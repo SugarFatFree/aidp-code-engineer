@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Compile scripts
+        run: python -m compileall -q .aidp
+      - name: Script self-checks
+        run: python3 .aidp/scripts/selfcheck.py
+      - name: Regression tests (includes scaffold skill tests)
+        run: bash .aidp/scripts/tests/run.sh
+      - name: Agent adapters (self-check in a temp repo)
+        run: python3 .aidp/scripts/agent_sync.py --self-check
+      - name: Doc reference and open-source hygiene guards
+        run: |
+          python3 .aidp/scripts/check_code_symbol_refs.py
+          python3 .aidp/scripts/check_cli_invocation.py
+          python3 .aidp/scripts/check_private_markers.py
+      - name: Memory template in sync
+        run: python3 .aidp/skills/aidp-code-engineer/scripts/sync_memory_md.py --check
+      - name: Scaffold bundle in sync
+        run: python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py --check
+      - name: Template self-verify (read-only)
+        run: python3 .aidp/skills/aidp-code-engineer/scripts/verify.py . --template --read-only

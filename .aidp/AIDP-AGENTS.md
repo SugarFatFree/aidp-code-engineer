@@ -33,8 +33,8 @@
 
 ## ★ 多 Agent 兼容（Claude Code / Codex / DeepSeek Harness）
 
-- **单一信源 = `.aidp/`**：命令、角色、规则、流程、脚本、hook、模板、SKILL、插件只在这里维护；各 Agent 的入口（`.claude/commands|skills|plugins`、`.codex/aidp/skills`、`.codex/skills`、`.dsh/commands`、`.agents/skills`、各 Agent hook / MCP 配置等）由 `python3 .aidp/scripts/agent_sync.py` 生成，⛔ 不手改生成物；生成入口登记在根 `.gitignore` 托管块、不入库，clone 后先跑一次。
-- **命令与 SKILL 分离**：AIDP 命令只放 `.aidp/commands/`，公共 SKILL 只放 `.aidp/skills/`，插件只放 `.aidp/plugins/`。Claude Code 使用 `.claude/commands/<命令>.md`（`/<命令>`）；Codex 使用 `.codex/aidp/skills/<命令>/SKILL.md`（`$<命令>`，只允许用户显式调用）；DeepSeek Harness 使用 `.dsh/commands/<命令>.md`（`/<命令>`）。Codex 与 DeepSeek Harness 共用 `.agents/skills/` 中的公共 SKILL，命令参数均保持 `$ARGUMENTS` 语义。
+- **单一信源 = `.aidp/`**：命令、角色、规则、流程、脚本、hook、模板、SKILL、插件只在这里维护；各 Agent 的入口（`.claude/commands|skills|plugins`、`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`、`.agents/skills`、各 Agent hook / MCP 配置等）由 `python3 .aidp/scripts/agent_sync.py` 生成，⛔ 不手改生成物；生成入口登记在根 `.gitignore` 托管块、不入库，clone 后先跑一次。
+- **命令与 SKILL 分离**：AIDP 命令只放 `.aidp/commands/`，公共 SKILL 只放 `.aidp/skills/`，插件只放 `.aidp/plugins/`。Claude Code 使用 `.claude/commands/<命令>.md`（`/<命令>`）；Codex 使用官方发现根 `.codex/skills/aidp/<命令>/SKILL.md`（`$<命令>`，只允许用户显式调用）；DeepSeek Harness 使用 `.dsh/commands/<命令>.md`（`/<命令>`）。Codex 与 DeepSeek Harness 共用 `.agents/skills/` 中的公共 SKILL，命令参数均保持 `$ARGUMENTS` 语义。Codex 命令正文遇到明确的 `/foo args` 串联时，确定性读取 `.aidp/commands/foo.md`，把 `args` 原样作为子命令 `$ARGUMENTS` 在当前执行链内联执行；文件不存在或无法唯一映射时 fail closed。
 - **当前 Agent 判定**：`python3 .aidp/scripts/agent_env.py detect`——`AIDP_AGENT` 环境变量优先，其次项目根存在 `.codex/` → Codex、`.dsh/` → DeepSeek Harness、`.claude/` → Claude Code（可并存）。
 - **项目记忆文件**：只用 Claude Code 时为 `CLAUDE.md`；Codex / DeepSeek Harness 为 `AGENTS.md`；并存时正文在 `AGENTS.md`、`CLAUDE.md` 仅一行 `@AGENTS.md`。脚本一律经 `agent_env.py memory-file` 取路径。
 - **工具名**：文档以 Claude Code 工具名书写（`AskUserQuestion` / `Agent` / `Skill` / `TodoWrite` / `/loop` 等），在其他 Agent 下按 **`.aidp/reference/agent-tools.md`** 换成等价能力，语义不变。

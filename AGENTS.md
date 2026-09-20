@@ -29,7 +29,7 @@
 | 主要命令的设计目标基线 | `设计目标.md` |
 
 - **本仓库不携带 Agent 适配层**（`.claude/`、`.codex/`、`.dsh/`、`.agents/` 已整目录忽略）：维护者本地用哪个 Agent，就建对应标记目录后跑 `python3 .aidp/scripts/agent_sync.py`。
-- **命令适配由 `agent_sync.py` 生成**：Claude Code → `.claude/commands/`，Codex → `.codex/aidp/skills/`，DeepSeek Harness → `.dsh/commands/`；增删 `.aidp/commands/` 后重跑该脚本。
+- **命令适配由 `agent_sync.py` 生成**：Claude Code → `.claude/commands/`，Codex → 官方发现根 `.codex/skills/aidp/`，DeepSeek Harness → `.dsh/commands/`；增删 `.aidp/commands/` 后重跑该脚本。Codex 命令正文中的 `/foo args` 按适配前言确定性读取 `.aidp/commands/foo.md`，并原样传递子命令 `$ARGUMENTS`。
 
 ## 提交规范
 

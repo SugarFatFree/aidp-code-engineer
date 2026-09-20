@@ -191,10 +191,10 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 
 ## 多 Agent 说明
 
-- 单一信源是目标项目的 `.aidp/`；Claude Code 的 `.claude/commands|skills|plugins`、Codex 的 `.codex/aidp/skills` / `.codex/skills`、DeepSeek Harness 的 `.dsh/commands`、共用 `.agents/skills` 及各 Agent hook / MCP 配置均由 `python3 .aidp/scripts/agent_sync.py` 生成，不手改。
+- 单一信源是目标项目的 `.aidp/`；Claude Code 的 `.claude/commands|skills|plugins`、Codex 的 `.codex/skills/aidp` / `.codex/skills`、DeepSeek Harness 的 `.dsh/commands`、共用 `.agents/skills` 及各 Agent hook / MCP 配置均由 `python3 .aidp/scripts/agent_sync.py` 生成，不手改。
 - 装配方式：`link` 用相对符号链接，`copy` 为实体副本（不支持符号链接的环境）；改了 `.aidp/` 后重跑 `agent_sync.py` 即可同步。
 - 记忆文件形态切换（例如后来加入 Codex）由 `agent_sync.py` 搬迁正文，不丢内容。
-- 命令入口：Claude Code 为 `.claude/commands` + `/命令`，Codex 为 `.codex/aidp/skills` + `$命令`，DeepSeek Harness 为 `.dsh/commands` + `/命令`。
+- 命令入口：Claude Code 为 `.claude/commands` + `/命令`，Codex 为官方发现根 `.codex/skills/aidp` + `$命令`，DeepSeek Harness 为 `.dsh/commands` + `/命令`。Codex 命令 SKILL 内联执行原始正文明确串联的 `/foo args`：读取 `.aidp/commands/foo.md`，把 `args` 原样传为 `$ARGUMENTS`；未知命令 fail closed。
 - 浏览器自动化插件 `chrome-devtools-mcp` 随仓库分发在 `.aidp/plugins/`：Claude Code 登记完整项目插件；Codex 生成 `.codex/skills/chrome-devtools-mcp/skills` 并合并 MCP 到 `.codex/config.toml`；DeepSeek Harness 将插件 SKILL 装配进 `.agents/skills` 并合并 MCP 到 `.dsh/mcp.json`。本机需要 Node.js（`npx`），Codex 需项目 trust；DSH init 会尝试安装 `dsh-plugin-commands@latest`，失败时报告 WARN 和重试命令。
 - 命令、工具名、定时循环在各 Agent 下的写法见 `.aidp/reference/agent-tools.md`。
 

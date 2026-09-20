@@ -58,14 +58,14 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/.aidp/skills/aidp-co
 | Agent | 判定依据（项目根，可并存） | SKILL 入口 | AIDP 命令入口 | 项目记忆文件 |
 |-------|---------|-----------|-------------|-------------|
 | Claude Code | `.claude/`（都没有时缺省） | `.claude/skills/` | `.claude/commands/`，`/sprint-dev` | `CLAUDE.md` |
-| Codex | `.codex/` | `.agents/skills/` | `.codex/aidp/skills/`，`$sprint-dev` | `AGENTS.md` |
+| Codex | `.codex/` | `.agents/skills/` | `.codex/skills/aidp/`，`$sprint-dev` | `AGENTS.md` |
 | DeepSeek Harness | `.dsh/` | `.agents/skills/` | `.dsh/commands/`，`/sprint-dev` | `AGENTS.md` |
 
 - 可用环境变量 `AIDP_AGENT=claude|codex|dsh` 显式覆盖自动判定。
 - 无论哪种 Agent，命令、Agent 定义、规则、流程、脚本的**单一信源**都是 `.aidp/`，各 Agent 目录只是适配层。
-- **命令与 SKILL 在源头分开**：AIDP 命令只在 `.aidp/commands/`，公共 SKILL 只在 `.aidp/skills/`。`agent_sync.py` 分别生成 Claude Code 命令文件、Codex 显式调用命令 SKILL、DeepSeek Harness 命令文件；命令参数正文保持 `$ARGUMENTS` 语义不变。
+- **命令与 SKILL 在源头分开**：AIDP 命令只在 `.aidp/commands/`，公共 SKILL 只在 `.aidp/skills/`。`agent_sync.py` 分别生成 Claude Code 命令文件、Codex 官方发现根 `.codex/skills/aidp/` 下的显式调用命令 SKILL、DeepSeek Harness 命令文件；命令参数正文保持 `$ARGUMENTS` 语义不变。Codex 命令正文明确串联 `/foo args` 时，确定性读取 `.aidp/commands/foo.md` 并把 `args` 原样传为子命令 `$ARGUMENTS`，未知命令 fail closed。
 - **插件**：`.aidp/plugins/` 随仓库分发插件（内置 `chrome-devtools-mcp`：浏览器自动化 MCP + 配套调试 SKILL，Apache-2.0）。Claude Code 以项目级插件启用；Codex 的插件 SKILL 生成到 `.codex/skills/chrome-devtools-mcp/skills/`，MCP 写入 `.codex/config.toml`；DeepSeek Harness 的插件 SKILL 生成到 `.agents/skills/`，MCP 汇总到 `.dsh/mcp.json`。
-- **适配入口不入库**：`.claude/commands|skills|plugins`、`.codex/aidp/skills`、`.codex/skills`、`.dsh/commands`、`.agents/skills` 下的生成入口由 `python3 .aidp/scripts/agent_sync.py` 维护并自动写入 `.gitignore` 托管块；clone 后先跑一次该命令（脚手架 init / migrate / upgrade 会自动执行）。
+- **适配入口不入库**：`.claude/commands|skills|plugins`、`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`、`.agents/skills` 下的生成入口由 `python3 .aidp/scripts/agent_sync.py` 维护并自动写入 `.gitignore` 托管块；clone 后先跑一次该命令（脚手架 init / migrate / upgrade 会自动执行）。
 - 同时使用多种 Agent 时，`AGENTS.md` 为正文，`CLAUDE.md` 仅引用它（`@AGENTS.md`）。查询当前生效的记忆文件：`python3 .aidp/scripts/agent_env.py memory-file`。
 
 ## 📦 目录结构

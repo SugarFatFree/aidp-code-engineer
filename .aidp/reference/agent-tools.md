@@ -11,11 +11,11 @@
 | 判定依据（项目根） | `.claude/` | `.codex/` | `.dsh/` |
 | 项目记忆文件 | `CLAUDE.md`（与其他 Agent 并存时为 `@AGENTS.md` 薄壳） | `AGENTS.md` | `AGENTS.md` |
 | SKILL 目录 | `.claude/skills/` | `.agents/skills/` | `.agents/skills/`（与 Codex 共用） |
-| AIDP 命令入口 | `/sprint-dev …`（`.claude/commands/`） | `$sprint-dev …`（`.codex/aidp/skills/`，仅显式调用） | `/sprint-dev …`（`.dsh/commands/`） |
+| AIDP 命令入口 | `/sprint-dev …`（`.claude/commands/`） | `$sprint-dev …`（`.codex/skills/aidp/`，仅显式调用） | `/sprint-dev …`（`.dsh/commands/`） |
 | 插件（`.aidp/plugins/`） | `.claude/plugins/<name>/` + settings 登记 marketplace 并启用 | 插件 SKILL 位于 `.codex/skills/<name>/skills/`，MCP 合并到 `.codex/config.toml` | 插件 SKILL 位于 `.agents/skills/`，MCP 汇总到 `.dsh/mcp.json` |
 | Stop hook | `.claude/settings.json` | `.codex/hooks.json`（`config.toml` 需 `codex_hooks = true`） | `.dsh/hooks.json`，由 hooks 插件加载 |
 
-入口全部由 `python3 .aidp/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；命令只在 `.aidp/commands/`、公共 SKILL 只在 `.aidp/skills/`、插件只在 `.aidp/plugins/`。`agent_sync.py` 为各 Agent 生成原生命令入口，Codex 命令 SKILL 带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`；`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。
+入口全部由 `python3 .aidp/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；命令只在 `.aidp/commands/`、公共 SKILL 只在 `.aidp/skills/`、插件只在 `.aidp/plugins/`。Codex 命令位于官方发现根 `.codex/skills/aidp/`，带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`。其正文明确串联 `/foo args` 时，读取 `.aidp/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 内联执行；未知命令或无法唯一映射时 fail closed。`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。
 
 ## 二、工具名
 

@@ -38,7 +38,7 @@
 在 `test_agent_sync.py` 的三 Agent link 模式用例中加入以下等价断言，并删除对 `.agents/skills/aidp-cmd` 的期望：
 
 ```python
-codex_command = root / ".codex/aidp/skills/sprint-dev/SKILL.md"
+codex_command = root / ".codex/skills/aidp/sprint-dev/SKILL.md"
 check("codex 原生命令 SKILL", codex_command.is_file())
 check("codex 命令保留参数", "$ARGUMENTS" in codex_command.read_text(encoding="utf-8"))
 check("codex 命令有 frontmatter", codex_command.read_text(encoding="utf-8").startswith("---\nname: sprint-dev\n"))
@@ -91,7 +91,7 @@ python3 .aidp/scripts/tests/test_agent_sync.py
 python3 .aidp/scripts/tests/test_agent_sync_router.py
 ```
 
-Expected: FAIL，缺少 `.codex/aidp/skills/*` 与 `.dsh/commands/*`，且旧 `aidp-cmd` 仍被生成。
+Expected: FAIL，缺少 `.codex/skills/aidp/*` 与 `.dsh/commands/*`，且旧 `aidp-cmd` 仍被生成。
 
 - [ ] **Step 4: 提交测试红灯**
 
@@ -115,7 +115,7 @@ git commit -m "test: define native agent command adapters" -m "Co-Authored-By: C
 CLAUDE_SKILLS = ".claude/skills"
 SHARED_SKILLS = ".agents/skills"
 CLAUDE_COMMANDS = ".claude/commands"
-CODEX_COMMAND_SKILLS = ".codex/aidp/skills"
+CODEX_COMMAND_SKILLS = ".codex/skills/aidp"
 DSH_COMMANDS = ".dsh/commands"
 OBSOLETE_ROUTER = "aidp-cmd"
 ```
@@ -130,12 +130,27 @@ OBSOLETE_ROUTER = "aidp-cmd"
 CODEX_EXPLICIT_POLICY = "policy:\n  allow_implicit_invocation: false\n"
 
 
-def codex_command_skill(name: str, command_text: str) -> str:
-    heading = next(
-        (line[2:].strip() for line in command_text.splitlines() if line.startswith("# ")),
-        f"AIDP command {name}",
+def command_description(name: str, command_text: str) -> str:
+    frontmatter = _frontmatter(command_text)
+    if frontmatter.get("description"):
+        return frontmatter["description"]
+    match = re.search(r"^#\s+(.+?)\s*$", command_text, re.M)
+    return match.group(1).strip() if match else f"AIDP command {name}"
+
+
+def codex_command_preamble(name: str) -> str:
+    return (
+        "## Codex 命令适配规则\n\n"
+        f"1. 用户以 `${name} args` 调用时，`args` 原样作为 `$ARGUMENTS`。\n"
+        "2. 原始正文明确串联 `/foo args` 时，读取 `.aidp/commands/foo.md`，"
+        "把 `args` 原样作为子命令 `$ARGUMENTS` 内联执行。\n"
+        "3. 文件不存在、命令未知或无法唯一映射时 fail closed。\n"
+        "4. 不得改写原始命令正文。\n\n"
     )
-    description = heading.replace('"', "'")
+
+
+def codex_command_skill(name: str, command_text: str) -> str:
+    description = command_description(name, command_text).replace('"', "'")
     return (
         "---\n"
         f"name: {name}\n"
@@ -143,11 +158,12 @@ def codex_command_skill(name: str, command_text: str) -> str:
         "disable-model-invocation: true\n"
         "user-invocable: true\n"
         "---\n\n"
+        f"{codex_command_preamble(name)}"
         f"{command_text.rstrip()}\n"
     )
 ```
 
-每个命令同时生成 `agents/openai.yaml`，内容取 `CODEX_EXPLICIT_POLICY`。SKILL 正文不内联第二套 OpenAI 策略。
+每个命令同时生成 `agents/openai.yaml`，内容取 `CODEX_EXPLICIT_POLICY`。SKILL 正文不内联第二套 OpenAI 策略，适配前言固定声明参数与子命令内联规则。
 
 - [ ] **Step 3: 泛化命令同步函数**
 
@@ -541,7 +557,7 @@ def cleanup_obsolete_router(root: Path, backup_root: Path, warnings: list[str]) 
 
 - 删除 `scaffold_lib.py` 中 `FINGERPRINT_EXEMPT = ("skills/aidp-cmd/",)`；若该常量无其他用途，一并删除辅助函数并修调用方。
 - 删除 `verify.py` 中的路由源校验函数及主流程调用。
-- `_adapter_mode()` 探测加入 `.codex/aidp/skills` 和 `.dsh/commands`。
+- `_adapter_mode()` 探测加入 `.codex/skills/aidp` 和 `.dsh/commands`。
 - 删除 `.aidp/skills/aidp-cmd/` 源目录。
 
 - [ ] **Step 5: 运行脚手架专项测试**
@@ -600,7 +616,7 @@ Expected: 返回现存路由引用，作为逐项清理清单。
 
 ```text
 Claude Code: 公共 SKILL=.claude/skills；命令=.claude/commands；插件=.claude/plugins/chrome-devtools-mcp；调用=/<command>
-Codex: 公共 SKILL=.agents/skills；命令=.codex/aidp/skills；浏览器插件 SKILL=.codex/skills/chrome-devtools-mcp/skills；调用=$<command>
+Codex: 公共 SKILL=.agents/skills；命令=.codex/skills/aidp；浏览器插件 SKILL=.codex/skills/chrome-devtools-mcp/skills；调用=$<command>
 DSH: 公共与浏览器插件 SKILL=.agents/skills；命令=.dsh/commands；调用=/<command>
 ```
 

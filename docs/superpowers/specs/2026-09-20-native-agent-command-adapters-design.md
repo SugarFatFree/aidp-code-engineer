@@ -41,7 +41,7 @@ Codex 已支持多层级 SKILL 目录，DSH 可通过 `dsh-plugin-commands` 读�
 .claude/skills/<skill>/             # Claude Code 公共 SKILL
 .claude/commands/<command>.md       # Claude Code 原生命令
 
-.codex/aidp/skills/<command>/
+.codex/skills/aidp/<command>/
 └── SKILL.md                        # Codex 命令 SKILL
 
 .dsh/commands/<command>.md          # DSH 原生命令
@@ -51,7 +51,7 @@ Codex 已支持多层级 SKILL 目录，DSH 可通过 `dsh-plugin-commands` 读�
 .agents/skills/<plugin-skill>/                          # DSH 插件 SKILL
 ```
 
-路径固定使用 `.codex/aidp/skills`；`aidp` 与项目名称一致。`chrome-devtools-mcp` 的插件 SKILL 在 Codex 与 DSH 组合项目中均指向同一份 `.aidp/plugins/chrome-devtools-mcp/skills/` 真源；Codex 按其发现优先级使用 `.codex/skills`，DSH 使用 `.agents/skills`。
+路径固定使用 `.codex/skills/aidp`；`aidp` 与项目名称一致。`chrome-devtools-mcp` 的插件 SKILL 在 Codex 与 DSH 组合项目中均指向同一份 `.aidp/plugins/chrome-devtools-mcp/skills/` 真源；Codex 按其发现优先级使用 `.codex/skills`，DSH 使用 `.agents/skills`。
 
 适配层继续支持：
 
@@ -82,16 +82,18 @@ Codex 已支持多层级 SKILL 目录，DSH 可通过 `dsh-plugin-commands` 读�
 每个命令生成一个独立目录：
 
 ```text
-.codex/aidp/skills/<command>/SKILL.md
+.codex/skills/aidp/<command>/SKILL.md
 ```
 
 `SKILL.md` 由确定性生成器构造：
 
 1. `name` 等于命令文件名。
-2. `description` 从命令文档首个 H1 提取；提取失败时使用稳定的通用描述。
+2. `description` 优先取命令 frontmatter，其次取首个 H1，仍无值时使用稳定的通用描述。
 3. 设置为仅允许用户显式调用，禁止隐式模型调用。
-4. frontmatter 后原样附加 `.aidp/commands/<command>.md` 正文。
-5. 正文中的 `$ARGUMENTS` 不改写，以保持参数语义。
+4. frontmatter 后写入确定性适配前言，再原样附加 `.aidp/commands/<command>.md` 正文。
+5. 用户以 `$<command> args` 调用时，`args` 全部文字原样作为 `$ARGUMENTS`，不增删、不改写、不调整顺序与引号。
+6. 原始正文明确调用或串联 `/foo args` 时，读取 `.aidp/commands/foo.md`，确认文件存在后把 `args` 原样作为子命令 `$ARGUMENTS`，在当前执行链内联执行；命令未知、文件不存在或无法唯一映射时 fail closed。
+7. 适配层不得改写原始命令正文。
 
 调用形式：
 
@@ -190,13 +192,13 @@ DSH:         /<command> <args>
 
 - 按启用 Agent 独立生成或清理对应适配目录。
 - `.agents/skills/` 在 Codex 或 DSH 任一启用时存在；二者都未启用时只清理由 AIDP 生成的入口。
-- `--check` 覆盖 `.claude/skills`、`.claude/commands`、`.agents/skills`、`.codex/aidp/skills`、`.dsh/commands` 及插件适配目录。
+- `--check` 覆盖 `.claude/skills`、`.claude/commands`、`.agents/skills`、`.codex/skills/aidp`、`.dsh/commands` 及插件适配目录。
 - 命令与公共 SKILL 重名时 fail closed。
 - 不删除没有 AIDP 生成标记的项目自有文件。
 
 ### 7.2 `verify.py`
 
-适配模式探测加入 `.codex/aidp/skills` 和 `.dsh/commands`，避免 Codex-only 或 DSH-only 的 copy 模式被误判为 link。
+适配模式探测加入 `.codex/skills/aidp` 和 `.dsh/commands`，避免 Codex-only 或 DSH-only 的 copy 模式被误判为 link。
 
 模板模式不再校验路由源；下游模式通过 `agent_sync.py --check` 校验全部适配层。
 

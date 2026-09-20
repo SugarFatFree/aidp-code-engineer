@@ -718,6 +718,10 @@ def _name_conflicts(root: Path, plugin_skills: dict) -> list:
 
 
 def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
+    if "claude" in agents:
+        for plugin in plugins:
+            _require_generated_or_absent(root / CLAUDE_PLUGINS / plugin.name,
+                                         "Claude 插件目录")
     if "codex" in agents:
         for command in _command_files(root):
             _require_generated_or_absent(root / CODEX_COMMAND_SKILLS / command.stem,

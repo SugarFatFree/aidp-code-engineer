@@ -660,6 +660,23 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
+    # Claude 插件目标存在用户目录 → preflight fail closed，无部分适配写入
+    root = _mkrepo(markers=(".claude",))
+    try:
+        _add_browser_plugin(root)
+        user_target = root / ".claude/plugins/chrome-devtools-mcp/note.txt"
+        user_target.parent.mkdir(parents=True)
+        user_target.write_text("keep claude plugin\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        check("Claude 插件目标无生成证据 → fail closed、用户内容保持且无部分适配",
+              rc == 2 and "用户" in out.get("error", "")
+              and _read(user_target) == "keep claude plugin\n"
+              and not (root / ".claude/commands/sprint-dev.md").exists()
+              and not (root / ".claude/skills/demo-skill").exists()
+              and not (root / ".claude/settings.json").exists())
+    finally:
+        _rm(root)
+
     # 插件 copy 模式：三端均为内容完整的真实副本
     root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
     try:

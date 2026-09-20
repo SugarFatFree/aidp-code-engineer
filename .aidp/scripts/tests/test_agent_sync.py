@@ -474,6 +474,43 @@ def test_copy_mode_and_errors():
         _rm(root)
         shutil.rmtree(external, ignore_errors=True)
 
+    # 旧根的祖先为 symlink 时，同样不得跟随到外部
+    root = _mkrepo(markers=(".codex",))
+    external = Path(tempfile.mkdtemp())
+    try:
+        generated = external / "skills/generated-command"
+        generated.mkdir(parents=True)
+        (generated / AS.GENERATED_FILE).write_text("native-command\n", encoding="utf-8")
+        sentinel = external / "sentinel.txt"
+        sentinel.write_text("outside ancestor\n", encoding="utf-8")
+        (root / ".codex/aidp").symlink_to(external, target_is_directory=True)
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("旧 Codex 根祖先为 symlink → 不跟随、不删除外部内容",
+              rc == 0 and (root / ".codex/aidp").is_symlink()
+              and generated.is_dir() and _read(sentinel) == "outside ancestor\n")
+    finally:
+        _rm(root)
+        shutil.rmtree(external, ignore_errors=True)
+
+    # 通用 _prune 对词法位于 root 外的路径拒绝操作
+    root = _mkrepo(markers=(".codex",))
+    external = Path(tempfile.mkdtemp())
+    try:
+        generated = external / "generated-command"
+        generated.mkdir()
+        (generated / AS.GENERATED_FILE).write_text("native-command\n", encoding="utf-8")
+        plan = AS.Plan(root, True, "link")
+        try:
+            AS._prune(plan, external, set())
+            no_error = True
+        except ValueError:
+            no_error = False
+        check("_prune 词法越出 root → 外部目录保持且无 action",
+              no_error and generated.is_dir() and plan.actions == [])
+    finally:
+        _rm(root)
+        shutil.rmtree(external, ignore_errors=True)
+
     # 新 Codex 命令 namespace 必须位于真实目录，symlink/文件均原子拒绝
     root = _mkrepo(markers=(".claude", ".codex"))
     external = Path(tempfile.mkdtemp())

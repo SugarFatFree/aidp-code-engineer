@@ -270,8 +270,17 @@ def _is_generated(p: Path) -> bool:
 
 
 def _prune(plan: Plan, base: Path, wanted: set):
-    """只遍历真实目录；目录 symlink/文件均视为用户边界，绝不跟随。"""
-    if base.is_symlink() or not base.is_dir():
+    """只遍历 root 内无 symlink 祖先的真实目录，绝不跨越适配边界。"""
+    try:
+        relative = base.relative_to(plan.root)
+    except ValueError:
+        return
+    current = plan.root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return
+    if not base.is_dir():
         return
     for p in sorted(base.iterdir()):
         if p.name not in wanted and _is_generated(p):

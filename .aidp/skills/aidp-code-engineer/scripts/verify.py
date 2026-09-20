@@ -230,7 +230,7 @@ def _managed_adapter_entries(root: Path) -> set:
                 continue
             out.update((root / ".claude/commands" / command.name,
                         root / ".dsh/commands" / command.name,
-                        root / ".codex/aidp/skills" / command.stem))
+                        root / ".codex/skills/aidp" / command.stem))
     skills = root / ".aidp/skills"
     if skills.is_dir():
         for skill in skills.iterdir():
@@ -249,7 +249,7 @@ def _managed_adapter_entries(root: Path) -> set:
             for skill in source.iterdir():
                 if (skill / "SKILL.md").is_file():
                     out.add(root / ".agents/skills" / skill.name)
-    for marker in (root / ".codex/aidp/skills").glob("*/.aidp-generated"):
+    for marker in (root / ".codex/skills/aidp").glob("*/.aidp-generated"):
         if marker.is_file():
             out.add(marker.parent)
     return out

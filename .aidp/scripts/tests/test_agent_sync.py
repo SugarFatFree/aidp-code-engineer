@@ -198,15 +198,15 @@ def test_sync_all_agents_link():
 
         # Codex
         check("Codex：公共 SKILL 在 .agents/skills", (root / ".agents/skills/demo-skill").is_symlink())
-        codex_cmd = root / ".codex/aidp/skills/sprint-dev/SKILL.md"
+        codex_cmd = root / ".codex/skills/aidp/sprint-dev/SKILL.md"
         codex_text = _read(codex_cmd)
         check("Codex：每条命令生成独立 SKILL", codex_cmd.is_file())
         check("Codex：命令 SKILL 保留参数正文", "$ARGUMENTS" in codex_text)
         check("Codex：命令 SKILL frontmatter name 正确", codex_text.startswith("---\nname: sprint-dev\n"))
         check("Codex：显式调用策略在 agents/openai.yaml",
               "allow_implicit_invocation: false" in
-              _read(root / ".codex/aidp/skills/sprint-dev/agents/openai.yaml"))
-        check("Codex：README 不生成命令 SKILL", not (root / ".codex/aidp/skills/README").exists())
+              _read(root / ".codex/skills/aidp/sprint-dev/agents/openai.yaml"))
+        check("Codex：README 不生成命令 SKILL", not (root / ".codex/skills/aidp/README").exists())
         check("公共 SKILL 不再暴露 aidp-cmd", not (root / ".agents/skills/aidp-cmd").exists())
         check("真源不再生成 aidp-cmd", not (root / ".aidp/skills/aidp-cmd").exists())
         hk = json.loads(_read(root / ".codex/hooks.json"))
@@ -224,7 +224,7 @@ def test_sync_all_agents_link():
         check("★ 生成入口登记进 .gitignore 托管块",
               AS.GITIGNORE_BEGIN in gi and "/.claude/commands/sprint-dev.md" in gi
               and "/.claude/skills/demo-skill" in gi
-              and "/.codex/aidp/skills/sprint-dev" in gi
+              and "/.codex/skills/aidp/sprint-dev" in gi
               and "/.dsh/commands/sprint-dev.md" in gi)
         hk = json.loads(_read(root / ".dsh/hooks.json"))
         check("DSH：hooks.json Stop hook 带 --agent dsh",
@@ -245,10 +245,10 @@ def test_sync_all_agents_link():
         check("漂移明细含缺失入口与三 Agent 新增命令",
               ".claude/commands/sprint-dev.md" in paths
               and ".claude/commands/release.md" in paths
-              and ".codex/aidp/skills/release/SKILL.md" in paths
+              and ".codex/skills/aidp/release/SKILL.md" in paths
               and ".dsh/commands/release.md" in paths)
         check("--check 不写盘", not (root / ".claude/commands/sprint-dev.md").exists()
-              and not (root / ".codex/aidp/skills/release/SKILL.md").exists()
+              and not (root / ".codex/skills/aidp/release/SKILL.md").exists()
               and not (root / ".dsh/commands/release.md").exists())
         rc, _, _, err = _run(SYNC_PY, "--root", str(root), "--human")
         check("修复后再 --check 一致", _run(SYNC_PY, "--root", str(root), "--check")[0] == 0 and rc == 0)
@@ -263,7 +263,7 @@ def test_sync_all_agents_link():
         removes = {a["path"] for a in out.get("actions", []) if a["op"] == "remove"}
         check("★ 源已删 → 清理三 Agent 命令与公共 SKILL 入口",
               {".claude/commands/release.md", ".claude/skills/demo-skill", ".agents/skills/demo-skill",
-               ".codex/aidp/skills/release", ".dsh/commands/release.md"} <= removes)
+               ".codex/skills/aidp/release", ".dsh/commands/release.md"} <= removes)
         check("★ 用户自有 SKILL 不被清理", (root / ".agents/skills/my-own/SKILL.md").is_file())
         gi = _read(root / ".gitignore")
         check("★ 源删除后 .gitignore 托管块同步移除、用户 SKILL 不被忽略",
@@ -302,13 +302,13 @@ def test_memory_migration_shapes():
         check("仅 codex → CLAUDE.md 不改写（不丢原文件）", _read(root / "CLAUDE.md") == BODY)
         check("仅 codex → 不生成 .claude / .dsh 入口",
               not (root / ".claude/skills").exists() and not (root / ".dsh/commands").exists())
-        codex_text = _read(root / ".codex/aidp/skills/sprint-dev/SKILL.md")
+        codex_text = _read(root / ".codex/skills/aidp/sprint-dev/SKILL.md")
         check("仅 codex → 公共 SKILL + 可执行原生命令 SKILL",
               (root / ".agents/skills/demo-skill").exists()
               and codex_text.startswith("---\nname: sprint-dev\n")
               and "$ARGUMENTS" in codex_text
               and "allow_implicit_invocation: false" in
-              _read(root / ".codex/aidp/skills/sprint-dev/agents/openai.yaml"))
+              _read(root / ".codex/skills/aidp/sprint-dev/agents/openai.yaml"))
         rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex", "--check")
         check("仅 codex 二次 --check 一致", rc == 0)
     finally:
@@ -353,7 +353,7 @@ def test_copy_mode_and_errors():
         check("copy 模式忽略 __pycache__", not (sk / "__pycache__").exists())
         cmd = root / ".claude/commands/sprint-dev.md"
         check("copy 模式：Claude 命令文件为副本", cmd.is_file() and not cmd.is_symlink())
-        codex_cmd = root / ".codex/aidp/skills/sprint-dev/SKILL.md"
+        codex_cmd = root / ".codex/skills/aidp/sprint-dev/SKILL.md"
         check("copy 模式：Codex 命令 SKILL 为生成文件",
               codex_cmd.is_file() and not codex_cmd.is_symlink() and "$ARGUMENTS" in _read(codex_cmd))
         dsh_cmd = root / ".dsh/commands/sprint-dev.md"
@@ -418,7 +418,7 @@ def test_copy_mode_and_errors():
               and "$ARGUMENTS" in _read(dsh_cmd)
               and not (root / ".dsh/skills").exists()
               and not (root / ".claude/skills").exists()
-              and not (root / ".codex/aidp/skills").exists())
+              and not (root / ".codex/skills/aidp").exists())
     finally:
         _rm(root)
 
@@ -427,16 +427,16 @@ def test_copy_mode_and_errors():
     try:
         _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex,dsh")
         check("切换前已生成 Codex/DSH 原生命令入口",
-              (root / ".codex/aidp/skills/sprint-dev/SKILL.md").is_file()
+              (root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file()
               and (root / ".dsh/commands/sprint-dev.md").exists())
-        own = root / ".codex/aidp/skills/my-own/SKILL.md"
+        own = root / ".codex/skills/aidp/my-own/SKILL.md"
         own.parent.mkdir(parents=True, exist_ok=True)
         own.write_text("---\nname: my-own\ndescription: user\n---\n", encoding="utf-8")
         _run(SYNC_PY, "--root", str(root), "--agents", "claude")
         check("切换为 Claude-only → 清理 DSH 生成命令",
               not (root / ".dsh/commands/sprint-dev.md").exists())
         check("切换为 Claude-only → 清理 Codex 生成命令",
-              not (root / ".codex/aidp/skills/sprint-dev").exists())
+              not (root / ".codex/skills/aidp/sprint-dev").exists())
         check("切换 Agent → 保留 Codex 命令目录内用户自有内容", own.is_file())
     finally:
         _rm(root)
@@ -449,7 +449,7 @@ def test_copy_mode_and_errors():
         p = subprocess.run([sys.executable, SYNC_PY, "--root", str(root)], capture_output=True, text=True)
         check("★ 命令与 SKILL 同名 → 非 0 退出并提示冲突", p.returncode != 0 and "冲突" in (p.stderr + p.stdout))
         check("冲突时不生成任何原生命令入口",
-              not (root / ".codex/aidp/skills/sprint-dev").exists()
+              not (root / ".codex/skills/aidp/sprint-dev").exists()
               and not (root / ".dsh/commands/sprint-dev.md").exists())
     finally:
         _rm(root)
@@ -457,7 +457,7 @@ def test_copy_mode_and_errors():
     # 原生命令目标已有用户内容 → fail closed，不覆盖
     root = _mkrepo(markers=(".codex",))
     try:
-        user_skill = root / ".codex/aidp/skills/sprint-dev/SKILL.md"
+        user_skill = root / ".codex/skills/aidp/sprint-dev/SKILL.md"
         user_skill.parent.mkdir(parents=True)
         user_skill.write_text("---\nname: user-sprint-dev\ndescription: keep\n---\n", encoding="utf-8")
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")

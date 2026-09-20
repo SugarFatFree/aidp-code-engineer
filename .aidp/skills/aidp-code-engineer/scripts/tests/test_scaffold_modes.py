@@ -403,7 +403,7 @@ class NativeAdapterVerifyTest(unittest.TestCase):
             source = root / ".aidp/commands/sprint-dev.md"
             source.parent.mkdir(parents=True)
             source.write_text("# sprint-dev\n", encoding="utf-8")
-            codex = root / ".codex/aidp/skills/sprint-dev"
+            codex = root / ".codex/skills/aidp/sprint-dev"
             codex.mkdir(parents=True)
             (codex / "SKILL.md").write_text("---\nname: sprint-dev\n---\n", encoding="utf-8")
             (codex / ".aidp-generated").write_text("native-command\n", encoding="utf-8")
@@ -433,7 +433,7 @@ class NativeAdapterVerifyTest(unittest.TestCase):
             source = root / ".aidp/commands/sprint-dev.md"
             source.parent.mkdir(parents=True)
             source.write_text("# sprint-dev\n", encoding="utf-8")
-            generated = root / ".codex/aidp/skills/sprint-dev"
+            generated = root / ".codex/skills/aidp/sprint-dev"
             generated.mkdir(parents=True)
             (generated / "SKILL.md").write_text("---\nname: sprint-dev\n---\n", encoding="utf-8")
             (generated / ".aidp-generated").write_text("native-command\n", encoding="utf-8")
@@ -441,7 +441,7 @@ class NativeAdapterVerifyTest(unittest.TestCase):
             user_source.mkdir()
             (user_source / "SKILL.md").write_text("---\nname: user\n---\n", encoding="utf-8")
             user_link = root / ".codex/skills/user"
-            user_link.parent.mkdir(parents=True)
+            user_link.parent.mkdir(parents=True, exist_ok=True)
             user_link.symlink_to(user_source)
             self.assertEqual(V._adapter_mode(root, None), "copy")
 

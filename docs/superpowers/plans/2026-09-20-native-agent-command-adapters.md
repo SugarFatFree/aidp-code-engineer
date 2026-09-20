@@ -540,7 +540,7 @@ def cleanup_obsolete_router(root: Path, backup_root: Path, warnings: list[str]) 
 - [ ] **Step 4: 移除路由特殊逻辑**
 
 - 删除 `scaffold_lib.py` 中 `FINGERPRINT_EXEMPT = ("skills/aidp-cmd/",)`；若该常量无其他用途，一并删除辅助函数并修调用方。
-- 删除 `verify.py::check_router_source()` 及主流程调用。
+- 删除 `verify.py` 中的路由源校验函数及主流程调用。
 - `_adapter_mode()` 探测加入 `.codex/aidp/skills` 和 `.dsh/commands`。
 - 删除 `.aidp/skills/aidp-cmd/` 源目录。
 

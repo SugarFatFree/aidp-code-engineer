@@ -7,9 +7,12 @@ import shutil
 import subprocess
 import sys
 import unittest
+from argparse import Namespace
 from pathlib import Path
+from unittest import mock
 
 import _helpers as H
+import scaffold as S
 import scaffold_lib as L
 import scaffold_marker
 
@@ -34,7 +37,8 @@ def fake_dsh_env(root, exit_code=0):
     dsh.write_text(
         "#!/bin/sh\n"
         "printf '%s\\n' \"$@\" > \"$DSH_TEST_LOG\"\n"
-        "if [ \"${DSH_TEST_EXIT:-0}\" -ne 0 ]; then echo 'plugin install failed' >&2; fi\n"
+        "if [ \"${DSH_TEST_EXIT:-0}\" -ne 0 ]; then "
+        "printf '%s\\n' \"${DSH_TEST_MESSAGE:-plugin install failed}\" >&2; fi\n"
         "exit \"${DSH_TEST_EXIT:-0}\"\n",
         encoding="utf-8")
     dsh.chmod(0o755)
@@ -168,6 +172,46 @@ class DshCommandPluginInstallTest(unittest.TestCase):
             self.assertIn(self.RETRY, warning)
             self.assertTrue((root / ".aidp").is_dir())
             self.assertTrue(any(a["op"] == "agent-sync" for a in res["actions"]), res["actions"])
+
+    def test_timeout_is_bounded_warns_and_agent_sync_continues(self):
+        with H.TempRepo() as root:
+            real_run = subprocess.run
+            install_kwargs = {}
+
+            def run_with_timeout(cmd, *args, **kwargs):
+                if tuple(cmd) == S.DSH_COMMAND_PLUGIN:
+                    install_kwargs.update(kwargs)
+                    raise subprocess.TimeoutExpired(cmd, kwargs["timeout"],
+                                                    stderr="plugin timed out\nstill running")
+                return real_run(cmd, *args, **kwargs)
+
+            options = Namespace(
+                mode="auto", agent="dsh", json=True, user=None, name_cn=None,
+                version="V0.1.0", force=False, keep_backups=L.PRUNE_KEEP_LAST_DEFAULT,
+                keep_days=L.PRUNE_KEEP_DAYS_DEFAULT, no_agent_sync=False, adapter_mode="link")
+            with mock.patch.object(S.subprocess, "run", side_effect=run_with_timeout):
+                res = S.run(root, options)
+
+            self.assertIs(install_kwargs["stdin"], subprocess.DEVNULL)
+            self.assertEqual(install_kwargs["timeout"], 120)
+            warning = "\n".join(res["warnings"])
+            self.assertIn("超时 120 秒", warning)
+            self.assertIn("plugin timed out still running", warning)
+            self.assertIn(self.RETRY, warning)
+            self.assertTrue(any(a["op"] == "agent-sync" for a in res["actions"]), res["actions"])
+
+    def test_nonzero_detail_is_single_line_and_bounded(self):
+        with H.TempRepo() as root:
+            env, _ = fake_dsh_env(root, exit_code=9)
+            env["DSH_TEST_MESSAGE"] = "first line\n" + ("x" * 600) + "\nlast line"
+            res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
+            warning = next(w for w in res["warnings"] if "DSH 命令插件安装失败" in w)
+            self.assertNotIn("\n", warning)
+            self.assertIn("exit 9", warning)
+            self.assertIn("first line", warning)
+            self.assertIn(self.RETRY, warning)
+            detail = warning.split("：", 1)[1].split("；请手工重试", 1)[0]
+            self.assertLessEqual(len(detail), 300)
 
     def test_non_dsh_init_does_not_install(self):
         for agent in ("claude", "codex"):

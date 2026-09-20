@@ -47,6 +47,8 @@ AGENT_ALIASES = {"claude-code": "claude", "claudecode": "claude", "deepseek": "d
 EXEC_SUFFIX = {".py", ".sh"}
 DSH_COMMAND_PLUGIN = ("dsh", "plugin", "--profile", "web", "add", "dsh-plugin-commands@latest")
 DSH_COMMAND_PLUGIN_RETRY = " ".join(DSH_COMMAND_PLUGIN)
+DSH_COMMAND_PLUGIN_TIMEOUT = 120
+DSH_PLUGIN_DETAIL_LIMIT = 300
 
 NAV_PURPOSES = {
     "产品提供": "产品方提供的原始输入（PRD、需求说明等）",
@@ -620,17 +622,35 @@ def manage_gitkeep(root: Path, dirs, rep: Report):
 
 
 # ── Agent 依赖与 agent_sync ─────────────────────────────────────────────────
+def _bounded_detail(value) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) > DSH_PLUGIN_DETAIL_LIMIT:
+        return text[:DSH_PLUGIN_DETAIL_LIMIT - 1].rstrip() + "…"
+    return text
+
+
 def install_dsh_command_plugin(mode: str, agents, rep: Report):
     """DSH init 尽力安装项目命令发现插件；失败可恢复，不中断脚手架。"""
     if mode != "init" or "dsh" not in agents:
         return
     try:
-        p = subprocess.run(DSH_COMMAND_PLUGIN, capture_output=True, text=True)
+        p = subprocess.run(DSH_COMMAND_PLUGIN, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=DSH_COMMAND_PLUGIN_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        detail = _bounded_detail(exc.stderr or exc.stdout)
+        suffix = f"：{detail}" if detail else ""
+        rep.warn(f"DSH 命令插件安装失败（超时 {DSH_COMMAND_PLUGIN_TIMEOUT} 秒）{suffix}；"
+                 f"请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
+        return
     except OSError as exc:
-        rep.warn(f"DSH 命令插件安装失败：{exc}；请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
+        detail = _bounded_detail(exc)
+        suffix = f"：{detail}" if detail else ""
+        rep.warn(f"DSH 命令插件安装失败{suffix}；请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
         return
     if p.returncode != 0:
-        detail = (p.stderr or p.stdout or "").strip()
+        detail = _bounded_detail(p.stderr or p.stdout)
         suffix = f"：{detail}" if detail else ""
         rep.warn(f"DSH 命令插件安装失败（exit {p.returncode}）{suffix}；"
                  f"请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")

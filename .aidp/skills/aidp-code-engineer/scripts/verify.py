@@ -369,7 +369,10 @@ def check_code_readme(root: Path, r: VerifyResult):
             continue
         for path in [base] + sorted(p for p in base.rglob("*") if p.is_dir()):
             rel = path.relative_to(root)
-            if any(x.startswith(".") for x in rel.parts) or rel.as_posix() in NAV_SCAN_EXCLUDED:
+            rel_text = rel.as_posix()
+            excluded = any(rel_text == prefix or rel_text.startswith(prefix + "/")
+                           for prefix in NAV_SCAN_EXCLUDED)
+            if any(x.startswith(".") for x in rel.parts) or excluded:
                 continue
             dec = policy.is_readme_required_directory(path, None, root=root)
             if dec["required"] and dec.get("reason") == "navigation-hub" and not (path / "README.md").is_file():

@@ -448,6 +448,28 @@ class NativeAdapterVerifyTest(unittest.TestCase):
     def test_template_verify_has_no_router_source_check(self):
         self.assertFalse(hasattr(V, "check_router_source"))
 
+    def test_navigation_check_excludes_maintenance_plan_subtree_only(self):
+        with H.TempRepo() as root:
+            for rel in (
+                "docs/superpowers/specs/designs",
+                "docs/superpowers/specs/decisions",
+                "docs/superpowers/specs/reviews",
+                "docs/init/guides",
+                "docs/init/contracts",
+                "docs/init/examples",
+            ):
+                (root / rel).mkdir(parents=True)
+            result = V.VerifyResult()
+            V.check_code_readme(root, result)
+            self.assertFalse(
+                any("docs/superpowers" in warning for warning in result.warnings),
+                result.warnings,
+            )
+            self.assertTrue(
+                any("docs/init" in warning for warning in result.warnings),
+                result.warnings,
+            )
+
 
 class ObsoleteRouterMigrationTest(unittest.TestCase):
     MARKER = "<!-- 命令表由 .aidp/scripts/agent_sync.py 按 .aidp/commands/ 维护 -->\n"

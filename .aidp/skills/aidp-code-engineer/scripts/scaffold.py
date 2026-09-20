@@ -1,0 +1,814 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""scaffold.py —— AIDP 脚手架主入口：init（空项目）/ migrate（已有项目改建）/ upgrade（脚手架版本升级）。
+
+用法：
+    python3 scaffold.py <root> --detect                       # 只探测，输出 JSON（模式 / Agent / 代码与输入扫描）
+    python3 scaffold.py <root> [--mode auto|init|migrate|upgrade] [--version V0.1.0] [--user NAME]
+                        [--agent claude,codex,dsh] [--adapter-mode link|copy] [--name-cn 中文名]
+                        [--force] [--keep-backups N] [--keep-days N] [--no-agent-sync] [--json]
+
+模式自动判定：项目根有 `.aidp/` → upgrade；无 `.aidp/` 但有代码 → migrate；否则 → init。
+
+Agent 判定：项目根已有 `.claude/` `.codex/` `.dsh/` 之一或多者 → 按其装配；都没有 → `--agent`
+→ 环境变量 `AIDP_AGENT` → 交互终端询问 → 默认 claude；并创建对应标记目录。
+装配（入口、hook 接线、记忆文件形态）由目标项目的 `.aidp/scripts/agent_sync.py` 完成。
+
+执行内容（三模式共用一条确定性流水线，差异只在已有内容的处置）：
+  备份 → 目录骨架 → `.aidp/` 契约（版本门控 + 用户填充型保护 + 本地改动覆盖清单）→ `.aidp/scripts/`（字节不同即覆盖）
+  → docs 范式文档与结构性 README（项目改过的进语义改写队列）→ memory 配置与模板
+  → 根 README / env / .gitignore 托管区 → 项目记忆文件（按锚点确定性合并）
+  → 脚手架 skill 自身安装到 `.aidp/skills/aidp-code-engineer/` → 导航 README 与 .gitkeep
+  → 孤儿契约报告 → 版本戳（有语义改写待办时写 scaffold.pending）→ agent_sync 装配。
+  任何覆盖已有文件的写入之前都先备份到 `.aidp-backup-<时间戳>/`。
+
+退出码：0 完成（可能留有语义改写待办，见输出 `pending`）· 2 参数或环境错误
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import scaffold_lib as L  # noqa: E402
+import scaffold_marker  # noqa: E402
+import migrate  # noqa: E402
+
+KNOWN_AGENTS = ("claude", "codex", "dsh")
+MARKER_DIRS = {"claude": ".claude", "codex": ".codex", "dsh": ".dsh"}
+AGENT_ALIASES = {"claude-code": "claude", "claudecode": "claude", "deepseek": "dsh",
+                 "deepseek-harness": "dsh", "openai-codex": "codex"}
+EXEC_SUFFIX = {".py", ".sh"}
+DSH_COMMAND_PLUGIN = ("dsh", "plugin", "--profile", "web", "add", "dsh-plugin-commands@latest")
+DSH_COMMAND_PLUGIN_RETRY = " ".join(DSH_COMMAND_PLUGIN)
+
+NAV_PURPOSES = {
+    "产品提供": "产品方提供的原始输入（PRD、需求说明等）",
+    "研发需求": "由 /sprint-requirements 生成的研发需求",
+    "code": "原型代码（按模块）",
+    "mockup": "高保真原型（图片 / PDF / 设计源文件）",
+    "sql": "SQL 脚本（增量轨 / 全量轨）",
+    "配置文件": "配置产物（增量轨 / 全量轨）",
+    "部署流程": "部署 SOP 与 SQL 执行台账",
+    "增量": "增量轨：已有环境升级所需的变更",
+    "全量": "全量轨：从零搭建所需的完整产物",
+    "研发自测": "研发自测方案与用例（dev-manual-testcase 生成）",
+    "正式用例": "测试人员提供的正式用例",
+    "sprints": "Sprint 归档（/sprint-close 写入）",
+    "detail": "详细设计（按版本隔离）",
+    "tools": "跨版本运维 / 一次性工具归档",
+    "frontend": "前端子项目",
+    "backend": "后端子项目",
+}
+
+
+class Report:
+    def __init__(self):
+        self.actions, self.warnings, self.notes = [], [], []
+
+    def act(self, op, path, why=""):
+        self.actions.append({"op": op, "path": path, "why": why})
+
+    def warn(self, msg):
+        self.warnings.append(msg)
+
+    def note(self, msg):
+        self.notes.append(msg)
+
+
+# ── 通用写入 ────────────────────────────────────────────────────────────────
+def write_if_diff(dst: Path, data: bytes) -> bool:
+    if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == data:
+        return False
+    if dst.is_symlink():
+        dst.unlink()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(data)
+    if dst.suffix in EXEC_SUFFIX:
+        try:
+            dst.chmod(0o755)
+        except OSError:
+            pass
+    return True
+
+
+def rel_of(root: Path, p: Path) -> str:
+    return p.relative_to(root).as_posix()
+
+
+# ── 探测 ────────────────────────────────────────────────────────────────────
+def detect_mode(root: Path):
+    if (root / ".aidp").is_dir():
+        return "upgrade", "项目根已有 .aidp/"
+    if migrate.has_code(root):
+        return "migrate", "检测到已有代码"
+    return "init", "未检测到 .aidp/ 与代码"
+
+
+def parse_agents(text: str) -> list:
+    out = []
+    for part in (text or "").split(","):
+        n = AGENT_ALIASES.get(part.strip().lower(), part.strip().lower())
+        if not n:
+            continue
+        if n not in KNOWN_AGENTS:
+            raise ValueError(f"未知 Agent：{part.strip()}（可选 {', '.join(KNOWN_AGENTS)}）")
+        if n not in out:
+            out.append(n)
+    return out
+
+
+def marker_agents(root: Path) -> list:
+    return [a for a in KNOWN_AGENTS if (root / MARKER_DIRS[a]).is_dir()]
+
+
+def resolve_agents(root: Path, arg: str, interactive: bool):
+    markers = marker_agents(root)
+    if markers:
+        return markers, "markers"
+    if arg and parse_agents(arg):
+        return parse_agents(arg), "argument"
+    env = os.environ.get("AIDP_AGENT", "").strip()
+    if env and parse_agents(env):
+        return parse_agents(env), "env"
+    if interactive and sys.stdin.isatty():
+        ans = input("选择要装配的 AI 编码 Agent（claude / codex / dsh，可逗号分隔多选，回车 = claude）：").strip()
+        if parse_agents(ans):
+            return parse_agents(ans), "prompt"
+    return ["claude"], "default"
+
+
+def read_project_cfg(root: Path) -> dict:
+    out = {}
+    text = L.read_text(root / "memory/aidp-config.yaml")
+    in_sec = False
+    for ln in text.splitlines():
+        if ln and ln[:1] not in (" ", "\t", "#"):
+            in_sec = ln.strip().startswith("project:")
+            continue
+        m = re.match(r"^\s+(name|name_cn)\s*:\s*(.*?)\s*$", ln) if in_sec else None
+        if m:
+            v = m.group(2).split(" #")[0].strip().strip('"\'')
+            if v and "{{" not in v:
+                out[m.group(1)] = v
+    return out
+
+
+def guess_version(root: Path):
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        m = re.search(r"当前版本\*\*[：:]\s*(V\d+\.\d+(?:\.\d+)?)", L.read_text(root / name))
+        if m:
+            return m.group(1)
+    return None
+
+
+def detect(root: Path) -> dict:
+    mode, reason = detect_mode(root)
+    env = os.environ.get("AIDP_AGENT", "").strip()
+    cfg = read_project_cfg(root)
+    return {
+        "root": str(root),
+        "mode": mode,
+        "reason": reason,
+        "project": cfg.get("name") or root.name,
+        "project_cn": cfg.get("name_cn"),
+        "user": L.git_user(root),
+        "version_guess": guess_version(root),
+        "agents": {"markers": marker_agents(root), "env": env or None,
+                   "resolved_without_prompt": (marker_agents(root) or (parse_agents(env) if env else None))},
+        "scaffold": {"bundle_version": L.bundle_version(), "project_version": scaffold_marker.read_version(root),
+                     "pending": scaffold_marker.read_pending(root),
+                     "rewrite_queue": len(L.queue_entries(root))},
+        "memory_files": sorted(L.memory_bodies(root)),
+        "code_units": migrate.detect_code_units(root, cfg.get("name") or root.name),
+        "docs": migrate.scan_docs(root),
+        "inputs": migrate.scan_inputs(root),
+        "is_template_project": L.is_template_project(root),
+    }
+
+
+# ── 备份 ────────────────────────────────────────────────────────────────────
+BACKUP_ITEMS = (".aidp", "AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", "docs/init",
+                "docs/architecture", "memory/aidp-config.yaml", "memory/README.md",
+                ".claude/settings.json", ".codex/hooks.json", ".codex/config.toml", ".dsh/hooks.json")
+
+
+class Backup:
+    """升级备份：`overwrite` / 首次接入时整体快照；其余情况在覆盖某个已有文件前按需逐文件备份。"""
+
+    def __init__(self, root: Path, rep: Report):
+        self.root, self.rep, self.dir = root, rep, None
+
+    def _ensure_dir(self):
+        if self.dir is None:
+            self.dir = self.root / f".aidp-backup-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+            self.dir.mkdir(parents=True)
+        return self.dir
+
+    def full(self, keep_last: int, keep_days: int):
+        pr = L.prune_backups(self.root, keep_last, keep_days)
+        for name in pr["removed"]:
+            self.rep.act("prune", name, "超出备份保留策略")
+        root = self.root
+        items = [r for r in BACKUP_ITEMS if (root / r).exists()]
+        items += [rel_of(root, p) for p in sorted((root / "docs").rglob("README.md"))] if (root / "docs").is_dir() else []
+        items += [rel_of(root, p) for p in sorted((root / "memory").glob("*.md"))] if (root / "memory").is_dir() else []
+        if not items:
+            return None
+        dst = self._ensure_dir()
+        for rel in items:
+            src = root / rel
+            if src.is_dir():
+                shutil.copytree(src, dst / rel, dirs_exist_ok=True, symlinks=True,
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            elif src.is_file():
+                (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst / rel)
+        self.rep.act("backup", dst.name, f"{len(items)} 项")
+        return dst
+
+    def save(self, rel: str):
+        """覆盖 `rel` 之前调用：文件存在且本轮尚未备份过 → 复制进备份目录。"""
+        src = self.root / rel
+        if not src.is_file() or src.is_symlink():
+            return
+        first = self.dir is None
+        dst = self._ensure_dir() / rel
+        if dst.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        if first:
+            self.rep.act("backup", self.dir.name, "覆盖前逐文件备份")
+
+
+# ── 契约 ────────────────────────────────────────────────────────────────────
+def gate_decision(proj_raw, scaffold_raw, pending, queue_nonempty, force) -> str:
+    pv, sv = L.parse_ver(proj_raw), L.parse_ver(scaffold_raw)
+    if force or pv is None or sv is None or pv < sv:
+        return "overwrite"
+    if pv == sv:
+        return "overwrite" if (pending or queue_nonempty) else "fill"
+    return "protect"
+
+
+def refresh_optional_rules(root: Path, rep: Report):
+    """已安装的可选规则随模板位刷新；安装副本被本地改过则保留并告警（须在 templates 同步前调用）。"""
+    for tpl_rel, inst_rel in L.OPTIONAL_RULES:
+        new_tpl = L.BUNDLE_AIDP / tpl_rel
+        old_tpl = root / ".aidp" / tpl_rel
+        inst = root / ".aidp" / inst_rel
+        if not new_tpl.is_file() or not inst.is_file():
+            continue
+        new = new_tpl.read_bytes()
+        modified = old_tpl.is_file() and inst.read_bytes() != old_tpl.read_bytes()
+        if inst.read_bytes() == new:
+            continue
+        if modified:
+            rep.warn(f".aidp/{inst_rel} 与本地模板位不一致（疑似本地修改），未覆盖；"
+                     f"确认后跑 `python3 .aidp/scripts/check_webmcp.py --install-rule` 重装")
+            continue
+        write_if_diff(inst, new)
+        rep.act("update", f".aidp/{inst_rel}", "已安装的可选规则随模板升级")
+
+
+def installed_manifest(root: Path):
+    """项目里上一版脚手架安装的契约指纹（`.aidp/skills/aidp-code-engineer/assets/CONTRACT_MANIFEST.json`）。
+
+    运行中的脚手架就是项目内安装位时，它已是新版指纹，无法区分「本地改动」与「版本差异」→ 返回 None。
+    """
+    target = root / L.INSTALLED_SKILL_REL
+    if target.resolve() == L.SKILL_DIR.resolve():
+        return None
+    try:
+        return json.loads((target / L.MANIFEST_REL).read_text(encoding="utf-8")).get("files") or {}
+    except (OSError, ValueError):
+        return None
+
+
+def sync_gated(root: Path, decision: str, rep: Report, bk: "Backup" = None, old_files=None):
+    """契约同步。`old_files` = 上一版安装的契约指纹：`overwrite` 时据此列出「本地改过、被新版覆盖」的文件。"""
+    local_overwritten = []
+    if decision == "protect":
+        rep.warn("项目脚手架版本高于当前脚手架包，跳过契约同步以保护项目；请换用新版脚手架")
+        return local_overwritten
+    refresh_optional_rules(root, rep)
+    for d in L.GATED_DIRS:
+        for rel, sp in L.iter_files(L.BUNDLE_AIDP / d):
+            label = f"{d}/{rel}"
+            dp = root / ".aidp" / d / rel
+            new = sp.read_bytes()
+            if label in L.USER_FILLABLE_CONTRACTS and dp.is_file():
+                verdict = L.decide_user_fillable(root, label, dp.read_bytes(), new)
+                if verdict == "uptodate":
+                    L.uf_record(root, label, new)
+                elif verdict == "refresh":
+                    if bk:
+                        bk.save(f".aidp/{label}")
+                    write_if_diff(dp, new)
+                    L.uf_record(root, label, new)
+                    rep.act("refresh", f".aidp/{label}", "未填写的骨架")
+                elif L.enqueue(root, f".aidp/{label}", sp):
+                    rep.act("queue", f".aidp/{label}", "已填写内容，待语义合并新骨架")
+                continue
+            if not dp.exists():
+                write_if_diff(dp, new)
+                if label in L.USER_FILLABLE_CONTRACTS:
+                    L.uf_record(root, label, new)
+                rep.act("create", f".aidp/{label}")
+            elif decision == "overwrite":
+                cur = dp.read_bytes() if dp.is_file() else None
+                if cur is not None and cur != new and old_files is not None and not L.is_fingerprint_exempt(label) \
+                        and old_files.get(label) != L.sha256(cur):
+                    local_overwritten.append(f".aidp/{label}")
+                if bk and cur != new:
+                    bk.save(f".aidp/{label}")
+                if write_if_diff(dp, new):
+                    rep.act("update", f".aidp/{label}")
+    if local_overwritten:
+        where = f"原文见 {bk.dir.name}/" if bk and bk.dir else "原文见本轮备份目录"
+        rep.warn(f"{len(local_overwritten)} 个契约文件本地改过、已被新版覆盖（{where}；项目特有规则应写进项目记忆文件"
+                 f"「项目自定义」段）：" + "、".join(local_overwritten[:20])
+                 + (f" …（另 {len(local_overwritten) - 20} 个）" if len(local_overwritten) > 20 else ""))
+    return local_overwritten
+
+
+def sync_scripts(root: Path, rep: Report):
+    for d in L.UNGATED_DIRS:
+        for rel, sp in L.iter_files(L.BUNDLE_AIDP / d):
+            if L.is_template_owned(f"{d}/{rel}"):
+                continue
+            dp = root / ".aidp" / d / rel
+            existed = dp.exists()
+            if write_if_diff(dp, sp.read_bytes()):
+                rep.act("update" if existed else "create", f".aidp/{d}/{rel}")
+
+
+def self_install(root: Path, decision: str, rep: Report):
+    """把运行中的脚手架 skill 安装到项目 `.aidp/skills/aidp-code-engineer/`（下游据此跑 verify / 收口）。
+
+    模板回归单测（`L.SELF_INSTALL_EXCLUDE`）不随安装下发。
+    """
+    target = root / ".aidp/skills" / L.SKILL_NAME
+    if decision == "protect" or L.SKILL_DIR.resolve() == target.resolve():
+        return
+    want = {rel: sp for rel, sp in L.iter_files(L.SKILL_DIR)
+            if not any(rel.startswith(x) for x in L.SELF_INSTALL_EXCLUDE)}
+    n = 0
+    for rel, sp in want.items():
+        if write_if_diff(target / rel, sp.read_bytes()):
+            n += 1
+    for rel, p in list(L.iter_files(target)):
+        if rel not in want:
+            p.unlink()
+            n += 1
+    if n:
+        rep.act("install", f".aidp/skills/{L.SKILL_NAME}/", f"{n} 个文件")
+
+
+def report_orphans(root: Path, rep: Report):
+    try:
+        manifest = json.loads((L.SKILL_DIR / L.MANIFEST_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    expected = set(manifest.get("files") or {})
+    skills_in_manifest = {k.split("/")[1] for k in expected if k.startswith("skills/")}
+    orphans = []
+    for d in L.GATED_DIRS:
+        for rel, _ in L.iter_files(root / ".aidp" / d):
+            label = f"{d}/{rel}"
+            if label in expected or label in L.OPTIONAL_INSTALLED_CONTRACTS:
+                continue
+            if d == "skills":
+                name = rel.split("/", 1)[0]
+                if name == L.SKILL_NAME or name not in skills_in_manifest:
+                    continue
+            orphans.append(f".aidp/{label}")
+    if orphans:
+        rep.warn(f"{len(orphans)} 个契约文件已不在当前脚手架中（只报告、不删除；确认不再需要后手工删除）："
+                 + "、".join(orphans[:10]) + (" …" if len(orphans) > 10 else ""))
+    return orphans
+
+
+# ── docs / memory / 根文件 ─────────────────────────────────────────────────
+def _prev_delivered(root: Path, bundle_rel: str):
+    """上一版脚手架安装进项目的同名下发件字节（运行中的脚手架即安装位时无从比较 → None）。"""
+    target = root / L.INSTALLED_SKILL_REL
+    if target.resolve() == L.SKILL_DIR.resolve():
+        return None
+    p = target / bundle_rel
+    return p.read_bytes() if p.is_file() else None
+
+
+def sync_delivered_file(root: Path, rel: str, sp: Path, bundle_rel: str, bk: "Backup", rep: Report):
+    """项目会改写的下发文件（docs 结构性 README、memory/README.md）：未改过才刷新，改过的进语义改写队列。"""
+    dp, data = root / rel, sp.read_bytes()
+    verdict = L.decide_user_fillable(root, rel, dp.read_bytes(), data, _prev_delivered(root, bundle_rel))
+    if verdict == "uptodate":
+        if dp.read_bytes() == data:
+            L.uf_record(root, rel, data)
+    elif verdict == "refresh":
+        bk.save(rel)
+        write_if_diff(dp, data)
+        L.uf_record(root, rel, data)
+        rep.act("update", rel)
+    elif L.enqueue(root, rel, sp):
+        rep.act("queue", rel, "项目改过的下发文件，待语义合并新版")
+
+
+def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup"):
+    base = L.ASSETS / "docs"
+    for rel, sp in L.iter_files(base):
+        dp = root / "docs" / rel
+        data = sp.read_bytes()
+        if rel.startswith("architecture/") and rel.count("/") == 1 and not rel.endswith("README.md"):
+            if not dp.exists():
+                write_if_diff(dp, data)
+                rep.act("create", f"docs/{rel}")
+            continue
+        if not dp.exists():
+            write_if_diff(dp, data)
+            if not rel.startswith("init/"):
+                L.uf_record(root, f"docs/{rel}", data)
+            rep.act("create", f"docs/{rel}")
+        elif rel.startswith("init/"):
+            if dp.read_bytes() != data:
+                bk.save(f"docs/{rel}")
+                write_if_diff(dp, data)
+                rep.act("update", f"docs/{rel}")
+        elif was_aidp:
+            sync_delivered_file(root, f"docs/{rel}", sp, f"assets/docs/{rel}", bk, rep)
+        elif dp.read_bytes() != data:
+            rep.note(f"docs/{rel} 已存在且非 AIDP 版本，保留原文；AIDP 版见 {rel_of(L.SKILL_DIR.parent, sp)}")
+
+
+def _yaml_top_blocks(text: str) -> dict:
+    blocks, cur, buf = {}, None, []
+    pending_comments = []
+    for ln in text.splitlines():
+        m = re.match(r"^([A-Za-z_][\w-]*):", ln)
+        if m:
+            if cur:
+                blocks[cur] = "\n".join(buf).rstrip() + "\n"
+            cur, buf = m.group(1), pending_comments + [ln]
+            pending_comments = []
+        elif cur and (ln.startswith((" ", "\t")) or not ln.strip()):
+            buf.append(ln)
+        elif ln.startswith("#"):
+            if cur and buf and not buf[-1].strip():
+                blocks[cur] = "\n".join(buf).rstrip() + "\n"
+                cur, buf = None, []
+            if cur:
+                buf.append(ln)
+            else:
+                pending_comments.append(ln)
+    if cur:
+        blocks[cur] = "\n".join(buf).rstrip() + "\n"
+    return blocks
+
+
+def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup"):
+    tpl = L.render((L.SKILL_DIR / L.CONFIG_TPL_REL).read_text(encoding="utf-8"), ctx)
+    dst = root / "memory/aidp-config.yaml"
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(tpl, encoding="utf-8")
+        rep.act("create", "memory/aidp-config.yaml")
+        return
+    have = dst.read_text(encoding="utf-8")
+    present = set(re.findall(r"^([A-Za-z_][\w-]*):", have, re.M))
+    missing = [(k, v) for k, v in _yaml_top_blocks(tpl).items() if k not in present]
+    if missing:
+        bk.save("memory/aidp-config.yaml")
+        dst.write_text(have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing), encoding="utf-8")
+        rep.act("update", "memory/aidp-config.yaml", "补齐配置段：" + "、".join(k for k, _ in missing))
+
+
+def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"):
+    src = L.ASSETS / "memory"
+    for tpl, rel in L.MEMORY_TEMPLATES:
+        dst = root / rel
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(L.render((src / tpl).read_text(encoding="utf-8"), ctx), encoding="utf-8")
+            rep.act("create", rel)
+            continue
+        cur = L.read_text(dst)
+        rendered = L.render(cur, ctx)          # 只替换残留的占位符本身，已填写的段落原样保留
+        if rendered != cur:
+            bk.save(rel)
+            dst.write_text(rendered, encoding="utf-8")
+            rep.act("render", rel, "替换残留占位符")
+    readme_src, readme = src / "README.md", root / "memory/README.md"
+    data = readme_src.read_bytes()
+    if not readme.exists():
+        write_if_diff(readme, data)
+        L.uf_record(root, "memory/README.md", data)
+        rep.act("create", "memory/README.md")
+    elif was_aidp:
+        sync_delivered_file(root, "memory/README.md", readme_src, "assets/memory/README.md", bk, rep)
+    elif readme.read_bytes() != data:
+        rep.note("memory/README.md 已存在且非 AIDP 版本，保留原文")
+
+
+def sync_root_files(root: Path, ctx: dict, rep: Report, bk: "Backup"):
+    readme = root / "README.md"
+    if not readme.exists():
+        readme.write_text(L.render((L.ASSETS / "root/README.md.tpl").read_text(encoding="utf-8"), ctx),
+                          encoding="utf-8")
+        rep.act("create", "README.md")
+    env = root / "env/.env"
+    if not env.exists():
+        env.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(L.ASSETS / "root/env.tpl", env)
+        rep.act("create", "env/.env")
+    gi = root / ".gitignore"
+    have = gi.read_text(encoding="utf-8") if gi.exists() else None
+    want = L.merge_gitignore(have, (L.ASSETS / "root/gitignore.tpl").read_text(encoding="utf-8"))
+    if have != want:
+        bk.save(".gitignore")
+        gi.write_text(want, encoding="utf-8")
+        rep.act("create" if have is None else "update", ".gitignore", "AIDP 托管区")
+
+
+def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: bool, rep: Report, bk: "Backup"):
+    tpl_path = L.SKILL_DIR / L.MEMORY_TPL_REL
+    rendered = L.render(tpl_path.read_text(encoding="utf-8"), ctx)
+    bodies = L.memory_bodies(root)
+    target = L.memory_target(root, agents)
+    if not bodies:
+        (root / target).write_text(rendered, encoding="utf-8")
+        rep.act("create", target, "项目记忆文件")
+        return
+    body_file = target if target in bodies else next(iter(bodies))
+    is_aidp = L.looks_like_aidp_body(bodies[body_file])
+    if is_aidp:
+        # 已是 AIDP 形态：按锚点确定性合并——新模板正文 +「当前状态」字段值 +「项目自定义」段原文
+        if was_aidp and decision != "overwrite":
+            return
+        merged = L.merge_memory_upgrade(bodies[body_file], rendered)
+        if merged != bodies[body_file]:
+            bk.save(body_file)
+            (root / body_file).write_text(merged, encoding="utf-8")
+            rep.act("merge", body_file, "按新版模板合并，保留「当前状态」字段值与「项目自定义」段")
+        return
+    bk.save(target)
+    (root / target).write_text(migrate.merge_custom(rendered, bodies), encoding="utf-8")
+    rep.act("merge", target, "原记忆文件内容并入「项目自定义」段：" + "、".join(sorted(bodies)))
+    L.enqueue(root, target, tpl_path)
+    rep.act("queue", target, "复核「项目自定义」段：去重、与 AIDP 约定冲突项交用户裁决")
+    if "claude" not in agents and "CLAUDE.md" in bodies and target != "CLAUDE.md":
+        rep.note("CLAUDE.md 原文已并入 AGENTS.md；当前未装配 Claude Code，CLAUDE.md 保留原样")
+
+
+# ── 导航 README / .gitkeep ─────────────────────────────────────────────────
+def _nav_body(directory: Path, policy) -> str:
+    children = sorted(p.name for p in directory.iterdir() if p.is_dir() and not p.name.startswith("."))
+    lines = [f"# {directory.name}", "", "本目录是导航枢纽，下列子目录各自承载一类内容。", "", "## 子目录", ""]
+    for c in children:
+        if c in NAV_PURPOSES:
+            purpose = NAV_PURPOSES[c]
+        elif L.VERSION_RE.match(c):
+            purpose = f"{c} 版本的产出"
+        elif directory.parent.name == "memory" or directory.parent.parent.name in ("implementation",):
+            purpose = f"开发者 {c} 的个人记录"
+        else:
+            purpose = "用途待补充"
+        lines.append(f"- `{c}/` — {purpose}")
+    return "\n".join(lines) + "\n"
+
+
+def ensure_nav_readmes(root: Path, rep: Report):
+    try:
+        policy = L.load_project_module("readme_policy")
+    except ImportError as e:
+        rep.warn(f"导航 README 跳过：{e}")
+        return
+    for top in ("docs", "memory"):
+        base = root / top
+        if not base.is_dir():
+            continue
+        for d in [base] + sorted(p for p in base.rglob("*") if p.is_dir()):
+            if any(x.startswith(".") for x in d.relative_to(root).parts):
+                continue
+            if (d / "README.md").exists():
+                continue
+            decision = policy.is_readme_required_directory(d, None, root=root)
+            if decision.get("required") and decision.get("reason") == "navigation-hub":
+                (d / "README.md").write_text(_nav_body(d, policy), encoding="utf-8")
+                rep.act("create", f"{rel_of(root, d)}/README.md", "导航 README")
+
+
+def manage_gitkeep(root: Path, dirs, rep: Report):
+    for rel in dirs:
+        d = root / rel
+        if d.is_dir() and not any(d.iterdir()):
+            (d / ".gitkeep").touch()
+    for rel in dirs:
+        d = root / rel
+        while d != root and d.is_dir():
+            gk = d / ".gitkeep"
+            if gk.exists() and any(p.name != ".gitkeep" for p in d.iterdir()):
+                gk.unlink()
+            d = d.parent
+
+
+# ── Agent 依赖与 agent_sync ─────────────────────────────────────────────────
+def install_dsh_command_plugin(mode: str, agents, rep: Report):
+    """DSH init 尽力安装项目命令发现插件；失败可恢复，不中断脚手架。"""
+    if mode != "init" or "dsh" not in agents:
+        return
+    try:
+        p = subprocess.run(DSH_COMMAND_PLUGIN, capture_output=True, text=True)
+    except OSError as exc:
+        rep.warn(f"DSH 命令插件安装失败：{exc}；请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
+        return
+    if p.returncode != 0:
+        detail = (p.stderr or p.stdout or "").strip()
+        suffix = f"：{detail}" if detail else ""
+        rep.warn(f"DSH 命令插件安装失败（exit {p.returncode}）{suffix}；"
+                 f"请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
+        return
+    rep.act("dsh-plugin", "dsh-plugin-commands@latest", "profile=web")
+
+
+def run_agent_sync(root: Path, agents, mode: str, rep: Report) -> dict:
+    script = root / ".aidp/scripts/agent_sync.py"
+    if not script.is_file():
+        rep.warn("缺 .aidp/scripts/agent_sync.py，跳过 Agent 装配")
+        return {}
+    cmd = [sys.executable, str(script), "--root", str(root), "--agents", ",".join(agents), "--mode", mode]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        data = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
+    except ValueError:
+        data = {}
+    if p.returncode != 0:
+        rep.warn(f"agent_sync.py 失败（exit {p.returncode}）：{(p.stderr or p.stdout).strip()[:300]}")
+    else:
+        rep.act("agent-sync", ",".join(agents), f"{len(data.get('actions') or [])} 项（mode={mode}）")
+    return data
+
+
+# ── 主流程 ──────────────────────────────────────────────────────────────────
+def run(root: Path, a) -> dict:
+    rep = Report()
+    mode = a.mode if a.mode != "auto" else detect_mode(root)[0]
+    agents, agent_source = resolve_agents(root, a.agent, interactive=not a.json)
+    user = a.user or L.git_user(root)
+    cfg = read_project_cfg(root)
+    project = cfg.get("name") or root.name
+    version = a.version or guess_version(root) or "V0.1.0"
+    ctx = {"project": project, "project_cn": a.name_cn or cfg.get("name_cn") or project,
+           "user": user, "version": version, "date": datetime.now().strftime("%Y-%m-%d")}
+
+    scaffold_raw = L.bundle_version()
+    proj_raw = scaffold_marker.read_version(root)
+    pending = scaffold_marker.read_pending(root)
+    was_aidp = (root / ".aidp").is_dir()
+    decision = gate_decision(proj_raw, scaffold_raw, pending, bool(L.queue_entries(root)), a.force)
+
+    bk = Backup(root, rep)
+    if not was_aidp or decision == "overwrite":
+        bk.full(a.keep_backups, a.keep_days)
+    old_files = installed_manifest(root) if was_aidp else None
+    for ag in agents:
+        if not (root / MARKER_DIRS[ag]).is_dir():
+            (root / MARKER_DIRS[ag]).mkdir(parents=True)
+            rep.act("create", MARKER_DIRS[ag] + "/", "Agent 标记目录")
+
+    dirs = L.skeleton_dirs(root, version, user)
+    for rel in dirs:
+        if not (root / rel).is_dir():
+            (root / rel).mkdir(parents=True, exist_ok=True)
+
+    local_overwritten = sync_gated(root, decision, rep, bk, old_files)
+    sync_scripts(root, rep)
+    sync_docs(root, was_aidp, rep, bk)
+    sync_config(root, ctx, rep, bk)
+    sync_memory(root, ctx, was_aidp, rep, bk)
+    sync_root_files(root, ctx, rep, bk)
+    if decision != "protect":
+        sync_memory_file(root, agents, ctx, decision, was_aidp, rep, bk)
+    self_install(root, decision, rep)
+    manage_gitkeep(root, dirs, rep)
+    ensure_nav_readmes(root, rep)
+    manage_gitkeep(root, dirs, rep)
+    orphans = report_orphans(root, rep)
+
+    queue = L.queue_entries(root)
+    if decision != "protect" and scaffold_raw:
+        if queue:
+            scaffold_marker.write_pending(root, scaffold_raw)
+        else:
+            scaffold_marker.write_version(root, scaffold_raw)
+
+    install_dsh_command_plugin(mode, agents, rep)
+    if not a.no_agent_sync:
+        run_agent_sync(root, agents, a.adapter_mode, rep)
+
+    backups = L.scan_backups(root)
+    total = sum(L.dir_size(p) for p, _ in backups)
+    if len(backups) > L.BACKUP_HYGIENE_MAX_DIRS or total > L.BACKUP_HYGIENE_MAX_BYTES:
+        rep.warn(f"升级备份 {len(backups)} 个 / 共 {L.human_size(total)}；确认无需回滚后可删除："
+                 + " ".join(p.name for p, _ in backups))
+
+    return {
+        "mode": mode, "project": project, "version": version, "user": user,
+        "agents": agents, "agent_source": agent_source, "adapter_mode": a.adapter_mode,
+        "scaffold_version": scaffold_raw, "previous_scaffold_version": proj_raw,
+        "contract_decision": decision,
+        "pending": bool(queue), "rewrite_queue": queue,
+        "orphans": orphans, "local_overwritten": local_overwritten,
+        "backup": bk.dir.name if bk.dir else None,
+        "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes,
+    }
+
+
+def print_human(res: dict):
+    print(f"[scaffold] 模式 {res['mode']} · 项目 {res['project']} · 版本 {res['version']} · 用户 {res['user']}")
+    print(f"[scaffold] Agent {','.join(res['agents'])}（来源 {res['agent_source']}）· 适配层 {res['adapter_mode']}")
+    print(f"[scaffold] 脚手架 {res['previous_scaffold_version'] or '未建立'} → {res['scaffold_version']}"
+          f"（契约处置：{res['contract_decision']}）")
+    counts = {}
+    for x in res["actions"]:
+        counts[x["op"]] = counts.get(x["op"], 0) + 1
+    print("[scaffold] 动作：" + (" · ".join(f"{k} {v}" for k, v in counts.items()) or "无"))
+    for x in res["actions"]:
+        if x["op"] not in ("create", "update") or not x["path"].startswith(".aidp/"):
+            print(f"  {x['op']:10} {x['path']}" + (f"（{x['why']}）" if x["why"] else ""))
+    for w in res["warnings"]:
+        print(f"  ⚠️ {w}")
+    for n in res["notes"]:
+        print(f"  ℹ️ {n}")
+    if res["pending"]:
+        print(f"[scaffold] ⏳ 语义改写待办 {len(res['rewrite_queue'])} 条（{L.REWRITE_QUEUE_FILE}）："
+              "逐条语义改写后跑 finalize_upgrade.py（核验每条已改写、删除队列并收口；无需改动的条目用 --accept 标记）")
+    else:
+        print("[scaffold] ✅ 无语义改写待办，scaffold.version 已写入")
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="AIDP 脚手架：init / migrate / upgrade")
+    ap.add_argument("root", nargs="?", default=".")
+    ap.add_argument("--detect", action="store_true", help="只探测并输出 JSON")
+    ap.add_argument("--mode", choices=("auto", "init", "migrate", "upgrade"), default="auto")
+    ap.add_argument("--version", default=None, help="项目业务版本号，如 V0.1.0")
+    ap.add_argument("--user", default=None, help="开发者标识（缺省 git config user.name）")
+    ap.add_argument("--agent", default="", help="项目根无 Agent 标记目录时装配的 Agent：claude,codex,dsh")
+    ap.add_argument("--adapter-mode", choices=("link", "copy"), default="copy" if os.name == "nt" else "link")
+    ap.add_argument("--name-cn", default=None, help="项目中文名（写入 memory/aidp-config.yaml）")
+    ap.add_argument("--force", action="store_true", help="无视版本门控覆盖契约文件")
+    ap.add_argument("--keep-backups", type=int, default=L.PRUNE_KEEP_LAST_DEFAULT,
+                    help="备份保留个数（0 = 不清理）")
+    ap.add_argument("--keep-days", type=int, default=L.PRUNE_KEEP_DAYS_DEFAULT)
+    ap.add_argument("--no-agent-sync", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+
+    root = Path(a.root).resolve()
+    if not root.is_dir():
+        print(f"项目根不存在：{root}", file=sys.stderr)
+        return 2
+    if a.detect:
+        print(json.dumps(detect(root), ensure_ascii=False, indent=2))
+        return 0
+    probe = L.git(root, "rev-parse", "--git-dir")
+    if probe is None or probe.returncode != 0:
+        print("⛔ 目标目录不是 git 仓库（先 git init）", file=sys.stderr)
+        return 2
+    if L.is_template_project(root):
+        print("⛔ 目标是 AIDP 模板项目自身：模板维护请用 mirror_to_bundle.py，不在模板上运行脚手架", file=sys.stderr)
+        return 2
+    if not (L.BUNDLE_AIDP.is_dir() and L.bundle_version()):
+        print("⛔ 脚手架 bundle 不完整（缺 assets/aidp 或 assets/SCAFFOLD_VERSION）", file=sys.stderr)
+        return 2
+    user = a.user or L.git_user(root)
+    if not user or not L.USER_RE.match(user):
+        print(f"⛔ 开发者标识无效：{user!r}（仅字母数字 _ . -；用 --user 指定或设置 git config user.name）",
+              file=sys.stderr)
+        return 2
+    a.user = user
+    if a.version and not L.VERSION_RE.match(a.version):
+        print(f"⛔ 版本号格式应为 V0.1.0：{a.version}", file=sys.stderr)
+        return 2
+    try:
+        res = run(root, a)
+    except ValueError as e:
+        print(f"⛔ {e}", file=sys.stderr)
+        return 2
+    if a.json:
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+    else:
+        print_human(res)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,78 @@
+// AIDP 部署流水线模板（Jenkins Declarative Pipeline，`cicd.provider: jenkins`）
+//
+// 拷贝到下游项目根目录 Jenkinsfile，在 Jenkins 建一个「Pipeline script from SCM」Job 指向本仓库，
+// 并在 memory/aidp-config.yaml 登记：
+//   cicd:
+//     provider: jenkins
+//     pipelines: {test: team/deploy-test}   // Job 路径，文件夹用 / 分隔
+//     jenkins:
+//       url: https://jenkins.example.com
+//       user_env: AIDP_JENKINS_USER         // ⛔ 只写环境变量名
+//       token_env: AIDP_JENKINS_TOKEN       // 该账号的 API Token，需 Job 的 Build / Read 权限
+//
+// AIDP 与它的约定只有三条：
+//   1. 推送正式代码后由 SCM 钩子（Webhook / 轮询）自动构建，或由 `cicd_watch.py --mode trigger --env <env>`
+//      经 REST API 触发（Job 须允许无参数构建：不要声明必填 parameters）；
+//   2. 构建记录能按 commit 查到（`cicd_watch.py --mode detect --commit <sha> --env <env>`）——
+//      依赖 Git 插件记录的 lastBuiltRevision，故必须用 SCM checkout，不要在脚本里自行 git clone；
+//   3. 部署完成即结束；应用是否就绪由 `.aidp/scripts/autopilot-deploy-watch.py` 探针判断，不在流水线里等。
+//
+// 构建与部署步骤按项目实际技术栈替换（下面以 Node 前端 + Maven 后端为例，要求 agent 已装 node / mvn）。
+// 部署凭据放在 Jenkins Credentials，通过 withCredentials 引用，不要写进本文件。
+
+pipeline {
+  agent any
+
+  options {
+    disableConcurrentBuilds()          // 同一环境串行部署，不互相取消
+    timestamps()
+  }
+
+  triggers {
+    pollSCM('H/5 * * * *')             // 已配置 Webhook 时可删除
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Build frontend') {
+      when { expression { fileExists('code/frontend') } }
+      steps {
+        sh '''
+          for d in code/frontend/*/; do
+            [ -f "$d/package.json" ] || continue
+            (cd "$d" && corepack enable && (pnpm install --frozen-lockfile || npm ci) && (pnpm build || npm run build))
+          done
+        '''
+      }
+    }
+
+    stage('Build backend') {
+      when { expression { fileExists('code/backend') } }
+      steps {
+        sh '''
+          for d in code/backend/*/; do
+            [ -f "$d/pom.xml" ] || continue
+            (cd "$d" && mvn -B -DskipTests package)
+          done
+        '''
+      }
+    }
+
+    stage('Deploy') {
+      steps {
+        sh '''
+          if [ -z "$DEPLOY_HOST" ]; then
+            echo "未配置 DEPLOY_HOST，跳过部署（请按项目实际部署方式替换本步骤）"
+            exit 0
+          fi
+          echo "在此处替换为项目实际部署命令（rsync / docker push / kubectl apply 等）"
+        '''
+      }
+    }
+  }
+}

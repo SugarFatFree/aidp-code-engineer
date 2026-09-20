@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<!-- report-shell-version: 4 -->
+<!--
+  AI 执行报告 — 执行结果离线单页应用（SPA）主入口
+
+  用途：聚合展示一个版本下所有 build 的 AI 全自动执行结果（综合首页 + 各 build 子页）。
+        视觉基于「AI执行结果报告」新模板：暗/亮蓝双主题 + 章节折叠 + 决策驾驶舱(cockpit)
+        + 需求功能卡 + 测试漏斗 + 缺陷/风险任务卡 + 剩余待办。
+  报告结构：「AI 执行报告」= 本 index.html（执行结果，主入口）+ 同目录 plan.html（执行计划），
+            共享 data/ 数据与 assets/style.css；各 build 详情页头部有「→ 查看本 build 执行计划」链接跳转到 plan.html。
+            （旧版的 执行计划/ + 执行结果/ 两层子目录已拍平到本级。）
+  离线说明：完全 file:// 双击可开，零 CDN / 零外链 / 零 fetch；数据通过 <script src="data/xxx.js">
+            注入 window.__AIRUNS__（script src 在 file:// 下可用，fetch 会被 CORS 挡）。
+  下游用法：autopilot 每跑完一个 build，在 data/ 下新增一份 {version}_build{N}.js（按数据契约 schema），
+            并在 index.html 与 plan.html 的「数据注入区」各追加一行 <script src="data/...">（务必在 app.js / plan.js 之前引入）。
+  URL 参数：① hash 路由 #/build/<build标识> 直达指定 build 子页；
+            ② 兼容 query ?build=<build标识>（boot 时自动转 hash），满足「URL 参数直接打开指定构建版本」。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 执行报告</title>
+  <!-- 主题预设（在样式/绘制前应用，避免暗/亮闪烁）-->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('reportTheme');
+        var legacy = { blue: 'light-blue', green: 'light-blue', orange: 'light-blue', purple: 'light-blue', 'light-orange': 'light-blue', 'dark-orange': 'dark-blue' };
+        if (legacy[t]) t = legacy[t];
+        document.documentElement.setAttribute('data-theme', t || 'dark-blue');
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark-blue'); }
+    })();
+  </script>
+  <!-- 本地样式（随项目，无外链） -->
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+
+  <!-- ===== 顶栏：标题 + 视图 tab + build 下拉 + 主题切换 ===== -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1><span class="logo-dot"></span>AI 执行报告</h1>
+      <div class="nav-tabs">
+        <button id="tab-overview" class="active">综合首页</button>
+        <button id="tab-build">执行详情</button>
+      </div>
+      <div class="build-select" style="display:none">
+        <label for="build-select">当前 Build</label>
+        <select id="build-select"></select>
+      </div>
+      <span class="spacer"></span>
+      <button class="theme-toggle" onclick="toggleTheme()" aria-label="切换亮/暗主题" data-tip="切换到暗色">
+        <span class="toggle-thumb">
+          <svg class="ic-sun" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <svg class="ic-moon" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== 主体：两个视图，纯前端 hash 路由切换 ===== -->
+  <main class="wrap">
+    <section id="view-overview" class="view active"></section>
+    <section id="view-build" class="view"></section>
+  </main>
+
+  <footer class="footer">本报告完全离线生成 · 零第三方依赖 · 图表为手写内联 SVG · AIDP 范式模板</footer>
+
+  <!--
+    ===== 数据注入区（重要）=====
+    autopilot 每新增一个 build，在此追加一行 <script src="data/{version}_build{N}.js"></script>。
+    顺序无关紧要（app.js 会按 buildNo 排序），但所有数据脚本必须在 app.js 之前。
+  -->
+  <script src="data/示例_build1001.js"></script>
+  <script src="data/示例_build1002.js"></script>
+  <!-- ↑ 下游每新增一个 build，在此追加一行 data/ script 引用 ↑ -->
+
+  <!-- 渲染逻辑（必须最后引入） -->
+  <script src="assets/app.js"></script>
+</body>
+</html>

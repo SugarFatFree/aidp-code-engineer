@@ -1,0 +1,48 @@
+# SKILL 内部编排、命令端无需接线的脚本白名单（`<skill>/<script>` 每行一条）
+#
+# 判据 = `check_skill_ref_freshness.py::unreferenced_scripts`：SKILL 带了脚本、而命令端
+# （commands/agents/flows/rules/reference）无人引用 → 默认判「疑似欠账」WARN。
+# 确认某脚本本就由 SKILL 自己在内部编排里调用、命令端不该出现它时，登记到本文件。
+#
+# ⛔ 白名单必须是**人工裁定**的结果。曾经的实现拿「SKILL 自己的文档提到过该脚本」当豁免依据，
+#    而上游 SKILL 必然在自己 references 里写了自己的脚本名 ⇒ 告警永不触发；
+#    某轮上游一次新增 3 个硬门脚本、命令端一个都没接，检查仍输出空列表。
+#    改成显式名单后，新脚本必然冒头、必须有人看一眼「该不该接命令端」。
+#
+# 每条都写清为什么不用接。
+
+# —— 被 SKILL 自身流程调用的取材/扫描器，不是命令端硬门 ——
+code-verification-loop/check_webmcp_adapter.py # 维度 9 内部实现，由 webmcp_enabled 门控
+code-verification-loop/scan_cache_usage.py     # 维度 4 内部扫描器
+code-verification-loop/scan_design_field_inventory.py  # 维度 4 字段对账内部取材
+code-verification-loop/scan_field_columns.py   # 同上
+code-verification-loop/scan_stale_copy.py      # 维度 4「文案与数据口径一致性」子行的旧口径/作废 REQ 采集器
+dev-execution-planner/analyze_third_party_progress.py   # 计划期内部分析
+dev-execution-planner/check_ddl_consistency.py          # SKILL 自检，非命令端硬门
+dev-execution-planner/generate_third_party_checklist.py # 产物生成器
+dev-execution-planner/scan_aidp.py                      # SKILL 内部上下文扫描
+dev-logic-architect/check_ddl_consistency.py            # SKILL 自检，非命令端硬门
+dev-logic-architect/check_third_party_mock_runtime.py   # 核心原则 14。⚠️ 已核实：上游只在
+                                               # references/flow-self-check.md（**作者侧自检**）列它，
+                                               # QR 派发面 flow-qr-dispatch.md 零命中，索引表标「⚠️ 待接入」。
+                                               # 原注释写「QR 内部执行」不准确，已更正——白名单的前提
+                                               # 必须是核实过的事实，抄一个假前提等于给自己发豁免。
+# —— 以下 4 条：本轮把 check_skill_ref_freshness 的「裸名全局匹配」改成「精确路径 / 同文档内
+#    脚本名+SKILL名 共现」之后才冒出来的。此前被跨 SKILL 同名脚本掩盖（实测 6 组同名），
+#    典型：ux-logic-extractor 的同名脚本出现在别处，就让 dev-logic-architect 那份永不报。——
+dev-execution-planner/check_service_impl_stub.py        # 已核实：上游 references/flow-execution.md:69
+                                               # 明确写了调用式，属 SKILL 内部编排
+dev-execution-planner/check_third_party_dep_reverse.py  # 已核实：上游 flow-execution.md 反向兜底段自调
+dev-execution-planner/scan_mock_data.py                 # 已核实：上游 flow-granularity.md 清单项自调
+dev-logic-architect/check_no_fabricated_fallback.py     # 上游索引表标「❌ 假红率待验证」、只在
+                                               # flow-self-check.md 作者侧列出 —— 上游自己都没启用，
+                                               # 命令端不该先接。⚠️ 上游转为启用后须回来接线并删本行。
+dev-manual-testcase/strip_comments.py          # 零残留断言实跑的【取材器】，不是校验器；
+                                               # 命令端跑齐的是 7 个校验器，它不在那一组
+
+# —— 脚手架引擎自身的子命令，由 SKILL.md / 项目记忆文件的运维步骤调用，不进 AIDP 命令面 ——
+aidp-code-engineer/finalize_upgrade.py         # upgrade 收口，由脚手架流程调用
+aidp-code-engineer/reverse_generate.py         # 反向生成，人工按需运行
+aidp-code-engineer/bump_version.py             # 范式版本号自增，仅模板维护者按用户明确指令运行
+aidp-code-engineer/scaffold_lib.py             # 脚手架各脚本共享的库模块，不单独执行
+aidp-code-engineer/scaffold_marker.py          # 脚手架版本戳（aidp-config.yaml scaffold 段）读写库，由脚手架脚本内部调用

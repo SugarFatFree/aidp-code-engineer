@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!-- report-shell-version: 2 -->
+<!--
+  AI测试报告 — 离线单页应用（SPA）入口
+
+  用途：聚合展示一个版本下所有 build 的 AI 自动化测试结果（综合首页 + 各 build 子页）。
+  离线说明：完全 file:// 双击可开，零 CDN / 零外链 / 零 fetch；数据通过 <script src="data/xxx.js">
+            注入 window.__BUILDS__（script src 在 file:// 下可用，fetch 会被 CORS 挡）。
+  下游用法：每跑完一个 build，在 data/ 下新增一份 示例_buildNNNN.js（按数据契约 schema），
+            并在下方「数据注入区」追加一行 <script src="data/...">（务必在 app.js 之前引入）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI测试报告</title>
+  <!-- 本地样式（随项目，无外链） -->
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+
+  <!-- ===== 顶栏：标题 + 视图 tab + build 下拉 ===== -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1><span class="logo-dot"></span>AI测试报告</h1>
+      <div class="nav-tabs">
+        <button id="tab-overview" class="active">综合首页</button>
+        <button id="tab-build">Build 详情</button>
+      </div>
+      <span class="spacer"></span>
+      <div class="build-select" style="display:none">
+        <label for="build-select">当前 Build：</label>
+        <select id="build-select"></select>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== 主体：两个视图，纯前端 hash 路由切换 ===== -->
+  <main class="container">
+    <section id="view-overview" class="view active"></section>
+    <section id="view-build" class="view"></section>
+  </main>
+
+  <footer class="footer">本报告完全离线生成 · 零第三方依赖 · 图表为手写内联 SVG · AIDP 范式模板</footer>
+
+  <!-- ===== 截图灯箱（用例明细「截图」列缩略图点击后弹出大图）===== -->
+  <div id="shot-modal" class="shot-modal" hidden>
+    <div class="shot-modal-backdrop"></div>
+    <div class="shot-modal-body" role="dialog" aria-modal="true" aria-label="用例截图大图">
+      <button class="shot-modal-close" type="button" aria-label="关闭">×</button>
+      <img class="shot-modal-img" src="" alt="用例截图大图" />
+      <div class="shot-modal-cap"></div>
+    </div>
+  </div>
+
+  <!--
+    ===== 数据注入区（重要）=====
+    每新增一个 build，在此追加一行 <script src="data/示例_buildNNNN.js"></script>。
+    顺序无关紧要（app.js 会按 buildNo 排序），但所有数据脚本必须在 app.js 之前。
+  -->
+  <script src="data/示例_build1001.js"></script>
+  <script src="data/示例_build1002.js"></script>
+  <!-- ↑ 下游每新增一个 build，在此追加一行 data/ script 引用 ↑ -->
+
+  <!-- 渲染逻辑（必须最后引入） -->
+  <script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,195 @@
+{
+  "$comment": "单条用例执行结果 JSON schema 示例。每条用例执行后写 round-{M}/results/{TC-ID}.json。字段说明见 references/report-format.md。★落盘前用 `python3 <SKILL_DIR>/scripts/check_result.py <结果文件或 results/ 目录>` 校验形状与枚举——本文件是示例、不是可被通用校验器识别的 JSON Schema,机器约束由该脚本承载。",
+  "$shape": {
+    "status枚举": "pass | fail | block | na; na 表示本场景永久不适用,不计入通过率分母,且必须有 note/na_reason/error 之一作为理由",
+    "$note": "★数组字段的元素形状硬契约(由 scripts/check_result.py 校验)。此前本文件只给了一个对象数组样例、没有 items 约束,执行方把 evidence 写成字符串数组 [\"round-1/evidence/x.png\"] 时无任何提示,直到 gen_report.py 聚合期 AttributeError 崩掉整份报告。现在:聚合器兼容解析并告警,check_result.py 在落盘时就拦。",
+    "evidence": {
+      "type": "array",
+      "items": {"type": "object", "required": ["artifact"], "optional": ["step", "summary"]},
+      "字符串元素": "非规范形状(Important):聚合器按 artifact 兼容解析,但请改写成对象",
+      "artifact": "证据产物相对路径,如 round-1/evidence/TC-USER-001-step5.png;缺失则报告证据列显示 —",
+      "direct_pass约束": "execution_mode=direct 且 status=pass 时,evidence 至少有一条 summary 或 artifact 非空的轻量事实;不要求截图类型"
+    },
+    "runtimeErrors": {
+      "type": "array",
+      "items": {"type": "object", "required": ["type", "message", "severity"], "optional": ["detail", "artifact"]},
+      "type枚举": "console | network | pageError",
+      "severity枚举": "P1 | P2 | P3"
+    },
+    "db_assertion": {
+      "type": "object | null",
+      "required": ["pageValue", "sqlValue", "match"],
+      "约束": "match=false 时 status 必须为 fail"
+    },
+    "precondition_probe": {
+      "type": "object | null",
+      "required": ["id", "status", "detail", "evidence"],
+      "status枚举": "satisfied | unmet | probe-error",
+      "约束": "unmet → block_reason=precondition-unmet; probe-error 不得伪装成 unmet"
+    },
+    "self_heal_trace": {
+      "type": "object | null",
+      "required": ["cause", "recovery", "outcome"],
+      "约束": "self_heal_applied=true 时必须非空"
+    }
+  },
+  "case_id": "TC-USER-001",
+  "entry_kind": "case",
+  "suite": "SUITE-USER 用户管理",
+  "test_name": "新增用户成功",
+  "priority": "P0",
+  "client": "web",
+  "driver": "cli",
+  "execution_mode": "verified",
+  "status": "pass",
+  "is_reverse": false,
+  "is_regression": false,
+  "related_defect_id": null,
+  "db_assertion": null,
+  "precondition_probe": null,
+  "block_reason": null,
+  "is_environment_issue": null,
+  "error": null,
+  "note": null,
+  "evidence": [
+    {
+      "step": 5,
+      "summary": "Toast 显示『用户创建成功』,列表新增一行『测试用户A』,总数 12→13",
+      "artifact": "round-1/evidence/TC-USER-001-step5.png"
+    }
+  ],
+  "runtimeErrors": [
+    {
+      "type": "network",
+      "message": "接口返回 500",
+      "detail": "GET /api/user/list 500",
+      "severity": "P2",
+      "artifact": "round-1/evidence/TC-USER-001-console.png"
+    }
+  ],
+  "retries": 0,
+  "self_heal_applied": false,
+  "self_heal_attempts": 0,
+  "self_heal_trace": null,
+  "started_at": "2026-09-10T09:14:03+08:00",
+  "finished_at": "2026-09-10T09:14:07+08:00",
+  "elapsed_ms": 4200,
+  "duration_ms": 4200,
+  "mechanism": "dom",
+  "$field_notes": {
+    "entry_kind": "条目类型,可选,缺省 = \"case\"(普通用例)。枚举:case | free-scan。★\"free-scan\" = 自由巡检项(对「菜单可达但本轮用例未覆盖」的页面导航一遍、拉运行时错误,run-context free_scan: true 时才产生),case_id 形如 运行时-<页面>、test_name 填页面名。⚠️ 巡检项不计入用例统计、不进缺陷列表(gen_report.split_entries 分流,单列报告 §2.6)——它没有断言,混进 total 会让「巡检页越多通过率越好看」,方向恰好是反的。漏标 entry_kind 而 case_id 已是 运行时-… 形态时,check_result.py 报 Important。",
+    "driver": "实际使用的驱动(如实反映,严禁静默切换或用了 plugin 却填 cli)。Web 端取值枚举:cli(本地 `chrome-devtools` 命令、驱动本机独立 Chrome)| mcp-remote(异机自注册的远程 MCP 变体)| mcp-plugin-fallback(插件自起隔离实例变体,CLI 缺失时 last-resort)| manual(人工介入);其它端如 appium / miniprogram-automator 等。各变体对应的具体 MCP 工具名见 references/driver-web.md(端专有工具名只在适配层出现,本 schema 属端无关方法论层、不写)。注意:此字段 ≠ run-context『驱动选择』(那里填 chrome-devtools-mcp / playwright 等工具族)。详见 references/report-format.md 一、schema。",
+    "block_reason": "仅当 status=block 时非空。枚举:retry-exhausted(单操作重试到顶) | driver-missing(驱动缺失) | driver-hung(驱动进程级卡死,且连续自愈重启均失败) | precondition-unmet(前置不满足) | network-error(网络/接口不可用) | env-unavailable(被测环境整体不可用) | account-invalid(测试账号失效/权限被回收) | (**条件启用·仅 webmcp_enabled: true 时可能出现**)webmcp-driver-too-old(驱动版本 < 1.8.0) | webmcp-driver-version-unknown(版本取不到,fail-closed)。缺陷分级与去重按此枚举,不再靠 error 文本 grep。★除 retry-exhausted 外均属**环境类**(gen_report.ENV_BLOCK_REASONS),编号 ENV-xxx、不计产品缺陷、不锁 Critical;retry-exhausted 刻意留在「待验证/产品缺陷」侧(既可能是环境抖动也可能是页面真没渲染出来),由人复核。",
+    "is_environment_issue": "★可选布尔,执行方**显式**标注本次阻塞是否属环境问题,优先级高于 block_reason 枚举推断(执行方最了解阻塞性质)。缺省 null → 回落枚举判定,行为与旧版本一致。用途:枚举归不了类的环境阻塞(如被测环境证书过期、依赖的第三方沙箱停服)也能正确排除出产品缺陷,避免报告把纯环境阻塞编号成 BUG-xxx 误导。只有 status=block 时生效。",
+    "runtimeErrors": "★运行时错误全程捕获(P3 告警类受 run-context capture_warnings 控制、默认关;P1/P2 恒记录——P3 缺失不等于采集不全):每条用例执行后附带拉一次 console/network,把 console 报错 / network 非 2xx / 页面级错误 UI 写入本数组,供下游『运行时错误→升级 bug→回写问题汇总清单』直接消费,无需命令端二次扫描。type=console|network|pageError;detail 写『METHOD PATH 状态码』或 console 首行;severity=P1|P2|P3;pass 用例也可能带 runtimeErrors(页面能用但有后台报错)。",
+    "started_at / finished_at / elapsed_ms": "★**单条耗时三件套(必填)**。`started_at`/`finished_at` 为 ISO-8601 带时区字符串,`elapsed_ms` 为整数毫秒。⚠️ **为什么升为必填(2026-09-10 下游实证)**:此前只有一个从不被校验、也从不被聚合的 `duration_ms` 示例字段,于是**没有人填**,调优只能靠 evidence 文件 mtime 反推——而那只对产出了**多个** evidence 的用例有效。下游实测两轮 116 条:`TC-PXY-F01` **一条占总时长 25%(36.8 min)**,这个结论是靠三个证据文件的时间戳跨度才发现的,**非常容易整条漏掉**。**没有单条耗时,任何优化都无法验证是否生效** —— 这是所有后续调优的前提。`duration_ms` 作为旧字段保留(与 `elapsed_ms` 同义),`check_result.py` 会在两者都在且不等时告警。",
+    "mechanism": "★可选,本条用例的**主要执行机制**。枚举:`dom`(经 DOM/CDP 操作与断言,缺省)| `webmcp`(经页面注册的 WebMCP 工具调用)| `mixed`(状态准备走 WebMCP、断言走 DOM)。⚠️⚠️ **`[还原度]` 用例(以及一切视觉/布局/样式断言)禁止填 `webmcp`**——WebMCP 读的是**页面声明的能力**,不是**渲染结果**,用它验还原度会让渲染层缺陷 **100% 漏测且全绿**。`check_result.py` C14 拦这条。详见 `references/execution-methodology.md`「WebMCP 分层铁律」。",
+    "self_heal_attempts": "★可选整数,**实际触发自愈的次数**(缺省 0)。⚠️ **它与 `execution_mode` 不是一回事,这正是下游被带偏的地方**:`execution_mode=self-heal` 表示「**具备**自愈能力」,不表示「**实际自愈了**」。下游实测 43 条 `execution_mode=self-heal`,而 `retries` 合计只有 **1** 次 —— 分析者第一反应是「43 条在重跑,先治自愈」,真相是自愈几乎没触发。有了本字段,「有多少条真的自愈过」可直接统计,不必再拿两个语义不同的字段并排猜。",
+    "execution_mode": "★执行模式 = **本条用例被授予的执行策略**(direct | verified | self-heal),⚠️ **是「能力/策略」不是「实际发生了什么」**。`self-heal` 只表示**允许**失败后自愈重跑,**不代表真的重跑过**——实际发生看 `retries` 与 `self_heal_attempts`。⚠️ 两个字段并排出现时极易把调优方向带偏(下游实证:43 条 self-heal vs 实际 1 次重试),**报告里出现 execution_mode 分布时必须同时给出 `self_heal_attempts` 合计**,`gen_report.py` 已如此实现。",
+    "self_heal_trace": "★可选,失败复测追溯。仅当 self_heal_applied=true 时要求非空;其余用例省略或 null(不增加普通用例负担)。三要素:cause(失败根因判断,如『网络超时致按钮未响应』/『前置数据缺失』) | recovery(执行的恢复动作 + observe 恢复检验结果,证据来源即 execution-methodology.md『observe 恢复检验清单』,不新造机制) | outcome(复测结论,枚举 recovered-pass | still-fail-block)。缺省时行为与旧版本一致(旧版本无此字段)。",
+    "is_regression": "★是否回归用例(上游 [回归] 标记透传,是=true)。为 true 时该用例失败(fail / 非环境类的 block)缺陷等级一律锁 Critical,覆盖优先级映射(gen_report 用例族锁定)。缺省 false,行为与旧版本一致。",
+    "related_defect_id": "★回归用例关联的缺陷 ID(上游 `关联缺陷: {缺陷ID}` 字段);非回归用例为 null。供报告与下游回写关联原缺陷。",
+    "db_assertion": "★[双源对账] 用例的数据真值对账结果,由驱动适配层 DB 断言驱动产出(执行用例『双源对账』段等价 SQL 与页面取值比对)。结构 {pageValue(页面取值), sqlValue(等价 SQL 取回的 DB 真值), match(是否一致)};match=false 则该用例判 fail。非双源对账用例为 null。端专有的 SQL/MCP 调用只在 references/driver-db-assertion.md 出现,方法论层不写。"
+  },
+  "$examples": {
+    "fail": {
+      "status": "fail",
+      "block_reason": null,
+      "error": "关键预期验证失败:点击『保存』后未出现成功 Toast,列表未新增(实际停留在表单页)",
+      "runtimeErrors": [{"type": "console", "message": "Uncaught TypeError", "detail": "TypeError: cannot read 'id' of undefined (user.js:42)", "severity": "P1", "artifact": "round-1/evidence/TC-USER-009-console.png"}],
+      "evidence": [{"step": 5, "summary": "表单页仍显示,无 Toast", "artifact": "round-1/evidence/TC-USER-009-step5.png"}]
+    },
+    "block_retry_exhausted": {
+      "status": "block",
+      "block_reason": "retry-exhausted",
+      "error": "单操作连续失败 3 次:『部门』下拉框元素定位不到(driver 报 element not found)",
+      "runtimeErrors": [],
+      "evidence": [{"step": 3, "summary": "下拉框未渲染", "artifact": "round-1/evidence/TC-USER-010-step3.png"}]
+    },
+    "block_driver_missing": {
+      "status": "block",
+      "block_reason": "driver-missing",
+      "error": "appium 未就绪 → 移动端用例整体跳过。补齐建议:npm i -g appium && 启动 appium server",
+      "runtimeErrors": [],
+      "evidence": []
+    },
+    "block_driver_hung": {
+      "$note": "驱动进程级卡死:健康探活无回应 → resetSession 重建 → 重登 → 续跑,连续 3 次自愈均失败才落定。未达上限不许直接 block、更不许空等到单步超时逐条耗尽。属环境类,不计产品缺陷。",
+      "status": "block",
+      "block_reason": "driver-hung",
+      "error": "驱动进程级无响应:连续 3 次原子调用全超时且探活(driverAlive=false)无回应;已执行 3 次 resetSession 重建+重登自愈均未恢复(重建返回见证据)",
+      "runtimeErrors": [],
+      "evidence": [{"step": 0, "summary": "探活输出 + 3 次重建返回 + 时间戳", "artifact": "round-1/evidence/TC-USER-014-driver-hung.log"}]
+    },
+    "block_network": {
+      "status": "block",
+      "block_reason": "network-error",
+      "error": "登录接口不可达,连续 3 次 5xx",
+      "runtimeErrors": [{"type": "network", "message": "登录接口 503", "detail": "POST /api/login 503", "severity": "P1", "artifact": ""}],
+      "evidence": []
+    },
+    "self_heal_recovered": {
+      "$note": "self-heal 模式:首跑失败→状态恢复→重试通过。self_heal_applied=true 时 self_heal_trace 必须非空。",
+      "status": "pass",
+      "execution_mode": "self-heal",
+      "self_heal_applied": true,
+      "self_heal_trace": {
+        "cause": "网络超时致『提交』按钮点击后无响应,首跑关键预期失败",
+        "recovery": "回到起始页 + 重新登录 → observe 恢复检验:登录态=已登录、当前 URL=工作台、目标列表计数=3(与期望一致),恢复成功",
+        "outcome": "recovered-pass"
+      },
+      "retries": 1,
+      "error": null,
+      "evidence": [{"step": 6, "summary": "重试后 Toast『提交成功』,列表计数 3→4", "artifact": "round-1/evidence/TC-ORDER-005-step6.png"}]
+    },
+    "self_heal_still_fail": {
+      "$note": "self-heal 模式:恢复后重试仍失败,落定 block。",
+      "status": "block",
+      "block_reason": "retry-exhausted",
+      "execution_mode": "self-heal",
+      "self_heal_applied": true,
+      "self_heal_trace": {
+        "cause": "前置数据缺失:依赖的待审工单不存在",
+        "recovery": "重建前置数据 → observe 恢复检验:目标列表计数=0(期望≥1,恢复检验未通过)",
+        "outcome": "still-fail-block"
+      },
+      "retries": 1,
+      "error": "恢复后重试仍失败:待审工单列表为空,无法进入审批流",
+      "evidence": [{"step": 2, "summary": "工单列表为空", "artifact": "round-1/evidence/TC-ORDER-008-step2.png"}]
+    },
+    "regression_fail_locked_critical": {
+      "$note": "[回归] 用例族:即便是 P2 用例,失败也锁 Critical(覆盖 P2→P3 常规映射)。缺陷等级由 gen_report 判用例族后锁定,非 result JSON 直接写等级。",
+      "case_id": "TC-ORDER-020",
+      "priority": "P2",
+      "type": "回归",
+      "status": "fail",
+      "is_regression": true,
+      "related_defect_id": "BUG-2024-0311",
+      "error": "回归验证失败:原缺陷 BUG-2024-0311 场景复现,金额仍显示为负数",
+      "evidence": [{"step": 4, "summary": "金额列显示 -100.00", "artifact": "round-1/evidence/TC-ORDER-020-step4.png"}]
+    },
+    "dual_source_mismatch": {
+      "$note": "[双源对账] 用例:页面值与 DB 真值不一致,db_assertion.match=false → 判 fail。SQL 由 DB 断言驱动执行(端专有调用只在 driver-adapters.md)。",
+      "case_id": "TC-STAT-007",
+      "priority": "P1",
+      "status": "fail",
+      "db_assertion": {
+        "pageValue": "128",
+        "sqlValue": "130",
+        "match": false
+      },
+      "error": "双源对账不一致:管理控制台统计页显示 128,DB 等价 SQL 取回 130(订单中心删单未同步统计)",
+      "evidence": [{"step": 3, "summary": "统计卡片显示『订单总数 128』", "artifact": "round-1/evidence/TC-STAT-007-step3.png"}]
+    },
+    "copy_consistency_stale_text": {
+      "$note": "[文案一致性] 反向用例:语义/口径变更(用量口径由仅企业扩为企业+个人)后旧文案残留,反向断言『不存在文本X』命中 → 判 fail;is_reverse=true 透传。缺陷等级由 gen_report 判用例族后锁 Critical(覆盖 P2→P3 常规映射),口径误导对账。",
+      "case_id": "TC-STAT-011",
+      "priority": "P2",
+      "type": "文案一致性",
+      "status": "fail",
+      "is_reverse": true,
+      "error": "文案口径残留:用量统计口径已扩为企业+个人,但该 tooltip 仍显示『仅统计企业级、不含员工个人消费』,反向断言『不存在文本\"仅统计企业级\"』命中,与实际展示值相反",
+      "evidence": [{"step": 2, "summary": "tooltip 文案仍含『仅统计企业级』", "artifact": "round-1/evidence/TC-STAT-011-step2.png"}]
+    }
+  }
+}

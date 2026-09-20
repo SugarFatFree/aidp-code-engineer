@@ -1,0 +1,57 @@
+{
+  "$comment": "运行环境事实对象示例(round-{M}/env-facts.json)。环境准备阶段取证一次,是报告「一、测试概况」的唯一数据源。每个事实字段必须配套 <字段>Source 来源标注;取不到写 null + 未取到(原因),严禁回落模板默认或推断值。校验:python3 <SKILL_DIR>/scripts/check_env_facts.py <env-facts.json> [--report 报告.md]。端专有的取证方法见驱动适配层 references/driver-<端>.md,本文件只写端无关表述。",
+  "$sourceEnum": [
+    "显式指定 —— 编排层/run-context 传入且本次未复用已有实例(唯一可不带括号说明的一类)",
+    "复用已有实例(来源) —— 连到已存在的驱动实例;此时命令传入的启动参数不生效,须以运行探测为准",
+    "无头不可用降级(原因) —— 显式降级,须写明降级原因",
+    "运行取证(方法) —— 执行期实测,须写明用什么信号测出来的",
+    "未取到(原因) —— 实测取不到;此时字段值必须为 null"
+  ],
+
+  "renderMode": "headless",
+  "renderModeSource": "运行取证(浏览器运行时渲染标识含无头标记;驱动运行配置亦声明无头)",
+
+  "browserVersion": "HeadlessChrome/149.0.0.0",
+  "browserVersionSource": "运行取证(浏览器运行时版本标识)",
+
+  "viewport": "1905x2053",
+  "viewportSource": "运行取证(视口宽高,非窗口外框尺寸)",
+
+  "reusedInstance": true,
+  "reusedInstanceSource": "运行取证(连接时已存在 3 个非本任务页面,判定为复用已有常驻实例)",
+
+  "testUrl": "http://test.example.com/console",
+  "testUrlSource": "显式指定",
+
+  "loginRole": null,
+  "loginRoleSource": "未取到(入口流程尚未登录,取证时点早于首次登录)",
+
+  "driver": "cli",
+  "driverSource": "运行取证(实际生效的驱动,与结果 JSON 的 driver 字段同枚举)",
+
+  "executionPath": "subagent→inline",
+  "executionPathSource": "运行取证(派发执行子 Agent 失败,本轮降级为主流程内联执行)",
+
+  "datasourceEnvironment": "test",
+  "datasourceEnvironmentSource": "显式指定",
+
+  "datasourceOwnership": "verified",
+  "datasourceOwnershipSource": "运行取证(P2 环境指纹比对:配置表 env_name=test,与被测 URL 所属环境一致)",
+
+  "probedAt": "2026-08-11 10:20",
+
+  "$datasourceOwnershipEnum": [
+    "verified —— 归属探针通过,确属被测环境的库,可做双源对账与 SQL 造删数",
+    "mismatched —— 探针证否(如 DB=staging / 被测=test):datasource 整体标不适用,相关用例降级并留痕",
+    "unverified —— 未做探针或探针无结论:按 mismatched 同样处置(保守侧)",
+    "not-applicable —— 本轮无 [双源对账] 用例、也无 SQL 造删数"
+  ],
+
+  "$executionPathEnum": [
+    "subagent —— 按方法论规范派执行子 Agent、模块内串行(默认路径)",
+    "inline —— 全程在主流程内联执行(未派子 Agent)",
+    "subagent→inline —— 派发失败/被拒后降级为内联,须在 Source 里写明降级原因"
+  ],
+
+  "$note": "① 渲染模式/版本/视口取自一次真实取证,非杜撰;② loginRole 演示「取不到」的正确写法——值 null + 未取到(原因),而不是填「管理员」这类看起来合理的默认;③ reusedInstance=true 时 renderModeSource 不得为「显式指定」(硬门会拦),因为复用实例下命令传参不生效;④ 事实字段可按端扩展(如 deviceModel/osVersion),新增字段自动要求配套 Source,无需改校验脚本;⑤ `$`/`_` 开头的键视为注释元数据,不参与事实字段校验;⑥ `executionPath` 记录本轮**派发路径**(子 Agent / 内联 / 降级),此前这类信息只散落在报告叙述里、无字段承载,报告概况读不到执行形态——它同样是**运行事实**,照三条铁律办:降级了就如实写 `subagent→inline` 并在 Source 里写降级原因,别按规范默认值填 `subagent`。"
+}

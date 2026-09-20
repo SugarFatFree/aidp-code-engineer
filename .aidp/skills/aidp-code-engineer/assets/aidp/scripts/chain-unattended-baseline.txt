@@ -1,0 +1,61 @@
+# 串联透传棘轮 baseline —— 已人工判定为「不是链式调用」的站点。
+# 格式：<相对路径>\t<调用文本>\t<出现次数>（⛔ 不记行号：行号随无关编辑漂移；
+#   ⛔ 次数不能省：同文件同形调用常出现多次，只记前两列会让新增的那次被掩盖）
+#
+# 典型的合法条目：给用户看的「后续流程」清单 · 命令边界说明 · 明令禁止输出的反例 ·
+#   人工操作指引（「运维跑 …」「手动跑 …」）· 提示词模板。
+# ⛔ 新增条目前先确认它**真不是**调用；是调用就去补 `--unattended`，别往这里加。
+
+.aidp/commands/sprint-aiauto-test.md	/sprint-autopilot --skip-dev	2
+.aidp/commands/sprint-autopilot.md	/version --no-tag	1
+.aidp/commands/sprint-batch.md	/sprint-aiauto-test --once	3
+.aidp/commands/sprint-batch.md	/sprint-aiauto-test --once 回归	1
+.aidp/commands/sprint-batch.md	/sprint-aiauto-test --once 重试	1
+.aidp/commands/sprint-batch.md	/sprint-close {NNN}	1
+.aidp/commands/sprint-batch.md	/sprint-dev --cascade-now	1
+.aidp/commands/sprint-batch.md	/sprint-full 003	1
+.aidp/commands/sprint-batch.md	/sprint-full {NNN+1}	3
+.aidp/commands/sprint-batch.md	/sprint-full {NNN}	2
+.aidp/commands/sprint-batch.md	/version V0.1.0	1
+.aidp/commands/sprint-batch.md	/version V0.1.0 发布	1
+.aidp/commands/sprint-batch.md	/version {version}	2
+.aidp/commands/sprint-bugfix.md	/version {version}	1
+.aidp/commands/sprint-close.md	/version {version}	1
+.aidp/commands/sprint-dev.md	/sprint-bugfix sprint-{NNN}	1
+.aidp/commands/sprint-dev.md	/sprint-full 001	1
+.aidp/commands/sprint-dev.md	/sprint-start 001	1
+.aidp/commands/sprint-dev.md	/version {V}	2
+.aidp/commands/sprint-dev.md	/version {version}	1
+.aidp/commands/sprint-full.md	/sprint-bugfix sprint-002	1
+.aidp/commands/sprint-full.md	/version V0.1.0	2
+.aidp/commands/sprint-full.md	/version {version}	2
+.aidp/commands/sprint-init-complete.md	/sprint-full 001	1
+.aidp/commands/sprint-init-complete.md	/sprint-start 001	1
+.aidp/commands/sprint-init.md	/version V0.1.0	1
+.aidp/commands/sprint-init.md	/version {version}	1
+.aidp/commands/sprint-plan.md	/sprint-selftest {version}	1
+.aidp/commands/sprint-plan.md	/sprint-selftest {version} --supplement={NN}	1
+.aidp/commands/sprint-plan.md	/sprint-start 001	1
+.aidp/commands/sprint-test.md	/sprint-aiauto-test --once	1
+.aidp/commands/sprint-test.md	/sprint-autopilot --skip-dev	1
+.aidp/commands/sprint-test.md	/sprint-bugfix sprint-{NNN}	2
+.aidp/commands/sprint-test.md	/sprint-close {NNN}	1
+.aidp/commands/sprint-test.md	/sprint-selftest {version}	3
+.aidp/flows/sprint-autopilot/phase-0-3.md	/sprint-aiauto-test --reset-chrome-ip	1
+.aidp/flows/sprint-autopilot/phase-0-5.md	/version {TARGET_VERSION} 正式打	1
+.aidp/flows/sprint-autopilot/phase-2.md	/version --no-tag	1
+.aidp/flows/sprint-autopilot/phase-2.md	/version --no-tag 归档	1
+.aidp/flows/sprint-autopilot/phase-2.md	/version {PRE_RELEASE_VERSION}	1
+.aidp/flows/sprint-autopilot/phase-2.md	/version {PRE_RELEASE_VERSION} 补打	1
+.aidp/flows/sprint-autopilot/phase-3-3.md	/version {TARGET_VERSION}	1
+.aidp/flows/sprint-autopilot/usage-guard.md	/version --no-tag	1
+.aidp/flows/sprint-batch/step-6.md	/sprint-aiauto-test --once	2
+.aidp/flows/sprint-batch/step-6b.md	/sprint-aiauto-test --once	3
+.aidp/flows/version/planning-2.md	/sprint-plan --supplement	1
+.aidp/flows/version/planning-2.md	/sprint-selftest --supplement	1
+.aidp/flows/version/planning-8.md	/sprint-autopilot {version} 版本规划已执行	2
+.aidp/flows/version/planning-8.md	/sprint-dev 001 开始第一个	1
+.aidp/flows/version/planning-8.md	/sprint-dev {NNN}	1
+.aidp/flows/sprint-aiauto-test/phase-3-3b.md	/sprint-autopilot --once	1
+.aidp/flows/sprint-autopilot/phase-0-9.md	裸委派 /sprint-aiauto-test	1
+.aidp/flows/sprint-autopilot/phase-3-2.md	裸委派 /sprint-aiauto-test	2

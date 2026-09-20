@@ -1,0 +1,78 @@
+# AIDP 项目配置（**人维护**，团队共享、随 git 提交）
+#
+# 这是你可以直接改的那一份。程序写的运行时状态在
+# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。
+#
+# 改完无需重启任何东西，下一次命令运行即生效。
+
+project:
+  # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，
+  # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。
+  name: {{project}}
+  name_cn: "{{project_cn}}"
+
+commit_gate:
+  # 提交前门禁总开关（约定 24：每次 git commit 前跑 .aidp/scripts/commit_gate.py）。
+  # 关掉之后：不再检查台账积压 / CICD 推送欠账。
+  enabled: true
+
+notify:
+  # 里程碑通知总开关（约定 32：.aidp/scripts/notify.py）。
+  # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。
+  enabled: false
+  # 一个渠道失败时是否尝试下一个
+  fallback: true
+  # autopilot 启动时是否发 #0a「渠道已连通」通知（默认不发，避免噪音）
+  channel_ready_card: false
+  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只经环境变量引用，不明文入库。
+  channels: []
+  # 例：
+  #   - {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}
+  #   - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}
+  #   - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}
+  #   - {type: lark-cli, chat_id: "<chat id>"}
+  #   - {type: command, command: "<读 stdin JSON 的发送命令>"}
+
+cicd:
+  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。
+  provider: github-actions
+  # 无人值守下是否允许自动触发 / 重试流水线。
+  auto_trigger: true
+  max_retries: 3
+  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；
+  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}
+  pipelines: {}
+  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。
+  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}
+  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}
+  # command:   {list: "...", view: "...", trigger: "...", retry: "...", check: "..."}
+
+stop_guard:
+  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。
+  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。
+  enabled: true
+
+scheduler:
+  # 7×24 操作系统调度（python3 .aidp/scripts/aidp_scheduler.py install）：
+  # 开发链路与测试链路各装一个用户级定时任务，互不阻塞。
+  dev_interval: 10m
+  test_interval: 5m
+  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh
+  agent: auto
+  # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知
+  stale_cycles: 3
+  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。
+  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。
+  exec: {}
+  # 例：exec: {codex: "codex exec --sandbox workspace-write {prompt}"}
+
+scaffold:
+  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——
+  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。
+  version: null
+  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。
+  pending: null
+
+# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，
+# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。
+autopilot_decisions: {}

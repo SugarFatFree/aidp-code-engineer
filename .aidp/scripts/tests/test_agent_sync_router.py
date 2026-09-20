@@ -81,14 +81,17 @@ def test_native_command_skills():
         text = _read(codex)
         source = _read(root / ".aidp/commands/sprint-dev.md")
         check("装配成功", rc == 0)
-        check("Codex 独立命令 SKILL frontmatter 与 description 确定性",
+        check("Codex description 优先使用命令 frontmatter",
               text.startswith(
-                  '---\nname: sprint-dev\ndescription: "/sprint-dev — 开发阶段"\n'
+                  '---\nname: sprint-dev\ndescription: "执行 Sprint 开发"\n'
               ))
         check("Codex 命令正文逐字包含", source in text and "$ARGUMENTS" in text)
         check("Codex explicit invocation policy",
               "allow_implicit_invocation: false" in
               _read(root / ".codex/aidp/skills/sprint-dev/agents/openai.yaml"))
+        h1_fallback = _read(root / ".codex/aidp/skills/version/SKILL.md")
+        check("无 frontmatter 时使用 H1 description",
+              'description: "/version — 版本管理命令（★）"' in h1_fallback)
         fallback = _read(root / ".codex/aidp/skills/no-title/SKILL.md")
         check("无 H1 使用稳定 description", 'description: "AIDP command no-title"' in fallback)
         check("README 不生成命令 SKILL", not (root / ".codex/aidp/skills/README").exists())

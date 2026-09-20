@@ -454,12 +454,43 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
+    # 原生命令目标已有用户内容 → fail closed，不覆盖
+    root = _mkrepo(markers=(".codex",))
+    try:
+        user_skill = root / ".codex/aidp/skills/sprint-dev/SKILL.md"
+        user_skill.parent.mkdir(parents=True)
+        user_skill.write_text("---\nname: user-sprint-dev\ndescription: keep\n---\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("Codex 同名命令目标无生成标记 → fail closed 且用户内容保持",
+              rc == 2 and "用户" in out.get("error", "")
+              and "user-sprint-dev" in _read(user_skill))
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".dsh",))
+    try:
+        user_command = root / ".dsh/commands/sprint-dev.md"
+        user_command.parent.mkdir(parents=True)
+        user_command.write_text("# user command\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "dsh")
+        check("DSH 同名命令目标无生成账本 → fail closed 且用户内容保持",
+              rc == 2 and "用户" in out.get("error", "")
+              and _read(user_command) == "# user command\n")
+    finally:
+        _rm(root)
+
     # 插件：Claude 项目插件 / Codex 项目级 skills + MCP / DSH 共享 skills + MCP
     root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
     try:
         pl = _add_browser_plugin(root)
+        (root / ".claude/settings.json").write_text(json.dumps({
+            "extraKnownMarketplaces": {"user-market": {"source": {"source": "directory", "path": "./user"}}},
+            "enabledPlugins": {"user-plugin@user-market": True},
+        }), encoding="utf-8")
         (root / ".codex/config.toml").write_text(
-            'model = "user-model"\n\n[mcp_servers.user-browser]\ncommand = "user-mcp"\n', encoding="utf-8")
+            'model = "user-model"\n\n[mcp_servers.user-browser]\ncommand = "user-mcp"\n\n'
+            '[plugins."user-plugin@local-repo"]\nenabled = true\n\n'
+            '[plugins."chrome-devtools-mcp@local-repo"]\nenabled = true\n', encoding="utf-8")
         (root / ".dsh/mcp.json").write_text(json.dumps({
             "mcpServers": {"user-browser": {"command": "user-mcp", "args": ["--keep"]}}
         }), encoding="utf-8")
@@ -489,10 +520,12 @@ def test_copy_mode_and_errors():
         check("插件·Codex：config.toml 注册 MCP server",
               "[mcp_servers.chrome-devtools]" in config
               and 'args = ["chrome-devtools-mcp@1.6.0"]' in config)
-        check("插件·Codex：同步保留用户 config 与 MCP server",
+        check("插件·Codex：同步保留用户 config、MCP server 与 local-repo 插件项",
               'model = "user-model"' in config
               and "[mcp_servers.user-browser]" in config
-              and 'command = "user-mcp"' in config)
+              and 'command = "user-mcp"' in config
+              and '[plugins."user-plugin@local-repo"]' in config
+              and '[plugins."chrome-devtools-mcp@local-repo"]' not in config)
         check("插件·DSH：插件 SKILL 直接进入 .agents/skills",
               (dsh_skill / "SKILL.md").is_file() and not (root / ".dsh/skills").exists())
         dsh_mcp = json.loads(_read(root / ".dsh/mcp.json"))
@@ -517,10 +550,14 @@ def test_copy_mode_and_errors():
         # 切换为 Codex-only：清理 DSH 的 AIDP server/技能，保留用户 server 与 Codex 入口
         _run(SYNC_PY, "--root", str(root), "--agents", "codex")
         dsh_after_switch = json.loads(_read(root / ".dsh/mcp.json"))
-        check("插件·切换 Codex-only：清理 DSH AIDP 入口、保留用户 server 与 Codex 入口",
+        claude_after_switch = json.loads(_read(root / ".claude/settings.json"))
+        check("插件·切换 Codex-only：清理 Claude/DSH AIDP 项并保留用户配置与 Codex 入口",
               not dsh_skill.exists()
               and "chrome-devtools" not in dsh_after_switch.get("mcpServers", {})
               and dsh_after_switch.get("mcpServers", {}).get("user-browser", {}).get("command") == "user-mcp"
+              and "chrome-devtools-plugins" not in claude_after_switch.get("extraKnownMarketplaces", {})
+              and claude_after_switch.get("extraKnownMarketplaces", {}).get("user-market")
+              and claude_after_switch.get("enabledPlugins", {}).get("user-plugin@user-market") is True
               and (codex_skill / "SKILL.md").is_file())
 
         # 用户自有命令不能因切换 Agent 被清理
@@ -533,15 +570,93 @@ def test_copy_mode_and_errors():
         _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
         config_after_delete = _read(root / ".codex/config.toml")
         dsh_after_delete = json.loads(_read(root / ".dsh/mcp.json"))
-        check("插件源删除 → 只清理 AIDP 入口/MCP，用户 Codex/DSH/插件内容保留",
+        claude_after_delete = json.loads(_read(root / ".claude/settings.json"))
+        check("插件源删除 → 只清理 AIDP 入口/MCP/settings，用户配置与插件内容保留",
               not (root / ".claude/plugins/chrome-devtools-mcp").exists()
               and not (root / ".codex/skills/chrome-devtools-mcp").exists()
               and "[mcp_servers.chrome-devtools]" not in config_after_delete
               and "[mcp_servers.user-browser]" in config_after_delete
+              and '[plugins."user-plugin@local-repo"]' in config_after_delete
               and 'model = "user-model"' in config_after_delete
               and dsh_after_delete.get("mcpServers", {}).get("user-browser", {}).get("command") == "user-mcp"
               and "chrome-devtools" not in dsh_after_delete.get("mcpServers", {})
+              and "chrome-devtools-plugins" not in claude_after_delete.get("extraKnownMarketplaces", {})
+              and not any(key.startswith("chrome-devtools-mcp@")
+                          for key in claude_after_delete.get("enabledPlugins", {}))
+              and claude_after_delete.get("extraKnownMarketplaces", {}).get("user-market")
+              and claude_after_delete.get("enabledPlugins", {}).get("user-plugin@user-market") is True
               and user_plugin.is_file())
+    finally:
+        _rm(root)
+
+    # 未受管同名 MCP：配置一致则保留，不一致 fail closed
+    root = _mkrepo(markers=(".codex",))
+    try:
+        _add_browser_plugin(root)
+        config_path = root / ".codex/config.toml"
+        unmanaged = ('model = "keep"\n\n[mcp_servers.chrome-devtools]\ncommand = "npx"\n'
+                     'args = ["chrome-devtools-mcp@1.6.0"]\n')
+        config_path.write_text(unmanaged, encoding="utf-8")
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        config = _read(config_path)
+        check("Codex 未受管同名 MCP 一致 → 原样保留且不接管",
+              rc == 0 and config.count("[mcp_servers.chrome-devtools]") == 1
+              and "AIDP-MCP chrome-devtools" not in config and 'model = "keep"' in config)
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        _add_browser_plugin(root)
+        config_path = root / ".codex/config.toml"
+        original = '[mcp_servers.chrome-devtools]\ncommand = "user-mcp"\n'
+        config_path.write_text(original, encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("Codex 未受管同名 MCP 不一致 → fail closed 且原配置保持",
+              rc == 2 and "冲突" in out.get("error", "") and _read(config_path) == original)
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".dsh",))
+    try:
+        _add_browser_plugin(root)
+        mcp_path = root / ".dsh/mcp.json"
+        unmanaged_data = {"mcpServers": {"chrome-devtools": {
+            "command": "npx", "args": ["chrome-devtools-mcp@1.6.0"]}}}
+        mcp_path.write_text(json.dumps(unmanaged_data), encoding="utf-8")
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "dsh")
+        marker = root / AS.DSH_MCP_MANAGED
+        _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        after_switch = json.loads(_read(mcp_path) or "{}")
+        check("DSH 未受管同名 MCP 一致 → 保留且切换 Agent 不删除",
+              rc == 0 and "chrome-devtools" in after_switch.get("mcpServers", {})
+              and "chrome-devtools" not in _read(marker))
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".dsh",))
+    try:
+        _add_browser_plugin(root)
+        mcp_path = root / ".dsh/mcp.json"
+        original_data = {"mcpServers": {"chrome-devtools": {"command": "user-mcp"}}}
+        mcp_path.write_text(json.dumps(original_data), encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "dsh")
+        check("DSH 未受管同名 MCP 不一致 → fail closed 且用户 server 保持",
+              rc == 2 and "冲突" in out.get("error", "")
+              and json.loads(_read(mcp_path)) == original_data)
+    finally:
+        _rm(root)
+
+    # Codex 插件目标存在用户目录 → fail closed
+    root = _mkrepo(markers=(".codex",))
+    try:
+        _add_browser_plugin(root)
+        user_target = root / ".codex/skills/chrome-devtools-mcp/note.txt"
+        user_target.parent.mkdir(parents=True)
+        user_target.write_text("keep\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("Codex 插件目标无生成标记 → fail closed 且用户目录保持",
+              rc == 2 and "用户" in out.get("error", "") and _read(user_target) == "keep\n")
     finally:
         _rm(root)
 
@@ -585,6 +700,48 @@ def test_copy_mode_and_errors():
         p = subprocess.run([sys.executable, SYNC_PY, "--root", str(root)], capture_output=True, text=True)
         check("插件 SKILL 与公共 SKILL 重名 → 非零退出并提示冲突",
               p.returncode != 0 and "冲突" in (p.stdout + p.stderr))
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        pl = root / ".aidp/plugins/demo-plugin"
+        (pl / ".claude-plugin").mkdir(parents=True)
+        (pl / ".claude-plugin/plugin.json").write_text('{"name":"demo-plugin"}\n', encoding="utf-8")
+        (pl / "skills/demo-skill").mkdir(parents=True)
+        (pl / "skills/demo-skill/SKILL.md").write_text("---\nname: demo-skill\n---\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("Codex-only 也检查插件 SKILL 与公共 SKILL 重名",
+              rc == 2 and "冲突" in out.get("error", ""))
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        pl = root / ".aidp/plugins/demo-plugin"
+        (pl / ".claude-plugin").mkdir(parents=True)
+        (pl / ".claude-plugin/plugin.json").write_text('{"name":"demo-plugin"}\n', encoding="utf-8")
+        (pl / "skills/sprint-dev").mkdir(parents=True)
+        (pl / "skills/sprint-dev/SKILL.md").write_text("---\nname: sprint-dev\n---\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("插件 SKILL 与命令重名 → Codex-only fail closed",
+              rc == 2 and "冲突" in out.get("error", ""))
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        for plugin_name in ("plugin-a", "plugin-b"):
+            pl = root / ".aidp/plugins" / plugin_name
+            (pl / ".claude-plugin").mkdir(parents=True)
+            (pl / ".claude-plugin/plugin.json").write_text(
+                json.dumps({"name": plugin_name}), encoding="utf-8")
+            (pl / "skills/shared-name").mkdir(parents=True)
+            (pl / "skills/shared-name/SKILL.md").write_text(
+                "---\nname: shared-name\n---\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("插件之间 SKILL 重名 → Codex-only fail closed",
+              rc == 2 and "冲突" in out.get("error", ""))
     finally:
         _rm(root)
 

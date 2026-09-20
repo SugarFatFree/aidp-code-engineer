@@ -56,6 +56,7 @@ OPENAI_YAML = "policy:\n  allow_implicit_invocation: false\n"
 CODEX_MCP_BEGIN = "# >>> AIDP-MCP {name} >>>"
 CODEX_MCP_END = "# <<< AIDP-MCP {name} <<<"
 DSH_MCP_MANAGED = ".dsh/.aidp-mcp-servers.json"
+CLAUDE_PLUGIN_MANAGED = ".claude/.aidp-plugins.json"
 LEGACY_CODEX_PLUGINS = ".agents/plugins"
 GITIGNORE_BEGIN = "# >>> AIDP-AGENT-ADAPTERS（由 .aidp/scripts/agent_sync.py 生成，勿手改）>>>"
 GITIGNORE_END = "# <<< AIDP-AGENT-ADAPTERS <<<"
@@ -215,6 +216,9 @@ def _command_files(root: Path) -> list:
 
 
 def _command_description(name: str, text: str) -> str:
+    frontmatter = _frontmatter(text)
+    if frontmatter.get("description"):
+        return frontmatter["description"].replace('"', "'")
     match = re.search(r"^#\s+(.+?)\s*$", text, re.M)
     return (match.group(1).strip() if match else f"AIDP command {name}").replace('"', "'")
 
@@ -250,6 +254,11 @@ def _prune(plan: Plan, base: Path, wanted: set):
             plan.remove(p, "not generated anymore")
 
 
+def _require_generated_or_absent(path: Path, label: str):
+    if (path.exists() or path.is_symlink()) and not _is_generated(path):
+        raise SystemExit(f"[agent_sync] {label} 已存在用户内容，拒绝覆盖：{path}")
+
+
 def _base_skill_dirs(root: Path) -> dict:
     source = root / AIDP_DIR / "skills"
     if not source.is_dir():
@@ -267,7 +276,9 @@ def sync_skill_dir(plan: Plan, rel: str, extra: dict = None) -> list:
     generated = []
     destination = plan.root / rel
     for name, source in sorted(skills.items()):
-        plan.link_dir(destination / name, source)
+        target = destination / name
+        _require_generated_or_absent(target, "SKILL 入口")
+        plan.link_dir(target, source)
         generated.append(f"{rel}/{name}")
     _prune(plan, destination, set(skills))
     return generated
@@ -291,7 +302,10 @@ def sync_file_commands(plan: Plan, rel: str, enabled: bool = True) -> list:
         plan.remove(destination / name, "command source removed")
     generated = []
     for command in commands:
-        plan.link_file(destination / command.name, command)
+        target = destination / command.name
+        if (target.exists() or target.is_symlink()) and command.name not in previous and not _is_generated(target):
+            raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
+        plan.link_file(target, command)
         generated.append(f"{rel}/{command.name}")
     if wanted:
         plan.write_text(marker, json.dumps(sorted(wanted), ensure_ascii=False) + "\n")
@@ -308,6 +322,7 @@ def sync_codex_commands(plan: Plan) -> list:
     for command in _command_files(plan.root):
         name = command.stem
         target = destination / name
+        _require_generated_or_absent(target, "Codex 命令 SKILL")
         wanted.add(name)
         plan.write_text(target / "SKILL.md", codex_command_skill(name, _read(command)))
         plan.write_text(target / "agents/openai.yaml", OPENAI_YAML)
@@ -381,30 +396,61 @@ def _plugin_mcp(pdir: Path, manifest: dict) -> dict:
 
 
 def sync_claude_plugins(plan: Plan, plugins: list) -> list:
-    """Claude Code：插件目录就地加载 + `.claude/settings.json` 登记 marketplace 与启用项。"""
+    """Claude Code 项目插件；settings 只增删 marker 明确记录的键。"""
     root, generated = plan.root, []
-    for pdir in plugins:
-        name = pdir.name
-        plan.link_dir(root / CLAUDE_PLUGINS / name, pdir)
+    for plugin in plugins:
+        name = plugin.name
+        plan.link_dir(root / CLAUDE_PLUGINS / name, plugin)
         generated.append(f"{CLAUDE_PLUGINS}/{name}")
-    _prune(plan, root / CLAUDE_PLUGINS, {p.name for p in plugins})
-    if not plugins:
+    _prune(plan, root / CLAUDE_PLUGINS, {plugin.name for plugin in plugins})
+
+    path = root / ".claude/settings.json"
+    marker = root / CLAUDE_PLUGIN_MANAGED
+    if not plugins and not marker.is_file():
         return generated
-    path = root / ".claude" / "settings.json"
     try:
         data = json.loads(_read(path) or "{}")
-    except json.JSONDecodeError:
-        raise SystemExit(f"[agent_sync] {path} 不是合法 JSON，拒绝覆盖，请先修复")
+        previous = json.loads(_read(marker) or "{}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"[agent_sync] Claude 插件配置不是合法 JSON：{exc}")
     markets = data.setdefault("extraKnownMarketplaces", {})
     enabled = data.setdefault("enabledPlugins", {})
-    for pdir in plugins:
-        mk = json.loads(_read(pdir / ".claude-plugin" / "marketplace.json") or "{}") \
-            if (pdir / ".claude-plugin" / "marketplace.json").is_file() else {}
-        market = mk.get("name") or f"{pdir.name}-marketplace"
-        markets[market] = {"source": {"source": "directory", "path": f"./{CLAUDE_PLUGINS}/{pdir.name}"}}
-        for entry in (mk.get("plugins") or [{"name": pdir.name}]):
-            enabled[f"{entry.get('name', pdir.name)}@{market}"] = True
+    for key in previous.get("marketplaces", []):
+        markets.pop(key, None)
+    for key in previous.get("enabledPlugins", []):
+        enabled.pop(key, None)
+
+    managed_markets = []
+    managed_enabled = []
+    for plugin in plugins:
+        marketplace_file = plugin / ".claude-plugin/marketplace.json"
+        marketplace = json.loads(_read(marketplace_file) or "{}") if marketplace_file.is_file() else {}
+        market = marketplace.get("name") or f"{plugin.name}-marketplace"
+        desired_market = {"source": {"source": "directory", "path": f"./{CLAUDE_PLUGINS}/{plugin.name}"}}
+        if market in markets and markets[market] != desired_market:
+            raise SystemExit(f"[agent_sync] Claude marketplace 用户配置冲突：{market}")
+        if market not in markets:
+            markets[market] = desired_market
+            managed_markets.append(market)
+        for entry in marketplace.get("plugins") or [{"name": plugin.name}]:
+            key = f"{entry.get('name', plugin.name)}@{market}"
+            if key in enabled and enabled[key] is not True:
+                raise SystemExit(f"[agent_sync] Claude enabledPlugins 用户配置冲突：{key}")
+            if key not in enabled:
+                enabled[key] = True
+                managed_enabled.append(key)
+
+    if not markets:
+        data.pop("extraKnownMarketplaces", None)
+    if not enabled:
+        data.pop("enabledPlugins", None)
     plan.write_text(path, _json_dump(data))
+    managed = {"marketplaces": managed_markets, "enabledPlugins": managed_enabled}
+    if managed_markets or managed_enabled:
+        plan.write_text(marker, _json_dump(managed))
+        generated.append(CLAUDE_PLUGIN_MANAGED)
+    elif marker.is_file():
+        plan.remove(marker, "no managed Claude plugin settings")
     return generated
 
 
@@ -443,6 +489,7 @@ def sync_codex_plugin_skills(plan: Plan, plugins: list) -> list:
             continue
         wanted.add(plugin.name)
         target = base / plugin.name
+        _require_generated_or_absent(target, "Codex 插件 SKILL 目录")
         plan.link_dir(target / "skills", source)
         plan.write_text(target / GENERATED_FILE, "plugin-skills\n")
         generated.append(f"{CODEX_PLUGIN_SKILLS}/{plugin.name}")
@@ -469,13 +516,64 @@ def _codex_mcp_block(name: str, config: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def sync_codex_mcp(plan: Plan, servers: dict):
+def _toml_scalar(raw: str):
+    raw = raw.strip()
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return raw.strip('"').strip("'")
+
+
+def _toml_section(text: str, header: str):
+    match = re.search(rf"(?m)^\[{re.escape(header)}\]\s*$", text)
+    if not match:
+        return None
+    next_header = re.search(r"(?m)^\[", text[match.end():])
+    end = match.end() + next_header.start() if next_header else len(text)
+    values = {}
+    for line in text[match.end():end].splitlines():
+        item = re.match(r"^\s*([A-Za-z0-9_-]+)\s*=\s*(.*?)\s*$", line)
+        if item:
+            values[item.group(1)] = _toml_scalar(item.group(2))
+    return values
+
+
+def _mcp_matches(existing: dict, desired: dict) -> bool:
+    return all(existing.get(key) == value for key, value in desired.items())
+
+
+def _without_codex_managed_mcp(text: str) -> str:
+    return re.sub(r"(?ms)^# >>> AIDP-MCP [^\n]+ >>>\n.*?^# <<< AIDP-MCP [^\n]+ <<<\n?", "", text)
+
+
+def _validate_codex_mcp(root: Path, servers: dict):
+    text = _without_codex_managed_mcp(_read(root / ".codex/config.toml"))
+    for name, config in sorted(servers.items()):
+        existing = _toml_section(text, f"mcp_servers.{name}")
+        if existing is not None and not _mcp_matches(existing, config):
+            raise SystemExit(f"[agent_sync] Codex 未受管 MCP server 配置冲突：{name}")
+
+
+def sync_codex_mcp(plan: Plan, servers: dict, legacy_plugins: set):
     path = plan.root / ".codex/config.toml"
     original = _read(path)
-    text = re.sub(r"(?ms)^# >>> AIDP-MCP [^\n]+ >>>\n.*?^# <<< AIDP-MCP [^\n]+ <<<\n?", "", original)
-    text = re.sub(r'(?ms)^\[plugins\."[^"\n]+@local-repo"\]\n.*?(?=^\[|\Z)', "", text)
+    text = _without_codex_managed_mcp(original)
+    for plugin_name in sorted(legacy_plugins):
+        pattern = (rf'(?ms)^\[plugins\."{re.escape(plugin_name)}@local-repo"\]\s*\n'
+                   r'.*?(?=^\[|\Z)')
+        text = re.sub(pattern, "", text)
+
+    managed_servers = {}
+    for name, config in sorted(servers.items()):
+        existing = _toml_section(text, f"mcp_servers.{name}")
+        if existing is None:
+            managed_servers[name] = config
+        elif not _mcp_matches(existing, config):
+            raise SystemExit(f"[agent_sync] Codex 未受管 MCP server 配置冲突：{name}")
+
     text = text.rstrip()
-    blocks = "\n".join(_codex_mcp_block(name, config).rstrip() for name, config in sorted(servers.items()))
+    blocks = "\n".join(_codex_mcp_block(name, config).rstrip()
+                       for name, config in sorted(managed_servers.items()))
     if blocks:
         text = (text + "\n\n" if text else "") + blocks + "\n"
     elif text:
@@ -484,7 +582,22 @@ def sync_codex_mcp(plan: Plan, servers: dict):
         plan.write_text(path, text)
 
 
-def sync_dsh_mcp(plan: Plan, servers: dict, removable: set) -> list:
+def _validate_dsh_mcp(root: Path, servers: dict):
+    path = root / ".dsh/mcp.json"
+    try:
+        data = json.loads(_read(path) or "{}")
+    except json.JSONDecodeError:
+        raise SystemExit(f"[agent_sync] {path} 不是合法 JSON，拒绝覆盖，请先修复")
+    current = data.get("mcpServers") or {}
+    if not isinstance(current, dict):
+        raise SystemExit(f"[agent_sync] {path} 的 mcpServers 必须是对象")
+    previous = _generated_names(root / DSH_MCP_MANAGED)
+    for name, config in servers.items():
+        if name in current and name not in previous and current[name] != config:
+            raise SystemExit(f"[agent_sync] DSH 未受管 MCP server 配置冲突：{name}")
+
+
+def sync_dsh_mcp(plan: Plan, servers: dict) -> list:
     root = plan.root
     path = root / ".dsh/mcp.json"
     marker = root / DSH_MCP_MANAGED
@@ -497,10 +610,19 @@ def sync_dsh_mcp(plan: Plan, servers: dict, removable: set) -> list:
         current = {}
     if not isinstance(current, dict):
         raise SystemExit(f"[agent_sync] {path} 的 mcpServers 必须是对象")
-    managed = _generated_names(marker) | set(removable)
-    for name in managed:
+
+    previous = _generated_names(marker)
+    for name in previous:
         current.pop(name, None)
-    current.update(servers)
+    managed = set()
+    for name, config in sorted(servers.items()):
+        if name in current:
+            if current[name] != config:
+                raise SystemExit(f"[agent_sync] DSH 未受管 MCP server 配置冲突：{name}")
+            continue
+        current[name] = config
+        managed.add(name)
+
     data["mcpServers"] = current
     generated = []
     if current:
@@ -508,20 +630,37 @@ def sync_dsh_mcp(plan: Plan, servers: dict, removable: set) -> list:
         generated.append(".dsh/mcp.json")
     elif path.is_file():
         plan.remove(path, "no MCP servers remain")
-    if servers:
-        plan.write_text(marker, json.dumps(sorted(servers), ensure_ascii=False) + "\n")
+    if managed:
+        plan.write_text(marker, json.dumps(sorted(managed), ensure_ascii=False) + "\n")
         generated.append(DSH_MCP_MANAGED)
     elif marker.is_file():
         plan.remove(marker, "no managed DSH MCP servers")
     return generated
 
 
-def cleanup_legacy_codex_plugins(plan: Plan):
-    base = plan.root / LEGACY_CODEX_PLUGINS
-    _prune(plan, base, set())
+def _legacy_codex_managed(root: Path) -> set:
+    base = root / LEGACY_CODEX_PLUGINS
+    managed = {path.name for path in base.iterdir()
+               if path.is_dir() and (path / GENERATED_FILE).is_file()} if base.is_dir() else set()
     marker = base / GENERATED_FILE
     if _read(marker) == "marketplace\n":
+        try:
+            marketplace = json.loads(_read(base / "marketplace.json") or "{}")
+        except json.JSONDecodeError:
+            marketplace = {}
+        managed.update(entry.get("name") for entry in marketplace.get("plugins", [])
+                       if isinstance(entry, dict) and entry.get("name"))
+    return managed
+
+
+def cleanup_legacy_codex_plugins(plan: Plan) -> set:
+    base = plan.root / LEGACY_CODEX_PLUGINS
+    managed = _legacy_codex_managed(plan.root)
+    marker = base / GENERATED_FILE
+    _prune(plan, base, set())
+    if _read(marker) == "marketplace\n":
         plan.remove(marker, "legacy marketplace marker")
+    return managed
 
 
 # ── hooks ────────────────────────────────────────────────────────────────────
@@ -578,9 +717,34 @@ def _name_conflicts(root: Path, plugin_skills: dict) -> list:
     return sorted(skills & commands)
 
 
+def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
+    if "codex" in agents:
+        for command in _command_files(root):
+            _require_generated_or_absent(root / CODEX_COMMAND_SKILLS / command.stem,
+                                         "Codex 命令 SKILL")
+        for plugin in plugins:
+            if (plugin / "skills").is_dir():
+                _require_generated_or_absent(root / CODEX_PLUGIN_SKILLS / plugin.name,
+                                             "Codex 插件 SKILL 目录")
+    if "dsh" in agents:
+        destination = root / DSH_COMMANDS
+        previous = _generated_names(destination / GENERATED_FILE)
+        for command in _command_files(root):
+            target = destination / command.name
+            if ((target.exists() or target.is_symlink()) and command.name not in previous
+                    and not _is_generated(target)):
+                raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
+    if "codex" in agents or "dsh" in agents:
+        desired = _base_skill_dirs(root)
+        if "dsh" in agents:
+            desired = {**desired, **plugin_skills}
+        for name in desired:
+            _require_generated_or_absent(root / SHARED_SKILLS / name, "SKILL 入口")
+
+
 def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     plugins = _plugin_dirs(root)
-    plugin_skills = _plugin_skill_dirs(plugins) if "dsh" in agents else {}
+    plugin_skills = _plugin_skill_dirs(plugins) if ({"codex", "dsh"} & set(agents)) else {}
     public_skills = set(_base_skill_dirs(root))
     skill_clash = sorted(public_skills & set(plugin_skills))
     if skill_clash:
@@ -588,13 +752,19 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     clash = _name_conflicts(root, plugin_skills)
     if clash:
         raise SystemExit(f"[agent_sync] 命令与 SKILL 同名冲突：{', '.join(clash)}，请改名其一")
+    all_servers = _plugin_servers(plugins)
+    _validate_targets(root, agents, plugins, plugin_skills)
+    if "codex" in agents:
+        _validate_codex_mcp(root, all_servers)
+    if "dsh" in agents:
+        _validate_dsh_mcp(root, all_servers)
 
     plan = Plan(root, apply, mode)
     sync_memory(plan, agents)
     for agent in agents:
         sync_hooks(plan, agent)
+    legacy_plugins = cleanup_legacy_codex_plugins(plan)
     generated = []
-    all_servers = _plugin_servers(plugins)
 
     if "claude" in agents:
         generated += sync_skill_dir(plan, CLAUDE_SKILLS)
@@ -614,21 +784,20 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     if "codex" in agents:
         generated += sync_codex_commands(plan)
         generated += sync_codex_plugin_skills(plan, plugins)
-        sync_codex_mcp(plan, all_servers)
+        sync_codex_mcp(plan, all_servers, legacy_plugins)
     else:
         _prune(plan, root / CODEX_COMMAND_SKILLS, set())
         sync_codex_plugin_skills(plan, [])
-        sync_codex_mcp(plan, {})
+        sync_codex_mcp(plan, {}, legacy_plugins)
 
     if "dsh" in agents:
         generated += sync_file_commands(plan, DSH_COMMANDS)
-        generated += sync_dsh_mcp(plan, all_servers, set(all_servers))
+        generated += sync_dsh_mcp(plan, all_servers)
     else:
         sync_file_commands(plan, DSH_COMMANDS, enabled=False)
-        generated += sync_dsh_mcp(plan, {}, set(all_servers))
+        generated += sync_dsh_mcp(plan, {})
 
     _prune(plan, root / ".dsh/skills", set())
-    cleanup_legacy_codex_plugins(plan)
     sync_gitignore(plan, generated)
     return {"agents": agents, "mode": mode, "applied": apply,
             "drift": bool(plan.actions), "actions": plan.actions}

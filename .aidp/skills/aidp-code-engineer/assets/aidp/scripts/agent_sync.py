@@ -7,7 +7,7 @@
 | Agent | 公共 SKILL | 命令入口 | chrome-devtools-mcp |
 |-------|------------|----------|---------------------|
 | Claude Code | `.claude/skills/` | `.claude/commands/*.md` | `.claude/plugins/<name>/` |
-| Codex | `.agents/skills/` | `.codex/aidp/skills/<command>/SKILL.md` | `.codex/skills/<name>/skills/` + `.codex/config.toml` MCP |
+| Codex | `.agents/skills/` | `.codex/skills/aidp/<command>/SKILL.md` | `.codex/skills/<name>/skills/` + `.codex/config.toml` MCP |
 | DeepSeek Harness | `.agents/skills/` | `.dsh/commands/*.md` | 插件 SKILL 合并进 `.agents/skills/` + `.dsh/mcp.json` |
 
 `.aidp/commands/`、`.aidp/skills/`、`.aidp/plugins/` 始终是唯一真源。生成入口使用相对符号链接，
@@ -47,12 +47,14 @@ OBSOLETE_ROUTER = "aidp-cmd"
 CLAUDE_SKILLS = ".claude/skills"
 SHARED_SKILLS = ".agents/skills"
 CLAUDE_COMMANDS = ".claude/commands"
-CODEX_COMMAND_SKILLS = ".codex/aidp/skills"
+CODEX_COMMAND_SKILLS = ".codex/skills/aidp"
+LEGACY_CODEX_COMMAND_SKILLS = ".codex/aidp/skills"
 DSH_COMMANDS = ".dsh/commands"
 PLUGINS_SRC = "plugins"
 CLAUDE_PLUGINS = ".claude/plugins"
 CODEX_PLUGIN_SKILLS = ".codex/skills"
 OPENAI_YAML = "policy:\n  allow_implicit_invocation: false\n"
+CODEX_BODY_MARKER = "## 原始命令正文（逐字保真）\n\n"
 CODEX_MCP_BEGIN = "# >>> AIDP-MCP {name} >>>"
 CODEX_MCP_END = "# <<< AIDP-MCP {name} <<<"
 DSH_MCP_MANAGED = ".dsh/.aidp-mcp-servers.json"
@@ -230,6 +232,19 @@ def _command_description(name: str, text: str) -> str:
     return (match.group(1).strip() if match else f"AIDP command {name}").replace('"', "'")
 
 
+def _codex_command_preamble(name: str) -> str:
+    return (
+        "## Codex 命令适配规则\n\n"
+        f"1. 用户以 `${name} args` 调用本命令时，`args` 的全部文字原样作为本命令的 `$ARGUMENTS`；"
+        "不增删、不改写、不调整顺序与引号。\n"
+        "2. 当下方原始命令正文明确调用或串联 `/foo args` 时，不依赖隐式 SKILL 调用，而是读取 "
+        "`.aidp/commands/<命令名>.md`（此处命令名为 `foo`）。确认文件存在后，将 `args` 原样作为"
+        "子命令的 `$ARGUMENTS`，在当前执行链内联执行。\n"
+        "3. 被引用的命令文件不存在、命令名未知或无法唯一映射时，必须 fail closed：停止执行并报告未知命令，严禁猜测或跳过。\n"
+        "4. 本适配层只负责参数传递和命令串联；不得改写下方原始命令正文。\n\n"
+    )
+
+
 def codex_command_skill(name: str, command_text: str) -> str:
     return (
         "---\n"
@@ -238,7 +253,9 @@ def codex_command_skill(name: str, command_text: str) -> str:
         "disable-model-invocation: true\n"
         "user-invocable: true\n"
         "---\n\n"
-        f"{command_text.rstrip()}\n"
+        f"{_codex_command_preamble(name)}"
+        f"{CODEX_BODY_MARKER}"
+        f"{command_text}"
     )
 
 
@@ -253,7 +270,16 @@ def _is_generated(p: Path) -> bool:
 
 
 def _prune(plan: Plan, base: Path, wanted: set):
-    """清理本脚本生成、但已不需要的入口（只动自己生成的，不碰用户自有内容）。"""
+    """只遍历 root 内无 symlink 祖先的真实目录，绝不跨越适配边界。"""
+    try:
+        relative = base.relative_to(plan.root)
+    except ValueError:
+        return
+    current = plan.root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return
     if not base.is_dir():
         return
     for p in sorted(base.iterdir()):
@@ -856,6 +882,16 @@ def _validate_claude_plugins(root: Path, plugins: list):
                 raise SystemExit(f"[agent_sync] Claude enabledPlugins 用户配置冲突：{key}")
 
 
+def _validate_real_namespace(root: Path, rel: str, label: str):
+    current = root
+    for part in Path(rel).parts:
+        current = current / part
+        if current.is_symlink():
+            raise SystemExit(f"[agent_sync] {label} 必须位于真实目录，拒绝 symlink：{current}")
+        if current.exists() and not current.is_dir():
+            raise SystemExit(f"[agent_sync] {label} 必须位于真实目录，发现非目录：{current}")
+
+
 def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
     if "claude" in agents:
         for name in _base_skill_dirs(root):
@@ -871,6 +907,7 @@ def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: di
             _require_generated_or_absent(root / CLAUDE_PLUGINS / plugin.name,
                                          "Claude 插件目录")
     if "codex" in agents:
+        _validate_real_namespace(root, CODEX_COMMAND_SKILLS, "Codex 命令 namespace")
         for command in _command_files(root):
             _require_generated_or_absent(root / CODEX_COMMAND_SKILLS / command.stem,
                                          "Codex 命令 SKILL")
@@ -951,6 +988,7 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
         sync_file_commands(plan, DSH_COMMANDS, enabled=False)
         generated += sync_dsh_mcp(plan, {})
 
+    _prune(plan, root / LEGACY_CODEX_COMMAND_SKILLS, set())
     _prune(plan, root / ".dsh/skills", set())
     sync_gitignore(plan, generated)
     return {"agents": agents, "mode": mode, "applied": apply,
@@ -989,7 +1027,7 @@ def _self_check() -> int:
         checks = {
             "memory": _read(root / "AGENTS.md") == "# 正文\n" and _is_shell(_read(root / "CLAUDE.md")),
             "claude command": (root / ".claude/commands/sprint-dev.md").is_file(),
-            "codex command": (root / ".codex/aidp/skills/sprint-dev/SKILL.md").is_file(),
+            "codex command": (root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file(),
             "dsh command": (root / ".dsh/commands/sprint-dev.md").is_file(),
             "shared skill": (root / ".agents/skills/demo/SKILL.md").is_file(),
             "no router": not (root / ".agents/skills/aidp-cmd").exists(),

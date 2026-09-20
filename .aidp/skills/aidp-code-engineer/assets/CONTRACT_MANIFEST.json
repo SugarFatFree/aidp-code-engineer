@@ -148,7 +148,7 @@
     "plugins/chrome-devtools-mcp/skills/memory-leak-debugging/references/memlab.md": "048d3f1f733e036a0db513470cbbc22247884cf14e5b473f08977ba61b761b44",
     "plugins/chrome-devtools-mcp/skills/troubleshooting/SKILL.md": "f7deca2af0ea0f6519b350a0fcb1e05d948228eac86f23d71ff3985508cf331f",
     "reference/README.md": "bb773c95e49e64126baa2bda14a3abb554973950621b8f9ce32af67170f57eb1",
-    "reference/agent-tools.md": "3a250e87090a7c03b8dbe600794879896d8b21f3b1a9974c97d13c3560bc6f00",
+    "reference/agent-tools.md": "adb287359c6c6513b53dc0117567062f5dcbe172e03e1b6310b3314a3d3f1b73",
     "reference/skills.md": "fdf027eca8c105ea07201d6d6aaf7b4b5ca5d89234212f6f5be66c8d5f6f424c",
     "reference/上游调用日志参考实现.md": "d589cb6bda11bc970c60f507f3bc2bd91526f358e9fa70466e3fa0a82379f38f",
     "reference/初始化与文档索引.md": "fc1f3d0e90fac9adcc6978dd7882ffac89f2bc4a8fa10de0be74d82bd25dee4f",

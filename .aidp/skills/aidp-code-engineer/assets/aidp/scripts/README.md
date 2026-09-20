@@ -265,12 +265,12 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 ## agent_sync.py — `.aidp/` 单一信源 → 各 Agent 工具入口装配（确定性、幂等）
 
-按 `agent_env.py` 的检测结果生成 Claude Code（`.claude/skills|commands|plugins`、`.claude/settings.json`）、Codex（公共 `.agents/skills`、命令 `.codex/aidp/skills`、插件 `.codex/skills`、`.codex/hooks.json` / `config.toml`）、DeepSeek Harness（公共与插件 `.agents/skills`、`.dsh/commands`、`.dsh/hooks.json` / `mcp.json`）入口；生成入口登记进根 `.gitignore` 托管块、不入库。入口默认是相对符号链接，`--mode copy` 时为副本；改规则永远改 `.aidp/` 后重跑。同时负责项目记忆文件形态（`CLAUDE.md` / `AGENTS.md` / `@AGENTS.md` 薄壳）切换，⛔ 绝不丢弃正文。适配层配置由本脚本生成，不进脚手架 bundle 镜像。
+按 `agent_env.py` 的检测结果生成 Claude Code（`.claude/skills|commands|plugins`、`.claude/settings.json`）、Codex（公共 `.agents/skills`、官方命令根 `.codex/skills/aidp`、插件 `.codex/skills`、`.codex/hooks.json` / `config.toml`）、DeepSeek Harness（公共与插件 `.agents/skills`、`.dsh/commands`、`.dsh/hooks.json` / `mcp.json`）入口；生成入口登记进根 `.gitignore` 托管块、不入库。Codex 命令 SKILL 确定性声明内联串联规则：原始正文中的 `/foo args` 读取 `.aidp/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 执行，未知命令 fail closed。入口默认是相对符号链接，`--mode copy` 时为副本；改规则永远改 `.aidp/` 后重跑。同时负责项目记忆文件形态（`CLAUDE.md` / `AGENTS.md` / `@AGENTS.md` 薄壳）切换，⛔ 绝不丢弃正文。适配层配置由本脚本生成，不进脚手架 bundle 镜像。
 用法：`python3 .aidp/scripts/agent_sync.py [--agents claude,codex,dsh] [--mode copy] [--check] [--human]`；`--self-check` 自测。退出码：`0`=已一致/已写入；`1`=`--check` 发现漂移；`2`=参数、环境或用户自有目标冲突。
 
 ## agent_loop.sh — 非交互唤起 AIDP 命令
 
-`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（路由 SKILL 原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过）、日志追加到 `memory/.aidp/logs/<命令>.log`。
+`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过）、日志追加到 `memory/.aidp/logs/<命令>.log`。
 Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 取 `agent_env.py detect` 第一个）；执行模板（`{prompt}` 占位）：`AIDP_AGENT_EXEC` > `scheduler.exec.<agent>` > 内置默认（Claude Code `claude -p --permission-mode acceptEdits {prompt}`、Codex `codex exec --sandbox workspace-write {prompt}`；DeepSeek Harness 无内置默认、须配置，写法以所用版本官方文档为准）。
 
 ## aidp_scheduler.py — 7×24 操作系统调度装配（开发链路 + 测试链路）

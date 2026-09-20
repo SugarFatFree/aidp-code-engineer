@@ -249,6 +249,21 @@ class Backup:
         if first:
             self.rep.act("backup", self.dir.name, "覆盖前逐文件备份")
 
+    def save_tree(self, rel: str):
+        """删除目录前备份整棵子树；失败由调用方决定是否保留源目录。"""
+        src = self.root / rel
+        if not src.is_dir() or src.is_symlink():
+            return None
+        first = self.dir is None
+        dst = self._ensure_dir() / rel
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dst, symlinks=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        if first:
+            self.rep.act("backup", self.dir.name, "删除前目录备份")
+        return dst
+
 
 # ── 契约 ────────────────────────────────────────────────────────────────────
 def gate_decision(proj_raw, scaffold_raw, pending, queue_nonempty, force) -> str:
@@ -294,6 +309,110 @@ def installed_manifest(root: Path):
         return None
 
 
+LEGACY_ROUTER_REL = ".aidp/skills/aidp-cmd"
+LEGACY_ROUTER_MARK = "<!-- 命令表由 .aidp/scripts/agent_sync.py 按 .aidp/commands/ 维护；改命令请改 .aidp/commands/ 后重跑该脚本 -->"
+LEGACY_ROUTER_OPENAI_YAML = "policy:\n  allow_implicit_invocation: false\n"
+
+
+def _legacy_frontmatter(text: str) -> dict:
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.S)
+    out = {}
+    if not m:
+        return out
+    for line in m.group(1).splitlines():
+        kv = re.match(r"^([A-Za-z_-]+)\s*:\s*(.*)$", line)
+        if kv:
+            out[kv.group(1)] = kv.group(2).strip().strip('"').strip("'")
+    return out
+
+
+def _legacy_title_description(text: str) -> str:
+    m = re.search(r"^#\s+/?[\w-]+\s*[—-]+\s*(.+?)\s*$", text, re.M)
+    if not m:
+        return ""
+    desc = re.sub(r"[（(]\s*★\s*[)）]|★", "", m.group(1)).strip()
+    return f"AIDP 命令：{desc}"
+
+
+def _legacy_router_skill(root: Path) -> str:
+    commands = []
+    source = root / ".aidp/commands"
+    if source.is_dir():
+        for command in sorted(source.glob("*.md")):
+            if command.stem.upper() == "README":
+                continue
+            text = L.read_text(command)
+            fm = _legacy_frontmatter(text)
+            desc = fm.get("description") or _legacy_title_description(text) or f"AIDP 命令 /{command.stem}"
+            commands.append((command.stem, desc.replace('"', "'"), fm.get("argument-hint", "")))
+    with_hint = any(hint for _name, _desc, hint in commands)
+    if with_hint:
+        head = "| 命令 | 用途 | 参数格式 |\n|------|------|---------|\n"
+        rows = "\n".join(f"| `{name}` | {desc} | {hint or '见命令文件「参数」段'} |"
+                         for name, desc, hint in commands)
+    else:
+        head = "| 命令 | 用途 |\n|------|------|\n"
+        rows = "\n".join(f"| `{name}` | {desc} |" for name, desc, _hint in commands)
+    names = " / ".join(name for name, _desc, _hint in commands)
+    return (
+        "---\n"
+        "name: aidp-cmd\n"
+        f'description: "AIDP 命令统一入口：aidp-cmd <命令> [参数]。可用命令：{names}"\n'
+        "disable-model-invocation: true\n"
+        "user-invocable: true\n"
+        "---\n"
+        f"{LEGACY_ROUTER_MARK}\n\n"
+        "# aidp-cmd — AIDP 命令入口\n\n"
+        "本 SKILL 是本项目全部 AIDP 命令的统一入口，**仅由用户显式调用**。\n\n"
+        "## 调用方式\n\n"
+        "    aidp-cmd <命令> [参数…]\n\n"
+        "## 参数解析规则（确定性，⛔ 不做任何推断）\n\n"
+        "1. 调用文字去掉开头的 `aidp-cmd`（连同 `$` / `/` 前缀）后，**第一个词 = 命令名**。\n"
+        "2. 命令名之后的**全部文字原样**作为该命令的参数 `$ARGUMENTS`：不增删、不改写、不调整顺序与引号；"
+        "没有其余文字时 `$ARGUMENTS` 为空串。\n"
+        "3. 命令文件里出现的 `$ARGUMENTS`、`${ARGUMENTS}`、`${ARGUMENTS:-}` 一律**按文本替换**为第 2 步得到的参数原文；"
+        "⛔ 不从环境变量、上下文或历史对话里另找参数。\n\n"
+        "示例：`aidp-cmd sprint-autopilot --unattended --no-loop` → 命令名 `sprint-autopilot`，"
+        "`$ARGUMENTS` = `--unattended --no-loop`。\n\n"
+        "## 执行步骤\n\n"
+        "1. 按上面的规则取命令名与 `$ARGUMENTS`。\n"
+        "2. 命令名不在下表中，或调用时没给命令名 → 把下表列给用户、请其选择，⛔ 不要猜。\n"
+        "3. 完整读取 `.aidp/commands/<命令名>.md`，代入 `$ARGUMENTS` 后按其内容逐步执行（该文件是命令的唯一权威，"
+        "参数格式见其开头的「参数」段）。\n"
+        "4. 文中出现的 Claude Code 专有工具名，按 `.aidp/reference/agent-tools.md` 换成当前 Agent 的等价能力。\n\n"
+        "## 可用命令\n\n"
+        f"{head}{rows}\n"
+    )
+
+
+def _legacy_router_is_generated(root: Path, router: Path) -> bool:
+    skill = router / "SKILL.md"
+    policy = router / "agents/openai.yaml"
+    return (skill.is_file() and policy.is_file()
+            and L.read_text(skill) == _legacy_router_skill(root)
+            and L.read_text(policy) == LEGACY_ROUTER_OPENAI_YAML)
+
+
+def cleanup_obsolete_router(root: Path, mode: str, bk: "Backup", rep: Report):
+    if mode not in ("migrate", "upgrade"):
+        return
+    router = root / LEGACY_ROUTER_REL
+    if not router.is_dir() or router.is_symlink():
+        return
+    if not _legacy_router_is_generated(root, router):
+        try:
+            saved = bk.save_tree(LEGACY_ROUTER_REL)
+        except OSError as exc:
+            rep.warn(f"旧命令路由备份失败，已保留原目录：{exc}")
+            return
+        if saved is None:
+            rep.warn("旧命令路由无法备份，已保留原目录")
+            return
+        rep.warn(f"旧命令路由已备份：{saved.relative_to(root).as_posix()}")
+    shutil.rmtree(router)
+    rep.act("remove", LEGACY_ROUTER_REL + "/", "原生命令适配不再使用统一路由")
+
+
 def sync_gated(root: Path, decision: str, rep: Report, bk: "Backup" = None, old_files=None):
     """契约同步。`old_files` = 上一版安装的契约指纹：`overwrite` 时据此列出「本地改过、被新版覆盖」的文件。"""
     local_overwritten = []
@@ -304,6 +423,8 @@ def sync_gated(root: Path, decision: str, rep: Report, bk: "Backup" = None, old_
     for d in L.GATED_DIRS:
         for rel, sp in L.iter_files(L.BUNDLE_AIDP / d):
             label = f"{d}/{rel}"
+            if label.startswith("skills/aidp-cmd/"):
+                continue
             dp = root / ".aidp" / d / rel
             new = sp.read_bytes()
             if label in L.USER_FILLABLE_CONTRACTS and dp.is_file():
@@ -326,7 +447,7 @@ def sync_gated(root: Path, decision: str, rep: Report, bk: "Backup" = None, old_
                 rep.act("create", f".aidp/{label}")
             elif decision == "overwrite":
                 cur = dp.read_bytes() if dp.is_file() else None
-                if cur is not None and cur != new and old_files is not None and not L.is_fingerprint_exempt(label) \
+                if cur is not None and cur != new and old_files is not None \
                         and old_files.get(label) != L.sha256(cur):
                     local_overwritten.append(f".aidp/{label}")
                 if bk and cur != new:
@@ -709,6 +830,7 @@ def run(root: Path, a) -> dict:
             (root / rel).mkdir(parents=True, exist_ok=True)
 
     local_overwritten = sync_gated(root, decision, rep, bk, old_files)
+    cleanup_obsolete_router(root, mode, bk, rep)
     sync_scripts(root, rep)
     sync_docs(root, was_aidp, rep, bk)
     sync_config(root, ctx, rep, bk)

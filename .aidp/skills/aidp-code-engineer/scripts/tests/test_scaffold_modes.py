@@ -15,6 +15,7 @@ import _helpers as H
 import scaffold as S
 import scaffold_lib as L
 import scaffold_marker
+import verify as V
 
 BUNDLE_VERSION = L.bundle_version()
 
@@ -396,16 +397,104 @@ class OptionalRuleRefreshTest(unittest.TestCase):
             self.assertNotIn(f".aidp/{inst_rel}", res["orphans"], "已安装的可选规则不算孤儿")
 
 
-class RouterExemptTest(unittest.TestCase):
-    def test_downstream_extra_command_is_not_contract_drift(self):
+class NativeAdapterVerifyTest(unittest.TestCase):
+    def test_copy_mode_detects_codex_and_dsh_native_entries(self):
         with H.TempRepo() as root:
-            scaffold(root, "--version", "V0.1.0", "--agent", "codex")
-            (root / ".aidp/commands/team-deploy.md").write_text("# /team-deploy — 团队部署\n", encoding="utf-8")
-            subprocess.run([sys.executable, str(root / ".aidp/scripts/agent_sync.py"), "--root", str(root)],
-                           capture_output=True, text=True, env=H.clean_env(), check=True)
-            self.assertIn("team-deploy", (root / ".aidp/skills/aidp-cmd/SKILL.md").read_text(encoding="utf-8"))
-            rc, errors, out = H.verify(root)
-            self.assertNotIn("aidp-cmd", "\n".join(l for l in out.splitlines() if "[WARN]" in l), out)
+            codex = root / ".codex/aidp/skills/sprint-dev"
+            codex.mkdir(parents=True)
+            (codex / "SKILL.md").write_text("---\nname: sprint-dev\n---\n", encoding="utf-8")
+            self.assertEqual(V._adapter_mode(root, None), "copy")
+
+        with H.TempRepo() as root:
+            dsh = root / ".dsh/commands"
+            dsh.mkdir(parents=True)
+            (dsh / "sprint-dev.md").write_text("# sprint-dev\n", encoding="utf-8")
+            self.assertEqual(V._adapter_mode(root, None), "copy")
+
+        with H.TempRepo() as root:
+            plugin = root / ".codex/skills/chrome-devtools-mcp/skills/chrome-devtools"
+            plugin.mkdir(parents=True)
+            (plugin / "SKILL.md").write_text("---\nname: chrome-devtools\n---\n", encoding="utf-8")
+            self.assertEqual(V._adapter_mode(root, None), "copy")
+
+    def test_template_verify_has_no_router_source_check(self):
+        self.assertFalse(hasattr(V, "check_router_source"))
+
+
+class ObsoleteRouterMigrationTest(unittest.TestCase):
+    MARKER = "<!-- 命令表由 .aidp/scripts/agent_sync.py 按 .aidp/commands/ 维护 -->\n"
+
+    @staticmethod
+    def _options(mode="upgrade"):
+        return Namespace(
+            mode=mode, agent="claude", json=True, user=None, name_cn=None,
+            version="V0.1.0", force=False, keep_backups=L.PRUNE_KEEP_LAST_DEFAULT,
+            keep_days=L.PRUNE_KEEP_DAYS_DEFAULT, no_agent_sync=True, adapter_mode="link")
+
+    @classmethod
+    def _router(cls, root, modified=False):
+        router = root / ".aidp/skills/aidp-cmd"
+        (router / "agents").mkdir(parents=True, exist_ok=True)
+        body = S._legacy_router_skill(root)
+        if modified:
+            body += "\n项目自定义路由内容\n"
+        (router / "SKILL.md").write_text(body, encoding="utf-8")
+        (router / "agents/openai.yaml").write_text(S.LEGACY_ROUTER_OPENAI_YAML, encoding="utf-8")
+        return router
+
+    def test_upgrade_removes_generated_router_without_extra_backup(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--no-agent-sync")
+            router = self._router(root)
+            before = len(L.scan_backups(root))
+            res = S.run(root, self._options())
+            self.assertFalse(router.exists())
+            self.assertEqual(len(L.scan_backups(root)), before)
+            self.assertTrue(any(a["op"] == "remove" and a["path"] == ".aidp/skills/aidp-cmd/"
+                                for a in res["actions"]), res["actions"])
+
+    def test_modified_router_is_backed_up_then_removed(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--no-agent-sync")
+            router = self._router(root, modified=True)
+            res = S.run(root, self._options())
+            self.assertFalse(router.exists())
+            self.assertTrue(res["backup"], res)
+            saved = root / res["backup"] / ".aidp/skills/aidp-cmd/SKILL.md"
+            self.assertIn("项目自定义路由内容", saved.read_text(encoding="utf-8"))
+            self.assertTrue(any("旧命令路由已备份" in w and res["backup"] in w for w in res["warnings"]),
+                            res["warnings"])
+
+    def test_backup_failure_preserves_modified_router(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--no-agent-sync")
+            router = self._router(root, modified=True)
+            original = (router / "SKILL.md").read_text(encoding="utf-8")
+            with mock.patch.object(S.shutil, "copytree", side_effect=OSError("disk full")):
+                res = S.run(root, self._options())
+            self.assertTrue(router.is_dir())
+            self.assertEqual((router / "SKILL.md").read_text(encoding="utf-8"), original)
+            self.assertTrue(any("旧命令路由备份失败" in w and "disk full" in w for w in res["warnings"]),
+                            res["warnings"])
+
+    def test_missing_router_is_noop_and_init_does_not_migrate(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--no-agent-sync")
+            shutil.rmtree(root / ".aidp/skills/aidp-cmd", ignore_errors=True)
+            res = S.run(root, self._options())
+            self.assertFalse(any("旧命令路由" in w for w in res["warnings"]), res["warnings"])
+
+        with H.TempRepo() as root:
+            router = self._router(root, modified=True)
+            S.cleanup_obsolete_router(root, "init", S.Backup(root, S.Report()), S.Report())
+            self.assertTrue(router.is_dir())
+
+    def test_explicit_migrate_cleans_generated_router(self):
+        with H.TempRepo() as root:
+            router = self._router(root)
+            res = S.run(root, self._options("migrate"))
+            self.assertEqual(res["mode"], "migrate")
+            self.assertFalse(router.exists())
 
 
 class VerifyIsolationTest(unittest.TestCase):

@@ -58,6 +58,9 @@ CODEX_MCP_END = "# <<< AIDP-MCP {name} <<<"
 DSH_MCP_MANAGED = ".dsh/.aidp-mcp-servers.json"
 CLAUDE_PLUGIN_MANAGED = ".claude/.aidp-plugins.json"
 LEGACY_CODEX_PLUGINS = ".agents/plugins"
+CODEX_MCP_SUPPORTED_FIELDS = {
+    "command", "args", "url", "enabled", "startup_timeout_sec", "tool_timeout_sec",
+}
 GITIGNORE_BEGIN = "# >>> AIDP-AGENT-ADAPTERS（由 .aidp/scripts/agent_sync.py 生成，勿手改）>>>"
 GITIGNORE_END = "# <<< AIDP-AGENT-ADAPTERS <<<"
 
@@ -549,6 +552,12 @@ def _without_codex_managed_mcp(text: str) -> str:
 def _validate_codex_mcp(root: Path, servers: dict):
     text = _without_codex_managed_mcp(_read(root / ".codex/config.toml"))
     for name, config in sorted(servers.items()):
+        if not isinstance(config, dict):
+            raise SystemExit(f"[agent_sync] Codex MCP server {name} 配置必须是对象")
+        unsupported = sorted(set(config) - CODEX_MCP_SUPPORTED_FIELDS)
+        if unsupported:
+            raise SystemExit(
+                f"[agent_sync] Codex MCP server {name} 含未支持字段：{', '.join(unsupported)}")
         existing = _toml_section(text, f"mcp_servers.{name}")
         if existing is not None and not _mcp_matches(existing, config):
             raise SystemExit(f"[agent_sync] Codex 未受管 MCP server 配置冲突：{name}")
@@ -623,13 +632,16 @@ def sync_dsh_mcp(plan: Plan, servers: dict) -> list:
         current[name] = config
         managed.add(name)
 
-    data["mcpServers"] = current
-    generated = []
     if current:
+        data["mcpServers"] = current
+    else:
+        data.pop("mcpServers", None)
+    generated = []
+    if data:
         plan.write_text(path, _json_dump(data))
         generated.append(".dsh/mcp.json")
     elif path.is_file():
-        plan.remove(path, "no MCP servers remain")
+        plan.remove(path, "no DSH MCP configuration remains")
     if managed:
         plan.write_text(marker, json.dumps(sorted(managed), ensure_ascii=False) + "\n")
         generated.append(DSH_MCP_MANAGED)
@@ -717,8 +729,84 @@ def _name_conflicts(root: Path, plugin_skills: dict) -> list:
     return sorted(skills & commands)
 
 
+def _json_object(path: Path, label: str) -> dict:
+    try:
+        value = json.loads(_read(path) or "{}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"[agent_sync] {label} JSON 非法：{exc}")
+    if not isinstance(value, dict):
+        raise SystemExit(f"[agent_sync] {label} 类型错误：顶层必须是对象")
+    return value
+
+
+def _validate_hooks(root: Path, agents: list):
+    if not (root / STOP_GUARD_REL).is_file():
+        return
+    paths = {"claude": root / ".claude/settings.json",
+             "codex": root / ".codex/hooks.json",
+             "dsh": root / ".dsh/hooks.json"}
+    for agent in agents:
+        path = paths[agent]
+        if path.exists():
+            _json_object(path, f"{agent} hooks {path}")
+
+
+def _validate_claude_plugins(root: Path, plugins: list):
+    marker_path = root / CLAUDE_PLUGIN_MANAGED
+    settings_path = root / ".claude/settings.json"
+    if not plugins and not marker_path.is_file():
+        return
+    settings = _json_object(settings_path, "Claude settings")
+    marker = _json_object(marker_path, "Claude plugin marker") if marker_path.is_file() else {}
+    for field in ("marketplaces", "enabledPlugins"):
+        values = marker.get(field, [])
+        if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+            raise SystemExit(f"[agent_sync] Claude plugin marker 字段类型错误：{field}")
+    markets = settings.get("extraKnownMarketplaces", {})
+    enabled = settings.get("enabledPlugins", {})
+    if not isinstance(markets, dict):
+        raise SystemExit("[agent_sync] Claude settings 字段类型错误：extraKnownMarketplaces 必须是对象")
+    if not isinstance(enabled, dict):
+        raise SystemExit("[agent_sync] Claude settings 字段类型错误：enabledPlugins 必须是对象")
+    markets = dict(markets)
+    enabled = dict(enabled)
+    for key in marker.get("marketplaces", []):
+        markets.pop(key, None)
+    for key in marker.get("enabledPlugins", []):
+        enabled.pop(key, None)
+
+    for plugin in plugins:
+        marketplace_path = plugin / ".claude-plugin/marketplace.json"
+        marketplace = _json_object(marketplace_path, f"Claude marketplace {marketplace_path}") \
+            if marketplace_path.is_file() else {}
+        name = marketplace.get("name") or f"{plugin.name}-marketplace"
+        entries = marketplace.get("plugins", [{"name": plugin.name}])
+        if not isinstance(name, str) or not isinstance(entries, list) \
+                or any(not isinstance(entry, dict) for entry in entries):
+            raise SystemExit(f"[agent_sync] Claude marketplace 字段类型错误：{marketplace_path}")
+        desired = {"source": {"source": "directory", "path": f"./{CLAUDE_PLUGINS}/{plugin.name}"}}
+        if name in markets and markets[name] != desired:
+            raise SystemExit(f"[agent_sync] Claude marketplace 用户配置冲突：{name}")
+        for entry in entries:
+            plugin_name = entry.get("name", plugin.name)
+            if not isinstance(plugin_name, str):
+                raise SystemExit(f"[agent_sync] Claude marketplace 字段类型错误：{marketplace_path}")
+            key = f"{plugin_name}@{name}"
+            if key in enabled and enabled[key] is not True:
+                raise SystemExit(f"[agent_sync] Claude enabledPlugins 用户配置冲突：{key}")
+
+
 def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
     if "claude" in agents:
+        for name in _base_skill_dirs(root):
+            _require_generated_or_absent(root / CLAUDE_SKILLS / name, "Claude SKILL 入口")
+        destination = root / CLAUDE_COMMANDS
+        previous = _generated_names(destination / GENERATED_FILE)
+        for command in _command_files(root):
+            target = destination / command.name
+            if ((target.exists() or target.is_symlink()) and command.name not in previous
+                    and not _is_generated(target)):
+                raise SystemExit(f"[agent_sync] Claude 命令目标已存在用户内容，拒绝覆盖：{target}")
         for plugin in plugins:
             _require_generated_or_absent(root / CLAUDE_PLUGINS / plugin.name,
                                          "Claude 插件目录")
@@ -758,6 +846,8 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
         raise SystemExit(f"[agent_sync] 命令与 SKILL 同名冲突：{', '.join(clash)}，请改名其一")
     all_servers = _plugin_servers(plugins)
     _validate_targets(root, agents, plugins, plugin_skills)
+    _validate_hooks(root, agents)
+    _validate_claude_plugins(root, plugins if "claude" in agents else [])
     if "codex" in agents:
         _validate_codex_mcp(root, all_servers)
     if "dsh" in agents:

@@ -677,6 +677,168 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
+    # DSH 最后一个受管 server 删除时保留其他顶层配置
+    root = _mkrepo(markers=(".dsh",))
+    try:
+        plugin = _add_browser_plugin(root)
+        _run(SYNC_PY, "--root", str(root), "--agents", "dsh")
+        mcp_path = root / ".dsh/mcp.json"
+        data = json.loads(_read(mcp_path))
+        data["transport"] = {"mode": "stdio", "timeout": 30}
+        mcp_path.write_text(json.dumps(data), encoding="utf-8")
+        shutil.rmtree(plugin)
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "dsh")
+        after = json.loads(_read(mcp_path) or "{}")
+        check("DSH 最后受管 server 移除 → 仅删空 mcpServers、保留顶层配置",
+              rc == 0 and after == {"transport": {"mode": "stdio", "timeout": 30}})
+    finally:
+        _rm(root)
+
+    # Claude 目标与配置错误必须在 memory/hooks/适配层写入前 fail closed
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        user_skill = root / ".claude/skills/demo-skill/SKILL.md"
+        user_skill.parent.mkdir(parents=True)
+        user_skill.write_text("# user skill\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude SKILL 用户目标冲突 → 原子 fail closed",
+              rc == 2 and "用户" in out.get("error", "") and _read(user_skill) == "# user skill\n"
+              and _read(root / "CLAUDE.md") == BODY and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/commands").exists() and not (root / ".codex/hooks.json").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        user_command = root / ".claude/commands/sprint-dev.md"
+        user_command.parent.mkdir(parents=True)
+        user_command.write_text("# user command\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude command 用户目标冲突 → 原子 fail closed",
+              rc == 2 and "用户" in out.get("error", "") and _read(user_command) == "# user command\n"
+              and _read(root / "CLAUDE.md") == BODY and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/skills").exists() and not (root / ".codex/hooks.json").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        _add_browser_plugin(root)
+        settings = root / ".claude/settings.json"
+        settings.write_text("{bad json", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude settings 非法 → preflight 原子失败",
+              rc == 2 and "JSON" in out.get("error", "") and _read(settings) == "{bad json"
+              and _read(root / "CLAUDE.md") == BODY and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/plugins/chrome-devtools-mcp").exists()
+              and not (root / ".codex/hooks.json").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        _add_browser_plugin(root)
+        settings = root / ".claude/settings.json"
+        settings.write_text(json.dumps({"extraKnownMarketplaces": []}), encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude settings 字段类型错误 → preflight 原子失败",
+              rc == 2 and "类型" in out.get("error", "") and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/plugins/chrome-devtools-mcp").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        _add_browser_plugin(root)
+        settings = root / ".claude/settings.json"
+        settings.write_text(json.dumps({
+            "extraKnownMarketplaces": {
+                "chrome-devtools-plugins": {"source": {"source": "directory", "path": "./user"}}
+            }
+        }), encoding="utf-8")
+        original = _read(settings)
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude marketplace 用户配置冲突 → preflight 原子失败",
+              rc == 2 and "冲突" in out.get("error", "") and _read(settings) == original
+              and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/plugins/chrome-devtools-mcp").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        hooks = root / ".codex/hooks.json"
+        hooks.write_text("{bad hooks", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Agent hook JSON 非法 → preflight 原子失败",
+              rc == 2 and "hooks" in out.get("error", "") and _read(hooks) == "{bad hooks"
+              and _read(root / "CLAUDE.md") == BODY and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/commands").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        _add_browser_plugin(root)
+        marker = root / AS.CLAUDE_PLUGIN_MANAGED
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("[]", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude managed marker 类型错误 → preflight 原子失败",
+              rc == 2 and "marker" in out.get("error", "").lower()
+              and _read(marker) == "[]" and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/plugins/chrome-devtools-mcp").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        plugin = _add_browser_plugin(root)
+        marketplace = plugin / ".claude-plugin/marketplace.json"
+        marketplace.write_text("{bad json", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude marketplace 非法 → preflight 原子失败",
+              rc == 2 and "marketplace" in out.get("error", "").lower()
+              and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/plugins/chrome-devtools-mcp").exists()
+              and not (root / ".codex/hooks.json").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        plugin = _add_browser_plugin(root)
+        marketplace = plugin / ".claude-plugin/marketplace.json"
+        marketplace.write_text(json.dumps({"name": "chrome-devtools-plugins", "plugins": {}}),
+                               encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Claude marketplace 字段类型错误 → preflight 原子失败",
+              rc == 2 and "类型" in out.get("error", "") and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/plugins/chrome-devtools-mcp").exists())
+    finally:
+        _rm(root)
+
+    # Codex MCP 声明含未支持字段 → 写入前 fail closed，错误列出 server/字段
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        plugin = _add_browser_plugin(root)
+        manifest_path = plugin / ".claude-plugin/plugin.json"
+        manifest = json.loads(_read(manifest_path))
+        manifest["mcpServers"]["chrome-devtools"].update({
+            "env": {"TOKEN": "x"}, "cwd": "/tmp", "headers": {"X-Test": "1"},
+        })
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        error = out.get("error", "")
+        check("Codex MCP 未支持字段 → preflight 原子 fail closed",
+              rc == 2 and "chrome-devtools" in error and all(key in error for key in ("env", "cwd", "headers"))
+              and _read(root / "CLAUDE.md") == BODY and not (root / "AGENTS.md").exists()
+              and not (root / ".claude/plugins/chrome-devtools-mcp").exists()
+              and not (root / ".codex/config.toml").exists()
+              and not (root / ".codex/hooks.json").exists())
+    finally:
+        _rm(root)
+
     # 插件 copy 模式：三端均为内容完整的真实副本
     root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
     try:

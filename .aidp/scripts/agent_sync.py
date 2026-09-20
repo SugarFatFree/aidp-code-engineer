@@ -714,12 +714,9 @@ def sync_hooks(plan: Plan, agent: str):
     if agent == "codex":
         cfg = root / ".codex" / "config.toml"
         text = _read(cfg)
-        if not re.search(r"^\s*codex_hooks\s*=\s*true\s*$", text, re.M):
-            if re.search(r"^\s*\[features\]\s*$", text, re.M):
-                text = re.sub(r"^(\s*\[features\]\s*)$", r"\1\ncodex_hooks = true", text, count=1, flags=re.M)
-            else:
-                text = (text.rstrip() + "\n\n" if text.strip() else "") + "[features]\ncodex_hooks = true\n"
-            plan.write_text(cfg, text)
+        merged = _merge_codex_hook_flag(text)
+        if merged != text:
+            plan.write_text(cfg, merged)
 
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
@@ -739,6 +736,60 @@ def _json_object(path: Path, label: str) -> dict:
     return value
 
 
+def _validate_hook_structure(data: dict, path: Path):
+    hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise SystemExit(f"[agent_sync] hooks 结构错误：{path} 的 hooks 必须是对象")
+    stop = hooks.get("Stop", [])
+    if not isinstance(stop, list):
+        raise SystemExit(f"[agent_sync] hooks 结构错误：{path} 的 Stop 必须是数组")
+    for index, group in enumerate(stop):
+        if not isinstance(group, dict):
+            raise SystemExit(f"[agent_sync] hooks 结构错误：{path} Stop[{index}] 必须是对象")
+        entries = group.get("hooks", [])
+        if not isinstance(entries, list):
+            raise SystemExit(f"[agent_sync] hooks 结构错误：{path} Stop[{index}].hooks 必须是数组")
+        for hook_index, hook in enumerate(entries):
+            if not isinstance(hook, dict):
+                raise SystemExit(
+                    f"[agent_sync] hooks 结构错误：{path} Stop[{index}].hooks[{hook_index}] 必须是对象")
+            if "command" in hook and not isinstance(hook["command"], str):
+                raise SystemExit(f"[agent_sync] hooks 结构错误：{path} command 必须是字符串")
+            if "type" in hook and not isinstance(hook["type"], str):
+                raise SystemExit(f"[agent_sync] hooks 结构错误：{path} type 必须是字符串")
+
+
+def _validate_codex_features(root: Path):
+    path = root / ".codex/config.toml"
+    text = _read(path)
+    feature_headers = list(re.finditer(r"(?m)^[ \t]*\[features\][ \t]*$", text))
+    hook_keys = list(re.finditer(r"(?m)^[ \t]*codex_hooks[ \t]*=[ \t]*([^#\n]+?)[ \t]*$", text))
+    if len(feature_headers) > 1:
+        raise SystemExit(f"[agent_sync] Codex features 结构错误：{path} 含重复 [features] section")
+    if len(hook_keys) > 1:
+        raise SystemExit(f"[agent_sync] Codex features 结构错误：{path} 含重复 codex_hooks 键")
+    if hook_keys:
+        value = hook_keys[0].group(1).strip()
+        if value not in ("true", "false"):
+            raise SystemExit(f"[agent_sync] Codex features 结构错误：codex_hooks 必须是 true/false")
+        if not feature_headers:
+            raise SystemExit(f"[agent_sync] Codex features 结构错误：codex_hooks 不在 [features] section")
+        start = feature_headers[0].end()
+        next_header = re.search(r"(?m)^[ \t]*\[", text[start:])
+        end = start + next_header.start() if next_header else len(text)
+        if not (start <= hook_keys[0].start() < end):
+            raise SystemExit(f"[agent_sync] Codex features 结构错误：codex_hooks 不在 [features] section")
+
+
+def _merge_codex_hook_flag(text: str) -> str:
+    if re.search(r"(?m)^[ \t]*codex_hooks[ \t]*=", text):
+        return re.sub(r"(?m)^[ \t]*codex_hooks[ \t]*=[ \t]*(?:true|false)[ \t]*$",
+                      "codex_hooks = true", text, count=1)
+    if re.search(r"(?m)^[ \t]*\[features\][ \t]*$", text):
+        return re.sub(r"(?m)^([ \t]*\[features\][ \t]*)$", r"\1\ncodex_hooks = true", text, count=1)
+    return (text.rstrip() + "\n\n" if text.strip() else "") + "[features]\ncodex_hooks = true\n"
+
+
 def _validate_hooks(root: Path, agents: list):
     if not (root / STOP_GUARD_REL).is_file():
         return
@@ -747,8 +798,11 @@ def _validate_hooks(root: Path, agents: list):
              "dsh": root / ".dsh/hooks.json"}
     for agent in agents:
         path = paths[agent]
-        if path.exists():
-            _json_object(path, f"{agent} hooks {path}")
+        data = _json_object(path, f"{agent} hooks {path}") if path.exists() else {}
+        _validate_hook_structure(data, path)
+        _merge_stop_hook(json.loads(json.dumps(data)), _hook_cmd(agent))
+    if "codex" in agents:
+        _validate_codex_features(root)
 
 
 def _validate_claude_plugins(root: Path, plugins: list):

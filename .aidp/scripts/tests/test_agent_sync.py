@@ -777,6 +777,60 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
+    malformed_hooks = [
+        ("hooks 非对象", {"hooks": []}),
+        ("Stop 非数组", {"hooks": {"Stop": {}}}),
+        ("group 非对象", {"hooks": {"Stop": ["bad-group"]}}),
+        ("group hooks 非数组", {"hooks": {"Stop": [{"hooks": {}}]}}),
+        ("hook 非对象", {"hooks": {"Stop": [{"hooks": ["bad-hook"]}]}}),
+    ]
+    for label, payload in malformed_hooks:
+        root = _mkrepo(markers=(".claude", ".codex"))
+        try:
+            hooks = root / ".codex/hooks.json"
+            hooks.write_text(json.dumps(payload), encoding="utf-8")
+            settings = root / ".claude/settings.json"
+            settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git status)"]}}), encoding="utf-8")
+            original_settings = _read(settings)
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+            check(f"Agent hook 结构错误（{label}）→ preflight 原子失败",
+                  rc == 2 and "hooks" in out.get("error", "") and _read(hooks) == json.dumps(payload)
+                  and _read(settings) == original_settings and _read(root / "CLAUDE.md") == BODY
+                  and not (root / "AGENTS.md").exists() and not (root / ".claude/commands").exists())
+        finally:
+            _rm(root)
+
+    # Codex features：false 精确替换，重复键/section 原子拒绝
+    root = _mkrepo(markers=(".codex",))
+    try:
+        config = root / ".codex/config.toml"
+        config.write_text('[features]\nother = true\ncodex_hooks = false\n', encoding="utf-8")
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        text = _read(config)
+        check("Codex codex_hooks=false → 原位替换为单个 true",
+              rc == 0 and text.count("codex_hooks") == 1 and "codex_hooks = true" in text
+              and "codex_hooks = false" not in text and text.count("[features]") == 1
+              and "other = true" in text)
+    finally:
+        _rm(root)
+
+    for label, config_text in (
+        ("重复 codex_hooks", '[features]\ncodex_hooks = false\ncodex_hooks = true\n'),
+        ("重复 features section", '[features]\nother = true\n\n[features]\ncodex_hooks = false\n'),
+    ):
+        root = _mkrepo(markers=(".claude", ".codex"))
+        try:
+            config = root / ".codex/config.toml"
+            config.write_text(config_text, encoding="utf-8")
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+            check(f"Codex features 异常（{label}）→ preflight 原子失败",
+                  rc == 2 and "features" in out.get("error", "").lower()
+                  and _read(config) == config_text and _read(root / "CLAUDE.md") == BODY
+                  and not (root / "AGENTS.md").exists() and not (root / ".codex/hooks.json").exists()
+                  and not (root / ".claude/commands").exists())
+        finally:
+            _rm(root)
+
     root = _mkrepo(markers=(".claude", ".codex"))
     try:
         _add_browser_plugin(root)

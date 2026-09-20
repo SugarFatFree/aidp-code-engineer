@@ -35,10 +35,6 @@ def is_template_owned(rel_to_aidp: str) -> bool:
     return any(rel_to_aidp == x or (x.endswith("/") and rel_to_aidp.startswith(x)) for x in TEMPLATE_OWNED)
 
 
-def is_fingerprint_exempt(_label: str) -> bool:
-    """兼容镜像脚本调用；原生命令适配后所有受版本门控契约都进入指纹。"""
-    return False
-
 # 用户填充型契约：脚手架发骨架、项目持续填写；填过的不覆盖，改入语义改写队列。
 USER_FILLABLE_CONTRACTS = {"reference/子Agent必读.md"}
 USER_FILLABLE_BASELINE = ".aidp-user-fillable.json"

@@ -340,6 +340,7 @@ def check_code_layout(root: Path, r: VerifyResult):
 
 
 NAV_SCAN_ROOTS = ("docs", "memory")
+NAV_SCAN_EXCLUDED = {"docs/superpowers"}  # 模板维护规格/计划，不属于下游文档导航
 
 
 def check_code_readme(root: Path, r: VerifyResult):
@@ -367,7 +368,8 @@ def check_code_readme(root: Path, r: VerifyResult):
         if not base.is_dir():
             continue
         for path in [base] + sorted(p for p in base.rglob("*") if p.is_dir()):
-            if any(x.startswith(".") for x in path.relative_to(root).parts):
+            rel = path.relative_to(root)
+            if any(x.startswith(".") for x in rel.parts) or rel.as_posix() in NAV_SCAN_EXCLUDED:
                 continue
             dec = policy.is_readme_required_directory(path, None, root=root)
             if dec["required"] and dec.get("reason") == "navigation-hub" and not (path / "README.md").is_file():

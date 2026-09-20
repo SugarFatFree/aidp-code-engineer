@@ -136,7 +136,8 @@ def _project_root():
 
 
 _AUTOPILOT_CALL_RE = re.compile(
-    r"(?:(?:^|\s)[$/]sprint-autopilot\b|<command-name>/?sprint-autopilot</command-name>)")
+    r"(?m)^(?:[ \t]*[$/]sprint-autopilot\b|[ \t]*/loop\b[^\r\n]*/sprint-autopilot\b)"
+    r"|<command-name>/?sprint-autopilot</command-name>")
 
 
 def _user_texts(obj):

@@ -3847,11 +3847,28 @@ def test_stop_guard_failopen_ledger():
                       encoding="utf-8")
         rc, _, _ = _run(td, _active, tick=None, stdin=json.dumps({"transcript_path": str(tp)}))
         check("★ aidp-cmd 文本不是命令入口 → 放行", rc == 0)
+        for ordinary in ("请解释 $sprint-autopilot", "比较 /sprint-autopilot 与手工流程",
+                         "echo $sprint-autopilot", "解释一下 sprint-autopilot 的冻结机制"):
+            tp.write_text(json.dumps({"type": "user", "message": {"role": "user",
+                                      "content": ordinary}}) + "\n", encoding="utf-8")
+            rc, _, _ = _run(td, _active, tick=None,
+                            stdin=json.dumps({"transcript_path": str(tp)}))
+            check("★ 普通正文提及命令不误判：%s" % ordinary, rc == 0)
         tp.write_text(json.dumps({"type": "user", "message": {"role": "user",
-                                  "content": "解释一下 sprint-autopilot 的冻结机制"}}) + "\n",
+                                  "content": "前置说明\n/sprint-autopilot --unattended"}}) + "\n",
                       encoding="utf-8")
         rc, _, _ = _run(td, _active, tick=None, stdin=json.dumps({"transcript_path": str(tp)}))
-        check("★ 普通对话里只是提到命令名（非调用）→ 放行", rc == 0)
+        check("★ 多行输入的行首 /sprint-autopilot → 拦截", rc == 2)
+        tp.write_text(json.dumps({"type": "user", "message": {"role": "user",
+                                  "content": "/loop 10m /sprint-autopilot --unattended"}}) + "\n",
+                      encoding="utf-8")
+        rc, _, _ = _run(td, _active, tick=None, stdin=json.dumps({"transcript_path": str(tp)}))
+        check("★ 行首 /loop 内的 /sprint-autopilot → 拦截", rc == 2)
+        tp.write_text(json.dumps({"type": "user", "message": {"role": "user",
+                                  "content": "<command-name>sprint-autopilot</command-name>"}}) + "\n",
+                      encoding="utf-8")
+        rc, _, _ = _run(td, _active, tick=None, stdin=json.dumps({"transcript_path": str(tp)}))
+        check("★ command-name 包装的 sprint-autopilot → 拦截", rc == 2)
     with tempfile.TemporaryDirectory() as td:
         bl = {"autopilot": {"wake_source_this_tick": "1"},
               "versions": {"V1": {"run_state": {"next_phase": "3.2.1-deploy", "next_sprint": "done"},

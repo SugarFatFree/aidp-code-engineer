@@ -209,21 +209,61 @@ def check_memory_file(root: Path, r: VerifyResult):
     r.note(f"项目记忆文件 = {mf}（Agent：{','.join(agents)}，来源 {env.get('source')}）")
 
 
+def _link_points_into_aidp(root: Path, path: Path) -> bool:
+    if not path.is_symlink():
+        return False
+    try:
+        target = (path.parent / os.readlink(path)).resolve()
+        target.relative_to((root / ".aidp").resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _managed_adapter_entries(root: Path) -> set:
+    """据当前 `.aidp/` 真源列出可证明由 AIDP 管理的适配入口。"""
+    out = set()
+    commands = root / ".aidp/commands"
+    if commands.is_dir():
+        for command in commands.glob("*.md"):
+            if command.stem.upper() == "README":
+                continue
+            out.update((root / ".claude/commands" / command.name,
+                        root / ".dsh/commands" / command.name,
+                        root / ".codex/aidp/skills" / command.stem))
+    skills = root / ".aidp/skills"
+    if skills.is_dir():
+        for skill in skills.iterdir():
+            if skill.name == "aidp-cmd" or not (skill / "SKILL.md").is_file():
+                continue
+            out.update((root / ".claude/skills" / skill.name,
+                        root / ".agents/skills" / skill.name))
+    plugins = root / ".aidp/plugins"
+    if plugins.is_dir():
+        for plugin in plugins.iterdir():
+            source = plugin / "skills"
+            if not source.is_dir():
+                continue
+            out.update((root / ".claude/plugins" / plugin.name,
+                        root / ".codex/skills" / plugin.name / "skills"))
+            for skill in source.iterdir():
+                if (skill / "SKILL.md").is_file():
+                    out.add(root / ".agents/skills" / skill.name)
+    for marker in (root / ".codex/aidp/skills").glob("*/.aidp-generated"):
+        if marker.is_file():
+            out.add(marker.parent)
+    return out
+
+
 def _adapter_mode(root: Path, override):
-    """适配层装配方式：有任一生成入口是符号链接 → link；有入口但全是实体 → copy。"""
+    """仅依据可证明由 AIDP 管理的入口判断 link/copy，忽略用户自有 symlink。"""
     if override:
         return override
     seen = False
-    roots = (
-        root / ".claude/commands", root / ".claude/skills", root / ".agents/skills",
-        root / ".codex/aidp/skills", root / ".codex/skills", root / ".dsh/commands",
-    )
-    for base in roots:
-        if not base.is_dir():
-            continue
-        for entry in base.rglob("*"):
-            if entry.is_symlink():
-                return "link"
+    for entry in _managed_adapter_entries(root):
+        if _link_points_into_aidp(root, entry):
+            return "link"
+        if entry.exists():
             seen = True
     return "copy" if (seen or os.name == "nt") else "link"
 

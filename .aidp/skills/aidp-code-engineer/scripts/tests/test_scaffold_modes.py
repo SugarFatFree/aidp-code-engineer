@@ -400,21 +400,49 @@ class OptionalRuleRefreshTest(unittest.TestCase):
 class NativeAdapterVerifyTest(unittest.TestCase):
     def test_copy_mode_detects_codex_and_dsh_native_entries(self):
         with H.TempRepo() as root:
+            source = root / ".aidp/commands/sprint-dev.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("# sprint-dev\n", encoding="utf-8")
             codex = root / ".codex/aidp/skills/sprint-dev"
             codex.mkdir(parents=True)
             (codex / "SKILL.md").write_text("---\nname: sprint-dev\n---\n", encoding="utf-8")
+            (codex / ".aidp-generated").write_text("native-command\n", encoding="utf-8")
             self.assertEqual(V._adapter_mode(root, None), "copy")
 
         with H.TempRepo() as root:
+            source = root / ".aidp/commands/sprint-dev.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("# sprint-dev\n", encoding="utf-8")
             dsh = root / ".dsh/commands"
             dsh.mkdir(parents=True)
             (dsh / "sprint-dev.md").write_text("# sprint-dev\n", encoding="utf-8")
             self.assertEqual(V._adapter_mode(root, None), "copy")
 
         with H.TempRepo() as root:
-            plugin = root / ".codex/skills/chrome-devtools-mcp/skills/chrome-devtools"
+            source = root / ".aidp/plugins/chrome-devtools-mcp/skills/chrome-devtools"
+            source.mkdir(parents=True)
+            (source / "SKILL.md").write_text("---\nname: chrome-devtools\n---\n", encoding="utf-8")
+            plugin = root / ".codex/skills/chrome-devtools-mcp/skills"
             plugin.mkdir(parents=True)
-            (plugin / "SKILL.md").write_text("---\nname: chrome-devtools\n---\n", encoding="utf-8")
+            (plugin / "chrome-devtools").mkdir()
+            (plugin / "chrome-devtools/SKILL.md").write_text("---\nname: chrome-devtools\n---\n", encoding="utf-8")
+            self.assertEqual(V._adapter_mode(root, None), "copy")
+
+    def test_copy_mode_ignores_user_owned_symlink(self):
+        with H.TempRepo() as root:
+            source = root / ".aidp/commands/sprint-dev.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("# sprint-dev\n", encoding="utf-8")
+            generated = root / ".codex/aidp/skills/sprint-dev"
+            generated.mkdir(parents=True)
+            (generated / "SKILL.md").write_text("---\nname: sprint-dev\n---\n", encoding="utf-8")
+            (generated / ".aidp-generated").write_text("native-command\n", encoding="utf-8")
+            user_source = root / "user-skill"
+            user_source.mkdir()
+            (user_source / "SKILL.md").write_text("---\nname: user\n---\n", encoding="utf-8")
+            user_link = root / ".codex/skills/user"
+            user_link.parent.mkdir(parents=True)
+            user_link.symlink_to(user_source)
             self.assertEqual(V._adapter_mode(root, None), "copy")
 
     def test_template_verify_has_no_router_source_check(self):
@@ -464,6 +492,20 @@ class ObsoleteRouterMigrationTest(unittest.TestCase):
             self.assertIn("项目自定义路由内容", saved.read_text(encoding="utf-8"))
             self.assertTrue(any("旧命令路由已备份" in w and res["backup"] in w for w in res["warnings"]),
                             res["warnings"])
+
+    def test_generated_router_with_extra_content_is_backed_up_completely(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--no-agent-sync")
+            router = self._router(root)
+            (router / "notes.md").write_text("用户补充说明\n", encoding="utf-8")
+            (router / "custom").mkdir()
+            (router / "custom/rule.txt").write_text("用户规则\n", encoding="utf-8")
+            res = S.run(root, self._options())
+            self.assertFalse(router.exists())
+            backup = root / res["backup"] / ".aidp/skills/aidp-cmd"
+            self.assertEqual((backup / "notes.md").read_text(encoding="utf-8"), "用户补充说明\n")
+            self.assertEqual((backup / "custom/rule.txt").read_text(encoding="utf-8"), "用户规则\n")
+            self.assertTrue(any("旧命令路由已备份" in w for w in res["warnings"]), res["warnings"])
 
     def test_backup_failure_preserves_modified_router(self):
         with H.TempRepo() as root:

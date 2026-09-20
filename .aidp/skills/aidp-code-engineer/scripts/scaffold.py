@@ -386,10 +386,20 @@ def _legacy_router_skill(root: Path) -> str:
 
 
 def _legacy_router_is_generated(root: Path, router: Path) -> bool:
+    expected = {"SKILL.md", "agents", "agents/openai.yaml"}
+    try:
+        entries = {p.relative_to(router).as_posix() for p in router.rglob("*")}
+    except OSError:
+        return False
+    if entries != expected:
+        return False
+    agents = router / "agents"
     skill = router / "SKILL.md"
-    policy = router / "agents/openai.yaml"
-    return (skill.is_file() and policy.is_file()
-            and L.read_text(skill) == _legacy_router_skill(root)
+    policy = agents / "openai.yaml"
+    if (router.is_symlink() or agents.is_symlink() or skill.is_symlink() or policy.is_symlink()
+            or not agents.is_dir() or not skill.is_file() or not policy.is_file()):
+        return False
+    return (L.read_text(skill) == _legacy_router_skill(root)
             and L.read_text(policy) == LEGACY_ROUTER_OPENAI_YAML)
 
 

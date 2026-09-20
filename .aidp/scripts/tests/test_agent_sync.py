@@ -545,6 +545,50 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
+    # 所有适配 namespace 的自身或祖先 symlink 均须在任何写入前 fail closed
+    namespace_cases = (
+        (".claude", "claude", False),
+        (".claude/skills", "claude", False),
+        (".claude/commands", "claude", False),
+        (".claude/plugins", "claude", True),
+        (".codex", "codex", False),
+        (".codex/skills", "codex", False),
+        (".codex/skills/chrome-devtools-mcp", "codex", True),
+        (".dsh", "dsh", False),
+        (".dsh/commands", "dsh", False),
+        (".agents", "codex", False),
+        (".agents/skills", "codex", False),
+        (".agents/plugins", "codex", False),
+    )
+    for rel, agents_arg, needs_plugin in namespace_cases:
+        root = _mkrepo()
+        external = Path(tempfile.mkdtemp())
+        try:
+            if needs_plugin:
+                _add_browser_plugin(root)
+            sentinel = external / "sentinel.txt"
+            sentinel.write_text(f"outside {rel}\n", encoding="utf-8")
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists() or target.is_symlink():
+                if target.is_dir() and not target.is_symlink():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            target.symlink_to(external, target_is_directory=True)
+            external_before = sorted(path.name for path in external.iterdir())
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", agents_arg)
+            check(f"适配 namespace symlink（{rel}）→ exit2 且内外零副作用",
+                  rc == 2 and "真实目录" in out.get("error", "")
+                  and target.is_symlink()
+                  and sorted(path.name for path in external.iterdir()) == external_before
+                  and _read(sentinel) == f"outside {rel}\n"
+                  and _read(root / "CLAUDE.md") == BODY and not (root / "AGENTS.md").exists()
+                  and not (root / ".gitignore").exists())
+        finally:
+            _rm(root)
+            shutil.rmtree(external, ignore_errors=True)
+
     # 原生命令目标已有用户内容 → fail closed，不覆盖
     root = _mkrepo(markers=(".codex",))
     try:

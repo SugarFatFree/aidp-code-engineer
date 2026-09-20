@@ -87,6 +87,25 @@ def _mkrepo(markers=(), claude_md=BODY, agents_md=None, hook=True):
     return root
 
 
+def _add_browser_plugin(root):
+    plugin = root / ".aidp/plugins/chrome-devtools-mcp"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin/plugin.json").write_text(json.dumps(
+        {"name": "chrome-devtools-mcp", "version": "1.6.0", "description": "浏览器",
+         "mcpServers": {"chrome-devtools": {
+             "command": "npx", "args": ["chrome-devtools-mcp@1.6.0"]}}}),
+        encoding="utf-8")
+    (plugin / ".claude-plugin/marketplace.json").write_text(json.dumps(
+        {"name": "chrome-devtools-plugins",
+         "plugins": [{"name": "chrome-devtools-mcp", "source": "./"}]}), encoding="utf-8")
+    (plugin / "skills/chrome-devtools/references").mkdir(parents=True)
+    (plugin / "skills/chrome-devtools/SKILL.md").write_text(
+        "---\nname: chrome-devtools\ndescription: 浏览器调试\n---\n", encoding="utf-8")
+    (plugin / "skills/chrome-devtools/references/usage.md").write_text(
+        "# usage\n\n完整参考内容\n", encoding="utf-8")
+    return plugin
+
+
 def _rm(root):
     shutil.rmtree(root.parent, ignore_errors=True)
 
@@ -438,18 +457,25 @@ def test_copy_mode_and_errors():
     # 插件：Claude 项目插件 / Codex 项目级 skills + MCP / DSH 共享 skills + MCP
     root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
     try:
-        pl = root / ".aidp/plugins/chrome-devtools-mcp"
-        (pl / ".claude-plugin").mkdir(parents=True)
-        (pl / ".claude-plugin/plugin.json").write_text(json.dumps(
-            {"name": "chrome-devtools-mcp", "version": "1.6.0", "description": "浏览器",
-             "mcpServers": {"chrome-devtools": {"command": "npx", "args": ["chrome-devtools-mcp@1.6.0"]}}}),
-            encoding="utf-8")
-        (pl / ".claude-plugin/marketplace.json").write_text(json.dumps(
-            {"name": "chrome-devtools-plugins",
-             "plugins": [{"name": "chrome-devtools-mcp", "source": "./"}]}), encoding="utf-8")
-        (pl / "skills/chrome-devtools").mkdir(parents=True)
-        (pl / "skills/chrome-devtools/SKILL.md").write_text(
-            "---\nname: chrome-devtools\ndescription: 浏览器调试\n---\n", encoding="utf-8")
+        pl = _add_browser_plugin(root)
+        (root / ".codex/config.toml").write_text(
+            'model = "user-model"\n\n[mcp_servers.user-browser]\ncommand = "user-mcp"\n', encoding="utf-8")
+        (root / ".dsh/mcp.json").write_text(json.dumps({
+            "mcpServers": {"user-browser": {"command": "user-mcp", "args": ["--keep"]}}
+        }), encoding="utf-8")
+
+        # 旧版 Codex marketplace 包装：AIDP 生成项应清理，用户同目录内容必须保留
+        legacy = root / ".agents/plugins/chrome-devtools-mcp"
+        legacy.mkdir(parents=True)
+        (legacy / AS.GENERATED_FILE).write_text("", encoding="utf-8")
+        (legacy / "plugin.json").write_text('{"name":"chrome-devtools-mcp"}\n', encoding="utf-8")
+        (root / ".agents/plugins/marketplace.json").write_text(
+            '{"name":"local-repo","plugins":[]}\n', encoding="utf-8")
+        (root / ".agents/plugins/.aidp-generated").write_text("marketplace\n", encoding="utf-8")
+        user_plugin = root / ".agents/plugins/user-owned/note.txt"
+        user_plugin.parent.mkdir(parents=True)
+        user_plugin.write_text("keep me\n", encoding="utf-8")
+
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root))
         st = json.loads(_read(root / ".claude/settings.json"))
         check("插件·Claude：完整项目级插件 + marketplace 启用",
@@ -463,9 +489,21 @@ def test_copy_mode_and_errors():
         check("插件·Codex：config.toml 注册 MCP server",
               "[mcp_servers.chrome-devtools]" in config
               and 'args = ["chrome-devtools-mcp@1.6.0"]' in config)
+        check("插件·Codex：同步保留用户 config 与 MCP server",
+              'model = "user-model"' in config
+              and "[mcp_servers.user-browser]" in config
+              and 'command = "user-mcp"' in config)
         check("插件·DSH：插件 SKILL 直接进入 .agents/skills",
               (dsh_skill / "SKILL.md").is_file() and not (root / ".dsh/skills").exists())
-        check("插件·DSH：.dsh/mcp.json 汇总 MCP", "chrome-devtools-mcp@1.6.0" in _read(root / ".dsh/mcp.json"))
+        dsh_mcp = json.loads(_read(root / ".dsh/mcp.json"))
+        check("插件·DSH：新增 chrome-devtools 且保留用户 server",
+              "chrome-devtools" in dsh_mcp.get("mcpServers", {})
+              and dsh_mcp.get("mcpServers", {}).get("user-browser", {}).get("command") == "user-mcp")
+        check("插件·旧 Codex marketplace 包装完整清理、用户内容保留",
+              not legacy.exists()
+              and not (root / ".agents/plugins/marketplace.json").exists()
+              and not (root / ".agents/plugins/.aidp-generated").exists()
+              and user_plugin.is_file())
         check("插件·Codex+DSH：两入口解析到同一真源",
               codex_skill.resolve() == (pl / "skills/chrome-devtools").resolve()
               and dsh_skill.resolve() == (pl / "skills/chrome-devtools").resolve())
@@ -476,10 +514,13 @@ def test_copy_mode_and_errors():
               and "/.agents/skills/chrome-devtools" in gi)
         check("插件装配幂等", _run(SYNC_PY, "--root", str(root), "--check")[0] == 0)
 
-        # 切换为 Codex-only：DSH 插件入口/MCP 清理，Codex 入口保留
+        # 切换为 Codex-only：清理 DSH 的 AIDP server/技能，保留用户 server 与 Codex 入口
         _run(SYNC_PY, "--root", str(root), "--agents", "codex")
-        check("插件·切换 Codex-only：DSH 入口清理、Codex 保留",
-              not dsh_skill.exists() and not (root / ".dsh/mcp.json").exists()
+        dsh_after_switch = json.loads(_read(root / ".dsh/mcp.json"))
+        check("插件·切换 Codex-only：清理 DSH AIDP 入口、保留用户 server 与 Codex 入口",
+              not dsh_skill.exists()
+              and "chrome-devtools" not in dsh_after_switch.get("mcpServers", {})
+              and dsh_after_switch.get("mcpServers", {}).get("user-browser", {}).get("command") == "user-mcp"
               and (codex_skill / "SKILL.md").is_file())
 
         # 用户自有命令不能因切换 Agent 被清理
@@ -490,10 +531,46 @@ def test_copy_mode_and_errors():
 
         shutil.rmtree(pl)
         _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
-        check("插件源删除 → Claude/Codex 生成入口与 MCP 受管块清理",
+        config_after_delete = _read(root / ".codex/config.toml")
+        dsh_after_delete = json.loads(_read(root / ".dsh/mcp.json"))
+        check("插件源删除 → 只清理 AIDP 入口/MCP，用户 Codex/DSH/插件内容保留",
               not (root / ".claude/plugins/chrome-devtools-mcp").exists()
               and not (root / ".codex/skills/chrome-devtools-mcp").exists()
-              and "[mcp_servers.chrome-devtools]" not in _read(root / ".codex/config.toml"))
+              and "[mcp_servers.chrome-devtools]" not in config_after_delete
+              and "[mcp_servers.user-browser]" in config_after_delete
+              and 'model = "user-model"' in config_after_delete
+              and dsh_after_delete.get("mcpServers", {}).get("user-browser", {}).get("command") == "user-mcp"
+              and "chrome-devtools" not in dsh_after_delete.get("mcpServers", {})
+              and user_plugin.is_file())
+    finally:
+        _rm(root)
+
+    # 插件 copy 模式：三端均为内容完整的真实副本
+    root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
+    try:
+        pl = _add_browser_plugin(root)
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--mode", "copy")
+        claude_plugin = root / ".claude/plugins/chrome-devtools-mcp"
+        codex_plugin_skill = root / ".codex/skills/chrome-devtools-mcp/skills/chrome-devtools"
+        dsh_plugin_skill = root / ".agents/skills/chrome-devtools"
+        source_skill = pl / "skills/chrome-devtools"
+        check("插件 copy·Claude：完整项目插件为真实副本",
+              rc == 0 and claude_plugin.is_dir() and not claude_plugin.is_symlink()
+              and not (claude_plugin / ".claude-plugin/plugin.json").is_symlink()
+              and _read(claude_plugin / ".claude-plugin/plugin.json")
+              == _read(pl / ".claude-plugin/plugin.json"))
+        check("插件 copy·Codex：skills 集合为内容完整的真实副本",
+              codex_plugin_skill.is_dir() and not codex_plugin_skill.is_symlink()
+              and not (codex_plugin_skill / "SKILL.md").is_symlink()
+              and _read(codex_plugin_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
+              and _read(codex_plugin_skill / "references/usage.md")
+              == _read(source_skill / "references/usage.md"))
+        check("插件 copy·DSH：.agents/skills 为内容完整的真实副本",
+              dsh_plugin_skill.is_dir() and not dsh_plugin_skill.is_symlink()
+              and not (dsh_plugin_skill / "SKILL.md").is_symlink()
+              and _read(dsh_plugin_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
+              and _read(dsh_plugin_skill / "references/usage.md")
+              == _read(source_skill / "references/usage.md"))
     finally:
         _rm(root)
 

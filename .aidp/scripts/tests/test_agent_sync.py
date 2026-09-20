@@ -454,6 +454,60 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
+    # 旧 Codex 命令根若是外部 symlink，保守保留且绝不遍历目标
+    root = _mkrepo(markers=(".codex",))
+    external = Path(tempfile.mkdtemp())
+    try:
+        generated = external / "generated-command"
+        generated.mkdir()
+        (generated / AS.GENERATED_FILE).write_text("native-command\n", encoding="utf-8")
+        sentinel = external / "sentinel.txt"
+        sentinel.write_text("outside\n", encoding="utf-8")
+        legacy_parent = root / ".codex/aidp"
+        legacy_parent.mkdir(parents=True)
+        (legacy_parent / "skills").symlink_to(external, target_is_directory=True)
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("旧 Codex 命令根为 symlink → 不遍历、不删除外部内容",
+              rc == 0 and (legacy_parent / "skills").is_symlink()
+              and generated.is_dir() and _read(sentinel) == "outside\n")
+    finally:
+        _rm(root)
+        shutil.rmtree(external, ignore_errors=True)
+
+    # 新 Codex 命令 namespace 必须位于真实目录，symlink/文件均原子拒绝
+    root = _mkrepo(markers=(".claude", ".codex"))
+    external = Path(tempfile.mkdtemp())
+    try:
+        sentinel = external / "sentinel.txt"
+        sentinel.write_text("outside\n", encoding="utf-8")
+        namespace_parent = root / ".codex/skills"
+        namespace_parent.mkdir(parents=True)
+        (namespace_parent / "aidp").symlink_to(external, target_is_directory=True)
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Codex 命令 namespace 为外部 symlink → exit2 且内外零副作用",
+              rc == 2 and "真实目录" in out.get("error", "")
+              and _read(sentinel) == "outside\n" and list(external.iterdir()) == [sentinel]
+              and _read(root / "CLAUDE.md") == BODY and not (root / "AGENTS.md").exists()
+              and not (root / ".codex/hooks.json").exists()
+              and not (root / ".claude/commands").exists())
+    finally:
+        _rm(root)
+        shutil.rmtree(external, ignore_errors=True)
+
+    root = _mkrepo(markers=(".claude", ".codex"))
+    try:
+        namespace = root / ".codex/skills/aidp"
+        namespace.parent.mkdir(parents=True)
+        namespace.write_text("user file\n", encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex")
+        check("Codex 命令 namespace 为普通文件 → exit2 且仓库零副作用",
+              rc == 2 and "真实目录" in out.get("error", "")
+              and _read(namespace) == "user file\n" and _read(root / "CLAUDE.md") == BODY
+              and not (root / "AGENTS.md").exists() and not (root / ".codex/hooks.json").exists()
+              and not (root / ".claude/commands").exists())
+    finally:
+        _rm(root)
+
     # 原生命令目标已有用户内容 → fail closed，不覆盖
     root = _mkrepo(markers=(".codex",))
     try:

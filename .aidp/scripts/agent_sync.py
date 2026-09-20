@@ -270,8 +270,8 @@ def _is_generated(p: Path) -> bool:
 
 
 def _prune(plan: Plan, base: Path, wanted: set):
-    """清理本脚本生成、但已不需要的入口（只动自己生成的，不碰用户自有内容）。"""
-    if not base.is_dir():
+    """只遍历真实目录；目录 symlink/文件均视为用户边界，绝不跟随。"""
+    if base.is_symlink() or not base.is_dir():
         return
     for p in sorted(base.iterdir()):
         if p.name not in wanted and _is_generated(p):
@@ -873,6 +873,16 @@ def _validate_claude_plugins(root: Path, plugins: list):
                 raise SystemExit(f"[agent_sync] Claude enabledPlugins 用户配置冲突：{key}")
 
 
+def _validate_real_namespace(root: Path, rel: str, label: str):
+    current = root
+    for part in Path(rel).parts:
+        current = current / part
+        if current.is_symlink():
+            raise SystemExit(f"[agent_sync] {label} 必须位于真实目录，拒绝 symlink：{current}")
+        if current.exists() and not current.is_dir():
+            raise SystemExit(f"[agent_sync] {label} 必须位于真实目录，发现非目录：{current}")
+
+
 def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
     if "claude" in agents:
         for name in _base_skill_dirs(root):
@@ -888,6 +898,7 @@ def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: di
             _require_generated_or_absent(root / CLAUDE_PLUGINS / plugin.name,
                                          "Claude 插件目录")
     if "codex" in agents:
+        _validate_real_namespace(root, CODEX_COMMAND_SKILLS, "Codex 命令 namespace")
         for command in _command_files(root):
             _require_generated_or_absent(root / CODEX_COMMAND_SKILLS / command.stem,
                                          "Codex 命令 SKILL")

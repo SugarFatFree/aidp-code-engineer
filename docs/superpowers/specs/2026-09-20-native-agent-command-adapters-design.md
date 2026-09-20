@@ -45,9 +45,13 @@ Codex 已支持多层级 SKILL 目录，DSH 可通过 `dsh-plugin-commands` 读�
 └── SKILL.md                        # Codex 命令 SKILL
 
 .dsh/commands/<command>.md          # DSH 原生命令
+
+.claude/plugins/chrome-devtools-mcp/                    # Claude Code 项目级插件
+.codex/skills/chrome-devtools-mcp/skills/<plugin-skill>/ # Codex 插件 SKILL 集合
+.agents/skills/<plugin-skill>/                          # DSH 插件 SKILL
 ```
 
-路径固定使用 `.codex/aidp/skills`；`aidp` 与项目名称一致。
+路径固定使用 `.codex/aidp/skills`；`aidp` 与项目名称一致。`chrome-devtools-mcp` 的插件 SKILL 在 Codex 与 DSH 组合项目中均指向同一份 `.aidp/plugins/chrome-devtools-mcp/skills/` 真源；Codex 按其发现优先级使用 `.codex/skills`，DSH 使用 `.agents/skills`。
 
 适配层继续支持：
 
@@ -106,6 +110,23 @@ Codex 命令 SKILL 是生成物，不进入 `.aidp/skills/`、契约 manifest �
 ```
 
 DSH 同时从 `.agents/skills/` 读取公共 SKILL。命令名与公共 SKILL 名不得冲突；`agent_sync.py` 在写入前执行硬校验，发现冲突时退出并列出名称，防止 DSH 静默选择错误入口。
+
+### 3.5 `chrome-devtools-mcp` 插件
+
+`.aidp/plugins/chrome-devtools-mcp/` 保持插件单一信源。它同时包含 Claude Code 插件清单、6 个调试 SKILL 和 `chrome-devtools` MCP server 声明，各 Agent 按自己的发现机制装配：
+
+- Claude Code：保留完整项目级插件形态，链接或复制到 `.claude/plugins/chrome-devtools-mcp/`，并在 `.claude/settings.json` 登记本地 marketplace 和启用项。
+- Codex：不再生成 `.agents/plugins` marketplace 包装。插件的 `skills/` 集合链接或复制到 `.codex/skills/chrome-devtools-mcp/skills/`；同时把 manifest 中的 MCP 声明确定性合并到项目 `.codex/config.toml`：
+
+```toml
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["chrome-devtools-mcp@1.6.0"]
+```
+
+- DSH：插件内每个 SKILL 以原名称链接或复制到 `.agents/skills/<plugin-skill>/`，同时继续把 MCP 声明汇总到 `.dsh/mcp.json`。
+
+Codex 同时启用 DSH 时也会扫描 `.agents/skills`，但 `.codex/skills` 的发现优先级更高；两处生成物必须指向同一真源并保持字节一致。插件 SKILL 与 AIDP 公共 SKILL 重名时 fail closed，不通过改名或静默覆盖规避冲突。
 
 ## 4. DSH 插件安装
 
@@ -197,6 +218,9 @@ DSH:         /<command> <args>
 - DSH 命令与 SKILL 重名时拒绝生成。
 - 切换 Agent 后清理旧生成物，但保留项目自有文件。
 - 旧 `.agents/skills/aidp-cmd` 被清理。
+- `chrome-devtools-mcp` 分别装配为 Claude 项目级插件、Codex `.codex/skills` 集合和 DSH `.agents/skills` 集合。
+- Codex `.codex/config.toml` 与 DSH `.dsh/mcp.json` 均保留 MCP server 声明，且不再生成 `.agents/plugins` marketplace。
+- 插件 SKILL 与公共 SKILL 重名时拒绝生成。
 - 幂等与 `--check` 漂移检测。
 
 ### 8.2 脚手架回归
@@ -249,8 +273,9 @@ python3 .aidp/scripts/check_private_markers.py
 3. Codex 和 DSH 均从 `.agents/skills/` 读取公共 SKILL，Claude Code 从 `.claude/skills/` 读取相同真源的适配层。
 4. DSH init 会尝试安装 `dsh-plugin-commands@latest`，失败时结果可见且可恢复。
 5. 旧项目升级不会静默覆盖项目自有文件，也不会继续暴露旧路由入口。
-6. `agent_sync.py --check`、模板 verify、脚手架单测和模板回归测试全部通过。
-7. bundle 由同步脚本生成，未手工修改 `.aidp/skills/aidp-code-engineer/assets/`。
+6. `chrome-devtools-mcp` 在 Claude Code 中保持完整项目级插件，在 Codex/DSH 中以各自原生 SKILL 路径可发现，且两者均有可用的 MCP server 配置。
+7. `agent_sync.py --check`、模板 verify、脚手架单测和模板回归测试全部通过。
+8. bundle 由同步脚本生成，未手工修改 `.aidp/skills/aidp-code-engineer/assets/`。
 
 ## 11. 版本约束
 

@@ -81,8 +81,10 @@ def test_native_command_skills():
         text = _read(codex)
         source = _read(root / ".aidp/commands/sprint-dev.md")
         check("装配成功", rc == 0)
-        check("Codex 独立命令 SKILL frontmatter",
-              text.startswith("---\nname: sprint-dev\n") and "description:" in text)
+        check("Codex 独立命令 SKILL frontmatter 与 description 确定性",
+              text.startswith(
+                  '---\nname: sprint-dev\ndescription: "/sprint-dev — 开发阶段"\n'
+              ))
         check("Codex 命令正文逐字包含", source in text and "$ARGUMENTS" in text)
         check("Codex explicit invocation policy",
               "allow_implicit_invocation: false" in

@@ -283,9 +283,13 @@ def test_memory_migration_shapes():
         check("仅 codex → CLAUDE.md 不改写（不丢原文件）", _read(root / "CLAUDE.md") == BODY)
         check("仅 codex → 不生成 .claude / .dsh 入口",
               not (root / ".claude/skills").exists() and not (root / ".dsh/commands").exists())
-        check("仅 codex → 公共 SKILL + 原生命令 SKILL",
+        codex_text = _read(root / ".codex/aidp/skills/sprint-dev/SKILL.md")
+        check("仅 codex → 公共 SKILL + 可执行原生命令 SKILL",
               (root / ".agents/skills/demo-skill").exists()
-              and (root / ".codex/aidp/skills/sprint-dev/SKILL.md").is_file())
+              and codex_text.startswith("---\nname: sprint-dev\n")
+              and "$ARGUMENTS" in codex_text
+              and "allow_implicit_invocation: false" in
+              _read(root / ".codex/aidp/skills/sprint-dev/agents/openai.yaml"))
         rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex", "--check")
         check("仅 codex 二次 --check 一致", rc == 0)
     finally:
@@ -313,7 +317,7 @@ def test_memory_migration_shapes():
 
 def test_copy_mode_and_errors():
     print("【--mode copy / 参数错误 / hooks 合并】")
-    root = _mkrepo(markers=(".claude", ".codex"))
+    root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
     try:
         (root / ".aidp/skills/demo-skill/__pycache__").mkdir()
         (root / ".aidp/skills/demo-skill/__pycache__/x.pyc").write_bytes(b"\0")
@@ -333,6 +337,10 @@ def test_copy_mode_and_errors():
         codex_cmd = root / ".codex/aidp/skills/sprint-dev/SKILL.md"
         check("copy 模式：Codex 命令 SKILL 为生成文件",
               codex_cmd.is_file() and not codex_cmd.is_symlink() and "$ARGUMENTS" in _read(codex_cmd))
+        dsh_cmd = root / ".dsh/commands/sprint-dev.md"
+        check("copy 模式：DSH 命令文件为真实副本",
+              dsh_cmd.is_file() and not dsh_cmd.is_symlink()
+              and _read(dsh_cmd) == _read(root / ".aidp/commands/sprint-dev.md"))
         st = json.loads(_read(root / ".claude/settings.json"))
         stop = st["hooks"]["Stop"]
         check("★ hooks 合并：保留用户其他配置，就地更新已有 stop guard 条目（不重复追加）",
@@ -384,12 +392,33 @@ def test_copy_mode_and_errors():
     root = _mkrepo()
     try:
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), AIDP_AGENT="dsh")
-        check("AIDP_AGENT=dsh → 公共 SKILL + 原生命令", rc == 0 and out.get("agents") == ["dsh"]
+        dsh_cmd = root / ".dsh/commands/sprint-dev.md"
+        check("AIDP_AGENT=dsh → 公共 SKILL + 可执行原生命令", rc == 0 and out.get("agents") == ["dsh"]
               and (root / ".agents/skills/demo-skill").exists()
-              and (root / ".dsh/commands/sprint-dev.md").exists()
+              and dsh_cmd.is_symlink()
+              and "$ARGUMENTS" in _read(dsh_cmd)
               and not (root / ".dsh/skills").exists()
               and not (root / ".claude/skills").exists()
               and not (root / ".codex/aidp/skills").exists())
+    finally:
+        _rm(root)
+
+    # Agent 切换：清理自生成命令入口，保留 Codex 命令目录内用户内容
+    root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
+    try:
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex,dsh")
+        check("切换前已生成 Codex/DSH 原生命令入口",
+              (root / ".codex/aidp/skills/sprint-dev/SKILL.md").is_file()
+              and (root / ".dsh/commands/sprint-dev.md").exists())
+        own = root / ".codex/aidp/skills/my-own/SKILL.md"
+        own.parent.mkdir(parents=True, exist_ok=True)
+        own.write_text("---\nname: my-own\ndescription: user\n---\n", encoding="utf-8")
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        check("切换为 Claude-only → 清理 DSH 生成命令",
+              not (root / ".dsh/commands/sprint-dev.md").exists())
+        check("切换为 Claude-only → 清理 Codex 生成命令",
+              not (root / ".codex/aidp/skills/sprint-dev").exists())
+        check("切换 Agent → 保留 Codex 命令目录内用户自有内容", own.is_file())
     finally:
         _rm(root)
 

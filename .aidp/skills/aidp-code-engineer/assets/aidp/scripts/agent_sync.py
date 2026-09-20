@@ -892,6 +892,19 @@ def _validate_real_namespace(root: Path, rel: str, label: str):
             raise SystemExit(f"[agent_sync] {label} 必须位于真实目录，发现非目录：{current}")
 
 
+def _validate_adapter_namespaces(root: Path, plugins: list):
+    namespaces = {
+        ".claude", CLAUDE_SKILLS, CLAUDE_COMMANDS, CLAUDE_PLUGINS,
+        ".codex", CODEX_PLUGIN_SKILLS, CODEX_COMMAND_SKILLS,
+        ".dsh", DSH_COMMANDS, ".dsh/skills",
+        ".agents", SHARED_SKILLS, LEGACY_CODEX_PLUGINS,
+    }
+    namespaces.update(f"{CODEX_PLUGIN_SKILLS}/{plugin.name}" for plugin in plugins
+                      if (plugin / "skills").is_dir())
+    for rel in sorted(namespaces, key=lambda item: (len(Path(item).parts), item)):
+        _validate_real_namespace(root, rel, f"Agent 适配 namespace {rel}")
+
+
 def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
     if "claude" in agents:
         for name in _base_skill_dirs(root):
@@ -907,7 +920,6 @@ def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: di
             _require_generated_or_absent(root / CLAUDE_PLUGINS / plugin.name,
                                          "Claude 插件目录")
     if "codex" in agents:
-        _validate_real_namespace(root, CODEX_COMMAND_SKILLS, "Codex 命令 namespace")
         for command in _command_files(root):
             _require_generated_or_absent(root / CODEX_COMMAND_SKILLS / command.stem,
                                          "Codex 命令 SKILL")
@@ -942,6 +954,7 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     if clash:
         raise SystemExit(f"[agent_sync] 命令与 SKILL 同名冲突：{', '.join(clash)}，请改名其一")
     all_servers = _plugin_servers(plugins)
+    _validate_adapter_namespaces(root, plugins)
     _validate_targets(root, agents, plugins, plugin_skills)
     _validate_hooks(root, agents)
     _validate_claude_plugins(root, plugins if "claude" in agents else [])

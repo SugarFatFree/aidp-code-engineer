@@ -804,11 +804,12 @@ def test_copy_mode_and_errors():
     root = _mkrepo(markers=(".codex",))
     try:
         config = root / ".codex/config.toml"
-        config.write_text('[features]\nother = true\ncodex_hooks = false\n', encoding="utf-8")
+        config.write_text('[features]\nother = true\ncodex_hooks = false # keep this comment\n', encoding="utf-8")
         rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
         text = _read(config)
-        check("Codex codex_hooks=false → 原位替换为单个 true",
-              rc == 0 and text.count("codex_hooks") == 1 and "codex_hooks = true" in text
+        check("Codex codex_hooks=false 带注释 → 原位替换为单个 true 并保留注释",
+              rc == 0 and text.count("codex_hooks") == 1
+              and "codex_hooks = true # keep this comment" in text
               and "codex_hooks = false" not in text and text.count("[features]") == 1
               and "other = true" in text)
     finally:

@@ -63,6 +63,10 @@ CODEX_MCP_SUPPORTED_FIELDS = {
 }
 GITIGNORE_BEGIN = "# >>> AIDP-AGENT-ADAPTERS（由 .aidp/scripts/agent_sync.py 生成，勿手改）>>>"
 GITIGNORE_END = "# <<< AIDP-AGENT-ADAPTERS <<<"
+CODEX_HOOK_LINE_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)codex_hooks(?P<before>[ \t]*)="
+    r"(?P<after>[ \t]*)(?P<value>true|false)(?P<comment>[ \t]*(?:#.*)?)$"
+)
 
 
 # ── 通用小工具 ────────────────────────────────────────────────────────────────
@@ -763,15 +767,15 @@ def _validate_codex_features(root: Path):
     path = root / ".codex/config.toml"
     text = _read(path)
     feature_headers = list(re.finditer(r"(?m)^[ \t]*\[features\][ \t]*$", text))
-    hook_keys = list(re.finditer(r"(?m)^[ \t]*codex_hooks[ \t]*=[ \t]*([^#\n]+?)[ \t]*$", text))
+    assignments = list(re.finditer(r"(?m)^[ \t]*codex_hooks[ \t]*=.*$", text))
+    hook_keys = list(CODEX_HOOK_LINE_RE.finditer(text))
     if len(feature_headers) > 1:
         raise SystemExit(f"[agent_sync] Codex features 结构错误：{path} 含重复 [features] section")
-    if len(hook_keys) > 1:
+    if len(assignments) > 1:
         raise SystemExit(f"[agent_sync] Codex features 结构错误：{path} 含重复 codex_hooks 键")
+    if assignments and not hook_keys:
+        raise SystemExit(f"[agent_sync] Codex features 结构错误：codex_hooks 必须是 true/false")
     if hook_keys:
-        value = hook_keys[0].group(1).strip()
-        if value not in ("true", "false"):
-            raise SystemExit(f"[agent_sync] Codex features 结构错误：codex_hooks 必须是 true/false")
         if not feature_headers:
             raise SystemExit(f"[agent_sync] Codex features 结构错误：codex_hooks 不在 [features] section")
         start = feature_headers[0].end()
@@ -782,9 +786,11 @@ def _validate_codex_features(root: Path):
 
 
 def _merge_codex_hook_flag(text: str) -> str:
-    if re.search(r"(?m)^[ \t]*codex_hooks[ \t]*=", text):
-        return re.sub(r"(?m)^[ \t]*codex_hooks[ \t]*=[ \t]*(?:true|false)[ \t]*$",
-                      "codex_hooks = true", text, count=1)
+    if CODEX_HOOK_LINE_RE.search(text):
+        def replace(match):
+            return (f"{match.group('indent')}codex_hooks{match.group('before')}="
+                    f"{match.group('after')}true{match.group('comment')}")
+        return CODEX_HOOK_LINE_RE.sub(replace, text, count=1)
     if re.search(r"(?m)^[ \t]*\[features\][ \t]*$", text):
         return re.sub(r"(?m)^([ \t]*\[features\][ \t]*)$", r"\1\ncodex_hooks = true", text, count=1)
     return (text.rstrip() + "\n\n" if text.strip() else "") + "[features]\ncodex_hooks = true\n"

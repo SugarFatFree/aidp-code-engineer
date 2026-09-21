@@ -29,6 +29,16 @@ UNGATED_DIRS = ("scripts",)
 MIRROR_DIRS = ("agents", "commands", "rules", "flows", "reference", "scripts", "hooks", "templates", "plugins")
 # 模板项目自有、不下发的资产（相对 `.aidp/`）：回归单测与设计目标棘轮 baseline（`设计目标.md` 本身不下发）
 TEMPLATE_OWNED = ("scripts/tests/", "scripts/design-goals-baseline.txt")
+# Agent 原生运行包包含完整静态运行契约；脚手架自身与模板维护资产不递归下发。
+RUNTIME_DIRS = (
+    "agents", "commands", "flows", "hooks", "plugins", "reference",
+    "rules", "scripts", "skills", "templates",
+)
+RUNTIME_EXCLUDES = (
+    "skills/aidp-code-engineer/",
+    "scripts/tests/",
+    "scripts/design-goals-baseline.txt",
+)
 # 脚手架自身安装到下游时不带的子树（相对 skill 目录）：模板回归单测、下游模板真源（下游只用派生出的 assets/）
 SELF_INSTALL_EXCLUDE = ("scripts/tests/", "sources/")
 def is_template_owned(rel_to_aidp: str) -> bool:

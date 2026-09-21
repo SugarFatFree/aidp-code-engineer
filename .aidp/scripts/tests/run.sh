@@ -93,12 +93,14 @@ run "test_unattended_recovery.py（无人值守失败处置 + 自动恢复）" p
 run "test_aidp_scheduler.py（7×24 操作系统调度）" python3 .aidp/scripts/tests/test_aidp_scheduler.py
 run "test_agent_sync_router.py（原生命令生成 + 参数保真）" python3 .aidp/scripts/tests/test_agent_sync_router.py
 run "test_runtime_and_vcs.py（运行根解析 + VCS 能力降级）" python3 .aidp/scripts/tests/test_runtime_and_vcs.py
+run "test_runtime_paths.py（下发运行路径抽象守卫）" python3 .aidp/scripts/tests/test_runtime_paths.py
 run "test_command_skill_contracts.py（命令 ↔ SKILL 调用契约）" python3 .aidp/scripts/tests/test_command_skill_contracts.py
 run "test_doc_reference_guards.py（符号引用 / CLI 归属 / 私有痕迹 三道门）" python3 .aidp/scripts/tests/test_doc_reference_guards.py
 
 # ── 脚手架 skill 侧（.aidp/skills/aidp-code-engineer/scripts/tests/）──
 run "test_mirror.py（脚手架侧：本体→bundle 镜像）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_mirror.py
 run "test_scaffold_lib.py（脚手架侧：脚手架库）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_scaffold_lib.py
+run "test_runtime_layout.py（脚手架侧：Agent 原生运行包渲染）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_runtime_layout.py
 run "test_scaffold_modes.py（脚手架侧：init / migrate / upgrade 三模式）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_scaffold_modes.py
 run "test_sync_memory_md.py（脚手架侧：项目记忆文件同步）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_sync_memory_md.py
 

@@ -24,9 +24,10 @@
 | `test_aidp_scheduler.py` | `aidp_scheduler.py`（7×24 操作系统调度）：systemd / crontab / launchd / schtasks 渲染、周期解析、install / uninstall / status、心跳巡检告警、`agent_loop.sh --once` 参数补齐 | `python3 .aidp/scripts/tests/test_aidp_scheduler.py` | Python 标准库 |
 | `test_agent_sync_router.py` | Codex / DeepSeek Harness 原生命令生成、Codex frontmatter 与 `$ARGUMENTS` 正文保真、命令/SKILL 重名保护、`--check` 漂移、gitignore 托管块去重 | `python3 .aidp/scripts/tests/test_agent_sync_router.py` | Python 标准库 + `git` |
 | `test_runtime_and_vcs.py` | `.aidp` / `.claude/aidp` / `.agents/aidp` 运行根与项目根解析、环境覆盖路径 containment、`git|none` 能力检测、开发者身份四级回落、`unsupported: vcs-disabled` 结构 | `python3 .aidp/scripts/tests/test_runtime_and_vcs.py` | Python 标准库；Git 阳性用例用临时仓库（不可用则仅该用例跳过） |
+| `test_runtime_paths.py` | 下发运行契约中的 `{{AIDP_HOME}}`、根 `.aidp/` 硬编码和渲染态未解析 token 守卫 | `python3 .aidp/scripts/tests/test_runtime_paths.py` | Python 标准库 |
 | `test_command_skill_contracts.py` | 命令 ↔ SKILL 调用契约：脚手架调用形态、SQL 隔离门两轨布局、`code-verification-loop` 仅验收模式、`bugfix` 输入面、质量门委派接线、发布欠账唯一写入口、写前快照 | `python3 .aidp/scripts/tests/test_command_skill_contracts.py` | Python 标准库 + `git` |
 | `test_doc_reference_guards.py` | 文档引用与开源卫生三道门：`check_code_symbol_refs.py`（`脚本::符号` 存在性）/ `check_cli_invocation.py`（子命令与 flag 归属）/ `check_private_markers.py`（内网地址 / 主机名 / MCP 服务名 / 下游项目名 / 示例子项目名 / 本地名单）双侧对照 + `--self-check` | `python3 .aidp/scripts/tests/test_doc_reference_guards.py` | Python 标准库 |
-| **脚手架侧（不在本目录、由 `run.sh` 一并调起）** | `.aidp/skills/aidp-code-engineer/scripts/tests/` 下的 `test_mirror.py` / `test_scaffold_lib.py` / `test_scaffold_modes.py` / `test_sync_memory_md.py` | 见 `run.sh`「脚手架 skill 侧」段 | Python 标准库 |
+| **脚手架侧（不在本目录、由 `run.sh` 一并调起）** | `.aidp/skills/aidp-code-engineer/scripts/tests/` 下的 `test_mirror.py` / `test_scaffold_lib.py` / `test_runtime_layout.py` / `test_scaffold_modes.py` / `test_sync_memory_md.py` | 见 `run.sh`「脚手架 skill 侧」段 | Python 标准库 |
 | `sync_group_table.py` | 维护工具：把 `test_guard_scripts.py` 的实跑分组同步进本 README 的分组表 | `python3 .aidp/scripts/tests/sync_group_table.py` | Python 标准库 |
 | `fixtures/*.js` | AI 报告数据缺陷形态的回归样本（脱敏） | — | — |
 | `run.sh` | 一次跑全部 | `bash .aidp/scripts/tests/run.sh` | 同上 |

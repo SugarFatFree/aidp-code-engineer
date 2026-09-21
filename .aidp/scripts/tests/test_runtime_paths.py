@@ -49,6 +49,39 @@ def load_script(name):
     return module
 
 
+def test_real_source_renders_for_both_runtime_homes():
+    scripts = REPO / ".aidp/skills/aidp-code-engineer/scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import runtime_layout as layout
+
+    base = Path(tempfile.mkdtemp(prefix="aidp-real-runtime-", dir=str(REPO)))
+    try:
+        claude = base / ".claude/aidp"
+        shared = base / ".agents/aidp"
+        layout.render_runtime(REPO / ".aidp", claude, ".claude/aidp", "V1.0.0", "claude")
+        layout.render_runtime(REPO / ".aidp", shared, ".agents/aidp", "V1.0.0", "shared")
+        layout.validate_runtime(claude, expected_home=".claude/aidp")
+        layout.validate_runtime(shared, expected_home=".agents/aidp")
+        check("真实源可渲染 Claude/shared 且规范化一致",
+              layout.normalize_runtime(claude, ".claude/aidp")
+              == layout.normalize_runtime(shared, ".agents/aidp"))
+        results = []
+        for checker in (claude / "scripts/check_runtime_paths.py",
+                        shared / "scripts/check_runtime_paths.py"):
+            proc = subprocess.run([sys.executable, str(checker), "--root", str(base),
+                                   "--rendered", "--json"],
+                                  capture_output=True, text=True)
+            try:
+                payload = json.loads(proc.stdout)
+            except ValueError:
+                payload = {}
+            results.append(proc.returncode == 0 and payload.get("ok"))
+        check("渲染后两包递归扫描无 token 和旧运行路径", all(results))
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 def test_user_visible_messages(root):
     emit = load_script("emit-report.py")
     try:
@@ -158,6 +191,7 @@ def main():
         shutil.rmtree(root / ".agents")
 
         test_user_visible_messages(root)
+        test_real_source_renders_for_both_runtime_homes()
 
         rc = subprocess.run([sys.executable, str(SCRIPT), "--self-check"],
                             capture_output=True, text=True).returncode

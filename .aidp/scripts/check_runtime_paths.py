@@ -41,7 +41,7 @@ TOKEN = "{{" + "AIDP_HOME" + "}}"
 RUNTIME_REL = runtime_relpath("", __file__)
 IGNORE_RE = re.compile(r"runtime-path-ignore:\s*\S")
 MAX_BYTES = 2 * 1024 * 1024
-LEGACY_MODULES = {".aidp/scripts/agent_sync.py"}
+LEGACY_MODULES = {RUNTIME_REL.rstrip("/") + "/scripts/agent_sync.py"}
 LEGACY_FUNCTION_PREFIXES = ("cleanup_", "_cleanup_", "prune_legacy", "_prune_legacy")
 
 

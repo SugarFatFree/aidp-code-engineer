@@ -27,6 +27,12 @@ AI 才会发现"文件不存在"，那时已经在下游业务项目的运行现
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
 _aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
@@ -124,7 +130,7 @@ def main():
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif not res["applicable"]:
-        print(f"'[SKIP] 无 $AIDP_HOME/skills/ 目录（'{res['reason']}）")
+        print(runtime_text(f"'[SKIP] 无 __AIDP_HOME__/skills/ 目录（'{res['reason']}）", __file__))
     elif res["findings"]:
         sys.stderr.write(f"❌ SKILL 内部文件引用悬空 {len(res['findings'])} 处"
                          f"（巡检 {res['files']} 份 .md、{res['checked']} 处引用）：\n")

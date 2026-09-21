@@ -115,6 +115,4 @@ def runtime_relpath(relative: str | os.PathLike[str] = "", script_file: Path | s
 def runtime_text(text: str, script_file: Path | str = __file__) -> str:
     """Expand legacy source-tree path literals for template and native runtimes."""
     home = runtime_relpath("", script_file).rstrip("/")
-    legacy_prefix = ".aidp" + "/"
-    return (text.replace("__AIDP_HOME__", home)
-            .replace(legacy_prefix, home + "/"))
+    return text.replace("__AIDP_HOME__", home)

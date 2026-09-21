@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -25,6 +26,7 @@ EXCLUDED_PREFIXES = (
 EXCLUDED_FILES = {
     "scripts/design-goals-baseline.txt",
     "scripts/check_runtime_paths.py",  # 检查器自身包含阳性正则与自检探针
+    "scripts/aidp_runtime.py",         # 运行根展开器定义内部 token
 }
 TEXT_SUFFIXES = {
     "", ".md", ".py", ".sh", ".js", ".ts", ".json", ".jsonl",
@@ -74,9 +76,104 @@ def iter_contract_files(root: Path, selected: list[str] | None = None):
             yield path
 
 
+def _legacy_assignment(node: ast.Constant, parents: dict) -> bool:
+    parent = parents.get(node)
+    if not isinstance(parent, ast.Assign) or parent.value is not node:
+        return False
+    return any(isinstance(target, ast.Name) and target.id == "LEGACY_AIDP_DIR"
+               for target in parent.targets)
+
+
+def _assignment_names(node: ast.AST, parents: dict) -> set[str]:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, ast.Assign):
+            return {target.id for target in current.targets if isinstance(target, ast.Name)}
+        if isinstance(current, (ast.Expr, ast.Return, ast.FunctionDef, ast.Module)):
+            break
+    return set()
+
+
+def _memory_state_construction(node: ast.Constant, parents: dict) -> bool:
+    current = parents.get(node)
+    while current is not None and not isinstance(current, (ast.Assign, ast.Expr, ast.Return)):
+        if isinstance(current, ast.Call):
+            literals = {arg.value for arg in current.args
+                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str)}
+            if "memory" in literals:
+                return True
+        current = parents.get(current)
+    return "LOCK_DIRNAME" in _assignment_names(node, parents)
+
+
+def _path_construction(node: ast.Constant, parents: dict) -> bool:
+    if _memory_state_construction(node, parents):
+        return False
+    parent = parents.get(node)
+    if isinstance(parent, ast.BinOp) and isinstance(parent.op, (ast.Div, ast.Add)):
+        return True
+    if isinstance(parent, ast.Call):
+        func = parent.func
+        if isinstance(func, ast.Name) and func.id in {"Path", "PurePath"}:
+            return True
+        if isinstance(func, ast.Attribute) and func.attr == "join":
+            return True
+    return False
+
+
+def _wrapped_by_runtime_text(node: ast.AST, parents: dict) -> bool:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, ast.Call):
+            func = current.func
+            if isinstance(func, ast.Name) and func.id in {"runtime_text", "_runtime_text"}:
+                return True
+    return False
+
+
+def _scan_python_constructions(path: Path, root: Path) -> list[dict]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return []
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    findings = []
+    rel = path.relative_to(root).as_posix()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        if node.value == LEGACY_AIDP_DIR:
+            if _legacy_assignment(node, parents):
+                continue
+            if _path_construction(node, parents):
+                findings.append({
+                    "kind": "hardcoded-runtime-construction", "path": rel,
+                    "line": node.lineno, "value": LEGACY_AIDP_DIR,
+                })
+        if ("__AIDP_HOME__" in node.value or "$AIDP_HOME" in node.value) \
+                and not _wrapped_by_runtime_text(node, parents):
+            findings.append({
+                "kind": "unexpanded-runtime-output", "path": rel,
+                "line": node.lineno, "value": "runtime-home-token",
+            })
+    return findings
+
+
 def scan(root: Path, selected: list[str] | None = None, rendered: bool = False) -> list[dict]:
     findings = []
+    state_root = root / RUNTIME_REL / "memory" / ".aidp"
+    if os.path.lexists(str(state_root)):
+        findings.append({
+            "kind": "runtime-state-in-source",
+            "path": state_root.relative_to(root).as_posix(),
+            "line": 1,
+            "value": "memory/.aidp",
+        })
     for path in iter_contract_files(root, selected):
+        if path.suffix.lower() == ".py":
+            findings.extend(_scan_python_constructions(path, root))
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):

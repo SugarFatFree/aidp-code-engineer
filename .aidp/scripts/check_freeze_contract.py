@@ -42,6 +42,12 @@
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
 _aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
@@ -213,7 +219,7 @@ def run(root="."):
             if "_UNFREEZE_BY_" in ln or "_HUMAN_ONLY" in ln or ln.strip().startswith('"'):
                 for v in enum:
                     if f'"{v}"' in ln:
-                        readers.setdefault(v, []).append(f"'$AIDP_HOME/scripts/autopilot_unfreeze.py:'{i+1}")
+                        readers.setdefault(v, []).append(runtime_text(f"'__AIDP_HOME__/scripts/autopilot_unfreeze.py:'{i+1}", __file__))
 
     for d in SCAN_DIRS:
         base = os.path.join(root, runtime_relpath("", __file__), d)

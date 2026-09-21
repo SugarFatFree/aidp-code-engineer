@@ -481,9 +481,9 @@ def do_watchdog(root, a, now=None, send_notify=True):
             continue                      # 同一陈旧心跳只告警一次
         state[chain] = r["heartbeat_at"]
         label = CHAINS[chain]["label"]
-        msg = (f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
+        msg = (runtime_text(f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
                f"（阈值 {r['threshold_seconds'] // 60} 分钟，最后心跳 {r['heartbeat_at']}）。"
-               "请检查定时任务：python3 $AIDP_HOME/scripts/aidp_scheduler.py status")
+               "请检查定时任务：python3 __AIDP_HOME__/scripts/aidp_scheduler.py status", __file__))
         rec = {"at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
                "source": "aidp_scheduler.watchdog", "kind": "loop-heartbeat-stale",
                "chain": chain, "command": r["command"], "heartbeat_at": r["heartbeat_at"],

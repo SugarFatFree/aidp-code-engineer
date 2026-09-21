@@ -772,11 +772,11 @@ def _print_obligations(info: dict) -> None:
     stale = int(casc.get("stale") or 0)
     if stale > 0:
         sys.stderr.write(
-            f"📒 开发期变更台账有 {stale} 条昨天及更早的条目未级联"
+            runtime_text(f"📒 开发期变更台账有 {stale} 条昨天及更早的条目未级联"
             f"（共 {casc.get('total') or 0} 条，涉及版本 "
             f"{'/'.join((casc.get('versions') or {}).keys()) or '-'}）→ 约定 22 收口点 1："
             "本次 commit+push 完成后派后台子 Agent 批量级联并清账；"
-            "详规 `$AIDP_HOME/reference/开发期族增量.md`\n")
+            "详规 `__AIDP_HOME__/reference/开发期族增量.md`\n", __file__))
 
     byp = info.get("suspected_cascade_bypass") or {}
     if byp.get("suspected"):
@@ -801,10 +801,10 @@ def _print_obligations(info: dict) -> None:
     unparsed = casc.get("unparsed") or []
     if unparsed:
         sys.stderr.write(
-            f"⚠️ 台账存在但**未识别出任何条目**（疑似格式漂移）：{', '.join(unparsed)}\n"
+            runtime_text(f"⚠️ 台账存在但**未识别出任何条目**（疑似格式漂移）：{', '.join(unparsed)}\n"
             "   → 本机制只认三种条目形态（一行式 `- C-NNN · MM-DD ·` / `### C-NNN` / "
-            "表格首列 `| C-NNN |`）。请按 `$AIDP_HOME/templates/_开发期族增量.md` 校正格式，"
-            "否则收口点永不触发、台账会无限增长且零告警。\n")
+            "表格首列 `| C-NNN |`）。请按 `__AIDP_HOME__/templates/_开发期族增量.md` 校正格式，"
+            "否则收口点永不触发、台账会无限增长且零告警。\n", __file__))
 
     dirty = int(casc.get("cascaded_not_cleaned") or 0)
     if dirty > 0:
@@ -824,13 +824,13 @@ def _print_obligations(info: dict) -> None:
     cicd = info.get("pending_cicd") or {}
     if cicd.get("pending"):
         sys.stderr.write(
-            f"🚄 本次推送未经推送分类器（版本 {cicd.get('version')} / build {cicd.get('build')}）"
+            runtime_text(f"🚄 本次推送未经推送分类器（版本 {cicd.get('version')} / build {cicd.get('build')}）"
             "——约定 31.5「**推送 ≠ 交付完成**」。\n"
-            "   → `git push` 之【前】跑 `python3 $AIDP_HOME/scripts/classify_push.py --root . "
+            "   → `git push` 之【前】跑 `python3 __AIDP_HOME__/scripts/classify_push.py --root . "
             "--version <V> --build <B> --base-ref <BASE>`；\n"
             "     无正式代码变更记 `cicd_skipped=true` 即算完成；有变更须 `cicd_watch.py` "
             "监听至终态 + 就绪探针。\n"
-            "   ⛔ 作用域 = **推送这一事实、与命令入口无关**：裸对话路径同样适用。\n")
+            "   ⛔ 作用域 = **推送这一事实、与命令入口无关**：裸对话路径同样适用。\n", __file__))
 
     dest = casc.get("destructive_unregistered") or []
     if dest:

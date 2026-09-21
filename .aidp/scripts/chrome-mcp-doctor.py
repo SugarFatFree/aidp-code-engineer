@@ -641,7 +641,7 @@ def do_check(root, override_ip=None):
     # 1) 配置缺失
     if mode == "absent":
         print("【配置状态】❌ 项目根 .mcp.json 缺少远程条目")
-        print(f"'  → 跑：python3 $AIDP_HOME/scripts/chrome-mcp-doctor.py set --ip <IP:9222>'")
+        print(runtime_text(f"'  → 跑：python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py set --ip <IP:9222>'", __file__))
         print(f"     （远程不可达想本地兜底 → set --local-headless，会切 chrome-devtools-cli、不写 MCP 条目）")
         exit_code = EXIT_NO_CONFIG
         next_action = "set"
@@ -649,8 +649,8 @@ def do_check(root, override_ip=None):
         # 旧版遗留的 chrome-devtools-mcp --headless=true 条目：现已弃用（本地兜底改走 cli）。
         print(f"【配置状态】⚠️ 检出旧版 MCP 无头条目 `{server_name}`（chrome-devtools-mcp --headless=true）")
         print(f"  本地无头兜底已改走 chrome-devtools-cli（直连 CDP、免 MCP/重启）→ 该 MCP 条目应清除：")
-        print(f"'  → 跑：python3 $AIDP_HOME/scripts/chrome-mcp-doctor.py set --local-headless（清条目 + 切 cli）'")
-        print(f"'     或：python3 $AIDP_HOME/scripts/chrome-mcp-doctor.py reset（仅删条目）'")
+        print(runtime_text(f"'  → 跑：python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py set --local-headless（清条目 + 切 cli）'", __file__))
+        print(runtime_text(f"'     或：python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py reset（仅删条目）'", __file__))
         exit_code = EXIT_NO_CONFIG
         next_action = "set-local-headless"
     else:

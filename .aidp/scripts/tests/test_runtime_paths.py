@@ -61,6 +61,50 @@ def main():
               rc == 1 and [x.get("kind") for x in data.get("findings", [])]
               == ["unresolved-runtime-home"])
 
+        (root / ".aidp/commands/ok.md").write_text("ok\n", encoding="utf-8")
+        write(root, ".aidp/scripts/ast_probe.py",
+              "from pathlib import Path\nimport os\n"
+              "LEGACY_AIDP_DIR = '.aidp'\n"
+              "A = Path('.aidp') / 'commands'\n"
+              "B = os.path.join('x', '.aidp', 'scripts')\n"
+              "C = '.aidp' + '/flows/x.md'\n"
+              "print('__AIDP_HOME__/scripts/leak.py')\n")
+        rc, data = run(root)
+        ast_hits = [x for x in data.get("findings", []) if x.get("kind") == "hardcoded-runtime-construction"]
+        token_hits = [x for x in data.get("findings", []) if x.get("kind") == "unexpanded-runtime-output"]
+        check("AST 抓 Path/join/拼接构造，LEGACY 常量单独声明放行",
+              rc == 1 and len(ast_hits) == 3)
+        check("Python 用户输出不得泄露内部运行根 token", len(token_hits) == 1)
+        (root / ".aidp/scripts/ast_probe.py").unlink()
+
+        state = root / ".aidp/memory/.aidp/alerts.jsonl"
+        state.parent.mkdir(parents=True)
+        state.write_text("{}\n", encoding="utf-8")
+        rc, data = run(root)
+        check("模板运行源禁止携带 memory/.aidp 状态文件",
+              rc == 1 and any(x.get("kind") == "runtime-state-in-source" for x in data.get("findings", [])))
+        shutil.rmtree(root / ".aidp/memory")
+
+        native = root / ".agents/aidp"
+        (native / "scripts").mkdir(parents=True)
+        shutil.copy2(REPO / ".aidp/scripts/aidp_runtime.py", native / "scripts/aidp_runtime.py")
+        skill_script = native / "skills/dev-execution-planner/scripts/scan_aidp.py"
+        skill_script.parent.mkdir(parents=True)
+        shutil.copy2(REPO / ".aidp/skills/dev-execution-planner/scripts/scan_aidp.py", skill_script)
+        (native / "commands").mkdir()
+        (native / "commands/demo.md").write_text("# demo\n", encoding="utf-8")
+        p = subprocess.run([sys.executable, str(skill_script), str(root), "--json"],
+                           capture_output=True, text=True)
+        try:
+            payload = json.loads(p.stdout)
+        except ValueError:
+            payload = {}
+        check("Skill 脚本可从原生 runtime 定位运行包",
+              p.returncode == 0 and any(x.get("type") == "aidp_directory"
+                                        and ".agents/aidp" in x.get("source", "")
+                                        for x in payload.get("sources", [])))
+        shutil.rmtree(root / ".agents")
+
         rc = subprocess.run([sys.executable, str(SCRIPT), "--self-check"],
                             capture_output=True, text=True).returncode
         check("脚本自检通过", rc == 0)

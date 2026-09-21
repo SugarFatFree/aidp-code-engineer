@@ -393,8 +393,8 @@ def _check_one_ledger(root, v, fam, rel, must_delete, transfer_to, pc, unparsed)
                                  "改写为变更内容与理由本身（增量册是中转站、不承担长期溯源），再真删"})
     if rel in unparsed:
         return (None, {"version": v, "family": fam, "path": rel, "reason": "unparsed",
-                       "detail": f"{label}增量册有实质内容却一条条目都解析不出——格式漂移，"
-                                 "无从证明已收口；请按 $AIDP_HOME/templates/_开发期族增量.md 骨架修正"})
+                       "detail": runtime_text(f"{label}增量册有实质内容却一条条目都解析不出——格式漂移，"
+                                 "无从证明已收口；请按 __AIDP_HOME__/templates/_开发期族增量.md 骨架修正", __file__)})
     finfo = ((pc.get("versions", {}).get(v) or {}).get("families") or {}).get(fam)
     if finfo is None:
         return (None, {"version": v, "family": fam, "path": rel, "reason": "not-scanned",

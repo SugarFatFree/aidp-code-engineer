@@ -45,6 +45,17 @@ class RuntimeRootTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "解析 AIDP 运行根"):
             self.runtime.runtime_root("/p/scripts/x.py", environ={})
 
+    def test_runtime_text_expands_only_internal_token(self):
+        script = Path("/p/.claude/aidp/scripts/x.py")
+        self.assertEqual(
+            self.runtime.runtime_text("run __AIDP_HOME__/scripts/x.py", script),
+            "run .claude/aidp/scripts/x.py",
+        )
+        self.assertEqual(
+            self.runtime.runtime_text("memory/.aidp/alerts.jsonl", script),
+            "memory/.aidp/alerts.jsonl",
+        )
+
     def test_relative_overrides_resolve_inside_project(self):
         with tempfile.TemporaryDirectory() as td:
             project = Path(td) / "project"

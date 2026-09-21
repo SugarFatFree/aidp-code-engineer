@@ -31,6 +31,12 @@
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
 _aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
@@ -86,7 +92,7 @@ def run(root="."):
         if (flow_uses or declared) and not declared:
             findings.append({
                 "level": "ERROR", "command": cmd, "used_in": where[:4],
-                "detail": (f"`/{cmd}'` 的 flow 分片里读了 `$ARGUMENTS`，但**命令正文没有声明它** —— `$ARGUMENTS` 只在 `$AIDP_HOME/commands/*.md` 里被 runtime 文本替换，flow 是 Read 进来的普通文本 → 解析器恒收空串 → **全部 flag 落 0**'"),
+                "detail": (runtime_text(f"`/{cmd}'` 的 flow 分片里读了 `$ARGUMENTS`，但**命令正文没有声明它** —— `$ARGUMENTS` 只在 `__AIDP_HOME__/commands/*.md` 里被 runtime 文本替换，flow 是 Read 进来的普通文本 → 解析器恒收空串 → **全部 flag 落 0**'", __file__)),
             })
     return {"applicable": True, "reason": "", "scanned": scanned,
             "findings": findings, "passed": not findings}

@@ -377,7 +377,7 @@ def main(argv=None):
 
     root = Path(args.root).resolve()
     if not (root / runtime_relpath("", __file__)).is_dir():
-        sys.stderr.write(runtime_text('未找到 %s/$AIDP_HOME/\n', __file__) % root)
+        sys.stderr.write(runtime_text('未找到 %s/__AIDP_HOME__/\n', __file__) % root)
         return 2
 
     findings, scanned, truth, _ref = scan(root)

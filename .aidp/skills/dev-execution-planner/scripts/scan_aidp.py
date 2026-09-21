@@ -24,12 +24,30 @@ import sys
 from pathlib import Path
 
 
+def _runtime_api():
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        scripts = parent / "scripts"
+        if (scripts / "aidp_runtime.py").is_file():
+            if str(scripts) not in sys.path:
+                sys.path.insert(0, str(scripts))
+            import aidp_runtime
+            anchor = scripts / "aidp_runtime.py"
+            return aidp_runtime, anchor
+    raise RuntimeError(f"找不到 AIDP 运行包: {here}")
+
+
+def _runtime_root() -> Path:
+    api, anchor = _runtime_api()
+    return api.runtime_root(anchor)
+
+
 def scan_aidp_config(root: Path) -> list:
     """扫描 AIDP_HOME/ 目录和配置文件"""
     results = []
 
-    # AIDP_HOME/ 目录
-    aidp_dir = root / '.aidp'
+    # 当前脚本所属的 Agent 原生运行包
+    aidp_dir = _runtime_root()
     if aidp_dir.is_dir():
         results.append({
             "source": str(aidp_dir),
@@ -63,7 +81,7 @@ def scan_aidp_config(root: Path) -> list:
 def scan_aidp_docs(root: Path) -> list:
     """扫描 AIDP*.md 文档"""
     results = []
-    search_dirs = [root, root / 'docs', root / 'doc', root / '.aidp']
+    search_dirs = [root, root / 'docs', root / 'doc', _runtime_root()]
 
     for search_dir in search_dirs:
         if not search_dir.is_dir():

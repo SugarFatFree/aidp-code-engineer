@@ -48,9 +48,16 @@ def _paths():
     return aidp_paths
 
 
+def _runtime_anchor():
+    return Path(__file__).resolve().parents[1] / "scripts" / "aidp_runtime.py"
+
+
 def _runtime_rel(relative=""):
-    script_anchor = Path(__file__).resolve().parents[1] / "scripts" / "aidp_runtime.py"
-    return _runtime_module().runtime_relpath(relative, script_anchor)
+    return _runtime_module().runtime_relpath(relative, _runtime_anchor())
+
+
+def _runtime_text(text):
+    return _runtime_module().runtime_text(text, _runtime_anchor())
 
 
 def _exit_allow():
@@ -469,9 +476,11 @@ def main():
     cnt = int(counts.get(cnt_key) or 0)
     if cnt >= STOP_GUARD_MAX_BLOCKS:
         # 达上限 → fail-open，避免无限阻止；大声告警交人工
-        sys.stderr.write(
-            f"⚠️ autopilot 收尾门（build {B}）连续 {cnt}' 次未过、已达阻止上限，本护栏放行止损。请人工检查仪式产物是否缺失（跑 $AIDP_HOME/scripts/autopilot-ceremony-gate.py check --version '{V} --build {B}）。\n"
-        )
+        sys.stderr.write(_runtime_text(
+            f"⚠️ autopilot 收尾门（build {B}）连续 {cnt} 次未过、已达阻止上限，本护栏放行止损。"
+            f"请人工检查仪式产物是否缺失（跑 __AIDP_HOME__/scripts/autopilot-ceremony-gate.py "
+            f"check --version {V} --build {B}）。\n"
+        ))
         _note_skip(root, "max-blocks-reached",
                    f"version {V} · build {B} 收尾门连续 {cnt} 次未过，达阻止上限后放行止损")
         _exit_allow()

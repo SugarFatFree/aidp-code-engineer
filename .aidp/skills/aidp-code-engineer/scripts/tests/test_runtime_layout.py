@@ -80,7 +80,7 @@ class RenderContractTest(RuntimeLayoutTestCase):
         self.assertEqual(R.render_text(TEXT, ".claude/aidp"), "run=.claude/aidp/scripts/tool.py\n")
         self.assertEqual(R.render_text(TEXT, ".agents/aidp"), "run=.agents/aidp/scripts/tool.py\n")
         for invalid in (
-            "{{UNKNOWN_TOKEN}}\n",
+            "{{AIDP_UNKNOWN_TOKEN}}\n",
             "python3 .aidp/scripts/tool.py\n",
             "read /iflytek/workspace/private/.aidp/x\n",
         ):
@@ -162,7 +162,7 @@ class RenderContractTest(RuntimeLayoutTestCase):
             )
         with self.assertRaises(ValueError):
             R.render_text(
-                "bad={{UNKNOWN_TOKEN}}  # runtime-path-ignore: 不得豁免 token\n",
+                "bad={{AIDP_UNKNOWN_TOKEN}}  # runtime-path-ignore: 不得豁免 token\n",
                 ".claude/aidp", template_root=root,
             )
         with self.assertRaises(ValueError):
@@ -496,7 +496,7 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             destination = base / ".agents/aidp"
             R.render_runtime(source, destination, ".agents/aidp", "V1.0.0", "shared")
             before = R.tree_digest(destination)
-            (source / "commands/sprint-dev.md").write_text("{{UNKNOWN_TOKEN}}\n", encoding="utf-8")
+            (source / "commands/sprint-dev.md").write_text("{{AIDP_UNKNOWN_TOKEN}}\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 R.render_runtime(source, destination, ".agents/aidp", "V1.0.1", "shared")
             self.assertEqual(R.tree_digest(destination), before)

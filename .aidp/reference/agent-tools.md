@@ -2,7 +2,7 @@
 
 > AIDP 的命令、流程分片、角色文件以 Claude Code 的工具名书写（它们最具体、最容易检索）。
 > 在 Codex 或 DeepSeek Harness 下执行时，按本表换成等价能力——**语义不变，只换手段**。
-> 当前 Agent 由 `python3 .aidp/scripts/agent_env.py detect` 判定。
+> 当前 Agent 由 `python3 {{AIDP_HOME}}/scripts/agent_env.py detect` 判定。
 
 ## 一、判定与记忆文件
 
@@ -12,10 +12,10 @@
 | 项目记忆文件 | `CLAUDE.md`（与其他 Agent 并存时为 `@AGENTS.md` 薄壳） | `AGENTS.md` | `AGENTS.md` |
 | SKILL 目录 | `.claude/skills/` | `.agents/skills/` | `.agents/skills/`（与 Codex 共用） |
 | AIDP 命令入口 | `/sprint-dev …`（`.claude/commands/`） | `$sprint-dev …`（`.codex/skills/aidp/`，仅显式调用） | `/sprint-dev …`（`.dsh/commands/`） |
-| 插件（`.aidp/plugins/`） | `.claude/plugins/<name>/` + settings 登记 marketplace 并启用 | 插件 SKILL 位于 `.codex/skills/<name>/skills/`，MCP 合并到 `.codex/config.toml` | 插件 SKILL 位于 `.agents/skills/`，MCP 汇总到 `.dsh/mcp.json` |
+| 插件（`{{AIDP_HOME}}/plugins/`） | `.claude/plugins/<name>/` + settings 登记 marketplace 并启用 | 插件 SKILL 位于 `.codex/skills/<name>/skills/`，MCP 合并到 `.codex/config.toml` | 插件 SKILL 位于 `.agents/skills/`，MCP 汇总到 `.dsh/mcp.json` |
 | Stop hook | `.claude/settings.json` | `.codex/hooks.json`（`config.toml` 需 `codex_hooks = true`） | `.dsh/hooks.json`，由 hooks 插件加载 |
 
-入口全部由 `python3 .aidp/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；命令只在 `.aidp/commands/`、公共 SKILL 只在 `.aidp/skills/`、插件只在 `.aidp/plugins/`。Codex 命令位于官方发现根 `.codex/skills/aidp/`，带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`。其正文明确串联 `/foo args` 时，读取 `.aidp/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 内联执行；未知命令或无法唯一映射时 fail closed。`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。
+入口全部由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；命令只在 `{{AIDP_HOME}}/commands/`、公共 SKILL 只在 `{{AIDP_HOME}}/skills/`、插件只在 `{{AIDP_HOME}}/plugins/`。Codex 命令位于官方发现根 `.codex/skills/aidp/`，带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`。其正文明确串联 `/foo args` 时，读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 内联执行；未知命令或无法唯一映射时 fail closed。`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。
 
 ## 二、工具名
 
@@ -30,7 +30,7 @@
 | `WebFetch` / `WebSearch` | 联网读取 | 使用当前 Agent 的联网能力；不可用时记为「未取到」，⛔ 不编造 |
 | `$ARGUMENTS` | 命令参数 | 调用当前 Agent 的命令入口时附带的文字 |
 | `$CLAUDE_PROJECT_DIR` | 项目根目录 | `git rev-parse --show-toplevel` |
-| chrome-devtools MCP 工具（`mcp__chrome-devtools__*`） | 浏览器自动化 | 插件 `.aidp/plugins/chrome-devtools-mcp/` 由 `agent_sync.py` 为各 Agent 装配后使用同名工具（Claude Code 插件形态工具名为 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`）|
+| chrome-devtools MCP 工具（`mcp__chrome-devtools__*`） | 浏览器自动化 | 插件 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/` 由 `agent_sync.py` 为各 Agent 装配后使用同名工具（Claude Code 插件形态工具名为 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`）|
 
 ## 三、7×24 无人值守（操作系统调度为主）
 
@@ -39,13 +39,13 @@
 **推荐形态 = 操作系统调度双进程**（三种 Agent 通用）：
 
 ```bash
-python3 .aidp/scripts/aidp_scheduler.py install [--agent claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m]
-python3 .aidp/scripts/aidp_scheduler.py status       # 定时任务是否已装 + 两条链路心跳
-python3 .aidp/scripts/aidp_scheduler.py uninstall
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m]
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status       # 定时任务是否已装 + 两条链路心跳
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall
 ```
 
-- 为两条链路各装一个用户级定时任务（Linux：systemd --user timer，无 systemd 用户实例时用 crontab；macOS：launchd；Windows：输出 `schtasks` 命令手工执行），每个任务调用 `.aidp/scripts/agent_loop.sh --once <命令> --unattended`。两条链路是两个独立进程，互不阻塞。
-- `agent_loop.sh` 每轮：自动补 `--unattended --no-loop`；导出 `AIDP_TICK_COMMAND=<命令>`（Stop 护栏据此只拦 autopilot tick）与 `ARGUMENTS`；flock 互斥（上一轮未结束则跳过）；加载可选的 `~/.config/aidp/env`（通知 webhook、CICD 令牌等凭据环境变量写这里，不进仓库、不进定时任务定义）；日志落 `memory/.aidp/logs/<命令>.log`；开跑前执行 `aidp_scheduler.py watchdog`——任一链路超过 `scheduler.stale_cycles × 周期` 无心跳（且未在执行中）即写本地告警台账 `memory/.aidp/alerts.jsonl` 并发里程碑通知。
+- 为两条链路各装一个用户级定时任务（Linux：systemd --user timer，无 systemd 用户实例时用 crontab；macOS：launchd；Windows：输出 `schtasks` 命令手工执行），每个任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`。两条链路是两个独立进程，互不阻塞。
+- `agent_loop.sh` 每轮：自动补 `--unattended --no-loop`；导出 `AIDP_TICK_COMMAND=<命令>`（Stop 护栏据此只拦 autopilot tick）与 `ARGUMENTS`；flock 互斥（上一轮未结束则跳过）；加载可选的 `~/.config/aidp/env`（通知 webhook、CICD 令牌等凭据环境变量写这里，不进仓库、不进定时任务定义）；日志落 `memory/{{AIDP_HOME}}/logs/<命令>.log`；开跑前执行 `aidp_scheduler.py watchdog`——任一链路超过 `scheduler.stale_cycles × 周期` 无心跳（且未在执行中）即写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` 并发里程碑通知。
 - 周期、Agent、执行命令模板取 `memory/aidp-config.yaml` 的 `scheduler` 段；Linux 注销后仍要运行需执行一次 `loginctl enable-linger "$USER"`。
 
 **各 Agent 的非交互执行前置**（执行命令模板优先级：`AIDP_AGENT_EXEC` 环境变量 > `scheduler.exec.<agent>` > 内置默认；⚠️ 各 CLI 参数以所用版本官方文档为准）：

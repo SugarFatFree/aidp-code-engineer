@@ -962,9 +962,10 @@ def test_tick_flags_target_version_no_fallback():
     repo = Path(os.path.dirname(os.path.dirname(os.path.dirname(HERE))))
     d = Path(tempfile.mkdtemp())
     (d / "memory").mkdir()
-    # ⚠️ 必须软链 .aidp —— BASELINE_EDIT 是相对路径，缺它则子进程直接失败、
-    #    _cur_version() 返回空串，于是"回落没触发"与"回落不存在"在输出上完全同形。
-    os.symlink(repo / ".aidp", d / ".aidp")
+    # 原生运行包使用实体副本；夹具至少复制执行链需要的三个脚本。
+    (d / ".aidp/scripts").mkdir(parents=True)
+    for name in ("autopilot_tick_flags.py", "baseline_edit.py", "aidp_runtime.py"):
+        shutil.copy2(repo / ".aidp/scripts" / name, d / ".aidp/scripts" / name)
     (d / "memory/.sprint-autopilot-baseline.json").write_text(json.dumps({
         "autopilot": {"target_version": "", "pre_release_version": "V0.1.0"},
         "versions": {"V0.1.0": {"phase_beta_done_at": "2026-09-01T10:00:00+08:00"}},
@@ -1802,7 +1803,7 @@ def test_terminology_and_conv30():
           not any(n["file"].endswith(("rationale.md", "invariants.md"))
                   for n in (d2.get("new") or [])))
     check("约定 30 范围已含 flows/reference/rules（契约正文的大头在那里）",
-          "`.aidp/flows/**`" in (repo / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8"))
+          "`{{AIDP_HOME}}/flows/**`" in (repo / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8"))
 
 
 def test_ledger_format_tolerance():
@@ -5545,7 +5546,7 @@ def test_tick_namespace_isolation():
     scripts = Path(__file__).resolve().parents[1]
     root = Path(tempfile.mkdtemp())
     (root / ".aidp/scripts").mkdir(parents=True)
-    for n in ("autopilot_tick_flags.py", "baseline_edit.py"):
+    for n in ("autopilot_tick_flags.py", "baseline_edit.py", "aidp_runtime.py"):
         shutil.copy(scripts / n, root / ".aidp/scripts" / n)
     (root / "memory").mkdir()
     (root / "memory/.sprint-autopilot-baseline.json").write_text('{"versions":{}}', encoding="utf-8")
@@ -7073,7 +7074,7 @@ def test_fail_handle_freeze_now_and_enum_guard():
     d = Path(tempfile.mkdtemp())
     sc = d / ".aidp/scripts"
     sc.mkdir(parents=True)
-    for f in ("autopilot_fail_handle.py", "baseline_edit.py"):
+    for f in ("autopilot_fail_handle.py", "baseline_edit.py", "aidp_runtime.py"):
         shutil.copy(repo / ".aidp/scripts" / f, sc / f)
     src = (repo / ".aidp/scripts/check_freeze_contract.py").read_text(encoding="utf-8")
     (sc / "check_freeze_contract.py").write_text(

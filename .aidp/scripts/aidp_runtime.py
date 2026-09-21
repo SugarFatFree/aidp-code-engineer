@@ -85,7 +85,7 @@ def _roots(script_file: Path | str, environ: Mapping[str, str] | None) -> tuple[
 
 def runtime_root(script_file: Path | str = __file__, *,
                  environ: Mapping[str, str] | None = None) -> Path:
-    """Return `.aidp`, `.claude/aidp`, or `.agents/aidp` for a script."""
+    """Return the template, Claude, or shared AIDP runtime root for a script."""
     return _roots(script_file, environ)[0]
 
 
@@ -93,3 +93,28 @@ def project_root(script_file: Path | str = __file__, *,
                  environ: Mapping[str, str] | None = None) -> Path:
     """Return the project root without invoking Git."""
     return _roots(script_file, environ)[1]
+
+
+def runtime_path(relative: str | os.PathLike[str], script_file: Path | str = __file__) -> Path:
+    """Return an absolute path inside the current AIDP runtime."""
+    root = runtime_root(script_file)
+    target = _normalize_lexical(root / Path(relative))
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(f"运行包相对路径越界: {relative}") from exc
+    return target
+
+
+def runtime_relpath(relative: str | os.PathLike[str] = "", script_file: Path | str = __file__) -> str:
+    """Return a project-relative POSIX path inside the current runtime."""
+    target = runtime_path(relative, script_file)
+    return target.relative_to(project_root(script_file)).as_posix()
+
+
+def runtime_text(text: str, script_file: Path | str = __file__) -> str:
+    """Expand legacy source-tree path literals for template and native runtimes."""
+    home = runtime_relpath("", script_file).rstrip("/")
+    legacy_prefix = ".aidp" + "/"
+    return (text.replace("__AIDP_HOME__", home)
+            .replace(legacy_prefix, home + "/"))

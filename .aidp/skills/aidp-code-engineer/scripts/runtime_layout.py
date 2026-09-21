@@ -20,9 +20,10 @@ RUNTIME_MANIFEST = ".aidp-runtime.json"
 RUNTIME_HOME = {"claude": ".claude/aidp", "shared": ".agents/aidp"}
 RUNTIME_DIRS = L.RUNTIME_DIRS
 RUNTIME_EXCLUDES = L.RUNTIME_EXCLUDES
-_TOKEN_RE = re.compile(r"\{\{[^{}]+\}\}")
+_TOKEN_RE = re.compile(r"\{\{AIDP_[A-Z0-9_]+\}\}")
 _VERSION_RE = re.compile(r"^V\d+\.\d+\.\d+$")
 _IGNORE_PATH_RE = re.compile(r"runtime-path-ignore:\s*\S+")
+_OLD_RUNTIME_RE = re.compile(r"(?<!memory/)(?<![\w{])\.aidp/")
 
 
 def _lexical(path: Path) -> Path:
@@ -107,7 +108,7 @@ def render_text(text: str, home: str, template_root: object = None) -> str:
     if unknown:
         raise ValueError(f"存在未解析运行占位符: {', '.join(unknown)}")
     for line_no, line in enumerate(rendered.splitlines(), 1):
-        if ".aidp/" in line:
+        if _OLD_RUNTIME_RE.search(line):
             raise ValueError(f"存在旧运行路径 .aidp/（第 {line_no} 行）")
         if _template_path_leaks(line, template_root) and not _IGNORE_PATH_RE.search(line):
             raise ValueError(f"存在模板根绝对路径泄露（第 {line_no} 行）")
@@ -251,7 +252,7 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
         if _TOKEN_RE.search(text):
             raise ValueError(f"运行包含未解析占位符: {relative}")
         for line in text.splitlines():
-            if ".aidp/" in line:
+            if _OLD_RUNTIME_RE.search(line):
                 raise ValueError(f"运行包含旧路径: {relative}")
         if "{{AIDP_HOME}}" in text:
             raise ValueError(f"运行包含未解析 AIDP_HOME: {relative}")

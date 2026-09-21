@@ -32,12 +32,25 @@ STOP_GUARD_MAX_BLOCKS = 3         # 连续阻止上限，达到即 fail-open 防
 SKIP_LOG_MAX = 50                 # fail-open 台账保留最近 N 条（滚动截断，不无限增长）
 
 
+def _runtime_module():
+    import sys as _s
+    scripts = str(Path(__file__).resolve().parents[1] / "scripts")
+    if scripts not in _s.path:
+        _s.path.insert(0, scripts)
+    import aidp_runtime
+    return aidp_runtime
+
+
 def _paths():
     """aidp_paths（本地运行时产物的路径单一信源）。"""
-    import sys as _s
-    _s.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    _runtime_module()
     import aidp_paths
     return aidp_paths
+
+
+def _runtime_rel(relative=""):
+    script_anchor = Path(__file__).resolve().parents[1] / "scripts" / "aidp_runtime.py"
+    return _runtime_module().runtime_relpath(relative, script_anchor)
 
 
 def _exit_allow():
@@ -211,7 +224,7 @@ def main():
 
     # 1b. 配置开关：memory/aidp-config.yaml 的 stop_guard.enabled=false → 放行（读不出按开启处理）
     try:
-        sys.path.insert(0, str(root / ".aidp" / "scripts"))
+        sys.path.insert(0, str(root / _runtime_rel("") / "scripts"))
         import aidp_config
         if not aidp_config.stop_guard_enabled(str(root)):
             _exit_allow()
@@ -286,7 +299,7 @@ def main():
                 #    与 phase-3-9 的 GATE_STAGE 同口径：委派证据 **或** 测试链路真在干活。
                 _alive = 0
                 try:
-                    _g = root / ".aidp" / "scripts" / "autopilot-ceremony-gate.py"
+                    _g = root / _runtime_rel("") / "scripts" / "autopilot-ceremony-gate.py"
                     if _g.is_file():
                         _r = subprocess.run(
                             [sys.executable, str(_g), "test-loop-alive", "--version", str(V),
@@ -349,7 +362,7 @@ def main():
     V, B, wbt, entry_mode = target
 
     # 4. 跑收尾门（确定性外部脚本）——脚本缺失/异常即放行
-    gate = root / ".aidp" / "scripts" / "autopilot-ceremony-gate.py"
+    gate = root / _runtime_rel("") / "scripts" / "autopilot-ceremony-gate.py"
     if not gate.is_file():
         _exit_allow_noted(root, "gate-script-missing",
                           "收尾门脚本缺失：%s（version %s · build %s 未经任何校验即放行）"
@@ -374,7 +387,7 @@ def main():
     #    也不逼执行体去补发一条根本发不出去的通知。
     notify_on = False
     try:
-        sys.path.insert(0, str(root / ".aidp" / "scripts"))
+        sys.path.insert(0, str(root / _runtime_rel("") / "scripts"))
         import notify as _notify
         notify_on = bool(_notify.notify_ready(str(root)))
     except Exception:
@@ -457,8 +470,7 @@ def main():
     if cnt >= STOP_GUARD_MAX_BLOCKS:
         # 达上限 → fail-open，避免无限阻止；大声告警交人工
         sys.stderr.write(
-            f"⚠️ autopilot 收尾门（build {B}）连续 {cnt} 次未过、已达阻止上限，本护栏放行止损。"
-            f"请人工检查仪式产物是否缺失（跑 .aidp/scripts/autopilot-ceremony-gate.py check --version {V} --build {B}）。\n"
+            f"⚠️ autopilot 收尾门（build {B}）连续 {cnt}' 次未过、已达阻止上限，本护栏放行止损。请人工检查仪式产物是否缺失（跑 $AIDP_HOME/scripts/autopilot-ceremony-gate.py check --version '{V} --build {B}）。\n"
         )
         _note_skip(root, "max-blocks-reached",
                    f"version {V} · build {B} 收尾门连续 {cnt} 次未过，达阻止上限后放行止损")

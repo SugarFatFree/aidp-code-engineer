@@ -1,0 +1,78 @@
+# AIDP 部署流水线模板（GitLab CI/CD，`cicd.provider: gitlab-ci`）
+#
+# 拷贝到下游项目根目录 .gitlab-ci.yml，并在 memory/aidp-config.yaml 登记：
+#   cicd:
+#     provider: gitlab-ci
+#     pipelines: {test: main}          # 分支名：触发与按分支过滤用；留空 = 不按分支过滤
+#     gitlab-ci:
+#       url: https://gitlab.example.com
+#       project: group/name              # 或项目 ID
+#       token_env: AIDP_GITLAB_TOKEN     # ⛔ 只写环境变量名；令牌需 api 权限
+#
+# AIDP 与它的约定只有三条：
+#   1. 推送正式代码后由 push 自动创建 pipeline，或由 `cicd_watch.py --mode trigger --env <env>`
+#      经 API 按分支创建（下方 rules 已放行 api 来源）；
+#   2. pipeline 能按 commit 查到（`cicd_watch.py --mode detect --commit <sha> --env <env>`）——GitLab 天然满足；
+#   3. 部署完成即结束；应用是否就绪由 `{{AIDP_HOME}}/scripts/autopilot-deploy-watch.py` 探针判断，不在流水线里等。
+#
+# 构建与部署步骤按项目实际技术栈替换（下面以 Node 前端 + Maven 后端为例）。
+# 部署凭据放在 GitLab 项目的 CI/CD Variables（Masked / Protected），不要写进本文件。
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - code/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api" || $CI_PIPELINE_SOURCE == "web"'
+
+stages:
+  - build
+  - deploy
+
+build-frontend:
+  stage: build
+  image: node:20
+  rules:
+    - exists:
+        - code/frontend/*/package.json
+  script:
+    - |
+      for d in code/frontend/*/; do
+        [ -f "$d/package.json" ] || continue
+        (cd "$d" && corepack enable && (pnpm install --frozen-lockfile || npm ci) && (pnpm build || npm run build))
+      done
+  artifacts:
+    paths:
+      - code/frontend/*/dist/
+    expire_in: 1 day
+
+build-backend:
+  stage: build
+  image: maven:3-eclipse-temurin-17
+  rules:
+    - exists:
+        - code/backend/*/pom.xml
+  script:
+    - |
+      for d in code/backend/*/; do
+        [ -f "$d/pom.xml" ] || continue
+        (cd "$d" && mvn -B -DskipTests package)
+      done
+  artifacts:
+    paths:
+      - code/backend/*/target/*.jar
+    expire_in: 1 day
+
+deploy-test:
+  stage: deploy
+  image: alpine:3
+  resource_group: deploy-test          # 同一环境串行部署，不互相取消
+  environment:
+    name: test
+  script:
+    - |
+      if [ -z "$DEPLOY_HOST" ]; then
+        echo "未配置 DEPLOY_HOST，跳过部署（请按项目实际部署方式替换本步骤）"
+        exit 0
+      fi
+      echo "在此处替换为项目实际部署命令（rsync / docker push / kubectl apply 等）"

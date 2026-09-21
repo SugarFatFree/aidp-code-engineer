@@ -4,7 +4,7 @@
 
 > 按约定 21，下表只给**一句话用途 + 被谁调用**；各 SKILL 的维度/原则/检查细则是单一信源，详见对应 `SKILL.md`，不在此复述。
 
-### 本项目自带的 Skills（`.aidp/skills/`；**可改性以约定 16 为准**——全部由 AIDP 模板仓库维护、在模板仓库内可直接改，下游项目内不应直接改）
+### 本项目自带的 Skills（`{{AIDP_HOME}}/skills/`；**可改性以约定 16 为准**——全部由 AIDP 模板仓库维护、在模板仓库内可直接改，下游项目内不应直接改）
 
 | Skill | 用途 | 被谁调用 |
 |-------|------|---------|
@@ -21,14 +21,14 @@
 
 | 脚本 | 用途 | 被谁调用 |
 |-------|------|---------|
-| `.aidp/scripts/notify.py` ★ | 里程碑通知发送（`--auto` 按 `memory/aidp-config.yaml` 的 `notify.channels` 依次尝试飞书 webhook / lark-cli / 钉钉 / 企业微信 / 自定义命令，成功即停；未配置渠道退出码 3 = 静默跳过；单一信源见约定 32）| `/sprint-autopilot` + `/sprint-aiauto-test` 里程碑通知 |
-| `.aidp/scripts/cicd_watch.py` | CICD 流水线监听与触发 / 重试（`--mode` watch / detect / poll / trigger / retry；平台 = `cicd.provider`，默认 GitHub Actions，适配层 `cicd_providers.py`；单一信源见约定 31.5）| `/sprint-autopilot` 部署阶段、链外 push 后监听 |
+| `{{AIDP_HOME}}/scripts/notify.py` ★ | 里程碑通知发送（`--auto` 按 `memory/aidp-config.yaml` 的 `notify.channels` 依次尝试飞书 webhook / lark-cli / 钉钉 / 企业微信 / 自定义命令，成功即停；未配置渠道退出码 3 = 静默跳过；单一信源见约定 32）| `/sprint-autopilot` + `/sprint-aiauto-test` 里程碑通知 |
+| `{{AIDP_HOME}}/scripts/cicd_watch.py` | CICD 流水线监听与触发 / 重试（`--mode` watch / detect / poll / trigger / retry；平台 = `cicd.provider`，默认 GitHub Actions，适配层 `cicd_providers.py`；单一信源见约定 31.5）| `/sprint-autopilot` 部署阶段、链外 push 后监听 |
 
 ### 随仓库分发的插件
 
 | 名称 | 用途 | 安装 |
 |------|------|------|
-| `chrome-devtools-mcp`（插件） | 浏览器实测驱动 MCP + 6 份配套调试 SKILL（`/sprint-aiauto-test`、`dev-manual-testcase` 推荐）| 随仓库分发于 `.aidp/plugins/chrome-devtools-mcp/`（Apache-2.0）：Claude Code 使用 `.claude/plugins/` 完整项目插件；Codex 使用 `.codex/skills/chrome-devtools-mcp/skills/` + `.codex/config.toml` MCP；DeepSeek Harness 使用 `.agents/skills/` + `.dsh/mcp.json` |
+| `chrome-devtools-mcp`（插件） | 浏览器实测驱动 MCP + 6 份配套调试 SKILL（`/sprint-aiauto-test`、`dev-manual-testcase` 推荐）| 随仓库分发于 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/`（Apache-2.0）：Claude Code 使用 `.claude/plugins/` 完整项目插件；Codex 使用 `.codex/skills/chrome-devtools-mcp/skills/` + `.codex/config.toml` MCP；DeepSeek Harness 使用 `.agents/skills/` + `.dsh/mcp.json` |
 
 ### Superpowers 插件 Skills（★ 全局内置插件，非项目 vendored）
 

@@ -25,7 +25,7 @@
 4. **判不出 version/build、脚本缺失、任何异常** → 放行（永不因自身故障 wedge）。
 5. **熔断上限**：同一 build 连续阻止达 3 次仍未过 → fail-open 放行 + 告警交人工（防无限 wedge）。
 
-只有【全部确定信号齐备 + 收尾门确定 `exit 1` + 未达熔断上限】才 `exit 2`。计数文件 `memory/.aidp/stop-guard-count`（收尾门通过即清）。
+只有【全部确定信号齐备 + 收尾门确定 `exit 1` + 未达熔断上限】才 `exit 2`。计数文件 `memory/{{AIDP_HOME}}/stop-guard-count`（收尾门通过即清）。
 
 **项目根目录解析**（兼容多宿主）：`CLAUDE_PROJECT_DIR` → `CODEX_PROJECT_DIR` / `DSH_PROJECT_DIR`（若宿主注入）→ `git rev-parse --show-toplevel` → 当前工作目录。
 
@@ -39,11 +39,11 @@
 
 ## 多 Agent 接线
 
-> ✅ **下游项目无需手动配置**：接线由 `aidp-code-engineer` 脚手架在 **init / migrate / upgrade** 时自动完成，日常也可用 `python3 .aidp/scripts/agent_sync.py` 按当前启用的 Agent 幂等补齐——脚本本体只有 `.aidp/hooks/` 这一份，各宿主的配置文件只写「Stop 事件 → 调这个脚本」，保留你已有的其它 hook / 配置。手工配置仅用于排查。
+> ✅ **下游项目无需手动配置**：接线由 `aidp-code-engineer` 脚手架在 **init / migrate / upgrade** 时自动完成，日常也可用 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 按当前启用的 Agent 幂等补齐——脚本本体只有 `{{AIDP_HOME}}/hooks/` 这一份，各宿主的配置文件只写「Stop 事件 → 调这个脚本」，保留你已有的其它 hook / 配置。手工配置仅用于排查。
 
 | Agent | 配置文件 | 接线方式 |
 |------|---------|---------|
-| **Claude Code** | `.claude/settings.json`（项目级共享，随 git 提交）| `hooks.Stop` 挂 `python3 .aidp/hooks/autopilot-stop-guard.py` |
+| **Claude Code** | `.claude/settings.json`（项目级共享，随 git 提交）| `hooks.Stop` 挂 `python3 {{AIDP_HOME}}/hooks/autopilot-stop-guard.py` |
 | **Codex** | `.codex/hooks.json` | Stop 事件挂同一命令（带 `--agent codex`）；须在 `.codex/config.toml` 中开启 `[features] codex_hooks = true`，且项目需被 Codex 信任（trust）才会加载项目级 hooks |
 | **DeepSeek Harness** | `.dsh/hooks.json` | Claude Code 格式，Stop 事件挂同一命令（带 `--agent dsh`），由 DeepSeek Harness 的 hooks 插件加载（加载方式以所用版本官方文档为准） |
 
@@ -55,7 +55,7 @@ Claude Code 配置示例（`.claude/settings.json`，已有内容时合并 `hook
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 .aidp/hooks/autopilot-stop-guard.py" }
+          { "type": "command", "command": "python3 {{AIDP_HOME}}/hooks/autopilot-stop-guard.py" }
         ]
       }
     ]
@@ -71,7 +71,7 @@ Codex 配置示例（`.codex/hooks.json`）：
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 .aidp/hooks/autopilot-stop-guard.py --agent codex" }
+          { "type": "command", "command": "python3 {{AIDP_HOME}}/hooks/autopilot-stop-guard.py --agent codex" }
         ]
       }
     ]

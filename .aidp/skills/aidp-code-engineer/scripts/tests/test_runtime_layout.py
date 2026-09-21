@@ -87,6 +87,31 @@ class RenderContractTest(RuntimeLayoutTestCase):
                     R.render_text(invalid, ".claude/aidp")
         self.assertIn("LEGACY_AIDP_DIR", R.render_text('LEGACY_AIDP_DIR = ".aidp"\n', ".claude/aidp"))
 
+    def test_source_requires_every_real_runtime_directory(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td:
+            base = Path(td)
+            source = make_source(base)
+            shutil.rmtree(source / "flows")
+            with self.assertRaises(RuntimeError):
+                R.render_tree(source, base / "missing-output", ".claude/aidp")
+
+            source = make_source(base / "second")
+            shutil.rmtree(source / "rules")
+            Path(source / "rules").symlink_to(Path(outside_td), target_is_directory=True)
+            with self.assertRaises(RuntimeError):
+                R.render_tree(source, base / "symlink-output", ".agents/aidp")
+
+    def test_legacy_constant_does_not_exempt_an_illegal_runtime_path_on_same_line(self):
+        self.assertEqual(
+            R.render_text('LEGACY_AIDP_DIR = ".aidp"\n', ".claude/aidp"),
+            'LEGACY_AIDP_DIR = ".aidp"\n',
+        )
+        with self.assertRaises(ValueError):
+            R.render_text(
+                'LEGACY_AIDP_DIR = ".aidp"; command = ".aidp/scripts/tool.py"\n',
+                ".claude/aidp",
+            )
+
     def test_binary_is_copied_without_text_substitution(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -137,6 +162,23 @@ class ManifestContractTest(RuntimeLayoutTestCase):
                 json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
             with self.assertRaises(ValueError):
                 R.validate_runtime(runtime, expected_home=".agents/aidp")
+
+    def test_validate_rejects_missing_required_directory_even_with_matching_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".claude/aidp"
+            R.render_runtime(source, runtime, ".claude/aidp", "V1.0.0", "claude")
+            shutil.rmtree(runtime / "agents")
+            manifest = json.loads((runtime / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            manifest["files"] = {
+                relative: digest for relative, digest in manifest["files"].items()
+                if not relative.startswith("agents/")
+            }
+            (runtime / R.RUNTIME_MANIFEST).write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                R.validate_runtime(runtime, expected_home=".claude/aidp")
 
     def test_validate_detects_tampering_and_normalize_compares_homes(self):
         with tempfile.TemporaryDirectory() as td:

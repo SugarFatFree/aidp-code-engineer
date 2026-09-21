@@ -85,14 +85,24 @@ def render_text(text: str, home: str) -> str:
     if unknown:
         raise ValueError(f"存在未解析运行占位符: {', '.join(unknown)}")
     for line_no, line in enumerate(rendered.splitlines(), 1):
-        if ".aidp/" in line and "LEGACY_AIDP_DIR" not in line:
+        if ".aidp/" in line:
             raise ValueError(f"存在旧运行路径 .aidp/（第 {line_no} 行）")
     return rendered
+
+
+def _validate_required_dirs(root: Path, label: str, error_type) -> None:
+    if root.is_symlink() or not root.is_dir():
+        raise error_type(f"{label}不是有效目录: {root}")
+    for dirname in RUNTIME_DIRS:
+        path = root / dirname
+        if path.is_symlink() or not path.is_dir():
+            raise error_type(f"{label}缺少真实目录: {dirname}")
 
 
 def render_tree(source_root: Path, destination: Path, home: str) -> None:
     """把模板真源渲染到空目标目录。"""
     source_root, destination = Path(source_root), Path(destination)
+    _validate_required_dirs(source_root, "运行包真源", RuntimeError)
     destination.mkdir(parents=True, exist_ok=True)
     for dirname in RUNTIME_DIRS:
         source_dir = source_root / dirname
@@ -164,6 +174,7 @@ def _read_manifest(runtime: Path) -> dict:
 
 def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict:
     runtime = Path(runtime)
+    _validate_required_dirs(runtime, "运行包", ValueError)
     manifest = _read_manifest(runtime)
     if manifest.get("schema") != "aidp.runtime/v1":
         raise ValueError("运行包 manifest schema 非法")
@@ -185,7 +196,7 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
         if _TOKEN_RE.search(text):
             raise ValueError(f"运行包含未解析占位符: {relative}")
         for line in text.splitlines():
-            if ".aidp/" in line and "LEGACY_AIDP_DIR" not in line:
+            if ".aidp/" in line:
                 raise ValueError(f"运行包含旧路径: {relative}")
         if "{{AIDP_HOME}}" in text:
             raise ValueError(f"运行包含未解析 AIDP_HOME: {relative}")

@@ -407,6 +407,27 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             self.assertTrue(lock.is_symlink())
             self.assertEqual(sentinel.read_bytes(), before)
 
+    def test_hard_linked_lock_is_rejected_without_writing_external_sentinel(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td:
+            base, outside = Path(td), Path(outside_td)
+            parent = base / ".claude"
+            parent.mkdir()
+            lock = parent / ".aidp-runtime.lock"
+            sentinel = outside / "sentinel"
+            sentinel.write_bytes(b"hard-link-target-must-not-change\n")
+            before = sentinel.read_bytes()
+            try:
+                os.link(str(sentinel), str(lock))
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前平台不支持 hardlink: {exc}")
+            before_links = sentinel.stat().st_nlink
+            with self.assertRaises(RuntimeError):
+                R._acquire_runtime_lock(parent, base)
+            self.assertEqual(sentinel.read_bytes(), before)
+            self.assertEqual(lock.read_bytes(), before)
+            self.assertEqual(sentinel.stat().st_nlink, before_links)
+            self.assertTrue(lock.exists())
+
     def test_invalid_lock_symlink_or_directory_is_rejected_and_preserved(self):
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td:
             base, outside = Path(td), Path(outside_td)

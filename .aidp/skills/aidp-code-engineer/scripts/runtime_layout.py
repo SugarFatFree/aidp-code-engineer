@@ -390,6 +390,8 @@ def _verify_open_lock_identity(lock: Path, fd: int) -> os.stat_result:
         raise RuntimeError(f"运行包锁路径非法: {lock}")
     if not stat.S_ISREG(descriptor.st_mode):
         raise RuntimeError(f"运行包锁 fd 不是普通文件: {lock}")
+    if getattr(descriptor, "st_nlink", 0) != 1 or getattr(pathname, "st_nlink", 0) != 1:
+        raise RuntimeError(f"运行包锁不得是 hardlink: {lock}")
     fd_identity = (getattr(descriptor, "st_dev", 0), getattr(descriptor, "st_ino", 0))
     path_identity = (getattr(pathname, "st_dev", 0), getattr(pathname, "st_ino", 0))
     if all(fd_identity) and all(path_identity) and fd_identity != path_identity:

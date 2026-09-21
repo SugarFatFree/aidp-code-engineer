@@ -146,8 +146,13 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             res = scaffold(root, "--version", "V0.1.0", "--agent", "claude")
             self.assertFalse((root / ".aidp").exists())
             self.assertTrue((root / ".claude/aidp/scripts/agent_sync.py").is_file())
+            self.assertTrue((root / ".claude/aidp/commands/sprint-dev.md").is_file())
+            self.assertTrue((root / ".claude/aidp/skills/bugfix/SKILL.md").is_file())
+            self.assertTrue((root / ".claude/aidp/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
             self.assertTrue((root / ".claude/commands/sprint-dev.md").is_file())
             self.assertTrue((root / ".claude/skills/aidp-code-engineer/SKILL.md").is_file())
+            self.assertTrue((root / ".claude/skills/bugfix/SKILL.md").is_file())
+            self.assertTrue((root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
             self.assertFalse((root / ".agents").exists())
             manifest = self._manifest(root, Path(".claude/aidp"))
             self.assertEqual(manifest["schema"], "aidp.runtime/v1")
@@ -160,7 +165,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             scaffold(root, "--version", "V0.1.0", "--agent", "codex,dsh", env=env)
             self.assertFalse((root / ".aidp").exists())
             self.assertTrue((root / ".agents/aidp/scripts/agent_sync.py").is_file())
+            self.assertTrue((root / ".agents/aidp/commands/sprint-dev.md").is_file())
+            self.assertTrue((root / ".agents/aidp/skills/bugfix/SKILL.md").is_file())
+            self.assertTrue((root / ".agents/aidp/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
             self.assertTrue((root / ".agents/skills/aidp-code-engineer/SKILL.md").is_file())
+            self.assertTrue((root / ".agents/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
             self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
@@ -195,8 +204,12 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             generated = (
                 root / ".claude/aidp",
                 root / ".claude/commands/sprint-dev.md",
+                root / ".claude/skills/bugfix",
+                root / ".claude/plugins/chrome-devtools-mcp",
                 root / ".agents/aidp",
                 root / ".agents/skills/aidp-code-engineer",
+                root / ".agents/skills/bugfix",
+                root / ".agents/skills/chrome-devtools-mcp",
                 root / ".codex/skills/aidp/sprint-dev",
                 root / ".dsh/commands/sprint-dev.md",
             )

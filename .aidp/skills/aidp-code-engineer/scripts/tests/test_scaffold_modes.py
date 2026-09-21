@@ -138,6 +138,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
         self.assertFalse((runtime / "scripts/tests").exists())
         self.assertFalse((runtime / "scripts/design-goals-baseline.txt").exists())
 
+    def _assert_target_runtime_paths(self, text, expected_home):
+        self.assertIn(expected_home + "/", text)
+        self.assertNotIn("{{AIDP_HOME}}", text)
+        self.assertNotIn(".aidp/", text)
+
     @staticmethod
     def _manifest(root, rel):
         return json.loads((root / rel / ".aidp-runtime.json").read_text(encoding="utf-8"))
@@ -164,6 +169,8 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".claude/aidp/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".claude/aidp/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
             self.assertTrue((root / ".claude/commands/sprint-dev.md").is_file())
+            claude_command = (root / ".claude/commands/sprint-test.md").read_text(encoding="utf-8")
+            self._assert_target_runtime_paths(claude_command, ".claude/aidp")
             self.assertTrue((root / ".claude/skills/aidp-code-engineer/SKILL.md").is_file())
             self.assertTrue((root / ".claude/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
@@ -186,7 +193,13 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".agents/skills/aidp-code-engineer/SKILL.md").is_file())
             self.assertTrue((root / ".agents/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
+            codex_skill = (root / ".codex/skills/aidp/sprint-test/SKILL.md").read_text(encoding="utf-8")
+            marker = "## 原始命令正文（逐字保真）\n\n"
+            self.assertIn(marker, codex_skill)
+            self._assert_target_runtime_paths(codex_skill.split(marker, 1)[1], ".agents/aidp")
             self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
+            dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
+            self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
             self.assertEqual(len(list(root.glob(".agents/aidp/.aidp-runtime.json"))), 1)
             self._assert_runtime_contract(root, Path(".agents/aidp"))
@@ -200,6 +213,10 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
             self.assertFalse((root / ".claude/aidp").exists())
             self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
+            codex_skill = (root / ".codex/skills/aidp/sprint-test/SKILL.md").read_text(encoding="utf-8")
+            marker = "## 原始命令正文（逐字保真）\n\n"
+            self.assertIn(marker, codex_skill)
+            self._assert_target_runtime_paths(codex_skill.split(marker, 1)[1], ".agents/aidp")
             self.assertFalse((root / ".dsh/commands").exists())
             self._assert_runtime_contract(root, Path(".agents/aidp"))
 
@@ -211,6 +228,8 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
             self.assertFalse((root / ".claude/aidp").exists())
             self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
+            dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
+            self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
             self.assertFalse((root / ".codex/skills/aidp").exists())
             self._assert_runtime_contract(root, Path(".agents/aidp"))
 

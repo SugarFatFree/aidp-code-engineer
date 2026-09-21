@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -131,9 +132,16 @@ def _runtime_files(runtime: Path):
             yield path.relative_to(runtime).as_posix(), path
 
 
-def build_runtime_manifest(runtime: Path, version: str, source: str) -> dict:
-    if source not in RUNTIME_HOME:
+def _validate_source_home(source: str, home: str) -> None:
+    expected = RUNTIME_HOME.get(source)
+    if expected is None:
         raise ValueError(f"非法运行包 source: {source}")
+    if home != expected:
+        raise ValueError(f"运行包 source/home 不匹配: {source} 要求 {expected}，实际 {home}")
+
+
+def build_runtime_manifest(runtime: Path, version: str, source: str, home: str) -> dict:
+    _validate_source_home(source, home)
     files = {relative: _file_hash(path) for relative, path in _runtime_files(Path(runtime))}
     return {
         "schema": "aidp.runtime/v1",
@@ -168,6 +176,7 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
     if dict(sorted(expected_files.items())) != dict(sorted(actual.items())):
         raise ValueError("运行包文件指纹漂移")
     home = expected_home or RUNTIME_HOME[manifest["source"]]
+    _validate_source_home(manifest["source"], home)
     for relative, path in _runtime_files(runtime):
         data = path.read_bytes()
         if not _is_text(data):
@@ -245,35 +254,64 @@ def _write_manifest(runtime: Path, manifest: dict) -> None:
     )
 
 
+def _validate_backup(backup: Path, destination: Path, transaction: Path,
+                     expected_digest: str) -> Path:
+    backup = _lexical(Path(backup))
+    destination = _lexical(destination)
+    transaction = _lexical(transaction)
+    if not _lexists(backup) or backup.is_symlink() or not backup.is_dir():
+        raise RuntimeError(f"运行包备份不存在或不是独立目录: {backup}")
+    try:
+        backup.relative_to(destination)
+        raise RuntimeError(f"运行包备份不得位于原运行包内部: {backup}")
+    except ValueError:
+        pass
+    try:
+        backup.relative_to(transaction)
+        raise RuntimeError(f"运行包备份不得位于事务目录内部: {backup}")
+    except ValueError:
+        pass
+    if backup == destination or backup == transaction:
+        raise RuntimeError(f"运行包备份路径不独立: {backup}")
+    if tree_digest(backup) != expected_digest:
+        raise RuntimeError(f"运行包备份不完整: {backup}")
+    return backup
+
+
 def render_runtime(source_root: Path, destination: Path, home: str, version: str,
                    source: str, backup_callback: Optional[Callable[[Path], Path]] = None,
                    replace_func: Callable[[object, object], None] = os.replace) -> dict:
-    """在同父目录 staging 后原子替换运行包；失败恢复旧包。"""
+    """在同父唯一事务目录内渲染并原子替换；失败恢复旧包。"""
+    _validate_source_home(source, home)
     destination = Path(destination)
     boundary = _default_boundary(destination)
     destination = _assert_contained(destination, boundary)
-    stage = destination.with_name(destination.name + ".aidp-stage")
-    previous = destination.with_name(destination.name + ".aidp-previous")
-    for transient in (stage, previous):
-        remove_tree_safely(transient, boundary=boundary)
-
-    if _lexists(destination):
-        if destination.is_symlink() or not destination.is_dir():
-            raise RuntimeError(f"运行包目标不是受管目录: {destination}")
-        if not (destination / RUNTIME_MANIFEST).is_file():
-            raise RuntimeError(f"同名目录缺少运行包 manifest，拒绝覆盖: {destination}")
-        if _runtime_modified(destination):
-            if backup_callback is None:
-                raise RuntimeError(f"运行包含用户修改，必须先完整备份: {destination}")
-            backup = backup_callback(destination)
-            if backup is None or not Path(backup).exists():
-                raise RuntimeError(f"运行包备份失败: {destination}")
-
-    stage.mkdir(parents=True, exist_ok=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    transaction = Path(tempfile.mkdtemp(
+        prefix=f".{destination.name}.aidp-txn-", dir=str(destination.parent)))
+    transaction = _assert_contained(transaction, boundary)
+    stage = transaction / "stage"
+    previous = transaction / "previous"
     moved_old = False
     try:
+        if _lexists(destination):
+            if destination.is_symlink() or not destination.is_dir():
+                raise RuntimeError(f"运行包目标不是受管目录: {destination}")
+            if not (destination / RUNTIME_MANIFEST).is_file():
+                raise RuntimeError(f"同名目录缺少运行包 manifest，拒绝覆盖: {destination}")
+            if _runtime_modified(destination):
+                if backup_callback is None:
+                    raise RuntimeError(f"运行包含用户修改，必须先完整备份: {destination}")
+                expected_digest = tree_digest(destination)
+                backup = backup_callback(destination)
+                if backup is None:
+                    raise RuntimeError(f"运行包备份失败: {destination}")
+                _validate_backup(Path(backup), destination, transaction, expected_digest)
+
+        stage.mkdir(parents=True, exist_ok=False)
         render_tree(Path(source_root), stage, home)
-        manifest = build_runtime_manifest(stage, version=version, source=source)
+        manifest = build_runtime_manifest(
+            stage, version=version, source=source, home=home)
         _write_manifest(stage, manifest)
         validate_runtime(stage, expected_home=home)
         if _lexists(destination):
@@ -287,10 +325,12 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                 moved_old = False
             raise
         if _lexists(previous):
-            remove_tree_safely(previous, boundary=boundary)
+            remove_tree_safely(previous, boundary=transaction)
+            moved_old = False
         return manifest
     finally:
-        if _lexists(stage):
-            remove_tree_safely(stage, boundary=boundary)
         if moved_old and _lexists(previous) and not _lexists(destination):
             replace_func(previous, destination)
+            moved_old = False
+        if _lexists(transaction):
+            remove_tree_safely(transaction, boundary=destination.parent)

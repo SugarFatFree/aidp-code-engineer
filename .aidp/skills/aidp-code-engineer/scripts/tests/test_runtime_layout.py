@@ -103,7 +103,8 @@ class ManifestContractTest(RuntimeLayoutTestCase):
             runtime.mkdir()
             (runtime / "b.txt").write_text("b\n", encoding="utf-8")
             (runtime / "a.txt").write_text("a\n", encoding="utf-8")
-            manifest = R.build_runtime_manifest(runtime, version="V1.2.3", source="claude")
+            manifest = R.build_runtime_manifest(
+                runtime, version="V1.2.3", source="claude", home=".claude/aidp")
             self.assertEqual(manifest["schema"], "aidp.runtime/v1")
             self.assertEqual(manifest["version"], "V1.2.3")
             self.assertEqual(manifest["source"], "claude")
@@ -111,6 +112,31 @@ class ManifestContractTest(RuntimeLayoutTestCase):
             self.assertNotIn(R.RUNTIME_MANIFEST, manifest["files"])
             for digest in manifest["files"].values():
                 self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_source_and_home_mapping_is_enforced_at_every_layer(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / "runtime"
+            R.render_tree(source, runtime, ".claude/aidp")
+            with self.assertRaises(ValueError):
+                R.build_runtime_manifest(runtime, version="V1.0.0", source="claude",
+                                         home=".agents/aidp")
+            with self.assertRaises(ValueError):
+                R.build_runtime_manifest(runtime, version="V1.0.0", source="shared",
+                                         home=".claude/aidp")
+            with self.assertRaises(ValueError):
+                R.render_runtime(source, base / ".claude/aidp", ".agents/aidp",
+                                 "V1.0.0", "claude")
+            with self.assertRaises(ValueError):
+                R.render_runtime(source, base / ".agents/aidp", ".claude/aidp",
+                                 "V1.0.0", "shared")
+            manifest = R.build_runtime_manifest(
+                runtime, version="V1.0.0", source="claude", home=".claude/aidp")
+            (runtime / R.RUNTIME_MANIFEST).write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                R.validate_runtime(runtime, expected_home=".agents/aidp")
 
     def test_validate_detects_tampering_and_normalize_compares_homes(self):
         with tempfile.TemporaryDirectory() as td:
@@ -145,6 +171,21 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             self.assertIn("new .claude/aidp", (destination / "commands/sprint-dev.md").read_text())
             self.assertFalse(destination.with_name("aidp.aidp-stage").exists())
             self.assertFalse(destination.with_name("aidp.aidp-previous").exists())
+
+    def test_preexisting_fixed_transaction_names_are_never_touched(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".claude/aidp"
+            fixed_stage = destination.with_name("aidp.aidp-stage")
+            fixed_previous = destination.with_name("aidp.aidp-previous")
+            fixed_stage.mkdir(parents=True)
+            fixed_previous.mkdir(parents=True)
+            (fixed_stage / "user.txt").write_text("stage-user\n", encoding="utf-8")
+            (fixed_previous / "user.txt").write_text("previous-user\n", encoding="utf-8")
+            R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
+            self.assertEqual((fixed_stage / "user.txt").read_text(), "stage-user\n")
+            self.assertEqual((fixed_previous / "user.txt").read_text(), "previous-user\n")
 
     def test_render_failure_keeps_old_runtime(self):
         with tempfile.TemporaryDirectory() as td:
@@ -203,6 +244,44 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual((backups[0] / "commands/sprint-dev.md").read_text(), "user edit\n")
             self.assertEqual((backups[0] / "user-note.md").read_text(), "keep me\n")
+
+    def test_partial_or_nested_backup_is_rejected_without_changing_runtime(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".agents/aidp"
+            R.render_runtime(source, destination, ".agents/aidp", "V1.0.0", "shared")
+            (destination / "commands/sprint-dev.md").write_text("user edit\n", encoding="utf-8")
+            nested_target = destination / "nested-backup"
+            nested_target.mkdir()
+            (nested_target / "note.txt").write_text("not independent\n", encoding="utf-8")
+            before = R.tree_digest(destination)
+
+            callbacks = [lambda runtime: runtime]
+
+            def empty_backup(runtime):
+                target = base / "empty-backup"
+                target.mkdir()
+                return target
+            callbacks.append(empty_backup)
+
+            def partial_backup(runtime):
+                target = base / "partial-backup"
+                target.mkdir()
+                (target / "one.txt").write_text("partial\n", encoding="utf-8")
+                return target
+            callbacks.append(partial_backup)
+
+            def nested_backup(runtime):
+                return nested_target
+            callbacks.append(nested_backup)
+
+            for callback in callbacks:
+                with self.subTest(callback=callback.__name__):
+                    with self.assertRaises(RuntimeError):
+                        R.render_runtime(source, destination, ".agents/aidp", "V1.0.1", "shared",
+                                         backup_callback=callback)
+                    self.assertEqual(R.tree_digest(destination), before)
 
     def test_existing_directory_without_manifest_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:

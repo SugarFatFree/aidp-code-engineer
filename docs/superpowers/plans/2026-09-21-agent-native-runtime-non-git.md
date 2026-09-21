@@ -38,6 +38,9 @@
 ```python
 assert not (project / ".aidp").exists()
 assert (project / ".claude/aidp/scripts/agent_sync.py").is_file()
+assert (project / ".claude/aidp/commands/sprint-dev.md").is_file()
+assert (project / ".claude/aidp/skills/bugfix/SKILL.md").is_file()
+assert (project / ".claude/aidp/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file()
 assert (project / ".claude/commands/sprint-dev.md").is_file()
 assert (project / ".claude/skills/aidp-code-engineer/SKILL.md").is_file()
 assert not (project / ".agents").exists()
@@ -50,6 +53,9 @@ assert not (project / ".agents").exists()
 ```python
 assert not (project / ".aidp").exists()
 assert (project / ".agents/aidp/scripts/agent_sync.py").is_file()
+assert (project / ".agents/aidp/commands/sprint-dev.md").is_file()
+assert (project / ".agents/aidp/skills/bugfix/SKILL.md").is_file()
+assert (project / ".agents/aidp/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file()
 assert (project / ".agents/skills/aidp-code-engineer/SKILL.md").is_file()
 assert (project / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file()
 assert (project / ".dsh/commands/sprint-dev.md").is_file()
@@ -227,11 +233,17 @@ git commit -m "feat: add runtime and vcs capability layers" -m "Co-Authored-By: 
 
 ```python
 RUNTIME_DIRS = (
-    "agents", "flows", "hooks", "reference", "rules", "scripts", "templates",
+    "agents", "commands", "flows", "hooks", "plugins", "reference",
+    "rules", "scripts", "skills", "templates",
+)
+RUNTIME_EXCLUDES = (
+    "skills/aidp-code-engineer/",
+    "scripts/tests/",
+    "scripts/design-goals-baseline.txt",
 )
 ```
 
-断言 `commands`、`skills`、`plugins`、`memory` 和 `scripts/tests` 不在运行包。
+断言 `commands`、公共 `skills` 和 `plugins` 在运行包；`memory`、脚手架自身、模板测试和设计目标 baseline 不在运行包。
 
 - [ ] **Step 2: 编写文本渲染测试**
 
@@ -401,7 +413,7 @@ git commit -m "refactor: abstract downstream runtime paths" -m "Co-Authored-By: 
 
 - [ ] **Step 1: 改造 source discovery**
 
-`agent_sync.py` 使用 `runtime_root(__file__)` 获取 `.claude/aidp` 或 `.agents/aidp`，commands/skills/plugins 由脚手架传入或按 Agent 原生目录读取受管源清单，不再访问项目根 `.aidp`。
+`agent_sync.py` 使用 `runtime_root(__file__)` 获取 `.claude/aidp` 或 `.agents/aidp`，并从运行包内的 `commands/`、`skills/`、`plugins/` 生成 Agent 原生可发现入口，不再访问项目根 `.aidp`。
 
 - [ ] **Step 2: managed-copy 替代链接**
 

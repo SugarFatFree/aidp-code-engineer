@@ -184,26 +184,32 @@ AIDP_HOME="${AIDP_HOME:-.agents/aidp}"
 
 ## 5. 运行包内容
 
-下游运行包包含：
+下游运行包包含完整的静态运行契约真源：
 
 ```text
 agents/
+commands/
 flows/
 hooks/
+plugins/
 reference/
 rules/
 scripts/
+skills/
 templates/
 ```
 
+- `commands/` 是编排命令内联子命令的稳定真源。
+- `skills/` 保存命令和 flow 按路径读取的公共 SKILL 真源。
+- `plugins/` 保存浏览器插件及其嵌套 SKILL/MCP 声明真源。
+- Agent 原生 commands、SKILL 和 plugin 目录是从运行包生成的可发现入口副本，不是另一份手工真源。
+
 以下内容不放入运行包：
 
-- `commands/`：进入 Agent 原生命令目录。
-- 公共 `skills/`：进入 `.claude/skills/` 或 `.agents/skills/`。
-- `plugins/`：按 Agent 分别装配。
+- `skills/aidp-code-engineer/`：脚手架 SKILL 单独安装到 Agent SKILL 目录，避免把自身 bundle 递归复制进运行包。
 - `memory/`：模板项目测试或样例内容不下发。
 - `scripts/tests/`：模板自有回归测试不下发。
-- `aidp-code-engineer/assets/`：只存在于脚手架 SKILL 自身。
+- `scripts/design-goals-baseline.txt`：模板维护基线不下发。
 
 `aidp-code-engineer` 脚手架 SKILL 的安装位置：
 

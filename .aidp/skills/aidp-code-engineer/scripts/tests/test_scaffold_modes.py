@@ -160,9 +160,12 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
         }
         self.assertEqual(left_files, right_files)
 
-    def _assert_absent(self, root, *relative_roots):
+    def _assert_absent(self, path):
+        self.assertFalse(os.path.lexists(path), f"路径必须完全不存在（含悬空 symlink）: {path}")
+
+    def _assert_roots_absent(self, root, *relative_roots):
         for relative in relative_roots:
-            self.assertFalse((root / relative).exists(), f"未启用目录不应存在: {relative}")
+            self._assert_absent(root / relative)
 
     def _assert_target_runtime_paths(self, text, expected_home):
         self.assertIn(expected_home + "/", text)
@@ -189,7 +192,7 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
     def test_claude_only_uses_native_runtime_without_root_aidp(self):
         with H.TempRepo() as root:
             res = scaffold(root, "--version", "V0.1.0", "--agent", "claude")
-            self.assertFalse((root / ".aidp").exists())
+            self._assert_absent(root / ".aidp")
             self.assertTrue((root / ".claude/aidp/scripts/agent_sync.py").is_file())
             self.assertTrue((root / ".claude/aidp/commands/sprint-dev.md").is_file())
             self.assertTrue((root / ".claude/aidp/skills/bugfix/SKILL.md").is_file())
@@ -200,8 +203,8 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".claude/skills/aidp-code-engineer/SKILL.md").is_file())
             self.assertTrue((root / ".claude/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
-            self.assertFalse((root / ".agents").exists())
-            self._assert_absent(root, ".codex/skills/aidp", ".dsh/commands")
+            self._assert_absent(root / ".agents")
+            self._assert_roots_absent(root, ".codex/skills/aidp", ".dsh/commands")
             self._assert_fully_materialized(
                 root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
             )
@@ -215,7 +218,7 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
         with H.TempRepo() as root:
             env, _ = fake_dsh_env(root)
             scaffold(root, "--version", "V0.1.0", "--agent", "codex,dsh", env=env)
-            self.assertFalse((root / ".aidp").exists())
+            self._assert_absent(root / ".aidp")
             self.assertTrue((root / ".agents/aidp/scripts/agent_sync.py").is_file())
             self.assertTrue((root / ".agents/aidp/commands/sprint-dev.md").is_file())
             self.assertTrue((root / ".agents/aidp/skills/bugfix/SKILL.md").is_file())
@@ -231,13 +234,13 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
             self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
-            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_absent(root / ".codex/skills/chrome-devtools-mcp")
             self._assert_tree_equal(
                 root / ".agents/skills/chrome-devtools-mcp/skills",
                 root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
             )
             self.assertEqual(len(list(root.glob(".agents/aidp/.aidp-runtime.json"))), 1)
-            self._assert_absent(
+            self._assert_roots_absent(
                 root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
             )
             self._assert_fully_materialized(
@@ -250,9 +253,9 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
     def test_codex_only_uses_one_shared_runtime(self):
         with H.TempRepo() as root:
             scaffold(root, "--version", "V0.1.0", "--agent", "codex")
-            self.assertFalse((root / ".aidp").exists())
+            self._assert_absent(root / ".aidp")
             self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
-            self._assert_absent(
+            self._assert_roots_absent(
                 root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
                 ".dsh/commands",
             )
@@ -261,9 +264,9 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             marker = "## 原始命令正文（逐字保真）\n\n"
             self.assertIn(marker, codex_skill)
             self._assert_target_runtime_paths(codex_skill.split(marker, 1)[1], ".agents/aidp")
-            self.assertFalse((root / ".dsh/commands").exists())
+            self._assert_absent(root / ".dsh/commands")
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
-            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_absent(root / ".codex/skills/chrome-devtools-mcp")
             self._assert_tree_equal(
                 root / ".agents/skills/chrome-devtools-mcp/skills",
                 root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
@@ -277,17 +280,17 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
         with H.TempRepo() as root:
             env, _ = fake_dsh_env(root)
             scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
-            self.assertFalse((root / ".aidp").exists())
+            self._assert_absent(root / ".aidp")
             self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
-            self._assert_absent(
+            self._assert_roots_absent(
                 root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
                 ".codex/skills/aidp",
             )
             self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
             dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
             self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
-            self.assertFalse((root / ".codex/skills/aidp").exists())
-            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_absent(root / ".codex/skills/aidp")
+            self._assert_absent(root / ".codex/skills/chrome-devtools-mcp")
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
             self._assert_tree_equal(
                 root / ".agents/skills/chrome-devtools-mcp/skills",
@@ -297,6 +300,14 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
                 root, ".agents/aidp", ".agents/skills", ".dsh/commands",
             )
             self._assert_runtime_contract(root, Path(".agents/aidp"))
+
+    def test_dangling_legacy_root_symlink_is_cleaned_before_init(self):
+        with H.TempRepo() as root:
+            legacy = root / ".aidp"
+            legacy.symlink_to(root / "missing-legacy-runtime", target_is_directory=True)
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            self._assert_absent(legacy)
+            self.assertTrue((root / ".claude/aidp/.aidp-runtime.json").is_file())
 
     def test_all_agents_render_equivalent_runtime_packages(self):
         with H.TempRepo() as root:
@@ -311,7 +322,7 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
                 ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
                 ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
             )
-            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_absent(root / ".codex/skills/chrome-devtools-mcp")
             self._assert_tree_equal(
                 root / ".agents/skills/chrome-devtools-mcp/skills",
                 root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
@@ -352,7 +363,7 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
                 ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
                 ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
             )
-            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_absent(root / ".codex/skills/chrome-devtools-mcp")
             self._assert_tree_equal(
                 root / ".agents/skills/chrome-devtools-mcp/skills",
                 root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",

@@ -1087,6 +1087,20 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
+    # 旧 Codex 专属插件入口即使是悬空 symlink 也必须被识别并清理
+    root = _mkrepo(markers=(".codex",))
+    try:
+        _add_browser_plugin(root)
+        legacy = root / ".codex/skills/chrome-devtools-mcp"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.symlink_to(root / "missing-old-plugin", target_is_directory=True)
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        shared = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md"
+        check("悬空旧 Codex 插件 symlink → 清理且改用共享嵌套 SKILL",
+              rc == 0 and not os.path.lexists(legacy) and shared.is_file())
+    finally:
+        _rm(root)
+
     # 插件 SKILL 与公共 SKILL 同名 → fail closed
     root = _mkrepo(markers=(".dsh",))
     try:

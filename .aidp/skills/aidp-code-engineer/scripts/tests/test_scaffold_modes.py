@@ -141,14 +141,28 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
     def _assert_fully_materialized(self, root, *relative_roots):
         for relative in relative_roots:
             managed_root = root / relative
-            if not managed_root.exists():
-                continue
+            self.assertTrue(managed_root.exists(), f"受管根必须存在: {relative}")
             self.assertFalse(managed_root.is_symlink(), f"受管根不得为 symlink: {relative}")
             for descendant in managed_root.rglob("*"):
                 self.assertFalse(
                     descendant.is_symlink(),
                     f"受管树后代不得为 symlink: {descendant.relative_to(root)}",
                 )
+
+    def _assert_tree_equal(self, left, right):
+        left_files = {
+            path.relative_to(left).as_posix(): path.read_bytes()
+            for path in left.rglob("*") if path.is_file()
+        }
+        right_files = {
+            path.relative_to(right).as_posix(): path.read_bytes()
+            for path in right.rglob("*") if path.is_file()
+        }
+        self.assertEqual(left_files, right_files)
+
+    def _assert_absent(self, root, *relative_roots):
+        for relative in relative_roots:
+            self.assertFalse((root / relative).exists(), f"未启用目录不应存在: {relative}")
 
     def _assert_target_runtime_paths(self, text, expected_home):
         self.assertIn(expected_home + "/", text)
@@ -187,6 +201,7 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".claude/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
             self.assertFalse((root / ".agents").exists())
+            self._assert_absent(root, ".codex/skills/aidp", ".dsh/commands")
             self._assert_fully_materialized(
                 root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
             )
@@ -216,11 +231,17 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
             self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
+            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_tree_equal(
+                root / ".agents/skills/chrome-devtools-mcp/skills",
+                root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
+            )
             self.assertEqual(len(list(root.glob(".agents/aidp/.aidp-runtime.json"))), 1)
+            self._assert_absent(
+                root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
+            )
             self._assert_fully_materialized(
-                root,
-                ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
-                ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
+                root, ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
             )
             self._assert_runtime_contract(root, Path(".agents/aidp"))
             manifest = self._manifest(root, Path(".agents/aidp"))
@@ -231,13 +252,22 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             scaffold(root, "--version", "V0.1.0", "--agent", "codex")
             self.assertFalse((root / ".aidp").exists())
             self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
-            self.assertFalse((root / ".claude/aidp").exists())
+            self._assert_absent(
+                root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
+                ".dsh/commands",
+            )
             self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
             codex_skill = (root / ".codex/skills/aidp/sprint-test/SKILL.md").read_text(encoding="utf-8")
             marker = "## 原始命令正文（逐字保真）\n\n"
             self.assertIn(marker, codex_skill)
             self._assert_target_runtime_paths(codex_skill.split(marker, 1)[1], ".agents/aidp")
             self.assertFalse((root / ".dsh/commands").exists())
+            self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
+            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_tree_equal(
+                root / ".agents/skills/chrome-devtools-mcp/skills",
+                root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
+            )
             self._assert_fully_materialized(
                 root, ".agents/aidp", ".agents/skills", ".codex/skills/aidp",
             )
@@ -249,11 +279,20 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
             self.assertFalse((root / ".aidp").exists())
             self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
-            self.assertFalse((root / ".claude/aidp").exists())
+            self._assert_absent(
+                root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
+                ".codex/skills/aidp",
+            )
             self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
             dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
             self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
             self.assertFalse((root / ".codex/skills/aidp").exists())
+            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
+            self._assert_tree_equal(
+                root / ".agents/skills/chrome-devtools-mcp/skills",
+                root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
+            )
             self._assert_fully_materialized(
                 root, ".agents/aidp", ".agents/skills", ".dsh/commands",
             )
@@ -271,6 +310,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
                 root,
                 ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
                 ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
+            )
+            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_tree_equal(
+                root / ".agents/skills/chrome-devtools-mcp/skills",
+                root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
             )
             self.assertTrue((root / claude_rel / ".aidp-runtime.json").is_file())
             self.assertTrue((root / shared_rel / ".aidp-runtime.json").is_file())
@@ -307,6 +351,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
                 root,
                 ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
                 ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
+            )
+            self.assertFalse((root / ".codex/skills/chrome-devtools-mcp").exists())
+            self._assert_tree_equal(
+                root / ".agents/skills/chrome-devtools-mcp/skills",
+                root / ".agents/aidp/plugins/chrome-devtools-mcp/skills",
             )
             self.assertTrue(any(
                 action.get("action") == "normalized"
@@ -620,7 +669,7 @@ class NativeAdapterVerifyTest(unittest.TestCase):
             source = root / ".aidp/plugins/chrome-devtools-mcp/skills/chrome-devtools"
             source.mkdir(parents=True)
             (source / "SKILL.md").write_text("---\nname: chrome-devtools\n---\n", encoding="utf-8")
-            plugin = root / ".codex/skills/chrome-devtools-mcp/skills"
+            plugin = root / ".agents/skills/chrome-devtools-mcp/skills"
             plugin.mkdir(parents=True)
             (plugin / "chrome-devtools").mkdir()
             (plugin / "chrome-devtools/SKILL.md").write_text("---\nname: chrome-devtools\n---\n", encoding="utf-8")

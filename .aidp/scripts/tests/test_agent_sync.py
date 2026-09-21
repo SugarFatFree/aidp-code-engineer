@@ -577,11 +577,11 @@ def test_copy_mode_and_errors():
         (".claude/plugins", "claude", True),
         (".codex", "codex", False),
         (".codex/skills", "codex", False),
-        (".codex/skills/chrome-devtools-mcp", "codex", True),
         (".dsh", "dsh", False),
         (".dsh/commands", "dsh", False),
         (".agents", "codex", False),
         (".agents/skills", "codex", False),
+        (".agents/skills/chrome-devtools-mcp", "codex", True),
         (".agents/plugins", "codex", False),
     )
     for rel, agents_arg, needs_plugin in namespace_cases:
@@ -671,9 +671,10 @@ def test_copy_mode_and_errors():
         check("插件·Claude：完整项目级插件 + marketplace 启用",
               (root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file()
               and st["enabledPlugins"].get("chrome-devtools-mcp@chrome-devtools-plugins") is True)
-        codex_skill = root / ".codex/skills/chrome-devtools-mcp/skills/chrome-devtools"
-        dsh_skill = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools"
-        check("插件·Codex：项目级技能集合", (codex_skill / "SKILL.md").is_file())
+        shared_skill = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools"
+        check("插件·Codex/DSH：从 .agents/skills 发现共享嵌套技能集合",
+              (shared_skill / "SKILL.md").is_file()
+              and not (root / ".codex/skills/chrome-devtools-mcp").exists())
         check("插件·Codex：不生成仓库 marketplace", not (root / ".agents/plugins/marketplace.json").exists())
         config = _read(root / ".codex/config.toml")
         check("插件·Codex：config.toml 注册 MCP server",
@@ -685,8 +686,8 @@ def test_copy_mode_and_errors():
               and 'command = "user-mcp"' in config
               and '[plugins."user-plugin@local-repo"]' in config
               and '[plugins."chrome-devtools-mcp@local-repo"]' not in config)
-        check("插件·DSH：插件 SKILL 以 namespaced managed-copy 进入 .agents/skills",
-              (dsh_skill / "SKILL.md").is_file() and not dsh_skill.is_symlink()
+        check("插件·共享 SKILL 以 namespaced managed-copy 进入 .agents/skills",
+              (shared_skill / "SKILL.md").is_file() and not shared_skill.is_symlink()
               and not (root / ".agents/skills/chrome-devtools").exists()
               and not (root / ".dsh/skills").exists())
         dsh_mcp = json.loads(_read(root / ".dsh/mcp.json"))
@@ -699,31 +700,32 @@ def test_copy_mode_and_errors():
               and not (root / ".agents/plugins/.aidp-generated").exists()
               and user_plugin.is_file())
         source_skill = pl / "skills/chrome-devtools"
-        check("插件·Codex+DSH：两入口为同源 managed-copy",
-              not codex_skill.is_symlink() and not dsh_skill.is_symlink()
-              and _read(codex_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
-              and _read(dsh_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
-              and _read(codex_skill / "references/usage.md") == _read(source_skill / "references/usage.md")
-              and _read(dsh_skill / "references/usage.md") == _read(source_skill / "references/usage.md"))
+        check("插件·Codex+DSH：共享入口与 runtime plugin 同源且全实体",
+              not shared_skill.is_symlink()
+              and not (shared_skill / "SKILL.md").is_symlink()
+              and not (shared_skill / "references/usage.md").is_symlink()
+              and _read(shared_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
+              and _read(shared_skill / "references/usage.md") == _read(source_skill / "references/usage.md"))
         gi = _read(root / ".gitignore")
         check("插件生成物登记 .gitignore",
               "/.claude/plugins/chrome-devtools-mcp" in gi
-              and "/.codex/skills/chrome-devtools-mcp" in gi
+              and "/.codex/skills/chrome-devtools-mcp" not in gi
               and "/.agents/skills/chrome-devtools-mcp" in gi)
         check("插件装配幂等", _run(SYNC_PY, "--root", str(root), "--check")[0] == 0)
 
-        # 切换为 Codex-only：清理 DSH 的 AIDP server/技能，保留用户 server 与 Codex 入口
+        # 切换为 Codex-only：清理 DSH MCP，保留用户 server 与共享嵌套 SKILL
         _run(SYNC_PY, "--root", str(root), "--agents", "codex")
         dsh_after_switch = json.loads(_read(root / ".dsh/mcp.json"))
         claude_after_switch = json.loads(_read(root / ".claude/settings.json"))
-        check("插件·切换 Codex-only：清理 Claude/DSH AIDP 项并保留用户配置与 Codex 入口",
-              not dsh_skill.exists()
+        check("插件·切换 Codex-only：清理 Claude/DSH 配置并保留共享 SKILL",
+              (shared_skill / "SKILL.md").is_file()
+              and not (root / ".codex/skills/chrome-devtools-mcp").exists()
               and "chrome-devtools" not in dsh_after_switch.get("mcpServers", {})
               and dsh_after_switch.get("mcpServers", {}).get("user-browser", {}).get("command") == "user-mcp"
               and "chrome-devtools-plugins" not in claude_after_switch.get("extraKnownMarketplaces", {})
               and claude_after_switch.get("extraKnownMarketplaces", {}).get("user-market")
               and claude_after_switch.get("enabledPlugins", {}).get("user-plugin@user-market") is True
-              and (codex_skill / "SKILL.md").is_file())
+              and (shared_skill / "SKILL.md").is_file())
 
         # 用户自有命令不能因切换 Agent 被清理
         (root / ".dsh/commands").mkdir(parents=True, exist_ok=True)
@@ -739,6 +741,7 @@ def test_copy_mode_and_errors():
         check("插件源删除 → 只清理 AIDP 入口/MCP/settings，用户配置与插件内容保留",
               not (root / ".claude/plugins/chrome-devtools-mcp").exists()
               and not (root / ".codex/skills/chrome-devtools-mcp").exists()
+              and not shared_skill.exists()
               and "[mcp_servers.chrome-devtools]" not in config_after_delete
               and "[mcp_servers.user-browser]" in config_after_delete
               and '[plugins."user-plugin@local-repo"]' in config_after_delete
@@ -812,15 +815,15 @@ def test_copy_mode_and_errors():
     finally:
         _rm(root)
 
-    # Codex 插件目标存在用户目录 → fail closed
+    # 共享插件目标存在用户目录 → fail closed
     root = _mkrepo(markers=(".codex",))
     try:
         _add_browser_plugin(root)
-        user_target = root / ".codex/skills/chrome-devtools-mcp/note.txt"
+        user_target = root / ".agents/skills/chrome-devtools-mcp/note.txt"
         user_target.parent.mkdir(parents=True)
         user_target.write_text("keep\n", encoding="utf-8")
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
-        check("Codex 插件目标无生成标记 → fail closed 且用户目录保持",
+        check("共享插件目标无生成标记 → fail closed 且用户目录保持",
               rc == 2 and "用户" in out.get("error", "") and _read(user_target) == "keep\n")
     finally:
         _rm(root)
@@ -1065,26 +1068,21 @@ def test_copy_mode_and_errors():
         pl = _add_browser_plugin(root)
         rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--mode", "copy")
         claude_plugin = root / ".claude/plugins/chrome-devtools-mcp"
-        codex_plugin_skill = root / ".codex/skills/chrome-devtools-mcp/skills/chrome-devtools"
-        dsh_plugin_skill = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools"
+        shared_plugin_skill = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools"
         source_skill = pl / "skills/chrome-devtools"
         check("插件 copy·Claude：完整项目插件为真实副本",
               rc == 0 and claude_plugin.is_dir() and not claude_plugin.is_symlink()
               and not (claude_plugin / ".claude-plugin/plugin.json").is_symlink()
               and _read(claude_plugin / ".claude-plugin/plugin.json")
               == _read(pl / ".claude-plugin/plugin.json"))
-        check("插件 copy·Codex：skills 集合为内容完整的真实副本",
-              codex_plugin_skill.is_dir() and not codex_plugin_skill.is_symlink()
-              and not (codex_plugin_skill / "SKILL.md").is_symlink()
-              and _read(codex_plugin_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
-              and _read(codex_plugin_skill / "references/usage.md")
-              == _read(source_skill / "references/usage.md"))
-        check("插件 copy·DSH：.agents/skills 为内容完整的真实副本",
-              dsh_plugin_skill.is_dir() and not dsh_plugin_skill.is_symlink()
-              and not (dsh_plugin_skill / "SKILL.md").is_symlink()
-              and _read(dsh_plugin_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
-              and _read(dsh_plugin_skill / "references/usage.md")
+        check("插件 copy·Codex/DSH：共享嵌套 skills 为内容完整的真实副本",
+              shared_plugin_skill.is_dir() and not shared_plugin_skill.is_symlink()
+              and not (shared_plugin_skill / "SKILL.md").is_symlink()
+              and not (shared_plugin_skill / "references/usage.md").is_symlink()
+              and _read(shared_plugin_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
+              and _read(shared_plugin_skill / "references/usage.md")
               == _read(source_skill / "references/usage.md")
+              and not (root / ".codex/skills/chrome-devtools-mcp").exists()
               and not (root / ".agents/skills/chrome-devtools").exists())
     finally:
         _rm(root)

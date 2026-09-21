@@ -1118,11 +1118,42 @@ def test_copy_mode_and_errors():
     check("agent_sync --self-check 通过", rc == 0 and out.get("self_check") == "pass")
 
 
+def test_native_runtime_managed_copy_contract():
+    print("【Agent 原生运行包：managed-copy + DSH 嵌套 SKILL 契约】")
+    root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
+    try:
+        _add_browser_plugin(root)
+        rc, out, _, _ = _run(
+            SYNC_PY, "--root", str(root), "--agents", "claude,codex,dsh",
+            "--mode", "link",
+        )
+        generated = (
+            root / ".claude/skills/demo-skill",
+            root / ".claude/commands/sprint-dev.md",
+            root / ".agents/skills/demo-skill",
+            root / ".codex/skills/aidp/sprint-dev",
+            root / ".dsh/commands/sprint-dev.md",
+        )
+        check("新布局统一使用 managed-copy，不生成 symlink",
+              rc == 0 and all(path.exists() and not path.is_symlink() for path in generated))
+        nested = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md"
+        check("DSH/Codex 插件 SKILL 使用 namespaced 嵌套布局",
+              nested.is_file() and not (root / ".agents/skills/chrome-devtools").exists())
+        check("旧 link 参数明确规范化为 managed-copy",
+              any(action.get("action") == "normalized"
+                  and action.get("from") == "link"
+                  and action.get("to") == "managed-copy"
+                  for action in out.get("actions", [])))
+    finally:
+        _rm(root)
+
+
 def main():
     test_agent_env()
     test_sync_all_agents_link()
     test_memory_migration_shapes()
     test_copy_mode_and_errors()
+    test_native_runtime_managed_copy_contract()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0
 

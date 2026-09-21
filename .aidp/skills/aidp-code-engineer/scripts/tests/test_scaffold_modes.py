@@ -67,7 +67,11 @@ def missing_dsh_env(root):
 
 
 def agent_sync_check(root):
-    p = subprocess.run([sys.executable, str(root / ".aidp/scripts/agent_sync.py"), "--root", str(root), "--check"],
+    runtime = root / ".agents/aidp"
+    if not runtime.is_dir():
+        runtime = root / ".claude/aidp"
+    p = subprocess.run([sys.executable, str(runtime / "scripts/agent_sync.py"),
+                        "--root", str(root), "--check"],
                        capture_output=True, text=True, env=H.clean_env())
     return p.returncode, p.stdout
 
@@ -88,7 +92,8 @@ class InitSmokeTest(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             rc, out = agent_sync_check(root)
             self.assertEqual(rc, 0, out)
-            self.assertTrue((root / ".aidp/skills/aidp-code-engineer/scripts/verify.py").is_file())
+            skill_root = root / (".claude/skills" if agents == "claude" else ".agents/skills")
+            self.assertTrue((skill_root / "aidp-code-engineer/scripts/verify.py").is_file())
             self.assertTrue((root / ".gitignore").read_text().startswith(L.GITIGNORE_BEGIN))
             self.assertIn("name: demo", (root / "memory/aidp-config.yaml").read_text())
             # 幂等：同版本再跑不产生契约写入、不备份
@@ -116,6 +121,92 @@ class InitSmokeTest(unittest.TestCase):
         files = self._init("claude,codex,dsh")
         self.assertIn("# demo", files["AGENTS.md"])
         self.assertTrue(L.is_shell(files["CLAUDE.md"]))
+
+
+class NativeRuntimeLayoutContractTest(unittest.TestCase):
+    @staticmethod
+    def _manifest(root, rel):
+        return json.loads((root / rel / ".aidp-runtime.json").read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _normalized_runtime(root, rel, manifest):
+        normalized = {}
+        home = rel.as_posix()
+        for name in manifest["files"]:
+            path = root / rel / name
+            data = path.read_bytes()
+            try:
+                normalized[name] = data.decode("utf-8").replace(home, "{{AIDP_HOME}}")
+            except UnicodeDecodeError:
+                normalized[name] = data
+        return normalized
+
+    def test_claude_only_uses_native_runtime_without_root_aidp(self):
+        with H.TempRepo() as root:
+            res = scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            self.assertFalse((root / ".aidp").exists())
+            self.assertTrue((root / ".claude/aidp/scripts/agent_sync.py").is_file())
+            self.assertTrue((root / ".claude/commands/sprint-dev.md").is_file())
+            self.assertTrue((root / ".claude/skills/aidp-code-engineer/SKILL.md").is_file())
+            self.assertFalse((root / ".agents").exists())
+            manifest = self._manifest(root, Path(".claude/aidp"))
+            self.assertEqual(manifest["schema"], "aidp.runtime/v1")
+            self.assertEqual(manifest["source"], "claude")
+            self.assertEqual(res["agents"], ["claude"])
+
+    def test_codex_and_dsh_share_native_runtime_and_nested_plugin_skills(self):
+        with H.TempRepo() as root:
+            env, _ = fake_dsh_env(root)
+            scaffold(root, "--version", "V0.1.0", "--agent", "codex,dsh", env=env)
+            self.assertFalse((root / ".aidp").exists())
+            self.assertTrue((root / ".agents/aidp/scripts/agent_sync.py").is_file())
+            self.assertTrue((root / ".agents/skills/aidp-code-engineer/SKILL.md").is_file())
+            self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
+            self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
+            self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
+            self.assertEqual(len(list(root.glob(".agents/aidp/.aidp-runtime.json"))), 1)
+            manifest = self._manifest(root, Path(".agents/aidp"))
+            self.assertEqual(manifest["source"], "shared")
+
+    def test_all_agents_render_equivalent_runtime_packages(self):
+        with H.TempRepo() as root:
+            env, _ = fake_dsh_env(root)
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude,codex,dsh", env=env)
+            claude_rel = Path(".claude/aidp")
+            shared_rel = Path(".agents/aidp")
+            self.assertTrue((root / claude_rel / ".aidp-runtime.json").is_file())
+            self.assertTrue((root / shared_rel / ".aidp-runtime.json").is_file())
+            claude = self._manifest(root, claude_rel)
+            shared = self._manifest(root, shared_rel)
+            self.assertEqual(claude["version"], shared["version"])
+            self.assertEqual(set(claude["files"]), set(shared["files"]))
+            self.assertEqual(
+                self._normalized_runtime(root, claude_rel, claude),
+                self._normalized_runtime(root, shared_rel, shared),
+            )
+
+    def test_link_mode_is_normalized_to_managed_copy(self):
+        with H.TempRepo() as root:
+            env, _ = fake_dsh_env(root)
+            res = scaffold(
+                root, "--version", "V0.1.0", "--agent", "claude,codex,dsh",
+                "--adapter-mode", "link", env=env,
+            )
+            generated = (
+                root / ".claude/aidp",
+                root / ".claude/commands/sprint-dev.md",
+                root / ".agents/aidp",
+                root / ".agents/skills/aidp-code-engineer",
+                root / ".codex/skills/aidp/sprint-dev",
+                root / ".dsh/commands/sprint-dev.md",
+            )
+            self.assertTrue(all(path.exists() and not path.is_symlink() for path in generated))
+            self.assertTrue(any(
+                action.get("action") == "normalized"
+                and action.get("from") == "link"
+                and action.get("to") == "managed-copy"
+                for action in res["actions"]
+            ), res["actions"])
 
 
 class AgentResolutionTest(unittest.TestCase):

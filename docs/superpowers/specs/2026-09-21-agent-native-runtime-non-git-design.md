@@ -72,6 +72,8 @@ Codex-only、DSH-only 或 Codex+DSH 项目：
 │   ├── scripts/
 │   └── templates/
 └── skills/
+    └── chrome-devtools-mcp/
+        └── skills/
 
 .codex/
 ├── skills/aidp/<command>/
@@ -85,9 +87,18 @@ Codex-only、DSH-only 或 Codex+DSH 项目：
 ```
 
 - `.agents/aidp/` 是 Codex/DSH 共用的只读运行内核。
-- `.agents/skills/` 保存公共 SKILL；DSH 也从这里发现插件 SKILL。
+- `.agents/skills/` 保存公共 SKILL 和 namespaced 插件 SKILL；Codex 与 DSH 均支持递归发现。
+- `chrome-devtools-mcp` 的 DSH/Codex 共享入口为 `.agents/skills/chrome-devtools-mcp/skills/`，不再把插件 SKILL 扁平化到根目录。
 - `.codex/skills/aidp/` 保存 Codex 原生命令 SKILL。
 - `.dsh/commands/` 保存 DSH 原生命令。
+
+DSH 的项目级 commands 和嵌套 SKILL 依赖扩展：
+
+```bash
+dsh plugin --profile web add github:SugarFatFree/dsh-agent-extension
+```
+
+脚手架在 init、migrate、upgrade 中只要目标 Agent 包含 DSH，就执行一次幂等 ensure。CLI 缺失、网络失败或安装超时时继续生成运行包，但必须 WARN、记录完整重试命令，并把 DSH commands/嵌套 SKILL 能力标记为 unavailable。生产契约与实现不得引用旧插件包名；迁移反向测试可以保留旧名称。脚手架不主动卸载用户环境中的旧插件。
 
 ### 3.3 生成物形态
 
@@ -381,7 +392,7 @@ Git 依赖脚本逐步改为调用该模块，保证退出码、JSON 和错误�
 - 旧 `.aidp/` 删除必须晚于新运行包完整验证。
 - 非 Git 不属于错误，不产生 traceback；能力不可用使用结构化 unsupported。
 - 需要 Git 的发布动作不得降级成假成功。
-- 插件安装失败继续按现有 WARN 策略，不影响基础运行包生成。
+- `dsh-agent-extension` 安装失败时继续生成基础运行包，但 DSH commands/嵌套 SKILL 能力明确标为 unavailable；告警必须包含完整重试命令。
 
 ## 11. 测试设计
 
@@ -393,6 +404,8 @@ Git 依赖脚本逐步改为调用该模块，保证退出码、JSON 和错误�
 - 新 init 后根 `.aidp/` 不存在。
 - 运行内核分别位于 `.claude/aidp`、`.agents/aidp`。
 - 公共 SKILL、命令、插件和 hooks 位于正确 Agent 目录。
+- DSH init/migrate/upgrade 均以精确 argv ensure `github:SugarFatFree/dsh-agent-extension`，不再引用 `dsh-plugin-commands`。
+- Codex/DSH 均可从 `.agents/skills/<plugin>/skills/**/SKILL.md` 发现 namespaced 嵌套插件技能。
 - 新布局统一生成受管实体副本；旧 `link` 参数被规范化为 managed-copy，不产生符号链接。
 - namespace symlink 和路径越界零副作用。
 

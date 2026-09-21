@@ -138,6 +138,18 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
         self.assertFalse((runtime / "scripts/tests").exists())
         self.assertFalse((runtime / "scripts/design-goals-baseline.txt").exists())
 
+    def _assert_fully_materialized(self, root, *relative_roots):
+        for relative in relative_roots:
+            managed_root = root / relative
+            if not managed_root.exists():
+                continue
+            self.assertFalse(managed_root.is_symlink(), f"受管根不得为 symlink: {relative}")
+            for descendant in managed_root.rglob("*"):
+                self.assertFalse(
+                    descendant.is_symlink(),
+                    f"受管树后代不得为 symlink: {descendant.relative_to(root)}",
+                )
+
     def _assert_target_runtime_paths(self, text, expected_home):
         self.assertIn(expected_home + "/", text)
         self.assertNotIn("{{AIDP_HOME}}", text)
@@ -175,6 +187,9 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".claude/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
             self.assertFalse((root / ".agents").exists())
+            self._assert_fully_materialized(
+                root, ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
+            )
             self._assert_runtime_contract(root, Path(".claude/aidp"))
             manifest = self._manifest(root, Path(".claude/aidp"))
             self.assertEqual(manifest["schema"], "aidp.runtime/v1")
@@ -202,6 +217,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
             self.assertEqual(len(list(root.glob(".agents/aidp/.aidp-runtime.json"))), 1)
+            self._assert_fully_materialized(
+                root,
+                ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
+                ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
+            )
             self._assert_runtime_contract(root, Path(".agents/aidp"))
             manifest = self._manifest(root, Path(".agents/aidp"))
             self.assertEqual(manifest["source"], "shared")
@@ -218,6 +238,9 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertIn(marker, codex_skill)
             self._assert_target_runtime_paths(codex_skill.split(marker, 1)[1], ".agents/aidp")
             self.assertFalse((root / ".dsh/commands").exists())
+            self._assert_fully_materialized(
+                root, ".agents/aidp", ".agents/skills", ".codex/skills/aidp",
+            )
             self._assert_runtime_contract(root, Path(".agents/aidp"))
 
     def test_dsh_only_uses_one_shared_runtime(self):
@@ -231,6 +254,9 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
             self._assert_target_runtime_paths(dsh_command, ".agents/aidp")
             self.assertFalse((root / ".codex/skills/aidp").exists())
+            self._assert_fully_materialized(
+                root, ".agents/aidp", ".agents/skills", ".dsh/commands",
+            )
             self._assert_runtime_contract(root, Path(".agents/aidp"))
 
     def test_all_agents_render_equivalent_runtime_packages(self):
@@ -241,6 +267,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             shared_rel = Path(".agents/aidp")
             self._assert_runtime_contract(root, claude_rel)
             self._assert_runtime_contract(root, shared_rel)
+            self._assert_fully_materialized(
+                root,
+                ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
+                ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
+            )
             self.assertTrue((root / claude_rel / ".aidp-runtime.json").is_file())
             self.assertTrue((root / shared_rel / ".aidp-runtime.json").is_file())
             claude = self._manifest(root, claude_rel)
@@ -272,6 +303,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
                 root / ".dsh/commands/sprint-dev.md",
             )
             self.assertTrue(all(path.exists() and not path.is_symlink() for path in generated))
+            self._assert_fully_materialized(
+                root,
+                ".claude/aidp", ".claude/commands", ".claude/skills", ".claude/plugins",
+                ".agents/aidp", ".agents/skills", ".codex/skills/aidp", ".dsh/commands",
+            )
             self.assertTrue(any(
                 action.get("action") == "normalized"
                 and action.get("from") == "link"

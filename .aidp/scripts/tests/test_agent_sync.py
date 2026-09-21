@@ -1066,7 +1066,7 @@ def test_copy_mode_and_errors():
         rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--mode", "copy")
         claude_plugin = root / ".claude/plugins/chrome-devtools-mcp"
         codex_plugin_skill = root / ".codex/skills/chrome-devtools-mcp/skills/chrome-devtools"
-        dsh_plugin_skill = root / ".agents/skills/chrome-devtools"
+        dsh_plugin_skill = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools"
         source_skill = pl / "skills/chrome-devtools"
         check("插件 copy·Claude：完整项目插件为真实副本",
               rc == 0 and claude_plugin.is_dir() and not claude_plugin.is_symlink()
@@ -1084,7 +1084,8 @@ def test_copy_mode_and_errors():
               and not (dsh_plugin_skill / "SKILL.md").is_symlink()
               and _read(dsh_plugin_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
               and _read(dsh_plugin_skill / "references/usage.md")
-              == _read(source_skill / "references/usage.md"))
+              == _read(source_skill / "references/usage.md")
+              and not (root / ".agents/skills/chrome-devtools").exists())
     finally:
         _rm(root)
 

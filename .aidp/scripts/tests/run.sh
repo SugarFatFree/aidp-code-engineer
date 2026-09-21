@@ -92,6 +92,7 @@ run "test_baseline_archive.py（baseline 归档回落 + decisions 双信源）" 
 run "test_unattended_recovery.py（无人值守失败处置 + 自动恢复）" python3 .aidp/scripts/tests/test_unattended_recovery.py
 run "test_aidp_scheduler.py（7×24 操作系统调度）" python3 .aidp/scripts/tests/test_aidp_scheduler.py
 run "test_agent_sync_router.py（原生命令生成 + 参数保真）" python3 .aidp/scripts/tests/test_agent_sync_router.py
+run "test_runtime_and_vcs.py（运行根解析 + VCS 能力降级）" python3 .aidp/scripts/tests/test_runtime_and_vcs.py
 run "test_command_skill_contracts.py（命令 ↔ SKILL 调用契约）" python3 .aidp/scripts/tests/test_command_skill_contracts.py
 run "test_doc_reference_guards.py（符号引用 / CLI 归属 / 私有痕迹 三道门）" python3 .aidp/scripts/tests/test_doc_reference_guards.py
 

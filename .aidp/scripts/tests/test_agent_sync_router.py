@@ -120,9 +120,10 @@ def test_native_command_skills():
         fallback = _read(root / ".codex/skills/aidp/no-title/SKILL.md")
         check("无 H1 使用稳定 description", 'description: "AIDP command no-title"' in fallback)
         check("README 不生成命令 SKILL", not (root / ".codex/skills/aidp/README").exists())
-        check("DSH 命令直接链接且正文保真",
-              (root / ".dsh/commands/sprint-dev.md").is_symlink()
-              and _read(root / ".dsh/commands/sprint-dev.md") == source)
+        dsh_command = root / ".dsh/commands/sprint-dev.md"
+        check("DSH 命令以 managed-copy 生成且正文保真",
+              dsh_command.is_file() and not dsh_command.is_symlink()
+              and _read(dsh_command) == source)
         check("公共 SKILL 不含 aidp-cmd", not (root / ".agents/skills/aidp-cmd").exists())
         check("真源不生成 aidp-cmd", not (root / ".aidp/skills/aidp-cmd").exists())
     finally:

@@ -7,7 +7,7 @@
   · agent_sync：Claude Code / Codex / DeepSeek Harness 三种入口装配（SKILL 目录、命令入口 / 包装 SKILL、Stop hook）
   · 记忆文件搬迁：仅 Claude → CLAUDE.md 正文；并存 → 正文进 AGENTS.md、CLAUDE.md 成 @AGENTS.md 薄壳；⛔ 不丢正文
   · 幂等（二次运行零动作）、--check 漂移 exit 1 且不写盘、源删除后清理自生成入口但不碰用户自有 SKILL
-  · --mode copy、未知 Agent / 无 .aidp → exit 2、非法 hooks JSON 拒绝覆盖、--self-check
+  · managed-copy、未知 Agent / 无运行包 → exit 2、非法 hooks JSON 拒绝覆盖、--self-check
 
 直接跑：`python3 .aidp/scripts/tests/test_agent_sync.py`
 """
@@ -85,6 +85,20 @@ def _mkrepo(markers=(), claude_md=BODY, agents_md=None, hook=True):
     if agents_md is not None:
         (root / "AGENTS.md").write_text(agents_md, encoding="utf-8")
     return root
+
+
+def _move_source_into_runtime(root, runtime_rel):
+    source = root / ".aidp"
+    runtime = root / runtime_rel
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(runtime))
+    scripts = runtime / "scripts"
+    scripts.mkdir(exist_ok=True)
+    for name in ("agent_sync.py", "agent_env.py", "aidp_runtime.py"):
+        candidate = Path(SCRIPTS) / name
+        if candidate.is_file():
+            shutil.copy2(candidate, scripts / name)
+    return runtime
 
 
 def _add_browser_plugin(root):
@@ -168,8 +182,8 @@ def test_agent_env():
 
 
 # ── agent_sync：三种 Agent 装配 ───────────────────────────────────────────────
-def test_sync_all_agents_link():
-    print("【agent_sync：Claude Code + Codex + DeepSeek Harness 同时装配（link）】")
+def test_sync_all_agents_managed_copy():
+    print("【agent_sync：Claude Code + Codex + DeepSeek Harness 同时装配（managed-copy）】")
     root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
     try:
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root))
@@ -184,11 +198,12 @@ def test_sync_all_agents_link():
 
         # Claude Code
         sk = root / ".claude/skills/demo-skill"
-        check("Claude：.claude/skills/demo-skill 为相对符号链接指向 .aidp",
-              sk.is_symlink() and not os.path.isabs(os.readlink(sk)) and (sk / "SKILL.md").is_file())
+        check("Claude：.claude/skills/demo-skill 为 managed-copy",
+              sk.is_dir() and not sk.is_symlink() and (sk / "SKILL.md").is_file())
         check("无 SKILL.md 的目录不装配", not (root / ".claude/skills/not-a-skill").exists())
         cmd = root / ".claude/commands/sprint-dev.md"
-        check("Claude：.claude/commands/*.md 链接到 .aidp/commands", cmd.is_symlink() and "Sprint" in _read(cmd))
+        check("Claude：.claude/commands/*.md 为 managed-copy",
+              cmd.is_file() and not cmd.is_symlink() and "Sprint" in _read(cmd))
         check("Claude：README.md 不作为命令", not (root / ".claude/commands/README.md").exists())
         check("Claude：不生成命令包装 SKILL", not (root / ".claude/skills/sprint-dev").exists())
         st = json.loads(_read(root / ".claude/settings.json"))
@@ -197,7 +212,9 @@ def test_sync_all_agents_link():
               cmds == [f'python3 "$CLAUDE_PROJECT_DIR/{AS.STOP_GUARD_REL}"'])
 
         # Codex
-        check("Codex：公共 SKILL 在 .agents/skills", (root / ".agents/skills/demo-skill").is_symlink())
+        shared_skill = root / ".agents/skills/demo-skill"
+        check("Codex：公共 SKILL 在 .agents/skills 且为 managed-copy",
+              shared_skill.is_dir() and not shared_skill.is_symlink())
         codex_cmd = root / ".codex/skills/aidp/sprint-dev/SKILL.md"
         codex_text = _read(codex_cmd)
         check("Codex：每条命令生成独立 SKILL", codex_cmd.is_file())
@@ -215,9 +232,10 @@ def test_sync_all_agents_link():
         check("Codex：config.toml 开启 codex_hooks", "[features]\ncodex_hooks = true" in _read(root / ".codex/config.toml"))
 
         # DeepSeek Harness
-        check("DSH：命令直接生成到 .dsh/commands",
-              (root / ".dsh/commands/sprint-dev.md").is_symlink()
-              and "$ARGUMENTS" in _read(root / ".dsh/commands/sprint-dev.md"))
+        dsh_command = root / ".dsh/commands/sprint-dev.md"
+        check("DSH：命令以 managed-copy 生成到 .dsh/commands",
+              dsh_command.is_file() and not dsh_command.is_symlink()
+              and "$ARGUMENTS" in _read(dsh_command))
         check("DSH：README 不作为命令", not (root / ".dsh/commands/README.md").exists())
         check("DSH：不再生成专属 .dsh/skills", not (root / ".dsh/skills").exists())
         gi = _read(root / ".gitignore")
@@ -252,7 +270,7 @@ def test_sync_all_agents_link():
               and not (root / ".dsh/commands/release.md").exists())
         rc, _, _, err = _run(SYNC_PY, "--root", str(root), "--human")
         check("修复后再 --check 一致", _run(SYNC_PY, "--root", str(root), "--check")[0] == 0 and rc == 0)
-        check("--human 输出动作摘要到 stderr", "link" in err or "write" in err)
+        check("--human 输出动作摘要到 stderr", "copy" in err or "write" in err or "normalized" in err)
 
         # 源删除 → 清理自生成入口；用户自有 SKILL 不动
         (root / ".agents/skills/my-own").mkdir()
@@ -376,8 +394,14 @@ def test_copy_mode_and_errors():
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--mode", "copy", "--check")
         check("★ copy 模式源内容变更 → --check 漂移 exit 1", rc == 1
               and any(a["path"] == ".claude/skills/demo-skill" for a in out.get("actions", [])))
+        _run(SYNC_PY, "--root", str(root), "--mode", "copy")
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--check")
-        check("copy → link 切换同样视为漂移", rc == 1)
+        check("默认 link 参数规范化为 managed-copy 且不制造模式漂移",
+              rc == 0 and out.get("drift") is False
+              and any(action.get("action") == "normalized"
+                      and action.get("from") == "link"
+                      and action.get("to") == "managed-copy"
+                      for action in out.get("actions", [])))
     finally:
         _rm(root)
 
@@ -403,7 +427,7 @@ def test_copy_mode_and_errors():
     empty = Path(tempfile.mkdtemp())
     try:
         rc, out, _, _ = _run(SYNC_PY, "--root", str(empty))
-        check("无 .aidp/ → exit 2", rc == 2 and "error" in out)
+        check("无任何 AIDP 运行包 → exit 2", rc == 2 and "error" in out)
     finally:
         shutil.rmtree(empty, ignore_errors=True)
 
@@ -414,7 +438,7 @@ def test_copy_mode_and_errors():
         dsh_cmd = root / ".dsh/commands/sprint-dev.md"
         check("AIDP_AGENT=dsh → 公共 SKILL + 可执行原生命令", rc == 0 and out.get("agents") == ["dsh"]
               and (root / ".agents/skills/demo-skill").exists()
-              and dsh_cmd.is_symlink()
+              and dsh_cmd.is_file() and not dsh_cmd.is_symlink()
               and "$ARGUMENTS" in _read(dsh_cmd)
               and not (root / ".dsh/skills").exists()
               and not (root / ".claude/skills").exists()
@@ -648,7 +672,7 @@ def test_copy_mode_and_errors():
               (root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file()
               and st["enabledPlugins"].get("chrome-devtools-mcp@chrome-devtools-plugins") is True)
         codex_skill = root / ".codex/skills/chrome-devtools-mcp/skills/chrome-devtools"
-        dsh_skill = root / ".agents/skills/chrome-devtools"
+        dsh_skill = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools"
         check("插件·Codex：项目级技能集合", (codex_skill / "SKILL.md").is_file())
         check("插件·Codex：不生成仓库 marketplace", not (root / ".agents/plugins/marketplace.json").exists())
         config = _read(root / ".codex/config.toml")
@@ -661,8 +685,10 @@ def test_copy_mode_and_errors():
               and 'command = "user-mcp"' in config
               and '[plugins."user-plugin@local-repo"]' in config
               and '[plugins."chrome-devtools-mcp@local-repo"]' not in config)
-        check("插件·DSH：插件 SKILL 直接进入 .agents/skills",
-              (dsh_skill / "SKILL.md").is_file() and not (root / ".dsh/skills").exists())
+        check("插件·DSH：插件 SKILL 以 namespaced managed-copy 进入 .agents/skills",
+              (dsh_skill / "SKILL.md").is_file() and not dsh_skill.is_symlink()
+              and not (root / ".agents/skills/chrome-devtools").exists()
+              and not (root / ".dsh/skills").exists())
         dsh_mcp = json.loads(_read(root / ".dsh/mcp.json"))
         check("插件·DSH：新增 chrome-devtools 且保留用户 server",
               "chrome-devtools" in dsh_mcp.get("mcpServers", {})
@@ -672,14 +698,18 @@ def test_copy_mode_and_errors():
               and not (root / ".agents/plugins/marketplace.json").exists()
               and not (root / ".agents/plugins/.aidp-generated").exists()
               and user_plugin.is_file())
-        check("插件·Codex+DSH：两入口解析到同一真源",
-              codex_skill.resolve() == (pl / "skills/chrome-devtools").resolve()
-              and dsh_skill.resolve() == (pl / "skills/chrome-devtools").resolve())
+        source_skill = pl / "skills/chrome-devtools"
+        check("插件·Codex+DSH：两入口为同源 managed-copy",
+              not codex_skill.is_symlink() and not dsh_skill.is_symlink()
+              and _read(codex_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
+              and _read(dsh_skill / "SKILL.md") == _read(source_skill / "SKILL.md")
+              and _read(codex_skill / "references/usage.md") == _read(source_skill / "references/usage.md")
+              and _read(dsh_skill / "references/usage.md") == _read(source_skill / "references/usage.md"))
         gi = _read(root / ".gitignore")
         check("插件生成物登记 .gitignore",
               "/.claude/plugins/chrome-devtools-mcp" in gi
               and "/.codex/skills/chrome-devtools-mcp" in gi
-              and "/.agents/skills/chrome-devtools" in gi)
+              and "/.agents/skills/chrome-devtools-mcp" in gi)
         check("插件装配幂等", _run(SYNC_PY, "--root", str(root), "--check")[0] == 0)
 
         # 切换为 Codex-only：清理 DSH 的 AIDP server/技能，保留用户 server 与 Codex 入口
@@ -1118,6 +1148,37 @@ def test_copy_mode_and_errors():
     check("agent_sync --self-check 通过", rc == 0 and out.get("self_check") == "pass")
 
 
+def test_sync_executes_from_native_runtime_without_root_aidp():
+    print("【agent_sync：从 Agent 原生 runtime 执行，无根 .aidp】")
+    cases = (
+        ("claude", ".claude/aidp", ".claude/aidp/scripts/agent_sync.py",
+         ".claude/commands/sprint-dev.md", ".claude/skills/demo-skill/SKILL.md"),
+        ("codex,dsh", ".agents/aidp", ".agents/aidp/scripts/agent_sync.py",
+         ".dsh/commands/sprint-dev.md", ".agents/skills/demo-skill/SKILL.md"),
+    )
+    for agents, runtime_rel, script_rel, command_rel, skill_rel in cases:
+        root = _mkrepo(markers=tuple(f".{name}" for name in agents.split(",")))
+        try:
+            _add_browser_plugin(root)
+            _move_source_into_runtime(root, runtime_rel)
+            script = root / script_rel
+            rc, out, _, _ = _run(str(script), "--root", str(root), "--agents", agents)
+            check(f"{agents}：无根 .aidp 仍可装配",
+                  rc == 0 and not (root / ".aidp").exists()
+                  and (root / command_rel).is_file()
+                  and (root / skill_rel).is_file())
+            check(f"{agents}：原生 runtime 装配结果为 managed-copy",
+                  not (root / command_rel).is_symlink()
+                  and not (root / skill_rel).parent.is_symlink())
+            rc, checked, _, _ = _run(
+                str(script), "--root", str(root), "--agents", agents, "--check",
+            )
+            check(f"{agents}：无根 .aidp 的 --check 一致",
+                  rc == 0 and checked.get("drift") is False)
+        finally:
+            _rm(root)
+
+
 def test_native_runtime_managed_copy_contract():
     print("【Agent 原生运行包：managed-copy + DSH 嵌套 SKILL 契约】")
     root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
@@ -1150,9 +1211,10 @@ def test_native_runtime_managed_copy_contract():
 
 def main():
     test_agent_env()
-    test_sync_all_agents_link()
+    test_sync_all_agents_managed_copy()
     test_memory_migration_shapes()
     test_copy_mode_and_errors()
+    test_sync_executes_from_native_runtime_without_root_aidp()
     test_native_runtime_managed_copy_contract()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0

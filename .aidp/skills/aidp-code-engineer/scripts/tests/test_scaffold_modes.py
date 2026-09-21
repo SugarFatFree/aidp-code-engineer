@@ -124,6 +124,20 @@ class InitSmokeTest(unittest.TestCase):
 
 
 class NativeRuntimeLayoutContractTest(unittest.TestCase):
+    RUNTIME_DIRS = (
+        "agents", "commands", "flows", "hooks", "plugins", "reference", "rules",
+        "scripts", "skills", "templates",
+    )
+
+    def _assert_runtime_contract(self, root, rel):
+        runtime = root / rel
+        for dirname in self.RUNTIME_DIRS:
+            self.assertTrue((runtime / dirname).is_dir(), f"runtime 缺目录: {rel}/{dirname}")
+        self.assertFalse((runtime / "skills/aidp-code-engineer").exists())
+        self.assertFalse((runtime / "memory").exists())
+        self.assertFalse((runtime / "scripts/tests").exists())
+        self.assertFalse((runtime / "scripts/design-goals-baseline.txt").exists())
+
     @staticmethod
     def _manifest(root, rel):
         return json.loads((root / rel / ".aidp-runtime.json").read_text(encoding="utf-8"))
@@ -154,6 +168,7 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".claude/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".claude/plugins/chrome-devtools-mcp/.claude-plugin/plugin.json").is_file())
             self.assertFalse((root / ".agents").exists())
+            self._assert_runtime_contract(root, Path(".claude/aidp"))
             manifest = self._manifest(root, Path(".claude/aidp"))
             self.assertEqual(manifest["schema"], "aidp.runtime/v1")
             self.assertEqual(manifest["source"], "claude")
@@ -174,8 +189,30 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())
             self.assertEqual(len(list(root.glob(".agents/aidp/.aidp-runtime.json"))), 1)
+            self._assert_runtime_contract(root, Path(".agents/aidp"))
             manifest = self._manifest(root, Path(".agents/aidp"))
             self.assertEqual(manifest["source"], "shared")
+
+    def test_codex_only_uses_one_shared_runtime(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "codex")
+            self.assertFalse((root / ".aidp").exists())
+            self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
+            self.assertFalse((root / ".claude/aidp").exists())
+            self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
+            self.assertFalse((root / ".dsh/commands").exists())
+            self._assert_runtime_contract(root, Path(".agents/aidp"))
+
+    def test_dsh_only_uses_one_shared_runtime(self):
+        with H.TempRepo() as root:
+            env, _ = fake_dsh_env(root)
+            scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
+            self.assertFalse((root / ".aidp").exists())
+            self.assertTrue((root / ".agents/aidp/.aidp-runtime.json").is_file())
+            self.assertFalse((root / ".claude/aidp").exists())
+            self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
+            self.assertFalse((root / ".codex/skills/aidp").exists())
+            self._assert_runtime_contract(root, Path(".agents/aidp"))
 
     def test_all_agents_render_equivalent_runtime_packages(self):
         with H.TempRepo() as root:
@@ -183,6 +220,8 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             scaffold(root, "--version", "V0.1.0", "--agent", "claude,codex,dsh", env=env)
             claude_rel = Path(".claude/aidp")
             shared_rel = Path(".agents/aidp")
+            self._assert_runtime_contract(root, claude_rel)
+            self._assert_runtime_contract(root, shared_rel)
             self.assertTrue((root / claude_rel / ".aidp-runtime.json").is_file())
             self.assertTrue((root / shared_rel / ".aidp-runtime.json").is_file())
             claude = self._manifest(root, claude_rel)

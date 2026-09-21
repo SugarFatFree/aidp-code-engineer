@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 from typing import Callable, Dict, Optional
@@ -19,6 +20,8 @@ RUNTIME_HOME = {"claude": ".claude/aidp", "shared": ".agents/aidp"}
 RUNTIME_DIRS = L.RUNTIME_DIRS
 RUNTIME_EXCLUDES = L.RUNTIME_EXCLUDES
 _TOKEN_RE = re.compile(r"\{\{[^{}]+\}\}")
+_VERSION_RE = re.compile(r"^V\d+\.\d+\.\d+$")
+_IGNORE_PATH_RE = re.compile(r"runtime-path-ignore:\s*\S+")
 
 
 def _lexical(path: Path) -> Path:
@@ -76,8 +79,23 @@ def _is_text(data: bytes) -> bool:
         return False
 
 
-def render_text(text: str, home: str) -> str:
-    """渲染一个 UTF-8 契约文件，并拒绝未解析或旧运行路径。"""
+def _template_path_leaks(line: str, template_root: object) -> bool:
+    if template_root is None:
+        return False
+    root = str(template_root).rstrip("/\\")
+    if not root:
+        return False
+    normalized_line = line.replace("\\", "/")
+    normalized_root = root.replace("\\", "/").rstrip("/")
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_.-])" + re.escape(normalized_root) + r"(?=$|/)",
+        re.IGNORECASE if re.match(r"^[A-Za-z]:/", normalized_root) else 0,
+    )
+    return bool(pattern.search(normalized_line))
+
+
+def render_text(text: str, home: str, template_root: object = None) -> str:
+    """渲染 UTF-8 契约，并拒绝 token、旧路径和模板绝对路径泄露。"""
     if home not in RUNTIME_HOME.values():
         raise ValueError(f"未知 AIDP_HOME: {home}")
     rendered = text.replace("{{AIDP_HOME}}", home)
@@ -87,6 +105,8 @@ def render_text(text: str, home: str) -> str:
     for line_no, line in enumerate(rendered.splitlines(), 1):
         if ".aidp/" in line:
             raise ValueError(f"存在旧运行路径 .aidp/（第 {line_no} 行）")
+        if _template_path_leaks(line, template_root) and not _IGNORE_PATH_RE.search(line):
+            raise ValueError(f"存在模板根绝对路径泄露（第 {line_no} 行）")
     return rendered
 
 
@@ -124,7 +144,10 @@ def render_tree(source_root: Path, destination: Path, home: str) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             data = source.read_bytes()
             if _is_text(data):
-                target.write_text(render_text(data.decode("utf-8"), home), encoding="utf-8")
+                target.write_text(
+                    render_text(data.decode("utf-8"), home, template_root=source_root),
+                    encoding="utf-8",
+                )
                 shutil.copymode(source, target)
             else:
                 shutil.copy2(source, target)
@@ -132,6 +155,18 @@ def render_tree(source_root: Path, destination: Path, home: str) -> None:
 
 def _file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _file_mode(path: Path) -> str:
+    return format(stat.S_IMODE(path.stat().st_mode), "04o")
+
+
+def _entry_mode(path: Path) -> str:
+    return format(stat.S_IMODE(path.lstat().st_mode), "04o")
+
+
+def _file_metadata(path: Path) -> dict:
+    return {"sha256": _file_hash(path), "mode": _file_mode(path)}
 
 
 def _runtime_files(runtime: Path):
@@ -150,9 +185,16 @@ def _validate_source_home(source: str, home: str) -> None:
         raise ValueError(f"运行包 source/home 不匹配: {source} 要求 {expected}，实际 {home}")
 
 
+def _validate_version(version: object) -> str:
+    if not isinstance(version, str) or not _VERSION_RE.fullmatch(version):
+        raise ValueError(f"非法运行包版本: {version!r}")
+    return version
+
+
 def build_runtime_manifest(runtime: Path, version: str, source: str, home: str) -> dict:
     _validate_source_home(source, home)
-    files = {relative: _file_hash(path) for relative, path in _runtime_files(Path(runtime))}
+    version = _validate_version(version)
+    files = {relative: _file_metadata(path) for relative, path in _runtime_files(Path(runtime))}
     return {
         "schema": "aidp.runtime/v1",
         "version": version,
@@ -180,10 +222,19 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
         raise ValueError("运行包 manifest schema 非法")
     if manifest.get("source") not in RUNTIME_HOME:
         raise ValueError("运行包 manifest source 非法")
+    _validate_version(manifest.get("version"))
     expected_files = manifest.get("files")
     if not isinstance(expected_files, dict):
         raise ValueError("运行包 manifest files 必须是对象")
-    actual = {relative: _file_hash(path) for relative, path in _runtime_files(runtime)}
+    for relative, metadata in expected_files.items():
+        if not isinstance(relative, str) or not isinstance(metadata, dict) \
+                or set(metadata) != {"sha256", "mode"} \
+                or not isinstance(metadata.get("sha256"), str) \
+                or not re.fullmatch(r"[0-9a-f]{64}", metadata["sha256"]) \
+                or not isinstance(metadata.get("mode"), str) \
+                or not re.fullmatch(r"[0-7]{4}", metadata["mode"]):
+            raise ValueError(f"运行包 manifest 文件元数据非法: {relative}")
+    actual = {relative: _file_metadata(path) for relative, path in _runtime_files(runtime)}
     if dict(sorted(expected_files.items())) != dict(sorted(actual.items())):
         raise ValueError("运行包文件指纹漂移")
     home = expected_home or RUNTIME_HOME[manifest["source"]]
@@ -205,14 +256,14 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
     return manifest
 
 
-def normalize_runtime(runtime: Path, home: str) -> Dict[str, bytes]:
-    """把运行根反向规范化为 token，供 Claude/shared 运行包比较。"""
+def normalize_runtime(runtime: Path, home: str) -> Dict[str, dict]:
+    """把运行根反向规范化为 token，并保留权限模式供双包比较。"""
     normalized = {}
     for relative, path in _runtime_files(Path(runtime)):
         data = path.read_bytes()
         if _is_text(data):
             data = data.decode("utf-8").replace(home, "{{AIDP_HOME}}").encode("utf-8")
-        normalized[relative] = data
+        normalized[relative] = {"content": data, "mode": _file_mode(path)}
     return normalized
 
 
@@ -224,6 +275,7 @@ def tree_digest(root: Path) -> str:
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root).as_posix().encode("utf-8")
         digest.update(relative + b"\0")
+        digest.update(_entry_mode(path).encode("ascii") + b"\0")
         if path.is_symlink():
             digest.update(b"L" + os.readlink(path).encode("utf-8"))
         elif path.is_file():
@@ -254,7 +306,7 @@ def _runtime_modified(destination: Path) -> bool:
     expected = manifest.get("files")
     if not isinstance(expected, dict):
         return True
-    actual = {relative: _file_hash(path) for relative, path in _runtime_files(destination)}
+    actual = {relative: _file_metadata(path) for relative, path in _runtime_files(destination)}
     return dict(sorted(expected.items())) != dict(sorted(actual.items()))
 
 

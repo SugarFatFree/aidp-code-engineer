@@ -4,6 +4,7 @@
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -112,6 +113,45 @@ class RenderContractTest(RuntimeLayoutTestCase):
                 ".claude/aidp",
             )
 
+    def test_render_rejects_template_root_leaks_but_allows_generic_absolute_paths(self):
+        posix_root = "/workspace/template"
+        windows_root = r"C:\workspace\template"
+        with self.assertRaises(ValueError):
+            R.render_text("read /workspace/template/.hidden/file.md\n", ".claude/aidp",
+                          template_root=posix_root)
+        with self.assertRaises(ValueError):
+            R.render_text(r"read C:\workspace\template\rules\x.md" + "\n", ".agents/aidp",
+                          template_root=windows_root)
+        self.assertEqual(
+            R.render_text("#!/usr/bin/env python3\npath=C:/Windows/System32\n", ".claude/aidp",
+                          template_root=posix_root),
+            "#!/usr/bin/env python3\npath=C:/Windows/System32\n",
+        )
+
+    def test_runtime_path_ignore_only_exempts_template_root_on_that_line(self):
+        root = "/workspace/template"
+        text = (
+            "example=/workspace/template/demo  # runtime-path-ignore: 文档示例\n"
+            "generic=/usr/bin/env\n"
+        )
+        self.assertEqual(R.render_text(text, ".claude/aidp", template_root=root), text)
+        with self.assertRaises(ValueError):
+            R.render_text(
+                "bad=.aidp/scripts/x  # runtime-path-ignore: 不得豁免旧路径\n",
+                ".claude/aidp", template_root=root,
+            )
+        with self.assertRaises(ValueError):
+            R.render_text(
+                "bad={{UNKNOWN_TOKEN}}  # runtime-path-ignore: 不得豁免 token\n",
+                ".claude/aidp", template_root=root,
+            )
+        with self.assertRaises(ValueError):
+            R.render_text(
+                "one=/workspace/template/a  # runtime-path-ignore: 示例\n"
+                "two=/workspace/template/b\n",
+                ".claude/aidp", template_root=root,
+            )
+
     def test_binary_is_copied_without_text_substitution(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -135,8 +175,34 @@ class ManifestContractTest(RuntimeLayoutTestCase):
             self.assertEqual(manifest["source"], "claude")
             self.assertEqual(list(manifest["files"]), ["a.txt", "b.txt"])
             self.assertNotIn(R.RUNTIME_MANIFEST, manifest["files"])
-            for digest in manifest["files"].values():
-                self.assertRegex(digest, r"^[0-9a-f]{64}$")
+            for metadata in manifest["files"].values():
+                self.assertEqual(set(metadata), {"sha256", "mode"})
+                self.assertRegex(metadata["sha256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(metadata["mode"], r"^[0-7]{4}$")
+
+    def test_manifest_version_is_required_and_strict_semver(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "aidp"
+            runtime.mkdir()
+            (runtime / "a.txt").write_text("a\n", encoding="utf-8")
+            for version in (None, "", 1, "1.2.3", "V1.2", "V1.2.3.4", "V1.x.3"):
+                with self.subTest(version=version):
+                    with self.assertRaises(ValueError):
+                        R.build_runtime_manifest(
+                            runtime, version=version, source="claude", home=".claude/aidp")
+
+            source = make_source(Path(td) / "source-fixture")
+            installed = Path(td) / ".claude/aidp"
+            R.render_runtime(source, installed, ".claude/aidp", "V1.2.3", "claude")
+            for version in (None, "", 1, "1.2.3", "V1.2"):
+                manifest = json.loads((installed / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+                manifest["version"] = version
+                (installed / R.RUNTIME_MANIFEST).write_text(
+                    json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+                with self.subTest(validate_version=version):
+                    with self.assertRaises(ValueError):
+                        R.validate_runtime(installed, expected_home=".claude/aidp")
+            R.render_runtime(source, installed, ".claude/aidp", "V1.2.3", "claude")
 
     def test_source_and_home_mapping_is_enforced_at_every_layer(self):
         with tempfile.TemporaryDirectory() as td:
@@ -162,6 +228,29 @@ class ManifestContractTest(RuntimeLayoutTestCase):
                 json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
             with self.assertRaises(ValueError):
                 R.validate_runtime(runtime, expected_home=".agents/aidp")
+
+    def test_mode_is_manifested_and_permission_drift_is_detected(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            tool = source / "scripts/sample.txt"
+            tool.chmod(0o755)
+            claude = base / ".claude/aidp"
+            shared = base / ".agents/aidp"
+            R.render_runtime(source, claude, ".claude/aidp", "V1.0.0", "claude")
+            R.render_runtime(source, shared, ".agents/aidp", "V1.0.0", "shared")
+            manifest = json.loads((claude / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["files"]["scripts/sample.txt"]["mode"], "0755")
+            self.assertEqual(stat.S_IMODE((claude / "scripts/sample.txt").stat().st_mode), 0o755)
+            self.assertEqual(R.normalize_runtime(claude, ".claude/aidp"),
+                             R.normalize_runtime(shared, ".agents/aidp"))
+
+            (shared / "scripts/sample.txt").chmod(0o644)
+            with self.assertRaises(ValueError):
+                R.validate_runtime(shared, expected_home=".agents/aidp")
+            self.assertNotEqual(R.normalize_runtime(claude, ".claude/aidp"),
+                                R.normalize_runtime(shared, ".agents/aidp"))
+            self.assertNotEqual(R.tree_digest(claude), R.tree_digest(shared))
 
     def test_validate_rejects_missing_required_directory_even_with_matching_manifest(self):
         with tempfile.TemporaryDirectory() as td:
@@ -317,6 +406,14 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             def nested_backup(runtime):
                 return nested_target
             callbacks.append(nested_backup)
+
+            def wrong_mode_backup(runtime):
+                target = base / "wrong-mode-backup"
+                shutil.copytree(runtime, target)
+                candidate = target / "commands/sprint-dev.md"
+                candidate.chmod(0o600)
+                return target
+            callbacks.append(wrong_mode_backup)
 
             for callback in callbacks:
                 with self.subTest(callback=callback.__name__):

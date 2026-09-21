@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import tempfile
+import time
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -98,6 +99,9 @@ def render_text(text: str, home: str, template_root: object = None) -> str:
     """渲染 UTF-8 契约，并拒绝 token、旧路径和模板绝对路径泄露。"""
     if home not in RUNTIME_HOME.values():
         raise ValueError(f"未知 AIDP_HOME: {home}")
+    for hardcoded_home in RUNTIME_HOME.values():
+        if hardcoded_home in text:
+            raise ValueError(f"模板必须使用 {{{{AIDP_HOME}}}}，不得硬编码 {hardcoded_home}")
     rendered = text.replace("{{AIDP_HOME}}", home)
     unknown = sorted(set(_TOKEN_RE.findall(rendered)))
     if unknown:
@@ -251,6 +255,9 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
                 raise ValueError(f"运行包含旧路径: {relative}")
         if "{{AIDP_HOME}}" in text:
             raise ValueError(f"运行包含未解析 AIDP_HOME: {relative}")
+        for configured_home in RUNTIME_HOME.values():
+            if configured_home != home and configured_home in text:
+                raise ValueError(f"运行包含其他目标的 AIDP_HOME: {relative}")
     if home not in RUNTIME_HOME.values():
         raise ValueError(f"非法 expected_home: {home}")
     return manifest
@@ -341,6 +348,42 @@ def _validate_backup(backup: Path, destination: Path, transaction: Path,
     return backup
 
 
+def _acquire_runtime_lock(parent: Path, boundary: Path):
+    lock = _assert_contained(parent / ".aidp-runtime.lock", boundary)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(str(lock), flags, 0o600)
+    except FileExistsError as exc:
+        raise RuntimeError(f"运行包事务锁已存在: {lock}") from exc
+    try:
+        identity = os.fstat(fd)
+        payload = f"pid={os.getpid()} time={time.time():.6f}\n".encode("ascii")
+        os.write(fd, payload)
+        os.fsync(fd)
+        return lock, fd, (identity.st_dev, identity.st_ino)
+    except Exception:
+        os.close(fd)
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _release_runtime_lock(lock: Path, fd: int, identity) -> None:
+    try:
+        os.close(fd)
+    finally:
+        try:
+            current = lock.lstat()
+        except OSError:
+            return
+        if not lock.is_symlink() and (current.st_dev, current.st_ino) == identity:
+            lock.unlink()
+
+
 def render_runtime(source_root: Path, destination: Path, home: str, version: str,
                    source: str, backup_callback: Optional[Callable[[Path], Path]] = None,
                    replace_func: Callable[[object, object], None] = os.replace) -> dict:
@@ -350,50 +393,60 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
     boundary = _default_boundary(destination)
     destination = _assert_contained(destination, boundary)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    transaction = Path(tempfile.mkdtemp(
-        prefix=f".{destination.name}.aidp-txn-", dir=str(destination.parent)))
-    transaction = _assert_contained(transaction, boundary)
-    stage = transaction / "stage"
-    previous = transaction / "previous"
-    moved_old = False
+    lock, lock_fd, lock_identity = _acquire_runtime_lock(destination.parent, boundary)
     try:
-        if _lexists(destination):
-            if destination.is_symlink() or not destination.is_dir():
-                raise RuntimeError(f"运行包目标不是受管目录: {destination}")
-            if not (destination / RUNTIME_MANIFEST).is_file():
-                raise RuntimeError(f"同名目录缺少运行包 manifest，拒绝覆盖: {destination}")
-            if _runtime_modified(destination):
-                if backup_callback is None:
-                    raise RuntimeError(f"运行包含用户修改，必须先完整备份: {destination}")
-                expected_digest = tree_digest(destination)
-                backup = backup_callback(destination)
-                if backup is None:
-                    raise RuntimeError(f"运行包备份失败: {destination}")
-                _validate_backup(Path(backup), destination, transaction, expected_digest)
-
-        stage.mkdir(parents=True, exist_ok=False)
-        render_tree(Path(source_root), stage, home)
-        manifest = build_runtime_manifest(
-            stage, version=version, source=source, home=home)
-        _write_manifest(stage, manifest)
-        validate_runtime(stage, expected_home=home)
-        if _lexists(destination):
-            replace_func(destination, previous)
-            moved_old = True
+        transaction = Path(tempfile.mkdtemp(
+            prefix=f".{destination.name}.aidp-txn-", dir=str(destination.parent)))
+        transaction = _assert_contained(transaction, boundary)
+        stage = transaction / "stage"
+        previous = transaction / "previous"
+        moved_old = False
+        expected_destination_digest = None
         try:
-            replace_func(stage, destination)
-        except Exception:
+            if _lexists(destination):
+                if destination.is_symlink() or not destination.is_dir():
+                    raise RuntimeError(f"运行包目标不是受管目录: {destination}")
+                if not (destination / RUNTIME_MANIFEST).is_file():
+                    raise RuntimeError(f"同名目录缺少运行包 manifest，拒绝覆盖: {destination}")
+                expected_destination_digest = tree_digest(destination)
+                if _runtime_modified(destination):
+                    if backup_callback is None:
+                        raise RuntimeError(f"运行包含用户修改，必须先完整备份: {destination}")
+                    backup = backup_callback(destination)
+                    if backup is None:
+                        raise RuntimeError(f"运行包备份失败: {destination}")
+                    _validate_backup(
+                        Path(backup), destination, transaction, expected_destination_digest)
+                    if tree_digest(destination) != expected_destination_digest:
+                        raise RuntimeError("备份期间运行包发生并发修改，拒绝替换")
+
+            stage.mkdir(parents=True, exist_ok=False)
+            render_tree(Path(source_root), stage, home)
+            manifest = build_runtime_manifest(
+                stage, version=version, source=source, home=home)
+            _write_manifest(stage, manifest)
+            validate_runtime(stage, expected_home=home)
+            if _lexists(destination):
+                if tree_digest(destination) != expected_destination_digest:
+                    raise RuntimeError("安装前运行包发生并发修改，拒绝替换")
+                replace_func(destination, previous)
+                moved_old = True
+            try:
+                replace_func(stage, destination)
+            except Exception:
+                if moved_old and _lexists(previous) and not _lexists(destination):
+                    replace_func(previous, destination)
+                    moved_old = False
+                raise
+            if _lexists(previous):
+                remove_tree_safely(previous, boundary=transaction)
+                moved_old = False
+            return manifest
+        finally:
             if moved_old and _lexists(previous) and not _lexists(destination):
                 replace_func(previous, destination)
                 moved_old = False
-            raise
-        if _lexists(previous):
-            remove_tree_safely(previous, boundary=transaction)
-            moved_old = False
-        return manifest
+            if _lexists(transaction):
+                remove_tree_safely(transaction, boundary=destination.parent)
     finally:
-        if moved_old and _lexists(previous) and not _lexists(destination):
-            replace_func(previous, destination)
-            moved_old = False
-        if _lexists(transaction):
-            remove_tree_safely(transaction, boundary=destination.parent)
+        _release_runtime_lock(lock, lock_fd, lock_identity)

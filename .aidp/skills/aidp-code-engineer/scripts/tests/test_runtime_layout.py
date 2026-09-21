@@ -113,6 +113,25 @@ class RenderContractTest(RuntimeLayoutTestCase):
                 ".claude/aidp",
             )
 
+    def test_templates_must_use_runtime_token_instead_of_hardcoded_homes(self):
+        self.assertEqual(
+            R.render_text("run={{AIDP_HOME}}/scripts/x.py\n", ".claude/aidp"),
+            "run=.claude/aidp/scripts/x.py\n",
+        )
+        self.assertEqual(
+            R.render_text("run={{AIDP_HOME}}/scripts/x.py\n", ".agents/aidp"),
+            "run=.agents/aidp/scripts/x.py\n",
+        )
+        for text, home in (
+            ("run=.claude/aidp/scripts/x.py\n", ".claude/aidp"),
+            ("run=.agents/aidp/scripts/x.py\n", ".agents/aidp"),
+            ("run=.agents/aidp/scripts/x.py\n", ".claude/aidp"),
+            ("run=.claude/aidp/scripts/x.py\n", ".agents/aidp"),
+        ):
+            with self.subTest(text=text, home=home):
+                with self.assertRaises(ValueError):
+                    R.render_text(text, home)
+
     def test_render_rejects_template_root_leaks_but_allows_generic_absolute_paths(self):
         posix_root = "/workspace/template"
         windows_root = r"C:\workspace\template"
@@ -229,6 +248,29 @@ class ManifestContractTest(RuntimeLayoutTestCase):
             with self.assertRaises(ValueError):
                 R.validate_runtime(runtime, expected_home=".agents/aidp")
 
+    def test_validate_allows_expected_home_and_rejects_other_home_or_token_even_if_rehashed(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".claude/aidp"
+            R.render_runtime(source, runtime, ".claude/aidp", "V1.0.0", "claude")
+            R.validate_runtime(runtime, expected_home=".claude/aidp")
+            command = runtime / "commands/sprint-dev.md"
+            for illegal in (
+                "run=.agents/aidp/scripts/x.py\n",
+                "run={{AIDP_HOME}}/scripts/x.py\n",
+                "run=.aidp/scripts/x.py\n",
+            ):
+                command.write_text(illegal, encoding="utf-8")
+                manifest = R.build_runtime_manifest(
+                    runtime, version="V1.0.0", source="claude", home=".claude/aidp")
+                (runtime / R.RUNTIME_MANIFEST).write_text(
+                    json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+                with self.subTest(illegal=illegal):
+                    with self.assertRaises(ValueError):
+                        R.validate_runtime(runtime, expected_home=".claude/aidp")
+            R.render_runtime(source, runtime, ".claude/aidp", "V1.0.0", "claude")
+
     def test_mode_is_manifested_and_permission_drift_is_detected(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -302,6 +344,65 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             self.assertIn("new .claude/aidp", (destination / "commands/sprint-dev.md").read_text())
             self.assertFalse(destination.with_name("aidp.aidp-stage").exists())
             self.assertFalse(destination.with_name("aidp.aidp-previous").exists())
+
+    def test_existing_transaction_lock_fails_closed_and_is_not_removed(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".claude/aidp"
+            lock = destination.parent / ".aidp-runtime.lock"
+            lock.parent.mkdir(parents=True)
+            lock.write_text("other-owner\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
+            self.assertEqual(lock.read_text(), "other-owner\n")
+            self.assertFalse(destination.exists())
+
+    def test_lock_covers_backup_and_reentrant_transaction_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".agents/aidp"
+            R.render_runtime(source, destination, ".agents/aidp", "V1.0.0", "shared")
+            (destination / "commands/sprint-dev.md").write_text("user edit\n", encoding="utf-8")
+            reentrant_rejected = []
+            competing_destination = destination.parent / "another-runtime"
+
+            def backup(runtime):
+                try:
+                    R.render_runtime(source, competing_destination, ".agents/aidp", "V1.0.1", "shared")
+                except RuntimeError as exc:
+                    reentrant_rejected.append("lock" in str(exc).lower() or "锁" in str(exc))
+                target = base / "complete-backup"
+                shutil.copytree(runtime, target)
+                return target
+
+            R.render_runtime(source, destination, ".agents/aidp", "V1.0.1", "shared",
+                             backup_callback=backup)
+            self.assertEqual(reentrant_rejected, [True])
+            self.assertFalse(competing_destination.exists())
+            self.assertFalse((destination.parent / ".aidp-runtime.lock").exists())
+
+    def test_backup_callback_modification_after_copy_aborts_and_preserves_second_edit(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".agents/aidp"
+            R.render_runtime(source, destination, ".agents/aidp", "V1.0.0", "shared")
+            command = destination / "commands/sprint-dev.md"
+            command.write_text("first user edit\n", encoding="utf-8")
+
+            def backup_then_modify(runtime):
+                target = base / "race-backup"
+                shutil.copytree(runtime, target)
+                command.write_text("second concurrent edit\n", encoding="utf-8")
+                return target
+
+            with self.assertRaises(RuntimeError):
+                R.render_runtime(source, destination, ".agents/aidp", "V1.0.1", "shared",
+                                 backup_callback=backup_then_modify)
+            self.assertEqual(command.read_text(), "second concurrent edit\n")
+            self.assertFalse((destination.parent / ".aidp-runtime.lock").exists())
 
     def test_preexisting_fixed_transaction_names_are_never_touched(self):
         with tempfile.TemporaryDirectory() as td:

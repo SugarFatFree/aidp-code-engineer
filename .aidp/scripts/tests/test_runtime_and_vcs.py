@@ -72,6 +72,50 @@ class RuntimeRootTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "项目根之外"):
                 self.runtime.runtime_root(script, environ=env)
 
+    def test_rejects_relative_dotdot_runtime_escape(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            project = base / "project"
+            project.mkdir()
+            script = project / ".aidp/scripts/x.py"
+            script.parent.mkdir(parents=True)
+            script.write_text("# fixture\n", encoding="utf-8")
+            env = {
+                "AIDP_PROJECT_ROOT": str(project),
+                "AIDP_HOME": "nested/../../outside",
+            }
+            with self.assertRaisesRegex(RuntimeError, "项目根之外"):
+                self.runtime.runtime_root(script, environ=env)
+
+    def test_rejects_absolute_dotdot_runtime_escape(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            project = base / "project"
+            project.mkdir()
+            script = project / ".aidp/scripts/x.py"
+            script.parent.mkdir(parents=True)
+            script.write_text("# fixture\n", encoding="utf-8")
+            escaped = project / "nested/../../outside"
+            env = {"AIDP_PROJECT_ROOT": str(project), "AIDP_HOME": str(escaped)}
+            with self.assertRaisesRegex(RuntimeError, "项目根之外"):
+                self.runtime.runtime_root(script, environ=env)
+
+    def test_normalizes_dotdot_overrides_that_remain_inside_project(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            project = base / "workspace/project"
+            runtime = project / ".claude/aidp"
+            runtime.mkdir(parents=True)
+            script = runtime / "scripts/x.py"
+            script.parent.mkdir()
+            script.write_text("# fixture\n", encoding="utf-8")
+            env = {
+                "AIDP_PROJECT_ROOT": str(base / "workspace/other/../project"),
+                "AIDP_HOME": ".claude/tmp/../aidp",
+            }
+            self.assertEqual(self.runtime.project_root(script, environ=env), project)
+            self.assertEqual(self.runtime.runtime_root(script, environ=env), runtime)
+
     def test_rejects_symlinked_runtime_override_ancestor(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

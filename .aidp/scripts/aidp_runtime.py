@@ -20,9 +20,16 @@ def _natural_layout(script_file: Path | str) -> tuple[Path, Path]:
     raise RuntimeError(f"无法从脚本位置解析 AIDP 运行根: {path}")
 
 
+def _normalize_lexical(path: Path | str | os.PathLike[str]) -> Path:
+    """Collapse `.`/`..` without resolving symlinks."""
+    expanded = os.path.expanduser(os.fspath(path))
+    return Path(os.path.abspath(os.path.normpath(expanded)))
+
+
 def _absolute(value: str | os.PathLike[str], base: Path) -> Path:
     path = Path(value).expanduser()
-    return path if path.is_absolute() else base / path
+    combined = path if path.is_absolute() else base / path
+    return _normalize_lexical(combined)
 
 
 def _reject_symlinked_path(path: Path, label: str) -> None:
@@ -43,8 +50,8 @@ def _reject_symlinked_path(path: Path, label: str) -> None:
 
 
 def _contained(path: Path, project: Path) -> Path:
-    lexical_path = path.absolute()
-    lexical_project = project.absolute()
+    lexical_path = _normalize_lexical(path)
+    lexical_project = _normalize_lexical(project)
     try:
         lexical_path.relative_to(lexical_project)
     except ValueError as exc:
@@ -65,12 +72,12 @@ def _roots(script_file: Path | str, environ: Mapping[str, str] | None) -> tuple[
         natural_runtime, natural_project = _natural_layout(script_file)
 
     project = (_absolute(project_value, Path.cwd()) if project_value
-               else natural_project)
+               else _normalize_lexical(natural_project))
     assert project is not None
     _reject_symlinked_path(project, "项目根")
 
     runtime = (_absolute(home_value, project) if home_value
-               else natural_runtime)
+               else _normalize_lexical(natural_runtime))
     assert runtime is not None
     runtime = _contained(runtime, project)
     return runtime, project.absolute()

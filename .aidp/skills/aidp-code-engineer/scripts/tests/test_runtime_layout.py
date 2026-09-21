@@ -387,6 +387,26 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             R.render_runtime(source, destination, ".agents/aidp", "V1.0.0", "shared")
             self.assertTrue((destination.parent / ".aidp-runtime.lock").is_file())
 
+    def test_lock_swap_to_symlink_between_precheck_and_open_never_writes_target(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td:
+            base, outside = Path(td), Path(outside_td)
+            parent = base / ".claude"
+            parent.mkdir()
+            lock = parent / ".aidp-runtime.lock"
+            lock.write_bytes(b"stale-lock\n")
+            sentinel = outside / "sentinel"
+            sentinel.write_bytes(b"external-bytes-must-not-change\n")
+            before = sentinel.read_bytes()
+
+            def swap_to_symlink(_lock_path):
+                lock.unlink()
+                lock.symlink_to(sentinel)
+
+            with self.assertRaises(RuntimeError):
+                R._acquire_runtime_lock(parent, base, _after_lock_precheck=swap_to_symlink)
+            self.assertTrue(lock.is_symlink())
+            self.assertEqual(sentinel.read_bytes(), before)
+
     def test_invalid_lock_symlink_or_directory_is_rejected_and_preserved(self):
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td:
             base, outside = Path(td), Path(outside_td)

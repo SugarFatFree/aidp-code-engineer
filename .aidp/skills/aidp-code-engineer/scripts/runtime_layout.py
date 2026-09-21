@@ -379,11 +379,33 @@ class _RuntimeLock:
         self.release()
 
 
-def _acquire_runtime_lock(parent: Path, boundary: Path) -> _RuntimeLock:
+def _verify_open_lock_identity(lock: Path, fd: int) -> os.stat_result:
+    """打开后以 lstat/fstat 核实同一普通文件，避免 Windows symlink 竞态。"""
+    descriptor = os.fstat(fd)
+    try:
+        pathname = os.lstat(str(lock))
+    except OSError as exc:
+        raise RuntimeError(f"运行包锁在打开后消失: {lock}") from exc
+    if stat.S_ISLNK(pathname.st_mode) or not stat.S_ISREG(pathname.st_mode):
+        raise RuntimeError(f"运行包锁路径非法: {lock}")
+    if not stat.S_ISREG(descriptor.st_mode):
+        raise RuntimeError(f"运行包锁 fd 不是普通文件: {lock}")
+    fd_identity = (getattr(descriptor, "st_dev", 0), getattr(descriptor, "st_ino", 0))
+    path_identity = (getattr(pathname, "st_dev", 0), getattr(pathname, "st_ino", 0))
+    if all(fd_identity) and all(path_identity) and fd_identity != path_identity:
+        raise RuntimeError(f"运行包锁路径在打开期间被替换: {lock}")
+    return descriptor
+
+
+def _acquire_runtime_lock(parent: Path, boundary: Path,
+                          _after_lock_precheck=None) -> _RuntimeLock:
     lock = _assert_contained(parent / ".aidp-runtime.lock", boundary)
     if _lexists(lock):
-        if lock.is_symlink() or not lock.is_file():
+        info = os.lstat(str(lock))
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
             raise RuntimeError(f"运行包锁路径非法: {lock}")
+    if _after_lock_precheck is not None:
+        _after_lock_precheck(lock)
     flags = os.O_CREAT | os.O_RDWR
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
@@ -395,10 +417,10 @@ def _acquire_runtime_lock(parent: Path, boundary: Path) -> _RuntimeLock:
         raise RuntimeError(f"运行包锁路径不可用: {lock}: {exc}") from exc
     backend = "msvcrt" if os.name == "nt" else "fcntl"
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            raise RuntimeError(f"运行包锁不是普通文件: {lock}")
+        info = _verify_open_lock_identity(lock, fd)
         if info.st_size < 1:
+            _verify_open_lock_identity(lock, fd)
+            os.lseek(fd, 0, os.SEEK_SET)
             os.write(fd, b"\0")
             os.fsync(fd)
         try:
@@ -411,6 +433,7 @@ def _acquire_runtime_lock(parent: Path, boundary: Path) -> _RuntimeLock:
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         except (BlockingIOError, OSError) as exc:
             raise RuntimeError(f"运行包事务锁正被其他进程持有: {lock}") from exc
+        _verify_open_lock_identity(lock, fd)
         payload = f"pid={os.getpid()} time={time.time():.6f}\n".encode("ascii")
         os.ftruncate(fd, 0)
         os.lseek(fd, 0, os.SEEK_SET)

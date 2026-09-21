@@ -107,7 +107,10 @@ def add(root, version, step, title, redo="", level="Important", note="", locate=
     body.append(f"- **补跑命令**：`{redo}`；或 {finalize}" if redo else f"- **补跑命令**：{finalize}")
     body.append(f"- **状态**：{OPEN}")
     if not text:
-        text = runtime_text(f"# {version}' 发布欠账\n\n> 读写一律经 `python3 __AIDP_HOME__/scripts/release_debt.py`。\n'", __file__)
+        text = runtime_text(
+            f"# {version} 发布欠账\n\n> 读写一律经 `python3 __AIDP_HOME__/scripts/release_debt.py`。\n",
+            __file__,
+        )
     sep = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
     open(p, "w", encoding="utf-8").write(text + sep + "\n".join(body) + "\n")
     return p, "added"

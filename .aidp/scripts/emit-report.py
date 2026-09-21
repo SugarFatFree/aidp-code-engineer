@@ -355,7 +355,10 @@ def ensure_skeleton(report_dir, tpl_dir):
     if os.path.isfile(os.path.join(report_dir, "index.html")):
         return False
     if not os.path.isdir(tpl_dir):
-        raise FileNotFoundError(runtime_text(f"报告模板缺失：{tpl_dir}'（请先重跑脚手架补 __AIDP_HOME__/templates/reports/）'", __file__))
+        raise FileNotFoundError(runtime_text(
+            f"报告模板缺失：{tpl_dir}（请先重跑脚手架补 __AIDP_HOME__/templates/reports/）",
+            __file__,
+        ))
     os.makedirs(os.path.dirname(report_dir) or ".", exist_ok=True)
     shutil.copytree(tpl_dir, report_dir, dirs_exist_ok=True)
     # 清掉示例 data 文件 + 从各页移除其 <script> 注册行
@@ -758,7 +761,10 @@ def main():
                 tpl_ex = os.path.join(tpl_dir, "data", "示例_build1001.js")
                 msg = (f"数据契约校验未通过（{len(schema_errs)} 项）：\n  - "
                        + "\n  - ".join(schema_errs)
-                       + runtime_text(f"\n契约单一信源：{tpl_ex}' + __AIDP_HOME__/templates/reports/README.md；'", __file__)
+                       + runtime_text(
+                           f"\n契约单一信源：{tpl_ex} + __AIDP_HOME__/templates/reports/README.md；",
+                           __file__,
+                       )
                        + "写结果 JSON 前请先读示例文件对齐字段名/结构/单位。"
                        + "临时救火可加 --allow-schema-warn（会在 data 头部 schemaWarnings[] 留痕）。")
                 out["error"] = msg

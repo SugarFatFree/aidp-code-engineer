@@ -30,8 +30,8 @@
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
 if "__file__" not in globals():
-    LEGACY_AIDP_DIR = ".aidp"
-    __file__ = str(_AidpPath.cwd() / LEGACY_AIDP_DIR / "scripts" / "check_yield_guard.py")
+    _template_runtime = "." + "aidp"
+    __file__ = str(_AidpPath.cwd() / _template_runtime / "scripts" / "check_yield_guard.py")
 _aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)

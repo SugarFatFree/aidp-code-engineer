@@ -450,7 +450,13 @@ def run(root):
     if not rule_installed:
         findings.append({
             "level": "ERROR", "check": "rule-not-installed", "file": RULE_INSTALLED,
-            "detail": runtime_text(f"已启用 WebMCP，但详规未安装到 `{RULE_INSTALLED}'` —— rules 是**路径触发**加载的，文件不在那儿就永远不会自动加载，规则等于不存在。跑 `python3 __AIDP_HOME__/scripts/check_webmcp.py --install-rule` 安装（模板位：'{RULE_TEMPLATE}）", __file__),
+            "detail": runtime_text(
+                f"已启用 WebMCP，但详规未安装到 `{RULE_INSTALLED}` —— rules 是**路径触发**加载的，"
+                "文件不在那儿就永远不会自动加载，规则等于不存在。"
+                "跑 `python3 __AIDP_HOME__/scripts/check_webmcp.py --install-rule` 安装"
+                f"（模板位：{RULE_TEMPLATE}）",
+                __file__,
+            ),
         })
     # ⛔ 「单一适配层」与「unregisterTool」两项判据【已移交上游】——
     #   由 `code-verification-loop` 维度 9 + 其 scripts/check_webmcp_adapter.py 承担。

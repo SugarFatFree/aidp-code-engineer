@@ -130,7 +130,10 @@ def main():
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif not res["applicable"]:
-        print(runtime_text(f"'[SKIP] 无 __AIDP_HOME__/skills/ 目录（'{res['reason']}）", __file__))
+        print(runtime_text(
+            f"[SKIP] 无 __AIDP_HOME__/skills/ 目录（{res['reason']}）",
+            __file__,
+        ))
     elif res["findings"]:
         sys.stderr.write(f"❌ SKILL 内部文件引用悬空 {len(res['findings'])} 处"
                          f"（巡检 {res['files']} 份 .md、{res['checked']} 处引用）：\n")

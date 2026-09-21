@@ -41,6 +41,8 @@ TOKEN = "{{" + "AIDP_HOME" + "}}"
 RUNTIME_REL = runtime_relpath("", __file__)
 IGNORE_RE = re.compile(r"runtime-path-ignore:\s*\S")
 MAX_BYTES = 2 * 1024 * 1024
+LEGACY_MODULES = {".aidp/scripts/agent_sync.py"}
+LEGACY_FUNCTION_PREFIXES = ("cleanup_", "_cleanup_", "prune_legacy", "_prune_legacy")
 
 
 def _is_excluded(rel: str) -> bool:
@@ -133,6 +135,27 @@ def _wrapped_by_runtime_text(node: ast.AST, parents: dict) -> bool:
     return False
 
 
+def _enclosing_function(node: ast.AST, parents: dict) -> str:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name
+    return ""
+
+
+def _assigned_legacy_names(tree: ast.AST) -> dict[str, ast.Constant]:
+    result = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant) \
+                or node.value.value != LEGACY_AIDP_DIR:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                result[target.id] = node.value
+    return result
+
+
 def _scan_python_constructions(path: Path, root: Path) -> list[dict]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -141,7 +164,31 @@ def _scan_python_constructions(path: Path, root: Path) -> list[dict]:
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     findings = []
     rel = path.relative_to(root).as_posix()
+    legacy_names = _assigned_legacy_names(tree)
+    for name, value_node in legacy_names.items():
+        if name != "LEGACY_AIDP_DIR":
+            findings.append({
+                "kind": "hardcoded-runtime-root-variable", "path": rel,
+                "line": value_node.lineno, "value": name,
+            })
+        elif rel not in LEGACY_MODULES:
+            findings.append({
+                "kind": "legacy-runtime-root-outside-migration", "path": rel,
+                "line": value_node.lineno, "value": name,
+            })
     for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) \
+                and node.id == "LEGACY_AIDP_DIR":
+            parent = parents.get(node)
+            in_path = (isinstance(parent, ast.BinOp) and isinstance(parent.op, (ast.Div, ast.Add))) \
+                or (isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute)
+                    and parent.func.attr == "join")
+            fn = _enclosing_function(node, parents)
+            if in_path and not fn.startswith(LEGACY_FUNCTION_PREFIXES):
+                findings.append({
+                    "kind": "legacy-runtime-root-used-by-runtime", "path": rel,
+                    "line": node.lineno, "value": fn or "<module>",
+                })
         if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
             continue
         if node.value == LEGACY_AIDP_DIR:

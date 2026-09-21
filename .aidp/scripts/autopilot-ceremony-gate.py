@@ -985,8 +985,13 @@ def cmd_check(args):
                 #    只有一种解释：驱动选定环节根本没走。老 build 不受影响：本门只校当前 --build。
                 rec("报告driver如实性", bool(_waiver),
                     f"driver={_waiver} 豁免留痕" if _waiver else
-                    runtime_text(f"⛔ 已产出 AI测试报告 data/{B}.js，却无 baseline builds[{B}].driver_actual"
-                    f"（报告自述 driver={_claim or '(无)'}'）——驱动选定环节未走过。正确动作：跑 `python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py check-cli` 选定驱动并写盘；若确有不可抗原因，须写 builds[].driver_actual_waiver 说明理由'", __file__))
+                    runtime_text(
+                        f"⛔ 已产出 AI测试报告 data/{B}.js，却无 baseline builds[{B}].driver_actual"
+                        f"（报告自述 driver={_claim or '(无)'}）——驱动选定环节未走过。"
+                        "正确动作：跑 `python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py check-cli` "
+                        "选定驱动并写盘；若确有不可抗原因，须写 builds[].driver_actual_waiver 说明理由",
+                        __file__,
+                    ))
             elif str(_actual) not in BROWSER_DRIVERS and not _evid:
                 # ★ 非浏览器驱动（curl / jdbc / http …）= 降级出了浏览器测试的范畴，必须举证。
                 #   下游实测：撞 "Missing X server" 就断定"浏览器不可用"改跑 curl+JDBC，

@@ -348,40 +348,79 @@ def _validate_backup(backup: Path, destination: Path, transaction: Path,
     return backup
 
 
-def _acquire_runtime_lock(parent: Path, boundary: Path):
+class _RuntimeLock:
+    """进程级 advisory lock；锁文件持久存在，内核锁随 fd/进程释放。"""
+
+    def __init__(self, path: Path, fd: int, backend: str):
+        self.path = path
+        self.fd = fd
+        self.backend = backend
+        self._released = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        try:
+            if self.backend == "fcntl":
+                import fcntl
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+            else:
+                import msvcrt
+                os.lseek(self.fd, 0, os.SEEK_SET)
+                msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(self.fd)
+            self._released = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _type, _value, _traceback):
+        self.release()
+
+
+def _acquire_runtime_lock(parent: Path, boundary: Path) -> _RuntimeLock:
     lock = _assert_contained(parent / ".aidp-runtime.lock", boundary)
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if _lexists(lock):
+        if lock.is_symlink() or not lock.is_file():
+            raise RuntimeError(f"运行包锁路径非法: {lock}")
+    flags = os.O_CREAT | os.O_RDWR
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
         fd = os.open(str(lock), flags, 0o600)
-    except FileExistsError as exc:
-        raise RuntimeError(f"运行包事务锁已存在: {lock}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"运行包锁路径不可用: {lock}: {exc}") from exc
+    backend = "msvcrt" if os.name == "nt" else "fcntl"
     try:
-        identity = os.fstat(fd)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError(f"运行包锁不是普通文件: {lock}")
+        if info.st_size < 1:
+            os.write(fd, b"\0")
+            os.fsync(fd)
+        try:
+            if backend == "fcntl":
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except (BlockingIOError, OSError) as exc:
+            raise RuntimeError(f"运行包事务锁正被其他进程持有: {lock}") from exc
         payload = f"pid={os.getpid()} time={time.time():.6f}\n".encode("ascii")
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, payload)
         os.fsync(fd)
-        return lock, fd, (identity.st_dev, identity.st_ino)
+        os.lseek(fd, 0, os.SEEK_SET)
+        return _RuntimeLock(lock, fd, backend)
     except Exception:
         os.close(fd)
-        try:
-            lock.unlink()
-        except OSError:
-            pass
         raise
-
-
-def _release_runtime_lock(lock: Path, fd: int, identity) -> None:
-    try:
-        os.close(fd)
-    finally:
-        try:
-            current = lock.lstat()
-        except OSError:
-            return
-        if not lock.is_symlink() and (current.st_dev, current.st_ino) == identity:
-            lock.unlink()
 
 
 def render_runtime(source_root: Path, destination: Path, home: str, version: str,
@@ -393,7 +432,7 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
     boundary = _default_boundary(destination)
     destination = _assert_contained(destination, boundary)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    lock, lock_fd, lock_identity = _acquire_runtime_lock(destination.parent, boundary)
+    runtime_lock = _acquire_runtime_lock(destination.parent, boundary)
     try:
         transaction = Path(tempfile.mkdtemp(
             prefix=f".{destination.name}.aidp-txn-", dir=str(destination.parent)))
@@ -449,4 +488,4 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
             if _lexists(transaction):
                 remove_tree_safely(transaction, boundary=destination.parent)
     finally:
-        _release_runtime_lock(lock, lock_fd, lock_identity)
+        runtime_lock.release()

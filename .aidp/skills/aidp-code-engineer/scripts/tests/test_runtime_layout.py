@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -345,43 +346,71 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             self.assertFalse(destination.with_name("aidp.aidp-stage").exists())
             self.assertFalse(destination.with_name("aidp.aidp-previous").exists())
 
-    def test_existing_transaction_lock_fails_closed_and_is_not_removed(self):
+    def test_stale_lock_file_is_reusable_and_persists_after_release(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             source = make_source(base)
             destination = base / ".claude/aidp"
             lock = destination.parent / ".aidp-runtime.lock"
             lock.parent.mkdir(parents=True)
-            lock.write_text("other-owner\n", encoding="utf-8")
-            with self.assertRaises(RuntimeError):
-                R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
-            self.assertEqual(lock.read_text(), "other-owner\n")
-            self.assertFalse(destination.exists())
+            lock.write_text("stale-owner\n", encoding="utf-8")
+            R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
+            self.assertTrue(lock.is_file())
+            self.assertGreaterEqual(lock.stat().st_size, 1)
+            R.render_runtime(source, destination, ".claude/aidp", "V1.0.1", "claude")
 
-    def test_lock_covers_backup_and_reentrant_transaction_is_rejected(self):
+    def test_active_lock_in_independent_process_rejects_then_releases(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             source = make_source(base)
             destination = base / ".agents/aidp"
+            destination.parent.mkdir(parents=True)
+            child_code = (
+                "import sys,time; from pathlib import Path; "
+                "sys.path.insert(0,sys.argv[1]); import runtime_layout as r; "
+                "h=r._acquire_runtime_lock(Path(sys.argv[2]),Path(sys.argv[3])); "
+                "print('READY',flush=True); time.sleep(60)"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c", child_code, str(SCRIPTS),
+                 str(destination.parent), str(base)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            try:
+                self.assertEqual(process.stdout.readline().strip(), "READY")
+                with self.assertRaises(RuntimeError):
+                    R.render_runtime(source, destination, ".agents/aidp", "V1.0.0", "shared")
+                self.assertFalse(destination.exists())
+            finally:
+                process.terminate()
+                process.communicate(timeout=10)
             R.render_runtime(source, destination, ".agents/aidp", "V1.0.0", "shared")
-            (destination / "commands/sprint-dev.md").write_text("user edit\n", encoding="utf-8")
-            reentrant_rejected = []
-            competing_destination = destination.parent / "another-runtime"
+            self.assertTrue((destination.parent / ".aidp-runtime.lock").is_file())
 
-            def backup(runtime):
-                try:
-                    R.render_runtime(source, competing_destination, ".agents/aidp", "V1.0.1", "shared")
-                except RuntimeError as exc:
-                    reentrant_rejected.append("lock" in str(exc).lower() or "锁" in str(exc))
-                target = base / "complete-backup"
-                shutil.copytree(runtime, target)
-                return target
+    def test_invalid_lock_symlink_or_directory_is_rejected_and_preserved(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside_td:
+            base, outside = Path(td), Path(outside_td)
+            source = make_source(base)
+            destination = base / ".claude/aidp"
+            destination.parent.mkdir(parents=True)
+            lock = destination.parent / ".aidp-runtime.lock"
+            sentinel = outside / "sentinel"
+            sentinel.write_text("safe\n", encoding="utf-8")
+            lock.symlink_to(sentinel)
+            with self.assertRaises(RuntimeError):
+                R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
+            self.assertTrue(lock.is_symlink())
+            self.assertEqual(sentinel.read_text(), "safe\n")
 
-            R.render_runtime(source, destination, ".agents/aidp", "V1.0.1", "shared",
-                             backup_callback=backup)
-            self.assertEqual(reentrant_rejected, [True])
-            self.assertFalse(competing_destination.exists())
-            self.assertFalse((destination.parent / ".aidp-runtime.lock").exists())
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".claude/aidp"
+            lock = destination.parent / ".aidp-runtime.lock"
+            lock.mkdir(parents=True)
+            with self.assertRaises(RuntimeError):
+                R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
+            self.assertTrue(lock.is_dir())
 
     def test_backup_callback_modification_after_copy_aborts_and_preserves_second_edit(self):
         with tempfile.TemporaryDirectory() as td:
@@ -402,7 +431,7 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
                 R.render_runtime(source, destination, ".agents/aidp", "V1.0.1", "shared",
                                  backup_callback=backup_then_modify)
             self.assertEqual(command.read_text(), "second concurrent edit\n")
-            self.assertFalse((destination.parent / ".aidp-runtime.lock").exists())
+            self.assertTrue((destination.parent / ".aidp-runtime.lock").is_file())
 
     def test_preexisting_fixed_transaction_names_are_never_touched(self):
         with tempfile.TemporaryDirectory() as td:

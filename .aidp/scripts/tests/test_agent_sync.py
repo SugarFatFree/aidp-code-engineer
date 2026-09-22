@@ -1250,23 +1250,29 @@ def test_managed_copy_tree_drift_is_recursive():
         skill_file.unlink()
         skill_file.symlink_to(source / "SKILL.md")
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
-        check("后代文件 symlink → --check 漂移", rc == 1 and out.get("drift") is True)
+        check("后代文件 symlink → --check fail closed", rc == 2 and skill_file.is_symlink())
+        shutil.rmtree(target)
         _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
 
         shutil.rmtree(target / "references")
         (target / "references").symlink_to(source / "references", target_is_directory=True)
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
-        check("后代目录 symlink → --check 漂移", rc == 1 and out.get("drift") is True)
+        check("后代目录 symlink → --check fail closed", rc == 2 and (target / "references").is_symlink())
+        shutil.rmtree(target)
         _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
 
         (target / "references/empty").rmdir()
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
-        check("源空目录在目标缺失 → --check 漂移", rc == 1 and out.get("drift") is True)
+        check("源空目录在目标缺失 → --check fail closed",
+              rc == 2 and not (target / "references/empty").exists())
+        shutil.rmtree(target)
         _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
 
         (target / "references/extra-empty").mkdir()
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
-        check("目标额外空目录 → --check 漂移", rc == 1 and out.get("drift") is True)
+        check("目标额外空目录 → --check fail closed",
+              rc == 2 and (target / "references/extra-empty").is_dir())
+        shutil.rmtree(target)
         _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
 
         outside = Path(tempfile.mkdtemp())
@@ -1275,9 +1281,8 @@ def test_managed_copy_tree_drift_is_recursive():
         (target / "SKILL.md").unlink()
         os.link(sentinel, target / "SKILL.md")
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
-        check("目标 hardlink → --check 漂移且外部字节不变",
-              rc == 1 and out.get("drift") is True
-              and sentinel.read_text(encoding="utf-8") == "outside\n")
+        check("目标 hardlink → --check fail closed 且外部字节不变",
+              rc == 2 and sentinel.read_text(encoding="utf-8") == "outside\n")
         shutil.rmtree(outside, ignore_errors=True)
     finally:
         _rm(root)
@@ -1657,6 +1662,134 @@ def test_legacy_symlink_cleanup_is_lexically_contained():
         _rm(root)
 
 
+def test_user_edits_are_not_overwritten():
+    print("【受管入口：用户改动与旧账本必须 fail closed】")
+    for change in ("extra", "content", "mode", "root-mode", "legacy-marker", "corrupt-marker"):
+        root = _mkrepo(markers=(".claude",))
+        try:
+            _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+            skill = root / ".claude/skills/demo-skill"
+            marker = skill / AS.GENERATED_FILE
+            if change == "extra":
+                (skill / "user.md").write_text("mine\n", encoding="utf-8")
+                protected = skill / "user.md"
+            elif change == "content":
+                protected = skill / "SKILL.md"
+                protected.write_text("edited\n", encoding="utf-8")
+            elif change == "mode":
+                protected = skill / "SKILL.md"
+                protected.chmod((protected.stat().st_mode & 0o777) ^ 0o100)
+            elif change == "root-mode":
+                protected = skill
+                skill.chmod((skill.stat().st_mode & 0o777) ^ 0o100)
+            else:
+                marker.write_text("directory-copy\n" if change == "legacy-marker" else "{bad json",
+                                  encoding="utf-8")
+                protected = skill / "SKILL.md"
+                if change == "legacy-marker":
+                    protected.write_text("edited legacy\n", encoding="utf-8")
+            old_bytes = protected.read_bytes() if protected.is_file() else b""
+            old_mode = protected.stat().st_mode & 0o777
+            (root / ".aidp/skills/demo-skill/SKILL.md").write_text("new source\n", encoding="utf-8")
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+            check(f"目录 {change} → 拒绝覆盖且原样保留",
+                  rc == 2 and "冲突" in out.get("error", "")
+                  and (protected.read_bytes() if protected.is_file() else b"") == old_bytes
+                  and (protected.stat().st_mode & 0o777) == old_mode)
+        finally:
+            _rm(root)
+
+    root = _mkrepo(markers=(".claude",))
+    try:
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        target = root / ".claude/skills/demo-skill"
+        added = target / "user-added.md"
+        added.write_text("mine\n", encoding="utf-8")
+        shutil.rmtree(root / ".aidp/skills/demo-skill")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        check("源删除时受管目录有用户追加 → 拒绝清理并保留",
+              rc == 2 and "冲突" in out.get("error", "") and added.is_file())
+    finally:
+        _rm(root)
+
+    for change in ("content", "mode", "legacy-ledger"):
+        root = _mkrepo(markers=(".claude",))
+        try:
+            _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+            cmd = root / ".claude/commands/sprint-dev.md"
+            if change == "content":
+                cmd.write_text("user command\n", encoding="utf-8")
+            elif change == "mode":
+                cmd.chmod((cmd.stat().st_mode & 0o777) ^ 0o100)
+            else:
+                ledger = root / ".claude/commands/.aidp-generated"
+                ledger.write_text('["sprint-dev.md", "version.md"]\n', encoding="utf-8")
+                cmd.write_text("edited with old ledger\n", encoding="utf-8")
+            old_bytes = cmd.read_bytes()
+            old_mode = cmd.stat().st_mode & 0o777
+            (root / ".aidp/commands/sprint-dev.md").write_text("new source\n", encoding="utf-8")
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+            check(f"单文件命令 {change} → 拒绝覆盖且保留",
+                  rc == 2 and "冲突" in out.get("error", "")
+                  and cmd.read_bytes() == old_bytes and (cmd.stat().st_mode & 0o777) == old_mode)
+        finally:
+            _rm(root)
+
+
+def test_plugin_and_codex_generated_edits_fail_closed():
+    print("【插件与 Codex 命令：受管目录用户改动保护】")
+    for relative in (".claude/plugins/chrome-devtools-mcp",
+                     ".agents/skills/chrome-devtools-mcp",
+                     ".codex/skills/aidp/sprint-dev"):
+        root = _mkrepo(markers=(".claude", ".codex", ".dsh"))
+        try:
+            _add_browser_plugin(root)
+            _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex,dsh")
+            target = root / relative
+            extra = target / "user-added.md"
+            extra.write_text("mine\n", encoding="utf-8")
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root),
+                                  "--agents", "claude,codex,dsh")
+            check(f"{relative} 用户追加文件 → fail closed 保留",
+                  rc == 2 and "冲突" in out.get("error", "")
+                  and extra.read_text(encoding="utf-8") == "mine\n")
+        finally:
+            _rm(root)
+
+
+def test_legacy_ledgers_upgrade_only_when_unmodified():
+    print("【旧账本：仅原样内容可升级到摘要清单】")
+    root = _mkrepo(markers=(".claude",))
+    try:
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+        skill = root / ".claude/skills/demo-skill"
+        (skill / AS.GENERATED_FILE).write_text("directory-copy\n", encoding="utf-8")
+        commands = root / ".claude/commands"
+        (commands / AS.GENERATED_FILE).write_text(
+            '["sprint-dev.md", "version.md"]\n', encoding="utf-8")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        skill_marker = json.loads((skill / AS.GENERATED_FILE).read_text(encoding="utf-8"))
+        command_marker = json.loads((commands / AS.GENERATED_FILE).read_text(encoding="utf-8"))
+        check("未修改旧目录和命令账本正常升级",
+              rc == 0 and skill_marker.get("schema") == "aidp.adapter/v1"
+              and command_marker.get("schema") == "aidp.commands/v1")
+        (root / ".aidp/skills/demo-skill/SKILL.md").write_text("new source\n", encoding="utf-8")
+        (root / ".aidp/commands/sprint-dev.md").write_text("new command\n", encoding="utf-8")
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        check("受管源正常更新且保持新账本", rc == 0 and
+              "new source" in (skill / "SKILL.md").read_text(encoding="utf-8")
+              and "new command" in (commands / "sprint-dev.md").read_text(encoding="utf-8"))
+        (commands / "sprint-dev.md").write_text("edited after source removal\n", encoding="utf-8")
+        (root / ".aidp/commands/sprint-dev.md").unlink()
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        check("源删除时仍校验本地命令并保留修改",
+              rc == 2 and "冲突" in out.get("error", "")
+              and (commands / "sprint-dev.md").read_text(encoding="utf-8")
+              == "edited after source removal\n")
+    finally:
+        _rm(root)
+
+
 def main():
     test_agent_env()
     test_sync_all_agents_managed_copy()
@@ -1669,6 +1802,9 @@ def main():
     test_materialization_is_atomic_and_source_is_safe()
     test_native_runtime_ancestors_must_be_real()
     test_legacy_symlink_cleanup_is_lexically_contained()
+    test_user_edits_are_not_overwritten()
+    test_legacy_ledgers_upgrade_only_when_unmodified()
+    test_plugin_and_codex_generated_edits_fail_closed()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0
 

@@ -32,6 +32,7 @@ if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_root, runtime_text
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -198,6 +199,65 @@ def _validate_material_path(root: Path, source: Path, expect_dir: bool):
                     raise SystemExit(f"[agent_sync] 复制源文件存在硬链接：{path}")
 
 
+def _file_record(path: Path) -> dict:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise SystemExit(f"[agent_sync] 受管文件不是单链接普通文件，冲突：{path}")
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "mode": format(info.st_mode & 0o777, "04o")}
+
+
+def _directory_inventory(root: Path) -> dict:
+    if root.is_symlink() or not root.is_dir():
+        raise SystemExit(f"[agent_sync] 受管目录不是实体目录，冲突：{root}")
+    entries = {".": {"type": "dir", "mode": format(root.lstat().st_mode & 0o777, "04o")}}
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(dirpath)
+        for name in sorted(dirnames + filenames):
+            path = base / name
+            if path == root / GENERATED_FILE:
+                continue
+            info = path.lstat()
+            rel = path.relative_to(root).as_posix()
+            if stat.S_ISDIR(info.st_mode):
+                entries[rel] = {"type": "dir", "mode": format(info.st_mode & 0o777, "04o")}
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                entries[rel] = {"type": "file", **_file_record(path)}
+            else:
+                raise SystemExit(f"[agent_sync] 受管目录包含非实体或硬链接节点，冲突：{path}")
+    return entries
+
+
+def _directory_marker(root: Path) -> str:
+    return json.dumps({"schema": "aidp.adapter/v1", "entries": _directory_inventory(root)},
+                      ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def _check_managed_directory(path: Path, source: Path = None):
+    if path.is_symlink():
+        return
+    marker = path / GENERATED_FILE
+    try:
+        data = json.loads(_read(marker))
+    except (ValueError, TypeError):
+        data = None
+    current = _directory_inventory(path)
+    if (path.parent.name == "plugins" and path.parent.parent.name == ".agents"
+            and _read(marker) == "" and set(current) == {".", "plugin.json"}):
+        try:
+            legacy = json.loads(_read(path / "plugin.json"))
+        except json.JSONDecodeError:
+            legacy = None
+        if legacy == {"name": path.name}:
+            return
+    if isinstance(data, dict) and data.get("schema") == "aidp.adapter/v1":
+        if data.get("entries") != current:
+            raise SystemExit(f"[agent_sync] 受管目录已被修改或追加，冲突：{path}")
+        return
+    if _read(marker) != "directory-copy\n" or source is None or not _tree_equal(source, path):
+        raise SystemExit(f"[agent_sync] 旧受管目录无有效清单且内容不一致，冲突：{path}")
+
+
 def _validate_staged_tree(stage: Path):
     info = stage.lstat()
     if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
@@ -258,7 +318,12 @@ class Plan:
     def link_dir(self, dst: Path, src: Path):
         """兼容旧调用名；新布局始终生成带标记的实体目录副本。"""
         _validate_material_path(self.root, src, expect_dir=True)
+        if os.path.lexists(dst) and not dst.is_symlink():
+            _check_managed_directory(dst, src)
         if dst.is_dir() and not dst.is_symlink() and _tree_equal(src, dst):
+            if _read(dst / GENERATED_FILE) == _directory_marker(dst):
+                return
+            self.write_text(dst / GENERATED_FILE, _directory_marker(dst))
             return
         self.actions.append({"op": "copy", "path": self._rel(dst), "from": self._source_label(src)})
         if self.apply:
@@ -267,7 +332,7 @@ class Plan:
             try:
                 shutil.copytree(src, stage, symlinks=True, dirs_exist_ok=True,
                                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-                (stage / GENERATED_FILE).write_text("directory-copy\n", encoding="utf-8")
+                (stage / GENERATED_FILE).write_text(_directory_marker(stage), encoding="utf-8")
                 _validate_material_path(self.root, src, expect_dir=True)
                 _validate_staged_tree(stage)
                 if not _tree_equal(src, stage):
@@ -343,6 +408,8 @@ class Plan:
     def remove(self, p: Path, why: str):
         if not (p.exists() or p.is_symlink()):
             return
+        if p.is_dir() and not p.is_symlink() and (p / GENERATED_FILE).is_file():
+            _check_managed_directory(p)
         self.actions.append({"op": "remove", "path": self._rel(p), "why": why})
         if self.apply:
             self._remove(p)
@@ -529,26 +596,68 @@ def _generated_names(path: Path) -> set:
         data = json.loads(_read(path) or "[]")
     except json.JSONDecodeError:
         return set()
+    if isinstance(data, dict) and data.get("schema") == "aidp.commands/v1":
+        return set(data.get("files", {}))
     return {str(item) for item in data if isinstance(item, str)} if isinstance(data, list) else set()
+
+
+def _command_ledger(path: Path) -> dict:
+    try:
+        data = json.loads(_read(path) or "[]")
+    except json.JSONDecodeError:
+        raise SystemExit(f"[agent_sync] 命令账本损坏，冲突：{path}")
+    if isinstance(data, dict) and data.get("schema") == "aidp.commands/v1" \
+            and isinstance(data.get("files"), dict):
+        return data["files"]
+    if isinstance(data, list) and all(isinstance(item, str) for item in data):
+        return {item: None for item in data}
+    raise SystemExit(f"[agent_sync] 命令账本格式错误，冲突：{path}")
+
+
+def _check_command(root: Path, path: Path, expected: dict, source: Path = None):
+    if path.is_symlink():
+        if source is not None and cleanup_legacy_link_is_generated(root, path):
+            return
+        raise SystemExit(f"[agent_sync] 命令入口 symlink 未经授权，冲突：{path}")
+    if not path.is_file():
+        raise SystemExit(f"[agent_sync] 受管命令缺失或类型改变，冲突：{path}")
+    current = _file_record(path)
+    if expected is not None:
+        if current != expected:
+            raise SystemExit(f"[agent_sync] 受管命令被修改，冲突：{path}")
+    elif source is None or current != _file_record(source):
+        raise SystemExit(f"[agent_sync] 旧命令账本无摘要且目标与源不一致，冲突：{path}")
 
 
 def sync_file_commands(plan: Plan, rel: str, enabled: bool = True) -> list:
     destination = plan.root / rel
     marker = destination / GENERATED_FILE
-    previous = _generated_names(marker)
+    previous = _command_ledger(marker) if marker.is_file() else {}
     commands = _command_files(plan.root) if enabled else []
     wanted = {command.name for command in commands}
-    for name in sorted(previous - wanted):
+    sources = {command.name: command for command in commands}
+    for name, old_record in sorted(previous.items()):
+        target = destination / name
+        if os.path.lexists(target):
+            _check_command(plan.root, target, old_record, sources.get(name))
+        elif name not in wanted:
+            raise SystemExit(f"[agent_sync] 受管命令缺失，冲突：{target}")
+    for name in sorted(previous.keys() - wanted):
         plan.remove(destination / name, "command source removed")
     generated = []
     for command in commands:
         target = destination / command.name
-        if (target.exists() or target.is_symlink()) and command.name not in previous and not _is_generated(target, plan.root):
-            raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
+        if (target.exists() or target.is_symlink()) and command.name not in previous:
+            if not _is_generated(target, plan.root):
+                raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
+            _check_command(plan.root, target, None, command)
         plan.link_file(target, command)
         generated.append(f"{rel}/{command.name}")
     if wanted:
-        plan.write_text(marker, json.dumps(sorted(wanted), ensure_ascii=False) + "\n")
+        records = {name: _file_record(destination / name) if plan.apply
+                   else _file_record(sources[name]) for name in sorted(wanted)}
+        plan.write_text(marker, json.dumps({"schema": "aidp.commands/v1", "files": records},
+                                           ensure_ascii=False, sort_keys=True) + "\n")
         generated.append(f"{rel}/{GENERATED_FILE}")
     elif marker.is_file():
         plan.remove(marker, "no generated commands")
@@ -566,7 +675,11 @@ def sync_codex_commands(plan: Plan) -> list:
         wanted.add(name)
         plan.write_text(target / "SKILL.md", codex_command_skill(name, _read(command)))
         plan.write_text(target / "agents/openai.yaml", OPENAI_YAML)
-        plan.write_text(target / GENERATED_FILE, "native-command\n")
+        if plan.apply:
+            marker = _directory_marker(target)
+        else:
+            marker = _read(target / GENERATED_FILE) or "native-command\n"
+        plan.write_text(target / GENERATED_FILE, marker)
         generated.append(f"{CODEX_COMMAND_SKILLS}/{name}")
     _prune(plan, destination, wanted)
     return generated
@@ -758,7 +871,8 @@ def sync_shared_plugin_skills(plan: Plan, plugins: list, enabled: bool = True) -
         target = base / plugin.name
         _require_generated_or_absent(plan.root, target, "共享插件 SKILL namespace")
         plan.link_dir(target / "skills", source)
-        plan.write_text(target / GENERATED_FILE, "plugin-skills\n")
+        marker = _directory_marker(target) if plan.apply else (_read(target / GENERATED_FILE) or "plugin-skills\n")
+        plan.write_text(target / GENERATED_FILE, marker)
         generated.append(f"{SHARED_SKILLS}/{plugin.name}")
     for plugin in plugins:
         if plugin.name not in wanted:
@@ -1153,6 +1267,75 @@ def _validate_adapter_namespaces(root: Path, plugins: list):
         _validate_real_namespace(root, rel, f"Agent 适配 namespace {rel}")
 
 
+def _has_managed_marker(path: Path) -> bool:
+    try:
+        return (path / GENERATED_FILE).is_file()
+    except OSError as exc:
+        raise SystemExit(f"[agent_sync] 受管目录无法检查，冲突：{path}：{exc}") from exc
+
+
+def _validate_existing_managed(root: Path, agents: list, plugins: list):
+    skills = _base_skill_dirs(root)
+    for rel in (CLAUDE_SKILLS, SHARED_SKILLS):
+        base = root / rel
+        if not base.is_dir() or base.is_symlink():
+            continue
+        for target in base.iterdir():
+            if target.is_symlink() or not _has_managed_marker(target):
+                continue
+            source = skills.get(target.name)
+            plugin = next((item for item in plugins if item.name == target.name), None)
+            if plugin is not None and rel == SHARED_SKILLS and (plugin / "skills").is_dir():
+                source = plugin / "skills"
+                if _read(target / GENERATED_FILE) == "plugin-skills\n":
+                    if not _tree_equal(source, target / "skills"):
+                        raise SystemExit(f"[agent_sync] 旧插件目录被修改，冲突：{target}")
+                    continue
+                if (target / "skills" / GENERATED_FILE).is_file():
+                    _check_managed_directory(target / "skills", source)
+                source = None
+            if source is None and _read(target / GENERATED_FILE) == "directory-copy\n":
+                raise SystemExit(f"[agent_sync] 旧受管目录源已删除，无法验证，冲突：{target}")
+            _check_managed_directory(target, source)
+    plugin_by_name = {plugin.name: plugin for plugin in plugins}
+    for rel, sources in ((CLAUDE_PLUGINS, plugin_by_name),):
+        base = root / rel
+        if base.is_dir() and not base.is_symlink():
+            for target in base.iterdir():
+                if target.is_dir() and not target.is_symlink() and _has_managed_marker(target):
+                    _check_managed_directory(target, sources.get(target.name))
+    for rel in (CLAUDE_COMMANDS, DSH_COMMANDS):
+        base = root / rel
+        marker = base / GENERATED_FILE
+        if not marker.is_file():
+            continue
+        ledger = _command_ledger(marker)
+        sources = {command.name: command for command in _command_files(root)}
+        for name, record in ledger.items():
+            target = base / name
+            if os.path.lexists(target):
+                _check_command(root, target, record, sources.get(name))
+            elif name not in sources:
+                raise SystemExit(f"[agent_sync] 受管命令缺失，冲突：{target}")
+    base = root / CODEX_COMMAND_SKILLS
+    if base.is_dir() and not base.is_symlink():
+        sources = {command.stem: command for command in _command_files(root)}
+        for target in base.iterdir():
+            if not target.is_dir() or target.is_symlink() or not _has_managed_marker(target):
+                continue
+            marker = _read(target / GENERATED_FILE)
+            if marker == "native-command\n":
+                command = sources.get(target.name)
+                if command is None or _read(target / "SKILL.md") != codex_command_skill(target.name, _read(command)) \
+                        or _read(target / "agents/openai.yaml") != OPENAI_YAML \
+                        or any(p.relative_to(target).as_posix() not in
+                               {GENERATED_FILE, "SKILL.md", "agents", "agents/openai.yaml"}
+                               for p in target.rglob("*")):
+                    raise SystemExit(f"[agent_sync] 旧 Codex 命令被修改，冲突：{target}")
+            else:
+                _check_managed_directory(target)
+
+
 def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
     if "claude" in agents:
         for name in _base_skill_dirs(root):
@@ -1161,9 +1344,10 @@ def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: di
         previous = _generated_names(destination / GENERATED_FILE)
         for command in _command_files(root):
             target = destination / command.name
-            if ((target.exists() or target.is_symlink()) and command.name not in previous
-                    and not _is_generated(target, root)):
-                raise SystemExit(f"[agent_sync] Claude 命令目标已存在用户内容，拒绝覆盖：{target}")
+            if (target.exists() or target.is_symlink()) and command.name not in previous:
+                if not _is_generated(target, root):
+                    raise SystemExit(f"[agent_sync] Claude 命令目标已存在用户内容，拒绝覆盖：{target}")
+                _check_command(root, target, None, command)
         for plugin in plugins:
             _require_generated_or_absent(root, root / CLAUDE_PLUGINS / plugin.name,
                                          "Claude 插件目录")
@@ -1176,9 +1360,10 @@ def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: di
         previous = _generated_names(destination / GENERATED_FILE)
         for command in _command_files(root):
             target = destination / command.name
-            if ((target.exists() or target.is_symlink()) and command.name not in previous
-                    and not _is_generated(target, root)):
-                raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
+            if (target.exists() or target.is_symlink()) and command.name not in previous:
+                if not _is_generated(target, root):
+                    raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
+                _check_command(root, target, None, command)
     if "codex" in agents or "dsh" in agents:
         for name in _base_skill_dirs(root):
             _require_generated_or_absent(root, root / SHARED_SKILLS / name, "SKILL 入口")
@@ -1212,6 +1397,7 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
         raise SystemExit(f"[agent_sync] 命令与 SKILL 同名冲突：{', '.join(clash)}，请改名其一")
     all_servers = _plugin_servers(plugins)
     _validate_adapter_namespaces(root, plugins)
+    _validate_existing_managed(root, agents, plugins)
     _validate_targets(root, agents, plugins, plugin_skills)
     _validate_hooks(root, agents)
     _validate_claude_plugins(root, plugins if "claude" in agents else [])

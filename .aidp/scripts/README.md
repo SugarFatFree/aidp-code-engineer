@@ -1,6 +1,6 @@
 # {{AIDP_HOME}}/scripts/ — AIDP 工具脚本
 
-> 本目录由 AIDP 脚手架 `aidp-code-engineer` 下发到 `{{AIDP_HOME}}/scripts/`，供命令端 / CI / 开发者直接调用（调用一律用仓库根相对路径 `python3 {{AIDP_HOME}}/scripts/<脚本>`）。
+> 模板仓库 `.aidp` 中的 scripts 只作维护源；本目录由脚手架 `aidp-code-engineer` 下发到当前 Agent 的 `{{AIDP_HOME}}/scripts/`，供命令端 / CI / 开发者调用（使用安装后的路径 `python3 {{AIDP_HOME}}/scripts/<脚本>`）。非 Git 项目不会自动 `git init`；脚本的 Git 专属能力不适用时须显式记录，不得视为发布成功。
 > 脚本是**脚手架契约**（随版本升级覆盖更新），请勿在下游项目内手改；需变更回到模板仓库修改后升级下发（约定 16）。
 
 > ⚡ **不确定某个脚本怎么调？别猜、别翻文档**——本目录与各 SKILL `scripts/` 下的脚本 CLI 形态

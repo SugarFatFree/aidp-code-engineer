@@ -33,6 +33,9 @@
 
 ## ★ 多 Agent 兼容（Claude Code / Codex / DeepSeek Harness）
 
+- **运行目录**：本项目的 AIDP 真源为 `{{AIDP_HOME}}/`（仅 Claude Code 为 `.claude/aidp/`，有 Codex / DeepSeek Harness 时共享目录为 `.agents/aidp/`）；模板仓库的 `.aidp/` 是维护源，**下游项目根没有这个目录**。Claude Code 与其他 Agent 并存时从 `.claude/aidp/` 的装配副本读取。
+- **无 Git 分流**：先读取脚手架返回的 `vcs_mode=git|none`；`none` 仍可规划、开发、本地测试和本地归档，Git 提交、推送、tag、CICD 监听不可假定成功，正式发布必须 fail closed、不得宣布已发布。是否建立 Git 仓库由用户决定，不自动 `git init`。
+
 - **单一信源 = `{{AIDP_HOME}}/`**：命令、角色、规则、流程、脚本、hook、模板、SKILL、插件只在这里维护；各 Agent 的入口（`.claude/commands|skills|plugins`、`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`、`.agents/skills`、各 Agent hook / MCP 配置等）由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成，⛔ 不手改生成物；生成入口登记在根 `.gitignore` 托管块、不入库，clone 后先跑一次。
 - **命令与 SKILL 分离**：AIDP 命令只放 `{{AIDP_HOME}}/commands/`，公共 SKILL 只放 `{{AIDP_HOME}}/skills/`，插件只放 `{{AIDP_HOME}}/plugins/`。Claude Code 使用 `.claude/commands/<命令>.md`（`/<命令>`）；Codex 使用官方发现根 `.codex/skills/aidp/<命令>/SKILL.md`（`$<命令>`，只允许用户显式调用）；DeepSeek Harness 使用 `.dsh/commands/<命令>.md`（`/<命令>`）。Codex 与 DeepSeek Harness 共用 `.agents/skills/` 中的公共 SKILL，命令参数均保持 `$ARGUMENTS` 语义。Codex 命令正文遇到明确的 `/foo args` 串联时，确定性读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为子命令 `$ARGUMENTS` 在当前执行链内联执行；文件不存在或无法唯一映射时 fail closed。
 - **当前 Agent 判定**：`python3 {{AIDP_HOME}}/scripts/agent_env.py detect`——`AIDP_AGENT` 环境变量优先，其次项目根存在 `.codex/` → Codex、`.dsh/` → DeepSeek Harness、`.claude/` → Claude Code（可并存）。
@@ -182,7 +185,7 @@
 | `aidp-code-engineer` | 脚手架 init/migrate/upgrade |
 | `superpowers:*`（tdd/subagent/debugging/executing-plans/verification）| `/sprint-dev`（tdd/subagent/verification）·`bugfix` SKILL（debugging）·`/sprint-batch`（executing-plans/verification）·`/sprint-test`·`/sprint-bugfix` 方式 B（verification） |
 
-> 外部可选：`api-tester` 等（未装即跳过）；浏览器实测驱动 `chrome-devtools-mcp` 随仓库分发于 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/`：Claude Code 使用完整项目插件，Codex 使用 `.codex/skills/chrome-devtools-mcp/skills/` + 项目 MCP 配置，DeepSeek Harness 使用 `.agents/skills/` + `.dsh/mcp.json`（见 `{{AIDP_HOME}}/reference/skills.md`）。
+> 外部可选：`api-tester` 等（未装即跳过）；浏览器实测驱动 `chrome-devtools-mcp` 随仓库分发于 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/`：Claude Code 使用完整项目插件，Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json`（见 `{{AIDP_HOME}}/reference/skills.md`）。
 
 ## 初始化输入文件清单
 

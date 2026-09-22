@@ -2,7 +2,7 @@
 
 ## 本项目使用的 Skills
 
-> 按约定 21，下表只给**一句话用途 + 被谁调用**；各 SKILL 的维度/原则/检查细则是单一信源，详见对应 `SKILL.md`，不在此复述。
+> 按约定 21，下表只给**一句话用途 + 被谁调用**；各 SKILL 的维度/原则/检查细则是单一信源，详见对应 `SKILL.md`，不在此复述。模板 `.aidp` 中的 skills 仅用于维护，下游公共 SKILL 从 `.agents/skills/`（Codex / DSH）或 `.claude/skills/`（Claude）调用，契约真源在 `{{AIDP_HOME}}/skills/`。
 
 ### 本项目自带的 Skills（`{{AIDP_HOME}}/skills/`；**可改性以约定 16 为准**——全部由 AIDP 模板仓库维护、在模板仓库内可直接改，下游项目内不应直接改）
 
@@ -28,7 +28,7 @@
 
 | 名称 | 用途 | 安装 |
 |------|------|------|
-| `chrome-devtools-mcp`（插件） | 浏览器实测驱动 MCP + 6 份配套调试 SKILL（`/sprint-aiauto-test`、`dev-manual-testcase` 推荐）| 随仓库分发于 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/`（Apache-2.0）：Claude Code 使用 `.claude/plugins/` 完整项目插件；Codex 使用 `.codex/skills/chrome-devtools-mcp/skills/` + `.codex/config.toml` MCP；DeepSeek Harness 使用 `.agents/skills/` + `.dsh/mcp.json` |
+| `chrome-devtools-mcp`（插件） | 浏览器实测驱动 MCP + 6 份配套调试 SKILL（`/sprint-aiauto-test`、`dev-manual-testcase` 推荐）| 随仓库分发于 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/`（Apache-2.0）：Claude Code 使用 `.claude/plugins/` 完整项目插件（工具名 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`）；Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json` |
 
 ### Superpowers 插件 Skills（★ 全局内置插件，非项目 vendored）
 

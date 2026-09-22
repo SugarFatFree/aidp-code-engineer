@@ -644,9 +644,12 @@ def sync_delivered_file(root: Path, rel: str, sp: Path, bundle_rel: str, bk: "Ba
 
 def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup"):
     base = L.ASSETS / "docs"
+    home = ".agents/aidp" if (root / ".agents/aidp").is_dir() else ".claude/aidp"
     for rel, sp in L.iter_files(base):
         dp = root / "docs" / rel
         data = sp.read_bytes()
+        if rel.startswith("init/") and rel.endswith(".md"):
+            data = data.decode("utf-8").replace("{{AIDP_HOME}}", home).encode("utf-8")
         if rel.startswith("architecture/") and rel.count("/") == 1 and not rel.endswith("README.md"):
             if not dp.exists():
                 write_if_diff(dp, data)

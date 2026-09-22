@@ -1,5 +1,6 @@
 # {{AIDP_HOME}}/reference/ — 按需 Read 的参考资料
 
+> 模板仓库 `.aidp` 中的 reference 仅用于维护；下游安装后的本目录位于 `{{AIDP_HOME}}/reference/`。该路径由当前 Agent 的运行包确定。
 > 本目录放**不需要常驻上下文、用到时才 Read** 的长文：约定细则分片、命令速查、SKILL 用途表、
 > 初始化与文档索引、开发期族增量册详规、子 Agent 必读、参考实现骨架等。
 >

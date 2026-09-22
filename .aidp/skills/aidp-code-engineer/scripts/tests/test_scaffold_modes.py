@@ -562,6 +562,88 @@ class NativePreflightTest(unittest.TestCase):
             self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
             self.assertFalse(os.path.lexists(root / ".claude/aidp"))
 
+    def test_rollback_preserves_concurrent_skill_file(self):
+        with H.TempRepo() as root:
+            skills = root / ".claude/skills"
+            skills.mkdir(parents=True)
+            concurrent = skills / "concurrent-user-file.txt"
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+
+            def fail_after_user_write(*_args, **_kwargs):
+                concurrent.write_text("keep\n", encoding="utf-8")
+                raise OSError("injected failure")
+
+            with mock.patch.object(S, "_install_native_skill", side_effect=fail_after_user_write):
+                with self.assertRaisesRegex(OSError, "injected failure"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+
+    def test_rollback_preserves_concurrent_private_readme(self):
+        with H.TempRepo() as root:
+            private = root / "docs/private"
+            private.mkdir(parents=True)
+            concurrent = private / "README.md"
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+
+            def fail_after_user_write(*_args, **_kwargs):
+                concurrent.write_text("keep\n", encoding="utf-8")
+                raise OSError("injected failure")
+
+            with mock.patch.object(S, "_install_native_skill", side_effect=fail_after_user_write):
+                with self.assertRaisesRegex(OSError, "injected failure"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+
+    def test_rollback_preserves_user_file_added_during_successful_skill_stage(self):
+        with H.TempRepo() as root:
+            (root / ".claude/skills").mkdir(parents=True)
+            concurrent = root / ".claude/skills/concurrent-user-file.txt"
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            install = S._install_native_skill
+
+            def install_with_user_write(*args, **kwargs):
+                concurrent.write_text("keep\n", encoding="utf-8")
+                return install(*args, **kwargs)
+
+            with mock.patch.object(S, "_install_native_skill", side_effect=install_with_user_write), \
+                    mock.patch.object(S, "run_agent_sync", side_effect=OSError("injected failure")):
+                with self.assertRaisesRegex(OSError, "injected failure"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+
+    def test_rollback_preserves_user_readme_added_during_successful_docs_stage(self):
+        with H.TempRepo() as root:
+            (root / "docs/private").mkdir(parents=True)
+            concurrent = root / "docs/private/README.md"
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            sync = S.sync_docs
+
+            def sync_with_user_write(*args, **kwargs):
+                concurrent.write_text("keep\n", encoding="utf-8")
+                return sync(*args, **kwargs)
+
+            with mock.patch.object(S, "sync_docs", side_effect=sync_with_user_write), \
+                    mock.patch.object(S, "_install_native_skill", side_effect=OSError("injected failure")):
+                with self.assertRaisesRegex(OSError, "injected failure"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+
     def test_upgrade_failure_restores_runtime_and_user_document(self):
         with H.TempRepo() as root:
             scaffold(root, "--agent", "claude", "--user", "alice")

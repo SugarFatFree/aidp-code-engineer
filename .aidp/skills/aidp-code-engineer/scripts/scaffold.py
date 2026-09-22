@@ -80,11 +80,14 @@ NAV_PURPOSES = {
 
 
 class Report:
-    def __init__(self):
+    def __init__(self, journal=None):
         self.actions, self.warnings, self.notes = [], [], []
+        self.journal = journal
 
     def act(self, op, path, why=""):
         self.actions.append({"op": op, "path": path, "why": why})
+        if self.journal is not None and op in {"create", "install", "update", "merge", "render"}:
+            self.journal.record(path)
 
     def warn(self, msg):
         self.warnings.append(msg)
@@ -1001,44 +1004,79 @@ def _preflight_native_project_paths(root: Path, version: str, user: str):
             raise ValueError(f"项目文件不是普通文件，拒绝写入：{target}")
 
 
-def _is_native_generated_new(relative: Path, delivered_docs: set) -> bool:
-    parts = relative.parts
-    if not parts:
-        return False
-    if parts[0] in (".claude", ".agents", ".codex", ".dsh"):
-        return len(parts) > 1 and parts[1] in {
-            "aidp", "commands", "skills", "plugins", "hooks.json", "settings.json",
-            "config.toml", "mcp.json", ".aidp-plugins.json", ".aidp-mcp-servers.json",
-        }
-    if parts[0] == "docs":
-        return relative.as_posix() in delivered_docs or relative.name in ("README.md", ".gitkeep")
-    if parts[0] == "memory":
-        return relative.as_posix() in {
-            "memory/aidp-config.yaml", "memory/README.md",
-            *(rel for _tpl, rel in L.MEMORY_TEMPLATES),
-        } or relative.name in ("README.md", ".gitkeep")
-    return relative.as_posix() == "env/.env" or relative.name == ".gitkeep"
+class _NativeInstallJournal:
+    def __init__(self, root: Path, managed: set):
+        self.root, self.managed = root, managed
+        self.initial = self._paths()
+        self.created = set()
+
+    def _paths(self):
+        paths = set()
+        for name in self.managed:
+            base = self.root / name
+            if not os.path.lexists(base):
+                continue
+            paths.add(Path(name))
+            if base.is_dir() and not base.is_symlink():
+                paths.update(path.relative_to(self.root) for path in base.rglob("*"))
+        return paths
+
+    def record(self, path):
+        target = Path(path)
+        if not target.is_absolute():
+            target = self.root / target
+        try:
+            relative = target.relative_to(self.root)
+        except ValueError as exc:
+            raise ValueError(f"安装动作越出项目根：{target}") from exc
+        if not relative.parts or relative.parts[0] not in self.managed:
+            return
+        for parent in (relative, *relative.parents):
+            if parent.parts and parent not in self.initial and os.path.lexists(self.root / parent):
+                self.created.add(parent)
+        if target.is_dir() and not target.is_symlink():
+            self.created.update(child.relative_to(self.root)
+                                for child in target.rglob("*")
+                                if child.relative_to(self.root) not in self.initial)
+
+    def rollback_created(self):
+        for relative in sorted(self.created, key=lambda path: len(path.parts), reverse=True):
+            path = self.root / relative
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass  # 并发加入的用户文件仍在该目录中。
 
 
-def _preserve_concurrent_files(root: Path, backup: Path, saved: set):
-    delivered_docs = {f"docs/{rel}" for rel, _source in L.iter_files(L.ASSETS / "docs")}
-    preserved = []
-    for name in saved:
-        current, original = root / name, backup / name
-        if not current.is_dir() or current.is_symlink() or not original.is_dir():
+def _restore_native_snapshot(original: Path, target: Path):
+    if original.is_symlink() or original.is_file():
+        if os.path.lexists(target):
+            _remove_transaction_path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(original, target, follow_symlinks=False)
+        return
+    if os.path.lexists(target) and (not target.is_dir() or target.is_symlink()):
+        _remove_transaction_path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    directories = [original] + [path for path in original.rglob("*")
+                                if path.is_dir() and not path.is_symlink()]
+    for directory in sorted(directories, key=lambda path: len(path.parts)):
+        destination = target / directory.relative_to(original)
+        if os.path.lexists(destination) and (not destination.is_dir() or destination.is_symlink()):
+            _remove_transaction_path(destination)
+        destination.mkdir(parents=True, exist_ok=True)
+    for source in original.rglob("*"):
+        if source.is_dir() and not source.is_symlink():
             continue
-        for path in current.rglob("*"):
-            if path.is_dir() and not path.is_symlink():
-                continue
-            relative = path.relative_to(root)
-            if os.path.lexists(original / path.relative_to(current)) \
-                    or _is_native_generated_new(relative, delivered_docs):
-                continue
-            preserved.append(relative)
-            target = backup / "__concurrent__" / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target, follow_symlinks=False)
-    return preserved
+        destination = target / source.relative_to(original)
+        if os.path.lexists(destination):
+            _remove_transaction_path(destination)
+        shutil.copy2(source, destination, follow_symlinks=False)
+    for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
+        shutil.copystat(directory, target / directory.relative_to(original))
 
 
 def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
@@ -1054,12 +1092,14 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> di
                L.USER_FILLABLE_BASELINE}
     managed.update(Path(rel).parts[0] for rel in L.skeleton_dirs(root, version, user)
                    if rel and not rel.startswith(".aidp/"))
-    existing = {path.name for path in root.iterdir()}
+    journal = _NativeInstallJournal(root, managed)
     with tempfile.TemporaryDirectory(prefix="aidp-native-rollback-", dir=root.parent) as temp:
         backup = Path(temp)
         saved = set()
-        for name in managed & existing:
+        for name in managed:
             original = root / name
+            if not os.path.lexists(original):
+                continue
             if original.is_dir() and not original.is_symlink():
                 shutil.copytree(original, backup / name, symlinks=True)
             elif original.is_symlink():
@@ -1068,33 +1108,17 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> di
                 shutil.copy2(original, backup / name)
             saved.add(name)
         try:
-            return _run_native_impl(root, a, mode, agents, agent_source)
+            return _run_native_impl(root, a, mode, agents, agent_source, journal)
         except BaseException:
-            preserved = _preserve_concurrent_files(root, backup, saved)
+            journal.rollback_created()
             for name in saved:
-                _remove_transaction_path(root / name)
-                original = backup / name
-                if original.is_dir() and not original.is_symlink():
-                    shutil.copytree(original, root / name, symlinks=True)
-                elif original.is_symlink():
-                    (root / name).symlink_to(os.readlink(original))
-                else:
-                    shutil.copy2(original, root / name)
-            for name in managed - existing:
-                path = root / name
-                if os.path.lexists(path):
-                    _remove_transaction_path(path)
-            for relative in preserved:
-                target = root / relative
-                if not os.path.lexists(target):
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(backup / "__concurrent__" / relative, target,
-                                 follow_symlinks=False)
+                _restore_native_snapshot(backup / name, root / name)
             raise
 
 
-def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
-    rep = Report()
+def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
+                     journal: _NativeInstallJournal) -> dict:
+    rep = Report(journal)
     source = _runtime_source()
     legacy = root / ".aidp"
     if legacy.is_symlink():
@@ -1126,6 +1150,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str) 
             if json.loads(current.read_text(encoding="utf-8"))["version"] == scaffold_raw and not a.force:
                 continue
         runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind)
+        journal.record(dest.parent / ".aidp-runtime.lock")
         rep.act("install", home + "/", "Agent 原生运行包")
     for ag in agents:
         marker = root / MARKER_DIRS[ag]
@@ -1135,21 +1160,32 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str) 
     dirs = [d for d in L.skeleton_dirs(root, version, user) if not d.startswith(".aidp/")]
     for rel in dirs:
         (root / rel).mkdir(parents=True, exist_ok=True)
+        journal.record(rel)
     sync_docs(root, bool(previous), rep, bk)
+    journal.record(L.USER_FILLABLE_BASELINE)
     sync_config(root, ctx, rep, bk)
     sync_memory(root, ctx, bool(previous), rep, bk)
+    journal.record(L.USER_FILLABLE_BASELINE)
     sync_root_files(root, ctx, rep, bk)
     if decision != "protect":
         sync_memory_file(root, agents, ctx, decision, bool(previous), rep, bk)
     _install_native_skill(root, agents, rep)
     manage_gitkeep(root, dirs, rep)
+    for rel in dirs:
+        journal.record(root / rel / ".gitkeep")
     ensure_nav_readmes(root, rep)
     manage_gitkeep(root, dirs, rep)
+    for rel in dirs:
+        journal.record(root / rel / ".gitkeep")
     if scaffold_raw and decision != "protect":
         scaffold_marker.write_version(root, scaffold_raw)
+        journal.record(scaffold_marker.CONFIG_REL)
     dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
     if not a.no_agent_sync:
-        run_agent_sync(root, agents, "copy", rep, strict=True)
+        adapter_result = run_agent_sync(root, agents, "copy", rep, strict=True)
+        for action in adapter_result.get("actions") or []:
+            if action.get("op") in {"write", "copy", "install"}:
+                journal.record(action.get("path") or "")
     if a.adapter_mode == "link":
         rep.actions.append({"op": "normalized", "path": "agent-adapters", "why": "link → managed-copy",
                             "action": "normalized", "from": "link", "to": "managed-copy"})

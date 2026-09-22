@@ -200,7 +200,8 @@ def test_standalone_push_debt():
             subprocess.run(["git", "-C", str(d), "config", k, v], check=True)
         (d / ".aidp/scripts").mkdir(parents=True)
         for f in ("classify_commit_change.py", "classify_push.py", "baseline_edit.py",
-                  "commit_gate.py", "aidp_paths.py", "aidp_config.py"):
+                  "commit_gate.py", "aidp_paths.py", "aidp_config.py", "vcs.py",
+                  "aidp_runtime.py"):
             src = REPO / ".aidp/scripts" / f
             if src.is_file():
                 shutil.copy(src, d / ".aidp/scripts" / f)

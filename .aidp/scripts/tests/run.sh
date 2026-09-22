@@ -101,6 +101,7 @@ run "test_doc_reference_guards.py（符号引用 / CLI 归属 / 私有痕迹 三
 run "test_mirror.py（脚手架侧：本体→bundle 镜像）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_mirror.py
 run "test_scaffold_lib.py（脚手架侧：脚手架库）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_scaffold_lib.py
 run "test_runtime_layout.py（脚手架侧：Agent 原生运行包渲染）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_runtime_layout.py
+run "test_installed_init_docs.py（脚手架侧：下发文档运行路径）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_installed_init_docs.py
 run "test_scaffold_modes.py（脚手架侧：init / migrate / upgrade 三模式）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_scaffold_modes.py
 run "test_sync_memory_md.py（脚手架侧：项目记忆文件同步）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_sync_memory_md.py
 

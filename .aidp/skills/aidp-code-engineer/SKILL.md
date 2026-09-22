@@ -54,6 +54,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 │   ├── finalize_upgrade.py  # 语义改写队列清空后收口版本戳
 │   ├── scaffold_marker.py   # memory/aidp-config.yaml 的 scaffold.version / pending 读写
 │   ├── scaffold_lib.py      # 目录骨架、契约目录、gitignore 托管区、备份策略等共享定义
+│   ├── runtime_layout.py    # 渲染并校验 Agent 原生运行包及其受管清单
 │   ├── reverse_generate.py  # 从已有代码反向生成 docs/architecture/技术选型.md
 │   ├── mirror_to_bundle.py  # 模板维护：本体 → assets/ 单向镜像
 │   ├── sync_memory_md.py    # 模板维护：.aidp/AIDP-AGENTS.md（下发记忆源）→ assets/AGENTS.md.tpl

@@ -14,6 +14,14 @@
 > 它现场跑 `--help` 取真值，**永不过期**（手写速查表必然过期，那是又一处「加东西的人不会
 > 想起去改」的副本）。⚠️ usage 里**不带 `--` 的那些是位置参数**，是最常踩的一类。
 
+## aidp_runtime.py — 运行包与项目根路径解析
+
+供运行脚本导入 `runtime_root()`、`project_root()` 和 `runtime_text()`：从脚本位置识别模板仓库或 Agent 原生运行包，展开运行路径，不依赖 Git 查找项目根。它是库模块，不作为独立命令调用。
+
+## vcs.py — Git 能力检测与非 Git 降级
+
+供脚手架和 Git 专属脚本导入 `detect_mode()`、`developer_identity()`、`unsupported()`；非 Git 能力返回 `vcs-disabled`，退出码为 3。它是库模块，不作为独立命令调用。
+
 ## chrome-mcp-doctor.py — chrome-devtools-mcp 远程连接配置强制校验 + 配置器
 
 `/sprint-aiauto-test` / `/sprint-autopilot` 连接**远程 Chrome** 做浏览器自动化测试时，

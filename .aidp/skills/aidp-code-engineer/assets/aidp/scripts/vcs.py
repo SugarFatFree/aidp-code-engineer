@@ -28,11 +28,15 @@ def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
 
 
 def detect_mode(root: Path | str) -> str:
-    """Return `git` only for a real Git worktree; every other case is `none`."""
-    proc = _run_git(Path(root), "rev-parse", "--is-inside-work-tree")
-    if proc is not None and proc.returncode == 0 and proc.stdout.strip() == "true":
-        return "git"
-    return "none"
+    """Return `git` only when the project itself is a Git worktree root."""
+    root = Path(root)
+    proc = _run_git(root, "rev-parse", "--is-inside-work-tree")
+    if proc is None or proc.returncode != 0 or proc.stdout.strip() != "true":
+        return "none"
+    top = _run_git(root, "rev-parse", "--show-toplevel")
+    if top is None or top.returncode != 0 or not top.stdout.strip():
+        return "none"
+    return "git" if os.path.abspath(root) == os.path.abspath(top.stdout.strip()) else "none"
 
 
 def unsupported(capability: str) -> dict[str, str]:

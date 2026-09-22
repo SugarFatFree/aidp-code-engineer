@@ -133,4 +133,3 @@ AI 自动化测试由**独立测试链路** /sprint-aiauto-test 承担（与本�
 >       【B 走远程】重启 Claude Code 加载远程 .mcp.json 后挂 /loop 5m /sprint-aiauto-test --unattended，或换一台有 chrome 的机器跑测试。
 >
 > ③ **不 invoke `/sprint-aiauto-test`、不空等、不反复提示重启**，autopilot **正常收尾退出**（开发成果已交付、原因 + 安装解法已播报）。其余四类预判（`local-cli-ready` / `remote-ready` / `needs-restart-has-fallback` / `local-chrome-no-cli`）**不触发本终止**，照常委派测试链路（`needs-restart-has-fallback` 的 3 分钟窗口 + cli 兜底、`local-chrome-no-cli` 的 cli 修复回落或 `mcp-plugin-fallback` 显式降级均由 `/sprint-aiauto-test` 承担）。仅 `blocked-no-fallback`（本机无 chrome 且远程不可用）才触发本终止。
-

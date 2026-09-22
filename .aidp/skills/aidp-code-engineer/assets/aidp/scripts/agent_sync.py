@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -1071,12 +1072,36 @@ def _hook_cmd(agent: str) -> str:
     return f'python3 "${{PWD}}/{rel}" --agent {agent}'
 
 
-def _merge_stop_hook(data: dict, cmd: str) -> dict:
+def _is_managed_stop_hook(command: str, root: Path | None = None) -> bool:
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return False
+    if len(argv) not in (2, 4) or argv[0] != "python3":
+        return False
+    if len(argv) == 4 and (argv[2] != "--agent" or argv[3] not in ("codex", "dsh")):
+        return False
+    legacy = f"{LEGACY_AIDP_DIR}/hooks/autopilot-stop-guard.py"
+    claude = _hook_rel("claude")
+    shared = _hook_rel("codex")
+    rel_paths = (legacy, claude, shared)
+    path = argv[1]
+    if path in rel_paths:
+        return True
+    if path in (f"$CLAUDE_PROJECT_DIR/{rel}" for rel in (legacy, claude)):
+        return True
+    if path in (f"${{PWD}}/{rel}" for rel in (legacy, shared)):
+        return True
+    return bool(root and Path(path).is_absolute()
+                and any(_lexical(Path(path)) == _lexical(root / rel) for rel in rel_paths))
+
+
+def _merge_stop_hook(data: dict, cmd: str, root: Path | None = None) -> dict:
     hooks = data.setdefault("hooks", {})
     stop = hooks.setdefault("Stop", [])
     for group in stop:
         for h in group.get("hooks", []):
-            if "autopilot-stop-guard.py" in h.get("command", ""):
+            if _is_managed_stop_hook(h.get("command", ""), root):
                 h["command"] = cmd
                 h["type"] = "command"
                 return data
@@ -1099,7 +1124,7 @@ def sync_hooks(plan: Plan, agent: str):
         data = json.loads(_read(path) or "{}")
     except json.JSONDecodeError:
         raise SystemExit(f"[agent_sync] {path} 不是合法 JSON，拒绝覆盖，请先修复")
-    plan.write_text(path, _json_dump(_merge_stop_hook(data, _hook_cmd(agent))))
+    plan.write_text(path, _json_dump(_merge_stop_hook(data, _hook_cmd(agent), root)))
     if agent == "codex":
         cfg = root / ".codex" / "config.toml"
         text = _read(cfg)
@@ -1196,7 +1221,7 @@ def _validate_hooks(root: Path, agents: list):
         path = paths[agent]
         data = _json_object(path, f"{agent} hooks {path}") if path.exists() else {}
         _validate_hook_structure(data, path)
-        _merge_stop_hook(json.loads(json.dumps(data)), _hook_cmd(agent))
+        _merge_stop_hook(json.loads(json.dumps(data)), _hook_cmd(agent), root)
     if "codex" in agents:
         _validate_codex_features(root)
 

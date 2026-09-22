@@ -302,6 +302,16 @@ exit，**所有版本一起停**），而 #4 通知会把诊断误导成「basel
   窗口、确认这一版真没人管了，才认定为过渡版。命中时「请重部署 / 请挂测试链路」本就是**假告警**
   （没人会回头部署测这一版），冻结只会让它烂在 limbo。
 
+### Phase 2 执行片收敛时保留的根因
+
+- 门禁围栏、步骤 2 的命令编排、步骤 3 和 5 的 Bash 围栏互不共享 shell 状态。旧版门禁设置 `PRERELEASE_HOLD/YIELD` 后，步骤 3/5 从未持久化的 tick 信号读空，`HOLD:-1` 让真正成功的归档永不写游标；同一 shell 中 `YIELD=1,HOLD=0` 又可假写 done。每 tick 先清空并显式持久化门禁放行/暂缓/让位，只有步骤 2 的本地或远端必需产物核验通过才登记归档成功；步骤 3/5 跨进程读回四信号并校游标，缺任一即不落成功态。无 Git 的 `internal_released_at` 仅表示已核验的本地归档选版游标，不是正式发布。
+
+- `PRE_RELEASE_VERSION` 从 Phase 0.3.4 跨 Bash 调用传入，必须从 tick 状态读回；若直接用空的 shell 变量，所有 `.versions.""` 查询都落空，0a/0b 会把合法版本误判成未部署且未收敛。时间比较也必须使用 epoch：ISO8601 的 `+08:00` 与 `Z` 混排时，字符串顺序不等于时间顺序。
+- 0y 尾段和自动修复闭环进行中，部署或测试未就绪是合法中间态。Phase 2 只让位，不累计冻结 streak，也不能写自己的 `run-state` 覆盖 Phase 3 的部署、探针或终审续跑游标。
+- 测试链路缺失达到阈值后，冻结并不是本 build 的报告收尾。仍须执行 `phase-3-9.md` 的静态-only 三步：定稿 testSummary、产出 AI执行报告并发 #3；只打印一条冻结提示会让报告永停骨架。
+- `internal_released_at` 必须由 `baseline_edit.py` 真写入。旧版只有 JSON 示例和“已写入”的 run-state 摘要，字段实际恒空，归档版持续留在 `current-version` 候选集，测试链路反复重测已归档版本。
+- 0T 的版本计划要按文件名中的 `研发执行计划` 通配，不可只认 `01_研发执行计划.md`：`01_M1研发执行计划.md` 和带开发者后缀的合规拆分文件同样表示新版规划已开始。
+
 ## Phase 3.1.5 铸 build 的复用判据与出口游标（对应 `phase-3-4.md`）
 
 - **复用判据必须与 `ENTRY_MODE` 解耦**——绑死 `test-only` 会让无人值守默认形态每 tick 都铸新 build →
@@ -481,6 +491,17 @@ is not True → FAIL`。`frontend_changed` 是**真写的**（phase-3-8 收尾�
 于是 gate 注释所称「信号缺失就跳过、不误判」的保护失效：**任何动过前端的 build
 在 `--stage final` 恒 FAIL**。写入点落在 Step D 探针情形③通过处，与判据同源。
 
+进一步地，后端就绪只证明后端可测，无法证明前端资源更新。Step D 以前虽要求抓首页、
+下载 JS/CSS 并匹配 `must_contain[]` 每个特征串，却没有可执行检查，`FE_PROBE_OK=0`
+只是提示执行体自行替换；无论取值为何，`probe_passed` 和 `last_deployed_at` 都先写了。
+现在按本版 PRD 的 `deploy_ends.frontend.ready_asset_probe` 解析配置并抓部署首页引用的同源资源，
+全部特征命中后才写 `frontend_deploy_verified`；缺失、取数失败均不写部署就绪证据，
+空特征串只能警告跳过，不伪造前端已验证。探针判据必须先于所有成功证据执行。
+当前 build 的 `frontend_deploy_verified/probe_passed/probe_at/probe_commit` 与版本级
+`last_deployed_at/phase_beta_done_at` 必须同锁一次落盘；分步写时第二、三步失败会留下
+误导下游的半套成功证据。无 Git 的本地部署不需要 push SHA，以同次落盘的 `probe_at`
+与 `last_deployed_at` 验证出口；`last_autopilot_head` 只记录 Git push 后确有的 HEAD。
+
 ## incremental 为何必须在铸 build 出口先分流（`phase-3-4.md`）
 
 Phase 3.3b 的硬判据③**保证** `ENTRY_MODE=incremental` 只在 `OPEN_N == 0`（无未关闭 Sprint）时成立。
@@ -511,6 +532,12 @@ Step C 判 ③失败重试 / ④ CICD 平台不可达（提供方凭据失效 / 
 
 紧随其后的散文本已写明「部署未就绪而本 tick 让位时 `next` 写 `3.2.1-deploy`」——
 只是没有对应的分支代码。这是本仓最常见的形状：判据写对了，落不到可执行面上。
+
+随后虽补了成功/未成功分支，出口的 `CICD_OK=0` 仍把真实 success 一律改判为待续；
+且摘要含「运行中」被 `baseline_edit.py` 的进行时门拒写，连合法续轮询的游标也无法持久化。
+出口须读本次 poll 的 run ID、commit 和 verdict 并与本 build push 锚一致。
+`running` 与 Step D 的 `rc=4` 都只代表一次调用的时间片结束：有唤醒源才可让下一 tick 接手；
+无唤醒源必须在本 tick 追加有界探测，仍无终态则按现有原因冻结并告知，不能静默等不存在的 tick。
 
 
 ## `builds[]` 字段表（`phase-1.md` baseline 字段清单的外置正文）

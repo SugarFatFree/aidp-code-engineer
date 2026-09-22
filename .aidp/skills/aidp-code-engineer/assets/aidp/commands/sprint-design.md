@@ -245,7 +245,7 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 
 | SKILL 占位符 | 显式传值 |
 |--------------|---------|
-| `{SQL脚本目录}` | `code/sql/`（**暂存位**——SKILL 原生生成到 **`code/sql/v{版本号}/{NN}_<中文名>.sql`（★ 带 `v` 前缀，dev-logic-architect SKILL 硬约定，见其「SQL 版本严格隔离铁律」）**，命令端 Step 3.2 再 `git mv` 搬迁到**最终位置** `docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql`）|
+| `{SQL脚本目录}` | `code/sql/`（**暂存位**——SKILL 原生生成到 **`code/sql/v{版本号}/{NN}_<中文名>.sql`（★ 带 `v` 前缀，dev-logic-architect SKILL 硬约定，见其「SQL 版本严格隔离铁律」）**，命令端 Step 3.2 按源文件跟踪状态搬迁到**最终位置** `docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql`）|
 | `{文档目录}` | `docs/design/detail/`（详细设计本身的落盘目录就是 `{version}/` 子目录下）|
 | `{API文档目录}` | `docs/design/detail/`（AIDP 合并到设计目录，体现为 `接口设计.md` + `对外开放接口.md`）|
 | `{测试文档目录}` | `docs/testing/`（Sprint 粒度按 `{version}/sprint-{NNN}/` 组织）|
@@ -297,11 +297,19 @@ Step 1.5 落盘后，若详设目录进入**拆分编号模式**（已生成 `00
 
 ```bash
 DETAIL=docs/design/detail/{version}
-if [ -f "$DETAIL/00_索引.md" ] && [ -f "$DETAIL/事实清单.md" ] && [ ! -e "$DETAIL/98_事实清单.md" ]; then
-  git mv "$DETAIL/事实清单.md" "$DETAIL/98_事实清单.md"
-  echo "✅ 事实清单已归一为 98_事实清单.md（拆分目录保留位）"
+if [ -f "$DETAIL/00_索引.md" ] && [ -f "$DETAIL/事实清单.md" ]; then
+  if [ -e "$DETAIL/98_事实清单.md" ] || [ -L "$DETAIL/98_事实清单.md" ]; then
+    echo "⛔ 98_事实清单.md 已存在，拒绝覆盖事实清单" >&2
+    exit 1
+  fi
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+     git ls-files --error-unmatch -- "$DETAIL/事实清单.md" >/dev/null 2>&1; then
+    git mv -- "$DETAIL/事实清单.md" "$DETAIL/98_事实清单.md" || exit 1
+  else
+    mv -- "$DETAIL/事实清单.md" "$DETAIL/98_事实清单.md" || exit 1
+  fi
+  echo "✅ 事实清单已归一为 98_事实清单.md（索引态保留位）"
 fi
-# 单文件模式（无 00_索引.md）保持 事实清单.md 不加前缀，与约定 15「单文件不加前缀」一致
 ```
 
 > ★ **`00_索引.md` 必须把 `98_事实清单.md` 列为「代码事实基线」条目**（标明它是 application.yml / 路由 / 跨项目接口的真值来源，设计以此为准）。
@@ -328,14 +336,14 @@ fi
 
 > 📎 **子步锚点说明**：Step 2 / 3.0 / 3.1 / 3.2 / 4.1–4.3 **合并在本标题下、不各设独立标题**——本文档（及 `/version` 各 `planning-N.md`）正文里出现的 `Step 3.0`（前版 SQL 风格提取）、`Step 3.2`（SQL 两阶段落位）等引用，即指下方骨架表对应行 + 其 flow 分片内的同名子步，**不是缺失的标题**。
 
-> ⚠️ 关键规则：Step 2 检查数据库基线/架构文档三态 + 注入「关联文档」表；Step 3 沿用历史 SQL 风格（不复制前版 SQL）+ **两阶段落位**（SKILL 暂存 `code/sql/v*` → 命令端 `git mv` 归位 `docs/deployment/{version}/sql/增量/`、文件头版本==目录版本==迭代版本三者一致）；Step 4 architecture 三份文档按三态反填/增量，且**保留 Step 0.5.5「运行时端点契约」段不覆盖**。
+> ⚠️ 关键规则：Step 2 检查数据库基线/架构文档三态 + 注入「关联文档」表；Step 3 沿用历史 SQL 风格（不复制前版 SQL）+ **两阶段落位**（SKILL 暂存 `code/sql/v*` → 命令端按已跟踪/未跟踪分流归位 `docs/deployment/{version}/sql/增量/`、文件头版本==目录版本==迭代版本三者一致）；Step 4 architecture 三份文档按三态反填/增量，且**保留 Step 0.5.5「运行时端点契约」段不覆盖**。
 
 | Step | 骨架 |
 |------|------|
 | 2 | 数据库基线对比 + 架构文档全目录识别与约束三态判定 + 公共组件 + ADR + 关联文档表（共享模板 + 按类型微调）|
 | 3.0 | 历史 SQL 风格归纳（`check_sql_style_consistency.py --history-only`，口径以 SKILL 核心原则 12 为准）|
 | 3.1 | 生成本版 SQL（只写本版新增/变更、`NN_` 从 01 起、⛔ 不复制前版 + 风格统一 + DDL 幂等）|
-| 3.2 | SQL 两阶段落位 + 版本落位一致性防护（双模式扫描 git mv 归位 + 文件头版本校正 + 设计引用回写）|
+| 3.2 | SQL 两阶段落位 + 版本落位一致性防护（双模式扫描并按源跟踪状态归位 + 文件头版本校正 + 设计引用回写）|
 | 4.1/4.2/4.3 | 更新 技术选型.md / 架构约束.md / systemPatterns.md（有架构设计则优先据其派生约束）|
 
 **进入本段第一动作 = 按序 Read 以下 2 个分片**，逐项执行、绝不凭骨架或记忆略过子步骤：
@@ -464,7 +472,7 @@ UI Agent 从原型代码 + `docs/prototype/{version}/mockup/`（如有）中提�
 
 ### 输出差异（按本轮实际是否有变更落盘对应文件）
 
-★ **命名保持**：上游 dev-logic-architect SKILL 内部按"SKILL 默认产物路径"风格生成（SKILL 已禁"补充/追加"语义前缀，新风格输出纯 `NN_业务名.md`）；命令端在 SKILL 返回后**只做序号续编校正**（若 NN 与目录现存最大序号冲突则 `git mv` 归一到 `MAX+1`），**绝不回补"补充"字眼**（具体脚本见 `{{AIDP_HOME}}/flows/version/planning-4.md`（`version.md` Step 2.4.4 现仅是一行指针），本命令单独被调用时也跑同段脚本兜底）：
+★ **命名保持**：上游 dev-logic-architect SKILL 内部按"SKILL 默认产物路径"风格生成（SKILL 已禁"补充/追加"语义前缀，新风格输出纯 `NN_业务名.md`）；命令端在 SKILL 返回后**只做序号续编校正**（若 NN 与目录现存最大序号冲突则按源文件跟踪状态归一到 `MAX+1`），**绝不回补"补充"字眼**（具体脚本见 `{{AIDP_HOME}}/flows/version/planning-4.md`（`version.md` Step 2.4.4 现仅是一行指针），本命令单独被调用时也跑同段脚本兜底）：
 
 | 文档类型 | SKILL 默认产物路径（待归一） | 归一后路径（统一 `NN_<业务主题>.md`，文件名不带"补充"字眼） |
 |---------|----------------------------|--------------------------|

@@ -11,6 +11,21 @@
 **1. 内容主文档锚点归一**（fresh 与补充模式均跑；对每类目录）：★ **doc-SKILL（dev-logic-architect / dev-execution-planner / ux-logic-extractor）原生产出 `00_索引.md` + `01_` 序号态，本步为幂等兜底**——仅当检出历史/异常形态才归一，正常情形不动。把 SKILL 产出的历史形态——① `00_<语义名>.md`/`00_*-总览.md`（历史单主文档/多文件总览）② **裸中文名多文件**（如 `详细设计.md`/`接口设计.md`/`数据库设计.md`/`元转积分改造清单.md`，无任何两位前缀——**这是设计详情目录最易漂移的形态**）——统一归一为 `01_/02_/03_`+ 内容文档、`00_` 槽位让给专职索引。**设计详情目录延续 `/sprint-dev` Phase 0A 已按 glob 兼容的三态命名：拆分态固定 `01_详细设计.md`/`02_数据库设计.md`/`03_接口设计.md`、其余专题 `04_+` 续编。**
 
 ```bash
+plan_move() {
+  if [ -e "$2" ] || [ -L "$2" ]; then printf '❌ 目标已存在：%s\n' "$2" >&2; return 1; fi
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+     git ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+    git mv -- "$1" "$2" || return 1
+  else
+    mv -n -- "$1" "$2" || return 1
+    [ ! -e "$1" ] || { printf '❌ 移动未完成：%s\n' "$1" >&2; return 1; }
+  fi
+}
+next_seq() {
+  local DIR="$1" MAX
+  MAX=$(ls "$DIR" 2>/dev/null | grep -E "^[0-9]{2}_" | grep -vE "^(00|98|99)_" | sort | tail -1 | grep -oE "^[0-9]{2}")
+  printf "%02d" $(( 10#${MAX:-00} + 1 ))
+}
 canonical_seq() {  # 设计专题 → 规范两位序号（与 sprint-dev glob 三态一致）；非固定专题返回空走续编
   case "$1" in
     # ⛔ 序号以 **A 序**为准：01 详细设计 / 02 数据库设计 / 03 接口设计。
@@ -28,7 +43,7 @@ promote_content_main() {
   if [ -n "$LEGACY" ]; then
     local NEWNAME=$(echo "$LEGACY" | sed -E 's/^00_//; s/-总览\.md$/.md/')
     local DST_N="01"; [ -e "${DIR}01_${NEWNAME}" ] && DST_N=$(next_seq "$DIR")
-    git mv "${DIR}${LEGACY}" "${DIR}${DST_N}_${NEWNAME}"
+    plan_move "${DIR}${LEGACY}" "${DIR}${DST_N}_${NEWNAME}" || return 1
   fi
   # ② ★ 裸中文名多文件（无 NN_ 前缀、非管家/方案/索引文件）：≥2 份即按专题规范编号（下游 V0.9.1 症状根治）
   local BARE=$(ls "$DIR" 2>/dev/null | grep -E "\.md$" | grep -vE "^[0-9]{2}_|^README|^00_(索引|研发自测方案)|^输入变更|事实清单|待澄清")
@@ -37,31 +52,63 @@ promote_content_main() {
     for f in $BARE; do
       local sn=$(canonical_seq "${f%.md}")
       { [ -z "$sn" ] || [ -e "${DIR}${sn}_${f}" ]; } && sn=$(next_seq "$DIR")
-      git mv "${DIR}${f}" "${DIR}${sn}_${f}"
+      plan_move "${DIR}${f}" "${DIR}${sn}_${f}" || return 1
     done
   fi
 }
+for DIR in "docs/requirements/{version}/研发需求/" "docs/design/detail/{version}/" "docs/plans/{version}/"; do
+  [ -d "$DIR" ] || continue
+  promote_content_main "$DIR" || exit 1
+done
 ```
 
 **研发自测用例共享目录子目录化**（`docs/testing/{version}/` 是共享目录，先归位到 `研发自测/` 子目录再归一）：
 
 ```bash
+plan_move() {
+  if [ -e "$2" ] || [ -L "$2" ]; then printf '❌ 目标已存在：%s\n' "$2" >&2; return 1; fi
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+     git ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+    git mv -- "$1" "$2" || return 1
+  else
+    mv -n -- "$1" "$2" || return 1
+    [ ! -e "$1" ] || { printf '❌ 移动未完成：%s\n' "$1" >&2; return 1; }
+  fi
+}
 V_TEST="docs/testing/{version}"
 # 历史扁平单文件 → 统一目录名 研发自测；新流程 /sprint-selftest 已直接产出 研发自测/ 子目录
-[ -f "$V_TEST/研发自测用例.md" ] && [ ! -e "$V_TEST/研发自测.md" ] && git mv "$V_TEST/研发自测用例.md" "$V_TEST/研发自测.md"
-[ -d "$V_TEST/研发自测用例"   ] && [ ! -e "$V_TEST/研发自测"   ] && git mv "$V_TEST/研发自测用例"   "$V_TEST/研发自测"
-if [ -f "$V_TEST/研发自测.md" ] && [ ! -d "$V_TEST/研发自测" ]; then
-  mkdir -p "$V_TEST/研发自测"; git mv "$V_TEST/研发自测.md" "$V_TEST/研发自测/02_全量自测用例.md"   # 历史扁平单文件（用例）落用例槽 02_（当前规范：00_ 索引 / 01_ 方案 / 用例 02_）
+if [ -f "$V_TEST/研发自测用例.md" ]; then
+  plan_move "$V_TEST/研发自测用例.md" "$V_TEST/研发自测.md" || exit 1
 fi
-for f in $V_TEST/研发自测用例-补充-*.md $V_TEST/研发自测-补充-*.md; do   # 历史散落补充归位（保留原名，索引登记补充）
-  [ -f "$f" ] && git mv "$f" "$V_TEST/研发自测/$(basename "$f")"
+if [ -d "$V_TEST/研发自测用例" ]; then
+  plan_move "$V_TEST/研发自测用例" "$V_TEST/研发自测" || exit 1
+fi
+if [ -f "$V_TEST/研发自测.md" ]; then
+  mkdir -p "$V_TEST/研发自测" || exit 1
+  plan_move "$V_TEST/研发自测.md" "$V_TEST/研发自测/02_全量自测用例.md" || exit 1
+fi
+for f in "$V_TEST"/研发自测用例-补充-*.md "$V_TEST"/研发自测-补充-*.md; do
+  [ -f "$f" ] || continue
+  mkdir -p "$V_TEST/研发自测" || exit 1
+  plan_move "$f" "$V_TEST/研发自测/$(basename "$f")" || exit 1
 done
 TESTCASE_DIR="$V_TEST/研发自测/"
 ```
 
-**2. 补充产物：保持 SKILL 干净命名 `NN_<业务名>.md`（不加"补充"字眼）**——补充模式 B-2 下，上游 SKILL 的增量产出本就是 `NN_<业务名>.md`（已禁"补充/追加"语义前缀，`check_doc_split.py` 亦禁）。⚠️ 两处易错：① 三个 SKILL 都明令「本 SKILL **没有** `mode=supplement` 之类的模式参数，严禁臆造」——`--supplement` 是**命令端**的 flag；② 三份同名 `check_doc_split.py` 的编号不同（ULE / DEP 是检查项 7，**DLA 是检查项 11**），设计详情用的正是 DLA 那份。命令端**只做序号续编校正**（若 SKILL 给的 NN 与目录现存最大序号冲突/不连续，`git mv` 归一到 `MAX+1`），**绝不再补回"补充"字眼**。业务主题 `${TOPIC}`：用户 `/version V0.X "<主题>"` 显式传入 > 口述文件名解析 > 兜底 `增量NN${NN}`。
+**2. 补充产物：保持 SKILL 干净命名 `NN_<业务名>.md`（不加"补充"字眼）**——补充模式 B-2 下，上游 SKILL 的增量产出本就是 `NN_<业务名>.md`（已禁"补充/追加"语义前缀，`check_doc_split.py` 亦禁）。⚠️ 两处易错：① 三个 SKILL 都明令「本 SKILL **没有** `mode=supplement` 之类的模式参数，严禁臆造」——`--supplement` 是**命令端**的 flag；② 三份同名 `check_doc_split.py` 的编号不同（ULE / DEP 是检查项 7，**DLA 是检查项 11**），设计详情用的正是 DLA 那份。命令端**只做序号续编校正**（若 SKILL 给的 NN 与目录现存最大序号冲突/不连续，按源文件跟踪状态归一到 `MAX+1`），**绝不再补回"补充"字眼**。业务主题 `${TOPIC}`：用户 `/version V0.X "<主题>"` 显式传入 > 口述文件名解析 > 兜底 `增量NN${NN}`。
 
 ```bash
+# 独立 Bash 围栏：不能沿用上一围栏里的函数。
+plan_move() {
+  if [ -e "$2" ] || [ -L "$2" ]; then printf '❌ 目标已存在：%s\n' "$2" >&2; return 1; fi
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+     git ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+    git mv -- "$1" "$2" || return 1
+  else
+    mv -n -- "$1" "$2" || return 1
+    [ ! -e "$1" ] || { printf '❌ 移动未完成：%s\n' "$1" >&2; return 1; }
+  fi
+}
 # ⛔ `TESTCASE_DIR` 赋在上一围栏（另一次 Bash 调用），必须在本围栏重新派生：取空则下面所有
 #    `"$TESTCASE_DIR"` 实参都是空路径，研发自测这一类的 `00_索引.md` 从不生成/刷新（约定 15 落空）。
 TESTCASE_DIR="docs/testing/{version}/研发自测/"
@@ -81,18 +128,33 @@ normalize_increment() {
   local WANT_N=$(next_seq "$DIR")
   local CLEAN_NAME=$(echo "$NAME" | sed -E 's/^补充-//')
   if [ "$CUR_N" != "$WANT_N" ] || [ "$NAME" != "$CLEAN_NAME" ]; then
-    git mv "$SRC" "${DIR}${WANT_N}_${CLEAN_NAME}"
+    plan_move "$SRC" "${DIR}${WANT_N}_${CLEAN_NAME}" || return 1
   fi
 }
 for DIR in "docs/requirements/{version}/研发需求/" "docs/design/detail/{version}/" "docs/plans/{version}/" "$TESTCASE_DIR"; do
-  normalize_increment "$DIR"
+  normalize_increment "$DIR" || exit 1
 done
 ```
 
 **3. 去重号 + 生成/刷新 `00_索引.md`（专职索引，三项必载：文件清单 + 生成时间 + 主/补充标识）**——先**消除同目录两位前缀重号**（研发自测 `02_全量自测用例` 等用例分册间重号根治；`01_研发自测方案` + `01_测试环境与账号` 双 `01_` 是不同类别并存、均按名排除 dedup、不误判），再逐份登记内容文档（`01_`+，排除 `00_索引`/`98_`/`99_`）。**主/补充标识规则**：fresh 模式本轮产出 = `主`；`--supplement` 本轮新增 = `补充`；**再生时保留已有行的标识**（历史多分区主文档 `01_/02_` 仍为 `主`），只把本轮新文件按 `RUN_TYPE` 追加。生成时间取文件 mtime（`date -r <file> '+%F %H:%M'`）。
 
 ```bash
+plan_move() {
+  if [ -e "$2" ] || [ -L "$2" ]; then printf '❌ 目标已存在：%s\n' "$2" >&2; return 1; fi
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+     git ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+    git mv -- "$1" "$2" || return 1
+  else
+    mv -n -- "$1" "$2" || return 1
+    [ ! -e "$1" ] || { printf '❌ 移动未完成：%s\n' "$1" >&2; return 1; }
+  fi
+}
 TESTCASE_DIR="docs/testing/{version}/研发自测/"   # ⛔ 同上：跨围栏取空会让 gen_index 作用于空路径
+next_seq() {
+  local DIR="$1" MAX
+  MAX=$(ls "$DIR" 2>/dev/null | grep -E "^[0-9]{2}_" | grep -vE "^(00|98|99)_" | sort | tail -1 | grep -oE "^[0-9]{2}")
+  printf "%02d" $(( 10#${MAX:-00} + 1 ))
+}
 dedup_prefix() {  # 同目录两位前缀重号 → 保留 mtime 较早者、靠后者续编到 next-free（排除 00_/98_/99_ 与非用例分册文件：研发自测方案、测试环境与账号）
   # ★ 研发自测目录两个非用例分册文件走固定保留槽、均按名排除去重：
   #   ① 01_研发自测方案.md（dev-manual-testcase 方案，固定 01_）② 01_测试环境与账号.md（aiauto-test 配置，固定 01_、~20 处 reader 硬编码依赖）。
@@ -102,7 +164,8 @@ dedup_prefix() {  # 同目录两位前缀重号 → 保留 mtime 较早者、靠
     local n=$(echo "$f" | grep -oE "^[0-9]{2}")
     if echo " $seen " | grep -q " $n "; then
       local nn=$(next_seq "$DIR")
-      git mv "${DIR}${f}" "${DIR}${nn}_$(echo "$f" | sed -E 's/^[0-9]{2}_//')"; seen="$seen $nn"
+      plan_move "${DIR}${f}" "${DIR}${nn}_$(echo "$f" | sed -E 's/^[0-9]{2}_//')" || return 1
+      seen="$seen $nn"
     else seen="$seen $n"; fi
   done
 }
@@ -140,14 +203,17 @@ gen_index() {
 
 # ★ RUN_TYPE 显式赋值（由 Step 1 模式决议）：情况 A（fresh 全量）→ fresh；情况 B-2（补充模式）→ supplement
 RUN_TYPE=fresh   # 补充模式（情况 B-2）分支下改赋 RUN_TYPE=supplement
-# 研发需求 / 设计详情 / 研发执行计划：① 锚点/裸名归一 ② 去重号 ③ 生成 00_索引（gen_index 自带命名锚例外守卫）
+# 研发需求 / 设计详情 / 研发执行计划：前一围栏已归一锚点/裸名；此处去重号并生成 00_索引。
 for DIR in "docs/requirements/{version}/研发需求/" "docs/design/detail/{version}/" "docs/plans/{version}/"; do
-  promote_content_main "$DIR"; dedup_prefix "$DIR"; gen_index "$DIR" "$RUN_TYPE"
+  [ -d "$DIR" ] || continue
+  dedup_prefix "$DIR" || exit 1
+  gen_index "$DIR" "$RUN_TYPE" || exit 1
 done
 # 研发自测目录：已随上游对齐通用范式（00_索引 + 01_研发自测方案 + 用例 02_），与其他三类同样 dedup + gen_index。
 # 用例分册从 02_ 起去重号；01_研发自测方案 与 01_测试环境与账号（aiauto-test 配置）均按名排除 dedup（dedup_prefix 排除项）。
 # gen_index 自带守卫：当前规范目录（无 00_研发自测方案.md）正常维护 00_索引；grandfather 旧锚目录跳过、留旧布局不动。
-dedup_prefix "$TESTCASE_DIR"; gen_index "$TESTCASE_DIR" "$RUN_TYPE"
+dedup_prefix "$TESTCASE_DIR" || exit 1
+gen_index "$TESTCASE_DIR" "$RUN_TYPE" || exit 1
 ```
 
 > ★ **单一信源 = 约定 15**：`00_` 槽位给专职导航锚 `00_索引.md`（研发执行计划**里程碑拆分态同样如此**——分册从 `01_M1研发执行计划.md` 起，`00_` 不被总览占用；存量 `00_研发执行计划-总览.md` 属历史 grandfather，留旧不动、不新产）；补充文档文件名不带"补充"字眼、身份在导航锚登记；生成方 = 命令端归一 + 上游最终原生。**研发自测目录已对齐通用范式**——导航锚 = `00_索引.md`（SKILL 第八步收尾产出），`01_研发自测方案.md`（方案）+ 用例从 `02_` 起，命令端对该目录同样 `dedup_prefix` + `gen_index`（gen_index 守卫：grandfather 旧锚 `00_研发自测方案.md` 目录跳过、不强铺）。

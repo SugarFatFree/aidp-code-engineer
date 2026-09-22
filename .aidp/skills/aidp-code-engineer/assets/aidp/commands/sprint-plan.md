@@ -97,7 +97,7 @@ SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死列�
 
 ### Step 1.6：★ DDL Task SQL 路径回写到最终部署位置（搬迁配套，镜像 sprint-design Step 3.2 ④）
 
-> `dev-execution-planner` 按 `{SQL脚本目录}=code/sql/` 暂存位生成 DDL Task 路径 `code/sql/v{版本号}/{NN}_<中文名>.sql`（Step 1.5 的上游 `check_sql_path_handoff.py` 亦按此**暂存格式**校验 `/v{版本号}/` 子目录，故本回写**必须在 Step 1.5 校验通过之后**跑、绝不可提前——P2 是 `warn` 档、不置 `passed=False`，提前回写只多一条 Important 告警噪音（与本文件上方同一口径））。但 SQL 最终落 `docs/deployment/{version}/sql/增量/`（约定 6/11，由 `/sprint-design` Step 3.2 `git mv` 归位）——故命令端在上游校验通过后，把研发执行计划正文里的暂存位 SQL 路径**确定性回写**为最终部署位置，避免"SQL 已在最终位置、计划仍指暂存位"的断链（`/sprint-dev` 按约定 6 从 `docs/deployment/{version}/sql/增量/` 检测应用 SQL，计划路径须与之一致）。纯确定性文件替换，命令端内联跑（与 sprint-design ④ 同）。
+> `dev-execution-planner` 按 `{SQL脚本目录}=code/sql/` 暂存位生成 DDL Task 路径 `code/sql/v{版本号}/{NN}_<中文名>.sql`（Step 1.5 的上游 `check_sql_path_handoff.py` 亦按此**暂存格式**校验 `/v{版本号}/` 子目录，故本回写**必须在 Step 1.5 校验通过之后**跑、绝不可提前——P2 是 `warn` 档、不置 `passed=False`，提前回写只多一条 Important 告警噪音（与本文件上方同一口径））。但 SQL 最终落 `docs/deployment/{version}/sql/增量/`（约定 6/11，由 `/sprint-design` Step 3.2 按源文件跟踪状态归位）——故命令端在上游校验通过后，把研发执行计划正文里的暂存位 SQL 路径**确定性回写**为最终部署位置，避免"SQL 已在最终位置、计划仍指暂存位"的断链（`/sprint-dev` 按约定 6 从 `docs/deployment/{version}/sql/增量/` 检测应用 SQL，计划路径须与之一致）。纯确定性文件替换，命令端内联跑（与 sprint-design ④ 同）。
 
 ```bash
 # 回写研发执行计划全部分册（单文件 01_ / 拆分 00_总览 + 0N_ / 00_索引）中的暂存位 SQL 路径 → 最终部署位置

@@ -22,8 +22,8 @@
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 取回 BUILD/NOTIFY_ENABLED（跨分片不持久）
   mkdir -p memory/.aidp
   python3 {{AIDP_HOME}}/scripts/emit-report.py --kind exec --patch --version "$TARGET_VERSION" --build "${BUILD}" \
-    --data "docs/reports/${TARGET_VERSION}/AI执行报告/.build-input-${BUILD}.json" --baseline memory/.sprint-autopilot-baseline.json --json > "memory/{{AIDP_HOME}}/emit-exec-${BUILD}.json"
-  AI_REPORT_URL=$(jq -r '.access_url' "memory/{{AIDP_HOME}}/emit-exec-${BUILD}.json")   # 仓库相对路径（带 #/build/<BUILD> hash）
+    --data "docs/reports/${TARGET_VERSION}/AI执行报告/.build-input-${BUILD}.json" --baseline memory/.sprint-autopilot-baseline.json --json > "memory/.aidp/emit-exec-${BUILD}.json"
+  AI_REPORT_URL=$(jq -r '.access_url' "memory/.aidp/emit-exec-${BUILD}.json")   # 仓库相对路径（带 #/build/<BUILD> hash）
   ```
   脚本自动：写结果态 data + 注册两页（报告只落本地 `docs/reports/`）→ 回写 baseline `report_deliveries.exec_report`；返回的 `access_url` 为仓库相对路径（带 `#/build` hash），#3 通知直接附该路径。**⛔ 不手工写 data / 注册**。
 

@@ -54,7 +54,7 @@ stop_guard:
 
 scheduler:
   # 7×24 操作系统调度（python3 .aidp/scripts/aidp_scheduler.py install）：
-  # 开发链路与测试链路各装一个用户级定时任务，互不阻塞。
+  # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。
   dev_interval: 10m
   test_interval: 5m
   # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh

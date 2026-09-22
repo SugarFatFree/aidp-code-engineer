@@ -1332,4 +1332,3 @@ Quality Review Agent 在执行检查时:
 - 完备性度量类维度(18-19)与 SKILL 执行流程"第七步:覆盖率回检"共用同一份信源 [`test-design-methodology.md`](./test-design-methodology.md),生成时自检与事后 QA 判据一致、不产生双信源
 - 每轮检查必须生成完整的覆盖率矩阵和问题清单
 - 修订建议必须具体可执行,包含 TC-ID 和具体操作
-

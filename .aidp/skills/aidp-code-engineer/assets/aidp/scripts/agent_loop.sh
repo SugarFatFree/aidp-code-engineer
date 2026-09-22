@@ -139,13 +139,13 @@ run_one() {
     rc=0
     eval "${exec_tpl//\{prompt\}/$quoted}" >>"$log" 2>&1 || rc=$?
     echo "[agent_loop] $(date '+%F %T') 结束 rc=$rc" >>"$log"
-    exit 0
+    exit "$rc"
   ) 9>"$lock"
 }
 
 if [ "$once" = 1 ]; then
   python3 "$AIDP_HOME/scripts/aidp_scheduler.py" watchdog --quiet >>"$log" 2>&1 || true
-  run_one
+  run_one || exit $?
   exit 0
 fi
 

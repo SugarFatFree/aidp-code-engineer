@@ -65,7 +65,7 @@
 │   └── reports/       # AI 全自动报告（执行/测试/数据清理/版本测试）
 ├── memory/            # AI 记忆系统
 ├── env/               # 环境配置（.env）
-├── .aidp/             # AIDP 单一信源：commands/agents/rules/flows/reference/skills/hooks/templates/plugins
+├── {{AIDP_HOME}}/      # AIDP 运行真源：commands/agents/rules/flows/reference/skills/hooks/templates/plugins
 │                     #   + scripts/ 工具脚本（aidp_state / commit_gate / notify / cicd_watch 等）
 ├── .github/           # CICD 工作流（如有）
 ├── AGENTS.md          # 项目记忆文件（Claude Code 下为 CLAUDE.md）
@@ -107,11 +107,13 @@ chore: 构建/工具链相关
 /sprint-test              # 执行测试
 ```
 
+上方 `/命令` 适用于 Claude Code / DeepSeek Harness；Codex 使用同名 `$命令`（如 `$sprint-dev`）。
+
 ★ 7×24 全自动（开发链路 + 测试链路两条同时运行；操作系统调度，Claude Code / Codex / DeepSeek Harness 通用）：
 
 ```bash
-python3 .aidp/scripts/aidp_scheduler.py install   # 开发链路（/sprint-autopilot，默认 10m）+ 测试链路（/sprint-aiauto-test，默认 5m）
-python3 .aidp/scripts/aidp_scheduler.py status    # 定时任务 + 两条链路心跳；冻结 / 告警见 memory/.aidp/alerts.jsonl
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 开发链路（10m）+ 测试链路（5m）+ 独立 watchdog 巡检（5m）
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 三条定时任务 + 两条链路心跳；告警见 memory/.aidp/alerts.jsonl
 ```
 
 Claude Code 会话内短期使用：`/loop 10m /sprint-autopilot --unattended` 与 `/loop 5m /sprint-aiauto-test --unattended`（会话级，关闭即停）。

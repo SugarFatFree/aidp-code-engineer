@@ -7,7 +7,7 @@
 > 🔀 **与 `/sprint-full` 的边界**：本命令跑**多个** Sprint（循环调 `/sprint-full`）；只跑**单个** Sprint 用 `/sprint-full {NNN}`。
 
 **★ 本命令是编排器**：
-- 调用 `superpowers:executing-plans` 做顶层执行计划
+- 用 `plan_sprints.py` 的执行列表与 Step 3 的逐 Sprint 子 Agent 循环做顶层编排
 - 循环调用 `/sprint-full {NNN} [--unattended]` 执行每个 Sprint（本命令带该 flag 时必透传）
 - 调用 `superpowers:verification-before-completion` 做完成前验证
 - **★ Step 6**：全部 Sprint 完成后**自动询问部署方式并衔接 `/sprint-aiauto-test`** 跑浏览器仿真测试，端到端闭环
@@ -15,7 +15,7 @@
 > ⛔ **零询问连跑铁律（置顶强调 — 下游最易违反）**：本命令一旦启动，**Sprint 循环体（Step 3）内默认直接连跑研发执行计划的全部 Sprint、全程零询问**，把整张计划当**一个不可分割的任务**：
 > - **不问"跑哪个 Sprint"**：无范围参数 = 跑**全部**研发执行计划文件里的未完成 Sprint（首跑 = 001→最后）；只跑一段才显式传 `001-003`。**严禁**启动时 `AskUserQuestion` 让用户选 Sprint。
 > - **不问"是否继续下一个 Sprint"**：一个 `/sprint-full` 返回后**立即**进下一个，直到执行列表全部关闭。
-> - **本命令的连跑节奏**：本命令用 `superpowers:executing-plans` 仅作循环脚手架，在**批量语境下不采用**其「When to Stop and Ask for Help」的逐任务停下确认节奏——Sprint 之间**绝不**冒出「继续吗 / 跑哪个」类询问（这是本命令自身的连跑行为声明，非改写该 skill 的内部逻辑）。
+> - **本命令的连跑节奏**：由 Step 1 的 `plan_sprints.py` 执行列表与 Step 3 的逐 Sprint 循环决定；Sprint 之间**绝不**冒出「继续吗 / 跑哪个」类询问。遇阻塞按 Step 4 分类与 Step 5.5 收口，不把编排节奏委托给带交互停顿的通用 SKILL。
 > - **Step 3 循环体内的唯一合法停顿**：① 硬失败（编译/前端校验失败、设计文档缺失，见 Step 4）② `/sprint-full` 内部必要决策门（UI 来源 C/D、约定 22 破坏性变更确认门、Critical 裁决）③ 显式 `--stop-on-blocker`（软失败也停）。除此之外，**Sprint 之间任何"要不要继续 / 跑哪个"的询问都是违规**。
 > - ⛔ **严禁自发弹「工作量大 / 如何推进 / 全自主全做 vs 分阶段逐个确认」范围·进度门**（catch-all，**两种模式都禁**）：研发执行计划的全部 Sprint（含单 Sprint 内多个 REQ / 多端工作）是**一个不可分割、必须一次跑完的整体**。模型**不得**以"两个 REQ / 工作量较大 / 每个 Sprint 可控 / 稳妥起见"为由，自发弹「我全自主完成 N 个 Sprint vs 先做某 Sprint 给你 review 再继续」这类询问——它既违反上面"不问是否继续下一个 Sprint"，也**不属于** ② 的「必要决策门」（② 仅指 UI 来源/上游级联/Critical 这类**内容决策**，**不含**"要不要一次做完 / 分几段做"这种**范围·节奏决策**，后者永远默认"一次全做完"、无需问）。`--unattended` 下更是绝对禁止。
 >   - **★ `--unattended` 例外（autopilot `/loop` 无人值守）= catch-all 绝不停等**：本命令带 `--unattended` 时，上面 ②③ 的内部决策门**以及任何未枚举的交互门一律不再停下等人**——透传 `--unattended` 给 `/sprint-full → /sprint-dev`，由其消费 PRD `autopilot_decisions` 预声明（UI C/D 走 `visual_baseline`、约定22 级联默认自动，见 `/sprint-dev` Step 0 / Step X.0.0）、或走文档化保守默认、或转失败熔断（Critical 无法自动裁决时），**绝不 `AskUserQuestion`**。这堵住 autopilot 7×24 在 Sprint 内部弹窗挂死的缺口；PRD 未预声明则走各门文档化的保守默认。
@@ -65,11 +65,7 @@
      上下文压力由子 Agent 隔离承担。要先压缩请自行中断后 /compact 再重跑。
 ```
 
-- **★ 本提示是【纯 INFO】，不是询问门**：打印后**直接继续**，与下方超时分支同一处置。
-  ⛔ 曾在此弹「y 继续 / n 中止」二选一，用户回 n 就**一个 Sprint 都不跑**地终止——
-  那正是本命令「零询问连跑铁律」点名禁止的「反过来用『要省上下文』当借口停下来问人」，
-  与它发生在循环体内还是体外无关（rationale 里"披了一层『发生在循环体外』的壳"说的就是它）。
-  用户要中止随时可以外部中断，不需要命令替他造一个中止出口。
+- **★ 本提示仅为 INFO，不是询问门**：打印后直接继续；上下文长度不构成停下来征询或中止批量执行的理由。用户仍可自行中断。
 - **执行形态**（与上同一处置，不区分"有无响应"）：
   按「每 Sprint 一个独立子 Agent」形态跑（`/sprint-full <NNN> --from-batch` 逐个派），
   ⛔ **此处不传 `--unattended`**：本门仅交互式可达（见下一条），传了会让交互式用户静默进入无人值守语义——
@@ -141,16 +137,9 @@ eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed}"   # ALL_SPRINTS / CLO
   参数 003- → 执行列表 = [003, 004, 005]
 ```
 
-### Step 2：调用 superpowers:executing-plans 作为顶层编排
+### Step 2：初始化批量执行状态
 
-使用 `Skill` 工具调用 `superpowers:executing-plans`（**仅作循环脚手架**）：
-
-```
-计划：批量执行 {version} 下的 {M} 个 Sprint
-默认行为：**全流程批量跑完，中途仅"硬失败"才停**；软失败（bugfix 循环超限等）记账后继续，全部跑完再由人工介入联调验证
-```
-
-> ⛔ **executing-plans 的 stop-and-ask 在此被覆盖**：该 SKILL 自带「When to Stop and Ask for Help」会在任务间停下征询；但在 `/sprint-batch` 语境下，**Sprint 之间一律不停、不问**（连跑铁律见顶部）。executing-plans 仅提供"逐项执行 + 完成前汇报"骨架，其"遇不确定就停下问"**只对 `/sprint-full` 内部的必要决策门生效**，**不得**升格为"每个 Sprint 之间问一次要不要继续"。
+以 Step 1 的 `REMAIN_SPRINTS` 与范围参数交集作为本批次执行列表，按 Sprint 编号顺序交给 Step 3；主流程只保留当前编号、已 close 清单和 Step 4 分类的阻塞状态。不得因单个子 Agent 返回就提前宣布全部完成；若返回状态无法判定，按 Step 4 硬失败收口，不询问“是否继续”。断点续跑时重新执行 Step 1，从计划与已归档记录计算剩余列表。
 
 ### Step 2.5：★ 生成 Sprint 上下文预热包（首次派发前一次，循环内增量更新）
 

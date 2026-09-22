@@ -38,18 +38,18 @@
    GIT_PUSH_COMMIT=$([ -n "$B" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$B" get push_commit --default "" || echo "")
    CENV="<dev|test|prod>"; mkdir -p memory/.aidp
    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "${GIT_PUSH_COMMIT:?}" --env "$CENV" \
-     --version "$TARGET_VERSION" --timeout 480 > memory/{{AIDP_HOME}}/cicd-detect.json
-   DRC=$?; cat memory/{{AIDP_HOME}}/cicd-detect.json
+     --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json
+   DRC=$?; cat memory/.aidp/cicd-detect.json
    # ★ 命中（rc=0 且 next_action=poll）→ 输出 JSON 直接回写 baseline（⛔ 散文声明不算写入）
-   if [ "$DRC" = "0" ] && [ "$(jq -r '.next_action' memory/{{AIDP_HOME}}/cicd-detect.json)" = "poll" ]; then
+   if [ "$DRC" = "0" ] && [ "$(jq -r '.next_action' memory/.aidp/cicd-detect.json)" = "poll" ]; then
      python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" set \
        cicd_run.env "$CENV" \
-       cicd_run.pipeline "$(jq -r '.pipeline // ""' memory/{{AIDP_HOME}}/cicd-detect.json)" \
-       cicd_run.run_id "$(jq -r '.run_id // ""' memory/{{AIDP_HOME}}/cicd-detect.json)" \
-       cicd_run.run_commit "$(jq -r '.run_commit // ""' memory/{{AIDP_HOME}}/cicd-detect.json)" \
-       cicd_run.commit_verified "$(jq -r '.commit_verified // false' memory/{{AIDP_HOME}}/cicd-detect.json)"
+       cicd_run.pipeline "$(jq -r '.pipeline // ""' memory/.aidp/cicd-detect.json)" \
+       cicd_run.run_id "$(jq -r '.run_id // ""' memory/.aidp/cicd-detect.json)" \
+       cicd_run.run_commit "$(jq -r '.run_commit // ""' memory/.aidp/cicd-detect.json)" \
+       cicd_run.commit_verified "$(jq -r '.commit_verified // false' memory/.aidp/cicd-detect.json)"
    fi
-   # rc=2 unreachable / rc=3 CLI 类 → 按 phase-3-6b.md「瞬时故障记账」（CJ=memory/{{AIDP_HOME}}/cicd-detect.json）
+   # rc=2 unreachable / rc=3 CLI 类 → 按 phase-3-6b.md「瞬时故障记账」（CJ=memory/.aidp/cicd-detect.json）
    # 需要跨多条流水线观测时，对 cicd.pipelines 里的每个 env（或 --pipeline <标识>）各跑一次 detect
    ```
    **匹配优先级（commit 是唯一能区分"我的提交"与"他人同期提交 / 上一条旧运行"的信号）**：
@@ -80,7 +80,7 @@
 
 > Step A0 point1「观测法」已在 push 后等 `cicd_post_push_wait_seconds` 检测、命中自动起跑即记 `RUN_TRIGGERED=auto`+`RESOLVED_PIPELINE` 直接进 Step C。本 Step A 只在 **A0 未走观测法**（如 A0 靠触发分支主匹配选定流水线、尚未确认它是否已被本次 push 自动起跑）时做一次针对 `RESOLVED_PIPELINE` 的防重复触发确认，避免一次推送跑两次构建。
 - **若 A0 已置 `RUN_TRIGGERED=auto`** → 本 Step A 整体跳过，直接进 Step C。
-- **否则**：流水线常配「push 触发」，`RESOLVED_PIPELINE` 可能已被本轮 push 起跑——`python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "$GIT_PUSH_COMMIT" --pipeline "$RESOLVED_PIPELINE" --timeout 480 > memory/{{AIDP_HOME}}/cicd-detect.json` 读最近运行（命中后同 A0 代码块回写 baseline），**优先按运行 commit `== GIT_PUSH_COMMIT` 命中**（强绑定，`commit_verified=true`）；取不到 commit 时才回退弱信号（`commit_verified=false`）——弱信号的三个条件与「为何不能只看时间」见 rationale.md「自动触发运行的强弱绑定」。
+- **否则**：流水线常配「push 触发」，`RESOLVED_PIPELINE` 可能已被本轮 push 起跑——`python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "$GIT_PUSH_COMMIT" --pipeline "$RESOLVED_PIPELINE" --timeout 480 > memory/.aidp/cicd-detect.json` 读最近运行（命中后同 A0 代码块回写 baseline），**优先按运行 commit `== GIT_PUSH_COMMIT` 命中**（强绑定，`commit_verified=true`）；取不到 commit 时才回退弱信号（`commit_verified=false`）——弱信号的三个条件与「为何不能只看时间」见 rationale.md「自动触发运行的强弱绑定」。
   - **已自动触发**（`next_action=poll`）→ 记 `RUN_TRIGGERED=auto` + `RESOLVED_RUN_ID`（命中运行的 run id）+ `RESOLVED_RUN_COMMIT`（= 命中运行的 commit），跳过 Step B 直接进 Step C 监控**这条 `RESOLVED_RUN_ID`**。
   - **未自动触发**（`next_action=trigger`：无新运行 / **有运行却无一条 commit 等于 `GIT_PUSH_COMMIT`** / 最近运行早于本次 push）→ 进 Step B 主动触发；**绝不**把一条 commit 不符的旧运行（他人提交 / 上一版旧部署）当成本次运行放行。
 
@@ -95,12 +95,12 @@
     GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --build "$B" get push_commit --default "" || echo "")
     RESOLVED_PIPELINE=$($BE get cicd_run.pipeline --default "")
     DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
-    mkdir -p memory/.aidp; CJ=memory/{{AIDP_HOME}}/cicd-trigger.json
+    mkdir -p memory/.aidp; CJ=memory/.aidp/cicd-trigger.json
     python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --pipeline "${RESOLVED_PIPELINE:?}" --ref "$DEV_BRANCH" \
       --version "$TARGET_VERSION" --timeout 480 > "$CJ"
     # next_action=poll → 输出已带新 run_id；next_action=detect → 平台不回显 run id，用 commit 强绑定重新锁定
     if [ "$(jq -r '.next_action' "$CJ")" = "detect" ]; then
-      CJ=memory/{{AIDP_HOME}}/cicd-detect.json
+      CJ=memory/.aidp/cicd-detect.json
       python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "$GIT_PUSH_COMMIT" --pipeline "$RESOLVED_PIPELINE" \
         --version "$TARGET_VERSION" --timeout 480 > "$CJ"
     fi

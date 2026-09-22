@@ -116,7 +116,7 @@ fi
 
 > ★ **0.0.0ter 收尾护栏 fail-open 台账自检（紧接 0.0.0bis，同为开局只读一眼）**：Stop hook `autopilot-stop-guard.py` 是"收尾门没过不许结束"的结构级兜底，但它有 4 层 fail-open。**放行不等于收口，只等于护栏判不出来**——所以每一次"本可介入却放行"都会记进台账，本轮开局读一眼：
 > ```bash
-> SKIPS=memory/{{AIDP_HOME}}/stop-guard-skips.jsonl
+> SKIPS=memory/.aidp/stop-guard-skips.jsonl
 > [ -f "$SKIPS" ] && tail -3 "$SKIPS" | while IFS= read -r l; do echo "⚠️ 上轮收尾护栏未介入：$l"; done
 > ```
 > 命中 `no-build-no-runstate` / `gate-exec-failed` / `gate-script-missing` → **上一轮的仪式产物很可能真的缺**，本轮按 IRON-3 从 `run_state` 续跑时**一并复核**该 build 的收尾门（`autopilot-ceremony-gate.py check`），别默认它已过。命中 `escape-hatch` → 提醒用户逃生舱还开着（`memory/.autopilot-stop-guard-off` 未删，护栏全程沉默）。**无台账文件 = 从未发生可疑放行**（良性放行刻意不记，见 hook 内 `_note_skip` 注释）。

@@ -148,6 +148,10 @@ DERIVED_VARS = {
         "AUDIT_VERDICT",         # version-auditor 终审结论
         "TRIGGER_REASON",  # supply-check: ignore 通知文案里的 {占位符}、非 shell 变量        # 本轮触发原因（诊断用）
         "PRE_RELEASE_VERSION",   # 本轮准发布版本号（Phase 2）
+        "PRERELEASE_GATE_OK",     # Phase 2 本 tick 双门放行（含已核实的 0T 过渡版）
+        "PRERELEASE_HOLD",        # 门禁/归档/游标失败，禁止后续成功落账
+        "PRERELEASE_YIELD",       # 尾段/自动修复让位，不得覆盖 Phase 3 游标
+        "PRERELEASE_ARCHIVE_OK",  # 步骤 2 必需归档产物均已核验；不能仅凭命令返回值
         # ★★ TARGET_VERSION 此前【根本不在本表里】——而 autopilot 侧有 21 份分片读它、
         #    无一自赋值（唯二"赋值"是占位符文本 `TARGET_VERSION="<Phase 0.3.4 识别结果>"`）。
         #    后果不是少一个变量，是**整个 run_state 状态机不存在**：每个 Phase 出口的

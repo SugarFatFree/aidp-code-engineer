@@ -39,7 +39,7 @@
      ```typescript
      // ❌ 错误：后端配置了 context-path=/api，前端未包含
      const baseURL = 'http://localhost:8080'
-     
+
      // ✅ 正确：前端 baseURL 包含后端 context-path
      const baseURL = 'http://localhost:8080/api'
      ```

@@ -8,7 +8,7 @@
 **① 接入路径(由连接位置决定工具形态):**
 - **本地路径 → `chrome-devtools-cli` 技能(CLI 直调,全称技能名 `chrome-devtools-mcp:chrome-devtools-cli`)**:Claude Code 与 Chrome **同机**时,用 CLI 直连本机调试端口。
   > ⚠️ **命令名 ≠ 技能名(务必分清,否则会误判"未装"):** `chrome-devtools-cli` 是 chrome-devtools-mcp 插件里的**技能名**,**不是命令名**;它实际调用的命令是 **`chrome-devtools`**(`npm i chrome-devtools-mcp@latest -g` 安装后可用)。用法为 `chrome-devtools <tool>`(如 `chrome-devtools list_pages`),自检用 `chrome-devtools status`。**不存在名为 `chrome-devtools-cli` 的二进制**——凡自检 / 调用 CLI 一律用命令 `chrome-devtools`,**用 `command -v chrome-devtools-cli` 自检会误判"未装"→ 静默降级 MCP、驱动报告失真**。下文出现的 `chrome-devtools-cli` 均是技能名 / 路径引用(如 `/chrome-devtools-mcp:chrome-devtools-cli`),不要当命令去执行。
-  
+
   CLI 是命令行逐次调用,`--headless=new` 等启动参数在**调用时传入**,**不依赖常驻 MCP 服务、不读 MCP 配置文件**。因此**切换无头 ↔ 有头只是给本机 chrome 加 / 去 `--headless=new`,即时生效,无需重启 Claude Code**。这是日常自测的默认路径。
 - **远程路径 → `chrome-devtools-mcp`(MCP 服务)**:Claude Code 与 Chrome **异机**时(本地无 GUI 却需有头、或 WSL/SSH 跨机场景),用 MCP 服务连接远程已启动的 chrome 调试服务,端点(`<远程 IP>:9222`)写入 MCP 配置文件。**仅首次配置 / 更换远程端点时才需改 MCP 配置 + 重启 Claude Code**(见 §6)。
 

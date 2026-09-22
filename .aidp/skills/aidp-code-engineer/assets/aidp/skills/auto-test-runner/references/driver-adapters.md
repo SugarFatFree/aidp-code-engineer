@@ -124,4 +124,3 @@
 2. 在 `detect_drivers.py` 增加该端探测分支(命令/包/服务检测)。
 3. **方法论层零改动**——只要新适配器实现了 locate/act/observe/capture 四能力,批量调度/模式分级/闭环/失败分级/断点/报告全部自动复用。
 4. **端专有 API 只写进新建的 `driver-<端>.md`**;`SKILL.md`/`execution-methodology.md`/`report-format.md`/`usecase-format.md` 一律零改动,改完跑 `python3 <SKILL_DIR>/scripts/check_layer_isolation.py <SKILL_DIR>` 自检。
-

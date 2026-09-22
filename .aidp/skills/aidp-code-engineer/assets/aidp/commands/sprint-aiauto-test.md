@@ -50,7 +50,7 @@
 /sprint-aiauto-test [flags]
 
 # ★ 标准用法（生产 7×24）：操作系统调度（与开发链路一并安装）；版本号自动从 baseline 读
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 测试链路默认每 5 分钟经 agent_loop.sh --once 唤起本命令
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 开发/测试链路 + 独立 watchdog；测试默认每 5 分钟唤起
 # 交互式短期用法（Claude Code 会话内；会话级、7 天过期、空闲才触发、同会话与开发链路串行）
 /loop 5m /sprint-aiauto-test --unattended                             # 每 5 分钟读 baseline 看有无新部署，自动跑测
 
@@ -228,7 +228,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|ds
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status
 ```
 
-- 开发链路（`/sprint-autopilot`，默认 10m）与测试链路（本命令，默认 5m）各一个独立定时任务，每轮经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended` 唤起（自动补 `--no-loop`、flock 互斥、日志落 `memory/{{AIDP_HOME}}/logs/`），两条链路互不阻塞；任一链路心跳中断由 `aidp_scheduler.py watchdog` 写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` 并发通知。
+- 开发链路（`/sprint-autopilot`，默认 10m）与测试链路（本命令，默认 5m）各一个独立定时任务，每轮经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended` 唤起（自动补 `--no-loop`、flock 互斥、日志落 `memory/.aidp/logs/`），两条链路互不阻塞；第三条独立 watchdog 定时任务每 5 分钟检查两条链路（含从未启动），失联时由 `aidp_scheduler.py watchdog` 写本地告警台账 `memory/.aidp/alerts.jsonl` 并发通知。
 - 非交互执行需预授权工具权限（Claude `permissions.allow` / Codex `codex exec --sandbox workspace-write` + 项目 trust / DeepSeek Harness 在 `scheduler.exec.dsh` 配置执行命令），详见 `{{AIDP_HOME}}/reference/agent-tools.md` 第三节；各 CLI 参数以所用版本官方文档为准。
 
 ### #2 会话内 `/loop`（Claude Code 交互式短期用法）
@@ -256,7 +256,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status
 | 命令 | 关系 |
 |------|------|
 | `/sprint-autopilot` ★ | **姊妹命令**：autopilot 写 baseline，aiauto-test 读 baseline；两条链路同时运行 |
-| `{{AIDP_HOME}}/scripts/aidp_scheduler.py` ★ | 7×24 守护标准方式：两条链路各一个操作系统定时任务 + 心跳巡检 |
+| `{{AIDP_HOME}}/scripts/aidp_scheduler.py` ★ | 7×24 守护标准方式：两条链路任务 + 第三条独立心跳巡检任务 |
 | `/loop` | 会话内交互式短期用法 |
 | `/sprint-test` | autopilot 内部已调（静态扫描走 code-verification-loop）；aiauto-test 是浏览器实测，互补 |
 | `/sprint-bugfix` | aiauto-test 发现**失败用例 + 运行时错误（即使关联用例通过 / 页面无用例覆盖，见 Phase 2.4）**→ 都回写「问题汇总清单」，用户跑 sprint-bugfix 一并修复 |

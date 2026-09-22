@@ -107,6 +107,8 @@ fi
 ```bash
 V={version}                 # 形如 V0.2.0
 VNUM=${V#V}                 # 去 V 前缀 → 0.2.0
+VCS_MODE="${VCS_MODE:-$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))')}"
+if [ "$VCS_MODE" = "git" ]; then
 # 已发布信号（任一命中即已发布）：① 该版本存在 release tag（三风格全覆盖，与 version.md「tag 风格识别约定」同口径）
 # ⛔ 必须区分「判定失败」与「判定为未发布」：两者都产出空值时，浅克隆 / 未 fetch --tags /
 #    CI 无 tag 检出 / git user.name 与 memory 目录名不一致 / progress.md 格式不符 —— 任一情形
@@ -122,16 +124,39 @@ RELEASED=$(printf '%s\n' "$TAGS" | head -1)
 [ -z "$RELEASED" ] && grep -qsE "$V.*✅ ?已发布|已发布.*$V" "memory/$V/$(git config user.name)/progress.md" 版本更新日志.md 2>/dev/null && RELEASED="$V(状态已发布)"
 # ⛔ fail-closed：tag 判定本身失败且其余信号均未命中 → 落点未知，按「已发布」进下方决策门，⛔ 不并入"未发布"
 [ "$TAG_OK" = 0 ] && [ -z "$RELEASED" ] && RELEASED="unknown(tag-query-failed)"
+elif [ "$VCS_MODE" = "none" ]; then
+  # 无 Git 仅使用版本级本地记录；缺少明确证据不能由“无 tag”推导未发布。
+  RELEASED=""
+  [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" get internal_released_at --default "" 2>/dev/null)" ] && RELEASED="internal_released_at"
+  [ -z "$RELEASED" ] && [ -d "docs/deployment/$V/配置文件/全量" ] && RELEASED="deployment-baseline"
+  UNRELEASED=0
+  V_ESC=${V//./\\.}
+  for progress in "memory/$V"/*/progress.md 版本更新日志.md; do
+    [ -f "$progress" ] || continue
+    if grep -qsE "$V_ESC.*✅ ?已发布|已发布.*$V_ESC" "$progress"; then
+      [ -z "$RELEASED" ] && RELEASED="$V(状态已发布)"
+    fi
+    # 只有版本号同一行明确写未发布，且不存在任何已发布信号，才允许累进。
+    grep -qsE "$V_ESC.*未发布|未发布.*$V_ESC" "$progress" && UNRELEASED=1
+  done
+  if [ "$UNRELEASED" = 1 ] && [ -n "$RELEASED" ]; then
+    RELEASED="unknown(local-release-state-conflict)"
+  elif [ "$UNRELEASED" = 0 ] && [ -z "$RELEASED" ]; then
+    RELEASED="unknown(local-release-state-unverified)"
+  fi
+else
+  RELEASED="unknown(vcs-mode-unrecognized)"
+fi
 echo "RELEASED=${RELEASED}"
 ```
-> ⛔ **`TAG_OK=0`（不是 git 仓库 / tag 查询本身失败）→ fail-closed**：上方最后一行把 `RELEASED` 置为 `unknown(tag-query-failed)`，
-> 于是走下方决策门（交互式让用户确认版本落点；`--unattended` 按保守默认处理并留痕），⛔ 不得并入"未发布"直接累进。
+> ⛔ **`TAG_OK=0`（Git tag 查询失败）或 `vcs_mode=none` 且无明确本地发布证据 → fail-closed**：将 `RELEASED` 置为 `unknown(...)`，交互式要求用户先核实并选定落点；`--unattended` 记录 `release-state-unknown` 待裁决并结束本次累进，不得自行创建 patch 版本或把无 Git 当未发布。即使本地证据命中，也仅表示需要版本落点决策，不表示已完成正式 Git 发布。
 >
-> 说明：若用户已开始新版本规划，「当前版本」早已被 `/version` 推进到未发布的新号（无 tag、状态非已发布），本门 `RELEASED` 为空、**自动不触发**——故本门只在「停在已发布版本、又来新需求」时才拦。
+> 说明：Git 模式下若用户已开始新版本规划，「当前版本」已推进到未发布的新号，tag 查询成功且无已发布信号时 `RELEASED` 为空、本门自动不触发；无 Git 模式须有版本号对应的明确「未发布」本地记录且无已发布信号，才能让 `RELEASED` 为空；记录缺失或互相矛盾时需先核实发布状态。
 
 **② ★ 决策前置铁律（不可逆序）**：`RELEASED` 非空时，**在用户选定落点并确认之前，绝不创建任何 `{新版本}` 持久副作用**——不 `mkdir docs/requirements/{新版本}/` / `docs/design/detail/{新版本}/` / `memory/{新版本}/`、不写项目记忆文件「当前状态」、不建 tag/分支。**决策 → 用户确认 → 才建目录**（事前一问，成本远低于事后 `git mv` 一批目录 + 回改状态文件）。
 
 **③ `RELEASED` 非空 → 决策门（`RELEASED` 为空 → 跳过本门，直接进 Phase 0B.1 正常累进）**：
+- **`RELEASED=unknown(...)`** → 发布状态不可核实，停止本次累进并保留原版本号；交互式请用户核实本地发布记录并明确落点，`--unattended` 记待裁决 `release-state-unknown` 并交上层失败处置，不使用下方已确认发布版本的默认 patch 路径。
 - **交互式**（非 `--unattended`）→ `AskUserQuestion` **三选一**（命令端给推荐项 + 逐项讲清代价，**版本号语义 patch/minor 由用户定、执行体不自裁**）：
   - **① 落回已发布版本 `{V}`（re-release）**：增量并入 `{V}`、完成后走 `/version {V}` 情况 C 重新发布。⚠️ **风险必须明示**：re-release 会**强制移动已推送的 tag `v{VNUM}` + 强制重建版本分支 + 强制推送**；**若该 tag 已被他人拉取 / 已被 CI / 制品库消费，强制移动有实际风险**。适合：极小热修且确认 tag 未被下游消费。
   - **② 新开 patch 版本 `{x.y.z+1}`（推荐默认，风险最低）**：向后兼容的修补 / 行为补齐 → 新建版本目录 → 累进开发；**不动已发布的 tag**。

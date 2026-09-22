@@ -89,7 +89,7 @@ const request = axios.create({
 request.interceptors.request.use((config) => {
   // ✅ 正确：运行时判断环境变量（打包后保留此逻辑）
   const mockEnabled = import.meta.env.VITE_THIRD_PARTY_MOCK_ENABLED === 'true';
-  
+
   if (mockEnabled && config.url?.includes('/alipay/trade/refund')) {
     console.warn('[DEV] 使用 Mock 数据拦截: /alipay/trade/refund');
     return Promise.reject({
@@ -98,7 +98,7 @@ request.interceptors.request.use((config) => {
       isMockResponse: true
     });
   }
-  
+
   return config;
 });
 
@@ -158,14 +158,14 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class CustomsDeclareServiceImpl implements CustomsDeclareService {
-    
+
     // ✅ 正确：运行时注入配置（任意环境可通过环境变量切换）
     @Value("${third-party.mock.enabled}")
     private boolean mockEnabled;
-    
+
     @Autowired
     private CustomsApiClient customsApiClient;
-    
+
     @Override
     public DeclareResponse submitDeclaration(DeclareRequest request) {
         // THIRD_PARTY_MOCK: 海关总署报关推送接口未交付
@@ -179,7 +179,7 @@ public class CustomsDeclareServiceImpl implements CustomsDeclareService {
             log.warn("[DEV] 使用 Mock 数据: 海关报关推送接口");
             return CustomsDeclareResponseMock.buildSuccess(request.getDeclarationNo());
         }
-        
+
         // 真实调用
         return customsApiClient.declare(request);
     }
@@ -188,30 +188,30 @@ public class CustomsDeclareServiceImpl implements CustomsDeclareService {
 
 1. **详细设计 Module E 登记**:在详细设计的 Module E 待澄清清单中登记"等待第三方接口交付:vendor={供应商} / api={接口路径} / expected_ready={预计交付日期} / mock 位置=前端|后端|中间件"
 2. **Phase 3/4 任务拆解时——强制拆分为 5 个独立 Task（Critical）**:
-   
+
    为每个第三方接口对接创建以下**独立、不可合并**的任务链：
-   
+
    **Task X.1: Mock 开关配置**
    - 内容：添加环境变量声明（`.env.development` / `application.yml`）
    - 验收：配置文件中存在 mock 开关，默认值正确（dev=true, prod=false）
-   
+
    **Task X.2: Mock 实现代码**
    - 内容：
      - 前端：拦截器 + 运行时 if 判断（`import.meta.env.VITE_THIRD_PARTY_MOCK_ENABLED`）
      - 后端：服务类 + 运行时 if 分支（`@Value` + `if (mockEnabled)`）
    - 验收：Mock 使用运行时可控方式（非构建期守卫），THIRD_PARTY_MOCK 标注块完整
-   
+
    **Task X.3: Mock 数据 Fixture**
    - 内容：
      - 前端：独立 JSON 文件（`src/mocks/fixtures/{vendor}{api}.json`）
      - 后端：独立 Java 类（`com.project.mocks.{Vendor}{Api}MockData.java`）
    - 验收：Fixture 独立存放，不散落在业务组件中
-   
+
    **Task X.4: 真实接口对接**
    - 前置依赖：第三方接口交付
    - 内容：切换到真实接口调用，验证联调通过
    - 验收：真实接口可正常调用，返回预期数据
-   
+
    **Task X.5: Mock 清理验证**
    - 前置依赖：Task X.4 完成
    - 内容：
@@ -224,12 +224,12 @@ public class CustomsDeclareServiceImpl implements CustomsDeclareService {
      - ✅ Mock Fixture 文件已删除
      - ✅ 环境变量开关已禁用或删除
      - ✅ 扫描脚本输出"无残留"
-   
+
    **Why 强制拆分 5 个 Task:**
    - 开关/实现/数据分离 → 清理时精准定位，不会漏删
    - Task X.5 显式列入研发执行计划 → 开发者不会忘记清理
    - 结构化任务 → 与 `code-verification-loop` 扫描规则对齐，验收阶段不返工
-   
+
    **优先采用前端 mock 方案**：
    - Phase 4 前端任务直接落 Task X.1~X.3（前端实现）
    - Phase 3 后端无需创建 Task X.1~X.3（节省后端工时）

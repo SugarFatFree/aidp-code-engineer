@@ -175,6 +175,12 @@ def run(root):
                 body_joined = re.sub(r"\\\s*\n\s*", " ", body)
                 for m in re.finditer(r"tick_flags\.py[^\n]*?\bset\b[^\n]*", body_joined):
                     set_names |= set(re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", m.group(0)))
+                aliases = re.findall(
+                    r'^\s*([A-Za-z_]\w*)=(["\'])[^\n]*?autopilot_tick_flags\.py\s+set\b[^\n]*?\2\s*$',
+                    body_joined, re.M)
+                for alias, _ in aliases:
+                    set_names |= set(re.findall(
+                        r'\$' + re.escape(alias) + r'\s+([A-Z][A-Z0-9_]{2,})\b', body_joined))
                 for name in declared:
                     if re.search(r"\$\{?%s\b" % re.escape(name), body):
                         consumers.setdefault(name, []).append(os.path.relpath(p, root))

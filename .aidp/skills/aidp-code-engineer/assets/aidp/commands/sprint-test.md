@@ -220,9 +220,11 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 
 **输出**：把预判结果追加到 `docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md`「研发自测准入预检」章节（健康探测命令 + 命中/未命中清单 + 执行规则提示）。
 
-### Step 3：调用 api-tester skill（后端接口自动测试，可选）
+### Step 3：在线接口附加观察（后端接口自动测试，可选）
 
-如果后端是 Spring Boot 项目，**且本地或 Claude Code 环境中可用** `api-tester` skill（后端接口自动测试 skill，可选），使用 `Skill` 工具调用：
+**验收边界**：Step 2 的静态核验与 Step 7 的编译/类型检查形成 `/sprint-test` 验收结论；本步的健康探测、`api-tester` 和接口字段级对齐只在已有服务可用时追加运行时观察。在线成功不得覆盖静态失败，在线失败或环境缺席也不得改变静态验收结论、触发本命令的静态 Critical 回修；发现实际运行缺陷时另记待处理问题，由部署/浏览器实测链路复验。
+
+如果后端是 Spring Boot 项目，**且本地或 Agent 环境中可用** `api-tester` skill（后端接口自动测试 skill，可选），使用 `Skill` 工具调用：
 
 > ⛔ **约定 35 守卫（本步唯一会触及运行时的地方，缺它则本步字面违反"验收循环不启动任何服务"）**：
 > **只对【已在运行】的服务发只读探测，绝不自起服务**。进本步前先探活：
@@ -230,7 +232,7 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 > curl -sf -m 3 -o /dev/null "${BACKEND_BASE_URL}/actuator/health" || \
 >   { echo "⏭️ 后端未就绪 → 整步跳过（⛔ 不得为跑接口测试而启动服务，约定 35 ①）"; SKIP_API_TEST=1; }
 > ```
-> - 探活失败 → **整步跳过**，在 `docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md`「各子报告汇总」段标「接口测试未执行：环境未就绪」（验收结论的唯一落点，见 `/sprint-close` Step 2），**不阻断**其余维度；
+> - 探活失败 → **整步跳过**，在 `docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md`「在线接口观察」段标「接口测试未执行：环境未就绪」，**不阻断**静态验收；
 > - ⛔ **禁止**在本步 `mvn spring-boot:run` / `docker compose up` / 任何形式拉起被测服务；
 > - 只读探测（GET / 幂等查询）可发，**写操作接口**须由用例显式标注为可测才发。
 >
@@ -246,7 +248,7 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
   "$BACKEND_BASE_URL" --json > docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-api-contract.json
 ```
 
-结果（只读 GET 探测、report-only）汇入 test-report「各子报告汇总」；不一致项按 Critical 转写 bug 记录。探活失败 → 标「接口契约对齐未执行：环境未就绪」。
+结果（只读 GET 探测、report-only）汇入 test-report「在线接口观察」；不一致项另记运行时问题供后续复验，不作为静态验收 Critical，也不改变 Step 2 的结论。探活失败 → 标「接口契约对齐未执行：环境未就绪」。
 
 ```
 扫描 Controller 和 DTO → 生成 curl 测试命令 → 执行测试 → 写入 api_test_report.md
@@ -256,7 +258,7 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 
 ### Step 4：前端浏览器仿真功能测试 → 走 `/sprint-aiauto-test`（不在本命令内）
 
-> ⚠️ **前端「浏览器仿真功能测试」由独立命令 `/sprint-aiauto-test`**（当前工具 `chrome-devtools-mcp`，**默认无头 `--headless=new`**）在**部署完成后**承担；`/sprint-test` 本阶段聚焦**静态扫描**（`code-verification-loop`）+ 可选 `api-tester` 接口测试。
+> ⚠️ **前端「浏览器仿真功能测试」由独立命令 `/sprint-aiauto-test`**（当前工具 `chrome-devtools-mcp`，**默认无头 `--headless=new`**）在**部署完成后**承担；`/sprint-test` 本阶段的验收结论只由**静态扫描**（`code-verification-loop`）与静态编译/类型检查决定；可选 `api-tester` 仅提供独立在线观察。
 
 - 本 Sprint 若需浏览器实测：部署完成后按下列**入口判据**选命令（账号/环境/渲染模式等连接信息见 `docs/testing/{version}/研发自测/01_测试环境与账号.md`）：
   1. 查 baseline `memory/.sprint-autopilot-baseline.json` 里本 `{version}` 是否属 **autopilot 体系**——判据 = `current_build` 存在，**或** `versions.{version}` 存在**且** `versions.{version}.source != "sprint-batch"`（`source="sprint-batch"` 是 `/sprint-batch` Step 6.4 自己的预写痕迹，不算 autopilot 体系，否则每次重跑都被弹回）；
@@ -274,10 +276,10 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 内容包含：
 - 测试范围和回归范围
 - 测试用例统计（总数/通过/失败/阻塞/不适用）
-- 各子报告汇总（api-tester / code-verification-loop；前端浏览器仿真测试报告（HTML）由 `/sprint-aiauto-test` 落 `docs/reports/{version}/AI测试报告/`）
+- 静态验收子报告汇总（code-verification-loop）；在线接口观察（如有 api-tester / 接口字段级对齐）单列，不计入静态验收结论；前端浏览器仿真测试报告（HTML）由 `/sprint-aiauto-test` 落 `docs/reports/{version}/AI测试报告/`
 - 缺陷统计
 - **研发自测问题汇总清单引用**：仅写**跳转链接 + 状态计数摘要**（如「待修复 P0=N₁ / P1=N₂ / P2=N₃ / P3=N₄；已修复 M；已验证 K」），**不嵌入清单全文**（避免与原清单双倍维护）；指向 `docs/testing/{version}/研发自测/` 下用例文档末尾的「问题汇总清单」表（按 glob 汇总所有分册的清单计数）；下游 `/sprint-bugfix` 会从该清单批量读取「待修复」行
-- 测试结论：✅ 建议发布 / ⚠️ 有条件发布 / ❌ 不建议发布
+- 静态验收结论：✅ 建议进入部署实测 / ⚠️ 有条件进入实测 / ❌ 静态验收不通过；**在线结果不参与静态验收结论**，最终发布仍须独立通过部署与浏览器实测门
 
 ### Step 6：Bugfix 验证（回归测试）
 

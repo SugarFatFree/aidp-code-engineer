@@ -25,7 +25,7 @@
 4. **判不出 version/build、脚本缺失、任何异常** → 放行（永不因自身故障 wedge）。
 5. **熔断上限**：同一 build 连续阻止达 3 次仍未过 → fail-open 放行 + 告警交人工（防无限 wedge）。
 
-只有【全部确定信号齐备 + 收尾门确定 `exit 1` + 未达熔断上限】才 `exit 2`。计数文件 `memory/{{AIDP_HOME}}/stop-guard-count`（收尾门通过即清）。
+只有【全部确定信号齐备 + 收尾门确定 `exit 1` + 未达熔断上限】才 `exit 2`。计数文件 `memory/.aidp/stop-guard-count`（收尾门通过即清）。
 
 **项目根目录解析**（兼容多宿主）：`CLAUDE_PROJECT_DIR` → `CODEX_PROJECT_DIR` / `DSH_PROJECT_DIR`（若宿主注入）→ `git rev-parse --show-toplevel` → 当前工作目录。
 

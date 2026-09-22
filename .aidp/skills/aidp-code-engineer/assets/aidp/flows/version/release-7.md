@@ -220,7 +220,7 @@ else
         [ -n "$RUN_ID" ] || { echo "⛔ cicd_watch 返回 poll 但缺 run_id"; exit 1; }
         WATCH_RC=0
         WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RUN_ID" \
-          --env "$CICD_ENV" --version "$VERSION") || WATCH_RC=$?
+          --commit "$PUSH_COMMIT" --env "$CICD_ENV" --version "$VERSION") || WATCH_RC=$?
         [ "$WATCH_RC" -le 3 ] || { echo "⛔ cicd_watch 异常 fail-closed"; exit 1; } ;;
       probe)
         python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py \

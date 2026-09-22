@@ -68,7 +68,7 @@ python3 {{AIDP_HOME}}/scripts/check_memory_loss.py --snapshot
 >
 > 它拿工作区与 Step 0 的快照比（无快照时回落 `git HEAD`），覆盖 Step 2 的 `activeContext.md` / `progress.md`：**L1 段落消失 / L2 段落塌缩 ≥40% / L3 整份塌缩** 任一命中即 exit 1；通过后自动清理快照。
 > 填掉 `（待填充）` 占位符**不算丢失**（那正是约定 8 要求的动作，按标题前缀匹配）。
-> 报红即按提示从快照（`memory/{{AIDP_HOME}}/memory-snapshot/<文件>`）或 `git show HEAD:<文件>` 取回被吞的段落，⛔ 不得以「本次就是要精简」为由径直 commit。
+> 报红即按提示从快照（`memory/.aidp/memory-snapshot/<文件>`）或 `git show HEAD:<文件>` 取回被吞的段落，⛔ 不得以「本次就是要精简」为由径直 commit。
 >
 > **Why**：「整段重写吞掉手写内容」与「本次确实没改那一段」在仓库里完全同形——
 > 光靠纪律，失效时不可观测，所以必须有这道确定性检测。本步的动词是「追加」「更新」，

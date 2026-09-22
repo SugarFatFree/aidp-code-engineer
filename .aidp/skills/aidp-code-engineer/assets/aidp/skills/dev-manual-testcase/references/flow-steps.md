@@ -95,4 +95,3 @@
 > **机检:** `python scripts/check_testcase_format.py {测试目录}` 会核 `00_索引.md` 存在(缺失报 Important;历史旧锚 `00_研发自测方案.md` 目录 grandfather 放行、提示迁移)。
 
 ---
-

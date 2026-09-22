@@ -2,7 +2,7 @@
 
 > 本规范隶属于 `code-verification-loop` SKILL，供维度 2B 第三方临时 mock 协议核验使用。
 > 上级:`../SKILL.md`
-> 
+>
 > **协议内容说明:** 本协议定义的标注规范与 `dev-logic-architect` SKILL.md 核心原则 14 保持一致。其他 SKILL 通过引用核心原则 14 间接获得协议规范。
 >
 > **目的:** 在第三方平台接口尚未交付时,允许前端/后端使用临时 mock 数据保持开发联调;一旦真实接口可用,mock 必须立即删除,严禁与真实调用并存或保留为兜底。
@@ -142,13 +142,13 @@ export async function mockAlipayRefund(orderId: string) {
  */
 @Component
 public class CustomsQueryClient {
-    
+
     @Value("${third-party.mock.enabled:false}")
     private boolean mockEnabled;
-    
+
     @Autowired
     private CustomsApiClient realClient;
-    
+
     public CustomsQueryResp query(CustomsQueryReq req) {
         if (mockEnabled) {
             // THIRD_PARTY_MOCK 占位逻辑
@@ -178,7 +178,7 @@ import os
 def idp_token_exchange(code: str) -> dict:
     """OAuth IDP token exchange"""
     mock_enabled = os.getenv("THIRD_PARTY_MOCK_ENABLED", "false").lower() == "true"
-    
+
     if mock_enabled:
         # THIRD_PARTY_MOCK: OAuth IDP 用户授权接口未交付,占位以解阻塞登录联调
         # vendor: 集团统一身份认证 IDP
@@ -188,7 +188,7 @@ def idp_token_exchange(code: str) -> dict:
         # owner: BE-王五
         # REMOVE_WHEN: 真实接口可调通后立即删除本分支,禁止保留为兜底
         return {"access_token": "MOCK_AT_" + code, "expires_in": 3600}
-    
+
     # 真实接口调用
     response = httpx.post(
         f"{settings.IDP_BASE_URL}/oauth2/token",

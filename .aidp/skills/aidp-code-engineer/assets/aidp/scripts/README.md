@@ -82,7 +82,7 @@ python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py gate --require notify,mcp_c
 python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py gate --require notify --interactive # 交互式调用：通知启用却无可用渠道时不放行
 ```
 
-可校验项（`--require` 取值）：`notify`（`notify.enabled=false` 视为满足；启用时至少一个渠道**本地可用**——webhook 渠道 = 对应 `*_env` 环境变量已设置、`lark-cli` = 命令在 PATH 且配了 `chat_id`、`command` = 命令非空；启用却无可用渠道时无人值守视为降级满足（冻结 / 告警照常写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl`），**`--interactive` 下不满足**）/
+可校验项（`--require` 取值）：`notify`（`notify.enabled=false` 视为满足；启用时至少一个渠道**本地可用**——webhook 渠道 = 对应 `*_env` 环境变量已设置、`lark-cli` = 命令在 PATH 且配了 `chat_id`、`command` = 命令非空；启用却无可用渠道时无人值守视为降级满足（冻结 / 告警照常写本地告警台账 `memory/.aidp/alerts.jsonl`），**`--interactive` 下不满足**）/
 `mcp_chrome`（仅"需远程 chrome"时要求）/ `clean_tree`（一般**不**进 gate，脏树走命令端决策门）。
 
 ### 退出码（命令端按此分流）
@@ -179,7 +179,7 @@ AIDP 级联恒「版本内单向向下」，约定 34 补了反向清算。它�
 
 `/sprint-autopilot` / `/sprint-aiauto-test` 发里程碑通知的**安全通道**：
 ① **字段入参**（`--title`/`--section`/`--section-file`/`--link-text`/`--link-url`/`--footer`），脚本先构造一个**中性通知模型**（`schema=aidp.notify/v1`：title / color / sections / link / footer / meta），再按渠道渲染，调用方**绝不手拼 JSON**；
-② 给了 `--node` 时登记里程碑通知台账：发送成功记 `sent`，失败或无可用渠道记 `undelivered`（收尾门判 DEGRADE 而非 FAIL，杜绝"发送失败仍记已发"骗过收尾门）；`--alert`（冻结 / 告警类节点）无论送达与否都追加本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` 并在 stderr 打印 `🚨 [AIDP-ALERT]`——无通知渠道时"停得响"靠它；
+② 给了 `--node` 时登记里程碑通知台账：发送成功记 `sent`，失败或无可用渠道记 `undelivered`（收尾门判 DEGRADE 而非 FAIL，杜绝"发送失败仍记已发"骗过收尾门）；`--alert`（冻结 / 告警类节点）无论送达与否都追加本地告警台账 `memory/.aidp/alerts.jsonl` 并在 stderr 打印 `🚨 [AIDP-ALERT]`——无通知渠道时"停得响"靠它；
 ③ **标题前缀确定性兜底**：项目名称按 `--project-name` > `AIDP_PROJECT_NAME` > `memory/aidp-config.yaml` 的 `project.name_cn` > `project.name` > git 根目录名解析（恒非空），标题缺项目名称 / 缺 `--version` 版本号即就地补齐并在 stderr 提示；只解析到英文目录名时另打 `⚠️`（`--check-name` 只打印来源，英文兜底 exit 3）。
 ④ **渠道回落在代码里**：`--auto` 按 `memory/aidp-config.yaml` 的 `notify.channels` 依次尝试、成功即停（`notify.fallback=false` 时首个真实失败即停）：
 
@@ -217,7 +217,11 @@ Phase 1「PRD 变化检测」的确定性程序。内联 bash 的常见失效是
 
 `/sprint-autopilot` 部署后的确定性就绪探针：**先 health 判 UP（⛔ 不用登录页可达性判就绪）→ 冷启动窗口内 502/503/连接拒绝属正常不判失败 → `--auth-url` 给出时要求鉴权接口连续 2 次取到非空数据 → 就绪后写 baseline `versions.{version}.last_deployed_at` 放行测试链路**。超时 / 间隔由 `autopilot_tick_flags.py` 的 `CLOUD_READY_TIMEOUT` / `CLOUD_READY_INTERVAL` 从 PRD 供给。
 **单次调用有上限、跨 tick 续探**：`--max-seconds`（默认 480，短于宿主工具 10 分钟上限）到时未就绪且总超时未到 → `exit 4`（pending），下个 tick 带同一 `--since <首次探测时刻>` 续探，冷启动窗口与 `--timeout` 均从 `--since` 起算、不记失败。
-用法：`python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py --health-url <health端点> [--auth-url <鉴权取数接口> --auth-header 'Authorization: Bearer <token>'] [--cold-start-seconds 55] [--timeout 300] [--interval N] [--since <ISO>] [--max-seconds 480] --version <V> [--no-write]`。退出码：`0`=就绪并已写 last_deployed_at；`2`=总超时仍未就绪（命令端递增 `push_probe_fail_streak` 熔断，⛔ 不重跑流水线）；`3`=参数错误；`4`=本次调用到上限、下 tick 续探。
+用法：`python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py --health-url <health端点> [--auth-url <鉴权取数接口> --auth-header 'Authorization: Bearer <token>'] [--cold-start-seconds 55] [--timeout 300] [--interval N] [--since <ISO>] [--max-seconds 480] --version <V> [--no-write]`。退出码：`0`=就绪（不带 `--no-write` 时写 last_deployed_at）；`2`=总超时仍未就绪（命令端递增 `push_probe_fail_streak` 熔断，⛔ 不重跑流水线）；`3`=参数错误；`4`=本次调用到上限、下 tick 续探。autopilot Step D 使用 `--no-write`，完成前端校验后才统一落部署证据。
+
+## frontend_asset_probe.py — 前端产物特征探针与部署证据原子落盘
+
+从本版 PRD `autopilot_decisions.deployment.deploy_ends.frontend.ready_asset_probe` 读首页 URL 与 `must_contain` 特征串，下载首页引用的同源 JS/CSS，逐串核对真实部署资产。前端未声明或未配置特征串时标 `skipped`（不伪造 `frontend_deploy_verified`）；应校验而资源缺失或未命中则退出 1。`--record-ready --build <BUILD> [--commit <SHA>]` 在特征校验后通过 `LockedBaseline` 同锁写入 build 级 `probe_passed/frontend_deploy_verified/probe_at` 与版本级 `last_deployed_at/phase_beta_done_at`，失败不留部分成功证据（退出 2）。无 Git 本地部署省略 `--commit`，Git 部署必须用本 build 的 push SHA 绑定。用法：`python3 {{AIDP_HOME}}/scripts/frontend_asset_probe.py --version <V> [--record-ready --build <BUILD> --commit <SHA>] [--baseline <path>]`。
 
 ## release_scope.py — 本次发布实际覆盖哪些版本（含未单独发布的过渡版本）
 
@@ -252,7 +256,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 ## release_baseline_check.py — 双轨部署基线机器门（12 项确定性校验，约定 37）
 
-约定 37 要求发布期为每个版本同时产出**增量轨**（怎么升级）与**全量轨**（从零怎么搭）。其判据链大多是"要记得做"的动作，而最伤人的几类错误恰恰**人眼逐行看必漏、脚本一秒抓到**——下游实跑回流：`cuc.auth-code` 与 `cuc.kop.auth-code` 都被脱敏成 `${AUTH_CODE}`（现网真值不同，照此注入会让两个认证码撞在一起，一次抓到 3 组）、schema 前缀 / `TABLESPACE` / `STORAGE` 残留把脚本钉死在原环境、6 处失效相对链接。**判据是确定性的，就不该靠自觉消费。**
+约定 37 要求发布期为每个版本同时产出**增量轨**（怎么升级）与**全量轨**（从零怎么搭）。本检查以确定性规则阻断配置占位变量碰撞、SQL 中的环境绑定物残留及相对链接失效；不同命名空间的键脱敏后仍须保持唯一，避免两个配置项意外共用同一占位值。
 覆盖 12 项（含 **11. 全量核对可复核**〔00_索引.md 须写明剔除结论与导出源，二者均 ERROR 级〕与 **12. DDL 注释实查**〔委派 `check_sql_ledger_comment.py`〕）：结构完整性 / YAML 语法（`.yml` 逐文件 + `.md` 内 ```yaml 代码块逐块）/ SQL 环境绑定物残留（命中数须为 0）+ 建表幂等 / 明文凭据 / **占位变量名唯一性**（全路径命名回检）/ `${a.b}` 引用可解析 / 注释完备性（「无行内注释且上一行非注释」）/ 生效形态唯一（多形态中间件，判据绑**解析出的全路径**、不绑原始行文本——绑行文本永远匹配不到嵌套的 `redis.cluster`，本项曾因此静默空跑）/ 相对链接有效性。 / **增量极简度**（增量配置文档无 Markdown 表格、行内注释 ≤20 字符，约定 37.5-6）
 **PyYAML 可选**：可用则做严格语法校验，不可用自动降级为内置结构自检（Tab 缩进 / 同层重复键）+ INFO 告知，**绝不因缺依赖而假通过**。
 用法：`python3 {{AIDP_HOME}}/scripts/release_baseline_check.py --version V0.2.0 [--root .] [--json]`。退出码：`0`=无 ERROR；`1`=有 ERROR（**不得带 ERROR 发布全量基线**）；`2`=版本目录不存在/用法错。编排落点 = `/version` Step 3.3.7.9（`release-4.md`），判据单一信源 = `{{AIDP_HOME}}/reference/约定细则-5.md`。
@@ -273,19 +277,19 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 ## agent_sync.py — `{{AIDP_HOME}}/` 单一信源 → 各 Agent 工具入口装配（确定性、幂等）
 
-按 `agent_env.py` 的检测结果生成 Claude Code（`.claude/skills|commands|plugins`、`.claude/settings.json`）、Codex（公共 `.agents/skills`、官方命令根 `.codex/skills/aidp`、插件 `.codex/skills`、`.codex/hooks.json` / `config.toml`）、DeepSeek Harness（公共与插件 `.agents/skills`、`.dsh/commands`、`.dsh/hooks.json` / `mcp.json`）入口；生成入口登记进根 `.gitignore` 托管块、不入库。Codex 命令 SKILL 确定性声明内联串联规则：原始正文中的 `/foo args` 读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 执行，未知命令 fail closed。入口默认是相对符号链接，`--mode copy` 时为副本；改规则永远改 `{{AIDP_HOME}}/` 后重跑。同时负责项目记忆文件形态（`CLAUDE.md` / `AGENTS.md` / `@AGENTS.md` 薄壳）切换，⛔ 绝不丢弃正文。适配层配置由本脚本生成，不进脚手架 bundle 镜像。
+按 `agent_env.py` 的检测结果生成 Claude Code（`.claude/skills|commands|plugins`、`.claude/settings.json`）、Codex（公共 `.agents/skills`、官方命令根 `.codex/skills/aidp`、插件 `.codex/skills`、`.codex/hooks.json` / `config.toml`）、DeepSeek Harness（公共与插件 `.agents/skills`、`.dsh/commands`、`.dsh/hooks.json` / `mcp.json`）入口；生成入口登记进根 `.gitignore` 托管块、不入库。Codex 命令 SKILL 确定性声明内联串联规则：原始正文中的 `/foo args` 读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 执行，未知命令 fail closed。入口默认是 managed-copy 副本；兼容的 `--mode link` 也归一为 managed-copy，不再生成符号链接。改规则永远改 `{{AIDP_HOME}}/` 后重跑。同时负责项目记忆文件形态（`CLAUDE.md` / `AGENTS.md` / `@AGENTS.md` 薄壳）切换，⛔ 绝不丢弃正文。适配层配置由本脚本生成，不进脚手架 bundle 镜像。
 用法：`python3 {{AIDP_HOME}}/scripts/agent_sync.py [--agents claude,codex,dsh] [--mode copy] [--check] [--human]`；`--self-check` 自测。退出码：`0`=已一致/已写入；`1`=`--check` 发现漂移；`2`=参数、环境或用户自有目标冲突。
 
 ## agent_loop.sh — 非交互唤起 AIDP 命令
 
-`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过）、日志追加到 `memory/{{AIDP_HOME}}/logs/<命令>.log`。
+`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过）、日志追加到 `memory/.aidp/logs/<命令>.log`。
 Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 取 `agent_env.py detect` 第一个）；执行模板（`{prompt}` 占位）：`AIDP_AGENT_EXEC` > `scheduler.exec.<agent>` > 内置默认（Claude Code `claude -p --permission-mode acceptEdits {prompt}`、Codex `codex exec --sandbox workspace-write {prompt}`；DeepSeek Harness 无内置默认、须配置，写法以所用版本官方文档为准）。
 
-## aidp_scheduler.py — 7×24 操作系统调度装配（开发链路 + 测试链路）
+## aidp_scheduler.py — 7×24 操作系统调度装配（开发链路 + 测试链路 + 独立 watchdog）
 
-7×24 的运行载体：为**开发链路**（`sprint-autopilot`）与**测试链路**（`sprint-aiauto-test`）各装一个用户级定时任务，每个任务调用 `agent_loop.sh --once <命令> --unattended`。平台自动选择：Linux `systemd --user` timer（无 systemd 时 crontab）、macOS launchd、Windows 输出 `schtasks` 命令供手工执行。
-`watchdog` 做存活巡检：任一链路连续 `scheduler.stale_cycles` 个周期无心跳 → 写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` 并经 `notify.py --alert` 播报。会话内 `/loop` 仅适合交互式短期使用（会话级、7 天过期、会话空闲才触发、同会话两条 loop 串行）。
-用法：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install|uninstall|status|watchdog [--agent auto|claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m] [--platform systemd|cron|launchd|schtasks] [--dry-run] [--json]`；`--self-check` 离线自测（临时目录渲染两条链路的任务单元）。配置段 = `memory/aidp-config.yaml` 的 `scheduler`（`aidp_config.scheduler_config()`）。
+7×24 的运行载体：为**开发链路**（`sprint-autopilot`）与**测试链路**（`sprint-aiauto-test`）各装一个用户级定时任务，分别调用 `agent_loop.sh --once <命令> --unattended`；第三条独立 watchdog 任务默认每 5 分钟巡检，即使两条链路都从未启动也可在宽限期后告警。平台自动选择：Linux `systemd --user` timer（无 systemd 时 crontab）、macOS launchd、Windows 输出 `schtasks` 命令供手工执行。
+`watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。
+用法：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install|uninstall|status|watchdog [--agent auto|claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m] [--platform systemd|cron|launchd|schtasks] [--dry-run] [--json]`；`--self-check` 离线自测（临时目录渲染三条任务）。配置段 = `memory/aidp-config.yaml` 的 `scheduler`（`aidp_config.scheduler_config()`）。
 
 ## aidp_state.py — 项目级运行时状态（baseline 的 `project_state` 段）
 
@@ -826,7 +830,7 @@ python3 {{AIDP_HOME}}/scripts/autopilot_reset.py --arguments="$ARGUMENTS"; rc=$?
 
 - **只写「走「失败处置」流程」一句散文、没有 `bump`** → 那几类失败**永远累不到阈值**，
   不会按可自动解冻的 reason 冻结，只能等通用 stuck 熔断冻成人工专属的 `stuck-phase`；
-- **写了四件套但没发 #4** → 冻结只存在于 baseline，通知渠道零消息（停得住、停不响）——故冻结时**恒写**本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` + stderr，无通知渠道时同样可见；
+- **写了四件套但没发 #4** → 冻结只存在于 baseline，通知渠道零消息（停得住、停不响）——故冻结时**恒写**本地告警台账 `memory/.aidp/alerts.jsonl` + stderr，无通知渠道时同样可见；
 - **无唤醒源时阈值恒不可达** → `--once` / 无 `/loop` 的轮次没有下一 tick 叠 streak。
 
 收进一个调用后，这三样在结构上不可能再单独发生。
@@ -850,7 +854,7 @@ python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --command 
 `techContext` / `databaseBaseline`）**相当一部分由人手写，且往往是仓库里唯一一份记录**——
 覆盖即永久丢失。确定性防线靠本脚本：与比对基线比 **L1 段落消失 / L2 段落塌缩 ≥40% / L3 整份塌缩**，任一命中 exit 1。
 受保护面另含 `memory/V*/*/{activeContext,progress}.md`。
-**比对基线优先取写前快照**：写入前调 `--snapshot`，把受保护文件的工作区现状存到 `memory/{{AIDP_HOME}}/memory-snapshot/`（未提交的手写内容同样受保护）；检查通过后自动清掉快照（`--keep-snapshot` 保留），报红时保留快照供取回被吞段落。无快照时回落 `git HEAD`。
+**比对基线优先取写前快照**：写入前调 `--snapshot`，把受保护文件的工作区现状存到 `memory/.aidp/memory-snapshot/`（未提交的手写内容同样受保护）；检查通过后自动清掉快照（`--keep-snapshot` 保留），报红时保留快照供取回被吞段落。无快照时回落 `git HEAD`。
 
 ⛔ **填 `（待填充）` 占位符不算丢失**——那正是约定 8 强制要求的动作，按标题**前缀**匹配，
 误伤这一条等于用一道门去阻止另一条约定要求做的事。
@@ -963,9 +967,9 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 
 登记每个运行时/配置产物的路径、性质（人维护 / 运行时状态 / 运行时日志）与入库策略，
 并提供 `inventory()` 供体检遍历。落点分三类：`memory/aidp-config.yaml`（人写·入库）、
-`memory/.sprint-autopilot-baseline.json`（程序写·入库）、`memory/{{AIDP_HOME}}/`（程序写·本地：锁 `locks/`、日志 `logs/`、
+`memory/.sprint-autopilot-baseline.json`（程序写·入库）、`memory/.aidp/`（程序写·本地：锁 `locks/`、日志 `logs/`、
 通知台账、Stop 护栏计数、**本地告警台账 `alerts.jsonl`**）。
-`append_alert(root, **fields)` 追加一条告警到 `memory/{{AIDP_HOME}}/alerts.jsonl` 并在 stderr 打印 `🚨 [AIDP-ALERT]`——
+`append_alert(root, **fields)` 追加一条告警到 `memory/.aidp/alerts.jsonl` 并在 stderr 打印 `🚨 [AIDP-ALERT]`——
 无人值守下所有冻结 / 告警都经它落本地，不依赖通知渠道是否配置。
 
 `--check-vcs` 断言**登记的入库策略与 `git check-ignore` 的事实一致** ——

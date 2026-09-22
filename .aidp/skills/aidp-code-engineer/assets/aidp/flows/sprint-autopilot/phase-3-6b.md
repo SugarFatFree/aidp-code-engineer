@@ -24,18 +24,33 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 V="${TARGET_VERSION:?}"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 RID=$($BE --version "$V" get cicd_run.run_id --default "")
 [ -n "$RID" ] || { echo "⛔ 取不到 RESOLVED_RUN_ID（Step A0/A/B 应已落 cicd_run.run_id）"; exit 1; }
+B=$($BE --version "$V" get current_build --default "")
+GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_commit --default "" || echo "")
+[ -n "$GIT_PUSH_COMMIT" ] || { echo "⛔ 取不到本 build 的 push_commit，禁止轮询或放行部署"; exit 1; }
 PL=$($BE --version "$V" get cicd_run.pipeline --default "")
 CENV=$($BE --version "$V" get cicd_run.env --default "test")
 if [ -n "$PL" ]; then TARGET=(--pipeline "$PL"); else TARGET=(--env "$CENV"); fi
 mkdir -p memory/.aidp
-# ★ --timeout 480：单次调用 < 9 分钟（Bash 工具上限 10 分钟）；到时仍未终态 → verdict=running、下 tick 续 poll
-python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RID" "${TARGET[@]}" --version "$V" \
-  --timeout 480 > memory/{{AIDP_HOME}}/cicd-poll.json
+# 有唤醒源留给下一 tick；无唤醒源最多轮询 300+120 秒，同 tick 必有明确终态或冻结。
+CICD_POLL_WINDOW=480
+[ "${HAS_WAKE_SOURCE:-0}" = "0" ] && CICD_POLL_WINDOW=300
+python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RID" --commit "$GIT_PUSH_COMMIT" "${TARGET[@]}" --version "$V" \
+  --timeout "$CICD_POLL_WINDOW" > memory/.aidp/cicd-poll.json
 WRC=$?
-cat memory/{{AIDP_HOME}}/cicd-poll.json   # 一行 JSON：verdict / next_action / reason / run_id / run_commit / next_retry_count
-VERDICT=$(jq -r '.verdict // ""' memory/{{AIDP_HOME}}/cicd-poll.json)
-RUN_COMMIT=$(jq -r '.run_commit // empty' memory/{{AIDP_HOME}}/cicd-poll.json)
-[ -n "$RUN_COMMIT" ] && $BE --version "$V" set cicd_run.run_commit "$RUN_COMMIT"
+VERDICT=$(jq -r '.verdict // ""' memory/.aidp/cicd-poll.json)
+if [ "$VERDICT" = "running" ] && [ "${HAS_WAKE_SOURCE:-0}" = "0" ]; then
+  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RID" --commit "$GIT_PUSH_COMMIT" "${TARGET[@]}" --version "$V" \
+    --timeout 120 > memory/.aidp/cicd-poll.json
+  WRC=$?
+  VERDICT=$(jq -r '.verdict // ""' memory/.aidp/cicd-poll.json)
+  if [ "$VERDICT" = "running" ]; then
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$B" \
+      --freeze-now --phase 3.2.1-deploy --reason deploy-unreachable \
+      --why "CICD 运行 $RID 在本次无唤醒源调用的 420 秒轮询预算内未终态，需人工续跑"
+  fi
+fi
+cat memory/.aidp/cicd-poll.json   # 一行 JSON：verdict / next_action / reason / run_id / run_commit / next_retry_count
+# poll 已逐次核对 view_run.commit 与本 build 的 push_commit；不以响应 SHA 覆盖基线锚点。
 # ★ 取到状态（非 unreachable）= 平台可达 → 清连续不可达计数
 case "$VERDICT" in unreachable|"") : ;; *) $BE --version "$V" del cicd_unreachable_streak cicd_cli_fail_streak || true ;; esac
 ```
@@ -50,6 +65,7 @@ case "$VERDICT" in unreachable|"") : ;; *) $BE --version "$V" del cicd_unreachab
 | `failed` / rc=2（重试用尽） | ③ 失败且 `CICD_RETRY` 已满 | 走下方「失败重试」的 **2.** 分支（既有「失败处置」流程，`--reason deploy-unreachable`）—— ⛔ 别另造冻结原因 |
 | `unreachable` / rc=2 | ④ CICD 平台不可达（**取不到状态** ≠ 取到失败态，多为网络抖动 / 平台瞬时 5xx） | **不计入 `CICD_RETRY`、不空触发**；按 streak 记账（下方「瞬时故障记账」），连续 3 次才冻结 `cicd-unreachable`（环境类，自动复探）；游标留 `3.2.1-deploy` 下 tick 重试 |
 | `vanished` / rc=2 | ⑤ 锚定运行消失 / 被顶替 | **绝不静默滑到"最近一条"顶替**；`freeze cicd-run-vanished "<原因>"`，**不写 `last_deployed_at`** |
+| `commit-mismatch` / rc=2 | 锚定运行的 commit 不符或为空 | **禁止成功放行与部署证据**；按运行被顶替即时冻结 `cicd-run-vanished`，不消耗重试配额 |
 | `unknown-status` / rc=2 | 状态字样连续无法归类 | 转人工（`freeze pipeline-unknown`），不消耗重试配额 |
 | `parse-error` / rc=2 | 脚手架自身解析缺陷（**非**环境问题） | 报修脚本 + 按 31.5 最保守口径直接重试；⛔ 不回头查业务代码 |
 | rc=3 `cli-missing` / `unauthenticated` / `provider-unavailable` | 提供方 CLI 未安装 / 未登录 / 令牌过期（7×24 下常见） | 按 streak 记账（下方「瞬时故障记账」），连续 3 次冻结 `cicd-cli-unavailable`（环境类，装好 / 重新登录后自动复探放行）；游标留 `3.2.1-deploy` |
@@ -60,14 +76,14 @@ case "$VERDICT" in unreachable|"") : ;; *) $BE --version "$V" del cicd_unreachab
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
 # CJ = 刚跑的那次 cicd_watch 输出（Step A0/A/B 的 detect / trigger、本步 poll / retry 同样适用）
-V="${TARGET_VERSION:?}"; CJ="${CJ:-memory/{{AIDP_HOME}}/cicd-poll.json}"
+V="${TARGET_VERSION:?}"; CJ="${CJ:-memory/.aidp/cicd-poll.json}"
 VERDICT=$(jq -r '.verdict // ""' "$CJ" 2>/dev/null); REASON=$(jq -r '.reason // ""' "$CJ" 2>/dev/null)
 case "$VERDICT" in
   unreachable)
     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "${BUILD:-}" \
       --phase 3.2.1-deploy --reason cicd-unreachable --streak-key cicd_unreachable_streak --threshold 3 \
       --why "CICD 平台不可达：$REASON（请检查网络 / 平台状态）" ;;
-  vanished)   # ⑤ 锚定运行消失：即时冻结（不滑到"最近一条"顶替、不写 last_deployed_at）
+  vanished|commit-mismatch)   # 锚定运行消失或 SHA 错绑：即时冻结（不放行探针、不写 last_deployed_at）
     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "${BUILD:-}" \
       --freeze-now --phase 3.2.1-deploy --reason cicd-run-vanished \
       --why "锚定的 CICD 运行消失或被顶替：$REASON" ;;
@@ -98,7 +114,7 @@ CICD_MAX=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get cicd.max_retries 2>/
 #   本步的即时冻结点（B 触发被拒 / C⑤ / 重试 auto_trigger 闸 / 重试被拒）全部经它；④ 与 CLI 类走上方 streak 记账；
 #   调用形态：freeze <freeze_reason> "<needs_human_reason>"
 freeze() {   # $1=freeze_reason  $2=needs_human_reason
-  # ★★ 落盘 + #4 + 本地告警台账（memory/{{AIDP_HOME}}/alerts.jsonl）由 fail_handle 一次做完；
+  # ★★ 落盘 + #4 + 本地告警台账（memory/.aidp/alerts.jsonl）由 fail_handle 一次做完；
   #   同版本同原因已冻结时它是 no-op（不刷新冻结时刻、不重发 #4）。
   #   #4 是冻结时刻唯一对外可见的信号且不在收尾门期望通知集里，⛔ 不得自己拼四件套漏发。
   python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "${BUILD:-}" \
@@ -128,16 +144,16 @@ freeze() {   # $1=freeze_reason  $2=needs_human_reason
      if [ -n "$PL" ]; then TARGET=(--pipeline "$PL"); else TARGET=(--env "$CENV"); fi
      mkdir -p memory/.aidp
      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode retry --run-id "$RESOLVED_RUN_ID" "${TARGET[@]}" \
-       --version "$V" --timeout 480 > memory/{{AIDP_HOME}}/cicd-retry.json
-     RRC=$?; cat memory/{{AIDP_HOME}}/cicd-retry.json
+       --version "$V" --timeout 480 > memory/.aidp/cicd-retry.json
+     RRC=$?; cat memory/.aidp/cicd-retry.json
      if [ "$RRC" = "0" ]; then
        $BE --version "$V" bump cicd_run.cicd_retry_count
-       NEW_RID=$(jq -r '.run_id // empty' memory/{{AIDP_HOME}}/cicd-retry.json)
+       NEW_RID=$(jq -r '.run_id // empty' memory/.aidp/cicd-retry.json)
        if [ -z "$NEW_RID" ]; then
          # ★ 平台不回显新 run id（jenkins / command）→ 同 tick 按原 commit 重新 detect 锁定，⛔ 不留旧失败 run_id 空耗配额
          python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "${RESOLVED_RUN_COMMIT:?}" "${TARGET[@]}" \
-           --version "$V" --timeout 480 > memory/{{AIDP_HOME}}/cicd-detect.json
-         NEW_RID=$(jq -r '.run_id // empty' memory/{{AIDP_HOME}}/cicd-detect.json)
+           --version "$V" --timeout 480 > memory/.aidp/cicd-detect.json
+         NEW_RID=$(jq -r '.run_id // empty' memory/.aidp/cicd-detect.json)
        fi
        # 以新锚精确轮询（GitHub Actions 为同一 id；GitLab CI / Jenkins 可能是新 id）
        [ -n "$NEW_RID" ] && $BE --version "$V" set cicd_run.run_id "$NEW_RID"
@@ -173,17 +189,23 @@ freeze() {   # $1=freeze_reason  $2=needs_human_reason
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
-# ⛔ 出口**必须按 Step C 的实际结论分流**（本块无守卫；只留"成功"一种形态的后果见 rationale.md）。
-#   CICD_OK 由执行体按 Step C 判定结果就地代入（②成功=1；③/④/⑤=0）。
-CICD_OK=0   # ← Step C 判②成功则改为 1（`running` 未终态 / ③ / ④ / rc=3 CLI 类 / ⑤ 一律 0）
-if [ "$CICD_OK" = "1" ]; then
+# 从本次 poll 的持久 JSON 读回，拒绝旧 run 或别的 commit 的 success。
+RID=$($BE --version "$V" get cicd_run.run_id --default "")
+B=$($BE --version "$V" get current_build --default "")
+PUSH=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_commit --default "" || echo "")
+CJ=memory/.aidp/cicd-poll.json
+VERDICT=$(jq -r '.verdict // ""' "$CJ" 2>/dev/null)
+POLL_RID=$(jq -r '.run_id // ""' "$CJ" 2>/dev/null)
+POLL_COMMIT=$(jq -r '.run_commit // ""' "$CJ" 2>/dev/null)
+if [ "$VERDICT" = "success" ] && [ -n "$RID" ] && [ "$POLL_RID" = "$RID" ] \
+   && [ -n "$PUSH" ] && [ "$POLL_COMMIT" = "$PUSH" ]; then
   $BE --version "$V" run-state "3.2.1-deploy" "3.2.1-probe" "done" \
     --summary "Phase 3.2.1 Step A–C 完成：部署已触发、流水线成功；就绪探针（Step D）待跑" \
     --pending "deploy-probe"
 else
   # 未终态 / ③失败重试中 / ④CICD 平台不可达 / CLI 不可用 / ⑤锚定运行消失 —— 一律留在本步，下 tick 重来
   $BE --version "$V" run-state "3.2.1-deploy" "3.2.1-deploy" "done" \
-    --summary "Phase 3.2.1 Step C 未取得流水线成功（运行中 / 重试中 / CICD 不可达 / 锚定运行消失），下 tick 续" \
+    --summary "Phase 3.2.1 Step C 尚无流水线成功证据；保留部署游标与待办" \
     --pending "cicd-watch"
 fi
 ```

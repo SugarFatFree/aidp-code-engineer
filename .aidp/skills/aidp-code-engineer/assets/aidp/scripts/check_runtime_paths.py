@@ -38,6 +38,7 @@ OLD_RUNTIME_RE = re.compile(
     r"(?<!memory/)(?<![\w{])" + re.escape(LEGACY_AIDP_DIR) + r"/"
 )
 TOKEN = "{{" + "AIDP_HOME" + "}}"
+STATE_HOME_RE = re.compile(r"memory/(?:\{\{AIDP_HOME\}\}|\.(?:claude|agents)/aidp)/")
 RUNTIME_REL = runtime_relpath("", __file__)
 IGNORE_RE = re.compile(r"runtime-path-ignore:\s*\S")
 MAX_BYTES = 2 * 1024 * 1024
@@ -54,7 +55,7 @@ def iter_contract_files(root: Path, selected: list[str] | None = None):
     if selected:
         starts = [root / item for item in selected]
     else:
-        starts = [aidp / item for item in RUNTIME_DIRS]
+        starts = [aidp / item for item in RUNTIME_DIRS] + [aidp / "AIDP-AGENTS.md"]
     seen = set()
     for start in starts:
         if not start.exists() or start.is_symlink():
@@ -227,6 +228,12 @@ def scan(root: Path, selected: list[str] | None = None, rendered: bool = False) 
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
             rel = path.relative_to(root).as_posix()
+            state_home = STATE_HOME_RE.search(line)
+            if state_home:
+                findings.append({
+                    "kind": "runtime-state-home-confusion", "path": rel,
+                    "line": lineno, "value": state_home.group(0),
+                })
             old_hits = list(OLD_RUNTIME_RE.finditer(line))
             if old_hits:
                 findings.append({

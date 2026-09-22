@@ -47,8 +47,8 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status       # 定时任务是�
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall
 ```
 
-- 为两条链路各装一个用户级定时任务（Linux：systemd --user timer，无 systemd 用户实例时用 crontab；macOS：launchd；Windows：输出 `schtasks` 命令手工执行），每个任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`。两条链路是两个独立进程，互不阻塞。
-- `agent_loop.sh` 每轮：自动补 `--unattended --no-loop`；导出 `AIDP_TICK_COMMAND=<命令>`（Stop 护栏据此只拦 autopilot tick）与 `ARGUMENTS`；flock 互斥（上一轮未结束则跳过）；加载可选的 `~/.config/aidp/env`（通知 webhook、CICD 令牌等凭据环境变量写这里，不进仓库、不进定时任务定义）；日志落 `memory/{{AIDP_HOME}}/logs/<命令>.log`；开跑前执行 `aidp_scheduler.py watchdog`——任一链路超过 `scheduler.stale_cycles × 周期` 无心跳（且未在执行中）即写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` 并发里程碑通知。
+- 为开发、测试链路各装一个用户级定时任务，并加装第三条独立 watchdog 巡检任务（Linux：systemd --user timer，无 systemd 用户实例时用 crontab；macOS：launchd；Windows：输出 `schtasks` 命令手工执行）。两条链路经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended` 独立运行，watchdog 即使两者从未启动也能在宽限期后告警。
+- `agent_loop.sh` 每轮：自动补 `--unattended --no-loop`；导出 `AIDP_TICK_COMMAND=<命令>`（Stop 护栏据此只拦 autopilot tick）与 `ARGUMENTS`；flock 互斥（上一轮未结束则跳过）；加载可选的 `~/.config/aidp/env`（通知 webhook、CICD 令牌等凭据环境变量写这里，不进仓库、不进定时任务定义）；日志落 `memory/.aidp/logs/<命令>.log`；开跑前执行 `aidp_scheduler.py watchdog`——任一链路超过 `scheduler.stale_cycles × 周期` 无心跳（且未在执行中）即写本地告警台账 `memory/.aidp/alerts.jsonl` 并发里程碑通知。
 - 周期、Agent、执行命令模板取 `memory/aidp-config.yaml` 的 `scheduler` 段；Linux 注销后仍要运行需执行一次 `loginctl enable-linger "$USER"`。
 
 **各 Agent 的非交互执行前置**（执行命令模板优先级：`AIDP_AGENT_EXEC` 环境变量 > `scheduler.exec.<agent>` > 内置默认；⚠️ 各 CLI 参数以所用版本官方文档为准）：

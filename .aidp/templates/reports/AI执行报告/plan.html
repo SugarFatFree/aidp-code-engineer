@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<!-- report-shell-version: 4 -->
+<!--
+  AI 执行计划 — 离线页面（AI 执行报告的「计划」侧）
+
+  用途：展示某 build 的 AI 计划执行内容（Build 元信息 + 执行工作流 stepper + 计划时间线甘特
+        + 步骤依赖表 + 需求功能点比对清单）。与同目录 index.html（执行结果）合并为统一「AI 执行报告」，
+        共享 data/ 数据与 assets/style.css 样式；以 index.html 为主入口，本页由结果页「查看执行计划」链接跳转打开。
+  离线说明：完全 file:// 双击可开，零 CDN / 零外链 / 零 fetch；数据通过 <script src="data/xxx.js">
+            注入 window.__AIRUNS__（与 index.html 同一份数据，计划侧读 plannedStatus / type / features 等）。
+  URL 参数：hash 路由 #/build/<build标识> 直达指定 build 的计划；兼容 ?build=<build>（boot 时转 hash）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 执行计划</title>
+  <!-- 主题预设（在样式/绘制前应用，避免暗/亮闪烁，与 index.html 同源）-->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('reportTheme');
+        var legacy = { blue: 'light-blue', green: 'light-blue', orange: 'light-blue', purple: 'light-blue', 'light-orange': 'light-blue', 'dark-orange': 'dark-blue' };
+        if (legacy[t]) t = legacy[t];
+        document.documentElement.setAttribute('data-theme', t || 'dark-blue');
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark-blue'); }
+    })();
+  </script>
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+
+  <!-- ===== 顶栏：标题 + 返回执行结果 + build 下拉 + 主题切换 ===== -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1><span class="logo-dot"></span>AI 执行计划</h1>
+      <div class="nav-tabs">
+        <a class="nav-link" id="back-result" href="index.html">← 返回执行结果</a>
+      </div>
+      <div class="build-select">
+        <label for="build-select">当前 Build</label>
+        <select id="build-select"></select>
+      </div>
+      <span class="spacer"></span>
+      <button class="theme-toggle" onclick="toggleTheme()" aria-label="切换亮/暗主题" data-tip="切换到暗色">
+        <span class="toggle-thumb">
+          <svg class="ic-sun" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <svg class="ic-moon" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== 主体：计划视图（纯前端 hash 路由按 build 切换）===== -->
+  <main class="wrap">
+    <section id="view-plan" class="view active"></section>
+  </main>
+
+  <footer class="footer">本页与「执行结果」同属 AI 执行报告 · 完全离线生成 · 零第三方依赖 · AIDP 范式模板</footer>
+
+  <!--
+    ===== 数据注入区（与 index.html 共用同一批 data/ 脚本）=====
+    autopilot 每新增一个 build，在 index.html 与本页同步追加一行 <script src="data/{version}_build{N}.js">。
+  -->
+  <script src="data/示例_build1001.js"></script>
+  <script src="data/示例_build1002.js"></script>
+  <!-- ↑ 下游每新增一个 build，在此追加一行 data/ script 引用（与 index.html 保持一致）↑ -->
+
+  <!-- 计划页渲染逻辑（必须最后引入）-->
+  <script src="assets/plan.js"></script>
+</body>
+</html>

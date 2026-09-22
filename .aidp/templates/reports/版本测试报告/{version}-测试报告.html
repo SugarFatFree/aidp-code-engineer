@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<!--
+  版本测试报告 — 单文件完全自包含模板（版本级正式对外报告）
+
+  用途：/version 正式发布版本时产出的「版本级最终测试报告」=
+        一份面向交付 / 存档的正式对外测试报告，简洁、专业、适合打印。
+  定位说明（与旧版的关键区别）：
+    - 这是「本版本的测试结果」，读者**不感知底层有几个 build**；
+    - 报告里任何地方都不出现 build 号 / 构建版本 / build 趋势图 / 按 build 分节；
+    - 报告里不含任何应用截图（不渲染 screenshots、不内联 base64、不放截图链接）。
+  自包含说明：CSS + JS + 数据 + SVG 图表全部内联在这一个 .html 文件里，
+              零外部文件、零 CDN、零外链、零 fetch —— 拷给任何人 file:// 双击即看。
+  数据来源（聚合规则）：
+    - 内联 window.__BUILDS__ 仍保留底层多 build 数据数组（与 AI测试报告同 schema，
+      schema 见 ../README.md：每个 build 含 summary / suites / cases / defects / runtimeErrors）；
+    - 但渲染时**只取 buildNo 最大的那个 build**（最后收敛的一轮 = 最终验收态）聚合成版本级视图；
+    - 不逐 build 展示、不做 build 间趋势对比。
+  下游用法：把文件名 {version} 替换为实际版本号（如 V0.1.0-测试报告.html）；
+            把下方「内联数据」中的 window.__BUILDS__ 替换为本版本真实 build 数据，
+            并在 window.__VERSION_META__ 里填里程碑 / 发布日期 / 部署环境等版本元信息。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>版本测试报告</title>
+  <style>
+    /* ========== 内联样式（卡片式 / 柔和阴影 / 响应式 / 状态色 / 打印友好） ========== */
+    :root {
+      --c-pass:#16a34a; --c-fail:#dc2626; --c-block:#f59e0b; --c-skip:#9ca3af;
+      --c-brand:#2563eb; --c-brand-soft:#eff6ff;
+      --c-text:#1f2937; --c-text-2:#6b7280; --c-border:#e5e7eb; --c-bg:#f3f4f6; --c-card:#fff;
+      --radius:12px; --radius-sm:8px;
+      --shadow:0 1px 3px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.05);
+      --shadow-sm:0 1px 2px rgba(0,0,0,.05); --gap:20px;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; padding:0; background:var(--c-bg); color:var(--c-text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+      font-size:14px; line-height:1.6; }
+    a { color:var(--c-brand); text-decoration:none; } a:hover { text-decoration:underline; }
+
+    /* 报告头（版本级，无顶栏导航/不需要切换） */
+    .report-head { background:var(--c-card); border-bottom:1px solid var(--c-border); box-shadow:var(--shadow-sm); }
+    .report-head-inner { max-width:1000px; margin:0 auto; padding:30px 28px 26px; }
+    .report-head h1 { font-size:24px; margin:0 0 8px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .report-head h1 .logo-dot { width:12px; height:12px; border-radius:50%; background:var(--c-brand); display:inline-block; flex:none; }
+    .report-head .subline { color:var(--c-text-2); font-size:14px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .report-head .subline .sep { color:var(--c-border); }
+    .verdict-badge { display:inline-flex; align-items:center; gap:6px; padding:5px 14px; border-radius:999px; font-size:14px; font-weight:700; }
+    .verdict-badge.ok   { background:#dcfce7; color:var(--c-pass); }
+    .verdict-badge.warn { background:#fef3c7; color:#b45309; }
+    .verdict-badge.bad  { background:#fee2e2; color:var(--c-fail); }
+
+    .container { max-width:1000px; margin:0 auto; padding:24px 28px; }
+    .section { margin-bottom:28px; }
+    .section-title { font-size:16px; font-weight:600; margin:0 0 14px; display:flex; align-items:center; gap:8px; }
+    .section-title::before { content:""; width:4px; height:16px; border-radius:2px; background:var(--c-brand); display:inline-block; }
+    .card { background:var(--c-card); border:1px solid var(--c-border); border-radius:var(--radius); box-shadow:var(--shadow); padding:20px; }
+
+    /* 版本信息表 */
+    .info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px 28px; }
+    .info-item { display:flex; flex-direction:column; gap:3px; padding-bottom:10px; border-bottom:1px dashed var(--c-border); }
+    .info-item .info-k { color:var(--c-text-2); font-size:12px; }
+    .info-item .info-v { font-weight:600; word-break:break-all; }
+
+    /* KPI 卡 */
+    .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:var(--gap); }
+    .kpi { background:var(--c-card); border:1px solid var(--c-border); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; }
+    .kpi .kpi-label { color:var(--c-text-2); font-size:13px; }
+    .kpi .kpi-value { font-size:30px; font-weight:700; margin-top:6px; line-height:1.1; }
+    .kpi .kpi-sub { color:var(--c-text-2); font-size:12px; margin-top:6px; }
+    .kpi.accent-pass  .kpi-value { color:var(--c-pass); }
+    .kpi.accent-fail  .kpi-value { color:var(--c-fail); }
+    .kpi.accent-block .kpi-value { color:var(--c-block); }
+    .kpi.accent-skip  .kpi-value { color:var(--c-skip); }
+    .kpi.accent-brand .kpi-value { color:var(--c-brand); }
+
+    /* 图表区 */
+    .grid-2 { display:grid; gap:var(--gap); grid-template-columns:minmax(260px,340px) 1fr; align-items:stretch; }
+    @media (max-width:820px) { .grid-2 { grid-template-columns:1fr; } }
+    .chart-box { display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    .chart-box svg { max-width:100%; height:auto; }
+    .legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:14px; justify-content:center; }
+    .legend-item { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--c-text-2); }
+    .legend-swatch { width:12px; height:12px; border-radius:3px; display:inline-block; }
+
+    /* 表格 */
+    .table-wrap { overflow-x:auto; }
+    table.report-table { width:100%; border-collapse:collapse; font-size:13px; background:var(--c-card); }
+    table.report-table th, table.report-table td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--c-border); white-space:nowrap; }
+    table.report-table th { background:#fafafa; color:var(--c-text-2); font-weight:600; }
+    table.report-table td.wrap { white-space:normal; min-width:200px; }
+    table.report-table tbody tr:hover { background:var(--c-brand-soft); }
+    table.report-table tfoot td { font-weight:700; background:#fafafa; border-top:2px solid var(--c-border); }
+
+    .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; line-height:1.6; }
+    .badge.pass { background:#dcfce7; color:var(--c-pass); }
+    .badge.fail { background:#fee2e2; color:var(--c-fail); }
+    .badge.block { background:#fef3c7; color:#b45309; }
+    .badge.skip { background:#f3f4f6; color:var(--c-skip); }
+    .sev { font-weight:700; } .sev.P0,.sev.P1 { color:var(--c-fail); } .sev.P2 { color:var(--c-block); } .sev.P3 { color:var(--c-text-2); }
+    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+    .dot.pass{background:var(--c-pass)} .dot.fail{background:var(--c-fail)} .dot.block{background:var(--c-block)} .dot.skip{background:var(--c-skip)}
+
+    .rate-bar { display:flex; align-items:center; gap:8px; min-width:120px; }
+    .rate-bar .track { flex:1; height:6px; border-radius:999px; background:#e5e7eb; overflow:hidden; }
+    .rate-bar .fill { height:100%; border-radius:999px; background:var(--c-pass); }
+    .rate-bar .rate-num { font-variant-numeric:tabular-nums; width:44px; text-align:right; }
+    .muted { color:var(--c-text-2); }
+    .empty-tip { color:var(--c-text-2); padding:14px; text-align:center; }
+
+    /* 测试结论叙述块 */
+    .conclusion { border-left:4px solid var(--c-brand); padding:14px 18px; border-radius:var(--radius-sm); background:var(--c-brand-soft); }
+    .conclusion.ok   { border-left-color:var(--c-pass); background:#f0fdf4; }
+    .conclusion.warn { border-left-color:var(--c-block); background:#fffbeb; }
+    .conclusion.bad  { border-left-color:var(--c-fail); background:#fef2f2; }
+    .conclusion .c-title { font-weight:700; font-size:15px; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+    .conclusion ul { margin:8px 0 0; padding-left:20px; }
+    .conclusion li { margin:3px 0; }
+
+    .footer { text-align:center; color:var(--c-text-2); font-size:12px; padding:24px 0 40px; }
+
+    /* 响应式适配（手机 / 平板 / 桌面自适应）— 桌面保持原设计不变；info/KPI 网格已 auto-fit
+       自动降列，此处仅在窄屏收紧留白、缩放大字号，并保证宽表格横向滚动 */
+    @media (max-width:768px) {
+      :root { --gap:14px; }
+      .report-head-inner { padding:22px 18px 18px; }
+      .report-head h1 { font-size:20px; }
+      .container { padding:16px; }
+      .section { margin-bottom:22px; }
+    }
+    @media (max-width:560px) {
+      body { font-size:13px; }
+      .report-head-inner { padding:16px 14px 14px; }
+      .report-head h1 { font-size:18px; }
+      .report-head .subline { font-size:13px; gap:8px 12px; }
+      .container { padding:12px; }
+      .card { padding:14px; }
+      .info-grid { gap:10px 16px; }
+      .kpi .kpi-value { font-size:24px; }
+      table.report-table th, table.report-table td { padding:8px 10px; }
+      .footer { padding:18px 12px 32px; }
+    }
+
+    /* 打印优化：去背景色噪声，保留色块语义 */
+    @media print {
+      html,body { background:#fff; }
+      .container { padding:0 12px; }
+      .card, .kpi { box-shadow:none; break-inside:avoid; }
+      .section { break-inside:avoid; }
+      .report-head { box-shadow:none; }
+      table.report-table tbody tr:hover { background:transparent; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== 报告头（版本级标题 + 副标题 + 结论徽章） ===== -->
+  <header class="report-head">
+    <div class="report-head-inner">
+      <h1><span class="logo-dot"></span><span id="report-title">版本测试报告</span></h1>
+      <div class="subline" id="report-subline"></div>
+    </div>
+  </header>
+
+  <main class="container" id="app"></main>
+
+  <footer class="footer" id="report-footer">本报告为单文件完全自包含 · 零外部依赖 · 图表为手写内联 SVG · AIDP 范式模板</footer>
+
+  <!--
+    ========== 版本元信息（替换为真实版本信息）==========
+    与 build 数据无关的版本级元数据，由 /version 发布时填充。
+    milestone / releaseDate / environment 用于版本信息表与报告头副标题。
+  -->
+  <script>
+    window.__VERSION_META__ = {
+      version: "V0.1.0",                       // 版本号（若留空则从 __BUILDS__ 推断）
+      milestone: "M1 MVP",                     // 里程碑名称
+      releaseDate: "2026-06-15",               // 发布日期
+      deployMode: "cloud",                     // 部署模式：local / cloud（若留空则取最后一个 build 的 deployMode）
+      testUrl: "https://uat.example.com",      // 测试环境访问 URL（若留空则取最后一个 build 的 testUrl）
+      generatedBy: "/version 发布时自动生成"     // 生成说明（页脚）
+    };
+  </script>
+
+  <!--
+    ========== 内联数据（替换为真实数据）==========
+    数据契约 schema 与 AI测试报告 完全一致（见 ../README.md）。
+    保留多 build 数组（schema 不变），但版本级报告**只渲染 buildNo 最大的那个 build**。
+    以下两份示例：最后一个 build 通过率更高，体现缺陷收敛后的最终验收态。
+  -->
+  <script>
+    window.__BUILDS__ = [
+      {
+        build: "V0.1.0_build1001", version: "V0.1.0", buildNo: 1001,
+        startedAt: "2026-06-14 10:00", finishedAt: "2026-06-14 11:30",
+        trigger: "PRD 更新", branch: "feature/autopilot-V0.1.0",
+        deployMode: "local", testUrl: "http://localhost:5173", renderMode: "headless", driver: "cli",
+        summary: { total: 50, pass: 42, fail: 5, block: 2, skip: 1, passRate: 0.84 },
+        suites: [
+          { id: "SUITE-001", name: "用户管理", total: 12, pass: 11, fail: 1, block: 0, skip: 0 },
+          { id: "SUITE-002", name: "订单中心", total: 16, pass: 12, fail: 3, block: 1, skip: 0 },
+          { id: "SUITE-003", name: "数据看板", total: 12, pass: 10, fail: 1, block: 1, skip: 0 },
+          { id: "SUITE-004", name: "系统设置", total: 10, pass: 9, fail: 0, block: 0, skip: 1 }
+        ],
+        cases: [
+          { id: "T-001-01", title: "账号密码登录成功", suite: "SUITE-001", result: "pass", note: "", screenshot: "screenshots/t-001-01.png" },
+          { id: "T-001-03", title: "新增用户必填校验", suite: "SUITE-001", result: "fail", note: "手机号未做格式校验", screenshot: "screenshots/t-001-03.png" },
+          { id: "T-002-03", title: "退订接口返回 500", suite: "SUITE-002", result: "fail", note: "后端 NPE，见缺陷 C-001", screenshot: "screenshots/t-002-03.png" },
+          { id: "T-002-05", title: "批量发货阻塞", suite: "SUITE-002", result: "block", note: "依赖物流接口未交付", screenshot: "screenshots/t-002-05.png" },
+          { id: "T-004-02", title: "短信网关配置（暂缓）", suite: "SUITE-004", result: "skip", note: "本期不交付，忽略", screenshot: "" }
+        ],
+        defects: [
+          { id: "C-001", title: "退订接口返回 500（后端 NPE）", severity: "P1", caseId: "T-002-03", status: "待修复" },
+          { id: "C-002", title: "导出订单 Excel 文件名乱码", severity: "P2", caseId: "T-002-04", status: "待修复" },
+          { id: "C-003", title: "看板趋势图切换近 7 天不刷新", severity: "P2", caseId: "T-003-02", status: "修复中" }
+        ],
+        runtimeErrors: [
+          { id: "R-001", desc: "Uncaught TypeError: cannot read 'list' of undefined", url: "/order", status: "待修复" },
+          { id: "R-002", desc: "GET /api/report/export 503 Service Unavailable", url: "/dashboard", status: "待修复" }
+        ],
+        screenshots: [
+          { step: "登录页", path: "screenshots/login.png", caseId: "T-001-01" }
+        ]
+      },
+      {
+        build: "V0.1.0_build1002", version: "V0.1.0", buildNo: 1002,
+        startedAt: "2026-06-15 09:30", finishedAt: "2026-06-15 10:40",
+        trigger: "缺陷修复回归", branch: "feature/autopilot-V0.1.0",
+        deployMode: "cloud", testUrl: "https://uat.example.com", renderMode: "headed", driver: "mcp",
+        summary: { total: 52, pass: 50, fail: 1, block: 1, skip: 0, passRate: 0.962 },
+        suites: [
+          { id: "SUITE-001", name: "用户管理", total: 12, pass: 12, fail: 0, block: 0, skip: 0 },
+          { id: "SUITE-002", name: "订单中心", total: 18, pass: 17, fail: 0, block: 1, skip: 0 },
+          { id: "SUITE-003", name: "数据看板", total: 12, pass: 11, fail: 1, block: 0, skip: 0 },
+          { id: "SUITE-004", name: "系统设置", total: 10, pass: 10, fail: 0, block: 0, skip: 0 }
+        ],
+        cases: [
+          { id: "T-001-03", title: "新增用户必填校验", suite: "SUITE-001", result: "pass", note: "已补手机号校验，回归通过", screenshot: "screenshots/t-001-03.png" },
+          { id: "T-002-03", title: "退订接口返回正常", suite: "SUITE-002", result: "pass", note: "C-001 已修复", screenshot: "screenshots/t-002-03.png" },
+          { id: "T-002-05", title: "批量发货阻塞", suite: "SUITE-002", result: "block", note: "物流接口仍未交付", screenshot: "screenshots/t-002-05.png" },
+          { id: "T-003-04", title: "看板导出 PDF", suite: "SUITE-003", result: "fail", note: "PDF 中文字体缺失", screenshot: "screenshots/t-003-04.png" }
+        ],
+        defects: [
+          { id: "C-005", title: "看板导出 PDF 中文字体缺失", severity: "P3", caseId: "T-003-04", status: "待修复" }
+        ],
+        runtimeErrors: [
+          { id: "R-004", desc: "批量发货依赖物流接口未交付（阻塞）", url: "/order", status: "待第三方交付" }
+        ],
+        screenshots: [
+          { step: "退订成功", path: "screenshots/t-002-03.png", caseId: "T-002-03" }
+        ]
+      }
+    ];
+  </script>
+
+  <!-- ========== 内联渲染脚本（含手写 SVG 图表，零第三方库） ========== -->
+  <script>
+  (function () {
+    "use strict";
+    var COLORS = { pass:"#16a34a", fail:"#dc2626", block:"#f59e0b", skip:"#9ca3af", brand:"#2563eb" };
+    var RESULT_TEXT = { pass:"通过", fail:"失败", block:"阻塞", skip:"忽略" };
+    var RESULT_KEYS = ["pass","fail","block","skip"];
+
+    /** HTML 转义，防止数据中的特殊字符破坏结构 */
+    function esc(s){ if(s==null) return ""; return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+    /** 比率（0~1）转百分比文本 */
+    function pct(v){ return Math.round((v||0)*100)+"%"; }
+    /** 比率（0~1）转整数百分比数值 */
+    function pctNum(v){ return Math.round((v||0)*100); }
+
+    /* ---- SVG：通过率环形图（中心大字通过率%） ---- */
+    function svgDonut(dist, size){
+      size = size||230; var cx=size/2, cy=size/2, r=size*0.38, stroke=size*0.14;
+      var total = RESULT_KEYS.reduce(function(s,k){return s+(dist[k]||0);},0);
+      var circ = 2*Math.PI*r, offset=0, arcs="";
+      if(total===0){
+        arcs='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="#e5e7eb" stroke-width="'+stroke+'"/>';
+      } else {
+        RESULT_KEYS.forEach(function(k){
+          var val=dist[k]||0; if(!val) return;
+          var len=(val/total)*circ;
+          arcs+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+COLORS[k]+'" stroke-width="'+stroke+'" stroke-dasharray="'+len.toFixed(2)+' '+(circ-len).toFixed(2)+'" stroke-dashoffset="'+(-offset).toFixed(2)+'" transform="rotate(-90 '+cx+' '+cy+')"><title>'+RESULT_TEXT[k]+' '+val+'</title></circle>';
+          offset+=len;
+        });
+      }
+      var passRate = total? Math.round((dist.pass||0)/total*100):0;
+      return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" role="img" aria-label="通过率环形图">'+arcs
+        +'<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-size="'+(size*0.22)+'" font-weight="700" fill="#1f2937">'+passRate+'%</text>'
+        +'<text x="'+cx+'" y="'+(cy+size*0.14)+'" text-anchor="middle" font-size="'+(size*0.06)+'" fill="#6b7280">通过率</text></svg>';
+    }
+    /** 图例（与环形图共享分布） */
+    function legendHtml(dist){
+      return '<div class="legend">'+RESULT_KEYS.map(function(k){
+        return '<span class="legend-item"><span class="legend-swatch" style="background:'+COLORS[k]+'"></span>'+RESULT_TEXT[k]+' '+(dist[k]||0)+'</span>';
+      }).join("")+'</div>';
+    }
+
+    /* ---- SVG：用例分布饼图（按结果 pass/fail/block/skip） ---- */
+    function svgPie(dist, size){
+      size = size||230; var cx=size/2, cy=size/2, r=size*0.42;
+      var total = RESULT_KEYS.reduce(function(s,k){return s+(dist[k]||0);},0);
+      if(total===0){
+        return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" role="img" aria-label="用例分布饼图"><circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="#f3f4f6" stroke="#e5e7eb"/></svg>';
+      }
+      var angle=-90, slices=""; // 从 12 点钟方向起
+      RESULT_KEYS.forEach(function(k){
+        var val=dist[k]||0; if(!val) return;
+        var frac=val/total, sweep=frac*360;
+        // 整圆单独画 circle，避免起止点重合导致路径不显示
+        if(frac>=0.9999){
+          slices+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+COLORS[k]+'"><title>'+RESULT_TEXT[k]+' '+val+' ('+Math.round(frac*100)+'%)</title></circle>';
+          return;
+        }
+        var a0=angle*Math.PI/180, a1=(angle+sweep)*Math.PI/180;
+        var x0=cx+r*Math.cos(a0), y0=cy+r*Math.sin(a0);
+        var x1=cx+r*Math.cos(a1), y1=cy+r*Math.sin(a1);
+        var large=sweep>180?1:0;
+        slices+='<path d="M'+cx+' '+cy+' L'+x0.toFixed(2)+' '+y0.toFixed(2)+' A'+r+' '+r+' 0 '+large+' 1 '+x1.toFixed(2)+' '+y1.toFixed(2)+' Z" fill="'+COLORS[k]+'" stroke="#fff" stroke-width="1.5"><title>'+RESULT_TEXT[k]+' '+val+' ('+Math.round(frac*100)+'%)</title></path>';
+        angle+=sweep;
+      });
+      return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" role="img" aria-label="用例分布饼图">'+slices+'</svg>';
+    }
+
+    /* ---- SVG：用例分布柱状图（按结果） ---- */
+    function svgResultBars(dist){
+      var W=560,padL=40,padR=24,padT=16,padB=44,gap=28;
+      var keys=RESULT_KEYS, n=keys.length;
+      var barW=Math.min(72,(W-padL-padR-(n-1)*gap)/n);
+      var maxVal=Math.max.apply(null,keys.map(function(k){return dist[k]||0;}).concat([1]));
+      var ih=180,H=padT+ih+padB,bars="",labels="",yLines="";
+      // y 轴参考线（0 / 50% / 100% 区间，按最大值刻度）
+      [0,0.5,1].forEach(function(f){
+        var y=padT+ih-f*ih, v=Math.round(maxVal*f);
+        yLines+='<line x1="'+padL+'" y1="'+y+'" x2="'+(W-padR)+'" y2="'+y+'" stroke="#eef0f2"/><text x="'+(padL-8)+'" y="'+(y+4)+'" text-anchor="end" font-size="11" fill="#9ca3af">'+v+'</text>';
+      });
+      keys.forEach(function(k,i){
+        var val=dist[k]||0, x=padL+i*(barW+gap), h=(val/maxVal)*ih, y=padT+ih-h;
+        bars+='<rect x="'+x+'" y="'+y.toFixed(1)+'" width="'+barW+'" height="'+h.toFixed(1)+'" fill="'+COLORS[k]+'" rx="3"><title>'+RESULT_TEXT[k]+' '+val+'</title></rect>';
+        if(val>0) bars+='<text x="'+(x+barW/2)+'" y="'+(y-6).toFixed(1)+'" text-anchor="middle" font-size="12" font-weight="700" fill="'+COLORS[k]+'">'+val+'</text>';
+        labels+='<text x="'+(x+barW/2)+'" y="'+(padT+ih+22)+'" text-anchor="middle" font-size="12" fill="#6b7280">'+RESULT_TEXT[k]+'</text>';
+      });
+      return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" role="img" aria-label="用例分布柱状图"><line x1="'+padL+'" y1="'+(padT+ih)+'" x2="'+(W-padR)+'" y2="'+(padT+ih)+'" stroke="#e5e7eb"/>'+yLines+bars+labels+'</svg>';
+    }
+
+    /* ---- 数据准备：取 buildNo 最大的那个 build 聚合为版本级最终结果 ---- */
+    var BUILDS = (window.__BUILDS__||[]).slice().sort(function(a,b){return (a.buildNo||0)-(b.buildNo||0);});
+    var META = window.__VERSION_META__ || {};
+    var app = document.getElementById("app");
+
+    if(!BUILDS.length){
+      app.innerHTML='<div class="card empty-tip">暂无测试数据。</div>';
+      document.getElementById("report-title").textContent = (META.version||"") + " 版本测试报告";
+      return;
+    }
+
+    // 最终验收态 = 最后收敛的一轮（buildNo 最大）；版本级报告只用这一份聚合
+    var FINAL = BUILDS[BUILDS.length-1];
+    var summary = FINAL.summary || { total:0, pass:0, fail:0, block:0, skip:0, passRate:0 };
+    var dist = { pass:summary.pass||0, fail:summary.fail||0, block:summary.block||0, skip:summary.skip||0 };
+    var total = summary.total != null ? summary.total : RESULT_KEYS.reduce(function(s,k){return s+dist[k];},0);
+    var passRate = (summary.passRate != null) ? summary.passRate : (total? dist.pass/total : 0);
+
+    // 版本号优先取元信息，其次从 build 推断
+    var version = META.version || FINAL.version || "";
+    // 部署环境优先取元信息，其次取最终 build 的运行参数
+    var deployMode = META.deployMode || FINAL.deployMode || "";
+    var testUrl = META.testUrl || FINAL.testUrl || "";
+    var deployModeText = deployMode==="cloud" ? "云端部署" : (deployMode==="local" ? "本地部署" : (deployMode||"—"));
+
+    /* ---- 测试结论判定（依据最终 build 通过率 + 未关闭缺陷） ---- */
+    // 合并最终 build 的 defects + runtimeErrors，去重为版本级缺陷清单
+    var CLOSED = ["已修复","已关闭","已解决","修复完成","closed","fixed","resolved"];
+    function isClosed(status){
+      var s=String(status||"").toLowerCase();
+      return CLOSED.some(function(c){ return s.indexOf(String(c).toLowerCase())>=0; });
+    }
+    var defectList=[], seen={};
+    (FINAL.defects||[]).forEach(function(d){
+      if(seen[d.id]) return; seen[d.id]=1;
+      defectList.push({ id:d.id, title:d.title, severity:d.severity||"P3", caseId:d.caseId||"", status:d.status||"待修复" });
+    });
+    // 运行时错误并入缺陷汇总（统一为缺陷视角；无严重级则按 P2 计），按 id 去重
+    (FINAL.runtimeErrors||[]).forEach(function(r){
+      if(seen[r.id]) return; seen[r.id]=1;
+      defectList.push({ id:r.id, title:r.desc || (r.url? ("运行时错误 @ "+r.url) : "运行时错误"), severity:r.severity||"P2", caseId:r.url||"", status:r.status||"待修复" });
+    });
+    // 严重级排序：P0 > P1 > P2 > P3 > 其它
+    var SEV_ORDER = { P0:0, P1:1, P2:2, P3:3 };
+    defectList.sort(function(a,b){ return (SEV_ORDER[a.severity]!=null?SEV_ORDER[a.severity]:9) - (SEV_ORDER[b.severity]!=null?SEV_ORDER[b.severity]:9); });
+    var openDefects = defectList.filter(function(d){ return !isClosed(d.status); });
+
+    // 结论级别：全部通过 / 有遗留 / 未通过
+    var verdict; // ok / warn / bad
+    if(dist.fail===0 && openDefects.length===0 && passRate>=0.999){
+      verdict="ok";
+    } else if(passRate>=0.9 && !openDefects.some(function(d){ return d.severity==="P0"||d.severity==="P1"; })){
+      verdict="warn";
+    } else {
+      verdict="bad";
+    }
+    var VERDICT_META = {
+      ok:   { badge:"ok",   label:"✅ 测试通过",   icon:"✅" },
+      warn: { badge:"warn", label:"⚠️ 有遗留缺陷", icon:"⚠️" },
+      bad:  { badge:"bad",  label:"❌ 未通过",     icon:"❌" }
+    };
+    var vm = VERDICT_META[verdict];
+
+    /* ---- 报告头：标题 + 副标题 + 结论徽章 ---- */
+    document.getElementById("report-title").textContent = version + " 版本测试报告";
+    document.title = version + " 版本测试报告";
+    var subParts = [];
+    if(META.milestone)   subParts.push('里程碑：'+esc(META.milestone));
+    if(META.releaseDate) subParts.push('发布日期：'+esc(META.releaseDate));
+    var subHtml = subParts.map(function(t){ return '<span>'+t+'</span>'; }).join('<span class="sep">·</span>')
+      + (subParts.length? '<span class="sep">·</span>' : '')
+      + '<span class="verdict-badge '+vm.badge+'">'+vm.label+'</span>';
+    document.getElementById("report-subline").innerHTML = subHtml;
+
+    /* ---- ① 版本信息表 ---- */
+    function infoItem(k,v){ return '<div class="info-item"><span class="info-k">'+esc(k)+'</span><span class="info-v">'+esc(v||"—")+'</span></div>'; }
+    var envText = deployModeText + (testUrl ? "（"+esc(testUrl)+"）" : "");
+    var infoSec = '<section class="section"><div class="section-title">版本信息</div><div class="card"><div class="info-grid">'
+      + infoItem("版本号", version)
+      + infoItem("里程碑", META.milestone)
+      + infoItem("发布日期", META.releaseDate)
+      + '<div class="info-item"><span class="info-k">测试环境</span><span class="info-v">'+envText+'</span></div>'
+      + '<div class="info-item"><span class="info-k">测试结论</span><span class="info-v" style="color:'+(verdict==="ok"?COLORS.pass:verdict==="warn"?COLORS.block:COLORS.fail)+'">'+esc(vm.label)+'</span></div>'
+      + '</div></div></section>';
+
+    /* ---- ② 测试总览 KPI 卡 ---- */
+    var kpiSec = '<section class="section"><div class="section-title">测试总览</div><div class="kpi-grid">'
+      + '<div class="kpi accent-brand"><div class="kpi-label">总用例数</div><div class="kpi-value">'+total+'</div></div>'
+      + '<div class="kpi accent-pass"><div class="kpi-label">通过</div><div class="kpi-value">'+dist.pass+'</div></div>'
+      + '<div class="kpi accent-fail"><div class="kpi-label">失败</div><div class="kpi-value">'+dist.fail+'</div></div>'
+      + '<div class="kpi accent-block"><div class="kpi-label">阻塞</div><div class="kpi-value">'+dist.block+'</div></div>'
+      + '<div class="kpi accent-skip"><div class="kpi-label">忽略</div><div class="kpi-value">'+dist.skip+'</div></div>'
+      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">'+pct(passRate)+'</div></div>'
+      + '</div></section>';
+
+    /* ---- ③ 图表：通过率环形图 + 用例分布 ---- */
+    var distRows = RESULT_KEYS.map(function(k){
+      return '<tr><td><span class="dot '+k+'"></span>'+RESULT_TEXT[k]+'</td><td>'+dist[k]+'</td><td>'+(total?Math.round(dist[k]/total*100):0)+'%</td></tr>';
+    }).join("");
+    var chartSec = '<section class="section"><div class="section-title">测试结果图表</div><div class="grid-2">'
+      + '<div class="card chart-box">'+svgDonut(dist,230)+legendHtml(dist)+'</div>'
+      + '<div class="card chart-box"><div style="width:100%">'+svgResultBars(dist)+'</div>'
+      +   '<div class="table-wrap" style="width:100%;margin-top:8px"><table class="report-table"><thead><tr><th>结果</th><th>数量</th><th>占比</th></tr></thead><tbody>'+distRows+'</tbody></table></div>'
+      + '</div></div></section>';
+
+    /* ---- ④ 套件结果表 ---- */
+    var suites = FINAL.suites || [];
+    var suiteTotals = { total:0, pass:0, fail:0, block:0, skip:0 };
+    var suiteRows = suites.map(function(s){
+      var st = s.total != null ? s.total : ((s.pass||0)+(s.fail||0)+(s.block||0)+(s.skip||0));
+      var rate = st ? (s.pass||0)/st : 0;
+      suiteTotals.total += st; suiteTotals.pass += s.pass||0; suiteTotals.fail += s.fail||0;
+      suiteTotals.block += s.block||0; suiteTotals.skip += s.skip||0;
+      return '<tr><td class="wrap">'+esc(s.name)+'</td><td>'+st+'</td><td style="color:'+COLORS.pass+'">'+(s.pass||0)+'</td><td style="color:'+(s.fail?COLORS.fail:"")+'">'+(s.fail||0)+'</td><td style="color:'+(s.block?COLORS.block:"")+'">'+(s.block||0)+'</td><td>'+(s.skip||0)+'</td>'
+        + '<td><div class="rate-bar"><div class="track"><div class="fill" style="width:'+pct(rate)+';background:'+(rate>=0.9?COLORS.pass:rate>=0.6?COLORS.block:COLORS.fail)+'"></div></div><span class="rate-num">'+pct(rate)+'</span></div></td></tr>';
+    }).join("") || '<tr><td colspan="7" class="empty-tip">无套件数据</td></tr>';
+    var totalRate = suiteTotals.total ? suiteTotals.pass/suiteTotals.total : 0;
+    var suiteFoot = suites.length ? ('<tfoot><tr><td>合计</td><td>'+suiteTotals.total+'</td><td>'+suiteTotals.pass+'</td><td>'+suiteTotals.fail+'</td><td>'+suiteTotals.block+'</td><td>'+suiteTotals.skip+'</td><td>'+pct(totalRate)+'</td></tr></tfoot>') : '';
+    var suiteSec = '<section class="section"><div class="section-title">测试套件结果</div><div class="card"><div class="table-wrap"><table class="report-table"><thead><tr><th>测试套件</th><th>总数</th><th>通过</th><th>失败</th><th>阻塞</th><th>忽略</th><th>通过率</th></tr></thead><tbody>'+suiteRows+'</tbody>'+suiteFoot+'</table></div></div></section>';
+
+    /* ---- ⑤ 缺陷汇总表（缺陷 + 运行时错误合并去重；无 build 列、无截图列） ---- */
+    var defRows = defectList.map(function(d){
+      var closed = isClosed(d.status);
+      return '<tr><td>'+esc(d.id)+'</td><td class="wrap">'+esc(d.title)+'</td><td><span class="sev '+esc(d.severity)+'">'+esc(d.severity)+'</span></td><td>'+(closed?'<span class="badge pass">'+esc(d.status)+'</span>':'<span class="badge fail">'+esc(d.status)+'</span>')+'</td></tr>';
+    }).join("") || '<tr><td colspan="4" class="empty-tip">本版本无缺陷</td></tr>';
+    var defCount = defectList.length;
+    var defSec = '<section class="section"><div class="section-title">缺陷汇总（共 '+defCount+' 项，未关闭 '+openDefects.length+' 项）</div><div class="card"><div class="table-wrap"><table class="report-table"><thead><tr><th>编号</th><th>标题</th><th>严重度</th><th>状态</th></tr></thead><tbody>'+defRows+'</tbody></table></div></div></section>';
+
+    /* ---- ⑥ 测试结论 ---- */
+    var conclText = "", conclList = "";
+    if(verdict==="ok"){
+      conclText = '本版本共执行 '+total+' 条测试用例，全部通过，通过率 '+pct(passRate)+'，无未关闭缺陷。测试结论：<strong>全部通过，达到发布标准</strong>。';
+    } else if(verdict==="warn"){
+      conclText = '本版本共执行 '+total+' 条测试用例，通过 '+dist.pass+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷（均为非阻断级）。测试结论：<strong>核心功能通过，存在可接受的遗留缺陷</strong>，建议发布并跟踪以下遗留项：';
+      conclList = '<ul>'+openDefects.map(function(d){ return '<li><span class="sev '+esc(d.severity)+'">'+esc(d.severity)+'</span> '+esc(d.id)+' '+esc(d.title)+'（'+esc(d.status)+'）</li>'; }).join("")+'</ul>';
+    } else {
+      conclText = '本版本共执行 '+total+' 条测试用例，通过 '+dist.pass+' 条，失败 '+dist.fail+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷。测试结论：<strong>未通过验收，需修复后重测</strong>。待处理缺陷：';
+      conclList = '<ul>'+openDefects.map(function(d){ return '<li><span class="sev '+esc(d.severity)+'">'+esc(d.severity)+'</span> '+esc(d.id)+' '+esc(d.title)+'（'+esc(d.status)+'）</li>'; }).join("")+'</ul>';
+    }
+    var conclSec = '<section class="section"><div class="section-title">测试结论</div><div class="conclusion '+verdict+'"><div class="c-title">'+vm.icon+' '+esc(vm.label.replace(/^[^\s]+\s/,''))+'</div><div>'+conclText+'</div>'+conclList+'</div></section>';
+
+    /* ---- 装配输出（顺序：信息表 → KPI → 图表 → 套件 → 缺陷 → 结论）---- */
+    app.innerHTML = infoSec + kpiSec + chartSec + suiteSec + defSec + conclSec;
+
+    /* ---- 页脚：生成说明 + 日期占位 ---- */
+    var genBy = META.generatedBy || "/version 发布时自动生成";
+    var dateStr = META.releaseDate || "{发布日期}";
+    document.getElementById("report-footer").innerHTML =
+      '本报告由 '+esc(genBy)+' · 生成日期 '+esc(dateStr)+' · 单文件完全自包含 · 零外部依赖 · 图表为手写内联 SVG';
+  })();
+  </script>
+</body>
+</html>

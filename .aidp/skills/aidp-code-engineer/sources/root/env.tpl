@@ -1,0 +1,24 @@
+# 环境配置模板
+# 请根据实际部署环境修改以下配置
+
+# 数据库配置
+DB_TYPE=
+DB_HOST=
+DB_PORT=
+DB_NAME=
+DB_USER=
+DB_PASSWORD=
+
+# Redis 配置
+REDIS_HOST=
+REDIS_PORT=
+REDIS_PASSWORD=
+
+# 应用配置
+APP_PORT=8080
+APP_CONTEXT_PATH=/
+
+# 其他服务
+# MINIO_ENDPOINT=
+# MINIO_ACCESS_KEY=
+# MINIO_SECRET_KEY=

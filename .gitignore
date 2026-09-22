@@ -1,0 +1,98 @@
+# === Java ===
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+hs_err_pid*
+target/
+*.ctxt
+.mtj.tmp/
+
+# === Node / Frontend ===
+node_modules/
+dist/
+.nuxt/
+.next/
+.output/
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# === Logs ===
+*.log
+logs/
+
+# === IDE / OS ===
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# === Archives / Build ===
+*.zip
+*.tar.gz
+*.rar
+build/
+
+# === Environment / Secrets ===
+.env.local
+.env.*.local
+# 本模板仓库不提交任何真实环境连接信息（下游项目的 env/.env 由各自团队决定是否入库）
+env/.env
+env/.env.*
+
+# === Agent 本地配置（个人设置，不入库）===
+.claude/settings.local.json
+.codex/*.local.*
+.dsh/*.local.*
+
+# === Skill 本地凭证变体（本机私有，禁止入库）===
+.aidp/skills/*/*-config.json
+.aidp/skills/*/.env
+.aidp/skills/*/config.json
+.aidp/skills/*/assets/config.json
+
+# === AIDP 脚手架 ===
+.aidp-backup-*
+# ⚠️ 语义改写待办清单 .aidp-rewrite-queue.txt【刻意不忽略、必须入库】：它与 memory/aidp-config.yaml 的
+#    scaffold.pending 共同表示"本次脚手架升级尚未交付"（项目填写过的下发文件还没吸收新版骨架）。
+#    入库后它就是团队可见的仓库状态，收口（finalize_upgrade.py）核验通过后自动删除。
+
+# === AIDP 运行时文件 ===
+# memory/.sprint-autopilot-baseline.json 刻意入库、团队共享（项目级版本状态机，不含个人信息）
+# 测试账号文件（敏感：明文账号密码；命令端会自动追加此条 + chmod 600）
+memory/.sprint-autopilot-credentials.json
+# 里程碑通知发送台账（完成核验门 autopilot-ceremony-gate.py 用；本地校验状态）
+memory/.autopilot-ceremony-ledger.json
+# 本地运行态目录（锁文件、提交前门禁台账等）
+memory/.aidp/
+# baseline 的 flock 锁载体（0 字节，纯本地）
+# ⛔ 必须两条：数据文件本身就是点开头的，而 `memory/*.lock` 的 `*` 不匹配前导点
+memory/*.lock
+memory/.*.lock
+# Stop hook（autopilot-stop-guard.py）的本地运行态：熔断计数 / fail-open 台账 / 人工逃生舱开关
+memory/.autopilot-stop-guard-count
+memory/.autopilot-stop-guard-skips.jsonl
+memory/.autopilot-stop-guard-off
+# AI 报告临时输入草稿（emit-report.py 的 --data；生成 HTML 后自动删除）
+docs/reports/*/*/.build-input-*.json
+memory/.exec-report-*.json
+memory/.aiauto-test-result-*.json
+memory/.test-report-*.json
+# 代码事实索引：100% 由 code_inventory.py 从 code/ 派生，可随时重建
+memory/_facts/code-inventory.json
+
+# === Agent 适配层（模板仓库不入库）===
+# 本仓库是 AIDP 模板本体，单一信源只有 .aidp/；各 Agent 的入口目录由脚手架在下游按实际 Agent 生成。
+# 维护者在本仓库用哪个 Agent，就在本地建对应标记目录后跑 `python3 .aidp/scripts/agent_sync.py`。
+/.claude/
+/.codex/
+/.dsh/
+/.agents/

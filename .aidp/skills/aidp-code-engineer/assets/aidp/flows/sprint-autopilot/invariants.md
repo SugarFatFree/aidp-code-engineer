@@ -26,9 +26,9 @@
 >
 > **★★ 结构级机器门（本条已从自律级升级，⛔ 命令返回前必跑）**：
 > ```bash
-> V=$(python3 .aidp/scripts/baseline_edit.py get autopilot.target_version --default "")
-> [ -z "$V" ] && V=$(python3 .aidp/scripts/baseline_edit.py current-version)   # 兜底
-> python3 .aidp/scripts/autopilot-ceremony-gate.py handback-check --version "$V" --record
+> V=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get autopilot.target_version --default "")
+> [ -z "$V" ] && V=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)   # 兜底
+> python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py handback-check --version "$V" --record
 > ```
 > `exit 1` = 契约违背（`wake_source_this_tick==0` 且 `run_state.next_phase`/`next_sprint` 任一非空且 ≠ `done`），**不得就此收工**。
 > ⚠️ 它**刻意不并进 `ceremony-gate check`**：那道门在测试链路 Phase 3.7 / 3.4 step2 就跑，而 `run-state … done` 要到收尾才写，并进去就是每轮必 FAIL 的假阳性（与当初拆 `--stage skeleton|final` 躲的是同一类时序坑）。故 HANDBACK 的唯一落点 = **命令返回前**。
@@ -46,7 +46,7 @@
 > - **⛔ 禁止的是"无仪式的裸交付"（这才是静默改道）**：绝不允许 autopilot 把需求识别为 bugfix/优化后，**在第一段回复就静默换成裸 `/sprint-bugfix` / `/sprint-dev` 直改 / 普通定向修正、跳过 build/报告/通知**让产物落空，且不告知用户。**识别为增量没问题；跳过仪式产物不行。**
 > - **★ 产物缺失必须显式告知（结构级、禁止静默 · 入口级仪式不变式 ③细则）**：仅当 autopilot 因 ① 停在配置向导态（无执行意图的纯探路直接调用）② 无新需求 / baseline 无变化且无 `--once`/执行意图（Phase 1 未命中）③ 版本已全部交付且无增量诉求（S3/S4）④ 其它确实无法进入 Phase 2/3 的兜底原因 而**不产出仪式产物**时，**必须跑结构级告警脚本**（把"必须打印"从自律 prose 升级为脚本强制，堵"既不产物也不告警"黑洞）：
 >   ```bash
->   python3 .aidp/scripts/autopilot-ceremony-gate.py check --version <版本> --no-pipeline-reason "<具体依据，如：无执行意图停在配置向导 / Phase 1 未检测到变化 / <版本> 已全部交付>"
+>   python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check --version <版本> --no-pipeline-reason "<具体依据，如：无执行意图停在配置向导 / Phase 1 未检测到变化 / <版本> 已全部交付>"
 >   ```
 >   它会 `exit 0` 并结构级打印：`⚠️ 本轮未进入开发流水线…判定依据=<原因>` + `应产 vs 实产：build号/AI执行报告/AI测试报告/里程碑通知 均=无（属预期无产、非缺失）` + 恢复指引（`/sprint-autopilot --target <版本> --once` 或 7×24 并行挂两条 /loop）。**禁止**手写"打印一段文字"糊弄——必须走脚本，让"未进流水线"成为结构级可核验事实。
 > - **★ 两条 loop 与报告归属（结尾必说清）**：**autopilot 本命令只产 AI 执行报告**（且必须 Phase 3 真正跑起来才有）；**AI 测试报告 / 测试通知由第二条 `/loop 5m /sprint-aiauto-test --unattended` 产**——**`/loop` 无人值守下只挂 autopilot 一条则测试报告 / 测试通知永不产生**。完整 7×24 = `/loop 10m /sprint-autopilot --unattended` + `/loop 5m /sprint-aiauto-test --unattended` 两条并行。**★ 例外（P0-4）：交互式【单次】调用（非 /loop）→ autopilot 在部署后自己跑一次 `/sprint-aiauto-test --once --unattended`**（无第二条 loop 承担、用户预期"全链路"含测试；除非显式 `--skip-aiauto-test`），故交互单次也能拿到测试报告 + 测试通知。
@@ -65,7 +65,7 @@
 
 ## IRON-9：baseline 单一写入口不变式
 
-> ⛔⛔ **baseline 单一写入口不变式（顶层铁律 —— 两条 loop 并发写，裸写必丢更新）**：`memory/.sprint-autopilot-baseline.json` 被**开发链路（`/loop 10m /sprint-autopilot --unattended`）与测试链路（`/loop 5m /sprint-aiauto-test --unattended`）并发写**。**一切写操作必须经 `.aidp/scripts/baseline_edit.py`**（内部 `flock` 排他锁 + **锁内重读** + `os.replace` 原子替换），**⛔ 严禁**在 flow / 命令端写裸 `jq '…' f > tmp && mv tmp f` 或内联 python 直接覆盖整份 —— 那只保证"不半截"，**不保证"不丢对方的字段"**：长 tick 交叉时会把对方刚落的 `ai_report_finalized` / `last_deployed_at` / 各 streak 整体抹掉，表现为重复 finalize、门判据错乱、熔断永不达阈。
+> ⛔⛔ **baseline 单一写入口不变式（顶层铁律 —— 两条 loop 并发写，裸写必丢更新）**：`memory/.sprint-autopilot-baseline.json` 被**开发链路（`/loop 10m /sprint-autopilot --unattended`）与测试链路（`/loop 5m /sprint-aiauto-test --unattended`）并发写**。**一切写操作必须经 `{{AIDP_HOME}}/scripts/baseline_edit.py`**（内部 `flock` 排他锁 + **锁内重读** + `os.replace` 原子替换），**⛔ 严禁**在 flow / 命令端写裸 `jq '…' f > tmp && mv tmp f` 或内联 python 直接覆盖整份 —— 那只保证"不半截"，**不保证"不丢对方的字段"**：长 tick 交叉时会把对方刚落的 `ai_report_finalized` / `last_deployed_at` / 各 streak 整体抹掉，表现为重复 finalize、门判据错乱、熔断永不达阈。
 > - 常用写法：`baseline_edit.py [--version <V>] set <path> <value> …` / `del <path> …` / `bump <path>` / `touch <path>` / `run-state <cur> <next> [sprint]`；**只读查询**用 `baseline_edit.py get` 或裸 `jq -r`（读不加锁无妨）。
 > - 同理适用于**脚本**：`emit-report.py` / `autopilot-deploy-watch.py` 已复用同一把锁；新增任何写 baseline 的脚本一律 `from baseline_edit import LockedBaseline`，不要另起一套写盘范式。
 > - **★ 字段被当判据前，必须先回答「谁写的 / 当前路径下它会不会被写」（写入方声明义务）**：baseline 里的**跨链路交接字段**（一条链路写、另一条链路当判据读）**登记时必须在字段说明处写明两件事——「写入方」（哪个 Phase / 哪个脚本写它）与「哪些路径下它不会被写」**。⛔ 缺这两项就拿它当判据，失效形态是**永久假值**：字段恒空 → 判据恒不成立 → 门恒不放行（或恒放行），而这**不产生任何报错**。真实事故两例：① `last_autopilot_head` 只在「云端 CICD + 就绪探针」一条部署路径写，其余部署形态恒空，于是 `unconverged` 冻结在那些形态下**永远解不开**；② 同一字段是**活指针**却被当**冻结时刻快照**用，云端路径下反而在冻结瞬间就被自己解掉。**判定同源**：`check_tick_var_supply.py` 已守「有消费者、无生产者」的变量；本条把同一纪律推到 baseline 字段面上——**有读者、写者只覆盖部分路径**同样是缺陷，只是它不会被"零生产者"检出。
@@ -92,10 +92,10 @@
 >   - **每轮开始先读 `run_state`**：`next_phase` 非空且非 `"done"` → **直接执行该 Phase**（不询问、不复述已完成内容、不重跑已完成 Phase）；`pending_actions` 非空 → **先把这些必做动作补完**（发漏的通知 + record-card、补漏的部署监听、触发漏挂的测试）**再**进下一 Phase。**★ 逐 tick 单 Sprint 续跑（#1）**：`next_phase=="3.2-dev"` 且 `next_sprint` 非 `"done"` → 本 tick 从 `next_sprint` 号 Sprint 续跑（该 Sprint 之前的已关闭、跳过不重跑，权威仍以各 Sprint 归档/close 记录核对，见 Phase 3.2「执行粒度」）。
 >   - **★★ 写盘是硬动作，不是"声明"（每个 Phase 分片末尾**必须**执行下面这一行，漏写即整套断点续跑失效）**：
 >     ```bash
->     eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # ★ 必须在本围栏首行：
+>     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 必须在本围栏首行：
 >     #   shell state 不跨 Bash 调用，漏了它 $TARGET_VERSION 取空 → run-state 报错 rc=1、一字节不写
 >     #   → next_phase/next_sprint 恒空 → 每 tick 从头重推 + 中间 tick 误跑收尾门。照抄本模板时勿删。
->     python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" \
+>     python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" \
 >       run-state "<本 Phase 编号>" "<下一 Phase 编号 或 done>" "<next_sprint 或 done>" \
 >       --summary "<本 Phase ≤20 行结论摘要>" --pending "<未完成动作,逗号分隔>"
 >     ```
@@ -103,8 +103,8 @@
 >     ⛔ **只在 `invariants` 里描述 `run_state` 而分片不写盘 = 状态机不存在**：`next_phase` 恒空 → tick 中途崩溃后下一 tick 从 Phase 3.0 全量重推；`next_sprint` 恒空 → Stop hook 的"中间 yield-tick 豁免"判据取不到值，会在每个中间 tick 误跑收尾门并白烧熔断额度。
 >   - **★★ 通用 stuck 检测（"既不失败也不推进"的兜底熔断 —— 现有熔断全是"特定失败计数"式，都堵不住这一类）**：`dev_fail_streak` / `probe_fail_streak` / `test_loop_missing_streak` 等**都要求先有一次明确失败**才计数；但真实卡死往往**没有失败**——子 Agent 每 tick 回传 partial、某个 Sprint 永远 close 不掉、`pending_actions` 里某项每 tick 都补不完。表现是 `/loop` 岁月静好地空转，**零告警、零熔断、build 永不收口**。故每轮开始读 `run_state` 时先跑本检测：
 >     ```bash
->     eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 $TARGET_VERSION
->     BE="python3 .aidp/scripts/baseline_edit.py"
+>     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 $TARGET_VERSION
+>     BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 >     # ⛔ **只读不写**：`phase_enter_count` / `phase_first_entered_at` 的唯一维护者是各 Phase 出口的
 >     #    `baseline_edit.py run-state`（它按「换 Phase 或 next_sprint 游标前移」判推进并重置）。
 >     #    此处若再 `bump` 一次 = 每 tick 加两次、阈值提前一半到达 → 长版本正常推进中被误判 stuck。
@@ -116,7 +116,7 @@
 >     if [ "$CNT" -ge "${STUCK_PHASE_ENTER_THRESHOLD:-8}" ] && [ "$AGE" -gt "${STUCK_PHASE_AGE_SECONDS:-7200}" ]; then
 >       # 熔断条件（次数 + 滞留时长双判据）已在上面成立 → `--freeze-now`：冻结四件套 + #4 一次做完。
 >       # ⛔ 判据不是 streak，别塞计数；⛔ 「发 #4」必须由这一行真发出去，写成注释 = 停得住但停不响。
->       python3 .aidp/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" --freeze-now \
+>       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" --freeze-now \
 >         --phase "$CUR_PHASE" --reason stuck-phase \
 >         --why "Phase $CUR_PHASE 连续进入 $CNT 次、滞留超 $((AGE/60)) 分钟且无推进（既不失败也不前进）"
 >       echo "⛔ 通用 stuck 熔断：Phase $CUR_PHASE 连续 $CNT tick 原地打转（首次进入 $FIRST）→ 已冻结并发 #4"
@@ -139,8 +139,8 @@
 > - **⑤ 委派/自触发 AI 自动化测试产 AI测试报告**（autopilot 只产 AI执行报告；AI测试报告 + 测试通知由第二条 `/loop /sprint-aiauto-test --unattended` 产，缺则按 ④细则自触发/提级告警）；
 > - **⑥ 返回前【无条件】跑一次收尾 ceremony 闸**（`autopilot-ceremony-gate.py`，结构级、必打印"应产 vs 实产"逐项清单，见 ⑥细则 + 文末「命令收尾硬门」）。
 > - **★ ②细则（auto-push）**：执行 `/sprint-autopilot` 本身 = 对"自动推到本轮解析出的部署分支（`DEV_BRANCH`）"的**显式且持久授权**（等价"提交并推送吧"）、既定职责非 destructive，**不得**因"NEVER commit unless user asks"在任何路径停下二次确认。**唯一免推送**（三者其一）：① 显式 `--skip-deploy` ② `deployment.mode=none`（命令行或 PRD）③ push 失败硬阻塞（走「失败处置」#4，绝不静默吞）；除此之外**只要产生了代码改动就必须 auto commit+push**（`mode=none`/`--skip-deploy` 时只 commit 不 push）。**交互式 `--once` 一致**（同样 auto-push、不回退"commit only when user asks"）。分支/触发细节（`DEV_BRANCH` 解析、`PENDING_MERGE_TO` 合并回部署源、绝不打 tag/不自动 merge master）见 Phase 3.2「授权即入口」。
-> - **★ ⑥细则（收尾硬门：无条件 + 结构级 + 必打印，堵"既不产物也不告警"黑洞）**：命令**返回前无条件**跑一次 `python3 .aidp/scripts/autopilot-ceremony-gate.py check --version {V} --build {B} …`（**不埋在"走到才触发"的 Phase 里**）——校 build/HTML报告/通知台账/测试报告归属，缺失即补产、补不齐 `exit 1` 不静默返回；**无论过没过都打印"应产清单 vs 逐项实产核验"**（build号/AI执行报告/AI测试报告/各里程碑通知，缺项标原因 + 补产命令，脚本已内置该表头）。
-> - **★ ③细则（"未进流水线"必打印，从 prose 升级为结构级）**：确实无法进入 Phase 2/3（判增量绕过/Phase 1 无变化/版本已交付/停在配置向导）而**不产 build/报告/通知**时，**必须**跑 `python3 .aidp/scripts/autopilot-ceremony-gate.py check --version {V} --no-pipeline-reason "<具体依据>"`（结构级强制打印"⚠️ 本轮未进入开发流水线…判定依据=<原因>" + 应产=无说明，`exit 0`）——堵"既不产物也不告警"黑洞。
+> - **★ ⑥细则（收尾硬门：无条件 + 结构级 + 必打印，堵"既不产物也不告警"黑洞）**：命令**返回前无条件**跑一次 `python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check --version {V} --build {B} …`（**不埋在"走到才触发"的 Phase 里**）——校 build/HTML报告/通知台账/测试报告归属，缺失即补产、补不齐 `exit 1` 不静默返回；**无论过没过都打印"应产清单 vs 逐项实产核验"**（build号/AI执行报告/AI测试报告/各里程碑通知，缺项标原因 + 补产命令，脚本已内置该表头）。
+> - **★ ③细则（"未进流水线"必打印，从 prose 升级为结构级）**：确实无法进入 Phase 2/3（判增量绕过/Phase 1 无变化/版本已交付/停在配置向导）而**不产 build/报告/通知**时，**必须**跑 `python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check --version {V} --no-pipeline-reason "<具体依据>"`（结构级强制打印"⚠️ 本轮未进入开发流水线…判定依据=<原因>" + 应产=无说明，`exit 0`）——堵"既不产物也不告警"黑洞。
 > - **★ ④细则（AI测试报告归属 + 双链路缺失要响，运行时打印非只写文档）**：autopilot 只产 AI执行报告；AI测试报告 + 测试通知(#D/#R/#F)归第二条 `/loop 5m /sprint-aiauto-test --unattended`。本版需浏览器实测（`deployment.mode`≠none）却检测不到 `aiauto_test_heartbeat_at` 心跳且本 build 无 `aiauto_delegated_at` 委派证据时——**交互式单跑**：autopilot 必自调用一次 `/sprint-aiauto-test --once --unattended`（P0-3）；**`/loop` 无人值守**：运行时**提级打印**"⚠️ 请并行挂第二条 `/loop 5m /sprint-aiauto-test --unattended`，否则 AI测试报告/测试通知永不产生"（收尾门 3b2「测试链路运行证据」已结构级兜此判据）。
 > - **★ ⑤细则（通知未发也要说清原因，禁静默）**：`NOTIFY_ENABLED=0`（`memory/aidp-config.yaml` 的 `notify.enabled=false` 或 `notify.channels` 为空 / `notify.py` 退出码 3）或因绕过框架未到通知节点而一条通知都没发时，**必须**在终端明确打印"本轮为何一条通知都没发"（未配置渠道/全部渠道失败/未进入里程碑节点）+ 恢复指引（配置 `notify` 段，见约定 32）；绝不"配过就以为发了"却静默不发。⚠️ 这是终端打印，不是弹窗——未配置渠道仍属合规降级、不阻塞。
 > - ⛔ **Red-Flag 反例（与「把『回复继续我接着建 XXX』当输出结束轮次 = 严重违规」同款）**：在 `/sprint-autopilot` 入口下完成任何代码改动后，输出「要不要我提交并推送 / 你确认我就 push / 要不要继续」这类**征询 = 严重违规**——交互式与无人值守都禁止。
@@ -149,7 +149,7 @@
 
 ## IRON-5：推送分类与监听不变式
 
-> ⛔⛔ **推送分类与监听不变式（顶层铁律）**：每次 AIDP 代码 push 前，必须调用 `python3 .aidp/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"] [--base-ref "$BASE_REF"]` 并把完整结果写入当前 build（⛔ 分工别写反：**落盘的是 `classify_push.py`**，它内部调 `classify_commit_change.py` 取分类；后者只有 `--root/--base-ref/--json/paths`，**无 `--version`/`--build`、不落盘**，直接写它 = 分类结果永不进 build、下游读方按 fail-closed 白跑一轮 CICD 监听）。分类为无正式代码变更且无分类错误时，push 仍须成功校验并记录 `cicd_skipped=true`，随后完成本次 push，不触发/监听远端 CICD、不等待部署、不跑就绪探针；分类为正式代码变更、分类结果缺失或分类错误时，才进入「部署触发 → 轮询终态（失败重试 ≤3）→ 就绪探针 → 写 last_deployed_at」。
+> ⛔⛔ **推送分类与监听不变式（顶层铁律）**：每次 AIDP 代码 push 前，必须调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"] [--base-ref "$BASE_REF"]` 并把完整结果写入当前 build（⛔ 分工别写反：**落盘的是 `classify_push.py`**，它内部调 `classify_commit_change.py` 取分类；后者只有 `--root/--base-ref/--json/paths`，**无 `--version`/`--build`、不落盘**，直接写它 = 分类结果永不进 build、下游读方按 fail-closed 白跑一轮 CICD 监听）。分类为无正式代码变更且无分类错误时，push 仍须成功校验并记录 `cicd_skipped=true`，随后完成本次 push，不触发/监听远端 CICD、不等待部署、不跑就绪探针；分类为正式代码变更、分类结果缺失或分类错误时，才进入「部署触发 → 轮询终态（失败重试 ≤3）→ 就绪探针 → 写 last_deployed_at」。
 > - **★ 作用域 = 全命令，不限本流程**（单一信源 = 约定 31.5）：所有 AIDP 命令的 push 点均须执行同一分类与分流，包括 `/sprint-dev`、`/sprint-bugfix`、`/sprint-batch`、`/version` 和用户授权的直接推送。
 > - 分类脚本调用失败、JSON 不完整或分类结果无法落盘时必须 fail-closed，按正式代码路径监听；不得用远端流水线状态反推分类。
 > - `cicd.provider=none`、未配置 `cicd.pipelines`（或 `cicd_watch.py` 退出码 3：提供方 CLI/凭据不可用）、`manual-script`、`mode=local` 或 `mode=none` 时，分类允许监听但没有可接管的远端流水线，按对应轻量部署分支处理；明确 `cicd_skipped=true` 的 push 不进入任何部署探针。
@@ -157,10 +157,10 @@
 > ★ 按 push 归属**分两条路径、不叠加**（避免主部署被双探针 / 在流水线尚未触发时过早探针误超时）：
 > - **【路径 A】主部署 push（由 Phase 3.2.1 完整 CICD 编排接管）**——`cicd-provider` / `git-push`+已配置 `cicd.pipelines` 的**主开发分支推送**，其"查触发/主动触发/轮询/重试≤3 + 就绪探针 + 写 `last_deployed_at`"**全部由 Phase 3.2.1 Step A0–D 编排承担（权威路径）**；Step D 的就绪探针同样调用 `autopilot-deploy-watch.py`（单一实现，`push_probe_fail_streak` 熔断），⛔ 路径 A 不在 Step D 之外再叠加一次探针。
 > - **【路径 B】需要独立处理的 push**——分类结果允许监听但未由 Phase 3.2.1 主部署编排接管的 push（如测试期缺陷修复后、独立 `/sprint-dev`·`/sprint-batch`、`/version` 发布期或其它非主部署编排 push）走两个确定性脚本串成完整六步；分类明确为非正式变更的 push 不进入路径 B：
->   **① ③ 流水线监听 + 失败重试（已接入 CICD 时必做）** —— `.aidp/scripts/cicd_watch.py`（平台 = `cicd.provider`，默认 GitHub Actions；差异收在 `cicd_providers.py`）：
+>   **① ③ 流水线监听 + 失败重试（已接入 CICD 时必做）** —— `{{AIDP_HOME}}/scripts/cicd_watch.py`（平台 = `cicd.provider`，默认 GitHub Actions；差异收在 `cicd_providers.py`）：
 >   ```bash
->   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
->   python3 .aidp/scripts/cicd_watch.py --commit "$(git rev-parse HEAD)" --env "<dev|test|prod>" \
+>   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
+>   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --commit "$(git rev-parse HEAD)" --env "<dev|test|prod>" \
 >     --version "$TARGET_VERSION" --timeout 480   # 退出码 0=流水线成功或未终态(verdict=running) · 1=需写动作 · 2=需人工 · 3=未接入 / 提供方 CLI·凭据不可用 / 未配置流水线
 >   ```
 >   按其 stdout JSON 的 `next_action` 分流：`probe` → 进下面 ④⑤⑥；`poll`（`verdict=running`，单次调用时限内未终态）→ 让位下 tick 续 poll；`verdict=unreachable` / rc=3 CLI 类 → 按 streak 记账（`cicd-unreachable` / `cicd-cli-unavailable`，连续 3 次冻结，环境类自动复探）；`trigger`/`retry` → **② 由命令端显式调写模式**（见下）；`abort` → 交人工（重试用尽 / 超时 / 锚定运行消失）。`cicd_retry_count` 经 `baseline_edit.py` 累加、**上限 `cicd.max_retries`（默认 3）**。
@@ -169,19 +169,19 @@
 >   - **写动作闸门 = `cicd.auto_trigger`（默认 true）**：为 true 时无人值守直接执行、无需人工确认；为 false 时**不执行任何写动作** → 按「冻结字段写入契约」置 `needs_human=true` + `aiauto_frozen_at=@now` + `freeze_reason=cicd-auto-trigger-off`、发 #4 后冻结，**绝不静默跳过监听**。
 >   ⛔ **场景边界**：流水线配了 push 自动触发 → 正常路径是脚本 detect 直接命中 `probe`/`poll`，出现 `trigger` 说明自动触发没起来、属异常，须在执行写动作的同时打印告警；流水线仅支持手动/API 触发时，`trigger` 是常规路径、按 `cicd.auto_trigger` 执行。
 >
->   **④⑤⑥ 冷启动等待 + 就绪探针 + 写 `last_deployed_at`** —— `.aidp/scripts/autopilot-deploy-watch.py`：
+>   **④⑤⑥ 冷启动等待 + 就绪探针 + 写 `last_deployed_at`** —— `{{AIDP_HOME}}/scripts/autopilot-deploy-watch.py`：
 >   ```bash
->   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
->   python3 .aidp/scripts/autopilot-deploy-watch.py \
+>   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
+>   python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py \
 >     --health-url "<后端 health 端点，如 http://host:8080/actuator/health>" \
 >     [--auth-url "<登录后自身鉴权取数接口>" --auth-header "Cookie: <会话>"] \
 >     --cold-start-seconds 55 --timeout 300 --max-seconds 480 --version "$TARGET_VERSION"
->   RC=$?; BE="python3 .aidp/scripts/baseline_edit.py"; V="$TARGET_VERSION"
+>   RC=$?; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="$TARGET_VERSION"
 >   # ⛔ 散文的「递增 +1」不是写入：全仓只有归零点、没有递增方 ⇒ 阈值永远达不到、
 >   #    这道熔断门一次也不会触发（表现为每 tick 重探 300s、零通知）。
 >   case "$RC" in
 >     0) $BE --version "$V" del push_probe_fail_streak || true ;;
->     2) python3 .aidp/scripts/autopilot_fail_handle.py --version "$V" \
+>     2) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" \
 >          --phase 3.2.1-deploy-probe --reason probe-timeout \
 >          --streak-key push_probe_fail_streak --threshold 3 \
 >          --why "就绪探针超时，环境疑似未起来（⛔ 不重跑流水线）" ;;
@@ -231,8 +231,8 @@
     - ⛔ **禁止单 tick 内前台 sleep 等退避**：部分运行环境直接禁前台 `sleep`；即便不禁，`30s+60s+120s` 也会**白吃掉 3.5 分钟 tick**（10m tick 里三分之一空转，5m tick 更离谱），且 sleep 期间 tick 可能已被判超时。
     - **落地 = 记「下次可重试时刻」，未到点直接让位本 tick**：
       ```bash
-      eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
-      BE="python3 .aidp/scripts/baseline_edit.py"
+      eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
+      BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
       # ① 派发前先看闸门：未到点 → 本 tick 不重试、直接让位（不算失败、不记 streak）
       RETRY_AT=$($BE --version "$TARGET_VERSION" get subagent_retry_at)
       to_ts() { date -d "$1" +%s 2>/dev/null || echo 0; }

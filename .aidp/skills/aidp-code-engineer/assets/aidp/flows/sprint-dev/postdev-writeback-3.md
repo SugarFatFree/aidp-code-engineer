@@ -7,6 +7,8 @@
 
 #### Step X.8：★ 部署流程 SOP + SQL执行台账（检测驱动，独立于配置变更）
 
+> `vcs_mode=none` 时下面两处 Git diff 均记 `unsupported:vcs-disabled`，不得把空 diff 当「无变更」；部署变更检测改用本 Sprint `activeContext.md` 涉及文件、SQL 与配置清单，本地规划产物按该清单派增量审计。无法得到可信文件清单时审计按当前版本四类文档收敛，而不是跳过审计。`git` 模式仍按原 diff 范围执行。
+
 > **为何独立成步**：部署流程文档的实际变更源（新增 SQL / 部署后回填接口 / 需重启）**远宽于** Step X.7 的「配置文件被改动」触发面。若嵌套在 X.7 内，则"只加 SQL、零配置改动"时永远不生成（下游 V0.10 根因）。故本步**独立**、**触发源 = 部署侧实质变更检测**（照搬约定 6「检测 `sql/增量/` 下有无脚本即执行、不依赖研发执行计划是否列 SQL 任务」的检测驱动范式），**与是否改配置、研发执行计划是否列了『写部署文档』任务全部无关**。
 
 **★ 触发（检测驱动，无条件先检测；命中任一即"本版有部署侧变更"）**——命令端跑一次轻量检测：
@@ -28,7 +30,7 @@ git diff --name-only HEAD~1 2>/dev/null | grep -qiE 'init|rebuild|migrate|backfi
 
 **A) 部署流程 `docs/deployment/{version}/部署流程/部署流程.md`（给部署执行者的操作手册，固定文件名）**：
 - **定位**：面向**部署执行者**的操作手册（不是给开发者的设计说明）——每句都应回答"下一步敲什么命令 / 点什么"；解释"为什么这么设计 / 机制怎么实现"（去重表/sha256/迁移原理/历史背景）**一律不进本文档**（归详细设计或删）。与 `{version}-deployment-checklist.md`（运维手工的前置/回滚/灰度/监控）分工，**不复述配置细节**（指向 `配置文件/增量/配置项清单.md`）、**不复述 SQL 内容**（指向 `sql/增量/` 与台账）。
-- **★ 无条件 bootstrap-if-missing**：`DEPLOY_CHANGE=1` 且（`部署流程.md` 缺失 **或** 仅剩模板占位符未实值化）→ `mkdir -p docs/deployment/{version}/部署流程/` 并**从模板 `.aidp/templates/deployment/部署流程.md` 复制**（模板即 8 章骨架 `〇选形态/一打包/二部署/三中间件配置/四配置项/五验证/六排障/七回滚`，每章带生成指引注释 + 预期篇幅），填充占位符（`{version}`/`{prev-version}` + 各章实值）；已存在有效文件 → 增量更新对应章节（本版新增 init 接口 / 新形态 / 新中间件差异则补进对应章）。**"无文件则生成"不挂任何条件触发的增量步骤内**——检测到部署变更即 bootstrap。
+- **★ 无条件 bootstrap-if-missing**：`DEPLOY_CHANGE=1` 且（`部署流程.md` 缺失 **或** 仅剩模板占位符未实值化）→ `mkdir -p docs/deployment/{version}/部署流程/` 并**从模板 `{{AIDP_HOME}}/templates/deployment/部署流程.md` 复制**（模板即 8 章骨架 `〇选形态/一打包/二部署/三中间件配置/四配置项/五验证/六排障/七回滚`，每章带生成指引注释 + 预期篇幅），填充占位符（`{version}`/`{prev-version}` + 各章实值）；已存在有效文件 → 增量更新对应章节（本版新增 init 接口 / 新形态 / 新中间件差异则补进对应章）。**"无文件则生成"不挂任何条件触发的增量步骤内**——检测到部署变更即 bootstrap。
 - **★ 生成约束（三条，随模板注释同源、命令端强制落地）**：
   1. **多形态成套**：检测本版部署形态数 N（`docs/deployment/{version}/` 下部署资产 / PRD `autopilot_decisions.deployment` / 打包脚本判断），**N 种形态就产 N 套「打包」+「中间件配置」，缺一不可**；多形态共用一套构建命令时**明确写"构建命令相同、区别只在取用哪些产物"**（避免误以为要维护多条构建链路）。「打包」章须给**产物完整路径 + 文件名 + 解压后内部结构**（如"解压后直接是 bin/+lib/，无顶层目录"）；「中间件配置」须**内嵌完整可复制配置**（每形态各一份）+ 标注形态间差异，外部 `配置文件/` example 作补充**不作替代**。
   2. **自动化环节压缩**：凡应用/框架**自动完成**的环节（启动期自动建表/自动迁移/自动初始化）**只写一句结论 + 幂等性说明**，**禁止**展开人工执行步骤、**禁止**写实现机制（去重表/sha256）。反例（禁）：把"启动期自动迁移、无需人工"当成"第一步 执行 SQL"来写；正例：「SQL 无需人工干预——建表与升级由应用启动时自动完成（幂等，重复启动不重复执行）；`sql/增量/` 仅权威副本供核对」。仅**确需人工执行 SQL** 时才展开步骤。
@@ -37,12 +39,12 @@ git diff --name-only HEAD~1 2>/dev/null | grep -qiE 'init|rebuild|migrate|backfi
 
 **B) SQL执行台账 `docs/deployment/{version}/部署流程/SQL执行台账.md`（固定文件名，★ 团队共享入库）**：
 - **用途**：记录**各环境** SQL 执行状态（开发/演示/生产分列），弥补约定 6 的 `.applied-sql.json` 只覆盖开发库且为 per-user memory、不入部署文档、不覆盖其它环境的空白。
-- **首版**：`DEPLOY_CHANGE=1` 且台账缺失 → 从模板 `.aidp/templates/deployment/SQL执行台账.md` 复制，按 `sql/增量/` 下实际脚本逐行建表（脚本名 × 环境列）。
+- **首版**：`DEPLOY_CHANGE=1` 且台账缺失 → 从模板 `{{AIDP_HOME}}/templates/deployment/SQL执行台账.md` 复制，按 `sql/增量/` 下实际脚本逐行建表（脚本名 × 环境列）。
 - **★ 与约定 6 联动登记开发库列**：Step 1（后端开发）按约定 6 把 SQL 自动应用到开发库成功后，**除写 `.applied-sql.json` 外，同步在台账「开发库」列登记**（状态 ✅ / 影响行数 / 执行时间；no-op 记原因）；**演示/生产列留 `待部署` 占位**，待各环境部署时补——让台账**从开发第一天就存在**、非等到生产部署才临时手搓。
 - **团队共享**：台账是跨人协作的部署产物，**入库共享**（区别于 per-user `memory/{version}/{user}/.applied-sql.json`）。
 
 **C) ★ 反静默失败（约定 6 同款「部署阻断风险」告警，禁止静默跳过）**：`DEPLOY_CHANGE=1` 但出现下列任一 → **WARN + 标「部署阻断风险：部署流程文档缺失/未覆盖本版部署变更」**，绝不静默继续：
-- 模板 `.aidp/templates/deployment/部署流程.md` 或 `SQL执行台账.md` **不存在**（脚手架分发异常，提示重跑 upgrade）；
+- 模板 `{{AIDP_HOME}}/templates/deployment/部署流程.md` 或 `SQL执行台账.md` **不存在**（脚手架分发异常，提示重跑 upgrade）；
 - 生成/写入失败；
 - 检测到部署侧变更（`DEPLOY_CHANGE=1`）却最终无 `部署流程.md`（或仅占位符）。
 - **无人值守**（`--unattended`）：把该 WARN 记入 baseline（`versions.{V}.deploy_docs_missing=true`）+ autopilot **#4 提示**，不弹窗、不阻塞，但留痕，供部署前置门（`/sprint-batch` Step 6 / `/sprint-autopilot` Phase 3.2.1）拦截。
@@ -69,7 +71,7 @@ PRD 行级原子条目 → 研发需求（C-4）、研发需求字段 → 详细
 # ⛔ `VERSION` 在 /sprint-dev 全链路无赋值方：取空后四个 `-- <path>` 退化成整目录比对，
 #    `CHANGED` 几乎恒非空 ⇒ 每次回写都白派一轮 version-auditor 子 Agent（方向 fail-safe，
 #    但判据失真、无人值守下纯烧成本）。真源 = baseline。
-VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version 2>/dev/null)
+VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version 2>/dev/null)
 [ -n "$VERSION" ] || { echo "⛔ 取不到当前版本号 → 无法界定审计范围，⛔ 不得静默跳过本收口点"; exit 1; }
 # 判据：本轮是否动过四类文档（含各族内容主文档）
 CHANGED=$(git diff --name-only "${BASE_REF:-HEAD~1}"..HEAD -- \
@@ -78,7 +80,7 @@ CHANGED=$(git diff --name-only "${BASE_REF:-HEAD~1}"..HEAD -- \
 ```
 
 `CHANGED` 非空 → 用 `Agent({run_in_background:false})` 派 **version-auditor 子 Agent**
-（独立上下文，`.aidp/agents/version-auditor.md`），并在派单简报里显式声明：
+（独立上下文，`{{AIDP_HOME}}/agents/version-auditor.md`），并在派单简报里显式声明：
 
 | 传给它 | 值 |
 | :- | :- |
@@ -104,15 +106,15 @@ CHANGED=$(git diff --name-only "${BASE_REF:-HEAD~1}"..HEAD -- \
 # ★ 两个变量由**执行体据审计子 Agent 回传就地填字面量**（同 phase-0-1 的 IS_LOOP_CONTEXT 范式）：
 AUDIT_CRITICAL=0   # ← 审计回传含 Critical 则改 1
 UNATTENDED=0       # ← 本次调用带 --unattended 则改 1
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-V="${TARGET_VERSION:-$(python3 .aidp/scripts/baseline_edit.py current-version 2>/dev/null)}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+V="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version 2>/dev/null)}"
 [ -n "$V" ] || { echo "⛔ 取不到版本号（TARGET_VERSION 空且 current-version 无解）→ 本块无法执行，⛔ 不得静默跳过：请显式传版本或先落 baseline"; exit 1; }
-BE="python3 .aidp/scripts/baseline_edit.py"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 if [ "$AUDIT_CRITICAL" = "1" ] && [ "$UNATTENDED" = "1" ]; then
   # 冻结四件套 + #4 一次做完。`--freeze-now` = 熔断条件（审计 Critical）已成立、一次即冻，
   # ⛔ 不走 streak：给它塞计数会在巡检里长出一串永不清零、也不是真判据的假计数。
   # ⛔ 「发 #4」必须由这一行真的发出去 —— 只写四件套 = 停得住但停不响，通知渠道零消息。
-  python3 .aidp/scripts/autopilot_fail_handle.py --version "$V" --freeze-now \
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --freeze-now \
     --phase audit-critical --reason audit-critical \
     --why "增量审计检出 Critical（C-4/C-5/F/G/H），无人值守不得静默放行，请人工裁决后重跑"
 fi

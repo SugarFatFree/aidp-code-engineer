@@ -1,6 +1,6 @@
 # sprint-design · Step 6.5 详情（对外开放接口 OpenAPI 文档化）
 
-> 本文件是 `/sprint-design` 命令 **Step 6.5** 的完整详细步骤，由命令主体（`.aidp/commands/sprint-design.md`）在**进入该段时用 Read 工具按需加载**——把状态判定 + 首次/增量子 Agent 派单 prompt 模板 + `openapi.yaml` 结构/SHA256 契约从"每次调用整体入上下文"改为"走到该段才载"。命令主体只保留该段的**骨架表 + Read 指针**。
+> 本文件是 `/sprint-design` 命令 **Step 6.5** 的完整详细步骤，由命令主体（`{{AIDP_HOME}}/commands/sprint-design.md`）在**进入该段时用 Read 工具按需加载**——把状态判定 + 首次/增量子 Agent 派单 prompt 模板 + `openapi.yaml` 结构/SHA256 契约从"每次调用整体入上下文"改为"走到该段才载"。命令主体只保留该段的**骨架表 + Read 指针**。
 >
 > ⚠️ **权威性**：进入本段后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-design/step-6.5-对外接口在线化.md`。理据/根因见同目录 `rationale.md`。

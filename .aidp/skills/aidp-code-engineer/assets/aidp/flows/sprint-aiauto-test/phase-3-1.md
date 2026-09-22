@@ -1,7 +1,7 @@
 <!-- 二次切分 · phase-3 片1/6：覆盖 3.0 报告生成门 / 3.1 报告产物 / 3.2 报告内容 / 3.2.5 截图落盘硬核验-->
 # sprint-aiauto-test · Phase 3 详情（测试报告生成 3.0–3.7）
 
-> 本文件是 `/sprint-aiauto-test` 命令 **Phase 3** 详情的**第 1/6 片**（⛔ 本片不含 Phase 3 全部子步——后续子步在 `-2` / `-3` / `-3b` / `-4` / `-5` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`.aidp/commands/sprint-aiauto-test.md`）在**进入 Phase 3 时用 Read 工具按需加载**。命令主体只保留 Phase 3 的**硬门 + 3.0–3.8 骨架 + 指向本文件的指针**。
+> 本文件是 `/sprint-aiauto-test` 命令 **Phase 3** 详情的**第 1/6 片**（⛔ 本片不含 Phase 3 全部子步——后续子步在 `-2` / `-3` / `-3b` / `-4` / `-5` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`）在**进入 Phase 3 时用 Read 工具按需加载**。命令主体只保留 Phase 3 的**硬门 + 3.0–3.8 骨架 + 指向本文件的指针**。
 >
 > ⚠️ **权威性**：进入 Phase 3 后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/`。理据/根因见同目录 `rationale.md`。
@@ -10,7 +10,7 @@
 
 ## Phase 3：测试报告生成（HTML — AI测试报告）
 
-> ⛔⛔ **RED FLAG（最高优先级，先读再动手）**：**测试报告唯一形态 = HTML 离线 SPA**。如果你此刻正打算"写一份 markdown 测试报告"（如 `AI自动化测试报告-{V}-build{N}.md` / `动态测试报告-*.md` / 任何 `.md` 报告）—— **立即停止，这是执行违规**。正确动作只有一条：**`cp` 模板 `index.html`+`assets/` → 写 `data/{BUILD}.js` 数据文件 → 注册 `<script>`**（详见 3.2.6）。测试结论/统计/缺陷/截图全部进 `data/{BUILD}.js`（结构化数据），由 `index.html` 渲染，**不另写任何 markdown 叙述报告**。**禁止范围 = `AI测试报告/` 根层的叙述性 `.md`**（各级 `README.md` 除外）。⛔ **`build-*/round-*/` 下 SKILL 的契约产物一律豁免、绝不删**——`tasks.md` 是 `auto-test-runner` 断点续跑的唯一进度真相、`run-context.md` 是其运行上下文，按 SKILL 契约必产（约定 21）；把它们当"markdown 报告"删掉会直接把状态机归零，而 3.2.5bis 维度 3 扫的正是被删的那份。
+> ⛔⛔ **RED FLAG：测试报告唯一形态 = HTML 离线 SPA**。禁止在 `AI测试报告/` 根层另写叙述性 `.md`（各级 `README.md` 除外）；按 3.2.6 经模板生成 `index.html`+`assets/`、写 `data/{BUILD}.js` 并注册脚本。**`build-*/round-*/` 下 SKILL 契约产物一律保留、绝不删**，尤其 `tasks.md` 与 `run-context.md`。误删会破坏断点续跑；根因见 `rationale.md`。
 >
 > ★ 自检口诀：测试跑完、要落报告时，问自己"我是在 `cp` HTML 模板 + 写 `.js` 数据，还是在写 `.md`？"——若是后者，回到 3.2.6 重来。
 
@@ -22,7 +22,7 @@
 # ★ 跨分片取回本 tick 变量 —— flow 每个分片是**独立的 Bash 调用**，shell 变量不持久；
 #   漏这一行会让下方判据读到空串、`${VAR:-默认}` 静默落默认值（恒真/恒假）。
 #   真源在 baseline 的（BUILD/DRIVER/DEPLOY_MODE/NOTIFY_ENABLED/LOOP_UNATTENDED…）由脚本自动回落。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 if [ "$REPORT_ENABLED" != "1" ]; then
   echo "⏭️ 非 autopilot 驱动（无 current_build）→ 跳过 Phase 3 的 AI测试报告 HTML 生成"
   echo "   已完成：测试执行 + 终端结果摘要 + 失败用例回写「问题汇总清单」（供 /sprint-bugfix 拾取）+ baseline aiauto_test_result"
@@ -33,7 +33,7 @@ if [ "$REPORT_ENABLED" != "1" ]; then
 fi
 export SKIP_REPORT="${SKIP_REPORT:-0}"
 # ★ 落盘：`export` 跨不过 Bash 调用，而 3.2.5 / 3.2.6 在别的分片里判它
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test SKIP_REPORT "$SKIP_REPORT"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test SKIP_REPORT "$SKIP_REPORT"
 # REPORT_ENABLED=1（autopilot 驱动）→ 正常往下走 3.1 ~ 3.2.6 生成 AI测试报告 HTML
 # ⛔ 3.1 / 3.2.5 / 3.2.6 每步开头必须先判 `[ "$SKIP_REPORT" = "1" ] && 跳过本步`：
 #    "跳过"若只以注释形式存在，standalone 轮次逐字执行会继续进 3.2.5 截图硬核验
@@ -73,7 +73,7 @@ docs/reports/{TARGET_VERSION}/AI测试报告/
 > 🪟 **无头模式同样适用本硬核验**：`--headless=new` 无头 Chrome **完整支持 `capture` 截图**，整套仿真操作在无头/有头下行为一致，唯一区别是无头无可见窗口。**无头不是"不截图 / 跳过本核验"的借口**——证据缺失一律按执行缺陷处理。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # ⛔ 每步开头必判 SKIP_REPORT（3.1 已落盘）：standalone 轮次没有 BUILD 归属，
 #    `SHOT_DIR` 会拼出空 BUILD 段 ⇒ 恒无 .png ⇒ 本门恒失败 ⇒ 3 tick 后冻掉一个
 #    本就不该产报告的版本。散文写了"跳过"不算数，必须是可执行判据。
@@ -89,14 +89,14 @@ mkdir -p "$SHOT_DIR"
 #    ⚠️ 不校就归集的风险：若 evidence 被写成字符串数组而非对象数组，下面的 artifact 兜底会**静默拷 0 张图**，
 #       而命令仍judged"完成"——报告里一张证据都没有却全绿。判据/枚举单一信源 = 该脚本，命令端不复述。
 #    ★ 脚本已支持多路径（`target` 为 nargs='+'），故直接喂 round-*/results/ 通配即可，一次校完全部轮次。
-if [ -f .aidp/skills/auto-test-runner/scripts/check_result.py ]; then
+if [ -f {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py ]; then
   # ⛔ 不用 `--strict`：它把**所有** Important 一律翻成 exit 1，而 SKILL 明写 **I7**
   #   （direct 模式的 pass 无轻量事实 evidence）是「**不阻断**、报告单列」——I2/I5 同样连坐。
   #   故改读 `--json` 的 `issues[].rule` **白名单**（理据见 rationale）：
   #   ⛔ 白名单取脚本 `_issue()` 的 **rule 实名（snake_case）**，⛔ 不用文档里的 `I` 编号
   #   （编号从不出现在 `issues[].rule` 里，用它做白名单恒不匹配；理据见 rationale）。
   #   其余 Important 一律单列告警、不阻断（开放式表述，别再腐化成闭集）。
-  CR_JSON=$(python3 .aidp/skills/auto-test-runner/scripts/check_result.py \
+  CR_JSON=$(python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py \
     "${BTR}/build-${BUILD}"/round-*/results/ --json 2>/dev/null); CR_EXIT=$?
   CR_BLOCKING=$(printf '%s' "$CR_JSON" | python3 -c "import json,sys
 d=json.load(sys.stdin)
@@ -125,19 +125,19 @@ if [ -z "$(find "$SHOT_DIR" -name '*.png' 2>/dev/null | head -1)" ]; then
   echo "❌ Phase 3 核验失败：截图为空 $SHOT_DIR —— auto-test-runner 未按 capture 契约在关键步骤（登录/提交/状态变化/断言/报错）出图"
   # → 用例已跑完无法回补：data/{BUILD}.js 须把对应 case 的 screenshot 标"缺图"并记执行缺陷，不得静默
   # ★ 记账 + 达阈冻结（防 /loop 每 tick 重撞同一失败）：连续 3 次即按 Phase 0.2「冻结字段写入契约」冻结本版
-  N=$(python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" bump shot_gate_fail_streak)   # ★ 本门专属计数，⛔ 不与 3.2.6 两门共用
+  N=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" bump shot_gate_fail_streak)   # ★ 本门专属计数，⛔ 不与 3.2.6 两门共用
   # 无唤醒源=没有下一 tick 叠 streak，阈值恒不可达 → 当场按达阈处置（根因见 rationale.md）
   if [ "$N" -ge 3 ] || [ "${HAS_WAKE_SOURCE:-0}" = "0" ]; then
     # ★ `unconverged_frozen_head` 必须与四件套**同批写入**（理据见 rationale.md「冻结快照 HEAD」）
-    python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" \
+    python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" \
       set needs_human true aiauto_frozen_at @now freeze_reason unconverged \
       unconverged_frozen_head "$(git rev-parse HEAD 2>/dev/null || echo '')" \
       needs_human_reason "连续 $N 次截图核验失败：auto-test-runner 未按 capture 契约出图"
-    python3 .aidp/scripts/baseline_edit.py set aiauto_blocked_reason "frozen:unconverged@$TARGET_VERSION"
+    python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_blocked_reason "frozen:unconverged@$TARGET_VERSION"
     echo "⏸️ 连续 $N 次截图核验失败 → 冻结本版待人工（解冻靠新提交 / 新部署 / 人工 retry）"
   fi
   # ★ 发 #4 通知：参数须对齐 notify.py 真实签名（无 --kind/--body），写错会被 `|| true` 咽掉
-  python3 .aidp/scripts/notify.py --node "#4" \
+  python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" \
     --auto --title "AI 测试受阻：截图为空" --header-color red \
     --version "$TARGET_VERSION" --build "${BUILD:-?}" \
     --section "截图核验失败第 $N 次（阈值 3）。$SHOT_DIR 下无 .png，auto-test-runner 未按 capture 契约出图。本轮结论未采信、已让位。" || true
@@ -148,7 +148,7 @@ fi
 #    一个 `report_gate_fail_streak`，同 tick 内前门通过即 del，后两门的阈值**恒不可达** ——
 #    每 5 分钟跑一整轮全量实测 + 一张 #4，一天 288 轮，`needs_human` 永不置位。
 #    （同一推理已在 `phase-3-5.md` 用过：给最终门单开了 `final_gate_fail_streak`。）
-python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" del shot_gate_fail_streak || true
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del shot_gate_fail_streak || true
 fi   # ← SKIP_REPORT 守卫结束
 ```
 
@@ -165,18 +165,18 @@ fi   # ← SKIP_REPORT 守卫结束
 
 用 `Agent` 工具派**一个独立子 Agent**（隔离上下文），prompt 至少给：
 
-- 质量维度清单路径：`.aidp/skills/auto-test-runner/references/quality-review-checklist.md`（**判据以它为单一信源，命令端不复述维度内容**，约定 21）
+- 质量维度清单路径：`{{AIDP_HOME}}/skills/auto-test-runner/references/quality-review-checklist.md`（**判据以它为单一信源，命令端不复述维度内容**，约定 21）
 - 本轮 round 目录：`docs/reports/{TARGET_VERSION}/AI测试报告/build-{BUILD}/round-{M}/`
   （⚠️ **`build-` 前缀不能漏**：SKILL 按其契约把证据落在 `build-${BUILD}/round-{M}/`，同文件上方引用的也是这个形态。少了前缀，质量检查子 Agent 扫的是一个不存在的目录——判通过即恒真空门、判失败即误冻结健康 build，两种结果都错。)
 - 要求：先跑 SKILL 自带的确定性脚本（**清单以 checklist 各维度「自动化辅助」行为准，⛔ 不写成闭集**），**逐个按各自签名传参**（⛔ 入参各不相同，一把喂 round 目录会得到与被检对象无关的恒定结论——恒真的空门比没门更坏）：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-  S=.aidp/skills/auto-test-runner/scripts
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+  S={{AIDP_HOME}}/skills/auto-test-runner/scripts
   M=$(ls -d "docs/reports/${TARGET_VERSION}/AI测试报告/build-${BUILD}"/round-* 2>/dev/null \
       | sed 's|.*/round-||' | sort -n | tail -1)          # 本轮轮次号（取最大）
   RD="docs/reports/${TARGET_VERSION}/AI测试报告/build-${BUILD}/round-${M}"
   python3 $S/tasks_state.py scan "$RD/tasks.md" --json            # tasks.md 不得残留 [ ]/[>]
-  python3 $S/check_layer_isolation.py .aidp/skills/auto-test-runner --json   # 维度 1：传 SKILL 根目录
+  python3 $S/check_layer_isolation.py {{AIDP_HOME}}/skills/auto-test-runner --json   # 维度 1：传 SKILL 根目录
   python3 $S/check_env_facts.py "$RD/env-facts.json" --json       # 环境取证：传 env-facts.json
   # ★ 维度 8 必跑：收窄 = 静默漏跑（用例不进 tasks.md，跑完仍全绿）
   python3 $S/tasks_state.py selftest --json
@@ -192,10 +192,10 @@ fi   # ← SKIP_REPORT 守卫结束
 - **`quality-review-checklist.md` 里标 `Critical` 的任一项不通过**（维度级与「折入本维度」的子核查同等对待；⛔ 判据取 SKILL 的标记，不照本命令的记忆列名单）→ **可执行地**记账（⛔ 散文的「记」不是写入：全仓只有 `del`、没有递增 ⇒ 阈值永不达、每 tick 从头重跑一整轮全量实测、零通知）：
 
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell --command aiauto-test)"
-  BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell --command aiauto-test)"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
   # ★ 本门专属 streak，⛔ 不与 3.2.5 / 3.2.6 共用；记账→判阈→四件套→#4 一次做完
-  python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$V" \
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$V" \
     --phase 3.3-qr --reason audit-critical --streak-key qr_gate_fail_streak --threshold 3 \
     --why "质量检查清单 Critical 连续未过（详见本步输出）"
   ```

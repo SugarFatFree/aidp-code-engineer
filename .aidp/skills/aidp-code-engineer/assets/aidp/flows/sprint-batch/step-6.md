@@ -16,7 +16,7 @@
 > ⛔ **6.0.5 / 6.0.6 是【部署前】安全网，不受本跳过判定管辖——先跑它们，再做下表判定**。
 > 它们校的是「SQL 有没有真的应用到库」与「部署流程文档在不在」，与"跑不跑浏览器测试"无关；
 > 放在判定之后会被 `--skip-aiauto-test` 连坐，而 7×24 主路径恒带该 flag（根因见
-> `.aidp/flows/sprint-autopilot/rationale.md`「部署前安全网为何要在 autopilot 侧再跑一次」）。
+> `{{AIDP_HOME}}/flows/sprint-autopilot/rationale.md`「部署前安全网为何要在 autopilot 侧再跑一次」）。
 
 | 条件 | 行为 |
 |------|------|
@@ -34,8 +34,8 @@
 #   空值会让 SQL_DIR 退化成 "docs/deployment//sql/增量"、用例扫描目录变 "docs/testing/"，
 #   进而被误判成"本版无 SQL / 无用例"而整段跳过。
 # ⛔ 首选 TARGET_VERSION，`current-version` 只作兜底（根因见 rationale.md「版本号取错」）。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null || true)"
-VERSION="${TARGET_VERSION:-$(python3 .aidp/scripts/baseline_edit.py current-version)}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null || true)"
+VERSION="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号（TARGET_VERSION 与 current-version 均空）→ 中止本步，不静默跳过"; exit 1; }
 V="$VERSION"; SQL_DIR="docs/deployment/$V/sql/增量"                  # SQL 最终落位（约定 6/§2.5.4）
 [ -d "$SQL_DIR" ] || SQL_DIR="code/sql/$V"                      # 兼容 legacy 存量（grandfather）
@@ -64,7 +64,7 @@ fi
 > 本版本若有部署侧变更（sql/ 有脚本 / 部署后回填接口 / 需重启），部署流程 SOP + SQL执行台账应由 `/sprint-dev` **Step X.8（检测驱动）**在开发期已生成。本步是**部署前兜底核验**——堵住边界（某些 Sprint 全前端未触发 / Step X.8 曾被跳过），避免"制品已部署、部署流程文档还不存在"的倒序。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"; VERSION="${TARGET_VERSION:-$(python3 .aidp/scripts/baseline_edit.py current-version)}"   # 口径同 6.0.5 首处
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"; VERSION="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"   # 口径同 6.0.5 首处
 V="$VERSION"; SQL_DIR="docs/deployment/$V/sql/增量"; [ -d "$SQL_DIR" ] || SQL_DIR="code/sql/$V"
 FLOW="docs/deployment/$V/部署流程/部署流程.md"
 if ls "$SQL_DIR"/[0-9][0-9]_*.sql 2>/dev/null | grep -qv '99_'; then   # 本版有部署侧变更信号
@@ -84,7 +84,7 @@ fi
 `/sprint-aiauto-test` Phase 2.0 用例来源优先级铁律：测试人员为主（`docs/testing/{version}/正式用例/`）+ 研发自测查漏补充（`docs/testing/{version}/研发自测/` 或单文件 `docs/testing/{version}/研发自测.md`）。本步骤只确保至少有一处有用例可读：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"; VERSION="${TARGET_VERSION:-$(python3 .aidp/scripts/baseline_edit.py current-version)}"   # 口径同 6.0.5 首处
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"; VERSION="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"   # 口径同 6.0.5 首处
 V="docs/testing/$VERSION"
 
 # 测试人员用例：正式用例/ 下排除环境配置 + 待澄清
@@ -118,7 +118,7 @@ fi
 1. **定位 PRD 文件**：扫 `docs/requirements/$VERSION/产品提供/*.md` 取第一份；找不到 → 跳过 + 报告标"PRD 缺失"
 2. **抽 YAML frontmatter 中 `autopilot_decisions.deployment` 段**：
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"; VERSION="${TARGET_VERSION:-$(python3 .aidp/scripts/baseline_edit.py current-version)}"   # 口径同 6.0.5
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"; VERSION="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"   # 口径同 6.0.5
    PRD_FILE=$(ls docs/requirements/"$VERSION"/产品提供/*.md 2>/dev/null | head -1)   # 步骤 1 的"取第一份"落成可执行
    [ -n "$PRD_FILE" ] || { echo "⛔ 未找到 PRD（docs/requirements/$VERSION/产品提供/*.md）→ 跳过本步并在报告标「PRD 缺失」"; }
    DEPLOY_MODE=$(awk '/^---$/{f=!f;next} f && /^[[:space:]]*mode:/{print $2;exit}' "$PRD_FILE")

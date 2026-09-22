@@ -19,9 +19,9 @@
 ★ **熔断冻结跳过**：候选筛选先读 `.versions."<V>".needs_human`——**为 true 即从 PRE_RELEASE / TARGET 候选剔除**；写入方齐备性由 `check_freeze_contract.py` 守。**解冻**：新部署自动解冻 / 人工清 `needs_human` / `--reset-baseline` / **`--target <V>` 显式点名**（根因见 `rationale.md`）：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 if [ -n "${TARGET_FLAG_VALUE:-}" ]; then
-  TARGET_VERSION="$TARGET_FLAG_VALUE"; BE="python3 .aidp/scripts/baseline_edit.py"
+  TARGET_VERSION="$TARGET_FLAG_VALUE"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
   # ⛔ 清单与解冻块同源，漏一个计数 = 刚解冻又达阈重冻（理据见 rationale）。
   $BE --version "$TARGET_VERSION" del needs_human needs_human_reason \
     needs_human_kind aiauto_frozen_at freeze_reason \
@@ -56,7 +56,7 @@ fi
 > PY
 > ); do
 >   # --apply：到期即删冻结字段 + 以 @<V> 结尾的顶层 aiauto_blocked_reason，并累加复探次数
->   python3 .aidp/scripts/autopilot_unfreeze.py --env-reprobe "$_v" --apply --json 2>/dev/null \
+>   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --env-reprobe "$_v" --apply --json 2>/dev/null \
 >     | python3 -c "import json,sys;d=json.load(sys.stdin);print('🔓 %s 环境类冻结（%s）第 %s 次复探放行' % ('$_v', d.get('reason'), d.get('attempts')) if d.get('applied') else ('⏸️ $_v 环境类复探已用尽，转人工' if d.get('exhausted') else ''))" 2>/dev/null || true
 > done
 > ```
@@ -70,19 +70,19 @@ fi
 > # 单一信源 = flows/sprint-aiauto-test/rationale.md「冻结分类」表）。⛔ 不得内联复写（理据见 rationale.md）。
 > # ★ $V 与 $BE 都必须在**本围栏**取回（围栏间 shell state 不共享）：
 > #   $V 取空 → UNFZ 空 → if 恒假 → 配置类冻结修好了也永不解冻（理据见 rationale）。
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 > # ⛔ 这里**不能用 `:?`**：`autopilot.target_version` 要到本步末尾才落盘，首 tick /
 > #   刚跑过 `--reset-baseline` 时它恒空 —— `:?` 会让非交互 shell 当场退出，连同下面那段
 > #   **专为「被冻版本已被选版剔除、只探 $V 探不到」而写的 `--aiauto-probe-all` 遍历**一起
 > #   不执行，该轮所有被冻版本得不到复评。probe-all 本就不依赖 $V，单版探针另用 `[ -n "$V" ]` 守。
-> BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:-}"
+> BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:-}"
 > # ★ 通知渠道复探与版本解冻同属「配置恢复了就自动重开」，放在同一处：冷启动第一个 tick
 > #   把通知关掉后若无人复探，此后所有 #4 只剩终端可见（#4 是冻结时刻唯一对外信号）。
-> python3 .aidp/scripts/autopilot_unfreeze.py --notify-reprobe 2>/dev/null || true
+> python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --notify-reprobe 2>/dev/null || true
 > # ★ 先扫全部被冻版本并**逐个解冻**：被冻版会被本步候选剔除，只探 $V 则 Phase 2 冻在
 > #   PRE_RELEASE 上的三类（deploy-unreachable / unconverged / config-missing）永远探不到。
 > #   ⛔ 只调 probe-all 不消费它的 `unfreezable[]` 等于没探 —— 它只打印、不写盘。
-> for _v in $(python3 .aidp/scripts/autopilot_unfreeze.py --aiauto-probe-all --json 2>/dev/null \
+> for _v in $(python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --aiauto-probe-all --json 2>/dev/null \
 >             | python3 -c "import json,sys;print(' '.join((json.load(sys.stdin).get('unfreezable') or [])))" 2>/dev/null); do
 >   $BE --version "$_v" del needs_human needs_human_reason needs_human_kind aiauto_frozen_at freeze_reason \
 >     dev_fail_streak dev_fail_phase auto_retest_streak test_loop_missing_streak \
@@ -92,7 +92,7 @@ fi
 >   echo "🔓 $_v 具备解冻证据 → 已解冻重回候选"
 > done
 > [ -n "$V" ] || { echo "ℹ️ 本 tick 尚无 TARGET_VERSION（首 tick / 刚 reset）→ 单版探针跳过，probe-all 已跑完"; }
-> PROBE=$([ -n "$V" ] && python3 .aidp/scripts/autopilot_unfreeze.py --aiauto-probe "$V" --json 2>/dev/null || echo '{}')
+> PROBE=$([ -n "$V" ] && python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --aiauto-probe "$V" --json 2>/dev/null || echo '{}')
 > UNFZ=$(printf '%s' "$PROBE" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('evidence','') if d.get('unfreeze') else '')" 2>/dev/null)
 > if [ -n "$UNFZ" ]; then
 >   $BE --version "$V" del needs_human needs_human_reason aiauto_frozen_at freeze_reason test_loop_missing_streak
@@ -114,20 +114,20 @@ fi
 # ⛔ 代入**实际版本号**，绝不原样执行占位形态、绝不留 `<...>`（留占位符与不落盘等价）。
 # ⚠️ `autopilot_tick_flags.py set` 一次只收【单个】 name value（不同于 baseline_edit.py），连写 argparse exit 2
 #    → 两个变量一个都落不了盘（理据见 rationale）。
-python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot TARGET_VERSION "<0.3.4 判定的 TARGET_VERSION，无则空串>"
-python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot PRE_RELEASE_VERSION "<0.3.4 判定的 PRE_RELEASE_VERSION，无则空串>"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot TARGET_VERSION "<0.3.4 判定的 TARGET_VERSION，无则空串>"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PRE_RELEASE_VERSION "<0.3.4 判定的 PRE_RELEASE_VERSION，无则空串>"
 # ★ 两个版本号必须**成对**持久化到 baseline 顶层（tick 命名空间每 tick 整段重写、跨不了 tick）；
 #   `autopilot.{target,pre_release}_version` 是二者声明真源，本两行是唯一供给点。
 #   ⛔ 任一行漏写 = 断点续跑取空 → 该版全部 jq 打空、门恒判失败（理据见 rationale）。
-python3 .aidp/scripts/baseline_edit.py set autopilot.target_version "<0.3.4 判定的 TARGET_VERSION，无则空串>"
-python3 .aidp/scripts/baseline_edit.py set autopilot.pre_release_version "<0.3.4 判定的 PRE_RELEASE_VERSION，无则空串>"
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py set autopilot.target_version "<0.3.4 判定的 TARGET_VERSION，无则空串>"
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py set autopilot.pre_release_version "<0.3.4 判定的 PRE_RELEASE_VERSION，无则空串>"
 # 落盘后立即自检：读回应与判定值一致，不一致说明代入失败或落盘失败 —— ⛔ 空值即中止本 tick，别带病往下跑
-python3 .aidp/scripts/autopilot_tick_flags.py --shell | grep -E "^(TARGET_VERSION|PRE_RELEASE_VERSION)="
-_TV=$(python3 .aidp/scripts/autopilot_tick_flags.py --shell | sed -n "s/^TARGET_VERSION=//p" | tr -d \"\'\")
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell | grep -E "^(TARGET_VERSION|PRE_RELEASE_VERSION)="
+_TV=$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell | sed -n "s/^TARGET_VERSION=//p" | tr -d \"\'\")
 # ⛔ 只判非空**不够**：占位串「<0.3.4 判定的…>」原样写入时它也非空，自检照样放行 —— 此后所有
 #   `--version "<0.3.4 判定的…>"` 的 baseline 路径与 `docs/*/<占位>/` 的 glob 全部落空但不报错，
 #   run_state 还会写进一个幽灵版本节点。故必须**校形状**（本自检要覆盖的恰是"代入失败"那一档）。
-_PRV=$(python3 .aidp/scripts/autopilot_tick_flags.py --shell | sed -n "s/^PRE_RELEASE_VERSION=//p" | tr -d \"\')
+_PRV=$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell | sed -n "s/^PRE_RELEASE_VERSION=//p" | tr -d \"\')
 case "$_TV" in
   # ⛔ **空 ≠ 落盘失败**：「本版等准发布、产品还没提新 PRD」是 7×24 最常见的稳态
   #   （0.3.4 决策矩阵里的合法行 `| 有 | null | 仅跑 Phase 2 |`）。这里裸 exit 1 会把它

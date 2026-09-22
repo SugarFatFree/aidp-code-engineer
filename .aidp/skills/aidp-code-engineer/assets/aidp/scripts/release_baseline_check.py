@@ -37,15 +37,21 @@
 
 ## 用法
 
-    python3 .aidp/scripts/release_baseline_check.py --version V0.2.0
-    python3 .aidp/scripts/release_baseline_check.py --version V0.2.0 --json
-    python3 .aidp/scripts/release_baseline_check.py --version V0.2.0 --root /path/to/repo
+    python3 AIDP_HOME/scripts/release_baseline_check.py --version V0.2.0
+    python3 AIDP_HOME/scripts/release_baseline_check.py --version V0.2.0 --json
+    python3 AIDP_HOME/scripts/release_baseline_check.py --version V0.2.0 --root /path/to/repo
 
 退出码：0 = 无 ERROR（可能有 WARN/INFO）；1 = 有 ERROR；2 = 用法 / 路径错误。
 
 ★ 依赖：**标准库优先**。PyYAML 若可用则用于第 2 项严格语法校验，不可用时自动降级为
 内置的轻量结构自检（Tab 缩进 / 缩进跳变 / 同层重复键）并给 INFO——**绝不因缺依赖而假通过**。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -667,7 +673,7 @@ def check_ddl_comment_verified(root, ver_dir, version, rep):
     要填那张表，就得真去查一次。判定委派 `check_sql_ledger_comment.py`（单一实现，
     ⛔ 不在这里重写一遍 ADD COLUMN 的方言识别——两处各写一份必然漂移）。
     """
-    script = root / ".aidp" / "scripts" / "check_sql_ledger_comment.py"
+    script = root / runtime_relpath("", __file__) / "scripts" / "check_sql_ledger_comment.py"
     if not script.is_file():
         rep.note("DDL 注释实查", "check_sql_ledger_comment.py 不存在，本项跳过")
         return
@@ -780,7 +786,7 @@ def main(argv=None):
                 print(f"  {icon} [{it['check']}] {it['msg']}")
         print(f"\n  合计：{len(rep.errors)} ERROR / {len(rep.warns)} WARN / {len(rep.notes)} INFO")
         if rep.errors:
-            print("  → 有 ERROR，本版全量基线不可发布；逐条修复后重跑（判据见 .aidp/reference/约定细则-5.md）")
+            print(runtime_text('  → 有 ERROR，本版全量基线不可发布；逐条修复后重跑（判据见 __AIDP_HOME__/reference/约定细则-5.md）', __file__))
         else:
             print("  🎉 无 ERROR")
     return 1 if rep.errors else 0

@@ -16,7 +16,7 @@
 
 ## 判据
 
-把 `.aidp/{commands,agents,flows,reference,rules}` 与 `docs/init` 下的 `.md` 归一化
+把 `AIDP_HOME/{commands,agents,flows,reference,rules}` 与 `docs/init` 下的 `.md` 归一化
 （去 markdown 标记 / 折叠空白 / 去行首列表符号）后按句切分，滑窗比对：
 
   - 同一片段（≥`--error-len`，默认 **150** 字符）出现在 **≥2 个文件** → **ERROR**
@@ -29,19 +29,25 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_cross_file_dup.py [--root <仓库根>] [--json]
+    python3 AIDP_HOME/scripts/check_cross_file_dup.py [--root <仓库根>] [--json]
                                                     [--error-len 150] [--warn-len 80]
 
 退出码：`0`=无 ERROR 级重复 / `1`=检出 / `2`=用法或读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
 import re
 import sys
 
-SCAN = [".aidp/commands", ".aidp/agents", ".aidp/flows",
-        ".aidp/reference", ".aidp/rules", "docs/init"]
+SCAN = [runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/agents', __file__), runtime_text('__AIDP_HOME__/flows', __file__),
+        runtime_text('__AIDP_HOME__/reference', __file__), runtime_text('__AIDP_HOME__/rules', __file__), "docs/init"]
 ATTACH_SKIP = {"README.md"}
 # ★ `ignore` 后允许跟说明文字（本脚本的修复建议本就要求写明豁免理由）——
 #   若要求 `ignore` 紧跟 `-->`，带理由的豁免会静默失效、检查形同虚设。

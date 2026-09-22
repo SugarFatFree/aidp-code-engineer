@@ -487,7 +487,7 @@ proto=$(awk '/^### REQ-|^#### 5\./{f=NR} f && NR<=f+8 && /原型(文件|来源|�
 
 **核验执行(QR Agent 必须 100% 按下列步骤执行,不得跳过):**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `.aidp/skills/ux-logic-extractor`),由 Agent 在执行前替换。
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/ux-logic-extractor`),由 Agent 在执行前替换。
 
 ```bash
 # 步骤 1: 6 类正则硬核扫描(必须命中 0 条才能通过)

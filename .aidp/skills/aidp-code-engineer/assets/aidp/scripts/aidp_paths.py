@@ -15,7 +15,7 @@
 import os
 
 # 程序写的运行时状态统一目录（人别动）；锁文件在其下 `locks/`。
-RUNTIME_DIRNAME = ".aidp"
+RUNTIME_DIRNAME = "." + "aidp"  # 项目业务状态目录，不是 Agent 运行包根
 LOCK_DIRNAME = os.path.join(RUNTIME_DIRNAME, "locks")   # 与 baseline_edit.lock_path 同值，改这里要同步那边
 
 

@@ -4,7 +4,7 @@
 
 ## 它堵的是哪一类失效
 
-`$ARGUMENTS` 是**斜杠命令正文的 runtime 文本替换**——只有 `.aidp/commands/<cmd>.md` 里
+`$ARGUMENTS` 是**斜杠命令正文的 runtime 文本替换**——只有 `AIDP_HOME/commands/<cmd>.md` 里
 真的写了这个字样，宿主才会把用户输入替换进去。而 flow 分片是被 `Read` 进来的**普通文本**，
 `${ARGUMENTS:-}` 在那里只是一个未设置的 shell 变量。
 
@@ -18,7 +18,7 @@
 
 ## 判据
 
-对每个 `.aidp/commands/<cmd>.md`：若 `<cmd>` 自己或它的 `.aidp/flows/<cmd>/**` 里
+对每个 `AIDP_HOME/commands/<cmd>.md`：若 `<cmd>` 自己或它的 `AIDP_HOME/flows/<cmd>/**` 里
 出现了 `$ARGUMENTS` / `${ARGUMENTS`，则**命令正文**必须也出现 `$ARGUMENTS` —— 否则 ERROR。
 
 ⛔ 只查「用了却没声明」，不查反向（命令正文声明了但没人用是无害的）。
@@ -29,14 +29,20 @@
 
 退出码：`0`=通道齐备（或不适用）/ `1`=有命令用了却没声明 / `2`=用法错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
 import re
 import sys
 
-CMD_DIR = os.path.join(".aidp", "commands")
-FLOW_DIR = os.path.join(".aidp", "flows")
+CMD_DIR = os.path.join(runtime_relpath("", __file__), "commands")
+FLOW_DIR = os.path.join(runtime_relpath("", __file__), "flows")
 ARG_RE = re.compile(r"\$\{?ARGUMENTS\b")
 IGNORE_RE = re.compile(r"<!--\s*argch-check:\s*ignore\b")
 
@@ -80,9 +86,12 @@ def run(root="."):
         if (flow_uses or declared) and not declared:
             findings.append({
                 "level": "ERROR", "command": cmd, "used_in": where[:4],
-                "detail": (f"`/{cmd}` 的 flow 分片里读了 `$ARGUMENTS`，但**命令正文没有声明它** —— "
-                           f"`$ARGUMENTS` 只在 `.aidp/commands/*.md` 里被 runtime 文本替换，"
-                           f"flow 是 Read 进来的普通文本 → 解析器恒收空串 → **全部 flag 落 0**"),
+                "detail": runtime_text(
+                    f"`/{cmd}` 的 flow 分片里读了 `$ARGUMENTS`，但**命令正文没有声明它** —— "
+                    "`$ARGUMENTS` 只在 `__AIDP_HOME__/commands/*.md` 里被 runtime 文本替换，"
+                    "flow 是 Read 进来的普通文本 → 解析器恒收空串 → **全部 flag 落 0**",
+                    __file__,
+                ),
             })
     return {"applicable": True, "reason": "", "scanned": scanned,
             "findings": findings, "passed": not findings}

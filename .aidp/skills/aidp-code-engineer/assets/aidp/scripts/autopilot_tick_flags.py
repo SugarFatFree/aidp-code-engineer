@@ -25,9 +25,9 @@
 ⛔ **每一条都必须带 `--command`**（见下方「命名空间」）——漏了就落回默认的 `autopilot` 键，
 在 aiauto-test 侧表现为"写进去了却读不回来"的静默失效。
 
-    解析：python3 .aidp/scripts/autopilot_tick_flags.py parse --command autopilot   --arguments "$ARGUMENTS"
-    落盘：python3 .aidp/scripts/autopilot_tick_flags.py set  --command autopilot   WILL_BROWSER_TEST 1
-    读回：eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"   # ← 分片里只此一行
+    解析：python3 AIDP_HOME/scripts/autopilot_tick_flags.py parse --command autopilot   --arguments "$ARGUMENTS"
+    落盘：python3 AIDP_HOME/scripts/autopilot_tick_flags.py set  --command autopilot   WILL_BROWSER_TEST 1
+    读回：eval "$(python3 AIDP_HOME/scripts/autopilot_tick_flags.py --command autopilot --shell)"   # ← 分片里只此一行
     （aiauto-test 侧把三处 `autopilot` 换成 `aiauto-test`。）
 
 ## 命名空间
@@ -50,6 +50,12 @@
 
 退出码：0 = 成功；1 = 落盘失败；2 = 用法错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
@@ -59,7 +65,7 @@ import subprocess
 import sys
 import time
 
-BASELINE_EDIT = os.path.join(".aidp", "scripts", "baseline_edit.py")
+BASELINE_EDIT = os.path.join(runtime_relpath("", __file__), "scripts", "baseline_edit.py")
 # ⚠️ **按命令分命名空间**（曾是同一个常量 `"autopilot.tick"`）：
 #    两条 7×24 链路（`/loop 10m /sprint-autopilot` 与 `/loop 5m /sprint-aiauto-test`）**都**在
 #    tick 起点调 `parse`，而 `parse` 会先 `del NS` 再整段重写。共用一个键 ⇒ 任一方开 tick

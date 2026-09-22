@@ -1,6 +1,6 @@
 # sprint-design · 输出前硬门 详情（回检清单 + 三合一回写校验）
 
-> 本文件是 `/sprint-design` 命令 **输出前硬门**的完整详细步骤，由命令主体（`.aidp/commands/sprint-design.md`）在**进入该段（跑完 Step 2~6 后）时用 Read 工具按需加载**——把 A 回检清单 bash 块 + B 三合一回写校验脚本（基线 + ADR + 金额字段）从"每次调用整体入上下文"改为"走到该段才载"。命令主体只保留该段的**硬门提醒 + 骨架表 + Read 指针**。
+> 本文件是 `/sprint-design` 命令 **输出前硬门**的完整详细步骤，由命令主体（`{{AIDP_HOME}}/commands/sprint-design.md`）在**进入该段（跑完 Step 2~6 后）时用 Read 工具按需加载**——把 A 回检清单 bash 块 + B 三合一回写校验脚本（基线 + ADR + 金额字段）从"每次调用整体入上下文"改为"走到该段才载"。命令主体只保留该段的**硬门提醒 + 骨架表 + Read 指针**。
 >
 > ⚠️ **权威性**：进入本段后，**以本文件为准逐项执行**——用 Bash 工具真实执行两个 bash 块、逐行填「🔍 输出前回检」表，B 块退出码必须为 0 且看到通过字样才算完成；不得凭命令主体骨架或记忆略过。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-design/step-输出前硬门.md`。理据/根因见同目录 `rationale.md`。
@@ -22,7 +22,7 @@
 ### A. 回检清单 bash 块
 
 ```bash
-# ⛔ `cd` 之后**不得再用仓库根相对路径调脚本**——`.aidp/skills/...` 在版本目录下不存在，
+# ⛔ `cd` 之后**不得再用仓库根相对路径调脚本**——`{{AIDP_HOME}}/skills/...` 在版本目录下不存在，
 #    整条命令 `No such file` → `$?` 非 0 → 被当成"检查未通过"或（配 `>/dev/null 2>&1` 时）
 #    静默记成入参错不计 Fail。故先把仓库根固化成绝对路径再 cd。
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -55,7 +55,7 @@ PENDING_FILE=$(ls 99_待澄清问题清单.md 2>/dev/null | wc -l)
 # ⛔ 加了 `--json` 却把 stdout 全丢、只取退出码 = 撞进本命令另一分片（step-1.6）刚点名要防的假绿：
 #   该脚本三类元素**一个都没识别到**时 return 0，`--json` 里 `skipped:true`。标题形态一漂移，
 #   整道 Critical 溯源门就静默全绿。判定必须「退出码 0 **且** skipped != true」。
-UPS_JSON=$(python3 "$REPO_ROOT/.aidp/skills/dev-logic-architect/scripts/check_upstream_reference.py" . --json 2>/dev/null); UPS_EXIT=$?
+UPS_JSON=$(python3 "$REPO_ROOT/{{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_upstream_reference.py" . --json 2>/dev/null); UPS_EXIT=$?
 UPS_SKIPPED=$(printf '%s' "$UPS_JSON" | python3 -c "import json,sys;print(1 if json.load(sys.stdin).get('skipped') else 0)" 2>/dev/null || echo -1)
 
 cd -
@@ -171,9 +171,9 @@ fi
 #   - ```sql DDL 块（CREATE TABLE 风格）
 #   - Markdown 字段表格（| 字段名 | 类型 | ... | 备注 | 风格，AIDP 主流形态）
 # 单层调用即可，无需命令侧 grep 兜底
-MONEY_CHECK_SCRIPT=".aidp/skills/dev-logic-architect/scripts/check_money_field.py"
+MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_money_field.py"
 if [ ! -f "$MONEY_CHECK_SCRIPT" ]; then
-  MONEY_CHECK_SCRIPT=".aidp/skills/aidp-code-engineer/assets/aidp/skills/dev-logic-architect/scripts/check_money_field.py"
+  MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/../skills/aidp-code-engineer/assets/aidp/skills/dev-logic-architect/scripts/check_money_field.py"
 fi
 if [ -f "$MONEY_CHECK_SCRIPT" ]; then
   CRITICAL_COUNT=$(python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" --json 2>/dev/null \
@@ -185,7 +185,7 @@ if [ -f "$MONEY_CHECK_SCRIPT" ]; then
     exit 1
   fi
 else
-  echo "⚠️ 未找到 check_money_field.py（应位于 .aidp/skills/dev-logic-architect/scripts/），跳过「货币金额字段整数化」维度校验"
+  echo "⚠️ 未找到 check_money_field.py（应位于 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/），跳过「货币金额字段整数化」维度校验"
 fi
 
 echo "✅ 基线 + ADR + 金额字段 三合一回写校验通过"

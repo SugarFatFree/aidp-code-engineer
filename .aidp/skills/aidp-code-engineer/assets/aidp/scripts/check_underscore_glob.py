@@ -23,6 +23,12 @@
 
 退出码：0 = 全部合规；1 = 有漏排；2 = 入参/环境错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -35,7 +41,7 @@ FAMILY_HINTS = ("研发自测", "研发需求", "docs/design/detail", "docs/plan
 # 通配式 .md 扫描（白名单式如 `-name "02_*自测用例*.md"` 不算）
 _WILDCARD_MD = re.compile(r'-name\s+"\*\.md"')
 _HAS_GUARD = re.compile(r'-not\s+-name\s+"_\*"')
-SCAN_DIRS = (".aidp/flows", ".aidp/commands")
+SCAN_DIRS = (runtime_text('__AIDP_HOME__/flows', __file__), runtime_text('__AIDP_HOME__/commands', __file__))
 
 
 def _iter_md(root):

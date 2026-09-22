@@ -45,4 +45,5 @@ aidp-code-engineer/finalize_upgrade.py         # upgrade 收口，由脚手架�
 aidp-code-engineer/reverse_generate.py         # 反向生成，人工按需运行
 aidp-code-engineer/bump_version.py             # 范式版本号自增，仅模板维护者按用户明确指令运行
 aidp-code-engineer/scaffold_lib.py             # 脚手架各脚本共享的库模块，不单独执行
+aidp-code-engineer/runtime_layout.py           # scaffold.py / verify.py 内部渲染与校验运行包，不是命令端硬门
 aidp-code-engineer/scaffold_marker.py          # 脚手架版本戳（aidp-config.yaml scaffold 段）读写库，由脚手架脚本内部调用

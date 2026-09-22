@@ -394,7 +394,7 @@
 **Step F-2：枚举原型元素 + 操作逻辑全集 + 处置**
 从基线逐页抽取 **① 元素**（区块/卡片、表格列、表单字段、筛选/排序/分页、按钮与次级操作、空态/加载/错误/成功等交互态、跳转/弹窗）**② 操作逻辑/交互流**（点击→反馈/跳转、校验规则与时机、字段联动、条件显隐/禁用、筛选排序分页行为、增删改-保存-取消/批量流、二次确认、默认值、多步步序、错误处理）及其**处置列**（实现/裁剪/延期/改为 X）。
 
-**★ 元素维必须按「六类」分类枚举、逐项核对，不做整体判断**（约定 39 R1；六类定义单一信源<!-- singlesource-scope: R1六类 --> = `.aidp/rules/frontend.md` 约定 4「原型内容基线」条）：**① 数据字段 ② 操作入口 ③ 统计卡片 ④ 筛选与排序项 ⑤ 空态/加载态/错误态 ⑥ 二次确认弹窗**。**基线若写成散文式整体描述、未按六类逐项列出** → ⚠️ **Important**（结构不合规，核对无法逐项进行，提示回 `/sprint-design` 按六类重出）；**六类中某类整类缺席且该页确有此类元素** → 按下方判定同等对待"漏项"。
+**★ 元素维必须按「六类」分类枚举、逐项核对，不做整体判断**（约定 39 R1；六类定义单一信源<!-- singlesource-scope: R1六类 --> = `{{AIDP_HOME}}/rules/frontend.md` 约定 4「原型内容基线」条）：**① 数据字段 ② 操作入口 ③ 统计卡片 ④ 筛选与排序项 ⑤ 空态/加载态/错误态 ⑥ 二次确认弹窗**。**基线若写成散文式整体描述、未按六类逐项列出** → ⚠️ **Important**（结构不合规，核对无法逐项进行，提示回 `/sprint-design` 按六类重出）；**六类中某类整类缺席且该页确有此类元素** → 按下方判定同等对待"漏项"。
 
 **Step F-3：覆盖矩阵（仅核未标裁剪/延期/改逻辑的"实现"项）**
 
@@ -428,13 +428,13 @@
 **★ 机器前置（先跑再人判，逐条语义变更各跑一次）**：
 
 ```bash
-python3 .aidp/scripts/check_cascade_residue.py --version {version} \
+python3 {{AIDP_HOME}}/scripts/check_cascade_residue.py --version {version} \
   --old "<变更前口径>" --new "<变更后口径>" --json
 ```
 
 它给两样东西：① **真残留清单**（旧口径仍作为生效规则出现的 `文件:行号`）② **新口径落地分布**
 （0 命中的族 = 该族大概率整族漏级联）。二者都是"三层贯通"判定的**证据**——先拿到它再做语义判断，
-比从零 grep 四族文档快且不漏。分类口径与豁免见 `.aidp/reference/开发期族增量.md`「口径残留门」。
+比从零 grep 四族文档快且不漏。分类口径与豁免见 `{{AIDP_HOME}}/reference/开发期族增量.md`「口径残留门」。
 
 > 退出码 2（有真残留）**不直接等于本项 Critical**：脚本只做初筛，是否属"派生展示物漏改"仍按下方判据判；
 > 但**残留处必须在报告里逐条列出并给处置结论**，不得跑完不提。
@@ -456,9 +456,9 @@ python3 .aidp/scripts/check_cascade_residue.py --version {version} \
 
 ```bash
 # ① 找候选：本版反转的口径，哪些历史版本提过（现读现搜各版研发需求正文）
-python3 .aidp/scripts/requirement_query.py search <本版变更关键语义词…> --before {version} --json
+python3 {{AIDP_HOME}}/scripts/requirement_query.py search <本版变更关键语义词…> --before {version} --json
 # ② 查已判过的：聚合各版 98_*.json 的 table_f（跨版本作废判定的唯一机读信源）
-python3 .aidp/scripts/requirement_query.py supersessions --before {version} --json
+python3 {{AIDP_HOME}}/scripts/requirement_query.py supersessions --before {version} --json
 ```
 
 > **为何是全历史**：只读 `{prev_version}` 是**为控成本而牺牲覆盖**——被本版推翻的历史结论
@@ -685,7 +685,7 @@ python3 .aidp/scripts/requirement_query.py supersessions --before {version} --js
 - **重跑安全**：本 Agent 无副作用（除 audit 报告写盘），可任意次数重跑
 - **不修改 4 类产物**：审计不直接改 4 类产物，修复由命令端按建议回调对应 SKILL
 - **★ 独立子 Agent 上下文隔离机制**：本 Agent 通过 `Agent` 工具被 `/version` Step 2.4.7 调用，跑在与主对话**隔离的对话上下文**里 — 内部读取 4 类产物 / 跑 grep / 写报告等中间 token **不计入主对话上下文窗口**；主对话只接收本 Agent 返回的最终 JSON 摘要（≤ 200 行）。**因此调用方（/version 命令）不应以"节省主上下文"为由跳过本 Agent — 反之，本 Agent 的存在意义就是"绕开主上下文限制做横向审计"，跳过=反向破坏设计目的**
-- **★ 唯一允许跳过的条件**：用户在 `/version` 调用时**显式传** `--skip-audit` → 命令端跳过 Step 2.4.7，Step 2.8 报告标"⚠️ 已跳过审计（用户显式 --skip-audit）"。**除此之外没有其他跳过路径**；Agent 自行判断的"节省上下文 / 简单可省 / 用户应该能接受"等任何借口跳过本 Step 都视为违反铁律（详见 `.aidp/flows/version/planning-7.md` 的 RED FLAG 反模式表）
+- **★ 唯一允许跳过的条件**：用户在 `/version` 调用时**显式传** `--skip-audit` → 命令端跳过 Step 2.4.7，Step 2.8 报告标"⚠️ 已跳过审计（用户显式 --skip-audit）"。**除此之外没有其他跳过路径**；Agent 自行判断的"节省上下文 / 简单可省 / 用户应该能接受"等任何借口跳过本 Step 都视为违反铁律（详见 `{{AIDP_HOME}}/flows/version/planning-7.md` 的 RED FLAG 反模式表）
 
 ---
 

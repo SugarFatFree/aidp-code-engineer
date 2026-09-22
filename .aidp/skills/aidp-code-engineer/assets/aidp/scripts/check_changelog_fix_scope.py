@@ -31,6 +31,12 @@
 
 退出码：0 = 通过 / 不适用；3 = 有 Important（不阻断）；2 = 入参错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -46,9 +52,11 @@ H3_RE = re.compile(r"^###\s", re.M)
 ITEM_RE = re.compile(r"^\s*[-*]\s+(?P<t>.+?)\s*$", re.M)
 EMPTY_DECL = "本版无面向已发布版本的缺陷修复"
 # 非正式代码：这些路径下的改动不代表使用者可触达的行为
+_LEGACY_AIDP_PREFIX = re.escape(".aidp") + "/"
 NON_CODE_RE = re.compile(
-    r"^(docs/|memory/|\.aidp/|\.claude/|tests/|"
-    r"[^/]*\.md$|README)")
+    r"^(docs/|memory/|" + _LEGACY_AIDP_PREFIX
+    + r"|\.claude/|\.agents/|\.codex/|\.dsh/|tests/|[^/]*\.md$|README)"
+)
 
 
 def _git(root, *args):

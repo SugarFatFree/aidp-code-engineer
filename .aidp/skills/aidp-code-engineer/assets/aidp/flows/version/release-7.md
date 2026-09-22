@@ -2,7 +2,7 @@
 
 > 本片覆盖：**Step 3.4 打 tag + 建分支 + 提交推送（3.4.1–3.4.4）**（3.3.12bis / 3.3.13 在 `release-6.md`）。
 > **Step 3.5（更新项目记忆文件「当前状态」）与 3.6（发布报告）全文见 `release-7b.md`**，进入该步第一动作 = Read 该文件。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 ### Step 3.4：打 Git 标签 + 创建版本分支并自动提交推送（自动 push）
@@ -15,16 +15,16 @@
 
 ```bash
 # ★ 自取版本号（见 rationale）
-VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version);; esac
+VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version);; esac
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
-BE="python3 .aidp/scripts/baseline_edit.py"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 BUILD=$($BE --version "$VERSION" get current_build --default "")
 # push 基准在发布 commit 前保存；首次无 HEAD 保持空值并 fail-closed
 BASE_REF=$(git rev-parse HEAD 2>/dev/null || true)
 [ -n "$BUILD" ] && $BE --version "$VERSION" --build "$BUILD" set push_base_ref "$BASE_REF"
 # ★ 终态落账门：关键产物缺失且台账无对应条目 = 静默跳过 → 当场补登记（随本提交入库）
 NO_TAG_FLAG=""   # ← 带 --no-tag 时执行体就地改为 --no-tag
-python3 .aidp/scripts/release_debt.py gate --version "$VERSION" $NO_TAG_FLAG --register-missing
+python3 {{AIDP_HOME}}/scripts/release_debt.py gate --version "$VERSION" $NO_TAG_FLAG --register-missing
 # 检查工作区
 if [ -n "$(git status --porcelain)" ]; then
   git add memory/{version}/ AGENTS.md docs/reports/{version}/ 版本更新日志.md README.md 2>/dev/null || true
@@ -48,7 +48,7 @@ if git -c core.quotepath=false status --porcelain docs/ | grep -q .; then
 fi
 ```
 
-> 🔗 **约定 24 提交前门禁（本路径同样适用）**：提交前跑 `python3 .aidp/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit。
+> 🔗 **约定 24 提交前门禁（本路径同样适用）**：提交前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit。
 
 #### Step 3.4.2：打 tag（tag 命名用小写 v SemVer 风格）
 
@@ -79,9 +79,9 @@ fi
 ```bash
 set -e
 # ★ 自取版本号（见 rationale）
-VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version);; esac
+VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version);; esac
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
-BE="python3 .aidp/scripts/baseline_edit.py"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 TAG_NAME="v$(echo "$VERSION" | sed -E 's/^[Vv]//')"; BRANCH_NAME="V${TAG_NAME#v}"
 EXISTING_TAG=$(git tag -l "$TAG_NAME")
 # ★ tag 必须同时查远端（理据见 rationale.md）；远端不可达时退化为只按本地判、不中断发布
@@ -102,7 +102,7 @@ FORCE_AUTHORIZED=$($BE --version "$VERSION" get release_force_authorized --defau
 
 if [ "$REPUBLISH" = "1" ] && [ "$FORCE_AUTHORIZED" != "1" ]; then
   # 撞名但未获授权（无人值守恒走此支）→ 整段跳过 tag 与版本分支，登记欠账，其余发布步骤照常
-  python3 .aidp/scripts/release_debt.py add --version "$VERSION" --step 3.4.2 \
+  python3 {{AIDP_HOME}}/scripts/release_debt.py add --version "$VERSION" --step 3.4.2 \
     --title "tag/版本分支未创建（撞名且未获强推授权）" \
     --locate "$TAG_NAME / $BRANCH_NAME 已被占用；发布提交 $(git rev-parse HEAD)" \
     --redo "交互式重跑 /version $VERSION 并在授权门选①，或改用新补丁号"
@@ -132,16 +132,16 @@ $BE --version "$VERSION" set release_republish "$REPUBLISH" \
 
 ```bash
 # ★ 自取版本号（见 rationale）
-VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version);; esac
+VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version);; esac
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
-BE="python3 .aidp/scripts/baseline_edit.py"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 BUILD=$($BE --version "$VERSION" get current_build --default "")
 if [ -n "$BUILD" ]; then
   BASE_REF=$($BE --version "$VERSION" --build "$BUILD" get push_base_ref --default "")
-  python3 .aidp/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
+  python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
 else
   BASE_REF=$(git rev-parse HEAD 2>/dev/null || true)
-  python3 .aidp/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
+  python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
 fi
 # ⛔ 三处 push 逐个捕获 rc，任一失败即落盘 + 阻断：本围栏无 `set -e`，不捕获就会带着
 #   **从未推出去的 commit** 继续跑探针并宣告"发布完成"。见 `rationale.md`「push 失败为何必须显式分流」。
@@ -179,12 +179,12 @@ fi
 if [ "$CICD_SKIPPED" = "true" ]; then
   echo "✅ 发布 push 判定为 docs-only → 不触发 CICD、不监听、不跑就绪探针"
 else
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
   # ⛔ `--shell` 只输出 TARGET_VERSION、不输出 VERSION，故本块自取（见 rationale.md）
   VERSION="{version}"
   [ -z "$VERSION" ] || case "$VERSION" in "{version}") VERSION="${TARGET_VERSION:-}";; esac
   [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
-  BE="python3 .aidp/scripts/baseline_edit.py"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
   # ⛔ `autopilot_decisions.*` 在 PRD frontmatter、不在 baseline（取必得空串 → 下方 fail-closed 恒成立）。
   PRD_FILE=$(find "docs/requirements/$VERSION/产品提供" -maxdepth 1 -name '*.md' 2>/dev/null | sort | head -1)
   yml() { [ -n "$PRD_FILE" ] && awk -v k="$1" '/^---$/{f=!f;next} f && $1==k":"{print $2;exit}' "$PRD_FILE"; }
@@ -201,7 +201,7 @@ else
   AUTH_HEADER=$(yml cloud_ready_auth_header)
   CLOUD_DEPLOY_TIMEOUT=$(yml cloud_deploy_check_timeout_seconds); [ -n "$CLOUD_DEPLOY_TIMEOUT" ] || CLOUD_DEPLOY_TIMEOUT=300
   [ -n "$CLOUD_HEALTH_URL" ] || { echo "⛔ 缺少部署就绪 health URL，fail-closed"; exit 1; }
-  WATCH_JSON=$(python3 .aidp/scripts/cicd_watch.py --commit "$PUSH_COMMIT" --env "$CICD_ENV" \
+  WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --commit "$PUSH_COMMIT" --env "$CICD_ENV" \
     --version "$VERSION") || WATCH_RC=$?
   WATCH_RC=${WATCH_RC:-0}
   [ "$WATCH_RC" -eq 0 ] || [ "$WATCH_RC" -eq 1 ] || [ "$WATCH_RC" -eq 2 ] || [ "$WATCH_RC" -eq 3 ] || {
@@ -219,11 +219,11 @@ else
         RUN_ID=$(printf '%s' "$WATCH_JSON" | jq -r '.run_id // empty')
         [ -n "$RUN_ID" ] || { echo "⛔ cicd_watch 返回 poll 但缺 run_id"; exit 1; }
         WATCH_RC=0
-        WATCH_JSON=$(python3 .aidp/scripts/cicd_watch.py --mode poll --run-id "$RUN_ID" \
+        WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RUN_ID" \
           --env "$CICD_ENV" --version "$VERSION") || WATCH_RC=$?
         [ "$WATCH_RC" -le 3 ] || { echo "⛔ cicd_watch 异常 fail-closed"; exit 1; } ;;
       probe)
-        python3 .aidp/scripts/autopilot-deploy-watch.py \
+        python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py \
           --health-url "$CLOUD_HEALTH_URL" \
           ${CLOUD_AUTH_URL:+--auth-url "$CLOUD_AUTH_URL"} \
           ${AUTH_HEADER:+--auth-header "$AUTH_HEADER"} \
@@ -243,18 +243,18 @@ else
         RUN_ID=$(printf '%s' "$WATCH_JSON" | jq -r '.run_id // empty')
         # ★ 空值必须当场炸（否则 `--run-id ""` 让 ≤3 次重试第一次就撞死，且报错文案盖住真因）
         [ -n "$RUN_ID" ] || { echo "⛔ cicd_watch retry 未返回 run_id —— 重试链中止"; exit 1; }
-        RETRY_JSON=$(python3 .aidp/scripts/cicd_watch.py --mode retry --run-id "$RUN_ID" --env "$CICD_ENV" \
+        RETRY_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode retry --run-id "$RUN_ID" --env "$CICD_ENV" \
           --version "$VERSION") || { echo "⛔ 重试被拒：$RETRY_JSON"; exit 1; }
         $BE --version "$VERSION" bump cicd_run.cicd_retry_count
         NEW_RUN_ID=$(printf '%s' "$RETRY_JSON" | jq -r '.run_id // empty')
         # ⛔ 不能 `|| exit 1`：exit 1 = 需调用方做写动作、非错误，用它会让 ≤3 次封顶成 1 次。
         WATCH_RC=0
         if [ -n "$NEW_RUN_ID" ]; then
-          WATCH_JSON=$(python3 .aidp/scripts/cicd_watch.py --mode poll --run-id "$NEW_RUN_ID" \
+          WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$NEW_RUN_ID" \
             --commit "$RETRY_COMMIT" --env "$CICD_ENV" --version "$VERSION") || WATCH_RC=$?
         else
           # 不回显新 id → 按原 commit 重新锁定
-          WATCH_JSON=$(python3 .aidp/scripts/cicd_watch.py --commit "$RETRY_COMMIT" --env "$CICD_ENV" \
+          WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --commit "$RETRY_COMMIT" --env "$CICD_ENV" \
             --version "$VERSION") || WATCH_RC=$?
         fi
         WATCH_RC=${WATCH_RC:-0}
@@ -270,7 +270,7 @@ fi
 ```
 
 > ★ **推送分类与监听（约定 31.5）**：有 `current_build` 写 build、无则 `--standalone` 写版本级，⛔ 禁空 build；分类用 `BASE_REF`。
-> ⛔ **发布期边界**：`next_action=trigger` 时**绝不自动触发**——只终端提示，由用户主动要求才执行 `python3 .aidp/scripts/cicd_watch.py --mode trigger --env <env> --ref <branch>`；`memory/aidp-config.yaml` 的 `cicd.provider=none` 或未配置 `cicd.pipelines` 时不适用。（余下理据见 `rationale.md`）
+> ⛔ **发布期边界**：`next_action=trigger` 时**绝不自动触发**——只终端提示，由用户主动要求才执行 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --env <env> --ref <branch>`；`memory/aidp-config.yaml` 的 `cicd.provider=none` 或未配置 `cicd.pipelines` 时不适用。（余下理据见 `rationale.md`）
 
 #### Step 3.4.4：失败处置
 

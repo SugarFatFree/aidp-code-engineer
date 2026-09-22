@@ -11,7 +11,7 @@
 
 ### 🛡️ 落盘后 bash 硬核回检(子 Agent 强制第一步,先于语义维度审查)
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `.aidp/skills/dev-manual-testcase`),由子 Agent 在执行前替换。
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-manual-testcase`),由子 Agent 在执行前替换。
 
 **用例文档落盘后,以下 bash 一次性回检脚本由下方派发的**质量检查子 Agent**作为强制第一步执行(见子 Agent prompt 步骤 0),任一命中即拒绝标记完成、强制重写违规段落。主流程**禁止**在当前上下文内联运行这些脚本:**
 

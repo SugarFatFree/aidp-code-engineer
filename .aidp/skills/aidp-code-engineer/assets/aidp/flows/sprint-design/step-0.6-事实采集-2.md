@@ -14,9 +14,9 @@
 **★ 执行方式：一律经 `code_inventory.py`，⛔ 不手工 grep 全扫。**
 
 ```bash
-python3 .aidp/scripts/code_inventory.py update            # 增量刷新（内容没变的文件零解析）
-python3 .aidp/scripts/code_inventory.py render            # 渲染「代码现状清单」段 Markdown
-python3 .aidp/scripts/code_inventory.py delta --since {prev_version}   # 本版相对上版新增/删除了哪些代码事实
+python3 {{AIDP_HOME}}/scripts/code_inventory.py update            # 增量刷新（内容没变的文件零解析）
+python3 {{AIDP_HOME}}/scripts/code_inventory.py render            # 渲染「代码现状清单」段 Markdown
+python3 {{AIDP_HOME}}/scripts/code_inventory.py delta --since {prev_version}   # 本版相对上版新增/删除了哪些代码事实
 ```
 
 > **Why 收编成脚本**：本步原文写死「全扫（不增量）」，产物又落在版本目录 `docs/design/detail/{version}/*事实清单.md`——
@@ -38,7 +38,7 @@ python3 .aidp/scripts/code_inventory.py delta --since {prev_version}   # 本版�
 | **配置文件**（参考）| `find code/ env/ docs/deployment/{version}/ \( -name 'application*.yml' -o -name 'application*.yaml' -o -name 'application*.properties' -o -name 'bootstrap*.yml' -o -name '.env*' -o -name '*.conf' -o -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' \) 2>/dev/null` 拿文件清单（**不展开配置项**，仅列文件作为线索；find 不支持 `{a,b}` 大括号扩展，必须每个扩展名单独 `-o -name`，外层 `\( ... \)` 包起否则 `-o` 优先级与目录混淆）| 文件路径 + 大致用途（后端/前端/部署） |
 
 **输出**：`render` 出的 Markdown 直接写入事实清单的「代码现状清单」段（紧跟「路径消费者点」表之后），格式见分片 `step-0.6-事实采集-3.md` 的 Step 0.6.5 事实清单模板。
-**落盘后补一次快照**：`python3 .aidp/scripts/code_inventory.py snapshot --version {version}`——下一个版本的 `delta --since {version}` 靠它算 Δ，漏打快照会让下版退回全量判断。
+**落盘后补一次快照**：`python3 {{AIDP_HOME}}/scripts/code_inventory.py snapshot --version {version}`——下一个版本的 `delta --since {version}` 靠它算 Δ，漏打快照会让下版退回全量判断。
 
 > **配置文件清单的边界**：本步骤**仅列文件路径作为线索**，**不展开具体配置项**——具体配置项的权威清单由 `/sprint-dev` Step X.7 维护到 `docs/deployment/{version}/配置文件/增量/配置项清单.md`（运维视角）。两者分工：本清单帮设计/开发"知道有哪些配置文件存在"；配置项清单帮运维"知道每个 key 改什么"。
 

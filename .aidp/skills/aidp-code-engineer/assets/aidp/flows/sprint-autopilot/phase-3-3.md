@@ -29,7 +29,7 @@
    ```
 
 2. **跑 `/version {TARGET_VERSION} [--unattended]`**（⛔ 无人值守下必带——`/version` 有多个交互门）（**仅当 `PLANNING_DONE=0` 或带 `--force-replan`**；否则整步跳过）（含里程碑参数，从 Phase 0.6 收集到的 `autopilot_decisions` 推断）：
-   - **★★ 上下文隔离（#2 子 Agent 委派，仅 `LOOP_UNATTENDED=1`）**：`/version` 是全链路最重的一段，**优先委派【独立子 Agent】执行**（隔离上下文）——子 Agent 在其自身上下文里读 `.aidp/commands/version.md` 跑完整规划链 + 终审，只回传 **compact JSON**：`{version, planning_done:bool, artifacts:[主产物路径], sprint_count:N, auditor_verdict:"pass"|"block", key_counts:{req,design,api,db,cases}, fail_reason?}`。主流程据此发 #1b / 写 `run_state` / 进 3.1.5。**⛔ 交互式（`LOOP_UNATTENDED=0`）不委派**：`/version` 的决策类 `AskUserQuestion` 需用户在场应答，子 Agent 无法与用户交互 → 内联执行（见下条）。**回退**：子 Agent 工具不可用 → 内联执行，行为与产物完全不变。理据（为何这是规划 tick 破 1M 的最大来源）见 rationale.md。
+   - **★★ 上下文隔离（#2 子 Agent 委派，仅 `LOOP_UNATTENDED=1`）**：`/version` 是全链路最重的一段，**优先委派【独立子 Agent】执行**（隔离上下文）——子 Agent 在其自身上下文里读 `{{AIDP_HOME}}/commands/version.md` 跑完整规划链 + 终审，只回传 **compact JSON**：`{version, planning_done:bool, artifacts:[主产物路径], sprint_count:N, auditor_verdict:"pass"|"block", key_counts:{req,design,api,db,cases}, fail_reason?}`。主流程据此发 #1b / 写 `run_state` / 进 3.1.5。**⛔ 交互式（`LOOP_UNATTENDED=0`）不委派**：`/version` 的决策类 `AskUserQuestion` 需用户在场应答，子 Agent 无法与用户交互 → 内联执行（见下条）。**回退**：子 Agent 工具不可用 → 内联执行，行为与产物完全不变。理据（为何这是规划 tick 破 1M 的最大来源）见 rationale.md。
      > ⛔⛔ **委派 × flag 一致性铁律（二选一，不许骑墙）**：`LOOP_UNATTENDED=0` 时**要么严格内联不委派**，
      > **要么**委派时**绝不给子 Agent 传 `--unattended`**（改走「子 Agent 回传 `needs_interaction` →
      > 主流程代问 → 结果回灌」协议）。**"委派"与"传 unattended"是两个独立决定，绝不因前者顺手做后者**：
@@ -45,7 +45,7 @@
    - 失败（含 `/version` 返回 `audit-block`）→ 走「失败处置」流程（记 `dev_fail_streak` + 熔断，见本命令「失败处置」）——⛔ 五步（记账/判阈/冻结四件套/发 #4/让位）必须**可执行地**跑，散文不算：
 
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
    # ★ reason 必须按**失败类别**分流，⛔ 不能一律 audit-critical：后者属人工专属解冻档
    #   （`_HUMAN_ONLY`，探针一律不解冻），把「子 Agent 派发失败 / 网络抖动 / 超时」这类
    #   瞬态错误按它冻上，是把一次重试就能过去的事变成必须人来救；而 needs_human_reason
@@ -59,9 +59,9 @@
    #   用来发现「读侧留了解冻分支、写侧其实没人写」的，先把自己弄瞎不可接受。
    V3="--version ${TARGET_VERSION:?} --phase 3.1-plan"
    case "$PLAN_FAIL_KIND" in
-     audit-block) python3 .aidp/scripts/autopilot_fail_handle.py $V3 --reason audit-critical \
+     audit-block) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py $V3 --reason audit-critical \
        --why "version-auditor 审计 block 且自动修复 3 轮未过，需人工裁决" ;;
-     *)           python3 .aidp/scripts/autopilot_fail_handle.py $V3 --reason plan-transient \
+     *)           python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py $V3 --reason plan-transient \
        --why "/version 规划未走完（派发/网络/超时等），非审计 block" ;;
    esac
    # 0=已记账让位本 tick／3=已冻结（达阈或无唤醒源）／2=入参错（⛔ 什么都没写）
@@ -76,7 +76,7 @@
 
      ```bash
      VERDICT=pass   # ← 按本步终审结论就地改为 pass / warn / block；跳过本步时填 pass
-     python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot AUDIT_VERDICT "$VERDICT"
+     python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot AUDIT_VERDICT "$VERDICT"
      ```
 
 3. 解析 `docs/plans/{TARGET_VERSION}/01_研发执行计划.md` 得到 Sprint 总数 N（跳过规划时直接读现存文件）→ 发 **里程碑通知 #1b 规划完成（见 0.1bis；总是发）**（公共字段 + 下列内容）：
@@ -98,8 +98,8 @@
 > Phase 0 的 **0.6bis 对账门**（`phase-0-9.md`）在 full 模式下必然判 `no-casebook`——用例册是本 Phase 的 `/version` Step 2.4.3.5 才生成的，Phase 0 时它还不存在。**若不在这里补跑一次，full 模式下这道门等于从未存在**（下游正是 full 模式踩的）。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-python3 .aidp/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --record
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+python3 {{AIDP_HOME}}/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --record
 ```
 
 - `exit 0` → 通过，继续 3.1.5。
@@ -129,15 +129,15 @@ python3 .aidp/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --rec
 > （`exit 1`）。中途进度用 `--pending` 表达。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
 # ★ FIX-7 输入漂移检测：PRD 可能在规划**进行中**被产品改（实测：22:12 新增 §3.7/§3.8 并改写
 #   两条验收标准，而快照只在规划开始时记过一次）——此时四类产物是按**旧 PRD** 产的，却会被
 #   当成"本版规划已完成"。出口重算一次 PRD 摘要与快照比对，不符即 WARN 并要求走补充模式重跑。
 #   复用既有检测器、**不带 `--commit`**（只报不写，绝不在此把中途变更推平进基线——那会让这批
 #   变更此后永远检测不出，见 phase-1.md「短路时不回写 tracked_files」同源坑）。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # 读回 AUDIT_VERDICT（3.1 step 2 落盘）等
-eval "$(python3 .aidp/scripts/autopilot-prd-watch.py --version "$V" --shell 2>/dev/null || echo SHOULD_RUN=0)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 读回 AUDIT_VERDICT（3.1 step 2 落盘）等
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot-prd-watch.py --version "$V" --shell 2>/dev/null || echo SHOULD_RUN=0)"
 [ "${SHOULD_RUN:-0}" = "1" ] && echo "⚠️ PRD 在本次规划【进行中】发生变化（${TRIGGER_REASON:-}）：四类产物可能基于旧 PRD，请按 /version 补充模式重跑增量并走约定 22 级联"
 $BE --version "$V" run-state "3.1-plan" "3.1.5-build" "" \
   --summary "Phase 3.1 版本规划完成（PLANNING_DONE=${PLANNING_DONE:-1}）：需求/设计/计划/自测用例/自测方案/测试环境六类产物已就位，auditor verdict=${AUDIT_VERDICT:-pass}" --pending ""

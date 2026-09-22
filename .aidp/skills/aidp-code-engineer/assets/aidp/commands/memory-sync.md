@@ -5,7 +5,7 @@
 ## 前置流程
 
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（`python3 .aidp/scripts/agent_env.py memory-file` 取路径；下文记作 `AGENTS.md`）「当前状态.当前版本」
+1. **{version}** ← 项目记忆文件（`python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取路径；下文记作 `AGENTS.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`
 3. 迭代级记忆文件全部位于 `memory/{version}/{user}/` 下；项目级记忆文件在 `memory/` 根。
 
@@ -21,7 +21,7 @@
 ## Step 0：写前快照（⛔ 任何写入之前）
 
 ```bash
-python3 .aidp/scripts/check_memory_loss.py --snapshot
+python3 {{AIDP_HOME}}/scripts/check_memory_loss.py --snapshot
 ```
 
 把受保护文件（项目级 memory 五件套 + 项目记忆文件 + `memory/{version}/{user}/{activeContext,progress}.md`）的**工作区现状**存为比对基线——未提交的手写内容也因此受保护。
@@ -63,12 +63,12 @@ python3 .aidp/scripts/check_memory_loss.py --snapshot
 > **★ Step 2、Step 3 全部写完后必跑（确定性落点，⛔ 不是「最好跑一下」）**：
 >
 > ```bash
-> python3 .aidp/scripts/check_memory_loss.py
+> python3 {{AIDP_HOME}}/scripts/check_memory_loss.py
 > ```
 >
 > 它拿工作区与 Step 0 的快照比（无快照时回落 `git HEAD`），覆盖 Step 2 的 `activeContext.md` / `progress.md`：**L1 段落消失 / L2 段落塌缩 ≥40% / L3 整份塌缩** 任一命中即 exit 1；通过后自动清理快照。
 > 填掉 `（待填充）` 占位符**不算丢失**（那正是约定 8 要求的动作，按标题前缀匹配）。
-> 报红即按提示从快照（`memory/.aidp/memory-snapshot/<文件>`）或 `git show HEAD:<文件>` 取回被吞的段落，⛔ 不得以「本次就是要精简」为由径直 commit。
+> 报红即按提示从快照（`memory/{{AIDP_HOME}}/memory-snapshot/<文件>`）或 `git show HEAD:<文件>` 取回被吞的段落，⛔ 不得以「本次就是要精简」为由径直 commit。
 >
 > **Why**：「整段重写吞掉手写内容」与「本次确实没改那一段」在仓库里完全同形——
 > 光靠纪律，失效时不可观测，所以必须有这道确定性检测。本步的动词是「追加」「更新」，

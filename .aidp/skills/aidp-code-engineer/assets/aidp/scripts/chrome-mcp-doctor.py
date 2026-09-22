@@ -41,6 +41,12 @@
   3  （explain-error）报错未收录 —— ⛔ 未收录 ≠ 可自行解释为不可用，先跑 check-cli
   2  USAGE     —— 参数错误
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 
 import argparse
 import json
@@ -622,8 +628,8 @@ def do_check(root, override_ip=None):
         print("      # 服务名强制 chrome-<git 用户名>、强制 --scope project，禁用通用名与 --scope user/全局")
         print('      claude mcp add "chrome-$(git config user.name)" --scope project chrome-devtools-mcp')
         print()
-        print("    本地默认路径：chrome-devtools-mcp 随仓库以插件分发（.aidp/plugins/chrome-devtools-mcp/），")
-        print("    跑 `python3 .aidp/scripts/agent_sync.py` 即为 Claude Code / Codex / DeepSeek Harness 装配（需 Node.js）。")
+        print(runtime_text('    本地默认路径：chrome-devtools-mcp 随仓库以插件分发（__AIDP_HOME__/plugins/chrome-devtools-mcp/），', __file__))
+        print(runtime_text('    跑 `python3 __AIDP_HOME__/scripts/agent_sync.py` 即为 Claude Code / Codex / DeepSeek Harness 装配（需 Node.js）。', __file__))
         print("    远程注册后退出并重开 Claude Code（claude --dangerously-skip-permissions -c）使其加载。")
         print("    注：远程连接一律走项目根 .mcp.json（chrome-{git_user}）；本机 chrome-devtools-cli")
         print("        本地测试免 MCP 注册、免重启。本项缺失为提示性，不影响下方退出码。")
@@ -635,7 +641,7 @@ def do_check(root, override_ip=None):
     # 1) 配置缺失
     if mode == "absent":
         print("【配置状态】❌ 项目根 .mcp.json 缺少远程条目")
-        print(f"  → 跑：python3 .aidp/scripts/chrome-mcp-doctor.py set --ip <IP:9222>")
+        print(runtime_text(f"'  → 跑：python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py set --ip <IP:9222>'", __file__))
         print(f"     （远程不可达想本地兜底 → set --local-headless，会切 chrome-devtools-cli、不写 MCP 条目）")
         exit_code = EXIT_NO_CONFIG
         next_action = "set"
@@ -643,8 +649,8 @@ def do_check(root, override_ip=None):
         # 旧版遗留的 chrome-devtools-mcp --headless=true 条目：现已弃用（本地兜底改走 cli）。
         print(f"【配置状态】⚠️ 检出旧版 MCP 无头条目 `{server_name}`（chrome-devtools-mcp --headless=true）")
         print(f"  本地无头兜底已改走 chrome-devtools-cli（直连 CDP、免 MCP/重启）→ 该 MCP 条目应清除：")
-        print(f"  → 跑：python3 .aidp/scripts/chrome-mcp-doctor.py set --local-headless（清条目 + 切 cli）")
-        print(f"     或：python3 .aidp/scripts/chrome-mcp-doctor.py reset（仅删条目）")
+        print(runtime_text(f"'  → 跑：python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py set --local-headless（清条目 + 切 cli）'", __file__))
+        print(runtime_text(f"'     或：python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py reset（仅删条目）'", __file__))
         exit_code = EXIT_NO_CONFIG
         next_action = "set-local-headless"
     else:

@@ -17,14 +17,26 @@ AI 才会发现"文件不存在"，那时已经在下游业务项目的运行现
 
 ## 判据（只查确定性的，不猜语义）
 
-扫 `.aidp/{commands,agents,flows,reference,rules}/**.md` 正文里形如
+扫 `AIDP_HOME/{commands,agents,flows,reference,rules}/**.md` 正文里形如
 `<skill-name>/{scripts,references,assets}/<file>` 的引用：
-  · `<skill-name>` 命中 `.aidp/skills/` 下真实存在的 SKILL 目录 → 该文件必须存在，否则 **ERROR**
+  · `<skill-name>` 命中 `AIDP_HOME/skills/` 下真实存在的 SKILL 目录 → 该文件必须存在，否则 **ERROR**
   · `<skill-name>` 不是已安装的 SKILL → 跳过（可能是别的项目/示例路径，不归本门管）
 
 ⛔ 刻意**不查**维度编号、参数名、章节标题：那些要语义匹配，误报率高，
    一个恒红的门比没有门更糟。本门只做"文件在不在"这一件确定的事。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
@@ -35,8 +47,8 @@ SCAN_DIRS = ["commands", "agents", "flows", "reference", "rules"]
 # `<skill>/scripts/x.py` 或 `<skill>/references/x.md`，可带反引号
 # ★ `assets/` 也必须认：命令端确实会指名 SKILL 的资产文件（`auto-test-runner` 的 `assets/env-facts-schema.json` 等），
 #   它们和 scripts/references 一样会随上游改名/移位而漂——只认两个目录等于给资产引用留了个无门区。
-# ★ 左边界 `(?<![\w.-])`：`.aidp/scripts/x.py` 里的 `aidp` 是目录名、不是 SKILL 名——
-#   SKILL 名若恰好与目录名重合（如名为 `aidp` 的 SKILL），缺这道边界会把全部 `.aidp/scripts/` 引用误判成悬空。
+# ★ 左边界 `(?<![\w.-])`：`AIDP_HOME/scripts/x.py` 里的 `aidp` 是目录名、不是 SKILL 名——
+#   SKILL 名若恰好与目录名重合（如名为 `aidp` 的 SKILL），缺这道边界会把全部 `AIDP_HOME/scripts/` 引用误判成悬空。
 REF_RE = re.compile(
     r"(?<![\w.-])([a-z][a-z0-9-]{2,})/(scripts|references|assets)/([A-Za-z0-9_.\-]+\.(?:py|md|json))")
 # ★ 按安装态生成、仓库里天然不存在的文件：不算悬空。
@@ -51,7 +63,7 @@ def _is_install_time_file(skill_dir, sub, fname):
 
 
 def installed_skills(root):
-    base = os.path.join(root, ".aidp", "skills")
+    base = os.path.join(root, runtime_relpath("", __file__), "skills")
     if not os.path.isdir(base):
         return set()
     return {n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n))}
@@ -65,7 +77,7 @@ def scan(root="."):
 
     findings, checked, files = [], 0, 0
     for sub in SCAN_DIRS:
-        base = os.path.join(root, ".aidp", sub)
+        base = os.path.join(root, runtime_relpath("", __file__), sub)
         if not os.path.isdir(base):
             continue
         for cur, dirs, names in os.walk(base):
@@ -87,7 +99,7 @@ def scan(root="."):
                         if skill not in skills:
                             continue          # 不是已安装 SKILL，不归本门管
                         checked += 1
-                        skill_dir = os.path.join(root, ".aidp", "skills", skill)
+                        skill_dir = os.path.join(root, runtime_relpath("", __file__), "skills", skill)
                         target = os.path.join(skill_dir, kind, fname)
                         if _is_install_time_file(skill_dir, kind, fname):
                             continue          # 安装态生成（有同名 .example.）—— 仓库里不存在是常态
@@ -118,7 +130,10 @@ def main():
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif not res["applicable"]:
-        print(f"[SKIP] 无 .aidp/skills/ 目录（{res['reason']}）")
+        print(runtime_text(
+            f"[SKIP] 无 __AIDP_HOME__/skills/ 目录（{res['reason']}）",
+            __file__,
+        ))
     elif res["findings"]:
         sys.stderr.write(f"❌ SKILL 内部文件引用悬空 {len(res['findings'])} 处"
                          f"（巡检 {res['files']} 份 .md、{res['checked']} 处引用）：\n")

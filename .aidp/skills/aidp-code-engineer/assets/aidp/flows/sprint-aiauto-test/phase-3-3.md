@@ -10,7 +10,7 @@
 # ★ 跨分片取回本 tick 变量 —— flow 每个分片是**独立的 Bash 调用**，shell 变量不持久；
 #   漏这一行会让下方判据读到空串、`${VAR:-默认}` 静默落默认值（恒真/恒假）。
 #   真源在 baseline 的（BUILD/DRIVER/DEPLOY_MODE/NOTIFY_ENABLED/LOOP_UNATTENDED…）由脚本自动回落。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 if [ "$REPORT_ENABLED" = "1" ]; then
   RPT_AI="docs/reports/${TARGET_VERSION}/AI执行报告"; gate_fail=0
   [ -f "$RPT_AI/data/${BUILD}.js" ] || { echo "❌ 完成核验：缺执行数据（data/${BUILD}.js，autopilot 3.1.5 应已写计划态并注册两页）"; gate_fail=1; }
@@ -19,7 +19,7 @@ if [ "$REPORT_ENABLED" = "1" ]; then
   # ⛔ BE 必须定义在 if **之外**：成功分支（清零 streak）也要用它。定义在 if 内的后果不是报错——
   #   `$BE ... 2>/dev/null || true` 会把 `--version: command not found` 压成 rc=0，于是
   #   handoff_fail_streak 只增不减，三次**成功**交接照样冻成 handoff-exhausted（人工-only）。
-  BE="python3 .aidp/scripts/baseline_edit.py"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
   if [ "$gate_fail" = 1 ]; then
     HANDOFF_NO_LOOP=""   # ★ 透传无人值守（同 2.5.1）：恒带 --unattended，有唤醒源再加 --no-loop
     [ "${LOOP_UNATTENDED:-0}" = "1" ] && { [ "${HAS_WAKE_SOURCE:-0}" = "1" ] && HANDOFF_NO_LOOP=" --unattended --no-loop" || HANDOFF_NO_LOOP=" --unattended"; }
@@ -28,7 +28,7 @@ if [ "$REPORT_ENABLED" = "1" ]; then
     # ★ 记账 → 判阈 → 冻结四件套（交接类，解冻 = 人工）→ 发 #4，一次调用做完。
     #   内含「无唤醒源（HAS_WAKE_SOURCE=0：--once / 无 /loop）当场按达阈处置」——没有下一 tick
     #   叠 streak 时阈值恒不可达、永不冻结，而 exit 0 会被上游读成"跑过了"（宁可早冻，不要静默）。
-    python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
       --phase 3.2.7-handoff --reason handoff-exhausted --streak-key handoff_fail_streak \
       --threshold "${HANDOFF_FAIL_THRESHOLD:-3}" \
       --why "连续多次交接仍拿不回齐全 AI执行报告（执行数据缺失）"
@@ -65,11 +65,11 @@ fi
 <!-- flowvar-check: allow J 同段内 gen_report --json 的输出，紧邻两行内消费 -->
 <!-- flowvar-check: allow AUTO_FIXABLE_FOUND 上方分流两类的语义判定结果，由 Claude 就地代入 -->
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 > OPEN_BUGS=$(grep -rE '\|[[:space:]]*待修复[[:space:]]*\|' \
 >   "docs/testing/${TARGET_VERSION}/正式用例" "docs/testing/${TARGET_VERSION}/测试验收" "docs/testing/${TARGET_VERSION}/测试执行" "docs/testing/${TARGET_VERSION}/研发自测" 2>/dev/null | wc -l)
 > # ★ 统计必须走 SKILL 的 gen_report.py 聚合，⛔ 不得手工累加（rationale.md「统计为何必须走 gen_report.py」）
-> GR=.aidp/skills/auto-test-runner/scripts/gen_report.py
+> GR={{AIDP_HOME}}/skills/auto-test-runner/scripts/gen_report.py
 > RD=$(ls -d "docs/reports/${TARGET_VERSION}/AI测试报告/build-${BUILD}"/round-* 2>/dev/null | sort -V | tail -1)
 > [ -f "$GR" ] && [ -n "$RD" ] && { J=$(python3 "$GR" "$RD" --json 2>/dev/null)
 >   THIS_ROUND_FAIL_COUNT=$(echo "$J"|jq -r '.counts.fail // empty'); THIS_ROUND_NA=$(echo "$J"|jq -r '.counts.na // 0')
@@ -84,7 +84,7 @@ fi
 > #   ⛔ precondition-unmet 仍计入：「有权限造数据却没造」与「真造不出」在枚举上同形，只能逐条复评。
 > EXCLUDED_BLOCK=$(python3 - "$RD" "$TARGET_VERSION" <<'PY' 2>/dev/null || echo 0
 > import json, sys, glob, os
-> sys.path.insert(0, ".aidp/skills/auto-test-runner/scripts")
+> sys.path.insert(0, "{{AIDP_HOME}}/skills/auto-test-runner/scripts")
 > from gen_report import load_results, is_env_issue
 > rd, v = sys.argv[1], sys.argv[2]
 > try:
@@ -98,7 +98,7 @@ fi
 > print(n)
 > PY
 > )
-> CASE_LEDGER_PENDING=$(python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" get case_ledger_pending --default 0)
+> CASE_LEDGER_PENDING=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get case_ledger_pending --default 0)
 > if [ -z "${THIS_ROUND_FAIL_COUNT+x}" ] || [ -z "${THIS_ROUND_FAIL_COUNT}" ]; then echo "⛔ 未从 gen_report.py 聚合到 fail 数 → fail-closed 判未收敛"; CONVERGED=0
 > elif [ "${CASE_LEDGER_PENDING:-0}" -gt 0 ]; then echo "⛔ 用例台账仍有 ${CASE_LEDGER_PENDING} 条待执行（case_ledger_pending）→ 不收敛"; CONVERGED=0
 > elif [ "$(( ${THIS_ROUND_BLOCK:-1} - ${EXCLUDED_BLOCK:-0} ))" -gt 0 ]; then echo "⛔ 本轮仍有 $(( THIS_ROUND_BLOCK - EXCLUDED_BLOCK )) 条 block（该跑而没跑到；已排除环境类/待确认 ${EXCLUDED_BLOCK:-0} 条）→ 判据 3 覆盖率未达 100%，不收敛"; CONVERGED=0
@@ -113,11 +113,11 @@ fi
 > case "$AUTO_FIXABLE_FOUND" in true|false) ;; *)
 >   echo "⛔ AUTO_FIXABLE_FOUND 仍是占位/非法值（$AUTO_FIXABLE_FOUND）——拒绝写入 baseline"; exit 1 ;;
 > esac
-> python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test CONVERGED "$CONVERGED"
+> python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test CONVERGED "$CONVERGED"
 > # ★ na 必须落盘：消费点 3.4 已随分片切分到 phase-3-3b.md，shell 变量跨不过去
-> python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test THIS_ROUND_NA "${THIS_ROUND_NA:-0}"
-> python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test THIS_ROUND_DIRECT_NOEV "${THIS_ROUND_DIRECT_NOEV:-0}"
-> BEV="python3 .aidp/scripts/baseline_edit.py --version $TARGET_VERSION"
+> python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test THIS_ROUND_NA "${THIS_ROUND_NA:-0}"
+> python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test THIS_ROUND_DIRECT_NOEV "${THIS_ROUND_DIRECT_NOEV:-0}"
+> BEV="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version $TARGET_VERSION"
 > if [ "$CONVERGED" = "1" ]; then
 >   $BEV set auto_fixable_pending false aiauto_test_unconverged_streak 0
 >   $BEV del auto_retest_streak auto_fix_in_progress_since >/dev/null 2>&1 || true   # 收敛即清复测计数，不跨修复周期累加
@@ -145,7 +145,7 @@ fi
 > RPT="docs/reports/${V}/AI测试报告/index.html"; BDJS="docs/reports/${V}/AI测试报告/data/${BUILD}.js"
 > BTR="docs/reports/${V}/AI测试报告"     # ⛔ 本分片内自取：shell 变量不跨围栏/分片持久
 > ROUND_DIR=$(ls -d "${BTR}/build-${BUILD}"/round-* 2>/dev/null | sort -V | tail -1)
-> RES=$(python3 .aidp/skills/auto-test-runner/scripts/gen_report.py "$ROUND_DIR" --json 2>/dev/null \
+> RES=$(python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/gen_report.py "$ROUND_DIR" --json 2>/dev/null \
 >       | python3 -c "import json,sys;d=json.load(sys.stdin);c=d.get('counts') or {};\
 print(json.dumps({'total':d.get('total'),'pass':c.get('pass'),'failed':c.get('fail'),\
 'block':c.get('block'),'na':c.get('na'),'elapsed_total_ms':d.get('elapsed_total_ms'),\

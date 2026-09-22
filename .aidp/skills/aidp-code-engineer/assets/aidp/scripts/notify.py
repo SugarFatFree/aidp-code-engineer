@@ -46,7 +46,7 @@
     [--footer "自动生成 · sprint-autopilot"] \\
     --auto \\
     [--node '#F' --version V0.11 --build V0.11_build1001 \\
-     --gate .aidp/scripts/autopilot-ceremony-gate.py]    # 登记台账（成功 = sent，失败 = undelivered）
+     --gate AIDP_HOME/scripts/autopilot-ceremony-gate.py]    # 登记台账（成功 = sent，失败 = undelivered）
     [--alert]                                             # 告警类：恒写本地告警台账
     [--project-name '<项目中文名>']                       # 不传则自动解析
   notify.py --title ... --section ... --print-only        # 只构造并打印中性 JSON 与各渠道渲染结果
@@ -60,6 +60,12 @@
        `--check-name` 只拿到英文兜底名时也返回 3。
 --section / --footer 里的字面 "\\n" 会被转成真实换行（书写便利）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import base64
 import hashlib
@@ -637,12 +643,12 @@ def main(argv=None):
                     help="只构造并打印中性 JSON 与各渠道渲染结果，不发送、不登记")
     ap.add_argument("--node", default="", help="里程碑节点标识（如 #F）；给了才登记台账（成功 sent / 失败 undelivered）")
     ap.add_argument("--alert", action="store_true",
-                    help="告警类通知：无论发送成败都追加 memory/.aidp/alerts.jsonl 并打印 stderr（--node #4 自动视为告警）")
+                    help=runtime_text('告警类通知：无论发送成败都追加 memory/.aidp/alerts.jsonl 并打印 stderr（--node #4 自动视为告警）', __file__))
     # ⛔ --node 给出时 --version 结构性必需：record-card 侧 --version 为必填，缺它该卡永远进不了台账。
     #    故在发送之前 fail-closed——发出去的通知收不回来，台账却会永久缺一条。
     ap.add_argument("--version", default="")
     ap.add_argument("--build", default="")
-    ap.add_argument("--gate", default=".aidp/scripts/autopilot-ceremony-gate.py",
+    ap.add_argument("--gate", default=runtime_text('__AIDP_HOME__/scripts/autopilot-ceremony-gate.py', __file__),
                     help="ceremony gate 路径（record-card 用）")
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--project-name", default="",

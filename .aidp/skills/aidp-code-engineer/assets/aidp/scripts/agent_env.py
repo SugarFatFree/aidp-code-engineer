@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """agent_env.py —— 识别本项目启用的 AI 编码 Agent，并解析项目记忆文件落点。
 
-单一信源 `.aidp/` 同时服务多个 Agent（Claude Code / Codex / DeepSeek Harness）；
+单一信源 `AIDP_HOME/` 同时服务多个 Agent（Claude Code / Codex / DeepSeek Harness）；
 各 Agent 读的项目记忆文件不同：
 
   · 只有 Claude Code          → `CLAUDE.md`
@@ -19,9 +19,9 @@
 （真正的正文在 AGENTS.md，写进薄壳会把导入结构冲掉）。
 
 CLI：
-  python3 .aidp/scripts/agent_env.py detect      [--root .]   # {"agents": [...], "source": "env|markers|default"}
-  python3 .aidp/scripts/agent_env.py memory-file [--root .]   # {"memory_file": "AGENTS.md", "agents": [...], ...}
-  python3 .aidp/scripts/agent_env.py --self-check
+  python3 AIDP_HOME/scripts/agent_env.py detect      [--root .]   # {"agents": [...], "source": "env|markers|default"}
+  python3 AIDP_HOME/scripts/agent_env.py memory-file [--root .]   # {"memory_file": "AGENTS.md", "agents": [...], ...}
+  python3 AIDP_HOME/scripts/agent_env.py --self-check
 """
 import argparse
 import json

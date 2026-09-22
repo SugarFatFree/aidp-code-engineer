@@ -2,7 +2,7 @@
 <!-- flowvar-check: allow VKEY -->
 
 > 本片覆盖 Phase 3.2：批量 Sprint、推送、部署与出口游标；进入本阶段后按本文逐项执行。
-> 分片清单见 `.aidp/commands/sprint-autopilot.md`，维护理由见同目录 `rationale.md`。
+> 分片清单见 `{{AIDP_HOME}}/commands/sprint-autopilot.md`，维护理由见同目录 `rationale.md`。
 
 ---
 
@@ -21,7 +21,7 @@
    ```
 
 > ★ 进入步骤 1 前从 baseline 读回本 tick 信号（shell state 不跨 Bash 调用），并将两值写入子 Agent prompt：
-> `BE="python3 .aidp/scripts/baseline_edit.py"; HAS_WAKE_SOURCE=$($BE get autopilot.wake_source_this_tick --default 0); LOOP_UNATTENDED=$($BE get autopilot.loop_unattended_this_tick --default 0)`
+> `BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; HAS_WAKE_SOURCE=$($BE get autopilot.wake_source_this_tick --default 0); LOOP_UNATTENDED=$($BE get autopilot.loop_unattended_this_tick --default 0)`
 
 1. **★ 执行粒度决策（#1 上下文优化 —— 决定"一 tick 跑几个 Sprint"，先于下面的调用）**：全量开发把 N 个 Sprint 的 dev/test/bugfix 往返**线性累积在同一上下文**，是 autopilot 单 tick 破 1M 上下文的最大来源。故按上下文分流：
    - **`HAS_WAKE_SOURCE=1`（`/loop` / cron）且未带 `--batch-one-tick`（★ 默认）= 逐 tick 单 Sprint**：进入下方 **1.1 单 Sprint 可执行分支**，本 tick 只跑下一个未关闭 Sprint。
@@ -33,10 +33,10 @@
    **① 计算下一个待跑 Sprint（fail-closed）**：
    ```bash
    # 先从权威计划与已关闭归档计算下一个 Sprint；任一集合为空都 fail-closed。
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-   BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
    # ★ Sprint 集合唯一口径 = plan_sprints.py（根因见 rationale.md「计划文件的三种解析法」）
-   _PS=$(python3 .aidp/scripts/plan_sprints.py --version "$V" --shell) || exit 1
+   _PS=$(python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version "$V" --shell) || exit 1
    eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed}"
    # ⛔ 本 exit 0 **只结束本围栏、不让位本 tick**（全仓唯一例外，见 rationale「全部关闭分支的 exit 0」）
    [ "$REMAIN_COUNT" -eq 0 ] && { echo "✅ 全部 Sprint 已关闭 → 跳过 Sprint 循环 → Read phase-3-5b.md，从步骤 2.5『部署触发前置』（commit → 分类 → push）执行（不退本 tick）"; exit 0; }
@@ -51,9 +51,9 @@
    **③ 据落盘产物判定 + 记账 + 写游标**（⛔ 只认 close 归档文件，不信子 Agent 口述）：
 
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-   BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
-   _PS=$(python3 .aidp/scripts/plan_sprints.py --version "$V" --shell) || exit 1
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+   _PS=$(python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version "$V" --shell) || exit 1
    eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed}"
    read -ra CLOSED_AFTER <<< "$CLOSED_SPRINTS"
    SPRINT_NO=$($BE --version "$V" get run_state.next_sprint --default "")
@@ -75,7 +75,7 @@
          needs_human_reason "Sprint-$SPRINT_NO 连续 $S tick 未取得 close 归档（3.2-dev），结构性不可自愈，请人工介入"
        $BE set aiauto_blocked_reason "frozen:handoff-exhausted@$V"
        # ⛔ 冻结必须同时发 #4（口径见 phase-0-4.md）：不发 = 「停了，但没人知道」。
-       python3 .aidp/scripts/notify.py --node "#4" --auto --header-color red \
+       python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
          --title "开发受阻：Sprint 未取得 close 归档" --version "$V" \
          --section "Sprint-$SPRINT_NO 连续 $S tick 无 close 归档（3.2-dev），已冻结本版待人工。" || true   # 退出码 3 = 未配置通知渠道，静默跳过
        echo "⛔ Sprint-$SPRINT_NO 连续 $S tick 无 close 归档（≥ 阈值 ${DEV_FAIL_FREEZE_THRESHOLD:-3}）→ needs_human 冻结本版止损"; exit 0
@@ -88,7 +88,7 @@
    $BE --version "$V" run-state "3.2-dev" "3.2-dev" "${REMAIN_AFTER:-done}" \
      --summary "Sprint-$SPRINT_NO 已完成 start→dev→test→bugfix→close" --pending ""
    # ★ 让位前**可执行地**断言唤醒源（理据见 rationale.md「让位前必须断言唤醒源」）
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    if [ -n "$REMAIN_AFTER" ] && [ "${HAS_WAKE_SOURCE:-0}" = "1" ]; then
      echo "UNATTENDED_YIELD"; exit 0   # 让位本 tick，下一 tick 接着跑 Sprint-$REMAIN_AFTER
    elif [ -n "$REMAIN_AFTER" ]; then
@@ -114,10 +114,10 @@
 不依赖任何跨围栏变量），写盘前还有一道"算空即拒写"的兜底：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?TARGET_VERSION 未由 tick flags 提供}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?TARGET_VERSION 未由 tick flags 提供}"
 # ★ 同上：Sprint 集合唯一口径 = plan_sprints.py（fail-closed 内建，含"计划在但解析不出 Sprint"）
-_PS=$(python3 .aidp/scripts/plan_sprints.py --version "$V" --shell) || exit 1
+_PS=$(python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version "$V" --shell) || exit 1
 eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed}"
 REMAINING_SPRINTS="$REMAIN_COUNT"; NEXT_SPRINT_NO="$NEXT_SPRINT"
 if [ -n "$NEXT_SPRINT_NO" ]; then
@@ -125,12 +125,15 @@ if [ -n "$NEXT_SPRINT_NO" ]; then
 else
   NEXT_SPRINT="done"
   # ⛔ 判据真源【不在 baseline】，走 tick_flags 读真源（见 rationale.md「3.2 出口路由」）
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
   CICD_BOUND="${CICD_PIPELINE_BOUND:-0}"   # ← memory/aidp-config.yaml cicd 段（provider + pipelines.<env>，同 cicd_watch.py 的真源）
   READY_CFG="${CLOUD_READY_URL:-}"         # ← PRD autopilot_decisions.deployment（按版本取）
-  if [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ "${CICD_BOUND:-0}" != "0" ]; then
+  # 无 Git 的 cloud 不能 push，也不能进入 3.2.1-deploy/probe 游标等待不存在的远端部署。
+  # VCS_MODE 从本围栏 tick flags 取回；未提供时以入口能力检测为准，不可把 none 默认成 git。
+  VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+  if [ "${VCS_MODE:-git}" = "git" ] && [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ "${CICD_BOUND:-0}" != "0" ]; then
     NEXT_PHASE_AFTER_DEV="3.2.1-deploy"
-  elif [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ -n "$READY_CFG" ]; then
+  elif [ "${VCS_MODE:-git}" = "git" ] && [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ -n "$READY_CFG" ]; then
     NEXT_PHASE_AFTER_DEV="3.2.1-probe"
   else
     NEXT_PHASE_AFTER_DEV="3.3-audit"

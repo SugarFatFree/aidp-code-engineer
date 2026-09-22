@@ -3,7 +3,7 @@
 
 ## 为什么不是一份手写速查表
 
-`.aidp/scripts/` 与各 SKILL `scripts/` 下有上百个脚本，CLI 形态互不统一——实测同一轮里
+`AIDP_HOME/scripts/` 与各 SKILL `scripts/` 下有上百个脚本，CLI 形态互不统一——实测同一轮里
 踩到四种：位置子命令（`check_sprint_numbering.py check`）、`--paths <路径>`、单个位置路径、
 三个位置参数。子 Agent 每次都要试错 1~2 次才跑对，而失败信息是 argparse 原文、不指向正确用法。
 
@@ -14,14 +14,20 @@
 
 ## 用法
 
-    python3 .aidp/scripts/scripts_usage.py                  # 全部（本项目 + 各 SKILL）
-    python3 .aidp/scripts/scripts_usage.py check_count      # 名字含该子串的
-    python3 .aidp/scripts/scripts_usage.py --json
+    python3 AIDP_HOME/scripts/scripts_usage.py                  # 全部（本项目 + 各 SKILL）
+    python3 AIDP_HOME/scripts/scripts_usage.py check_count      # 名字含该子串的
+    python3 AIDP_HOME/scripts/scripts_usage.py --json
 
 输出每个脚本一行 `usage:`（argparse 的第一行），必要时带上位置参数名——那正是最常踩的一类。
 
 退出码：0 正常；2 参数错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -29,7 +35,7 @@ import re
 import subprocess
 import sys
 
-ROOTS = (".aidp/scripts", ".aidp/skills")
+ROOTS = (runtime_text('__AIDP_HOME__/scripts', __file__), runtime_text('__AIDP_HOME__/skills', __file__))
 SKIP_DIRS = {"__pycache__", "tests", "assets", "node_modules"}
 SKIP_NAMES = {"__init__.py", "scripts_usage.py"}
 

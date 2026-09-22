@@ -5,7 +5,7 @@
 ## 前置流程
 
 1. **{user}** ← `git config user.name`
-2. **{version}** ← 项目记忆文件（`python3 .aidp/scripts/agent_env.py memory-file` 取路径）「当前状态.当前版本」；读不到则取 `memory/` 下按版本序最大的 `V*` 目录；仍无（尚未规划任何版本）则标记 `{version}` 缺省、检查项 9 标 N/A（`verify.py` 下游模式缺版本参数直接 exit 2，不跑）。**★ 不得写死任何具体版本号**（写死会让下游项目对着不存在的 `memory/V0.0.1/{user}/` 报假缺失）。
+2. **{version}** ← 项目记忆文件（`python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取路径）「当前状态.当前版本」；读不到则取 `memory/` 下按版本序最大的 `V*` 目录；仍无（尚未规划任何版本）则标记 `{version}` 缺省、检查项 9 标 N/A（`verify.py` 下游模式缺版本参数直接 exit 2，不跑）。**★ 不得写死任何具体版本号**（写死会让下游项目对着不存在的 `memory/V0.0.1/{user}/` 报假缺失）。
 3. 扫描 `memory/` 下**所有版本**（`V*` 目录）和**所有用户**的子目录，汇总健康度。
 4. 项目级 memory 文件检查一次即可。
 
@@ -83,12 +83,12 @@
 
 ### 9. ★ 脚手架漂移比对（约定 16 回检；仅 AIDP 脚手架项目）
 
-- 若存在 `.aidp/skills/aidp-code-engineer/scripts/verify.py` 且 `{version}` 已解析 → 跑 `python3 .aidp/skills/aidp-code-engineer/scripts/verify.py . {version} {user} --read-only`（`{version}` 由「前置流程」第 2 步解析，**不写死**），把其 FAIL/ERROR/WARN（尤其契约漂移）汇总为本项状态；`{version}` 缺省 → 标 N/A
-- 命中漂移 → ⚠️ 提示「重跑 `python3 .aidp/skills/aidp-code-engineer/scripts/scaffold.py . --mode upgrade` 同步」；无 verify.py（非脚手架项目）→ 标 N/A
+- 若存在 `{{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py` 且 `{version}` 已解析 → 跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . {version} {user} --read-only`（`{version}` 由「前置流程」第 2 步解析，**不写死**），把其 FAIL/ERROR/WARN（尤其契约漂移）汇总为本项状态；`{version}` 缺省 → 标 N/A
+- 命中漂移 → ⚠️ 提示「重跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --mode upgrade` 同步」；无 verify.py（非脚手架项目）→ 标 N/A
 
 ### 9bis. ★ 已发布 AI 报告的完整性巡检（只读）
 
-- 跑 `python3 .aidp/scripts/emit-report.py verify-reports --json`：批量契约校验 + `_integrity`
+- 跑 `python3 {{AIDP_HOME}}/scripts/emit-report.py verify-reports --json`：批量契约校验 + `_integrity`
   checksum 防篡改，扫**所有历史 build 报告 data**。退出码 `4` = 有报告契约不过 / 疑似被手改 /
   无法解析；`0` = 全部可解析且未被篡改。无 `docs/reports/` → 标 N/A。
 - ⛔ **本步是该子命令唯一的常规调用方**：它守的是「报告定稿即不可变」这条承诺，
@@ -103,7 +103,7 @@
   # ⛔ 不可直接把 `show --json` 的原始输出读进上下文：它打的是**整个 state**（含全部文件的 sha），
   #    中等仓库即达百 KB、大仓可达 MB 级 —— 只读性没问题，但会把子 Agent 的上下文挤爆。
   #    只取本项真正要看的两个字段：
-  python3 .aidp/scripts/code_inventory.py show --json 2>/dev/null \
+  python3 {{AIDP_HOME}}/scripts/code_inventory.py show --json 2>/dev/null \
     | python3 -c 'import json,sys
 try:
     d = json.load(sys.stdin)
@@ -118,7 +118,7 @@ print(json.dumps({"generated_at": d.get("generated_at"), "counts": d.get("counts
   > `memory/_facts/code-inventory.json`，与本命令「纯审计、不写产物、子 Agent 全程只读」的声明
   > 直接矛盾；更要命的是**检查会自我清除**——本项的判据正是"索引久未刷新"，而取判据的命令
   > 自己就把索引刷新了，于是第二次跑必然 `delta≈0` 报绿。"检查通过"是自己改出来的。
-- **老版本产物体量**：`python3 .aidp/scripts/archive_old_artifacts.py plan --json`（**只读 dry-run**）。可归档版本的原始体积 > 100MB 或跨版本重复文件 > 100 个 → ⚠️ 建议执行归档（留仓、只是打包+去重，豁免最近 5 版）。
+- **老版本产物体量**：`python3 {{AIDP_HOME}}/scripts/archive_old_artifacts.py plan --json`（**只读 dry-run**）。可归档版本的原始体积 > 100MB 或跨版本重复文件 > 100 个 → ⚠️ 建议执行归档（留仓、只是打包+去重，豁免最近 5 版）。
 - ⛔ **本项只报告、绝不代为执行**：`apply` 会删文件，是否执行、豁免几个版本由用户拍板；健康检查本身是只读子 Agent。
 
 ## 输出格式

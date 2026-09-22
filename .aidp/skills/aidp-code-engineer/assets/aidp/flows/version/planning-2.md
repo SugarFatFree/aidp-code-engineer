@@ -1,7 +1,7 @@
 # /version · 版本规划流程详情 — 分片 2/8
 
 > 本片覆盖：**Step 2.2 读取上下文 / 2.3 目录骨架 / 2.4 协调调用 / 2.4.0 输入变更摘要**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 ### Step 2.2：读取上下文
@@ -21,7 +21,7 @@ mkdir -p docs/testing/{version}
 # ★ 正式用例/（测试人员手动上传的正式测试用例）由测试人员维护，AIDP 绝不预建/自动创建；aiauto-test 只读消费作主集
 mkdir -p docs/testing/{version}/研发自测          # 研发自测用例统一目录（研发自测方案 + 套件 + 用例都落此目录）
 mkdir -p docs/plans/{version}
-# ★ 报告体系（AI执行报告 = index.html+plan.html 离线 HTML + 测试报告 HTML；骨架/模板从 .aidp/templates/reports/ 拷入）
+# ★ 报告体系（AI执行报告 = index.html+plan.html 离线 HTML + 测试报告 HTML；骨架/模板从 {{AIDP_HOME}}/templates/reports/ 拷入）
 mkdir -p docs/reports/{version}/AI执行报告
 mkdir -p docs/reports/{version}/AI测试报告/data docs/reports/{version}/AI测试报告/assets docs/reports/{version}/AI测试报告/screenshots
 mkdir -p docs/reports/{version}/版本测试报告

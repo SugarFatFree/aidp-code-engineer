@@ -1,7 +1,7 @@
 # 04 — Agents 详细规范
 
 > **文档定位**：本文档是 Agent 角色体系的**总览和索引**。
-> 具体的 Agent 指令文件已在 `.aidp/agents/` 下，AI Agent 运行时会直接读取这些文件。
+> 下游 Agent 指令位于 `{{AIDP_HOME}}/agents/`，AI Agent 运行时从该目录读取（仅 Claude 为 `.claude/aidp/`，有 Codex / DSH 为 `.agents/aidp/`）。下方链接指向下游已安装的运行目录；模板仓库中的维护源位于 `.aidp/agents/`。
 > 本文档**不再重复** Agent 内部细节，仅提供角色职责、协作关系、调用规则的全局视图。
 
 ---
@@ -43,15 +43,15 @@ Reviewer Agent   代码审查
 
 | Agent | 职责 | 主要输入 | 主要输出 | 指令文件 |
 |-------|------|---------|---------|---------|
-| **PM** | 需求分析、需求拆分（EPIC/Task）、验收结论、Sprint 生命周期管理 | PRD、业务需求 | 需求文档、验收结论（并入 AI执行报告/progress）、activeContext/progress | [`pm.md`](../../.aidp/agents/pm.md) |
-| **Architect** | 系统设计、技术决策、ADR、详细设计、数据库基线 | 需求、`docs/architecture/`（架构约束 + 可选架构设计文档，全目录）、脚手架、databaseBaseline | 详细设计、API 设计、DB 设计、SQL、ADR | [`architect.md`](../../.aidp/agents/architect.md) |
-| **UI** | 视觉规范、高保真原型生成、组件映射 | PRD、UI 原型代码、UI 规范约束 | UI 规范、组件映射、`docs/prototype/{version}/mockup/` 原型 | [`ui.md`](../../.aidp/agents/ui.md) |
-| **Frontend** | 前端代码实现、公共组件、API 调用层 | 详细设计、UI 规范、高保真原型、脚手架 | 前端代码（TDD + 复用公共组件） | [`frontend.md`](../../.aidp/agents/frontend.md) |
-| **Backend** | 后端代码实现、API、数据库 | API 设计、DB 设计、脚手架 | 后端代码（TDD + 分层结构） | [`backend.md`](../../.aidp/agents/backend.md) |
-| **QA** | 测试用例设计与执行、Bugfix 验证、回归测试 | 需求、验收标准、代码、bugfix 记录 | 测试用例、测试报告、bug 记录 | [`qa.md`](../../.aidp/agents/qa.md) |
-| **Reviewer** | 代码质量审查、安全性、规范性、UI 一致性 | 代码、设计文档、约束文档 | 审查报告、合并决策 | [`reviewer.md`](../../.aidp/agents/reviewer.md) |
-| **AIDP-Compliance** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留、事实清单 ↔ 代码、引用三角、目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py stdout、memory/、项目记忆文件（AGENTS.md / CLAUDE.md）、code/ 配置、事实清单 | 统一合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | [`aidp-compliance.md`](../../.aidp/agents/aidp-compliance.md) |
-| **Version-Auditor** ★ | 版本规划产物全量审计（8 项：A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34）） | 版本规划产物（requirements / design / plans / testing 等） | 审计报告 `docs/audit/{version}/version-output-audit-*.md` | [`version-auditor.md`](../../.aidp/agents/version-auditor.md) |
+| **PM** | 需求分析、需求拆分（EPIC/Task）、验收结论、Sprint 生命周期管理 | PRD、业务需求 | 需求文档、验收结论（并入 AI执行报告/progress）、activeContext/progress | [`pm.md`](../../{{AIDP_HOME}}/agents/pm.md) |
+| **Architect** | 系统设计、技术决策、ADR、详细设计、数据库基线 | 需求、`docs/architecture/`（架构约束 + 可选架构设计文档，全目录）、脚手架、databaseBaseline | 详细设计、API 设计、DB 设计、SQL、ADR | [`architect.md`](../../{{AIDP_HOME}}/agents/architect.md) |
+| **UI** | 视觉规范、高保真原型生成、组件映射 | PRD、UI 原型代码、UI 规范约束 | UI 规范、组件映射、`docs/prototype/{version}/mockup/` 原型 | [`ui.md`](../../{{AIDP_HOME}}/agents/ui.md) |
+| **Frontend** | 前端代码实现、公共组件、API 调用层 | 详细设计、UI 规范、高保真原型、脚手架 | 前端代码（TDD + 复用公共组件） | [`frontend.md`](../../{{AIDP_HOME}}/agents/frontend.md) |
+| **Backend** | 后端代码实现、API、数据库 | API 设计、DB 设计、脚手架 | 后端代码（TDD + 分层结构） | [`backend.md`](../../{{AIDP_HOME}}/agents/backend.md) |
+| **QA** | 测试用例设计与执行、Bugfix 验证、回归测试 | 需求、验收标准、代码、bugfix 记录 | 测试用例、测试报告、bug 记录 | [`qa.md`](../../{{AIDP_HOME}}/agents/qa.md) |
+| **Reviewer** | 代码质量审查、安全性、规范性、UI 一致性 | 代码、设计文档、约束文档 | 审查报告、合并决策 | [`reviewer.md`](../../{{AIDP_HOME}}/agents/reviewer.md) |
+| **AIDP-Compliance** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留、事实清单 ↔ 代码、引用三角、目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py stdout、memory/、项目记忆文件（AGENTS.md / CLAUDE.md）、code/ 配置、事实清单 | 统一合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | [`aidp-compliance.md`](../../{{AIDP_HOME}}/agents/aidp-compliance.md) |
+| **Version-Auditor** ★ | 版本规划产物全量审计（8 项：A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34）） | 版本规划产物（requirements / design / plans / testing 等） | 审计报告 `docs/audit/{version}/version-output-audit-*.md` | [`version-auditor.md`](../../{{AIDP_HOME}}/agents/version-auditor.md) |
 
 ## 3. Agent 激活规则
 
@@ -76,7 +76,7 @@ Reviewer Agent   代码审查
 如需精细控制，手动激活单个 Agent：
 
 ```
-请读取 .aidp/agents/frontend.md 并按照其中的指令工作。
+请读取 {{AIDP_HOME}}/agents/frontend.md 并按照其中的指令工作。
 当前任务是开发 Sprint-001 的前端部分。
 ```
 
@@ -87,8 +87,8 @@ Reviewer Agent   代码审查
 ```
 创建 Agent Team sprint-001，角色包括：
 - architect：负责详细设计
-- backend-dev：后端实现（读取 .aidp/agents/backend.md）
-- frontend-dev：前端实现（读取 .aidp/agents/frontend.md）
+- backend-dev：后端实现（读取 {{AIDP_HOME}}/agents/backend.md）
+- frontend-dev：前端实现（读取 {{AIDP_HOME}}/agents/frontend.md）
 - qa-validator：集成验收
 
 任务依赖：backend-dev + frontend-dev 并行 → qa-validator
@@ -141,24 +141,24 @@ PM（记录验收结论 + 归档）
 
 ## 5. Agent 文件索引
 
-实际的 Agent 指令文件位于 `.aidp/agents/` 下，AI Agent 运行时会直接读取：
+下游 Agent 指令文件位于 `{{AIDP_HOME}}/agents/` 下；下方链接指向已安装的运行目录供查阅：
 
 | 文件 | 核心章节 |
 |------|---------|
-| [`.aidp/agents/pm.md`](../../.aidp/agents/pm.md) | 身份定义 / 会话启动清单 / 核心工作流程 / 输出格式 / 红线 / 完成标准 |
-| [`.aidp/agents/architect.md`](../../.aidp/agents/architect.md) | 同上 |
-| [`.aidp/agents/ui.md`](../../.aidp/agents/ui.md) | 同上 + 高保真原型生成流程 |
-| [`.aidp/agents/frontend.md`](../../.aidp/agents/frontend.md) | 同上 + 视觉情形 A/B/C/D 判定（含 UI 设计规范维度）+ 真实 API 唯一交付/临时 Mock 清理规则 |
-| [`.aidp/agents/backend.md`](../../.aidp/agents/backend.md) | 同上 + TDD 开发顺序 |
-| [`.aidp/agents/qa.md`](../../.aidp/agents/qa.md) | 同上 + 测试用例设计维度 |
-| [`.aidp/agents/reviewer.md`](../../.aidp/agents/reviewer.md) | 同上 + 审查维度矩阵 |
-| [`.aidp/agents/aidp-compliance.md`](../../.aidp/agents/aidp-compliance.md) | 同上 + 包住 verify.py + 4 个语义维度（第 4 维「目标 ↔ 实现背离」仅当仓库根有 `设计目标.md` 时启用）+ 红线：禁止修改任何项目文件 |
-| [`.aidp/agents/version-auditor.md`](../../.aidp/agents/version-auditor.md) | 同上 + 版本规划产物 8 项审计（A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34））+ 红线：只读审计、只写 `docs/audit/{version}/` 报告 |
+| [`{{AIDP_HOME}}/agents/pm.md`](../../{{AIDP_HOME}}/agents/pm.md) | 身份定义 / 会话启动清单 / 核心工作流程 / 输出格式 / 红线 / 完成标准 |
+| [`{{AIDP_HOME}}/agents/architect.md`](../../{{AIDP_HOME}}/agents/architect.md) | 同上 |
+| [`{{AIDP_HOME}}/agents/ui.md`](../../{{AIDP_HOME}}/agents/ui.md) | 同上 + 高保真原型生成流程 |
+| [`{{AIDP_HOME}}/agents/frontend.md`](../../{{AIDP_HOME}}/agents/frontend.md) | 同上 + 视觉情形 A/B/C/D 判定（含 UI 设计规范维度）+ 真实 API 唯一交付/临时 Mock 清理规则 |
+| [`{{AIDP_HOME}}/agents/backend.md`](../../{{AIDP_HOME}}/agents/backend.md) | 同上 + TDD 开发顺序 |
+| [`{{AIDP_HOME}}/agents/qa.md`](../../{{AIDP_HOME}}/agents/qa.md) | 同上 + 测试用例设计维度 |
+| [`{{AIDP_HOME}}/agents/reviewer.md`](../../{{AIDP_HOME}}/agents/reviewer.md) | 同上 + 审查维度矩阵 |
+| [`{{AIDP_HOME}}/agents/aidp-compliance.md`](../../{{AIDP_HOME}}/agents/aidp-compliance.md) | 同上 + 包住 verify.py + 4 个语义维度（第 4 维「目标 ↔ 实现背离」仅当仓库根有 `设计目标.md` 时启用）+ 红线：禁止修改任何项目文件 |
+| [`{{AIDP_HOME}}/agents/version-auditor.md`](../../{{AIDP_HOME}}/agents/version-auditor.md) | 同上 + 版本规划产物 8 项审计（A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34））+ 红线：只读审计、只写 `docs/audit/{version}/` 报告 |
 
 **维护原则**：
 - 本文档只维护全局视图（职责、协作、激活规则）
-- 具体 Agent 的执行细节都在 `.aidp/agents/` 下，不在本文档重复
-- 修改 Agent 行为时，直接修改 `.aidp/agents/` 下对应文件
+- 具体 Agent 的执行细节都在下游 `{{AIDP_HOME}}/agents/` 下，不在本文档重复
+- 修改通用 Agent 行为时，回到模板仓库 `.aidp/agents/` 修改并经脚手架同步，不直接修改下游契约
 
 ## 6. 路径规则
 

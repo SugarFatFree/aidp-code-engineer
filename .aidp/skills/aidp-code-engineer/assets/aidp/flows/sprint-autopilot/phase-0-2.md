@@ -13,8 +13,8 @@
 
 1. **显式打印已配置渠道（绝不静默对外发消息）**：`CH_OK=1` 时终端必打印一行，列出将尝试的渠道类型与顺序（只打印类型与所引用的环境变量名，⛔ 绝不打印 webhook 地址 / 密钥值）：
    ```bash
-   python3 .aidp/scripts/aidp_config.py get notify.channels
-   echo "✅ 里程碑通知渠道就绪（按 notify.channels 顺序尝试，fallback=$(python3 .aidp/scripts/aidp_config.py get notify.fallback)）；改渠道直接编辑 memory/aidp-config.yaml"
+   python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.channels
+   echo "✅ 里程碑通知渠道就绪（按 notify.channels 顺序尝试，fallback=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.fallback)）；改渠道直接编辑 memory/aidp-config.yaml"
    ```
    `notify` 是**项目级共享**配置（`memory/aidp-config.yaml`，人维护、随仓库提交），不区分成员、不需要逐人确认；密钥只经环境变量引用（`webhook_env` / `secret_env`），故 baseline 与配置文件里都不含任何凭据。
 2. **渠道缺失（`CH_OK=0`）→ 交互式与无人值守一律不弹窗**：通知是可选增强，缺失时**当场落盘**降级（见 Step 3 的落盘块），静默跳过本轮全部通知节点。⛔ **不能只置 shell 变量 `NOTIFY_ENABLED=0`**：shell state 不跨 Bash 调用，下游 `tick_flags` 读回的值若与实际不符，收尾门便按「通道可用」索要应发通知台账 → 台账全缺 → 每 tick FAIL → `dev_fail_streak` 累积至冻结。
@@ -30,14 +30,14 @@
 
 ```bash
 # 本块自取配置（分片间 shell 变量不持久，⛔ 不能指望上文的 CH_OK）
-N_ENABLED=$(python3 .aidp/scripts/aidp_config.py get notify.enabled)
-N_CHANNELS=$(python3 .aidp/scripts/aidp_config.py get notify.channels)
+N_ENABLED=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.enabled)
+N_CHANNELS=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.channels)
 if [ "$N_ENABLED" = "true" ] && [ -n "$N_CHANNELS" ] && [ "$N_CHANNELS" != "[]" ]; then
-  python3 .aidp/scripts/baseline_edit.py set notify_enabled true
-  python3 .aidp/scripts/baseline_edit.py del notify_disabled_reason notify_disabled_at >/dev/null 2>&1 || true
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set notify_enabled true
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py del notify_disabled_reason notify_disabled_at >/dev/null 2>&1 || true
 else
   _R=channels-missing; [ "$N_ENABLED" != "true" ] && _R=disabled-in-config
-  python3 .aidp/scripts/baseline_edit.py set notify_enabled false notify_disabled_reason "$_R" notify_disabled_at @now
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set notify_enabled false notify_disabled_reason "$_R" notify_disabled_at @now
   echo "ℹ️ 未配置可用通知渠道（$_R）→ 已落盘 notify_enabled=false（本轮跳过播报，不影响主流程）"
 fi
 ```

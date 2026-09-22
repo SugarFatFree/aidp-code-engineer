@@ -98,7 +98,7 @@
 - 表关系说明
 - 初始化数据（从 UI 原型 Mock 数据转换）
 - 严格遵守架构约束中的数据库规范
-- **★ 数据库设计硬规则由 `dev-logic-architect` SKILL 单一信源**（按项目记忆文件（AGENTS.md / CLAUDE.md）约定 21 — 不在本文件复述具体维度/核心原则编号与主题清单）：含多维度独立 Agent 检查 + 多条核心原则（数量与主题以 SKILL.md 为准）。Architect Agent 生成 DDL 时只需确保产物结构遵循 SKILL 规则即可，落盘后由 `/sprint-design`「SKILL 脚本兜底清单」+「输出前硬门」（货币金额 + 基线 + ADR 三合一回写校验）通过 SKILL 官方脚本兜底校验。详细规则见 `.aidp/skills/dev-logic-architect/SKILL.md` + `references/quality-review-checklist.md`。
+- **★ 数据库设计硬规则由 `dev-logic-architect` SKILL 单一信源**（按项目记忆文件（AGENTS.md / CLAUDE.md）约定 21 — 不在本文件复述具体维度/核心原则编号与主题清单）：含多维度独立 Agent 检查 + 多条核心原则（数量与主题以 SKILL.md 为准）。Architect Agent 生成 DDL 时只需确保产物结构遵循 SKILL 规则即可，落盘后由 `/sprint-design`「SKILL 脚本兜底清单」+「输出前硬门」（货币金额 + 基线 + ADR 三合一回写校验）通过 SKILL 官方脚本兜底校验。详细规则见 `{{AIDP_HOME}}/skills/dev-logic-architect/SKILL.md` + `references/quality-review-checklist.md`。
 
 **Step 4：API 接口设计**
 - 遵循约束文档中的接口规范
@@ -108,13 +108,13 @@
 
 **Step 4.5：WebMCP 能力设计（★ 可选，未启用即整步跳过）**
 
-**先判定，判定为否就没有本步**：`python3 .aidp/scripts/check_webmcp.py --detect --json`
+**先判定，判定为否就没有本步**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`
 （启用判定的**唯一实现**，⛔ 不要自己 grep PRD）。`enabled: false`（默认、绝大多数项目）→
 **本步整步跳过**，不产任何章节、不占产物位、不发告警。
 
-`enabled: true` 时，**先确保详规已安装**（`python3 .aidp/scripts/check_webmcp.py --install-rule`，幂等；
-详规默认不在 `rules/` 下、模板位在 `.aidp/templates/optional-rules/webmcp.md`），
-再按其规则产出以下**额外**六项（细则一律见 WebMCP 可选规则，本处不复述——该规则**默认不安装**，权威模板位 `.aidp/templates/optional-rules/webmcp.md`，启用后经 `python3 .aidp/scripts/check_webmcp.py --install-rule` 装到 `.aidp/rules/webmcp.md`）：<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计 -->
+`enabled: true` 时，**先确保详规已安装**（`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`，幂等；
+详规默认不在 `rules/` 下、模板位在 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），
+再按其规则产出以下**额外**六项（细则一律见 WebMCP 可选规则，本处不复述——该规则**默认不安装**，权威模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，启用后经 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` 装到 `{{AIDP_HOME}}/rules/webmcp.md`）：<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计 -->
 
 | 产出 | 要点 |
 | :- | :- |

@@ -62,7 +62,7 @@ build 记录由 autopilot Phase 3.1.5 铸造；`--build` **只寻址、不代建
 
 ## 用法示例
 
-    B=.aidp/scripts/baseline_edit.py
+    B=AIDP_HOME/scripts/baseline_edit.py
     python3 $B touch aiauto_test_heartbeat_at
     python3 $B --version "$V" set needs_human true aiauto_frozen_at @now freeze_reason '"account-missing"'
     python3 $B --version "$V" del needs_human aiauto_frozen_at probe_fail_streak
@@ -72,7 +72,6 @@ build 记录由 autopilot Phase 3.1.5 铸造；`--build` **只寻址、不代建
 
   0 成功  ·  1 路径/值语法错  ·  2 IO 错（baseline 不可读写）
 """
-
 import argparse
 import json
 import os

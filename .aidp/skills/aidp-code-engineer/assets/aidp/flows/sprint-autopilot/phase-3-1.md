@@ -11,7 +11,7 @@
 
 ## Phase 3：下版全流程（仅当 TARGET_VERSION 非 null）
 
-> ⛔ **强制仪式不可精简硬门（exit-1 级铁律 — 任何入口模式都不得自行删减）**：下列"强制仪式"在**任何** `ENTRY_MODE`（交互式 `--once` / `full` / `incremental`（bug修复·功能优化增量）/ `test-only`）、任何用户是否在场下**均为强制产出**；**唯一合法跳过 = 命中下表「唯一合法降级条件」**（纯技术性不可用），由 Phase 3.4 step 4「完成核验门」的**确定性外部脚本 `.aidp/scripts/autopilot-ceremony-gate.py check`** 逐项 `exit 1` 校验（只认文件产物 + 通知台账，**执行体无法用「已精简 / 交互式」绕过返回码**），未产出且无合法降级即阻断收尾、强制补齐。
+> ⛔ **强制仪式不可精简硬门（exit-1 级铁律 — 任何入口模式都不得自行删减）**：下列"强制仪式"在**任何** `ENTRY_MODE`（交互式 `--once` / `full` / `incremental`（bug修复·功能优化增量）/ `test-only`）、任何用户是否在场下**均为强制产出**；**唯一合法跳过 = 命中下表「唯一合法降级条件」**（纯技术性不可用），由 Phase 3.4 step 4「完成核验门」的**确定性外部脚本 `{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check`** 逐项 `exit 1` 校验（只认文件产物 + 通知台账，**执行体无法用「已精简 / 交互式」绕过返回码**），未产出且无合法降级即阻断收尾、强制补齐。
 >
 > | 强制仪式 | 产出位置 | 唯一合法降级条件（命中才可跳/降级）| 降级后动作 |
 > |---|---|---|---|
@@ -23,7 +23,7 @@
 > ⛔ **非法跳过借口（命中即规范违规，执行体严禁据此精简）**：「交互式执行」「省时 / 提速」「避免打扰团队」「重型仪式 / 流程太重」「用户没明说要报告」「已做精简 / 已简化说明」「单次调用不必全套」「测试通过了报告非必需」「缺前置数据 / 缺测试账号」「需要用户确认才能继续测试」——**一律不是合法降级条件**。★ 后两条另有 Phase 0「用例前置资源对账门」（`phase-0-9.md` 0.6bis）作前置：对账已在 Phase 0 一次性问清并落盘，此后再以"缺前置数据/账号"为由暂停 = **直接判违规**；真缺则按对账门的占位口径标 `block` 继续跑完其余用例，**不是**停下来问人。能跳过仪式的**只有**上表「唯一合法降级条件」列的技术性不可用。执行体若输出"已做精简 / 已简化流程"之类说明却拿不出对应的合法降级条件 = **直接判违规**，完成核验门 `exit 1` 阻断收尾、回对应 Phase 强制补齐。
 >
 > ⛔ **报告不可变铁律（与「强制仪式不可精简硬门」同级 · exit-非零级）**：AI执行报告 / AI测试报告一经 **finalize**（R-4 收尾：`testSummary` 回填真实值 + 报告落盘 + #3/#F 通知已发 + baseline 置 `builds[].ai_report_finalized=true`+`ai_report_finalized_at`）即**冻结不可改**。此后**任何测试结论变化——无论源于代码修复、产品口径澄清、还是用例范围调整——一律铸新 build 跑新一轮，绝不回写旧 build 的 data**。旧 build 是"当时的事实"、新 build 是"现在的事实"，二者并存才有质量趋势与审计价值。**执行体若在已 finalized 的 build 上重新 emit 报告 = 严重违规**。
-> - **确定性兜底（三重锁，非仅 prose）**：① `.aidp/scripts/emit-report.py` 检测目标 build 已 `ai_report_finalized` → 拒写 `exit 2`（唯一逃生阀 `--force-amend` 仅修笔误 + 追加 `amendments[]` 留痕）；② Phase 3.1.5 复用判定已收紧——`current_build` 已 finalize/收尾 → **强制铸新 build 跑复测**（标「第 N 轮复测（上轮通过率 X%）」，见 3.1.5）；③ `autopilot-ceremony-gate.py --stage final` 校本 build data mtime 不得晚于 `ai_report_finalized_at`（无 `amendments[]` 留痕的二次篡改 = FAIL）。
+> - **确定性兜底（三重锁，非仅 prose）**：① `{{AIDP_HOME}}/scripts/emit-report.py` 检测目标 build 已 `ai_report_finalized` → 拒写 `exit 2`（唯一逃生阀 `--force-amend` 仅修笔误 + 追加 `amendments[]` 留痕）；② Phase 3.1.5 复用判定已收紧——`current_build` 已 finalize/收尾 → **强制铸新 build 跑复测**（标「第 N 轮复测（上轮通过率 X%）」，见 3.1.5）；③ `autopilot-ceremony-gate.py --stage final` 校本 build data mtime 不得晚于 `ai_report_finalized_at`（无 `amendments[]` 留痕的二次篡改 = FAIL）。
 > - **结论变化的唯一正确路径**：修复 / 澄清 → 铸新 build → 新一轮实测 → 新报告；旧 build 报告原样保留。趋势与"第一轮 vs 第二轮"对比由多 build 并存天然形成。
 > - **★ 铸新 build 出复测报告是【自动仪式】、绝不作为问句抛给用户（本次反馈铁律）**：首测、复测都**无条件出报告**——报告产出是 autopilot 强制仪式（同「强制仪式不可精简硬门」），**不是用户决策点**。复测发现旧 build 报告是上一轮（如"当前报告停留在上一轮 76.9%"）时，Phase 3.1.5 R-1 **自动**铸新 build（`ai_report_finalized` → 强制自增）并自动产新报告，**严禁**弹出/输出诸如"**要我重新铸一个 build 出复测报告吗？**""按报告不可变铁律旧 build 不能改，要不要铸 build1002？"这类**询问**——这是把既定的自动仪式误当选择项，答案**恒为是、直接执行**，交互式与 `/loop` 无人值守下**都不问**。用户的决策点只有一个：是否发起本轮 `/sprint-autopilot`（复测）；一旦发起，铸 build + 出报告是其必然产物、无需再问。「报告不可变」解释的是"为什么走新 build"（旧 build 冻结），**不是"要不要走"的开关**。
 

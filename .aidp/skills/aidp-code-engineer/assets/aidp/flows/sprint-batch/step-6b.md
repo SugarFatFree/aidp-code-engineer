@@ -17,8 +17,8 @@
 1. **预写 baseline**（让 aiauto-test Phase 0.2 能识别「当前开发版本」）：
    ```bash
    # ★ 本块自取版本号（分片间 shell 变量不持久；口径同 step-6.md 6.0.5 首处）
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"
-   VERSION="${TARGET_VERSION:-$(python3 .aidp/scripts/baseline_edit.py current-version)}"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"
+   VERSION="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"
    [ -n "$VERSION" ] || { echo "⛔ 取不到版本号 → 中止本步，不静默跳过"; exit 1; }
    BASELINE_FILE="memory/.sprint-autopilot-baseline.json"
    NOW=$(date -Iseconds)
@@ -26,9 +26,9 @@
    #    无正式代码变更记 cicd_skipped=true 且不写该字段；有变更须 cicd_watch 终态 + 就绪探针才写。
    #
    # ⛔⛔ 下面几行**必须是可执行语句**，⛔ 不得退回注释（根因见 rationale.md「预写 baseline」）。
-   BE="python3 .aidp/scripts/baseline_edit.py"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
    # 本块自取（分片间 shell 变量不持久）：部署形态取 PRD 声明、部署证据取 baseline 既有事实
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"
    DM="${DEPLOY_MODE:-$($BE --version "$VERSION" get deployment_mode --default none)}"
    $BE --version "$VERSION" set phase_beta_done_at "$NOW" deployment_mode "$DM" source "sprint-batch"
    # ★ `last_deployed_at` 只认**本轮的真实就绪证据**。
@@ -38,7 +38,7 @@
    HURL=$($BE --version "$VERSION" get deployment.cloud_ready_api_url --default "")
    [ -z "$HURL" ] && HURL=$($BE --version "$VERSION" get deployment.local_backend_url --default "")
    if [ -n "$HURL" ]; then
-     python3 .aidp/scripts/autopilot-deploy-watch.py --health-url "$HURL" \
+     python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py --health-url "$HURL" \
        --cold-start-seconds 55 --timeout 300 --version "$VERSION"   # exit 0 时它自己写 last_deployed_at
      case "$?" in
        0) echo "✅ 就绪探针通过，last_deployed_at 已由探针写入" ;;

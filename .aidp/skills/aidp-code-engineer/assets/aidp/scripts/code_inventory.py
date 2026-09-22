@@ -33,13 +33,13 @@ Step 0.6.4.7「扫描代码现状清单」原文写死「扫描深度：**全扫
 "该复用还是该新建"等语义结论仍归 `/sprint-design` 与 `dev-logic-architect`（约定 21）。
 
 用法：
-    python3 .aidp/scripts/code_inventory.py update            # 增量刷新缓存并打印摘要
-    python3 .aidp/scripts/code_inventory.py update --json     # 结构化输出（含 delta）
-    python3 .aidp/scripts/code_inventory.py update --full     # 忽略缓存全量重扫
-    python3 .aidp/scripts/code_inventory.py show --json       # 只读当前缓存，不扫盘
-    python3 .aidp/scripts/code_inventory.py render            # 渲染成事实清单「代码现状清单」段 Markdown
-    python3 .aidp/scripts/code_inventory.py delta --since V0.1.0   # 相对某次快照的 Δ（见 snapshot）
-    python3 .aidp/scripts/code_inventory.py snapshot --version V0.2.0  # 给本版打快照，供下版算 Δ
+    python3 AIDP_HOME/scripts/code_inventory.py update            # 增量刷新缓存并打印摘要
+    python3 AIDP_HOME/scripts/code_inventory.py update --json     # 结构化输出（含 delta）
+    python3 AIDP_HOME/scripts/code_inventory.py update --full     # 忽略缓存全量重扫
+    python3 AIDP_HOME/scripts/code_inventory.py show --json       # 只读当前缓存，不扫盘
+    python3 AIDP_HOME/scripts/code_inventory.py render            # 渲染成事实清单「代码现状清单」段 Markdown
+    python3 AIDP_HOME/scripts/code_inventory.py delta --since V0.1.0   # 相对某次快照的 Δ（见 snapshot）
+    python3 AIDP_HOME/scripts/code_inventory.py snapshot --version V0.2.0  # 给本版打快照，供下版算 Δ
 
 退出码：0 正常；1 缓存缺失且 show/render/delta 无从进行；2 用法错。
 """

@@ -4,7 +4,7 @@
 
 ## 为什么需要本脚本
 
-AIDP 的命令 flag 有两处落点：**定义处**（`.aidp/commands/*.md` 的参数表 / 参数列表 /
+AIDP 的命令 flag 有两处落点：**定义处**（`AIDP_HOME/commands/*.md` 的参数表 / 参数列表 /
 命令语法块）与**引用处**（flows 分片、reference 速查、docs/init 指导、命令正文互相引用）。
 两处**没有任何机器约束**，于是稳定复发两类缺陷：
 
@@ -21,18 +21,18 @@ AIDP 的命令 flag 有两处落点：**定义处**（`.aidp/commands/*.md` 的�
 
 **A. 定义源（满足任一即视为"该 flag 存在"）**
 
-  1. `.aidp/commands/*.md` 的**表格首格**：`| `--x` | 默认 | 说明 |`（首格内多个 flag
+  1. `AIDP_HOME/commands/*.md` 的**表格首格**：`| `--x` | 默认 | 说明 |`（首格内多个 flag
      如 `` `--a` / `--b` `` 全部登记）；
-  2. `.aidp/commands/*.md` 的**参数列表项**：`- `--x`：说明` / `- **`--x`** — 说明`；
-  3. `.aidp/commands/<cmd>.md` 的**自身命令语法块**：围栏代码块里以 `/<cmd>` 开头的行
+  2. `AIDP_HOME/commands/*.md` 的**参数列表项**：`- `--x`：说明` / `- **`--x`** — 说明`；
+  3. `AIDP_HOME/commands/<cmd>.md` 的**自身命令语法块**：围栏代码块里以 `/<cmd>` 开头的行
      （`## 命令语法` 段的惯用写法，如 `/sprint-batch --dry-run  # …`），整行的 flag 全登记
      —— 只认**该文件自己那条命令**，`/loop 10m /sprint-autopilot` 这种"调别的命令"不算定义；
-  4. `.aidp/commands/*.md` 的**小标题**：`### `--x` 模式`；
+  4. `AIDP_HOME/commands/*.md` 的**小标题**：`### `--x` 模式`；
   5. 仓库内 Python 的 `add_argument("--x"` —— 脚本类 flag 的权威定义；
-  6. 仓库内脚本源码（`.py/.js/.mjs/.cjs/.ts/.sh`，含 `.aidp/skills/`）里的 **flag 字符串
+  6. 仓库内脚本源码（`.py/.js/.mjs/.cjs/.ts/.sh`，含 `AIDP_HOME/skills/`）里的 **flag 字符串
      字面量** `"--x"` —— 覆盖 skill 自带 CLI（如 chrome-devtools）。
 
-**B. 引用面**：`.aidp/commands`、`.aidp/flows`、`.aidp/reference`、`docs/init` 的 `.md`，
+**B. 引用面**：`AIDP_HOME/commands`、`AIDP_HOME/flows`、`AIDP_HOME/reference`、`docs/init` 的 `.md`，
 抽两类提及：① 行内代码里的 `` `--x` `` ② **围栏代码块内裸写**的 `--x`（`/cmd --x` 示例的
 常见形态，不抽会漏掉最该抓的"可复制粘贴的错误示例"）。
 
@@ -47,7 +47,7 @@ AIDP 的命令 flag 有两处落点：**定义处**（`.aidp/commands/*.md` 的�
      （按 `| ; && || $( ` 切段）的**首个命令 token**（跳过 `sudo`/`python3` 等前缀词）。
 
          · owner 是 AIDP 斜杠命令（`/sprint-batch --x`）        → **在检查范围**
-         · owner 是本仓脚本（`.aidp/scripts/*.py` 的文件名）   → **在检查范围**（由 add_argument 兜底）
+         · owner 是本仓脚本（`AIDP_HOME/scripts/*.py` 的文件名）   → **在检查范围**（由 add_argument 兜底）
          · owner 是其它可执行名（`git` / `npx` / `claude` / `rmdir` / skill 自带 CLI …）→ **不在范围**
          · 段内没有 owner（如表格里孤零零一个 `` `--x` ``）      → **在检查范围**
 
@@ -70,13 +70,19 @@ AIDP 的命令 flag 有两处落点：**定义处**（`.aidp/commands/*.md` 的�
 
 ## 用法
 
-    python3 .aidp/scripts/check_ghost_flags.py               # 人读报告
-    python3 .aidp/scripts/check_ghost_flags.py --json        # 机读 JSON
-    python3 .aidp/scripts/check_ghost_flags.py --show-orphans  # additionally 列 INFO
-    python3 .aidp/scripts/check_ghost_flags.py --root . --path .aidp/commands
+    python3 AIDP_HOME/scripts/check_ghost_flags.py               # 人读报告
+    python3 AIDP_HOME/scripts/check_ghost_flags.py --json        # 机读 JSON
+    python3 AIDP_HOME/scripts/check_ghost_flags.py --show-orphans  # additionally 列 INFO
+    python3 AIDP_HOME/scripts/check_ghost_flags.py --root . --path AIDP_HOME/commands
 
 退出码：0 = 无未定义旗标；1 = 检出未定义旗标；2 = 用法/读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -85,15 +91,15 @@ import sys
 
 # ── 引用面（抽"文档教人传什么 flag"）──────────────────────────────
 DEFAULT_MENTION_PATHS = [
-    ".aidp/commands",
-    ".aidp/flows",
-    ".aidp/reference",
+    runtime_text('__AIDP_HOME__/commands', __file__),
+    runtime_text('__AIDP_HOME__/flows', __file__),
+    runtime_text('__AIDP_HOME__/reference', __file__),
     "docs/init",
 ]
 # ── 定义面（命令参数的权威落点）────────────────────────────────
-COMMANDS_DIR = ".aidp/commands"
+COMMANDS_DIR = runtime_text('__AIDP_HOME__/commands', __file__)
 # ── 源码定义面（脚本 / skill 自带 CLI 的 flag 字面量）──────────────
-SOURCE_DIRS = [".aidp/scripts", ".aidp/skills"]
+SOURCE_DIRS = [runtime_text('__AIDP_HOME__/scripts', __file__), runtime_text('__AIDP_HOME__/skills', __file__)]
 SOURCE_EXTS = (".py", ".js", ".mjs", ".cjs", ".ts", ".sh")
 SKIP_DIRS = {"__pycache__", ".git", "node_modules", "dist", "build", ".venv"}
 
@@ -207,7 +213,7 @@ def _flags_in_code_spans(text, own_only=False):
 
 
 def collect_definitions_from_commands(root):
-    """从 `.aidp/commands/*.md` 抽 flag 定义，返回 {flag: [来源, …]}。"""
+    """从 `AIDP_HOME/commands/*.md` 抽 flag 定义，返回 {flag: [来源, …]}。"""
     defs = {}
 
     def add(flag, where):
@@ -270,9 +276,9 @@ def collect_definitions_from_sources(root):
 
 
 def repo_script_names(root):
-    """本仓可执行脚本文件名集合（`.aidp/scripts/*.py|sh|js`）—— owner 判定用。"""
+    """本仓可执行脚本文件名集合（`AIDP_HOME/scripts/*.py|sh|js`）—— owner 判定用。"""
     names = set()
-    d = os.path.join(root, ".aidp", "scripts")
+    d = os.path.join(root, runtime_relpath("", __file__), "scripts")
     if os.path.isdir(d):
         for fn in os.listdir(d):
             if fn.endswith((".py", ".sh", ".js", ".mjs")):
@@ -306,7 +312,7 @@ def owner_in_scope(owner, script_names):
         return True
     if owner.startswith("/"):                       # `/sprint-batch` 等 AIDP 斜杠命令
         return True
-    return os.path.basename(owner) in script_names  # `.aidp/scripts/commit_gate.py`
+    return os.path.basename(owner) in script_names  # `AIDP_HOME/scripts/commit_gate.py`
 
 
 def _mentions_with_owner(text, default_owner=""):
@@ -455,9 +461,7 @@ def main():
                     print(f"      {s}")
                 if len(u["sites"]) > 5:
                     print(f"      …… 另 {len(u['sites']) - 5} 处")
-            print("  修复三选一：① 该 flag 应存在 → 去对应 `.aidp/commands/*.md` 参数表补定义；"
-                  "② 文档写错了 → 改成真实存在的 flag（或删掉）；"
-                  "③ 属教学示例/反面教材 → 加 `<!-- flag-check: ignore -->` 行内豁免。")
+            print(runtime_text('  修复三选一：① 该 flag 应存在 → 去对应 `__AIDP_HOME__/commands/*.md` 参数表补定义；② 文档写错了 → 改成真实存在的 flag（或删掉）；③ 属教学示例/反面教材 → 加 `<!-- flag-check: ignore -->` 行内豁免。', __file__))
         if args.show_orphans and res["orphans"]:
             print(f"\n[INFO] {len(res['orphans'])} 个 flag 只在参数表里定义、"
                   f"引用面无人提及（可能已废弃，不影响退出码）：")

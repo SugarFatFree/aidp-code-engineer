@@ -9,7 +9,7 @@
 > ⛔ **遵守 0.1.1.5 远程连接铁律**：本步骤**不**在 Claude Code 已经启动的情况下"运行时连接"，而是引导用户**先**按 0.1.1.4 在**项目根 `.mcp.json`** 配好/合并远程地址 + **后**重启 Claude Code（启动自动加载，无需 `--mcp-config`）。第一次进入本步骤通常以"提示用户配置 + 退出命令"结束，重启后再跑命令才进 Phase 0.2。
 
 **Step 0 — 无条件先建/合并项目根 `.mcp.json`（必做、与可达性无关）**：进入本步即按 0.1.1.4 用**已知远程 IP** 生成/合并**项目根 `.mcp.json`** 的 `chrome-{git_user}` 条目（`--browser-url http://<IP>:9222`，JSON 合并保留其它 server）+ 确保它**不在** `.gitignore`（入库提交）。已知 IP 优先级：① 测试方案 `TESTPLAN_CHROME_ADDR`（非空则直接用、**不问用户**）→ ② 项目根 `.mcp.json` 已有的 `chrome-{git_user}` 远程地址 → ③ 都没有 → 才在下方 B.2 用 AskUserQuestion 收集后回填本文件。无论 IP 来源、无论 MCP 当前是否可达，文件都先建好。
-> **执行 = `python3 .aidp/scripts/chrome-mcp-doctor.py set --ip <IP:9222>`**（写/合并 + 连通预检 + 污染检测 + 生效指引一步到位，退出码见 0.1.1.4）：`rc=5`（用户级/全局 MCP 配置被写脏）→ 先按脚本指引复位（移除 `--scope user`/全局注册、历史插件残留则卸载），**绝不手改用户级/全局**；`rc=4`（远端不可达）→ 文件仍已建好，按打印的 Chrome 启动参数让用户修远端 + 重启后复跑；`rc=0/3` → 进下方 A/B 分支。**脚本缺失（脚手架未下发/旧版）→ 由 Phase 0.0.5 的内联 python 兜底写 .mcp.json**（绝不因单点脚本缺失写不出；并建议重跑 `aidp-code-engineer upgrade` 补回脚本——已达目标版本也会自愈下发）。
+> **执行 = `python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py set --ip <IP:9222>`**（写/合并 + 连通预检 + 污染检测 + 生效指引一步到位，退出码见 0.1.1.4）：`rc=5`（用户级/全局 MCP 配置被写脏）→ 先按脚本指引复位（移除 `--scope user`/全局注册、历史插件残留则卸载），**绝不手改用户级/全局**；`rc=4`（远端不可达）→ 文件仍已建好，按打印的 Chrome 启动参数让用户修远端 + 重启后复跑；`rc=0/3` → 进下方 A/B 分支。**脚本缺失（脚手架未下发/旧版）→ 由 Phase 0.0.5 的内联 python 兜底写 .mcp.json**（绝不因单点脚本缺失写不出；并建议重跑 `aidp-code-engineer upgrade` 补回脚本——已达目标版本也会自愈下发）。
 
 **步骤分支**（Step 0 建好文件后）：
 
@@ -18,11 +18,11 @@
 > 不重写的后果：收尾门 3i 拿**最初打算用的驱动**去判报告如实性——报告如实填 `cli` 反被判失真 FAIL，
 > 或报告跟着填旧值（与实际不符）却全绿。每处降级后加：
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-> python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test DRIVER cli
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+> python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test DRIVER cli
 > [ -n "$BUILD" ] \
->   && python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$BUILD" set driver_actual cli \
->   || python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" set driver_actual_pending cli
+>   && python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$BUILD" set driver_actual cli \
+>   || python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" set driver_actual_pending cli
 > ```
 > （降级到 `mcp-plugin-fallback` 时把上面的 `cli` 换成 `mcp-plugin-fallback`。）
 
@@ -35,8 +35,8 @@
 **B0. ★ 绝不无限等待重启 —— 本机 chrome 可兜底则自动降级 cli（超时上限 180s）**：进入分支 B（远程 MCP 未加载、需重启才生效）时，**先判本机能否兜底**（`CHROME_BIN` 非空 = 本机有 chrome 可起无头）：
    - **本机无 chrome 可兜底**（`CHROME_BIN` 空）→ 无降级目标，**跳过 B0**、落下方 B 标准「先配后启 + 退出」引导。**★ 按驱动源分两种收尾（无人值守降级要播报+让位，绝不静默退出）**：① **autopilot 驱动**（`REPORT_ENABLED=1` / 有 `current_build`）→ 极端兜底由 `/sprint-autopilot` 按"照常进开发 → 开发完发里程碑通知说明原因 → 退出"处理（见 autopilot Phase 0.6 / 子流程 R）；② **standalone 测试 loop**（`REPORT_ENABLED=0`、无 autopilot 驱动）→ 版本级冻结（四件套 + #4 + 本地告警台账一次做完；同 reason 已冻结时脚本 no-op、不重发 #4），退出本 tick、**不空转**；环境恢复后 0.1.1 检测通过即 `--clear` 解冻，另有环境类自动复探：
      ```bash
-     eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-     python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
+     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
        --phase 0.1.5-remote --reason chrome-unavailable \
        --why "本机无 chrome 且远端不可达，浏览器实测无法执行；在运行 Agent 的机器装 Chrome（npm i chrome-devtools-mcp@latest -g 提供 chrome-devtools 命令）或修复远端"
      exit 0
@@ -45,7 +45,7 @@
    - **本机 chrome 可用 + 强制远程**（用户明确要远程）→ 远程需重启才生效，但**绝不无限空等**：
      - **交互式（非 `/loop`）**：打印重启 3 步指引（下方步骤 1~3）**+ 一行倒计时声明**：`⏳ 我最多等你 3 分钟重启走远程；期间可 Ctrl+C 退出去重启，若 180s 内未接管我将自动切本机无头 cli 兜底继续（免重启）`。然后**等待上限 180s**（有界轮询，每 ~30s 复探一次 `mcp__chrome-{git_user}__*` 是否已可达 / 远端是否仍在），到点仍未被接管 → **自动置 `DRIVER=cli` + `--headless=new` 进 Phase 0.2**，记一行 `⏳ 180s 超时未重启 → 自动降级本机无头 cli 兜底继续（如仍要远程请修复后重跑）`。
      - **`/loop` 无人值守**：**无人可重启 → 不空等**，直接置 `DRIVER=cli` + `--headless=new` 进 Phase 0.2，记一行 `⚠️ 无人值守 + 远程需重启 → 直接走本机无头 cli 兜底`。
-   - ⛔ **共同红线**：B0 的本地兜底一律走 `chrome-devtools-cli`（直连 CDP、免 MCP、免重启），**绝不**写 `chrome-devtools-mcp --headless` 这类 MCP 无头条目（那仍要重启、与本兜底初衷相悖）；如需清理残留远程 MCP 条目用 `python3 .aidp/scripts/chrome-mcp-doctor.py set --local-headless`（清条目 + 切 cli）。必须"有头"的用例按既有机制延后（见 3.5/3.6）。
+   - ⛔ **共同红线**：B0 的本地兜底一律走 `chrome-devtools-cli`（直连 CDP、免 MCP、免重启），**绝不**写 `chrome-devtools-mcp --headless` 这类 MCP 无头条目（那仍要重启、与本兜底初衷相悖）；如需清理残留远程 MCP 条目用 `python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py set --local-headless`（清条目 + 切 cli）。必须"有头"的用例按既有机制延后（见 3.5/3.6）。
 
 > ⛔ **进入分支 B 的第一道红线（最易被违反，必须先读）**：此时你能调到的往往只有通用名的用户级/全局 server `chrome-devtools`（用户级/全局注册或历史插件残留，IP 可能是旧的、连错的）。**无论它连到哪个 IP、无论你"觉得"哪个用户级/全局文件才是真正生效源**——都**禁止**去读/改 `~/.claude.json` / `~/.claude/settings*.json` / 历史 `~/.claude/plugins/` 下任何文件来"修 IP"。本分支的**唯一动作**就是：① 确认/合并项目根 `.mcp.json`（Step 0 已建）→ ② 打印重启指引（自动加载，无需 `--mcp-config`）→ ③ **主动退出命令**等用户重启。重启后项目 server `chrome-{git_user}` 才会被加载、连上正确 IP（见 0.1.1.5 禁止反模式 + 决定性事实）。**改用户级/全局文件省不掉重启，只会污染全机——零理由这么做。**
 
@@ -59,7 +59,7 @@
    # IP 来源：Step 0 已确定（测试方案预填 / baseline）；仅 Step 0 case ③（无任何已知 IP）+ Phase 0.0.6 Step 5 也未收到远程 IP 时才用
    # ★ 无人值守（LOOP_UNATTENDED=1）→ 绝不 AskUserQuestion：远程 IP 属测试方案配置缺失，冻结后退出本 tick
    #   （补 研发自测/「二·Chrome Remote Debugging 地址」后按 mtime 自动解冻）：
-   #   python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
+   #   python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
    #     --phase 0.1.5-remote --reason testplan-incomplete --why "强制远程但无已知 chrome 远端 IP，无人值守无法收集"; exit 0
    # 交互式：AskUserQuestion 收集 chrome 所在电脑 IP（含 192.168.x.x / 10.x.x.x / 172.16.x.x + Other），收集后回填 Step 0 的文件。
    # ★ 正常路径下远程 IP 已在 0.0.6 Step 5「一次性收全」阶段问过，此处不重复弹窗（见 0.0.6 一次性收全守卫）。

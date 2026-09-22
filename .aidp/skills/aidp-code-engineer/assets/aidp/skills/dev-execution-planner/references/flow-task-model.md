@@ -87,8 +87,8 @@
 
 **第 1 层:AIDP 命令与范式文档(最高优先级)**
 
-1. 检查 `.aidp/` 目录或 `.aidp.yml`、`aidp.json` 配置文件
-2. 检查项目根目录及 `docs/`、`doc/`、`.aidp/` 下的 `AIDP*.md` 文档(如 `AIDP.md`、`AIDP_范式.md`、`AIDP_规范.md`、`AIDP-README.md`、`AIDP_开发指南.md` 等),提取其中定义的:
+1. 检查 `{{AIDP_HOME}}/` 目录或 `.aidp.yml`、`aidp.json` 配置文件
+2. 检查项目根目录及 `docs/`、`doc/`、`{{AIDP_HOME}}/` 下的 `AIDP*.md` 文档(如 `AIDP.md`、`AIDP_范式.md`、`AIDP_规范.md`、`AIDP-README.md`、`AIDP_开发指南.md` 等),提取其中定义的:
    - 命令/脚本清单(如 `aidp gen:xxx`)
    - 代码生成范式(如命名约定、目录结构、生成器入口)
    - 约定的 Skill/Plugin 引用方式
@@ -100,20 +100,20 @@
 **第 2 层:项目 `.claude/` 下的 commands/skills/plugins/agents/mcp(次优先)**
 
 扫描当前项目根目录下的 `.claude/` 配置,提取项目级 Claude Code 资源:
-- `.aidp/commands/*.md` — 项目级 slash 命令(如 `/项目slash`)
-- `.aidp/skills/*/SKILL.md` — 项目级 skill(含名称、description、触发条件)
+- `{{AIDP_HOME}}/commands/*.md` — 项目级 slash 命令(如 `/项目slash`)
+- `{{AIDP_HOME}}/skills/*/SKILL.md` — 项目级 skill(含名称、description、触发条件)
 - `.claude/plugins/` — 项目级 plugin
-- `.aidp/agents/*.md` — 项目级 subagent 定义
+- `{{AIDP_HOME}}/agents/*.md` — 项目级 subagent 定义
 - `.claude/mcp.json` 或 `.claude/settings.json` 中的 `mcpServers` — 项目级 MCP server
 - `AGENTS.md` — 项目约定(可能包含命令使用规范)
 
 **第 3 层:系统 Claude Code 的 commands/skills/plugins/agents/mcp(再次)**
 
 扫描用户主目录下的全局 Claude Code 资源:
-- `~/.aidp/commands/*.md` — 全局 slash 命令
-- `~/.aidp/skills/*/SKILL.md` — 全局 skill(如 `/dev-logic-architect`、`/code-verification-loop`、`/api-tester`)
+- `~/{{AIDP_HOME}}/commands/*.md` — 全局 slash 命令
+- `~/{{AIDP_HOME}}/skills/*/SKILL.md` — 全局 skill(如 `/dev-logic-architect`、`/code-verification-loop`、`/api-tester`)
 - `~/.claude/plugins/` — 全局 plugin
-- `~/.aidp/agents/*.md` — 全局 subagent
+- `~/{{AIDP_HOME}}/agents/*.md` — 全局 subagent
 - `~/.claude/settings.json` 中的 `mcpServers` — 全局 MCP server
 
 **扫描产物**:在生成的执行计划开头列出"可用指令清单",按五层分组展示:
@@ -126,12 +126,12 @@
 - `aidp scaffold:controller` — 来源:`.aidp.yml`
 
 ### L2 — 项目 .claude/ 资源(项目团队约定)
-- `/项目-api-gen` — 来源:`.aidp/commands/项目-api-gen.md`
-- skill: `project-entity-gen` — 来源:`.aidp/skills/project-entity-gen/SKILL.md`
+- `/项目-api-gen` — 来源:`{{AIDP_HOME}}/commands/项目-api-gen.md`
+- skill: `project-entity-gen` — 来源:`{{AIDP_HOME}}/skills/project-entity-gen/SKILL.md`
 
 ### L3 — 系统 Claude Code 资源(全局)
-- `/dev-logic-architect` — 来源:`~/.aidp/skills/dev-logic-architect/`
-- `/code-verification-loop` — 来源:`~/.aidp/skills/code-verification-loop/`
+- `/dev-logic-architect` — 来源:`~/{{AIDP_HOME}}/skills/dev-logic-architect/`
+- `/code-verification-loop` — 来源:`~/{{AIDP_HOME}}/skills/code-verification-loop/`
 
 ### L4 — 通用工具命令
 - `mvn mybatis-plus:generate`、`pnpm create vite` 等

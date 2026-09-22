@@ -13,8 +13,8 @@
 
 ## 与 skill 的关系
 
-- **`.aidp/commands/sprint-bugfix.md`**（本文件）：用户输入 `/sprint-bugfix` 时 Claude Code 读取的**斜杠命令**
-- **`.aidp/skills/bugfix/SKILL.md`**：Claude 内部通过 `Skill` 工具调用的**技能**，由本命令在执行步骤中调用
+- **`{{AIDP_HOME}}/commands/sprint-bugfix.md`**（本文件）：用户输入 `/sprint-bugfix` 时 Claude Code 读取的**斜杠命令**
+- **`{{AIDP_HOME}}/skills/bugfix/SKILL.md`**：Claude 内部通过 `Skill` 工具调用的**技能**，由本命令在执行步骤中调用
 - 两者分别定位不同：前者是入口，后者是实现细节
 
 参数：$ARGUMENTS
@@ -31,7 +31,7 @@
 ## 前置流程
 
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`
 3. bug 扫描范围（**两类来源并集**；用户主动提及 GitHub Issue 时叠加第三类）：
    - `docs/bugfix/{version}/bugfix-*-{user}.md`（零散 bug 文件，传统来源）
@@ -77,16 +77,16 @@
 > **★ 归「必须问」时必须同时写出「具体要产品回答什么」**（一句话、可被回答的问句），
 > ⛔ 空泛的"需要产品确认"不接受。**写不出那个问句，就是这条其实不需要产品输入的证据** ——
 > 此时按默认处置直接修。无人值守链路里这条落成结构化字段（`pending_clarifications[].question`），
-> 由收尾门校验，见 `.aidp/flows/sprint-aiauto-test/phase-3-3b.md`。
+> 由收尾门校验，见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-3-3b.md`。
 
 > 表未穷举：新类型按「一、核心判据」归档——问一句"当前行为是不是错的"，是→默认修、否→问人。
-> **★ 编码期正确写法（前移、防这类缺陷从源头发生）单一信源 = `.aidp/rules/code.md`「错误契约与失败可见性 + fail-closed + 上游契约权威」**（约定 23 姊妹条）：本表管"发现了默认怎么修"（处置层），code.md 管"写代码时就该长什么样"（编码层），互补不重复（约定 21）。修复时按 code.md 的正确写法改。
+> **★ 编码期正确写法（前移、防这类缺陷从源头发生）单一信源 = `{{AIDP_HOME}}/rules/code.md`「错误契约与失败可见性 + fail-closed + 上游契约权威」**（约定 23 姊妹条）：本表管"发现了默认怎么修"（处置层），code.md 管"写代码时就该长什么样"（编码层），互补不重复（约定 21）。修复时按 code.md 的正确写法改。
 
 ### 批量挂起的成本意识（无人值守尤重）
 
 一次性向用户抛出 **≥2 个待拍板事项前，逐条自检**：这条是否**真的**需要人定（命中表中"必须问"两行 / 满足统一决策纪律正向判据）？**任一条的答案是"其实默认就该这么做"→ 不得放进询问清单、直接按默认处置修**。无人值守场景，挂起的成本是"整轮停摆到人醒"，**远高于**按默认值推进后被纠正的成本（git 可回退）。
 
-> **★ 修复期运行时验证纪律 = 约定 35（详规 `.aidp/rules/code.md`，约定 21 不复述）**：验证修复**默认只静态验证**；**绝不为"看看修好没 / 验证运行时"擅自启动前后端服务或跑完整构建**——需运行时/浏览器验证走 **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**（唯一例外 = `deployment.mode=local` 授权）。
+> **★ 修复期运行时验证纪律 = 约定 35（详规 `{{AIDP_HOME}}/rules/code.md`，约定 21 不复述）**：验证修复**默认只静态验证**；**绝不为"看看修好没 / 验证运行时"擅自启动前后端服务或跑完整构建**——需运行时/浏览器验证走 **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**（唯一例外 = `deployment.mode=local` 授权）。
 
 ## 参数解析与路径分支
 
@@ -120,7 +120,7 @@
 **执行规则**：
 
 - **不新开 Sprint、不做累进**——编排器已持有当前 Sprint 上下文，本方式只在其内闭环修复；需要累进的较大 bug 由编排器自行决定是否改走方式 C。
-- **执行体 = 方式 B 全流程**：编排器传入的参数（`sprint-{NNN}` 过滤 / 空）落到方式 B 的参数分支，按方式 B 的骨架表 + `.aidp/flows/sprint-bugfix/mode-b.md` 逐项执行。
+- **执行体 = 方式 B 全流程**：编排器传入的参数（`sprint-{NNN}` 过滤 / 空）落到方式 B 的参数分支，按方式 B 的骨架表 + `{{AIDP_HOME}}/flows/sprint-bugfix/mode-b.md` 逐项执行。
 - **零询问**：编排器上下文（尤其 `/sprint-batch` 连跑、`/sprint-autopilot` 无人值守）下不弹 `AskUserQuestion`，一律按上方「缺陷处置默认决策纪律」的默认处置直接修。
 - **收口**：修完把结果回填给编排器（已修 / 未修 + 原因），由编排器决定是否再跑一轮回归。
 
@@ -145,7 +145,7 @@
 | Step 5.5 | P0/P1 缺陷反哺一条 `[回归]` 用例（约定 33） | 走 `/sprint-selftest --ledger-cascade [--unattended]` 就地追加（不新建 `NN_`），用例↔缺陷双向关联 |
 | Step 6 | 更新 `activeContext.md` 待处理 Bugfix 区 | — |
 
-**进入本段第一动作 = Read `.aidp/flows/sprint-bugfix/mode-b.md`**，以该文件为权威逐项执行。
+**进入本段第一动作 = Read `{{AIDP_HOME}}/flows/sprint-bugfix/mode-b.md`**，以该文件为权威逐项执行。
 
 ---
 
@@ -164,17 +164,17 @@
 
 ### Phase 0C.1：累进 Sprint 序号 + 追加增量文档
 
-Sprint 序号计算复用 `/sprint-full` Phase 0B.1 —— ⛔ 取号一律 `python3 .aidp/scripts/check_sprint_numbering.py next`（**跨全部版本**扫 MAX+1），绝不自己 glob 当前版本目录（那会让新版本又从 001 起）；**增量产物与 `/sprint-dev`·`/sprint-full` 完全同款**：
+Sprint 序号计算复用 `/sprint-full` Phase 0B.1 —— ⛔ 取号一律 `python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next`（**跨全部版本**扫 MAX+1），绝不自己 glob 当前版本目录（那会让新版本又从 001 起）；**增量产物与 `/sprint-dev`·`/sprint-full` 完全同款**：
 
 > ★ **两条落点路径，按入口分流，⛔ 不可混用**：
 > - **约定 22 攒批级联**（`--ledger-cascade`，方式 B-2 的 Step 5、由收口点驱动）→ **就地改内容主文档正文**，⛔ **不新建 `NN_` 分册**（`check_cascade_landing.py` 见到新建 NN_ 即 exit 1）。这是 bug 修复触发上游文档同步时的**默认路径**。
 > - **产品侧 PRD/原型变更的增量分册**（`--supplement={NN}`）→ 落 `NN_<业务主题>.md`、不改主文档正文。下方第 2~6 条描述的正是这条路径。
 >
-> ⛔ 下文「不写回主文档正文」只约束 `--supplement` 这一条，**不适用于 `--ledger-cascade`**——`dev-logic-architect` 的增量约定明写「统一 `NN_<业务主题>.md` … 增量身份靠产物头部回链 + `00_索引.md` 追加一行体现，**且不改内容主文档正文**」，命令端无权覆盖 SKILL 自己的产物契约（约定 21）。成因见 `.aidp/flows/sprint-bugfix/rationale.md`「设计增量为何不写回主文档」。
+> ⛔ 下文「不写回主文档正文」只约束 `--supplement` 这一条，**不适用于 `--ledger-cascade`**——`dev-logic-architect` 的增量约定明写「统一 `NN_<业务主题>.md` … 增量身份靠产物头部回链 + `00_索引.md` 追加一行体现，**且不改内容主文档正文**」，命令端无权覆盖 SKILL 自己的产物契约（约定 21）。成因见 `{{AIDP_HOME}}/flows/sprint-bugfix/rationale.md`「设计增量为何不写回主文档」。
 > **溯源不因此变弱**：`00_索引.md` 记「类型=补充 + 生成时间」，增量文档头部三类回链（专职索引 / 本轮输入来源 / 同轮其他层补充）指回主文档，比内联追加更可审计。
 
 0. 约定 9 前置门已在 Phase 0C.00 执行（⛔ 不得挪到取号之后）。
-1. 新编号 = `python3 .aidp/scripts/check_sprint_numbering.py next`（跨版本连续，同 `/sprint-full` Phase 0B.1）
+1. 新编号 = `python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next`（跨版本连续，同 `/sprint-full` Phase 0B.1）
 1bis. **★ 档位判定（`--scale` 的唯一生产者）**：下面第 3 / 5 / 6 步都消费 `--scale={档位}`，⛔ 不判就传不出去、
    三个下游 SKILL 全部缺省回退 **L 档全套**（正文一行不省，等于白判）。判据**复用 `/sprint-dev` Phase 0B.1.1 步骤 2.5**
    （`REQ_COUNT` / `PAGE_COUNT` / `HAS_DDL` / `HAS_API` / `HAS_CONFIG` / `THIRD_PARTY` 四值 + S 语义子档），此处不复述；
@@ -313,4 +313,4 @@ do {
 | 需要架构调整才能修 | 方式 C |
 | 修复方案还不明确，先分析 | 方式 B（Claude 会分析后给方案）|
 
-> ★ **若本命令触发 `git commit`**（自动提交场景）：按**约定 24** 走提交前门禁——每次 commit 前跑 `python3 .aidp/scripts/commit_gate.py --quiet` 读 JSON，退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 / CICD 推送欠账），**不是禁止 commit**；判定字段与处置的单一信源 = 约定 24，本命令按约定 21 只做编排触发、不复述。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->
+> ★ **若本命令触发 `git commit`**（自动提交场景）：按**约定 24** 走提交前门禁——每次 commit 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON，退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 / CICD 推送欠账），**不是禁止 commit**；判定字段与处置的单一信源 = 约定 24，本命令按约定 21 只做编排触发、不复述。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->

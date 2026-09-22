@@ -7,7 +7,7 @@
 ### 0.3 部署 + 测试元数据（研发自测/ 配置优先 → PRD deployment 段兜底）
 
 **URL 取值优先级**：
-1. **`versions.{V}.testplan_deploy_url`**（Phase 0.0.5 从 研发自测/ 配置读到、**已落盘**的测试环境 URL）— 非空则直接用，跳过 PRD 读取。⛔ **从 baseline 读、不读 shell 变量**：`python3 .aidp/scripts/baseline_edit.py --version "$V" get testplan_deploy_url --default ""`（两个 Phase 分属不同 Bash 调用，shell state 不跨调用持久——读变量恒空、本优先级形同虚设）
+1. **`versions.{V}.testplan_deploy_url`**（Phase 0.0.5 从 研发自测/ 配置读到、**已落盘**的测试环境 URL）— 非空则直接用，跳过 PRD 读取。⛔ **从 baseline 读、不读 shell 变量**：`python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" get testplan_deploy_url --default ""`（两个 Phase 分属不同 Bash 调用，shell state 不跨调用持久——读变量恒空、本优先级形同虚设）
 2. **PRD `autopilot_decisions.deployment`** — 兜底，格式如下（由 sprint-autopilot Phase 0.6 一次性收集 + 写回 PRD；本命令仅读不写）
 
 PRD 头部 `autopilot_decisions.deployment` 段必须含以下字段（与原 `/sprint-autopilot` 设计一致 — 由 sprint-autopilot Phase 0.6 一次性收集 + 写回 PRD；本命令仅读不写）：
@@ -41,8 +41,8 @@ deployment:
 **字段缺失处理**：
 - mode 缺失 → 记账 + 判阈 + 冻结 + 发 #4 一次做完，退出本 tick（PRD 补齐 `deployment.mode` 后按 PRD 目录 mtime 自动解冻）：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-  python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
     --phase 0.3-deploy-mode --reason prd-missing --streak-key prd_missing_streak --threshold 3 \
     --why "PRD frontmatter 缺 autopilot_decisions.deployment.mode，无法判定部署模式；在 PRD 补齐或跑 /sprint-autopilot Phase 0.6 收集"
   exit 0
@@ -57,7 +57,7 @@ deployment:
 ```bash
 CRED_FILE="memory/.sprint-autopilot-credentials.json"
 CREDS_DONE=0     # =1 表示账号环节已收口 → 跳过本节余下分支，往下走 0.4bis → Phase 1
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 读回 SKIP_LOGIN / REQUIRES_LOGIN
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 读回 SKIP_LOGIN / REQUIRES_LOGIN
 
 # 1. 不需要登录 → 账号环节直接收口
 # ⛔ `REQUIRES_LOGIN` 取空时**不得**当成"不需要登录"：那会跳过账号收集、让需要登录的应用
@@ -90,7 +90,7 @@ if [ "$CREDS_DONE" = "0" ] && [ ! -f "$CRED_FILE" ]; then
   if [ "$LOOP_UNATTENDED" = "1" ]; then
     # ★ 无人值守：无人可答 → 绝不 AskUserQuestion。记账/四件套/#4 一次做完（**配置类** account-missing：
     #   解冻看 研发自测/ 配置文件 mtime，补账号不产生新部署）。
-    python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
       --phase 0.4-account --reason account-missing \
       --why "需登录应用但未取到测试账号；在 研发自测/「四、测试账号」表补填后自动复探"
     exit 0   # 本版已冻结待人工 → 终止本次调用；⛔ 不用 exit 1（已记账 + 已告警）
@@ -125,7 +125,7 @@ done
 
 # 全部候选账号冒烟失败 → 不进 Phase 2 空跑：
 #   - 无人值守（LOOP_UNATTENDED=1）→ 冻结四件套 + #4 **一次调用做完**（**配置类**，解冻看配置文件 mtime）：
-#       python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
+#       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
 #         --phase 0.4-account --reason account-invalid \
 #         --why "配置的候选账号全部登录失败（现象：<逐个写清>），请在 研发自测/ 换有效账号"
 #     再 `exit 0` 退本 tick。⛔ 别只写四件套不发 #4 —— 那是停得住但停不响，一条通知都没有。

@@ -39,9 +39,9 @@
 
     # ⛔ 别写成 `eval "$(...)"` 一行：fail-closed 时本脚本 **exit 1 且 stdout 零字节**
     #    （诊断走 stderr），`eval` 会把退出码吞掉 ⇒ 变量全 unset ⇒ 上游读成"没有待跑 Sprint"。
-    _PS=$(python3 .aidp/scripts/plan_sprints.py --version V0.1.0 --shell) || exit 1
+    _PS=$(python3 AIDP_HOME/scripts/plan_sprints.py --version V0.1.0 --shell) || exit 1
     eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed}"
-    python3 .aidp/scripts/plan_sprints.py --version V0.1.0 --json
+    python3 AIDP_HOME/scripts/plan_sprints.py --version V0.1.0 --json
 
 `--shell` 导出：`PLAN_FILE_COUNT` `PLAN_FILES` `ALL_SPRINTS` `CLOSED_SPRINTS`
 `REMAIN_SPRINTS` `REMAIN_COUNT` `FIRST_SPRINT` `NEXT_SPRINT` `CURRENT_SPRINT`

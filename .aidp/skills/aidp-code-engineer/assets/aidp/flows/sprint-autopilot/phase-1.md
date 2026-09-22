@@ -99,19 +99,19 @@ PRD_ROOT="${1:-docs/requirements/}"
 #   原样执行会把 `<Phase 0.3.4 识别的 TARGET_VERSION>` 当成版本号去拼路径，PRD_DIR 必不存在
 #   → autopilot-prd-watch 返回 should_run=0 → **fail-open 成「PRD 无变化 → 退出」**；
 #   而 `--heartbeat` 还会把这个占位串写成 baseline 里的垃圾版本节点。语法合法、零报错。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 : "${TARGET_VERSION:?Phase 0.3.4 尚未落盘 target_version，拒绝按占位符继续}"
 PRD_DIR="$PRD_ROOT/$TARGET_VERSION/产品提供/"
 BASELINE_FILE="memory/.sprint-autopilot-baseline.json"
 
-# ★ 变化检测内核 = .aidp/scripts/autopilot-prd-watch.py（单一信源，命令端不自行拼哈希比对）
+# ★ 变化检测内核 = {{AIDP_HOME}}/scripts/autopilot-prd-watch.py（单一信源，命令端不自行拼哈希比对）
 #   判定顺序：无 PRD 文件 → skip(no-prd-files)｜无 baseline 记录 → run(no-baseline)｜
 #             last_commit_hash 变了 → run(new-commit)｜tracked_files 归一后不等 → run(uncommitted-change)｜否则 skip(no-change)。
 #   ⚠️ 判据两侧必须**同构**后比对（都归一到 [{"path","sha256"}] 排序列表）——脚本已保证；
 #      绝不要用"`sha256sum` 文本行的哈希 vs `jq … | tostring` JSON 串的哈希"这种不可比写法（理据见 rationale.md）。
 #   --heartbeat：无论是否命中都写顶层 autopilot_loop_heartbeat_at，供运维区分「loop 存活无变化」与「loop 掉了」
 #                （与测试链路的 aiauto_test_heartbeat_at 对称）。
-eval "$(python3 .aidp/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION" --heartbeat --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION" --heartbeat --shell)"
 # → 导出 SHOULD_RUN / TRIGGER_REASON / PRD_DIR / PRD_REASON_CODE
 
 # ★ PRE_RELEASE_VERSION 不通过 PRD 变化触发，而是通过 Phase 0.3.3 的"S2 状态"识别
@@ -140,8 +140,8 @@ eval "$(python3 .aidp/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION"
 堵「既不失败也不推进」（理据见 `rationale.md`）；判据与冻结契约在脚本内：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-python3 .aidp/scripts/autopilot_stuck_check.py --version "$TARGET_VERSION"; SC=$?
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+python3 {{AIDP_HOME}}/scripts/autopilot_stuck_check.py --version "$TARGET_VERSION"; SC=$?
 case "$SC" in   # ⛔ 必须按码分流；禁写 `|| exit 0`（见 rationale）
   1) echo "→ 已冻结（#4 由脚本自己发出）"; exit 0;;
   2) echo "⚠️ 入参/环境错（如本块未代入 TARGET_VERSION）→ 跳过本门继续，不据此退出";;
@@ -154,8 +154,8 @@ esac
 **判据**：`run_state.next_phase` 非空且 ≠ `done` → 本 tick 是**上 tick 的续跑**，强制 `SHOULD_RUN=1` 并跳过 1.2 的 PRD 变化检测。（理据见 `rationale.md`「Phase 1 相关根因」。）
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 RS_PHASE=$($BE --version "$TARGET_VERSION" get run_state.next_phase)
 if [ -n "$RS_PHASE" ] && [ "$RS_PHASE" != "done" ]; then
   SHOULD_RUN=1; SKIP_PRD_WATCH=1     # 短路：本轮是上 tick 的续跑，不是"新触发"
@@ -172,8 +172,8 @@ fi
 回写 `last_check_at` + `last_trigger_at` + `tracked_files` + `last_commit_hash` → 进执行主流程（Phase 2/3）。**回写与检测必须同源**（否则写进去的结构与下次比对口径不一致，`no-change` 永不成立）：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-python3 .aidp/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION" --commit
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+python3 {{AIDP_HOME}}/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION" --commit
 ```
 
 ⚠️ 不要用裸 `jq … > tmp && mv` 自行拼 `tracked_files`——本脚本内部走 `baseline_edit.py` 的同一把 flock，与测试链路的并发写互斥。
@@ -185,8 +185,8 @@ python3 .aidp/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION" --commi
 ```bash
 # ⛔ --version 是必填（gate 的 argparse required=True）：漏了它整条命令 exit 2、
 #    IRON-4 ③ 的「未进流水线必须结构级打印」在唯一落点上一次都没执行过。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-python3 .aidp/scripts/autopilot-ceremony-gate.py check --version "${TARGET_VERSION:?}" \
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check --version "${TARGET_VERSION:?}" \
   --no-pipeline-reason "配置向导态：未进入执行主流程，本轮无 build 可收尾"
 ```
 

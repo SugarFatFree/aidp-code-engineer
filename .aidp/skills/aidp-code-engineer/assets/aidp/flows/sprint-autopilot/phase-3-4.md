@@ -17,9 +17,9 @@
 
 1. **铸造或复用 build 号**（命令端 Bash，计数器存 baseline `memory/.sprint-autopilot-baseline.json` 该版本字典 `build_seq`，**自增后必须立即 jq 落盘回写**）：
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"   # ★ 统一变量名 + 兜底默认（未定义时 jq 读 stdin 静默失败）
-   BE="python3 .aidp/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
    BV="$TARGET_VERSION"
    RPT_AI="docs/reports/$BV/AI执行报告"
    # ★ 复用判定（子流程 R 幂等性 + 报告不可变收紧，item 2）：test-only 入口（Phase 3.0 设 ENTRY_MODE=test-only）
@@ -38,7 +38,7 @@
       && [ "$CUR_FINAL" != "true" ] && [ "$CUR_STATUS" != "closed" ] && [ "$CUR_STATUS" != "tested" ]; then
      REUSABLE=1
    fi
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"   # 取回 ENTRY_MODE 等本 tick 变量
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"   # 取回 ENTRY_MODE 等本 tick 变量
    if [ "$REUSABLE" = "1" ]; then
      BUILD="$CUR"; BUILD_SEQ="$CUR_SEQ"
      # ★ entry_mode 落 build 级、复用时只补不覆盖（理由见 rationale.md「entry_mode 粒度」）；兼回填存量 build。
@@ -76,7 +76,7 @@
      BUILD="$BUILD" BV="$BV" RETEST_OF="$RETEST_OF" RETEST_ROUND="$RETEST_ROUND" \
      ENTRY_MODE="$ENTRY_MODE" python3 - <<'PY'
 import os, sys
-sys.path.insert(0, ".aidp/scripts")
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from baseline_edit import LockedBaseline, now_iso   # 同一把 flock + 锁内重读 + 原子替换
 bv, b = os.environ["BV"], os.environ["BUILD"]
 entry = {"build": b, "started_at": now_iso(), "status": "running"}
@@ -95,12 +95,12 @@ PY
    # ★ 复测轮标注（$RETEST_LABEL 非空时）：#0 起测通知 / #D 部署通知须在标题或首行带该标注（形如"第 N 轮复测（上轮通过率 X%）"）。
    ```
 
-2. **确保报告目录骨架存在 + AI执行报告(结果 index.html + 计划 plan.html 两页) + AI测试报告 入口就位 + shell 版本对账刷新**（首个 build 按 `.aidp/templates/reports/` 创建；已有 shell 则比对 `report-shell-version`，模板更新则刷新所有页面 + 样式、数据保留）：
+2. **确保报告目录骨架存在 + AI执行报告(结果 index.html + 计划 plan.html 两页) + AI测试报告 入口就位 + shell 版本对账刷新**（首个 build 按 `{{AIDP_HOME}}/templates/reports/` 创建；已有 shell 则比对 `report-shell-version`，模板更新则刷新所有页面 + 样式、数据保留）：
    ```bash
    # ★ 新围栏须重新取回 $BV（它不在 tick 白名单；取空则 SPA 铺到错目录，见 rationale.md）
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    BV="${TARGET_VERSION:?}"
-   RPT="docs/reports/$BV"; TPL=".aidp/templates/reports"
+   RPT="docs/reports/$BV"; TPL="{{AIDP_HOME}}/templates/reports"
    # ★ 模板存在性硬门：报告模板由脚手架铺设（scaffold/migrate/upgrade mirror templates/reports）。
    #   缺失 = 脚手架未铺（旧版漏 mirror）→ 报错指引重跑脚手架，**严禁手搓 index.html/plan.html/assets 或跳过 AI执行报告**。
    for T in "$TPL/AI执行报告/index.html" "$TPL/AI执行报告/plan.html" "$TPL/AI执行报告/assets/app.js" "$TPL/AI执行报告/assets/plan.js" "$TPL/AI测试报告/index.html"; do
@@ -134,14 +134,14 @@ PY
        done
      fi
    done
-   # 各级 README 缺失同理从 .aidp/templates/reports/ 对应骨架拷入
+   # 各级 README 缺失同理从 {{AIDP_HOME}}/templates/reports/ 对应骨架拷入
    ```
 
 3. **写本 build 执行数据文件（计划态）+ 注册到两页**：详见同目录 `rationale.md`「写本 build 执行数据文件的注册细则」。
    - **build 元信息**：`build` / `version` / `trigger` / `branch` / `deployMode` / `startedAt` / `planSource`（plan.html 元信息段用）
    - **★ steps[]（stepper + 计划甘特 + 步骤依赖表的唯一数据源）**：覆盖本轮 build 完整任务链路 `Phase 0 拉码+前置检查` → `Phase 1 PRD 检测` → `Phase 2 准发布(仅 PRE_RELEASE 非空)` → `Phase 3.1 版本规划` → `Phase 3.1.5 铸造 build+本数据` → 按 `01_研发执行计划.md` 的 Sprint 清单逐个（每个 Sprint 一行 `start→dev→test→bugfix→close`）→ `Phase 3.3 终审(version-auditor)` → `部署` → `Phase 3.4 生成结果+完成核验` → `AI 自动化测试` → `AI测试报告`。每步填 `name`（★ **≤ 14 字的简短标签**，明细放 `output`）/ `type`（准备/前置/规划/构建/开发/部署/测试/报告/审计——plan.js 据 type 估算甘特耗时）/ `output`（预期产物）/ `plannedStatus`。**★ 回填已发生的前置步骤**：本步在 Phase 0/1/3.1 **之后**执行，第 0/1/3.1/3.1.5 步 `plannedStatus` 直接填 `done`（已发生）+ 实际 `duration`；其后 Sprint/部署/测试/报告步骤 `plannedStatus: "plan"`
    - **★ features[]（需求功能点比对的唯一数据源）**：从 `docs/requirements/{TARGET_VERSION}/研发需求/01_研发需求.md`（拆分目录则汇总分册 `0N_*.md`）的**功能规格清单逐点**抽取，每点一条——`reqId`（沿用需求文档原编号，无编号按章节顺序补 `FP-NN`）/ `name` / `reqSource`（来源需求章节）/ `sprint`（按 `01_研发执行计划.md` 的 Task↔Sprint 映射）/ `status`（本步统一 `pend` 未开始，Phase 3.4 刷新为 done/doing/fail/skip）。**此为"已完成功能点逐条对照需求文档"的信源**，粒度为功能点而非 Sprint
-   - **★ 写盘 + 注册 = 调 `emit-report.py`（不手写文件 / 不手工 sed 注册）**：把执行数据对象（`build`/`steps[]`/`features[]`/元信息等）序列化成 JSON 存到**本报告目录下的临时输入** `docs/reports/$BV/AI执行报告/.build-input-${BUILD}.json`（写前先 `mkdir -p`；emit-report.py 用完自动删），再调 `python3 .aidp/scripts/emit-report.py --kind exec --version "$BV" --build "$BUILD" --data "docs/reports/$BV/AI执行报告/.build-input-${BUILD}.json"`（骨架态，不写交付台账）——脚本自动写 `data/${BUILD}.js`（`window.__AIRUNS__.push`）+ 注册 `<script>` 到 index.html **和** plan.html 两页（幂等，重跑覆盖 data、不重复注册）。后续 H1~H7 hook 是对该 data 的**小改 Edit**（不重走 emit-report），finalize 时再带完整结果态重调一次。
+   - **★ 写盘 + 注册 = 调 `emit-report.py`（不手写文件 / 不手工 sed 注册）**：把执行数据对象（`build`/`steps[]`/`features[]`/元信息等）序列化成 JSON 存到**本报告目录下的临时输入** `docs/reports/$BV/AI执行报告/.build-input-${BUILD}.json`（写前先 `mkdir -p`；emit-report.py 用完自动删），再调 `python3 {{AIDP_HOME}}/scripts/emit-report.py --kind exec --version "$BV" --build "$BUILD" --data "docs/reports/$BV/AI执行报告/.build-input-${BUILD}.json"`（骨架态，不写交付台账）——脚本自动写 `data/${BUILD}.js`（`window.__AIRUNS__.push`）+ 注册 `<script>` 到 index.html **和** plan.html 两页（幂等，重跑覆盖 data、不重复注册）。后续 H1~H7 hook 是对该 data 的**小改 Edit**（不重走 emit-report），finalize 时再带完整结果态重调一次。
    - **★ test-only / 纯复测轮次语义**：`ENTRY_MODE=test-only`（版本已开发完成、本轮无新 dev、只跑后续 AI 自动化测试）时数据仍**必产**，语义是「测试执行轮次」——dev/Sprint 步骤 `plannedStatus: "done"`（历史已完成）、本轮 live 步骤 = 部署(如需)+AI 测试；features `status` 按既有开发成果填（非统一 `pend`）。**无新 dev ≠ 无报告**。
 
 > 本步在 `--no-loop` / `/loop` / `--once` 下均执行；纯静态（`deployment.mode=none`）时 steps 省略部署 + AI 测试两步。
@@ -168,8 +168,8 @@ PY
 > **本 Phase 的实质动作做完、离开本分片之前立即执行**：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
 # ★★ 版本级 `deployment_mode` 落盘 = autopilot 链内**唯一写入者**，⛔ 别删
 #    （ceremony-gate 两处读它；零写入方的后果见 rationale.md「deployment_mode 的写入者」）
 $BE --version "$V" set deployment_mode "${DEPLOY_MODE:-none}"
@@ -188,7 +188,7 @@ else
   if [ "${ENTRY_MODE:-full}" = "incremental" ]; then
     NEXT_PHASE="3.2-dev"; NEXT_SPRINT="done"
   else
-    _PS=$(python3 .aidp/scripts/plan_sprints.py --version "$V" --shell) || exit 1
+    _PS=$(python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version "$V" --shell) || exit 1
     eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed（计划文件缺失/解析不出 Sprint-NNN）}"
     # ⛔ 无未关闭 Sprint ≠ 异常：复测轮 / --target 重跑时该版 Sprint 本就全关（见 rationale.md）
     NEXT_PHASE="3.2-dev"; [ -n "$NEXT_SPRINT" ] || NEXT_SPRINT="done"

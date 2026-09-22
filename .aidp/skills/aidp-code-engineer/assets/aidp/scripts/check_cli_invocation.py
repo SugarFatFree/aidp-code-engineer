@@ -14,7 +14,7 @@
 扫描 `.md` 里的 `python3 <路径>.py …` 调用（代码块与行内代码都算，行尾 `\\` 续行会拼接）：
 
 1. **脚本定位**：路径含占位（`<SKILL_DIR>`、`$VAR`、`{skill}`）时按文件名找；同名多份时，优先取与文档同属
-   一个 SKILL 目录的那份，否则取并集。`.aidp/` 下写死的路径找不到 → ERROR `missing-script`。
+   一个 SKILL 目录的那份，否则取并集。`AIDP_HOME/` 下写死的路径找不到 → ERROR `missing-script`。
 2. **flag**：每个 `--flag`（去掉 `=值`）必须是目标脚本（及其同目录被 import 的模块）源码里的字符串常量，
    或能被 argparse 缩写匹配到唯一一个 → 否则 ERROR `unknown-flag`。
 3. **子命令**：目标脚本有 `add_subparsers` 时，紧跟脚本路径的第一个非 flag 词必须是某个 `add_parser` 名；
@@ -29,12 +29,18 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_cli_invocation.py
-    python3 .aidp/scripts/check_cli_invocation.py --json
-    python3 .aidp/scripts/check_cli_invocation.py --self-check
+    python3 AIDP_HOME/scripts/check_cli_invocation.py
+    python3 AIDP_HOME/scripts/check_cli_invocation.py --json
+    python3 AIDP_HOME/scripts/check_cli_invocation.py --self-check
 
 退出码：0 = 无 ERROR（WARN 不影响）；1 = 有 ERROR；2 = 用法 / 读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import ast
 import json
@@ -50,7 +56,7 @@ INVOKE_RE = re.compile(r"(?<![\w-])python3?\s+(?:-u\s+)?([^\s`'\"|;&()]+\.py)\b(
 STOP_TOKENS = {"|", "||", "&&", ";", ">", ">>", "<", "2>&1", "&", ")", "then", "do"}
 CJK_RE = re.compile("[\u3000-\u9fff\uff00-\uffef]")
 PLACEHOLDER_RE = re.compile(r"[<>{}$…]|\.\.\.")
-SKILL_DIR_RE = re.compile(r"\.aidp/skills/([^/]+)/")
+SKILL_DIR_RE = re.compile(runtime_text('\\__AIDP_HOME__/skills/([^/]+)/', __file__))
 
 
 def _walk(root):
@@ -201,7 +207,7 @@ def run(root, paths=None):
                         else:
                             cands = allc
                     if not cands:
-                        if concrete and spath.startswith(".aidp/"):
+                        if concrete and spath.startswith(runtime_text('__AIDP_HOME__/', __file__)):
                             errors.append({"file": rel, "line": no, "script": spath,
                                            "kind": "missing-script", "token": spath})
                         continue

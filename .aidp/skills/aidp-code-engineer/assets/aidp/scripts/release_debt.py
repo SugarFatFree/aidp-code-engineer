@@ -12,24 +12,30 @@ Step 3.6 发布报告要数出未决条数，`--finalize-docs` / `--rebuild-base
 ## 子命令
 
     # 登记（幂等：同一 step+title 仍未决 → 只刷新时间戳，不重复堆积；已勾销后再失败 → 新增一条）
-    python3 .aidp/scripts/release_debt.py add --version V0.2.0 --step 3.3.12bis \\
+    python3 AIDP_HOME/scripts/release_debt.py add --version V0.2.0 --step 3.3.12bis \\
       --title "零残留断言总闸未过" --locate "<文件/章节>" --impact "<后果>" \\
       --redo "check_release_residual_gate.py --version V0.2.0"
 
     # 勾销（补跑成功后）：按 step（可叠 --title 精确到一条）把未决条目改 ✅ 已补齐（日期）
-    python3 .aidp/scripts/release_debt.py resolve --version V0.2.0 --step 3.3.7.9
+    python3 AIDP_HOME/scripts/release_debt.py resolve --version V0.2.0 --step 3.3.7.9
 
     # 列出未决（Step 3.6 顶部欠账块 / 补跑短路开场读它）
-    python3 .aidp/scripts/release_debt.py list --version V0.2.0 --open --json
+    python3 AIDP_HOME/scripts/release_debt.py list --version V0.2.0 --open --json
 
     # 终态落账门（Step 3.4.1 提交前）：关键产物「存在，或台账里有该步未决条目」，
     # 二者皆无 = 静默跳过 → exit 1；--register-missing 当场补登记后 exit 0
-    python3 .aidp/scripts/release_debt.py gate --version V0.2.0 [--no-tag] [--register-missing]
+    python3 AIDP_HOME/scripts/release_debt.py gate --version V0.2.0 [--no-tag] [--register-missing]
 
 兼容写法：不带子命令而直接给 `--version --step --title` 视为 `add`。
 
 退出码：0 成功 / 1 gate 发现未落账的跳过 / 2 用法错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -101,7 +107,10 @@ def add(root, version, step, title, redo="", level="Important", note="", locate=
     body.append(f"- **补跑命令**：`{redo}`；或 {finalize}" if redo else f"- **补跑命令**：{finalize}")
     body.append(f"- **状态**：{OPEN}")
     if not text:
-        text = f"# {version} 发布欠账\n\n> 读写一律经 `python3 .aidp/scripts/release_debt.py`。\n"
+        text = runtime_text(
+            f"# {version} 发布欠账\n\n> 读写一律经 `python3 __AIDP_HOME__/scripts/release_debt.py`。\n",
+            __file__,
+        )
     sep = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
     open(p, "w", encoding="utf-8").write(text + sep + "\n".join(body) + "\n")
     return p, "added"

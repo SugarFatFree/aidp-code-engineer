@@ -62,7 +62,7 @@
 
 **核验规则**: 详细设计中标注为「✅ 沿用已有」的每个接口,在生成执行计划前**必须**穿透到 Service 实现层验证可用性:
 
-> **`<SKILL_DIR>` 占位符(全文统一):** 本 SKILL 的实际安装目录(本项目 = `.aidp/skills/dev-execution-planner`)。
+> **`<SKILL_DIR>` 占位符(全文统一):** 本 SKILL 的实际安装目录(本项目 = `{{AIDP_HOME}}/skills/dev-execution-planner`)。
 
 ```bash
 # 强制运行接口可用性扫描(对应详细设计核心原则 18)

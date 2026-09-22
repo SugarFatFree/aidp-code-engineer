@@ -23,16 +23,16 @@
 ## Phase 0：★ 确定性骨架产出（与 `/sprint-init` 同一步，⛔ 不靠"记得手工建"）
 
 ```bash
-python3 .aidp/skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}
+python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}
 ```
 
-目录骨架 / 契约文件 / 工具脚本一律由脚手架产出（`.aidp/scripts/`、`.claude/settings.json`、
+目录骨架 / 契约文件 / 工具脚本一律由脚手架产出（`{{AIDP_HOME}}/scripts/`、`.claude/settings.json`、
 契约面、docs/memory 版本化骨架、`.gitignore` 规则）；本命令只产**语义内容**。
 理由与漏跑后果见 `/sprint-init` Phase 0（同一段，勿在此复述细则）。已有文件不覆盖，可重复执行。
 
 ## Phase 1：PM Agent — 项目认知建立
 
-读取 `.aidp/agents/pm.md` 获取角色定义。
+读取 `{{AIDP_HOME}}/agents/pm.md` 获取角色定义。
 
 **Step 1.1：创建项目级 memory 目录**
 
@@ -55,7 +55,7 @@ mkdir -p memory
 
 ## Phase 2：Architect Agent — 技术认知建立
 
-读取 `.aidp/agents/architect.md` 获取角色定义。
+读取 `{{AIDP_HOME}}/agents/architect.md` 获取角色定义。
 
 **Step 2.1：分析现有代码和配置**
 

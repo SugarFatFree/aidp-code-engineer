@@ -31,10 +31,10 @@
 #    现统一交给确定性脚本解析 + 落盘到 baseline `autopilot.tick`（**每 tick 整段重写**，不残留上轮）。
 # ★ 四个 `--reset-*` 必须先于读 baseline（它们改的正是 baseline）。
 #   rc: 0=未命中 / 10=已重置且结束本 tick / 11=已重置继续（根因见 rationale 同名段）。
-python3 .aidp/scripts/autopilot_reset.py --arguments="${ARGUMENTS:-}"; _RST=$?
+python3 {{AIDP_HOME}}/scripts/autopilot_reset.py --arguments="${ARGUMENTS:-}"; _RST=$?
 [ "$_RST" = "10" ] && exit 0
-python3 .aidp/scripts/autopilot_tick_flags.py parse --command autopilot --arguments "${ARGUMENTS:-}"
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py parse --command autopilot --arguments "${ARGUMENTS:-}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 # ⚠️ `$ARGUMENTS` 未被宿主注入时全部标志恒 0 —— 由 Claude 读用户原文补判后重跑上面两行，⛔ 绝不留空。
 # IS_LOOP_CONTEXT（探测法单一信源在此；Phase 1.3 复用本处值、不再独立探测）：
 #   判据 = 当前 prompt 是否含 `/loop` 字样。纯 shell 读不到，**须由 Claude 就地改成 0/1**，不得跳过：
@@ -67,7 +67,7 @@ fi
 #   两条 loop 共享同一字段，故**交互式轮不清它**（避免手动跑一次 autopilot 把并行测试 loop 的留痕抹掉）；
 #   要显式清除用 `/sprint-autopilot --reset-unattended`（等价 `baseline_edit.py del autopilot.unattended_confirmed autopilot.unattended_confirmed_at`）。
 if [ "$LOOP_UNATTENDED" = "1" ]; then
-  python3 .aidp/scripts/baseline_edit.py set \
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set \
     autopilot.unattended_confirmed true autopilot.unattended_confirmed_at @now >/dev/null 2>&1 || true
 fi
 # ★★ 本 tick 判定结果**必须落盘**（否则下游分片读不到）——`LOOP_UNATTENDED` 是普通 shell 变量，
@@ -76,7 +76,7 @@ fi
 #    被判缺失 → **每 tick 恒 exit 1，Phase 1/2/3 永不进入**。仅"把派生提前"治不了这个，必须落盘。
 # ⛔ 与只写不读的 `autopilot.unattended_confirmed` **不是一回事**：本字段是 **tick 级**的，
 #    每个 tick 在此**无条件重写**（含写 0），故不存在"上轮 7×24 的标志把本轮手动调用升级成无人值守"的风险。
-python3 .aidp/scripts/baseline_edit.py set autopilot.loop_unattended_this_tick "$LOOP_UNATTENDED" >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py set autopilot.loop_unattended_this_tick "$LOOP_UNATTENDED" >/dev/null 2>&1 || true
 echo "🔧 无人值守信号：LOOP_UNATTENDED=$LOOP_UNATTENDED（loop=$IS_LOOP_CONTEXT no-loop=$HAS_NO_LOOP_FLAG unattended=$HAS_UNATTENDED_FLAG once=$HAS_ONCE_FLAG）"
 #
 # ══ 第三步：派生 HAS_WAKE_SOURCE（"我 yield 之后，还有谁来叫我？"）══
@@ -93,7 +93,7 @@ if [ "$IS_LOOP_CONTEXT" = "1" ] || [ "$HAS_NO_LOOP_FLAG" = "1" ]; then
 else
   HAS_WAKE_SOURCE=0                                   # 交互式单次 / 裸 --unattended —— ⛔ 无人叫醒，禁止 yield
 fi
-python3 .aidp/scripts/baseline_edit.py set autopilot.wake_source_this_tick "$HAS_WAKE_SOURCE" >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py set autopilot.wake_source_this_tick "$HAS_WAKE_SOURCE" >/dev/null 2>&1 || true
 echo "🔧 唤醒源信号：HAS_WAKE_SOURCE=$HAS_WAKE_SOURCE（1=可 yield 分 tick 续跑；0=本轮内连跑到底、绝不 yield）"
 # ★ 把「本轮将怎么跑」明写到 stderr：`IS_LOOP_CONTEXT` 漏改不会报错、只会**静默换挡**
 #   （两种后果见 rationale「IS_LOOP_CONTEXT 为何需要第二信源」），所以必须打出来让人看见。
@@ -107,7 +107,7 @@ fi
 
 > ★ **0.0.0bis 上一轮遗留自检（开局第一件事，读一行 baseline）**：上一轮若在无唤醒源下把未完成的流程交还给了用户，本轮开局必须**立刻识别并续跑**，而不是当作新一轮从头判断：
 > ```bash
-> LAST_HB=$(python3 .aidp/scripts/baseline_edit.py get autopilot.last_handback --default "")
+> LAST_HB=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get autopilot.last_handback --default "")
 > case "$LAST_HB" in *VIOLATION*)
 >   echo "⚠️ 上一轮为契约违背（无唤醒源却停在非终态）→ 本轮【直接从 run_state 续跑那个未完成 Phase】，不重跑已完成部分" ;;
 > esac
@@ -116,7 +116,7 @@ fi
 
 > ★ **0.0.0ter 收尾护栏 fail-open 台账自检（紧接 0.0.0bis，同为开局只读一眼）**：Stop hook `autopilot-stop-guard.py` 是"收尾门没过不许结束"的结构级兜底，但它有 4 层 fail-open。**放行不等于收口，只等于护栏判不出来**——所以每一次"本可介入却放行"都会记进台账，本轮开局读一眼：
 > ```bash
-> SKIPS=memory/.aidp/stop-guard-skips.jsonl
+> SKIPS=memory/{{AIDP_HOME}}/stop-guard-skips.jsonl
 > [ -f "$SKIPS" ] && tail -3 "$SKIPS" | while IFS= read -r l; do echo "⚠️ 上轮收尾护栏未介入：$l"; done
 > ```
 > 命中 `no-build-no-runstate` / `gate-exec-failed` / `gate-script-missing` → **上一轮的仪式产物很可能真的缺**，本轮按 IRON-3 从 `run_state` 续跑时**一并复核**该 build 的收尾门（`autopilot-ceremony-gate.py check`），别默认它已过。命中 `escape-hatch` → 提醒用户逃生舱还开着（`memory/.autopilot-stop-guard-off` 未删，护栏全程沉默）。**无台账文件 = 从未发生可疑放行**（良性放行刻意不记，见 hook 内 `_note_skip` 注释）。
@@ -125,7 +125,7 @@ fi
 
 ### 0.0 通道与配置就绪（★ 最前 —— 任何可能 exit 的门之前必跑）
 
-> ⛔ **本节是 Phase 0 第一块，排在 0.1 拉码 / 脏树门之前**：先把「里程碑通知渠道就绪（打印已配置渠道；#0a 通知默认不发）」「远程 chrome `.mcp.json`」全部收齐，**再**做可能 `exit` 的拉码 / 脏树门——根除「脏工作区在发通知 / 采集之前就 `exit 1` → 通道全就绪却整次零推送」。确定性兜底由 `.aidp/scripts/autopilot-preflight.py` 提供（查得准、拦得住）；发通知 / 问用户等**交互动作**在本节按正确顺序做（脚本只读、不发通知、不问用户）。
+> ⛔ **本节是 Phase 0 第一块，排在 0.1 拉码 / 脏树门之前**：先把「里程碑通知渠道就绪（打印已配置渠道；#0a 通知默认不发）」「远程 chrome `.mcp.json`」全部收齐，**再**做可能 `exit` 的拉码 / 脏树门——根除「脏工作区在发通知 / 采集之前就 `exit 1` → 通道全就绪却整次零推送」。确定性兜底由 `{{AIDP_HOME}}/scripts/autopilot-preflight.py` 提供（查得准、拦得住）；发通知 / 问用户等**交互动作**在本节按正确顺序做（脚本只读、不发通知、不问用户）。
 
 **Step 0 — 就绪体检（preflight check，拿确定性快照）**：
 
@@ -133,8 +133,8 @@ fi
 # 只读体检：aidp-config notify 渠道 + .mcp.json chrome 条目 + git 脏树，
 # 输出 JSON 供本节按缺失项分流补做（恒 exit 0，纯信息态）。脚本缺失（旧版 / 未下发）→ 跳过体检、按下列 Step 手工收齐，
 # 并建议重跑 aidp-code-engineer upgrade 补回（已达目标版本也会幂等自愈下发，见 migrate）。
-[ -f .aidp/scripts/autopilot-preflight.py ] \
-  && python3 .aidp/scripts/autopilot-preflight.py check --json --record-probe \
+[ -f {{AIDP_HOME}}/scripts/autopilot-preflight.py ] \
+  && python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py check --json --record-probe \
   || echo "⚠️ preflight 脚本缺失，按下列 Step 手工收齐；建议重跑 aidp-code-engineer upgrade 补回"
 ```
 
@@ -145,8 +145,8 @@ fi
 **Step 1 — 通知渠道检查（读 `notify` 段；首次必跑）**：
 
 ```bash
-N_ENABLED=$(python3 .aidp/scripts/aidp_config.py get notify.enabled)
-N_CHANNELS=$(python3 .aidp/scripts/aidp_config.py get notify.channels)
+N_ENABLED=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.enabled)
+N_CHANNELS=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.channels)
 [ "$N_ENABLED" = "true" ] && [ -n "$N_CHANNELS" ] && [ "$N_CHANNELS" != "[]" ] && CH_OK=1 || CH_OK=0
 ```
 

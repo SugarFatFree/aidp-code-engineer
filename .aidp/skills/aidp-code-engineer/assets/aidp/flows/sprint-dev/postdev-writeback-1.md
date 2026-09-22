@@ -1,8 +1,6 @@
-> **【分片 1/3 · postdev-writeback 二次切分】** 本片覆盖 **Step X.0.0（上游文档级联同步检测，约定 22 统一入口）**。回写段完整步骤已切为 3 片，进入回写段须按序 Read：本片 → `postdev-writeback-2.md`（Step X.0 / X.2 / X.3 / X.4 / X.5 / X.6 / X.7）→ `postdev-writeback-3.md`（Step X.8 部署流程 SOP+台账）。三片顺序拼合 = 原 `postdev-writeback` 全文，不得只读单片。
+> **分片 1/3**：本片覆盖 Step X.0.0 上游级联检测。进入回写段须按序 Read 本片、`postdev-writeback-2.md`（X.0–X.7）和 `postdev-writeback-3.md`（X.8）；不得只读单片。
 
 # sprint-dev · 开发完成后回写详情（Step X.0.0–X.8）
-
-> 本文件是 `/sprint-dev` 命令 **「开发完成后：自动回写需求 + 设计文档」** 段**第 1/3 片**（Step X.0.0 上游级联检测 → X.0 研发需求回写 → X.2 详细设计 → X.3 研发执行计划 → X.4 memory → X.5 SQL → X.6 事实清单 → X.7 配置项清单 → X.8 部署流程 SOP+台账）的完整详细步骤（进入回写段时 Read 加载）。
 >
 > ⚠️ **权威性**：进入回写段后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤（尤其 Step X.0.0 约定 22 四级级联触发、Step X.7 约定 25 配置项清单、Step X.8 约定 25 部署流程检测驱动）。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；本回写段已二次切分为 `postdev-writeback-1/-2/-3.md` 三片，改动后同步各自 bundle 副本 `assets/aidp/flows/sprint-dev/`。理据/根因见同目录 `rationale.md`。
@@ -25,19 +23,17 @@
 
 **目的**：开发完成后自动分析本 Sprint 是否影响 4 份核心上游文档（**研发需求 / 详细设计 / 研发执行计划 / 研发自测用例**），按级联规则触发对应 SKILL / 命令补充模式，避免"代码已改、文档未跟"。
 
-**与 Phase 0B.1.1 的关系（权威定义见 Phase 0B.1.1「★ 单一权威路径」段）**：
-- **分支 A**（已规划 Sprint 开发）：Step X.0.0 是补文档的**主路径**——开发完成后回头把漂移一次性级联补齐。
-- **分支 B**（口述累进）：**Phase 0B.1.1 才是主路径**（先补文档后开发 + 完成硬门）；Step X.0.0 只兜"0B.1.1 之后开发中又新冒出的额外漂移"，**不接管、不重复** 0B.1.1 已产出的增量。
-- 两者**共用级联触发链、落盘形态不同**：0B.1.1 口述累进产 `NN_<业务主题>.md`（交付物）；X.0.0 开发期回填走 `--ledger-cascade` **就地改各族内容主文档正文**。**绝不两头落空、绝不互相甩锅**。
+**与 Phase 0B.1.1 的关系**：分支 A（已规划）以 X.0.0 为开发后补文档主路径；分支 B（口述累进）以 0B.1.1 为开发前主路径，X.0.0 只补后续新漂移。两者共用级联触发链，但 X.0.0 用 `--ledger-cascade` 就地改各族主文档，不重复 0B.1.1 的 `NN_<业务主题>.md`。权威定义见 Phase 0B.1.1，根因见 `rationale.md`。
 
 **执行（命令端自动）**：
 
 1. **生成变更影响清单**（命令端用 Bash 扫描，输出表）：
 
    ```bash
-   # 信号源（本 Sprint 起始 commit ↔ HEAD）
+   # vcs_mode=git：信号源 = 本 Sprint 起始 commit ↔ HEAD
    git diff {sprint-start-sha}..HEAD --stat
    git log --oneline {sprint-start-sha}..HEAD
+   # vcs_mode=none：禁用以上 Git 命令，改取下面的逐文件 sha256 前后态（含新增/删除）
    # 接口信号
    grep -rE "@(Get|Post|Put|Delete|Patch)Mapping|@RestController" code/backend/ | grep -v test
    # DDL 信号
@@ -46,6 +42,29 @@
    ls code/frontend/{子项目}/src/views/ ; ls code/frontend/{子项目}/src/components/
    # 业务规则/状态机信号（grep 关键注释关键词）
    grep -rE "// 状态机|// 业务规则|@Enum|TODO\[GAP\]|❓ 待澄清" code/
+   ```
+
+   `vcs_mode=none` 时先执行以下本地对账（`SNAP`/`CHANGES` 均按真实版本、身份、Sprint 编号展开；缺快照直接非零，不可空结果放行）：
+
+   ```bash
+SNAP="memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json"
+CHANGES="memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json"
+SNAP="$SNAP" CHANGES="$CHANGES" VERSION="{version}" python3 - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+snap, output = Path(os.environ["SNAP"]), Path(os.environ["CHANGES"])
+if not snap.is_file():
+    raise SystemExit("evidence-missing: Sprint 开发前文件快照缺失")
+before = json.loads(snap.read_text(encoding="utf-8"))
+roots = [Path("code"), Path("env"), Path("docs/deployment") / os.environ["VERSION"]]
+after = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+         for root in roots if root.exists() for p in root.rglob("*") if p.is_file()}
+changed = [{"path": p, "before_sha256": before.get(p), "after_sha256": after.get(p),
+            "kind": "added" if p not in before else "deleted" if p not in after else "modified"}
+           for p in sorted(before.keys() | after.keys()) if before.get(p) != after.get(p)]
+output.write_text(json.dumps(changed, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"本地文件变更：{len(changed)}；证据：{output}")
+PY
    ```
 
    输出 `memory/{version}/{user}/sprints/sprint-{NNN}-upstream-impact-{YYYYMMDD-HHMM}.md`：
@@ -59,13 +78,14 @@
    | 5 | 计划偏差 | Sprint-{NNN} 实际工时 8d vs 计划 5d | 工时记录 | 01_研发执行计划.md | L3+L4 |
    | 6 | ★ 第三方 Mock→真实对接 | 第三方交付后切真实（删 Mock 桩/拦截、`VITE_USE_MOCK` 或 `@Profile("mock")` 关、`.env.*` baseURL 切真实端点）| xxxClient / .env.* / mock 开关 | **01_详细设计.md / 03_接口设计.md**（契约变了 +**01_研发需求.md**）| L2+L3+L4（契约变 +L1）|
 
-   > 本步骤的 git diff + 代码结构对比 + 维度判定即「变更检测」的权威实现；`postdev-writeback-2.md` 的 Step X.2~X.3 仅在用户绕过 X.0.0 直接走兜底人工模式时单独触发。
+   > **`vcs_mode=none` 确定性本地证据**：在任何 Phase 0A.5 删除或 Phase 1 代码改写之前，`sprint-dev.md` 已将 `code/`、`env/`、本版 `docs/deployment/` 文件内容哈希存至 `memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json`。本步按同样三棵目录再算 sha256，路径并集逐项比较前后值（含新增/删除），形成带 `path / before_sha256 / after_sha256 / kind` 的变更清单；再从**这些实际变化的文件**提取接口、DDL、页面、业务规则与配置事实的具体内容，写入上述影响表。空 Git diff / 单纯扫描当前代码结构均不足以判「零漂移」；前态快照缺失或文件无法读取时记 `evidence-missing` 并审计本 Sprint 涉及的全部业务文件与上游文档，不得跳过 X.0/X.2/X.3。`DEV_FILES` 与 X.7 都消费**这一份相对路径清单**，不得各用一套判据。
+   > 本步骤在 `vcs_mode=git` 的 git diff + 代码结构对比 + 维度判定即「变更检测」的权威实现；`postdev-writeback-2.md` 的 Step X.2~X.3 仅在用户绕过 X.0.0 直接走兜底人工模式时单独触发。
    >
    > ★ **检测项 6「Mock→真实对接」要点**（约定 22 + 约定 26 阶段②/④）：切真实常**不表现为新增接口**（接口名没变、只是实现换成真实 client + baseURL），故易漏判。（余下理据见同目录 `rationale.md`）
 
    **跳过条件**：若清单为空（本 Sprint 完全按既存文档实现，零漂移）→ 终端打印「✅ 无上游文档变更，跳过 X.0/X.2/X.3」，直接进入 X.4。
 
-2. **落盘形态锚定**：本段四级一律走 `--ledger-cascade` **直接改各族内容主文档正文** + 刷该目录 `00_索引.md` 生成时间；⛔ 不新建分册、⛔ 不占 `NN_` 序号（那是产品侧/口述累进的命名空间）。**无需锚定 NN**。落盘规则详见 `.aidp/reference/开发期族增量.md`「收口执行要点」第 3 条。
+2. **落盘形态锚定**：本段四级一律走 `--ledger-cascade` **直接改各族内容主文档正文** + 刷该目录 `00_索引.md` 生成时间；⛔ 不新建分册、⛔ 不占 `NN_` 序号（那是产品侧/口述累进的命名空间）。**无需锚定 NN**。落盘规则详见 `{{AIDP_HOME}}/reference/开发期族增量.md`「收口执行要点」第 3 条。
 
 3. **★ 用户决策门**（两种模式）：
    - **★ `--unattended`（autopilot `/loop` 无人值守）**：**绝不弹窗**——默认走下方选项 **(1) 自动级联补充**（4 文档级联同步是既定动作、非需人拍板的选择）；影响清单 `sprint-{NNN}-upstream-impact-*.md` 照常留档以便复盘。仅当 PRD `autopilot_decisions.on_decision_conflict` 声明 `pause`/`pause-notify` （后者额外发里程碑通知）且本轮命中「决策冲突」才转失败处置交人工。
@@ -75,26 +95,21 @@
 
 3.5. **★ 改动量档位判定门（`dev_scale`）——级联的【承载形态】按改动量伸缩，触发级别与硬门一律不变**
 
-   > 本门与规划期 Step 2.4.1.5「需求规模档位」**同构**（那条治规划期、本条治开发期）。动机见 `rationale.md`。
-   >
-   > ⛔⛔ **只伸缩「承载形态」，绝不砍「级联本身」**——硬边界，非可权衡的偏好：
-   > **L4 自测用例任何档位都必须产出**（反向断言的载体），**L1 研发需求任何档位都要留痕**，
-   > 约定 22 的检测项清单与触发级别判定**一个都不裁剪**。可省的只是"另起分册 + 重复索引登记"这类**承载开销**。
+   > ⛔ 档位仅伸缩承载形态，绝不裁剪级联：L1 需求留痕、L4 自测用例、约定 22 检测项与触发级别任何档位都必须执行。动机见 `rationale.md`。
 
    **判据（命令端确定性计算，与 Step 2.4.1.5 同精神）**：
 
    ```bash
    # 本 Sprint 实际改动的【业务代码】文件数（排除文档/配置产物，只数 code/ 下真实代码）
-   # ★ 三个来源取并集，全部就地可取、不依赖任何跨分片传入的变量：
-   #   ① 工作区未暂存 ② 已暂存未提交 ③ ★未跟踪新增文件 ④ 已提交但未推送（@{u}..HEAD；无上游时自然为空）
-   # ⛔ ③ 不能省：新建文件在 add 之前是 untracked，`git diff` 系列【一个都不含】——漏掉它会把
-   #    "新增 3 个组件"判成 0 个改动、档位判低、级联被过度裁剪（实跑验证过的真实漏算）。
+   # 四个来源取并集：未暂存、已暂存、未跟踪、已提交未推送；漏未跟踪文件会误判改动量为零。
    DEV_FILES=$( { git diff --name-only -- code/
                   git diff --cached --name-only -- code/
                   git ls-files --others --exclude-standard -- code/
                   git log --name-only --pretty=format: @{u}..HEAD -- code/ 2>/dev/null
                 } | sort -u | grep -vE '^$|\.(md|json|ya?ml)$' | wc -l | tr -d ' ')
    ```
+
+   **`vcs_mode=none` 用本地证据替换上面整段 Git 计数**（不可在 Git 命令得到 0 后回退 S 档）：`DEV_FILES=$(CHANGES="memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json" python3 -c 'import json,os; from pathlib import Path; p=Path(os.environ["CHANGES"]); assert p.is_file(), "evidence-missing"; print(sum(x["path"].startswith("code/") and not x["path"].endswith((".md",".json",".yaml",".yml")) for x in json.loads(p.read_text(encoding="utf-8"))))')`。删除文件也计入改动，快照/清单缺失则停止档位自动判定并补证据或按 L 档审计，不得判 S。
 
    `HAS_API` / `HAS_DDL` / `HAS_SEMANTIC` / `HAS_CONFIG` 取自**上一步已产出的检测项表**（1 新增接口 /
    2 新增表 / 3 新增业务规则 · 6 Mock→真实 · 语义口径变更 · 新增配置项），不另行判定、不与其冲突。
@@ -116,31 +131,23 @@
    - **落盘留痕**：写 baseline `versions.{V}.sprints.{NNN}.dev_scale`（`{tier, dev_files, has_api, has_ddl, has_semantic, has_config, at}`），供复核"这轮为什么只产一份增量"。
    - **打印**：`📐 改动量档位：S（2 文件 / 接口=否 表=否 语义=否）→ L2 就地追加小节、L1+L4 照常产增量`。
    - **用户覆盖**：`/sprint-dev … --dev-scale=S|M|L` 显式覆盖自动判定（留痕 `source:"user"`）。
-   - **★ 判出的档位【必须】随下一步的四级级联调用传下去**（`--scale={dev_scale}`，见步骤 4 的调用映射表）——
-     档位只写进 baseline 而不传给 SKILL，是本门最容易犯且完全看不出来的错：SKILL 缺省回退 L 档全套产出，
-     正文一行不少，等于白判一次档。
-   - **⛔ 档位不影响的东西（逐条列明，防"顺手一起省了"）**：约定 22 检测项清单 / 触发级别判定 / L4 自测用例产出 / **S 语义子档的「受影响结论清单」** /
-     影响清单留档 / 破坏性变更确认门 / `sprint-{NNN}.md` 归档 / memory 与 CLAUDE.md 状态同步——**任何档位一律照做**。
+   - **档位必须传给下一步四级级联**（`--scale={dev_scale}`），不得只写 baseline；缺省会回退 L 档。
+   - **档位不影响的东西**：约定 22 检测/触发、L1 留痕、L4 用例、S 语义子档「受影响结论清单」、影响清单、破坏性确认、Sprint 归档和 memory 状态同步，任何档位均保留。
 
 3.8. **★ 攒批而非即时级联（默认行为）——写台账，不当场跑四级**
 
    > ⛔ **本步若由子 Agent 执行**：派单简报必须带 `cascade_mode` + `dev_scale`，且 `ledger` 时
    > **不得罗列待改文档清单**（罗列 = 强制 `--cascade-now`，机制当场失效）。契约见「子 Agent 执行时的派单契约」。
 
-   > **单一信源 = `.aidp/reference/开发期族增量.md`**（台账路径/格式/条目编号/收口点清单/清理规则/
+   > **单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`**（台账路径/格式/条目编号/收口点清单/清理规则/
    > 跨版本落点全在那份，本处**不复述**，只说明本步该做什么）。**进入本步第一动作 = Read 该文件。**
 
    把上一步影响清单的每一行**按受影响的族追加为增量册条目**（四族落点见
-   `.aidp/reference/开发期族增量.md`；跨族**共用同一 `C-NNN`**、各记各的那一面，⛔ 不复述别族）
-   （**不存在则从 `.aidp/templates/_开发期族增量.md` 拷贝骨架，⛔ 别自拟格式**——
+   `{{AIDP_HOME}}/reference/开发期族增量.md`；跨族**共用同一 `C-NNN`**、各记各的那一面，⛔ 不复述别族）
+   （**不存在则从 `{{AIDP_HOME}}/templates/_开发期族增量.md` 拷贝骨架，⛔ 别自拟格式**——
    条目形态是 `pending_cascade()` 的机器判据，改写法它就一条都认不出、收口点永不触发），**然后直接跳到 Step X.4，本轮不跑四级级联**（X.0/X.2/X.3 就是四级级联本身，须整段跳过）。
 
-   - **★ 条目只记一行、能省则省**：`- C-{NNN} · MM-DD HH:MM · 一句话 · sprint-{NNN}`。
-     **只记事后查不到的**（流水号 / 时间 / **改了什么这一句话** / 🔴破坏性 / sprint 号）；
-     **代码落点、影响级别 L1~L4、变更类型、档位一律不记**——收口时从代码与 `git diff` 现查更准
-     （以现状为准，手记的可能已被后续改动挪位）。⛔ 台账写详细 = 记台账本身成了新的耗时，
-     正好抵消攒批省下的时间，等于把下游最初的痛点请回来。一句话说不清的，说明它不是小改动，
-     本就该走 `--cascade-now` 当场级联。
+   - **台账条目只记一行**：`- C-{NNN} · MM-DD HH:MM · 一句话 · sprint-{NNN}`，附必要的 🔴破坏性标记；不重复记录代码落点、L1~L4 级别、变更类型或档位。详述放影响清单，一句话无法概括时用 `--cascade-now`。
    - **攒批期间 append-only**：只追加、绝不改删已有条目。
    - 🔴 **破坏性变更同样进台账**（项目方知情选择：一律攒、不设例外），但**必须**① 条目标 `🔴 破坏性`
      ② 在台账「⚠️ 已知失准点」段登记**具体失准位置**（哪份文档哪一节现在是错的）。
@@ -149,23 +156,14 @@
    - **★ 例外：`--cascade-now` 立即级联**。带该 flag 时**跳过攒批、当场跑完四级级联**（用于当轮就要拿到
      自测用例的场景——收口点不含 `/sprint-close`，当天开发当天关闭的 Sprint 需要它兜底）。
    - **打印**：`📥 已记入开发期变更台账 C-0NN（共 N 条待级联）；将于下次收口点批量级联`。
-   - **★ 同时在原影响清单文件末尾追加**：`📥 已入台账 C-0NN..C-0MM（攒批，待收口点级联）`
-     ——这是攒批路径的**合法终态标记**。缺了它，下面步骤 6 的「未消化」判据（只认 `✅ 级联执行结果`）
-     会把每一份攒批清单都判成未消化 ⇒ 下轮强制补跑级联 ⇒ **攒批在默认路径 100% 失效**，
-     且同批条目仍留在台账里、到下个收口点**再级联一次**（同一处主文档被改两遍）。
+   - **同时在原影响清单末尾追加** `📥 已入台账 C-0NN..C-0MM（攒批，待收口点级联）`，作为合法终态标记；否则下轮会重复级联。
 
 4. **级联触发规则**（★ **仅在收口点或 `--cascade-now` 时执行本步**；默认走上一步 3.8 攒批。
    收口时按台账**合并后**的总改动量重判档位，再按下表调用）：
 
    触发条件 → 触发哪一级的判定**按 CLAUDE.md 约定 22「4 级触发表」**（★ **逐条目独立判定、不按整轮取最大值**）。本步骤仅给出每一级对应的命令/SKILL 调用映射：
 
-   > ⛔⛔ **每一级调用都必须带 `--scale={dev_scale}`（上一步 3.5 判出的档位）——这是分档【真正省时】的落点。**
-   > 三个下游命令都支持 `--scale` 并**透传给各自 SKILL**，SKILL 据此真正伸缩产出规模
-   > （`dev-manual-testcase` 用例数 S=25~40 / M=60~100 / L=现状全套（按每模块基线，口径见 SKILL，非整轮合计）；`dev-logic-architect` 设计册数；
-   > `dev-execution-planner` task 是否分册）。**漏传即回退 L 档「现状全套」**——那样 3.5 的档位判定
-   > 就只省下了分册文件头与索引登记行这类样板，而**正文（用例 100+ 条、全套设计）一行没少**，
-   > 等于白判一次档。传的是 `dev_scale`（本次改动量）**不是** `req_scale`（整版需求规模）：
-   > 这里产的是本次改动的增量，规模应随改动面走。
+   > ⛔ 各级调用必须传递本次改动量 `--scale={dev_scale}`，由命令继续透传给 SKILL；不得误传整版 `req_scale`。漏传会回退 L 档。用例数与分册口径见各 SKILL，根因见 `rationale.md`。
 
    | 级 | 触发时调用（★ 均带 `--scale={dev_scale}`）|
    |----|-----------|

@@ -16,7 +16,7 @@
 - `/sprint-dev frontend` — 仅前端开发（当前 Sprint）
 - `/sprint-dev "<描述>" backend` — 自动累进 + 仅后端
 - `/sprint-dev 001 skip-test` — 跳过后续 test/bugfix/close 自动串联
-- `--cascade-now` — ★ **跳过攒批、当场跑完约定 22 四级级联**（默认行为是把变更按族记入 `_开发期{族}增量.md`、留到收口点批量级联，见 `flows/sprint-dev/postdev-writeback-1.md` 步骤 3.8 + `.aidp/reference/开发期族增量.md`）。用于**当轮就要拿到自测用例**的场景——收口点不含 `/sprint-close`，当天开发当天关闭的 Sprint 靠它兜底
+- `--cascade-now` — ★ **跳过攒批、当场跑完约定 22 四级级联**（默认行为是把变更按族记入 `_开发期{族}增量.md`、留到收口点批量级联，见 `flows/sprint-dev/postdev-writeback-1.md` 步骤 3.8 + `{{AIDP_HOME}}/reference/开发期族增量.md`）。用于**当轮就要拿到自测用例**的场景——收口点不含 `/sprint-close`，当天开发当天关闭的 Sprint 靠它兜底
 - `--dev-scale=S|M|L` — ★ **显式覆盖 Step X.0.0 的改动量档位判定**（S=小改动：L2 就地在既有册追加小节、不另起分册；M=现行全量级联；L=全量 + 部署基线联动）。不带则据本 Sprint 实际改动文件数 + 是否有接口/表/语义变更**自动判档**。⛔ 档位**只伸缩承载形态**，L1 需求留痕 / L4 自测用例 / 约定 22 检测项与触发级别 / 各类硬门**任何档位都不省**（详见 `flows/sprint-dev/postdev-writeback-1.md` 步骤 3.5）
 - `--unattended` — ★ autopilot `/loop` 无人值守标记：Step 0 UI 门（C/D）、**Phase 0A.5 死代码决策门情形 C**、Step X.0.0 约定22 级联门、**约定28 引新库同意门**均**不弹 `AskUserQuestion`**，改**消费 PRD `autopilot_decisions` 预声明**（visual_baseline → A/B/C/D；约定22 默认自动级联；死代码情形 C 默认「① 并存切流量」；需引新库无栈支持 → 转失败处置熔断而非弹窗），避免 7×24 挂死（由 `/sprint-autopilot` → `/sprint-batch` → 本命令透传）
 - `--from-batch` — 批量子任务标志（由 `/sprint-full` 透传）：本命令不弹 `AskUserQuestion`，内容决策门按「⏸ 待裁决」返回上层（语义单一信源 = `/sprint-full` 参数表）
@@ -35,14 +35,35 @@
   3. **不可逆或回退成本高**（已推送的 tag/分支、已分发的制品、`git mv` 一批目录才能撤销的结构）。
   典型如 **Phase 0B.0 版本落点决策门**（三条全中）：**绝不能以"不许自发问"为由跳过**。判定口诀：**动的是"要不要继续/怎么推进"→ 不问自动推进；动的是"版本号/持久目录/对外 tag 这类高成本不可逆承诺"→ 必须设门问用户**。
 - **★ "缺陷/问题怎么修"的默认处置 = `/sprint-bugfix`「缺陷处置默认决策纪律」（单一信源，约定 21 不复述）**：开发/修复途中遇到具体缺陷（失败被伪装成成功、前端吞后端 error、上游不可达、上游已交付更优端点、安全 fail-open 等）时，**先问一句「不做这个修复，当前行为是不是错的？」——是→按纪律映射表默认处置【直接修、不问】、拿不准也默认修**；只有"口径/单位/默认值需产品定义""涉及版本号/tag/对外承诺"才归"必须问"。**严禁把本就该默认修的缺陷当成"要产品拍板"挂起等人**（下游反馈根因）。
-- **★ 运行时验证纪律 = 约定 35（详规 `.aidp/rules/code.md`，约定 21 不复述）**：开发/验证代码**默认只静态验证**（类型/语法/lint/确定性脚本）；**绝不为"看 UI 效果 / 验证运行时"擅自启动前后端服务**（`npm run dev`/`vite`/`mvn spring-boot:run` 等——抢端口/冲突/卡机）**或跑完整构建**。需运行时/浏览器验证 → **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**。**★ Bash 起任何常驻服务类命令前先自检**「是否用户显式要求 / 是否 `deployment.mode=local` 授权例外」，否则中止改走 (a)/(b)/(c)。
+- **★ 运行时验证纪律 = 约定 35（详规 `{{AIDP_HOME}}/rules/code.md`，约定 21 不复述）**：开发/验证代码**默认只静态验证**（类型/语法/lint/确定性脚本）；**绝不为"看 UI 效果 / 验证运行时"擅自启动前后端服务**（`npm run dev`/`vite`/`mvn spring-boot:run` 等——抢端口/冲突/卡机）**或跑完整构建**。需运行时/浏览器验证 → **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**。**★ Bash 起任何常驻服务类命令前先自检**「是否用户显式要求 / 是否 `deployment.mode=local` 授权例外」，否则中止改走 (a)/(b)/(c)。
 
 ## 前置流程
 
+**VCS 能力分流（先于任何 Git 命令）**：以 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 取得 `vcs_mode=git|none`；`{user}` 以同模块 `developer_identity(Path.cwd())` 解析（显式身份 → 本地 Git 身份 → `AIDP_USER` → OS 用户），不再要求 Git 身份存在。`vcs_mode=none` 时仍执行本地 Sprint 取号、需求/设计/代码开发与静态验证；所有 Git-only 差异、commit、push、CICD 检查分别记 `unsupported:vcs-disabled`（`status=unsupported`，不是 passed），不执行 Git 命令，也不因缺 Git 中止本地开发。Phase 0B.0 的 tag 检测仅适用于 `git`；`none` 时用项目记忆/部署产物等本地发布信号判定，未知发布状态走既有保守版本落点门，绝不把无 Git 等同未发布。后续 `/sprint-test`、`/sprint-close` 沿用同一模式。
+
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
-2. **{user}** ← `git config user.name`
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
+2. **{user}** ← `vcs.py developer_identity(Path.cwd())`（无 Git 也可确定身份）
 3. 确认版本规划文档已生成（由 `/version` 完成）
+
+**`vcs_mode=none` 本地文件变更证据（分支 A/B 共用）**：在已确定 `{version}/{user}/{NNN}` 且任何代码删除/改写前拍 `memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json`；分支 A 必须在 Phase 0A.5 前拍，分支 B 在 Phase 0B.2 后、Phase 1 前拍。快照缺失不得把空 diff 判「零变更」，应补从本 Sprint 的逐文件改动记录取得前态；仍无法确认则扩大审计范围而非跳过。每次重入复用原快照，不覆盖开发前态：
+
+```bash
+SNAP="memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json"
+mkdir -p "$(dirname "$SNAP")"
+if [ ! -f "$SNAP" ]; then
+  SNAP="$SNAP" VERSION="{version}" python3 - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+roots = [Path("code"), Path("env"), Path("docs/deployment") / os.environ["VERSION"]]
+files = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+         for root in roots if root.exists() for p in root.rglob("*") if p.is_file()}
+Path(os.environ["SNAP"]).write_text(json.dumps(files, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+PY
+fi
+```
+
+回写时读取此快照，重新对相同目录逐文件算 sha256，比较 `before.get(path) != after.get(path)` 取新增/修改文件，`before.keys() - after.keys()` 取删除文件；按相对路径去重，输出确定性变更清单。禁止拿文件 mtime 代替内容哈希或以空 Git diff 当无改动。
 
 ## 参数解析与路径分支
 
@@ -95,7 +116,7 @@ git fetch --tags --quiet 2>/dev/null || true          # 拿不到远端 tag 不�
 TAGS=$(git tag -l "v$VNUM" "V$VNUM" "$V" "release-$V" "release-v$VNUM" 2>/dev/null) || TAG_OK=0
 RELEASED=$(printf '%s\n' "$TAGS" | head -1)
 # ③ 第三信号（不依赖 tag 与文件名约定）：baseline 的 internal_released_at + 随 tag 冻结的部署基线
-[ -z "$RELEASED" ] && [ -n "$(python3 .aidp/scripts/baseline_edit.py --version "$V" get internal_released_at --default "" 2>/dev/null)" ] && RELEASED="internal_released_at"
+[ -z "$RELEASED" ] && [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" get internal_released_at --default "" 2>/dev/null)" ] && RELEASED="internal_released_at"
 [ -z "$RELEASED" ] && [ -d "docs/deployment/$V/配置文件/全量" ] && RELEASED="deployment-baseline"
 # ② progress.md「版本历史」/ 版本更新日志 标本版「✅ 已发布」
 [ -z "$RELEASED" ] && grep -qsE "$V.*✅ ?已发布|已发布.*$V" "memory/$V/$(git config user.name)/progress.md" 版本更新日志.md 2>/dev/null && RELEASED="$V(状态已发布)"
@@ -122,12 +143,12 @@ echo "RELEASED=${RELEASED}"
 
 ```bash
 # ★ 取号一律走脚本，【绝不】自己 glob 当前版本目录（见下方 Why）
-NEXT=$(python3 .aidp/scripts/check_sprint_numbering.py next)   # 形如 004
+NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 004
 ```
 
 > ⛔ **Sprint 编号是【项目全局流水号】，跨版本连续自增、不随版本重置**（`06_版本与用户目录约定.md` §3.3）。
 > ⛔ 扫描路径**不得带 `{version}` 限定**（带了就等于每个新版本从 `sprint-001` 重新开始）。
-> 成因见 `.aidp/flows/sprint-dev/rationale.md`「Sprint 编号为何必须跨版本扫」。于是同一项目里存在多个
+> 成因见 `{{AIDP_HOME}}/flows/sprint-dev/rationale.md`「Sprint 编号为何必须跨版本扫」。于是同一项目里存在多个
 > `sprint-001`，bugfix 记录、`docs/testing/{version}/sprint-{NNN}/`、Sprint 归档
 > 全部产生歧义。脚本的 `next` 子命令**跨全部版本**扫描取 MAX+1，回检见 `check` 子命令。
 
@@ -154,9 +175,9 @@ NEXT=$(python3 .aidp/scripts/check_sprint_numbering.py next)   # 形如 004
 
    输出研发需求增量文档（NN 按目录现有序号累进），并在目录 `00_索引.md` 登记该增量行（类型=补充 + 生成时间）。
 
-   > ★ **增量文档命名（按约定 15）**：所有增量文档统一 `NN_<业务主题>.md`（NN 续编目录现存最大序号 +1，排除 `00_索引`/`98_`/`99_`）——**文件名不带"补充"字眼**；补充身份只记入 `00_索引.md`（类型=补充 + 更晚生成时间）。上游 SKILL 本就产出干净 `NN_<业务名>.md`（已禁"补充/追加"语义前缀，各 SKILL 的 `check_doc_split.py` 亦禁），命令端**只做序号续编校正、绝不回补"补充"字眼** + 维护 `00_索引.md`（脚本见 `.aidp/flows/version/planning-4.md`（`version.md` Step 2.4.4 现仅是一行指针））。下文括注（如"研发需求增量"）仅标识增量内容所属文档类型。
+   > ★ **增量文档命名（按约定 15）**：所有增量文档统一 `NN_<业务主题>.md`（NN 续编目录现存最大序号 +1，排除 `00_索引`/`98_`/`99_`）——**文件名不带"补充"字眼**；补充身份只记入 `00_索引.md`（类型=补充 + 更晚生成时间）。上游 SKILL 本就产出干净 `NN_<业务名>.md`（已禁"补充/追加"语义前缀，各 SKILL 的 `check_doc_split.py` 亦禁），命令端**只做序号续编校正、绝不回补"补充"字眼** + 维护 `00_索引.md`（脚本见 `{{AIDP_HOME}}/flows/version/planning-4.md`（`version.md` Step 2.4.4 现仅是一行指针））。下文括注（如"研发需求增量"）仅标识增量内容所属文档类型。
 
-   skill 内置的不中断原则、数据闭环完整性等会自动生效（沿用主文档 `Q-NNN` 编号空间往后递增，数据闭环孤立端用 `Q-FLOW-NNN`），命令端按 AGENTS.md 约定 21 不复述具体条款，详见 `.aidp/skills/ux-logic-extractor/SKILL.md`。
+   skill 内置的不中断原则、数据闭环完整性等会自动生效（沿用主文档 `Q-NNN` 编号空间往后递增，数据闭环孤立端用 `Q-FLOW-NNN`），命令端按 AGENTS.md 约定 21 不复述具体条款，详见 `{{AIDP_HOME}}/skills/ux-logic-extractor/SKILL.md`。
 
 2.5. **★ 口述规模档位判定门（`sup_scale`）——【必跑】，下面步骤 3 / 3bis / 4 的 `{档位}` 就是它的产出**
 
@@ -209,7 +230,7 @@ NEXT=$(python3 .aidp/scripts/check_sprint_numbering.py next)   # 形如 004
    - **★ 路径占位符显式传参**：调 dev-logic-architect 补充时，必须显式传 §2.5.7 的 5 个占位符值（`{SQL脚本目录}=code/sql/`、`{文档目录}=docs/design/detail/`、`{API文档目录}=docs/design/detail/`、`{测试文档目录}=docs/testing/`、`{配置目录}=env/+docs/deployment/{version}/`），禁止 SKILL 自动推断；映射表权威见 `docs/init/06_版本与用户目录约定.md` §2.5.7
 
 3bis. **★ 触发增量研发执行计划（独立一步，不能并进步骤 3）**：调 `/sprint-plan {version} --supplement={NN} --scale={档位} [--unattended]` 产出 `docs/plans/{version}/NN_<业务主题>.md`。
-   > ⛔ **`/sprint-design` 不产研发执行计划**——它全文不涉及 `dev-execution-planner`，其补充模式产物只有 详细设计 / 接口设计 / 对外开放接口 / 数据库设计 / DDL SQL 五类。⛔ 因此**不得把"计划增量"并进步骤 3**——那会让下方硬门第 6 项（**不可 N/A 的必 Pass 项**）无人生产、恒 Fail。成因见 `.aidp/flows/sprint-dev/rationale.md`「计划增量为何必须独立一步」。
+   > ⛔ **`/sprint-design` 不产研发执行计划**——它全文不涉及 `dev-execution-planner`，其补充模式产物只有 详细设计 / 接口设计 / 对外开放接口 / 数据库设计 / DDL SQL 五类。⛔ 因此**不得把"计划增量"并进步骤 3**——那会让下方硬门第 6 项（**不可 N/A 的必 Pass 项**）无人生产、恒 Fail。成因见 `{{AIDP_HOME}}/flows/sprint-dev/rationale.md`「计划增量为何必须独立一步」。
    > 即便临场改为直调 `dev-execution-planner` 兜住，也会绕过 `/sprint-plan` 的 Step 1.5 三脚本回检、Step 1.6 SQL 路径回写、Step 2 关联文档注入——故必须走命令编排、不得直调 SKILL。
 
 4. **★ 同步更新研发自测用例**：经 `/sprint-selftest {version} --supplement={NN} --scale={档位} [--unattended]` 编排（研发自测唯一入口，内部调 `dev-manual-testcase` skill 增量补充，prompt 驱动），输入：
@@ -219,7 +240,7 @@ NEXT=$(python3 .aidp/scripts/check_sprint_numbering.py next)   # 形如 004
    - `code/` 已有代码
    - **★ 路径占位符显式传参**：必须显式传 `{测试文档目录}=docs/testing/`（覆盖 SKILL 默认 `docs/test/`；映射表见 `docs/init/06` §2.5.7）
 
-   skill 工作要求：仅针对本轮新增/修订的功能点输出新用例或修订用例，未变功能不重复；原型变更必须重新对齐"操作对象 + 预期现象"。skill 内置的数据一致性与溯源原则 + 上游引用规则会自动生效，命令端按 AGENTS.md 约定 21 不复述，详见 `.aidp/skills/dev-manual-testcase/SKILL.md`。
+   skill 工作要求：仅针对本轮新增/修订的功能点输出新用例或修订用例，未变功能不重复；原型变更必须重新对齐"操作对象 + 预期现象"。skill 内置的数据一致性与溯源原则 + 上游引用规则会自动生效，命令端按 AGENTS.md 约定 21 不复述，详见 `{{AIDP_HOME}}/skills/dev-manual-testcase/SKILL.md`。
 
    输出 `docs/testing/{version}/研发自测/<NN>_<业务主题>.md`（按 AGENTS.md 约定 15 统一数字前缀规则：NN = 目录现存最大序号 + 1、用例从 `02_` 起，文件名不带"补充"字眼；★ **一律在 `研发自测/` 同目录平铺续编、严禁再拆二级子目录**——SKILL「文件命名总则」要求同目录 `NN_` 前缀平铺，其硬门 `check_testcase_format.py` 只 `glob("*.md")` 非递归，落进子目录的用例会整体逃检），并在**研发自测专职索引** `00_索引.md`（及 `01_研发自测方案.md` 的「用例索引」段 / `02_自测用例-总览.md`）追加登记该增量（研发自测目录已对齐通用范式、导航锚 = `00_索引.md`，见约定 15）。新增用例 ID 全局唯一（继承原主文档编号空间，往后递增）。
 
@@ -252,7 +273,7 @@ NEXT=$(python3 .aidp/scripts/check_sprint_numbering.py next)   # 形如 004
 - **`skip-doc-sync` 例外**：显式带该参数时本硬门整体跳过（见下方「跳过」），但须在完成报告显式 WARN 漂移风险。
 - **无人值守（`--unattended`）同样受硬门约束**：Fail 项按上表"Fail 处置"自动重跑对应 SKILL；重跑仍 Fail → 转失败处置（熔断冻结 + #4 里程碑通知 WARN），**不挂起、也不放行带病开发**。
 
-**跳过**：参数含 `skip-doc-sync` → 仅做步骤 1（记口述）；步骤 2~6 与上述完成硬门跳过。⛔ **但必须同轮把本轮口述变更按条目行格式写进【受影响各族】的增量册**（四族落点见 `.aidp/reference/开发期族增量.md`；终端 WARN 不落盘 = 欠账不可发现：`commit_gate::pending_cascade`、`check_cascade_landing.py`、四个收口点**全部只扫这四份册子**；不写则用户直接走 `/version` 发布时，收口点 3 的必删门会因「册子不存在」判为合法终态放行，即带着待级联条目走到版本发布）。此外终端 WARN「已跳过文档增量流，本 Sprint 完成后请人工跑 `/version` 补充模式校对；不跑会让设计/代码持续漂移」
+**跳过**：参数含 `skip-doc-sync` → 仅做步骤 1（记口述）；步骤 2~6 与上述完成硬门跳过。⛔ **但必须同轮把本轮口述变更按条目行格式写进【受影响各族】的增量册**（四族落点见 `{{AIDP_HOME}}/reference/开发期族增量.md`；终端 WARN 不落盘 = 欠账不可发现：`commit_gate::pending_cascade`、`check_cascade_landing.py`、四个收口点**全部只扫这四份册子**；不写则用户直接走 `/version` 发布时，收口点 3 的必删门会因「册子不存在」判为合法终态放行，即带着待级联条目走到版本发布）。此外终端 WARN「已跳过文档增量流，本 Sprint 完成后请人工跑 `/version` 补充模式校对；不跑会让设计/代码持续漂移」
 
 ### Phase 0B.1.3：★ 开发期口述追加 / 口径反转的处理（约定 34 ⑥ 决策门）
 
@@ -328,7 +349,7 @@ NEXT=$(python3 .aidp/scripts/check_sprint_numbering.py next)   # 形如 004
 
 ### Phase 0A.5：★ 历史死代码扫描与处置决策门
 
-> **目的**：开发新页面/接口前，先识别历史版本是否存在**同名/同语义**的死代码。判定为死代码 + 本 Sprint 重做该板块时，**必须先删旧再写新**，禁止叠加。详细判定规则与 grep 脚本见 `.aidp/agents/frontend.md` 核心原则 11 + `.aidp/agents/backend.md` 核心原则 11；本步骤仅做命令编排（按约定 21 不复述规则）。
+> **目的**：开发新页面/接口前，先识别历史版本是否存在**同名/同语义**的死代码。判定为死代码 + 本 Sprint 重做该板块时，**必须先删旧再写新**，禁止叠加。详细判定规则与 grep 脚本见 `{{AIDP_HOME}}/agents/frontend.md` 核心原则 11 + `{{AIDP_HOME}}/agents/backend.md` 核心原则 11；本步骤仅做命令编排（按约定 21 不复述规则）。
 
 **1. 识别本 Sprint 涉及的功能板块**（从设计/需求/计划读取）：
 
@@ -357,10 +378,10 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 | 情形 | 默认行为 | 是否弹 AskUserQuestion |
 |------|---------|----------------------|
 | **A 仍在用 + 增量增强** | 按约定 28 复用，正常往下写 | 否 |
-| **B 死代码 + 重做（默认）** | **自动 `git rm`** 全部归类为 B 的旧文件（含连带文件，清单见 agents 文档） + 同步补 `99_回滚脚本.sql` DROP（如涉及表） + 在 `*事实清单.md` 「死代码删除清单」段追加表格 | 否（默认无问询，避免打扰用户） |
+| **B 死代码 + 重做（默认）** | `vcs_mode=git` 自动 `git rm`；`vcs_mode=none` 对已确认归类为 B 的旧文件逐项 `Path.unlink()` 本地删除（仅文件，不删未核对目录，缺失文件如实记录），含连带文件；同步补 `99_回滚脚本.sql` DROP（如涉及表） + 在 `*事实清单.md` 「死代码删除清单」段追加表格 | 否（默认无问询，避免打扰用户） |
 | **C 仍在用 + 需求重构** | 弹 `AskUserQuestion`：「① 并存切流量（推荐）/ ② 直接替换 / ③ 单写新版保留旧版」三选一 | **是** |
 
-★ **关键铁律**：归类为 B 的文件必须**在 Phase 0A.5 内完成 `git rm`**（命令端用 Bash 执行），**不可**留待开发执行步骤里"边写边删"——否则 Agent 可能误以为"旧文件仍存在所以可以叠加"，反而触发反模式。
+★ **关键铁律**：归类为 B 的文件必须**在 Phase 0A.5 内完成实际删除**（`vcs_mode=git` 用 `git rm`；`vcs_mode=none` 经 Python `Path.unlink()` 删除已确认的本地文件，并用文件存在性复核），**不可**留待开发执行步骤里"边写边删"——否则 Agent 可能误以为"旧文件仍存在所以可以叠加"，反而触发反模式。
 
 ★ **情形 C 的 `--unattended` 降级（无人值守不挂死）**：`/loop` 无人值守（带 `--unattended`）下情形 C **不弹 `AskUserQuestion`**——优先消费 PRD `autopilot_decisions` 死代码处置预声明；无预声明则取**保守默认「① 并存切流量」**（新版并存 → 切流量 → 旧版留待人工删除，最不破坏现网），并在终端 + autopilot #4 里程碑通知 WARN「死代码情形 C 走无人值守默认①，旧版删除待人工复核」，**绝不挂起等待**。仅交互式（无 `--unattended`）才弹三选一。
 
@@ -399,9 +420,9 @@ grep "<旧表名>" memory/databaseBaseline.md
 
 > ⚠️ 关键规则一句提醒：**Phase 1.2 后端开发 Step 1 必做「开发期 SQL 自动应用（幂等、检测驱动）」（约定 6）**、**Phase 1.1.5 首次写码前必过「`code/{side}/{子项目}/` 目录确认门」（约定 18 铁律）**——这两处漏做会复现「部署后表缺失」/「源码根直放 `code/frontend` 父目录」两类下游事故。
 >
-> ⛔⛔ **详细步骤已外置为 2 个分片、进入 Phase 1 开发的【第一动作】= 按需加载**：Phase 1.0–1.4 的完整步骤在 `.aidp/flows/sprint-dev/` 下 **2 个分片**，**进入本段第一动作 = 按序 Read 两片**、逐项执行：
-> 1. **`.aidp/flows/sprint-dev/phase-1-dev-1.md`** — Phase 1.0pre / 1.0 / 1.1 / 1.1.5 / 1.2（后端开发）
-> 2. **`.aidp/flows/sprint-dev/phase-1-dev-2.md`** — Phase 1.3（前端开发）/ 1.4（并行开发）
+> ⛔⛔ **详细步骤已外置为 2 个分片、进入 Phase 1 开发的【第一动作】= 按需加载**：Phase 1.0–1.4 的完整步骤在 `{{AIDP_HOME}}/flows/sprint-dev/` 下 **2 个分片**，**进入本段第一动作 = 按序 Read 两片**、逐项执行：
+> 1. **`{{AIDP_HOME}}/flows/sprint-dev/phase-1-dev-1.md`** — Phase 1.0pre / 1.0 / 1.1 / 1.1.5 / 1.2（后端开发）
+> 2. **`{{AIDP_HOME}}/flows/sprint-dev/phase-1-dev-2.md`** — Phase 1.3（前端开发）/ 1.4（并行开发）
 >
 > 下方骨架仅供"知道有哪几步 + 定位"，**权威判定与操作一律以分片 flow 文件为准，绝不凭本骨架或记忆略过任一子步骤，也不得只读其中一片**。
 
@@ -424,10 +445,10 @@ grep "<旧表名>" memory/databaseBaseline.md
 
 > ⚠️ 关键规则一句提醒：**Step X.0.0 是约定 22「上游文档级联同步」的统一入口**——开发引入超出既存文档范围的实质变更（新增接口/表/业务规则/页面/功能点、原型字段被覆盖/裁剪、Mock→真实、语义·口径·范围变更）时必须按 4 级触发（研发需求→详细设计→研发执行计划→研发自测用例）自动级联，**禁止绕过它直接调单一 SKILL 补单层**；Step X.7/X.8 是约定 25 配置项清单 + 部署流程 SOP（检测驱动、独立于配置变更）。
 
-> ⛔⛔ **详细步骤已外置为 3 个分片、进入本回写段的【第一动作】= 按需加载**：Step X.0.0–X.8 的完整步骤在 `.aidp/flows/sprint-dev/` 下 **3 个分片**，**进入本段第一动作 = 按序 Read 三片**、逐项执行：
-> 1. **`.aidp/flows/sprint-dev/postdev-writeback-1.md`** — Step X.0.0（上游文档级联同步检测）
-> 2. **`.aidp/flows/sprint-dev/postdev-writeback-2.md`** — Step X.0 / X.2 / X.3 / X.4 / X.5 / X.6 / X.7
-> 3. **`.aidp/flows/sprint-dev/postdev-writeback-3.md`** — Step X.8（部署流程 SOP + SQL执行台账）+ **累进路径的产物审计收口**
+> ⛔⛔ **详细步骤已外置为 3 个分片、进入本回写段的【第一动作】= 按需加载**：Step X.0.0–X.8 的完整步骤在 `{{AIDP_HOME}}/flows/sprint-dev/` 下 **3 个分片**，**进入本段第一动作 = 按序 Read 三片**、逐项执行：
+> 1. **`{{AIDP_HOME}}/flows/sprint-dev/postdev-writeback-1.md`** — Step X.0.0（上游文档级联同步检测）
+> 2. **`{{AIDP_HOME}}/flows/sprint-dev/postdev-writeback-2.md`** — Step X.0 / X.2 / X.3 / X.4 / X.5 / X.6 / X.7
+> 3. **`{{AIDP_HOME}}/flows/sprint-dev/postdev-writeback-3.md`** — Step X.8（部署流程 SOP + SQL执行台账）+ **累进路径的产物审计收口**
 >
 > 下方骨架仅供定位，**权威判定与触发条件一律以分片 flow 文件为准，绝不凭本骨架或记忆略过任一 Step，也不得只读其中一片**。
 
@@ -463,9 +484,9 @@ grep "<旧表名>" memory/databaseBaseline.md
 - 在「已完成工作」中追加完成项
 - 更新「当前工作焦点」为"开发完成，等待测试"
 
-> ★ **若本命令触发 `git commit`**（自动提交场景）：按**约定 24**——**每次** commit 前先跑 `python3 .aidp/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），**不是禁止 commit**（判定字段与处置单一信源 = 约定 24，本命令不复述）。
+> ★ **若本命令触发 `git commit`**（自动提交场景）：按**约定 24**——**每次** commit 前先跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），**不是禁止 commit**（判定字段与处置单一信源 = 约定 24，本命令不复述）。
 
-> ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 .aidp/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 .aidp/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、失败自动重试（`cicd_watch.py --mode retry`）≤3 次并通过就绪探针。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`.aidp/flows/sprint-autopilot/invariants.md`）。
+> ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、失败自动重试（`cicd_watch.py --mode retry`）≤3 次并通过就绪探针。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`{{AIDP_HOME}}/flows/sprint-autopilot/invariants.md`）。
 
 ---
 

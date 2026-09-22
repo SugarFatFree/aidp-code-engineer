@@ -18,32 +18,32 @@ BASELINE_FILE="memory/.sprint-autopilot-baseline.json"
 # ★ 心跳已在 0.0.0（phase-0-1.md）写过，⛔ 不要挪回这里（理据见 rationale.md『0.2 取版与去重门注释』）
 # 乐观清空阻塞原因；任何 early-exit 分支在 exit 前必须回写它（见下方各门）
 # ⛔ **只清本链路能判归属的那一版**（本行在版本解析前跑；根因见 rationale「清除归属」）
-_ABR=$(python3 .aidp/scripts/baseline_edit.py get aiauto_blocked_reason --default "")
+_ABR=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get aiauto_blocked_reason --default "")
 case "$_ABR" in
-  ""|*chrome-unavailable*|*no-testable-version*) python3 .aidp/scripts/baseline_edit.py del aiauto_blocked_reason || true ;;
+  ""|*chrome-unavailable*|*no-testable-version*) python3 {{AIDP_HOME}}/scripts/baseline_edit.py del aiauto_blocked_reason || true ;;
   # ★ `no-testable-version` 必须在白名单里（谁写的谁必须能清；根因见 rationale 同名段）。
   *) echo "⏭️ 保留既有阻塞原因（$_ABR，非本链路可判归属）" ;;
 esac
 
 # 2. 版本号解析（自动从 baseline 读 — 不要求用户传）
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 读回 0.0.0 落盘的 --target/--select/--once 等
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 读回 0.0.0 落盘的 --target/--select/--once 等
 if [ -n "$TARGET_FLAG_VALUE" ]; then
   # --target 显式锁定（边界情况兜底，通常不走这条路径）
   TARGET_VERSION="$TARGET_FLAG_VALUE"
   # ⛔ 这一支同样必须落盘（理据见 rationale.md『0.2 取版与去重门注释』）
-  python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test \
+  python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test \
     TARGET_VERSION "$TARGET_VERSION" >/dev/null 2>&1 || true
 else
   # ★ 默认：取「当前开发版本」，判据单一信源 = baseline_edit.py current-version（⛔ 不内联 jq）
-  TARGET_VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version)
+  TARGET_VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)
   # ⛔ 选版后立即落盘，否则下游读回的是 autopilot 的开发版本（见 rationale「被测版本传不出去」）
-  python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test \
+  python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test \
     TARGET_VERSION "$TARGET_VERSION" >/dev/null 2>&1 || true
   if [ -z "$TARGET_VERSION" ]; then
     echo "⚠️ baseline 中无「当前开发版本」可测（所有版本要么已准发布要么未跑 sprint-autopilot Phase 3）"
     echo "👉 请先跑 /sprint-autopilot 完成 Phase 3（部署），或加 --target <V> 手动指定"
     # ⛔ early-exit 前必刷阻塞原因（漏写 = 开发链路误判健康，见 rationale.md）
-    python3 .aidp/scripts/baseline_edit.py set aiauto_blocked_reason "no-testable-version" >/dev/null 2>&1 || true
+    python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_blocked_reason "no-testable-version" >/dev/null 2>&1 || true
     exit 0
   fi
 fi
@@ -113,7 +113,7 @@ fi
 # ★ 熔断冻结门（对齐 autopilot needs_human 的统一放行开关）：仅默认自动选版路径（无 --target）
 #   生效；--target 手动指定 = 人工介入，视为解冻重试一次。
 if [ -z "$TARGET_FLAG_VALUE" ]; then
-  BE="python3 .aidp/scripts/baseline_edit.py --version $TARGET_VERSION"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version $TARGET_VERSION"
   NEEDS_HUMAN=$($BE get needs_human --default false)
   # ⚠️ 冻结时刻取统一字段 aiauto_frozen_at（兼容历史 probe_frozen_at）；缺它即永不解冻。
   FROZEN_AT=$($BE get aiauto_frozen_at --default "$($BE get probe_frozen_at --default '')")
@@ -123,7 +123,7 @@ if [ -z "$TARGET_FLAG_VALUE" ]; then
     # ⛔ 解冻证据判定**唯一实现 = `autopilot_unfreeze.py --aiauto-probe`**（只判不写）；
     #    ⛔ 严禁在此内联 case 复述枚举（根因见 rationale.md「解冻判据为何不得内联」）。
     #    返回形状：{"unfreeze":bool, "reason":<冻结原因>, "evidence":<恢复证据>|"note":<原因>}
-    UNFREEZE=$(python3 .aidp/scripts/autopilot_unfreeze.py --aiauto-probe "$TARGET_VERSION" --json \
+    UNFREEZE=$(python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --aiauto-probe "$TARGET_VERSION" --json \
                  2>/dev/null | jq -r 'if .unfreeze then (.evidence // "已具备恢复证据") else empty end')
     if [ -n "$UNFREEZE" ]; then
       # ★ 解冻必须把**所有**熔断计数一并清零（漏一个即刚解冻又达阈重冻）
@@ -132,12 +132,12 @@ if [ -z "$TARGET_FLAG_VALUE" ]; then
         shot_gate_fail_streak qr_gate_fail_streak \
         final_gate_fail_streak env_fail_streak case_gate_fail_streak handoff_fail_streak aiauto_gate_fail_streak \
         auto_retest_streak retest_cap_frozen_at retest_frozen_head
-      python3 .aidp/scripts/baseline_edit.py del aiauto_blocked_reason || true
+      python3 {{AIDP_HOME}}/scripts/baseline_edit.py del aiauto_blocked_reason || true
       echo "🔓 $TARGET_VERSION $UNFREEZE → 自动解冻重测"
     else
       # 仍冻结：/loop 无人值守跳过本版、不重测、不刷 #4（等新部署/配置更新，或人工 --target/--reset-baseline 解冻）
       # ★ 必须回写 aiauto_blocked_reason（根因见 rationale.md「心跳与阻塞原因」）
-      python3 .aidp/scripts/baseline_edit.py set aiauto_blocked_reason "frozen:$FREEZE_REASON@$TARGET_VERSION"
+      python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_blocked_reason "frozen:$FREEZE_REASON@$TARGET_VERSION"
       echo "⏸️ $TARGET_VERSION 已熔断待人工（needs_human=true，原因 $FREEZE_REASON，冻结于 $FROZEN_AT）→ 跳过本 tick"
       exit 0
     fi
@@ -154,7 +154,7 @@ if [ -n "$BUILD" ]; then
   #   pending_clarifications_archive，避免旧问题永久压住节流门与收敛判定。
   python3 - "$TARGET_VERSION" "$BUILD" "${HAS_ONCE_FLAG:-0}" <<'PC' || true
 import sys
-sys.path.insert(0, ".aidp/scripts")
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from baseline_edit import LockedBaseline, now_iso
 V, B, once = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 with LockedBaseline("memory/.sprint-autopilot-baseline.json", write=True) as lb:
@@ -168,7 +168,7 @@ with LockedBaseline("memory/.sprint-autopilot-baseline.json", write=True) as lb:
             print(f"🗂️ 已归档 {len(moved)} 条待确认项（新 build / --once）")
 PC
   # ★ 认领 0.0.7 的驱动事实（不认领则收尾门 3i 恒空转，见 rationale.md）
-  _BE="python3 .aidp/scripts/baseline_edit.py --version $TARGET_VERSION"
+  _BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version $TARGET_VERSION"
   _DRV=$($_BE get driver_actual_pending 2>/dev/null)
   [ -n "$_DRV" ] && $_BE --build "$BUILD" set driver_actual "$_DRV" >/dev/null 2>&1 \
     && $_BE del driver_actual_pending >/dev/null 2>&1 && echo "   driver_actual=$_DRV 已归属本 build"
@@ -194,7 +194,7 @@ if [ -n "$SELECT_FORCED_REASON" ] && [ "$SELECT_MODE" != "all" ]; then
   SELECT_MODE=all
 fi
 # ★ 必须落盘（消费点在别的分片；回读恒空会走子集分支并把空值传给 --select，见 rationale.md）
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test SELECT_MODE "$SELECT_MODE"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test SELECT_MODE "$SELECT_MODE"
 [ "$SELECT_MODE" != "all" ] && echo "🔎 【子集轮】select=$SELECT_MODE —— 准则仅对子集成立，不写 aiauto_tested_at"
 
 
@@ -217,18 +217,18 @@ if [ "$REPORT_ENABLED" = "1" ]; then
   else
     echo "✅ AI执行报告骨架就绪（data/${BUILD}.js 已在；index.html 结果 + plan.html 计划同源渲染）→ 直接往下测"
     # ★ 清零必须落在成功分支（见 rationale「交接计数器为何只增不减」）
-    python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" del handoff_fail_streak 2>/dev/null || true
+    python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del handoff_fail_streak 2>/dev/null || true
   fi
 fi
 
 # 3. 读 deployment 配置（PRD 头部 autopilot_decisions.deployment）
 PRD_FILE=$(ls docs/requirements/$TARGET_VERSION/产品提供/*.md 2>/dev/null | head -1)
-BEP="python3 .aidp/scripts/baseline_edit.py"   # ⚠️ 定义在 if 之外：两条分支都要用
+BEP="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"   # ⚠️ 定义在 if 之外：两条分支都要用
 if [ -z "$PRD_FILE" ]; then
   # ⛔ 不裸 exit 1；⚠️ 计数用**专属** prd_missing_streak（⛔ 不复用 env_fail_streak）。
   #   两条的根因见 rationale.md「PRD 缺失门」。
   # 记账→判阈→冻结四件套→发 #4 一次做完（⛔ 专属 reason `prd-missing`，不复用 config-missing）
-  python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
     --phase 0.3-prd --reason prd-missing \
     --streak-key prd_missing_streak --threshold "${ENV_FAIL_FREEZE_THRESHOLD:-3}" \
     --why "找不到 $TARGET_VERSION 的 PRD（docs/requirements/$TARGET_VERSION/产品提供/），无法解析部署模式"
@@ -242,15 +242,15 @@ DEPLOY_MODE=$(awk '/^---$/{f=!f;next} f && /^[[:space:]]*mode:/{print $2;exit}' 
 # 4. ★ 读里程碑通知配置（人维护配置 `memory/aidp-config.yaml` 的 `notify` 段，与 sprint-autopilot 共享）
 # ⚠️ 值域统一 0/1；判定与 notify.py 同源（总开关开启且至少一个渠道凭据就绪，由 tick_flags 供给）
 NOTIFY_ENABLED="${NOTIFY_ENABLED:-0}"
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test NOTIFY_ENABLED "$NOTIFY_ENABLED" >/dev/null 2>&1 || true  # 必须落盘
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test NOTIFY_ENABLED "$NOTIFY_ENABLED" >/dev/null 2>&1 || true  # 必须落盘
 # ★ 报告只落本地 `docs/reports/{V}/`，通知里的报告链接一律用仓库内相对路径（或仓库文件链接）。
 if [ "$NOTIFY_ENABLED" != "1" ]; then
   # ★ 未启用 / 未配置任何渠道 → 本轮里程碑通知静默跳过（通知是可选增强，缺失不阻塞测试主流程）。
   #   ⛔ 交互式与无人值守一致：不弹窗收集渠道；需要通知时由人自行编辑 memory/aidp-config.yaml 的 notify 段。
   NOTIFY_ENABLED=0
-  python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test NOTIFY_ENABLED 0 >/dev/null 2>&1 || true
+  python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test NOTIFY_ENABLED 0 >/dev/null 2>&1 || true
   echo "ℹ️ notify 未启用或未配置渠道 → 本轮里程碑通知静默跳过（不弹窗、不阻塞测试）"
 fi
-# ★ 发送统一走：python3 .aidp/scripts/notify.py --auto --title … --section … [--link-text … --link-url <仓库相对路径>]
+# ★ 发送统一走：python3 {{AIDP_HOME}}/scripts/notify.py --auto --title … --section … [--link-text … --link-url <仓库相对路径>]
 #   退出码 0 成功 / 1 全部渠道失败（WARN 不阻塞）/ 2 参数错误（修参数重发）/ 3 未配置任何渠道（静默跳过本节点）。
 ```

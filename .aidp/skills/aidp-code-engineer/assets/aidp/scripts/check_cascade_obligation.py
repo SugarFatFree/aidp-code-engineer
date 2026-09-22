@@ -45,6 +45,12 @@
 不传 `--sprint` 扫该版本全部 Sprint 归档 + 当前 `activeContext.md`
 （归档发生在 `/sprint-close` Step 3，本门在其后跑，两者都要看）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -211,11 +217,7 @@ def main():
                          "——载体形同虚设，同样不放行。\n")
     else:
         sys.stderr.write(f"   台账 {led['path']} 存在但 0 条未决条目。\n")
-    sys.stderr.write("   处置：把这些义务**同轮**写进对应族的增量册（骨架 `.aidp/templates/_开发期族增量.md`），"
-                     "或当场级联完并在归档行内标「已级联」。\n"
-                     "   判定自省：**收尾门/审计能不能靠脚本发现这条义务？不能 → 它还没被登记。**\n"
-                     "   归档 markdown 是给人读的叙述，台账才是给机器扫的清单。\n"
-                     "   详规 `.aidp/reference/开发期族增量.md`\n")
+    sys.stderr.write(runtime_text('   处置：把这些义务**同轮**写进对应族的增量册（骨架 `__AIDP_HOME__/templates/_开发期族增量.md`），或当场级联完并在归档行内标「已级联」。\n   判定自省：**收尾门/审计能不能靠脚本发现这条义务？不能 → 它还没被登记。**\n   归档 markdown 是给人读的叙述，台账才是给机器扫的清单。\n   详规 `__AIDP_HOME__/reference/开发期族增量.md`\n', __file__))
     return 2
 
 

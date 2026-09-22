@@ -17,7 +17,7 @@
 ## 前置流程
 
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`
 3. 后续路径全部使用解析到的 `{version}` / `{user}`。
 
@@ -64,7 +64,7 @@
 
 ## Step 3：更新项目记忆文件
 
-路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取（⛔ 不写死 `AGENTS.md`），定点更新「当前状态」区域：
+路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取（⛔ 不写死 `AGENTS.md`），定点更新「当前状态」区域：
 - 当前 Sprint：Sprint-{NNN}
 - 当前阶段：执行中
 

@@ -2,10 +2,10 @@
 # agent_loop.sh —— 以非交互模式唤起 AIDP 命令（Claude Code / Codex / DeepSeek Harness 通用）
 #
 # 两种形态：
-#   .aidp/scripts/agent_loop.sh --once sprint-autopilot --unattended     # 单次执行（供操作系统调度调用）
-#   .aidp/scripts/agent_loop.sh 10m sprint-autopilot --unattended        # 前台循环（临时使用）
+#   "$AIDP_HOME/scripts/agent_loop.sh" --once sprint-autopilot --unattended  # 单次执行
+#   "$AIDP_HOME/scripts/agent_loop.sh" 10m sprint-autopilot --unattended     # 前台循环
 #
-# 7×24 推荐由 `python3 .aidp/scripts/aidp_scheduler.py install` 为开发链路与测试链路各装一个
+# 7×24 推荐由 `python3 $AIDP_HOME/scripts/aidp_scheduler.py install` 为开发链路与测试链路各装一个
 # 操作系统定时任务，每个任务调用本脚本的 --once 形态。
 #
 # 每轮都会：
@@ -21,8 +21,23 @@
 #   claude 内置默认：claude -p --permission-mode acceptEdits {prompt}
 #   codex  内置默认：codex exec --sandbox workspace-write {prompt}
 #   dsh    无内置默认：须在 scheduler.exec.dsh 或 AIDP_AGENT_EXEC 中配置（写法以所用版本官方文档为准）
-# 各 CLI 的参数以所用版本官方文档为准；非交互执行需预授权工具权限，见 .aidp/reference/agent-tools.md 第三节。
+# 各 CLI 的参数以所用版本官方文档为准；非交互执行需预授权工具权限，见 $AIDP_HOME/reference/agent-tools.md 第三节。
 set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+AIDP_HOME="${AIDP_HOME:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
+home_name="$(basename -- "$AIDP_HOME")"
+host_name="$(basename -- "$(dirname -- "$AIDP_HOME")")"
+if [ "$home_name" = "aidp" ] && { [ "$host_name" = ".claude" ] || [ "$host_name" = ".agents" ]; }; then
+  default_root="$(CDPATH= cd -- "$AIDP_HOME/../.." && pwd)"
+elif [ "$home_name" = ".aidp" ]; then
+  default_root="$(CDPATH= cd -- "$AIDP_HOME/.." && pwd)"
+else
+  echo "[agent_loop] 非法 AIDP_HOME: $AIDP_HOME" >&2; exit 2
+fi
+root="${AIDP_PROJECT_ROOT:-$default_root}"
+export AIDP_HOME AIDP_PROJECT_ROOT="$root"
+cd "$root"
 
 usage() {
   echo "用法: $0 --once <命令名> [参数...]" >&2
@@ -59,9 +74,6 @@ done
 args="$* ${extra[*]:-}"
 args="$(echo "$args" | sed -e 's/^ *//' -e 's/ *$//')"
 
-root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-cd "$root"
-
 if [ -f "$HOME/.config/aidp/env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -72,8 +84,8 @@ fi
 cfg_get() {
   # $1 = agent | exec.<agent>
   python3 - "$1" <<'PY' 2>/dev/null || true
-import sys
-sys.path.insert(0, ".aidp/scripts")
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["AIDP_HOME"], "scripts"))
 import aidp_config
 c = aidp_config.scheduler_config(".")
 k = sys.argv[1]
@@ -90,7 +102,7 @@ if [ -z "$agent" ]; then
   [ -n "$agent" ] || agent=auto
 fi
 if [ "$agent" = "auto" ]; then
-  agent="$(python3 .aidp/scripts/agent_env.py detect | python3 -c 'import json,sys; print(json.load(sys.stdin)["agents"][0])')"
+  agent="$(python3 "$AIDP_HOME/scripts/agent_env.py" detect | python3 -c 'import json,sys; print(json.load(sys.stdin)["agents"][0])')"
 fi
 agent="${agent%%,*}"
 
@@ -132,14 +144,14 @@ run_one() {
 }
 
 if [ "$once" = 1 ]; then
-  python3 .aidp/scripts/aidp_scheduler.py watchdog --quiet >>"$log" 2>&1 || true
+  python3 "$AIDP_HOME/scripts/aidp_scheduler.py" watchdog --quiet >>"$log" 2>&1 || true
   run_one
   exit 0
 fi
 
 echo "[agent_loop] agent=$agent interval=${secs}s prompt=$prompt（日志：$log）" >&2
 while true; do
-  python3 .aidp/scripts/aidp_scheduler.py watchdog --quiet >>"$log" 2>&1 || true
+  python3 "$AIDP_HOME/scripts/aidp_scheduler.py" watchdog --quiet >>"$log" 2>&1 || true
   run_one
   sleep "$secs"
 done

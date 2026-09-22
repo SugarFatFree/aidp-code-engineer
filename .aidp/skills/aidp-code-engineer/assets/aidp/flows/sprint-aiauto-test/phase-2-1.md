@@ -1,7 +1,7 @@
 <!-- 二次切分 · phase-2 片1/2：覆盖 2.0 用例来源优先级解析（含跨版本回归继承/渲染模式拆分）-->
 # sprint-aiauto-test · Phase 2 详情（AI 自动化仿真测试主循环 2.0–2.4）
 
-> 本文件是 `/sprint-aiauto-test` 命令 **Phase 2** 详情的**第 1/2 片**（⛔ 本片不含 Phase 2 全部子步——后续子步在 `-2`…`-2` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`.aidp/commands/sprint-aiauto-test.md`）在**进入 Phase 2 时用 Read 工具按需加载**。命令主体只保留 Phase 2 的**硬门 + 2.0–2.4 骨架 + 指向本文件的指针**。
+> 本文件是 `/sprint-aiauto-test` 命令 **Phase 2** 详情的**第 1/2 片**（⛔ 本片不含 Phase 2 全部子步——后续子步在 `-2`…`-2` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`）在**进入 Phase 2 时用 Read 工具按需加载**。命令主体只保留 Phase 2 的**硬门 + 2.0–2.4 骨架 + 指向本文件的指针**。
 >
 > ⚠️ **权威性**：进入 Phase 2 后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/`。理据/根因见同目录 `rationale.md`。
@@ -26,8 +26,8 @@
 > ⛔⛔ **2.0.0 前置门：本版有没有【未级联】的用例增量**（约定 22 × 本链路交界，先跑再解析来源）
 >
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-> python3 .aidp/scripts/check_case_ledger_pending.py --version "$TARGET_VERSION"
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+> python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "$TARGET_VERSION"
 > ```
 >
 > 增量册记的是**变更线索**（一行），不是可执行用例（`SUITE-*`/`TC-*`/四要素步骤表）——
@@ -48,8 +48,8 @@
 > ★ **2.0.0bis 算本轮增量用例集**（前置门过后立刻跑；**只给报告用，不改执行范围**）
 >
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-> python3 .aidp/scripts/incremental_cases.py --version "$TARGET_VERSION" --build "$BUILD" --record
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+> python3 {{AIDP_HOME}}/scripts/incremental_cases.py --version "$TARGET_VERSION" --build "$BUILD" --record
 > ```
 >
 > **执行仍全量**（每轮从整个用例集重建 tasks.md，⛔ 不按增量裁剪）；本步只解决**报告分不清**。
@@ -62,7 +62,7 @@
 # ★ 跨分片取回本 tick 变量 —— flow 每个分片是**独立的 Bash 调用**，shell 变量不持久；
 #   漏这一行会让下方判据读到空串、`${VAR:-默认}` 静默落默认值（恒真/恒假）。
 #   真源在 baseline 的（BUILD/DRIVER/DEPLOY_MODE/NOTIFY_ENABLED/LOOP_UNATTENDED…）由脚本自动回落。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 V="docs/testing/${TARGET_VERSION}"
 
 # A. 测试人员提供的用例：正式用例/ 下排除 00*（环境/账号/方案/索引等配置）与 99*（待澄清清单）前缀的管家文件，其余全部 .md
@@ -116,14 +116,14 @@ else
   echo "❌ 正式用例/ 与 研发自测/ 均无可用用例 → 本 tick 不测"
   echo "   → 补用例：/sprint-selftest，或放进 正式用例/"
   # 记账→判阈（内含无唤醒源即当场达阈）→冻结四件套→发 #4，一次做完
-  python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
     --phase 2.0-cases --reason testplan-incomplete \
     --streak-key case_gate_fail_streak --threshold "${ENV_FAIL_FREEZE_THRESHOLD:-3}" \
     --why "正式用例/ 与 研发自测/ 均无可用用例，连续多 tick 无法开测；补用例即自动解冻"
   exit 0   # ⛔ 不用 exit 1：已记账 + 已告警，让位本 tick 而非让 /loop 每 tick 撞同一失败
 fi
 # ★ 有可用用例 → 清零环境熔断计数
-python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" del case_gate_fail_streak || true
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del case_gate_fail_streak || true
 
 # ★ 跨版本回归用例并入补充集（约定33 缺口5.2），随后随补充集统一去重（历史回归与本版用例撞功能点则去重保留其一）
 [ -n "$REGRESSION_CASES" ] && SUPPLEMENT_CASES=$(printf '%s\n%s\n' "$SUPPLEMENT_CASES" "$REGRESSION_CASES" | sed '/^$/d' | sort -u)
@@ -158,7 +158,7 @@ fi
 #   属另一次 Bash 调用，shell 变量不跨调用存活；BASELINE_FALLBACK 指向的 version:deferred_headed_cases
 #   **全仓无写入者**，不落盘则读回恒空 → 延后集永远判为空 → 「切有头补跑」的提醒永不触发，
 #   那批「必须有头」用例就此静默消失（报告里看不出漏测）。
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test DEFERRED_HEADED_CASES "${DEFERRED_HEADED_CASES:-}"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test DEFERRED_HEADED_CASES "${DEFERRED_HEADED_CASES:-}"
 # DRIVER=cli（本地）：不拆延后集，「必须有头」用例同会话即时切有头跑（CLI 免重启）
 # RENDER_MODE=headed（已整体有头）：全部用例本轮都能跑，DEFERRED_HEADED_CASES 为空、无延后
 ```

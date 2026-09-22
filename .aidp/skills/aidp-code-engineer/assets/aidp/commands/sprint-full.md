@@ -34,7 +34,7 @@
 ## 前置流程
 
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`
 
 ## 前置检查
@@ -88,7 +88,7 @@ else:
 
 ```bash
 # ★ 取号一律走脚本，【绝不】自己 glob 当前版本目录（见下方 Why）
-NEXT=$(python3 .aidp/scripts/check_sprint_numbering.py next)   # 形如 004
+NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 004
 ```
 
 > ⛔ **Sprint 编号是【项目全局流水号】，跨版本连续自增、不随版本重置**（`06_版本与用户目录约定.md` §3.3）。

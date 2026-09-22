@@ -18,7 +18,7 @@
 ## 前置流程
 
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取）「当前状态.当前版本」，读不到则询问（`--unattended` 下不询问、停止并返回失败信号）。
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取）「当前状态.当前版本」，读不到则询问（`--unattended` 下不询问、停止并返回失败信号）。
 2. **{user}** ← `git config user.name`
 
 ## 前置检查
@@ -49,12 +49,12 @@
 | 启动横幅 | 调 SKILL 前输出 `🚀 [Step 1]` 横幅（列输入/输出路径），横幅后必有 `Skill dev-manual-testcase` 调用 |
 | 继承基线定位 | bash 找 `PREV_TEST_V`（< 当前版本、最近一个有配置的旧版），把上一版方案「环境」段 + `01_测试环境与账号.md` 喂给 SKILL 作继承源 |
 | 调用参数 | PRD/详设/研发执行计划路径 + ★约定 33 规划期基线**显式传参**：PRD 原文 `产品提供/*.md`、原型内容基线、设计令牌、字段处置对照表、表 E、文案落点表（缺则违反约定 33）|
-| ★ WebMCP 入参 | **条件启用、默认不传**：先跑 `python3 .aidp/scripts/check_webmcp.py --detect --json`（启用判定唯一实现，⛔ 不自己 grep PRD）；`enabled: true` 才随 prompt 传 `webmcp_enabled: true` + `webmcp_launch_command: <脚本返回的原样，⛔ 不要自拟>` + `webmcp_entry_symbols: <原样数组>` → SKILL 才生成 WebMCP 两类套件（**未启用态套件优先级不低于已启用态**）并启用其维度 20。SKILL **明令不自行探测**，不传 = 用例族永不生成、启用了该能力的项目静默漏测 |
+| ★ WebMCP 入参 | **条件启用、默认不传**：先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`（启用判定唯一实现，⛔ 不自己 grep PRD）；`enabled: true` 才随 prompt 传 `webmcp_enabled: true` + `webmcp_launch_command: <脚本返回的原样，⛔ 不要自拟>` + `webmcp_entry_symbols: <原样数组>` → SKILL 才生成 WebMCP 两类套件（**未启用态套件优先级不低于已启用态**）并启用其维度 20。SKILL **明令不自行探测**，不传 = 用例族永不生成、启用了该能力的项目静默漏测 |
 | 路径占位符 | 显式传 `{测试文档目录}=docs/testing/`，以免 SKILL 按项目现有目录（`docs/test/`、`test/`、`tests/` 等）自适应到别处 |
 | 落盘核验归一 | `git mv` 整体归一到 `docs/testing/{version}/研发自测/`（去 `{项目名}` 子目录、保留 NN_ 前缀不改名）；用例从 `02_` 起、方案 `01_`、索引 `00_索引.md`；缺用例或缺方案 `exit 1` |
 | 补充模式 | `--supplement={NN}` 时先跑历史扁平归位 + 子目录化前置脚本，产出增量 `NN_<业务主题>.md`（不带"补充"字眼、身份记入 `00_索引.md`）|
 
-**进入本段第一动作 = 按序 Read 两片 flow：`.aidp/flows/sprint-selftest/step-1-1.md`（启动横幅 / 继承基线定位 / 调用参数 / 输出路径 / 项目级补充 / 路径占位符）+ `.aidp/flows/sprint-selftest/step-1-2.md`（调用返回后落盘核验归一 bash / 补充模式前置脚本）**，逐项执行，绝不凭骨架或记忆略过任一子步骤。
+**进入本段第一动作 = 按序 Read 两片 flow：`{{AIDP_HOME}}/flows/sprint-selftest/step-1-1.md`（启动横幅 / 继承基线定位 / 调用参数 / 输出路径 / 项目级补充 / 路径占位符）+ `{{AIDP_HOME}}/flows/sprint-selftest/step-1-2.md`（调用返回后落盘核验归一 bash / 补充模式前置脚本）**，逐项执行，绝不凭骨架或记忆略过任一子步骤。
 
 ### Step 2：★ 输出前硬门：研发自测用例回检
 
@@ -64,7 +64,7 @@
 >
 > ⚙️ **定位（按约定 21）**：用例的结构 / 格式 / 溯源 / 方案闭环 / 数量基线 / 还原度 / 零残留断言判定**一律以 `dev-manual-testcase` Quality Review 为单一信源**；本门只做两件事——① 派子 Agent 原样跑 SKILL 脚本复核、② 查 SKILL 不管的项目级落盘约定。
 
-**① SKILL 脚本复核（派独立子 Agent）**：按 **`.aidp/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `.aidp/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参只有三个：
+**① SKILL 脚本复核（派独立子 Agent）**：按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参只有三个：
 - `check_case_stats.py` 显式传 `--scale {档位}`（本命令 `--scale=` 入参 / `/version` Step 2.4.1.5 判档；均无则 L）；
 - `--issue-record` 按序取**上游研发需求** `docs/requirements/{version}/研发需求/01_研发需求.md` → `00_研发需求.md` → 本目录 `99_待澄清问题清单.md`，均无则不传（⛔ 首选不得是本目录自产清单：那是自己查自己）；
 - 其余脚本无额外入参。
@@ -110,7 +110,7 @@ CROSS_99=$(ls "$TEST_DIR"/99_跨系统验证清单.md 2>/dev/null | wc -l)      
 | 合并规则 1–6 | ①全量继承 `cp` 上版所有段 → ②本版新增追加 → ③明确修改只覆盖该字段 → ④明确删除删条目+留痕 → ⑤默认全保留 → ⑥文件头继承标记 |
 | 首版 fresh | 无上版 → 走预填逻辑（PRD 取 deploy URL / user_roles）+ Write 完整 Markdown 模板（测试工具 / chrome 连接配置 / 测试环境 / 账号 / DB / WebMCP 可选段 / 关联文档**七段**）|
 
-**进入本段第一动作 = 按序 Read 两片 flow：`.aidp/flows/sprint-selftest/step-3-1.md`（职责隔离表 / 继承基线定位 / 合并规则 1–6 / 预填逻辑）+ `.aidp/flows/sprint-selftest/step-3-2.md`（完整 Markdown 模板正文七段 + ⛔ 远程连接铁律 + 生成后提示）**，逐项执行，绝不凭骨架或记忆略过任一子步骤。
+**进入本段第一动作 = 按序 Read 两片 flow：`{{AIDP_HOME}}/flows/sprint-selftest/step-3-1.md`（职责隔离表 / 继承基线定位 / 合并规则 1–6 / 预填逻辑）+ `{{AIDP_HOME}}/flows/sprint-selftest/step-3-2.md`（完整 Markdown 模板正文七段 + ⛔ 远程连接铁律 + 生成后提示）**，逐项执行，绝不凭骨架或记忆略过任一子步骤。
 
 ---
 
@@ -154,7 +154,7 @@ CROSS_99=$(ls "$TEST_DIR"/99_跨系统验证清单.md 2>/dev/null | wc -l)      
 ### ★ 约定 22 级联落盘（`--ledger-cascade`，与 `--supplement={NN}` 互斥，同时传则报错）
 
 由**约定 22 级联**调用时（攒批收口子 Agent / `--cascade-now` 即时级联）**必须**加 `--ledger-cascade`：**就地改内容主文档正文** `docs/testing/{version}/研发自测/` 的既有用例册，改完刷该目录 `00_索引.md` 生成时间（约定 15）。
-⛔ 不新建 `NN_` 分册、不产中转增量册、不全量扫 `code/` 等落盘细则与内容产出方式，**单一信源 = `.aidp/reference/开发期族增量.md`「收口执行要点」第 2/3 条（L4 用例）**，本命令不复述。
+⛔ 不新建 `NN_` 分册、不产中转增量册、不全量扫 `code/` 等落盘细则与内容产出方式，**单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`「收口执行要点」第 2/3 条（L4 用例）**，本命令不复述。
 
 ### 输入差异
 - **必读** `docs/requirements/{version}/研发需求/输入变更-{NN}.md`（含 PRD 与原型两类变更）
@@ -177,7 +177,7 @@ CROSS_99=$(ls "$TEST_DIR"/99_跨系统验证清单.md 2>/dev/null | wc -l)      
 > ⚠️ 约定 38 的**自动触发路径**（用户在任意对话中随口给出地址/账号，Claude 当轮归档）**不必经本 flag**——
 > 直接按细则落库即可；本 flag 只是把同一套动作暴露成显式入口，供主动补录与批量补齐。
 
-**判定与规则单一信源 = 约定 38 细则（`.aidp/reference/约定细则-5.md`）**，本段不复述（约定 21），只列编排：
+**判定与规则单一信源 = 约定 38 细则（`{{AIDP_HOME}}/reference/约定细则-5.md`）**，本段不复述（约定 21），只列编排：
 
 1. **定版本**：第 1 位参数 > `AGENTS.md`「当前状态 → 当前版本」。
 2. **解析待归档项**：从用户本轮消息（或显式传入的文本）中识别环境 URL / 账号密码 / DB 连接，按细则 38.2 的

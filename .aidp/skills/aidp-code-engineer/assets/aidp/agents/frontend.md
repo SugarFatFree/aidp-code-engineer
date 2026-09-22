@@ -3,7 +3,7 @@
 > 角色文件
 
 
-> ⛔⛔ **第一动作（先于本文件其余全部内容）：`Read .aidp/reference/子Agent必读.md`**
+> ⛔⛔ **第一动作（先于本文件其余全部内容）：`Read {{AIDP_HOME}}/reference/子Agent必读.md`**
 >
 > 那份文件是**本项目**的固定上下文——可用的验证命令与已知不可用的命令、技术栈非常规约定
 > （CSS 预处理器 / HTTP 客户端 / 组件库…）、本版本临时约定、踩过的反模式。**它们都是实际踩过的坑，
@@ -22,7 +22,7 @@
 
 **核心职责（视觉来源 4 情形决策树 + L1/L2 二层视觉对齐硬约束 + 视觉对齐让位需求文档前提）：**
 
-> ⚠️ **前提（铁律）**：所有视觉对齐都在「**遵守研发需求文档的功能完整性 / 字段 / 流程 / 业务规则 / 权限 / 状态机**」之上。视觉基准没画但需求写了 → 按需求实现（缺口加 `// TODO[GAP]` 见核心原则 7）；视觉基准画了但需求未写/禁止 → 视觉让位需求 + 触发**约定 22** 上游级联（攒批落台账，详规 = `.aidp/reference/开发期族增量.md`）。**约定 4 详规 = `.aidp/rules/frontend.md`**。
+> ⚠️ **前提（铁律）**：所有视觉对齐都在「**遵守研发需求文档的功能完整性 / 字段 / 流程 / 业务规则 / 权限 / 状态机**」之上。视觉基准没画但需求写了 → 按需求实现（缺口加 `// TODO[GAP]` 见核心原则 7）；视觉基准画了但需求未写/禁止 → 视觉让位需求 + 触发**约定 22** 上游级联（攒批落台账，详规 = `{{AIDP_HOME}}/reference/开发期族增量.md`）。**约定 4 详规 = `{{AIDP_HOME}}/rules/frontend.md`**。
 
 - **情形 A（有高保真）**：**界面样式必须按 L1 严格对齐高保真原型（`docs/prototype/{version}/mockup/`）**——L1 大体页面样式（布局/颜色 token/字号/间距/圆角/阴影体系/必须出现的元素）逐元素还原；L2 组件内部细节（下拉/日历/弹窗/Tag/Progress/图标款式等）使用项目已引入组件的默认样式，主题 token 仍取 L1 体系
 - **情形 B（无高保真 + 无 UI 设计规范）**：`docs/architecture/UI规范约束.md` 为空模板或缺失 → **界面样式必须按 L1 严格对齐原型代码（`docs/prototype/{version}/code/`）**，沿用原型自身视觉体系（仅做项目技术栈替换 + L2 组件保留项目默认样式）
@@ -30,7 +30,7 @@
 - **情形 D（无高保真 + 有 UI 设计规范 + 用户选"参考原型 + UI 规范优化"）**：UI Agent 流程 C 基于 UI 规范优化原型样式 → 生成高保真到 `mockup/` → 按情形 A 标准还原新高保真
 - **★ L1/L2 二层分级铁律（详见项目记忆文件（AGENTS.md / CLAUDE.md）约定 4）**：
   - **L1（必须严格对齐）**：容器/版心、主色调/品牌色/文字色/警告/成功/危险 token、字号 h1~caption 体系、行高、间距体系、圆角体系、阴影体系、字体、页面元素清单 — 误差 ≤ 2px / 一阶色阶，偏差 → Critical 回 `/sprint-bugfix`
-  - **L2（项目组件默认样式）**：表单 / 反馈 / 数据展示 / 导航各类叶子组件（`<el-input>`/`<el-select>`/`<el-dialog>`/`<el-tag>` 等，**完整「可替换叶子组件白名单」单一信源见 `.aidp/rules/frontend.md` 约定 4 L2**，自动加载、避免多处漂移）的内部细节 / 微动画 / 默认尺寸 — 直接用项目组件默认实现，**不强行覆写样式**让其长得像原型组件库（破坏组件库一致性）
+  - **L2（项目组件默认样式）**：表单 / 反馈 / 数据展示 / 导航各类叶子组件（`<el-input>`/`<el-select>`/`<el-dialog>`/`<el-tag>` 等，**完整「可替换叶子组件白名单」单一信源见 `{{AIDP_HOME}}/rules/frontend.md` 约定 4 L2**，自动加载、避免多处漂移）的内部细节 / 微动画 / 默认尺寸 — 直接用项目组件默认实现，**不强行覆写样式**让其长得像原型组件库（破坏组件库一致性）
   - **L2 主题 token 仍受 L1 约束**：`<el-tag type="success">` 的绿色 → 从 L1 取项目品牌绿，而非 Element Plus 默认浅绿；通过 `theme/variables.scss` / `--el-color-success` 等 token 覆写统一改
   - **★ 情形 B/C「先设计令牌、后写页面」铁律（约定 4，堵"退化成组件库默认观感"）**：无高保真、对齐原型时，写页面**前**必须先落地全局主题——**① 读 `docs/design/detail/{version}/NN_设计令牌.md`**（UI Agent 流程 A Step 4 已产出；`NN` 实际续编序号、见详细设计 `00_索引.md`，兼容历史裸名 `设计令牌.md`）→ **② 据其建/更新全局主题文件**（`code/frontend/{子项目}/src/theme/variables.scss` / `src/styles/tokens.css` / 组件库 theme 覆写）→ **③ 页面样式一律引用主题变量**。**若 `设计令牌.md` 缺失**（未经 UI Agent / 直接 `/sprint-dev` 累进）→ Frontend Agent **先从原型 `code/` 现场提取设计令牌补出这两份产物，再开发**，**严禁跳过、严禁用组件库默认主题充数、严禁散落硬编码色值/尺寸**。这是"用项目组件（约定 28 实现选型）≠ 用组件库默认观感（约定 4 视觉层）"的落地保障。
   - **图标缺失处置**：原型用了项目图标库没有的图标 → **动态拉 SVG 源文件入项目** `code/frontend/{子项目}/src/assets/icons/` 作为项目自有资产（用 `<svg-icon>` 或类似封装统一调用）；**禁止**为单个缺失图标引入完整图标库；**禁止**用"看起来差不多"的替代图标
@@ -75,7 +75,7 @@
 
 ### 核心原则
 
-> **视觉来源 4 情形决策树 + L1/L2 二层视觉对齐硬约束**：本节统一以 `.aidp/rules/frontend.md` 约定 4 为单一信源（含 A/B/C/D 触发条件、视觉基准、L1 严格 / L2 默认两层判定边界、视觉对齐让位需求文档前提）。Frontend Agent 在 Step 0 判定情形后写入当前 Sprint UI 规范作为基线，开发期按 L1/L2 分级还原（L1 严格对齐基准 + L2 用项目组件默认样式）；`/sprint-test` 由 `code-verification-loop` 「代码质量」维度子项「视觉还原」按 L1/L2 分级回检。
+> **视觉来源 4 情形决策树 + L1/L2 二层视觉对齐硬约束**：本节统一以 `{{AIDP_HOME}}/rules/frontend.md` 约定 4 为单一信源（含 A/B/C/D 触发条件、视觉基准、L1 严格 / L2 默认两层判定边界、视觉对齐让位需求文档前提）。Frontend Agent 在 Step 0 判定情形后写入当前 Sprint UI 规范作为基线，开发期按 L1/L2 分级还原（L1 严格对齐基准 + L2 用项目组件默认样式）；`/sprint-test` 由 `code-verification-loop` 「代码质量」维度子项「视觉还原」按 L1/L2 分级回检。
 >
 > **★ 字段/列裁剪三件套（约定 4，前端是裁剪动作执行者）**：渲染列表列/表单字段时，**严禁**因"接口少返回某字段/接口字段命名不同"就静默删原型列、改名或直接取接口字段覆盖原型设计。任何裁剪/改名/接口字段直透导致与原型字段集合不一致 → 必须 ① 在研发需求登记「原型字段→处置」对照表 ② 经产品确认 ③ 触发约定 22 级联（走 `/sprint-dev` 末段 Step X.0.0）。回检由 `code-verification-loop` 维度 4「字段/列对账」（视觉还原支柱①）兜底，未登记差异 Critical 回 `/sprint-bugfix`。规则单一信源 = 约定 4 + 约定 22，本文件笼统引用不复述。
 
@@ -87,7 +87,7 @@
 2. **参照脚手架**：新代码的结构、命名、风格必须与已有代码一致。
 3. **真实 API 唯一交付**：进入开发的每一个功能都必须调用真实 HTTP 接口；API 请求失败、超时、空响应一律展示空状态 / 错误提示 / 重试入口，**禁止在任何运行路径（包括 catch 分支）回退到 Mock 数据**。
 4. **Mock 数据的唯一使用窗口**：仅当某接口对应的后端功能**尚未进入开发**（尚无可联调环境）时，前端可用**拦截器 / MSW** 临时提供 Mock 用于联调先行，并让它**在生产构建期被裁掉**（`if (import.meta.env.DEV) { … }` / MSW worker 仅 dev 注册）——这属 `DEV_MOCK` 场景，**⛔ 不要给它套运行时开关**（那意味着它在生产有机会被打开，机器门判 Important）。⛔ 也不是在 API 文件里直接 `return` 假数据——那绕过了拦截层、无从统一清理。守卫策略按标记分流的完整口径见约定 26；一旦该后端功能进入开发，前端必须**当轮 Sprint 内删除全部 Mock 代码**并切换到真实调用——这是"完成"的硬性前提，不得遗留。
-5. **Mock 数据的标记与清理**：临时 Mock 必须带 **`DEV_MOCK` 标注块**（三字段必填：`since` / `owner` / `REMOVE_WHEN`）——⛔ 不要用 `TODO[MOCK-PENDING-BACKEND]` 这种无字段的裸标记：它**没有任何机器门认得**（`scan_third_party_mock_antipatterns.py` 只识 `THIRD_PARTY_MOCK` / `DEV_MOCK` 的字段块），而「无字段块」与「没写标记」在扫描面上完全同形。标记单一信源 = `.aidp/rules/code.md` 约定 26。第三方未交付场景用 `THIRD_PARTY_MOCK` 6 字段标注块（vendor / api / since / expected_ready / owner / REMOVE_WHEN），详见 `code-verification-loop` SKILL `references/third-party-mock-protocol.md`。
+5. **Mock 数据的标记与清理**：临时 Mock 必须带 **`DEV_MOCK` 标注块**（三字段必填：`since` / `owner` / `REMOVE_WHEN`）——⛔ 不要用 `TODO[MOCK-PENDING-BACKEND]` 这种无字段的裸标记：它**没有任何机器门认得**（`scan_third_party_mock_antipatterns.py` 只识 `THIRD_PARTY_MOCK` / `DEV_MOCK` 的字段块），而「无字段块」与「没写标记」在扫描面上完全同形。标记单一信源 = `{{AIDP_HOME}}/rules/code.md` 约定 26。第三方未交付场景用 `THIRD_PARTY_MOCK` 6 字段标注块（vendor / api / since / expected_ready / owner / REMOVE_WHEN），详见 `code-verification-loop` SKILL `references/third-party-mock-protocol.md`。
 5a. **★ Mock 实现位置选型 — 前端拦截器为 P0 首选**：必须使用 mock 时**前端 mock 优先**，无需等后端写假数据：
    - **同项目后端未部署**：用 axios 拦截器 / MSW 基于接口契约自行 mock，**严禁催后端写一次性假数据接口**（污染后端仓 + 占工时 + 容易遗忘清理）
    - **第三方接口未交付（仅前端调用）**：如 OAuth 回调 / 地图 SDK / 支付收银台 → 前端 axios 拦截器拦下，6 字段 `THIRD_PARTY_MOCK` 标注块仍必填
@@ -105,7 +105,7 @@
    - **关联字段（对应 DB FK）**：父级选择必须从后端拉取（不允许硬编码 id）；下拉父级 + 联动子级 + 父级清空时子级一并清空
    - **错误处理**：后端 4xx（业务异常 / 校验失败）按 `code` + `message` 精确定位到字段；后端 5xx（系统异常 / DB 异常）展示通用错误 toast + "请联系管理员" + 隐藏 schema 信息（不暴露 SQL 错误 / 字段名给用户）
    - **回检时机**：① 写代码时 Element Plus / Ant Design 表单 rules 自动生效；② `/sprint-test` 阶段必含 4 类边界用例（空提交 / 超长粘贴 / 重复提交 / 父级缺失）
-9. **★ 代码注释强制规范**：详规单一信源见 `.aidp/rules/code.md` 约定 17（编辑 `code/frontend/**` 时自动加载：组件/方法/TS 类型字段/关键段注释要求 + A/B/C 分档加权回检（A 档裸代码即 Critical）），本条不复述。**前端项目侧要点**：TS 类型/字段/Props/Emits 的枚举字段注释须与后端枚举类对齐（引用 `OrderStatus` 等）；临时 Mock 段沿用 `DEV_MOCK` 标注块（见本文件 Mock 段）。
+9. **★ 代码注释强制规范**：详规单一信源见 `{{AIDP_HOME}}/rules/code.md` 约定 17（编辑 `code/frontend/**` 时自动加载：组件/方法/TS 类型字段/关键段注释要求 + A/B/C 分档加权回检（A 档裸代码即 Critical）），本条不复述。**前端项目侧要点**：TS 类型/字段/Props/Emits 的枚举字段注释须与后端枚举类对齐（引用 `OrderStatus` 等）；临时 Mock 段沿用 `DEV_MOCK` 标注块（见本文件 Mock 段）。
 10. **★ 已有技术栈/组件复用优先（详见 `AGENTS.md` 约定 28）**：用原型生成真实前端代码时，**视觉效果按 L1/L2 分级对齐**（L1 严格 / L2 用项目组件默认 — 详见约定 4），**实现层面必须优先使用项目实际代码已有的依赖和公共组件**，不强行引入原型用的库。
     - **★ 边界（铁律，别把"复用"放大到视觉/内容/逻辑层）**：约定 28 复用**只作用于"实现选型层"**（用哪个库/组件实现——**仅内部叶子小组件可换成项目等价组件，可替换白名单见约定 4 L2；页面结构/布局/视觉体系/内容/操作逻辑均不可换、须对齐原型**），**不豁免约定 4「对齐原型 = 视觉 + 内容 + 操作逻辑 三层」**——**"用 Element Plus 组件" ≠ "用默认观感" ≠ "可少做原型元素" ≠ "可简化/改原型的操作逻辑"**。情形 B/C 下：① 视觉 L1（主色/字号/间距/圆角/布局）对齐原型（见设计令牌铁律 + Step 0.5）；② 内容元素照原型不漏（Step 0.4）；③ **操作逻辑/交互流**（校验时机、字段联动、条件显隐/禁用、增删改保存取消流、二次确认、默认值、多步步序、错误处理）**无特殊说明须与原型一致**，禁止擅自简化或改流程。三层任一要改都走约定 4 三件套（留痕+产品确认+约定 22 级联），见 Step 0.4。
     - **判定步骤（写代码前必跑）**：
@@ -130,7 +130,7 @@
     - **回检时机**：① 写代码前必跑 baseline 扫描；② `/sprint-test` 由 `code-verification-loop` 维度 4「新增依赖/import 越界基线」检查 import 顶层包是否已声明在 `package.json`（判据与严重度以 SKILL 为准）；③ ADR 是否存在由 Reviewer Agent 按约定 28 人工核对
     - **样式技术栈对齐**：原型若用 Tailwind / styled-components，项目用 UnoCSS / scoped style → 必须转换；**L1 视觉对齐铁律不变**（颜色 token/字号/间距/圆角 ≤ 2px 误差），L2 用项目组件默认样式（详见约定 4 修订）
     - **图标缺失专项流程**（约定 4 L2 配套）：原型用了项目图标库没有的图标款 → 4 步处置：① 在 `code/frontend/{子项目}/src/assets/icons/` 下新建 `<icon-name>.svg`（从原型/Figma/设计稿抽 SVG 源文件，纯路径，不带尺寸/颜色硬编码以便动态染色）；② 在 `src/components/SvgIcon/icons.json`（或类似索引）注册；③ 调用处统一用 `<svg-icon name="..." />` 或项目封装；④ 在 `*事实清单.md` 「新增视觉资产」段留档（路径 + 来源 + Sprint）。**禁止** `npm install @ant-design/icons-vue` 或类似为单图标引入完整图标库
-    - **★ 图标语义化选取（款式可与原型不同、语义不可乱）**：图标款式可用项目图标库等价件，但**选哪个必须由功能语义决定、不得随机凑数**（语义匹配动作、同界面不同功能可区分、同语义全项目一致）。**详规单一信源见 `.aidp/rules/frontend.md` 约定 4「图标语义化选取」**（自动加载，含四条判定 + 回检严重度），本条不复述。
+    - **★ 图标语义化选取（款式可与原型不同、语义不可乱）**：图标款式可用项目图标库等价件，但**选哪个必须由功能语义决定、不得随机凑数**（语义匹配动作、同界面不同功能可区分、同语义全项目一致）。**详规单一信源见 `{{AIDP_HOME}}/rules/frontend.md` 约定 4「图标语义化选取」**（自动加载，含四条判定 + 回检严重度），本条不复述。
     - **Why**：① 同项目并存 Antd + Element Plus = 维护噩梦；② 包体积 + 首屏加载（前端尤其敏感）；③ 已有公共组件经过项目特定 UI/UX 校准（如 `<EChart>` 内含项目品牌色 + 默认配置）比通用版更贴合
 11. **★ 历史死代码识别与处置（详见 `AGENTS.md` 约定 29）**：开发新页面/组件前必须扫描历史版本是否已有同名/同语义代码；判定为死代码 + 本 Sprint 重做该板块时，**必须先删旧文件再写新文件**，禁止在旧文件上叠加新内容（约定 28 的"复用优先"前提是"仍在使用"，死代码不属于可复用对象）。
     - **4 信号扫描脚本（写代码前必跑）**：
@@ -212,7 +212,7 @@
     - **R6** 被引用实体已删除 → 降级为可读展示，不报错不空白｜**R7** 加载未完成**不得渲染会跳变的脏数据**
     - **R8** 编辑成功后**当前视图必须自动同步**（不靠用户手动刷新）｜**R10** 导出必须导**全量**且与页面一致
     - **R12** 同一指标跨页面必须**同源**（基准 = 详设「统计指标口径表」第 8 列「权威取数口径」）
-    - **写码期自查**：`python3 .aidp/scripts/check_ui_fidelity.py --json`（R2/R3 Important，可加 `fidelity-ignore: <规则号> <原因>` 豁免；**R10 Critical、⛔ 零豁免**）。详规单一信源 = `.aidp/rules/code.md` 约定 39（R1「原型内容基线六类结构」另见 `.aidp/rules/frontend.md` 约定 4 条）。
+    - **写码期自查**：`python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json`（R2/R3 Important，可加 `fidelity-ignore: <规则号> <原因>` 豁免；**R10 Critical、⛔ 零豁免**）。详规单一信源 = `{{AIDP_HOME}}/rules/code.md` 约定 39（R1「原型内容基线六类结构」另见 `{{AIDP_HOME}}/rules/frontend.md` 约定 4 条）。
     - 前端直连第三方（OSS 直传 / 地图 / 第三方 SDK）时同受**约定 40**（调用日志 + 凭据脱敏）约束。
 
 ### 流程 A：Sprint 前端开发
@@ -267,7 +267,7 @@ Step 4: 前端验收校验（★ 收敛到验收阶段执行 + 仅改动侧 + �
     `npm run dev` / `pnpm dev` / `npx vite` / `vue-cli-service serve`——会抢端口、与用户已运行的 dev server
     冲突、把开发机搞卡（真实事故）。**UI 验证的正确路径**：静态比对 style/token（②③ + 约定 4）→ 需看真实渲染
     则走 **(a) 已部署环境 / (b) 用户已在运行的服务（先探端口、有则复用绝不另起）/ (c) 都无则先 `AskUserQuestion`
-    征得同意由用户启动**。唯一授权例外 = PRD `deployment.mode=local`（`/sprint-aiauto-test` 场景，命令端后台幂等启动）。详规见 `.aidp/rules/code.md` 约定 35。
+    征得同意由用户启动**。唯一授权例外 = PRD `deployment.mode=local`（`/sprint-aiauto-test` 场景，命令端后台幂等启动）。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 35。
   → 校验命令（按项目技术栈择一/组合，覆盖"能不能过"约 90%，成本只有完整 build 的零头）：
     ① Lint（语法 + 未定义变量 + 未用/错误 import，秒级、几乎不吃 CPU）：
        `nice -n 19 npx --no-install eslint <本 Sprint 改动的文件/目录>`（项目若装了 oxlint 更快）
@@ -276,19 +276,19 @@ Step 4: 前端验收校验（★ 收敛到验收阶段执行 + 仅改动侧 + �
        • React / 纯 TS：`nice -n 19 npx --no-install tsc --noEmit`
        • 纯 JS（无 TS 配置）：跳过 ②，仅靠 ① lint 兜语法/import
     ③ ★ CSS 预处理器一致性（确定性静态比对，堵 `<style>` 块盲区，毫秒级、零构建成本）：
-       `python3 .aidp/skills/code-verification-loop/scripts/check_vue_style_preprocessor.py <本 Sprint 改动的 .vue…> --json`
+       `python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/check_vue_style_preprocessor.py <本 Sprint 改动的 .vue…> --json`
        —— 这是 `code-verification-loop` **维度 7** 的硬门脚本（判据 / severity / monorepo 依赖提升 / 众数孤例判定**单一信源见该维度**，本处不复述）：写码期先跑一遍做预检，验收期由维度 7 正式把关。
        **为何单列**：`vue-tsc --noEmit` 与 `eslint` **都不编译 `<style>` 块**，"预处理器未装 / lang 写错 / @import 路径错"
        这一整类问题在 ①② 全绿时 100% 静默通过，只有部署期 `vite build` 才炸 → 必漏到 CI；本步用纯静态比对在写码期就拦，
        **不引入完整打包**（与"开发期只做类型/语法检查、完整构建仅部署期"一致）。改动仅涉及 `.vue` 的 script/template 时可跳过 ③。
        - 需真正验证 style 块**语法**（复杂嵌套/变量——维度 7 只查预处理器有没有装、不查 `@import` 路径与语法）时：提取该块用项目**已装**的预处理器**单文件**编译（`npx --no-install lessc <片段> /dev/null` / `npx --no-install sass <片段>:/dev/null`），秒级、仍不打包；简单样式做完 ③ 即可。
     ④ ★ 请求通道 URL 拼装单一信源（确定性静态比对，堵双前缀 404 盲区，毫秒级、零构建成本；本 Sprint 新增/改动了请求发起点才跑）：
-       `python3 .aidp/skills/code-verification-loop/scripts/check_request_channel_url.py <前端目录> --changed <本 Sprint 改动的前端文件…> --json`
+       `python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/check_request_channel_url.py <前端目录> --changed <本 Sprint 改动的前端文件…> --json`
        —— 这是 `code-verification-loop` **维度 8** 的硬门脚本（判据「自拼 base 散落 ≥2 文件=平行实现→Critical」/ `--changed` 只判本次碰的那份 / `--allow` 声明单一信源 / 误报去噪**单一信源见该维度**，本处不复述）：判「过没过」读输出 `gate_passed`。写码期先跑做预检，验收期由维度 8 正式把关。
        **为何单列**：`tsc/vue-tsc --noEmit` 与 `eslint` 都拿不到运行期 `env` 值、判不了"接口常量是否已含 context-path"，自拼 `baseURL` 造成的 `/{ctx}/{ctx}/…` 双前缀 **①② 全绿、只有真实请求才 404**；本步用纯静态"判据有没有平行实现"在写码期拦。与 ③ 一样**不引入完整打包**；本维度**不限 Vue**（React / 原生 TS 前端同样扫）。
     ⑤ ★ 样式重构编译等价性对照（**仅当本 Sprint【重构】了样式**——抽公共 / 参数化 / 移动位置时才跑；纯新增样式不适用）：
        用项目**已装**的预处理器分别编译改动前后的样式段，再
-       `python3 .aidp/skills/code-verification-loop/scripts/check_css_equivalence.py <old.css> <new.css> --json`
+       `python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/check_css_equivalence.py <old.css> <new.css> --json`
        —— 这是 `code-verification-loop` **维度 14** 的硬门脚本（归一规则 / 刻意不归一项 / 基线有效性判定 /
        「仅顺序变化」分档**单一信源见该维度**，本处不复述）。**⚠️ 与 ③ 并列、不互相替代**：
        ③ 末尾的「单文件编译」只验**语法能不能编过**，⑤ 验的是**编出来的产物有没有变**——重构的定义就是产物不变。
@@ -341,10 +341,10 @@ Step 4.5: ★ 文件复杂度 + 复用封装自检
     • 跨页面/跨模块复用 → 提升到 `code/frontend/{子项目}/src/common|shared|composables|utils/`
   → ★ **视觉单元第 2 次出现即抽**（卡片 / 列表行 / 空态块 / 统计格 / 栅格容器 / 公共样式段）——
     不等第三次，「复制 + 登记技术债」不是合法出路。详规单一信源 =
-    `.aidp/rules/frontend.md`「约定 20 前端特例」20F.1–20F.4
+    `{{AIDP_HOME}}/rules/frontend.md`「约定 20 前端特例」20F.1–20F.4
   → 反过来禁止过度抽象：**逻辑**复用 3 次以下不抽（⛔ 本句不适用于上面的视觉单元，
     也不适用于**判据类逻辑**——URL/base 拼装、鉴权头组装、租户解析、时间格式化、金额换算、
-    字段归一/脱敏**散落 ≥2 处即须收敛**，见 `.aidp/rules/code.md` 约定 20）
+    字段归一/脱敏**散落 ≥2 处即须收敛**，见 `{{AIDP_HOME}}/rules/code.md` 约定 20）
   → SRP：单组件单一视觉职责；忌"瑞士军刀"组件
   → 兜底说明：本步骤是"开发期更早自检"，sprint-test 期会被 `code-verification-loop`
     SKILL「代码质量」维度表格的"文件复杂度 + 复用封装"子项 + 配套脚本
@@ -390,13 +390,13 @@ Step 5: ★ README 强制维护
 **第一动作 = 判定，而不是实现**：
 
 ```bash
-python3 .aidp/scripts/check_webmcp.py --detect --json   # → {"enabled": true|false, "source": "..."}
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json   # → {"enabled": true|false, "source": "..."}
 ```
 
 | 判定 | 本节行为 |
 | :- | :- |
 | **`enabled: false`（默认，绝大多数项目）** | **整节跳过**。不写任何相关代码、不产任何产物位、不发任何告警、界面上不出现任何相关元素 |
-| `enabled: true` | **第一动作 = 确保详规已安装**：`python3 .aidp/scripts/check_webmcp.py --install-rule`（幂等）——详规默认**不在** `rules/` 下（模板位 `.aidp/templates/optional-rules/webmcp.md`），未装则永远不会自动加载。装好后按 **`.aidp/rules/webmcp.md`** 执行 |
+| `enabled: true` | **第一动作 = 确保详规已安装**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`（幂等）——详规默认**不在** `rules/` 下（模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），未装则永远不会自动加载。装好后按 **`{{AIDP_HOME}}/rules/webmcp.md`** 执行 |
 
 **★ 一次性推荐提示（仅当项目【从未做过】该决策时）**：本项目既未启用、PRD 也无 `webmcp` 段（即
 `source` 为「未声明（默认关闭）」）且本 Sprint 确在写**带业务操作面的前端页面**时，**可在本 Sprint 汇报里

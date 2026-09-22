@@ -15,17 +15,17 @@
 > - **★ 本地 `handoff_fail_streak` 兜底熔断（不只依赖 autopilot 侧 `dev_fail_streak`，缩短跨命令熔断链）**：
 >   **计数时机 = 发起交接那一刻就 +1，不是"二次进入时才 +1"**（⚠️ 后者的递增条件不可达：autopilot 子流程 R 自己 `exit 1` 后**根本不会 invoke 回本命令**，"二次进入"这个事件永远不发生，计数恒 0、熔断永不触发）。落地：
 >   ```bash
->   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+>   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 >   # 发起交接【之前】先记账（⛔ 记账唯一落点在下方 autopilot_fail_handle.py，本行只读当前值用于日志）
->   N=$(python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" get handoff_fail_streak --default 0)
+>   N=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get handoff_fail_streak --default 0)
 >   ```
 >   **清零不在本片**：本片只在 `NEED_HANDOFF=1` 时被 Read，而清零要在 `NEED_HANDOFF=0` 的成功分支执行——
 >   落点在 `phase-0-6.md` 的「✅ AI执行报告骨架就绪」分支与 `phase-3-3.md` 的「✅ 完成核验」分支，两处均为可执行语句。
 >   **连续 ≥3 次交接仍拿不回齐全报告**时本命令**本地**冻结本版——记账/判阈/四件套/#4 一次做完
 >   （**替代**上面那次裸 `bump`：⛔ 别两处都记账，否则一轮交接记两次、阈值提前一半到达）：
 >   ```bash
->   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
->   python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+>   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+>   python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
 >     --phase 0.6-handoff --reason handoff-exhausted --streak-key handoff_fail_streak \
 >     --threshold "${HANDOFF_FAIL_THRESHOLD:-3}" \
 >     --why "连续多次交接仍拿不回齐全 AI执行报告"

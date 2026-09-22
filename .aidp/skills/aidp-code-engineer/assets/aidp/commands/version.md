@@ -28,6 +28,8 @@
 
 ## 前置流程
 
+**VCS 能力门（先于补跑短路和 Step 1）**：调用 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 取得 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 取得 `{user}`。`git` 保持原规划/发布流程；`none` 仍允许本地版本规划；`--finalize-docs` 只有能从可信本地发布台账核实未发布状态才允许本地整理，否则在任何文档改写前 fail-closed 并报告「无法核实已发布状态」，不得拿缺 tag 当未发布。其中 Git-only tag 核验、commit/push 均记 `unsupported:vcs-disabled`（非 passed），不得据此认定已发布。任何正式发布路径（含 `--release`、普通情况 B-3、`--no-tag` 准发布）的 tag/分支/push 在 `vcs_mode=none` 下一律 fail-closed：发布操作开始前退出，明确报告 `unsupported:vcs-disabled`，不写 `internal_released_at` 或发布完成标记、不得宣布已发布。`--rebuild-baseline` 在无 Git 时只可处理不依赖 tag 的未发布本地基线；无法确认是否已发布则停止，不改写可能已发布的产物。此门不改变 Git 模式的发布语义。
+
 1. **{version}** ← 命令参数（显式提供，不从项目记忆文件读取）
 2. **{user}** ← `git config user.name`
 3. 校验 {version} 格式；不合法时按 `docs/init/06_版本与用户目录约定.md` 第 6 节话术重问。
@@ -47,8 +49,8 @@
 - **环境确认门**：Step 3.3.7.9 的「全量基线从哪个环境导出」确认门**照常弹**（属发布路径允许交互的
   四处结构化门之一，见 `release-1.md`）；`--unattended` 下按其既定无人值守分支处理。
 - **提交**：自行 `git add docs/deployment/{version}/` + commit（消息 `docs({version}): rebuild-baseline 补齐双轨部署基线`）
-  + push 本分支，**绝不打 tag、不建/不推版本分支**。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 .aidp/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
-  > 🔗 约定 24 提交前门禁同其余 commit 路径（`git commit` 前跑 `python3 .aidp/scripts/commit_gate.py --quiet`；单一信源 = 约定 24）。
+  + push 本分支，**绝不打 tag、不建/不推版本分支**。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
+  > 🔗 约定 24 提交前门禁同其余 commit 路径（`git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet`；单一信源 = 约定 24）。
 - **完成播报**：打印本次产出的全量轨文件数 + 机器门 12 项结果 + 台账剩余未决项。
 
 ## `--finalize-docs` 补跑短路（发布期文档整理）
@@ -56,11 +58,11 @@
 > 用于**发布时 Step 3.3.7 / 3.3.10 / 3.3.11 / 3.3.13 因流程脆弱触发失败兜底被跳过**后，一键事后补齐——不必重跑整个 `/version`、不重新打 tag。当本次调用带 `--finalize-docs` 时**在 Step 1 模式决议之前短路**：
 
 - **前置**：{version} 必须**已存在版本规划产物**（`docs/design/detail/{version}/` 或 `docs/plans/{version}/` 存在）；否则报错「{version} 尚未规划，请先 `/version {version}` 规划/发布」并退出。
-- **★ 已发布版本保护**：{version} 已打 tag 时同 `--rebuild-baseline` 的「已发布版本保护」——交互式先过改写授权门、无人值守拒绝执行并登记欠账；获授权后各步以 tag 对应代码为事实源（`git worktree add` 取 tag 工作树）。
+- **★ 已发布版本保护**：`vcs_mode=none` 时，在读取欠账或改写任何文件之前先核对项目记忆中的版本状态与 baseline `internal_released_at`、本地发布台账；任一显示已发布或互相矛盾、缺失而无法核实已发布状态 → fail-closed 退出并报告 `unsupported:vcs-disabled`，不执行五步、不勾销欠账（不能用无 tag 推断未发布）。仅有明确一致的「未发布」本地状态才可做本地文档整理，Git 提交/推送记 skipped。`vcs_mode=git` 时已打 tag 同 `--rebuild-baseline` 的「已发布版本保护」——交互式先过改写授权门、无人值守拒绝执行并登记欠账；获授权后各步以 tag 对应代码为事实源（`git worktree add` 取 tag 工作树）。
 - **只跑五步、按序**：① **Step 3.3.9.5**（收口开发期变更台账 —— ⛔ 必须先于 3.3.10，否则台账内容赶不上主文档合并）② **Step 3.3.7**（部署产物整理完善——A/B/C 三部分，**B/C 独立强制执行**，见其解耦说明）③ **Step 3.3.10**（版本规划文档收敛——历史归一 + 取代链消解 + 族级/项级粒度合并）④ **Step 3.3.11**（全量详细设计重算——**默认变更范围增量**〔只重算动过的专题、其余前滚，见 `release-6.md`〕，可叠 `--full-rebuild` 强制全量；带 `--no-tag` 时同正式发布口径跳过，纯 `--finalize-docs` 视为正式补跑、执行）⑤ **Step 3.3.13**（代码内版本标识对齐复核——补跑场景下**只复核 + 更新台账状态**，不自动改代码〔改代码须回正式发布的交互式确认门〕）。**跳过**其余全部（Step 0 ~ 3.3.5、Step 3.3.8/3.3.9/3.3.12bis、Step 3.4.x 发布提交/打 tag）。
 - **★ 欠账驱动**：开始先读 `docs/audit/{version}/发布欠账.md`（若存在）——**优先补齐其中登记的跳过项**（按「精确定位」逐条处理），补齐成功即 `release_debt.py resolve` 勾销对应步骤；台账不存在则对四步全量重跑一遍（幂等：已整理干净的族/产物 no-op、不重复动）。
-- **提交**：本短路**自行 `git add` 四步产物 + commit**（消息 `docs({version}): finalize-docs 补齐发布期整理`）+ `git push` 本分支，但**绝不打 tag、不推送 tag、不建/不推版本分支**（tag 与大写版本分支都仍由正式 `/version {version}` 管控）。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 .aidp/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
-  > 🔗 **约定 24 提交前门禁（本命令所有 commit 路径通用，不复述细节）**：`git commit` 前先跑 `python3 .aidp/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit；判定字段与处置**单一信源 = 约定 24**。
+- **提交**：本短路**自行 `git add` 四步产物 + commit**（消息 `docs({version}): finalize-docs 补齐发布期整理`）+ `git push` 本分支，但**绝不打 tag、不推送 tag、不建/不推版本分支**（tag 与大写版本分支都仍由正式 `/version {version}` 管控）。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
+  > 🔗 **约定 24 提交前门禁（本命令所有 commit 路径通用，不复述细节）**：`git commit` 前先跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit；判定字段与处置**单一信源 = 约定 24**。
 - **无人值守**：`--finalize-docs --unattended` 下五步失败兜底走无人值守分支（WARN + 台账登记、不弹窗）。
 - **完成播报**：打印本次补齐结果（收敛 N 族 / 全量重算成功与否 / 部署产物完善项）+ 台账剩余未决项（仍需人工处理的「待人工合并清单」）。
 
@@ -70,7 +72,7 @@
 
 **登记时机**：上述任一步骤的**某项 / 某族**因守恒失败 / 语义无法机械收敛 / 联动删除引用不一致 / 解析异常 / 编号冲突无法自动重编 / **代码内自报版本与发布版本不一致（无人值守下不自动改）**而被跳过时登记一条。
 
-**读写唯一入口 = `python3 .aidp/scripts/release_debt.py`**（⛔ 不手写 `echo >>`；条目格式、幂等、状态字段均由脚本保证）：
+**读写唯一入口 = `python3 {{AIDP_HOME}}/scripts/release_debt.py`**（⛔ 不手写 `echo >>`；条目格式、幂等、状态字段均由脚本保证）：
 
 | 动作 | 命令 |
 |---|---|
@@ -138,11 +140,11 @@ done
 - 移动后随版本规划产物一并 commit（或单独 `chore(归位): 根目录 PRD/原型 → AIDP {version} 目录`）。
 - **不自动判定的兜底**：根目录若有名字未命中、但含大量 `.html/.vue/.jsx` 的目录（疑似 vibe coding 导出原型），**只在确认问询里列出供用户人工勾选**，不自动归类。
 
-> 📎 **本文档章节体系过渡说明**：`Step N` 连续编号**只覆盖到 Step 1 为止**（Step 0 前置组 → Step 1 判断执行模式，线性必经）。Step 1 决议出分支后，本文档改按**分支流程章节**组织——「版本规划流程（情况 A / B-2）」「版本发布流程（情况 B-3）」「情况 C：版本已发布」；各分支内部的 `Step 2.x` / `Step 3.x` 编号在其**外置分片**（`.aidp/flows/version/planning-N.md` / `release-N.md`）内延续，本文档只保留骨架索引表。下方「角色：PM Agent」是贯穿全流程的角色声明，不占 Step 序号。
+> 📎 **本文档章节体系过渡说明**：`Step N` 连续编号**只覆盖到 Step 1 为止**（Step 0 前置组 → Step 1 判断执行模式，线性必经）。Step 1 决议出分支后，本文档改按**分支流程章节**组织——「版本规划流程（情况 A / B-2）」「版本发布流程（情况 B-3）」「情况 C：版本已发布」；各分支内部的 `Step 2.x` / `Step 3.x` 编号在其**外置分片**（`{{AIDP_HOME}}/flows/version/planning-N.md` / `release-N.md`）内延续，本文档只保留骨架索引表。下方「角色：PM Agent」是贯穿全流程的角色声明，不占 Step 序号。
 
 ## 角色：PM Agent
 
-读取 `.aidp/agents/pm.md` 获取角色定义。
+读取 `{{AIDP_HOME}}/agents/pm.md` 获取角色定义。
 
 ## Step 1：判断执行模式
 
@@ -189,7 +191,7 @@ done
 
 ## 版本规划流程（情况 A 全量 / B-2 补充）
 
-> ⛔⛔ **详细步骤已外置为 8 个分片、进入版本规划流程的【第一动作】= 按需加载**：Step 2.0–2.8 的完整步骤外置到 **`.aidp/flows/version/planning-1.md` … `planning-8.md`**（每片 ≤20KB）。**按 Step 进度依次 `Read` 对应分片、逐项执行**——下方骨架表的「分片」列给出每组 Step 落在哪一片；**权威判定一律以对应分片正文为准，绝不凭骨架或记忆略过任一子步骤/硬门**。进入本流程先 `Read planning-1.md` 起步，随 Step 推进再 `Read` 后续分片。
+> ⛔⛔ **详细步骤已外置为 8 个分片、进入版本规划流程的【第一动作】= 按需加载**：Step 2.0–2.8 的完整步骤外置到 **`{{AIDP_HOME}}/flows/version/planning-1.md` … `planning-8.md`**（每片 ≤20KB）。**按 Step 进度依次 `Read` 对应分片、逐项执行**——下方骨架表的「分片」列给出每组 Step 落在哪一片；**权威判定一律以对应分片正文为准，绝不凭骨架或记忆略过任一子步骤/硬门**。进入本流程先 `Read planning-1.md` 起步，随 Step 推进再 `Read` 后续分片。
 >
 > ⛔ **关键硬门（详见 `planning-7.md`）**：Step 2.4.7「版本规划产物全量审计」是**强制执行铁律**——独立子 Agent 隔离上下文跑 8 项审计（含 Critical 硬门 C-4/C-5/F/G），唯一合法跳过 = `--skip-audit`；补充模式（B-2）绝不覆盖主文档、只产 `NN_<业务主题>.md` 增量并登记 `00_索引.md`。
 
@@ -223,7 +225,7 @@ done
 
 > 对应 Step 1 模式决议的 **B-3 分支**（版本已存在 + 状态「🚧 开发中」 + 用户经 `--release` 或交互选择"发布版本"）。B-1 无操作退出 / B-2 走补充模式（上方版本规划流程）/ B-3 才进入本节正式发布。
 
-> ⛔⛔ **详细步骤已外置为 9 个分片、进入版本发布流程的【第一动作】= 按需加载**：交互式发布决策纪律 + tag 风格识别约定 + Step 3.1–3.6 的完整步骤外置到 **`.aidp/flows/version/release-1.md` … `release-7.md` / `release-7b.md` / `release-7c.md`**（每片 ≤20KB；Step 3.5/3.6 切分到 `release-7b.md`、Step 3.4.4 失败处置切分到 `release-7c.md`）。**按 Step 进度依次 `Read` 对应分片、逐项执行**——下方骨架表的「分片」列给出每组 Step 落在哪一片；**权威判定一律以对应分片正文为准，绝不凭骨架或记忆略过任一子步骤/硬门**。进入本流程先 `Read release-1.md` 起步（决策纪律 + tag 约定 + 前置检查），随 Step 推进再 `Read` 后续分片。
+> ⛔⛔ **详细步骤已外置为 9 个分片、进入版本发布流程的【第一动作】= 按需加载**：交互式发布决策纪律 + tag 风格识别约定 + Step 3.1–3.6 的完整步骤外置到 **`{{AIDP_HOME}}/flows/version/release-1.md` … `release-7.md` / `release-7b.md` / `release-7c.md`**（每片 ≤20KB；Step 3.5/3.6 切分到 `release-7b.md`、Step 3.4.4 失败处置切分到 `release-7c.md`）。**按 Step 进度依次 `Read` 对应分片、逐项执行**——下方骨架表的「分片」列给出每组 Step 落在哪一片；**权威判定一律以对应分片正文为准，绝不凭骨架或记忆略过任一子步骤/硬门**。进入本流程先 `Read release-1.md` 起步（决策纪律 + tag 约定 + 前置检查），随 Step 推进再 `Read` 后续分片。
 >
 > ⛔ **关键硬门（详见 `release-1.md`）**：**交互式发布 = 全量执行**——发布一经启动即全量跑完 Step 3.1 → 3.6，中途绝不弹「是否继续 / 是否发布 / 要不要先验证」；允许交互的结构化门共**四处**（3.1 P0 强制发布确认 / 3.3.7.9 全量基线环境 / 3.3.13 版本标识**复检仍不一致**那一格 / **3.4.2.2 移动已发布 tag 的授权门**，白名单单一信源见 `release-1.md`）；⛔ 每次 `AskUserQuestion` 前须先指名它是白名单哪一项，指不出来即违规（前置自检见 `release-1.md`）
 
@@ -270,7 +272,7 @@ done
 |------------|----------|
 | 规划/发布模式自动判定 | [Step 1](#step-1判断执行模式) |
 | 版本历史表（`memory/{version}/{user}/progress.md`，跨用户以最早规划者为权威） | [Step 2.5](../flows/version/planning-8.md) / [Step 3.3](../flows/version/release-2.md) |
-| 代码内本应用版本号（`pom.xml` / `package.json` / `build.gradle` / `Cargo.toml` / `pyproject.toml` / `Dockerfile`）随版本号同步 | **规划期改齐** [Step 2.7.3](../flows/version/planning-8.md) → **发布期复核兜底** [Step 3.3.13](../flows/version/release-6.md)（同一实现 `.aidp/scripts/check_version_identifier.py`）|
+| 代码内本应用版本号（`pom.xml` / `package.json` / `build.gradle` / `Cargo.toml` / `pyproject.toml` / `Dockerfile`）随版本号同步 | **规划期改齐** [Step 2.7.3](../flows/version/planning-8.md) → **发布期复核兜底** [Step 3.3.13](../flows/version/release-6.md)（同一实现 `{{AIDP_HOME}}/scripts/check_version_identifier.py`）|
 | 未关闭 Sprint 自动 `/sprint-close` | [Step 3.1](../flows/version/release-1.md) |
 | 版本更新日志.md（版本概览表 + 详情区块，倒叙置顶） | [Step 3.3.5](../flows/version/release-2.md) |
 | 打 tag + 自动 commit/push | [Step 3.4](../flows/version/release-7.md) |

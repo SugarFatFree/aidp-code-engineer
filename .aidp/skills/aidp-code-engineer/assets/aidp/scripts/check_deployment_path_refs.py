@@ -19,7 +19,7 @@
 
 ## 判定口径（与 verify.py::check_deployment_two_track_layout 同源）
 
-扫全仓 `.md`（默认排除 `.aidp/skills/`：SKILL 本体 + 脚手架 bundle 镜像，本体改完由
+扫全仓 `.md`（默认排除 `AIDP_HOME/skills/`：SKILL 本体 + 脚手架 bundle 镜像，本体改完由
 `mirror_to_bundle.py` 单向同步，重复报只产生双份噪音），对每一处 `docs/deployment/<版本>/` 路径：
 
 1. `…/sql/` 之后的**下一个路径段**不是 `增量` / `全量` → 违规
@@ -47,9 +47,9 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_deployment_path_refs.py            # 人读报告
-    python3 .aidp/scripts/check_deployment_path_refs.py --json     # 机读 JSON
-    python3 .aidp/scripts/check_deployment_path_refs.py --root . --path .aidp/flows
+    python3 AIDP_HOME/scripts/check_deployment_path_refs.py            # 人读报告
+    python3 AIDP_HOME/scripts/check_deployment_path_refs.py --json     # 机读 JSON
+    python3 AIDP_HOME/scripts/check_deployment_path_refs.py --root . --path AIDP_HOME/flows
 
 级别 **ERROR**（同 `verify.py` 那道文件系统门：旧结构 = 静默丢产物，不是风格问题）。
 退出码：0 = 全部两轨写法；1 = 检出旧结构写法；2 = 用法/读取错误。
@@ -63,7 +63,7 @@ import sys
 # 默认扫全仓；这些目录不下钻（SKILL 本体 / 依赖 / 产物）
 EXCLUDE_DIRS = {
     ".git", "node_modules", "__pycache__", "dist", "build", ".venv",
-    "skills",  # `.aidp/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
+    "skills",  # `AIDP_HOME/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
 }
 # ★ 前缀式排除：`.aidp-backup-<时间戳>` 目录名带时间戳，永远命中不了上面的精确名集合。
 #   备份是冻结的历史副本（按定义就装着旧结构），不排除会让每个做过 upgrade 的下游恒红。

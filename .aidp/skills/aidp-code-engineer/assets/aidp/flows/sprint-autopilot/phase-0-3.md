@@ -25,12 +25,12 @@ GIT_USER=$(git config user.name 2>/dev/null | tr -d ' '); [ -z "$GIT_USER" ] && 
 #   单一信源，与 /sprint-aiauto-test 0.1.1.4 同源；用法详见 scripts/README.md）；
 # ⚠️ 脚本缺失（脚手架未下发 / 旧版）→ 走内联 python 合并兜底，**绝不因单点脚本缺失写不出 .mcp.json**
 #   （并建议重跑 aidp-code-engineer upgrade 补回脚本——已达目标版本也会自愈下发，见 migrate）。
-if [ -f .aidp/scripts/chrome-mcp-doctor.py ]; then
-  python3 .aidp/scripts/chrome-mcp-doctor.py set --ip "$CHROME_IP"; DOCTOR_RC=$?
+if [ -f {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py ]; then
+  python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py set --ip "$CHROME_IP"; DOCTOR_RC=$?
   # 退出码：0 就绪 / 4 远端不可达（脚本已打印 Chrome 启动参数；/loop 下不阻塞、留给 aiauto-test 复检）
   #         / 5 全局插件被写脏（按脚本打印的卸载重装复位，⛔ 绝不手改 ~/.claude/plugins 下任何全局文件）
 else
-  echo "  ⚠️ .aidp/scripts/chrome-mcp-doctor.py 缺失 → 走内联兜底写 .mcp.json（建议重跑 aidp-code-engineer upgrade 补回）"
+  echo "  ⚠️ {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py 缺失 → 走内联兜底写 .mcp.json（建议重跑 aidp-code-engineer upgrade 补回）"
   python3 - ".mcp.json" "chrome-${GIT_USER}" "http://${CHROME_IP}" <<'PY'
 import json, os, sys
 path, name, url = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -52,6 +52,8 @@ fi
 
 ### 0.1 拉取远端全部分支 + 当前分支最新代码 + 脏树决策门
 
+> **`vcs_mode=none` 前置出口**：先消费命令入口经 `{{AIDP_HOME}}/scripts/vcs.py` 检测的模式；无 Git 时整段 fetch/pull/脏树门跳过并记录 `status=skipped, reason=unsupported:vcs-disabled`，直接继续 Phase 0.3 的本地 PRD 扫描。不运行下方 Bash 块，不把 Git 命令失败当 `dirty-tree` / `git-pull-conflict`，不冻结本地开发。`git` 时下方原流程不变。
+
 > 排在 0.0 之后：进入本节时 **通知渠道就绪已打印**（0.0 完成），故脏树**不静默 `exit 1` 击穿前置交互**——非 PRD 改动走下方「脏树决策门」（交互三选一 / `/loop` 安全默认）。
 
 ★ **为什么仍要先拉码**：定时执行（`/loop` 唤起 / OS cron）时，产品可能刚 push 了新 PRD 到 origin；命令端不先拉则本地 git log 仍是旧版本，Phase 1 baseline 检测会误判"PRD 无变化"漏跑。**先 `git fetch --all` 拉全部分支**（产品/其他成员可能把新 PRD 或 Sprint 推到非当前分支，全分支 fetch 才不漏；也让后续版本扫描看得到所有分支的 close 记录），**再对当前分支 `git pull --rebase` 取最新代码**。
@@ -70,12 +72,12 @@ if [ -f "$BASELINE_FILE" ] && [ -n "$(jq -r '.preflight_frozen_at // empty' "$BA
   # ⛔ 解冻判据必须与冻结原因**同域**：只有 0.1 自己那些 reason（脏树 / detached / pull 冲突 /
   #    远端不可达）才由"树干净 + 远端可达"证明已恢复。对 `prd-root-missing` 这类**非 0.1 域**的原因，
   #    该条件在树干净时恒成立 ⇒ 每 tick 解冻→再冻结，形成 4-tick 周期震荡、人也看不出到底冻没冻。
-  _PF_R=$(python3 .aidp/scripts/baseline_edit.py get preflight_fail_reason --default "")
+  _PF_R=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get preflight_fail_reason --default "")
   case "$_PF_R" in ""|detached-head|git-pull-conflict|git-fetch-failed|dirty-tree|remote-unreachable) _PF_SAME_SCOPE=1 ;; *) _PF_SAME_SCOPE=0 ;; esac
   # dirty-tree：无人值守下脏树本就走 --autostash 拉码，恢复证据只需远端可达（树不必干净）
   _PF_TREE_OK=0; { [ "$_PF_R" = "dirty-tree" ] || [ -z "$(git status --porcelain 2>/dev/null)" ]; } && _PF_TREE_OK=1
   if [ "$_PF_SAME_SCOPE" = "1" ] && [ "$_PF_TREE_OK" = "1" ] && git fetch --dry-run >/dev/null 2>&1; then
-    python3 .aidp/scripts/baseline_edit.py del preflight_frozen_at preflight_fail_streak preflight_fail_reason
+    python3 {{AIDP_HOME}}/scripts/baseline_edit.py del preflight_frozen_at preflight_fail_streak preflight_fail_reason
     echo "🔓 前置冻结自动解除（工作区已干净 + 远端可达）→ 继续本 tick"
   elif [ "$_PF_SAME_SCOPE" = "1" ]; then
     # 0.1 自己那几个 reason：条件未恢复 → 本 tick 确实无法拉码，让位
@@ -93,11 +95,11 @@ fi
 # ⛔ 全部经 baseline_edit.py 加锁写（invariants「baseline 单一写入口不变式」）：
 #    Phase 0 每 tick 都跑，与测试 loop 的 5m 写窗高频重叠；裸 `jq … > tmp && mv` 会整份覆盖
 #    对方刚落的心跳 / ai_report_finalized / 各 streak（后者会让熔断永不达阈）。
-BE="python3 .aidp/scripts/baseline_edit.py"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 _preflight_fail() {   # $1=reason(机读类别，如 detached-head / git-pull-conflict) $2=人读摘要
   # 记账 → 判阈 → 冻结 → 发 #4 全归 autopilot_fail_handle.py --preflight（⛔ 别在这另写一份，
   # 「发 #4」曾长期只是一句 echo 文案，而本处是最上游的冻结点、三道门都盖不到，见 rationale.md）
-  python3 .aidp/scripts/autopilot_fail_handle.py --preflight \
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --preflight \
     --reason "$1" --why "$2" --threshold "$PREFLIGHT_THRESHOLD"
   exit 0   # 让位本 tick（已记账 + 已告警），⛔ 不是 exit 1 让 /loop 空撞
 }
@@ -116,7 +118,7 @@ else
   # ⛔ 排除表必须覆盖**每 tick 必产且无人 commit** 的产物（AI执行/测试报告、截图、审计、bugfix 记录、
   #    测试链路写的研发自测文件〔问题汇总清单 / 环境账号 / 探针档案〕、`.mcp.json`）：漏排 ⇒ 脏树恒非空 ⇒
   #    跳过拉码 ⇒ 产品推到 origin 的新 PRD 永远看不见、下一版本永不启动。
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
   DIRTY_NON_PRD=$(git status --porcelain | grep -vE "^.. (docs/requirements/|docs/reports/|docs/bugfix/|docs/audit/|docs/testing/[^/]+/研发自测/|\.mcp\.json|memory/\.sprint-autopilot-baseline\.json)")
   if [ -n "$DIRTY_NON_PRD" ]; then
     echo "⚠️ 工作区有非 PRD 未 commit 改动（绝不静默退出）："
@@ -166,18 +168,12 @@ else
   fi
 fi
 
-# 前置检查走完且工作区干净 → 清零前置熔断计数（落地「特别说明」的"成功一次自动清零/解冻"）
-# ⛔ **必须按 reason 分辨作用域，不能无条件清**：本行位于 0.1，每 tick 必跑；而**同一个**
-#    `preflight_fail_streak` 还被 0.1 之后的三个失败点复用（0.3.1 PRD root 缺失 /
-#    0.4 遗留 Sprint 收口失败 / 0.7 收尾钢门）。无条件清零 ⇒ 那三类失败每 tick 都被重置回 0、
-#    **永远达不到阈值 3**：既不冻结、也不停，只是每 10 分钟刷一次 #4 通知，无限刷屏且永不推进
-#    （工作区干净正是 7×24 常态，所以这条 100% 成立）。
-#    正确口径：只清**本段自己**产生的那些 reason（0.1 作用域）；其余 reason 说明失败发生在
-#    后续步骤，本段无权判定它是否已恢复，留给各自的成功路径去清。
-PF_REASON=$(python3 .aidp/scripts/baseline_edit.py get preflight_fail_reason --default "")
+# 工作区恢复后只清 0.1 自己的失败原因；其它前置熔断由各自成功路径清零。
+# ⛔ 不按 reason 隔离会让后续失败计数每 tick 被重置，熔断永不达阈；根因见 rationale.md。
+PF_REASON=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get preflight_fail_reason --default "")
 case "$PF_REASON" in
   ""|detached-head|git-pull-conflict|git-fetch-failed|dirty-tree|remote-unreachable)
-    [ -z "$DIRTY_TREE" ] && python3 .aidp/scripts/baseline_edit.py \
+    [ -z "$DIRTY_TREE" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py \
       del preflight_fail_streak preflight_frozen_at preflight_fail_reason || true ;;
   *)
     echo "ℹ️ 前置计数保留（reason=$PF_REASON 属 0.1 之后的失败点，由其成功路径自行清零）" ;;

@@ -48,8 +48,8 @@ bugfix 记录、测试目录 `docs/testing/{version}/sprint-{NNN}/`、归档记�
 
 ## 用法
 
-    python3 .aidp/scripts/check_sprint_numbering.py next [--root .] [--json]
-    python3 .aidp/scripts/check_sprint_numbering.py check [--root .] [--json]
+    python3 AIDP_HOME/scripts/check_sprint_numbering.py next [--root .] [--json]
+    python3 AIDP_HOME/scripts/check_sprint_numbering.py check [--root .] [--json]
 
 退出码：`0`=通过 / `1`=检出问题 / `2`=用法或读取错误。
 """

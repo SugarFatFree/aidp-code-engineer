@@ -35,10 +35,16 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_step_index_coverage.py [--root <仓库根>] [--json]
+    python3 AIDP_HOME/scripts/check_step_index_coverage.py [--root <仓库根>] [--json]
 
 退出码：`0`=双向覆盖一致 / `1`=检出缺口 / `2`=用法或读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -92,8 +98,8 @@ def _norm(n):
 
 
 def collect(root):
-    cmds_dir = os.path.join(root, ".aidp", "commands")
-    flows_dir = os.path.join(root, ".aidp", "flows")
+    cmds_dir = os.path.join(root, runtime_relpath("", __file__), "commands")
+    flows_dir = os.path.join(root, runtime_relpath("", __file__), "flows")
     if not (os.path.isdir(cmds_dir) and os.path.isdir(flows_dir)):
         return None
     out = {}
@@ -146,7 +152,7 @@ def collect(root):
 def run(root):
     data = collect(root)
     if data is None:
-        return {"applicable": False, "reason": "缺 .aidp/commands 或 .aidp/flows，跳过",
+        return {"applicable": False, "reason": runtime_text('缺 __AIDP_HOME__/commands 或 __AIDP_HOME__/flows，跳过', __file__),
                 "findings": [], "passed": True}
     findings = []
     for cmd, d in sorted(data.items()):

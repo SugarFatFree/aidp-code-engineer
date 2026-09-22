@@ -237,4 +237,4 @@
   ① **启动任何前后端服务**（`npm run dev` / `vite` / `mvn spring-boot:run` / `python manage.py runserver` 等）——会抢端口、与用户已运行的服务冲突、常驻进程前台阻塞会话；
   ② **执行完整打包构建**（`npm run build` / `vite build` / `mvn package` / `gradle build`）——OOM 与资源耗尽风险，且验收阶段并不需要部署产物。
 - **浏览器 / 运行时验证归 `/sprint-aiauto-test`**：需要真实点页面、看渲染、抓 console 错误的验证，一律经该命令的浏览器实测链路完成，**不在本 Agent 内联执行**。上表「浏览器兼容 / 响应式布局」等维度亦按此分工——本 Agent 只核对**用例是否覆盖了这些维度**，不亲自跑浏览器。
-- 详规见 `.aidp/rules/code.md`（编辑 `code/**` 时自动加载）与 `.aidp/reference/约定细则-4.md`。
+- 详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载）与 `{{AIDP_HOME}}/reference/约定细则-4.md`。

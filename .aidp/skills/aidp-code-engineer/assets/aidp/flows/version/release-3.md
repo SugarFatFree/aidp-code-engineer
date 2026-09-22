@@ -1,7 +1,7 @@
 # /version · 版本发布流程详情 — 分片 3/9
 
 > 本片覆盖：**Step 3.3.7 部署产物整理（含 3.3.7.1–3.3.7.6）**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 ### Step 3.3.7：★ 本版本部署产物整理完善（`docs/deployment/{version}/` 发布前优化整理）

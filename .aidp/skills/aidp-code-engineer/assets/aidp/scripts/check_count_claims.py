@@ -9,7 +9,7 @@ r"""check_count_claims.py — 文档里的「自称计数」必须与被数的�
 「3 个语义维度」会让执行体跑完第 3 个就收工，第 4 维静默不执行；
 「共 9 组」会让人以为测试套件只有 9 组、多出来的 7 组是不是野生的。
 一次审计一口气抓到三处过期：`aidp-compliance`「3 个语义维度」实为 4、
-`.aidp/scripts/README.md`「共 9 组」实为 16、`设计目标.md`「36 项核心约定」实为 37。
+`AIDP_HOME/scripts/README.md`「共 9 组」实为 16、`设计目标.md`「36 项核心约定」实为 37。
 
 计数**天然是确定性的**——被数的东西就在仓库里、数得出来。这类东西不该靠人记得回头改。
 
@@ -24,10 +24,10 @@ r"""check_count_claims.py — 文档里的「自称计数」必须与被数的�
    （与 verify.py 的差别：那边只扫 4 个固定文件、本脚本扫全仓——「36 项核心约定」正是漂在
    `设计目标.md` 这种不在那 4 个之列的文件里。）
 2. **语义维度数** —— `N 个语义维度`
-   ⇢ 真值 = `.aidp/agents/aidp-compliance.md` 里 `### … 语义维度 N` 小节数。
+   ⇢ 真值 = `AIDP_HOME/agents/aidp-compliance.md` 里 `### … 语义维度 N` 小节数。
 3. **测试分组数** —— `共 N 组`，**且同一行提到 `test_guard_scripts`**（用行内共现锁定上下文，
    不写死文件名：换个 README 写同一句话照样被核）
-   ⇢ 真值 = `.aidp/scripts/tests/test_guard_scripts.py` 里 `print("【…】")` 的分组数。
+   ⇢ 真值 = `AIDP_HOME/scripts/tests/test_guard_scripts.py` 里 `print("【…】")` 的分组数。
 
 任一真值取不到（文件缺失/形态不符）→ 该类**整类跳过**、不猜、不报（下游可能没有 agents 目录）。
 
@@ -62,12 +62,18 @@ r"""check_count_claims.py — 文档里的「自称计数」必须与被数的�
 
 ## 用法
 
-    python3 .aidp/scripts/check_count_claims.py            # 人读报告
-    python3 .aidp/scripts/check_count_claims.py --json     # 机读 JSON
+    python3 AIDP_HOME/scripts/check_count_claims.py            # 人读报告
+    python3 AIDP_HOME/scripts/check_count_claims.py --json     # 机读 JSON
 
 级别 **ERROR**（过期计数会直接改变执行体的行为边界，不是文风问题）。
 退出码：0 = 全部计数一致；1 = 检出过期计数；2 = 用法/读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -76,7 +82,7 @@ import sys
 
 EXCLUDE_DIRS = {
     ".git", "node_modules", "__pycache__", "dist", "build", ".venv",
-    "skills",  # `.aidp/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
+    "skills",  # `AIDP_HOME/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
 }
 EXCLUDE_DIR_PREFIXES = (".aidp-backup",)
 
@@ -137,10 +143,10 @@ def _read(path):
 def convention_source(root):
     """「核心约定」正文权威文件。
 
-    模板仓库 = `.aidp/AIDP-AGENTS.md`（下发记忆源；根 AGENTS.md 只是模板自身维护记忆）；
+    模板仓库 = `AIDP_HOME/AIDP-AGENTS.md`（下发记忆源；根 AGENTS.md 只是模板自身维护记忆）；
     下游项目 = AGENTS.md 优先，仅 Claude Code 时 = CLAUDE.md。同 verify.py。
     """
-    paradigm = os.path.join(root, ".aidp", "AIDP-AGENTS.md")
+    paradigm = os.path.join(root, runtime_relpath("", __file__), "AIDP-AGENTS.md")
     if os.path.isfile(paradigm):
         return paradigm
     aidp = os.path.join(root, "AGENTS.md")
@@ -168,7 +174,7 @@ def truth_max_convention(root):
 
 def truth_semantic_dimensions(root):
     """真值：aidp-compliance.md 里 `### … 语义维度 N` 小节数；取不到返回 None。"""
-    path = os.path.join(root, ".aidp/agents/aidp-compliance.md")
+    path = os.path.join(root, runtime_text('__AIDP_HOME__/agents/aidp-compliance.md', __file__))
     body = _read(path)
     if not body:
         return None
@@ -199,7 +205,7 @@ def truth_goal_groups(root):
 
 def truth_guard_test_groups(root):
     """真值：test_guard_scripts.py 里 `print("【…】")` 的分组数；取不到返回 None。"""
-    path = os.path.join(root, ".aidp/scripts/tests/test_guard_scripts.py")
+    path = os.path.join(root, runtime_text('__AIDP_HOME__/scripts/tests/test_guard_scripts.py', __file__))
     body = _read(path)
     if not body:
         return None
@@ -212,7 +218,7 @@ def truth_guard_test_groups(root):
 
 def truth_release_gate_checks(root):
     """真值：release_baseline_check.py docstring 的「## 覆盖的 N 项校验」枚举条目数。"""
-    text = _read(os.path.join(root, ".aidp/scripts/release_baseline_check.py"))
+    text = _read(os.path.join(root, runtime_text('__AIDP_HOME__/scripts/release_baseline_check.py', __file__)))
     if text is None:
         return None
     m = re.search(r"##\s*覆盖的\s*\d+\s*项校验(.*?)\n\s*##", text, re.S)

@@ -27,6 +27,12 @@ r"""flow / 命令的 shell 围栏里，单引号字符串内不得出现 `\\n` �
 ⛔ 非代码块正文不查：散文里讲"要写 `\\n`"是合法的说明。
 豁免：行尾加 `# shell-escape-ignore` 或行内 `<!-- shell-escape-ignore -->`。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -56,7 +62,7 @@ def scan(root="."):
     root = os.path.abspath(root)
     findings, files, blocks = [], 0, 0
     for sub in SCAN_DIRS:
-        base = os.path.join(root, ".aidp", sub)
+        base = os.path.join(root, runtime_relpath("", __file__), sub)
         if not os.path.isdir(base):
             continue
         for cur, dirs, names in os.walk(base):
@@ -86,7 +92,7 @@ def scan(root="."):
                         continue
                     body = re.sub(r"^\s*>\s?", "", line)     # 剥引用块前缀
                     # 注释行不查：`# 台账在 versions.{V} 下` 这类是在**讲路径结构**，不是可执行代码
-                    _in_flow = (rel.replace("\\", "/").startswith(".aidp/flows/")
+                    _in_flow = (rel.replace("\\", "/").startswith(runtime_text('__AIDP_HOME__/flows/', __file__))
                                 and not body.lstrip().startswith("#"))
                     for pm in (PLACEHOLDER_RE.finditer(re.sub(r"'[^']*'", "", body))
                                if _in_flow else []):

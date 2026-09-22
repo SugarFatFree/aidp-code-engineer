@@ -75,7 +75,7 @@
 
 ## 六、WebMCP 带参浏览器（★ 可选段 — 项目未启用 WebMCP 时【整段删除】，不留空壳）
 
-> ⛔ **本段的产出规则是二值的**：`python3 .aidp/scripts/check_webmcp.py --detect --json` 判 `enabled: false`
+> ⛔ **本段的产出规则是二值的**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json` 判 `enabled: false`
 > （默认、绝大多数项目）→ **整段不写入生成的文件**；判 `enabled: true` → **本段即为必填**，
 > 且**必须填真实可复制执行的命令**，⛔ 不接受只留占位符。
 >

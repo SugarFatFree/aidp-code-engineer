@@ -21,7 +21,7 @@ emit-report.py — AI执行报告 / AI测试报告 的确定性产出器（防�
         如 risks 写成分组 dict / passRate 写成百分数）+ 校 `_integrity` checksum（发现手改；
         带 buildNo 的产物缺 `_integrity` 同样判疑似手改）。任一不过 → 退出码 4。
   emit 参数：
-      [--repo-root .] [--templates-root .aidp/templates/reports] [--reports-root docs/reports]
+      [--repo-root .] [--templates-root AIDP_HOME/templates/reports] [--reports-root docs/reports]
       [--baseline memory/.sprint-autopilot-baseline.json]
       [--record-baseline 0|1]   默认 1：把交付结果（报告链接）回写 baseline `report_deliveries.<build>.<exec_report|test_report>.url`
                                 供 ceremony-gate --stage final 校验；骨架阶段（ceremony-gate --stage skeleton 不校交付）传 0
@@ -40,6 +40,12 @@ emit-report.py — AI执行报告 / AI测试报告 的确定性产出器（防�
   此后任何测试结论变化——无论源于代码修复、产品口径澄清、还是用例范围调整——一律**铸新 build 跑新一轮**，
   绝不回写旧 build 的 data。本脚本检测目标 build 已 finalized → 拒绝写入并 exit 2（除非 --force-amend 修正笔误 + 留痕）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import glob
 import hashlib
@@ -151,7 +157,7 @@ def enrich_build_no(payload, build):
             payload["buildNo"] = int(m.group(1))
 
 
-# 契约（单一信源见 .aidp/templates/reports/{cn_dir}/data/示例_build1001.js + templates/reports/README.md）
+# 契约（单一信源见 AIDP_HOME/templates/reports/{cn_dir}/data/示例_build1001.js + templates/reports/README.md）
 _REQUIRED = {
     "test": ["build", "version", "buildNo", "summary", "cases"],
     "exec": ["build", "version", "buildNo", "overview", "steps", "features"],
@@ -349,7 +355,10 @@ def ensure_skeleton(report_dir, tpl_dir):
     if os.path.isfile(os.path.join(report_dir, "index.html")):
         return False
     if not os.path.isdir(tpl_dir):
-        raise FileNotFoundError(f"报告模板缺失：{tpl_dir}（请先重跑脚手架补 .aidp/templates/reports/）")
+        raise FileNotFoundError(runtime_text(
+            f"报告模板缺失：{tpl_dir}（请先重跑脚手架补 __AIDP_HOME__/templates/reports/）",
+            __file__,
+        ))
     os.makedirs(os.path.dirname(report_dir) or ".", exist_ok=True)
     shutil.copytree(tpl_dir, report_dir, dirs_exist_ok=True)
     # 清掉示例 data 文件 + 从各页移除其 <script> 注册行
@@ -652,7 +661,7 @@ def main():
     ap.add_argument("--build", required=True)
     ap.add_argument("--data", required=True, help="结果 JSON 文件（push 到全局容器的对象）")
     ap.add_argument("--repo-root", default=".")
-    ap.add_argument("--templates-root", default=".aidp/templates/reports")
+    ap.add_argument("--templates-root", default=runtime_text('__AIDP_HOME__/templates/reports', __file__))
     ap.add_argument("--reports-root", default="docs/reports")
     ap.add_argument("--baseline", default="memory/.sprint-autopilot-baseline.json")
     ap.add_argument("--record-baseline", type=int, choices=(0, 1), default=1)
@@ -752,7 +761,10 @@ def main():
                 tpl_ex = os.path.join(tpl_dir, "data", "示例_build1001.js")
                 msg = (f"数据契约校验未通过（{len(schema_errs)} 项）：\n  - "
                        + "\n  - ".join(schema_errs)
-                       + f"\n契约单一信源：{tpl_ex} + .aidp/templates/reports/README.md；"
+                       + runtime_text(
+                           f"\n契约单一信源：{tpl_ex} + __AIDP_HOME__/templates/reports/README.md；",
+                           __file__,
+                       )
                        + "写结果 JSON 前请先读示例文件对齐字段名/结构/单位。"
                        + "临时救火可加 --allow-schema-warn（会在 data 头部 schemaWarnings[] 留痕）。")
                 out["error"] = msg

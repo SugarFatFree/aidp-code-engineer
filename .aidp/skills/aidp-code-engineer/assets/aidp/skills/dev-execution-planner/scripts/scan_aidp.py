@@ -8,8 +8,8 @@ AIDP 命令与范式文档扫描脚本
 扫描项目中的 AIDP 配置、命令和范式文档，输出可用命令清单。
 
 扫描位置:
-  1. .aidp/ 目录或 .aidp.yml、aidp.json 配置文件
-  2. 项目根目录及 docs/、doc/、.aidp/ 下的 AIDP*.md 文档
+  1. AIDP_HOME/ 目录或 .aidp.yml、aidp.json 配置文件
+  2. 项目根目录及 docs/、doc/、AIDP_HOME/ 下的 AIDP*.md 文档
   3. package.json 的 scripts 字段
   4. Makefile / justfile / taskfile.yml 中定义的命令
   5. pom.xml 的 plugin 配置
@@ -24,18 +24,36 @@ import sys
 from pathlib import Path
 
 
+def _runtime_api():
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        scripts = parent / "scripts"
+        if (scripts / "aidp_runtime.py").is_file():
+            if str(scripts) not in sys.path:
+                sys.path.insert(0, str(scripts))
+            import aidp_runtime
+            anchor = scripts / "aidp_runtime.py"
+            return aidp_runtime, anchor
+    raise RuntimeError(f"找不到 AIDP 运行包: {here}")
+
+
+def _runtime_root() -> Path:
+    api, anchor = _runtime_api()
+    return api.runtime_root(anchor)
+
+
 def scan_aidp_config(root: Path) -> list:
-    """扫描 .aidp/ 目录和配置文件"""
+    """扫描 AIDP_HOME/ 目录和配置文件"""
     results = []
 
-    # .aidp/ 目录
-    aidp_dir = root / '.aidp'
+    # 当前脚本所属的 Agent 原生运行包
+    aidp_dir = _runtime_root()
     if aidp_dir.is_dir():
         results.append({
             "source": str(aidp_dir),
             "type": "aidp_directory",
             "commands": [],
-            "description": ".aidp/ 目录存在"
+            "description": "AIDP 运行包存在"
         })
         for f in aidp_dir.iterdir():
             if f.is_file():
@@ -63,7 +81,7 @@ def scan_aidp_config(root: Path) -> list:
 def scan_aidp_docs(root: Path) -> list:
     """扫描 AIDP*.md 文档"""
     results = []
-    search_dirs = [root, root / 'docs', root / 'doc', root / '.aidp']
+    search_dirs = [root, root / 'docs', root / 'doc', _runtime_root()]
 
     for search_dir in search_dirs:
         if not search_dir.is_dir():

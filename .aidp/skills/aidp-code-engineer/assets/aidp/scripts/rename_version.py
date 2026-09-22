@@ -11,7 +11,7 @@
 
 ## 三条容易踩的坑（本脚本内置处理）
 
-1. **不能无脑全库替换**：`.aidp/skills/` 与 `.aidp/scripts/tests/` 里的版本号是**范式示例
+1. **不能无脑全库替换**：`AIDP_HOME/skills/` 与 `AIDP_HOME/scripts/tests/` 里的版本号是**范式示例
    与测试夹具**（如 SKILL 文档里的 `docs/design/detail/V0.1.0/` 例子、单测里造的假版本目录），
    改了会破坏脚手架一致性和测试。这两处默认整棵排除。
 2. **pom 要扫全部层级**：多模块工程的 `<version>` 分散在父 pom 与各级子模块，
@@ -21,8 +21,8 @@
 
 ## 用法
 
-    python3 .aidp/scripts/rename_version.py V0.12.2 V0.13.0            # 计划（默认，只读）
-    python3 .aidp/scripts/rename_version.py V0.12.2 V0.13.0 --apply    # 执行
+    python3 AIDP_HOME/scripts/rename_version.py V0.12.2 V0.13.0            # 计划（默认，只读）
+    python3 AIDP_HOME/scripts/rename_version.py V0.12.2 V0.13.0 --apply    # 执行
 
 收尾恒打印**剩余命中清单 + 逐条豁免理由**，让人一眼确认零残留（而不是"脚本说完成了"）。
 **有未在豁免清单内的残留时退出码为 1**——零残留才 0，不给"跑完了但没改干净"留出口。
@@ -35,6 +35,12 @@
 它们的格式是裸版本号（`0.13.0` 而非 `V0.13.0`），由 `check_version_identifier.py` 对齐并校验，
 本脚本收尾会提示去跑它。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -46,7 +52,7 @@ VERSION_RE = re.compile(r"^V\d+\.\d+(\.\d+)?$")
 # 默认排除：范式示例 / 测试夹具 / 依赖与产物 / 版本控制目录
 EXCLUDE_DIR_PARTS = {".git", "node_modules", "dist", "build", "target", "vendor",
                      "__pycache__", ".idea", ".vscode", "coverage", "out"}
-EXCLUDE_PREFIXES = (".aidp/skills/", ".aidp/scripts/tests/")
+EXCLUDE_PREFIXES = (runtime_text('__AIDP_HOME__/skills/', __file__), runtime_text('__AIDP_HOME__/scripts/tests/', __file__))
 TEXT_SUFFIXES = {".md", ".py", ".sh", ".yml", ".yaml", ".json", ".xml", ".txt",
                  ".java", ".ts", ".js", ".vue", ".sql", ".properties", ".conf",
                  ".tpl", ".gradle", ".kts", ".toml", ".env", ".cfg", ".ini", ""}
@@ -183,9 +189,9 @@ def residue(root, old):
                 continue
             if not hits:
                 continue
-            if rel.startswith(".aidp/skills/"):
+            if rel.startswith(runtime_text('__AIDP_HOME__/skills/', __file__)):
                 why = "范式示例（SKILL 文档内的版本号样例）——刻意不改，改了会与上游 SKILL 漂移"
-            elif rel.startswith(".aidp/scripts/tests/"):
+            elif rel.startswith(runtime_text('__AIDP_HOME__/scripts/tests/', __file__)):
                 why = "测试夹具（单测自造的版本目录）——刻意不改，改了测试即失效"
             elif "版本变更历史" in rel or "版本更新日志" in rel or "changelog" in rel.lower():
                 # ⚠️ 不预设对错：改名的语义是"这个版本本来就该叫新号"（发布时正名），
@@ -228,8 +234,7 @@ def main():
         for f in p["files"][:20]:
             print(f"   file  {f['from']}  →  {f['to']}")
         print("   （以上为计划，加 --apply 执行；正文替换逐文件进行，不在此逐条列出）")
-        print("⚠️ 代码内自报版本（pom/package.json/Dockerfile）请在 --apply 后跑 "
-              "`python3 .aidp/scripts/check_version_identifier.py` 对齐并复验")
+        print(runtime_text('⚠️ 代码内自报版本（pom/package.json/Dockerfile）请在 --apply 后跑 `python3 __AIDP_HOME__/scripts/check_version_identifier.py` 对齐并复验', __file__))
         return 0
 
     ap_ = result["applied"]
@@ -242,8 +247,7 @@ def main():
             unresolved += 1
     if not result["residue"]:
         print("   （无剩余命中）")
-    print("\n⚠️ 下一步：跑 `python3 .aidp/scripts/check_version_identifier.py` 对齐代码内自报版本"
-          "（pom 含各级子模块 / package.json / Dockerfile），再跑 verify.py 复验")
+    print(runtime_text('\n⚠️ 下一步：跑 `python3 __AIDP_HOME__/scripts/check_version_identifier.py` 对齐代码内自报版本（pom 含各级子模块 / package.json / Dockerfile），再跑 verify.py 复验', __file__))
     return 1 if unresolved else 0
 
 

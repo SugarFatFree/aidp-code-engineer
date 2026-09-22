@@ -1,7 +1,7 @@
 # /version · 版本发布流程详情 — 分片 6/9
 
 > 本片覆盖：**Step 3.3.11 全量详细设计生成 / 3.3.12bis 零残留断言总闸 / 3.3.13 代码内版本标识对齐**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 ### Step 3.3.11：★ 全量详细设计生成（仅正式发布，变更范围增量重算 + 覆盖式只留最新、独立自包含）
@@ -34,7 +34,7 @@
   3. **★ 约定 22/34 扩范围安全网（增量安全的核心，堵 git 文件级 diff 的语义盲区；根因见 `rationale.md`）**：必须**额外扫本版研发需求**：命中约定 22 第三类语义变更 或 表 F 判「作废/修订」的项 → 其受影响专题**强制并入 Δ**（即便无代码文件命中）；变更若落在**跨专题共享单元**（公共基础设施 / 基类实体 / 共享 DTO / 全局配置）→ 保守地把所有引用该单元的专题并入 Δ。**宁可多算一个专题，绝不漏传播一处语义。**
   4. **前滚未变专题 + 重算变更专题**：staging 组装时——**Δ 外专题**从旧 `全量/` 对应分册**原样复制进 staging**（信任前滚、不重新合成）；**Δ 内专题走下方 4bis 的 section 级前滚**，⛔ 不整册重写。
   4bis. **★ 分册内 section 级前滚（不做则增量退化为准全量，根因见 rationale.md「专题级增量为何不够」）**：
-     - **重算前先报覆盖率**（⛔ 必须在开工前）：`python3 .aidp/scripts/design_full_rollforward.py scope --full-dir docs/design/detail/全量 --delta <Δ专题名逗号分隔>`，≥70% 时脚本会告警要求启用本条。
+     - **重算前先报覆盖率**（⛔ 必须在开工前）：`python3 {{AIDP_HOME}}/scripts/design_full_rollforward.py scope --full-dir docs/design/detail/全量 --delta <Δ专题名逗号分隔>`，≥70% 时脚本会告警要求启用本条。
      - **以旧分册为底本、只重写 Δ 命中的 H2 章节**，其余章节原样保留：`design_full_rollforward.py rollforward --old 全量/NN_x.md --new .全量-staging/NN_x.md --sections "<待重写H2>" --out .全量-staging/NN_x.md`。**哪些章节要重写是语义判断**（由 Δ 映射决定），脚本只保证"没点名的章节一字节不动"、并对点名却在新内容里缺失的章节**报错而非静默丢弃**。
      - **守恒核对只对被重写章节做深核**；未动章节与前滚专题同待遇，交第 5 点全集索引核对兜底。
      - **本步派独立子 Agent 执行**（与 3.3.9.5 同规格；理据见 `rationale.md`）。
@@ -76,12 +76,12 @@
 > 本步只判**跑没跑过**。理据见 `rationale.md`。
 
 ```bash
-VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version);; esac
+VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version);; esac
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
 # ⛔ --as-of 传【今天】：沿用上一轮的实跑日期不算"跑过"
 # ⛔ 失败必须真落账（只喊话 = 与"总闸通过了"同形，见 rationale.md）
-python3 .aidp/scripts/check_release_residual_gate.py --version "$VERSION" --as-of "$(date +%F)" \
-  || python3 .aidp/scripts/release_debt.py --version "$VERSION" \
+python3 {{AIDP_HOME}}/scripts/check_release_residual_gate.py --version "$VERSION" --as-of "$(date +%F)" \
+  || python3 {{AIDP_HOME}}/scripts/release_debt.py --version "$VERSION" \
        --step 3.3.12bis --title "零残留断言总闸未过"
 ```
 
@@ -94,7 +94,7 @@ python3 .aidp/scripts/check_release_residual_gate.py --version "$VERSION" --as-o
 **执行**（判定口径以脚本为单一信源，本处不复述扫描落点/归一化/deny-list）：
 
 ```bash
-python3 .aidp/scripts/check_version_identifier.py --version {version} --json > /tmp/vid-{version}.json
+python3 {{AIDP_HOME}}/scripts/check_version_identifier.py --version {version} --json > /tmp/vid-{version}.json
 VID_EXIT=$?
 ```
 

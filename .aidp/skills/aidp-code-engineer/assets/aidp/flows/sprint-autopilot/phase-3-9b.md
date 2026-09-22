@@ -9,12 +9,12 @@
 
    ```bash
    # ★ 本围栏 = 新的 Bash 调用：前片的变量一律不存活，必须重新取回
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"
-   BE="python3 .aidp/scripts/baseline_edit.py"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
    V="${TARGET_VERSION}"; B="${BUILD}"; BN="${BUILD_SEQ}"
    RPT_AI="docs/reports/${V}/AI执行报告"; RPT_TEST="docs/reports/${V}/AI测试报告"
-   GATE=".aidp/scripts/autopilot-ceremony-gate.py"
+   GATE="{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py"
    FAIL=0; ok(){ echo "  ✅ $1"; }; bad(){ echo "  ❌ $1 — $2"; FAIL=1; }
    # 下方内联校验 = 脚本缺失时的兜底 + 始终打印的非阻塞③测试报告提示（与脚本结论一致）
    echo "── ① autopilot 自有产物（缺失必补建后再退出）──"
@@ -82,7 +82,7 @@ RPT_URL=$($BE get "report_deliveries.\"$B\".exec_report.url" --default "")
      # ⛔ 补建复跑仍不过（结构性不可自愈）→ 走与上方 ceremony-gate 同一套记账，**不裸 exit 1**
      #   （本行上方那句自己就写着"勿裸 exit 1"，此前却真的裸退了）。
      # 记账→判阈→冻结四件套→发 #4 一次做完（⛔ 「发 #4 通知」写成注释 = 停得住但停不响）
-     python3 .aidp/scripts/autopilot_fail_handle.py --version "$V" \
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" \
        --phase 3.4-ceremony-gate --reason handoff-exhausted \
        --streak-key dev_fail_streak --threshold "${DEV_FAIL_FREEZE_THRESHOLD:-3}" \
        --why "收尾内联核验连续多 tick 未过（3.4-ceremony-gate），缺项清单见上方输出"

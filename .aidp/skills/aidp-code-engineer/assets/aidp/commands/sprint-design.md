@@ -160,15 +160,15 @@
 | 0.6.6 | 传 skill 硬约束（代码事实优先，禁编造 base/context-path）|
 
 **进入本段第一动作 = 按序 Read 以下 3 个分片**，逐项执行、绝不凭骨架或记忆略过子步骤：
-- `.aidp/flows/sprint-design/step-0.6-事实采集-1.md`（Step 0.5.5 端点契约确认门 + Step 0.6 事实采集 0.6.1~0.6.4.5 扫描后端/前端/部署/路径消费者点）
-- `.aidp/flows/sprint-design/step-0.6-事实采集-2.md`（Step 0.6.4.7 代码现状清单 + Step 0.6.4.8 关联项目采集）
-- `.aidp/flows/sprint-design/step-0.6-事实采集-3.md`（Step 0.6.5 事实清单模板 + Step 0.6.6 传 skill 硬约束）
+- `{{AIDP_HOME}}/flows/sprint-design/step-0.6-事实采集-1.md`（Step 0.5.5 端点契约确认门 + Step 0.6 事实采集 0.6.1~0.6.4.5 扫描后端/前端/部署/路径消费者点）
+- `{{AIDP_HOME}}/flows/sprint-design/step-0.6-事实采集-2.md`（Step 0.6.4.7 代码现状清单 + Step 0.6.4.8 关联项目采集）
+- `{{AIDP_HOME}}/flows/sprint-design/step-0.6-事实采集-3.md`（Step 0.6.5 事实清单模板 + Step 0.6.6 传 skill 硬约束）
 
 #### Step 0.7：★ 原型内容基线 + 设计令牌前置产出（有原型必产，**必须早于 Step 1**）
 
 > ⛔ **时序铁律**：这两份是 Step 1 调 `dev-logic-architect` 的**上游输入**（要求详设/接口/数据库覆盖到基线每个"实现"项），**必须在 Step 1 之前产出**——放在 Step 5 产出会造成"消费点早于生产点"、Step 1 拿不到基线，Step 5 再补也已经晚了。
 
-如果 `docs/prototype/{version}/code/` 存在原型代码 → **此处**读取 `.aidp/agents/ui.md`，跑 UI Agent 流程 A 的 **Step 0（4 情形决策门，约定 4 的 C/D 须用户显式选）** → **Step 1.5（原型内容基线）** → **Step 4（设计令牌，情形 B/C）**，产出：
+如果 `docs/prototype/{version}/code/` 存在原型代码 → **此处**读取 `{{AIDP_HOME}}/agents/ui.md`，跑 UI Agent 流程 A 的 **Step 0（4 情形决策门，约定 4 的 C/D 须用户显式选）** → **Step 1.5（原型内容基线）** → **Step 4（设计令牌，情形 B/C）**，产出：
 
 > ⛔ **Step 0 不可跳过**：它是约定 4「情形 C/D 由用户显式选」的**唯一触发点**。跳过它 → 视觉基准来源无人裁定，只能靠 Frontend Agent 在开发期兜底追问（`agents/frontend.md` 明确那是异常路径），且情形 D 的高保真生成会失去授权依据。
 
@@ -188,7 +188,7 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 （本项目已实际发生过一次）。命令端只补 SKILL 没有的两件项目级事项：
 
 1. **登记范围**：本版所有**会被文档反复引用的业务计数**（检测项数 / 支持格式数 / 角色数 / 状态机态数 …）。
-2. **项目级回扫入口**：有了该表，`python3 .aidp/scripts/check_count_claims.py --project-claims docs/design/detail/{version}/`
+2. **项目级回扫入口**：有了该表，`python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims docs/design/detail/{version}/`
    就能把散落面候选列全，人只需逐条判定哪些是「取值域全集」的合法留存、哪些是必须改的计数断言。
    **Why**：一次「固定 14 项 → 动态 13/14」的口径变化，实测散落约 25 处，全靠人肉 grep。
 
@@ -202,7 +202,7 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 
 使用 `Skill` 工具调用 `dev-logic-architect`，由 skill 自主完成详细设计生成 + 内置多维度独立 Agent 检查 + 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**，命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
-> 详细规则查 `.aidp/skills/dev-logic-architect/SKILL.md`；命令端只负责：① 传参（PRD/原型/前版基线/变更清单/`HAS_OPEN_API`+`HAS_THIRD_PARTY_DEP` 信号）② Step 1.5 落盘文件名 override（项目级中文文件名约定）③ Step 1.6~1.7.5 + SKILL 脚本复核 + 1.8 落盘后回检（统一派子 Agent 执行，脚本清单以 SKILL Quality Review 为单一信源）。
+> 详细规则查 `{{AIDP_HOME}}/skills/dev-logic-architect/SKILL.md`；命令端只负责：① 传参（PRD/原型/前版基线/变更清单/`HAS_OPEN_API`+`HAS_THIRD_PARTY_DEP` 信号）② Step 1.5 落盘文件名 override（项目级中文文件名约定）③ Step 1.6~1.7.5 + SKILL 脚本复核 + 1.8 落盘后回检（统一派子 Agent 执行，脚本清单以 SKILL Quality Review 为单一信源）。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 设计上下文路径）：
 > ★ **WebMCP 条件启用入参**（默认不传；绝大多数项目无此段）：`dev-logic-architect` 的**检查项 33「WebMCP 前端能力设计完整性」**（上游称「检查项 N」，本文档余处简称维度 N）是**入参门控**、
@@ -210,7 +210,7 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 > 静默漏掉这一层质量门。故调 SKILL 前先取判定（启用判定的唯一实现，⛔ 不要自己 grep PRD）：
 >
 > ```bash
-> python3 .aidp/scripts/check_webmcp.py --detect --json    # → enabled / entry_symbols / launch_command
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json    # → enabled / entry_symbols / launch_command
 > ```
 >
 > `enabled: true` → 随 prompt 传 `webmcp_enabled: true` + `webmcp_entry_symbols: <脚本返回的数组原样>` + `webmcp_launch_command: <脚本返回的原样>`（⛔ 三个 SKILL 都明写「不要自拟」）
@@ -321,7 +321,7 @@ fi
 | Step 1.7.5 | HAS_THIRD_PARTY_DEP=true | 第三方职责边界 5 项回检（越俎代庖必暂停）|
 | Step 1.8 | 无条件 | 上游溯源完整性 4 项（NN_ 前缀不过必暂停）|
 
-**进入本段第一动作 = Read `.aidp/flows/sprint-design/step-1.6-落盘后回检.md`**（Step 1.6 / 1.6.5 + 派单方式 + SKILL 脚本复核 + 补跑组），**接着 Read `step-1.7-对外接口与溯源回检.md`**（Step 1.7 / 1.7.5 / 1.8，条件触发；由**同一个**子 Agent 一并执行、不另派）。逐项执行，绝不凭骨架或记忆略过子步骤。
+**进入本段第一动作 = Read `{{AIDP_HOME}}/flows/sprint-design/step-1.6-落盘后回检.md`**（Step 1.6 / 1.6.5 + 派单方式 + SKILL 脚本复核 + 补跑组），**接着 Read `step-1.7-对外接口与溯源回检.md`**（Step 1.7 / 1.7.5 / 1.8，条件触发；由**同一个**子 Agent 一并执行、不另派）。逐项执行，绝不凭骨架或记忆略过子步骤。
 
 
 ### Step 2–4：Architect Agent 补充 + 生成 SQL 脚本 + 动态更新 docs/architecture/
@@ -339,12 +339,12 @@ fi
 | 4.1/4.2/4.3 | 更新 技术选型.md / 架构约束.md / systemPatterns.md（有架构设计则优先据其派生约束）|
 
 **进入本段第一动作 = 按序 Read 以下 2 个分片**，逐项执行、绝不凭骨架或记忆略过子步骤：
-- `.aidp/flows/sprint-design/step-2to4-架构补充与SQL-1.md`（Step 2 Architect Agent 补充）
-- `.aidp/flows/sprint-design/step-2to4-架构补充与SQL-2.md`（Step 3 生成 SQL 脚本 + Step 4 动态更新 docs/architecture/）
+- `{{AIDP_HOME}}/flows/sprint-design/step-2to4-架构补充与SQL-1.md`（Step 2 Architect Agent 补充）
+- `{{AIDP_HOME}}/flows/sprint-design/step-2to4-架构补充与SQL-2.md`（Step 3 生成 SQL 脚本 + Step 4 动态更新 docs/architecture/）
 
 ### Step 5：UI Agent 生成 UI 规范 + 原型内容基线 + 设计令牌（如有原型）
 
-如果 `docs/prototype/{version}/code/` 存在原型代码，读取 `.aidp/agents/ui.md` 获取 UI Agent 角色定义，跑其流程 A（**Step 0~4**——Step 0 是约定 4 情形 C/D 用户确认门的唯一触发点，不可跳）。
+如果 `docs/prototype/{version}/code/` 存在原型代码，读取 `{{AIDP_HOME}}/agents/ui.md` 获取 UI Agent 角色定义，跑其流程 A（**Step 0~4**——Step 0 是约定 4 情形 C/D 用户确认门的唯一触发点，不可跳）。
 
 #### Step 5.0：★ 原型内容基线 + 设计令牌两份规划期强制产出物（有原型必产，约定 4）
 
@@ -390,7 +390,7 @@ UI Agent 从原型代码 + `docs/prototype/{version}/mockup/`（如有）中提�
 | 6.5.4 | `openapi.yaml` 结构契约 + SHA256 算法（DRY 单一来源，派单 prompt 嵌入素材）|
 | 6.5.5–6.5.6 | 状态 C 增量：主 Claude 自检源 MD SHA256 变化 → 询问 + 派子 Agent 覆盖式重新生成 |
 
-**进入本段第一动作 = Read `.aidp/flows/sprint-design/step-6.5-对外接口在线化.md`**，逐项执行、绝不凭骨架或记忆略过子步骤。
+**进入本段第一动作 = Read `{{AIDP_HOME}}/flows/sprint-design/step-6.5-对外接口在线化.md`**，逐项执行、绝不凭骨架或记忆略过子步骤。
 
 ### Step 7：更新状态
 
@@ -408,7 +408,7 @@ UI Agent 从原型代码 + `docs/prototype/{version}/mockup/`（如有）中提�
 | A 回检清单 | 11 项判定表（文件数+NN_前缀 / 拆分数量 / L1 头部 / 对外接口 / 第三方边界 / 字典枚举 / ER·FK·NOT NULL / 文本长度 / 待澄清清单 / L2·L3 溯源覆盖率 / 金额整数化）+ 逐项「🔍 输出前回检」输出格式 |
 | B 三合一脚本 | 数据库基线回写 + ADR 回写 + 金额字段整数化（调 `check_money_field.py`）三段 bash，`exit 1` 即不允许标完成、须补写重跑到 0 |
 
-**进入本段第一动作 = Read `.aidp/flows/sprint-design/step-输出前硬门.md`**，用 Bash 工具真实执行两个 bash 块、逐行填表，绝不凭骨架或记忆略过。
+**进入本段第一动作 = Read `{{AIDP_HOME}}/flows/sprint-design/step-输出前硬门.md`**，用 Bash 工具真实执行两个 bash 块、逐行填表，绝不凭骨架或记忆略过。
 
 ## 输出
 
@@ -452,7 +452,7 @@ UI Agent 从原型代码 + `docs/prototype/{version}/mockup/`（如有）中提�
 ### ★ 约定 22 级联落盘（`--ledger-cascade`，与 `--supplement={NN}` 互斥，同时传则报错）
 
 由**约定 22 级联**调用时（攒批收口子 Agent / `--cascade-now` 即时级联）**必须**加 `--ledger-cascade`：**就地改内容主文档正文** `docs/design/detail/{version}/` 的 `01_详细设计.md`·`02_数据库设计.md`·`03_接口设计.md`（按实际范围），改完刷该目录 `00_索引.md` 生成时间（约定 15）。
-⛔ 不新建 `NN_` 分册、不产中转增量册、不全量扫 `code/` 等落盘细则与内容产出方式，**单一信源 = `.aidp/reference/开发期族增量.md`「收口执行要点」第 2/3 条（L2 设计）**，本命令不复述。
+⛔ 不新建 `NN_` 分册、不产中转增量册、不全量扫 `code/` 等落盘细则与内容产出方式，**单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`「收口执行要点」第 2/3 条（L2 设计）**，本命令不复述。
 
 ### 输入差异
 - **必读** `docs/requirements/{version}/研发需求/输入变更-{NN}.md`（含 PRD 与原型两类变更）
@@ -464,7 +464,7 @@ UI Agent 从原型代码 + `docs/prototype/{version}/mockup/`（如有）中提�
 
 ### 输出差异（按本轮实际是否有变更落盘对应文件）
 
-★ **命名保持**：上游 dev-logic-architect SKILL 内部按"SKILL 默认产物路径"风格生成（SKILL 已禁"补充/追加"语义前缀，新风格输出纯 `NN_业务名.md`）；命令端在 SKILL 返回后**只做序号续编校正**（若 NN 与目录现存最大序号冲突则 `git mv` 归一到 `MAX+1`），**绝不回补"补充"字眼**（具体脚本见 `.aidp/flows/version/planning-4.md`（`version.md` Step 2.4.4 现仅是一行指针），本命令单独被调用时也跑同段脚本兜底）：
+★ **命名保持**：上游 dev-logic-architect SKILL 内部按"SKILL 默认产物路径"风格生成（SKILL 已禁"补充/追加"语义前缀，新风格输出纯 `NN_业务名.md`）；命令端在 SKILL 返回后**只做序号续编校正**（若 NN 与目录现存最大序号冲突则 `git mv` 归一到 `MAX+1`），**绝不回补"补充"字眼**（具体脚本见 `{{AIDP_HOME}}/flows/version/planning-4.md`（`version.md` Step 2.4.4 现仅是一行指针），本命令单独被调用时也跑同段脚本兜底）：
 
 | 文档类型 | SKILL 默认产物路径（待归一） | 归一后路径（统一 `NN_<业务主题>.md`，文件名不带"补充"字眼） |
 |---------|----------------------------|--------------------------|

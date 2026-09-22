@@ -1,7 +1,7 @@
 <!-- 二次切分 · phase-0 片1/9：覆盖 0.0.0 无人值守信号 / 0.0 拉代码 / 0.0.5 读测试方案-->
 # sprint-aiauto-test · Phase 0 详情（前置条件检查 0.0.0–0.4）
 
-> 本文件是 `/sprint-aiauto-test` 命令 **Phase 0** 详情的**第 1/9 片**（⛔ 后续子步在 `-2`…`-8` 分片〔含 `-6b`〕，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`.aidp/commands/sprint-aiauto-test.md`）在**进入 Phase 0 时用 Read 工具按需加载**。
+> 本文件是 `/sprint-aiauto-test` 命令 **Phase 0** 详情的**第 1/9 片**（⛔ 后续子步在 `-2`…`-8` 分片〔含 `-6b`〕，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`）在**进入 Phase 0 时用 Read 工具按需加载**。
 >
 > ⚠️ **权威性**：进入 Phase 0 后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/`。理据/根因见同目录 `rationale.md`。
@@ -19,8 +19,8 @@
 ```bash
 # ══ 第一步：【全部】参数标志的确定性解析 + 落盘（与 sprint-autopilot 0.0.0 同款、同一脚本）══
 # 全部 flag 统一交给确定性脚本解析 + 落盘到 baseline tick 命名空间（每 tick 整段重写）。
-python3 .aidp/scripts/autopilot_tick_flags.py parse --command aiauto-test --arguments "${ARGUMENTS:-}"
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py parse --command aiauto-test --arguments "${ARGUMENTS:-}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # ⚠️ `$ARGUMENTS` 取不到（宿主未注入）→ 全部标志恒 0；此时由 Claude 读本轮用户输入原文补判，
 #    把 `--arguments` 换成用户原文重跑上面一行，绝不留空。
 # IS_LOOP_CONTEXT（探测法单一信源在 sprint-autopilot 0.0.0，此处同款）：prompt 启动上下文含 `/loop` 字样 → 1，否则 0。
@@ -47,7 +47,7 @@ fi
 #   （理据见 rationale.md『Phase 0 信号派生与落盘』）。
 HAS_WAKE_SOURCE=0
 { [ "$IS_LOOP_CONTEXT" = "1" ] || [ "$HAS_NO_LOOP_FLAG" = "1" ]; } && HAS_WAKE_SOURCE=1
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test \
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test \
   HAS_WAKE_SOURCE "$HAS_WAKE_SOURCE" >/dev/null 2>&1 || true
 # ⛔ 消费口径（所有 UNATTENDED_YIELD 点统一）：
 #   `HAS_WAKE_SOURCE=1` → 可 yield（下一 tick 会接着跑）；
@@ -56,34 +56,36 @@ python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test \
 
 # ★ 诊断留痕（只写不读，不参与判定；与 autopilot 共享同一字段，故交互式轮不清它）：
 if [ "$LOOP_UNATTENDED" = "1" ]; then
-  python3 .aidp/scripts/baseline_edit.py set \
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set \
     autopilot.unattended_confirmed true autopilot.unattended_confirmed_at @now >/dev/null 2>&1 || true
 fi
 # ★ 必须落盘：本命令可独立挂 `/loop 5m … --unattended`（不经 autopilot），
 #   只靠 autopilot 写则独立跑时读回恒空 → 账号收集弹窗在无人值守下挂死。
 # ⛔ 键名须带 `aiauto.` 前缀（rationale.md）
-python3 .aidp/scripts/baseline_edit.py set aiauto.loop_unattended_this_tick "$LOOP_UNATTENDED" >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto.loop_unattended_this_tick "$LOOP_UNATTENDED" >/dev/null 2>&1 || true
 echo "🔧 无人值守信号：LOOP_UNATTENDED=$LOOP_UNATTENDED（loop=$IS_LOOP_CONTEXT no-loop=$HAS_NO_LOOP_FLAG unattended=$HAS_UNATTENDED_FLAG once=$HAS_ONCE_FLAG）"
 # ★ 测试链路全局心跳：必须在**任何 early-exit 之前**写（0.0 拉码冲突 / 0.1.1 chrome 缺失 /
 #   0.1.5 远端引导 都会在 0.2 之前退出）。⛔ 心跳≠能干活，阻塞原因由 0.2 按本 tick 结论维护。
-python3 .aidp/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now >/dev/null 2>&1 || true
 # 无人值守统一动作宏（下文引用）：发一次 #4 通知 → 不轮询回复 → 退出本 tick（交下次 /loop 唤起按 baseline 状态决定）
 # 记为 UNATTENDED_YIELD：`发 #4 + exit`（绝不 AskUserQuestion / 绝不 60 分钟轮询）
 ```
 
 ### 0.0 拉取远端最新代码（同 /sprint-autopilot Phase 0.0）
 
+> `vcs_mode=none` 时记录拉码 `unsupported:vcs-disabled` 后直接进 0.0.5 读取本地测试方案；不运行 Git fetch/pull/rebase，不记 `aiauto_preflight_fail_streak`，不因 Git 不可用冻结。此后仅在真实本地部署就绪证据存在时继续浏览器实测，绝不以「未能拉码」等同测试已通过。
+
 `git fetch + git pull --rebase --autostash`，保证 baseline 文件读到 sprint-autopilot 最新写入的状态；rebase 冲突 → **一律 `git rebase --abort` + 记一行日志**：
 - **`LOOP_UNATTENDED=1`（测试链路专属顶层熔断，退出本 tick）**：冲突发生在版本解析之前、无版本上下文，走 `--preflight --command aiauto-test`（键 `aiauto_preflight_fail_streak / aiauto_preflight_frozen_at / aiauto_preflight_fail_reason`，不与开发链路的 `preflight_*` 共用）：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
   if git fetch --quiet && git pull --rebase --autostash --quiet; then
-    python3 .aidp/scripts/baseline_edit.py del aiauto_preflight_fail_streak aiauto_preflight_frozen_at aiauto_preflight_fail_reason >/dev/null 2>&1 || true
+    python3 {{AIDP_HOME}}/scripts/baseline_edit.py del aiauto_preflight_fail_streak aiauto_preflight_frozen_at aiauto_preflight_fail_reason >/dev/null 2>&1 || true
   else
     git rebase --abort 2>/dev/null || true
     if [ "${LOOP_UNATTENDED:-0}" = "1" ]; then
-      [ -n "$(python3 .aidp/scripts/baseline_edit.py get aiauto_preflight_frozen_at --default '')" ] && { echo "⏸️ 测试链路拉码已熔断待人工，静默退出"; exit 0; }
-      python3 .aidp/scripts/autopilot_fail_handle.py --preflight --command aiauto-test \
+      [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get aiauto_preflight_frozen_at --default '')" ] && { echo "⏸️ 测试链路拉码已熔断待人工，静默退出"; exit 0; }
+      python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --preflight --command aiauto-test \
         --reason preflight-incomplete --streak-key aiauto_preflight_fail_streak --threshold 3 \
         --why "测试链路 git pull --rebase 冲突（git-pull-conflict），已 abort；人工解决冲突后下一 tick 拉取成功即自动清零"
       exit 0
@@ -111,7 +113,7 @@ python3 .aidp/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now >/dev/n
 > 其中**声明侧就取自本步解析的测试方案**（本步不置位则「测试方案优先」永不可达）。
 >
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 > # ⛔ 必须在本围栏重新定位 TESTPLAN（它赋在下面那个围栏 = 另一次 Bash 调用）：
 > #    取空 ⇒ DECLARED_REMOTE 恒 0 ⇒「测试方案声明远程」这条优先级永不可达。口径同下方，改一处同步另一处。
 > CFG_MARK='Chrome Remote Debugging 地址|测试环境与账号|^#+ .*测试账号'
@@ -126,7 +128,7 @@ python3 .aidp/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now >/dev/n
 > case "${ARGUMENTS:-}${USER_INTENT:-}" in *远程*|*remote*) DECLARED_REMOTE=1 ;; esac
 > # ★ 必须落 tick 命名空间：消费点 0.0.7 在**另一个分片**，`export` 跨不过 Bash 调用
 > #   （只 export 时回读恒空 → 落 0 → MODE=remote 分支结构上不可达，声明形同无效）
-> python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test \
+> python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test \
 >   DECLARED_REMOTE "$DECLARED_REMOTE" >/dev/null 2>&1 || true
 > ```
 
@@ -134,13 +136,13 @@ python3 .aidp/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now >/dev/n
 
 <!-- dup-check: ignore 分片自包含 -->
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # ★★ 版本号轻量预解析（与 0.2 同一信源；`--target` 显式覆盖，不能用 `:=`，理据见 rationale.md『Phase 0 信号派生与落盘』）
 [ -n "${TARGET_FLAG_VALUE:-}" ] && TARGET_VERSION="$TARGET_FLAG_VALUE"
-: "${TARGET_VERSION:=$(python3 .aidp/scripts/baseline_edit.py current-version)}"
+: "${TARGET_VERSION:=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"
 # ★ 空版本号守卫：尚无可测版本（首个版本部署前）→ 本步无事可做，退出本 tick；⛔ 不拼 docs/testing//… 也不补全、不 commit
 if [ -z "$TARGET_VERSION" ]; then
-  python3 .aidp/scripts/baseline_edit.py set aiauto_blocked_reason "no-testable-version" >/dev/null 2>&1 || true
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_blocked_reason "no-testable-version" >/dev/null 2>&1 || true
   echo "ℹ️ 尚无可测版本（current-version 为空）→ 跳过测试方案预读，退出本 tick"; exit 0
 fi
 
@@ -167,18 +169,18 @@ if [ -n "$TESTPLAN" ] && [ -f "$TESTPLAN" ]; then
 
   # ★ 最早时机写入项目根 .mcp.json（IP 已知即建/合并，不等场景判定 / 不等 MCP 可达性）：
   #   测试方案给出 chrome IP = 远程 DRIVER=mcp-remote 信号 → 此刻立即无条件建/合并文件，根除"迟迟不建 / 根本不建"。
-  #   写/合并 + 连通预检 + 污染检测 + 生效指引统一由 .aidp/scripts/chrome-mcp-doctor.py 强制校验（单一信源，见 0.1.1.4）。
+  #   写/合并 + 连通预检 + 污染检测 + 生效指引统一由 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py 强制校验（单一信源，见 0.1.1.4）。
   if [ -n "$TESTPLAN_CHROME_ADDR" ]; then
     GIT_USER=$(git config user.name 2>/dev/null | tr -d ' '); [ -z "$GIT_USER" ] && GIT_USER=user
-    if [ -f .aidp/scripts/chrome-mcp-doctor.py ]; then
-      python3 .aidp/scripts/chrome-mcp-doctor.py set --ip "$TESTPLAN_CHROME_ADDR"; DOCTOR_RC=$?
+    if [ -f {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py ]; then
+      python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py set --ip "$TESTPLAN_CHROME_ADDR"; DOCTOR_RC=$?
       # set 内部已：写/合并 chrome-{git_user}（保留其它 server）+ 清 .gitignore 残留 + 跑体检。
       # 退出码：0 就绪 / 3 缺配置 / 4 远端不可达（已打印 Chrome 启动参数）/ 5 用户级/全局 MCP 配置被写脏（已打印复位指引）。
       # ⛔ 无论 DOCTOR_RC 为何，绝不改任何用户级/全局 MCP 配置（~/.claude.json / ~/.claude/settings*.json / 历史 ~/.claude/plugins，见 0.1.1.4 禁改清单）；
       #   rc=4 此刻不阻塞建文件（重启后由 0.1.5 复检）；rc=5 必须先按脚本指引卸载重装插件再继续。
     else
       # ⚠️ 脚本缺失（脚手架未下发 / 旧版）→ 内联兜底写 .mcp.json，绝不因单点脚本缺失写不出（建议重跑 aidp-code-engineer upgrade 补回）
-      echo "  ⚠️ .aidp/scripts/chrome-mcp-doctor.py 缺失 → 走内联兜底写 .mcp.json"
+      echo "  ⚠️ {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py 缺失 → 走内联兜底写 .mcp.json"
       python3 - ".mcp.json" "chrome-${GIT_USER}" "http://${TESTPLAN_CHROME_ADDR}" <<'PY'
 import json, os, sys
 path, name, url = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -200,7 +202,7 @@ PY
     | awk -F'|' 'NR==1{print $3}' | tr -d '`' | xargs)
   # ⛔ 必须落盘：Phase 0.7 在另一个 Bash 调用里把它当第 1 优先级读取
   [[ -n "$URL_RAW" && "$URL_RAW" != *"请填写"* ]] && TESTPLAN_DEPLOY_URL="$URL_RAW" \
-    && python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" \
+    && python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" \
          set testplan_deploy_url "$URL_RAW" \
     && echo "  ✅ 测试环境 URL：$URL_RAW（已落盘 → Phase 0.7 优先用此值）"
 
@@ -240,9 +242,9 @@ fi
 # ★ 落盘供后续分片读回（Phase 0.4 取渲染模式 / Phase 0.7 取账号就绪度）——
 #   这两个值的真源是"本轮解析测试方案"，baseline 里没有，不落盘则后续分片恒取空：
 #   TESTPLAN_CREDS_READY 取空会让"方案已填好账号"也掉进交互式收账号分支、无人值守挂死。
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test TESTPLAN_RENDER_MODE "$TESTPLAN_RENDER_MODE" >/dev/null 2>&1 || true
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test TESTPLAN_CREDS_READY "$TESTPLAN_CREDS_READY" >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test TESTPLAN_RENDER_MODE "$TESTPLAN_RENDER_MODE" >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test TESTPLAN_CREDS_READY "$TESTPLAN_CREDS_READY" >/dev/null 2>&1 || true
 # ★ REQUIRES_LOGIN 的唯一落盘点（Phase 0.7 读它决定要不要收账号）
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test REQUIRES_LOGIN "$TESTPLAN_REQUIRES_LOGIN" >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test REQUIRES_LOGIN "$TESTPLAN_REQUIRES_LOGIN" >/dev/null 2>&1 || true
 ```
 

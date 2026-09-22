@@ -24,7 +24,7 @@ WebMCP 是一项**可选**前端能力，**绝大多数项目不启用**。它�
 
 **四个上游 SKILL 全部做成「入参门控 + 明令不自行探测」**，判定权归调用方——也就是本脚本：
 
-    python3 .aidp/scripts/check_webmcp.py --detect --json
+    python3 AIDP_HOME/scripts/check_webmcp.py --detect --json
     # → {"enabled": true, "entry_symbols": [...], "symbols_source": "..."}
 
 命令端据此把 `webmcp_enabled` / `webmcp_entry_symbols` 传给 SKILL。
@@ -43,7 +43,7 @@ WebMCP 是一项**可选**前端能力，**绝大多数项目不启用**。它�
 ## 启用时的守卫（脚手架侧装配，纯词法）
 
 1. **详规已安装**（ERROR）：详规是**按需安装**的可选规则——默认在
-   `.aidp/templates/optional-rules/webmcp.md`，启用后才装到 `.aidp/rules/webmcp.md`。
+   `AIDP_HOME/templates/optional-rules/webmcp.md`，启用后才装到 `AIDP_HOME/rules/webmcp.md`。
    `rules/*.md` 是**路径触发**加载的，不在那儿就永远不会被加载 = 规则等于不存在。
    跑 `--install-rule` 安装。
 2. **详规未过期**（WARN）：安装副本与模板位不一致——要么脚手架升级后未刷新，要么副本被本地改过。
@@ -64,10 +64,16 @@ WebMCP 的挂载位置**已经迁移过一次**，规范仍在演进。故标识
 
 ## 用法
 
-    python3 .aidp/scripts/check_webmcp.py [--root <仓库根>] [--detect] [--install-rule] [--force] [--json]
+    python3 AIDP_HOME/scripts/check_webmcp.py [--root <仓库根>] [--detect] [--install-rule] [--force] [--json]
 
 退出码：`0`=通过或未启用（N/A）/ `1`=检出问题 / `2`=用法或读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -122,8 +128,8 @@ PROBE_SNIPPET = r"""(() => {
 TESTENV_MARK = re.compile(r"WebMCP|unsafely-treat-insecure-origin-as-secure")
 
 # ★ 详规是【按需安装】的可选规则，默认不在 rules/ 下 —— 见下方 install_rule() 的 Why
-RULE_TEMPLATE = os.path.join(".aidp", "templates", "optional-rules", "webmcp.md")
-RULE_INSTALLED = os.path.join(".aidp", "rules", "webmcp.md")
+RULE_TEMPLATE = os.path.join(runtime_relpath("", __file__), "templates", "optional-rules", "webmcp.md")
+RULE_INSTALLED = os.path.join(runtime_relpath("", __file__), "rules", "webmcp.md")
 
 
 def _read(p):
@@ -386,7 +392,7 @@ def launch_args(root, origins, driver="cli", executable=""):
 
 
 def install_rule(root, force=False):
-    """把详规从模板位安装到 `.aidp/rules/`（幂等）。
+    """把详规从模板位安装到 `AIDP_HOME/rules/`（幂等）。
 
     **Why 详规默认不在 rules/ 下**：`rules/*.md` 是**路径触发**加载的——只要编辑的文件命中
     `paths:`，整份文件就进上下文。绝大多数项目根本不启用 WebMCP，却要在每次编辑前端代码时
@@ -444,10 +450,13 @@ def run(root):
     if not rule_installed:
         findings.append({
             "level": "ERROR", "check": "rule-not-installed", "file": RULE_INSTALLED,
-            "detail": f"已启用 WebMCP，但详规未安装到 `{RULE_INSTALLED}` —— rules 是**路径触发**加载的，"
-                      f"文件不在那儿就永远不会自动加载，规则等于不存在。"
-                      f"跑 `python3 .aidp/scripts/check_webmcp.py --install-rule` 安装"
-                      f"（模板位：{RULE_TEMPLATE}）",
+            "detail": runtime_text(
+                f"已启用 WebMCP，但详规未安装到 `{RULE_INSTALLED}` —— rules 是**路径触发**加载的，"
+                "文件不在那儿就永远不会自动加载，规则等于不存在。"
+                "跑 `python3 __AIDP_HOME__/scripts/check_webmcp.py --install-rule` 安装"
+                f"（模板位：{RULE_TEMPLATE}）",
+                __file__,
+            ),
         })
     # ⛔ 「单一适配层」与「unregisterTool」两项判据【已移交上游】——
     #   由 `code-verification-loop` 维度 9 + 其 scripts/check_webmcp_adapter.py 承担。
@@ -484,7 +493,7 @@ def main():
     ap.add_argument("--root", default=".")
     ap.add_argument("--detect", action="store_true", help="只做启用判定，不跑检查")
     ap.add_argument("--install-rule", action="store_true",
-                    help="把详规从模板位安装到 .aidp/rules/（幂等；未启用时拒绝）")
+                    help=runtime_text('把详规从模板位安装到 __AIDP_HOME__/rules/（幂等；未启用时拒绝）', __file__))
     ap.add_argument("--force", action="store_true", help="配合 --install-rule：未启用也强装")
     ap.add_argument("--probe-snippet", action="store_true",
                     help="打印注入页面执行的探测 JS（白名单优先 + 全局扫描兜底），供测试链路 evaluate")
@@ -581,7 +590,7 @@ def main():
     for f in res["findings"]:
         print(f"  · [{f['check']}] {f['file']}")
         print(f"      {f['detail']}")
-    print("  详规单一信源 = `.aidp/rules/webmcp.md`。")
+    print(runtime_text('  详规单一信源 = `__AIDP_HOME__/rules/webmcp.md`。', __file__))
     return 1
 
 

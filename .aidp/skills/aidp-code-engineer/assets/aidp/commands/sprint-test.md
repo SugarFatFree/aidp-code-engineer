@@ -13,8 +13,10 @@
 
 ## 前置流程
 
+**VCS 能力分流**：从 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 读取 `vcs_mode=git|none`，用 `developer_identity(Path.cwd())` 取得 `{user}`；向 `code-verification-loop` 验收子 Agent 透传模式。`vcs_mode=none` 时继续本地用例、代码静态检查与验收，Git-only diff/commit/push/CICD 检查逐项记 `unsupported:vcs-disabled`（不是 passed，也不折算为全绿）；不能用 Git 差异判定测试范围时以 Sprint 计划与 `activeContext.md` 的本地文件清单为依据。Git 模式保持原有验收语义。
+
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`
 3. **{NNN}** ← 从参数或 activeContext 读取
 
@@ -29,7 +31,7 @@
 
 ### Step 1：QA Agent 补全 Sprint 范围 + 接口/性能/兼容性用例
 
-读取 `.aidp/agents/qa.md` 获取角色定义。
+读取 `{{AIDP_HOME}}/agents/qa.md` 获取角色定义。
 
 **前置：先 Read 已生成的用例（测试人员为主 + 研发自测查漏补充）**
 
@@ -111,7 +113,7 @@ fi
 > 静默漏掉这一层质量门。故调 SKILL 前先取判定（启用判定的唯一实现，⛔ 不要自己 grep PRD）：
 >
 > ```bash
-> python3 .aidp/scripts/check_webmcp.py --detect --json    # → enabled / entry_symbols
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json    # → enabled / entry_symbols
 > ```
 >
 > ★ **临时 Mock 协议入参（`--third-party-mode`，同属入参门控，⛔ 别漏）**：维度 2A 的
@@ -142,7 +144,7 @@ fi
 
 > ⛔ **`--unattended` / `--from-batch` 时 prompt 显式带上非交互上下文**（「任何需要用户裁决的节点一律不询问：记录结论 + 标注待人工确认后返回」）——子 Agent 里无人可答，主流程只会看到「子 Agent 未返回」。
 
-派发的子 Agent 内部以 `Skill` 工具调用 `code-verification-loop`。**skill 内置多维度独立 Agent 检查 + 分级处理（级别以 SKILL 为单一信源）+ 每轮留痕**；命令端按约定 21 不复述维度内容与级别名，只负责传入参数 + 接收验收报告。维度索引见 `.aidp/skills/code-verification-loop/SKILL.md`，各维度细则见其 `references/dimension-*.md`，第三方 mock 协议见 `references/third-party-mock-protocol.md`（SKILL 单一信源）。
+派发的子 Agent 内部以 `Skill` 工具调用 `code-verification-loop`。**skill 内置多维度独立 Agent 检查 + 分级处理（级别以 SKILL 为单一信源）+ 每轮留痕**；命令端按约定 21 不复述维度内容与级别名，只负责传入参数 + 接收验收报告。维度索引见 `{{AIDP_HOME}}/skills/code-verification-loop/SKILL.md`，各维度细则见其 `references/dimension-*.md`，第三方 mock 协议见 `references/third-party-mock-protocol.md`（SKILL 单一信源）。
 
 > 开发期更早的"复杂度+复用"自检由 Frontend Agent Step 4.5 / Backend Agent Step 7.5 承担（作为更早的自检关口，不取代 SKILL 兜底）。
 
@@ -152,9 +154,9 @@ fi
 - **设计文档路径**：`docs/design/detail/{version}/`（含本目录下全部分册）
 - **接口文档路径**：`docs/design/detail/{version}/03_接口设计.md`（历史裸名 `接口设计.md` 兼容）；如做了拆分则传 `docs/design/detail/{version}/` 让 skill 按 glob 加载
 - **被测项目根**：仓库根（`.`）——供 SKILL 的**三个外部脚本门控维度**定位被测项目侧脚本：
-  - **维度 10「UI 还原度确定性检查」** → `<被测项目根>/.aidp/scripts/check_ui_fidelity.py`
-  - **维度 12「上游调用日志可见性与脱敏」** → `<被测项目根>/.aidp/scripts/check_upstream_call_log.py`
-  - **维度 13「实现偏离设计」** → `<被测项目根>/.aidp/scripts/check_design_anchor.py`
+  - **维度 10「UI 还原度确定性检查」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`
+  - **维度 12「上游调用日志可见性与脱敏」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py`
+  - **维度 13「实现偏离设计」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py`
   三个脚本都由 AIDP 脚手架经 `ensure_root_scripts` 下发到**被测项目侧**（不在 SKILL 内、不受版本门控），本仓均已下发；⛔ **不传或传错 → 对应维度落到「不适用（未下发）」档**——维度 10 里**约定39-R10「导出只导当前页」是零豁免的 Critical**、维度 12 里 **C1 零日志 / C2 成功路径不可见也是 Critical**，等于静默放过硬门。（同一个根路径三维共用，传一次即可。）
 - **被验收版本号**：`{version}`（如 `V0.14.0`）——**维度 13 专用且必填**。它比维度 10/12 多这一个参数，SKILL 侧明令「值由调用方传入，⛔ 不得自拟或省略；取不到就按『不适用（未取到 `--version` 值）』留行」。⚠️ **漏传不会报错、只会让维度 13 恒落「不适用」**：脚本缺 `--version` 值时 argparse 直接 `exit 2`（用法错），而 SKILL 对 exit 2 的处置是「修正参数后重跑」——既不计过也不计不过，报告里两侧都不留痕。故本行与上一行是**两个独立参数**，不要合并、不要省略。
 
@@ -178,7 +180,7 @@ fi
 **★ 项目级步骤（不进 SKILL 入参）—— 业务计数声明表的全库回扫**：
 
 ```bash
-python3 .aidp/scripts/check_count_claims.py --project-claims "docs/design/detail/{version}/"
+python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/design/detail/{version}/"
 ```
 
 ⚠️ **它刻意【不】列进上面那张「传给 SKILL 的基线」清单**：`code-verification-loop` 全目录对
@@ -186,7 +188,7 @@ python3 .aidp/scripts/check_count_claims.py --project-claims "docs/design/detail
 把它写成「路径交给 SKILL 消费」会凭空造出一个消费者，让约定 33 的「必须有消费者」核验面
 自己骗自己（对照：统计指标口径表 → 维度 11、上游调用日志表 → 维度 12，那两条在 SKILL 的
 输入表里都有真实条目）。本表的测试期消费者**就是上面这条 bash**，单一信源见
-`.aidp/reference/约定细则-3.md` 约定 33 的基线→消费者映射。
+`{{AIDP_HOME}}/reference/约定细则-3.md` 约定 33 的基线→消费者映射。
 
 ⚠️ **为什么测试期必须再跑一次**：规划期 `/sprint-design` 已跑过一次，但核心原则 28 要堵的
 失效形态是**后续迭代造成的过期**——「某次迭代加到第 9 种，枚举类改了、页面自动跟着变了，
@@ -238,7 +240,7 @@ python3 .aidp/scripts/check_count_claims.py --project-claims "docs/design/detail
 **★ 接口字段级契约对齐（`dev-logic-architect` 检查项 25 的测试期消费者；规划期无运行环境、恒 N/A）**：探活成功（`SKIP_API_TEST` 未置位）时**必跑**，与 `api-tester` 是否可用无关：
 
 ```bash
-[ "${SKIP_API_TEST:-0}" = 1 ] || python3 .aidp/skills/dev-logic-architect/scripts/check_api_contract_alignment.py \
+[ "${SKIP_API_TEST:-0}" = 1 ] || python3 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_api_contract_alignment.py \
   "$(ls docs/design/detail/{version}/*接口设计.md | head -1)" \
   "$(ls docs/requirements/{version}/研发需求/01_研发需求.md docs/requirements/{version}/研发需求/0?_*.md 2>/dev/null | head -1)" \
   "$BACKEND_BASE_URL" --json > docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-api-contract.json
@@ -261,7 +263,7 @@ python3 .aidp/scripts/check_count_claims.py --project-claims "docs/design/detail
   2. 查本 build 的 **AI执行报告**是否已存在；
   3. **属 autopilot 体系 且 本 build AI执行报告缺失** → **改走 `/sprint-autopilot --skip-dev`**（test-only 入口，走子流程 R 产出 AI执行报告后由它委派浏览器实测）；**严禁**在 AI执行报告缺失下直达 `/sprint-aiauto-test` 手驱浏览器；
   4. **不属 autopilot 体系**（真正 standalone / `source="sprint-batch"`）**或 AI执行报告已在** → 直接 `/sprint-aiauto-test --once`。
-  > 口径单一信源 = 项目记忆文件（AGENTS.md / CLAUDE.md）「AI 测试入口前置规则」：**实测前必有 AI执行报告**；其中"属不属 autopilot 体系"的判据细则单一信源 = `.aidp/flows/sprint-batch/step-6b.md` Step 6.4 入口判据（⛔ 不是 `step-6.md`，那里只剩一句转发指针）。⛔ 本命令**自身不驱动浏览器、也不调 `/sprint-aiauto-test`**（全文无该调用），故不存在「链内豁免」一说——⛔ 不得据此误以为 `/sprint-test` 可以自行开浏览器实测。
+  > 口径单一信源 = 项目记忆文件（AGENTS.md / CLAUDE.md）「AI 测试入口前置规则」：**实测前必有 AI执行报告**；其中"属不属 autopilot 体系"的判据细则单一信源 = `{{AIDP_HOME}}/flows/sprint-batch/step-6b.md` Step 6.4 入口判据（⛔ 不是 `step-6.md`，那里只剩一句转发指针）。⛔ 本命令**自身不驱动浏览器、也不调 `/sprint-aiauto-test`**（全文无该调用），故不存在「链内豁免」一说——⛔ 不得据此误以为 `/sprint-test` 可以自行开浏览器实测。
 - 浏览器仿真测试报告（HTML）由 `/sprint-aiauto-test` 落 `docs/reports/{version}/AI测试报告/`（路径以 `/sprint-aiauto-test` 为单一信源），本命令不生成 e2e 报告。
 - 浏览器测试统一走 `chrome-devtools-mcp` / `/sprint-aiauto-test`。
 

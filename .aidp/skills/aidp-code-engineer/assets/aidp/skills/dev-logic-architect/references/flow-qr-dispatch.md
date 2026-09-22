@@ -13,7 +13,7 @@
 
 **详细设计文档落盘(单文件或多文件)后,以下 bash 一次性回检脚本由下方派发的**质量检查子 Agent**作为强制第一步执行(见子 Agent prompt 步骤 0),任一命中即拒绝标记完成、强制重写违规文件。主流程**禁止**在当前上下文内联运行这些脚本:**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `.aidp/skills/dev-logic-architect`),由 Agent 在执行前替换。
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-logic-architect`),由 Agent 在执行前替换。
 
 ```bash
 # 1. 命名规范 + 子目录嵌套 + 中文文件名 + 业务代号入名(多文件模式)

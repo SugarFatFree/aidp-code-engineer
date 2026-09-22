@@ -168,7 +168,7 @@ ls code/sql/v{current}/*.sql 2>/dev/null | grep -vE '^code/sql/v[^/]+/\d{2}_[一
 
 **自动化脚本(必跑):**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `.aidp/skills/dev-logic-architect`),由 Agent 在执行前替换。
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-logic-architect`),由 Agent 在执行前替换。
 
 ```bash
 python3 <SKILL_DIR>/scripts/check_sql_version_isolation.py \

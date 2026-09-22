@@ -39,6 +39,12 @@
 
 退出码：0 = 无 ERROR；1 = 有 ERROR；2 = 入参错。`--strict` 下 WARN 也计入退出码 1。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -70,11 +76,11 @@ _IGNORE_LINE_RE = re.compile(r"<!--\s*numbering-ignore:\s*(?P<why>[^>]*?)\s*-->"
 _IGNORE_FILE_RE = re.compile(r"<!--\s*numbering-ignore-file:\s*(?P<why>[^>]*?)\s*-->")
 
 SCAN_DIRS = (
-    ".aidp/commands", ".aidp/agents", ".aidp/flows",
-    ".aidp/reference", ".aidp/rules", ".aidp/templates",
+    runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/agents', __file__), runtime_text('__AIDP_HOME__/flows', __file__),
+    runtime_text('__AIDP_HOME__/reference', __file__), runtime_text('__AIDP_HOME__/rules', __file__), runtime_text('__AIDP_HOME__/templates', __file__),
     "docs/init",
 )
-SCAN_ROOT_FILES = ("设计目标.md", "README.md", "AGENTS.md", "CLAUDE.md", ".aidp/AIDP-AGENTS.md")
+SCAN_ROOT_FILES = ("设计目标.md", "README.md", "AGENTS.md", "CLAUDE.md", runtime_text('__AIDP_HOME__/AIDP-AGENTS.md', __file__))
 # bundle 副本是本体的镜像，同一问题报两遍没有价值
 # 叙述型文件：同一编号下从多个角度各写一节是它们的组织方式，标题同号不作数
 NARRATIVE_BASENAMES = ("rationale.md", "invariants.md", "README.md", "usage-guard.md")

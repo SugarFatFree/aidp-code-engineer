@@ -30,15 +30,21 @@
 
 ## 用法
 
-    python3 .aidp/scripts/selfcheck.py                 # 跑全部已登记探针
-    python3 .aidp/scripts/selfcheck.py --only check_md_anchors.py
-    python3 .aidp/scripts/selfcheck.py --json
-    python3 .aidp/scripts/<某个检查脚本>.py --self-check   # 单个脚本自检（等价于 --only）
+    python3 AIDP_HOME/scripts/selfcheck.py                 # 跑全部已登记探针
+    python3 AIDP_HOME/scripts/selfcheck.py --only check_md_anchors.py
+    python3 AIDP_HOME/scripts/selfcheck.py --json
+    python3 AIDP_HOME/scripts/<某个检查脚本>.py --self-check   # 单个脚本自检（等价于 --only）
 
 退出码：0 = 全部已登记探针自证有效；1 = 有探针未报红（该检查已失效）；2 = 入参错。
 **未登记探针的脚本不判失败**，但会计入 `unregistered` 并在摘要里点名——
 ⛔ 覆盖缺口必须可见，不许静默当成"全都自检过了"。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import project_root, runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -48,9 +54,10 @@ import sys
 import tempfile
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(SCRIPTS_DIR, "..", ".."))
+REPO_ROOT = str(project_root(__file__))
+RUNTIME_REL = runtime_relpath("", __file__)
 # 克隆到工作副本里的内容（检查器的扫描面全在这些路径下）
-SEED_ITEMS = (".aidp", "docs/init", "docs/deployment", "设计目标.md",
+SEED_ITEMS = (RUNTIME_REL, "docs/init", "docs/deployment", "设计目标.md",
               "README.md", "AGENTS.md", "CLAUDE.md", "版本变更历史.md")
 
 
@@ -110,7 +117,7 @@ def unsupported(name, reason):
 
 @probe("check_doc_numbering.py")
 def _p_doc_numbering(root):
-    _append(root, ".aidp/reference/命令速查.md",
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__),
             "\n\n## 探针\n\n- **1. 甲**\n- **2. 乙**\n- **2. 丙**\n")
 
 
@@ -126,20 +133,26 @@ def _p_case_ledger(root):
 def _p_private_markers(root):
     # 地址用拼接构造：本文件自身也在扫描面内，不能出现点分内网地址字面量
     addr = ".".join(["10", "20", "30", "40"])
-    _append(root, ".aidp/reference/命令速查.md", "\n\n探针：连 `http://%s:8080` 看看\n" % addr)
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__), "\n\n探针：连 `http://%s:8080` 看看\n" % addr)
+
+
+@probe("check_runtime_paths.py")
+def _p_runtime_paths(root):
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__),
+            runtime_text('\n\n探针：`python3 __AIDP_HOME__/scripts/runtime-path-probe.py`\n', __file__))
 
 
 @probe("check_code_symbol_refs.py")
 def _p_code_symbol_refs(root):
     # "::" 拼接：本文件自身也在扫描面内，字面量会被当成悬空引用
     ref = "selfcheck.py" + "::" + "_selfcheck_probe_missing_symbol"
-    _append(root, ".aidp/reference/命令速查.md", "\n\n探针：单一信源见 `%s`\n" % ref)
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__), "\n\n探针：单一信源见 `%s`\n" % ref)
 
 
 @probe("check_cli_invocation.py")
 def _p_cli_invocation(root):
-    _append(root, ".aidp/reference/命令速查.md",
-            "\n\n```bash\npython3 .aidp/scripts/commit_gate.py --selfcheck-probe-no-such-flag\n```\n")
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__),
+            runtime_text('\n\n```bash\npython3 __AIDP_HOME__/scripts/commit_gate.py --selfcheck-probe-no-such-flag\n```\n', __file__))
 
 
 @probe("check_sql_ledger_comment.py", args=("--json", "--version", "SELFCHECK"))
@@ -153,7 +166,7 @@ def _p_sql_ledger_comment(root):
 @probe("check_underscore_glob.py")
 def _p_underscore_glob(root):
     # 注入一条四族目录的通配式 .md 扫描、且漏排 `_*` —— 必须被抓到。
-    _append(root, ".aidp/flows/sprint-batch/step-6.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/sprint-batch/step-6.md', __file__),
             '\n\n```bash\nX=$(find "$V/研发自测" -maxdepth 2 -name "*.md" '
             '-not -name "README.md" 2>/dev/null)\n```\n')
 
@@ -170,19 +183,19 @@ def _p_testdata_prereq(root):
 
 @probe("check_banned_terminology.py")
 def _p_banned(root):
-    _append(root, ".aidp/commands/sprint-plan.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__),
             "\n\n本命令负责把今日任务映射到 Sprint / User Story，由 PM 负责用户故事拆分。\n")
 
 
 @probe("check_md_anchors.py")
 def _p_md_anchors(root):
-    _append(root, ".aidp/commands/sprint-plan.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__),
             "\n\n见 [不存在的小节](#zzz-selfcheck-dead-anchor-9871)。\n")
 
 
 @probe("check_loop_examples.py")
 def _p_loop(root):
-    _append(root, ".aidp/commands/sprint-autopilot.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-autopilot.md', __file__),
             "\n\n```bash\n/loop 10m /sprint-autopilot\n```\n")
 
 
@@ -190,13 +203,13 @@ def _p_loop(root):
 def _p_shell_escapes(root):
     # ⚠️ 要注入的是**两个反斜杠**：`\\n` 才是被禁的双重转义，
     #    单个 `\n` 在 shell 单引号里是 printf 的正确写法、本就不该报。
-    _append(root, ".aidp/flows/sprint-autopilot/phase-1.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/sprint-autopilot/phase-1.md', __file__),
             "\n\n```bash\nprintf '%s\\\\n' 001 002\n```\n")
 
 
 @probe("check_flow_bash_syntax.py")
 def _p_bash_syntax(root):
-    _append(root, ".aidp/flows/sprint-autopilot/phase-1.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/sprint-autopilot/phase-1.md', __file__),
             "\n\n```bash\nif [ -n \"$X\" ]; then\n  echo unbalanced\n```\n")
 
 
@@ -204,31 +217,31 @@ def _p_bash_syntax(root):
 def _p_line_refs(root):
     # ⚠️ 必须用 .md 路径：该检查只守 Markdown 之间的行号引用（MD_NAME_RE），
     #    拿 .py:NNN 当探针会"抓不到"，那是探针写错、不是检查失效。
-    _append(root, ".aidp/commands/sprint-plan.md",
-            "\n\n判据见 `.aidp/reference/命令速查.md:1234`。\n")
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__),
+            runtime_text('\n\n判据见 `__AIDP_HOME__/reference/命令速查.md:1234`。\n', __file__))
 
 
 @probe("check_singlesource_pointer.py")
 def _p_singlesource(root):
-    _append(root, ".aidp/commands/sprint-plan.md",
-            "\n\n本规则**单一信源 = `.aidp/reference/zzz-selfcheck-not-exist.md`**，此处不复述。\n")
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__),
+            runtime_text('\n\n本规则**单一信源 = `__AIDP_HOME__/reference/zzz-selfcheck-not-exist.md`**，此处不复述。\n', __file__))
 
 
 @probe("check_skill_ref_drift.py")
 def _p_skill_ref(root):
-    _append(root, ".aidp/commands/sprint-plan.md",
-            "\n\n判据见 `.aidp/skills/dev-execution-planner/references/zzz-selfcheck-missing.md`。\n")
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__),
+            runtime_text('\n\n判据见 `__AIDP_HOME__/skills/dev-execution-planner/references/zzz-selfcheck-missing.md`。\n', __file__))
 
 
 @probe("check_ghost_flags.py")
 def _p_ghost_flags(root):
-    _append(root, ".aidp/commands/sprint-autopilot.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-autopilot.md', __file__),
             "\n\n可用 `/sprint-autopilot --zzz-selfcheck-ghost-flag` 跳过本步。\n")
 
 
 @probe("check_shard_id_style.py")
 def _p_shard_style(root):
-    _write(root, ".aidp/flows/sprint-autopilot/phase-9-probe.md",
+    _write(root, runtime_text('__AIDP_HOME__/flows/sprint-autopilot/phase-9-probe.md', __file__),
            "# 探针\n\n### Step 9.1：甲\n\n正文\n\n### 9.2：乙\n\n正文\n")
 
 
@@ -236,8 +249,8 @@ def _p_shard_style(root):
 def _p_cross_dup(root):
     blob = ("\n\n" + ("本段用于自检阳性对照，逐字重复于两个文件之间，"
                       "用来验证跨文件长片段重复检测确实生效，绝不可被静默放过。" * 4) + "\n")
-    _append(root, ".aidp/commands/sprint-plan.md", blob)
-    _append(root, ".aidp/commands/sprint-start.md", blob)
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__), blob)
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-start.md', __file__), blob)
 
 
 @probe("check_ui_fidelity.py")
@@ -262,28 +275,28 @@ def _p_upstream_log(root):
 @probe("check_arguments_channel.py")
 def _p_args_channel(root):
     # 判据 = 分片用了 $ARGUMENTS、命令正文却没声明接收通道
-    _write(root, ".aidp/commands/zzz-selfcheck-probe.md",
+    _write(root, runtime_text('__AIDP_HOME__/commands/zzz-selfcheck-probe.md', __file__),
            "# /zzz-selfcheck-probe — 探针命令\n\n## 执行步骤\n\n1. 读取参数\n")
-    _write(root, ".aidp/flows/zzz-selfcheck-probe/step-1.md",
+    _write(root, runtime_text('__AIDP_HOME__/flows/zzz-selfcheck-probe/step-1.md', __file__),
            "# 探针分片\n\n```bash\nARGS=\"$ARGUMENTS\"\n```\n")
 
 
 @probe("check_convention30_prose.py")
 def _p_conv30(root):
-    _append(root, ".aidp/commands/sprint-plan.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__),
             "\n\n本步骤原来是先取号再校验，现在改成先校验再取号（V4.7 起），"
             "之所以这么改是因为旧顺序会漏号。\n")
 
 
 @probe("check_chain_unattended.py")
 def _p_chain(root):
-    _append(root, ".aidp/flows/sprint-autopilot/phase-3-5.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/sprint-autopilot/phase-3-5.md', __file__),
             "\n\n串联下游：调用 `/sprint-batch --skip-aiauto-test` 跑完本版全部 Sprint。\n")
 
 
 @probe("check_freeze_contract.py")
 def _p_freeze(root):
-    _append(root, ".aidp/flows/sprint-autopilot/phase-2.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/sprint-autopilot/phase-2.md', __file__),
             "\n\n```bash\n$BE --version \"$V\" set needs_human true\n```\n")
 
 
@@ -292,7 +305,7 @@ def _p_skill_gate(root):
     # 判据两个条件缺一不可：① 行内有「维度 N / N / N」枚举（ENUM_RE）
     # ② 同一行出现某个**声明过「不另立名单」的 SKILL** 的归属标识。
     # ⇒ 探针里的 SKILL 名不能随便挑，必须现取（当前是 auto-test-runner）。
-    base = os.path.join(root, ".aidp/skills")
+    base = os.path.join(root, runtime_text('__AIDP_HOME__/skills', __file__))
     owner = None
     for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
         d = os.path.join(base, name)
@@ -313,7 +326,7 @@ def _p_skill_gate(root):
         if owner:
             break
     assert owner, "没有任何 SKILL 声明「不另立名单」，本门不适用 —— 探针无从构造"
-    _append(root, ".aidp/commands/sprint-aiauto-test.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-aiauto-test.md', __file__),
             "\n\n`%s` 的维度 1 / 3 / 5 任一不通过 → 阻断验收。\n" % owner)
 
 
@@ -332,7 +345,7 @@ def _p_design_goals(root):
 
 @probe("check_flow_var_refs.py")
 def _p_flow_vars(root):
-    _append(root, ".aidp/flows/sprint-autopilot/phase-2.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/sprint-autopilot/phase-2.md', __file__),
             "\n\n```bash\necho \"$ZZZ_SELFCHECK_NEVER_PRODUCED\"\n```\n")
 
 
@@ -340,7 +353,7 @@ def _p_flow_vars(root):
 def _p_tick_vars(root):
     # 判据面是 autopilot_tick_flags.py 的 DERIVED_VARS 登记表：
     # 「登记了、但全仓没有任何供给点」才是它要抓的。故探针改的是登记表本身。
-    p = os.path.join(root, ".aidp/scripts/autopilot_tick_flags.py")
+    p = os.path.join(root, runtime_text('__AIDP_HOME__/scripts/autopilot_tick_flags.py', __file__))
     body = open(p, encoding="utf-8").read()
     anchor = "DERIVED_VARS = {"
     assert anchor in body
@@ -351,26 +364,26 @@ def _p_tick_vars(root):
 
 @probe("check_shard_counts.py")
 def _p_shard_counts(root):
-    _append(root, ".aidp/flows/README.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/README.md', __file__),
             "\n\n> `sprint-autopilot/` 目录共 99 片。\n")
 
 
 @probe("check_skill_ref_freshness.py")
 def _p_skill_fresh(root):
-    _append(root, ".aidp/commands/sprint-design.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/sprint-design.md', __file__),
             "\n\n判据见 `dev-logic-architect` 检查项 999「探针」。\n")
 
 
 @probe("check_deployment_path_refs.py")
 def _p_deploy_paths(root):
-    _append(root, ".aidp/commands/version.md",
+    _append(root, runtime_text('__AIDP_HOME__/commands/version.md', __file__),
             "\n\n产物落 `docs/deployment/{version}/sql/01_初始化.sql` 与 "
             "`docs/deployment/{version}/配置文件/配置项清单.md`。\n")
 
 
 @probe("check_count_claims.py")
 def _p_count_claims(root):
-    _append(root, ".aidp/reference/命令速查.md",
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__),
             "\n\n## 探针\n\n本范式共 99 项核心约定。\n")  # <!-- countclaim-check: ignore 探针文本，非本仓自称计数；标记刻意留在字符串外，写进字符串会让注入内容自带豁免、探针当场失效 -->
 
 
@@ -390,7 +403,7 @@ def _p_conv_dup(root):
     except ImportError:
         first = "AGENTS.md"
     cands = []
-    for cand in (".aidp/AIDP-AGENTS.md", first, "AGENTS.md", "CLAUDE.md"):
+    for cand in (runtime_text('__AIDP_HOME__/AIDP-AGENTS.md', __file__), first, "AGENTS.md", "CLAUDE.md"):
         if cand not in cands:
             cands.append(cand)
     for cand in cands:
@@ -405,7 +418,7 @@ def _p_conv_dup(root):
         raise RuntimeError(
             "项目记忆文件都取不到约定 20 主行（AGENTS.md / CLAUDE.md）—— "
             "探针无法注入真实主行，不能用自造句子冒充（首句探针是子串匹配，假句子抓不到）")
-    _append(root, ".aidp/reference/约定细则-1.md", "\n\n" + line + "\n")
+    _append(root, runtime_text('__AIDP_HOME__/reference/约定细则-1.md', __file__), "\n\n" + line + "\n")
 
 
 unsupported("autopilot_reset.py",
@@ -421,7 +434,7 @@ def _p_prose_exec(root):
     # 判据 = 某 flow 目录的散文承诺了某动作、该目录的 bash 围栏里却一次都没有。
     # ⚠️ 动作词取自脚本的 ACTIONS 白名单，自造名字抓不到；且必须新建目录——
     #    往 sprint-autopilot/ 里加，那边围栏本来就有 notify.py，配平后不报。
-    _write(root, ".aidp/flows/zzz-selfcheck-probe/step-1.md",
+    _write(root, runtime_text('__AIDP_HOME__/flows/zzz-selfcheck-probe/step-1.md', __file__),
            "# 探针分片\n\n本步完成后经 `notify.py` 发里程碑通知并登记通知台账。\n")
 
 
@@ -429,7 +442,7 @@ def _p_prose_exec(root):
 def _p_step_index(root):
     # 判据带「表里已列举 ≥2 个同级兄弟」的守卫 ⇒ 探针编号必须落在**已有的编号族**里
     # （Phase 3.x），另起 Phase 9.x 会因无兄弟而被守卫正当地放过。
-    _write(root, ".aidp/flows/sprint-autopilot/phase-3-99-probe.md",
+    _write(root, runtime_text('__AIDP_HOME__/flows/sprint-autopilot/phase-3-99-probe.md', __file__),
            "# 探针分片\n\n### Phase 3.99：探针步骤\n\n正文。\n")
 
 
@@ -437,7 +450,7 @@ def _p_step_index(root):
 def _p_yield_guard(root):
     # 阴性侧：现存 yield 站点全在 KNOWN_OPEN 里 → 只报「待修」不抬退出码 → 绿（不恒红）。
     # 阳性侧：在一个不在 KNOWN_OPEN 的分片里新起一个 yield 站点、且不带守卫 → 必须报红。
-    _append(root, ".aidp/flows/sprint-batch/step-6.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/sprint-batch/step-6.md', __file__),
             "\n```bash\nexit 0   # 让位本 tick（探针）\n```\n")
 
 
@@ -445,7 +458,7 @@ def _p_yield_guard(root):
 def _p_release_ask(root):
     # 阴性侧：现有 25 处 AskUserQuestion 提及都能指名归属 → 绿（不恒红）。
     # 阳性侧：在发布分片里新起一处无归属的问询 → 必须报红。
-    _append(root, ".aidp/flows/version/release-3.md",
+    _append(root, runtime_text('__AIDP_HOME__/flows/version/release-3.md', __file__),
             "\n\n随便问一句 AskUserQuestion 要不要继续\n")
 
 
@@ -460,11 +473,7 @@ unsupported("check_index_staleness.py",
             "那里现建一个临时 git 仓库，用 `git update-index --assume-unchanged` 精确复现"
             "「status 看不见这个文件」的状态，再改内容验证报红。")
 unsupported("check_memory_loss.py",
-            "基线优先取 `--snapshot` 写前快照（memory/.aidp/memory-snapshot/），无快照时取 `git HEAD`；"
-            "本沙箱是 tempfile 硬链接副本、无 .git、无快照也不含 memory/ —— "
-            "在这里它恒走「无可比基线」分支、注入什么都不会变红。"
-            "真实双侧对照在 tests/test_guard_scripts.py 的「memory 整段被吞」组："
-            "那里现建一个临时 git 仓库、提交基线、再删一段验证报红，并用「填占位符」做阴性对照。")
+            runtime_text('基线优先取 `--snapshot` 写前快照（memory/.aidp/memory-snapshot/），无快照时取 `git HEAD`；本沙箱是 tempfile 硬链接副本、无 .git、无快照也不含 memory/ —— 在这里它恒走「无可比基线」分支、注入什么都不会变红。真实双侧对照在 tests/test_guard_scripts.py 的「memory 整段被吞」组：那里现建一个临时 git 仓库、提交基线、再删一段验证报红，并用「填占位符」做阴性对照。', __file__))
 unsupported("check_changelog_fix_scope.py",
             "判据是「被修文件的引入点是否晚于上一个已发布 tag」，要真实 git 历史 + tag；"
             "克隆树无 .git ⇒ 恒判 not-a-git-repo（不适用、绿），注入探针也红不了——"
@@ -475,11 +484,8 @@ unsupported("check_changelog_fix_scope.py",
 @probe("check_release_debt_landing.py")
 def _p_release_debt(root):
     # 给发布分片加一处「失败兜底只 echo」的调用：必被判 ERROR。
-    _write(root, ".aidp/flows/version/release-zzz-probe.md",
-           "```bash\n"
-           'python3 .aidp/scripts/check_zzz.py --version "$V" \\\n'
-           '  || echo "⚠️ 未过 → 请自行登记欠账"\n'
-           "```\n")
+    _write(root, runtime_text('__AIDP_HOME__/flows/version/release-zzz-probe.md', __file__),
+           runtime_text('```bash\npython3 __AIDP_HOME__/scripts/check_zzz.py --version "$V" \\\n  || echo "⚠️ 未过 → 请自行登记欠账"\n```\n', __file__))
 
 
 @probe("check_comment_ratio.py")

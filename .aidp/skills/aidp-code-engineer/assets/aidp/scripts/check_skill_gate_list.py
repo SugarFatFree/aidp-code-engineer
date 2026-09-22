@@ -49,15 +49,21 @@ SKILL 与命令端各自独立迭代（约定 16）。它们**改一份名单**�
 
 退出码：`0`=无写死名单 / `1`=检出 / `2`=用法错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
 import re
 import sys
 
-SCAN_DIRS = (".aidp/commands", ".aidp/agents", ".aidp/flows",
-             ".aidp/reference", ".aidp/rules")
-SKILLS_DIR = ".aidp/skills"
+SCAN_DIRS = (runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/agents', __file__), runtime_text('__AIDP_HOME__/flows', __file__),
+             runtime_text('__AIDP_HOME__/reference', __file__), runtime_text('__AIDP_HOME__/rules', __file__))
+SKILLS_DIR = runtime_text('__AIDP_HOME__/skills', __file__)
 IGNORE_RE = re.compile(r"<!--\s*skillgate-check:\s*ignore\b")
 # 上游「我的集合会变、别抄名单」的自我声明
 NO_LIST_RE = re.compile(r"(不另立名单|不另列名单|判据就是标记本身)")

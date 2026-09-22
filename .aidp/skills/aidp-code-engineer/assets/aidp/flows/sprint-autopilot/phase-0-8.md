@@ -26,7 +26,7 @@
 
 > ★ **本步只补"测试方案的 chrome-mcp 段 + 连接/账号"，不校验"测试用例是否存在"**：测试用例（研发自测用例）由 **Phase 3.1 `/version` 规划阶段**经 Step 2.4.3.5 `/sprint-selftest` 调 `dev-manual-testcase` SKILL 生成——规划尚未跑时用例本就不存在，故 Phase 0 不设"用例存在性"门（否则与"规划阶段才产出用例"自相矛盾）。用例的实际存在性 + 来源优先级（测试人员正式用例为主 / 研发自测查漏为补）由 `/sprint-aiauto-test` Phase 2.0 在测试链路统一判定，命令端不前移、不复算。
 
-> 🔧 **chrome-devtools-mcp 安装预检（测试方案声明用 chrome-mcp 时执行，不阻塞开发链路）**：当下版**测试方案明确使用 chrome-devtools-mcp**（`autopilot_decisions.test_strategy=chrome-mcp`，即前端 web 项目走浏览器实测）时，本步**核验驱动就绪**——**委派 `python3 .aidp/scripts/chrome-mcp-doctor.py check-cli --json`**（检测单一信源，两命令共用；★ 它探**真实 cli 命令 `chrome-devtools`**（非 `chrome-devtools-cli`——那只是技能名）+ 四独立信号 `CLI_OK/NPM_PKG_OK/CHROME_BIN_OK/REMOTE`，**不再把"npm 包在"当"cli 可用"等价**，正是本次下游"包在但探错名 → 误判 cli 不可用 → 静默降级 MCP"的根因修复）：
+> 🔧 **chrome-devtools-mcp 安装预检（测试方案声明用 chrome-mcp 时执行，不阻塞开发链路）**：当下版**测试方案明确使用 chrome-devtools-mcp**（`autopilot_decisions.test_strategy=chrome-mcp`，即前端 web 项目走浏览器实测）时，本步**核验驱动就绪**——**委派 `python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py check-cli --json`**（检测单一信源，两命令共用；★ 它探**真实 cli 命令 `chrome-devtools`**（非 `chrome-devtools-cli`——那只是技能名）+ 四独立信号 `CLI_OK/NPM_PKG_OK/CHROME_BIN_OK/REMOTE`，**不再把"npm 包在"当"cli 可用"等价**，正是本次下游"包在但探错名 → 误判 cli 不可用 → 静默降级 MCP"的根因修复）：
 >   - ✅ 已安装 → 仅记一行 INFO，继续。
 >   - ❌ 未安装 → **就地打印安装引导**（让用户在挂 `/loop 5m /sprint-aiauto-test --unattended` 前装好，否则测试链路会卡在其 Phase 0.1 安装门）：
 >     ```
@@ -54,20 +54,20 @@
 >     `test_strategy` 恒空 ⇒ `mcp_chrome` 永不进必需项 REQ。两处校验形同虚设）：
 >
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # 取回 TARGET_VERSION（分片间 shell 变量不持久）
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 取回 TARGET_VERSION（分片间 shell 变量不持久）
 > # chrome_preflight：值域直接取 check-cli 的 category（与上面五类一一对应）
-> CAT=$(python3 .aidp/scripts/chrome-mcp-doctor.py check-cli --json 2>/dev/null \
+> CAT=$(python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py check-cli --json 2>/dev/null \
 >       | awk '/^\{/,0' | python3 -c "import json,sys;print(json.load(sys.stdin).get('category',''))" 2>/dev/null)
-> [ -n "$CAT" ] && python3 .aidp/scripts/baseline_edit.py set chrome_preflight "$CAT"
+> [ -n "$CAT" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py set chrome_preflight "$CAT"
 > # test_strategy：真源在 PRD autopilot_decisions；PRD 大目录取 baseline prd_root（可被项目覆盖）
 > # ⛔ 检索面必须限定到**本轮目标版本**：对整个 prd_root 递归 grep + head -1 会按文件系统序
 > #    取到**别的版本**的值（多版本共存是常态），而写入的又是 baseline **顶层**键 —— 于是
 > #    「上一版写 static-only、本版要 chrome-mcp」会让 0.7 钢门的 chrome 必需项恒假、
 > #    0.5.5 的 chrome 预检整段按 static-only 跳过，直到测试链路才发现驱动没装。
-> PRD_ROOT=$(python3 .aidp/scripts/baseline_edit.py get prd_root --default "docs/requirements")
+> PRD_ROOT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get prd_root --default "docs/requirements")
 > TS=$(grep -rhoE '^[[:space:]]*test_strategy:[[:space:]]*[a-z-]+' \
 >        "$PRD_ROOT/$TARGET_VERSION" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//')
-> [ -n "$TS" ] && python3 .aidp/scripts/baseline_edit.py set test_strategy "$TS"
+> [ -n "$TS" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py set test_strategy "$TS"
 > ```
 
 ### 0.6 字段缺失统一在 Phase 0 收集（★ 铁律：禁止执行主流程（Phase 2/3）中途阻塞）
@@ -85,9 +85,9 @@
 1. **合并两处声明，判定 = 「PRD frontmatter 优先」**：PRD 头部 frontmatter 是真源，`memory/aidp-config.yaml` 的 `autopilot_decisions:` 段 **只在 PRD 未声明该字段时兜底**；同名叶子两处值不同 → **取 PRD 值**并**逐条打印 `[decisions-conflict]`**（⛔ 不许静默取胜）。**唯一实现** = `autopilot_decisions_merge.py`，⛔ 不另写 grep/yq：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # 取回 TARGET_VERSION（分片间 shell 变量不持久）
-PRD_ROOT=$(python3 .aidp/scripts/baseline_edit.py get prd_root --default "docs/requirements")
-DM="python3 .aidp/scripts/autopilot_decisions_merge.py --version $TARGET_VERSION --prd-root $PRD_ROOT"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 取回 TARGET_VERSION（分片间 shell 变量不持久）
+PRD_ROOT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get prd_root --default "docs/requirements")
+DM="python3 {{AIDP_HOME}}/scripts/autopilot_decisions_merge.py --version $TARGET_VERSION --prd-root $PRD_ROOT"
 $DM --json   # 合并结果 = 第 2 步字段比对的唯一输入；冲突告警走 stderr、恒可见
 # 兜底副本与 PRD 有冲突字段 → exit 1 + 可直接执行的清理建议；⛔ 不阻塞本轮
 $DM --check || echo "⚠️ 兜底段 memory/aidp-config.yaml autopilot_decisions 与 PRD 冲突：本轮按 PRD 跑，按上面建议清理"

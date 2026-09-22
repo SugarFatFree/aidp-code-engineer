@@ -24,7 +24,7 @@ description: >
 
 > ⚠️ **`references/tech-stack-options.md`（选型表）是例外，必须全量加载**——它用于**选型期**，那时用户尚未选定技术栈、无从探测，正是要看到全部候选才能选。**选型表不拆、落地细则才拆**。详见 `references/stack-index.md`。
 
-> **`<SKILL_DIR>` 占位符（全文统一）:** 本文件所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` = 本 SKILL 的实际安装目录（本项目 = `.aidp/skills/dev-logic-architect`），执行前须替换为真实路径；**不要**按当前工作目录去找 `scripts/`。
+> **`<SKILL_DIR>` 占位符（全文统一）:** 本文件所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` = 本 SKILL 的实际安装目录（本项目 = `{{AIDP_HOME}}/skills/dev-logic-architect`），执行前须替换为真实路径；**不要**按当前工作目录去找 `scripts/`。
 
 ---
 

@@ -21,17 +21,17 @@
 
 ## 一、可用指令清单(按优先级)
 
-> 生成本计划前已按 5 层优先级扫描项目资源(`.aidp/`、`AIDP*.md`、`.claude/`、`~/.claude/`、`package.json scripts`、`Makefile`、`pom.xml`、README)。**若项目存在 L1/L2 资源,Task 必须优先采用**;本虚构项目扫描结果如下。
+> 生成本计划前已按 5 层优先级扫描项目资源(`{{AIDP_HOME}}/`、`AIDP*.md`、`.claude/`、`~/.claude/`、`package.json scripts`、`Makefile`、`pom.xml`、README)。**若项目存在 L1/L2 资源,Task 必须优先采用**;本虚构项目扫描结果如下。
 
 ### L1 — AIDP 命令与范式(项目专属,最高优先级)
-- 无(`.aidp/`、`AIDP*.md` 均未发现)
+- 无(`{{AIDP_HOME}}/`、`AIDP*.md` 均未发现)
 
 ### L2 — 项目 .claude/ 资源(项目团队约定)
 - 无(项目 `.claude/` 下无 commands/skills/agents)
 
 ### L3 — 系统 Claude Code 资源(全局)
-- `/dev-logic-architect` — 来源:`~/.aidp/skills/dev-logic-architect/`
-- `/code-verification-loop` — 来源:`~/.aidp/skills/code-verification-loop/`
+- `/dev-logic-architect` — 来源:`~/{{AIDP_HOME}}/skills/dev-logic-architect/`
+- `/code-verification-loop` — 来源:`~/{{AIDP_HOME}}/skills/code-verification-loop/`
 
 ### L4 — 通用工具命令
 - `mvn -q compiler:compile`(本样例按 `stack-java-spring.md` 二节的**默认写法**取值——直调 goal、不走 lifecycle;⛔ **不要照抄成 `mvn compile`**,更**永远不要写 `mvn clean compile`**——`clean` 会删 `target/` 触发全量重建;换项目前先读那一节的三条实测事实,尤其「execution 级 `<configuration>` 不生效」那条) / `mvn test` / `mvn mybatis-plus:generate` / `vue-tsc --noEmit`(前端开发期类型检查) / `pnpm test:e2e`

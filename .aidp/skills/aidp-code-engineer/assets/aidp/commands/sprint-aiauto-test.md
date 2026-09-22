@@ -4,7 +4,7 @@
 
 参数：$ARGUMENTS
 
-> ⛔ **上面这行不可删**：`$ARGUMENTS` 是斜杠命令正文的 **runtime 文本替换**，只在 `.aidp/commands/*.md` 里生效；
+> ⛔ **上面这行不可删**：`$ARGUMENTS` 是斜杠命令正文的 **runtime 文本替换**，只在 `{{AIDP_HOME}}/commands/*.md` 里生效；
 > flow 分片是被 `Read` 进来的普通文本，`${ARGUMENTS:-}` 在那里只是未设置的 shell 变量。缺了它 →
 > Phase 0.1 的 `autopilot_tick_flags.py parse --arguments` 恒收空串 → `--unattended` / `--once` / `--target`
 > **全部失效**；且本链路退出前已刷过心跳，开发链路据此判「测试链路健康」走暂缓，12 tick 后按 `unconverged`
@@ -42,13 +42,15 @@
 - AI 自动化测试可独立跑（研发验证 bug 修复 / 临时跑回归 / 手动触发 UAT 验证）
 - 部署失败不阻塞 sprint-autopilot 的 SQL/文档归档主流程
 
+**VCS 能力分流**：Phase 0 前以 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 读取 `vcs_mode=git|none`，身份由 `developer_identity(Path.cwd())` 解析。`none` 下不运行 Git fetch/pull、Git diff、commit/push；这些 Git-only 节点记 `unsupported:vcs-disabled`（非 passed），继续已有本地部署 URL 的探测与浏览器测试。没有实际部署就绪证据时不冒充已部署、不测旧服务：记本轮测试 skipped，保留本地测试准备产物与可恢复状态；不得因缺 Git 走 git-pull-conflict 熔断。`git` 沿用原流程。
+
 ## 命令语法
 
 ```
 /sprint-aiauto-test [flags]
 
 # ★ 标准用法（生产 7×24）：操作系统调度（与开发链路一并安装）；版本号自动从 baseline 读
-python3 .aidp/scripts/aidp_scheduler.py install                       # 测试链路默认每 5 分钟经 agent_loop.sh --once 唤起本命令
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 测试链路默认每 5 分钟经 agent_loop.sh --once 唤起本命令
 # 交互式短期用法（Claude Code 会话内；会话级、7 天过期、空闲才触发、同会话与开发链路串行）
 /loop 5m /sprint-aiauto-test --unattended                             # 每 5 分钟读 baseline 看有无新部署，自动跑测
 
@@ -79,7 +81,7 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 |---|---|
 | `--once` | 强制立即跑一次完整测试 |
 | **`LOOP_UNATTENDED=1`（`/loop` 上下文 / `--no-loop` / 含裸 `--unattended`）★** | **照常进 Phase 1/2/3 跑测**。⛔ **绝不落到下面的"默认"行**——`--unattended` 的语义就是"没人在场、别打印引导等人"；落默认行会让 `/loop 5m /sprint-aiauto-test --unattended` 每 tick 跑完 Phase 0（**心跳照刷、`aiauto_blocked_reason` 照清**）就打印引导退出，**一条用例都不跑**。二次伤害更隐蔽：开发链路 Phase 2 0b 读到"新鲜心跳 + 空 blocked_reason"判 `TEST_LOOP_ALIVE=1` → 走"暂缓"而非熔断 → 12 tick 后按 `unconverged` 冻结，告警文案写"测试链路存活但未收敛，请人工看测试结果/环境"，而真相是测试链路一次都没启动。与 `/sprint-autopilot` Phase 1.3 决策表同款分流。 |
-| 默认（无 flag + 非 `/loop` 上下文 + `LOOP_UNATTENDED=0`）| 完成 Phase 0 后**输出引导**「7×24 请用 `python3 .aidp/scripts/aidp_scheduler.py install` 装齐开发 + 测试两条链路（会话内临时可用 `/loop 5m /sprint-aiauto-test --unattended`）」+ 退出，**不跑测试**；避免误以为单次直接调用就实现了持续测试。 |
+| 默认（无 flag + 非 `/loop` 上下文 + `LOOP_UNATTENDED=0`）| 完成 Phase 0 后**输出引导**「7×24 请用 `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install` 装齐开发 + 测试两条链路（会话内临时可用 `/loop 5m /sprint-aiauto-test --unattended`）」+ 退出，**不跑测试**；避免误以为单次直接调用就实现了持续测试。 |
 
 | 参数 / Flag | 默认 | 说明 |
 |------------|------|------|
@@ -102,7 +104,7 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 
 > ⛔ **Phase 0 前置硬门（exit-1 级铁律 — 任何入口 / 任何用户意图都不得绕过）**：在跑任何浏览器实测 / 委派执行之前，**必须先完整跑完 Phase 0.0.0–0.4**——① `0.0.0` 最先派生 `LOOP_UNATTENDED`（否则后续无人值守分支误判挂死）② `0.0.7` 连接模式护栏（同机无 `.mcp.json` 必走本地 CLI，禁 MCP 变体顶替，与文首 ⛔⛔ 浏览器驱动铁律同源）③ `0.2` 步骤 2.5.1 自愈交接（autopilot 驱动但本 build AI执行报告骨架缺失 → 交接回 `/sprint-autopilot --skip-dev` 补齐，绝不在骨架缺失下散落 AI测试报告）。未跑完 Phase 0 → 不得进 Phase 1/2/3。
 >
-> ⛔⛔ **详细步骤已外置为 9 个分片、进入 Phase 0 的【第一动作】= 按需加载**：Phase 0 的完整 0.0.0–0.4 步骤拆为 **`phase-0-1.md` … `phase-0-7.md`（其中 0.2 因超 20KB 上限二次切分为 `phase-0-6.md` + `phase-0-6b.md`）**（均在 `.aidp/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供"知道有哪几步 + 定位分片"，权威判定与操作一律以对应分片为准。分片清单：`phase-0-1.md`(0.0.0/0.0/0.0.5) · `phase-0-2.md`(0.0.6/0.0.7) · `phase-0-3.md`(0.1/0.1.1/0.1.1.4) · `phase-0-4.md`(0.1.1.5/0.1.2/0.1.2.1/0.1.3/0.1.3.5/0.1.4) · `phase-0-5.md`(0.1.5) · `phase-0-6.md`(0.2 子步骤 1–4) · `phase-0-6b.md`(0.2 两段执行铁律) · `phase-0-7.md`(0.3/0.4) · `phase-0-8.md`(0.1.6，★ 可选能力、未启用整段跳过)。
+> ⛔⛔ **详细步骤已外置为 9 个分片、进入 Phase 0 的【第一动作】= 按需加载**：Phase 0 的完整 0.0.0–0.4 步骤拆为 **`phase-0-1.md` … `phase-0-7.md`（其中 0.2 因超 20KB 上限二次切分为 `phase-0-6.md` + `phase-0-6b.md`）**（均在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供"知道有哪几步 + 定位分片"，权威判定与操作一律以对应分片为准。分片清单：`phase-0-1.md`(0.0.0/0.0/0.0.5) · `phase-0-2.md`(0.0.6/0.0.7) · `phase-0-3.md`(0.1/0.1.1/0.1.1.4) · `phase-0-4.md`(0.1.1.5/0.1.2/0.1.2.1/0.1.3/0.1.3.5/0.1.4) · `phase-0-5.md`(0.1.5) · `phase-0-6.md`(0.2 子步骤 1–4) · `phase-0-6b.md`(0.2 两段执行铁律) · `phase-0-7.md`(0.3/0.4) · `phase-0-8.md`(0.1.6，★ 可选能力、未启用整段跳过)。
 
 **Phase 0 子步骤骨架（每步先 Read「所在分片」再执行）**：
 
@@ -129,7 +131,7 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 
 > ⛔ **Phase 1 关键硬门**：① `1.1` 就绪判据统一 —— `curl … 200` 仅对无登录系统足够；`REQUIRES_LOGIN=true` 时**必须以「登录成功后、自身鉴权接口连续 2 次正常取到数据」为就绪判据**（对齐 sprint-autopilot Phase 3.2.1 Step D「部署完成 ≠ 可测」），堵"可达性即就绪"陷阱 ② `1.2` 探测失败熔断 —— `/loop` 无人值守走 `UNATTENDED_YIELD` + `probe_fail_streak +1`，达 `probe_fail_freeze_threshold`（默认 3）置版本级 `needs_human=true` + `aiauto_frozen_at` + `freeze_reason=probe-timeout` + **顶层 `aiauto_blocked_reason`**（四件套）冻结本版、不再每 tick 重探刷 #4。
 >
-> ⛔⛔ **详细步骤已外置、进入 Phase 1 的【第一动作】= 按需加载**：Phase 1 的完整 1.1–1.3 步骤在 **`.aidp/flows/sprint-aiauto-test/phase-1.md`**。**进入本段第一动作 = Read `.aidp/flows/sprint-aiauto-test/phase-1.md`，逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以 `phase-1.md` 为准。
+> ⛔⛔ **详细步骤已外置、进入 Phase 1 的【第一动作】= 按需加载**：Phase 1 的完整 1.1–1.3 步骤在 **`{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-1.md`**。**进入本段第一动作 = Read `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-1.md`，逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以 `phase-1.md` 为准。
 
 **Phase 1 子步骤骨架（详见 `phase-1.md`）**：
 
@@ -147,7 +149,7 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 
 > ⛔ **执行内核委派 `auto-test-runner` skill（单一信源，约定 21）**：本 Phase 的用例执行方法论全部沉淀在 `auto-test-runner` skill，**命令端不复述、不手写逐条 chrome 调用**——只做三件事：① 组装 run-context（2.0.5）② **按模块派「测试执行子 Agent」**（用 `Agent`/Task 工具，prompt 里只给 `auto-test-runner` 的 `SKILL.md` + 方法论文件路径 + 本模块用例路径 + run-context 路径，令子 Agent **自行 `Read`**；⛔ 主循环**不**用 `Skill` 工具 invoke auto-test-runner——子 Agent 拿不到 Skill 工具，且把几千行方法论灌进主循环纯属浪费上下文）③ 消费其产物做 AIDP 后处理（运行时错误升级 bug / AI测试报告 HTML / 里程碑通知）。2.1/2.2 的浏览器操作细节仅为 **skill 内部行为示意**，命令端绝不自己直驱浏览器。
 >
-> ⛔⛔ **详细步骤已外置为 2 个分片、进入 Phase 2 的【第一动作】= 按需加载**：Phase 2 的完整 2.0–2.4 步骤拆为 **`phase-2-1.md`（2.0）+ `phase-2-2.md`（2.0.5–2.4）**（均在 `.aidp/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以对应分片为准。
+> ⛔⛔ **详细步骤已外置为 2 个分片、进入 Phase 2 的【第一动作】= 按需加载**：Phase 2 的完整 2.0–2.4 步骤拆为 **`phase-2-1.md`（2.0）+ `phase-2-2.md`（2.0.5–2.4）**（均在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以对应分片为准。
 
 **Phase 2 子步骤骨架（每步先 Read「所在分片」再执行）**：
 
@@ -163,7 +165,7 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 | **2.3** | `phase-2-2.md` | `--skip-login` 模式（测公开页）|
 | **2.4** | `phase-2-2.md` | ★ 运行时错误全程捕获与 bug 记录（不在用例里也要记）|
 
-> ★ **WebMCP 条件启用入参**（默认不传）：`auto-test-runner` 的 **`invoke` 补充能力**（列出/调用页面登记的工具，属 **Web 适配器的可选能力、不是第五个端**）与其**驱动版本校验**均为**入参门控**，SKILL **明令不自行探测**。组装 run-context（2.0.5）时先跑 `python3 .aidp/scripts/check_webmcp.py --detect --json`，`enabled: true` 才把 `webmcp_enabled: true` + `webmcp_entry_symbols` + `webmcp_launch_command` 写进 run-context 并在派子 Agent 的 prompt 里点明；**不传 = `invoke` 与版本校验永不启用**。⛔ 版本不足时由 SKILL 标 `block(webmcp-driver-too-old)`，**不得静默降级为「就当没有 WebMCP」**——那会让这一整类用例全绿式消失、报告看不出漏测。Phase 0.1.6（`phase-0-8.md`）已做驱动就绪预检，本处只负责把入参传下去。
+> ★ **WebMCP 条件启用入参**（默认不传）：`auto-test-runner` 的 **`invoke` 补充能力**（列出/调用页面登记的工具，属 **Web 适配器的可选能力、不是第五个端**）与其**驱动版本校验**均为**入参门控**，SKILL **明令不自行探测**。组装 run-context（2.0.5）时先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`，`enabled: true` 才把 `webmcp_enabled: true` + `webmcp_entry_symbols` + `webmcp_launch_command` 写进 run-context 并在派子 Agent 的 prompt 里点明；**不传 = `invoke` 与版本校验永不启用**。⛔ 版本不足时由 SKILL 标 `block(webmcp-driver-too-old)`，**不得静默降级为「就当没有 WebMCP」**——那会让这一整类用例全绿式消失、报告看不出漏测。Phase 0.1.6（`phase-0-8.md`）已做驱动就绪预检，本处只负责把入参传下去。
 
 > 收口：auto-test-runner 跑完 → 进入 Phase 3 生成报告。**执行前务必已 Read `phase-2-1.md` + `phase-2-2.md`。**
 
@@ -173,7 +175,7 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 
 > ⛔ **Phase 3 关键硬门**：① `3.0`/`3.2.7` 报告生成门 —— AI测试报告**仅在 `/sprint-autopilot` 流水线驱动（`REPORT_ENABLED=1`，baseline 有 `current_build`）时生成**，standalone 只跑测试不产报告 ② `3.2.5` 截图落盘硬核验 —— 归集后截图目录必须存在且非空，**缺失绝不生成"完成"报告** ③ `3.7`（R-4）finalize AI执行报告真实 testSummary + 发 #3 里程碑通知，一旦 `ai_report_finalized=true` 即冻结、结论变化只能铸新 build（报告不可变铁律，见文首 ⛔）。
 >
-> ⛔⛔ **详细步骤已外置为 6 个分片、进入 Phase 3 的【第一动作】= 按需加载**：Phase 3 的完整 3.0–3.8 步骤拆为 **`phase-3-1.md` … `phase-3-5.md`（其中 3.4 因超 20KB 上限二次切分为 `phase-3-3.md` + `phase-3-3b.md`）**（均在 `.aidp/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以对应分片为准。分片清单：`phase-3-1.md`(3.0/3.1/3.2/3.2.5) · `phase-3-2.md`(3.2.6) · `phase-3-3.md`(3.2.7/3.2.8/3.3) · `phase-3-3b.md`(3.4) · `phase-3-4.md`(3.5/3.6) · `phase-3-5.md`(3.7/3.8)。
+> ⛔⛔ **详细步骤已外置为 6 个分片、进入 Phase 3 的【第一动作】= 按需加载**：Phase 3 的完整 3.0–3.8 步骤拆为 **`phase-3-1.md` … `phase-3-5.md`（其中 3.4 因超 20KB 上限二次切分为 `phase-3-3.md` + `phase-3-3b.md`）**（均在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以对应分片为准。分片清单：`phase-3-1.md`(3.0/3.1/3.2/3.2.5) · `phase-3-2.md`(3.2.6) · `phase-3-3.md`(3.2.7/3.2.8/3.3) · `phase-3-3b.md`(3.4) · `phase-3-4.md`(3.5/3.6) · `phase-3-5.md`(3.7/3.8)。
 
 **Phase 3 子步骤骨架（每步先 Read「所在分片」再执行）**：
 
@@ -202,13 +204,13 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 任何 Phase 失败均走：
 
 1. **暂停命令**（不退出）
-2. **发 #4 里程碑通知**（同 sprint-autopilot 模板，经 `python3 .aidp/scripts/notify.py --auto ...`；退出码 3 = 未配置任何通知渠道 → 静默跳过本播报节点，⛔ 不弹窗问人）：
+2. **发 #4 里程碑通知**（同 sprint-autopilot 模板，经 `python3 {{AIDP_HOME}}/scripts/notify.py --auto ...`；退出码 3 = 未配置任何通知渠道 → 静默跳过本播报节点，⛔ 不弹窗问人）：
    ```
    🚨 /sprint-aiauto-test {TARGET_VERSION} 卡住，需要你介入
    阶段：Phase {N}
    错误：{摘要 200 字符}
    日志：memory/aiauto-test-{YYYYMMDD-HHMM}.log
-   📌 下一步：① 接管  ② 修复后解冻：python3 .aidp/scripts/autopilot_unfreeze.py --manual {TARGET_VERSION}
+   📌 下一步：① 接管  ② 修复后解冻：python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual {TARGET_VERSION}
              ③ 交互式会话内回复 retry / skip / abort
    ```
 3. **★ 按上下文分流（对齐 sprint-autopilot 失败处置 step 3）**：
@@ -222,12 +224,12 @@ python3 .aidp/scripts/aidp_scheduler.py install                       # 测试�
 ### #1 ★ 标准：操作系统调度（与开发链路一并安装）
 
 ```bash
-python3 .aidp/scripts/aidp_scheduler.py install [--agent claude|codex|dsh] [--test-interval 5m]
-python3 .aidp/scripts/aidp_scheduler.py status
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|dsh] [--test-interval 5m]
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status
 ```
 
-- 开发链路（`/sprint-autopilot`，默认 10m）与测试链路（本命令，默认 5m）各一个独立定时任务，每轮经 `.aidp/scripts/agent_loop.sh --once <命令> --unattended` 唤起（自动补 `--no-loop`、flock 互斥、日志落 `memory/.aidp/logs/`），两条链路互不阻塞；任一链路心跳中断由 `aidp_scheduler.py watchdog` 写本地告警台账 `memory/.aidp/alerts.jsonl` 并发通知。
-- 非交互执行需预授权工具权限（Claude `permissions.allow` / Codex `codex exec --sandbox workspace-write` + 项目 trust / DeepSeek Harness 在 `scheduler.exec.dsh` 配置执行命令），详见 `.aidp/reference/agent-tools.md` 第三节；各 CLI 参数以所用版本官方文档为准。
+- 开发链路（`/sprint-autopilot`，默认 10m）与测试链路（本命令，默认 5m）各一个独立定时任务，每轮经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended` 唤起（自动补 `--no-loop`、flock 互斥、日志落 `memory/{{AIDP_HOME}}/logs/`），两条链路互不阻塞；任一链路心跳中断由 `aidp_scheduler.py watchdog` 写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` 并发通知。
+- 非交互执行需预授权工具权限（Claude `permissions.allow` / Codex `codex exec --sandbox workspace-write` + 项目 trust / DeepSeek Harness 在 `scheduler.exec.dsh` 配置执行命令），详见 `{{AIDP_HOME}}/reference/agent-tools.md` 第三节；各 CLI 参数以所用版本官方文档为准。
 
 ### #2 会话内 `/loop`（Claude Code 交互式短期用法）
 
@@ -254,7 +256,7 @@ python3 .aidp/scripts/aidp_scheduler.py status
 | 命令 | 关系 |
 |------|------|
 | `/sprint-autopilot` ★ | **姊妹命令**：autopilot 写 baseline，aiauto-test 读 baseline；两条链路同时运行 |
-| `.aidp/scripts/aidp_scheduler.py` ★ | 7×24 守护标准方式：两条链路各一个操作系统定时任务 + 心跳巡检 |
+| `{{AIDP_HOME}}/scripts/aidp_scheduler.py` ★ | 7×24 守护标准方式：两条链路各一个操作系统定时任务 + 心跳巡检 |
 | `/loop` | 会话内交互式短期用法 |
 | `/sprint-test` | autopilot 内部已调（静态扫描走 code-verification-loop）；aiauto-test 是浏览器实测，互补 |
 | `/sprint-bugfix` | aiauto-test 发现**失败用例 + 运行时错误（即使关联用例通过 / 页面无用例覆盖，见 Phase 2.4）**→ 都回写「问题汇总清单」，用户跑 sprint-bugfix 一并修复 |
@@ -264,11 +266,11 @@ python3 .aidp/scripts/aidp_scheduler.py status
 
 ## 注意事项
 
-0. **🔗 约定 24 commit checkpoint（本命令的每条 `git commit` 路径通用）**：本命令虽不改业务代码，但仍有会 commit 的分支（如 Phase 0.2 Step 3 自动补全「测试环境与账号」配置后提交）。**这些 commit 之前**先跑 `python3 .aidp/scripts/commit_gate.py --quiet` 读 JSON（纯配置提交通常无欠账，但**必须跑过判定、不得默认跳过**）；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 / CICD 推送欠账），不是禁止 commit。判定字段与处置 **单一信源 = 约定 24**，此处不复述。
+0. **🔗 约定 24 commit checkpoint（本命令的每条 `git commit` 路径通用）**：本命令虽不改业务代码，但仍有会 commit 的分支（如 Phase 0.2 Step 3 自动补全「测试环境与账号」配置后提交）。**这些 commit 之前**先跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON（纯配置提交通常无欠账，但**必须跑过判定、不得默认跳过**）；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 / CICD 推送欠账），不是禁止 commit。判定字段与处置 **单一信源 = 约定 24**，此处不复述。
 1. **不自动 merge master / 不改代码**：本命令只读 + 测试，不修改代码；测试失败由用户跑 `/sprint-bugfix`
 2. **配置入口优先 研发自测/ 配置**（chrome 地址 / 测试环境 URL / 账号）+ **账号配置分两类**（开发测试环境明文 / 生产·UAT 走 credentials JSON）：总则见 Phase 0.0.5，账号细则见 Phase 0.4
 3. **测试报告 = HTML**：结果渲进 `docs/reports/{version}/AI测试报告/`（`data/{BUILD}.js` + `index.html` 综合首页/各 build 子页 + 图表），截图落 `AI测试报告/screenshots/{BUILD}/`；**不产出 docs/testing markdown 报告**（见 Phase 3.1）。发布时 `/version` Step 3.3.8 取最终验收 build → 版本测试报告单文件 HTML
-4. **默认（无参）选版优先级**：先取 phase_beta_done_at 最新 + internal_released_at 为空的版本；如全部已测过 → 退出（不重复测）。**`needs_human=true`（熔断冻结）的版本自动跳过**（探测超时/账号缺失/未收敛达冻结阈值三类熔断，见 Phase 0.2 熔断冻结门）；解冻途径：按冻结类别自动解冻（新部署 / 配置更新 / 环境类自动复探，见 `.aidp/flows/sprint-aiauto-test/rationale.md` 冻结枚举表），或人工 `python3 .aidp/scripts/autopilot_unfreeze.py --manual <V>`
+4. **默认（无参）选版优先级**：先取 phase_beta_done_at 最新 + internal_released_at 为空的版本；如全部已测过 → 退出（不重复测）。**`needs_human=true`（熔断冻结）的版本自动跳过**（探测超时/账号缺失/未收敛达冻结阈值三类熔断，见 Phase 0.2 熔断冻结门）；解冻途径：按冻结类别自动解冻（新部署 / 配置更新 / 环境类自动复探，见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/rationale.md` 冻结枚举表），或人工 `python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual <V>`
 5. **baseline 失同步保护**：本命令只**追加写** aiauto_tested_at / aiauto_test_report / aiauto_test_build_data 字段 + 刷 `builds[].status:"tested"`/`pass_rate`；不删除 sprint-autopilot 写的字段
 6. **mode=none 跳过**：autopilot_decisions.deployment.mode=none 的版本，本命令直接退出（标"该版本不做浏览器测试"）
 6bis. **★ `--select` 子集轮的三条硬护栏（子集≠测过了）**：选集会让「通过率」「P0=100%」等准则**只对子集成立**，若不设界就会出现「跑了 5 条 P0 全绿 → 版本被当成测过了」。故：

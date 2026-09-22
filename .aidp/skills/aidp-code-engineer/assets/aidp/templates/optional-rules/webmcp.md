@@ -9,18 +9,18 @@ paths:
 
 # WebMCP 能力详规（★ 按需安装的可选规则 · 安装后编辑前端代码时自动加载）
 
-> # ⛔ 本文件默认【不在】`.aidp/rules/` 下 —— 这是刻意的
+> # ⛔ 本文件默认【不在】`{{AIDP_HOME}}/rules/` 下 —— 这是刻意的
 >
-> `.aidp/rules/*.md` 的加载是**路径触发**的：只要编辑的文件命中 `paths:`，**整份文件就进上下文**。
+> `{{AIDP_HOME}}/rules/*.md` 的加载是**路径触发**的：只要编辑的文件命中 `paths:`，**整份文件就进上下文**。
 > 若把本文件直接放在 `rules/` 下，**绝大多数根本不启用该能力的项目**每次编辑前端代码都要
 > 白读这十几 KB —— 而它们读完的唯一结论是"本项目不适用"。这与本能力
 > 「**未启用即零成本**」的总原则直接冲突。
 >
-> 故本文件**存放在模板位**（`.aidp/templates/optional-rules/webmcp.md`，**不被 rules 机制扫描**），
-> **只有项目显式启用后才安装到 `.aidp/rules/webmcp.md`**：
+> 故本文件**存放在模板位**（`{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，**不被 rules 机制扫描**），
+> **只有项目显式启用后才安装到 `{{AIDP_HOME}}/rules/webmcp.md`**：
 >
 > ```bash
-> python3 .aidp/scripts/check_webmcp.py --install-rule     # 幂等；未启用时拒绝安装
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule     # 幂等；未启用时拒绝安装
 > ```
 >
 > - **未启用的项目**：`rules/` 下没有本文件 → **一个字节都不加载**，零成本。
@@ -46,7 +46,7 @@ paths:
 > **启用判定的唯一实现**（禁止各处各自 grep，那正是判据漂移的来源）：
 >
 > ```bash
-> python3 .aidp/scripts/check_webmcp.py --detect --json
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json
 > # → {"enabled": true|false, "source": "...", "rule_installed": true|false}
 > ```
 >
@@ -67,7 +67,7 @@ WebMCP 让网页把自身能力以**带 JSON Schema 的函数**形式登记给�
 
 **与 chrome-devtools-mcp（CDP 外部控制）互补而非替代**：CDP 通用、任何页面可用、模拟真人操作、页面是黑盒；
 WebMCP 需页面主动实现、直接调业务函数、页面自己声明能力边界。自动化测试中两者配合使用
-（分工表见 `.aidp/flows/sprint-aiauto-test/phase-0-8.md`）。
+（分工表见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-0-8.md`）。
 
 ---
 
@@ -122,7 +122,7 @@ WebMCP 需页面主动实现、直接调业务函数、页面自己声明能力�
 而且 `chrome-devtools` CLI **原生支持透传**：
 
 ```bash
-python3 .aidp/scripts/check_webmcp.py --launch-args --driver cli
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --launch-args --driver cli
 # 不传 --origin 时自动读「测试环境与账号」的前端地址（约定 38 保证已归档）
 # → chrome-devtools start --categoryExperimentalWebmcp true \
 #     --chromeArg "--enable-features=WebMCP" \
@@ -161,7 +161,7 @@ python3 .aidp/scripts/check_webmcp.py --launch-args --driver cli
 **自检方法**（须写进「测试环境与账号」文档，见 `/sprint-selftest` Step 3）——⛔ **别手写 `typeof <入口>` 逐个试**，用脚本产的探测片段（**白名单优先 + 全局扫描兜底**）：
 
 ```bash
-python3 .aidp/scripts/check_webmcp.py --probe-snippet   # 输出一段 JS，注入页面 evaluate
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --probe-snippet   # 输出一段 JS，注入页面 evaluate
 ```
 
 它返回 `{isSecureContext, whitelist:{<各入口>: typeof}, suspects:[{where,name,type}]}`。
@@ -377,10 +377,10 @@ python3 .aidp/scripts/check_webmcp.py --probe-snippet   # 输出一段 JS，注�
 
 | 检查 | 落点 | 未启用时 |
 | :- | :- | :-: |
-| 启用判定 + 单一适配层 grep 命中文件数 == 1（含注释） | `.aidp/scripts/check_webmcp.py` → `verify.py::check_webmcp` | **N/A** |
+| 启用判定 + 单一适配层 grep 命中文件数 == 1（含注释） | `{{AIDP_HOME}}/scripts/check_webmcp.py` → `verify.py::check_webmcp` | **N/A** |
 | 错误契约无死文案 / 未绕开既有执行通道 / 敏感字段未外泄 / 无"先登记后撤销"时序 | `code-verification-loop` 条件性维度 | **N/A** |
 | 设计产出（分层落点表 / 工具清单表 / 错误契约表 / 三层开关时序图 / 运行前提表 / ADR） | `agents/architect.md` + `dev-logic-architect` | **N/A** |
-| 两类测试套件（**未启用态** + 已启用态） | `dev-manual-testcase` + `.aidp/flows/sprint-aiauto-test/phase-0-8.md` | **N/A** |
+| 两类测试套件（**未启用态** + 已启用态） | `dev-manual-testcase` + `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-0-8.md` | **N/A** |
 | 带参浏览器启动命令 + 两行自检 | `/sprint-selftest` Step 3「测试环境与账号」 | **N/A** |
 
 ---

@@ -25,7 +25,7 @@ docs/reports/{version}/
     └── {version}-测试报告.html    ← /version 发布时取最终验收 build 生成，完全自包含单文件
 ```
 
-> **AI数据清理 结构说明**：模板 `.aidp/templates/reports/AI数据清理.md` 是**扁平单文件模板**；产出时**每 build 填充为一份** `docs/reports/{version}/AI数据清理/{version}_build{N}_数据清理.md`（子目录），与「AI测试报告 data 每 build 一份」同粒度。
+> **AI数据清理 结构说明**：模板 `{{AIDP_HOME}}/templates/reports/AI数据清理.md` 是**扁平单文件模板**；产出时**每 build 填充为一份** `docs/reports/{version}/AI数据清理/{version}_build{N}_数据清理.md`（子目录），与「AI测试报告 data 每 build 一份」同粒度。
 
 ## Build 号机制（单一信源）
 
@@ -43,12 +43,12 @@ docs/reports/{version}/
 
 > 离线铁律：所有 HTML 报告**零 CDN / 零网络依赖**，`file://` 双击即可打开；数据用 `<script src>` 注入（不用 `fetch`），图表手写内联 SVG。
 
-## ★ 报告产出 = 确定性脚本 `.aidp/scripts/emit-report.py`（不手搓，防退化成 markdown）
+## ★ 报告产出 = 确定性脚本 `{{AIDP_HOME}}/scripts/emit-report.py`（不手搓，防退化成 markdown）
 
 命令**不手写 `data/{build}.js`、不手工 sed 注册 `<script>`、不手工拷贝/打包**——一律经 `emit-report.py`：执行体只产出「结果 JSON」（它的分析），脚本负责把它**确定性**地组装成 HTML SPA 落到本地 `docs/reports/` 并返回报告路径。
 
 ```bash
-python3 .aidp/scripts/emit-report.py --kind exec|test --version V0.1.0 --build V0.1.0_build1001 \
+python3 {{AIDP_HOME}}/scripts/emit-report.py --kind exec|test --version V0.1.0 --build V0.1.0_build1001 \
   --data <结果.json> [--baseline memory/.sprint-autopilot-baseline.json] [--json]
 ```
 

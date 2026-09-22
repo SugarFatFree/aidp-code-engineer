@@ -9,8 +9,8 @@ paths:
 
 # 后端代码向约定详规（编辑 `code/backend/**` 时自动加载）
 
-> 本文件是 **约定 27（配置中心动态配置热刷新）**、**前端可选能力开关的服务端一侧**、**后端 DI 依赖可解析性静态检查（约定 35 姊妹条：开发期只静态验证的差集补齐）** 与 **约定 40 实现侧（上游调用日志的接线点与必踩的坑）** 的**单一信源详规**（四段，与本文件 frontmatter `description` 及 `.aidp/rules/README.md` 表格一致）。项目记忆文件（AGENTS.md / CLAUDE.md）核心约定段只保留约定 27 的一行索引锚点，锚点编号不变、「见约定 27」仍解析。
-> 约定 27 之外，后端还须遵守 `.aidp/rules/code.md`（全代码通用：注释 17 / 目录 18 / README 19 / 复杂度 20 / DB 约束 23 后端侧 / **错误契约与失败可见性 + fail-closed + 上游契约权威（约定 23 姊妹条，后端是主战场：失败返业务码+中文 message 不伪装成 200 空数据、上游不可达用中文服务名报错、安全 fail-closed）** / Mock 26 后端侧 / 组件复用 28 / 死代码 29 / **运行时验证纪律 35**〔不擅自起服务、不完整构建——对后端同样适用〕/ **通用还原度规则集 39** / **上游调用日志 40**〔本文件另有实现侧详规〕）。
+> 本文件是 **约定 27（配置中心动态配置热刷新）**、**前端可选能力开关的服务端一侧**、**后端 DI 依赖可解析性静态检查（约定 35 姊妹条：开发期只静态验证的差集补齐）** 与 **约定 40 实现侧（上游调用日志的接线点与必踩的坑）** 的**单一信源详规**（四段，与本文件 frontmatter `description` 及 `{{AIDP_HOME}}/rules/README.md` 表格一致）。项目记忆文件（AGENTS.md / CLAUDE.md）核心约定段只保留约定 27 的一行索引锚点，锚点编号不变、「见约定 27」仍解析。
+> 约定 27 之外，后端还须遵守 `{{AIDP_HOME}}/rules/code.md`（全代码通用：注释 17 / 目录 18 / README 19 / 复杂度 20 / DB 约束 23 后端侧 / **错误契约与失败可见性 + fail-closed + 上游契约权威（约定 23 姊妹条，后端是主战场：失败返业务码+中文 message 不伪装成 200 空数据、上游不可达用中文服务名报错、安全 fail-closed）** / Mock 26 后端侧 / 组件复用 28 / 死代码 29 / **运行时验证纪律 35**〔不擅自起服务、不完整构建——对后端同样适用〕/ **通用还原度规则集 39** / **上游调用日志 40**〔本文件另有实现侧详规〕）。
 
 ## 约定 27 — 配置中心动态配置热刷新（仅用配置中心的项目适用）
 
@@ -23,10 +23,10 @@ paths:
 
 ## 前端能力开关的服务端一侧（★ 可选，仅当项目启用了 WebMCP 等前端可选能力时适用）
 
-> **先判定，判定为否就没有本节**：`python3 .aidp/scripts/check_webmcp.py --detect --json` 判
+> **先判定，判定为否就没有本节**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json` 判
 > `enabled: false`（默认、绝大多数项目）→ **整节不适用**，不新增任何字段、接口、告警。
-> 前端侧详规单一信源 = WebMCP 可选规则（本节只写**后端该做什么**，不复述前端规则）。该规则**默认不安装**：权威模板位 `.aidp/templates/optional-rules/webmcp.md`，启用后经 `python3 .aidp/scripts/check_webmcp.py --install-rule` 装到 `.aidp/rules/webmcp.md`。<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计（可选规则未启用即一字节不加载）-->
-> ⚠️ 该详规**按需安装**：默认不在 `rules/` 下、模板位在 `.aidp/templates/optional-rules/webmcp.md`，
+> 前端侧详规单一信源 = WebMCP 可选规则（本节只写**后端该做什么**，不复述前端规则）。该规则**默认不安装**：权威模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，启用后经 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` 装到 `{{AIDP_HOME}}/rules/webmcp.md`。<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计（可选规则未启用即一字节不加载）-->
+> ⚠️ 该详规**按需安装**：默认不在 `rules/` 下、模板位在 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，
 > 由启用的项目跑 `check_webmcp.py --install-rule` 装过去。
 
 启用后，后端须为该能力提供一个**运行时可开关的服务端标志**（三层 AND 模型的 **L2** 层，
@@ -68,17 +68,17 @@ paths:
 
 **落地**：确定性静态分析，Spring/Java 探测、非 Java 项目静默跳过。回检三处——① **主检测点** = `code-verification-loop` 维度 6「DI 依赖可解析性」（测试期，Critical 命中回 `/sprint-bugfix`）② **开发期前置门** = `/sprint-dev` 后端阶段静态门（`--changed-only`，与 `mvn compile`「编译查不出的那一半」并列，早于 CICD 拦下）③ 本详规写动机与判定口径。命令端只编排调脚本、不复述判定逻辑（约定 21）。
 
-> ★ **唯一实现 = `.aidp/skills/code-verification-loop/scripts/check_di_resolvability.py`**（CVL SKILL 内置），①主检测点与②开发期前置门**共用同一个脚本**，不存在第二份。
+> ★ **唯一实现 = `{{AIDP_HOME}}/skills/code-verification-loop/scripts/check_di_resolvability.py`**（CVL SKILL 内置），①主检测点与②开发期前置门**共用同一个脚本**，不存在第二份。
 > CLI：`<code_dir> [--changed-only [--base <ref>]] [--json] [--strict] [--config-keys-file <f>]`；退出码 `0`=通过/不适用 · `1`=有 Critical · `2`=入参或环境错（目录不存在等，修参数重跑、**不算违规**）**或 `--json.unreadable_files` 非空**（有 `.java` 读不出：权限 / 断链符号链接 → **本维度结论不可信**，须修好文件后重跑，⛔ 不得按「不算违规」略过）。
 > - **没有 `--gate`，也不要加**：该脚本默认即「有 Critical → exit 1」。不提供 `--gate`：「默认恒 exit 0、须显式加参数才闸」等于一个忘加就静默放行的假绿开关。传了会被 argparse 拒绝（exit 2）。
 > - 纯前端项目没有 `code/backend` 时脚本返回 **exit 2（入参/环境错，不算违规）**；需免噪音用 `if [ -d code/backend ]; then … ; fi`。⛔ **不要写 `[ -d … ] && …`**——那会让整条复合命令返回 rc=1，被按「1=有 Critical」读成违规，比 exit 2 严格更坏。
 > - 判定口径变更 → 在模板仓库修改该 SKILL 脚本并同步 bundle（约定 16）；下游项目不直接改它、也不改其脚手架副本。
 >
-> ⛔ **不得在项目侧 `.aidp/scripts/` 重建一份 `check_di_resolvability.py` 副本**：两套口径必然漂移。项目侧副本有三类静默漏检——**未跟踪的新文件不纳入增量范围**（而新建的类正是 DI 问题最高发来源，等于对头号场景失明）、非 ASCII 路径被丢弃、路径不存在返回 0 假绿。需要调整判定口径 → 在模板仓库改 SKILL 脚本（约定 16）。
+> ⛔ **不得在项目侧 `{{AIDP_HOME}}/scripts/` 重建一份 `check_di_resolvability.py` 副本**：两套口径必然漂移。项目侧副本有三类静默漏检——**未跟踪的新文件不纳入增量范围**（而新建的类正是 DI 问题最高发来源，等于对头号场景失明）、非 ASCII 路径被丢弃、路径不存在返回 0 假绿。需要调整判定口径 → 在模板仓库改 SKILL 脚本（约定 16）。
 
 ## 约定 40 实现侧 — 上游调用日志的接线点与必踩的坑（后端）
 
-> 规则正文（必打字段 / 级别 / 脱敏 / 二进制降级 / 例外）以 `.aidp/rules/code.md` 约定 40 为**单一信源**，本节不复述。
+> 规则正文（必打字段 / 级别 / 脱敏 / 二进制降级 / 例外）以 `{{AIDP_HOME}}/rules/code.md` 约定 40 为**单一信源**，本节不复述。
 > 这里只放**后端才需要知道的接线细节**——放在这份按需加载的分片里，纯前端 / 非 JVM 项目一个字节都不必读。
 
 ### 挂载点（按所用客户端选一处，一次接线全局生效）
@@ -112,4 +112,4 @@ rt.getInterceptors().add(new UpstreamCallLoggingInterceptor());
 刻意不做全局抵扣：真实样本里拦截器是某个 Service 的**内部私有类、只挂在它自己的那个 `RestTemplate` 上**，
 全局抵扣会让隔壁真正零日志的客户端被静默放过——那正是本条要抓的东西。
 
-> 参考实现骨架（配对 traceId + 截断 + 脱敏 + 二进制降级四项能力）见 `.aidp/reference/上游调用日志参考实现.md`。
+> 参考实现骨架（配对 traceId + 截断 + 脱敏 + 二进制降级四项能力）见 `{{AIDP_HOME}}/reference/上游调用日志参考实现.md`。

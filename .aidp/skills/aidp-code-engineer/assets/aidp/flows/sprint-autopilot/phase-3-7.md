@@ -34,8 +34,8 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
 
   ```bash
   # ⛔ 分片间 shell 变量不持久：必须在本分片就地取回
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-  BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"; mkdir -p memory/.aidp
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"; mkdir -p memory/.aidp
   HEALTH_URL="<后端健康端点，无则留空>"
   AUTH_HEADER="<情形① 登录拿到的凭证头，如 'Authorization: Bearer …'；情形② 留空>"
   COLD="<Step D 开头按技术栈判定的冷启动等待秒数，下限 15>"
@@ -47,16 +47,16 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
   [ -n "$HEALTH_URL" ] && ARGS+=(--health-url "$HEALTH_URL")
   [ -n "${CLOUD_READY_URL:-}" ] && ARGS+=(--auth-url "$CLOUD_READY_URL")
   [ -n "$AUTH_HEADER" ] && ARGS+=(--auth-header "$AUTH_HEADER")
-  python3 .aidp/scripts/autopilot-deploy-watch.py "${ARGS[@]}" > memory/.aidp/deploy-watch.json
-  DRC=$?; cat memory/.aidp/deploy-watch.json
-  TF="python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED"
+  python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py "${ARGS[@]}" > memory/{{AIDP_HOME}}/deploy-watch.json
+  DRC=$?; cat memory/{{AIDP_HOME}}/deploy-watch.json
+  TF="python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED"
   case "$DRC" in
     0) $BE --version "$V" del push_probe_fail_streak probe_started_at || true ;;   # 就绪 → 情形③（如适用）→ 下方落盘
     4) $TF 0; echo "⏳ 就绪探针本次调用时限内未探完 → 游标留 3.2.1-probe，下 tick 续探（不记失败）"; exit 0 ;;
     5) $TF 0; echo "⚠️ 已就绪但写 last_deployed_at 失败 → 下 tick 原地重试，⛔ 不计 streak、不冻结"; exit 0 ;;
     *) $TF 0; $BE --version "$V" del probe_started_at || true   # 本轮探测结束，下次重新计时
        # rc=2 超时 / rc=3 探针参数缺失：部署成功但未就绪；⛔ 不写 last_deployed_at（不把不通的环境放进测试链路）
-       python3 .aidp/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "${BUILD:-}" \
+       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "${BUILD:-}" \
          --phase 3.2.1-probe --reason probe-timeout --streak-key push_probe_fail_streak --threshold 3 \
          --why "就绪探针未通过（rc=$DRC）：登录失败 / 登录后接口未返回数据 / 探针 URL 未配置"
        exit 0 ;;
@@ -65,12 +65,12 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
 
   **★ 判定当场落盘结论（不可省，下方出口靠它推进游标）**：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-  python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED 1
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+  python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED 1
   # ⛔ 以下三个字段是**跨链路交接信号**，必须落成可执行语句（散文从句不算写入）：
   #    读侧恒空时，测试链路每 tick 选不出版本、静默 exit 0，而开发链路因心跳还在而判
   #    "测试链路健康"，两条 loop 都在刷屏、什么都没测，最后冻结在错误的原因上。
-  BE="python3 .aidp/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
   # ⛔ `GIT_PUSH_COMMIT` 赋在 phase-3-5b 推送围栏、跨不过 Bash 调用：取空会让出口判据
   #    `PROBE_COMMIT == PUSH_COMMIT` 恒不等、游标卡在 3.2.1-probe，故从 baseline 读回。
   [ -n "${GIT_PUSH_COMMIT:-}" ] || GIT_PUSH_COMMIT=$([ -n "${BUILD:-}" ] && $BE --build "$BUILD" get push_commit --default "" || echo "")
@@ -87,7 +87,7 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
   $BE del auto_fix_in_progress_since || true
   # 本轮 autopilot 推到的 HEAD：retest-cap 的"人工修复"判别靠它与 retest_frozen_head 双重不等；
   # 恒空则第二个不等式恒真 → 自动解冻 → 3 轮上限退化为无限自动复测。
-  python3 .aidp/scripts/baseline_edit.py set last_autopilot_head "$(git rev-parse HEAD)"
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set last_autopilot_head "$(git rev-parse HEAD)"
   ```
 - **超 `cloud_ready_timeout_seconds` 仍未通过**（脚本 rc=2）→ 部署成功但服务未就绪 / 登录不通（与"流水线失败"不同，重跑流水线通常无济于事）→ 上方代码块已按 `push_probe_fail_streak` 记账（连续 3 次冻结 `probe-timeout`，环境类自动复探），**不写 `last_deployed_at`**；`PROBE_PASSED=0` 已当场落盘。
 - **情形③ 前端特征探针未命中**（脚本 rc=0 之后）→ 同样调 `autopilot_fail_handle.py --reason probe-timeout --streak-key push_probe_fail_streak --threshold 3`（正文写明缺失的特征串），`PROBE_PASSED=0`，⛔ 不执行下方「判定当场落盘结论」。
@@ -97,17 +97,13 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
 
 ## ⛳ 本 Phase 出口：`run_state` 写盘（Step D 自己的出口，不可省）
 
-> ⛔ **为什么 Step D 必须有独立出口**：上一分片 `phase-3-6.md`（Step A–C）出口写的是 `next=3.2.1-probe`，就绪探针要靠**本片**把它推进到 `3.3-audit`。本片若不写盘，游标会永远停在 `3.2.1-probe`：探针明明过了，下一 tick 仍从头重探，`last_deployed_at` 反复重写、Phase 3.3 永不开始。（`invariants.md`「阶段推进不变式」：只在 `invariants` 里描述 `run_state` 而分片不写盘 = 状态机不存在。）
+> ⛔ Step D 必须独立写 `run_state`：探针通过推进到 `3.3-audit`，否则停在 `3.2.1-probe`。详见 `invariants.md` 与 `rationale.md`。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
-# ★ 读回上文当场落盘的探针结论。⛔ 绝不能直接读 shell 变量 `$PROBE_PASSED`：本段与上文
-#   探针判定分属**不同 Bash 工具调用**，shell state 不跨调用持久 —— ⛔ 这里不得写成
-#   `${PROBE_PASSED:-0}`，而全仓无人给它赋值 → 恒取 0 → 恒走 else → 探针明明过了游标也
-#   永远停在 `3.2.1-probe`，下 tick 从头重探、`last_deployed_at` 反复重写，Phase 3.3/3.4
-#   永不开始、build 永不收口，最后只能靠通用 stuck 熔断（8 tick + 滞留 2h）冻结待人。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
+# 读回已落盘的探针结论；不同 Bash 调用的 shell 变量不能当作跨分片证据。
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 # 事实兜底：只认当前 build 的显式探针证据，禁止用版本级 last_deployed_at 反推。
 #   —— 旧版本的部署时间戳不能证明本 build 已就绪，否则失败/未探测的新部署会被放行。
 BUILD=$($BE --version "$V" get current_build --default "")

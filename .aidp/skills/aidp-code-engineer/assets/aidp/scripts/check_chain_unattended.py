@@ -25,7 +25,7 @@ r"""check_chain_unattended.py — 「串联下游必透传 --unattended」的棘
 ## 判定口径
 
 「候选站点」= 行内出现 `/<命令> <参数>`，且：
-  · 该命令**声明了** `--unattended`（扫 `.aidp/commands/<name>.md` 得到，不写死清单）
+  · 该命令**声明了** `--unattended`（扫 `AIDP_HOME/commands/<name>.md` 得到，不写死清单）
   · 不是本文件自己的命令（自指多为用法示例）
   · 参数里带位置占位符（`{version}` / `sprint-{NNN}`）或 `--supplement`（裸 flag 多是参数说明）
   · 该行不含 **`--unattended`**（要 flag 形态、不认裸词——只认裸词时，一句括注
@@ -37,13 +37,19 @@ baseline 按 **(文件, 调用文本, 出现次数)** 记，**不记行号** —
 只记 (文件, 调用文本) 时，**新增的第 3 处会被既有条目掩盖、报不出来**（实测：加一行后候选 33→34、却全绿）。
 
 用法:
-    python3 .aidp/scripts/check_chain_unattended.py [--root <仓库根>] [--json]
-    python3 .aidp/scripts/check_chain_unattended.py --update-baseline   # 人工判定后重新冻结
+    python3 AIDP_HOME/scripts/check_chain_unattended.py [--root <仓库根>] [--json]
+    python3 AIDP_HOME/scripts/check_chain_unattended.py --update-baseline   # 人工判定后重新冻结
 
 退出码: 0 = 无新增；1 = 有新增候选待判定；2 = 用法/环境错。
 """
 
 from __future__ import annotations
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 
 import argparse
 import json
@@ -52,7 +58,8 @@ import re
 import sys
 from pathlib import Path
 
-BASELINE = ".aidp/scripts/chain-unattended-baseline.txt"
+RUNTIME_REL = runtime_text('__AIDP_HOME__', __file__)
+BASELINE = runtime_text('__AIDP_HOME__/scripts/chain-unattended-baseline.txt', __file__)
 SCAN_DIRS = ("commands", "flows")
 # ⛔ 只跳 `rationale.md`：它承载「为什么/历史事故」，里面的命令行是叙述、不是执行契约。
 #    `invariants.md` **不能跳**——它是 autopilot 的顶层执行铁律，是规范性契约正文；
@@ -83,7 +90,7 @@ ARG_RE = re.compile(r"\{[^}\s]+\}|sprint-\{|--[a-z][a-z-]*|\d{3}"
 def accepting_commands(root: Path):
     """哪些命令**声明了** `--unattended` —— 扫命令文件得到，⛔ 不写死清单。"""
     out = set()
-    d = root / ".aidp" / "commands"
+    d = root / RUNTIME_REL / "commands"
     if not d.is_dir():
         return out
     for p in d.glob("*.md"):
@@ -122,7 +129,7 @@ def collect(root: Path):
     accept = accepting_commands(root)
     hits = []
     for d in SCAN_DIRS:
-        base = root / ".aidp" / d
+        base = root / RUNTIME_REL / d
         if not base.is_dir():
             continue
         for dirpath, dirnames, filenames in os.walk(base):
@@ -136,7 +143,10 @@ def collect(root: Path):
                     lines = p.read_text(encoding="utf-8").splitlines()
                 except OSError:
                     continue
-                rel = p.relative_to(root).as_posix()
+                actual_rel = p.relative_to(root).as_posix()
+                prefix = RUNTIME_REL.rstrip("/") + "/"
+                rel = ("{{AIDP_HOME}}/" + actual_rel[len(prefix):]
+                       if actual_rel.startswith(prefix) else actual_rel)
                 for i, ln in enumerate(lines, 1):
                     for m in INV_RE.finditer(ln):
                         if m.group(1) not in accept or m.group(1) == own:
@@ -235,8 +245,8 @@ def main(argv=None):
                                 json_out=getattr(args, "json", False)))
 
     root = Path(args.root).resolve()
-    if not (root / ".aidp" / "commands").is_dir():
-        sys.stderr.write("未找到 %s/.aidp/commands\n" % root)
+    if not (root / runtime_relpath("", __file__) / "commands").is_dir():
+        sys.stderr.write(runtime_text('未找到 %s/__AIDP_HOME__/commands\n', __file__) % root)
         return 2
 
     hits = collect(root)

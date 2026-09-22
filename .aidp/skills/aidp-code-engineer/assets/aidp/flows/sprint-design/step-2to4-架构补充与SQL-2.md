@@ -16,7 +16,7 @@
 历史风格沿用的扫描面、维度与「历史风格本身不统一时取谁」的裁决**一律以 SKILL 为准**（约定 21，命令端不另列维度表与裁决规则）。命令端只跑确定性归纳，把结果作为 Step 3.1 的输入：
 
 ```bash
-python3 .aidp/skills/dev-logic-architect/scripts/check_sql_style_consistency.py . "docs/design/detail/{version}/" --history-only --json
+python3 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_sql_style_consistency.py . "docs/design/detail/{version}/" --history-only --json
 ```
 
 - 有历史 SQL → 把归纳结果（含样本来源文件）随 prompt 传给 Architect Agent / `dev-logic-architect`；脚本报历史风格分裂时，按 SKILL 口径取基线并在设计文档里标注理由。

@@ -46,9 +46,9 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_line_refs.py            # 人读报告
-    python3 .aidp/scripts/check_line_refs.py --json     # 机读 JSON
-    python3 .aidp/scripts/check_line_refs.py --root . --path docs
+    python3 AIDP_HOME/scripts/check_line_refs.py            # 人读报告
+    python3 AIDP_HOME/scripts/check_line_refs.py --json     # 机读 JSON
+    python3 AIDP_HOME/scripts/check_line_refs.py --root . --path docs
 
 退出码：0 = 无硬编码行号；1 = 检出（WARN 级，调用方自行决定是否阻断）；2 = 用法/读取错误。
 """
@@ -60,7 +60,7 @@ import sys
 
 EXCLUDE_DIRS = {
     ".git", "node_modules", "__pycache__", "dist", "build", ".venv",
-    "skills",  # `.aidp/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
+    "skills",  # `AIDP_HOME/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
 }
 # ★ 前缀式排除：`.aidp-backup-<时间戳>` 带时间戳，永远命中不了上面的精确名集合；
 #   备份是冻结的历史副本，参与巡检只会在做过 upgrade 的下游制造恒红噪音（口径同 check_loop_examples.py）。

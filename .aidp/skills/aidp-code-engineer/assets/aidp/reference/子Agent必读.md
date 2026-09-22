@@ -4,7 +4,7 @@
 >
 > **给派发方（主 Agent）**：派发开发类子 Agent 时，prompt 里**只写本次任务特有的信息**
 > （改哪个模块、验收标准、涉及哪几个文件），**不要**把下面这些项目级固定上下文再抄一遍——
-> 只需在 prompt 首行写明：**「第一动作：`Read .aidp/reference/子Agent必读.md`」**。
+> 只需在 prompt 首行写明：**「第一动作：`Read {{AIDP_HOME}}/reference/子Agent必读.md`」**。
 >
 > **给子 Agent（被派发方）**：**开工前先完整读完本文件**，再动手。本文件里的坑都是**实际踩过**的，
 > 不是预防性猜测；忽略它们的典型代价是"改完发现验证方式根本跑不起来"或"重复踩同一个坑"。
@@ -42,7 +42,7 @@
 
 ---
 
-- **不确定脚手架脚本怎么调**（`.aidp/scripts/` 或各 SKILL 的 `scripts/`）→ `python3 .aidp/scripts/scripts_usage.py <名字片段>` 现场取真值。⛔ 别凭印象传参：这些脚本的 CLI 形态互不统一（位置子命令 / `--paths` / 位置路径 / 多个位置参数都有），猜错只会得到一行 argparse 原文、不指向正确用法。
+- **不确定脚手架脚本怎么调**（`{{AIDP_HOME}}/scripts/` 或各 SKILL 的 `scripts/`）→ `python3 {{AIDP_HOME}}/scripts/scripts_usage.py <名字片段>` 现场取真值。⛔ 别凭印象传参：这些脚本的 CLI 形态互不统一（位置子命令 / `--paths` / 位置路径 / 多个位置参数都有），猜错只会得到一行 argparse 原文、不指向正确用法。
 
 ## 三、技术栈与项目约定（只写"与通常不同"的部分）
 
@@ -79,9 +79,9 @@
 | 想知道 | 去哪 |
 | :- | :- |
 | 项目全局规范 / 41 条核心约定 | 项目记忆文件（`AGENTS.md`，Claude Code 下为 `CLAUDE.md`） |
-| 代码向详规（注释/目录/复杂度/Mock/死代码/运行时验证纪律） | `.aidp/rules/code.md`（编辑 `code/**` 时自动加载） |
-| 前端 UI 三层对齐 / 设计令牌 / L1·L2 分级 | `.aidp/rules/frontend.md` |
-| 后端热刷新 / DI 可解析性 | `.aidp/rules/backend.md` |
+| 代码向详规（注释/目录/复杂度/Mock/死代码/运行时验证纪律） | `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载） |
+| 前端 UI 三层对齐 / 设计令牌 / L1·L2 分级 | `{{AIDP_HOME}}/rules/frontend.md` |
+| 后端热刷新 / DI 可解析性 | `{{AIDP_HOME}}/rules/backend.md` |
 | 本版需求 / 设计 / 计划 / 自测 | `docs/{requirements,design/detail,plans,testing}/{version}/` |
 | 数据库既有表基线 | `memory/databaseBaseline.md` |
 | 架构决策记录（ADR） | `memory/systemPatterns.md` |

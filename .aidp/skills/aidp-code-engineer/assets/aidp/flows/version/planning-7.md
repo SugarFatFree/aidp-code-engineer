@@ -1,7 +1,7 @@
 # /version · 版本规划流程详情 — 分片 7/8
 
 > 本片覆盖：**Step 2.4.7 版本规划产物全量审计（独立子 Agent；强制铁律）**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 #### Step 2.4.7：★ 版本规划产物全量审计（独立子 Agent；强制执行铁律）
@@ -25,7 +25,7 @@
 
 **★ prev_version 取值口径（规划期 = 上一【迭代】版本，含未发布的中间过渡版本）**：
 
-规划期的"上一版本"**不是** `release-1.md`「tag 风格识别约定」定义的「上一已发布版本」——当前版本未发布时用户直接开下一版规划是**合法操作**（该版即中间过渡版本，见约定 2 细则「中间过渡版本」），若按 tag 取值就会**跳过过渡版本**，令 D 增量一致性审计把过渡版本已交付的内容重判为"新增"、H 跨版本作废清算（约定 34）读不到过渡版本的历史需求而漏检结论反转。故本 Step 按**产物目录 SemVer 扫描**取值（与 `/sprint-selftest` Step 1 的「前置：定位上一版本继承基线」同一范式，见 `.aidp/flows/sprint-selftest/step-1-1.md`；⛔ 该命令无 `Step 1.1`，那是分片文件名）：
+规划期的"上一版本"**不是** `release-1.md`「tag 风格识别约定」定义的「上一已发布版本」——当前版本未发布时用户直接开下一版规划是**合法操作**（该版即中间过渡版本，见约定 2 细则「中间过渡版本」），若按 tag 取值就会**跳过过渡版本**，令 D 增量一致性审计把过渡版本已交付的内容重判为"新增"、H 跨版本作废清算（约定 34）读不到过渡版本的历史需求而漏检结论反转。故本 Step 按**产物目录 SemVer 扫描**取值（与 `/sprint-selftest` Step 1 的「前置：定位上一版本继承基线」同一范式，见 `{{AIDP_HOME}}/flows/sprint-selftest/step-1-1.md`；⛔ 该命令无 `Step 1.1`，那是分片文件名）：
 
 ```bash
 CUR_V="{version}"
@@ -51,7 +51,7 @@ for d in $(ls -1 docs/requirements/ 2>/dev/null | grep -E '^V[0-9]+\.[0-9]+\.[0-
   [ "$d" = "{version}" ] && break
   [ -d "docs/requirements/$d/研发需求" ] && PREV_VERSION="$d"
 done
-python3 .aidp/scripts/code_inventory.py delta --since "${PREV_VERSION}" --json   # 本版代码事实 Δ
+python3 {{AIDP_HOME}}/scripts/code_inventory.py delta --since "${PREV_VERSION}" --json   # 本版代码事实 Δ
 # 文档侧 Δ = 本轮新产出的 NN_ 增量文档 + 其覆盖的专题
 ```
 
@@ -62,13 +62,13 @@ python3 .aidp/scripts/code_inventory.py delta --since "${PREV_VERSION}" --json  
 
 **调用方式**：
 
-使用 `Agent` 工具（subagent_type 留空走 general-purpose 默认；或显式配 `claude` 通用 agent）直接调用 `.aidp/agents/version-auditor.md` 定义的独立子 Agent：
+使用 `Agent` 工具（subagent_type 留空走 general-purpose 默认；或显式配 `claude` 通用 agent）直接调用 `{{AIDP_HOME}}/agents/version-auditor.md` 定义的独立子 Agent：
 
 ```
 Agent(
   description: "版本规划产物全量审计",
   prompt: <<PROMPT
-读取并严格按照 .aidp/agents/version-auditor.md 的「三、审计八项」+「四、审计报告输出」工作流执行，
+读取并严格按照 {{AIDP_HOME}}/agents/version-auditor.md 的「三、审计八项」+「四、审计报告输出」工作流执行，
 对版本 {version} 的 6 类规划产物（研发需求 / 详细设计 / 研发执行计划 / 研发自测用例 / 研发自测方案 /
 测试环境与账号；与 `planning-5.md` 三步落盘自检同口径，version-auditor 按「需求 / 设计 / 计划 / 自测」
 4 组归类，自测组含后 3 类）+ 原型内容基线做全量审计。
@@ -111,7 +111,7 @@ PROMPT
 | G | 语义变更派生完整性 | **Critical 硬门**（约定 22 第三类）：语义/口径/范围变更（无新增实体）类需求的派生展示物清单（表 E）是否三层贯通（研发需求→详细设计文案落点→用例反向断言）；无语义变更 = N/A |
 | H | 跨版本需求作废完整性 | 约定 34：本版推翻历史需求时是否登记作废清单（表 F）+ 作废项代码残留是否已标注；无语义反转 = N/A |
 
-详细审计项 + 评级阈值 + 结构化输出格式见 `.aidp/agents/version-auditor.md`，命令端不复述。
+详细审计项 + 评级阈值 + 结构化输出格式见 `{{AIDP_HOME}}/agents/version-auditor.md`，命令端不复述。
 
 **命令端处置（基于 Agent 返回的 JSON 摘要 `overall` 字段）**：
 

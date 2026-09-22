@@ -13,7 +13,7 @@
 
 **执行计划落盘后,以下 bash 脚本由下方派发的**质量检查子 Agent**作为强制第一步执行(见子 Agent prompt 步骤 0),任一命中即拒绝标记完成、强制重写违规段落。主流程**禁止**在当前上下文内联运行这些脚本:**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `.aidp/skills/dev-execution-planner`),由子 Agent 在执行前替换。
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-execution-planner`),由子 Agent 在执行前替换。
 
 ```bash
 # 1. 任务粒度 + AI 锚点 + 9 列任务表 + 链接合规(退出码 1 = 判错,分档看 --json severity;2 = 入参错)

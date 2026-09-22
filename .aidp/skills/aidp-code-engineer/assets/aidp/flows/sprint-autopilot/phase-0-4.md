@@ -13,17 +13,17 @@
 
 #### 渠道选择 + 失败回落（里程碑通知发送编排 · 单一信源）
 
-> 里程碑通知经 `.aidp/scripts/notify.py` 发出。渠道在 `memory/aidp-config.yaml` 的 `notify.channels` 中按顺序声明，支持 `feishu`（飞书自定义机器人 webhook）/ `lark-cli`（飞书 CLI）/ `dingtalk`（钉钉机器人 webhook）/ `wecom`（企业微信机器人 webhook）/ `command`（自定义命令，从 stdin 读通知 JSON）。webhook 地址与签名密钥**只经环境变量引用**（`webhook_env` / `secret_env`），⛔ 不明文入库（约定 32）。「回落」= 同一条通知换下一个渠道重发，**不是**"通道坏了"。
+> 里程碑通知经 `{{AIDP_HOME}}/scripts/notify.py` 发出。渠道在 `memory/aidp-config.yaml` 的 `notify.channels` 中按顺序声明，支持 `feishu`（飞书自定义机器人 webhook）/ `lark-cli`（飞书 CLI）/ `dingtalk`（钉钉机器人 webhook）/ `wecom`（企业微信机器人 webhook）/ `command`（自定义命令，从 stdin 读通知 JSON）。webhook 地址与签名密钥**只经环境变量引用**（`webhook_env` / `secret_env`），⛔ 不明文入库（约定 32）。「回落」= 同一条通知换下一个渠道重发，**不是**"通道坏了"。
 >
 > **★ 执行方式：渠道候选链已收编进 `notify.py --auto`，⛔ 执行体不手工编排。**
 > 发通知一律照抄下面这段（**⛔ 是可执行语句，不是示意；每个节点都要真的跑一次**）：
 >
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # ★ 必须在本围栏首行：
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 必须在本围栏首行：
 > #   shell state 不跨 Bash 调用，漏了它 $TARGET_VERSION / $BUILD 取空 → 通知以**空 version/build**
 > #   登记进台账 → 收尾门的 `c.get("version")==V and c.get("build")==B` 恒不匹配 →
 > #   「本 build 非零推送(台账≥1)」恒 FAIL → 每 3 tick 冻结一个健康版本。照抄时勿删。
-> python3 .aidp/scripts/notify.py --title '…' --section '…' [--section '…'] \
+> python3 {{AIDP_HOME}}/scripts/notify.py --title '…' --section '…' [--section '…'] \
 >   [--link-text '…' --link-url '…'] --auto --node '#N' \
 >   --version "$TARGET_VERSION" --build "$BUILD"
 > ```
@@ -53,7 +53,7 @@
 >
 > ⛔ **唯一允许放弃本播报节点的条件 = 候选链里每个渠道都【实测发过且都失败】**（脚本 exit 1）或**未配置任何渠道**（exit 3）。此时按 `NOTIFY_ENABLED=0` 语义**静默跳过、不阻塞主流程、不登记台账**；**⛔ 绝不因发送失败弹窗询问用户「通知发到哪里」**——无人值守下弹窗即挂起，有人值守下也只是把通道问题变成打断。exit 3 时同 `phase-0-2.md` Step 3 落盘 `notify_enabled=false`。`needs_human` / 熔断信号仍照落 baseline + 终端强警（见下）。
 >
-> **就绪期自查**：`python3 .aidp/scripts/autopilot-preflight.py check` 会对已配置渠道做一次只读检查（加 `--record-probe` 另把探测证据落 baseline `notify_probe`）（凭据环境变量是否存在、命令是否可执行，不发消息），把「已配置」与「具备发送条件」分行显示。⚠️ 检查是提示不是拦截：未确认可达仍照发，且 `gate` **不受检查影响**（必须离线可跑）。
+> **就绪期自查**：`python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py check` 会对已配置渠道做一次只读检查（加 `--record-probe` 另把探测证据落 baseline `notify_probe`）（凭据环境变量是否存在、命令是否可执行，不发消息），把「已配置」与「具备发送条件」分行显示。⚠️ 检查是提示不是拦截：未确认可达仍照发，且 `gate` **不受检查影响**（必须离线可跑）。
 
 > 全部播报节点集中在此表定义；下文各 Phase 只写「发通知 #N（见 0.1bis）」不再重复内容。
 > ⛔ **「发通知 #N」= 真跑上面那段命令，不是写一行注释**（`# 发 #4 通知（见 0.1bis）` 不算发）。
@@ -61,7 +61,7 @@
 > 终端 ⛔ 强警只在当场可见，**凌晨无人值守时运维两者都看不到**（除非自行配 `jq` 巡检）。
 > 而 #4 **不在任何收尾门的期望通知集里**（`EXPECT_CARDS` 只含 #0/#1/#1b/#1c/#1d/#2/#3），
 > 漏发不会被任何门抓到 ⇒ 表现为「停了，但没人知道」。**每个冻结点都必须真调一次 `notify.py --node "#4"`。**
-发送方式统一：**通知** = `notify.py --auto`（候选链/回落全在脚本内，见上节；默认蓝色 header，`#4` 用 `--header-color red`）；**报告本体** = 落本地 `docs/reports/{version}/…`，通知里以 `--link-text` / `--link-url` 附**仓库内相对路径**（或 GitHub 文件链接）。`NOTIFY_ENABLED=0` 时所有节点**静默跳过**（仅终端日志标「通知跳过」）。**★ 但熔断 / `needs_human` 冻结不受通知降级影响（关键失败信号绝不因通道关闭而丢）**：所有冻结路径（`dev_fail_streak` 达阈 / Step A0 流水线识别不出 / Step D 账号缺失 / 测试链路未挂载收敛等）**始终把 `needs_human=true` + `needs_human_reason` 写入 baseline**（机器可读——外部 cron / 巡检可 `jq -r '.versions[]|select(.needs_human==true)'` 抓取待人工版本）**+ 终端打印显式 `⛔` 强警**；`NOTIFY_ENABLED=0` 只是少了 #4 通知推送，**冻结事实与原因仍持久落 baseline + 终端可见**，不构成"静默卡住无人可知"。**★ 发通知 + 台账登记（强制仪式可校验化 · ★ BUG-4 修复：字段入参 + 成功才登记）**：`NOTIFY_ENABLED != 0` 时，发通知**一律经 `notify.py` 按字段入参发送**，**⛔ 绝不手拼整份通知 JSON**（正文含中文 + 一个 ASCII 双引号即让整份 JSON 解析失败——实跑踩中过）：`python3 .aidp/scripts/notify.py --title '…' --section '…' [--section '…'] [--link-text '…' --link-url '…'] --auto --node '#N' --version "$TARGET_VERSION" --build "$BUILD"`（转义由脚本 `json.dumps` 负责；渠道候选链与失败回落亦由脚本负责，见上节——**⛔ 常规路径别手工传 `--sender` 自选发送命令，那会丢掉回落**）。**★ `--title` 必须按 0.1bis「通知标题固定前缀」写全 `{emoji} {项目名称中文} {version}[_Build{N}] · {本通知标题}`**——`notify.py` 另有**确定性兜底**：项目中文名称（`--project-name` > `AIDP_PROJECT_NAME` > `memory/aidp-config.yaml` 的 `project.name_cn` > `project.name` > 仓库根目录名，恒非空）与 `--version` 版本号若不在标题里会被自动补齐并在 stderr 提示，但兜底是安全网、不免除按规范写标题的责任。**★ 台账仅在发送成功（`notify.py` 返回 0）后由它自动登记 `record-card`**——发送失败**不登记**（堵"先登记后发送、发送失败留假台账骗过 ceremony-gate"）。build 未铸造的 #0/#pre-* 等可省 `--build`。〔仅在特殊场景无法用 `notify.py` 时才回退手工 `autopilot-ceremony-gate.py record-card --node '#N' …`，且必须自行保证"确已发送成功才登记"。〕<!-- proseexec-check: ignore 手工 record-card 是「notify.py 用不了」时的回退说明，正常路径由 notify.py 自动登记，不该有独立可执行落点 -->这让 Phase 3.4 完成核验门能据台账确定性核验「通道可用却整次零推送 / 漏发应发通知」——通知虽无本地产物，台账把"静默省略 + 事后说已精简"这条路堵死。`NOTIFY_ENABLED=0`（合法降级）时不发也不记。
+发送方式统一：**通知** = `notify.py --auto`（候选链/回落全在脚本内，见上节；默认蓝色 header，`#4` 用 `--header-color red`）；**报告本体** = 落本地 `docs/reports/{version}/…`，通知里以 `--link-text` / `--link-url` 附**仓库内相对路径**（或 GitHub 文件链接）。`NOTIFY_ENABLED=0` 时所有节点**静默跳过**（仅终端日志标「通知跳过」）。**★ 但熔断 / `needs_human` 冻结不受通知降级影响（关键失败信号绝不因通道关闭而丢）**：所有冻结路径（`dev_fail_streak` 达阈 / Step A0 流水线识别不出 / Step D 账号缺失 / 测试链路未挂载收敛等）**始终把 `needs_human=true` + `needs_human_reason` 写入 baseline**（机器可读——外部 cron / 巡检可 `jq -r '.versions[]|select(.needs_human==true)'` 抓取待人工版本）**+ 终端打印显式 `⛔` 强警**；`NOTIFY_ENABLED=0` 只是少了 #4 通知推送，**冻结事实与原因仍持久落 baseline + 终端可见**，不构成"静默卡住无人可知"。**★ 发通知 + 台账登记（强制仪式可校验化 · ★ BUG-4 修复：字段入参 + 成功才登记）**：`NOTIFY_ENABLED != 0` 时，发通知**一律经 `notify.py` 按字段入参发送**，**⛔ 绝不手拼整份通知 JSON**（正文含中文 + 一个 ASCII 双引号即让整份 JSON 解析失败——实跑踩中过）：`python3 {{AIDP_HOME}}/scripts/notify.py --title '…' --section '…' [--section '…'] [--link-text '…' --link-url '…'] --auto --node '#N' --version "$TARGET_VERSION" --build "$BUILD"`（转义由脚本 `json.dumps` 负责；渠道候选链与失败回落亦由脚本负责，见上节——**⛔ 常规路径别手工传 `--sender` 自选发送命令，那会丢掉回落**）。**★ `--title` 必须按 0.1bis「通知标题固定前缀」写全 `{emoji} {项目名称中文} {version}[_Build{N}] · {本通知标题}`**——`notify.py` 另有**确定性兜底**：项目中文名称（`--project-name` > `AIDP_PROJECT_NAME` > `memory/aidp-config.yaml` 的 `project.name_cn` > `project.name` > 仓库根目录名，恒非空）与 `--version` 版本号若不在标题里会被自动补齐并在 stderr 提示，但兜底是安全网、不免除按规范写标题的责任。**★ 台账仅在发送成功（`notify.py` 返回 0）后由它自动登记 `record-card`**——发送失败**不登记**（堵"先登记后发送、发送失败留假台账骗过 ceremony-gate"）。build 未铸造的 #0/#pre-* 等可省 `--build`。〔仅在特殊场景无法用 `notify.py` 时才回退手工 `autopilot-ceremony-gate.py record-card --node '#N' …`，且必须自行保证"确已发送成功才登记"。〕<!-- proseexec-check: ignore 手工 record-card 是「notify.py 用不了」时的回退说明，正常路径由 notify.py 自动登记，不该有独立可执行落点 -->这让 Phase 3.4 完成核验门能据台账确定性核验「通道可用却整次零推送 / 漏发应发通知」——通知虽无本地产物，台账把"静默省略 + 事后说已精简"这条路堵死。`NOTIFY_ENABLED=0`（合法降级）时不发也不记。
 
 **所有通知公共字段（每个节点都含）**：`项目名称`（**中文优先**：读 `memory/aidp-config.yaml` 的 `project.name_cn`（如「订单管理平台」）；未填 → `project.name` → git 根目录名英文兜底，并建议填写 `project.name_cn`）、`工作目录`（绝对路径）、**时间字段（★ 标签按通知语义取，值恒为发送时刻 `date '+%Y-%m-%d %H:%M:%S'`）**。
 > ⛔ **时间字段标签分层（开始类通知显示"完成时间"是语义错）——按节点语义区分标签**：

@@ -1,6 +1,6 @@
 # sprint-bugfix · 方式 B 详情（独立修复已记录的 bug — ★ 最常用）
 
-> 本文件是 `/sprint-bugfix` 命令 **方式 B（独立修复已记录的 bug）** 的完整详细步骤，由命令主体（`.aidp/commands/sprint-bugfix.md`）在**判定为方式 B 时用 Read 工具按需加载**——把这一段（前置准备 / 独立使用流程 / 执行步骤 Step 1–6）从"每次调用整体入上下文"改为"走到方式 B 才载"，降低"lost in the middle"式漏步。命令主体只保留方式 B 的**骨架表 + 关键规则 + 指向本文件的指针**。
+> 本文件是 `/sprint-bugfix` 命令 **方式 B（独立修复已记录的 bug）** 的完整详细步骤，由命令主体（`{{AIDP_HOME}}/commands/sprint-bugfix.md`）在**判定为方式 B 时用 Read 工具按需加载**——把这一段（前置准备 / 独立使用流程 / 执行步骤 Step 1–6）从"每次调用整体入上下文"改为"走到方式 B 才载"，降低"lost in the middle"式漏步。命令主体只保留方式 B 的**骨架表 + 关键规则 + 指向本文件的指针**。
 >
 > ⚠️ **权威性**：进入方式 B 后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤（Step 0 口述 bug 与来源 B 先落记录 / Step 1 调 bugfix skill〔附项目级专项〕 / Step 2 推送分类与监听 / Step 3 回填状态与报告链接 / Step 4 编译·前端校验 / Step 5 回写设计文档 / Step 5.1 累进产物审计 / Step 5.5 P0·P1 反哺回归用例 / Step 6 更新 activeContext）。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-bugfix/mode-b.md`。理据/根因见同目录 `rationale.md`。
@@ -79,7 +79,7 @@
 
 #### Step 2：推送分类与监听（约定 31.5）
 
-部署上下文下，修复 push 前先保存 `BASE_REF`，调用 `python3 .aidp/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF"`（链外无 build → `--standalone`）。无正式代码变更且无分类错误 → 仍校验 push 成功、记 `cicd_skipped=true`，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误 → 走 `cicd_watch.py --mode watch --commit <sha> --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；失败经 `--mode retry` 重试≤3）+ `autopilot-deploy-watch.py` 就绪探针。⛔ 不得以远端状态反推分类。
+部署上下文下，修复 push 前先保存 `BASE_REF`，调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF"`（链外无 build → `--standalone`）。无正式代码变更且无分类错误 → 仍校验 push 成功、记 `cicd_skipped=true`，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误 → 走 `cicd_watch.py --mode watch --commit <sha> --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；失败经 `--mode retry` 重试≤3）+ `autopilot-deploy-watch.py` 就绪探针。⛔ 不得以远端状态反推分类。
 
 #### Step 3：回填状态与报告链接
 

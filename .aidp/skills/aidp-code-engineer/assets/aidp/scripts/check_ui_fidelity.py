@@ -15,10 +15,10 @@
     原因为空也放行但会计入 waived 统计（让「豁免」本身可被审计，而不是隐形）。
 
 用法:
-    python3 .aidp/scripts/check_ui_fidelity.py                 # 全量扫 code/
-    python3 .aidp/scripts/check_ui_fidelity.py --json          # 机器消费
-    python3 .aidp/scripts/check_ui_fidelity.py --check R10     # 只跑某几条
-    python3 .aidp/scripts/check_ui_fidelity.py --paths a.vue b.java   # 只扫指定文件
+    python3 AIDP_HOME/scripts/check_ui_fidelity.py                 # 全量扫 code/
+    python3 AIDP_HOME/scripts/check_ui_fidelity.py --json          # 机器消费
+    python3 AIDP_HOME/scripts/check_ui_fidelity.py --check R10     # 只跑某几条
+    python3 AIDP_HOME/scripts/check_ui_fidelity.py --paths a.vue b.java   # 只扫指定文件
 
 退出码: 0 = 无 Critical；1 = 有 Critical；2 = 用法错误。
 """

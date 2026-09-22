@@ -34,10 +34,16 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_shard_id_style.py [--root <仓库根>] [--json]
+    python3 AIDP_HOME/scripts/check_shard_id_style.py [--root <仓库根>] [--json]
 
 退出码：`0`（本检查恒为提示性，不阻断）/ `2`=用法或读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -66,9 +72,9 @@ def _read(p):
 
 
 def run(root):
-    flows = os.path.join(root, ".aidp", "flows")
+    flows = os.path.join(root, runtime_relpath("", __file__), "flows")
     if not os.path.isdir(flows):
-        return {"applicable": False, "reason": "无 .aidp/flows，跳过",
+        return {"applicable": False, "reason": runtime_text('无 __AIDP_HOME__/flows，跳过', __file__),
                 "findings": [], "passed": True}
     findings, scanned = [], 0
     for cmd in sorted(os.listdir(flows)):

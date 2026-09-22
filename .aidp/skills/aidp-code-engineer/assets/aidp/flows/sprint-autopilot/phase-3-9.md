@@ -17,17 +17,27 @@
 
    ```bash
    : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"   # ★ 统一变量名 + 兜底默认（未定义时 jq 会读 stdin 静默失败 → streak 不落盘、熔断永不达阈）
-   BE="python3 .aidp/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
    # ★★ 必须读回本 tick 变量（ENTRY_MODE / PLANNING_DONE / WILL_BROWSER_TEST / FORCE_REPLAN / NO_PLANNING）：
    #    它们全在别的分片派生，而分片间 shell state 不跨 Bash 调用持久；不读回 = 全取空 = 本门恒 FAIL
    #    → 3 tick 后按 handoff-exhausted 冻结版本。详见 rationale.md「收尾门的跨分片变量」。
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    V="${TARGET_VERSION}"; B="${BUILD}"; BN="${BUILD_SEQ}"
+   # 从 3.4-finish 续跑也要读版本级决定；无 Git 云部署不等待一条根本不会产生的测试交接。
+   VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+   WILL_BROWSER_TEST=$($BE --version "$V" get will_browser_test --default 0)
+   DEPLOY_READY=1
+   if [ "$VCS_MODE" = none ] && [ "${DEPLOY_MODE:-none}" = cloud ]; then DEPLOY_READY=0; fi
+   if [ "$DEPLOY_READY" = 0 ]; then
+     WILL_BROWSER_TEST=0
+     $BE --version "$V" set will_browser_test 0
+     echo "⚠️ vcs_mode=none 且云部署未执行：收尾门按静态-only 收口，不等待浏览器测试或 #1d"
+   fi
    RPT_AI="docs/reports/${V}/AI执行报告"; RPT_TEST="docs/reports/${V}/AI测试报告"
    FAIL=0; ok(){ echo "  ✅ $1"; }; bad(){ echo "  ❌ $1 — $2"; FAIL=1; }
 
    # ★★ 强制仪式确定性收尾门（外部脚本 = 权威）：只认文件产物 + 通知台账，缺失且无合法降级 → exit 1。
-   GATE=".aidp/scripts/autopilot-ceremony-gate.py"
+   GATE="{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py"
    # ★ stage 分流：skeleton = 本 build 已委派测试链路 **或** 测试链路真活着（谁是 build 关闭方）；
    #   其余一律 final（理据见 rationale.md，⛔ 别只看 WILL_BROWSER_TEST）。
    # ⛔ 判据里**不带 LOOP_UNATTENDED**："谁关闭这个 build" 与 "有没有人值守" 是两件事。
@@ -48,7 +58,7 @@
    fi
    # ★ 测试链路活跃 = 缺失计数的恢复信号：就地清零（跨复测 build 不累加）
    [ "$TEST_ALIVE" = "1" ] && { $BE --version "$V" del test_loop_missing_streak >/dev/null 2>&1 || true; }
-   if [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; then
+   if [ "${WILL_BROWSER_TEST:-0}" = "1" ] && { [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; }; then
      GATE_STAGE=skeleton; else GATE_STAGE=final; fi
    # ★★ 根因分诊 —— **必须先于 ceremony 闸**（理据见 rationale.md「测试链路缺失为何不能交给收尾门」）：
    #    本版需浏览器实测（WILL_BROWSER_TEST=1）却检测不到测试链路活跃时，上一行判 final，而 final 的
@@ -76,16 +86,16 @@
       && ! { [ -f "$RPT_TEST/index.html" ] && [ -f "$RPT_TEST/data/${B}.js" ]; }; then
      TLM=$($BE --version "$V" bump test_loop_missing_streak)
      echo "⚠️ 本版需浏览器实测但**未检测到测试链路活跃**（连续 ${TLM} tick）——浏览器实测 + AI测试报告 + #F 不会自动发生！"
-     echo "   · 7×24 标准挂法：python3 .aidp/scripts/aidp_scheduler.py install（开发 + 测试两个定时任务）"
+     echo "   · 7×24 标准挂法：python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install（开发 + 测试两个定时任务）"
      echo "   · 交互式会话：再挂一条 「/loop 5m /sprint-aiauto-test --unattended」"
      if [ "$TLM" -ge "${TEST_LOOP_MISSING_THRESHOLD:-3}" ]; then
        echo "⛔ 连续 ${TLM} tick 测试链路缺失（≥ 阈值 ${TEST_LOOP_MISSING_THRESHOLD:-3}）→ 本 build 按【静态-only 收尾 + 如实标注『浏览器实测未执行(测试链路未挂载)』】关闭，置 needs_human 冻结止损；补挂第二条 loop 后自动解冻重测"
        # 冻结四件套 + #4 + 本地告警台账一次做完（真因是测试链路没挂；测试链路心跳恢复即自动解冻）
-       python3 .aidp/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$B" \
+       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$B" \
          --freeze-now --phase 3.4-testloop --reason config-missing \
          --why "测试链路连续 ${TLM} tick 未活跃（未装 aidp_scheduler 测试任务 / 未挂 /loop 5m /sprint-aiauto-test --unattended），本 build 静态-only 收尾、浏览器实测未执行"
        # ★ 达阈 → 由本围栏之后的「静态-only 收尾」步骤接手（⛔ 不在此 exit，见下）
-       python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot \
+       python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot \
          WILL_BROWSER_TEST 0 >/dev/null 2>&1 || true
        # ⛔⛔ **tick 命名空间不是收尾门读的那个真源**：`autopilot-ceremony-gate.py` 的
        #    「显式落盘值优先」读的是 **baseline `versions.{V}.will_browser_test`**，
@@ -123,11 +133,13 @@
 
    ```bash
    # ★ 新围栏 = 新 Bash 调用，上一个围栏的变量一律不存活，必须重新取回
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"
-   BE="python3 .aidp/scripts/baseline_edit.py"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
    V="${TARGET_VERSION}"; B="${BUILD}"; BN="${BUILD_SEQ}"
-   GATE="${GATE:-.aidp/scripts/autopilot-ceremony-gate.py}"
+   # 同一版本级真源；不能在新 Bash 围栏重新拾取旧 tick 的 WILL_BROWSER_TEST=1。
+   WILL_BROWSER_TEST=$($BE --version "$V" get will_browser_test --default 0)
+   GATE="${GATE:-{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py}"
    # ⛔⛔ **GATE_STAGE 必须在本围栏【重新推导】**——它在上一个围栏（本片 stage 分流处）赋值，
    #    而本围栏开头那行注释说得很清楚：新围栏 = 新 Bash 调用、上个围栏的变量一律不存活。
    #    它也**不在** `autopilot_tick_flags.py --shell` 的供给清单里（实测命中 0）。
@@ -146,10 +158,10 @@
      echo "   ⛔ 不计入 test_loop_missing_streak（那会把脚本故障误诊成运维少挂了一条 loop），让位本 tick"
      exit 0
    fi
-   if [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; then
+   if [ "${WILL_BROWSER_TEST:-0}" = "1" ] && { [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; }; then
      GATE_STAGE=skeleton; else GATE_STAGE=final; fi
    RPT_AI="docs/reports/${V}/AI执行报告"; RPT_TEST="docs/reports/${V}/AI测试报告"
-   GATE=".aidp/scripts/autopilot-ceremony-gate.py"
+   GATE="{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py"
    FAIL=0; ok(){ echo "  ✅ $1"; }; bad(){ echo "  ❌ $1 — $2"; FAIL=1; }
    # ★ EXPECT_CARDS 只放「本门运行时 autopilot 自己**确实应该已发出**的里程碑通知」，判据须与各节点实际发送条件
    #   **逐条同源**（通知节点矩阵单一信源 = phase-0-5.md 0.1bis；理据见 rationale.md「收尾门期望集」）：
@@ -193,7 +205,7 @@
      [ "$GRC" != "0" ] && {   # ★ P0-2：final 阶段校规划产物存在性（full/incremental 缺六类即 FAIL）
        # 记账→判阈（内含「无唤醒源即当场达阈」）→冻结四件套→发 #4，一次调用做完。
        # ⛔ 「发 #4 通知」写成注释 = 停得住但停不响：零通知，与还在正常跑完全同形。
-       python3 .aidp/scripts/autopilot_fail_handle.py --version "$V" \
+       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" \
          --phase 3.4-ceremony-gate --reason handoff-exhausted \
          --streak-key dev_fail_streak --threshold "${DEV_FAIL_FREEZE_THRESHOLD:-3}" \
          --why "收尾 ceremony 闸连续多 tick 未过（3.4-ceremony-gate），结构性不可自愈；缺项清单见 gate 输出"

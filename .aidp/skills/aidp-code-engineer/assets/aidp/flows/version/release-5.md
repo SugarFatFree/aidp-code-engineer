@@ -1,12 +1,12 @@
 # /version · 版本发布流程详情 — 分片 5/9
 
 > 本片覆盖：**Step 3.3.9.5 收口开发期变更台账（约定 22 攒批级联收口点 3）+ Step 3.3.10 版本规划文档整合（补充合并回主文档 + 清废弃）**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 ### Step 3.3.9.5：★ 收口本版本开发期变更台账（约定 22 攒批级联 · 收口点 3，**必须先于 3.3.10**）
 
-> **单一信源 = `.aidp/reference/开发期族增量.md`**（格式 / 收口执行要点 / 清理规则全在那份）。
+> **单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`**（格式 / 收口执行要点 / 清理规则全在那份）。
 > **进入本步第一动作 = Read 该文件**；本处只说明触发、范围与"为什么必须排在 3.3.10 之前"。
 
 > ⛔ **为什么必须先于 Step 3.3.10**：3.3.10 要把 `NN_<业务主题>.md` 增量**合并回主文档**、
@@ -27,8 +27,8 @@
 - **★ 终态机器门（确定性，不通过不得进入 3.3.10）**：
   ```bash
   # ★ 落点门（模式 A）与终态门并列跑（二者正交，见 planning-8 同款注释）
-  python3 .aidp/scripts/check_cascade_landing.py --worktree --version {version} || exit 1
-  python3 .aidp/scripts/check_cascade_landing.py --must-delete --version {version} \
+  python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --worktree --version {version} || exit 1
+  python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --must-delete --version {version} \
     --transfer-to docs/audit/{version}/发布欠账.md
   ```
   ① 断言**本版本台账不存在**，无任何例外（有未决条目、打了 `LEDGER-ARCHIVED` 一律判失败——标记不替代删除）；
@@ -75,7 +75,7 @@
 2. **合并回主文档（语义改写，逐族委派对应 Agent 保证格式一致）**：读主文档 + 全部**未失效**补充，把补充内容**并入主文档对应章节**（新增接口并入接口章节、新增表并入数据模型、改写的业务规则替换原文等）：
    - **结论取代**：被 🔄 失效横幅标记的补充**整份丢弃不并入**（其内容已被后续补充取代）；只并入每条主题的**最终有效结论**。
    - **★ Mock→真实对接收敛（直接服务诉求）**：补充里"第三方已交付、改真实对接、补后端实现"类结论**取代**主文档原"本期 Mock、不实现后端"段——合并后主文档只留**真实对接方案**（真实端点/鉴权/字段映射/错误码/超时重试），**删掉所有已切真实的 Mock 占位描述**；仍未交付、发布时仍是 Mock 的第三方接口保留 Mock 说明 + `⏳ 待交付` 标注（与 Step 3.3.9 已满足判定一致）。
-   - **委派**：研发需求族 → PM Agent（`.aidp/agents/pm.md`）；设计族 + references 对外需求族（同由 `/sprint-design` 生成）→ Architect Agent（`.aidp/agents/architect.md`）；计划/自测族 → 命令端按主文档结构直接改写。大文档（主文档 > 800 行或补充 > 5 份）派后台子 Agent 隔离上下文执行。
+   - **委派**：研发需求族 → PM Agent（`{{AIDP_HOME}}/agents/pm.md`）；设计族 + references 对外需求族（同由 `/sprint-design` 生成）→ Architect Agent（`{{AIDP_HOME}}/agents/architect.md`）；计划/自测族 → 命令端按主文档结构直接改写。大文档（主文档 > 800 行或补充 > 5 份）派后台子 Agent 隔离上下文执行。
    - **产物守恒**：合并后主文档必须**覆盖所有未失效补充的每一个新增项**（接口/表/规则/用例逐条核对，不漏并）；主文档超约定 15/约定 20 行数阈值时按其拆分规则拆分主文档，**不得**因合并而新造"补充"。
 
 3. **刷新 `00_索引.md` + 去除增量指向痕迹**：① 刷新 `00_索引.md`——移除已合并增量的行，只留 `01_`+ 内容主文档行及其最新生成时间（合并后目录里已无增量文件）② 内容主文档正文清除"（补充 NN）""见增量文档"等指向增量的行内引用，改为正文直述 ③ 更新主文档头部「关联文档」表（若增量引入的新交叉引用需保留则并入主表）。

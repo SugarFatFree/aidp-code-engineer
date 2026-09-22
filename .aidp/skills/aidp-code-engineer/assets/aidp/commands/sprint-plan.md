@@ -38,7 +38,7 @@
 
 使用 `Skill` 工具调用 `dev-execution-planner`，由 skill 自主完成执行计划生成 + 多维度独立 Agent 检查（详见 SKILL.md）+ 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**（含多用户判定 / AIDP 资源扫描 / 上游引用规则 / 核心原则 / 拆分控制 / 不中断原则 / 金额字段类型守恒等），命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
-> 详细规则查 `.aidp/skills/dev-execution-planner/SKILL.md`；命令端只负责传入路径上下文 + Step 1.5 grep 回检（项目级补充）。
+> 详细规则查 `{{AIDP_HOME}}/skills/dev-execution-planner/SKILL.md`；命令端只负责传入路径上下文 + Step 1.5 grep 回检（项目级补充）。
 > **项目级补充**（喂给 SKILL prompt 的本项目上游路径）：PRD=`docs/requirements/{version}/研发需求/`、原型=`docs/prototype/{version}/`、详设=`docs/design/detail/{version}/`。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 详细设计三类路径）：
@@ -56,8 +56,8 @@ SKILL 的 `references/task-templates.md` Task 1.2「第三方中间件配置」�
 - 连带：`check_env_config.py` **先判形态再决定跑不跑**——项目无 `.env`/`.env.example` 且配置文件不用 `${}` 环境变量引用时，它返回 `skipped=true` + `total_checks=0` + `checks=[]` + **exit 0**，即**整份 N/A**。⛔ **读 `--json` 时必须先看 `skipped`**：`skipped=true` 时 `failed_critical=0` / `all_passed=true` 只是"没跑"，**不是"跑过且通过"**——把 N/A 读成通过正是脚本自身注释点名要防的假绿。`skipped=false` 时才逐项读其检查结果（`.gitignore` 排除 `.env`、配置文件 `${}` 引用等）；其中「`.env.example` 文件存在」为 `Important`，采用「运行时配置文件即权威、不维护示例副本」形态时属正常，不构成阻断。
 
 **额外提示**（命令端在调用 prompt 中补充，让 skill 的资源扫描覆盖本项目）：
-- 让 skill 扫描 `.aidp/commands/` 作为 L2 层可用命令
-- 让 skill 扫描 `.aidp/skills/` 作为 L2 层可用 skill
+- 让 skill 扫描 `{{AIDP_HOME}}/commands/` 作为 L2 层可用命令
+- 让 skill 扫描 `{{AIDP_HOME}}/skills/` 作为 L2 层可用 skill
 - 让 skill 把 `docs/architecture/`（架构约束 / 技术选型 / UI 规范约束 + 可选架构设计文档，全目录识别）作为约束条件
 - 多人协作时，把"功能模块 → 开发者"分配关系显式说明，触发 skill 第零步多用户分支
 
@@ -89,9 +89,9 @@ SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死列�
 
 ### Step 1.5：★ 上游溯源 + 越界检查 — SKILL Quality Review 复核
 
-> 上游溯源完整性 + 越界判定（Task PRD/原型/详细设计来源、章节+行号精度、禁写 DDL/接口设计）的规则、脚本、退出码与 `--json` 分档口径**单一信源 = `.aidp/skills/dev-execution-planner/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」**（由其质量检查子 Agent 步骤 0 强制跑）。命令端**不另列脚本清单、不复述阈值**。
+> 上游溯源完整性 + 越界判定（Task PRD/原型/详细设计来源、章节+行号精度、禁写 DDL/接口设计）的规则、脚本、退出码与 `--json` 分档口径**单一信源 = `{{AIDP_HOME}}/skills/dev-execution-planner/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」**（由其质量检查子 Agent 步骤 0 强制跑）。命令端**不另列脚本清单、不复述阈值**。
 >
-> 需要复核时（SKILL 报告缺脚本退出码证据 / 产物明显违规）→ **派一个独立子 Agent 按该文件原样跑全部脚本**（`<SKILL_DIR>` = `.aidp/skills/dev-execution-planner`，计划目录 = `docs/plans/{version}/`），只回传各脚本退出码 + `--json` 的必修 / 警告 / `skipped` 摘要；⛔ 不在主对话内联跑。
+> 需要复核时（SKILL 报告缺脚本退出码证据 / 产物明显违规）→ **派一个独立子 Agent 按该文件原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-execution-planner`，计划目录 = `docs/plans/{version}/`），只回传各脚本退出码 + `--json` 的必修 / 警告 / `skipped` 摘要；⛔ 不在主对话内联跑。
 
 判违规 → 暂停 Step 2，把退出码 + 报告正文展示给用户，让 SKILL 重写；退出码 `2`（入参错）→ 修参数重跑，不算产物违规。SKILL QR 标记通过但产物明显违规 → 视为 SKILL 缺陷，在模板仓库修 SKILL（约定 16），不在此步绕过。
 
@@ -113,7 +113,7 @@ echo "✅ 研发执行计划 SQL 路径已回写到最终部署位置 docs/deplo
 
 ### Step 2：PM Agent 补充任务分配矩阵 + 关联文档
 
-读取 `.aidp/agents/pm.md` 获取 PM Agent 角色定义。
+读取 `{{AIDP_HOME}}/agents/pm.md` 获取 PM Agent 角色定义。
 
 **在 `01_研发执行计划.md` 头部**（紧跟标题之后，正文之前）注入「关联文档」章节：
 
@@ -139,7 +139,7 @@ echo "✅ 研发执行计划 SQL 路径已回写到最终部署位置 docs/deplo
 > ⛔⛔ **填矩阵前先读这两条硬规则**（单一信源 = `docs/init/06_版本与用户目录约定.md` §3.3 / §3.4，本处只做落地提示）：
 >
 > 1. **Sprint 编号跨版本连续自增、不随版本重置**——本版第一个 Sprint 的号 **必须**取自
->    `python3 .aidp/scripts/check_sprint_numbering.py next`（跨全部版本扫 MAX+1）。
+>    `python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next`（跨全部版本扫 MAX+1）。
 >    ⛔ **严禁**新版本又从 `Sprint-001` 起：编号是项目全局流水号，重置会让同一项目出现多个 `sprint-001`，
 >    bugfix 记录 / `testing/{version}/sprint-{NNN}/` / Sprint 归档全部无法只凭编号定位（下游实测问题）。
 > 2. **一个 Sprint = 一个可独立验收的功能单元；同一功能的前后端任务归属【同一个】Sprint**——
@@ -152,7 +152,7 @@ echo "✅ 研发执行计划 SQL 路径已回写到最终部署位置 docs/deplo
 >
 > **落盘后必跑回检**（Critical 项不过即修正矩阵，勿带病进 Sprint 执行期）：
 > ```bash
-> python3 .aidp/scripts/check_sprint_numbering.py check
+> python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py check
 > ```
 
 ```markdown
@@ -255,7 +255,7 @@ DDL_HIT=$(grep -cE 'CREATE TABLE|^interface .* \{|^表名[:：]' $FILES)
 GRAN_DIR=$(mktemp -d); GRAN_EXIT=0; GRAN_SKIPPED=False; GRAN_MUST=0; n=0
 for f in $FILES; do
   n=$((n+1))
-  python3 .aidp/skills/dev-execution-planner/scripts/check_task_granularity.py "$f" --json > "$GRAN_DIR/$n.json"
+  python3 {{AIDP_HOME}}/skills/dev-execution-planner/scripts/check_task_granularity.py "$f" --json > "$GRAN_DIR/$n.json"
   _e=$?; [ "$_e" -ne 0 ] && GRAN_EXIT=$_e
 done
 # ★ skipped（一个 Task 段都没识别到 = 未实质核验）：任一份 skipped 即整体按未核验处理
@@ -341,7 +341,7 @@ Sprint 拆分：
 ### ★ 约定 22 级联落盘（`--ledger-cascade`，与 `--supplement={NN}` 互斥，同时传则报错）
 
 由**约定 22 级联**调用时（攒批收口子 Agent / `--cascade-now` 即时级联）**必须**加 `--ledger-cascade`：**就地改内容主文档正文** `docs/plans/{version}/01_研发执行计划.md`，改完刷该目录 `00_索引.md` 生成时间（约定 15）。
-⛔ 不新建 `NN_` 分册、不产中转增量册、不全量扫 `code/` 等落盘细则与内容产出方式，**单一信源 = `.aidp/reference/开发期族增量.md`「收口执行要点」第 2/3 条（L3 计划）**，本命令不复述。
+⛔ 不新建 `NN_` 分册、不产中转增量册、不全量扫 `code/` 等落盘细则与内容产出方式，**单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`「收口执行要点」第 2/3 条（L3 计划）**，本命令不复述。
 
 ### 输入差异
 - **必读** `docs/requirements/{version}/研发需求/输入变更-{NN}.md`（含 PRD 与原型两类变更）
@@ -363,7 +363,7 @@ Sprint 拆分：
 
 ### 输出差异
 
-★ **命名保持**：dev-execution-planner SKILL 内部按其默认产物路径风格生成纯 `NN_业务名.md`（已禁"补充/追加"语义前缀）；命令端返回后**只做序号续编校正**——规则与 `/sprint-design` 同款、**单一信源见 `.aidp/commands/sprint-design.md`「命名保持」段**，本处不复述（约定 21）。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->
+★ **命名保持**：dev-execution-planner SKILL 内部按其默认产物路径风格生成纯 `NN_业务名.md`（已禁"补充/追加"语义前缀）；命令端返回后**只做序号续编校正**——规则与 `/sprint-design` 同款、**单一信源见 `{{AIDP_HOME}}/commands/sprint-design.md`「命名保持」段**，本处不复述（约定 21）。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->
 
 | 文档 | SKILL 默认产物路径（待归一） | 归一后路径（统一 `NN_<业务主题>.md`，文件名不带"补充"字眼） |
 |------|-------------------------|--------------------------|

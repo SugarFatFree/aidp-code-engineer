@@ -144,7 +144,7 @@
 
 ### UI 还原度违规（维度 10·约定39-R2/R3/R10）
 
-> 判据脚本由 AIDP 脚手架下发到**被测项目侧** `<被测项目根>/.aidp/scripts/check_ui_fidelity.py`；
+> 判据脚本由 AIDP 脚手架下发到**被测项目侧** `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`；
 > ⛔ 本 SKILL 不写第二份同判据实现。脚本未下发时标「不适用」跳过、**报告仍留行**，
 > 但仍须对 R10 做一次人工 grep 兜底（它零豁免、判据纯词法）。
 
@@ -212,11 +212,11 @@ python3 <SKILL_DIR>/scripts/check_vue_style_preprocessor.py <改动的 .vue 或�
 python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --changed <本次改动的文件...> [--allow <单一信源glob>] [--json] [--strict]
 
 # 维度 10 — UI 还原度确定性检查（脚本在**被测项目侧**，不在本 SKILL）
-python3 <被测项目根>/.aidp/scripts/check_ui_fidelity.py --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py --json
 # 维度 12 — 上游调用日志可见性与脱敏（脚本在**被测项目侧**；只扫 .java/.kt，非 JVM 栈 outbound_files=0 即标不适用）
-python3 <被测项目根>/.aidp/scripts/check_upstream_call_log.py --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py --json
 # 维度 13 — 实现偏离设计（脚本在**被测项目侧**；⚠️ --version 必填带值，漏传落 exit 2 = 这一档静默没跑）
-python3 <被测项目根>/.aidp/scripts/check_design_anchor.py --version <版本号> --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --json
 
 # 备用 Shell 命令（仅 Linux/macOS）
 grep -rn "mockData\|fakeData\|mockList\|fakeList" src/ --include="*.vue" --include="*.ts" --include="*.js"

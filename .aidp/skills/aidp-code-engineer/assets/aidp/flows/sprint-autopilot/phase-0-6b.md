@@ -18,8 +18,8 @@
 #### step 1 — 判定信号 → 显式三分支裁定（不留 else 歧义）
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
 AFP=$($BE --version "$V" get auto_fixable_pending --default false)
 NH=$($BE  --version "$V" get needs_human          --default false)
 STREAK=$($BE --version "$V" get auto_retest_streak --default 0)
@@ -38,8 +38,8 @@ CAP=$($BE    --version "$V" get retest_auto_cap    --default 3)
 
 ```bash
 # 命中分支 ① 时执行（⛔ 每个围栏都是独立 Bash 调用，变量一律重新取回）
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
 $BE --version "$V" set needs_human true needs_human_kind retest-cap \
   retest_cap_frozen_at @now aiauto_frozen_at @now freeze_reason unconverged \
   retest_frozen_head "$(git rev-parse HEAD 2>/dev/null || echo '')" \
@@ -49,7 +49,7 @@ $BE --version "$V" set needs_human true needs_human_kind retest-cap \
 #   测试链路按 unconverged 保留阻塞值、Stop hook 的冻结豁免才能成立。
 $BE set aiauto_blocked_reason "frozen:unconverged@$V"
 # ⛔ 冻结必须同时发 #4（口径见 phase-0-4.md）：不发 = 停了但没人知道。
-python3 .aidp/scripts/notify.py --node "#4" --auto --header-color red \
+python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
   --title "自动复测达上限，转人工" --version "$V" \
   --section "连续自动修复复测已达上限，已冻结本版待人工。人工提交修复后（HEAD 变化）自动解冻复测。" || true
 ```
@@ -64,8 +64,8 @@ python3 .aidp/scripts/notify.py --node "#4" --auto --header-color red \
    #   漏了这两行 → `$BE` 展开成空 → `--version: command not found` → 一字节不写 →
    #   auto_retest_streak 恒 0（三分支表的「达上限转人工冻结」永不可达）、
    #   auto_fixable_pending 永不清零（每 tick 重入「派 bugfix → 重部署 → 铸新 build」无限循环）。
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-   BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
    $BE --version "$V" set auto_fixable_pending false auto_fix_in_progress_since @now
    $BE --version "$V" bump auto_retest_streak
    $BE --version "$V" del prerelease_test_hold_streak
@@ -95,8 +95,8 @@ python3 .aidp/scripts/notify.py --node "#4" --auto --header-color red \
 命中后的动作（三件，缺一不可）——**必须可执行地落盘，⛔ 散文不算动作**：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
 # ★ 冻结四件套 + retest-cap 专属三件，成套清；⛔ 尤其不能漏 auto_retest_streak：
 #   它是累加型字段，不归零则人工介入后恒 = cap，
 #   下一轮一有可修复缺陷就立刻再撞上限转人工，「每周期最多自动跑 3 轮」退化成 0 轮。
@@ -119,14 +119,14 @@ echo "♻️ $V retest-cap 解冻：检出人工修复信号，配额已归零�
 > ```bash
 > # ⛔ 新围栏 = 新 Bash 调用：$V 必须先取回，否则 `--version ""` → rc=1，
 > #    本围栏两行**都写不进去** → 游标推不到 3.1.5、自动复测闭环派完单就没有下文。
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 > V="${TARGET_VERSION:?TARGET_VERSION 取空，拒绝写入 baseline}"
 > # ★ 同时把 ENTRY_MODE 落成 incremental：复测轮没有未关闭 Sprint，
 > #   留在 full 会让 3.1.5 出口按「该有 Sprint 却没有」处理；命令正文说的「走增量分支」由这两行落盘兑现。
-> python3 .aidp/scripts/baseline_edit.py --version "$V" \
+> python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" \
 >   set autopilot_entry_mode incremental
-> python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot ENTRY_MODE incremental
-> python3 .aidp/scripts/baseline_edit.py --version "$V" run-state "3.1.5-build" "3.1.5-build"
+> python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot ENTRY_MODE incremental
+> python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" run-state "3.1.5-build" "3.1.5-build"
 > ```
 >
 > 此后游标推进由其消费的各 Phase（3.1.5 / 3.2 / 3.2.1 / 3.4）各自出口负责。
@@ -149,7 +149,7 @@ echo "♻️ $V retest-cap 解冻：检出人工修复信号，配额已归零�
      # DEPLOY_SOURCE_REF 由上一条「读部署源 ref」得出（流水线运行的构建分支 / 本地模式为空），
      # 由执行体就地代入字面量；⛔ 空值不落盘（落空串等于没记，反而掩盖"该合并却没合"）。
      DEPLOY_SOURCE_REF=""   # ← 执行体代入上一条读到的部署源 ref
-     [ -n "$DEPLOY_SOURCE_REF" ] && python3 .aidp/scripts/autopilot_tick_flags.py \
+     [ -n "$DEPLOY_SOURCE_REF" ] && python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py \
        set --command autopilot PENDING_MERGE_TO "$DEPLOY_SOURCE_REF" >/dev/null 2>&1 || true
      ```
    **绝不**把代码放到部署流水线永不构建的分支、也**绝不**等到部署阶段才作为 blocker 发现。
@@ -159,6 +159,6 @@ echo "♻️ $V retest-cap 解冻：检出人工修复信号，配额已归零�
    - **交互式（`LOOP_UNATTENDED=0`）**：退出，提示先 `/sprint-close`。
    - **★ `/loop` 无人值守（`LOOP_UNATTENDED=1`）**：**自动收口**——调 `/sprint-close --unattended` 把上一 tick 中断遗留的 Sprint 归档，成功即继续本 tick；与 0.5bis D3「上版收口自动收口、不问」同口径。
      收口失败 → 计入顶层 `preflight_fail_streak`（复用 0.1 的熔断记账，`preflight_fail_reason="stale-active-sprint"`），达阈冻结并发一次 #4。
-     **★ 收口成功 / 本就无活跃 Sprint → 必须解冻**：`python3 .aidp/scripts/autopilot_unfreeze.py stale-active-sprint || true`。0.1 的清零 case **只认它自己那 6 个 git 类 reason**，本 reason 落 `*)` 分支被明文"留给其成功路径清"——**这里就是那个成功路径**。缺这一行：遗留 Sprint 收口好了冻结也不解除，每 tick 在 0.1 静默 exit，唯一出路是 `--reset-baseline`（毁掉整份 baseline）。
+     **★ 收口成功 / 本就无活跃 Sprint → 必须解冻**：`python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py stale-active-sprint || true`。0.1 的清零 case **只认它自己那 6 个 git 类 reason**，本 reason 落 `*)` 分支被明文"留给其成功路径清"——**这里就是那个成功路径**。缺这一行：遗留 Sprint 收口好了冻结也不解除，每 tick 在 0.1 静默 exit，唯一出路是 `--reset-baseline`（毁掉整份 baseline）。
      ⛔ **绝不静默退出**：只写"退出提示先 close"而无无人值守分支 = 上一 tick 一旦中断留下未 close 的 Sprint，此后**每 tick 都在这里静默退出**，既不推进、也不告警、更不熔断（7×24 表现为"挂着但什么都不干"）。
    - 无活跃 Sprint → OK

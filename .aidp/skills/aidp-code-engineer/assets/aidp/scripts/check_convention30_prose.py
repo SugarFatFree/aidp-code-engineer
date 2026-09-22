@@ -14,7 +14,7 @@
 ## 判据
 
 扫约定 30 范围内的 `.md`（契约目录 + `docs/init` + 根级记忆文件 + 各 SKILL 的 `SKILL.md` + `docs/**/README.md`
-+ `.aidp/scripts/README.md` + `memory/README.md`），匹配历史叙事模式（`此前` / `原来是` / `旧行为` / `已废除` /
++ `AIDP_HOME/scripts/README.md` + `memory/README.md`），匹配历史叙事模式（`此前` / `原来是` / `旧行为` / `已废除` /
 `不再锁死` / `📌 历史` / 正文里的范式版本戳：`（Vx.y 新增）`、标题 `（Vx.y）`、文件头/页脚 `AIDP Vx.y`、
 行内 `Vx.y 起`）。
 
@@ -24,6 +24,12 @@
 
 退出码：0 无新增；1 有新增；2 参数错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import hashlib
 import json
@@ -31,19 +37,19 @@ import os
 import re
 import sys
 
-SCAN_DIRS = (".aidp/commands", ".aidp/agents", ".aidp/flows",
-             ".aidp/reference", ".aidp/rules", "docs/init")
+SCAN_DIRS = (runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/agents', __file__), runtime_text('__AIDP_HOME__/flows', __file__),
+             runtime_text('__AIDP_HOME__/reference', __file__), runtime_text('__AIDP_HOME__/rules', __file__), "docs/init")
 # 约定 30 明文把根级文件也列进范围，但它们不在任何 SCAN_DIRS 下 —— 单独登记，
 # 否则这些根级文件与项目记忆文件（AGENTS.md / CLAUDE.md）处于「规则说要管、门却不扫」的空白区。
-SCAN_FILES = ("CLAUDE.md", "README.md", "AGENTS.md", ".aidp/AIDP-AGENTS.md",
-              ".aidp/scripts/README.md", "memory/README.md")
+SCAN_FILES = ("CLAUDE.md", "README.md", "AGENTS.md", runtime_text('__AIDP_HOME__/AIDP-AGENTS.md', __file__),
+              runtime_text('__AIDP_HOME__/scripts/README.md', __file__), "memory/README.md")
 # 按文件名收的扫描面：各 SKILL 正文、docs 下各级 README（下发文档，读者同样是下游 AI）
-SCAN_GLOBS = ((".aidp/skills", "SKILL.md"), ("docs", "README.md"))
+SCAN_GLOBS = ((runtime_text('__AIDP_HOME__/skills', __file__), "SKILL.md"), ("docs", "README.md"))
 # 根因档案豁免：它的职责就是记录「为什么」。
 # ⛔ 只豁免 rationale.md —— 与约定 30 主行「唯 rationale.md 例外」逐字一致。
 #    曾一并豁免 invariants.md，与主行口径冲突；不变式文件同样只该陈述最终行为。
 EXEMPT_BASENAMES = {"rationale.md"}
-BASELINE = ".aidp/scripts/convention30-prose-baseline.txt"
+BASELINE = runtime_text('__AIDP_HOME__/scripts/convention30-prose-baseline.txt', __file__)
 
 # ⚠️ 词表宽度直接决定这道门的真实覆盖率：实测原「此前」正则（要求后接否定/范围副词）
 #    只命中 SCAN_DIRS 内 39 行里的 11 行（28%），另 28 行与 `曾经`/`原先`/`历史上`/`旧版曾`/

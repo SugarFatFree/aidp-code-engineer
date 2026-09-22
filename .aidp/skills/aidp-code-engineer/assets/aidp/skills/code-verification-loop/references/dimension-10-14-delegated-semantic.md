@@ -12,14 +12,14 @@
 > 已被占用成别的东西（`dev-logic-architect` 的 `R1/R2/R3` = 上游溯源三项；`dev-manual-testcase` 的
 > `R1~R12` = 反向覆盖维度），裸写必混淆。
 
-**⛔ 最高约束：本 SKILL 不得再写一份同判据实现。** 判据脚本 `<被测项目根>/.aidp/scripts/check_ui_fidelity.py`
+**⛔ 最高约束：本 SKILL 不得再写一份同判据实现。** 判据脚本 `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`
 由 AIDP 脚手架下发到**被测项目**侧，不在本 SKILL 的 `scripts/` 下、**也不许拷进来**。同一判据两份实现
 是最高频漂移源（改一处漏一处、两处都自称权威）——本 SKILL 维度 8 判别人「同一判据散落多份」，不能
 自己复制一份。
 
 ```bash
-python3 <被测项目根>/.aidp/scripts/check_ui_fidelity.py --json            # 全量
-python3 <被测项目根>/.aidp/scripts/check_ui_fidelity.py --check R3 --json # 单条
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py --json            # 全量
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py --check R3 --json # 单条
 # 退出码 0=无 Critical / 1=有 Critical / 2=用法错；输出 findings[]（rule/severity/file/line/message/evidence）
 ```
 
@@ -85,12 +85,12 @@ grep 结构判断，并把"设计缺口径表"报为 🟡 Important，**不静�
 > 与「上游 SKILL 产出的设计文档」里的「上游」不是一回事。通用规则号写全称 **约定40**，别写裸 `RNN`。
 
 **⛔ 最高约束：本 SKILL 不得再写一份 C1–I3 的 grep 实现。** 判据脚本
-`<被测项目根>/.aidp/scripts/check_upstream_call_log.py` 由 AIDP 脚手架下发到**被测项目**侧
+`<被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py` 由 AIDP 脚手架下发到**被测项目**侧
 （不在本 SKILL 的 `scripts/` 下、**也不许拷进来**、不受版本门控）。项目侧与 SKILL 侧各存一份平行判据时，
 两套口径会各自演进、其中一份带着静默漏检长期存活——与维度 10 是同一条纪律。
 
 ```bash
-python3 <被测项目根>/.aidp/scripts/check_upstream_call_log.py --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py --json
 # 退出码 0=无 Critical / 1=有 Critical / 2=入参或环境错（**不是维度违规**）
 # JSON 顶层：scanned_files / outbound_files / critical / important / waived / findings[]
 # 每条 finding：check(C1/C2/I1/I2/I3) / severity / file / line / message / evidence
@@ -116,7 +116,7 @@ python3 <被测项目根>/.aidp/scripts/check_upstream_call_log.py --json
 | **12.3** | **拦截器是否真的覆盖了全部出站客户端** | 核对「项目里有几个出站客户端 **vs** 拦截器实际注册到了几个 Bean 上」，差集逐个点名。⚠️ **抵扣了哪些一律以脚本 `--json` 的 `waived` 字段为准**，⛔ 不要凭记忆假设它抵扣了什么——对象存储 / 短信 SDK 这类**非 HTTP 机制**通常不在 HTTP 拦截器覆盖面内，但这属**脚本侧口径、随它演进**，本 SKILL 不复述 | 🔴 |
 
 > ⚠️ **本 SKILL 不复述该脚本的内部实现口径**（它抓什么、抵扣什么、怎么抵扣）——脚本不在本 SKILL 目录内
->（由脚手架下发到被测项目 `.aidp/scripts/`），本 SKILL **没有任何机制能发现这类描述过期**，而失效方向是**假绿**（以为脚本抵扣了、实际没有）。
+>（由脚手架下发到被测项目 `{{AIDP_HOME}}/scripts/`），本 SKILL **没有任何机制能发现这类描述过期**，而失效方向是**假绿**（以为脚本抵扣了、实际没有）。
 > 判据名 + 一句话含义 + severity 是复述的**上限**；细粒度口径一律**以 `--json` 的实际输出为准**，
 > 照 `dev-logic-architect` 检查项 31「以上游契约为准，上游变更即需跟进」的既有写法。
 
@@ -144,8 +144,8 @@ python3 <被测项目根>/.aidp/scripts/check_upstream_call_log.py --json
 **委派脚本（确定性采集）：**
 
 ```bash
-python3 <被测项目根>/.aidp/scripts/check_design_anchor.py --version <版本号> --json
-# 例：python3 <被测项目根>/.aidp/scripts/check_design_anchor.py --version V0.14.0 --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --json
+# 例：python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py --version V0.14.0 --json
 # 退出码 0=未发现未落点锚点 / 1=发现需交代的未落点锚点 / 2=入参或环境错
 ```
 
@@ -158,7 +158,7 @@ python3 <被测项目根>/.aidp/scripts/check_design_anchor.py --version <版本
 > 取不到版本号时按「不适用（未取到 `--version` 值）」标注留行，**不得**用一个猜的版本号把脚本跑绿。
 >
 > ⚠️ **参数形态以下发到被测项目的那份脚本 `--help` 为准，本节只给「必须带 `--version <值>`」这条结论。**
-> 脚本不在本 SKILL 目录内（由脚手架下发到被测项目 `.aidp/scripts/`），本 SKILL **没有任何机制能发现这里的参数描述过期**——与维度 12 的同款注记是同一条纪律，
+> 脚本不在本 SKILL 目录内（由脚手架下发到被测项目 `{{AIDP_HOME}}/scripts/`），本 SKILL **没有任何机制能发现这里的参数描述过期**——与维度 12 的同款注记是同一条纪律，
 > 失效方向同样是**假绿**（命令写错 → `exit 2` → 被当成环境问题略过）。**首次调用前先跑一次
 > `check_design_anchor.py --help` 核对参数**；与本节不一致时以 `--help` 为准，并在报告里记一句。
 

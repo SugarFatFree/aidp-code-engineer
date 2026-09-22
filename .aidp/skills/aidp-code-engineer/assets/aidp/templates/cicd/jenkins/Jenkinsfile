@@ -15,7 +15,7 @@
 //      经 REST API 触发（Job 须允许无参数构建：不要声明必填 parameters）；
 //   2. 构建记录能按 commit 查到（`cicd_watch.py --mode detect --commit <sha> --env <env>`）——
 //      依赖 Git 插件记录的 lastBuiltRevision，故必须用 SCM checkout，不要在脚本里自行 git clone；
-//   3. 部署完成即结束；应用是否就绪由 `.aidp/scripts/autopilot-deploy-watch.py` 探针判断，不在流水线里等。
+//   3. 部署完成即结束；应用是否就绪由 `{{AIDP_HOME}}/scripts/autopilot-deploy-watch.py` 探针判断，不在流水线里等。
 //
 // 构建与部署步骤按项目实际技术栈替换（下面以 Node 前端 + Maven 后端为例，要求 agent 已装 node / mvn）。
 // 部署凭据放在 Jenkins Credentials，通过 withCredentials 引用，不要写进本文件。

@@ -2,7 +2,7 @@
 
 # sprint-design · Step 2–4 详情（Architect 补充 + 生成 SQL 脚本 + 动态更新 architecture）
 
-> 本文件是 `/sprint-design` 命令 **Step 2 / Step 3 / Step 4** 详情的**首片**（⛔ 本片不含该段全部子步——其余在 `step-2to4-架构补充与SQL-2.md`，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`.aidp/commands/sprint-design.md`）在**进入该段时用 Read 工具按需加载**。命令主体只保留该段的**骨架表 + Read 指针**。
+> 本文件是 `/sprint-design` 命令 **Step 2 / Step 3 / Step 4** 详情的**首片**（⛔ 本片不含该段全部子步——其余在 `step-2to4-架构补充与SQL-2.md`，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`{{AIDP_HOME}}/commands/sprint-design.md`）在**进入该段时用 Read 工具按需加载**。命令主体只保留该段的**骨架表 + Read 指针**。
 >
 > ⚠️ **权威性**：进入本段后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-design/`。理据/根因见同目录 `rationale.md`。
@@ -11,7 +11,7 @@
 
 ### Step 2：Architect Agent 补充
 
-读取 `.aidp/agents/architect.md` 获取 Architect Agent 角色定义，对 skill 生成的内容进行补充：
+读取 `{{AIDP_HOME}}/agents/architect.md` 获取 Architect Agent 角色定义，对 skill 生成的内容进行补充：
 
 1. **检查数据库基线**：读取 `memory/databaseBaseline.md`，对比已有表
    - 已有表标注为"复用，本次不变更"

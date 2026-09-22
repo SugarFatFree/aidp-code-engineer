@@ -5,7 +5,7 @@
 >
 > **使用说明：** Quality Review Agent 必须读取本文件，按 40 个维度逐项检查详细设计文档的质量。
 >
-> **`<SKILL_DIR>` 占位符(全文统一)：** 本文件所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` = 本 SKILL 的实际安装目录（本项目 = `.aidp/skills/dev-logic-architect`），执行前须替换为真实路径。
+> **`<SKILL_DIR>` 占位符(全文统一)：** 本文件所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` = 本 SKILL 的实际安装目录（本项目 = `{{AIDP_HOME}}/skills/dev-logic-architect`），执行前须替换为真实路径。
 
 ---
 
@@ -635,7 +635,7 @@ python3 <SKILL_DIR>/scripts/check_third_party_mock_runtime.py <设计文档目�
 2. **检查子文档引用**:扫描所有子文档,提取其中的跨文档引用(如 `参考 ../07_订单域枚举.md > 订单状态`),检查引用路径是否存在、锚点是否可定位
 3. **检查内容重复**:对比主文档与子文档、子文档与子文档之间,是否存在大段重复内容(如主文档总览已有"全局架构图",`01_技术架构与基础框架.md` 又完整复制一遍)
 4. **检查版本号同步**:所有子文档的版本号必须与主文档完全一致
-5. **🛡️ bash 硬核回检(必跑)**:执行 `python3 <SKILL_DIR>/scripts/check_doc_split.py <设计文档目录> --check-dict-enums`,退出码非 0 直接判定本维度不通过(`<SKILL_DIR>` = `.aidp/skills/dev-logic-architect`)
+5. **🛡️ bash 硬核回检(必跑)**:执行 `python3 <SKILL_DIR>/scripts/check_doc_split.py <设计文档目录> --check-dict-enums`,退出码非 0 直接判定本维度不通过(`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-logic-architect`)
 
 **必须检查的维度:**
 
@@ -1610,7 +1610,7 @@ python3 <SKILL_DIR>/scripts/check_index_not_null.py <设计文档目录> --json
    - [ ] **V2 基线复制检测**:本版与上一版(双轨布局下均为 `sql/增量/` 轨)`comm -12 <(sort {当前版本}/*.sql) <(sort {上一版本}/*.sql) \| wc -l` 重复行 < 10;否则视为复制基线,Critical 阻塞
    - [ ] **V3 无变更不创建目录**:本版本无 DDL/DML 变更时**不创建** `{SQL脚本目录}/v{版本}/` 目录,或仅放 `00_README.md` 一句话说明;严禁放空 `init.sql` 或注释 SQL 占位
    - [ ] **V4 中文命名 + NN_ 序号**:文件名必须 `{NN}_{中文描述}.sql`(如 `01_用户表DDL.sql`),`99_回滚脚本.sql` 序号固定保留
-   - [ ] **自动化核验**:执行 `python3 <SKILL_DIR>/scripts/check_sql_version_isolation.py <部署根目录或SQL根目录> --version <当前版本>`(AIDP 双轨布局传 `docs/deployment`,自动识别 `{version}/sql/增量|全量` 并递归扫描,V2 只比增量轨),退出码非 0 即整体不通过(`<SKILL_DIR>` = `.aidp/skills/dev-logic-architect`)
+   - [ ] **自动化核验**:执行 `python3 <SKILL_DIR>/scripts/check_sql_version_isolation.py <部署根目录或SQL根目录> --version <当前版本>`(AIDP 双轨布局传 `docs/deployment`,自动识别 `{version}/sql/增量|全量` 并递归扫描,V2 只比增量轨),退出码非 0 即整体不通过(`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-logic-architect`)
 
 4. **D.2 环境要求完整性**:
    - [ ] 列出运行环境版本要求(JDK/Node.js/数据库/中间件等)
@@ -2396,7 +2396,7 @@ python3 <SKILL_DIR>/scripts/check_metric_spec.py <设计文档目录> --json   #
 
 **★ 与被测项目侧脚本的去重边界(硬约束):** 运行时五条判据(C1 出站调用类零日志 / C2 成功路径不可见 /
 I1 无一条日志提到 URL / I2 成功路径只有 debug / I3 疑似凭据明文入日志)由**被测项目侧**的
-`<项目根>/.aidp/scripts/check_upstream_call_log.py` 承担(经脚手架下发,不在任何 SKILL 内、不受版本门控)。
+`<项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py` 承担(经脚手架下发,不在任何 SKILL 内、不受版本门控)。
 **本检查项只承接设计期声明这一段,⛔ 严禁在本 SKILL 内重写那五条**——同一判据两份实现是最高频漂移源。
 
 **核验步骤:**
@@ -2842,7 +2842,7 @@ python3 <SKILL_DIR>/scripts/check_ddl_column_comment.py <设计文档目录> --j
   **没传时 `--json` 出 `requirements_scanned: false`,读到它 = 「PRD→设计 这一半没查」,
   ⛔ 不得读成通过**,权威判定回到核验步骤 1。
 - ⚠️ **信号识别刻意不认裸「权限」「角色」「只读」**:实测全仓 SKILL 文档标题里「权限」
-  命中 29 处、「角色」19 处,绝大多数是「权限校验模块」「角色定义」这类非约束语境(⚠️ **口径**:`grep -rn '^#\{1,6\} .*<词>' .aidp/skills/*/ --include='*.md' | wc -l`,不排代码围栏;⚠️ 该数会随仓库演进而变,引用时请**现算**、⛔ 别照抄数字;结论不依赖具体数值,只依赖「量级是几十处而非几处」)，
+  命中 29 处、「角色」19 处,绝大多数是「权限校验模块」「角色定义」这类非约束语境(⚠️ **口径**:`grep -rn '^#\{1,6\} .*<词>' {{AIDP_HOME}}/skills/*/ --include='*.md' | wc -l`,不排代码围栏;⚠️ 该数会随仓库演进而变,引用时请**现算**、⛔ 别照抄数字;结论不依赖具体数值,只依赖「量级是几十处而非几处」)，
   用它们做信号会让合规文档满屏假红(与 `check_metric_spec.py` 的 M1 同一条教训)。
   设计侧**只扫标题行、不扫正文散文**;需求侧**扫正文**(约束句天生不会是个标题),
   假红代价由「只认强句式」那道闸门承担。

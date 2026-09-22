@@ -33,6 +33,12 @@ AI 自动化测试**每轮跑全量**（每定一个新轮次就从整个用例�
 
 退出码：0 = 已算出（含 no-anchor 的诚实空集）；2 = 入参 / git 不可用（fail-closed，不假装空集）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
@@ -108,7 +114,7 @@ def _record(root, version, build, res):
     ★ 锚点**只在该 build 首次记录时推进**：同一 build 的复测轮不能把锚点推到 HEAD，
     否则第二轮起增量集恒空——而复测轮恰恰最需要知道"本 build 的增量是哪几条"。
     """
-    edit = os.path.join(root, ".aidp", "scripts", "baseline_edit.py")
+    edit = os.path.join(root, runtime_relpath("", __file__), "scripts", "baseline_edit.py")
     if not os.path.isfile(edit):
         return False, "baseline_edit.py 不存在"
     bl = _baseline(root)

@@ -1,7 +1,7 @@
 # /version · 版本发布流程详情 — 分片 2/9
 
 > 本片覆盖：**Step 3.2 收集信息 / 3.3 版本历史表 / 3.3.5 版本更新日志**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 ### Step 3.2：收集版本信息
@@ -65,7 +65,7 @@ git log -S "<被删掉的那段原文>" --pretty='%h %ad %s' --date=short -- <�
 
 ⛔ 概览表「🐛 修复」列计的是**过判据之后**的条数——它的真实含义是「清理了多少历史欠债」，不是「这版返工了多少次」。迭代过程不是交付物。
 
-**回检**：`python3 .aidp/scripts/check_changelog_fix_scope.py --version {version}`（Important 级、不阻断发布；确属误报用 `<!-- changelog-scope-ignore: 理由 -->` 显式豁免）。
+**回检**：`python3 {{AIDP_HOME}}/scripts/check_changelog_fix_scope.py --version {version}`（Important 级、不阻断发布；确属误报用 `<!-- changelog-scope-ignore: 理由 -->` 显式豁免）。
 
 **条目格式**（必须严格遵守，保持简明；每个版本均含"发布时间 + 更新日志"两要素）：
 

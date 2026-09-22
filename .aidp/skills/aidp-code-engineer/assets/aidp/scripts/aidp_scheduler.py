@@ -9,7 +9,7 @@ Claude Code 会话内的 `/loop` 是会话级定时任务：会话关闭即停�
 同一会话里挂两条时实际串行。7×24 需要两个**独立进程**分别按周期唤起两条链路，互不阻塞，
 这正是操作系统调度器（systemd timer / cron / launchd / Windows 计划任务）的职责。
 
-每个定时任务调用 `.aidp/scripts/agent_loop.sh --once <命令> --unattended`：
+每个定时任务调用 `AIDP_HOME/scripts/agent_loop.sh --once <命令> --unattended`：
 agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥、写日志；本脚本只负责装配与巡检。
 
 ## 子命令
@@ -35,6 +35,12 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
   2 = 用法错 / 平台不支持 / 装配命令执行失败
   3 = watchdog 检出陈旧链路（已写告警台账）
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import hashlib
 import json
@@ -75,13 +81,7 @@ def parse_interval(text):
 
 
 def project_root(start="."):
-    try:
-        r = subprocess.run(["git", "-C", start, "rev-parse", "--show-toplevel"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0 and r.stdout.strip():
-            return os.path.abspath(r.stdout.strip())
-    except (OSError, subprocess.SubprocessError):
-        pass
+    """调度目标根由调用参数决定，不依赖 Git 仓库探测。"""
     return os.path.abspath(start)
 
 
@@ -122,7 +122,7 @@ def _q(s):
 
 
 def chain_argv(root, chain):
-    return ["/bin/bash", os.path.join(root, ".aidp", "scripts", "agent_loop.sh"),
+    return ["/bin/bash", os.path.join(root, runtime_relpath("scripts/agent_loop.sh", __file__)),
             "--once", CHAINS[chain]["command"], "--unattended"]
 
 
@@ -239,7 +239,10 @@ def render_schtasks(root, agent, intervals, uninstall=False):
             cmds.append(f'schtasks /Delete /TN "{name}" /F')
             continue
         env = "".join(f"export {k}={v}; " for k, v in chain_env(agent).items())
-        inner = f"cd '{root}' && {env}.aidp/scripts/agent_loop.sh --once {CHAINS[chain]['command']} --unattended"
+        inner = runtime_text(
+            f"cd '{root}' && {env}__AIDP_HOME__/scripts/agent_loop.sh --once {CHAINS[chain]['command']} --unattended",
+            __file__,
+        )
         mins = max(1, intervals[chain] // 60)
         cmds.append(f'schtasks /Create /SC MINUTE /MO {mins} /TN "{name}" /TR "bash -lc \\"{inner}\\"" /F')
     return cmds
@@ -309,7 +312,7 @@ def do_install(root, a):
     else:
         res["error"] = f"不支持的平台：{plat}"
         return 2, res
-    res["notes"].append("非交互执行需 Agent 预授权工具权限，详见 .aidp/reference/agent-tools.md 第三节")
+    res["notes"].append(runtime_text('非交互执行需 Agent 预授权工具权限，详见 __AIDP_HOME__/reference/agent-tools.md 第三节', __file__))
     if a.dry_run:
         return 0, res
     os.makedirs(os.path.join(root, "memory", ".aidp", "logs"), exist_ok=True)
@@ -478,9 +481,9 @@ def do_watchdog(root, a, now=None, send_notify=True):
             continue                      # 同一陈旧心跳只告警一次
         state[chain] = r["heartbeat_at"]
         label = CHAINS[chain]["label"]
-        msg = (f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
+        msg = (runtime_text(f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
                f"（阈值 {r['threshold_seconds'] // 60} 分钟，最后心跳 {r['heartbeat_at']}）。"
-               f"请检查定时任务：python3 .aidp/scripts/aidp_scheduler.py status")
+               "请检查定时任务：python3 __AIDP_HOME__/scripts/aidp_scheduler.py status", __file__))
         rec = {"at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
                "source": "aidp_scheduler.watchdog", "kind": "loop-heartbeat-stale",
                "chain": chain, "command": r["command"], "heartbeat_at": r["heartbeat_at"],
@@ -490,7 +493,7 @@ def do_watchdog(root, a, now=None, send_notify=True):
         sys.stderr.write(f"🚨 [AIDP-ALERT] {msg}\n")
         alerted.append(chain)
         if send_notify:
-            notify = os.path.join(root, ".aidp", "scripts", "notify.py")
+            notify = os.path.join(root, runtime_relpath("", __file__), "scripts", "notify.py")
             if os.path.isfile(notify):
                 try:
                     subprocess.run([sys.executable, notify, "--auto", "--alert", "--header-color", "red",

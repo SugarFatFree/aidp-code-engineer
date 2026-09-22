@@ -22,6 +22,12 @@ AI 测试照常跑完**老用例集**、报告**全绿**。而现有的门一个
 
 退出码：0 = 无未级联用例增量（可安心实测）；1 = 有 N 条未级联（覆盖不完整）；2 = 入参/环境错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
@@ -29,7 +35,7 @@ import sys
 
 
 def run(root, version):
-    sys.path.insert(0, os.path.join(root, ".aidp", "scripts"))
+    sys.path.insert(0, os.path.join(root, runtime_relpath("", __file__), "scripts"))
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         from commit_gate import pending_cascade

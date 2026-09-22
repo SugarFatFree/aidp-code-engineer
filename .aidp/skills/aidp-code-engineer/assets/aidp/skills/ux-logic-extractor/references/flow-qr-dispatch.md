@@ -11,7 +11,7 @@
 
 **PRD 文档生成完毕(单文件或多文件)后,以下 bash 硬核回检命令由文末「Post-Generation Quality Review」派发的**独立质量检查子 Agent**作为强制第一步执行(见该章节子 Agent prompt 步骤 0),命中任一即视为不通过、强制 SKILL 重写违规段落,通过后才能标记任务完成。主流程**禁止**在当前对话上下文内联运行这些脚本(脚本输出会挤占主上下文),只接收子 Agent 回传的退出码与结论:**
 
-> **路径说明(本 SKILL 全部文档统一):** 本 SKILL 各文档中所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` 是本 SKILL 的所在目录,本项目为 `.aidp/skills/ux-logic-extractor`(**不要**按当前工作目录去找 `scripts/`)
+> **路径说明(本 SKILL 全部文档统一):** 本 SKILL 各文档中所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` 是本 SKILL 的所在目录,本项目为 `{{AIDP_HOME}}/skills/ux-logic-extractor`(**不要**按当前工作目录去找 `scripts/`)
 
 ```bash
 # 1. 6 类正则硬核扫描(技术栈/字段类型同行表/完整 API 路径/DDL/HTTP 错误码/T_ 前缀表名)

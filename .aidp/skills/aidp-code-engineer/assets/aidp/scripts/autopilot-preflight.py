@@ -42,6 +42,13 @@ doctor 负责（命令端写 .mcp.json 时调），本脚本只判 `chrome-{git_
   1  MISSING  —— gate 模式下有必需项缺失（命令端就地补做后复跑，不得带缺失往下）
   2  USAGE    —— 参数错误
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 
 import argparse
 import importlib.util
@@ -220,7 +227,7 @@ def detect_dirty_non_prd(root):
 
 def _project_name(root):
     """委派 `notify.py --check-name`（解析链单一信源在那边，⛔ 此处不另写一套）。"""
-    p = os.path.join(root, ".aidp", "scripts", "notify.py")
+    p = os.path.join(root, runtime_relpath("", __file__), "scripts", "notify.py")
     if not os.path.isfile(p):
         return {}
     try:
@@ -274,9 +281,8 @@ def is_satisfied(key, r, interactive=False):
 
 # 缺失项 → 命令端应做的下一步（打印给执行者，确保"就地补做"路径清晰）。
 NEXT_ACTION = {
-    "notify": "notify.enabled=true 但无可用渠道 → 设置 notify.channels 对应的 *_env 环境变量 / 安装 lark-cli，"
-              "或 `python3 .aidp/scripts/aidp_state.py notify-disable` 关闭通知（约定 32）",
-    "mcp_chrome": "需远程 chrome → python3 .aidp/scripts/chrome-mcp-doctor.py set --ip <IP:9222> 写项目根 .mcp.json",
+    "notify": runtime_text('notify.enabled=true 但无可用渠道 → 设置 notify.channels 对应的 *_env 环境变量 / 安装 lark-cli，或 `python3 __AIDP_HOME__/scripts/aidp_state.py notify-disable` 关闭通知（约定 32）', __file__),
+    "mcp_chrome": runtime_text('需远程 chrome → python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py set --ip <IP:9222> 写项目根 .mcp.json', __file__),
     "clean_tree": "非 PRD 改动走命令端决策门（commit/stash/abort），不静默退出",
 }
 
@@ -386,10 +392,15 @@ def main(argv=None):
                   help="gate：用户在场的交互式调用——通知启用却无可用渠道时不放行；省略=无人值守（降级放行）")
     a = p.parse_args(argv)
     root = os.path.abspath(a.root)
+    requested = [k.strip() for k in a.require.split(",") if k.strip()]
+    if detect_mode(root) != "git" and (a.mode == "check" or
+                                      "clean_tree" in requested):
+        print(json.dumps(unsupported("branch")))
+        return EXIT_UNSUPPORTED
 
     if a.mode == "gate":
         if a.require.strip():
-            required = [k.strip() for k in a.require.split(",") if k.strip()]
+            required = requested
             unknown = [k for k in required if k not in KNOWN_KEYS]
             if unknown:
                 print(f"❌ 未知 --require 项：{unknown}（可选 {KNOWN_KEYS}）", file=sys.stderr)
@@ -414,7 +425,7 @@ def main(argv=None):
                 "channels": _probe.get("channels") or [],
                 "detail": "; ".join(_bad) if _bad else "",
                 "at": _now_iso()}
-        _edit = os.path.join(root, ".aidp", "scripts", "baseline_edit.py")
+        _edit = os.path.join(root, runtime_relpath("", __file__), "scripts", "baseline_edit.py")
         if os.path.isfile(_edit):
             try:
                 subprocess.run([sys.executable, _edit, "set", "notify_probe",

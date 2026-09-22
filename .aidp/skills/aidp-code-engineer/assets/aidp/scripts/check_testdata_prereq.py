@@ -20,6 +20,12 @@
 
 退出码：0 = 对账通过 / 尚无用例册（INFO，规划期未到）；1 = 有缺口；2 = 参数或环境错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
@@ -95,7 +101,7 @@ def run(root, version):
 
 def _record(root, version, res):
     """把对账结论写进 baseline（必须走 baseline_edit.py：两条 /loop 并发写，见 memory/README.md 并发写铁律）。"""
-    edit = os.path.join(root, ".aidp", "scripts", "baseline_edit.py")
+    edit = os.path.join(root, runtime_relpath("", __file__), "scripts", "baseline_edit.py")
     if not os.path.isfile(edit):
         return False
     payload = json.dumps({

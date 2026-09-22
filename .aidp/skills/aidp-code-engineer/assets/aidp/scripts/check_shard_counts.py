@@ -4,7 +4,7 @@
 
 ## 为什么需要本脚本
 
-`.aidp/flows/<命令>/` 下的分片会二次切分（`phase-0-6.md` → 追加 `phase-0-6b.md`），
+`AIDP_HOME/flows/<命令>/` 下的分片会二次切分（`phase-0-6.md` → 追加 `phase-0-6b.md`），
 而散落在多处的「**N 片**」「`phase-0-1.md` … `phase-0-9.md`」这类**范围记法**不会自动跟着改。
 后果不是排版问题：执行体按「共 9 片、`phase-0-1` … `phase-0-9`」推进时，
 **`phase-0-6b.md` 整片不会被 Read**——那一片里的硬门（如 0.4 项目状态检查、
@@ -28,19 +28,25 @@ P0-1 incremental 判据）就此静默漏跑，而所有既有守卫都看不出
 
 ## 用法
 
-    python3 .aidp/scripts/check_shard_counts.py
-    python3 .aidp/scripts/check_shard_counts.py --json
+    python3 AIDP_HOME/scripts/check_shard_counts.py
+    python3 AIDP_HOME/scripts/check_shard_counts.py --json
 
 退出码：0 = 一致；1 = 检出不一致；2 = 用法/读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
 import re
 import sys
 
-FLOW_ROOT = ".aidp/flows"
-SCAN_DIRS = [".aidp/flows", ".aidp/commands", ".aidp/reference"]
+FLOW_ROOT = runtime_text('__AIDP_HOME__/flows', __file__)
+SCAN_DIRS = [runtime_text('__AIDP_HOME__/flows', __file__), runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/reference', __file__)]
 EXCLUDE_DIRS = {".git", "node_modules", "__pycache__", "skills"}
 
 IGNORE_LINE_RE = re.compile(r"<!--\s*shardcount-check:\s*ignore\s*(?:-->|\s)")
@@ -142,7 +148,7 @@ def run(root):
             if IGNORE_LINE_RE.search(line):
                 continue
             # 判据 1：片数声明——必须能确定归属命令，否则不猜。
-            # ★ 归属优先看**文件所在目录**：`.aidp/flows/<cmd>/x.md` 里的「第 N/M 片」
+            # ★ 归属优先看**文件所在目录**：`AIDP_HOME/flows/<cmd>/x.md` 里的「第 N/M 片」
             #   天然说的就是 `<cmd>` 的分片，比在行内找命令名可靠得多。原先只认行内命令名，
             #   而分片自己的头注释（「本文件是 … 第 9/10 片」）常不重复写命令名 →
             #   实测 61 处片数声明里有 17 处（27%）**一处都没被校验过**，全落在这类头注释上。
@@ -206,7 +212,7 @@ def run(root):
             # ⛔ 范围记法只在**本行/本文件所属命令**内比对：`phase-3-*` 这类前缀多个命令都有，
             #   跨命令比会拿 A 命令的 b 分片去指责 B 命令的范围记法（实测假阳）。
             #   归属推断优先级：行内明写的命令 > 文件所在 flows 子目录 > 命令文件自身的 basename
-            #   （`.aidp/commands/sprint-aiauto-test.md` 里的 `phase-3-*` 范围显然指它自己的分片）
+            #   （`AIDP_HOME/commands/sprint-aiauto-test.md` 里的 `phase-3-*` 范围显然指它自己的分片）
             range_owner = owner or next(
                 (c for c in dirs if os.sep + c + os.sep in path), None) or \
                 next((c for c in dirs

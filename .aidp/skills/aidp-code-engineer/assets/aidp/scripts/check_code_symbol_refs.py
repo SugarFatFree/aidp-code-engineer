@@ -28,9 +28,9 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_code_symbol_refs.py
-    python3 .aidp/scripts/check_code_symbol_refs.py --json
-    python3 .aidp/scripts/check_code_symbol_refs.py --self-check
+    python3 AIDP_HOME/scripts/check_code_symbol_refs.py
+    python3 AIDP_HOME/scripts/check_code_symbol_refs.py --json
+    python3 AIDP_HOME/scripts/check_code_symbol_refs.py --self-check
 
 退出码：0 = 全部可解析；1 = 有悬空引用；2 = 用法 / 读取错误。
 """

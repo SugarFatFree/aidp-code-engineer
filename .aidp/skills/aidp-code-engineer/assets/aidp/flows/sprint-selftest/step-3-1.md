@@ -19,7 +19,7 @@
 > `/sprint-aiauto-test` Phase 0.0.5 从「测试环境与账号」文件读 chrome 地址、URL、账号，字段齐全时无需交互询问。
 
 > ★ **可选段「六、WebMCP 带参浏览器」的产出规则是二值的**（模板正文见 `step-3-2.md`）：
-> 先跑 `python3 .aidp/scripts/check_webmcp.py --detect --json`——`enabled: false`（默认、绝大多数项目）
+> 先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`——`enabled: false`（默认、绝大多数项目）
 > → **整段不写入生成的文件**（不留空壳、不留占位标题）；`enabled: true` → **本段即为必填**，
 > 且须填**真实可复制执行**的启动命令（含两个浏览器开关 + 独立 `--user-data-dir`）+ 两行自检，
 > ⛔ 不接受只留占位符。机器回检 = `check_webmcp.py` 的 `testenv-section` 项（**只判最新版本那一份**，

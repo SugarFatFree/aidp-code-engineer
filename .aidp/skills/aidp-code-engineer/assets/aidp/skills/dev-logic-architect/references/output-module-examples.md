@@ -5,7 +5,7 @@
 >
 > **使用说明：** Agent 生成详细设计文档时应参考本文件的格式和深度，确保输出内容的完整性和规范性。本文件包含 Module A（技术架构与约束）、Module B（研发路径图）、Module C（测试全链路方案）、Module D（版本归档）、Module E（待澄清问题清单）的完整章节定义和示例。
 >
-> **`<SKILL_DIR>` 占位符(全文统一)：** 本文件所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` = 本 SKILL 的实际安装目录（本项目 = `.aidp/skills/dev-logic-architect`），执行前须替换为真实路径。
+> **`<SKILL_DIR>` 占位符(全文统一)：** 本文件所有 `python3 <SKILL_DIR>/scripts/xxx.py` 命令中的 `<SKILL_DIR>` = 本 SKILL 的实际安装目录（本项目 = `{{AIDP_HOME}}/skills/dev-logic-architect`），执行前须替换为真实路径。
 
 ---
 
@@ -2394,7 +2394,7 @@ stateDiagram-v2
 
 **自动化核验(必跑):**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 安装位置(本项目 = `.aidp/skills/dev-logic-architect`)
+> **`<SKILL_DIR>` 占位符:** SKILL 安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-logic-architect`)
 
 ```bash
 python3 <SKILL_DIR>/scripts/check_sql_version_isolation.py \

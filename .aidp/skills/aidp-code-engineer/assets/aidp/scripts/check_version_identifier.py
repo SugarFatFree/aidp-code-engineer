@@ -66,11 +66,11 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_version_identifier.py --version V0.3.0
-    python3 .aidp/scripts/check_version_identifier.py --version V0.3.0 --json
-    python3 .aidp/scripts/check_version_identifier.py --version V0.3.0 --path code --path deploy
-    python3 .aidp/scripts/check_version_identifier.py --version V0.3.0 --apply
-    python3 .aidp/scripts/check_version_identifier.py --version V0.3.0 --apply --apply-scope all
+    python3 AIDP_HOME/scripts/check_version_identifier.py --version V0.3.0
+    python3 AIDP_HOME/scripts/check_version_identifier.py --version V0.3.0 --json
+    python3 AIDP_HOME/scripts/check_version_identifier.py --version V0.3.0 --path code --path deploy
+    python3 AIDP_HOME/scripts/check_version_identifier.py --version V0.3.0 --apply
+    python3 AIDP_HOME/scripts/check_version_identifier.py --version V0.3.0 --apply --apply-scope all
 
 退出码：0 = 全部对齐（或无落点/不适用；`--apply` 下含"本次已改齐"）；
 1 = 仍有不一致（未改 / scope 外 / 写回失败）；2 = 用法/读取错误。

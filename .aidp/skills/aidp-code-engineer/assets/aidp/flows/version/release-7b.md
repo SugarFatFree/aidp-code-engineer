@@ -27,11 +27,11 @@ S2 被选作准发布候选。保留键清单与读方回落以脚本为单一�
 
 ```bash
 # ⛔ 跨围栏自取版本号（写法同 release-7c.md）
-VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version);; esac
+VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version);; esac
 TAG="v${VERSION#V}"
 if [ -n "$VERSION" ] && [ -n "$(git tag -l "$TAG")" ]; then
-  python3 .aidp/scripts/baseline_archive.py --dry-run   # 先看清要搬哪些（只报不写）
-  python3 .aidp/scripts/baseline_archive.py             # 落盘：明细先写归档、再把主文件改成墓碑
+  python3 {{AIDP_HOME}}/scripts/baseline_archive.py --dry-run   # 先看清要搬哪些（只报不写）
+  python3 {{AIDP_HOME}}/scripts/baseline_archive.py             # 落盘：明细先写归档、再把主文件改成墓碑
   git add memory/.sprint-autopilot-baseline.json memory/.aidp-baseline-archive/ 2>/dev/null
   # ★ 归档文件必须入库：baseline 本体就是团队共享的，只在本机留归档 = 换台机器历史就没了
   git diff --cached --quiet || git commit -m "chore(baseline): 归档 $VERSION 之前已发布版本的明细"
@@ -45,7 +45,7 @@ fi
 
 ### Step 3.6：输出发布报告
 
-> ⛔ **顶部欠账块（存在未决条目时必打，不得省）**：`python3 .aidp/scripts/release_debt.py list --version {version} --open --json` 的 `count > 0` 时，
+> ⛔ **顶部欠账块（存在未决条目时必打，不得省）**：`python3 {{AIDP_HOME}}/scripts/release_debt.py list --version {version} --open --json` 的 `count > 0` 时，
 > **在「🎉 发布成功」之前**先输出下面这段——否则一次攒下三条欠账的发布，终端仍打完整的成功话术、
 > 一个字不提，而 `--finalize-docs` / `--rebuild-baseline` 都以「开始先读发布欠账.md」为驱动。
 >
@@ -86,7 +86,7 @@ fi
 > 三取一（判据都已落盘，纯确定性、无需新增采集）：
 >
 > ```bash
-> BE="python3 .aidp/scripts/baseline_edit.py"; V="{version}"
+> BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="{version}"
 > PF=$($BE --version "$V" get release_push_failed --default "")      # Step 3.4.3 推送失败时落
 > TN=$($BE --version "$V" get release_tag_name --default "")         # 空 = 本轮未打 tag（--no-tag 或撞名未授权）
 > BN=$($BE --version "$V" get release_branch_name --default "")

@@ -10,14 +10,14 @@
 > 同 `phase-0-6b.md` 惯例）。进入 3.4 前先 Read 本片，逐项执行、不凭骨架或记忆略过。
 > 维护理由见同目录 `rationale.md`。
 >
-> ★ **进入本片第一动作**：`eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"`
+> ★ **进入本片第一动作**：`eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"`
 > 取回 `CONVERGED` / `THIS_ROUND_NA` 等由 3.3 落盘的判据——分片间 shell 变量不持久，漏这行则通知数值恒空。
 
 ---
 
 ### 3.4 ★ 里程碑通知 #R（每轮测试结束）+ #F（最终测试完成）（见 sprint-autopilot 0.1bis）
 
-> 经 `python3 .aidp/scripts/notify.py --auto` 发送（渠道取 `memory/aidp-config.yaml` 的 `notify.channels`；含公共字段 项目名称 / 工作目录 / **时间——#R/#F 属完成类通知，标签用「完成时间」，见 sprint-autopilot 0.1bis「时间字段标签分层」**）。`NOTIFY_ENABLED=0` 或 `notify.py` 退出码 3（未配置任何渠道）时静默跳过，⛔ 不弹窗问人。**轮次** `ROUND` 从 baseline `versions.{V}.aiauto_test_round` 读取并 +1 回写（每次 /sprint-aiauto-test 调用 = 一轮）。
+> 经 `python3 {{AIDP_HOME}}/scripts/notify.py --auto` 发送（渠道取 `memory/aidp-config.yaml` 的 `notify.channels`；含公共字段 项目名称 / 工作目录 / **时间——#R/#F 属完成类通知，标签用「完成时间」，见 sprint-autopilot 0.1bis「时间字段标签分层」**）。`NOTIFY_ENABLED=0` 或 `notify.py` 退出码 3（未配置任何渠道）时静默跳过，⛔ 不弹窗问人。**轮次** `ROUND` 从 baseline `versions.{V}.aiauto_test_round` 读取并 +1 回写（每次 /sprint-aiauto-test 调用 = 一轮）。
 
 **#R 每轮测试结束**（每次 /sprint-aiauto-test 跑完都发；header 全绿→蓝、有失败/运行时错误→橙）——除公共字段外含：版本 + 轮次、本轮 通过/失败/阻塞/忽略/**不适用**（⛔ 不并进 pass）、**无依据的 direct pass 条数**（`THIS_ROUND_DIRECT_NOEV`>0 时才出现这一行；⛔ 不得省略——省了就无从区分「跑过且通过」与「跳过后填 pass」）、本轮新发现缺陷数、是否收敛、报告路径。三类结果文案（**首行 = 通知标题 `notify.py --title`，按 0.1bis「通知标题固定前缀」必带项目中文名称**，其余为正文）：
 
@@ -50,22 +50,22 @@
   ③ 校 ①② 是否真落地——**⛔ 必传 `--expect-cards`**（不传即落进退化分支，「一整轮测试期通知零推送」照样 PASS，
      而本步恰恰承诺「绝不冻结仪式产物残缺的 build」）；⛔ 变量用真值、不留 `{V}`/`{BUILD}` 字面占位：
      ```bash
-     eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-     python3 .aidp/scripts/autopilot-ceremony-gate.py check \
+     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+     python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check \
        --version "$TARGET_VERSION" --build "$BUILD" --stage final --will-browser-test 1 \
        --notify "${NOTIFY_ENABLED:-1}" --expect-cards "#D,#R,#F" \
        --baseline memory/.sprint-autopilot-baseline.json
      ```
      **FAIL → 回 ①/② 补齐、复跑本门**，绝不冻结仪式产物残缺的 build；连续 FAIL 经专属计数熔断（未达阈只记账让位；达阈按交接类冻结，#4 + 本地告警台账）：
      ```bash
-     eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-     python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --build "${BUILD:-}" \
+     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --build "${BUILD:-}" \
        --phase 3.3-freeze-ceremony --reason handoff-exhausted \
        --streak-key aiauto_gate_fail_streak --threshold 3 \
        --why "未收敛冻结前的仪式收口门（#F/#3/执行报告终态）连续未过，无法安全冻结"
      exit 0
      ```
-     通过后清零：`python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" del aiauto_gate_fail_streak`；
+     通过后清零：`python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del aiauto_gate_fail_streak`；
   ④ 才置版本级 `needs_human=true` + `aiauto_frozen_at=@now` + `freeze_reason=unconverged` + **顶层 `aiauto_blocked_reason=frozen:unconverged@{V}`**（四件套，缺第 4 件开发链路会误判测试链路健康、双链路互等），**并同时置本 build 的 `ai_report_finalized=true` + `ai_report_finalized_at=@now`**，发最后一条 #4 后冻结本版：后续 `/loop` 跳过该版本（不再重测、不再刷 #4）。
   ⛔ **`ai_report_finalized` 必须在这里落**：① 已把报告 finalize 为终态、② 已把「不通过」结论对外播报，此后它就是**定稿**。而「报告不可变」的两把锁（`emit-report.py` 的拒写、`autopilot-ceremony-gate.py` 的 mtime 校验）都以该字段为开关——不落它，人工 `--target <V>` 解冻重试时会把已播报的历史结论静默覆盖掉。判据统一为「**任何一次 finalize + 对外播报都落冻结基准**」，不因收敛与否而异。
   ⛔ 少了 ①②③ 不得冻结。理据见 rationale.md「冻结前的仪式收口」。
@@ -74,8 +74,8 @@
 
   ```bash
   set -e
-  BE="python3 .aidp/scripts/baseline_edit.py"
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell --command aiauto-test)"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell --command aiauto-test)"
   V="${TARGET_VERSION:?}"; B="${BUILD:?}"
   # streak 不是 tick 变量、也不跨围栏存活 —— 从 baseline 读回（本轮末已由上文更新）
   STREAK=$($BE --version "$V" get aiauto_test_unconverged_streak --default 0)
@@ -83,24 +83,31 @@
   #   解冻自我封闭类 —— 冻后不再为它部署，解冻证据也就永远不到），偏松则永不冻。
   FREEZE_AT=$($BE --version "$V" get aiauto_unconverged_freeze_threshold --default 10)
   if [ "$STREAK" -lt "$FREEZE_AT" ]; then
-    echo "⚠️ 未收敛第 $STREAK 轮（< 冻结阈值 $FREEZE_AT）→ 只发 #R、不冻结，下一 tick 继续重测"
+    python3 {{AIDP_HOME}}/scripts/notify.py --node "#R" --auto --header-color orange \
+      --title "AI 测试未收敛：第 $STREAK 轮" --version "$V" --build "$B" \
+      --section "第 $STREAK 轮未收敛（冻结阈值 $FREEZE_AT）；下一 tick 继续重测。" || true
+    echo "⚠️ 未收敛第 $STREAK 轮：#R 已尝试发送；不冻结，下一 tick 继续重测"
     exit 0
   fi
   # 先落 build 级定稿位：报告已 finalize + 已对外播报 ⇒ 此后不可变（两把锁都读它）
   $BE --version "$V" --build "$B" set ai_report_finalized true ai_report_finalized_at @now
   # 再落版本级冻结四件套
-  # ★ 一并快照冻结时刻的 HEAD：`unconverged` 的自动解冻判据是"冻结后有人提交过"，
-  #   若不快照就只能拿活指针 `last_autopilot_head` 顶替——而它只在"云端 CICD（`cicd.provider`，默认 GitHub Actions）+ 就绪探针通过"
-  #   一条路径上被写过，其余部署形态下恒空 ⇒ 判据恒假 ⇒ 永久冻结（另一条 by-deploy 证据
-  #   也因"冻结版本被选版剔除、不再为它部署"而同时不可达）。
+  # 仅 Git 项目快照冻结时的 HEAD；无 Git 时该 SHA 能力为 unsupported:vcs-disabled。
+  VCS_MODE=$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+  FROZEN_HEAD=""
+  if [ "$VCS_MODE" = "git" ]; then
+    FROZEN_HEAD="$(git rev-parse HEAD 2>/dev/null)" || exit 1
+  elif [ "$VCS_MODE" != "none" ]; then
+    echo "⛔ 无法判定 VCS 模式，停止冻结写入" >&2; exit 1
+  fi
   $BE --version "$V" set needs_human true aiauto_frozen_at @now freeze_reason unconverged \
-    unconverged_frozen_head "$(git rev-parse HEAD 2>/dev/null || echo '')" \
+    unconverged_frozen_head "$FROZEN_HEAD" \
     needs_human_reason "连续 $STREAK 轮未收敛，判定不通过、暂停本版自动重测待人工介入"
   # ★ 第 4 件套（顶层）必写：只写版本级三件，开发链路会读到「心跳还在刷」误判测试链路健康、
   #   走 prerelease_test_hold_streak「暂缓」而非熔断 ⇒ 白等到第 12 个 tick 才再冻一次、且冻结原因与真因错位。
   $BE set aiauto_blocked_reason "frozen:unconverged@$V"
   # ⛔ 冻结必须同时发 #4（口径见 autopilot phase-0-4.md）：否则最后一条通知还是上一轮的 #R，看着像还在跑。
-  python3 .aidp/scripts/notify.py --node "#4" --auto --header-color red \
+  python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
     --title "AI 测试受阻：连续未收敛" --version "$V" --build "${B:-?}" \
     --section "连续 $STREAK 轮未收敛，判定不通过、已冻结本版待人工；本 build 的 AI执行报告已定稿。" || true
   echo "🧊 已冻结 $V（unconverged，streak=$STREAK）；本 build $B 的 AI执行报告已定稿、不可再被覆盖"
@@ -132,11 +139,11 @@
 
 ```bash
 # 本块自取（分片间 shell 变量不持久）
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-BUILD=$(python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" get current_build --default "")
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+BUILD=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get current_build --default "")
 python3 - "$TARGET_VERSION" "$BUILD" <<'PC'
 import sys
-sys.path.insert(0, ".aidp/scripts")
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from baseline_edit import LockedBaseline, now_iso   # 与 autopilot phase-3-4 铸 build 同款写法
 V, B = sys.argv[1], sys.argv[2]
 ITEMS = [  # ← 本轮判为「需人工确认类」的每条缺陷各一项
@@ -168,9 +175,9 @@ PC
 
 - **定报告链接（本段在 #F 通知组装前执行，先定 `TEST_REPORT_URL`）**：报告只落本地 `docs/reports/{V}/AI测试报告/`，Phase 3.2 步骤 4 的 `emit-report.py` 已写好交付台账，**直接读台账取仓库相对路径**：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
   # ⛔ 读交付台账、不读上一分片的 stdout 变量（跨 Bash 调用恒取空 → `#/build` 硬要求必失败）
-  TEST_REPORT_URL=$(python3 .aidp/scripts/baseline_edit.py get "report_deliveries.\"${BUILD}\".test_report.url" --default "")
+  TEST_REPORT_URL=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get "report_deliveries.\"${BUILD}\".test_report.url" --default "")
   [ -z "$TEST_REPORT_URL" ] && TEST_REPORT_URL="docs/reports/${TARGET_VERSION}/AI测试报告/index.html#/build/${BUILD}"
   ```
   > 报告产出单一信源 = `emit-report.py`，命令端不复制、不并行第二套。

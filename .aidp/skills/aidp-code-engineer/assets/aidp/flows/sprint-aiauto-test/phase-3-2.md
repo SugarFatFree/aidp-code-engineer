@@ -19,7 +19,7 @@
 > <!-- bashsyntax-check: ignore 本块是"守卫怎么包"的骨架示意，故意只给 if/else/fi 框架、
 >      中间是省略号，单独抽出来必然语法不完整；真正可执行的语句在 step 2~5bis 各自块内 -->
 > ```bash
-> eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+> eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 > if [ "${SKIP_REPORT:-0}" = "1" ]; then
 >   echo "⏭️ SKIP_REPORT=1（非 autopilot 驱动，本轮不产 AI测试报告）→ 整段跳过 step 2~5bis，直接进 Phase 3.3 写结论"
 >   # …… 直接进 Phase 3.3 ……
@@ -31,10 +31,10 @@
 
 1. **取 build 号**：用 Phase 0.2 步骤 2.5 已读到的 `current_build`（autopilot Phase 3.1.5 铸造）作为 `$BUILD`。
    - 注：本步只在 `REPORT_ENABLED=1`（current_build 存在 = autopilot 驱动）时执行；非 autopilot 驱动已在 3.0 门拦下、不进本步，故此处 `$BUILD` 必为 autopilot 铸造的真实 build 号。
-2. **确保静态项目存在 + shell 版本对账**：缺失则从 `.aidp/templates/reports/AI测试报告/` 拷入 `index.html`+`assets/`+空 `data/`+`screenshots/`+README；**已存在则比对 `report-shell-version`**（模板 index.html 顶部 `<!-- report-shell-version: N -->` vs 项目），模板更新（项目 < 模板）则刷新 `index.html`+`assets/`、保留 `data/`+`screenshots/`、并把 `data/` 下历史 build 脚本在 `app.js` 前重注册（消除「模板升级后停在旧样式」；同 `/sprint-autopilot` Phase 3.4 step 2 对账循环）：
+2. **确保静态项目存在 + shell 版本对账**：缺失则从 `{{AIDP_HOME}}/templates/reports/AI测试报告/` 拷入 `index.html`+`assets/`+空 `data/`+`screenshots/`+README；**已存在则比对 `report-shell-version`**（模板 index.html 顶部 `<!-- report-shell-version: N -->` vs 项目），模板更新（项目 < 模板）则刷新 `index.html`+`assets/`、保留 `data/`+`screenshots/`、并把 `data/` 下历史 build 脚本在 `app.js` 前重注册（消除「模板升级后停在旧样式」；同 `/sprint-autopilot` Phase 3.4 step 2 对账循环）：
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-   D="docs/reports/$TARGET_VERSION/AI测试报告"; T=".aidp/templates/reports/AI测试报告"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+   D="docs/reports/$TARGET_VERSION/AI测试报告"; T="{{AIDP_HOME}}/templates/reports/AI测试报告"
    if [ ! -f "$D/index.html" ]; then
      mkdir -p "$D/data" "$D/assets" "$D/screenshots"; cp "$T/index.html" "$D/"; cp -r "$T/assets/." "$D/assets/"; sed -i '/data\/示例_/d' "$D/index.html"
    else
@@ -53,15 +53,15 @@
    - **⛔ 命令端不自行探测、不复刻端专有取证判据**：`navigator.*` / 窗口尺寸等信号的取舍**随被测端版本漂移、其单一信源是 SKILL `references/driver-<端>.md` + `execution-methodology.md §10`**（例：Web 端 `navigator.webdriver` 与窗口外框尺寸对渲染模式判定「不能用/新版无头已失效」，SKILL 只认「运行配置 → UA 含 `HeadlessChrome` → 取不到写 null」）——命令端复刻必判错，**故本处不写任何具体取证配方，只消费结果**。
    - **SKILL 未产出 env-facts.json 时**（旧版 SKILL / 取证缺失）→ 视为取证缺失：`renderMode=null` + `renderModeSource="未取到(原因)"`，**绝不回落成有头/意图值**（取不到就不许编）。
    - 字段名 / 来源枚举（显式指定|复用已有实例|无头不可用降级|运行取证|未取到）/ null↔未取到 互为充要 / 复用实例时不得声称「显式指定」等口径的**单一信源 = SKILL `env-facts-schema.json` + `execution-methodology.md §10`，命令端不复述**（SPA 报告的字段名/数据形状仍以 `templates/reports/README.md` + `data/示例_build1001.js` 为准）。
-4. **★ 产 AI测试报告 SPA = 调确定性脚本 `emit-report.py`（不手搓 data / 注册）**；⛔ 调用前先断言 `: "${BUILD:?本段需要 build 归属，空 BUILD 会落盘一份无归属的官方报告}"`**：把本轮测试结论（Phase 2 用例执行结果 + Phase 2.4 运行时错误 + 截图清单 + **3bis 实测环境事实**，即原 markdown 报告的同源内容）**结构化成一份结果 JSON**（★ `summary` 的 `total/eligible_total/counts/pass_rate` 一律取自 `python3 .aidp/skills/auto-test-runner/scripts/gen_report.py <round目录> --json`，⛔ 不手工累加——`na` 使通过率分母变为 `total-na`，手算必与 SKILL 口径不一致；其余按 `data/示例_build1001.js` 数据契约：`{build,version,buildNo,startedAt,finishedAt,deployMode,testUrl,renderMode,renderModeSource,driver, summary:{total,pass,fail,block,skip,na,passRate}, suites,cases,defects,runtimeErrors,screenshots}`；**★ `renderMode`/`renderModeSource` 取 3bis 实测值、不用 `RENDER_MODE` 意图值**；**★ `cases[]` 逐字段名（不可自创同义词）= `{id, title, suite, result:"pass|fail|block|skip|na", note, screenshot}`——不是 `name`/`status`/`detail`；**`na`（不适用）必须带非空 `note` 写明理由**，`emit-report.py` 空理由直接拒写**），写到**本报告目录下的临时输入** `docs/reports/{V}/AI测试报告/.build-input-{BUILD}.json`（★ 不放 `memory/` 根目录——放对应报告目录；写前先 `mkdir -p docs/reports/{V}/AI测试报告`；`.` 前缀隐藏 + gitignore + emit-report.py 用完自动删），再调：
-   > **★ 数据契约唯一信源 = `.aidp/templates/reports/{AI执行报告|AI测试报告}/data/示例_build1001.js` + `templates/reports/README.md` schema 表**。写结果 JSON 前必须先读该示例文件，字段名/结构/单位以它为准：**禁止自创同义字段名、禁止改数组↔对象结构、比率字段一律 0~1 小数**。校验由 `emit-report.py` 强制执行（不符 exit 3 拒绝写盘），约定 21 命令端不复述具体字段清单、以示例文件为准。
+4. **★ 产 AI测试报告 SPA = 调确定性脚本 `emit-report.py`（不手搓 data / 注册）**；⛔ 调用前先断言 `: "${BUILD:?本段需要 build 归属，空 BUILD 会落盘一份无归属的官方报告}"`**：把本轮测试结论（Phase 2 用例执行结果 + Phase 2.4 运行时错误 + 截图清单 + **3bis 实测环境事实**，即原 markdown 报告的同源内容）**结构化成一份结果 JSON**（★ `summary` 的 `total/eligible_total/counts/pass_rate` 一律取自 `python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/gen_report.py <round目录> --json`，⛔ 不手工累加——`na` 使通过率分母变为 `total-na`，手算必与 SKILL 口径不一致；其余按 `data/示例_build1001.js` 数据契约：`{build,version,buildNo,startedAt,finishedAt,deployMode,testUrl,renderMode,renderModeSource,driver, summary:{total,pass,fail,block,skip,na,passRate}, suites,cases,defects,runtimeErrors,screenshots}`；**★ `renderMode`/`renderModeSource` 取 3bis 实测值、不用 `RENDER_MODE` 意图值**；**★ `cases[]` 逐字段名（不可自创同义词）= `{id, title, suite, result:"pass|fail|block|skip|na", note, screenshot}`——不是 `name`/`status`/`detail`；**`na`（不适用）必须带非空 `note` 写明理由**，`emit-report.py` 空理由直接拒写**），写到**本报告目录下的临时输入** `docs/reports/{V}/AI测试报告/.build-input-{BUILD}.json`（★ 不放 `memory/` 根目录——放对应报告目录；写前先 `mkdir -p docs/reports/{V}/AI测试报告`；`.` 前缀隐藏 + gitignore + emit-report.py 用完自动删），再调：
+   > **★ 数据契约唯一信源 = `{{AIDP_HOME}}/templates/reports/{AI执行报告|AI测试报告}/data/示例_build1001.js` + `templates/reports/README.md` schema 表**。写结果 JSON 前必须先读该示例文件，字段名/结构/单位以它为准：**禁止自创同义字段名、禁止改数组↔对象结构、比率字段一律 0~1 小数**。校验由 `emit-report.py` 强制执行（不符 exit 3 拒绝写盘），约定 21 命令端不复述具体字段清单、以示例文件为准。
    ```bash
    # ⛔ 用真实变量，不留字面 {V}/{BUILD}：花括号在 bash 里不展开，会真的去找名为 `{V}` 的目录 →
    #    骨架钢门指向不存在的 docs/reports/{V}/ 恒 FAIL，而 streak 记在真实版本上，3 tick 后
    #    冻成 handoff-exhausted（交接类、仅人工解冻），#F/#3 永不发。
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-   BUILD=$(python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" get current_build --default "")
-   python3 .aidp/scripts/emit-report.py --kind test --version "$TARGET_VERSION" --build "$BUILD" \
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+   BUILD=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get current_build --default "")
+   python3 {{AIDP_HOME}}/scripts/emit-report.py --kind test --version "$TARGET_VERSION" --build "$BUILD" \
      --data "docs/reports/$TARGET_VERSION/AI测试报告/.build-input-$BUILD.json" --json
    # 脚本自动：① 缺骨架则 cp 模板 → ② 写 data/{BUILD}.js（window.__BUILDS__.push）→ ③ 注册 index.html
    #          → ④ 报告落本地 docs/reports/（不上传）→ ⑤ 回写 baseline report_deliveries
@@ -70,8 +70,8 @@
    截图引用用相对 `index.html` 的 `screenshots/{BUILD}/xxx.png`。**⛔ 严禁自己写 markdown 测试报告 / 手工 cp+拼 `<script>`**——一律经 `emit-report.py`（HTML SPA 是唯一形态，见 `phase-3-1.md` 顶部 RED FLAG）。
 5. **★ finalize 后确定性校验（残留占位符 / 环境事实未取证 = 报告不合格，不静默产出 —— 缺陷反馈第四·命令层要求）**：`emit-report.py` 成功后，扫本 build data `docs/reports/{V}/AI测试报告/data/{BUILD}.js`：
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-   BE="python3 .aidp/scripts/baseline_edit.py"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
    BUILD=$($BE --version "$TARGET_VERSION" get current_build --default "")
    DATA="docs/reports/$TARGET_VERSION/AI测试报告/data/$BUILD.js"
    GATE_BAD=""
@@ -90,12 +90,12 @@
      #   可达、永不冻结，而 exit 0 被上游读成"跑过了"。故当场按达阈处置（宁可早冻，不要静默）。
      # 记账已在上面的 bump 完成 → 这里按已知 streak 判阈并收口（交接类：解冻 = 人工）
      if [ "$N" -ge "${REPORT_GATE_FREEZE_THRESHOLD:-3}" ] || [ "${HAS_WAKE_SOURCE:-0}" = "0" ]; then
-       python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
+       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
          --phase 3.2.6-report-gate --reason handoff-exhausted \
          --why "AI测试报告 finalize 校验连续 $N tick 不合格：$GATE_BAD"
        echo "⛔ 连续 $N tick 报告门未过 → 已冻结本版并发最后一张 #4，后续 tick 静默跳过"
      else
-       python3 .aidp/scripts/notify.py --node "#4" --auto --header-color red \
+       python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
          --title "AI 测试受阻：报告门未过" --version "$TARGET_VERSION" --build "${BUILD:-?}" \
          --section "第 $N 次（阈值 ${REPORT_GATE_FREEZE_THRESHOLD:-3}）：$GATE_BAD" || true
      fi
@@ -108,9 +108,9 @@
 5bis. **骨架钢门（发 #F 之前必过 · `--stage skeleton`）**：调 `autopilot-ceremony-gate.py check --stage skeleton`（`REPORT_ENABLED=1` 时）校验本 build「AI执行报告 SPA 骨架 + **AI测试报告 SPA**（本步刚由 emit-report 产）+ 无 markdown」——**此处不校交付台账**（exec 交付要到 Phase 3.7 R-4 才写，skeleton 阶段校它会时序死锁；交付台账留给 Phase 3.7 的 `--stage final` 门）：
    ```bash
    # ★ 跨分片取回本 tick 变量（BUILD / NOTIFY_ENABLED / REPORT_ENABLED 等真源在 baseline，自动回落）
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-   GATE=.aidp/scripts/autopilot-ceremony-gate.py
-   BE="python3 .aidp/scripts/baseline_edit.py"   # baseline 唯一加锁写入口
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+   GATE={{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"   # baseline 唯一加锁写入口
    REPORT_GATE_BAD=""
    if [ -f "$GATE" ]; then
      python3 "$GATE" check --version "$TARGET_VERSION" --build "$BUILD" \
@@ -138,12 +138,12 @@
      # ★ 无唤醒源（HAS_WAKE_SOURCE=0：--once / 无 /loop）时没有下一 tick 叠 streak ⇒ 阈值恒不
      #   可达、永不冻结，而 exit 0 被上游读成"跑过了"。故当场按达阈处置（宁可早冻，不要静默）。
      if [ "$N" -ge "${REPORT_GATE_FREEZE_THRESHOLD:-3}" ] || [ "${HAS_WAKE_SOURCE:-0}" = "0" ]; then
-       python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
+       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
          --phase 3.2.6-skeleton --reason handoff-exhausted \
          --why "报告骨架钢门连续 $N tick 未过：$REPORT_GATE_BAD"
        echo "⛔ 连续 $N tick 骨架钢门未过 → 已冻结本版并发最后一张 #4"
      else
-       python3 .aidp/scripts/notify.py --node "#4" --auto --header-color red \
+       python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
          --title "AI 测试受阻：报告骨架未过" --version "$TARGET_VERSION" --build "${BUILD:-?}" \
          --section "第 $N 次（阈值 ${REPORT_GATE_FREEZE_THRESHOLD:-3}）：$REPORT_GATE_BAD" || true
      fi

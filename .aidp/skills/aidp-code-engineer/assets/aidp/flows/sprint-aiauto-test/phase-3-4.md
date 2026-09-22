@@ -21,7 +21,7 @@
 # ★ 跨分片取回本 tick 变量 —— flow 每个分片是**独立的 Bash 调用**，shell 变量不持久；
 #   漏这一行会让下方判据读到空串、`${VAR:-默认}` 静默落默认值（恒真/恒假）。
 #   真源在 baseline 的（BUILD/DRIVER/DEPLOY_MODE/NOTIFY_ENABLED/LOOP_UNATTENDED…）由脚本自动回落。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # 每轮 /sprint-aiauto-test 报告落盘后跑；本命令不改代码，自修复由外层 loop 完成（见注意事项 1）
 # ★★ CONVERGED 已在 Phase 3.3 开头【无条件】算好（本地 cli + 远程 mcp 通用，位于所有消费点之前）——本步不重算、直接复用
 #   （3.4 streak 清零 / 3.7 报告 finalize + #3 通知 均消费同一 CONVERGED；见 3.3 开头 Critical 修复说明）
@@ -71,7 +71,7 @@ fi
 **Step 1 — 自动能力判定（不询问用户）**：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # 有头能力 = 已配远程 chrome MCP（DRIVER=mcp-remote，即 .mcp.json 有 chrome-{git_user} 条目）或 本机有 GUI 桌面（GUI_OK=1）
 case "${DRIVER}" in mcp*) IS_MCP=1 ;; *) IS_MCP=0 ;; esac
 if [ "$IS_MCP" = "1" ] || [ "${GUI_OK:-0}" = "1" ]; then

@@ -16,12 +16,14 @@
 
 2.5 **★ 部署触发前置 → 部署前安全网 → 部署动作（任何开发路径完成后都从这里执行：`/sprint-batch`、逐 tick 单 Sprint 全部关闭、incremental、自动修复复测轮；⛔ 不属于 `/sprint-batch` 步骤）**
 
+   > **`vcs_mode=none` 独立出口（优先于下方 Git 推送围栏）**：开发/测试/Sprint 关闭成果仍留在本地。对提交、推送、推送分类、远端 CICD 各节点写当前 build `steps[]` 为 `status=skipped`、`reason=unsupported:vcs-disabled`，baseline 同步保留未推送事实；不执行 `git status/add/commit/push`，不伪造 `push_commit` / `push_at` / `cicd_skipped=true`（该字段只表示 Git push 后按内容分类跳过 CICD）。`mode=local` 不经过 Git/CICD，必须探本地服务真实就绪（启动命令成功不等于就绪）；就绪后按下方「部署完成 → 落盘交接信号」写 `last_deployed_at` + `phase_beta_done_at` 并记录本地探活 URL/结果，未就绪则不得写证据或交接测试；依赖 Git push 的 cloud 路径只记未部署，不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d 部署成功通知，不启动对旧代码的浏览器测试。随后继续 Phase 3.3 本地审计、Phase 3.4 报告和收尾；不得因跳过 Git 节点冻结本地开发。`git` 时执行下方原围栏。
+
    - **★ 部署触发前置：开发成果提交 + 分类 + 推送（确定性步骤，绝不可省）**：dev 循环 /（incremental）增量改动完成后、执行下方「部署动作」**之前**，必须把本轮改动提交并推到 origin。本步以 `git status --porcelain` 为准兜底，不依赖子命令是否已提交：
      1. **授权即入口**：用户执行 `/sprint-autopilot` 即授权自动 `git add`+`commit`+`push` 到本轮解析出的 **DEV_BRANCH**。只 push DEV_BRANCH；按 Phase 0.4 的 `PENDING_MERGE_TO` 对齐部署源；绝不打 tag。
      2. **确定性提交**：在提交前先确定本次 push 的分类基准并写入当前 build，再决定是否提交：
         ```bash
-        eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-        BE="python3 .aidp/scripts/baseline_edit.py"
+        eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+        BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
         : "${TARGET_VERSION:?}"; : "${BUILD:?}"
         DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
         BASE_REF=$(git rev-parse "origin/${DEV_BRANCH}" 2>/dev/null || true)
@@ -30,14 +32,14 @@
         git status --porcelain
         # porcelain 非空时：git add -A + git commit（消息按 full/incremental 模式生成，末尾带 Co-Authored-By）
         ```
-        commit 前按约定 24 跑 `python3 .aidp/scripts/commit_gate.py --quiet` 读 JSON：退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
+        commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON：退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
      3. **push 前分类（唯一入口）**：在 `git push` 前执行，始终显式传入提交前保存的 `BASE_REF`（不能在提交后用默认 `HEAD` 推断）：
         ```bash
-        eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-        BE="python3 .aidp/scripts/baseline_edit.py"
+        eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+        BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
         : "${TARGET_VERSION:?}"; : "${BUILD:?}"
         BASE_REF=$($BE --version "$TARGET_VERSION" --build "$BUILD" get push_base_ref --default "")
-        CLASSIFY=(python3 .aidp/scripts/classify_push.py --root .
+        CLASSIFY=(python3 {{AIDP_HOME}}/scripts/classify_push.py --root .
           --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$BASE_REF")
         "${CLASSIFY[@]}"
         CLASSIFY_RC=$?
@@ -47,8 +49,8 @@
         ```bash
         # ★★ 本围栏 = 独立 Bash 调用：$DEV_BRANCH / $BE / $BUILD 一律不存活，必须先取回
         #    （eval 必须在 git push **之前**；根因见 rationale.md「推送围栏的三个取空」）
-        eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-        BE="python3 .aidp/scripts/baseline_edit.py"
+        eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+        BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
         DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
         : "${TARGET_VERSION:?}"; : "${BUILD:?}"; : "${DEV_BRANCH:?取不到分支名，拒绝 push}"
         git push origin "$DEV_BRANCH" || exit 1
@@ -58,14 +60,14 @@
           git switch "$PENDING_MERGE_TO" && git pull --rebase origin "$PENDING_MERGE_TO"
           MERGE_BASE_REF=$(git rev-parse HEAD)
           git merge --no-edit "$DEV_BRANCH"
-          python3 .aidp/scripts/classify_push.py --root . --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$MERGE_BASE_REF" || exit 1
+          python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$MERGE_BASE_REF" || exit 1
           git push origin "$PENDING_MERGE_TO" || exit 1
         fi
         GIT_PUSH_AT=$(date -Iseconds); GIT_PUSH_COMMIT=$(git rev-parse HEAD)
         $BE --version "$TARGET_VERSION" --build "$BUILD" set push_at "$GIT_PUSH_AT" push_commit "$GIT_PUSH_COMMIT"
         ```
      5. **失败兜底（不静默继续）**：push 失败（无 remote / 认证失效 / 非快进被拒）→ 绝不带着"未推送"继续进部署动作，走「失败处置」#4 通知 @用户介入，暂停本轮。
-   - **★ 部署前安全网（在「部署动作」之前跑，⛔ 不可省）**：按 `.aidp/flows/sprint-batch/step-6.md` 的 **Step 6.0.5「SQL 已应用校验」+ 6.0.6「部署流程文档校验」**就地执行同款校验（判据以该文件为单一信源）。根因见 rationale.md「部署前安全网为何要在 autopilot 侧再跑一次」。
+   - **★ 部署前安全网（在「部署动作」之前跑，⛔ 不可省）**：按 `{{AIDP_HOME}}/flows/sprint-batch/step-6.md` 的 **Step 6.0.5「SQL 已应用校验」+ 6.0.6「部署流程文档校验」**就地执行同款校验（判据以该文件为单一信源）。根因见 rationale.md「部署前安全网为何要在 autopilot 侧再跑一次」。
    - **部署动作**仍由本命令完成（按 `autopilot_decisions.deployment` 字段）：
      - **`--skip-deploy` 分支（用户主动跳过部署阶段）**：跳过部署、不写 `last_deployed_at`、不发 #1d；等效本轮 `mode=none` 行为，仅开发 + 静态自测
      - `mode=local`（★ 无人值守铁律：**后台启动 + 幂等复用**，否则 `/loop` 会挂死或刷屏）：**先探端口/进程 → 已在跑即复用、未跑才后台启动**（`nohup … &` + 写 PID、绝不前台常驻；探活与启动细则见 rationale.md「本地 dev server 幂等复用」）。
@@ -84,11 +86,11 @@
      故凡走到"写 `last_deployed_at`"的分支，都必须同时写它：
 
      ```bash
-     eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-     python3 .aidp/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" \
+     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+     python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" \
        set last_deployed_at @now phase_beta_done_at @now
      # 新部署落地 = 自动修复闭环的「修复 + 重部署」完成 → 清进行中标记，测试链路对新部署复测
-     python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" del auto_fix_in_progress_since || true
+     python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del auto_fix_in_progress_since || true
      ```
      （走 Step D 的分支由该 Step 统一落盘，不重复写。）
    - **★ 里程碑通知 #1d 部署完成-代码已推送（见 0.1bis #1d 部署完成通知模板）**：详见同目录 `rationale.md`「部署分支的未配置 CICD 回退与 #1d 通知模板要点（phase-3-5b.md 的外置正文）」。

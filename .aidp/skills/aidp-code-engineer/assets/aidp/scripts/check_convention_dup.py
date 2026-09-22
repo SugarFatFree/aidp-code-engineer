@@ -7,7 +7,7 @@
 核心约定有两处落点，职责必须严格二分：
 
   · **主行文件**「核心约定」段 —— **决策要点主行**（常驻上下文、唯一权威）；
-  · `.aidp/reference/约定细则-N.md`   —— 该条的**子项 / Why / 示例 / 实现子项**（按需 Read）。
+  · `AIDP_HOME/reference/约定细则-N.md`   —— 该条的**子项 / Why / 示例 / 实现子项**（按需 Read）。
 
 ★ **主行文件按形态探测，不写死**（两种形态都是合法下发结果）：
 
@@ -28,16 +28,16 @@
 1. 从项目记忆文件（`AGENTS.md` / `CLAUDE.md`）的「## 核心约定」段提取每条主行：形如 `N. **标题**：正文…`；
 2. 取该主行的 **首句探针**——正文去掉 `N. ` 序号后，切到第一个句末标点（`。；;`）；
    不足 40 字符则继续向后取，直到 ≥40 字符或整行用完（整行不足 40 字符则用整行）；
-3. 把探针与各 `.aidp/reference/约定细则-*.md` 全文**同样归一化**（去 Markdown 强调符 `*`、
+3. 把探针与各 `AIDP_HOME/reference/约定细则-*.md` 全文**同样归一化**（去 Markdown 强调符 `*`、
    折叠空白）后做子串匹配；命中 = 该条主行被复制进细则分片 → 报重复。
 
 归一化去掉 `*` 与空白差异，是为了让"改了两个星号/换了个空格"的伪装式复制同样被抓到。
 
 ## 用法
 
-    python3 .aidp/scripts/check_convention_dup.py            # 人读报告
-    python3 .aidp/scripts/check_convention_dup.py --json     # 机读 JSON
-    python3 .aidp/scripts/check_convention_dup.py --root /path/to/repo
+    python3 AIDP_HOME/scripts/check_convention_dup.py            # 人读报告
+    python3 AIDP_HOME/scripts/check_convention_dup.py --json     # 机读 JSON
+    python3 AIDP_HOME/scripts/check_convention_dup.py --root /path/to/repo
 
 退出码：0 = 无重复（或缺文件不适用）；1 = 检出重复；2 = 用法/读取错误。
 
@@ -46,6 +46,12 @@ JSON 输出含 `skip_kind` 区分跳过原因，供 `verify.py` 把"真不适用
 「## 核心约定」主行 —— 格式变更或文件被裁剪，**属异常、需人看**）/ `no-detail-fragments`
 （无 `约定细则-N.md` 分片，无从比对）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -56,12 +62,12 @@ import sys
 #   顺序不可颠倒：两个文件都在时只有 AGENTS.md 才是主行权威，
 #   `CLAUDE.md` 在形态 A 下仅是薄壳（`@AGENTS.md` 一行，抽不出主行）。
 MAIN_FILE_CANDIDATES = (
-    ".aidp/AIDP-AGENTS.md",  # 模板仓库：下发记忆源（根 AGENTS.md 是模板自身维护记忆，无约定主行）
+    runtime_text('__AIDP_HOME__/AIDP-AGENTS.md', __file__),  # 模板仓库：下发记忆源（根 AGENTS.md 是模板自身维护记忆，无约定主行）
     "AGENTS.md",  # 形态 A：含 Codex / DeepSeek Harness，或二者并存
     "CLAUDE.md",  # 形态 B：仅 Claude Code
 )
-DETAIL_GLOB_DIR = ".aidp/reference"
-RULES_GLOB_DIR = ".aidp/rules"
+DETAIL_GLOB_DIR = runtime_text('__AIDP_HOME__/reference', __file__)
+RULES_GLOB_DIR = runtime_text('__AIDP_HOME__/rules', __file__)
 DETAIL_PREFIX = "约定细则-"
 
 # 主行形如：`12. **文档动态同步**：…`
@@ -117,14 +123,14 @@ def load_details(root):
     只有标题之外的正文里再出现主行首句才算双写。
     """
     out = []
-    # ① `.aidp/reference/约定细则-N.md`
+    # ① `AIDP_HOME/reference/约定细则-N.md`
     d = os.path.join(root, DETAIL_GLOB_DIR)
     cands = []
     if os.path.isdir(d):
         cands += [(os.path.join(DETAIL_GLOB_DIR, n), os.path.join(d, n))
                   for n in sorted(os.listdir(d))
                   if n.startswith(DETAIL_PREFIX) and n.endswith(".md")]
-    # ② ★ `.aidp/rules/*.md` —— **代码向约定（4/17/18/19/20/23/26/27/28/29/35/39/40）的详规
+    # ② ★ `AIDP_HOME/rules/*.md` —— **代码向约定（4/17/18/19/20/23/26/27/28/29/35/39/40）的详规
     #    住在这里，不是 reference/**。只扫 reference/ 时，主行被复制进 rules/ 完全不查：
     #    而 rules 是**按 paths 自动加载**的，一份复制过去的主行会和 AGENTS.md 的那份
     #    同时进上下文，两处一改一没改就是最典型的漂移面。当前实测 0 处，属**无门区**而非无风险。

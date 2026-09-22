@@ -4,7 +4,7 @@
 
 ## 为什么需要本脚本
 
-一次全量审计在 `.aidp/flows/` 里挖出 **6 条同类 Critical**，全部是同一个形状：
+一次全量审计在 `AIDP_HOME/flows/` 里挖出 **6 条同类 Critical**，全部是同一个形状：
 
     判据引用了一个**从未被赋值的 shell 变量**，或读了一个**从未被写入的 baseline 字段**。
 
@@ -23,7 +23,7 @@
 
 ## 判定口径
 
-只扫 `.aidp/flows/**/*.md` 里的 ```bash / ```sh 代码块。
+只扫 `AIDP_HOME/flows/**/*.md` 里的 ```bash / ```sh 代码块。
 
 **A. shell 变量**：某分片**引用**了 `$VAR` / `${VAR...}`，而全仓 flow 的 bash 块里
    **没有任何地方**给它赋值（`VAR=`、`for VAR in`、`read VAR`、`export VAR=`、
@@ -35,7 +35,7 @@
    报 **ERROR**——它必然取空，`${VAR:-default}` 会静默落到默认值。
 
 **B. baseline 字段**：`baseline_edit.py ... get <path>` / `jq '.versions...'` 读取的字段，
-   在全仓 flow + `.aidp/scripts/*.py` 里找不到对应的 `set`/`touch`/`bump`/写盘点。
+   在全仓 flow + `AIDP_HOME/scripts/*.py` 里找不到对应的 `set`/`touch`/`bump`/写盘点。
    报 **WARN**（写入方可能在 SKILL 或运行时动态生成，误报成本高于漏报）。
 
 ## 豁免
@@ -46,19 +46,25 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_flow_var_refs.py           # 人读报告
-    python3 .aidp/scripts/check_flow_var_refs.py --json    # 机读
-    python3 .aidp/scripts/check_flow_var_refs.py --path .aidp/flows/sprint-autopilot
+    python3 AIDP_HOME/scripts/check_flow_var_refs.py           # 人读报告
+    python3 AIDP_HOME/scripts/check_flow_var_refs.py --json    # 机读
+    python3 AIDP_HOME/scripts/check_flow_var_refs.py --path AIDP_HOME/flows/sprint-autopilot
 
 退出码：0 = 无未定义引用；1 = 检出；2 = 用法/读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import json
 import os
 import re
 import sys
 
-FLOW_ROOT = os.path.join(".aidp", "flows")
+FLOW_ROOT = os.path.join(runtime_relpath("", __file__), "flows")
 EXCLUDE_DIRS = {".git", "node_modules", "__pycache__", "dist", "build", ".venv", "skills"}
 EXCLUDE_DIR_PREFIXES = (".aidp-backup",)
 
@@ -496,7 +502,7 @@ def _all_text(root):
     """
     self_path = os.path.abspath(__file__)
     buf = []
-    for sub in (FLOW_ROOT, ".aidp/commands", ".aidp/scripts"):
+    for sub in (FLOW_ROOT, runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/scripts', __file__)):
         base = os.path.join(root, sub)
         if not os.path.isdir(base):
             continue
@@ -522,7 +528,7 @@ def _scan_baseline_fields(root):
     """返回 (读到的字段 -> 首个 文件:行, 写到的字段集合)。扫 flows + commands + scripts。"""
     reads, writes = {}, set()
     targets = []
-    for sub in (FLOW_ROOT, ".aidp/commands", ".aidp/scripts"):
+    for sub in (FLOW_ROOT, runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/scripts', __file__)):
         base = os.path.join(root, sub)
         if not os.path.isdir(base):
             continue
@@ -552,7 +558,7 @@ def _scan_baseline_fields(root):
                 if f and f not in _BE_NOISE:
                     reads.setdefault(f, f"{rel}:{i}")
             # ★ 写入方识别必须认 `$BE` / `$BEV` 这类**别名**——仓内绝大多数写入都走
-            #   `BE="python3 .aidp/scripts/baseline_edit.py"` 再 `$BE set ...`；
+            #   `BE="python3 AIDP_HOME/scripts/baseline_edit.py"` 再 `$BE set ...`；
             #   只认全名会把一大批有写入的字段误报成孤儿，噪音一大这道门就会被无视。
             # ⚠️ 必须认 `\` 续行：`baseline_edit.py --version X \` 换行后才是 `set 字段 @now`，
             #    只看单行会把这类写入判成不存在（实测漏掉 internal_released_at）。
@@ -678,7 +684,7 @@ def main():
         description="flow 分片 bash 块里「读了但全仓没人写」的 shell 变量")
     ap.add_argument("--root", default=".")
     ap.add_argument("--path", action="append", default=None,
-                    help="只扫指定相对路径（可重复）；缺省扫 .aidp/flows")
+                    help=runtime_text('只扫指定相对路径（可重复）；缺省扫 __AIDP_HOME__/flows', __file__))
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--per-fence", action="store_true",
                     help="把「已赋值」收紧到**本围栏内、引用行之前**（围栏 = 一次独立 Bash 调用）")
@@ -727,9 +733,7 @@ def main():
               "（散文里写「再写 baseline 的 X」不算）：")
         for o in orphans:
             print(f"  · {o['field']}\n      ↳ {o['why']}")
-        print("  后果不是报错、是静默停摆：读侧恒空 → 分支恒真/恒假 → 两条 loop 都在刷屏、"
-              "什么都没测。\n  修复：在对应 flow 里落成可执行的 "
-              "`python3 .aidp/scripts/baseline_edit.py --version $V set <字段> @now`。")
+        print(runtime_text('  后果不是报错、是静默停摆：读侧恒空 → 分支恒真/恒假 → 两条 loop 都在刷屏、什么都没测。\n  修复：在对应 flow 里落成可执行的 `python3 __AIDP_HOME__/scripts/baseline_edit.py --version $V set <字段> @now`。', __file__))
     return 1 if (res["findings"] or orphans) else 0
 
 

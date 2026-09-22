@@ -13,7 +13,7 @@
 #   1. 推送正式代码后由 push 自动创建 pipeline，或由 `cicd_watch.py --mode trigger --env <env>`
 #      经 API 按分支创建（下方 rules 已放行 api 来源）；
 #   2. pipeline 能按 commit 查到（`cicd_watch.py --mode detect --commit <sha> --env <env>`）——GitLab 天然满足；
-#   3. 部署完成即结束；应用是否就绪由 `.aidp/scripts/autopilot-deploy-watch.py` 探针判断，不在流水线里等。
+#   3. 部署完成即结束；应用是否就绪由 `{{AIDP_HOME}}/scripts/autopilot-deploy-watch.py` 探针判断，不在流水线里等。
 #
 # 构建与部署步骤按项目实际技术栈替换（下面以 Node 前端 + Maven 后端为例）。
 # 部署凭据放在 GitLab 项目的 CI/CD Variables（Masked / Protected），不要写进本文件。

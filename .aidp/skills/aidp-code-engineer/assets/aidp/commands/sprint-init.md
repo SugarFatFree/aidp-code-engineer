@@ -27,17 +27,17 @@
 契约文件 / 工具脚本**是确定性的，必须由脚手架脚本产出：
 
 ```bash
-python3 .aidp/skills/aidp-code-engineer/scripts/scaffold.py . --detect          # 先探测模式（init / migrate / upgrade）
-python3 .aidp/skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}   # 模式默认 auto；需指定时加 --mode <mode> --agent <agents>
+python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --detect          # 先探测模式（init / migrate / upgrade）
+python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}   # 模式默认 auto；需指定时加 --mode <mode> --agent <agents>
 ```
 
-它负责（本命令**不重复实现、也不用 `mkdir -p` + `touch` 手搓**）：`.aidp/scripts/`（约定 24 要求每次
+它负责（本命令**不重复实现、也不用 `mkdir -p` + `touch` 手搓**）：`{{AIDP_HOME}}/scripts/`（约定 24 要求每次
 commit 前跑的 `commit_gate.py` 就在其中）、`.claude/settings.json`（Claude Code 适配层配置）、
-`.aidp/{agents,commands,rules,flows,reference,hooks,templates}` 契约面、`docs/` 与 `memory/`
+`{{AIDP_HOME}}/{agents,commands,rules,flows,reference,hooks,templates}` 契约面、`docs/` 与 `memory/`
 版本化骨架（含 `memory/aidp-config.yaml`）、`.gitignore` 规则。
 
 > ⚠️ **漏跑这一步的后果不是"少几个空目录"**：项目记忆文件（AGENTS.md / CLAUDE.md）的意图路由把「初始化项目 /
-> 接入 AIDP / 第一次跑」全部指向本命令，走这条路的项目跑完会**缺 `.aidp/scripts/` 与
+> 接入 AIDP / 第一次跑」全部指向本命令，走这条路的项目跑完会**缺 `{{AIDP_HOME}}/scripts/` 与
 > `memory/aidp-config.yaml`**——约定 24 的 commit 前门禁与约定 32 的里程碑通知装配双双落空，
 > 而这些缺失只能靠事后 `verify.py` 报错 + 人工补。两条初始化路径（本命令 / 脚手架）
 > 在本步交汇。
@@ -46,7 +46,7 @@ commit 前跑的 `commit_gate.py` 就在其中）、`.claude/settings.json`（Cl
 
 ## Phase 1：PM Agent — 项目认知建立
 
-读取 `.aidp/agents/pm.md` 获取角色定义。
+读取 `{{AIDP_HOME}}/agents/pm.md` 获取角色定义。
 
 **Step 1.1：创建目录结构**
 
@@ -54,7 +54,7 @@ commit 前跑的 `commit_gate.py` 就在其中）、`.claude/settings.json`（Cl
 # ⛔ 目录骨架不在本步手搓：Phase 0 的脚手架已确定性建出全部目录（手搓块是第二份骨架真相、必然漂移）。
 #    骨架缺 docs/requirements/{version}/研发需求 会让 /sprint-start 前置门直接以"需求文档不存在"停止。
 #    ★ 目录清单单一信源 = scaffold_lib.py::skeleton_dirs（约定 21）。本步只做核验：
-python3 .aidp/skills/aidp-code-engineer/scripts/verify.py . {version} {user} 2>&1 | grep -E "\[ERROR\].*(目录|directory)" && {
+python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . {version} {user} 2>&1 | grep -E "\[ERROR\].*(目录|directory)" && {
   echo "❌ Phase 0 骨架不完整——回到 Phase 0 重跑 scaffold.py，⛔ 不要在此手工 mkdir 补"; exit 1
 }
 echo "✅ 目录骨架核验通过（由 Phase 0 脚手架产出）"
@@ -73,7 +73,7 @@ echo "✅ 目录骨架核验通过（由 Phase 0 脚手架产出）"
 
 ## Phase 2：Architect Agent — 技术认知建立
 
-读取 `.aidp/agents/architect.md` 获取角色定义。
+读取 `{{AIDP_HOME}}/agents/architect.md` 获取角色定义。
 
 **Step 2.1：生成 docs/architecture/ 空模板**
 
@@ -218,7 +218,7 @@ echo "✅ 目录骨架核验通过（由 Phase 0 脚手架产出）"
 
 ⛔ **本文件不由本步生成**：Phase 0 的 `scaffold.py::sync_memory_file` 已 create-if-missing 从
 `AGENTS.md.tpl` 渲染出完整文件（核心约定 + Agent 路由 + reference/rules 指针）。照字面"生成"
-= 用手写近似版覆盖它，让主入口失去确定性生产者。路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取（只用 Claude Code 时为 `CLAUDE.md`）。
+= 用手写近似版覆盖它，让主入口失去确定性生产者。路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取（只用 Claude Code 时为 `CLAUDE.md`）。
 
 本步**只定点回填**「当前状态」区的 `{version}` / `{user}` 两个字段，⛔ 不重写正文任何其他部分。
 

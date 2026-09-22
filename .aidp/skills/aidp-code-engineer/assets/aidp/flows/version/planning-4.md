@@ -1,7 +1,7 @@
 # /version · 版本规划流程详情 — 分片 4/8
 
 > 本片覆盖：**Step 2.4.4 产物归一 + 00_索引.md 维护**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 #### Step 2.4.4：★ 产物归一 + `00_索引.md` 维护（fresh 与补充模式均执行，约定 15）
@@ -159,8 +159,8 @@ dedup_prefix "$TESTCASE_DIR"; gen_index "$TESTCASE_DIR" "$RUN_TYPE"
 产物落盘归一完成后、进入 Step 2.4.6/2.4.7 之前，刷新两份**项目级**索引，让本版结论对后续版本可检索：
 
 ```bash
-python3 .aidp/scripts/code_inventory.py update                          # 代码事实增量刷新
-python3 .aidp/scripts/code_inventory.py snapshot --version {version}    # 打快照，供下版算 Δ
+python3 {{AIDP_HOME}}/scripts/code_inventory.py update                          # 代码事实增量刷新
+python3 {{AIDP_HOME}}/scripts/code_inventory.py snapshot --version {version}    # 打快照，供下版算 Δ
 ```
 
 - **顺序不可换**：必须在 2.4.7 审计**之前**——审计 H 要在台账里检索历史条目，本版没入台账不影响 H（H 查的是历史），但**下一个版本的 H 会因此漏掉本版**；快照同理，漏打会让下版的 `delta --since {version}` 无从算起、退回全量判断。

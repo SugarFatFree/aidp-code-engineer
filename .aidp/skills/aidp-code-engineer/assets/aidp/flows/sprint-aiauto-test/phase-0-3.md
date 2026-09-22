@@ -42,18 +42,18 @@ npm ls -g chrome-devtools-mcp 2>/dev/null | grep -q chrome-devtools-mcp && echo 
 **判定结果**：
 - ✅ 已安装 → 清零环境熔断计数并显式解冻本门写下的冻结（幂等，仅当本版 `freeze_reason=chrome-unavailable`），再进 0.1.2 环境探测：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-  python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" del env_fail_streak 2>/dev/null || true
-  python3 .aidp/scripts/autopilot_unfreeze.py --clear "$TARGET_VERSION" --reason chrome-unavailable || true
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del env_fail_streak 2>/dev/null || true
+  python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --clear "$TARGET_VERSION" --reason chrome-unavailable || true
   ```
 - ❌ 未安装 → 打印安装引导 + **记账/告警/达阈冻结**后退出（**不静默继续、更不静默空转**）：
 
   > ⛔ **"打印 + 退出" 不够（无人值守下等于静默空转）**：`/loop 5m` 会**每 tick 撞同一处**、每次打印一屏安装引导后退出——**无 #4、无 streak、无冻结**，一条通知都没有，运维以为在跑、其实一轮用例都没执行过。故本门与其它环境门共用 `env_fail_streak` 计数：
   > ```bash
-  > eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+  > eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
   > # 记账 → 判阈 → 冻结四件套 → 发 #4，一次调用做完（**环境类**：装好后本门检测通过即 --clear 解冻，另有 --env-reprobe 自动复探；
 > #   已按同一 reason 冻结时脚本 no-op，不刷新冻结时刻、不重发 #4）
-  > python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+  > python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
   >   --phase 0.1.1-chrome --reason chrome-unavailable --streak-key env_fail_streak \
   >   --threshold "${ENV_FAIL_FREEZE_THRESHOLD:-3}" \
   >   --why "chrome-devtools-mcp 未安装，连续多个 tick 无法开测" \
@@ -100,8 +100,8 @@ npm ls -g chrome-devtools-mcp 2>/dev/null | grep -q chrome-devtools-mcp && echo 
 >
 > 这些都是**用户级 / 全局共享**文件、server 名往往是通用 `chrome-devtools`（**不是**本约定的 `chrome-{git_user}`），改任何一处都会污染本机所有项目并互相覆盖。**远程地址只能写项目根 `.mcp.json`**——这正是远程必须用 `chrome-{git_user}`（`--scope project`）而非通用 `chrome-devtools` 的原因（二者并存、前缀不同、不冲突）。
 
-> ✅ **强制校验闸门 = `.aidp/scripts/chrome-mcp-doctor.py`（脚手架下发到项目根，本节机制的单一信源）**：本节的「写/合并 `.mcp.json` + 连通性预检 + 全局污染检测 + 生效验证指引」全部由该脚本固化为有退出码的硬闸，命令端**只调它、不再各自内联实现**（约定 21；用法详见 `scripts/README.md`）：
-> - **写/合并 + 复位**：`python3 .aidp/scripts/chrome-mcp-doctor.py set --ip <IP:9222>`（JSON 合并保留其它 server + 自动清 `.gitignore` 残留）；远程不可达/需重启想本地兜底 → `set --local-headless`（**清掉远程 MCP 条目、切 `chrome-devtools-cli` 本地无头**，免 MCP、免重启）；清空重收 → `reset`。
+> ✅ **强制校验闸门 = `{{AIDP_HOME}}/scripts/chrome-mcp-doctor.py`（脚手架下发到项目根，本节机制的单一信源）**：本节的「写/合并 `.mcp.json` + 连通性预检 + 全局污染检测 + 生效验证指引」全部由该脚本固化为有退出码的硬闸，命令端**只调它、不再各自内联实现**（约定 21；用法详见 `scripts/README.md`）：
+> - **写/合并 + 复位**：`python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py set --ip <IP:9222>`（JSON 合并保留其它 server + 自动清 `.gitignore` 残留）；远程不可达/需重启想本地兜底 → `set --local-headless`（**清掉远程 MCP 条目、切 `chrome-devtools-cli` 本地无头**，免 MCP、免重启）；清空重收 → `reset`。
 > - **体检 + 退出码分流**：`check` 返回 `0 就绪 / 3 缺配置 / 4 远端不可达（打印 Chrome 启动参数）/ 5 用户级/全局 MCP 配置被写脏（打印复位指引）/ 2 参数错`，命令端按码分流（见 0.0.5 / 0.1.5）。
 > - **该调哪套工具**：远程一律调本项目 server 的 `mcp__chrome-{git_user}__*`（如 `mcp__chrome-{git_user}__list_pages`）；**严禁**调插件自带的 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`（那是插件自起的本地浏览器，连不到你的远端）。脚本每次 `check` 都打印当前 git_user 对应的正确前缀。
 > - **用户级/全局已被写脏怎么救**：脚本**只读**探测上述禁改文件——纯净的通用 server `chrome-devtools` 的 args **只有包名、绝无任何 `--` 开头参数**；一旦发现 `--browser-url`/`--headless`/`--executablePath` 等注入 = 被历史会话写脏 → **唯一正解 = 移除该用户级/全局注册再改走项目级**（`claude mcp remove chrome-devtools --scope user`；历史插件残留则卸载插件）回到纯净，脚本与命令端**绝不手改**用户级/全局文件。

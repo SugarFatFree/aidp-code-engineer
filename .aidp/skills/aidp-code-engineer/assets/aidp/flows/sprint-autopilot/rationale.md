@@ -22,6 +22,12 @@
 
 - **`config-missing` 必须按心跳解冻（双侧死锁）**——根因：该冻结由 Phase 3.9 / Phase 2 在「本版需实测但测试链路无心跳」达阈时写入，其 `#4` 通知明写「补挂 `/loop 5m /sprint-aiauto-test --unattended` 后自动解冻重测」。但两条既有解冻路径都够不着它：① autopilot 已把该版剔出候选 → **永不再为它部署**，"新部署"路径不可达；② 测试链路侧的配置类解冻只认 `docs/testing/**/*.md` 与 `skills/*/config.json` 的 **mtime**，而"挂 loop"这两者都不变。于是用户照着通知提示补挂了 loop 也解不开，只能人工清 baseline。
 
+## 分片压缩后保留的判据根因
+
+Phase 0.1 每 tick 都会检查工作区，但 `preflight_fail_streak` 还供后续 PRD、遗留 Sprint 和 0.7 收尾门复用。若工作区干净就无条件清零，后续失败永远无法累计到冻结阈值，通知可能每 tick 刷屏。因此只能按 `preflight_fail_reason` 清理本段自己的失败。
+
+Phase 3.4 必须按 build 起始提交 `push_base_ref` 判断前端改动；回退 `HEAD~1` 会漏掉跨多个 commit 的改动，部署覆盖门可能静默放行。`DEPLOY_MODE`、`SKIP_DEPLOY` 和 `WILL_BROWSER_TEST` 必须从 baseline 回读并写回，不能依赖不同 Bash 工具调用之间的 shell 变量。`--skip-aiauto-test` 是用户显式裁剪，关闭方判定要消费该值。静态-only build 由 autopilot 关闭，必须写 `ai_report_finalized`，否则 Stop hook 与准发布门误判报告未完成。
+
 ## Phase 3 相关根因（对应 `phase-3-*.md`）
 
 - **3.2.1 出口写 `3.2.1-probe` 而非 `3.3-audit`**——根因：Step A–C（`phase-3-6.md`，触发部署 + 等流水线）与 Step D（`phase-3-7.md`，就绪探针）分属两个分片，探针轮询可长达 `cloud_ready_timeout_seconds`。原出口直接写 `3.3-audit`、摘要还写着"探针就绪、`last_deployed_at` 已写"——tick 在探针中途中断，下一 tick 就从 `3.3-audit` 续跑，**整段就绪探针被跳过**：`last_deployed_at` 永不写入 → 测试链路无从触发；Phase 2 的 0a 门又因它为空而累计 `prerelease_deploy_block_streak`，最终把一个其实部署成功的版本误冻结成「部署就绪从未通过」。
@@ -41,7 +47,7 @@
 - **★ `HAS_WAKE_SOURCE` 与 `LOOP_UNATTENDED` 必须分开（yield 停摆根因）**——根因：`UNATTENDED_YIELD` 的前提是"**还有下一 tick 会来接**"，但判据一直挂在 `LOOP_UNATTENDED` 上。而后者由三路 OR 派生，其中 **`--unattended` 只表示"没人能回答弹窗"、完全不表示"有人会再叫我"**：`--once --unattended`（文档明写的"无头跑一轮"）恰好命中——跑完一个 Sprint 就 yield，然后**永远没有下一 tick**。实测事故：实际项目中跑完即退，`run_state` 停在 `next_phase=3.2-dev / next_sprint=016`，21 个 Task（约 84h）停摆；更糟的是收尾还反过来提示用户"要无人值守请挂两条 loop"——**一个自称"7×24 全自动开发编排器"的命令，把没干完的活儿丢回给了人，且看起来像正常收尾**。故拆出独立的 `HAS_WAKE_SOURCE`（只认 `/loop` 上下文 与 `--no-loop` cron 两路），**无受托人即不许 yield，改为本轮内连跑到底**。判据一句话：**"没人接的托付不叫托付，叫弃置"**。
 
 - **★ 阶段完成判据：产物落盘 ≠ 活已派出（实际项目实跑根因）**——21:31:34 派发规划子 Agent、**7 秒后**（21:31:41）就写 `phase_completed_at` 并推进 `next_phase`，而四类文档 21:46 才成文、`version-auditor` 23:08 才判出 2 项 Critical。开发链路早已按"规划已完成"跑掉 3 笔提交，最终**「计划验收标准与已交付代码相反」**。`phase-3-3.md`「⛳ 本 Phase 出口：`run_state` 写盘」段规约本身写对了（子 Agent **回传后**才写 `run_state`），但它只是散文、拦不住"明知未完成仍推进"。连带失效：`run_state` 此后再没更新过（终态 `current_phase` 仍停在 `3.1-planning`、`phase_enter_count:1`），通用 stuck 检测因此彻底失灵；`builds[]` 空导致一切按 build 取值的门空转；`pending_actions` 挂着一项未完成动作 7 小时无人处置。**修法**：判据落在唯一写入口 `baseline_edit.py run-state`——`phase_summary` 出现进行时自述即拒写（`exit 1`）。**判据取"摘要措辞"而非"耗时"**：耗时阈值在续跑/缓存路径上会误伤（合法的秒级完成确实存在），而"执行中/已派发"是执行体自己写下的、不会假阳性。**且只收进行时信号、不收「未完成/pending」**——"无未完成动作""pending_actions 已清空"都是正常完成摘要，收进来会把合法推进拦死（假阳性卡停流水线，比漏判更贵）。
-- **★ `entry_mode` 粒度错配（实际项目第二次实测）**——`autopilot_entry_mode` 是**版本级**字段（`versions.{V}.autopilot_entry_mode`），而 entry_mode 实际是 **build 级属性**：同一个版本里首轮 `full`、复验轮 `test-only` **共用一个槽位**，后写覆盖先写。于是 `.aidp/hooks/autopilot-stop-guard.py` 拿着"版本槽位的当前值"去校"另一个 build"，`_derive_expect_cards()` 算出的通知集自然错——实测表现是**要求补发两条内容必然为假的里程碑通知**（那一轮压根没发生的里程碑）。
+- **★ `entry_mode` 粒度错配（实际项目第二次实测）**——`autopilot_entry_mode` 是**版本级**字段（`versions.{V}.autopilot_entry_mode`），而 entry_mode 实际是 **build 级属性**：同一个版本里首轮 `full`、复验轮 `test-only` **共用一个槽位**，后写覆盖先写。于是 `{{AIDP_HOME}}/hooks/autopilot-stop-guard.py` 拿着"版本槽位的当前值"去校"另一个 build"，`_derive_expect_cards()` 算出的通知集自然错——实测表现是**要求补发两条内容必然为假的里程碑通知**（那一轮压根没发生的里程碑）。
   **这与此前那次 `--entry-mode` 死锁是同一失败形态的第二形态**：上次是"回退链缺一环"（hook 不传 → 通知集按 full 算），这次是"回退到了一个**粒度不对**的槽位"。**粒度对不上时，回退链再完整也取不到正确值**——修完回退链就以为这个字段安全了，正是本次复发的原因。
   **修法**：Phase 3.1.5 铸造时把当轮 `ENTRY_MODE` 落进 `builds[].entry_mode`；取值链改为 **显式 `--entry-mode` > `builds[].entry_mode` > 版本级 `autopilot_entry_mode` > `full`**（版本级降为老 baseline 的向后兼容回退）。**复用既有 build 时只补不覆盖**——一个 build 的应发通知集由"它是怎么开始的"决定，中途换 tick 模式不改变已经发生过的里程碑；同一段代码顺带回填没有该字段的存量 build。
 - **★ 收尾门只校产物、不校义务清算（实际项目实跑根因）**——全流程跑完、AI 测试 114 用例 0 失败，但发现 4 条缺陷含 1 条 P1（金额显示放大 100 倍、余额不足拦截失真）；收尾门 1~3i 全过（它们只问"东西产出来没有"），执行体遂认为"流程已完备、剩下的该问人了"，弹窗问用户「这条缺陷怎么处置：① 现在修+复测 ② 登记下版修 ③ 只修不复测」——直接违反「修不修从来不是选项」。**三处规则缝隙叠加**才让它显得合理：① 闭环判据读 `auto_fixable_pending`，而该字段此前只在**有失败用例**时才被想起来置真，`fail=0` 时天然为假 → 判定"闭环不触发"（可"用例全通过但有运行时错误 ≠ 绿灯"这条规则同时承认该状态存在，两处规则都认它、却没一处规定它触发闭环）；② 禁令是**举例式**（列举「是否自动修复复测」等具体措辞），换个问法就绕过去了；③ 闭环触发点绑 `/loop` tick 边界，**交互式单次调用没有"下一 tick"**、闭环无处挂载——这与当初为"交互单次没有第二条 loop 跑测试"补 P0-4 是完全对称的缺口，却一直没补。**修法**：① 分流输入明确为"本轮全部缺陷"（含运行时错误/观察发现），`fail=0` 不是跳过理由；② 禁令改判定式——**判据看选项集合、不看问法**，出现"不修/延后修/下版修/只修不复测"任一项即违规；③ 补 P0-4（交互单次由本次调用自身跑完闭环）；④ 收尾门加 3j/3k/3l 三项义务清算，把纪律从自律级升到结构级。**⛔ 刻意不做的事**：下游建议按 P0/P1/P2/P3 加"严重度→处置动作"映射表（P2 可不铸新 build、P3 登记不阻塞）——那等于给"不修"发分级通行证，正是本铁律要堵的。改为明写**严重度只决定顺序与紧急度、绝不决定修不修**，归类仍走 `/sprint-bugfix` 那条唯一判据（"不做这个修复，当前行为是不是错的？"）。
@@ -117,7 +123,7 @@ test-only 轮次恒索要 `#1c`/`#1d`/`#2` 三条本轮压根没发生的通知 
 计划文件里的全部 `Sprint-NNN` 号，减去 `memory/{V}/*/sprints/` 下已归档的，差集即剩余。
 就地算天然满足「同分片赋值」原则，不依赖任何人记得在上游某处 `set`（那正是它此前失效的原因）。
 
-机器回检 = `.aidp/scripts/check_tick_var_supply.py`（ERROR 硬门）：任何登记进 `DERIVED_VARS`
+机器回检 = `{{AIDP_HOME}}/scripts/check_tick_var_supply.py`（ERROR 硬门）：任何登记进 `DERIVED_VARS`
 却无供给链的变量都会被拦下；这三个已加 `# supply-check: ignore` 并注明"就地算"。
 
 ## 逐 tick 单 Sprint 的三档取舍（phase-3-5）
@@ -523,7 +529,7 @@ Step C 判 ③失败重试 / ④ CICD 平台不可达（提供方凭据失效 / 
 
 ## 写本 build 执行数据文件的注册细则（phase-3-4.md 的外置正文）
 
-3. **写本 build 执行数据文件（计划态）+ 注册到两页**：按 `.aidp/templates/reports/AI执行报告/data/示例_build1001.js` 数据契约，写 `$RPT/AI执行报告/data/${BUILD}.js`（`window.__AIRUNS__.push({...})`），**先填计划态字段**——`plan.html` 据此渲染工作流 stepper / 计划甘特 / 步骤依赖表 / 功能点比对（计划视图全部由 `plan.js` 从本数据自动渲染，无独立计划 md）；结果态字段（`overview`/`testSummary`/`defects`/`risks` 等）留待 Phase 3.4 finalize。本步填：
+3. **写本 build 执行数据文件（计划态）+ 注册到两页**：按 `{{AIDP_HOME}}/templates/reports/AI执行报告/data/示例_build1001.js` 数据契约，写 `$RPT/AI执行报告/data/${BUILD}.js`（`window.__AIRUNS__.push({...})`），**先填计划态字段**——`plan.html` 据此渲染工作流 stepper / 计划甘特 / 步骤依赖表 / 功能点比对（计划视图全部由 `plan.js` 从本数据自动渲染，无独立计划 md）；结果态字段（`overview`/`testSummary`/`defects`/`risks` 等）留待 Phase 3.4 finalize。本步填：
 
 
 
@@ -758,10 +764,10 @@ early-exit 且不写 `aiauto_blocked_reason`；而心跳在 early-exit **之前*
    #4 通知却指引"人工 `--reset-baseline` 重建状态机"，而状态机根本没坏。
 2. 0.3.4 末尾那道「TARGET_VERSION 落盘失败 → 中止本 tick」自检因回落恒非空而不可触发。
 
-**复现要点（值得记下来）**：第一次尝试复现失败，构造的夹具目录里没有 `.aidp/scripts/`。
+**复现要点（值得记下来）**：第一次尝试复现失败，构造的夹具目录里没有 `{{AIDP_HOME}}/scripts/`。
 `autopilot_tick_flags.py` 的 `BASELINE_EDIT` 是**相对路径**，子进程因此直接失败、
 `_cur_version()` 返回空串 —— 于是"回落没触发"与"回落不存在"在输出上完全同形。
-夹具补上 `.aidp/scripts/` 后一次命中。**这正是本仓反复治理的那类失效：工具没跑起来，输出却像通过。**
+夹具补上 `{{AIDP_HOME}}/scripts/` 后一次命中。**这正是本仓反复治理的那类失效：工具没跑起来，输出却像通过。**
 
 测试链路要的确实是 `current-version`，那条由 `BASELINE_FALLBACK_BY_COMMAND["aiauto-test"]`
 在**更早的 baseline 回落层**单独供给，与本表无关，故移除本表条目不影响它。

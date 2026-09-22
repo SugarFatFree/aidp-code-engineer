@@ -4,7 +4,7 @@
 
 ## 为什么需要本脚本
 
-`.aidp/commands/`、`.aidp/agents/`、`.aidp/flows/`、`.aidp/rules/` 大量写着
+`AIDP_HOME/commands/`、`AIDP_HOME/agents/`、`AIDP_HOME/flows/`、`AIDP_HOME/rules/` 大量写着
 「`code-verification-loop` 维度 11」「`dev-logic-architect` 检查项 34」「共 21 个维度」
 这类**对 SKILL 内部编号的引用**。SKILL 与命令各自演进，
 **SKILL 加一个维度时，命令侧不会有人想起来去改数字**——而读的人会当真：
@@ -14,7 +14,7 @@
 - 引用一个 SKILL **已删除**的脚本名，命令端照着跑会 file-not-found；
 - SKILL **新增**的硬门脚本没被任何命令引用 ⇒ 门配了却永不运行（最高频的失效形态）。
 
-真值就在 `.aidp/skills/*/` 里、数得出来。这类东西不该靠人记得回头改。
+真值就在 `AIDP_HOME/skills/*/` 里、数得出来。这类东西不该靠人记得回头改。
 
 ## 判定口径（三类，宁可少做不可误报）
 
@@ -39,12 +39,18 @@
     <!-- skillref-check: ignore-file 理由 -->    整份文件豁免
 
 用法:
-    python3 .aidp/scripts/check_skill_ref_freshness.py [--root <仓库根>] [--json]
+    python3 AIDP_HOME/scripts/check_skill_ref_freshness.py [--root <仓库根>] [--json]
 
 退出码: 0 = 无 ERROR；1 = 有 ERROR；2 = 用法/环境错。
 """
 
 from __future__ import annotations
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 
 import argparse
 import json
@@ -53,7 +59,7 @@ import re
 import sys
 from pathlib import Path
 
-# ⚠️ `docs/init` 必须在列（它不在 `.aidp/` 下，由 _scan_bases 单独并入）：
+# ⚠️ `docs/init` 必须在列（它不在 `AIDP_HOME/` 下，由 _scan_bases 单独并入）：
 #    范式主文档随脚手架下发给下游，里面同样写着「N 维度验收」这类 SKILL 计数；
 #    漏扫的实测代价 = `00_AIDP范式主文档.md` 的「13 维度」在 SKILL 升到 14 后无人发现。
 SCAN_DIRS = ("commands", "agents", "flows", "rules", "reference")
@@ -99,9 +105,9 @@ class Finding:
 
 
 def _scan_bases(root):
-    """全部扫描根：`.aidp/<SCAN_DIRS>` + 仓库级 `EXTRA_SCAN_DIRS`（如 `docs/init`）。"""
+    """全部扫描根：`AIDP_HOME/<SCAN_DIRS>` + 仓库级 `EXTRA_SCAN_DIRS`（如 `docs/init`）。"""
     for d in SCAN_DIRS:
-        yield root / ".aidp" / d
+        yield root / runtime_relpath("", __file__) / d
     for d in EXTRA_SCAN_DIRS:
         yield root / d
 
@@ -172,7 +178,7 @@ def _owner_at(spans, pos):
     若按"取行内第一个/最长的 SKILL 名"归属，维度 21 会被算到 cvl 头上而报假红（实测复现）。
     左侧最近 = 中文书写顺序里的真实归属。左侧没有 SKILL 名则**不猜、直接跳过**。
 
-    ⚠️ **还必须限距**：`.aidp/reference/` 里有单条 bullet 长达一两千字符、
+    ⚠️ **还必须限距**：`AIDP_HOME/reference/` 里有单条 bullet 长达一两千字符、
     顺带点名四五个 SKILL 的写法。实测有一处「维度 19」，其左侧最近的 SKILL 名远在
     **713 字符**之外——那不是归属关系、只是同一行里恰好也提到过。不限距就会报假红。
     """
@@ -188,7 +194,7 @@ def _owner_at(spans, pos):
 
 
 def scan(root: Path):
-    truth = load_truth(root / ".aidp" / SKILLS_DIR)
+    truth = load_truth(root / runtime_relpath("", __file__) / SKILLS_DIR)
     if not truth:
         return [], 0, truth, set()
     names = sorted(truth.keys(), key=len, reverse=True)
@@ -259,12 +265,12 @@ def scan(root: Path):
                         elif any(scr in truth[o]["scripts"] for o in truth):
                             owner = next(o for o in truth if scr in truth[o]["scripts"])
                             referenced_scripts.add((owner, scr))
-                        elif (root / ".aidp" / "scripts" / scr).is_file():
+                        elif (root / runtime_relpath("", __file__) / "scripts" / scr).is_file():
                             pass          # 项目侧脚本，不归 SKILL 管
                         else:
                             findings.append(Finding(
                                 "script", "ERROR", rel, i,
-                                "引用脚本 `%s`，但它既不在 `%s/scripts/` 下、也不在项目侧 `.aidp/scripts/`"
+                                runtime_text('引用脚本 `%s`，但它既不在 `%s/scripts/` 下、也不在项目侧 `__AIDP_HOME__/scripts/`', __file__)
                                 % (scr, sk), line))
     return findings, scanned, truth, referenced_scripts
 
@@ -275,7 +281,7 @@ def _wiring_baseline(root: Path):
     ⚠️ 白名单是**人工裁定**的结果，不是自动推断——正因为如此它才有信号：
     新脚本不在名单里就必然冒头，必须有人看一眼「该不该接命令端」。
     """
-    fp = root / ".aidp/scripts" / WIRING_BASELINE_NAME
+    fp = root / runtime_text('__AIDP_HOME__/scripts', __file__) / WIRING_BASELINE_NAME
     if not fp.is_file():
         return set()
     out = set()
@@ -320,7 +326,7 @@ def unreferenced_scripts(root: Path, truth):
     for sk in truth:
         marker = "%s/references/flow-qr-dispatch.md" % sk
         if any(marker in d and DELEGATE_PHRASE in d for d in docs):
-            fp = root / ".aidp/skills" / sk / "references" / "flow-qr-dispatch.md"
+            fp = root / runtime_text('__AIDP_HOME__/skills', __file__) / sk / "references" / "flow-qr-dispatch.md"
             try:
                 delegated[sk] = fp.read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -370,8 +376,8 @@ def main(argv=None):
                                 json_out=getattr(args, "json", False)))
 
     root = Path(args.root).resolve()
-    if not (root / ".aidp").is_dir():
-        sys.stderr.write("未找到 %s/.aidp/\n" % root)
+    if not (root / runtime_relpath("", __file__)).is_dir():
+        sys.stderr.write(runtime_text('未找到 %s/__AIDP_HOME__/\n', __file__) % root)
         return 2
 
     findings, scanned, truth, _ref = scan(root)

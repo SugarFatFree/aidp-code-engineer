@@ -20,7 +20,7 @@
 |------|---------|---------|
 | `docs/audit/合规检查-{YYYYMMDD}.md` | 创建/修改 | 每次合规检查后归档（仅当存在 ERROR 或 ≥5 个 WARN 时写盘；通过性检查只在终端输出，不污染 docs/） |
 
-> 本 Agent 是**只读审查角色**，**禁止**直接修改任何项目文件（memory/、docs/、.aidp/、.claude/ 等）——**唯一例外 = 上表白名单里的 `docs/audit/合规检查-{YYYYMMDD}.md`**。即使发现项目记忆文件 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`）残留 `aidp-code-engineer`、memory 还是模板骨架，也只**报告 + 给出修复指令**，不代用户改写。
+> 本 Agent 是**只读审查角色**，**禁止**直接修改任何项目文件（memory/、docs/、{{AIDP_HOME}}/、.claude/ 等）——**唯一例外 = 上表白名单里的 `docs/audit/合规检查-{YYYYMMDD}.md`**。即使发现项目记忆文件 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`）残留 `aidp-code-engineer`、memory 还是模板骨架，也只**报告 + 给出修复指令**，不代用户改写。
 
 ---
 
@@ -41,7 +41,7 @@
   4. docs/design/detail/{version}/*事实清单.md → 若存在则触发"事实清单 ↔ 代码"维度
   5. code/{backend,frontend}/**/application.yml | vite.config.* | nginx.conf（旧扁平 web/server 仅 upgrade 兼容）
      → 与事实清单对照
-  6. .aidp/commands/*.md / .aidp/agents/*.md / .aidp/skills/*/SKILL.md
+  6. {{AIDP_HOME}}/commands/*.md / {{AIDP_HOME}}/agents/*.md / {{AIDP_HOME}}/skills/*/SKILL.md
      → 引用三角检查
 ```
 
@@ -52,7 +52,7 @@
 ### Step 0：执行 verify.py 拿到全部脚本检查事实
 
 ```bash
-python3 .aidp/skills/aidp-code-engineer/scripts/verify.py {project_root} {version} {user} --read-only
+python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py {project_root} {version} {user} --read-only
 ```
 
 > verify.py 是**唯一可信的结构化事实源**。你必须先跑它，再做语义判断；不要自己重写它的检查逻辑。
@@ -69,13 +69,13 @@ python3 .aidp/skills/aidp-code-engineer/scripts/verify.py {project_root} {versio
 |------|------|
 | 结构 | 目录骨架（含 `{version}/{user}` 级目录）；关键脚本（`agent_env.py` / `agent_sync.py` / `commit_gate.py` 等）、Stop hook、本角色文件、`docs/init` 八份范式文档、memory 与 docs 骨架文件存在 |
 | 多 Agent | 项目记忆文件形态与 `agent_env.py memory-file` 判定一致（并存时 `CLAUDE.md` 为 `@AGENTS.md` 薄壳）、「当前状态」「核心约定」区域齐全；`agent_sync.py --check` 无漂移 |
-| 同步 | `docs/init` 与脚手架一致；`.aidp/` 契约文件与脚手架 `CONTRACT_MANIFEST.json` 逐文件比对、孤儿契约；项目 `scaffold.version` 是否落后 |
+| 同步 | `docs/init` 与脚手架一致；`{{AIDP_HOME}}/` 契约文件与脚手架 `CONTRACT_MANIFEST.json` 逐文件比对、孤儿契约；项目 `scaffold.version` 是否落后 |
 | 约定 | 代码目录 `{子项目}` 中间层（约定 18）；README 三档策略（约定 19）；部署双轨布局与 SQL 版本落位（约定 37 / 11）；部署文档齐备 |
 | 安全与卫生 | 运行时产物入库策略、凭证文件未入库、`.gitignore` AIDP 托管区为最新、`{{…}}` 占位符已替换、升级备份体积、语义改写队列与 `scaffold.pending` 已收口、「项目自定义」段与约定 35 冲突 |
-| 契约正文守卫 | flow 分片体积、站内锚点、单一信源指针、WebMCP、术语、约定 30 正文、shell 围栏、计数声明、幽灵旗标等（委派 `.aidp/scripts/check_*.py`）；仓库根有 `设计目标.md` 时加设计目标棘轮 |
-| 模板自检（仅 `--template`） | 本体 ↔ 脚手架 bundle 一致（`mirror_to_bundle.py --check`）、`assets/AGENTS.md.tpl` 与 `.aidp/AIDP-AGENTS.md`（下发记忆源）一致、`版本变更历史.md` / `SCAFFOLD_VERSION` / `CONTRACT_MANIFEST.json` 版本一致 |
+| 契约正文守卫 | flow 分片体积、站内锚点、单一信源指针、WebMCP、术语、约定 30 正文、shell 围栏、计数声明、幽灵旗标等（委派 `{{AIDP_HOME}}/scripts/check_*.py`）；仓库根有 `设计目标.md` 时加设计目标棘轮 |
+| 模板自检（仅 `--template`） | 本体 ↔ 脚手架 bundle 一致（`mirror_to_bundle.py --check`）、`assets/AGENTS.md.tpl` 与 `{{AIDP_HOME}}/AIDP-AGENTS.md`（下发记忆源）一致、`版本变更历史.md` / `SCAFFOLD_VERSION` / `CONTRACT_MANIFEST.json` 版本一致 |
 
-> 在 AIDP 模板仓库自身执行时，命令改为 `python3 .aidp/skills/aidp-code-engineer/scripts/verify.py . --template --read-only`（不传项目版本号，避免按范式版本号建出迭代目录）。
+> 在 AIDP 模板仓库自身执行时，命令改为 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . --template --read-only`（不传项目版本号，避免按范式版本号建出迭代目录）。
 
 ### Step 1：语义维度 1 — 模板项目残留 + memory 真填充
 
@@ -91,9 +91,9 @@ python3 .aidp/skills/aidp-code-engineer/scripts/verify.py {project_root} {versio
 
 ```
 AGENTS.md
-.aidp/agents/*.md
-.aidp/commands/*.md
-.aidp/skills/<非 aidp-code-engineer 的项目自定义 skill>/SKILL.md
+{{AIDP_HOME}}/agents/*.md
+{{AIDP_HOME}}/commands/*.md
+{{AIDP_HOME}}/skills/<非 aidp-code-engineer 的项目自定义 skill>/SKILL.md
 CLAUDE.md（若存在）/ README.md
 memory/*.md
 memory/{version}/{user}/*.md
@@ -103,7 +103,7 @@ docs/init/00_AIDP范式主文档.md
 **排除路径**（这些是允许出现模板名的"参考层"，不要在这里报警）：
 
 ```
-.aidp/skills/aidp-code-engineer/**       # 脚手架 skill 本体
+{{AIDP_HOME}}/../skills/aidp-code-engineer/**       # 脚手架 skill 本体
 docs/init/0?_*.md                         # 范式文档（在举例时合法出现）
 .aidp-backup-*/**                         # 历史备份
 ```
@@ -192,29 +192,29 @@ find . -type f -name 'nginx.conf' -o -name '*.conf' | head -5
 #   ①「使用/用 `Skill` 工具调用/调 `<name>`」 ②「调用/调 `<name>` skill」
 #   ③「经 `<name>`」④「工具调 `<name>`」（③④ 只认带连字符的 skill 名——如 dev-logic-architect /
 #      code-verification-loop / auto-test-runner 均含连字符——避免误捕非 skill 反引号 token）
-# ★ 扫描面必须含 flows/ 与 agents/：AIDP 已把大量 SKILL 调用从命令主体外置到 .aidp/flows/**，
+# ★ 扫描面必须含 flows/ 与 agents/：AIDP 已把大量 SKILL 调用从命令主体外置到 {{AIDP_HOME}}/flows/**，
 #   只扫 commands/ 会漏掉只在 flows 里出现的 SKILL 调用 → 本检查对它们空跑（false-negative）。
 grep -rEoh "(使用|用)[ ]*\`Skill\`[ ]*工具?调用?[ ]*\`[a-z][a-z0-9:-]+\`|(调用|调)[ ]*\`?[a-z][a-z0-9:-]+\`?[ ]*[sS]kill|(经|工具调)[ ]*\`[a-z][a-z0-9]*-[a-z0-9:-]+\`" \
-  .aidp/commands/*.md .aidp/flows/*/*.md .aidp/agents/*.md \
+  {{AIDP_HOME}}/commands/*.md {{AIDP_HOME}}/flows/*/*.md {{AIDP_HOME}}/agents/*.md \
   | grep -oE "\`[a-z][a-z0-9:-]+\`" | tr -d '`' | grep -vixE "skill" | sort -u
 ```
 
 > ⚠️ 命令**从不**用 `Skill(name)` 函数语法触发 SKILL，全部是上面多种自然语言写法；grep 尽量匹配这些写法，否则 `S_cmd` 漏项、本检查对那些 skill 空跑（false-negative）。
-> 抽出反引号内的 skill 名构成命中集合 `S_cmd`。再列出 `.aidp/skills/` 下实际目录集合 `S_actual`（含 superpowers 插件 skill 名形如 `superpowers:xxx`——它们不在本地目录，但是合法插件名，需要白名单豁免）。
+> 抽出反引号内的 skill 名构成命中集合 `S_cmd`。再列出 `{{AIDP_HOME}}/skills/` 下实际目录集合 `S_actual`（含 superpowers 插件 skill 名形如 `superpowers:xxx`——它们不在本地目录，但是合法插件名，需要白名单豁免）。
 
 `S_cmd - S_actual - 已知插件白名单` 非空 → **WARN**「命令 X 疑似引用未登记的 skill Y」（**不是硬 ERROR**：prose 抽取会把 SKILL 的**子命令动词**（带连字符的动词型 token）误当 skill 名——这些是合法子命令、非独立 skill，故降级为 WARN 交人工甄别）。**skill 存在性的硬对账以 Step 3.2「Skills 表 ↔ 目录」为权威**（结构化、无 prose 误报）；本步只作 prose 侧补充提醒。
 
-**插件白名单**（来源于 `.aidp/reference/skills.md` 的「Superpowers 插件 Skills」表 +「外部市场可选 Skills」行（如 `api-tester`）+「随仓库分发的插件」表（如 `chrome-devtools-mcp:*`），自动从这些表抽取，不要硬编码到本 Agent）。⚠️ 该表位于 `reference/skills.md`（项目记忆文件只留「本项目使用的 Skills」两列路由表、superpowers 折叠成一行），读错路径 = 抽不到白名单 = 本检查空跑。
+**插件白名单**（来源于 `{{AIDP_HOME}}/reference/skills.md` 的「Superpowers 插件 Skills」表 +「外部市场可选 Skills」行（如 `api-tester`）+「随仓库分发的插件」表（如 `chrome-devtools-mcp:*`），自动从这些表抽取，不要硬编码到本 Agent）。⚠️ 该表位于 `reference/skills.md`（项目记忆文件只留「本项目使用的 Skills」两列路由表、superpowers 折叠成一行），读错路径 = 抽不到白名单 = 本检查空跑。
 
 **3.2 Skills 注册表 ↔ 实际目录对账**
 
-读取 `.aidp/reference/skills.md` 中标题含 `.aidp/skills/` 的那张表（「本项目自带的 Skills」，按锚点 `.aidp/skills/` 匹配标题、不按全名）（**不是**项目记忆文件——Skills 详表在 reference 下），与 `.aidp/skills/` 实际子目录集合双向对账：
+读取 `{{AIDP_HOME}}/reference/skills.md` 中标题含 `{{AIDP_HOME}}/skills/` 的那张表（「本项目自带的 Skills」，按锚点 `{{AIDP_HOME}}/skills/` 匹配标题、不按全名）（**不是**项目记忆文件——Skills 详表在 reference 下），与 `{{AIDP_HOME}}/skills/` 实际子目录集合双向对账：
 - 表里有，目录里没有 → ERROR「skills.md 注册了 skill X 但目录不存在」
 - 目录里有，表里没有 → WARN「skill X 已存在但未在 skills.md 注册」
 
 **3.3 Agent 路由表 ↔ agents/ 实际文件对账**
 
-读取项目记忆文件的「Agent 激活路由」表（路径由 `python3 .aidp/scripts/agent_env.py memory-file` 解析；`CLAUDE.md` 为 `@AGENTS.md` 薄壳时读 `AGENTS.md`），与 `.aidp/agents/*.md` 双向对账。本 Agent 自身（`aidp-compliance.md`）必须出现在路由表中——若漏了，WARN「本 Agent 已存在但路由表未列出」。
+读取项目记忆文件的「Agent 激活路由」表（路径由 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 解析；`CLAUDE.md` 为 `@AGENTS.md` 薄壳时读 `AGENTS.md`），与 `{{AIDP_HOME}}/agents/*.md` 双向对账。本 Agent 自身（`aidp-compliance.md`）必须出现在路由表中——若漏了，WARN「本 Agent 已存在但路由表未列出」。
 
 ### Step 4：语义维度 4 — 目标 ↔ 实现背离（★ 仅模板项目自身；Advisory / WARN 级）
 
@@ -233,7 +233,7 @@ grep -rEoh "(使用|用)[ ]*\`Skill\`[ ]*工具?调用?[ ]*\`[a-z][a-z0-9:-]+\`|
 每条目标的判定按下面四步：
 
 1. 读该条目标。⚠️ **`设计目标.md` 只写目标、不写违约信号**（那是刻意的：违约信号必然带实现细节，会让目标跟着命令一起漂）。**违约 = 目标的否命题，由本 Agent 当场推导**，并且**必须推成可观察的现象**才能用——推不成现象的就别报，那是内心判断。
-2. 定位实现该目标的分片（命令正文 / `.aidp/flows/` 分片 / 相关脚本）。
+2. 定位实现该目标的分片（命令正文 / `{{AIDP_HOME}}/flows/` 分片 / 相关脚本）。
 3. 只问一个问题：**「按现在这份实现跑一遍，这条目标会不会不成立？」**
 4. 会 → **WARN**，写清「目标编号 · 实现分片 · 目标被架空的**可观察现象**」。
 

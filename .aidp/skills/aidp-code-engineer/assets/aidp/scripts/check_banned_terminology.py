@@ -22,15 +22,21 @@ migrate 的改名说明）必须原样保留禁用词，它们是规则本身。
 
 退出码：0 通过；1 有命中；2 参数错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
 import re
 import sys
 
-SCAN_DIRS = (".aidp/commands", ".aidp/agents", ".aidp/flows", ".aidp/reference",
-             ".aidp/rules", ".aidp/templates", "docs/init")
-SCAN_ROOT_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", ".aidp/AIDP-AGENTS.md",
+SCAN_DIRS = (runtime_text('__AIDP_HOME__/commands', __file__), runtime_text('__AIDP_HOME__/agents', __file__), runtime_text('__AIDP_HOME__/flows', __file__), runtime_text('__AIDP_HOME__/reference', __file__),
+             runtime_text('__AIDP_HOME__/rules', __file__), runtime_text('__AIDP_HOME__/templates', __file__), "docs/init")
+SCAN_ROOT_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", runtime_text('__AIDP_HOME__/AIDP-AGENTS.md', __file__),
                    "memory/README.md")
 
 # 禁用词 → (正确词, 为什么)

@@ -21,7 +21,7 @@ tick** 上 baseline 持久化标志尚未落盘，实际只剩"prompt 里有没�
 
 ## 判定口径
 
-1. 全仓 `.md`（默认排除 `.aidp/skills/`：那是 SKILL 本体 + 脚手架 bundle 镜像，
+1. 全仓 `.md`（默认排除 `AIDP_HOME/skills/`：那是 SKILL 本体 + 脚手架 bundle 镜像，
    本体改完由 `mirror_to_bundle.py` 单向同步，重复报只会产生双份噪音）；
 2. 匹配 `/loop [间隔] /sprint-autopilot` 与 `/loop [间隔] /sprint-aiauto-test`
    （间隔如 `10m` / `5m` / `30s`，允许缺省）；
@@ -43,9 +43,9 @@ tick** 上 baseline 持久化标志尚未落盘，实际只剩"prompt 里有没�
 
 ## 用法
 
-    python3 .aidp/scripts/check_loop_examples.py            # 人读报告
-    python3 .aidp/scripts/check_loop_examples.py --json     # 机读 JSON
-    python3 .aidp/scripts/check_loop_examples.py --root . --path .aidp/flows
+    python3 AIDP_HOME/scripts/check_loop_examples.py            # 人读报告
+    python3 AIDP_HOME/scripts/check_loop_examples.py --json     # 机读 JSON
+    python3 AIDP_HOME/scripts/check_loop_examples.py --root . --path AIDP_HOME/flows
 
 退出码：0 = 全部示例合规；1 = 检出漏写 `--unattended`；2 = 用法/读取错误。
 """
@@ -58,7 +58,7 @@ import sys
 # 默认扫全仓；这些目录不下钻（SKILL 本体 / 依赖 / 产物）
 EXCLUDE_DIRS = {
     ".git", "node_modules", "__pycache__", "dist", "build", ".venv",
-    "skills",  # `.aidp/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
+    "skills",  # `AIDP_HOME/skills/`：SKILL 本体 + 脚手架 bundle 镜像，由 mirror 脚本同步
 }
 # ★ 前缀式排除：`.aidp-backup-<时间戳>` 目录名带时间戳，**永远不可能**命中上面的精确名集合。
 #   漏排的后果只在下游显形（模板项目自身从不 upgrade、没有备份目录）：任一做过 upgrade 的下游

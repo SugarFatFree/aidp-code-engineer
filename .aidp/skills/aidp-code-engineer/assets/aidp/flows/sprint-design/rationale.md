@@ -4,7 +4,7 @@
 
 ## 为什么分片
 
-原 `/sprint-design` 命令主体 1362 行，整份入上下文导致："lost in the middle"中段漏步 / 几十条硬门互相稀释 / 长流程"满足即止"跳步。按 `.aidp/flows/README.md` 约定把最大、最自包含的几段外置为按需 Read 的 flow 文件，命令主体压到 ~410 行。
+原 `/sprint-design` 命令主体 1362 行，整份入上下文导致："lost in the middle"中段漏步 / 几十条硬门互相稀释 / 长流程"满足即止"跳步。按 `{{AIDP_HOME}}/flows/README.md` 约定把最大、最自包含的几段外置为按需 Read 的 flow 文件，命令主体压到 ~410 行。
 
 ## 外置清单（命令主体 → flow 文件）
 

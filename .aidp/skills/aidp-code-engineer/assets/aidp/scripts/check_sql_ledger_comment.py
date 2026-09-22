@@ -25,6 +25,12 @@
 
 退出码：0 = 合规 / 本版无新增列；1 = 有新增列却没实查留痕；2 = 入参或环境错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -75,8 +81,7 @@ def run(root, version):
     res["ledger"] = os.path.relpath(led, root).replace(os.sep, "/")
     if not os.path.isfile(led):
         res["status"] = "ledger-missing"
-        res["detail"] = ("本版有 %d 份 SQL 含 ADD COLUMN，却没有 SQL执行台账.md"
-                         "（模板 .aidp/templates/deployment/SQL执行台账.md）" % len(hits))
+        res["detail"] = (runtime_text('本版有 %d 份 SQL 含 ADD COLUMN，却没有 SQL执行台账.md（模板 __AIDP_HOME__/templates/deployment/SQL执行台账.md）', __file__) % len(hits))
         return res
     try:
         body = open(led, encoding="utf-8", errors="replace").read(400_000)

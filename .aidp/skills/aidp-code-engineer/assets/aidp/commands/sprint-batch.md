@@ -77,14 +77,14 @@
   上下文压力由子 Agent 隔离承担，主循环只保留进度与收口。
   ⛔ **"上下文太长 / 要省 token" 不构成停下来问人或终止的理由**（本铁律禁的是这个**理由**，
   与它出现在循环体内还是体外无关）。仅交互式会走到本门；无人值守由本 Step 首行守卫整段跳过。
-  成因见 `.aidp/flows/sprint-batch/rationale.md`「无响应处置为何不是终止」。
+  成因见 `{{AIDP_HOME}}/flows/sprint-batch/rationale.md`「无响应处置为何不是终止」。
 
 > 该提示**只在命令开头出现一次**；`--skip-context-check`、`--unattended`、`LOOP_UNATTENDED=1` 任一命中即一律跳过本 Step 0.0。
 
 ### Step 0.1：前置流程
 
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`
 
 ### Step 0.2：前置检查
@@ -124,7 +124,7 @@
 # ⛔ 绝不写成 `eval "$(...)"` 一行：脚本 fail-closed 时 **exit 1 且 stdout 零字节**，
 #    `eval` 会把退出码吞掉 → `REMAIN_COUNT` 未定义 → 执行列表为空 → **0 个 Sprint 跑完且零报错**，
 #    正是下方 Why 段要堵的那种假成功。形态与 `flows/sprint-autopilot/phase-3-5.md` 的调用保持一致。
-_PS=$(python3 .aidp/scripts/plan_sprints.py --version "$VERSION" --shell) || exit 1
+_PS=$(python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version "$VERSION" --shell) || exit 1
 eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed}"   # ALL_SPRINTS / CLOSED_SPRINTS / REMAIN_SPRINTS / REMAIN_COUNT
 ```
 
@@ -163,7 +163,7 @@ N 个 Sprint 子 Agent 各自重读同一批**本版内完全不变**的文档�
 - 本版关键口径与铁律（从研发执行计划提炼，⛔ 不复制全文）
 - 域间耦合关系与文件冲突面（有则写，无则写"未声明"）
 - 本项目静态验证的**正确跑法**（命令原样，避免每个子 Agent 各试一遍）
-- 已知环境坑（取自 `.aidp/reference/子Agent必读.md`，只摘与本版相关的）
+- 已知环境坑（取自 `{{AIDP_HOME}}/reference/子Agent必读.md`，只摘与本版相关的）
 - **上一 Sprint 的产出与登记的偏差**（见下方增量更新）
 
 **三条边界（缺一则它会从加速器变成错误源）**：
@@ -250,7 +250,7 @@ for NNN in 执行列表:
 
 ### Step 5.5：★ 收口本批次开发期变更台账（约定 22 攒批级联 · 收口点 4；**必须先于 Step 6**）
 
-> **单一信源 = `.aidp/reference/开发期族增量.md`**（收口执行要点 / 合并同类项 / 失效消解 /
+> **单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`**（收口执行要点 / 合并同类项 / 失效消解 /
 > 按合并后总量重判档位 / 清理与删文件规则全在那份）。**进入本步第一动作 = Read 该文件。**
 >
 > ⛔ **为什么必须有这一步、且必须在 Step 6 之前**：本命令一次跑完 N 个 Sprint，每个 Sprint 的
@@ -263,14 +263,14 @@ for NNN in 执行列表:
 
 - **触发**：本版**四族任一**增量册（含存量单册台账）存在且有「待级联」条目；四族全无 → 打印 INFO 跳过。
   路径与条目解析走 `commit_gate.cascade_ledger_paths()` / `pending_cascade()`，⛔ 不自拼路径。
-- **范围**：按族分流，**单一信源 = `.aidp/reference/开发期族增量.md` 收口点表「批量 Sprint 收尾」行**（本处不复述）。
+- **范围**：按族分流，**单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md` 收口点表「批量 Sprint 收尾」行**（本处不复述）。
 - **动作**：派**独立子 Agent** 读台账 → 结合代码现状核实（被后续 Sprint 推翻的条目直接作废、不产文档）
   → 合并同类项 → 按合并后总量重判档位 → 跑四级级联 → 产物随本批次提交。
 - **★ 清理**：成功级联的条目逐条删除；台账再无待级联条目 → 删除整个文件。失败条目留在台账 + WARN
   （**本收口点在版本开发中途，失败条目留到下个收口点是正常节奏**——与版本级收口点 2/3 的「必定删档」不同）。
 - **★ 终态机器门（确定性，不通过不得进入 Step 6）**：
-  `python3 .aidp/scripts/check_cascade_landing.py --base-ref "$BATCH_BASE_REF" --version {version}`（★ 落点门，模式 A；`BATCH_BASE_REF` = 进入本步时 `git rev-parse HEAD` 的值，本步级联产物**提交之后**跑，只看本批次提交范围；⛔ 不用 `--worktree`——它扫全部未提交文件、不止本批次）
-  + `python3 .aidp/scripts/check_cascade_landing.py --ledger-closed --version {version}`（终态门，档②）
+  `python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --base-ref "$BATCH_BASE_REF" --version {version}`（★ 落点门，模式 A；`BATCH_BASE_REF` = 进入本步时 `git rev-parse HEAD` 的值，本步级联产物**提交之后**跑，只看本批次提交范围；⛔ 不用 `--worktree`——它扫全部未提交文件、不止本批次）
+  + `python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --ledger-closed --version {version}`（终态门，档②）
   ⛔ 两个都要跑：终态门只看「台账清没清」、**不看改动落在哪**；落点门只看「改动落在哪」、不看台账。二者正交，缺一即留缺口
   —— **默认档**（非 `--must-delete`）：断言**文件存在 ⟺ 确有未决条目**；空台账 / 条条已级联却仍留着
   = 该删没删，exit 1。格式漂移致解析不出条目同样判失败，不 fail-open。判据表见台账详规「终态机器门」。
@@ -282,7 +282,7 @@ for NNN in 执行列表:
 
 > ⛔ **本步骤是 sprint-batch 与 sprint-aiauto-test 的衔接桥**：Step 1~5 跑"代码开发 + 单元/集成验证"，Step 6 跑"部署到运行环境后的真人视角浏览器仿真测试"，端到端闭环。按约定 21，**命令端只做编排 + 项目级补充**，不复述 sprint-aiauto-test / dev-manual-testcase 等 SKILL 内部规则。
 >
-> **进入本段第一动作 = Read `.aidp/flows/sprint-batch/step-6.md`**，逐项执行 6.0–6.6，绝不凭下方骨架表或记忆略过子步骤（骨架仅供定位，flow 文件为权威）。
+> **进入本段第一动作 = Read `{{AIDP_HOME}}/flows/sprint-batch/step-6.md`**，逐项执行 6.0–6.6，绝不凭下方骨架表或记忆略过子步骤（骨架仅供定位，flow 文件为权威）。
 
 | 子步骤 | 职责（一句话）|
 |--------|--------------|

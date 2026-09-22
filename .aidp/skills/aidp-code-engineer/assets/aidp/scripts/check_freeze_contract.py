@@ -4,7 +4,7 @@
 ## 这道门堵的是什么
 
 7×24 无人值守链路靠 `versions.{V}.needs_human=true` 冻结出问题的版本，等条件恢复再自动解冻。
-契约（单一信源 = `.aidp/flows/sprint-aiauto-test/phase-0-6.md`「冻结字段写入契约」）要求
+契约（单一信源 = `AIDP_HOME/flows/sprint-aiauto-test/phase-0-6.md`「冻结字段写入契约」）要求
 **一次写齐四件**：
 
     baseline_edit.py --version <V> set needs_human true aiauto_frozen_at @now freeze_reason <枚举>
@@ -40,6 +40,18 @@
 
 退出码：0 通过（可含 WARN）；1 有 ERROR；2 参数错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
@@ -117,7 +129,7 @@ FREEZE_REASON_VAL_RE = re.compile(r"freeze_reason[\s=]+[\"'`]?([a-z][a-z0-9-]*)"
 
 def _parse_enum(root):
     """从 rationale 的权威表解析 freeze_reason 全集（不硬编码，避免第二信源）。"""
-    p = os.path.join(root, ".aidp", ENUM_FILE)
+    p = os.path.join(root, runtime_relpath("", __file__), ENUM_FILE)
     if not os.path.isfile(p):
         return set(), False
     lines = open(p, encoding="utf-8").read().splitlines()
@@ -191,11 +203,11 @@ def run(root="."):
 
     writers, readers, scanned = {}, {}, 0
 
-    # ★ 解冻分支已从 flow 内联下沉到 `.aidp/scripts/autopilot_unfreeze.py` 的四个集合里，
+    # ★ 解冻分支已从 flow 内联下沉到 `AIDP_HOME/scripts/autopilot_unfreeze.py` 的四个集合里，
     #   而 SCAN_DIRS 只有 flows/commands —— 判据 4「每个枚举都有解冻路径」于是**结构上永不触发**：
     #   新增一个谁都不认的枚举，本门照样 0 ERROR / 0 WARN（当前 17 个枚举全覆盖是人工对齐的结果，
     #   不是这道门保证的）。故把该脚本的集合一并算作读侧。
-    _unf = os.path.join(root, ".aidp", "scripts", "autopilot_unfreeze.py")
+    _unf = os.path.join(root, runtime_relpath("", __file__), "scripts", "autopilot_unfreeze.py")
     if os.path.isfile(_unf):
         try:
             with open(_unf, encoding="utf-8", errors="replace") as f:
@@ -207,10 +219,10 @@ def run(root="."):
             if "_UNFREEZE_BY_" in ln or "_HUMAN_ONLY" in ln or ln.strip().startswith('"'):
                 for v in enum:
                     if f'"{v}"' in ln:
-                        readers.setdefault(v, []).append(f".aidp/scripts/autopilot_unfreeze.py:{i+1}")
+                        readers.setdefault(v, []).append(runtime_text(f"'__AIDP_HOME__/scripts/autopilot_unfreeze.py:'{i+1}", __file__))
 
     for d in SCAN_DIRS:
-        base = os.path.join(root, ".aidp", d)
+        base = os.path.join(root, runtime_relpath("", __file__), d)
         for dirpath, _dn, fns in os.walk(base):
             if "__pycache__" in dirpath:
                 continue
@@ -218,7 +230,7 @@ def run(root="."):
                 if not fn.endswith(".md") or fn in EXEMPT_BASENAMES:
                     continue
                 fp = os.path.join(dirpath, fn)
-                rel = os.path.relpath(fp, os.path.join(root, ".aidp")).replace(os.sep, "/")
+                rel = os.path.relpath(fp, os.path.join(root, runtime_relpath("", __file__))).replace(os.sep, "/")
                 _text = open(fp, encoding="utf-8").read()
                 lines = _text.splitlines()
                 # 本文件是否定义了写齐四件套的 freeze() —— 定了才认它的调用站点为写入者

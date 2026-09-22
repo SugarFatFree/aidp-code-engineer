@@ -24,9 +24,9 @@
 
 > ⛔ **本步默认【不当场跑下面的四级级联】**——它是修复完成后的回写，与 `/sprint-dev` 开发期漂移
 > 同性质：**开发过程中只写台账，收口点才成文**（根因见 `rationale.md`）。默认动作 = 把每条变更按
-> 一行追加到**受影响的每一族**增量册（四族落点见 `.aidp/reference/开发期族增量.md`；
+> 一行追加到**受影响的每一族**增量册（四族落点见 `{{AIDP_HOME}}/reference/开发期族增量.md`；
 > 同一变更跨族共用同一个 `C-NNN`、只记与该族相关的那一面；不存在则从
-> `.aidp/templates/_开发期族增量.md` 拷骨架），**然后直接跳到 Step 5.1**。
+> `{{AIDP_HOME}}/templates/_开发期族增量.md` 拷骨架），**然后直接跳到 Step 5.1**。
 >
 > - 一行格式：`- C-{NNN} · MM-DD HH:MM · 改了什么·为什么 · 🔴破坏性（可选）· sprint-{NNN}`
 > - 🔴 破坏性变更须同时在台账「⚠️ 已知失准点」段登记失准位置，否则 gate 判 `destructive_unregistered`。
@@ -55,7 +55,7 @@
 已在 `flows/sprint-dev/postdev-writeback-3.md` 收口，**方式 B 到不了那段**（见 rationale.md）。
 
 上一步（Step 5）产出了四类文档中任意一份 → 用 `Agent({run_in_background:false})` 派
-**version-auditor 子 Agent**（独立上下文，`.aidp/agents/version-auditor.md`），派单简报同规格：
+**version-auditor 子 Agent**（独立上下文，`{{AIDP_HOME}}/agents/version-auditor.md`），派单简报同规格：
 `scope=incremental`（只审本轮改动条目，不重跑全版全量）+ `changed_files`（本轮 git diff 清单）
 + **`trigger=accretion`（★ 必传）**——⛔ 漏传即落回缺省 `version`，Agent 会改按规划期日期路径写盘，
 把同一天的 `/version` 规划审计整份静默覆盖
@@ -76,15 +76,15 @@
 # ★ 两个变量由**执行体据审计子 Agent 回传就地填字面量**（同 phase-0-1 的 IS_LOOP_CONTEXT 范式）：
 AUDIT_CRITICAL=0   # ← 审计回传含 Critical 则改 1
 UNATTENDED=0       # ← 本次调用带 --unattended 则改 1
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-V="${TARGET_VERSION:-$(python3 .aidp/scripts/baseline_edit.py current-version 2>/dev/null)}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+V="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version 2>/dev/null)}"
 [ -n "$V" ] || { echo "⛔ 取不到版本号（TARGET_VERSION 空且 current-version 无解）→ 本块无法执行，⛔ 不得静默跳过：请显式传版本或先落 baseline"; exit 1; }
-BE="python3 .aidp/scripts/baseline_edit.py"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 if [ "$AUDIT_CRITICAL" = "1" ] && [ "$UNATTENDED" = "1" ]; then
   # 冻结四件套 + #4 一次做完。`--freeze-now` = 熔断条件（审计 Critical）已成立、一次即冻，
   # ⛔ 不走 streak：给它塞计数会在巡检里长出一串永不清零、也不是真判据的假计数。
   # ⛔ 「发 #4」必须由这一行真的发出去 —— 只写四件套 = 停得住但停不响，通知渠道零消息。
-  python3 .aidp/scripts/autopilot_fail_handle.py --version "$V" --freeze-now \
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --freeze-now \
     --phase audit-critical --reason audit-critical \
     --why "增量审计检出 Critical（C-4/C-5/F/G/H），无人值守不得静默放行，请人工裁决后重跑"
 fi

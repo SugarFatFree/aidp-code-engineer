@@ -38,7 +38,7 @@
 # ★ 跨分片取回本 tick 变量 —— flow 每个分片是**独立的 Bash 调用**，shell 变量不持久；
 #   漏这一行会让下方判据读到空串、`${VAR:-默认}` 静默落默认值（恒真/恒假）。
 #   真源在 baseline 的（BUILD/DRIVER/DEPLOY_MODE/NOTIFY_ENABLED/LOOP_UNATTENDED…）由脚本自动回落。
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 OS=$(uname -s)
 # GUI 可用性
 case "$OS" in
@@ -56,8 +56,8 @@ esac
 #   而分片间是不同的 Bash 调用、shell 变量不跨调用存活；其 BASELINE_FALLBACK 指向的
 #   root:chrome_bin / root:gui_ok **全仓无写入者**，不落盘则读回恒空 →
 #   「本机有 chrome 可兜底」永远判为假 → 远端不可达时不降级本地无头，直接落「先配后启 + 退出」。
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test CHROME_BIN "${CHROME_BIN:-}"
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test GUI_OK "${GUI_OK:-0}"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test CHROME_BIN "${CHROME_BIN:-}"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test GUI_OK "${GUI_OK:-0}"
 # 驱动模式：本地用 chrome-devtools-cli（免重启切模式）/ 远程用 chrome-devtools-mcp（须重启）
 # 缺省本地 cli；Phase 0.1.3 场景 C（远端）改 mcp；本地 CLI（命令 chrome-devtools）不可用→回退 mcp-plugin-fallback（同插件隔离实例、免重启，见 0.0.7；探测走 check-cli/SKILL）
 DRIVER="cli"
@@ -73,7 +73,7 @@ fi
 RENDER_MODE="${TESTPLAN_RENDER_MODE:-headless}"   # headless（默认，无需 GUI）| headed
 # ⛔ 必须落 tick 命名空间：消费点全在别的 Bash 调用，普通赋值跨不过去 →
 #   回读恒落静态默认 headless，测试方案声明的「有头」必被吞掉（见 rationale.md）。
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test \
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test \
   RENDER_MODE "$RENDER_MODE" >/dev/null 2>&1 || true
 ```
 
@@ -123,7 +123,7 @@ echo "实例归属判定：$OWNERSHIP（依据 = chrome-devtools status 的 daem
 # 前端访问地址取自 01_测试环境与账号.md / 测试方案（Phase 0.0.5 已解析）
 # ⛔ 不传 --origin：前端地址由脚本自己读「测试环境与账号」（约定 38 保证在那里）。
 #   flow 分片间 shell 变量不持久，传 $FRONTEND_URL 必取空 → 报错被吞 → WebMCP 静默永不启用。
-python3 .aidp/scripts/check_webmcp.py --launch-args --driver cli --json
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --launch-args --driver cli --json
 #   手工起 chrome 时传 --driver manual
 ```
 
@@ -155,11 +155,11 @@ python3 .aidp/scripts/check_webmcp.py --launch-args --driver cli --json
 #### 0.1.4 本机自启 Chrome 命令（按 OS）
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # ★ 渲染模式开关：默认无头（无需 GUI）；有头模式置空（RENDER_MODE=headed 时）
 HEADLESS_FLAG=$( [ "${RENDER_MODE:-headless}" = "headless" ] && echo "--headless=new" || echo "" )
 # ★ WebMCP 启动参数（0.1.3.5）：未启用时恒为空串 → 下面三条命令与本能力上线前逐字节一致
-WEBMCP_FLAGS=$(python3 .aidp/scripts/check_webmcp.py --launch-args --driver manual 2>/dev/null || true)
+WEBMCP_FLAGS=$(python3 {{AIDP_HOME}}/scripts/check_webmcp.py --launch-args --driver manual 2>/dev/null || true)
 # ★ 第二道防线：只接受真的以 `--` 开头的启动参数。脚本侧已把 N/A 提示改走 stderr，
 #   但这条捕获的结果会**直接拼进 chrome 启动命令**——任何一次回归（提示语误回 stdout、
 #   或新增一行 info）都会把中文塞进命令行、并让下面的 `-n` 判定误命中清空 --user-data-dir。

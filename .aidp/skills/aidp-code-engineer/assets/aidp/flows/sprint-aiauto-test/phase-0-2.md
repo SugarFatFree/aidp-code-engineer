@@ -3,7 +3,7 @@
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
 > ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-0-2.md`。理据见同目录 `rationale.md`。
 
-> ⚠️ **本片【不是】Phase 0.2**：`phase-0-N.md` 的 N 是**切片序号**、不是 Phase 号（本片装 0.0.6 / 0.0.7；Phase 0.2 在 `phase-0-6.md` + `phase-0-6b.md`）。按文件名直觉去 Read 会取错片——权威映射见 `.aidp/commands/sprint-aiauto-test.md` 的分片对照表。
+> ⚠️ **本片【不是】Phase 0.2**：`phase-0-N.md` 的 N 是**切片序号**、不是 Phase 号（本片装 0.0.6 / 0.0.7；Phase 0.2 在 `phase-0-6.md` + `phase-0-6b.md`）。按文件名直觉去 Read 会取错片——权威映射见 `{{AIDP_HOME}}/commands/sprint-aiauto-test.md` 的分片对照表。
 ### 0.0.6 ★ 测试方案 AI 自动化段预检 + 自动补全 + 信息收集（单一信源，供 /sprint-autopilot /sprint-batch 提前调用）
 
 > 设计目的：让 `/sprint-autopilot`（Phase 0.5.5）/ `/sprint-batch`（前置 Step 0.3）/ 本命令在**流程最开始**就把 chrome-devtools-mcp 自动化测试**所需信息一次性补齐**，**尽量减少中途用户介入**。本预检是该逻辑的**单一信源**，三处命令引用本节、不复写。
@@ -28,8 +28,8 @@ find code/frontend -maxdepth 3 -name package.json 2>/dev/null | while read p; do
 # 同 Phase 0.0.5：按内容标记找承载「测试环境与账号」的文件（独立成文或内嵌方案皆可），测试人员目录优先、研发自测兜底
 # ★ 与 0.0.5 同一版本号预解析（幂等；standalone / `/loop` 下 $TARGET_VERSION 若尚未赋值，这里补上，
 #   否则下面路径拼成 docs/testing//… 恒不命中、每 tick 误落"字段缺失"分支）
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 读回 0.0.0 落盘的 --target/--select 等
-: "${TARGET_VERSION:=${TARGET_FLAG_VALUE:-$(python3 .aidp/scripts/baseline_edit.py current-version)}}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 读回 0.0.0 落盘的 --target/--select 等
+: "${TARGET_VERSION:=${TARGET_FLAG_VALUE:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}}"
 # ★ 空版本号守卫：尚无可测版本（首个版本部署前）→ 本步无事可做，退出本 tick；⛔ 不拼 docs/testing//… 也不补全、不 commit
 [ -z "$TARGET_VERSION" ] && { echo "ℹ️ 尚无可测版本（current-version 为空）→ 跳过测试方案预检，退出本 tick"; exit 0; }
 TESTPLAN_DIR="docs/testing/${TARGET_VERSION}/研发自测"   # 缺配置时在此目录补全
@@ -63,11 +63,11 @@ HAS_AI_SECTION=0
 **Step 5 — 缺失则在流程最开始一次性收集（核心：减少中途介入）**：
 
 - **★ 无人值守守卫（`LOOP_UNATTENDED=1`）**：无人可答 → **绝不 `AskUserQuestion`**。
-  - **只缺 ⑥ 等待时长**（或 ⓪ 渲染模式）→ **不冻结**：按默认值（常规≤3s / 首次打开·导航≤30s；无头）继续本 tick，回写 `$TESTPLAN` 为 `常规操作 ≤ 3s / 首次打开·导航 ≤ 30s（默认值、未经人工确认）`，并把 `wait_default_unconfirmed=1` 写入本版 baseline（`python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" set wait_default_unconfirmed 1`），报告 `data.notes` 标注「浏览器等待时长为默认值、未经人工确认」。
+  - **只缺 ⑥ 等待时长**（或 ⓪ 渲染模式）→ **不冻结**：按默认值（常规≤3s / 首次打开·导航≤30s；无头）继续本 tick，回写 `$TESTPLAN` 为 `常规操作 ≤ 3s / 首次打开·导航 ≤ 30s（默认值、未经人工确认）`，并把 `wait_default_unconfirmed=1` 写入本版 baseline（`python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" set wait_default_unconfirmed 1`），报告 `data.notes` 标注「浏览器等待时长为默认值、未经人工确认」。
   - **缺 ①② 或跨设备 ④**（缺了就无法测）→ 缺失字段回写 `{待用户填写}` 占位，随后**一次调用做完**「记账 → 判阈 → 冻结四件套 → 发 #4」：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-  python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "${TARGET_VERSION:?}" --freeze-now \
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "${TARGET_VERSION:?}" --freeze-now \
     --phase 0.2-testplan --reason testplan-incomplete \
     --why "测试方案 AI 自动化段缺字段（<逐项列出缺哪些>），无人值守无法收集；补 研发自测/ 配置后重触发"
   ```
@@ -88,13 +88,13 @@ HAS_AI_SECTION=0
 > ⛔ **铁律（任何浏览器自动化动作之前必跑）**：先由本护栏定死 `MODE`（local/remote）与 `DRIVER`——**同机 + 无 `.mcp.json`（未注册自己的 `chrome-<git_user>` 远程服务）→ 必走 `chrome-devtools-cli`（CLI 直调），绝不允许用 MCP `chrome-devtools` 变体（含无用户后缀通用名 `mcp__chrome-devtools__*`）顶替**。MCP 变体驱动的是共享/远程 Chrome（`list_pages` 会混入他人标签页），本机场景误用它 = 连错实例、串测污染。**仅当确为异机、且已注册自己的 `chrome-<git_user>` 服务 + 端点写入项目根 `.mcp.json`** 时才走 `DRIVER=mcp-remote`。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 GIT_USER=$(git config user.name)
 # 判据 1：是否有"自己的"远程注册 —— 项目根 .mcp.json 存在 且 含 chrome-$GIT_USER 条目
 HAS_OWN_REMOTE=0
 if [ -f .mcp.json ] && grep -q "\"chrome-${GIT_USER}\"" .mcp.json 2>/dev/null; then HAS_OWN_REMOTE=1; fi
 # 判据 2：显式声明远程 —— 从 tick 命名空间**读回**（0.0.5 在另一分片落盘；理据见 rationale.md『驱动运行时记录与声明读回』）
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 DECLARED_REMOTE="${DECLARED_REMOTE:-0}"
 # 结论：两条件同时成立才远程；缺任一即本地、强制 CLI（不因 .mcp.json 里他人条目或历史通用名翻远程）
 if [ "$HAS_OWN_REMOTE" = 1 ] && [ "$DECLARED_REMOTE" = 1 ]; then
@@ -102,14 +102,14 @@ if [ "$HAS_OWN_REMOTE" = 1 ] && [ "$DECLARED_REMOTE" = 1 ]; then
 else
   MODE=local;  DRIVER=cli
 fi
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test MODE "$MODE" >/dev/null 2>&1 || true    # ★ MODE 无 baseline 真源，须落 tick 命名空间供后续分片读回
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test MODE "$MODE" >/dev/null 2>&1 || true    # ★ MODE 无 baseline 真源，须落 tick 命名空间供后续分片读回
 # ★ DRIVER 同样须落 tick 命名空间（baseline 回落源 0.6 认领后即 del，见 rationale「DRIVER 认领即删」）
-python3 .aidp/scripts/autopilot_tick_flags.py set --command aiauto-test DRIVER "$DRIVER" >/dev/null 2>&1 || true
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test DRIVER "$DRIVER" >/dev/null 2>&1 || true
 echo "连接模式判定：MODE=$MODE DRIVER=$DRIVER（HAS_OWN_REMOTE=$HAS_OWN_REMOTE DECLARED_REMOTE=$DECLARED_REMOTE）"
 # ★★ 运行时记录**此刻立即**落盘（独立于报告的第二信源，供收尾门 3i 核对）；build 号此刻未解析 →
 #   先落版本级待认领字段 driver_actual_pending，Phase 0.6 解析出 BUILD 后改挂 build 名下。
 #   理据见 rationale.md『驱动运行时记录与声明读回』。
-[ -n "$TARGET_VERSION" ] && python3 .aidp/scripts/baseline_edit.py \
+[ -n "$TARGET_VERSION" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py \
   --version "$TARGET_VERSION" set driver_actual_pending "$DRIVER" >/dev/null 2>&1 || true
 ```
 

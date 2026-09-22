@@ -608,7 +608,7 @@ grep -rnE '<断言式子>' <守护面> | grep -vE '^([^:]*:)?[0-9]+:[[:space:]]*
 ### 8-6.5 ★ 去重边界(硬约束)
 
 确定性判据(出站调用类零日志 / 成功路径不可见 / 无一条日志提到 URL / 成功路径只有 debug /
-疑似凭据明文入日志)由**被测项目侧**脚本 `<项目根>/.aidp/scripts/check_upstream_call_log.py`
+疑似凭据明文入日志)由**被测项目侧**脚本 `<项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py`
 承担(经脚手架下发、不在任何 SKILL 内),上游 `code-verification-loop` 的**维度 12** 负责委派它。
 **本 SKILL 只加用例侧断言,⛔ 不重写那套静态判据**——同一判据两份实现是最高频漂移源。
 

@@ -36,7 +36,7 @@
 1. **识别入口模式 `ENTRY_MODE`**（决定 Phase 3 走法 + build 号铸造/复用）：
    ```bash
    # ★ 本 tick 参数由 0.0.0 解析并落盘，此处读回（分片间 shell state 不跨 Bash 调用持久）
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    ENTRY_MODE="full"    # ★ 默认恒为 full 全流程（版本规划→全量开发→部署→AI测试）；任何流程裁剪只能来自【用户显式声明】，绝不由语义/关键词隐式触发（P0-0 唯一授权原则）
    # ── test-only（跳过开发、只部署+测）：唯一无条件来源 = 显式 flag --skip-dev ──
    [ "$SKIP_DEV" = 1 ] && ENTRY_MODE="test-only"
@@ -47,7 +47,7 @@
    #   ★ 严禁把「测试失败自动修复复测闭环」拆成第三个选项、也严禁把不含它的变体标「推荐」
    #     （它是每 tick 默认仪式、三模式恒开，不是用户决策点；论证见 rationale.md「维度唯一」）
    if [ "$ENTRY_MODE" = "full" ] && [ "$SKIP_DEV" != 1 ] && echo "$USER_INTENT" | grep -qE "已完成|已就绪|只.*测|后续.*(测试|自动化)|执行.*自动化测试"; then
-     if [ "$(python3 .aidp/scripts/baseline_edit.py get autopilot.loop_unattended_this_tick --default 0)" = "0" ]; then
+     if [ "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get autopilot.loop_unattended_this_tick --default 0)" = "0" ]; then
        : # 交互式：<AskUserQuestion 严格二选一「① 全流程（默认） ② 仅部署+测试(test-only)」——用户选②才置 ENTRY_MODE=test-only；不选则保持 full。两选项都恒含自动修复复测闭环，不得增设"含/不含自动修复"维度>
      else
        echo "🔒 无人值守命中 test-intent 但未带 --skip-dev → 保守默认 full（不隐式裁剪开发）"
@@ -66,7 +66,7 @@
    echo "🚪 入口模式：$ENTRY_MODE（incremental 为暂定，最终由 3.1.0 PLANNING_DONE 裁定）"
    # ★ 立即落盘（勿删）：baseline 真源 autopilot_entry_mode 由 3.1.0 写，而 test-only 恰恰整段跳过 3.1
    #   → 不在此落盘则后续 tick 恒回落 full：test-only 被送进开发循环、收尾门索要不该发的卡、3 tick 冻结。
-   python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot ENTRY_MODE "$ENTRY_MODE"
+   python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot ENTRY_MODE "$ENTRY_MODE"
    # ⛔ 入口仪式保证（对齐顶部「autopilot 入口 = 产物仪式保证」铁律）：full / incremental / test-only **三种模式都必须经子流程 R**
    #   产出 build 号 + AI执行报告（+ 测试链路出测试报告）+ 里程碑通知。incremental 绝不退化成"裸 /sprint-bugfix 不铸 build / 不出报告 / 不发通知"。
    # ⛔ Phase 0 前置硬门已保证：进入本步前 Phase 0.0–0.7 必已跑完（通知渠道检查 + #0a/#0 通知、.mcp.json、版本扫描）。
@@ -90,7 +90,7 @@
    - ⛔ **严禁**：识别到"只跑测试 / dev 已完成"就**直接 invoke `/sprint-aiauto-test`**、跳过子流程 R 骨架。AI执行报告**骨架**（写 `data` 计划态 + 注册 index.html/plan.html 两页）必须由本命令在委派前产出；委派出去的是**浏览器实测 + R-4 收尾**（aiauto-test 在 #F 后 finalize `data` 的 testSummary + 发 #3）。
    - **★ 委派前脚本化硬门（不可靠自律，落为可执行 bash；缺失 `exit 1` 阻断委派）**：在 `invoke /sprint-aiauto-test` 这一步**之前**必须跑通下面这段（**只校骨架，不校 #3 是否已发** —— #3 延后到 #F 后）；非零退出 = 禁止委派，强制回 Phase 3.1.5/3.4 补建（模板缺失则先重跑脚手架，见 3.1.5 step 2 模板硬门）：
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    V="$TARGET_VERSION"; B="$BUILD"; BN="${B##*_build}"; A="docs/reports/$V/AI执行报告"
    miss=0
    [ -f "$A/index.html" ] || { echo "❌ 缺 AI执行报告 结果入口：$A/index.html"; miss=1; }
@@ -108,7 +108,7 @@
    #    aiauto_test_heartbeat_at / ai_report_finalized / 各 streak（后者会让熔断永不达阈）。
    python3 - "$V" "$B" <<'PY'
 import sys, datetime, pathlib
-sys.path.insert(0, ".aidp/scripts")
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from baseline_edit import LockedBaseline          # 持 flock + 锁内重读 + 原子写回
 V, B = sys.argv[1], sys.argv[2]
 ts = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -136,8 +136,8 @@ PY
 > 收尾门（必 FAIL）并白烧熔断额度。**本 Phase 的实质动作做完、离开本分片之前立即执行**：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 .aidp/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
 $BE --version "$V" run-state "3.0-route" "3.1-plan" "" \
   --summary "Phase 3.0 入口路由完成：ENTRY_MODE=${ENTRY_MODE} / 目标版本 ${V} / AI执行报告前置门已过" --pending ""
 ```

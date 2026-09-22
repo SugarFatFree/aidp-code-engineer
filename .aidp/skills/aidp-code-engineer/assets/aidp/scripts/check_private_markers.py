@@ -28,10 +28,10 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_private_markers.py                 # 扫全仓（含脚手架 bundle）
-    python3 .aidp/scripts/check_private_markers.py --json
-    python3 .aidp/scripts/check_private_markers.py --denylist ~/private-words.txt
-    python3 .aidp/scripts/check_private_markers.py --self-check
+    python3 AIDP_HOME/scripts/check_private_markers.py                 # 扫全仓（含脚手架 bundle）
+    python3 AIDP_HOME/scripts/check_private_markers.py --json
+    python3 AIDP_HOME/scripts/check_private_markers.py --denylist ~/private-words.txt
+    python3 AIDP_HOME/scripts/check_private_markers.py --self-check
 
 退出码：0 = 无命中；1 = 有命中；2 = 用法 / 读取错误。
 """

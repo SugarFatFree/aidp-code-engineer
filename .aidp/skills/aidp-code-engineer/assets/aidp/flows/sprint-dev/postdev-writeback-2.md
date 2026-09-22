@@ -8,8 +8,8 @@
 
 > ⛔⛔ **本步（X.0）及 X.2 / X.3 的四级级联【仅在收口点或 `--cascade-now` 下执行】**——
 > 约定 22 默认走**攒批**：`postdev-writeback-1.md` 步骤 3.8 把变更记入
-> **受影响各族的增量册**（四族落点见 `.aidp/reference/开发期族增量.md`）后**直接跳到 Step X.4**，本步整段跳过。
-> 判定与收口规则单一信源 = `.aidp/reference/开发期族增量.md`。
+> **受影响各族的增量册**（四族落点见 `{{AIDP_HOME}}/reference/开发期族增量.md`）后**直接跳到 Step X.4**，本步整段跳过。
+> 判定与收口规则单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`。
 >
 > ⛔ 下方各步写的「自动触发 L1/L2/L3/L4」「随后自动级联」**只描述收口时的动作**，
 > **不是默认路径**。攒批下照此执行 = 写完台账又把四级跑一遍：攒批收益归零、还多一份台账，
@@ -26,7 +26,7 @@
 > 这里回填的是**开发期代码变更**，收口时**直接写进各族内容主文档正文**
 > ⛔ 不新建分册、不占 `NN_` 序号（那是产品侧 PRD/原型变更与口述累进的命名空间）。
 > `--supplement={NN}` 留给 **Phase 0B.1.1 口述累进**与产品侧 PRD/原型变更——那是产品会去读的交付物。
-> 两条路径**不共享 NN 锚定**：本段无需锚定 NN。落盘规则详见 `.aidp/reference/开发期族增量.md`「收口执行要点」第 3 条。
+> 两条路径**不共享 NN 锚定**：本段无需锚定 NN。落盘规则详见 `{{AIDP_HOME}}/reference/开发期族增量.md`「收口执行要点」第 3 条。
 
 3. **自动触发 L1 — 研发需求**：经 `/sprint-requirements {version} --ledger-cascade [--unattended]` 编排（**研发需求唯一入口**，内部以增量 prompt 驱动 `ux-logic-extractor`；★ **不直调 SKILL**——直调会跳过命令端的落盘归一 / 多系统拆分 / 头部元数据表 / AIDP 硬规范回检）→ **就地改** `docs/requirements/{version}/研发需求/01_研发需求.md`
 4. **自动触发 L2 — 详细设计**：`/sprint-design --ledger-cascade [--unattended]`：通过 Step 0.6.4.7 全扫代码现状 + Step 0.3 四象限对比，本批新增项会自动落入象限 ③「代码超前-补写」，由 dev-logic-architect 产出正文 → **就地改** `docs/design/detail/{version}/` 的 `01_详细设计.md`·`02_数据库设计.md`·`03_接口设计.md`（按实际范围）
@@ -90,7 +90,7 @@
    - 后端 CORS / 跳转 URL / 接口设计.md / 数据库 / Redis key 前缀（如复用 base 作为命名空间）
    - Nginx / Docker / K8s
 4. 如某消费者点本次确实无需联动 → 在「已联动消费者点」列以括号注明"无需联动 — 原因 XXX"
-5. 漏改的消费者点常导致下次"双前缀 404 / SSE 走错地址 / nginx 反代失效"等级联事故 —— 提交前用 `git diff --name-only` 与事实清单「路径消费者点」表对账，缺项要么补改要么注明"无需联动"
+5. 漏改的消费者点常导致下次"双前缀 404 / SSE 走错地址 / nginx 反代失效"等级联事故 —— `vcs_mode=git` 提交前用 `git diff --name-only`；`vcs_mode=none` 用 X.0.0 的本地 sha256 变更清单与事实清单「路径消费者点」表对账，缺项要么补改要么注明"无需联动"
 6. **★ 消费者点集合是"会变大"的、不止 base 改动才动本表**：Phase 1.3 Step 1「请求通道单一判据 + 消费者点登记门」在**新增请求通道**（新 composable / 工具 / `fetch`·`EventSource`·`WebSocket`）时就要往「路径消费者点」表**补登记新行**——本 Step X.6 管的是 base/context-path **改动时的联动**，二者互补。集合悄悄变大而无人登记，会让下次 base 变更漏掉新通道（双前缀 404 温床）。
 
 #### Step X.7：★ 维护配置项清单
@@ -104,7 +104,7 @@
 - **禁止**：① 在 .md 复抄整个配置文件（再大也别贴）；② 维护 key → 示例值的全量大表（已被代码文件本身覆盖）；③ 创建 `.env.example` / `application.example.yml` 等示例副本文件（真实文件 + 差异片段已足够，示例副本会双信源歧义）
 - **★ 分层也约束两份 .md 之间（部署流程 vs 配置项清单，Step X.8 联动）**：约定 25「同一份信息只在一处维护」不仅管"配置文件 vs .md"，也管 `部署流程/部署流程.md` 与 `配置文件/增量/配置项清单.md` **两份 .md 之间不得双写配置项内容**——**配置项明细/后果/敏感项加固归本清单**；**部署流程只声明"是否需要改 + 指向本清单"**（全部有默认值 → 一句"默认即可，见清单"；确有必填 → 只列 key 名、后果归清单）。分工口诀：**流程文档讲怎么做，清单讲配什么**。
 
-**触发条件**：本 Sprint 改动了任一配置文件（git diff 命中以下任一）**或新增/修改了代码内动态配置注入**：
+**触发条件**：本 Sprint 改动了任一配置文件（`vcs_mode=git` 据 git diff；`vcs_mode=none` 据 `sprint-dev.md` 开发前 `sprint-{NNN}-local-before.json` 与 X.0.0 的 `sprint-{NNN}-local-changes.json` 逐文件 sha256 前后态，按 `path` 过滤以下模式，含新增/删除）**或新增/修改了代码内动态配置注入**。无 Git 时清单缺失是 `evidence-missing`，不得将空 Git diff 解释为「无需更新配置项清单」：
 - 后端 Spring：`code/**/application*.{yml,yaml,properties}` / `code/**/bootstrap*.{yml,yaml,properties}`
 - 后端其他：`code/**/{config,settings}.{json,toml,ini,py}`
 - 前端：`code/**/.env*` / `code/**/vite.config.*` 中可配置常量段
@@ -152,7 +152,7 @@ ec:
 **首次创建 / 增量更新（同一套动作，幂等）**：
 
 0. **先建目录**：`mkdir -p docs/deployment/{version}/配置文件/增量`
-1. 取本 Sprint 的配置 diff（`git diff` 命中「触发条件」列出的文件 + 代码内动态配置注入新增的 key）
+1. 取本 Sprint 的配置变更（`vcs_mode=git` 用 `git diff`；`vcs_mode=none` 从 `memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json` 按上方配置路径过滤，逐条用 `before_sha256` / `after_sha256` 证实新增、修改、删除，再与当前文件内容及开发前快照对应文件的旧内容/本 Sprint 逐文件改动记录核对 key 级增删；快照只有哈希、不含旧内容，无法还原旧 key 时记 `evidence-missing` 并人工核对旧文件或按本版全部配置项保守审计，不得臆造删除项）+ 代码内动态配置注入新增的 key
 2. 新增项 → 追加进「1. 新增配置」对应分组代码块；删除项 → 追加进「2. 删除配置」，**按上面的缩进粒度写**
 3. nginx/compose/k8s 有改动 → 追加进「3. 运行时配置文件变更」（片段 + 位置 + 生效动作）
 4. **敏感项不另起段**，在新增代码块里对应行标 `# 必填·敏感`（发布期由 `全量/00_索引.md` 汇总成上线 checklist）
@@ -161,7 +161,7 @@ ec:
 
 **配置中心迁移操作**（用户手动触发，**不由命令自动判断**）：
 1. `git mv docs/deployment/{version}/配置文件/增量/配置项清单.md docs/deployment/{version}/配置文件/增量/配置项清单-{中心}.md`（如 `配置项清单-nacos.md`）
-2. 该迁移属**约定 37 全量轨**的承载变化：按 `.aidp/reference/约定细则-5.md` 更新 `配置文件/全量/00_索引.md`
+2. 该迁移属**约定 37 全量轨**的承载变化：按 `{{AIDP_HOME}}/reference/约定细则-5.md` 更新 `配置文件/全量/00_索引.md`
    （承载方式 / 文件索引 / 敏感项 checklist / 历史迁移四段均在那里）。
    ⛔ **不要**在本文件产出的「配置项清单」里改这四段 —— 上方 3 段结构里根本没有它们（此前这几步要求
    `Edit「1. 配置承载方式」表`/`「2. 配置文件索引」表`/`「5. 历史迁移」段`，那四个章节已被明令移除，

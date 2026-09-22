@@ -36,7 +36,7 @@
 对 `DERIVED_VARS` 里每个变量：
   - **有供给** = 全仓存在 `tick_flags.py set … <NAME>` / 在 `BASELINE_FALLBACK` / `DERIVED_FROM`
     / `FALLBACK_DEFAULT` / `DYNAMIC_FALLBACK` 之一（五者任一即可）；
-  - **有消费** = `.aidp/flows/` 或 `.aidp/commands/` 里出现 `$NAME` / `${NAME` 引用；
+  - **有消费** = `AIDP_HOME/flows/` 或 `AIDP_HOME/commands/` 里出现 `$NAME` / `${NAME` 引用；
   - **无供给 + 有消费 → ERROR**（判据恒取默认值、静默失效）；
   - **无供给 + 无消费 → WARN**（登记了但全仓没人用，属死登记，清理即可）；
   - 有供给 → OK。
@@ -45,18 +45,24 @@
 
 ## 用法
 
-    python3 .aidp/scripts/check_tick_var_supply.py [--root <仓库根>] [--json]
+    python3 AIDP_HOME/scripts/check_tick_var_supply.py [--root <仓库根>] [--json]
 
 退出码：`0`=全部有供给（或仅 WARN）/ `1`=检出无供给且被消费 / `2`=用法或读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
 import re
 import sys
 
-FLAGS_REL = ".aidp/scripts/autopilot_tick_flags.py"
-SCAN_DIRS = [".aidp/flows", ".aidp/commands"]
+FLAGS_REL = runtime_text('__AIDP_HOME__/scripts/autopilot_tick_flags.py', __file__)
+SCAN_DIRS = [runtime_text('__AIDP_HOME__/flows', __file__), runtime_text('__AIDP_HOME__/commands', __file__)]
 IGNORE_RE = re.compile(r"#\s*supply-check:\s*ignore")
 
 
@@ -218,7 +224,7 @@ def run(root):
     bl_keys = _baseline_fallback_keys(text)
     dyn = _dict_literal_names(text, "DYNAMIC_FALLBACK")
     writer_hay = []
-    for rel in list(SCAN_DIRS) + [".aidp/scripts"]:
+    for rel in list(SCAN_DIRS) + [runtime_text('__AIDP_HOME__/scripts', __file__)]:
         base = os.path.join(root, rel)
         if not os.path.isdir(base):
             continue

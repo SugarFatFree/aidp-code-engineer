@@ -1,7 +1,7 @@
 # /version · 版本规划流程详情 — 分片 8/8
 
 > 本片覆盖：**Step 2.5 progress / 2.6 activeContext / 2.7 更新版本 / 2.7.3 同步代码内应用版本号 / 2.7.4 收口上一版本变更台账 / 2.7.5 PRD快照 / 2.8 输出报告**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 ### Step 2.5：初始化 memory/{version}/{user}/progress.md
@@ -32,7 +32,7 @@
 **执行**（扫描落点 / 归一化 / deny-list / 写回口径均以脚本为单一信源，本处不复述）：
 
 ```bash
-python3 .aidp/scripts/check_version_identifier.py --version {version} --apply --json > /tmp/vid-plan-{version}.json
+python3 {{AIDP_HOME}}/scripts/check_version_identifier.py --version {version} --apply --json > /tmp/vid-plan-{version}.json
 VID_EXIT=$?
 ```
 
@@ -67,7 +67,7 @@ VID_EXIT=$?
 
 ### Step 2.7.4：★ 收口上一版本遗留的开发期变更台账（约定 22 攒批级联 · 收口点 2）
 
-> **单一信源 = `.aidp/reference/开发期族增量.md`**（台账格式 / 收口执行要点 / 跨版本落点 / 清理规则全在那份）。
+> **单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`**（台账格式 / 收口执行要点 / 跨版本落点 / 清理规则全在那份）。
 > **进入本步第一动作 = Read 该文件**，本处只说明触发与范围，不复述规则。
 
 - **触发**：**上一版本**（`{version}` 之前、按 SemVer 取最近）的**四族任一**增量册（含存量单册台账）
@@ -86,10 +86,10 @@ VID_EXIT=$?
   ```bash
   # ★ 落点门（模式 A）必须与终态门并列跑：二者正交——终态门只看「台账清没清」，
   #   落点门只看「改动落在哪」（主文档 ✅ / 中转册 ❌ / 新建 NN_ 分册 ❌）。
-  python3 .aidp/scripts/check_cascade_landing.py --worktree --version {上一版本} || exit 1
+  python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --worktree --version {上一版本} || exit 1
   # --transfer-to 支持逗号分隔多个目的地：拆四族后，条目按内容分派到哪一族要收口时才知道，
   # 故把当前版本四族册全部列为候选，任一找到痕迹即算转出到位。
-  python3 .aidp/scripts/check_cascade_landing.py --must-delete --version {上一版本} \
+  python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --must-delete --version {上一版本} \
     --transfer-to "docs/requirements/{version}/研发需求/_开发期需求增量.md,docs/design/detail/{version}/_开发期设计增量.md,docs/plans/{version}/_开发期计划增量.md,docs/testing/{version}/研发自测/_开发期用例增量.md"
   ```
   ① 断言**上一版本四族每一份都不存在**（有未决条目、打了 `LEDGER-ARCHIVED` 一律判失败——标记不替代删除）；

@@ -47,6 +47,12 @@ Step 3.3.9.5），但三处**全是纯文字、零机器校验**——执行体�
 fail-closed：base-ref 解析不了 / git 读不到 / 版本目录识别不出 / 台账读不出 → 非 0 退出，
 不假装通过（这类门一旦 fail-open，等于没有）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -54,7 +60,7 @@ import re
 import subprocess
 import sys
 
-# 四族目录模板（{v} = 版本号）；与 .aidp/reference/开发期族增量.md「收口执行要点」第 3 条对齐
+# 四族目录模板（{v} = 版本号）；与 AIDP_HOME/reference/开发期族增量.md「收口执行要点」第 3 条对齐
 FAMILIES = [
     ("需求", "docs/requirements/{v}/研发需求"),
     ("设计", "docs/design/detail/{v}"),
@@ -387,8 +393,8 @@ def _check_one_ledger(root, v, fam, rel, must_delete, transfer_to, pc, unparsed)
                                  "改写为变更内容与理由本身（增量册是中转站、不承担长期溯源），再真删"})
     if rel in unparsed:
         return (None, {"version": v, "family": fam, "path": rel, "reason": "unparsed",
-                       "detail": f"{label}增量册有实质内容却一条条目都解析不出——格式漂移，"
-                                 "无从证明已收口；请按 .aidp/templates/_开发期族增量.md 骨架修正"})
+                       "detail": runtime_text(f"{label}增量册有实质内容却一条条目都解析不出——格式漂移，"
+                                 "无从证明已收口；请按 __AIDP_HOME__/templates/_开发期族增量.md 骨架修正", __file__)})
     finfo = ((pc.get("versions", {}).get(v) or {}).get("families") or {}).get(fam)
     if finfo is None:
         return (None, {"version": v, "family": fam, "path": rel, "reason": "not-scanned",
@@ -510,7 +516,7 @@ def main():
             else:
                 sys.stderr.write("   收口 = 级联 + 删除，删除不是可选收尾。"
                                  "⛔ 没有\"打标记留档\"这条出路——标记不替代删除\n")
-            sys.stderr.write("   详规 `.aidp/reference/开发期族增量.md`「清理规则」\n")
+            sys.stderr.write(runtime_text('   详规 `__AIDP_HOME__/reference/开发期族增量.md`「清理规则」\n', __file__))
         return 0 if res.get("ok") else 1
 
     res = run(args.root, args.base_ref, args.version, args.worktree)
@@ -528,9 +534,7 @@ def main():
         for v in res["violations"]:
             sys.stderr.write(f"   · {v['path']}\n     应落 → {v['expected']}\n"
                              f"     原因：{v['reason']}\n")
-        sys.stderr.write("   收口级联**直接改该族内容主文档**（`01_` 等）+ 可刷 `00_索引.md`；"
-                         "⛔ 不新建分册、不占 `NN_<业务主题>.md` 命名空间。\n"
-                         "   详规 `.aidp/reference/开发期族增量.md`「收口执行要点」第 3 条\n")
+        sys.stderr.write(runtime_text('   收口级联**直接改该族内容主文档**（`01_` 等）+ 可刷 `00_索引.md`；⛔ 不新建分册、不占 `NN_<业务主题>.md` 命名空间。\n   详规 `__AIDP_HOME__/reference/开发期族增量.md`「收口执行要点」第 3 条\n', __file__))
     return 0 if res.get("ok") else 1
 
 

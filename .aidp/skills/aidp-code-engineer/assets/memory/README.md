@@ -1,7 +1,7 @@
 # memory/ — AI 记忆系统（Memory Bank）
 
 > AIDP 范式的 AI 记忆系统，解决 AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）无跨会话记忆的问题。
-> 完整规范见 [`docs/init/03_memory文件详细规范.md`](../docs/init/03_memory文件详细规范.md)。
+> 完整规范见 [`docs/init/03_memory文件详细规范.md`](../docs/init/03_memory文件详细规范.md)。模板仓库 `.aidp/` 仅是维护源；下游运行契约位于 `{{AIDP_HOME}}/`（仅 Claude 为 `.claude/aidp`，有 Codex / DSH 为 `.agents/aidp`），脚本引用一律指向下游运行目录。
 
 ## 分层结构
 
@@ -42,13 +42,13 @@
 | 文件 | 内容 | 入库 | 写入方 |
 |------|------|------|--------|
 | `.sprint-autopilot-baseline.json` | ★ `/sprint-autopilot`（开发链路）与 `/sprint-aiauto-test`（测试链路）**共享的版本状态机 baseline**（项目级扁平 `versions.{V}` + `current_build` + 项目级运行时记录 `project_state`），是两条链路判断"当前开发/被测版本"的唯一依据 | ✅ 入库共享 | 两命令 |
-| `.aidp/`（目录） | 本地运行态，路径单一信源 = `.aidp/scripts/aidp_paths.py`：里程碑通知台账、Stop 护栏计数 `stop-guard-count` 与放行留痕 `stop-guard-skips.jsonl`（滚动保留最近 50 条）、**本地告警台账 `alerts.jsonl`**（冻结 / 链路失联 / 通知未送达恒追加一行，无通知渠道时"停得响"靠它）、并发写锁 `locks/`（0 字节 `flock` 载体）、7×24 调度日志 `logs/`、memory 写前快照 `memory-snapshot/` | ❌ 已 gitignore（纯本地）| `aidp_paths.py` 各写方（`baseline_edit.py` / `notify.py` / `autopilot_fail_handle.py` / `agent_loop.sh` / `aidp_scheduler.py` / Stop hook 等）|
+| `.aidp/`（目录） | 本地运行态，路径单一信源 = `{{AIDP_HOME}}/scripts/aidp_paths.py`：里程碑通知台账、Stop 护栏计数 `stop-guard-count` 与放行留痕 `stop-guard-skips.jsonl`（滚动保留最近 50 条）、**本地告警台账 `alerts.jsonl`**（冻结 / 链路失联 / 通知未送达恒追加一行，无通知渠道时"停得响"靠它）、并发写锁 `locks/`（0 字节 `flock` 载体）、7×24 调度日志 `logs/`、memory 写前快照 `memory-snapshot/` | ❌ 已 gitignore（纯本地）| `aidp_paths.py` 各写方（`baseline_edit.py` / `notify.py` / `autopilot_fail_handle.py` / `agent_loop.sh` / `aidp_scheduler.py` / Stop hook 等）|
 | `.autopilot-stop-guard-off` | Stop 护栏人工禁用逃生舱（存在即全程放行，⛔ 用完即删）| ❌ 已 gitignore | 人工创建 |
 | `.sprint-autopilot-credentials.json` | 测试账号（明文敏感）| ❌ 已 gitignore + `chmod 600` | `/sprint-aiauto-test` Phase 0.4「测试账号加载」（`flows/sprint-aiauto-test/phase-0-7.md`）—— ⛔ 不是 `/sprint-autopilot`：其 `phase-0-8.md` 明写「不在本命令收集」 |
-| `_facts/code-inventory.json` | 代码事实增量缓存（API 端点 / 数据库表 / 前端路由 / 页面 / 配置，sha 比对刷新）| ❌ 已 gitignore（可由代码重建，无需入库）| `.aidp/scripts/code_inventory.py` |
-| （无落盘台账） | 跨版本需求检索走**读时查询**：`requirement_query.py search` 现读现搜各版研发需求正文、`supersessions` 聚合各版 `98_语义变更与需求作废.json` | — 无产物、不入库 | `.aidp/scripts/requirement_query.py` |
+| `_facts/code-inventory.json` | 代码事实增量缓存（API 端点 / 数据库表 / 前端路由 / 页面 / 配置，sha 比对刷新）| ❌ 已 gitignore（可由代码重建，无需入库）| `{{AIDP_HOME}}/scripts/code_inventory.py` |
+| （无落盘台账） | 跨版本需求检索走**读时查询**：`requirement_query.py search` 现读现搜各版研发需求正文、`supersessions` 聚合各版 `98_语义变更与需求作废.json` | — 无产物、不入库 | `{{AIDP_HOME}}/scripts/requirement_query.py` |
 
-> ⛔ **并发写铁律**：`.sprint-autopilot-baseline.json` 由**两条 `/loop` 并发读写**（开发链路 10m tick + 测试链路 5m tick），**任何写入必须经 `python3 .aidp/scripts/baseline_edit.py`（`memory/.aidp/locks/` 下加锁 + 锁内重读 + 原子替换）**——严禁直接 `Write` / `jq > file` / 手工编辑该 JSON，否则会丢写、互相覆盖版本状态。读取可直接读。
+> ⛔ **并发写铁律**：`.sprint-autopilot-baseline.json` 由**两条 `/loop` 并发读写**（开发链路 10m tick + 测试链路 5m tick），**任何写入必须经 `python3 {{AIDP_HOME}}/scripts/baseline_edit.py`（`memory/.aidp/locks/` 下加锁 + 锁内重读 + 原子替换）**——严禁直接 `Write` / `jq > file` / 手工编辑该 JSON，否则会丢写、互相覆盖版本状态。读取可直接读。
 
 ## 目录结构
 

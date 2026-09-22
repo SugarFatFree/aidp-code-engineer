@@ -1,4 +1,4 @@
-# .aidp/rules/ — 路径限定规则（Path-Scoped Rules）
+# {{AIDP_HOME}}/rules/ — 路径限定规则（Path-Scoped Rules）
 
 > 本目录承载 AIDP **代码向核心约定的详规**。每个 `*.md` 文件顶部用 YAML frontmatter 声明 `paths:` glob；**当 Claude Code 编辑的文件路径匹配任一 glob 时，该规则文件全文才进入上下文，不匹配则完全不加载**——把"只在写某类代码时才需要的规则"从每会话常驻的项目记忆文件（AGENTS.md / CLAUDE.md）里挪出来，既不丢功能又省常驻上下文。
 
@@ -13,11 +13,11 @@
 ## ★ 按需安装的可选规则（默认不在本目录）
 
 除上表三份**恒在**的规则外，还有一类**可选规则**：它们描述绝大多数项目不启用的能力，
-**默认存放在 `.aidp/templates/optional-rules/`（不被本目录的加载机制扫描），启用后才安装进来**。
+**默认存放在 `{{AIDP_HOME}}/templates/optional-rules/`（不被本目录的加载机制扫描），启用后才安装进来**。
 
 | 可选规则 | 模板位 | 安装命令 | 承载内容 |
 |------|------|------|------|
-| `webmcp.md` | `.aidp/templates/optional-rules/webmcp.md` | `python3 .aidp/scripts/check_webmcp.py --install-rule` | 前端 WebMCP：secure context 运行前提 / 三层 AND 开关与时序 / 能力入口 API 表面实测事实 / 10 条实现铁律 |
+| `webmcp.md` | `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` | `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` | 前端 WebMCP：secure context 运行前提 / 三层 AND 开关与时序 / 能力入口 API 表面实测事实 / 10 条实现铁律 |
 
 > ★ **为什么不直接放本目录**：本目录的加载是**路径触发**的——只要编辑的文件命中 `paths:`，
 > **整份文件就进上下文**。可选规则若常驻这里，**绝大多数根本不启用该能力的项目**每次编辑对应代码
@@ -41,10 +41,10 @@
 >   否则每个启用了该能力的下游都会永久顶着一条假的"脚手架孤儿文件"告警。
 >
 > **改动一律改模板位**（那是权威源）；装到本目录的是副本，改了无法回流、下次重装被覆盖。
-> 启用判定的**唯一实现** = `python3 .aidp/scripts/check_webmcp.py --detect`，各处一律调它、
+> 启用判定的**唯一实现** = `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect`，各处一律调它、
 > **禁止各自 grep PRD**——一处判错就会给未启用项目凭空长出告警，直接违反其「默认关闭」总原则。
 
-项目记忆文件（AGENTS.md / CLAUDE.md）的「核心约定」段只保留这些约定的**一行索引锚点**（编号 1–41 不变），正文写「详规见 `.aidp/rules/X`」——「见约定 N」始终能解析到索引摘要 + 本目录详规。
+项目记忆文件（AGENTS.md / CLAUDE.md）的「核心约定」段只保留这些约定的**一行索引锚点**（编号 1–41 不变），正文写「详规见 `{{AIDP_HOME}}/rules/X`」——「见约定 N」始终能解析到索引摘要 + 本目录详规。
 
 ## frontmatter 格式
 
@@ -61,4 +61,4 @@ paths:                    # 必填，glob 模式列表；应尽量具体、只�
 
 ## 维护边界（约定 16）
 
-本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更详规 → 改模板项目的 `.aidp/rules/` 本体 → 镜像进脚手架 bundle（rules **与重跑 `sync_memory_md.py` 无关**：不进 tpl 内联，由 `scaffold.py::sync_gated` 直接下发）。下游若确需项目特化，改用**嵌套 `code/{子项目}/AGENTS.md`（Claude Code 下为 `CLAUDE.md`）** 承载项目专属规则（属项目保护范围、不被覆盖）。
+本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更详规 → 改模板项目的 `{{AIDP_HOME}}/rules/` 本体 → 镜像进脚手架 bundle（rules **与重跑 `sync_memory_md.py` 无关**：不进 tpl 内联，由 `scaffold.py::sync_gated` 直接下发）。下游若确需项目特化，改用**嵌套 `code/{子项目}/AGENTS.md`（Claude Code 下为 `CLAUDE.md`）** 承载项目专属规则（属项目保护范围、不被覆盖）。

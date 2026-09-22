@@ -11,7 +11,7 @@
 > 都以「开始先读发布欠账.md」为驱动。**本步任何一条欠账写完后立即**：
 >
 > ```bash
-> VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version 2>/dev/null)   # ⛔ 跨围栏取空会 git add 到 docs/audit//
+> VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version 2>/dev/null)   # ⛔ 跨围栏取空会 git add 到 docs/audit//
 > if [ -n "$VERSION" ] && [ -n "$(git status --porcelain docs/audit/)" ]; then
 >   git add "docs/audit/$VERSION/" && git commit --amend --no-edit
 >   # ⛔ 若 tag 已推送则改用独立提交，⛔ 不得 amend 已推送的提交：
@@ -29,14 +29,14 @@
   ```bash
   set -e
   # ★ 自取版本号（⛔ 别写 `${VERSION:?}` 自引用，见 rationale）
-VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 .aidp/scripts/baseline_edit.py current-version);; esac
+VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version);; esac
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
-BE="python3 .aidp/scripts/baseline_edit.py"
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
   TAG_NAME=$($BE --version "$VERSION" get release_tag_name --default "")
   # ★ 跨围栏取授权位（Step 3.4.2 已落盘），⛔ 别读 shell 变量：取不到即空
   FORCE_AUTHORIZED=$($BE --version "$VERSION" get release_force_authorized --default 0)
   if [ "$FORCE_AUTHORIZED" != "1" ]; then
-    python3 .aidp/scripts/release_debt.py add --version "$VERSION" --step 3.4.4 \
+    python3 {{AIDP_HOME}}/scripts/release_debt.py add --version "$VERSION" --step 3.4.4 \
       --title "远端 tag 受保护、降级删除未获授权" \
       --locate "tag $TAG_NAME（远端已存在且拒绝强推）；未执行删远端 tag（破坏性动作须显式授权）" \
       --redo "交互式重跑 /version $VERSION 在授权门选①，或改用新补丁号"

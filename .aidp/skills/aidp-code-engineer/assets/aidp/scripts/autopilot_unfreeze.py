@@ -27,6 +27,12 @@
 `autopilot_unfreeze.py <reason>`：**仅当**当前 `preflight_fail_reason` 恰等于 `<reason>` 时
 清三件套；不等 / 无冻结 / baseline 不存在一律 no-op 且 exit 0（幂等、绝不误清他人作用域）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import project_root, runtime_relpath, runtime_text
 import argparse
 import json
 import os
@@ -45,7 +51,7 @@ BLOCKED_PREFIX = "frozen:preflight-incomplete@"
 def unfreeze(reason, root="."):
     if reason not in VALID:
         return {"ok": False, "error": "unknown-reason", "valid": sorted(VALID)}
-    be = os.path.join(root, ".aidp", "scripts", "baseline_edit.py")
+    be = os.path.join(root, runtime_relpath("", __file__), "scripts", "baseline_edit.py")
     if not os.path.isfile(be):
         return {"ok": True, "cleared": False, "note": "baseline_edit.py 不存在，no-op"}
     try:
@@ -233,7 +239,7 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
                 for d in ("正式用例", "测试验收", "测试执行", "研发自测")]
         pats += [os.path.join(root, "docs/testing", version, d, "*.md")
                  for d in ("正式用例", "测试验收", "测试执行", "研发自测")]
-        pats += [os.path.join(root, ".aidp/skills/*/config.json"),
+        pats += [os.path.join(root, runtime_text('__AIDP_HOME__/skills/*/config.json', __file__)),
                  os.path.join(root, "memory/.sprint-autopilot-credentials.json")]
         for pat in pats:
             for f in glob.glob(pat, recursive=True):
@@ -316,7 +322,7 @@ def notify_reprobe(root="."):
 
 
 # ── 环境类自动复探 / 显式解冻 / 人工解冻 ──────────────────────────────────────
-ENV_ENUM_FILE = os.path.join(".aidp", "flows", "sprint-aiauto-test", "rationale.md")
+ENV_ENUM_FILE = os.path.join(runtime_relpath("", __file__), "flows", "sprint-aiauto-test", "rationale.md")
 REPROBE_BASE_SECONDS = 20 * 60        # 第 0 次复探：冻结后 20 分钟
 REPROBE_MAX_INTERVAL = 4 * 3600       # 单次间隔封顶 4 小时
 REPROBE_MAX_ATTEMPTS = 10             # 用尽后转人工（发一次告警）
@@ -331,7 +337,7 @@ STREAK_FIELDS = ["dev_fail_streak", "dev_fail_phase", "probe_fail_streak", "push
 
 def env_class_reasons(root=None):
     """从冻结枚举权威表解析「解冻类别 = 环境类」的 reason 集合（⛔ 不在调用方手抄 case 列表）。"""
-    base = root or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    base = root or str(project_root(__file__))
     p = os.path.join(base, ENV_ENUM_FILE)
     out = set()
     try:

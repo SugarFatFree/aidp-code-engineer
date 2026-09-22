@@ -4,7 +4,7 @@
 
 ## 为什么需要本脚本
 
-AIDP 的命令主体被反复「瘦身」：`Step N` 的正文外置到 `.aidp/flows/<命令>/*.md` 分片，
+AIDP 的命令主体被反复「瘦身」：`Step N` 的正文外置到 `AIDP_HOME/flows/<命令>/*.md` 分片，
 命令里只留一张骨架索引表。**外置时最容易漏改的就是表格里的站内锚点** —— 目标标题已经
 搬走了，`[Step 2.4.7](#step-247...)` 还留在原地，点进去哪儿也不去。
 
@@ -35,12 +35,18 @@ AIDP 的命令主体被反复「瘦身」：`Step N` 的正文外置到 `.aidp/f
 
 ## 用法
 
-    python3 .aidp/scripts/check_md_anchors.py                 # 默认扫 AIDP 契约面
-    python3 .aidp/scripts/check_md_anchors.py --json
-    python3 .aidp/scripts/check_md_anchors.py --root . --path .aidp/commands
+    python3 AIDP_HOME/scripts/check_md_anchors.py                 # 默认扫 AIDP 契约面
+    python3 AIDP_HOME/scripts/check_md_anchors.py --json
+    python3 AIDP_HOME/scripts/check_md_anchors.py --root . --path AIDP_HOME/commands
 
 退出码：0 = 无死锚点；1 = 检出死锚点；2 = 用法/读取错误。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -48,11 +54,11 @@ import re
 import sys
 
 DEFAULT_PATHS = [
-    ".aidp/commands",
-    ".aidp/agents",
-    ".aidp/flows",
-    ".aidp/reference",
-    ".aidp/rules",
+    runtime_text('__AIDP_HOME__/commands', __file__),
+    runtime_text('__AIDP_HOME__/agents', __file__),
+    runtime_text('__AIDP_HOME__/flows', __file__),
+    runtime_text('__AIDP_HOME__/reference', __file__),
+    runtime_text('__AIDP_HOME__/rules', __file__),
     "docs/init",
 ]
 
@@ -67,7 +73,7 @@ FENCE_OPEN_RE = re.compile(r"^\s{0,3}(`{3,}|~{3,})\s*(\S.*)?$")
 # 站内锚点：](#xxx)，排除跨文件的 ](other.md#xxx)
 INPAGE_LINK_RE = re.compile(r"\]\(#([^)\s]+)\)")
 # ★ 跨文件锚点 `](other.md#anchor)`：原先整类移交给「路径断链检查」，但**接收方并不存在**
-#   （`.aidp/scripts/` 下没有任何脚本做跨文件锚点校验）—— 于是这一整类死锚点全仓无人管。
+#   （`AIDP_HOME/scripts/` 下没有任何脚本做跨文件锚点校验）—— 于是这一整类死锚点全仓无人管。
 #   现就地补上：路径按引用者所在目录解析，目标文件在 → 用它的 slug 集合判锚点。
 #   目标文件不在 → 交给别的路径检查，本门不报（避免与路径类检查双写同一结论）。
 CROSSFILE_LINK_RE = re.compile(r"\]\(([^)#\s]+\.md)#([^)\s]+)\)")

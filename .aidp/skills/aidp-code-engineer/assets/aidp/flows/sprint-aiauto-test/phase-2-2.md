@@ -11,7 +11,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 > ⛔ **派子 Agent、不 `Skill`-invoke**：执行子 Agent **拿不到 Skill 工具**（即便 `tools:*` 也没有），主 Agent 必须在 Task prompt 里要求子 Agent 先用 `Read` 读方法论。理据见 `rationale.md`。
 >
 > **子 Agent prompt 必含的路径清单（只给路径、不贴正文）**：
-> - `.aidp/skills/auto-test-runner/SKILL.md` + `references/execution-methodology.md`（完整执行方法论）
+> - `{{AIDP_HOME}}/skills/auto-test-runner/SKILL.md` + `references/execution-methodology.md`（完整执行方法论）
 > - `references/driver-adapters.md` + 被测端对应的 `references/driver-<端>.md`（本命令为 Web 端）+ `references/usecase-format.md`（解析用例）
 > - 本模块用例文件路径 + run-context 文件路径
 > - 要求：**读完再驱动浏览器执行**；跑完回传 compact `{module,total,pass,fail,block,evidence_dir,defects[]}`
@@ -19,7 +19,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 >   要求逐条给出三选一并写进 `note`：仍 block（原因不变）/ 仍 block（原因变更，须说明）/ 已解锁→实际结果。
 >   ⛔ 照抄 = 未复评（收尾门 3q 拦缺席与空 `note`）。理据见 `rationale.md`。
 > - **执行选集**：`SELECT_MODE != all` 时，prompt 要求子 Agent 建 tasks.md 时带选集参数——
->   `python3 .aidp/skills/auto-test-runner/scripts/tasks_state.py init <用例源> -o <tasks.md> --select $SELECT_MODE`。
+>   `python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/tasks_state.py init <用例源> -o <tasks.md> --select $SELECT_MODE`。
 >   ⚠️ `select` **不是 run-context 字段**（SKILL 侧仅 `tasks_state.py init` 的 CLI 参数），必须经 prompt 传；
 >   脚本会自动在 tasks.md 头部写「本轮为子集」告示 +「准则仅对子集成立、新 build 回归轮禁用选集」提醒。
 
@@ -36,7 +36,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 | 执行选集 `SELECT_MODE` | `--select` 给出则该值，否则 `all`；**无人值守 / 编排链内调用 / 新 build 回归轮一律强制 `all`**（见命令主体注意事项 6bis）| 本命令 flag |
 | ★ DB 连接（约定 33 缺口 3）| 「测试环境与账号」§五 DB 连接段的 datasource / DB MCP 名 **+ `environment`（SKILL 明令必填、禁留空；缺则填 `{待用户填写}` 并在报告点名）**——⛔ 漏传不报错，只让归属落 `unverified`、`[双源对账]` 用例整批降级 （缺则回退后端 `application.yml` 生效 profile）| Phase 0.0.5 读配置 |
 | ★ 跨系统前置数据（约定 33 缺口 4）| 「测试环境与账号」§三/§四的**联动系统**入口 + 账号 + §五对应 DB | Phase 0.0.5 读配置 |
-| 存活心跳 `heartbeat_cmd` | `python3 .aidp/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now` | ★ 长批次续写测试链路心跳（开发链路据此判「测试链路存活」）；主 Agent 每收回一个执行子 Agent 也执行一次 |
+| 存活心跳 `heartbeat_cmd` | `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now` | ★ 长批次续写测试链路心跳（开发链路据此判「测试链路存活」）；主 Agent 每收回一个执行子 Agent 也执行一次 |
 | 单步等待上限 | 每步 `${OP_TIMEOUT}s` / 首开 `${NAV_TIMEOUT}s` | Phase 0.0.6 用户确认 / 无人值守默认值（见 2.2.1）|
 | 测试产物目录 | `docs/reports/${TARGET_VERSION}/AI测试报告/` | skill 在此下按其契约自建 `build-${BUILD}/round-{M}/`（含 tasks.md / results/ / evidence/）；BUILD 由 Phase 0.2 读 |
 | 证据归档目录 | **不覆盖，由 skill 按契约派生** = `build-${BUILD}/round-{M}/evidence/{TC-ID}-{step}.png` | ★ 尊重 auto-test-runner 落盘契约（约定 21，命令端不强加扁平/role 路径）；命令端 Phase 3.2.5 再从此处**消费/归集** skill 截图到报告 `screenshots/${BUILD}/` 供 SPA 渲染 |
@@ -44,7 +44,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 
 > ★ **约定 33 配套边界（约定 21）**：命令端只负责把「DB 连接 / 跨系统前置数据」作为 run-context 参数**交给** auto-test-runner；**用起来**（DB 断言、前置段执行）以 auto-test-runner SKILL 为单一信源（`result-schema` 的 `db_assertion` 字段），命令端不复述、不实现。
 
-派单后（主 Agent **每收回一个执行子 Agent 即执行一次 `python3 .aidp/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now`**，长批次期间心跳不陈旧）各执行子 Agent 按 auto-test-runner 执行流程（第零步~第四步）分模块批量跑完、断点可续、实时打印进度（见 2.2.2），产出每条用例 `results/{TC-ID}.json`（`status`=pass/fail/block/**na** + `evidence` 截图摘要+路径）+ `tasks.md` 进度 + 固定结构报告。命令端**等 skill 跑完**再进 2.4（运行时错误后处理）+ Phase 3（AI测试报告 HTML）。
+派单后（主 Agent **每收回一个执行子 Agent 即执行一次 `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now`**，长批次期间心跳不陈旧）各执行子 Agent 按 auto-test-runner 执行流程（第零步~第四步）分模块批量跑完、断点可续、实时打印进度（见 2.2.2），产出每条用例 `results/{TC-ID}.json`（`status`=pass/fail/block/**na** + `evidence` 截图摘要+路径）+ `tasks.md` 进度 + 固定结构报告。命令端**等 skill 跑完**再进 2.4（运行时错误后处理）+ Phase 3（AI测试报告 HTML）。
 
 > ★ **无人值守一致**：auto-test-runner 执行不中途等人、阻塞标 block 继续；run-context 缺失项由 Phase 0 一次性收全（0.0.6），委派时不再追问。
 > ✅ **运行时错误对接已就绪**：`result-schema.json` 的 `runtimeErrors[]` 必填 `type`/`message`/`severity`，命令端只消费、不重算。字段全表见 `rationale.md`「运行时错误对接」。

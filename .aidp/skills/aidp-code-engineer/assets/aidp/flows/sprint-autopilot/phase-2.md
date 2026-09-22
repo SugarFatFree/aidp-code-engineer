@@ -19,12 +19,12 @@
 
    ```bash
    : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"   # ★ 统一变量名 + 兜底默认（未定义时 jq 会读 stdin 静默失败，streak 永不落盘）
-   BE="python3 .aidp/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
    # 时间一律 epoch 数值比较：ISO8601 的 "+08:00" 与 "Z" 两种时区写法混排时，字符串比较必误判
    to_ts() { date -d "$1" +%s 2>/dev/null || echo 0; }
    # ★ PRE_RELEASE_VERSION 由 Phase 0.3.4 选出（另一分片、另一次 Bash 调用）→ 必须读回；
    #   取空会让下面所有 jq 路径拼成 `.versions."".…` 恒取空 → 双前置门恒判"未部署/未收敛"。
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    DEP_MODE=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".deployment_mode // \"\"" "$BASELINE_FILE")
    LAST_DEP=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".last_deployed_at // \"\"" "$BASELINE_FILE")
    # 部署意图（mode≠none = 本应部署 + 需浏览器实测）
@@ -53,7 +53,7 @@
      echo "⛔ 0a 部署就绪未过：$PRE_RELEASE_VERSION 部署模式=${DEP_MODE:-<未写,PRD意图非none>} 但 last_deployed_at 为空 → 本 tick 不归档"
      echo "   → 需经 Phase 3.2.1 重新部署；--target $PRE_RELEASE_VERSION 可人工点名重跑部署"
      # 记账→判阈→冻结四件套→发 #4 一次做完（⛔ 「发 #4」写成注释 = 停得住但停不响）
-     python3 .aidp/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
        --phase 2-prerelease-deploy --reason deploy-unreachable \
        --streak-key prerelease_deploy_block_streak \
        --threshold "${PRERELEASE_DEPLOY_BLOCK_THRESHOLD:-3}" \
@@ -111,7 +111,7 @@ PY
        if [ "$TEST_LOOP_ALIVE" = "1" ]; then
          # 暂缓必须有上限（理据见 rationale.md）：记账→判阈→冻结四件套（含
          # unconverged_frozen_head 解冻快照）→发 #4，一次调用做完；未达阈只记账不发通知。
-         python3 .aidp/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
+         python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
            --phase 2-prerelease-unconverged --reason unconverged \
            --streak-key prerelease_test_hold_streak \
            --threshold "${PRERELEASE_TEST_HOLD_FREEZE:-12}" \
@@ -121,7 +121,7 @@ PY
          TLM=$($BE --version "$PRE_RELEASE_VERSION" get test_loop_missing_streak --default 0)   # ⛔ 只读不 bump：记账唯一落点在下方 fail_handle，两处都记会让阈值提前一半到达
          BLOCKED=$(jq -r '.aiauto_blocked_reason // ""' "$BASELINE_FILE")
          echo "⚠️ 0b 本版需浏览器实测但**测试链路不可用**（${BLOCKED:+测试侧已阻塞：$BLOCKED；}${BLOCKED:-无近期 aiauto_test_heartbeat_at}，连续 ${TLM} tick）→ 准发布暂缓；请挂第二条 loop 「/loop 5m /sprint-aiauto-test --unattended」或先解掉测试侧阻塞"
-         python3 .aidp/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
+         python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
            --phase 2-prerelease-testloop --reason config-missing \
            --streak-key test_loop_missing_streak \
            --threshold "${TEST_LOOP_MISSING_THRESHOLD:-3}" \
@@ -206,9 +206,9 @@ PY
    - 失败 → 走「失败处置」流程（⛔ 不是只写这一句：「失败处置」= 记账 + 判阈 + 冻结四件套 + 发 #4 五步，必须**可执行地**跑）：
 
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
   # ⛔ 版本必须是 `PRE_RELEASE_VERSION`（理据见 rationale.md「Phase 2 的失败处置传哪个版本」）
-  python3 .aidp/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
     --phase 2-prerelease --reason release-blocked \
     --why "准发布归档失败：归档流程 Step 3.1~3.6 未走完"
   # 退出码：0=已记账让位本 tick／3=已冻结（达阈或无唤醒源）／2=入参错（⛔ 此时什么都没写）
@@ -220,8 +220,8 @@ PY
    声称已写、实际没写。字段恒空 ⇒ 该版本永远留在 `current-version` 候选集里，
    状态机不进 S3，测试链路持续重测**已归档**的版本。
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-   python3 .aidp/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" \
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" \
      set internal_released_at @now
    ```
 
@@ -236,9 +236,9 @@ PY
 
 5. **★ 本片收尾必写 `run_state`（分片末尾硬动作，见 `invariants.md`「阶段推进不变式」——漏写即断点续跑失效）**：
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    # ⛔ next_phase 恒 done（理由见 rationale.md「归档版的游标不得代写下一版的阶段」）
-   python3 .aidp/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" \
+   python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" \
      run-state "2-prerelease" "done" "" \
      --summary "准发布归档完成（--no-tag），已写 internal_released_at，#pre-done 已发" --pending ""
    ```

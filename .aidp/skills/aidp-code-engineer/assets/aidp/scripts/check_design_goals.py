@@ -27,9 +27,15 @@ r"""check_design_goals.py — `设计目标.md` 的**指纹棘轮 + 实现名词
 下游项目没有 `设计目标.md`（模板专属、不下发）→ 直接 INFO 跳过、退出码 0。
 
 用法：
-    python3 .aidp/scripts/check_design_goals.py [--root .] [--json]
-    python3 .aidp/scripts/check_design_goals.py --update-baseline   # 人工定基
+    python3 AIDP_HOME/scripts/check_design_goals.py [--root .] [--json]
+    python3 AIDP_HOME/scripts/check_design_goals.py --update-baseline   # 人工定基
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import hashlib
 import json
@@ -39,7 +45,7 @@ import sys
 
 GOAL_RE = re.compile(r"^-\s+\*\*(G-[A-Z]+-\d+)\*\*\s*[—-]\s*(.+?)\s*$")
 GROUP_RE = re.compile(r"^###\s+(G-[A-Z]+)\s")
-BASELINE = ".aidp/scripts/design-goals-baseline.txt"
+BASELINE = runtime_text('__AIDP_HOME__/scripts/design-goals-baseline.txt', __file__)
 DOC = "设计目标.md"
 
 # ★ 实现名词模式：出现即说明这条写的是"怎么做"，不是"要达成什么"。
@@ -206,7 +212,7 @@ def main():
             print("  ⛔ `设计目标.md` 轻易不得更改：命令天天改、目标跟着动，审计就退化成")
             print("     「拿今天的实现核对今天刚按实现改过的目标」——恒绿且毫无意义。")
             print("     确因【需求变化】要改目标：先改本文件、再改实现，然后由人跑")
-            print("     `python3 .aidp/scripts/check_design_goals.py --update-baseline`。")
+            print(runtime_text('     `python3 __AIDP_HOME__/scripts/check_design_goals.py --update-baseline`。', __file__))
         else:
             extra = ("，新增 %d 条" % len(added)) if added else ""
             print("[OK] 设计目标 %d 条：指纹与 baseline 一致、无实现名词%s" % (len(goals), extra))

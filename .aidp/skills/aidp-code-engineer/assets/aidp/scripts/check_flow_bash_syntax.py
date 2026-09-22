@@ -41,12 +41,18 @@ bash 会把 `<` 读成输入重定向 → 报假语法错。实测全仓 146 个
     <!-- bashsyntax-check: ignore-file 理由 -->  整份文件豁免
 
 用法:
-    python3 .aidp/scripts/check_flow_bash_syntax.py [--root <仓库根>] [--json]
+    python3 AIDP_HOME/scripts/check_flow_bash_syntax.py [--root <仓库根>] [--json]
 
 退出码: 0 = 全部通过；1 = 有语法错；2 = 环境错（无 bash）。
 """
 
 from __future__ import annotations
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 
 import argparse
 import json
@@ -117,7 +123,7 @@ def iter_fences(text: str):
 def run(root: Path):
     findings, scanned, waived = [], 0, 0
     for d in SCAN_DIRS:
-        base = root / ".aidp" / d
+        base = root / runtime_relpath("", __file__) / d
         if not base.is_dir():
             continue
         for dirpath, dirnames, filenames in os.walk(base):

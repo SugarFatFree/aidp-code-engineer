@@ -44,7 +44,7 @@ PRD_ROOT="${1:-docs/requirements/}"   # 用户传入 = 优先；否则默认 doc
 # 校验
 if [ ! -d "$PRD_ROOT" ]; then
   # ⛔ 不裸 exit 1（/loop 每 tick 重撞、零告警）：内联记账，口径同 phase-0-3.md 的 `_preflight_fail`
-  BE="python3 .aidp/scripts/baseline_edit.py"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
   S=$($BE bump preflight_fail_streak); $BE set preflight_fail_reason "prd-root-missing"
   # 无唤醒源（--once / 无 /loop）时没有下一 tick 叠 streak ⇒ 阈值恒不可达、永不熔断
   HAS_WAKE_SOURCE=$($BE get autopilot.wake_source_this_tick --default 0)
@@ -64,17 +64,17 @@ if [ ! -d "$PRD_ROOT" ]; then
   # ★ 发 #4：⛔「发 #4」必须是这一行命令，不是一句注释——PRD root 缺失是整条链路最上游的门，
   #   它一旦把版本挡住而通知渠道零消息，表现就是「挂着跑却什么都没发生」，无人会来看终端。
   #   ⛔ 本步在选版之前，无版本号 ⇒ **不带 `--node`**（notify 对「有 --node 缺 --version」发送前 fail-closed，rc=2 一个字节都发不出）。
-  python3 .aidp/scripts/notify.py --alert --auto --header-color red \
+  python3 {{AIDP_HOME}}/scripts/notify.py --alert --auto --header-color red \
     --title "前置受阻：PRD 目录不存在" \
     --section "PRD root 不存在：$PRD_ROOT（连续第 $S 次）。请确认 docs/requirements/ 下的产品输入已就位后重触发。"
   NRC=$?
   case "$NRC" in
-    0|3) : ;;   # 0 已发 / 3 未配置渠道（合规降级，告警已落 memory/.aidp/alerts.jsonl）
+    0|3) : ;;   # 0 已发 / 3 未配置渠道（合规降级，告警已落 memory/{{AIDP_HOME}}/alerts.jsonl）
     *) echo "⚠️ #4 未发出（notify.py rc=$NRC）——不阻断熔断处置" ;;
   esac
   exit 0
 else
-  python3 .aidp/scripts/autopilot_unfreeze.py prd-root-missing || true
+  python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py prd-root-missing || true
 fi
 ```
 
@@ -128,13 +128,13 @@ fi
 
 #### 0.3.6 里程碑通知 #0（启动前确认，见 0.1bis）
 
-⛔ **先判 `SKIP_DEV` 再发**（`eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"`，`[ "${SKIP_DEV:-0}" = "1" ]` 为真则整段跳过）：test-only 入口按通知集矩阵**明确不发 #0**。
+⛔ **先判 `SKIP_DEV` 再发**（`eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"`，`[ "${SKIP_DEV:-0}" = "1" ]` 为真则整段跳过）：test-only 入口按通知集矩阵**明确不发 #0**。
 
 ⛔ **#0 只在「首次进入某版本全流程」时发**：`TARGET_VERSION` 的 `run_state.next_phase` 为空或 `done`（终态 = 本 tick 是该版新一轮的起点）才发；续跑中的 tick（逐 tick 单 Sprint、部署/测试尾段、准发布暂缓期）一律不发，否则每 10 分钟一张。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
-NP0=$(python3 .aidp/scripts/baseline_edit.py --version "${TARGET_VERSION:-_}" get run_state.next_phase --default "")
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+NP0=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:-_}" get run_state.next_phase --default "")
 case "$NP0" in ""|done) SEND_N0=1;; *) SEND_N0=0; echo "ℹ️ #0 跳过：$TARGET_VERSION 续跑中（next_phase=$NP0）";; esac
 ```
 

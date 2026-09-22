@@ -28,7 +28,7 @@ autopilot-deploy-watch.py —— 部署就绪探针 + last_deployed_at 写入（
   - 时间：用 datetime.now() 取本地 ISO-8601（供 last_deployed_at）——本脚本是独立 CLI 进程、不在被禁时间 API 的工作流沙箱内，可正常用。
 
 用法：
-  python3 .aidp/scripts/autopilot-deploy-watch.py \
+  python3 AIDP_HOME/scripts/autopilot-deploy-watch.py \
       --health-url http://host:8080/actuator/health \
       [--auth-url http://host:8080/api/xxx/list] \
       [--cold-start-seconds 55] [--timeout 300] [--interval 5] \

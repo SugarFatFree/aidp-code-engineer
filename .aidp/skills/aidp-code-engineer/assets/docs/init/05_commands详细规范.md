@@ -1,7 +1,7 @@
 # 05 — Commands 详细规范
 
 > **文档定位**：本文档是斜杠命令体系的**总览和索引**。
-> 具体的命令定义文件已在 `.aidp/commands/` 下，用户输入 `/xxx` 时 AI Agent 会直接读取。
+> 下游命令定义位于 `{{AIDP_HOME}}/commands/`（仅 Claude 为 `.claude/aidp/`，有 Codex / DSH 为 `.agents/aidp/`），适配入口分别为 `.claude/commands/`、`.codex/skills/aidp/`、`.dsh/commands/`。下方 Markdown 链接指向下游已安装的命令定义；模板仓库中的维护源位于 `.aidp/commands/`。
 > 本文档**不再重复**每个命令的内部细节，仅提供命令层次、执行模式、调用关系的全局视图。
 
 ---
@@ -62,25 +62,25 @@
 
 | 类别 | 命令 | 触发时机 | 调用的 skill | 命令文件 |
 |------|------|---------|-------------|---------|
-| **初始化** | `/sprint-init` | 项目初始化（一次性） | - | [`.aidp/commands/sprint-init.md`](../../.aidp/commands/sprint-init.md) |
-| | `/sprint-init-design` | 分步初始化前半段 | - | [`.aidp/commands/sprint-init-design.md`](../../.aidp/commands/sprint-init-design.md) |
-| | `/sprint-init-complete` | 分步初始化后半段 | - | [`.aidp/commands/sprint-init-complete.md`](../../.aidp/commands/sprint-init-complete.md) |
-| **版本规划** | `/version [版本号] [里程碑]` | 新版本规划 / 版本发布 | 串联下方 4 个 | [`.aidp/commands/version.md`](../../.aidp/commands/version.md) |
-| | `/sprint-requirements` | 生成需求文档 | `ux-logic-extractor` | [`.aidp/commands/sprint-requirements.md`](../../.aidp/commands/sprint-requirements.md) |
-| | `/sprint-design` | 生成详细设计 + 动态更新 architecture | `dev-logic-architect` | [`.aidp/commands/sprint-design.md`](../../.aidp/commands/sprint-design.md) |
-| | `/sprint-plan` | 生成研发执行计划 | `dev-execution-planner` | [`.aidp/commands/sprint-plan.md`](../../.aidp/commands/sprint-plan.md) |
-| | `/sprint-selftest` | 生成研发自测（方案 + 自测用例 + 测试环境与账号） | `dev-manual-testcase` | [`.aidp/commands/sprint-selftest.md`](../../.aidp/commands/sprint-selftest.md) |
-| **Sprint 执行** | `/sprint-batch [范围]` | 批量执行多个 Sprint | `superpowers:executing-plans` | [`.aidp/commands/sprint-batch.md`](../../.aidp/commands/sprint-batch.md) |
-| | `/sprint-full {NNN}\|"<描述>"` | 单 Sprint 一键（支持按计划或自动累进） | 串联下方 5 个 | [`.aidp/commands/sprint-full.md`](../../.aidp/commands/sprint-full.md) |
-| | `/sprint-start {NNN}` | 启动单个 Sprint | - | [`.aidp/commands/sprint-start.md`](../../.aidp/commands/sprint-start.md) |
-| | `/sprint-dev [scope\|"描述"]` | 开发阶段（★ 支持独立累进） | `superpowers:test-driven-development` + `superpowers:subagent-driven-development` | [`.aidp/commands/sprint-dev.md`](../../.aidp/commands/sprint-dev.md) |
-| | `/sprint-test` | 测试阶段（静态扫描 + 可选接口测试；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（+ 外部可选 `api-tester`） | [`.aidp/commands/sprint-test.md`](../../.aidp/commands/sprint-test.md) |
-| | `/sprint-bugfix [sprint-NNN\|bugfix-*.md\|"描述"]` | 问题修复（★ 支持独立使用 + 自动累进；可按 Sprint / 指定文件名 / 描述累进三种入参） | `bugfix` + `superpowers:systematic-debugging` | [`.aidp/commands/sprint-bugfix.md`](../../.aidp/commands/sprint-bugfix.md) |
-| | `/sprint-close {NNN}` | Sprint 关闭 | - | [`.aidp/commands/sprint-close.md`](../../.aidp/commands/sprint-close.md) |
-| **7×24 全自动** ★ | `/sprint-autopilot` | PRD 监听 → 自动开发链路编排（操作系统调度 `aidp_scheduler.py` 守护） | 串联 `/version` + `/sprint-batch` | [`.aidp/commands/sprint-autopilot.md`](../../.aidp/commands/sprint-autopilot.md) |
-| | `/sprint-aiauto-test` | 部署后 chrome 浏览器仿真测试（操作系统调度 `aidp_scheduler.py` 守护） | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例读已落盘的 `docs/testing/{version}/`（`正式用例/` 为主 + `研发自测/` 查漏补充），不直调用例生成 SKILL | [`.aidp/commands/sprint-aiauto-test.md`](../../.aidp/commands/sprint-aiauto-test.md) |
-| **辅助** | `/memory-sync` | 记忆同步 | - | [`.aidp/commands/memory-sync.md`](../../.aidp/commands/memory-sync.md) |
-| | `/health-check` | 健康检查 | - | [`.aidp/commands/health-check.md`](../../.aidp/commands/health-check.md) |
+| **初始化** | `/sprint-init` | 项目初始化（一次性） | - | [`{{AIDP_HOME}}/commands/sprint-init.md`](../../{{AIDP_HOME}}/commands/sprint-init.md) |
+| | `/sprint-init-design` | 分步初始化前半段 | - | [`{{AIDP_HOME}}/commands/sprint-init-design.md`](../../{{AIDP_HOME}}/commands/sprint-init-design.md) |
+| | `/sprint-init-complete` | 分步初始化后半段 | - | [`{{AIDP_HOME}}/commands/sprint-init-complete.md`](../../{{AIDP_HOME}}/commands/sprint-init-complete.md) |
+| **版本规划** | `/version [版本号] [里程碑]` | 新版本规划 / 版本发布 | 串联下方 4 个 | [`{{AIDP_HOME}}/commands/version.md`](../../{{AIDP_HOME}}/commands/version.md) |
+| | `/sprint-requirements` | 生成需求文档 | `ux-logic-extractor` | [`{{AIDP_HOME}}/commands/sprint-requirements.md`](../../{{AIDP_HOME}}/commands/sprint-requirements.md) |
+| | `/sprint-design` | 生成详细设计 + 动态更新 architecture | `dev-logic-architect` | [`{{AIDP_HOME}}/commands/sprint-design.md`](../../{{AIDP_HOME}}/commands/sprint-design.md) |
+| | `/sprint-plan` | 生成研发执行计划 | `dev-execution-planner` | [`{{AIDP_HOME}}/commands/sprint-plan.md`](../../{{AIDP_HOME}}/commands/sprint-plan.md) |
+| | `/sprint-selftest` | 生成研发自测（方案 + 自测用例 + 测试环境与账号） | `dev-manual-testcase` | [`{{AIDP_HOME}}/commands/sprint-selftest.md`](../../{{AIDP_HOME}}/commands/sprint-selftest.md) |
+| **Sprint 执行** | `/sprint-batch [范围]` | 批量执行多个 Sprint | `superpowers:executing-plans` | [`{{AIDP_HOME}}/commands/sprint-batch.md`](../../{{AIDP_HOME}}/commands/sprint-batch.md) |
+| | `/sprint-full {NNN}\|"<描述>"` | 单 Sprint 一键（支持按计划或自动累进） | 串联下方 5 个 | [`{{AIDP_HOME}}/commands/sprint-full.md`](../../{{AIDP_HOME}}/commands/sprint-full.md) |
+| | `/sprint-start {NNN}` | 启动单个 Sprint | - | [`{{AIDP_HOME}}/commands/sprint-start.md`](../../{{AIDP_HOME}}/commands/sprint-start.md) |
+| | `/sprint-dev [scope\|"描述"]` | 开发阶段（★ 支持独立累进） | `superpowers:test-driven-development` + `superpowers:subagent-driven-development` | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |
+| | `/sprint-test` | 测试阶段（静态扫描 + 可选接口测试；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（+ 外部可选 `api-tester`） | [`{{AIDP_HOME}}/commands/sprint-test.md`](../../{{AIDP_HOME}}/commands/sprint-test.md) |
+| | `/sprint-bugfix [sprint-NNN\|bugfix-*.md\|"描述"]` | 问题修复（★ 支持独立使用 + 自动累进；可按 Sprint / 指定文件名 / 描述累进三种入参） | `bugfix` + `superpowers:systematic-debugging` | [`{{AIDP_HOME}}/commands/sprint-bugfix.md`](../../{{AIDP_HOME}}/commands/sprint-bugfix.md) |
+| | `/sprint-close {NNN}` | Sprint 关闭 | - | [`{{AIDP_HOME}}/commands/sprint-close.md`](../../{{AIDP_HOME}}/commands/sprint-close.md) |
+| **7×24 全自动** ★ | `/sprint-autopilot` | PRD 监听 → 自动开发链路编排（操作系统调度 `aidp_scheduler.py` 守护） | 串联 `/version` + `/sprint-batch` | [`{{AIDP_HOME}}/commands/sprint-autopilot.md`](../../{{AIDP_HOME}}/commands/sprint-autopilot.md) |
+| | `/sprint-aiauto-test` | 部署后 chrome 浏览器仿真测试（操作系统调度 `aidp_scheduler.py` 守护） | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例读已落盘的 `docs/testing/{version}/`（`正式用例/` 为主 + `研发自测/` 查漏补充），不直调用例生成 SKILL | [`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`](../../{{AIDP_HOME}}/commands/sprint-aiauto-test.md) |
+| **辅助** | `/memory-sync` | 记忆同步 | - | [`{{AIDP_HOME}}/commands/memory-sync.md`](../../{{AIDP_HOME}}/commands/memory-sync.md) |
+| | `/health-check` | 健康检查 | - | [`{{AIDP_HOME}}/commands/health-check.md`](../../{{AIDP_HOME}}/commands/health-check.md) |
 
 ## 3. 四种执行模式
 
@@ -152,21 +152,21 @@ Step P3: 路径变量展开 → 按 06 文档第 2 节的路径模板使用
 
 | 类型 | 位置 | 触发方式 | 作用 |
 |------|------|---------|------|
-| **斜杠命令** | `.aidp/commands/*.md` | 用户输入 `/xxx` | 用户入口，高层编排器 |
-| **技能 Skill** | `.aidp/skills/*/SKILL.md` | AI Agent 内部用 Skill 工具调用 | 底层实现细节 |
+| **命令** | `{{AIDP_HOME}}/commands/*.md` | 用户输入 `/xxx` | 用户入口，高层编排器 |
+| **技能 Skill** | `{{AIDP_HOME}}/skills/*/SKILL.md`（Agent 发现入口 `.claude/skills/` / `.agents/skills/`） | AI Agent 内部用 Skill 工具调用 | 底层实现细节 |
 
 **典型调用关系**：
 ```
 用户输入 /sprint-bugfix
     ↓
-.aidp/commands/sprint-bugfix.md
+{{AIDP_HOME}}/commands/sprint-bugfix.md
     ↓ 内部调用 Skill 工具
-.aidp/skills/bugfix/SKILL.md + superpowers:systematic-debugging
+{{AIDP_HOME}}/skills/bugfix/SKILL.md + superpowers:systematic-debugging
 ```
 
 ## 6. 命令文件索引
 
-实际的命令定义文件位于 `.aidp/commands/` 下，AI Agent 运行时会直接读取：
+下游命令定义位于 `{{AIDP_HOME}}/commands/` 下，由各 Agent 的命令入口装配；模板维护源结构如下：
 
 ```
 .aidp/commands/
@@ -193,7 +193,7 @@ Step P3: 路径变量展开 → 按 06 文档第 2 节的路径模板使用
 
 **维护原则**：
 - 本文档只维护全局视图（分层、模式、前置流程、文件索引）
-- 具体命令的执行细节都在 `.aidp/commands/` 下，不在本文档重复
-- 修改命令行为时，直接修改 `.aidp/commands/` 下对应文件
+- 具体命令的执行细节在下游 `{{AIDP_HOME}}/commands/` 中，不在本文档重复
+- 修改通用命令行为时，在模板仓库 `.aidp/commands/` 修改并经脚手架同步，不直接修改下游契约
 
 ---

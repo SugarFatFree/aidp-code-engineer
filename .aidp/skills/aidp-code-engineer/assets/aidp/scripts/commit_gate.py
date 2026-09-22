@@ -7,7 +7,7 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
 裸对话路径（口述 → 改码 → 直接提交）同样适用。
 
 调用：
-  python3 .aidp/scripts/commit_gate.py [--quiet] [--context <ctx>] [--cascade-now] [--no-fail-on-debt]
+  python3 AIDP_HOME/scripts/commit_gate.py [--quiet] [--context <ctx>] [--cascade-now] [--no-fail-on-debt]
 
 输出 JSON（stdout）：
   {
@@ -15,7 +15,7 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
     "is_template_project": bool,     # aidp-code-engineer SKILL.md + scripts/sync_memory_md.py 都在、且非下游 = 模板项目自身
     "working_tree_dirty": bool,      # 有未提交改动
     "has_business_code_change": bool,  # 待提交改动含实际业务代码（源码扩展名 / code/ 下非文档）；纯文档/配置 = false
-    "is_scaffold_only_change": bool, # 改动全落脚手架契约白名单（.aidp/、Agent 适配层、docs/init/、根 scripts/、.aidp-*、
+    "is_scaffold_only_change": bool, # 改动全落脚手架契约白名单（AIDP_HOME/、Agent 适配层、docs/init/、根 scripts/、.aidp-*、
                                      #   根项目记忆文件 / 版本变更历史.md — 约定 16 同步范围）
     "today": "YYYY-MM-DD",
     "pending_cascade": dict,         # ★ 约定 22：台账摘要 `{files, total, stale, ...}`（**dict 不是 list**）。
@@ -45,6 +45,13 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
   ⚠️ 3/4 的语义是"**本轮结束前有一项义务未落地**"，**不是"现在禁止 commit"**——命令端见 3/4 照常
   commit+push，之后补上义务（派台账收口子 Agent / 补推送分类与监听）；义务落地后退出码自动回 0。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 import argparse
 import json
 import os
@@ -52,9 +59,9 @@ import re
 import subprocess
 import sys
 
-SCAFFOLD_SKILL_REL = ".aidp/skills/aidp-code-engineer/SKILL.md"
-SCAFFOLD_SYNC_REL = ".aidp/skills/aidp-code-engineer/scripts/sync_memory_md.py"
-SCAFFOLD_MARKER_REL = ".aidp/skills/aidp-code-engineer/scripts/scaffold_marker.py"
+SCAFFOLD_SKILL_REL = runtime_text('__AIDP_HOME__/skills/aidp-code-engineer/SKILL.md', __file__)
+SCAFFOLD_SYNC_REL = runtime_text('__AIDP_HOME__/skills/aidp-code-engineer/scripts/sync_memory_md.py', __file__)
+SCAFFOLD_MARKER_REL = runtime_text('__AIDP_HOME__/skills/aidp-code-engineer/scripts/scaffold_marker.py', __file__)
 
 
 # ───────────────────────── 配置 / 模板项目判定 ─────────────────────────
@@ -78,7 +85,7 @@ def is_template_project(root: str) -> bool:
 
     ⚠️ 不能只看 aidp-code-engineer 脚手架是否存在——**下游业务项目也携带完整脚手架 skill**
     （供其本地重跑 upgrade），仅靠"引擎存在"会把下游误判为模板项目。故：
-      ① `.aidp/skills/aidp-code-engineer/SKILL.md` 与其 `scripts/sync_memory_md.py` 都存在；
+      ① `AIDP_HOME/skills/aidp-code-engineer/SKILL.md` 与其 `scripts/sync_memory_md.py` 都存在；
       ② 且下游标记判定为「非下游」（`scaffold_marker.py`，回落 `aidp_config.is_downstream`）。
     """
     skill = os.path.join(root, SCAFFOLD_SKILL_REL)
@@ -120,7 +127,7 @@ def _git(root, *args, strip=True):
 
     ★ strip=False 用于 `status --porcelain`——porcelain 行首状态位含前导空格（如 ` M path`），
       整体 `.strip()` 会吃掉**首行**的前导空格，令后续按固定列宽 `line[3:]` 解析时首行路径丢首字符
-      （`.aidp/x` → `aidp/x`），破坏基于路径前缀的判定（scaffold_only 等）。故 porcelain 取原文。
+      （`AIDP_HOME/x` → `aidp/x`），破坏基于路径前缀的判定（scaffold_only 等）。故 porcelain 取原文。
 
     ★ 必带 `-c core.quotePath=false`：默认 git 把非 ASCII 路径输出成 `"...\\347\\272\\246..."`
       （外包双引号 + 八进制转义）。约定 14 要求 AIDP 文档**文件名也用中文**——
@@ -171,7 +178,7 @@ def _has_archived_mark(text):
 
 
 # ★ 约定 22 开发期族增量册（四族各一份，与该族内容主文档【同目录】）。
-#   单一信源 = `.aidp/reference/开发期族增量.md`。
+#   单一信源 = `AIDP_HOME/reference/开发期族增量.md`。
 #   ⛔ 落点刻意与主文档同级：收口就是**就地合并**，不跨目录搬运。
 CASCADE_FAMILIES = (
     ("req",    os.path.join("docs", "requirements"),          "研发需求", "_开发期需求增量.md"),
@@ -323,11 +330,11 @@ DOC_EXTS = {".md", ".markdown", ".txt", ".rst", ".adoc"}
 
 # ★ 脚手架契约路径白名单（约定 16 同步范围）：由脚手架 init/migrate/upgrade 下发/管理，
 #   属"范式契约"而非下游业务开发产物。
-#   根因：脚手架自带 .py/.mjs/.cjs/.js 脚本（.aidp/**、根 scripts/**）本身命中 SOURCE_EXTS，
+#   根因：脚手架自带 .py/.mjs/.cjs/.js 脚本（AIDP_HOME/**、根 scripts/**）本身命中 SOURCE_EXTS，
 #   若不按路径排除，纯脚手架升级会被误判为"含业务代码修改"。
 #   ⚠️ 边界：只要有一处改动落在白名单外（如 code/ / docs/{version}/ 迭代产物），即视为含真实活动。
-#   `.aidp/` = 单一信源；`.claude/` / `.codex/` / `.dsh/` = 各 Agent 适配层。
-SCAFFOLD_CONTRACT_PREFIXES = (".aidp/", ".claude/", ".codex/", ".dsh/", "docs/init/", "scripts/")
+#   `AIDP_HOME/` = 单一信源；`.claude/` / `.codex/` / `.dsh/` = 各 Agent 适配层。
+SCAFFOLD_CONTRACT_PREFIXES = (runtime_text('__AIDP_HOME__/', __file__), ".claude/", ".codex/", ".dsh/", "docs/init/", "scripts/")
 # 根级脚手架文档（下游 upgrade 会同步）：项目记忆文件（AGENTS.md / CLAUDE.md）与版本变更历史
 SCAFFOLD_CONTRACT_ROOT_FILES = {"agents.md", "claude.md", "版本变更历史.md"}
 # AIDP 自身的入库产物（路径单一信源 = aidp_paths.REGISTRY；此处按字面列出以保持本脚本自包含）
@@ -346,7 +353,7 @@ def _is_scaffold_contract(path: str) -> bool:
     # ★ AIDP 自己的运行时状态与人维护配置：不是下游业务产物。
     #   ⛔ 漏登会造成**自我干扰**：AIDP 命令运行时写的状态被下一次 gate 看成"非白名单文件"，
     #   把一次纯脚手架提交改判成含业务产物 —— 判据被它自己的副作用推翻。
-    if low in AIDP_RUNTIME_FILES or low.startswith("memory/.aidp/"):
+    if low in AIDP_RUNTIME_FILES or low.startswith(runtime_text('memory/.aidp/', __file__)):
         return True
     if low in SCAFFOLD_CONTRACT_ROOT_FILES:   # 根级脚手架文档（AGENTS.md / CLAUDE.md / 版本变更历史.md）
         return True
@@ -574,7 +581,7 @@ def _head_has_formal_change(root: str) -> bool:
     """HEAD 提交是否含正式代码变更（单一信源 = classify_commit_change.py；判不出按否）。"""
     try:
         cp = subprocess.run(
-            [sys.executable, os.path.join(root, ".aidp/scripts/classify_commit_change.py"),
+            [sys.executable, os.path.join(root, runtime_text('__AIDP_HOME__/scripts/classify_commit_change.py', __file__)),
              "--root", root, "--base-ref", "HEAD~1", "--json"],
             capture_output=True, text=True, timeout=60)
         return bool(json.loads(cp.stdout or "{}").get("has_formal_code_change"))
@@ -725,7 +732,7 @@ def gather(root: str, context: str = "bare-conversation", cascade_now: bool = Fa
         "has_business_code_change": has_business_code_change(porcelain),
         "is_scaffold_only_change": is_scaffold_only_change(porcelain),
         "today": today,
-        # ★ 约定 22 攒批级联台账（.aidp/reference/开发期族增量.md）
+        # ★ 约定 22 攒批级联台账（AIDP_HOME/reference/开发期族增量.md）
         "pending_cascade": cascade,
         # ★ 判据 = 台账有【昨天及更早】的待级联条目。同日重复收口由台账内容自然收敛
         #   （收口后条目即删、stale 归零）；多 git 用户防重靠 push 后重判。
@@ -766,10 +773,11 @@ def _print_obligations(info: dict) -> None:
     stale = int(casc.get("stale") or 0)
     if stale > 0:
         sys.stderr.write(
-            f"📒 开发期变更台账有 {stale} 条昨天及更早的条目未级联"
-            f"（共 {casc.get('total') or 0} 条，涉及版本 {'/'.join((casc.get('versions') or {}).keys()) or '-'}）"
-            "→ 约定 22 收口点 1：本次 commit+push 完成后派后台子 Agent 批量级联并清账；"
-            "详规 `.aidp/reference/开发期族增量.md`\n")
+            runtime_text(f"📒 开发期变更台账有 {stale} 条昨天及更早的条目未级联"
+            f"（共 {casc.get('total') or 0} 条，涉及版本 "
+            f"{'/'.join((casc.get('versions') or {}).keys()) or '-'}）→ 约定 22 收口点 1："
+            "本次 commit+push 完成后派后台子 Agent 批量级联并清账；"
+            "详规 `__AIDP_HOME__/reference/开发期族增量.md`\n", __file__))
 
     byp = info.get("suspected_cascade_bypass") or {}
     if byp.get("suspected"):
@@ -794,10 +802,10 @@ def _print_obligations(info: dict) -> None:
     unparsed = casc.get("unparsed") or []
     if unparsed:
         sys.stderr.write(
-            f"⚠️ 台账存在但**未识别出任何条目**（疑似格式漂移）：{', '.join(unparsed)}\n"
+            runtime_text(f"⚠️ 台账存在但**未识别出任何条目**（疑似格式漂移）：{', '.join(unparsed)}\n"
             "   → 本机制只认三种条目形态（一行式 `- C-NNN · MM-DD ·` / `### C-NNN` / "
-            "表格首列 `| C-NNN |`）。请按 `.aidp/templates/_开发期族增量.md` 校正格式，"
-            "否则收口点永不触发、台账会无限增长且零告警。\n")
+            "表格首列 `| C-NNN |`）。请按 `__AIDP_HOME__/templates/_开发期族增量.md` 校正格式，"
+            "否则收口点永不触发、台账会无限增长且零告警。\n", __file__))
 
     dirty = int(casc.get("cascaded_not_cleaned") or 0)
     if dirty > 0:
@@ -817,11 +825,13 @@ def _print_obligations(info: dict) -> None:
     cicd = info.get("pending_cicd") or {}
     if cicd.get("pending"):
         sys.stderr.write(
-            f"🚄 本次推送未经推送分类器（版本 {cicd.get('version')} / build {cicd.get('build')}）——"
-            "约定 31.5「**推送 ≠ 交付完成**」。\n"
-            "   → `git push` 之【前】跑 `python3 .aidp/scripts/classify_push.py --root . --version <V> --build <B> --base-ref <BASE>`；\n"
-            "     无正式代码变更记 `cicd_skipped=true` 即算完成；有变更须 `cicd_watch.py` 监听至终态 + 就绪探针。\n"
-            "   ⛔ 作用域 = **推送这一事实、与命令入口无关**：裸对话路径同样适用。\n")
+            runtime_text(f"🚄 本次推送未经推送分类器（版本 {cicd.get('version')} / build {cicd.get('build')}）"
+            "——约定 31.5「**推送 ≠ 交付完成**」。\n"
+            "   → `git push` 之【前】跑 `python3 __AIDP_HOME__/scripts/classify_push.py --root . "
+            "--version <V> --build <B> --base-ref <BASE>`；\n"
+            "     无正式代码变更记 `cicd_skipped=true` 即算完成；有变更须 `cicd_watch.py` "
+            "监听至终态 + 就绪探针。\n"
+            "   ⛔ 作用域 = **推送这一事实、与命令入口无关**：裸对话路径同样适用。\n", __file__))
 
     dest = casc.get("destructive_unregistered") or []
     if dest:
@@ -851,6 +861,9 @@ def main(argv=None):
                     help="本轮显式当场级联（约定 22 唯一合法例外）→ 抑制 suspected_cascade_bypass 告警")
     args = ap.parse_args(argv)
 
+    if detect_mode(args.repo_root) != "git":
+        print(json.dumps(unsupported("commit")))
+        return EXIT_UNSUPPORTED
     info = gather(args.repo_root, context=args.context, cascade_now=args.cascade_now)
     info["debts"] = debt_items(info) if info["commit_gate_enabled"] else []
     print(json.dumps(info, ensure_ascii=False))

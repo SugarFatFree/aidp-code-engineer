@@ -44,11 +44,11 @@
   出现频度极高，默认开启会瞬间淹没真正的凭据泄漏。需要时显式加 `--pii`。
 
 用法:
-    python3 .aidp/scripts/check_upstream_call_log.py                # 全量扫 code/
-    python3 .aidp/scripts/check_upstream_call_log.py --json         # 机器消费
-    python3 .aidp/scripts/check_upstream_call_log.py --check C1,C2  # 只跑某几条
-    python3 .aidp/scripts/check_upstream_call_log.py --paths a.java # 只扫指定文件
-    python3 .aidp/scripts/check_upstream_call_log.py --pii          # 额外检个人信息字段
+    python3 AIDP_HOME/scripts/check_upstream_call_log.py                # 全量扫 code/
+    python3 AIDP_HOME/scripts/check_upstream_call_log.py --json         # 机器消费
+    python3 AIDP_HOME/scripts/check_upstream_call_log.py --check C1,C2  # 只跑某几条
+    python3 AIDP_HOME/scripts/check_upstream_call_log.py --paths a.java # 只扫指定文件
+    python3 AIDP_HOME/scripts/check_upstream_call_log.py --pii          # 额外检个人信息字段
 
 豁免: 受检行或其上一行（文件级检查看类声明行或文件头 30 行内）加注释
       `upstream-log-ignore: <ID> <原因>`。原因为空也放行，但计入 waived 统计。

@@ -201,13 +201,13 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py <研发执行计划路径>
 ```bash
 python3 <SKILL_DIR>/scripts/scan_aidp.py [项目根目录]
 python3 <SKILL_DIR>/scripts/scan_aidp.py [项目根目录] --json
-# 扫描 .aidp/ / .aidp.yml / aidp.json / AIDP*.md / package.json scripts / Makefile / pom.xml plugin,
+# 扫描 {{AIDP_HOME}}/ / .aidp.yml / aidp.json / AIDP*.md / package.json scripts / Makefile / pom.xml plugin,
 # 产出 L1 层可用命令清单;据此核对执行计划开头"可用指令清单"是否漏列项目 AIDP 命令。
 ```
 
 **指令检查清单:**
 
-- [ ] 生成计划前,Agent 已按 5 层优先级扫描项目可用资源(扫描位置:`.aidp/`、`.aidp.yml`、`aidp.json`、**项目根目录及 `docs/`、`doc/` 下的 `AIDP*.md`**、`.aidp/commands/`、`.aidp/skills/`、`.claude/plugins/`、`.aidp/agents/`、`.claude/mcp.json`、`~/.aidp/skills/`、`~/.aidp/commands/`、`~/.claude/plugins/`、`~/.aidp/agents/`、`package.json scripts`、`Makefile`、`pom.xml plugin`、项目 README)
+- [ ] 生成计划前,Agent 已按 5 层优先级扫描项目可用资源(扫描位置:`{{AIDP_HOME}}/`、`.aidp.yml`、`aidp.json`、**项目根目录及 `docs/`、`doc/` 下的 `AIDP*.md`**、`{{AIDP_HOME}}/commands/`、`{{AIDP_HOME}}/skills/`、`.claude/plugins/`、`{{AIDP_HOME}}/agents/`、`.claude/mcp.json`、`~/{{AIDP_HOME}}/skills/`、`~/{{AIDP_HOME}}/commands/`、`~/.claude/plugins/`、`~/{{AIDP_HOME}}/agents/`、`package.json scripts`、`Makefile`、`pom.xml plugin`、项目 README)
 - [ ] 若项目有 AIDP 命令(L1),Task 的 AI 执行指令优先使用 AIDP 命令而非 L2-L5
 - [ ] 若项目 `.claude/` 有对应 skill/command(L2),优先于系统全局(L3)
 - [ ] 每个 Task 必须有 `**AI 执行指令**` 小标题及其下的 markdown 代码块,代码块第一行是可直接复制执行的命令(不是描述)
@@ -241,7 +241,7 @@ aidp gen:mapper --table biz_user --design <设计文档路径>#A.3
 依赖: Task 1.3
 要求: 字段/类型/约束以设计 A.3 为准,不得自行调整。
 ~~~
-> **指令来源**: L2 项目 `.aidp/skills/project-entity-gen`
+> **指令来源**: L2 项目 `{{AIDP_HOME}}/skills/project-entity-gen`
 > **降级方案**: L3 `/dev-logic-architect`
 
 **L3 系统 Skill 退化示例(无 L1/L2):**
@@ -873,7 +873,7 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 
 **自动化核验(必跑):**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `.aidp/skills/dev-execution-planner`)
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-execution-planner`)
 
 ```bash
 python3 <SKILL_DIR>/scripts/check_task_granularity.py \
@@ -910,7 +910,7 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py \
 | 1. 三方一致性 | ❌ | PRD 要求实时同步,设计采用 MQ 异步 | 在计划开头标注冲突,并按 PRD 以 WebSocket 重新设计 |
 | 2. 设计完备性 | ✅ | — | — |
 | 3. AIDP 范式对齐 | ❌ | Task 3.2 接口层任务出现在 Phase 2 | 将 Task 3.2 移至 Phase 3 |
-| 4. 指令化 | ❌ | Task 4.3 无可执行指令,仅有"实现前端页面"描述;项目 `.aidp/skills/` 有 `project-entity-gen` 但 Task 2.1 使用系统全局 `/dev-logic-architect` | 补充指令;Task 2.1 改用 L2 项目 skill |
+| 4. 指令化 | ❌ | Task 4.3 无可执行指令,仅有"实现前端页面"描述;项目 `{{AIDP_HOME}}/skills/` 有 `project-entity-gen` 但 Task 2.1 使用系统全局 `/dev-logic-architect` | 补充指令;Task 2.1 改用 L2 项目 skill |
 | 5. 提示词上下文 | ❌ | Task 2.4 提示词为"实现订单服务",无上下文引用 | 修订为"基于 Task 1.5 的 biz_order 表,实现 OrderService.create(),参考设计 B.1 FR-020" |
 | 6. 依赖链条 | ❌ | Task 3.1 依赖 Task 2.1,但 Task 2.1 未完成就列出 Task 3.1 | 调整顺序或增加 blockedBy 标注 |
 | 7. 框架与中间件配置 | ❌ | 详细设计使用 Redis 和 MinIO,但 Phase 1 缺失 Task 1.2 中间件配置 | 新增 Task 1.2,包含 .env.example、RedisConfig、MinioConfig |

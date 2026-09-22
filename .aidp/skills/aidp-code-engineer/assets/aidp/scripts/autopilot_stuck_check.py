@@ -44,6 +44,12 @@ autopilot 现有的熔断**全是"特定失败计数"式**——`dev_fail_streak
   3 = 判定 stuck 但**冻结字段写盘失败**（#4 仍已发出）——⛔ 调用方不得当 1 处理：
       盘上没冻，下 tick 判据未变、`already-frozen` 早退不生效 ⇒ 无限重冻循环
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 
 import argparse
 import json
@@ -74,9 +80,7 @@ def _send_stuck_card(version: str, out: dict) -> None:
     cmd = [sys.executable, CARD, "--node", "#4", "--auto", "--header-color", "red",
            "--title", "已冻结：%s 原地打转（stuck-phase）" % version,
            "--version", version,
-           "--section", ("Phase %s 连续进入 %d 次、滞留 %d 分钟且无推进（既不失败也不前进）。\n"
-                         "未完成动作：%s\n"
-                         "恢复：人工排查卡住原因后运行 `python3 .aidp/scripts/autopilot_unfreeze.py --manual %s`，下个 tick 自动继续。"
+           "--section", (runtime_text('Phase %s 连续进入 %d 次、滞留 %d 分钟且无推进（既不失败也不前进）。\n未完成动作：%s\n恢复：人工排查卡住原因后运行 `python3 __AIDP_HOME__/scripts/autopilot_unfreeze.py --manual %s`，下个 tick 自动继续。', __file__)
                          % (out.get("current_phase", "?"), out.get("phase_enter_count", 0),
                             int(out.get("age_seconds", 0)) // 60,
                             ", ".join(out.get("pending_actions") or []) or "无", version))]
@@ -203,7 +207,7 @@ def main() -> int:
               f"（--target <V> / --reset-baseline / 清 needs_human）")
         if "card_sent" in r:
             print("   #4 里程碑通知：" + ("已发出" if r["card_sent"]
-                                  else ("未配置通知渠道（已写本地告警台账 memory/.aidp/alerts.jsonl）"
+                                  else (runtime_text('未配置通知渠道（已写本地告警台账 memory/.aidp/alerts.jsonl）', __file__)
                                         if r.get("card_skipped") else
                                         f"⚠️ 未送达（{r.get('card_error', '')}）——冻结仍然成立，告警见 memory/.aidp/alerts.jsonl")))
     # ★ 写盘失败必须走**另一个**退出码：声称已冻、盘上没冻 ⇒ 下 tick 判据未变、

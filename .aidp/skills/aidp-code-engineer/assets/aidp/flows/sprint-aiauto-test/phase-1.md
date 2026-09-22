@@ -30,8 +30,8 @@
   - **★ `/loop` 无人值守**（`LOOP_UNATTENDED=1`）→ 无人可答：**一次调用做完「记账 → 判阈 → 冻结四件套 → 发 #4」**，随后走 `UNATTENDED_YIELD` 退出本 tick、不轮询。⛔ 散文的「+1」「置 needs_human」「发 #4」**都不是**写入/发送——逐处手抄必漏其一：漏 bump 则阈值永不达（每 tick 重探 900s + 刷 #4），漏 #4 则「停得住但停不响」（一条通知都没有）：
 
     ```bash
-    eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-    python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "${TARGET_VERSION:?}" \
+    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "${TARGET_VERSION:?}" \
       --phase 1-probe --reason probe-timeout --streak-key probe_fail_streak --threshold 3 \
       --why "连续多轮部署探测超时、疑似环境未就绪，暂停本版自动重探待人工介入"
     RC=$?   # 0=已记账、让位本 tick（下轮仍重探）｜3=已达阈或无唤醒源→已冻结本版｜2=入参错，⛔ 什么都没写
@@ -40,13 +40,13 @@
     `RC=3` 即**冻结本版测试**：后续 `/loop` 唤起跳过 `needs_human=true` 的版本（一行日志、不再重探、不再刷 #4）。解冻靠 `last_deployed_at` 刷新（新部署）或人工 `retry`/`--reset-baseline`。
 - 探测成功 → **可执行地**清零后进 Phase 2（与上面的 bump 对称——散文的「清零」同样不是写入；只增不减的计数器会把偶发抖动累成"连续 3 轮超时"并按 `probe-timeout` 冻结，而告警文案与事实不符）：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell --command aiauto-test)"
-  python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" del probe_fail_streak 2>/dev/null || true
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell --command aiauto-test)"
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del probe_fail_streak 2>/dev/null || true
   ```
 
 ### 1.3 ★ 里程碑通知 #D（部署完成-开始自动化测试，模板规则见 sprint-autopilot 0.1bis）
 
-> 经 `python3 .aidp/scripts/notify.py --auto` 发送（渠道取 `memory/aidp-config.yaml` 的 `notify.channels`；含公共字段 项目名称 / 工作目录 / **时间——#D 属开始类通知（测试开始语义），标签用「开始时间」，见 sprint-autopilot 0.1bis「时间字段标签分层」，⛔ 不用「完成时间」**）。`notify.enabled=false`（`NOTIFY_ENABLED=0`）或 `notify.py` 退出码 3（未配置任何渠道）时静默跳过，⛔ 不弹窗问人。
+> 经 `python3 {{AIDP_HOME}}/scripts/notify.py --auto` 发送（渠道取 `memory/aidp-config.yaml` 的 `notify.channels`；含公共字段 项目名称 / 工作目录 / **时间——#D 属开始类通知（测试开始语义），标签用「开始时间」，见 sprint-autopilot 0.1bis「时间字段标签分层」，⛔ 不用「完成时间」**）。`notify.enabled=false`（`NOTIFY_ENABLED=0`）或 `notify.py` 退出码 3（未配置任何渠道）时静默跳过，⛔ 不弹窗问人。
 
 （**首行 = 通知标题 `notify.py --title`，按 0.1bis「通知标题固定前缀」必带项目中文名称**；其余为正文）
 

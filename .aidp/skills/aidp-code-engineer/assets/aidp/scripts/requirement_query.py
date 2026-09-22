@@ -25,10 +25,10 @@
 ## 两个子命令
 
     # ① 搜历史 REQ（审计 H 的「找候选」）——扫 docs/requirements/*/研发需求/*.md
-    python3 .aidp/scripts/requirement_query.py search 口径 统计 --before V0.3.0 --json
+    python3 AIDP_HOME/scripts/requirement_query.py search 口径 统计 --before V0.3.0 --json
 
     # ② 聚合跨版本作废判定（审计 H 的「查已判过的」）——聚合各版 98_*.json 的 table_f
-    python3 .aidp/scripts/requirement_query.py supersessions --before V0.3.0 --json
+    python3 AIDP_HOME/scripts/requirement_query.py supersessions --before V0.3.0 --json
 
 ## 成本
 

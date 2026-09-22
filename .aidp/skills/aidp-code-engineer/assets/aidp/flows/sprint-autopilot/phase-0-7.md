@@ -88,9 +88,9 @@ autopilot_decisions:
   # === ★ WebMCP 可选能力段（⛔ 不计入必填决策段；【整段不存在 = 未启用】，绝大多数项目就该没有这段）===
   # ⛔ Phase 0.6 的字段缺失收集【不得】把本段当缺失项去问、去补、去填默认值——
   #    "段不存在"本身就是完整且正确的答案（默认关闭），凭空补一段 enabled:false 只会制造噪音。
-  # 判定唯一实现：python3 .aidp/scripts/check_webmcp.py --detect --json（各处禁止自行 grep）
-  # 详规单一信源：.aidp/rules/webmcp.md（★ 按需安装：默认在模板位
-  #   .aidp/templates/optional-rules/webmcp.md，启用后跑 check_webmcp.py --install-rule 装到 rules/）
+  # 判定唯一实现：python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json（各处禁止自行 grep）
+  # 详规单一信源：{{AIDP_HOME}}/rules/webmcp.md（★ 按需安装：默认在模板位
+  #   {{AIDP_HOME}}/templates/optional-rules/webmcp.md，启用后跑 check_webmcp.py --install-rule 装到 rules/）
   webmcp:
     enabled: true                                     # 仅当项目【显式决定】启用才写本段
     entry_symbols: ["navigator.modelContext"]         # 本项目实测的能力入口标识符（挂载位置已迁移过一次、

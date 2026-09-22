@@ -28,17 +28,17 @@ tracked_files 回写与检测判据分离导致的口径漂移）。
 ## 用法
 
     # 检测（只读），机读
-    python3 .aidp/scripts/autopilot-prd-watch.py --version V0.1.0 --json
+    python3 AIDP_HOME/scripts/autopilot-prd-watch.py --version V0.1.0 --json
 
     # shell 取值
-    eval "$(python3 .aidp/scripts/autopilot-prd-watch.py --version V0.1.0 --shell)"
+    eval "$(python3 AIDP_HOME/scripts/autopilot-prd-watch.py --version V0.1.0 --shell)"
     # → SHOULD_RUN=1  TRIGGER_REASON='...'  PRD_DIR='...'
 
     # 命中后回写（Phase 1.4）：加锁写 tracked_files / last_commit_hash / last_trigger_at
-    python3 .aidp/scripts/autopilot-prd-watch.py --version V0.1.0 --commit
+    python3 AIDP_HOME/scripts/autopilot-prd-watch.py --version V0.1.0 --commit
 
     # 每 tick 心跳（无论是否命中都写，供运维区分「loop 存活无变化」与「loop 掉了」）
-    python3 .aidp/scripts/autopilot-prd-watch.py --version V0.1.0 --heartbeat
+    python3 AIDP_HOME/scripts/autopilot-prd-watch.py --version V0.1.0 --heartbeat
 
 ## 退出码
 

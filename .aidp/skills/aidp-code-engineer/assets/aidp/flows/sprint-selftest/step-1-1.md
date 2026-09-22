@@ -27,7 +27,7 @@
 
 使用 `Skill` 工具调用 `dev-manual-testcase`，由 skill 自主完成研发自测方案 + 自测用例生成 + 内置多维度独立 Agent 检查 + 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**，命令端按 CLAUDE.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
-> 详细规则查 `.aidp/skills/dev-manual-testcase/SKILL.md`；命令端只负责传入路径上下文 + 输出位置 override。
+> 详细规则查 `{{AIDP_HOME}}/skills/dev-manual-testcase/SKILL.md`；命令端只负责传入路径上下文 + 输出位置 override。
 
 **前置：定位「上一版本继承基线」**（本版未显式指定环境/账号时，SKILL 方案「环境」段沿用上一版；与 Step 3 同一 SemVer 扫描，此处只为把基线路径**喂给 SKILL 作输入**）：
 

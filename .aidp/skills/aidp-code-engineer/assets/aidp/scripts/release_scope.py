@@ -18,7 +18,7 @@ AIDP 允许存在**中间过渡版本**：完成了需求/设计/开发，但**�
 
 ## 用法
 
-    python3 .aidp/scripts/release_scope.py --version V0.11.1 [--root .] [--json]
+    python3 AIDP_HOME/scripts/release_scope.py --version V0.11.1 [--root .] [--json]
 
 输出 JSON：
     {

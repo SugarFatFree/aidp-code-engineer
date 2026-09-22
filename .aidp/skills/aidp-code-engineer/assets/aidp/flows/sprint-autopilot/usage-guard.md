@@ -12,16 +12,16 @@
 
 ```bash
 # ★ 一次装齐两条链路：开发链路（默认 10m）+ 测试链路（默认 5m），各自独立进程、互不阻塞
-python3 .aidp/scripts/aidp_scheduler.py install [--agent claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m]
-python3 .aidp/scripts/aidp_scheduler.py status      # 定时任务是否在位 + 两条链路心跳
-python3 .aidp/scripts/aidp_scheduler.py uninstall   # 停用并删除两个定时任务
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m]
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status      # 定时任务是否在位 + 两条链路心跳
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除两个定时任务
 ```
 
 - 平台：Linux = systemd --user timer（无 systemd 用户实例时用 crontab）；macOS = launchd；Windows = 输出 `schtasks` 命令手工执行。Linux 注销后仍要运行需执行一次 `loginctl enable-linger "$USER"`。
-- 每个定时任务调用 `.aidp/scripts/agent_loop.sh --once <命令> --unattended`：自动补 `--no-loop`（`HAS_WAKE_SOURCE=1`，允许分 tick 让位）、导出 `AIDP_TICK_COMMAND`（Stop 护栏只拦 autopilot tick）与 `ARGUMENTS`、flock 互斥（上一轮未结束则本轮跳过）、日志落 `memory/.aidp/logs/<命令>.log`、加载可选的 `~/.config/aidp/env`（通知 webhook / CICD 令牌等凭据环境变量）。
+- 每个定时任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`：自动补 `--no-loop`（`HAS_WAKE_SOURCE=1`，允许分 tick 让位）、导出 `AIDP_TICK_COMMAND`（Stop 护栏只拦 autopilot tick）与 `ARGUMENTS`、flock 互斥（上一轮未结束则本轮跳过）、日志落 `memory/{{AIDP_HOME}}/logs/<命令>.log`、加载可选的 `~/.config/aidp/env`（通知 webhook / CICD 令牌等凭据环境变量）。
 - ⚠️ **两条链路缺一不可**：autopilot 只管开发链路（PRD→/version→/sprint-batch→触发部署），浏览器实测由 aiauto-test 链路负责；只跑第一条 = 测试半环永久缺失（Phase 3.4 step4③ 累加 `test_loop_missing_streak`，连续 ≥3 tick 后把 build 按静态-only 收尾 + 冻结告警）。
-- **存活巡检**：每轮开跑前 `aidp_scheduler.py watchdog` 检查两条链路心跳（`autopilot_loop_heartbeat_at` / `aiauto_test_heartbeat_at`）；任一链路超过 `scheduler.stale_cycles × 周期` 无心跳且不在执行中 → 写本地告警台账 `memory/.aidp/alerts.jsonl` + 发里程碑通知（同一次中断只告警一次）。
-- ★ **权限前置（headless 必做）**：非交互执行时未预授权的工具调用会被拒绝、整轮零进展。Claude Code 在 `.claude/settings.json` 的 `permissions.allow` 放行命令所需的 `Bash` / `Agent` / MCP 工具等（内置执行命令为 `claude -p --permission-mode acceptEdits {prompt}`）；Codex 需 `codex exec --sandbox workspace-write`（内置默认）且项目已 trust；DeepSeek Harness 须在 `memory/aidp-config.yaml` 的 `scheduler.exec.dsh` 填入其非交互执行命令。各 CLI 参数以所用版本官方文档为准，详见 `.aidp/reference/agent-tools.md` 第三节。
+- **存活巡检**：每轮开跑前 `aidp_scheduler.py watchdog` 检查两条链路心跳（`autopilot_loop_heartbeat_at` / `aiauto_test_heartbeat_at`）；任一链路超过 `scheduler.stale_cycles × 周期` 无心跳且不在执行中 → 写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` + 发里程碑通知（同一次中断只告警一次）。
+- ★ **权限前置（headless 必做）**：非交互执行时未预授权的工具调用会被拒绝、整轮零进展。Claude Code 在 `.claude/settings.json` 的 `permissions.allow` 放行命令所需的 `Bash` / `Agent` / MCP 工具等（内置执行命令为 `claude -p --permission-mode acceptEdits {prompt}`）；Codex 需 `codex exec --sandbox workspace-write`（内置默认）且项目已 trust；DeepSeek Harness 须在 `memory/aidp-config.yaml` 的 `scheduler.exec.dsh` 填入其非交互执行命令。各 CLI 参数以所用版本官方文档为准，详见 `{{AIDP_HOME}}/reference/agent-tools.md` 第三节。
 
 ### #2 会话内 `/loop`（Claude Code 交互式短期用法）
 
@@ -62,7 +62,7 @@ python3 .aidp/scripts/aidp_scheduler.py uninstall   # 停用并删除两个定�
 
 ## 输出示例
 
-> 📄 各场景（PRD 无变化 / 有更新触发 / 首次缺 autopilot_decisions / 规划已存在跳过）的**终端输出示例**已外置到 `.aidp/skills/aidp-code-engineer/references/autopilot/output-examples.md`（纯说明、执行时无需载入；想看命令打印样子时按需查阅）。
+> 📄 各场景（PRD 无变化 / 有更新触发 / 首次缺 autopilot_decisions / 规划已存在跳过）的**终端输出示例**已外置到 `{{AIDP_HOME}}/../skills/aidp-code-engineer/references/autopilot/output-examples.md`（纯说明、执行时无需载入；想看命令打印样子时按需查阅）。
 
 ---
 
@@ -73,7 +73,7 @@ python3 .aidp/scripts/aidp_scheduler.py uninstall   # 停用并删除两个定�
 
 | 方式 | 效果 |
 |------|------|
-| `python3 .aidp/scripts/aidp_scheduler.py uninstall` | 停用并删除两条链路的操作系统定时任务 |
+| `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall` | 停用并删除两条链路的操作系统定时任务 |
 | Claude Code 终端 Ctrl+C | 立即中止本次命令；如外层有 `/loop` 包装，需另跑 `/loops` 看面板停 |
 | `/loops` + 中止对应 loop | 停掉会话内 /loop；后续不再唤起命令 |
 | 关闭 Claude Code 会话 | 会话内 `/loop` 随之消失（操作系统定时任务不受影响）|
@@ -87,15 +87,15 @@ python3 .aidp/scripts/aidp_scheduler.py uninstall   # 停用并删除两个定�
 | 命令 | 关系 |
 |------|------|
 | `/sprint-autopilot` | **顶层一键编排器**（本命令）|
-| `.aidp/scripts/aidp_scheduler.py` ★ | **7×24 守护标准方式**：为开发链路 / 测试链路各装一个操作系统定时任务（经 `agent_loop.sh --once`），并做两条链路心跳巡检 |
+| `{{AIDP_HOME}}/scripts/aidp_scheduler.py` ★ | **7×24 守护标准方式**：为开发链路 / 测试链路各装一个操作系统定时任务（经 `agent_loop.sh --once`），并做两条链路心跳巡检 |
 | `/loop` | 会话内交互式短期用法（会话级、7 天过期、空闲触发、同会话串行）|
 | `/version` | Phase 3.1 内部调用（上版准发布走 Phase 2 `/version --no-tag`）|
 | `/sprint-batch` | Phase 3.2 内部调用 |
 | `version-auditor` Agent | Phase 3.1（/version 内强制）+ Phase 3.3 终审（强制仪式）|
-| `.aidp/scripts/emit-report.py` ★ | AI执行/测试报告确定性产出器：输入结果 JSON → 写 data + 注册 SPA 两页/一页（落本地 `docs/reports/{version}/`）+ 回写 `report_deliveries`（Phase 3.1.5/3.4/aiauto-test 3.2.6·3.7 调用；防手搓退化 markdown）|
-| `.aidp/scripts/autopilot-ceremony-gate.py` ★ | Phase 3.4 完成核验门：确定性校验强制仪式（AI执行报告 SPA / **AI测试报告 SPA（有浏览器测试时）** / **报告交付台账** / version-auditor 报告 / 通知台账 / 无 markdown），exit 1 阻断带缺失收尾 |
-| `.aidp/scripts/notify.py` ★ | 里程碑通知发送器：`--auto` 按 `memory/aidp-config.yaml` 的 `notify.channels` 依次尝试（飞书/钉钉/企业微信机器人 webhook、`lark-cli`、自定义命令），成功即停；退出码 3 = 未配置任何渠道 → 静默跳过本节点、不阻塞 |
-| `.aidp/scripts/cicd_watch.py` | CICD 流水线监听（`--mode` watch / detect / poll，平台 = `cicd.provider`，默认 GitHub Actions）；触发/重试写动作由命令端显式调 `--mode trigger` / `--mode retry`，受 `cicd.auto_trigger` 控制（见 IRON-5）|
+| `{{AIDP_HOME}}/scripts/emit-report.py` ★ | AI执行/测试报告确定性产出器：输入结果 JSON → 写 data + 注册 SPA 两页/一页（落本地 `docs/reports/{version}/`）+ 回写 `report_deliveries`（Phase 3.1.5/3.4/aiauto-test 3.2.6·3.7 调用；防手搓退化 markdown）|
+| `{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py` ★ | Phase 3.4 完成核验门：确定性校验强制仪式（AI执行报告 SPA / **AI测试报告 SPA（有浏览器测试时）** / **报告交付台账** / version-auditor 报告 / 通知台账 / 无 markdown），exit 1 阻断带缺失收尾 |
+| `{{AIDP_HOME}}/scripts/notify.py` ★ | 里程碑通知发送器：`--auto` 按 `memory/aidp-config.yaml` 的 `notify.channels` 依次尝试（飞书/钉钉/企业微信机器人 webhook、`lark-cli`、自定义命令），成功即停；退出码 3 = 未配置任何渠道 → 静默跳过本节点、不阻塞 |
+| `{{AIDP_HOME}}/scripts/cicd_watch.py` | CICD 流水线监听（`--mode` watch / detect / poll，平台 = `cicd.provider`，默认 GitHub Actions）；触发/重试写动作由命令端显式调 `--mode trigger` / `--mode retry`，受 `cicd.auto_trigger` 控制（见 IRON-5）|
 
 
 ## 注意事项

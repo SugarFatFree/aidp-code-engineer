@@ -25,13 +25,19 @@
   5. **可还原**：`restore --version V` 把 zip 解回原位（去重删掉的文件按清单从保留位置补回）。
 
 用法：
-    python3 .aidp/scripts/archive_old_artifacts.py plan                    # 看计划（默认）
-    python3 .aidp/scripts/archive_old_artifacts.py plan --keep 8 --area docs/reports
-    python3 .aidp/scripts/archive_old_artifacts.py apply --apply           # 真正执行
-    python3 .aidp/scripts/archive_old_artifacts.py restore --version V0.6 --area docs/reports --apply
+    python3 AIDP_HOME/scripts/archive_old_artifacts.py plan                    # 看计划（默认）
+    python3 AIDP_HOME/scripts/archive_old_artifacts.py plan --keep 8 --area docs/reports
+    python3 AIDP_HOME/scripts/archive_old_artifacts.py apply --apply           # 真正执行
+    python3 AIDP_HOME/scripts/archive_old_artifacts.py restore --version V0.6 --area docs/reports --apply
 
 退出码：0 正常；1 前置不满足（脏工作区 / 无可归档版本）；2 用法错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import hashlib
 import json
@@ -164,9 +170,8 @@ def _write_note(root, area, entries):
 
     lines = [f"# {area} 归档说明", "",
              "> 老版本产物**留在仓库内**，只是从散落目录换成了 zip；近期版本不归档。",
-             f"> 由 `.aidp/scripts/archive_old_artifacts.py` 维护，最后更新 {mf['updated_at']}。",
-             "> 还原：`python3 .aidp/scripts/archive_old_artifacts.py restore "
-             f"--area {area} --version <V> --apply`", "",
+             runtime_text(f"> 由 `__AIDP_HOME__/scripts/archive_old_artifacts.py` 维护，最后更新 {mf['updated_at']}。", __file__),
+             runtime_text(f"> 还原：`python3 __AIDP_HOME__/scripts/archive_old_artifacts.py restore --area {area} --version <V> --apply`", __file__), "",
              "| 版本 | 归档包 | 文件数 | 原始体积 | 压缩后 | 跨版本去重删除 |",
              "|---|---|---|---|---|---|"]
     for v in sorted(mf["entries"], key=_semver_key):

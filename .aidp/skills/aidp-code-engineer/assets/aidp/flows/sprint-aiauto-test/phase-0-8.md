@@ -24,7 +24,7 @@
 #### 步骤 1：启用判定（本步的第一动作，判定为否就没有后面所有步骤）
 
 ```bash
-python3 .aidp/scripts/check_webmcp.py --detect --json
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json
 # → {"enabled": true|false, "entry_symbols": [...], "symbols_source": "..."}
 ```
 
@@ -54,7 +54,7 @@ python3 .aidp/scripts/check_webmcp.py --detect --json
 #### 步骤 3：驱动版本预检（委派上游探测器，不自己写探测）
 
 ```bash
-python3 .aidp/skills/auto-test-runner/scripts/detect_drivers.py web --webmcp --json
+python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/detect_drivers.py web --webmcp --json
 ```
 
 - ⚠️ **端类型是【位置参数】不是 `--client` 选项**（`detect_drivers.py web`）——写成 `--client web` <!-- flag-check: ignore 反面教材，非真旗标引用 -->

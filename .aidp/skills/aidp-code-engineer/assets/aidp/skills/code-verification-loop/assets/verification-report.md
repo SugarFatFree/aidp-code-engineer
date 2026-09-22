@@ -85,10 +85,10 @@
 
 ---
 
-## 4b. 实现偏离设计（维度 13·外部脚本门控；被测项目无 `.aidp/scripts/check_design_anchor.py` 或未取到「验收版本号」时标「不适用」跳过、**仍留行**）
+## 4b. 实现偏离设计（维度 13·外部脚本门控；被测项目无 `{{AIDP_HOME}}/scripts/check_design_anchor.py` 或未取到「验收版本号」时标「不适用」跳过、**仍留行**）
 
 > 回检脚本（**在被测项目侧、不在本 SKILL**）：
-> `python3 <被测项目根>/.aidp/scripts/check_design_anchor.py --version <版本号> --json`
+> `python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --json`
 > ⚠️ **`--version` 是必填的带值参数**，与维度 10/12 的「只要 `--json`」不同；漏传会落 `exit 2`（入参错），
 > 而 `exit 2` 会被当成「修正参数后重跑」，这一档就**既不算过也不算不过**。⛔ 不得自拟版本号把脚本跑绿。
 > **本行不得删除。** 未下发脚本 / 未取到版本号时，把状态栏填成「⏭️ 不适用（未下发 `check_design_anchor.py`）」
@@ -191,7 +191,7 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --change
 
 ---
 
-## 8. UI 还原度确定性检查（维度 10·约定39-R2/R3/R10；被测项目无 `.aidp/scripts/check_ui_fidelity.py` 时标「不适用」跳过、**仍留行**）
+## 8. UI 还原度确定性检查（维度 10·约定39-R2/R3/R10；被测项目无 `{{AIDP_HOME}}/scripts/check_ui_fidelity.py` 时标「不适用」跳过、**仍留行**）
 
 > ⛔ **本 SKILL 不得自带同判据实现**——脚本由 AIDP 脚手架下发到被测项目侧。退出码 `2` 是入参/环境错、
 > **不是维度违规**。`fidelity-ignore` 豁免只对 R2/R3 有效，**R10 零豁免**；只写规则号不写原因的豁免须报 Important。
@@ -226,12 +226,12 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --change
 > ⛔ 不是把服务跑起来看日志输出（跑起来读实际日志归 `/sprint-aiauto-test`）。
 >
 > **双重门控，两种情形都标「⏭️ 不适用 + 原因」并保留本节**：① 被测项目未随脚手架下发
-> `<被测项目根>/.aidp/scripts/check_upstream_call_log.py`；② 非 JVM 栈（脚本只扫 `.java`/`.kt`，
+> `<被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py`；② 非 JVM 栈（脚本只扫 `.java`/`.kt`，
 > `outbound_files: 0`）。**不得整节删掉**——那是维度 9 的待遇，本节留行才能让阅读者知道
 > "这一档没跑过"。**退出码 2 是入参/环境错，不是维度违规。**
 
 ```bash
-python3 <被测项目根>/.aidp/scripts/check_upstream_call_log.py --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py --json
 # 退出码 0=无 Critical / 1=有 Critical / 2=入参或环境错
 ```
 

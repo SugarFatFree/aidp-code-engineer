@@ -15,18 +15,24 @@
 
 ## 判据（刻意保守，宁可漏报不误报）
 
-扫 `.aidp/flows/version/release-*.md` 的 bash 围栏，找形如
+扫 `AIDP_HOME/flows/version/release-*.md` 的 bash 围栏，找形如
 `python3 …/check_*.py …` 且紧随 `||` 兜底的语句；该兜底块内若**没有**出现
 `发布欠账.md`，判 ERROR。
 
 ⛔ 不查没有 `||` 的调用——那是硬阻断（失败即 exit），本就不需要落账。
 ⛔ 不查 `|| echo 0` 这类取默认值的写法（兜底块里没有 `⚠️`/`登记`/`欠账` 语义词时跳过）。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import os
 import re
 import sys
 
-SCAN_DIR = os.path.join(".aidp", "flows", "version")
+SCAN_DIR = os.path.join(runtime_relpath("", __file__), "flows", "version")
 DEBT_FILE = "发布欠账.md"
 # ★ 唯一写入口（推荐形态）：调它比手写 printf 样板更好 —— 格式由脚本保证、
 #   调用点只剩一行，不会因为分片逼近 20480 上限而被压成一句 echo。
@@ -96,35 +102,22 @@ def _self_check():
     try:
         fl = os.path.join(d, SCAN_DIR)
         os.makedirs(fl)
-        bad = ("```bash\n"
-               'python3 .aidp/scripts/check_x.py --version "$V" \\\n'
-               '  || echo "⚠️ 未过 → 请登记欠账"\n'
-               "```\n")
+        bad = (runtime_text('```bash\npython3 __AIDP_HOME__/scripts/check_x.py --version "$V" \\\n  || echo "⚠️ 未过 → 请登记欠账"\n```\n', __file__))
         open(os.path.join(fl, "release-9.md"), "w", encoding="utf-8").write(bad)
         r = scan(d)
         ok.append(("★ 阳性：失败兜底只 echo → 报出", not r["ok"] and r["errors"]))
-        good = ("```bash\n"
-                'python3 .aidp/scripts/check_x.py --version "$V" \\\n'
-                '  || { echo "⚠️ 未过"; echo "- x" >> "docs/audit/$V/发布欠账.md"; }\n'
-                "```\n")
+        good = (runtime_text('```bash\npython3 __AIDP_HOME__/scripts/check_x.py --version "$V" \\\n  || { echo "⚠️ 未过"; echo "- x" >> "docs/audit/$V/发布欠账.md"; }\n```\n', __file__))
         open(os.path.join(fl, "release-9.md"), "w", encoding="utf-8").write(good)
         ok.append(("阴性：兜底里写了发布欠账.md → 放行", scan(d)["ok"]))
-        viaw = ("```bash\n"
-                'python3 .aidp/scripts/check_x.py --version "$V" \\\n'
-                '  || python3 .aidp/scripts/release_debt.py --version "$V" --step 1 --title x\n'
-                "```\n")
+        viaw = (runtime_text('```bash\npython3 __AIDP_HOME__/scripts/check_x.py --version "$V" \\\n  || python3 __AIDP_HOME__/scripts/release_debt.py --version "$V" --step 1 --title x\n```\n', __file__))
         open(os.path.join(fl, "release-9.md"), "w", encoding="utf-8").write(viaw)
         ok.append(("★ 阴性：走唯一写入口 release_debt.py 也算落账（推荐形态）", scan(d)["ok"]))
-        hard = ("```bash\n"
-                'python3 .aidp/scripts/check_x.py --version "$V" || exit 1\n'
-                "```\n")
+        hard = (runtime_text('```bash\npython3 __AIDP_HOME__/scripts/check_x.py --version "$V" || exit 1\n```\n', __file__))
         open(os.path.join(fl, "release-9.md"), "w", encoding="utf-8").write(hard)
         r3 = scan(d)
         ok.append(("★ 阴性：硬阻断（|| exit 1）不要求落账，且不计入 checked",
                    r3["ok"] and r3["checked"] == 0))
-        dflt = ("```bash\n"
-                'N=$(python3 .aidp/scripts/check_x.py --count || echo 0)\n'
-                "```\n")
+        dflt = (runtime_text('```bash\nN=$(python3 __AIDP_HOME__/scripts/check_x.py --count || echo 0)\n```\n', __file__))
         open(os.path.join(fl, "release-9.md"), "w", encoding="utf-8").write(dflt)
         ok.append(("★ 阴性：`|| echo 0` 取默认值不是失败兜底 → 不误报", scan(d)["ok"]))
     finally:
@@ -156,9 +149,7 @@ def main(argv=None):
         return 0
     for e in r["errors"]:
         sys.stderr.write(f"  [ERROR] {e['file']}:{e['line']} — {e['msg']}\n")
-    sys.stderr.write("   改法（推荐）：`|| python3 .aidp/scripts/release_debt.py "
-                     "--version \"$VERSION\" --step <步骤号> --title <一句话> --redo <复现命令>`；"
-                     "也可手写追加（照抄 release-7c.md 的形态）\n")
+    sys.stderr.write(runtime_text('   改法（推荐）：`|| python3 __AIDP_HOME__/scripts/release_debt.py --version "$VERSION" --step <步骤号> --title <一句话> --redo <复现命令>`；也可手写追加（照抄 release-7c.md 的形态）\n', __file__))
     return 1
 
 

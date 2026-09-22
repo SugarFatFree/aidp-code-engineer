@@ -20,7 +20,7 @@ AIDP 是一套由 **AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）+
 
 如果是已有项目，调用该技能的 migrate 模式接入。
 
-> ℹ️ `aidp-code-engineer` 是 **SKILL**（由 AI Agent 用 `Skill` 工具内部调用 / 自然语言触发），不是斜杠命令——`.aidp/commands/` 下没有 `/aidp-code-engineer`，直接敲斜杠不会触发。
+> ℹ️ `aidp-code-engineer` 是可由用户调用的 **SKILL**，而非 `{{AIDP_HOME}}/commands/` 下的 AIDP 命令：Claude Code 可输入 `/aidp-code-engineer init`，Codex 可输入 `$aidp-code-engineer init`，也可用自然语言触发。初始化与改建支持无 Git 项目，不自动 `git init`；非 Git 可规划、开发和本地测试/归档，但不可提交、推送、打 tag 或宣称正式发布成功。
 
 ### 2. 首次版本规划
 
@@ -57,7 +57,7 @@ AIDP 项目的标准目录结构：
 
 ```
 project/
-├── .aidp/                      # ★ AIDP 单一信源（.claude/ .codex/ .dsh/ .agents/ 仅为适配层）
+├── {{AIDP_HOME}}/              # ★ 运行真源：仅 Claude 为 .claude/aidp；有 Codex / DSH 为 .agents/aidp
 │   ├── agents/                 # Agent 定义（PM/架构师/前端/后端/QA/审查员/UI/AIDP-Compliance/Version-Auditor，共 9 个）
 │   ├── commands/               # 命令定义（/version /sprint-* 等）
 │   ├── skills/                 # 公共技能定义
@@ -238,7 +238,7 @@ A: 调用 `aidp-code-engineer` 脚手架技能的 migrate 模式（SKILL，非�
 SKILL 会：
 - 保留已有代码和文档
 - 补充 AIDP 目录骨架
-- 合并 `.aidp/` 配置并生成当前 Agent 的适配层
+- 安装 `{{AIDP_HOME}}/` 运行契约并生成当前 Agent 的适配层
 - 不覆盖已有文件
 
 ### Q: 如何升级旧版 AIDP？
@@ -269,9 +269,9 @@ AIDP 范式提供了完整的理论层文档（位于 `docs/init/`），包含�
 
 **准备开始开发**：`00 第 5-6 节（决策树）→ AGENTS.md`
 
-**理解 Agent 分工**：`04 → .aidp/agents/*.md`
+**理解 Agent 分工**：`04 → {{AIDP_HOME}}/agents/*.md`
 
-**查找具体命令**：`05 → .aidp/commands/*.md`
+**查找具体命令**：`05 → {{AIDP_HOME}}/commands/*.md`
 
 **修改 memory 文件**：`03 → memory/README.md`
 
@@ -282,7 +282,7 @@ AIDP 范式提供了完整的理论层文档（位于 `docs/init/`），包含�
 ├── 00-03, 06 → 提供规则、模板、流程
 └── 04-05    → 作为索引指向 .aidp/ 下的实现
 
-实现层（.aidp/）
+实现层（下游 {{AIDP_HOME}}/；模板仓库 .aidp/ 只作维护源）
 ├── agents/     → 9 个 Agent 指令（7 业务 + 1 合规 + 1 版本审计，运行时读取）
 ├── commands/   → 19 个命令定义（/xxx 触发读取，含 /version /sprint-* /sprint-autopilot /sprint-aiauto-test 等）
 ├── skills/     → 8 个 skill（含生成/执行类：研发需求、详细设计、执行计划、自测用例、自动化测试执行、代码验证、缺陷修复 + aidp-code-engineer 脚手架，被命令内部调用）

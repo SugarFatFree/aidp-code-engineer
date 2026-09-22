@@ -13,14 +13,16 @@
 
 ## 前置流程
 
+**VCS 能力分流**：`{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 给出 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 给出 `{user}`。`vcs_mode=none` 时 Step 1–5 本地验收结论、走查、Sprint 归档与 memory 更新仍可完成；缺 Git 差异时使用 `activeContext.md` 的涉及文件清单作为走查范围。Git-only commit/push/发布交接标 `unsupported:vcs-disabled`，不是 passed；Sprint 本地归档完成不等于版本发布完成，也不得提示已推送或已发布。Git 模式沿用原流程。
+
 按 `docs/init/06_版本与用户目录约定.md`：
-1. **{version}** ← 项目记忆文件（路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
+1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`
 3. 路径展开见 05_commands详细规范.md。
 
 ## 角色：PM Agent
 
-读取 `.aidp/agents/pm.md` 获取角色定义，执行"流程 C：Sprint 关闭（/sprint-close）"。
+读取 `{{AIDP_HOME}}/agents/pm.md` 获取角色定义，执行"流程 C：Sprint 关闭（/sprint-close）"。
 
 ## Step 1：收集关闭信息
 
@@ -63,7 +65,7 @@
 
 ## Step 2.5：★ Reviewer Agent 代码走查
 
-读取 `.aidp/agents/reviewer.md` 获取 Reviewer Agent 角色定义，对本 Sprint 的代码与设计进行最终走查：
+读取 `{{AIDP_HOME}}/agents/reviewer.md` 获取 Reviewer Agent 角色定义，对本 Sprint 的代码与设计进行最终走查：
 
 **走查范围**：
 - 本 Sprint 涉及的源代码（参考 `memory/{version}/{user}/activeContext.md` 的「本次涉及文件」清单）
@@ -71,7 +73,7 @@
 - 对照 `docs/architecture/` 检查架构约束符合性
 - 对照 `memory/systemPatterns.md` 检查代码规范符合性
 
-**走查维度**：详见 `.aidp/agents/reviewer.md` 流程 A（reviewer Agent 为单一信源，命令端不复述具体维度清单）
+**走查维度**：详见 `{{AIDP_HOME}}/agents/reviewer.md` 流程 A（reviewer Agent 为单一信源，命令端不复述具体维度清单）
 
 **输出**（按 `06_版本与用户目录约定.md` §2.2.2 命名）：
 - 个人级走查报告：`docs/reports/{version}/review-{user}.md`（若已存在则在文末追加 Sprint 章节）
@@ -85,7 +87,7 @@
 ### Step 2.5.1：★ 实现偏离设计门（机器前置，先跑再走查）
 
 ```bash
-python3 .aidp/scripts/check_design_anchor.py --version {version}   # 0 通过 / 1 Important（或 fail-closed）/ 2 用法错
+python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version {version}   # 0 通过 / 1 Important（或 fail-closed）/ 2 用法错
 ```
 
 把详细设计里**点名过的字段与常量**逐个到源码里找落点。它专抓一类在本方代码里
@@ -100,7 +102,7 @@ python3 .aidp/scripts/check_design_anchor.py --version {version}   # 0 通过 / 
 
 ## Step 3：归档 activeContext
 
-> ⛔ **记录取舍与篇幅（约定 9；详规 `.aidp/reference/约定细则-5.md` 41.5）**：归档只记
+> ⛔ **记录取舍与篇幅（约定 9；详规 `{{AIDP_HOME}}/reference/约定细则-5.md` 41.5）**：归档只记
 > **事后查不到的判断与取舍**（为什么选这个方案、放弃了什么、留下什么已知失准点）——
 > ⛔ 不记 git log 查得到的、文档里已有的、下一轮会重算的。建议上限：**口述累进 ≤40 行 /
 > 计划内 Sprint ≤80 行 / 含口径反转 ≤120 行**（超出不阻断，但须自问「这些是不是事后查得到的」）。
@@ -120,7 +122,7 @@ python3 .aidp/scripts/check_design_anchor.py --version {version}   # 0 通过 / 
 ## Step 3.5：★ 约定 22 义务登记门（归档里写下的级联义务必须同轮落台账）
 
 ```bash
-python3 .aidp/scripts/check_cascade_obligation.py --version {version} --sprint {NNN}
+python3 {{AIDP_HOME}}/scripts/check_cascade_obligation.py --version {version} --sprint {NNN}
 # 0 通过 / 2 有未登记义务 / 1 fail-closed
 ```
 
@@ -130,7 +132,7 @@ python3 .aidp/scripts/check_cascade_obligation.py --version {version} --sprint {
 → 无待级联 → 不派单；终态门扫台账 → 文件不存在 → 合法终态 → 放行。**义务只活在散文里**，
 一直到 build 终审才被 `version-auditor` 判 Critical。该同型问题在实际项目中**连续三个版本复发**。
 
-- **门失败时的处置**：把这些义务**同轮**写进对应族的增量册（骨架 `.aidp/templates/_开发期族增量.md`；
+- **门失败时的处置**：把这些义务**同轮**写进对应族的增量册（骨架 `{{AIDP_HOME}}/templates/_开发期族增量.md`；
   ⛔ 台账被删只表示「当前批已清空」，不表示本版不再需要它——它是 append-only 的活文件，
   新订正须重建），或当场级联完并在归档那一行标「已级联」。
 - **本门只断言载体存在**，不做「归档第 N 条 ↔ 台账第 M 条」逐条映射（多条订正常被合并成
@@ -152,7 +154,7 @@ python3 .aidp/scripts/check_cascade_obligation.py --version {version} --sprint {
 
 ## Step 5.1：★ 收口「子 Agent 必读」踩坑清单（项目级）
 
-扫一遍本轮新踩的坑是否已登记进 `.aidp/reference/子Agent必读.md` —— 该文件自称「由开发期持续累积」
+扫一遍本轮新踩的坑是否已登记进 `{{AIDP_HOME}}/reference/子Agent必读.md` —— 该文件自称「由开发期持续累积」
 并把 `/sprint-close` 列为维护时机，本步即该维护时机的落点。
 
 - **判据**：本轮 `/sprint-bugfix` 修过的缺陷、开发中绕过的环境/技术栈陷阱、子 Agent 反复问到的同一件事
@@ -177,7 +179,7 @@ python3 .aidp/scripts/check_cascade_obligation.py --version {version} --sprint {
 
 ## Step 7：更新项目记忆文件
 
-路径经 `python3 .aidp/scripts/agent_env.py memory-file` 取（⛔ 不写死 `AGENTS.md`），定点更新「当前状态」为：
+路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取（⛔ 不写死 `AGENTS.md`），定点更新「当前状态」为：
 - 当前版本：{version}（保持）
 - 当前开发者：{user}（保持）
 - 当前 Sprint：Sprint-{NNN} 已关闭，等待 Sprint-{NNN+1}

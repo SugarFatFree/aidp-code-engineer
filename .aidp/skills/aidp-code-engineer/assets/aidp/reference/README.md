@@ -1,9 +1,10 @@
-# .aidp/reference/ — 按需 Read 的参考资料
+# {{AIDP_HOME}}/reference/ — 按需 Read 的参考资料
 
+> 模板仓库 `.aidp` 中的 reference 仅用于维护；下游安装后的本目录位于 `{{AIDP_HOME}}/reference/`。该路径由当前 Agent 的运行包确定。
 > 本目录放**不需要常驻上下文、用到时才 Read** 的长文：约定细则分片、命令速查、SKILL 用途表、
 > 初始化与文档索引、开发期族增量册详规、子 Agent 必读、参考实现骨架等。
 >
-> 与 `.aidp/rules/` 的分工：`rules/` 是**路径触发自动加载**（带 `paths:` frontmatter，编辑对应代码时才进上下文）；
+> 与 `{{AIDP_HOME}}/rules/` 的分工：`rules/` 是**路径触发自动加载**（带 `paths:` frontmatter，编辑对应代码时才进上下文）；
 > 本目录**不自动加载**，由项目记忆文件（`AGENTS.md`，Claude Code 下为 `CLAUDE.md`）/ 命令 / Agent 里的显式指针引导按需 Read。
 
 ## 文件一览
@@ -14,7 +15,7 @@
 | `命令速查.md` | 各命令的完整实操示例、flag 组合、7×24 前置 | 项目记忆文件「常用命令速查」 |
 | `skills.md` | 各 SKILL 的详细用途 | 项目记忆文件「本项目使用的 Skills」 |
 | `初始化与文档索引.md` | 初始化输入清单 + AIDP 范式文档索引 | 项目记忆文件两处 |
-| `开发期族增量.md` | 约定 22「攒批级联」的**四族增量册**详规与收口点清单（**该条的单一信源**）| 约定 22 主行；`.aidp/commands/sprint-batch.md`（明写「单一信源 = 本文件」）|
+| `开发期族增量.md` | 约定 22「攒批级联」的**四族增量册**详规与收口点清单（**该条的单一信源**）| 约定 22 主行；`{{AIDP_HOME}}/commands/sprint-batch.md`（明写「单一信源 = 本文件」）|
 | `子Agent必读.md` | 项目级踩坑清单（**用户填充型**，见下）| `agents/frontend.md`·`agents/backend.md`、`/sprint-close` Step 5.1 |
 | `上游调用日志参考实现.md` | 约定 40 的拦截器骨架（traceId 配对 / 截断 / 脱敏 / 二进制降级）| `rules/code.md`·`rules/backend.md` 约定 40 |
 | `agent-tools.md` | Claude Code / Codex / DeepSeek Harness 的判定依据、记忆文件、SKILL / 命令 / 插件目录、工具名与定时循环对照 | 项目记忆文件「多 Agent 兼容」段、`agent_sync.py` 适配入口 |
@@ -48,4 +49,4 @@
 
 1. 必须有**至少一处指针**指过来 —— 否则实际上没人会读到它。⚠️ **这一条目前没有机器门**：`verify.py` 的孤儿检查只管本体↔bundle 镜像，`check_singlesource_pointer.py` 只做**正向**指针可解析性，都不反向校验「本目录某文件有没有被指过」。靠人守。
 2. 在上表登记一行。
-3. 跑一次 `python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py` 镜像进脚手架。
+3. 跑一次 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/mirror_to_bundle.py` 镜像进脚手架。

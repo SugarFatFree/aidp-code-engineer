@@ -30,7 +30,7 @@
 
 ### 1.1 ⛔ 最高约束:本 SKILL 不得再写一份同判据实现
 
-判据脚本 **`<被测项目根>/.aidp/scripts/check_ui_fidelity.py` 由 AIDP 脚手架下发到每个下游项目**,不在本 SKILL 的
+判据脚本 **`<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py` 由 AIDP 脚手架下发到每个下游项目**,不在本 SKILL 的
 `scripts/` 下、**也不许拷进来**。
 
 > **Why(这不是洁癖,是最高频漂移源):** 同一判据两份实现 = 改一处漏一处、两处都自称权威。
@@ -44,9 +44,9 @@
 
 ```bash
 # 全量(推荐)
-python3 <被测项目根>/.aidp/scripts/check_ui_fidelity.py --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py --json
 # 单条规则
-python3 <被测项目根>/.aidp/scripts/check_ui_fidelity.py --check R3 --json
+python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py --check R3 --json
 ```
 
 - 退出码:`0` = 无 Critical / `1` = 有 Critical / `2` = 用法错误。

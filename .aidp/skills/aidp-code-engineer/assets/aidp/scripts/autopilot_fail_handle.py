@@ -12,7 +12,7 @@
 
 ## 用法
 
-    python3 .aidp/scripts/autopilot_fail_handle.py \\
+    python3 AIDP_HOME/scripts/autopilot_fail_handle.py \\
       --version V0.1.0 --phase 3.2.1-deploy --reason deploy-unreachable \\
       --why "就绪探针连续超时，疑似环境未就绪" \\
       [--command autopilot|aiauto-test] \\
@@ -45,6 +45,12 @@
   3 = 已冻结（达阈 / 无唤醒源 / 该版已按同一 reason 冻结）—— 调用方据此决定是否终止本版后续步骤
   2 = 用法/环境错（枚举非法、取不到版本号等）；⛔ 此时**什么都没写**，不要当成"处置过了"
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_text
 import argparse
 import json
 import os
@@ -72,7 +78,7 @@ PREFLIGHT_KEYS = {
                     "aiauto_preflight_fail_reason"),
 }
 # 恢复指引按解冻类别给出（类别单一信源 = autopilot_unfreeze.py）
-_UNFREEZE = "python3 .aidp/scripts/autopilot_unfreeze.py"
+_UNFREEZE = runtime_text('python3 __AIDP_HOME__/scripts/autopilot_unfreeze.py', __file__)
 
 
 def _recovery_hint(reason, version):
@@ -281,8 +287,7 @@ def _preflight(a):
             return 2
     out.update(streak=streak, frozen=freeze)
     title = ("前置熔断待人工：%s" % a.reason) if freeze else ("前置受阻：%s" % a.reason)
-    tail = ("已熔断，此后每 tick 静默退出；人工修复后运行 "
-            "`python3 .aidp/scripts/baseline_edit.py del %s %s %s` 恢复。" % (k_streak, k_frozen, k_reason)
+    tail = (runtime_text('已熔断，此后每 tick 静默退出；人工修复后运行 `python3 __AIDP_HOME__/scripts/baseline_edit.py del %s %s %s` 恢复。', __file__) % (k_streak, k_frozen, k_reason)
             if freeze else "修复后自动恢复。")
     section = "%s（连续第 %d 次，阈值 %d）%s" % (a.why, streak, a.threshold, tail)
     if (freeze or a.card_on_streak) and not a.no_card and os.path.isfile(CARD):
@@ -366,7 +371,7 @@ def main(argv=None):
                      "熔断条件已成立" if a.freeze_now
                      else "streak=%s，唤醒源=%s" % (out["streak"], out.get("has_wake_source")),
                      "，#4 已发" if out["card_sent"]
-                     else "，#4 未送达（已写本地告警台账 memory/.aidp/alerts.jsonl）"))
+                     else runtime_text('，#4 未送达（已写本地告警台账 memory/.aidp/alerts.jsonl）', __file__)))
         else:
             print("⛔ %s 失败第 %s 次（阈值 %d）→ 已记账%s，让位本 tick"
                   % (a.phase, out["streak"], a.threshold, " + 发 #4" if out["card_sent"] else ""))
@@ -401,10 +406,10 @@ def _self_check():
 
         rc, o = call("--command", "aiauto-test")
         ok.append(("★ 测试链路读 aiauto 唤醒源：首次失败只记账不冻结", rc == 0 and o.get("has_wake_source") == "1"))
-        ok.append(("★ 未达阈默认不发 #4", o.get("card_sent") is False and not os.path.isfile("memory/.aidp/alerts.jsonl")))
+        ok.append(("★ 未达阈默认不发 #4", o.get("card_sent") is False and not os.path.isfile(runtime_text('memory/.aidp/alerts.jsonl', __file__))))
         rc, o = call()
         ok.append(("阳性对照：开发链路无唤醒源 → 当场冻结", rc == 3 and o.get("frozen") is True))
-        ok.append(("★ 冻结恒写本地告警台账", os.path.isfile("memory/.aidp/alerts.jsonl")))
+        ok.append(("★ 冻结恒写本地告警台账", os.path.isfile(runtime_text('memory/.aidp/alerts.jsonl', __file__))))
         with open(bl, encoding="utf-8") as fh:
             at1 = json.load(fh)["versions"]["V9.9.9"].get("aiauto_frozen_at")
         rc, o = call()

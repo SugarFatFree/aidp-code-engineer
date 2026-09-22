@@ -3,7 +3,7 @@
 > 角色文件
 
 
-> ⛔⛔ **第一动作（先于本文件其余全部内容）：`Read .aidp/reference/子Agent必读.md`**
+> ⛔⛔ **第一动作（先于本文件其余全部内容）：`Read {{AIDP_HOME}}/reference/子Agent必读.md`**
 >
 > 那份文件是**本项目**的固定上下文——可用的验证命令与已知不可用的命令、技术栈非常规约定
 > （CSS 预处理器 / HTTP 客户端 / 组件库…）、本版本临时约定、踩过的反模式。**它们都是实际踩过的坑，
@@ -73,7 +73,7 @@
 3. **遵守约束**：所有代码必须符合架构约束文档的要求
 4. **可编译可运行（★ 编译验证收敛到验收 + 仅改动侧 + 资源受限）**：开发阶段**不再逐个任务/逐个接口编译**；编译验证收敛到 **Sprint 验收（`/sprint-test`）** 时执行一次，且**仅当本 Sprint 改动了后端才编后端**（未改动侧不编）。执行编译必须走**资源受限方式**（详见下方「Step 7: 编译验证」的资源受限配方），避免 CPU 打满
 5. **★ Mock 实现位置选型 — 不为前端写一次性假数据接口**：**严禁**写一次性假数据接口（如硬编码 `Result.ok(Arrays.asList(...))`）"先帮前端联调"——这是反模式：① 污染后端代码仓；② 占用后端正式开发工时；③ 假数据接口容易遗忘清理；④ 前端可用 axios 拦截器 / MSW 基于接口契约自行 mock（既然接口契约已明确，前端不需要后端写假数据就能独立调试）。
-   - **允许的 P1 后端 mock 场景**：仅当对接第三方接口供**后端服务端**调用（服务端鉴权 / 银行代扣 / 报关推送 / 回调验签）且第三方未交付时，用 `@Profile("mock")` 隔离 + 6 字段 `THIRD_PARTY_MOCK` 标注块。**Mock 位置选型优先级（P0 前端拦截 > P1 后端运行时开关 > P2 中间件）+ 守卫策略按标记分流（本条属 `THIRD_PARTY_MOCK` 一类：**必须**运行时开关，禁 `@Profile("dev")` 等构建期守卫；同项目后端未部署的 `DEV_MOCK` 是相反口径，见约定 26）、切真实当轮删除）详规单一信源见 `.aidp/rules/code.md` 约定 26**（自动加载），本条不复述。
+   - **允许的 P1 后端 mock 场景**：仅当对接第三方接口供**后端服务端**调用（服务端鉴权 / 银行代扣 / 报关推送 / 回调验签）且第三方未交付时，用 `@Profile("mock")` 隔离 + 6 字段 `THIRD_PARTY_MOCK` 标注块。**Mock 位置选型优先级（P0 前端拦截 > P1 后端运行时开关 > P2 中间件）+ 守卫策略按标记分流（本条属 `THIRD_PARTY_MOCK` 一类：**必须**运行时开关，禁 `@Profile("dev")` 等构建期守卫；同项目后端未部署的 `DEV_MOCK` 是相反口径，见约定 26）、切真实当轮删除）详规单一信源见 `{{AIDP_HOME}}/rules/code.md` 约定 26**（自动加载），本条不复述。
    - **前端来催"先写个假数据接口给我联调"时**：引导前端用 axios 拦截器 / MSW 自行 mock（既然接口契约已明确，前端无需后端写假数据即可独立调试）。
 6. **★ 上游文档缺口标记**：开发过程中如发现研发需求 / 详细设计 / 接口设计 / 数据库设计 / 研发执行计划任一份上游文档**没说但本 Sprint 实际要做**的功能点 / 字段 / 接口 / 业务规则 / 状态机 / 性能约束等，**禁止静默实现**——必须就地在代码注释里加 `// TODO[GAP]: <一句话描述上游缺口> — 由 /sprint-dev Step X.0.0 级联补回上游`。Step X.0.0 影响清单生成时会 grep 这些标记，自动归入级联触发清单。绝不允许"代码已实现但上游文档无记载"的暗修改。
 7. **★ DB 约束前置校验遵守强制规范**：写代码必须严格遵守 DDL 中的字段约束，**禁止依赖 DB 报错"事后处理"**——数据库异常应被代码主动拦截在落库前，而非作为业务错误暴露给前端：
@@ -105,8 +105,8 @@
      • 在 Service 里 `try { insert } catch { 默认值再 insert }` 这种"碰碰运气"风格
      • 把 DB 错误信息 `e.getMessage` 原样塞进 ApiResponse 暴露 schema 给前端
      • 用 `Optional.orElse(默认值)` 掩盖 NOT NULL 字段的真实缺失
-8. **★ 代码注释强制规范**：详规单一信源见 `.aidp/rules/code.md` 约定 17（编辑 `code/backend/**` 时自动加载：类/方法/字段/关键段注释要求 + A/B/C 分档加权回检（A 档裸代码即 Critical）），本条不复述。**仅保留后端项目侧要点**——**★ 返回 VO/DTO 字段集以「详细设计字段清单」为基线，Javadoc 字段清单不得充当独立基线**：列表/详情接口返回字段集以详细设计「字段实现清单」（缺失则研发需求字段清单）为准（研发需求列出的字段后端必须返回，少返回 = 前端无从渲染，如 `enrolledCount` 漏返回）；method/class 头 Javadoc 的"返回字段清单"只能复述上游、不得成为独立事实基准，与详细设计不符时以详细设计为准 + 走约定 22 级联，严禁"改 Javadoc 了事"；前后端字段/列对账由 `code-verification-loop`「字段/列对账」维度兜底。
-9. **★ 配置中心动态刷新强制规范（约定 27）**：用配置中心（Nacos/Apollo/Spring Cloud Config 等）时，注入**可变**配置的类须支持运行时热刷新（如 Spring `@RefreshScope`），配置变更无需重启即生效。**详规单一信源见 `.aidp/rules/backend.md` 约定 27**（编辑 `code/backend/**` 时自动加载：必加/不需要哪些类、长生命周期持有者避免缓存旧引用等），本条不复述。
+8. **★ 代码注释强制规范**：详规单一信源见 `{{AIDP_HOME}}/rules/code.md` 约定 17（编辑 `code/backend/**` 时自动加载：类/方法/字段/关键段注释要求 + A/B/C 分档加权回检（A 档裸代码即 Critical）），本条不复述。**仅保留后端项目侧要点**——**★ 返回 VO/DTO 字段集以「详细设计字段清单」为基线，Javadoc 字段清单不得充当独立基线**：列表/详情接口返回字段集以详细设计「字段实现清单」（缺失则研发需求字段清单）为准（研发需求列出的字段后端必须返回，少返回 = 前端无从渲染，如 `enrolledCount` 漏返回）；method/class 头 Javadoc 的"返回字段清单"只能复述上游、不得成为独立事实基准，与详细设计不符时以详细设计为准 + 走约定 22 级联，严禁"改 Javadoc 了事"；前后端字段/列对账由 `code-verification-loop`「字段/列对账」维度兜底。
+9. **★ 配置中心动态刷新强制规范（约定 27）**：用配置中心（Nacos/Apollo/Spring Cloud Config 等）时，注入**可变**配置的类须支持运行时热刷新（如 Spring `@RefreshScope`），配置变更无需重启即生效。**详规单一信源见 `{{AIDP_HOME}}/rules/backend.md` 约定 27**（编辑 `code/backend/**` 时自动加载：必加/不需要哪些类、长生命周期持有者避免缓存旧引用等），本条不复述。
    - **项目侧落点**（agent 操作补充）：加 `@RefreshScope` 的类注释写明"配置来自配置中心 {dataId}、支持动态刷新"，动态 key 字段注释标"配置中心可变"；`docs/deployment/{version}/配置文件/增量/配置项清单.md` 标"承载方式=配置中心"时本规范强制生效；回检 = `/sprint-test` `code-verification-loop` 维度 4 扫"注入配置中心 key 却未声明热刷新"。
 10. **★ 已有技术栈/组件复用优先（详见 `AGENTS.md` 约定 28）**：参照接口设计 / 原型代码实现真实后端代码时，**功能/契约必须与接口设计一致**，但**实现层面必须优先使用项目实际代码已有的依赖、工具类、Bean**，不强行引入原型代码用的库。
     - **判定步骤（写代码前必跑）**：
@@ -159,7 +159,7 @@
            docs/requirements/{version}/研发需求/ docs/design/detail/{version}/ docs/plans/{version}/ \
            | grep -iE "${TARGET_CLASS}|订单接口|订单管理"  # 替换为业务关键词
       ```
-    - **4 信号定义 + 3 类处置（A 增量复用 / B 删旧重做默认自动 / C 兼容重构弹问询）判定表 → 单一信源见 `.aidp/rules/code.md` 约定 29**（自动加载），本条不复述判定表；下方 grep 脚本、删除清单留档、关联文件清单为 backend agent 的**后端侧操作补充**。
+    - **4 信号定义 + 3 类处置（A 增量复用 / B 删旧重做默认自动 / C 兼容重构弹问询）判定表 → 单一信源见 `{{AIDP_HOME}}/rules/code.md` 约定 29**（自动加载），本条不复述判定表；下方 grep 脚本、删除清单留档、关联文件清单为 backend agent 的**后端侧操作补充**。
     - **删除清单留档（情形 B 必填）**：在 `docs/design/detail/{version}/*事实清单.md`「死代码删除清单」段追加：
       | 文件路径 | 信号命中 | 处置情形 | 删除时间 | Sprint |
       |---------|---------|---------|---------|--------|
@@ -211,9 +211,9 @@
 15. **★ 用户自我保护后端强校验（Critical，仅系统含用户管理时；详见 `dev-logic-architect` SKILL 核心原则 22 同源身份约束 / 检查项 1「业务逻辑一致性核验」的用户自我保护铁律子项 / `code-verification-loop` SKILL 维度 4「用户自我保护校验」）**：系统含用户管理（用户 CRUD / 启停 / 角色权限分配）时，用户删除 / 禁用 / 角色撤销接口**必须以当前登录态身份（JWT `sub` / `SecurityContext`，不取前端传入的「当前用户 id」）为基准**、后端强校验，拦截「目标 id == 当前操作人」的三类自伤操作：① 删除自己 ② 禁用 / 锁定 / 冻结自己 ③ 撤销 / 降级自己赖以管理的角色 / 权限（尤其最后一个管理员）——**前端按钮置灰仅辅助、不可替代后端校验**。与 item 14 同属 `dev-logic-architect` 核心原则 22 同源身份约束；回检由 `code-verification-loop` 维度 4 拦截（命中「能删除/禁用/降权自己」= Critical），详规以上述 SKILL 为单一信源、本条不复述。
 
 16. **★ 上游/第三方接口调用日志（约定 40）**：调用**进程外**依赖（第三方 HTTP API / 微服务 RPC·Feign / 对象存储 / 短信邮件消息网关 / 支付鉴权中心；**不含**本地 DB 与本地缓存）时，**成功路径也必须打 INFO**——请求侧「完整 URL（含 query）+ method + 入参」、响应侧「status + 上游业务 code + 出参 + 耗时」，两行带 traceId/序号**可配对**。⛔ 成功不得降级为 DEBUG（生产默认 INFO，需要看日志的时刻永远在生产）。二进制流只打元信息（文件名/大小/contentType），超阈值文本截断须标注原始长度；**凭据字段必须同时脱敏**（保留首尾各 3 位、中间 `***`）。**实现一律走拦截器/过滤器，⛔ 禁止每个 client 各写各的**。
-    - **回检**：`python3 .aidp/scripts/check_upstream_call_log.py --json`（C1 零日志 / C2 成功路径不可见 = Critical；I1 无 URL / I2 只有 debug / I3 疑似凭据明文 = Important，`upstream-log-ignore:` 可豁免但原因必须写）；由 `/sprint-dev` Phase 1 Step 8 直接调用。详规单一信源 = `.aidp/rules/code.md` 约定 40 + `.aidp/rules/backend.md` 实现侧（含「挂了拦截器业务侧读不到响应体」的坑），本条不复述。
+    - **回检**：`python3 {{AIDP_HOME}}/scripts/check_upstream_call_log.py --json`（C1 零日志 / C2 成功路径不可见 = Critical；I1 无 URL / I2 只有 debug / I3 疑似凭据明文 = Important，`upstream-log-ignore:` 可豁免但原因必须写）；由 `/sprint-dev` Phase 1 Step 8 直接调用。详规单一信源 = `{{AIDP_HOME}}/rules/code.md` 约定 40 + `{{AIDP_HOME}}/rules/backend.md` 实现侧（含「挂了拦截器业务侧读不到响应体」的坑），本条不复述。
 
-17. **★ 通用还原度后端侧（约定 39）**：① **R10 导出必须导全量**——导出接口方法体**禁止透传** `pageNo`/`pageSize`/`PageHelper`/`Pageable`（判 **Critical、⛔ 零豁免**：页面看到 1 万条、导出只出当前页 20 条，用户无从察觉）；② **R9 存量数据兼容性必须显式验证**——改结构 / 加必填 / 收窄取值域时，须对老数据跑一遍真实验证，不得只测新建路径；③ **R12 同一指标跨页面必须同源**——多处取数走同一权威口径（基准 = 详设「统计指标口径表」第 8 列）。详规见 `.aidp/rules/code.md` 约定 39，机器门 `python3 .aidp/scripts/check_ui_fidelity.py --json`。
+17. **★ 通用还原度后端侧（约定 39）**：① **R10 导出必须导全量**——导出接口方法体**禁止透传** `pageNo`/`pageSize`/`PageHelper`/`Pageable`（判 **Critical、⛔ 零豁免**：页面看到 1 万条、导出只出当前页 20 条，用户无从察觉）；② **R9 存量数据兼容性必须显式验证**——改结构 / 加必填 / 收窄取值域时，须对老数据跑一遍真实验证，不得只测新建路径；③ **R12 同一指标跨页面必须同源**——多处取数走同一权威口径（基准 = 详设「统计指标口径表」第 8 列）。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 39，机器门 `python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json`。
 
 ### 流程 A：Sprint 后端开发
 
@@ -259,11 +259,11 @@ Step 7: 编译验证（★ 收敛到验收阶段执行 + 仅改动侧 + 资源�
     擅自 `mvn spring-boot:run` / `gradle bootRun` / `python manage.py runserver` / `node server.js` 等后端常驻进程——
     会占端口、常驻占资源、前台阻塞会话 tick。**需要运行时验证接口时的正确路径**：**(a) 已部署环境（CICD 部署后 / `deployment` 已配 URL）
     / (b) 用户已在运行的服务（先探端口、有则复用绝不另起）/ (c) 都无则先 `AskUserQuestion` 征得同意由用户启动**。
-    唯一授权例外 = PRD `deployment.mode=local`（`/sprint-aiauto-test` / `/sprint-autopilot` 场景，命令端后台幂等启动）。详规见 `.aidp/rules/code.md` 约定 35
+    唯一授权例外 = PRD `deployment.mode=local`（`/sprint-aiauto-test` / `/sprint-autopilot` 场景，命令端后台幂等启动）。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 35
   → ★ 「验证工程骨架可构建」类任务同样只编译不打包：**开发期完整打包请求无论来自哪个来源**——
     研发执行计划里的验证任务、**项目记忆文件（`AGENTS.md` / `CLAUDE.md`）/ `README` / 「命令速查·常用命令」里列的「构建/打包：`mvn package`」类命令**
     （那类 cheatsheet 里的「构建」= 部署期命令、非开发期验证手段）、或用户泛说「打个包看看」——哪怕写着
-    `mvn package` / `mvn clean package`，**开发期一律降级为 `mvn -q compiler:compile` / `gradle compileJava`**（⛔ 不是 `mvn compile`：它走完整 lifecycle、会连带跑 `npm install`+`npm run build`，反而触发约定 35 ② 禁止的完整构建；判据单一信源见 `.aidp/skills/dev-execution-planner/references/stack-java-spring.md`「二、开发期轻量验证」（⛔ 别写裸文件名：全仓有 4 份同名文件、内容各不相同，只有这一份含该节））
+    `mvn package` / `mvn clean package`，**开发期一律降级为 `mvn -q compiler:compile` / `gradle compileJava`**（⛔ 不是 `mvn compile`：它走完整 lifecycle、会连带跑 `npm install`+`npm run build`，反而触发约定 35 ② 禁止的完整构建；判据单一信源见 `{{AIDP_HOME}}/skills/dev-execution-planner/references/stack-java-spring.md`「二、开发期轻量验证」（⛔ 别写裸文件名：全仓有 4 份同名文件、内容各不相同，只有这一份含该节））
     （只编译、不打 jar/war、不跑测试打包阶段）——与前端「开发期不 pnpm build」对称。
   → ★ 开发期 vs 发布期（口径区分，"编译/类型检查" ≠ "打包/构建产物"）：
     • **开发期验证**（/sprint-dev · /sprint-bugfix · /sprint-test 验收）= 仅**编译**改动侧
@@ -281,7 +281,7 @@ Step 7.5: ★ 文件复杂度 + 复用封装自检
     • 跨模块共享 → 提升到 common/shared 模块
   → 反过来禁止过度抽象：3 次以下复用不抽（Claude 默认 KISS 原则）
     ⛔ **判据类逻辑例外**：URL/base-path 拼装、鉴权头组装、租户解析、时间格式化、金额换算、
-    字段归一/脱敏 —— **散落 ≥2 处即须收敛**，比 3 次阈值更严（见 `.aidp/rules/code.md` 约定 20）
+    字段归一/脱敏 —— **散落 ≥2 处即须收敛**，比 3 次阈值更严（见 `{{AIDP_HOME}}/rules/code.md` 约定 20）
   → SRP：单类一职、命名"动词+名词"；忌"瑞士军刀"方法
   → 兜底说明：本步骤是"开发期更早自检"，sprint-test 期会被 `code-verification-loop`
     SKILL「代码质量」维度表格的"文件复杂度 + 复用封装"子项 + 配套脚本

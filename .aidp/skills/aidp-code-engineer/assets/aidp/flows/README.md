@@ -1,12 +1,12 @@
-# .aidp/flows/ — 长命令的分阶段 flow 文件（按需加载，降"整份入上下文致漏步"）
+# {{AIDP_HOME}}/flows/ — 长命令的分阶段 flow 文件（按需加载，降"整份入上下文致漏步"）
 
-> 本目录承载**超长 slash 命令**的 **Phase 详情分片**。命令主体（`.aidp/commands/<命令>.md`）保持**薄壳**——只留综述 + 顶层不变式 + 各 Phase 的**骨架 + 硬门 + 指向本目录对应 flow 文件的指针**；每个 Phase 的**完整详细步骤**外置到 `flows/<命令>/phase-N.md`，由命令主体在**进入该 Phase 时用 `Read` 工具按需加载**。
+> 本目录承载**超长 slash 命令**的 **Phase 详情分片**。命令主体（`{{AIDP_HOME}}/commands/<命令>.md`）保持**薄壳**——只留综述 + 顶层不变式 + 各 Phase 的**骨架 + 硬门 + 指向本目录对应 flow 文件的指针**；每个 Phase 的**完整详细步骤**外置到 `flows/<命令>/phase-N.md`，由命令主体在**进入该 Phase 时用 `Read` 工具按需加载**。
 
 ## 为什么需要（问题与原理）
 
 超长命令（上千行级）一次性整份入上下文，会导致：① **"lost in the middle"**——中段步骤注意力衰减、被漏读；② **指令互相稀释**——几十条 `⛔` 硬门挤一起等于没有优先级；③ **满足即止**——模型跑长流程时倾向"看着做完就收尾"、自我说服跳步。
 
-**分阶段按需加载**把"任一时刻的活跃指令集"从**整份**降到**当前 Phase 那一片**，是对上述三症的结构级缓解（与 skill 的 progressive disclosure、`.aidp/rules/*.md` 路径限定加载同原理）。
+**分阶段按需加载**把"任一时刻的活跃指令集"从**整份**降到**当前 Phase 那一片**，是对上述三症的结构级缓解（与 skill 的 progressive disclosure、`{{AIDP_HOME}}/rules/*.md` 路径限定加载同原理）。
 
 ## 约定（所有长命令统一遵守）
 
@@ -17,12 +17,12 @@
    - `usage-guard.md`（**用法与守护**，可选）：7×24 守护挂载用法（`/loop`、OS cron、单次模式、用法对比）+ 输出示例 + 停止机制等**参考性内容**，执行路径不需要，按需 `Read`。
    - `rationale.md`（**理据**）：该命令的根因 / 反例 / 历史事故——对人类维护者有价值、对执行期模型是**噪音**（稀释祈使信号），故从执行路径剥离、执行时**不加载**。
 3. **按需加载指令写死在命令骨架里**：命令在每个 Phase 段明确写"进入本 Phase 的**第一动作 = `Read` 对应 `phase-N.md`**，逐项执行、绝不凭骨架或记忆略过子步骤"。
-4. **每个 Phase 配一道确定性门（推荐）**：Phase 出口跑 `scripts/<命令>-*-gate.py` 之类脚本 `exit 1` 兜底"该 Phase 是否真做完"——prose 可被忽略、`exit 1` 过不去（参见 `.aidp/scripts/autopilot-ceremony-gate.py`）。
-5. **flow 文件不是命令**：`.aidp/flows/` **不**被 Claude Code 当作 slash 命令扫描（只有 `.aidp/commands/*.md` 才是），故不污染 `/` 菜单；`Read` 工具可正常读取。
-6. **★ 单文件大小硬约束：每个【执行分片】≤20KB（硬上限）、尽量 ~10KB**。**执行分片 = `.aidp/flows/**` 下除 `README.md` / `rationale.md` / `invariants.md` / `usage-guard.md` 之外的【全部】 `.md`**——不只 `phase-N.md`：`version/planning-*`、`sprint-design/step-*`、`sprint-dev/postdev-*` 等同样是执行分片，且其中若干长期贴着上限。**原因**：flow 文件被 Read 进上下文时，若本身上百 KB，"lost in the middle" 照旧存在、等于没拆彻底——分片的意义正是让"任一时刻活跃指令"足够小。超 20KB 的执行分片必须**按子步骤边界二次切分**成多个 `<段名>-1.md` / `<段名>-2.md` …（每片头部写明"本片覆盖子步骤 X.a–X.b"），命令主体的该段骨架表则**逐子步映射到对应分片**、模型按进度依次 Read。**切分不得从中间截断**任何 markdown 表格 / 代码块 / 单条硬门。
+4. **每个 Phase 配一道确定性门（推荐）**：Phase 出口跑 `scripts/<命令>-*-gate.py` 之类脚本 `exit 1` 兜底"该 Phase 是否真做完"——prose 可被忽略、`exit 1` 过不去（参见 `{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py`）。
+5. **flow 文件不是命令**：`{{AIDP_HOME}}/flows/` **不**被 Claude Code 当作 slash 命令扫描（只有 `{{AIDP_HOME}}/commands/*.md` 才是），故不污染 `/` 菜单；`Read` 工具可正常读取。
+6. **★ 单文件大小硬约束：每个【执行分片】≤20KB（硬上限）、尽量 ~10KB**。**执行分片 = `{{AIDP_HOME}}/flows/**` 下除 `README.md` / `rationale.md` / `invariants.md` / `usage-guard.md` 之外的【全部】 `.md`**——不只 `phase-N.md`：`version/planning-*`、`sprint-design/step-*`、`sprint-dev/postdev-*` 等同样是执行分片，且其中若干长期贴着上限。**原因**：flow 文件被 Read 进上下文时，若本身上百 KB，"lost in the middle" 照旧存在、等于没拆彻底——分片的意义正是让"任一时刻活跃指令"足够小。超 20KB 的执行分片必须**按子步骤边界二次切分**成多个 `<段名>-1.md` / `<段名>-2.md` …（每片头部写明"本片覆盖子步骤 X.a–X.b"），命令主体的该段骨架表则**逐子步映射到对应分片**、模型按进度依次 Read。**切分不得从中间截断**任何 markdown 表格 / 代码块 / 单条硬门。
    - **★ 豁免的四类**：`invariants.md`（全 Phase 通用、由命令主体在进入执行链前**一次性加载**，本就不随 Phase 反复进出上下文）、`usage-guard.md`（参考性、执行路径不载）、`rationale.md`（执行期不载）**不受 ≤20KB 硬上限约束**——它们不是"某一时刻的活跃指令集"，切碎反而破坏"按名引用解析到唯一定义处"的单一信源性。但仍应**尽量精简**：只放真正全局通用的条目，Phase 专属内容一律回归对应 `phase-N.md`。
 7. **★ 序列连续、无缺口（统一性）**：一个命令若已把多数 Phase/Step 外置，就**全部外置、不留中间缺口**（避免 `phase-0/1/3` 缺 `phase-2` 这种别扭序列）——哪怕某段较小也外置以保持一致。
-8. **★ 适用条件前置（让执行体"先判后读"、不读用不上的片）**：**机制 = 命令主体骨架表的「适用条件」列**（骨架表已在上下文，执行体据此判断某子步/分片当次适不适用，不满足则**整片跳过、无需 Read**，如纯后端项目跳过 chrome 预检片、`notify.enabled=false` 跳过里程碑通知模板片）。本条是**推荐**：新增/改动分片时补齐「适用条件」列，⛔ 不要假设"骨架表一定有该列"（没有该列即按全部适用处理）。⛔ **唯一机制就是这一列**，不设「分片 frontmatter 机读副本」（`.aidp/rules/` 的 `paths:` frontmatter 是另一回事）。
+8. **★ 适用条件前置（让执行体"先判后读"、不读用不上的片）**：**机制 = 命令主体骨架表的「适用条件」列**（骨架表已在上下文，执行体据此判断某子步/分片当次适不适用，不满足则**整片跳过、无需 Read**，如纯后端项目跳过 chrome 预检片、`notify.enabled=false` 跳过里程碑通知模板片）。本条是**推荐**：新增/改动分片时补齐「适用条件」列，⛔ 不要假设"骨架表一定有该列"（没有该列即按全部适用处理）。⛔ **唯一机制就是这一列**，不设「分片 frontmatter 机读副本」（`{{AIDP_HOME}}/rules/` 的 `paths:` frontmatter 是另一回事）。
 
 ## 标题层级 ↔ 编号的对应（易错点，写明以免再踩）
 
@@ -47,7 +47,7 @@
 
 ## 维护边界（约定 16）
 
-本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更 → 改模板项目 `.aidp/flows/` 本体 → 镜像进脚手架 bundle（`assets/aidp/flows/`，由 `scaffold.py::sync_gated` recurse 下发）。命令主体与其 flow 文件必须**成对同步**，避免"薄命令指向的 phase 文件缺失/过期"。
+本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更 → 改模板项目 `{{AIDP_HOME}}/flows/` 本体 → 镜像进脚手架 bundle（`assets/aidp/flows/`，由 `scaffold.py::sync_gated` recurse 下发）。命令主体与其 flow 文件必须**成对同步**，避免"薄命令指向的 phase 文件缺失/过期"。
 
 ## 现状
 
@@ -65,11 +65,11 @@
 | `sprint-bugfix` | `mode-b` + `mode-b2`（独立修复路径），**2 片** |
 | `sprint-requirements` | `execution-steps`，1 片 |
 
-> 命令主体行数随维护浮动、不写进本表（要看跑 `wc -l .aidp/commands/<命令>.md`）；**分片数**是稳定契约，由 `verify.py` 的分片计数与 ≤20KB 体积校验兜住。
+> 命令主体行数随维护浮动、不写进本表（要看跑 `wc -l {{AIDP_HOME}}/commands/<命令>.md`）；**分片数**是稳定契约，由 `verify.py` 的分片计数与 ≤20KB 体积校验兜住。
 
 Phase 序列连续无缺口（本目录约定 7）；每个 flow 目录另含 `rationale.md`（理据剥离位，执行期不载）。
 
-**本目录约定 6 的达标情况以现算为准**（⛔ 不在本文写死结论：写死必漂，与本 README 上方「写死必漂」同一条教训）——跑 `python3 .aidp/skills/aidp-code-engineer/scripts/verify.py . <项目版本号> <user>` 看「flows 分片超 20480B」一项。**判据 = `> 20480` 才违规、恰好 20480 合规**（与 `check_flow_slice_size` 逐字一致）。`sprint-autopilot/invariants.md`（显著超出）属**顶层不变式类、按本目录约定 6 不受 ≤20KB 约束**——它在进入执行链前一次性加载、非按 Phase 轮换，但**仍偏大、应持续精简**（Phase 专属内容回归对应 `phase-N.md`）。临时自查一行（⛔ 判据以 verify 为准，本行只是就手看看）：`find .aidp/flows -name '*.md' ! -name 'README.md' ! -name 'rationale.md' ! -name 'invariants.md' ! -name 'usage-guard.md' -size +20480c`——`find` 的 `+N` 是**严格大于**，故 `+20480c` 与闸门口径完全一致；**必须扫全部执行分片**：只匹配 `phase-*.md` 会漏掉 `version/planning-*`·`release-*`、`sprint-design/step-*`、`sprint-dev/*` 等多片。
+**本目录约定 6 的达标情况以现算为准**（⛔ 不在本文写死结论：写死必漂，与本 README 上方「写死必漂」同一条教训）——跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . <项目版本号> <user>` 看「flows 分片超 20480B」一项。**判据 = `> 20480` 才违规、恰好 20480 合规**（与 `check_flow_slice_size` 逐字一致）。`sprint-autopilot/invariants.md`（显著超出）属**顶层不变式类、按本目录约定 6 不受 ≤20KB 约束**——它在进入执行链前一次性加载、非按 Phase 轮换，但**仍偏大、应持续精简**（Phase 专属内容回归对应 `phase-N.md`）。临时自查一行（⛔ 判据以 verify 为准，本行只是就手看看）：`find {{AIDP_HOME}}/flows -name '*.md' ! -name 'README.md' ! -name 'rationale.md' ! -name 'invariants.md' ! -name 'usage-guard.md' -size +20480c`——`find` 的 `+N` 是**严格大于**，故 `+20480c` 与闸门口径完全一致；**必须扫全部执行分片**：只匹配 `phase-*.md` 会漏掉 `version/planning-*`·`release-*`、`sprint-design/step-*`、`sprint-dev/*` 等多片。
 
 **骨架表分片列的列名为「所在分片」或「分片」**。未落地该列的命令以段内指针指向 flow 片即可 —— 骨架表只在**分片数 ≥4** 的命令上才有必要，只有一两片的命令加一列纯属噪音。
 
@@ -85,5 +85,5 @@ Phase 序列连续无缺口（本目录约定 7）；每个 flow 目录另含 `r
 - **命令主体是「骨架 + 指针」**：它决定**读哪些分片**，因而必须在读分片**之前**就完整在场——
   骨架表、穷举白名单、flag 定义这些内容天然无法再外置（外置了就得先读它才知道读什么，循环依赖）。
 
-但**不设硬门 ≠ 可以无限长**：体积最大的命令主体（按 `wc -c .aidp/commands/*.md` 现算）
+但**不设硬门 ≠ 可以无限长**：体积最大的命令主体（按 `wc -c {{AIDP_HOME}}/commands/*.md` 现算）
 改动时优先把仍留在主体里的执行细节外置到分片，只留判据与指针。⛔ 不要为了达标而把骨架表拆走——那会直接破坏上面第 2 条。

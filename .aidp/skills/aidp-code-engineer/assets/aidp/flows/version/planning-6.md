@@ -1,7 +1,7 @@
 # /version · 版本规划流程详情 — 分片 6/8
 
 > 本片覆盖：**Step 2.4.6 关联文档交叉引用校验**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 #### Step 2.4.6：★ 关联文档交叉引用校验
@@ -48,7 +48,7 @@
    - 如 `docs/design/detail/{version}/*事实清单.md` 存在且「⚠️ 本次变更」表非空 → 必须验证「已联动消费者点」列**对每条变更都非空**（无需联动的应注明"无需联动 — 原因"）
    - 取「⚠️ 本次变更」表里**未声明已联动**的消费者点（按事实清单「路径消费者点」表的全集），与 `git diff --name-only HEAD~..HEAD`（首版 `/version` 则为 `git ls-files`）做交集——文件在消费者点表里但**不在本次改动中** → 标红写入「⚠️ 消费者级联告警」表
    - 反模式参考：base 变更后前端 URL 守卫漏改导致双前缀 404（详见事实清单「反模式提示」段）
-   - **告警等级**：base 变更但消费者未全部联动 = P0 告警。**交互式** → 命令暂停，要求用户先补改再继续；**无人值守**（`--unattended` / `--no-tag` / `LOOP_UNATTENDED`）→ ⛔ **绝不停等**（无人可答，`/loop` tick 会空转到熔断）：WARN + 把未联动消费者点逐条经 `python3 .aidp/scripts/release_debt.py --version {version} --step 2.4.6 --level Critical --title "<消费者点> 未随 base 变更联动" --redo "<补改命令>"` 登记进 **`docs/audit/{version}/发布欠账.md`** + 在 Step 2.8 报告标注（⛔ **不要另起 `规划欠账.md`**：那份没有任何读者——`--finalize-docs` / `--rebuild-baseline` 的补跑入口只读 `发布欠账.md`，报告顶部的必打块也只渲染它，`check_release_debt_landing.py` 的扫描面更只覆盖 `release-*.md`。而本行恰好跑在**无人值守分支**上，等于把一条 P0 告警写进一个没人读的文件），然后**继续后续步骤**；本项不构成失败信号（真正的阻断由 Step 2.4.7 审计的 `audit-block` 承担）。
+   - **告警等级**：base 变更但消费者未全部联动 = P0 告警。**交互式** → 命令暂停，要求用户先补改再继续；**无人值守**（`--unattended` / `--no-tag` / `LOOP_UNATTENDED`）→ ⛔ **绝不停等**（无人可答，`/loop` tick 会空转到熔断）：WARN + 把未联动消费者点逐条经 `python3 {{AIDP_HOME}}/scripts/release_debt.py --version {version} --step 2.4.6 --level Critical --title "<消费者点> 未随 base 变更联动" --redo "<补改命令>"` 登记进 **`docs/audit/{version}/发布欠账.md`** + 在 Step 2.8 报告标注（⛔ **不要另起 `规划欠账.md`**：那份没有任何读者——`--finalize-docs` / `--rebuild-baseline` 的补跑入口只读 `发布欠账.md`，报告顶部的必打块也只渲染它，`check_release_debt_landing.py` 的扫描面更只覆盖 `release-*.md`。而本行恰好跑在**无人值守分支**上，等于把一条 P0 告警写进一个没人读的文件），然后**继续后续步骤**；本项不构成失败信号（真正的阻断由 Step 2.4.7 审计的 `audit-block` 承担）。
 
 若发现缺失或路径无效（校验项 1~4），**子 Agent 就地修复**（追加/重写）后回传改动清单，不阻塞流程；校验项 5/6 的 P0 告警由子 Agent 标出并回传；主对话**交互式**据此暂停命令等待人工裁决，**无人值守**按上条降级（登记欠账 + 继续），不停等。修复日志由子 Agent 汇总后输出到本步末尾。
 

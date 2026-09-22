@@ -1,4 +1,4 @@
-# .aidp/agents/ — AIDP 角色指令文件（**不是** Claude Code 原生 subagent 注册目录）
+# {{AIDP_HOME}}/agents/ — AIDP 角色指令文件（**不是** Claude Code 原生 subagent 注册目录）
 
 > ⚠️ **先读这一条，能省掉一整轮误解**：本目录下的 9 份 `.md` 是**角色指令文件**，
 > 由执行体用 **`Read` 工具**加载后自己扮演该角色，或写进派发给子 Agent 的 prompt 里。
@@ -11,7 +11,7 @@
 这句话的**正确读法**是：
 
     用 `Agent` 工具派一个通用子 Agent（`general-purpose`），
-    并在 prompt 里明确要求它「先 Read `.aidp/agents/<角色>.md`，按该文件逐项执行」。
+    并在 prompt 里明确要求它「先 Read `{{AIDP_HOME}}/agents/<角色>.md`，按该文件逐项执行」。
 
 **错误读法**是把 `backend` / `version-auditor` 当成已注册的 `subagent_type` 直接传——
 那会拿到「未知 agent 类型」而不是想要的角色。两者的差别在报错上很明显，
@@ -45,5 +45,5 @@
 改用嵌套 `code/{子项目}/AGENTS.md`（Claude Code 下为 `CLAUDE.md`）承载。
 
 ⛔ **各角色的通用代码约定详规不写在这里**：约定 4/17/18/19/20/23/26/27/28/29/35/39/40 的正文
-在 `.aidp/rules/{code,frontend,backend}.md`（按 `paths:` 自动加载）。
+在 `{{AIDP_HOME}}/rules/{code,frontend,backend}.md`（按 `paths:` 自动加载）。
 本目录只留**索引 + 角色专属要点**——复制详规必然双写漂移。

@@ -1,6 +1,6 @@
 # sprint-requirements · 执行步骤详情（Step 0–3）
 
-> 本文件是 `/sprint-requirements` 命令 **执行步骤（Step 0 输入扫描 → Step 1 调 ux-logic-extractor → Step 1.5 命令级后处理 → Step 2 补充元数据 → Step 3 更新状态）** 的完整详细步骤，由命令主体（`.aidp/commands/sprint-requirements.md`）在**进入「执行步骤」时用 Read 工具按需加载**。命令主体只保留「执行步骤」的**骨架表 + 关键规则 + 指向本文件的指针**。
+> 本文件是 `/sprint-requirements` 命令 **执行步骤（Step 0 输入扫描 → Step 1 调 ux-logic-extractor → Step 1.5 命令级后处理 → Step 2 补充元数据 → Step 3 更新状态）** 的完整详细步骤，由命令主体（`{{AIDP_HOME}}/commands/sprint-requirements.md`）在**进入「执行步骤」时用 Read 工具按需加载**。命令主体只保留「执行步骤」的**骨架表 + 关键规则 + 指向本文件的指针**。
 >
 > ⚠️ **权威性**：进入执行步骤后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤（Step 1.5 的 (a)~(e) 后处理尤其易漏）。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-requirements/execution-steps.md`。理据/根因见同目录 `rationale.md`。
@@ -36,7 +36,7 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 
 使用 `Skill` 工具调用 `ux-logic-extractor`，由 skill 自主完成 PRD 生成 + 多维度（详见 SKILL.md）独立 Agent 检查 + 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**（含职责边界 / 上游引用规则 / 拆分数量控制 / 不中断原则 / 不臆造兜底 / 数据闭环完整性 / 复用优先维度等），命令端按 CLAUDE.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
-> 详细规则查 `.aidp/skills/ux-logic-extractor/SKILL.md`；命令端只负责传参 + 接收输出 + 下方 Step 1.5 的 AIDP 编排后处理。
+> 详细规则查 `{{AIDP_HOME}}/skills/ux-logic-extractor/SKILL.md`；命令端只负责传参 + 接收输出 + 下方 Step 1.5 的 AIDP 编排后处理。
 
 **调用参数**（按 skill 当前接口）：
 - **产品需求文档**：Step 0.1 扫描到的全部 PRD 路径
@@ -70,7 +70,7 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 
 【信号】上游齐全 → 请走严格模式（不走"独立使用上游不全时"的宽松判定）。
 
-SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行数/阈值）：REQ 段头部上游溯源 + 引用密度覆盖率，均由 SKILL 内置硬核回检 + 脚本 `.aidp/skills/ux-logic-extractor/scripts/check_req_upstream.py` 把关（具体头部行数 / 覆盖率阈值详见 SKILL.md）。
+SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行数/阈值）：REQ 段头部上游溯源 + 引用密度覆盖率，均由 SKILL 内置硬核回检 + 脚本 `{{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py` 把关（具体头部行数 / 覆盖率阈值详见 SKILL.md）。
 ```
 
 命令端把上述 prompt 作为「调用约束」原样追加到 SKILL 调用的 system prompt 末尾。SKILL QR 通过后，命令端在 Step 1.5 末尾再用 bash grep 兜底核验（详见 Step 1.5e 兜底回检）。
@@ -104,9 +104,9 @@ SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行�
 
 **(e) ★ SKILL 脚本复核（职责边界 / 字段清单 / PRD 条目反向覆盖 / 表 E·F / 第三方对接 / 拆分命名）**：
 
-> **单一信源 = `.aidp/skills/ux-logic-extractor/references/flow-qr-dispatch.md`**（脚本清单、触发条件、退出码、`98_语义变更与需求作废.json` 机读副本产出与 rc 处置全部在那里，由其质量检查子 Agent 步骤 0 强制跑）；命令端**不另列脚本、不复述判级**。
+> **单一信源 = `{{AIDP_HOME}}/skills/ux-logic-extractor/references/flow-qr-dispatch.md`**（脚本清单、触发条件、退出码、`98_语义变更与需求作废.json` 机读副本产出与 rc 处置全部在那里，由其质量检查子 Agent 步骤 0 强制跑）；命令端**不另列脚本、不复述判级**。
 >
-> 需要复核时（SKILL 报告缺脚本退出码证据 / 产物明显违规）→ **派独立子 Agent 按该文件原样跑全部脚本**（`<SKILL_DIR>` = `.aidp/skills/ux-logic-extractor`，PRD 目录 = `docs/requirements/{version}/研发需求/`，`check_prd_item_coverage.py` 的 `--prd-source` = `docs/requirements/{version}/产品提供/`），只回传各脚本退出码 + 摘要；⛔ 不在主对话内联跑。判违规 → 暂停 Step 2 让 SKILL 重写；退出码 `2` = 入参错，修参数重跑、不算违规；`98_语义变更与需求作废.json` 未落盘按 SKILL 口径阻断（它是 version-auditor 审计 H 的唯一机读信源）。SKILL QR 标记通过但产物明显违规 → 在模板仓库修 SKILL（约定 16），不在此步绕过。
+> 需要复核时（SKILL 报告缺脚本退出码证据 / 产物明显违规）→ **派独立子 Agent 按该文件原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/ux-logic-extractor`，PRD 目录 = `docs/requirements/{version}/研发需求/`，`check_prd_item_coverage.py` 的 `--prd-source` = `docs/requirements/{version}/产品提供/`），只回传各脚本退出码 + 摘要；⛔ 不在主对话内联跑。判违规 → 暂停 Step 2 让 SKILL 重写；退出码 `2` = 入参错，修参数重跑、不算违规；`98_语义变更与需求作废.json` 未落盘按 SKILL 口径阻断（它是 version-auditor 审计 H 的唯一机读信源）。SKILL QR 标记通过但产物明显违规 → 在模板仓库修 SKILL（约定 16），不在此步绕过。
 
 **Q-NNN 优先级汇总**（命令端读取十章节后按 P0/P1/P2 分组，在终端输出给用户）：
 
@@ -127,7 +127,7 @@ SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行�
 
 ### Step 2：补充元数据章节（PM Agent）
 
-读取 `.aidp/agents/pm.md` 获取角色定义。在每份研发需求文档**头部**追加以下章节（如 skill 未生成）：
+读取 `{{AIDP_HOME}}/agents/pm.md` 获取角色定义。在每份研发需求文档**头部**追加以下章节（如 skill 未生成）：
 
 ```markdown
 ## 关联文档

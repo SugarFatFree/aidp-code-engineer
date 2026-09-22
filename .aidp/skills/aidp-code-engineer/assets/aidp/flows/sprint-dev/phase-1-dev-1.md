@@ -2,7 +2,7 @@
 
 # sprint-dev · Phase 1 开发执行详情（1.0–1.4）
 
-> 本文件是 `/sprint-dev` 命令 **Phase 1 开发执行**（分支 A/B 共用）详情的**第 1/2 片**（⛔ 本片不含 Phase 1 开发执行 全部子步——后续子步在 `-2`…`-2` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`.aidp/commands/sprint-dev.md`）在**进入 Phase 1 开发时用 Read 工具按需加载**——把这近 180 行从"每次调用整体入上下文"改为"走到开发段才载"，降低"lost in the middle"式漏步。命令主体只保留 Phase 1 的**骨架表 + 硬门一句提醒 + 指向本文件的指针**。
+> 本文件是 `/sprint-dev` 命令 **Phase 1 开发执行**（分支 A/B 共用）详情的**第 1/2 片**（⛔ 本片不含 Phase 1 开发执行 全部子步——后续子步在 `-2`…`-2` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`{{AIDP_HOME}}/commands/sprint-dev.md`）在**进入 Phase 1 开发时用 Read 工具按需加载**——把这近 180 行从"每次调用整体入上下文"改为"走到开发段才载"，降低"lost in the middle"式漏步。命令主体只保留 Phase 1 的**骨架表 + 硬门一句提醒 + 指向本文件的指针**。
 >
 > ⚠️ **权威性**：进入 Phase 1 开发后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤（尤其 Phase 1.2 Step 1「开发期 SQL 自动应用」约定 6 + Phase 1.1.5「code/{side}/{子项目}/ 目录」约定 18）。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；本 Phase 1 段已二次切分为 `phase-1-dev-1/-2.md` 两片，改动后同步各自 bundle 副本 `assets/aidp/flows/sprint-dev/`。理据/根因见同目录 `rationale.md`。
@@ -54,7 +54,7 @@
 
 ### Phase 1.2：后端开发（如在范围内）
 
-读取 `.aidp/agents/backend.md` 获取角色定义，执行"开发顺序"工作流程。
+读取 `{{AIDP_HOME}}/agents/backend.md` 获取角色定义，执行"开发顺序"工作流程。
 
 #### 输入文件（必须全部读取）
 
@@ -105,7 +105,7 @@ Step 7: ★ DI 依赖可解析性静态门（纯 grep 级、不编译/不打包/
         ```bash
         # 唯一实现 = CVL SKILL 脚本；参数、退出码（含 exit 2 与 unreadable_files）口径见 rules/backend.md「DI 依赖可解析性」段
         if [ -d code/backend ]; then
-          python3 .aidp/skills/code-verification-loop/scripts/check_di_resolvability.py \
+          python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/check_di_resolvability.py \
             code/backend --changed-only --json
         else
           echo "跳过：无 code/backend（纯前端项目），不算违规"
@@ -114,7 +114,7 @@ Step 7: ★ DI 依赖可解析性静态门（纯 grep 级、不编译/不打包/
         —— Critical：记入本 Sprint「问题汇总清单」交 /sprint-bugfix 修（提示语含「同类型既有惯例」修法）；Warn：汇总提示不阻断。
 Step 7bis: ★ 注释比例反向门（约定 17 的**另一侧**；纯静态）：
         ```bash
-        python3 .aidp/scripts/check_comment_ratio.py --json   # 无 code/ 自报跳过并返回 0
+        python3 {{AIDP_HOME}}/scripts/check_comment_ratio.py --json   # 无 code/ 自报跳过并返回 0
         ```
         —— 约定 17 的回检**两个方向都要有**：只查"写少了"时，过度注释零成本、零反馈信号。
            本门判 `注释行/代码行 > 1.0 且未命中 A 档特征` = **Important，不阻断**。
@@ -124,7 +124,7 @@ Step 7bis: ★ 注释比例反向门（约定 17 的**另一侧**；纯静态）
 
 Step 8: ★ 上游调用日志静态门（约定 40；同样纯静态、不起服务）：
         ```bash
-        python3 .aidp/scripts/check_upstream_call_log.py --json   # 无 code/ 时脚本自身打印「跳过」并返回 0，⛔ 别加 `[ -d code ] &&` 守卫：无 code/ 时整条复合命令 rc=1，会被按下面的「1=有 Critical」误读成违规
+        python3 {{AIDP_HOME}}/scripts/check_upstream_call_log.py --json   # 无 code/ 时脚本自身打印「跳过」并返回 0，⛔ 别加 `[ -d code ] &&` 守卫：无 code/ 时整条复合命令 rc=1，会被按下面的「1=有 Critical」误读成违规
         ```
         —— C1 出站调用类零日志 / C2 成功路径不可见（日志全为 warn/error）= **Critical**，
            I1 无 URL / I2 只有 debug / I3 疑似凭据明文 = Important。判定口径单一信源 =
@@ -134,7 +134,7 @@ Step 8: ★ 上游调用日志静态门（约定 40；同样纯静态、不起�
            `outbound_files: 0` 或结论不变，直接过。
         —— 退出码：`0`=无 Critical · `1`=有 Critical · `2`=入参错（修参数重跑、不算违规）。
            Critical 当场修（补请求段/响应段日志或薄封装打点，骨架见
-           `.aidp/reference/上游调用日志参考实现.md`）；Important 逐条判断是真问题
+           `{{AIDP_HOME}}/reference/上游调用日志参考实现.md`）；Important 逐条判断是真问题
            还是加 `upstream-log-ignore: <检查号> <原因>`（**原因必须写**）。
         —— ⛔ **I3（疑似凭据明文）不得靠"少打日志"绕过**：约定 40 要的是「打全 + 脱敏」，
            不是「怕泄漏所以不打」——后者会把成功路径重新变成不可观测。

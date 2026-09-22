@@ -6,7 +6,7 @@
 >
 > 📌 本文只描述当前生效的范式结构与流程，不记录逐版变更（约定 30）。
 >
-> 完整目录规则见 `06_版本与用户目录约定.md`（单一权威来源）。
+> 完整目录规则见 `06_版本与用户目录约定.md`（单一权威来源）。本文中模板仓库 `.aidp/` 仅作维护源；下游运行契约用 `{{AIDP_HOME}}/` 表示（仅 Claude 为 `.claude/aidp/`，有 Codex / DSH 时为 `.agents/aidp/`），下游项目根不创建 `.aidp/`。无 Git 可规划、开发、本地测试与归档，但提交、推送、tag、CICD 和正式发布不可用，不自动 `git init`。
 
 ---
 
@@ -76,7 +76,7 @@ project-root/
 ├── AGENTS.md                             # ★ 项目记忆文件：会话流程 / 命令 / Agent 入口 / Skills / 核心约定（Claude Code 下为 CLAUDE.md）
 ├── README.md                             # 项目说明
 │
-├── .aidp/                                # ★ AIDP 单一信源（核心，项目级；.claude/ .codex/ .dsh/ 等仅为各 Agent 适配层）
+├── {{AIDP_HOME}}/                        # ★ 下游运行真源：仅 Claude 为 .claude/aidp；有 Codex / DSH 为 .agents/aidp
 │   ├── agents/                           # 9 个 Agent 角色指令（7 业务 + 1 合规 + 1 版本审计）
 │   ├── commands/                         # 自定义斜杠命令
 │   │   ├── sprint-init.md                # /sprint-init            项目初始化
@@ -308,15 +308,15 @@ project-root/
 
 | Agent | 职责 | 主要输入 | 主要输出 | 指令文件 |
 |-------|------|---------|---------|---------|
-| PM Agent | 需求分析、需求拆分（EPIC/Task）、验收结论 | PRD、业务需求 | Sprint 需求文档、验收结论（并入 AI执行报告/progress） | `.aidp/agents/pm.md` |
-| Architect Agent | 系统设计、技术决策、ADR、详细设计 | PRD、架构约束、技术栈 | 详细设计文档、API 设计、DB 设计 | `.aidp/agents/architect.md` |
-| UI Agent | 界面规范、原型分析、设计映射 | PRD、UI 原型代码、UI 规范约束 | UI 规范文档、组件映射清单 | `.aidp/agents/ui.md` |
-| Frontend Agent | 前端代码实现 | 详细设计、UI 规范、原型代码、前端脚手架 | 前端页面代码 | `.aidp/agents/frontend.md` |
-| Backend Agent | 后端代码实现、API、数据库 | API 设计、DB 设计、后端脚手架 | 后端接口代码 | `.aidp/agents/backend.md` |
-| QA Agent | 测试用例设计与执行、问题修复验证 | 研发需求、验收标准、bugfix 记录 | 测试用例、测试报告 | `.aidp/agents/qa.md` |
-| Reviewer Agent | 代码审查、质量把关 | PR 代码、设计文档 | 审查意见、合并决策 | `.aidp/agents/reviewer.md` |
-| **AIDP-Compliance Agent** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留 / 事实清单 ↔ 代码 / 引用三角 / 目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py 输出、memory/、项目记忆文件、code/、事实清单 | 合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | `.aidp/agents/aidp-compliance.md` |
-| **Version-Auditor Agent** ★ | 版本规划产物全量审计（A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34） 共 8 项）| 版本规划产物（requirements / design / plans / testing 等）| 审计报告 `docs/audit/{version}/version-output-audit-*.md` | `.aidp/agents/version-auditor.md` |
+| PM Agent | 需求分析、需求拆分（EPIC/Task）、验收结论 | PRD、业务需求 | Sprint 需求文档、验收结论（并入 AI执行报告/progress） | `{{AIDP_HOME}}/agents/pm.md` |
+| Architect Agent | 系统设计、技术决策、ADR、详细设计 | PRD、架构约束、技术栈 | 详细设计文档、API 设计、DB 设计 | `{{AIDP_HOME}}/agents/architect.md` |
+| UI Agent | 界面规范、原型分析、设计映射 | PRD、UI 原型代码、UI 规范约束 | UI 规范文档、组件映射清单 | `{{AIDP_HOME}}/agents/ui.md` |
+| Frontend Agent | 前端代码实现 | 详细设计、UI 规范、原型代码、前端脚手架 | 前端页面代码 | `{{AIDP_HOME}}/agents/frontend.md` |
+| Backend Agent | 后端代码实现、API、数据库 | API 设计、DB 设计、后端脚手架 | 后端接口代码 | `{{AIDP_HOME}}/agents/backend.md` |
+| QA Agent | 测试用例设计与执行、问题修复验证 | 研发需求、验收标准、bugfix 记录 | 测试用例、测试报告 | `{{AIDP_HOME}}/agents/qa.md` |
+| Reviewer Agent | 代码审查、质量把关 | PR 代码、设计文档 | 审查意见、合并决策 | `{{AIDP_HOME}}/agents/reviewer.md` |
+| **AIDP-Compliance Agent** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留 / 事实清单 ↔ 代码 / 引用三角 / 目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py 输出、memory/、项目记忆文件、code/、事实清单 | 合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | `{{AIDP_HOME}}/agents/aidp-compliance.md` |
+| **Version-Auditor Agent** ★ | 版本规划产物全量审计（A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34） 共 8 项）| 版本规划产物（requirements / design / plans / testing 等）| 审计报告 `docs/audit/{version}/version-output-audit-*.md` | `{{AIDP_HOME}}/agents/version-auditor.md` |
 
 共 **7 业务 Agent + 1 合规 Agent + 1 版本规划产物审计 Agent = 9 个 Agent**。各 Agent 的详细指令内容见 `04_agents详细规范.md`。
 
@@ -608,7 +608,7 @@ rm -rf memory/V*
 - ★ **前提：当前版本【未发布】**——自动累进仅在当前版本尚未发布时适用。若当前版本【已发布】（有 release tag / 标「✅ 已发布」），累进前先过「版本落点决策门」三选一（落回已发布版重发 / 新开 patch / 新开 minor），执行体绝不静默往已发布版本累进（单一信源见约定 2 / `/sprint-dev` Phase 0B.0）
 - 自动扫描已有 Sprint，序号取最大值 + 1（如 `sprint-005` 后续累进到 `sprint-006`）
 - 自动产出**增量文档** `NN_<业务主题>.md` 到版本级各目录（研发需求 / 详细设计 / 数据库设计 / 接口设计），并在各目录 `00_索引.md` 登记；⛔ **不改主文档正文**（细则单一信源 = `/sprint-dev` Phase 0B.1.1）
-- 按约定 22 级联到 `01_研发执行计划.md` 的 Sprint 清单**与研发自测用例**（四级 L1→L2→L3→**L4**，漏 L4 即违规）。★ **执行形态 = 攒批**：变更先按族记入 `_开发期{族}增量.md`（四族各一份、与该族内容主文档同目录，一行一条：编号·时间·一句话），由若干**收口点**批量级联——每日首次提交（push 后）/ 版本规划 / 版本发布 / `/sprint-batch` 收尾；收口时结合代码现状核实、成功即删条目、某族清空即删该族文件。判定规则一条未改，变的只是**执行时机**。详见 `.aidp/reference/开发期族增量.md`
+- 按约定 22 级联到 `01_研发执行计划.md` 的 Sprint 清单**与研发自测用例**（四级 L1→L2→L3→**L4**，漏 L4 即违规）。★ **执行形态 = 攒批**：变更先按族记入 `_开发期{族}增量.md`（四族各一份、与该族内容主文档同目录，一行一条：编号·时间·一句话），由若干**收口点**批量级联——每日首次提交（push 后）/ 版本规划 / 版本发布 / `/sprint-batch` 收尾；收口时结合代码现状核实、成功即删条目、某族清空即删该族文件。判定规则一条未改，变的只是**执行时机**。详见 `{{AIDP_HOME}}/reference/开发期族增量.md`
 - 然后执行完整的 Sprint 流程（start → dev → test → bugfix → close）
 - ★ **用户不需要手动跑五步命令**，也不需要先改文档再开发
 
@@ -683,7 +683,7 @@ Sprint-001（执行期）
 
 ### 6.7 ★ 文档动态同步机制
 
-所有 `/sprint-*` 命令在执行过程中，如检测到引入**新接口/新表/新功能/新架构决策**，**先按受影响的族记入 `_开发期{族}增量.md`**（append-only），由**收口点**批量级联回四份上游文档，保持"设计 ↔ 代码"一致。⛔ **开发过程中不实时改这四册主文档正文**（约定 12 / 22 的攒批模型）；收口点全集、四族落点与条目格式的单一信源 = `.aidp/reference/开发期族增量.md`。
+所有 `/sprint-*` 命令在执行过程中，如检测到引入**新接口/新表/新功能/新架构决策**，**先按受影响的族记入 `_开发期{族}增量.md`**（append-only），由**收口点**批量级联回四份上游文档，保持"设计 ↔ 代码"一致。⛔ **开发过程中不实时改这四册主文档正文**（约定 12 / 22 的攒批模型）；收口点全集、四族落点与条目格式的单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`。
 
 | 触发命令 | 检测内容 | 自动回写目标 |
 |---------|---------|-------------|
@@ -838,7 +838,7 @@ main                              生产分支（每个版本发布后合并，�
 
 ### 8.3 并行子 Agent 工作流
 
-需要多角色并行时，用 **`Agent` 工具**按 `.aidp/agents/*.md` 的角色指令派独立子 Agent，
+需要多角色并行时，用 **`Agent` 工具**按 `{{AIDP_HOME}}/agents/*.md` 的角色指令派独立子 Agent，
 用 **`TodoWrite`** 维护任务清单与依赖。⛔ **不存在 `TeamCreate` / `TaskCreate` 这类工具**——
 照它们写的流程一步都执行不了。
 
@@ -850,7 +850,7 @@ main                              生产分支（每个版本发布后合并，�
 用户 / 主循环
     │
     ├── TodoWrite 建任务清单（架构设计 → 前后端并行 → 集成验收）
-    ├── Agent 派 architect 子 Agent（读 .aidp/agents/architect.md）→ 完成详细设计
+    ├── Agent 派 architect 子 Agent（读 {{AIDP_HOME}}/agents/architect.md）→ 完成详细设计
     ├── Agent 并行派 frontend / backend 子 Agent → 各自开发
     └── 回 /sprint-test 走验收门 → /sprint-bugfix → /sprint-close
 ```
@@ -904,7 +904,7 @@ main                              生产分支（每个版本发布后合并，�
 
 ### 10.1 Skills 概述
 
-Skills 是可复用的能力模块，放在 `.aidp/skills/` 目录下，通过各 Agent 的 Skill 机制调用。
+Skills 是可复用的能力模块，契约定义放在 `{{AIDP_HOME}}/skills/`，由 `.claude/skills/` 或 `.agents/skills/` 的发现入口通过各 Agent 的 Skill 机制调用。
 
 ### 10.2 常见能力诉求 → 对应落点
 
@@ -919,7 +919,7 @@ Skills 是可复用的能力模块，放在 `.aidp/skills/` 目录下，通过�
 
 ### 10.3 自定义 Skills 集成
 
-Skills 文件格式遵循通用 Agent Skill 规范，放在 `.aidp/skills/{skill-name}/SKILL.md`。**文件顶部必须有 YAML frontmatter**（`name` + `description`）——Agent 靠它索引与匹配触发，缺 frontmatter 的 skill 不会被加载：
+Skills 文件格式遵循通用 Agent Skill 规范，契约放在 `{{AIDP_HOME}}/skills/{skill-name}/SKILL.md`。**文件顶部必须有 YAML frontmatter**（`name` + `description`）——Agent 靠它索引与匹配触发，缺 frontmatter 的 skill 不会被加载：
 
 ```markdown
 ---

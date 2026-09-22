@@ -6,7 +6,7 @@
 
 ### Phase 1.3：前端开发（如在范围内）
 
-读取 `.aidp/agents/frontend.md` 获取角色定义。
+读取 `{{AIDP_HOME}}/agents/frontend.md` 获取角色定义。
 
 #### 输入文件
 
@@ -64,7 +64,7 @@ Step 3: 路由配置
 Step 4: （★ 不在此逐任务校验）前端校验（lint + 类型检查，不打包）已收敛到验收（/sprint-test），
         仅改动侧 + 资源受限执行，见 agents/frontend.md「Step 4」
 Step 4.5: ★ UI 还原度静态门（约定 39 R2/R3/R10；纯静态、不起服务、不打包）：
-        执行：python3 .aidp/scripts/check_ui_fidelity.py --json
+        执行：python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json
         —— R2 状态视觉区分 / R3 截断可读性 判 Important；**R10 导出必须导全量判 Critical 且零豁免**。
         判定口径单一信源 = 该脚本 + rules/code.md 约定 39，命令端只编排不复述（约定 21）。
         —— 退出码：`0`=无 Critical · `1`=有 Critical · `2`=入参错（修参数重跑、不算违规）。
@@ -99,5 +99,5 @@ Step 4.5: ★ UI 还原度静态门（约定 39 R2/R3/R10；纯静态、不起�
 > ——简报里一旦直接点名"要改哪 6 份文档"，就等价于一次强制 `--cascade-now` 全量级联，
 > 攒批机制在派单路径上当场失效（实测：6 个源文件的小改动，文档改动量是代码的 1.75 倍）。
 > **字段语义、`ledger` 模式下「文档级联」段的替换文本、台账一行格式，
-> 单一信源 = `.aidp/reference/开发期族增量.md`「子 Agent 执行时的派单契约」**，此处不复述。
+> 单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`「子 Agent 执行时的派单契约」**，此处不复述。
 

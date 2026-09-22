@@ -18,13 +18,13 @@
 
 #### ★ SKILL 脚本复核（单一信源 = `dev-logic-architect` Quality Review，约定 21）
 
-子 Agent 按 **`.aidp/skills/dev-logic-architect/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」原样跑全部脚本**（`<SKILL_DIR>` = `.aidp/skills/dev-logic-architect`，SQL 版本隔离门传 `docs/deployment --version {version}`），各脚本的触发条件、退出码语义、哪些发现等级不占退出码（须读 `--json`）、处置一律以该文件与 `quality-review-checklist.md` 为准，⛔ 命令端不另列清单、不复述判级。只回传各脚本退出码 + `--json` 的 Critical / Important / `skipped` 摘要。
+子 Agent 按 **`{{AIDP_HOME}}/skills/dev-logic-architect/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-logic-architect`，SQL 版本隔离门传 `docs/deployment --version {version}`），各脚本的触发条件、退出码语义、哪些发现等级不占退出码（须读 `--json`）、处置一律以该文件与 `quality-review-checklist.md` 为准，⛔ 命令端不另列清单、不复述判级。只回传各脚本退出码 + `--json` 的 Critical / Important / `skipped` 摘要。
 
 #### ★ 需额外入参的补跑项（**具备入参时必跑**——SKILL 调度表写明「需 PRD / code_root，调用方具备时自行加跑」）
 
 > 本组吃**代码现状 / PRD** 而非设计产物，规划期「设计已改、代码未跟上」天然会红——⛔ **一律 report-only（告警档），不做阻断**（理据见 `rationale.md`「代码侧加跑组」）。
 
-| 脚本（`.aidp/skills/dev-logic-architect/scripts/`） | 入参 | 触发条件 |
+| 脚本（`{{AIDP_HOME}}/skills/dev-logic-architect/scripts/`） | 入参 | 触发条件 |
 |------|------|---------|
 | `check_feature_reuse.py <设计目录> code/` | 设计目录 + 代码根 | `code/` 存在即跑 |
 | `check_service_impl_stub.py code/` | 代码根 | 同上 |
@@ -38,7 +38,7 @@
 #### ★ 业务计数声明表的全库回扫（项目级，非 SKILL 脚本）
 
 ```bash
-python3 .aidp/scripts/check_count_claims.py --project-claims "docs/design/detail/{version}/"
+python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/design/detail/{version}/"
 ```
 
 表不存在 → 整段跳过（不报错、不阻断）。有表则按其「散落面」正则全库回扫，列出两类**候选**：

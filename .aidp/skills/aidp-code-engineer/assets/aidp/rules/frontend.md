@@ -10,9 +10,9 @@ paths:
 # 前端代码向约定详规（编辑 `code/frontend/**` 时自动加载）
 
 > 本文件是 **约定 4（UI 优先级）** 与 **约定 20 前端特例（UI 组件公共化）** 的**单一信源详规**（两段）。项目记忆文件（AGENTS.md / CLAUDE.md）核心约定段只保留约定 4 的一行索引锚点；全部决策铁律（含「叶子组件白名单」等只此一家的内容）在此。锚点编号不变，「见约定 4」仍解析到索引摘要 + 本详规。
-> 约定 4 之外，前端还须遵守 `.aidp/rules/code.md`（全代码通用：注释 17 / 目录 18 / README 19 / 复杂度 20〔逻辑复用 3 次阈值；**前端视觉单元的 2 次收紧特例见本文件「约定 20 前端特例」**〕 / DB 约束 23 前端侧 / Mock 26 前端侧 / 组件复用 28 / 死代码 29 / **通用还原度规则集 39**〔R1–R13，其中 R2 状态视觉区分 · R3 截断可读 · R4 二次确认 · R7 加载态不渲染脏数据 · R8 编辑后自动同步 · R12 指标跨页同源 与前端直接相关〕 / **运行时验证纪律 35**〔⛔ 不擅自 `npm run dev` / `vite` 起 dev server、不跑完整打包——前端是该条最主要的踩坑面〕/ **上游调用日志 40**）。
-> ⚠️ **写/改 `.vue` 的 `<style>` 块时的构建安全盲区（与约定 4 正交、属验证范畴）**：`vue-tsc --noEmit` 与 `eslint` **都不编译 `<style>` 块**，故「`lang="scss"` 但项目只装了 less」这类预处理器不一致在轻量化验证下 100% 静默通过、只在部署期 `vite build` 才炸。**新增/改动 `<style>` 前先跑确定性静态比对**：`python3 .aidp/skills/code-verification-loop/scripts/check_vue_style_preprocessor.py <改动的 .vue…> --json`（未装该预处理器 = 🔴 CI 必失败 / 全库孤例 = 🟡 疑似写错）。判据单一信源 = `code-verification-loop` **维度 7**；写码期 recipe 见 `agents/frontend.md` Step 4 ③，本行不复述。
-> ⚠️ **新增"请求通道"时禁自拼 baseURL / context-path（与约定 4 正交、属正确性范畴，堵双前缀 404 盲区）**：新增任何发起 HTTP / SSE / WebSocket 请求的通道（新 composable / 请求工具函数 / 直接调 `fetch`·`XHR`·`EventSource`·第三方请求库）时，**禁止自行拼接 `baseURL` / `context-path`**——必须**复用项目既有的 URL 解析单一信源**（如 `composables/apiUrl.ts` 的 `resolveApiUrl`）；项目尚无该单一信源则**先抽出来再写新通道**，绝不新增第 N 份平行实现（通用条款见 `.aidp/rules/code.md` 约定 20「判据类逻辑禁止平行实现」）。**判据**：接口常量分「相对路径」（需拼 base）与「已含 context-path 的绝对路径」（**不能再拼**、否则得 `/{ctx}/{ctx}/…` → 404）两类，直透拼接对第二类必炸；这类错误**类型检查与 lint 全绿、只有真实请求才暴露**。回检 = `code-verification-loop` **维度 8「请求通道 URL 拼装单一信源」**（确定性硬门脚本 `check_request_channel_url.py`：自拼 base 散落 ≥2 文件即判平行实现→Critical，判据/误报去噪单一信源见该维度）+ `/sprint-dev` Phase 1.3 Step 1「请求通道单一判据 + 消费者点登记门」+ `*事实清单.md`「路径消费者点」表（新增通道即登记 + 确认走单一信源）。
+> 约定 4 之外，前端还须遵守 `{{AIDP_HOME}}/rules/code.md`（全代码通用：注释 17 / 目录 18 / README 19 / 复杂度 20〔逻辑复用 3 次阈值；**前端视觉单元的 2 次收紧特例见本文件「约定 20 前端特例」**〕 / DB 约束 23 前端侧 / Mock 26 前端侧 / 组件复用 28 / 死代码 29 / **通用还原度规则集 39**〔R1–R13，其中 R2 状态视觉区分 · R3 截断可读 · R4 二次确认 · R7 加载态不渲染脏数据 · R8 编辑后自动同步 · R12 指标跨页同源 与前端直接相关〕 / **运行时验证纪律 35**〔⛔ 不擅自 `npm run dev` / `vite` 起 dev server、不跑完整打包——前端是该条最主要的踩坑面〕/ **上游调用日志 40**）。
+> ⚠️ **写/改 `.vue` 的 `<style>` 块时的构建安全盲区（与约定 4 正交、属验证范畴）**：`vue-tsc --noEmit` 与 `eslint` **都不编译 `<style>` 块**，故「`lang="scss"` 但项目只装了 less」这类预处理器不一致在轻量化验证下 100% 静默通过、只在部署期 `vite build` 才炸。**新增/改动 `<style>` 前先跑确定性静态比对**：`python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/check_vue_style_preprocessor.py <改动的 .vue…> --json`（未装该预处理器 = 🔴 CI 必失败 / 全库孤例 = 🟡 疑似写错）。判据单一信源 = `code-verification-loop` **维度 7**；写码期 recipe 见 `agents/frontend.md` Step 4 ③，本行不复述。
+> ⚠️ **新增"请求通道"时禁自拼 baseURL / context-path（与约定 4 正交、属正确性范畴，堵双前缀 404 盲区）**：新增任何发起 HTTP / SSE / WebSocket 请求的通道（新 composable / 请求工具函数 / 直接调 `fetch`·`XHR`·`EventSource`·第三方请求库）时，**禁止自行拼接 `baseURL` / `context-path`**——必须**复用项目既有的 URL 解析单一信源**（如 `composables/apiUrl.ts` 的 `resolveApiUrl`）；项目尚无该单一信源则**先抽出来再写新通道**，绝不新增第 N 份平行实现（通用条款见 `{{AIDP_HOME}}/rules/code.md` 约定 20「判据类逻辑禁止平行实现」）。**判据**：接口常量分「相对路径」（需拼 base）与「已含 context-path 的绝对路径」（**不能再拼**、否则得 `/{ctx}/{ctx}/…` → 404）两类，直透拼接对第二类必炸；这类错误**类型检查与 lint 全绿、只有真实请求才暴露**。回检 = `code-verification-loop` **维度 8「请求通道 URL 拼装单一信源」**（确定性硬门脚本 `check_request_channel_url.py`：自拼 base 散落 ≥2 文件即判平行实现→Critical，判据/误报去噪单一信源见该维度）+ `/sprint-dev` Phase 1.3 Step 1「请求通道单一判据 + 消费者点登记门」+ `*事实清单.md`「路径消费者点」表（新增通道即登记 + 确认走单一信源）。
 
 ## 约定 4 — UI 优先级
 
@@ -39,7 +39,7 @@ paths:
     - **每项固定四列**：`页面 → 类别 → 元素名 → 处置（实现/裁剪/延期/改为 X）`，外加实现后回填的 **`✓ 已实现`** 打勾列。
     - **①②④ 三类机器可检**：从清单提字段名/按钮名/筛选项名 → grep 实现模板 → 产出覆盖率；③⑤⑥ 依赖语义判断，由 `version-auditor` 审计 F 逐项核对。
     - **典型反例（这六类各自漏过什么）**：少了「已购商品数」列（①）· 详情缺提交人（①）· 没有导出按钮（②）· 少一个排序按钮（④）· 汇总卡片四个与功规不符（③）· 保存配置缺二次确认（⑥）。
-  - **★ 与约定 39 的关系**：本条（约定 4）管**"原型有什么、实现是否都有"**；约定 39 管**"实现出来的东西对不对"**（状态可区分 / 截断可读 / 失效实体拦截 / 导出全量 / 口径同源等 13 条通用还原度规则，与业务领域无关）。二者正交、都要过。详见 `.aidp/rules/code.md` 约定 39。
+  - **★ 与约定 39 的关系**：本条（约定 4）管**"原型有什么、实现是否都有"**；约定 39 管**"实现出来的东西对不对"**（状态可区分 / 截断可读 / 失效实体拦截 / 导出全量 / 口径同源等 13 条通用还原度规则，与业务领域无关）。二者正交、都要过。详见 `{{AIDP_HOME}}/rules/code.md` 约定 39。
   - **★ 消费原型自带设计交接 manifest**：原型目录若含 `DESIGN-MANIFEST.json` / `DESIGN-HANDOFF.md`（列 `screens`/`appModules`/`requiredStates`/`tokens`/`flows` 等）→ 命令必须**主动读取**、据其生成/校对「原型内容基线」与验收项（`requiredStates` 逐项纳入交互态核对、`flows` 纳入操作逻辑核对），不得只当视觉参考。
   - **回检（三道，覆盖规划期 + 开发期 + 测试期；三层齐查）**：① **规划期** `version-auditor` 新增「原型覆盖度」审计（Critical 硬门）——以「原型内容基线」为准，校验每个未标裁剪/延期/改逻辑的原型**元素、交互态与操作逻辑**是否被**研发需求 + 详细设计**覆盖，"原型有、需求/设计无、未标处置" → Critical 阻塞规划通过（除非 `--skip-audit`）；② **开发期** `/sprint-dev` Step 0.4 逐页对照门（含操作逻辑）；③ **测试期** `code-verification-loop`「内容完整性」逐页核对（原型有/实现无或行为不符/未标处置 → Critical 回 `/sprint-bugfix`，交互态与操作逻辑缺失/被简化同判）+ `dev-manual-testcase` 据基线为每个原型元素/状态/**操作流**生成一条可验证用例。上游 `ux-logic-extractor`/`dev-logic-architect` 转写时须保证「基线」每个"实现"项都有对应功能点/字段/**流程/交互规则**（覆盖到字段、状态与操作逻辑级）。
 - **4 种情形**（决策时机：`/sprint-dev` 前端开发前 Step 0 必执行 1 次 / `/version` 阶段；C/D 必须用户显式选，命令端不自动决定；结果写入当前 Sprint UI 规范基线）：
@@ -64,7 +64,7 @@ paths:
 
 ## 约定 20 前端特例 — UI 组件公共化（视觉单元第二次出现即抽）
 
-> 本节是 `.aidp/rules/code.md` 约定 20「同 Sprint 内 3 次复用即抽」在**前端视觉单元**上的**收紧特例**，
+> 本节是 `{{AIDP_HOME}}/rules/code.md` 约定 20「同 Sprint 内 3 次复用即抽」在**前端视觉单元**上的**收紧特例**，
 > 只覆盖「视觉单元」（卡片模板 / 列表行 / 空态块 / 统计格 / 栅格容器 / 公共样式段），
 > **逻辑复用（工具函数 / composable / hook / 服务）仍按约定 20 的 3 次阈值，本节不改它**。
 >
@@ -120,7 +120,7 @@ paths:
   不得据其得出"样式改动无回归"的结论（这是约定 35「阳性对照」在样式面上的具体形态）。
 - **样式重构（抽公共 / 参数化 / 移动位置）须做编译等价性对照**——重构的定义就是**产物不变**：
   用被测项目**自己的** `./node_modules/.bin/sass` / `lessc` / `stylus` 分别编译改动前后的样式段，
-  再跑 `python3 .aidp/skills/code-verification-loop/scripts/check_css_equivalence.py <old.css> <new.css> --json`。
+  再跑 `python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/check_css_equivalence.py <old.css> <new.css> --json`。
   零构建、只编译改动的样式段，不打包（**不违反约定 35 的"不完整构建"**）。
   **归一规则 / 刻意不归一项 / 基线有效性判定 / 「仅顺序变化」分档，一律以该脚本与 `code-verification-loop`
   维度 14 为单一信源，本处不复述**（约定 21）。三条只讲怎么读结果：

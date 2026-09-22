@@ -19,11 +19,11 @@
 - `overview.testPassRate` ← 同一 passRate；`result` ← success|partial|failed；`steps` ← 完整 steps 数组中「AI 自动化测试」一步改 `actualStatus:"done"` + 耗时（数组是顶层字段，须整体传入）；`defects`/`incidents` ← 追加本轮缺陷/运行时错误后的完整数组。
 - 再调（R-4 收尾）：
   ```bash
-  eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 取回 BUILD/NOTIFY_ENABLED（跨分片不持久）
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"   # 取回 BUILD/NOTIFY_ENABLED（跨分片不持久）
   mkdir -p memory/.aidp
-  python3 .aidp/scripts/emit-report.py --kind exec --patch --version "$TARGET_VERSION" --build "${BUILD}" \
-    --data "docs/reports/${TARGET_VERSION}/AI执行报告/.build-input-${BUILD}.json" --baseline memory/.sprint-autopilot-baseline.json --json > "memory/.aidp/emit-exec-${BUILD}.json"
-  AI_REPORT_URL=$(jq -r '.access_url' "memory/.aidp/emit-exec-${BUILD}.json")   # 仓库相对路径（带 #/build/<BUILD> hash）
+  python3 {{AIDP_HOME}}/scripts/emit-report.py --kind exec --patch --version "$TARGET_VERSION" --build "${BUILD}" \
+    --data "docs/reports/${TARGET_VERSION}/AI执行报告/.build-input-${BUILD}.json" --baseline memory/.sprint-autopilot-baseline.json --json > "memory/{{AIDP_HOME}}/emit-exec-${BUILD}.json"
+  AI_REPORT_URL=$(jq -r '.access_url' "memory/{{AIDP_HOME}}/emit-exec-${BUILD}.json")   # 仓库相对路径（带 #/build/<BUILD> hash）
   ```
   脚本自动：写结果态 data + 注册两页（报告只落本地 `docs/reports/`）→ 回写 baseline `report_deliveries.exec_report`；返回的 `access_url` 为仓库相对路径（带 `#/build` hash），#3 通知直接附该路径。**⛔ 不手工写 data / 注册**。
 
@@ -33,9 +33,9 @@
 
 **Step 1.5 — ★ 最终收尾钢门（`--stage final` · 发 #3 之前必过 · 本 build 唯一权威仪式门）**：此刻 exec + test 两份报告都已 finalize 落盘（交付台账 `report_deliveries.{exec_report,test_report}` 均已由 emit-report 写入），跑**全量校验**——执行报告 SPA + 测试报告 SPA + **两份交付台账** + 无 markdown + 通知台账：
    ```bash
-   eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-   GATE=.aidp/scripts/autopilot-ceremony-gate.py
-   BE="python3 .aidp/scripts/baseline_edit.py"   # ⚠️ 必须定义在 if 之外：通过分支也要用它清 streak
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+   GATE={{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"   # ⚠️ 必须定义在 if 之外：通过分支也要用它清 streak
    if [ -f "$GATE" ]; then
      # ⛔ **必传 `--expect-cards`（本门自称"本 build 唯一权威仪式门"，就必须真的校通知台账）**：
      #   实测事故：本门不传该 flag → 落进退化分支，而退化判据当时把"规划期无 build 的
@@ -76,7 +76,7 @@
      #    每 5 分钟从 Phase 0 重跑整轮浏览器实测。故本门用独立计数器。
      # 记账 → 判阈 → 冻结 → #4 一次做完（未达阈只记账不发通知；无唤醒源时脚本当场按达阈处置）。
      # ⛔ reason 不写 handoff-exhausted（人工专属）：真因 = 报告交付缺失，与 deploy-unreachable 同域、可自动复探。
-     python3 .aidp/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --build "${BUILD:-}" \
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --build "${BUILD:-}" \
        --phase 3.7-final-gate --reason deploy-unreachable \
        --streak-key final_gate_fail_streak --threshold "${REPORT_GATE_FREEZE_THRESHOLD:-3}" \
        --why "最终仪式门未过（报告交付缺失）：$FINAL_GATE_BAD；补齐（emit-report.py 重跑）后复跑，禁止发 #3/收尾"
@@ -86,7 +86,7 @@
    ```
    **这是浏览器路径的唯一 `final` 门**（autopilot Phase 3.4 对浏览器路径只跑 `skeleton`，把交付判定权交到此处，避免"要求尚未产生的交付台账"死结）；未过不发 #3、不收尾。
 
-**Step 2 — 发里程碑通知 #3（AI执行报告里程碑，绿色 header）**：`python3 .aidp/scripts/notify.py --auto --node "#3" --header-color green --title … --section … --link-text "查看完整报告" --link-url "$AI_REPORT_URL"`（退出码 3 = 未配置渠道 → 静默跳过；1 = 全部渠道失败 → WARN 不阻塞），正文按 sprint-autopilot 0.1bis「#3 AI执行报告通知完整模板」填充——「测试结论」段填**本 build 真实浏览器测试**（`总数 $TOTAL / 通过 $PASS / 失败 $FAIL / 阻塞 $BLOCK / 忽略 $SKIP / 不适用 $THIS_ROUND_NA / 通过率 N%`（**通过率分母 = 总数−不适用**，与 SKILL `gen_report.py` 同口径））；「查看完整报告」= `$AI_REPORT_URL`（Step 1 emit-report.py 返回，禁止指向 markdown / 手搓通知）。**#3 是本 build 的末尾里程碑**（在 #F 之后），与 #F（测试报告）各司其职：#F = AI测试报告，#3 = AI执行报告（含 dev 全流程 + 真实测试结论）。
+**Step 2 — 发里程碑通知 #3（AI执行报告里程碑，绿色 header）**：`python3 {{AIDP_HOME}}/scripts/notify.py --auto --node "#3" --header-color green --title … --section … --link-text "查看完整报告" --link-url "$AI_REPORT_URL"`（退出码 3 = 未配置渠道 → 静默跳过；1 = 全部渠道失败 → WARN 不阻塞），正文按 sprint-autopilot 0.1bis「#3 AI执行报告通知完整模板」填充——「测试结论」段填**本 build 真实浏览器测试**（`总数 $TOTAL / 通过 $PASS / 失败 $FAIL / 阻塞 $BLOCK / 忽略 $SKIP / 不适用 $THIS_ROUND_NA / 通过率 N%`（**通过率分母 = 总数−不适用**，与 SKILL `gen_report.py` 同口径））；「查看完整报告」= `$AI_REPORT_URL`（Step 1 emit-report.py 返回，禁止指向 markdown / 手搓通知）。**#3 是本 build 的末尾里程碑**（在 #F 之后），与 #F（测试报告）各司其职：#F = AI测试报告，#3 = AI执行报告（含 dev 全流程 + 真实测试结论）。
 
 **Step 3 — baseline 收尾（★ 报告冻结）** —— ⛔ **必须是可执行语句**（同分片 3.3 的 `tested` 就是围栏；
 `closed` + `finalized` 此前停在句子里，而它有 4 处可执行读侧：准发布 0b 门 / 已测去重门 /
@@ -94,8 +94,8 @@ Stop hook / emit-report 不可变锁。恒读 false 的后果是 0b 门永不通
 每 tick +1，第 12 tick 冻结在 `unconverged`——**而测试其实早就跑完并通过了**）：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-BEV="python3 .aidp/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+BEV="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
 # ★ PASS_RATE **必须在本围栏现取**：它由上一步 gen_report 聚合，而那是**另一次 Bash 调用**，
 #   shell 变量不存活 → `${PASS_RATE:-0}` 恒落 0 → `builds[].pass_rate` 恒记 0，
 #   报告首页与准发布判据读到的通过率全是 0。故从已落盘的报告数据现取，别靠跨围栏变量。
@@ -113,7 +113,7 @@ $BEV --build "${BUILD:?}" set status closed ai_report_finalized true \
 
 - **触发条件**：`REPORT_ENABLED=1`（autopilot 驱动、有 `BUILD`）→ 生成；**与 `CONVERGED` 无关**——无论本轮通过/部分通过/不通过，只要跑了测试就造了数据、就要能清（standalone 无 `BUILD` 概念 → 跳过本步）。
 - **落位**：`docs/reports/{version}/AI数据清理/${BUILD}_数据清理.md`（目录不存在先 `mkdir -p`；属 `docs/reports/{version}/` 报告族、与 `AI执行报告/`·`AI测试报告/`·`版本测试报告/` 同处，遵约定 11 版本落位一致性——恒落当前被测版本目录）。
-- **生成方式**：`cp .aidp/templates/reports/AI数据清理.md` 到落位路径后逐字段填充（模板即字段规范，本命令不复述）：
+- **生成方式**：`cp {{AIDP_HOME}}/templates/reports/AI数据清理.md` 到落位路径后逐字段填充（模板即字段规范，本命令不复述）：
   - **测试执行信息**：`BUILD` / 版本 / 测试时间窗（本轮开始~结束）/ 环境名 / 被测 URL / `driver` / 测试账号（脱敏）/ 本轮结论——取自 Phase 0 已读的「测试环境与账号」配置 + baseline build 记录。
   - **需清理的数据库**：DB 连接**优先取** `docs/testing/{version}/研发自测/` 的「测试环境与账号」配置的 DB 段；缺失则回退后端 `application.yml` 生效 profile 的 datasource（host/port/库名/账号）；**两者都缺 → 填 `{待补}` 占位 + 文档标注「需人工补数据库连接」，不静默留空**。
   - **涉及写库表 + 清理 SQL**：由本 build 实际跑过的用例/模块（auto-test-runner 本轮 `results/*.json` / 覆盖的 SUITE）映射到详细设计「数据库设计」对应业务表；**优先按「测试账号 create_by + 本轮时间窗 create_time」双条件生成逐表 `DELETE`**（表含审计字段时，安全、不误删真实数据）；无审计字段的表按业务标记/主键区间并标「需人工核对」；有外键依赖按子表→父表顺序。**严禁**生成整库 `DROP`/无条件 `DELETE`（除非该库为独占测试专用库才给 `TRUNCATE` 兜底选项）。

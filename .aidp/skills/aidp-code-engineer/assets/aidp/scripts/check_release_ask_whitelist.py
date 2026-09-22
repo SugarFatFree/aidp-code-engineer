@@ -13,7 +13,7 @@
 
 ## 判据
 
-扫 `.aidp/flows/version/**` 与 `.aidp/commands/version.md` 里每一处 `AskUserQuestion`
+扫 `AIDP_HOME/flows/version/**` 与 `AIDP_HOME/commands/version.md` 里每一处 `AskUserQuestion`
 提及，要求其**逻辑窗口**内出现白名单锚点（`白名单第 N 处` / `白名单` / `结构化门`）
 或显式豁免。指不出归属的 → ERROR。
 
@@ -24,6 +24,12 @@
 豁免：`<!-- ask-whitelist: ignore 理由 -->`。
 退出码：0 通过；1 有 ERROR；2 参数错。
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
@@ -31,8 +37,8 @@ import re
 import subprocess
 import sys
 
-SCAN = [os.path.join(".aidp", "flows", "version"),
-        os.path.join(".aidp", "commands", "version.md")]
+SCAN = [os.path.join(runtime_relpath("", __file__), "flows", "version"),
+        os.path.join(runtime_relpath("", __file__), "commands", "version.md")]
 ASK_RE = re.compile(r"AskUserQuestion")
 # 归属锚点：指名白名单、或明确说明这是结构化门 / 明确说明禁止
 ANCHOR_RE = re.compile(r"白名单|结构化门|禁止|⛔\s*不问|不得|无人值守|前置自检|反例|别再加回来")

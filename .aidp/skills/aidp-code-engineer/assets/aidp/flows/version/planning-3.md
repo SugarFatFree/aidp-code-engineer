@@ -1,7 +1,7 @@
 # /version · 版本规划流程详情 — 分片 3/8
 
 > 本片覆盖：**Step 2.4.1 requirements / 2.4.2 design / 2.4.3 plan / 2.4.3.5 selftest**。
-> 完整分片清单见 `.aidp/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
 #### Step 2.4.1：调用 /sprint-requirements

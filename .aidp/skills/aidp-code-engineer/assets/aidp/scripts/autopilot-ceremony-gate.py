@@ -53,7 +53,7 @@ autopilot-ceremony-gate.py — /sprint-autopilot 强制仪式确定性收尾门�
   5. 里程碑通知（按台账核验本 build 应发通知集已发）
      —— 唯一合法降级：--notify 0（notify.enabled=false / 无可用通知渠道 / 用户显式 --no-notify）
 
-★ 报告本体的产出/上传/链接由确定性脚本 .aidp/scripts/emit-report.py 完成（执行体不手搓 data/注册/上传）；
+★ 报告本体的产出/上传/链接由确定性脚本 AIDP_HOME/scripts/emit-report.py 完成（执行体不手搓 data/注册/上传）；
   本门只校最终产物 + 交付台账，堵死"只落一个 markdown 测试记录 + 手搓通知"的退化路径。
 
 里程碑通知为"发出去无本地痕迹"的仪式，故引入轻量台账：命令在每次发通知后调
@@ -74,6 +74,12 @@ autopilot-ceremony-gate.py — /sprint-autopilot 强制仪式确定性收尾门�
   record-card  发通知后登记台账（命令在每个发通知点之后调一次）
     --node '#1d' --version V0.1.0 --build V0.1.0_build1001 [--repo-root .] [--ledger PATH]
 """
+import sys as _aidp_sys
+from pathlib import Path as _AidpPath
+_aidp_scripts = str(_AidpPath(__file__).resolve().parent)
+if _aidp_scripts not in _aidp_sys.path:
+    _aidp_sys.path.insert(0, _aidp_scripts)
+from aidp_runtime import runtime_relpath, runtime_text
 import argparse
 import glob
 import hashlib
@@ -371,7 +377,7 @@ def _resolve_entry_mode(args, vnode, build=""):
       · `_derive_expect_cards()`  → `args.entry_mode or "full"`            ← 不回退 baseline
       · P0-2 规划产物检查          → `args.entry_mode or baseline… or "full"` ← 三级回退
 
-    而 `.aidp/hooks/autopilot-stop-guard.py` 调本脚本时**不传** `--entry-mode`。两者叠加：
+    而 `AIDP_HOME/hooks/autopilot-stop-guard.py` 调本脚本时**不传** `--entry-mode`。两者叠加：
     `args.entry_mode=None` → 通知集按 `full` 算 → **test-only 轮次经 hook 路径必然索要
     `#1c` 开发开始 / `#1d` 部署完成 / `#2` Sprint 关闭**——而这三件事那一轮一件都没发生。
 
@@ -512,7 +518,7 @@ def cmd_handback_check(args):
     if args.record:
         try:
             subprocess.run(
-                [sys.executable, os.path.join(root, ".aidp/scripts/baseline_edit.py"),
+                [sys.executable, os.path.join(root, runtime_text('__AIDP_HOME__/scripts/baseline_edit.py', __file__)),
                  "set", "autopilot.last_handback",
                  json.dumps({k: info[k] for k in ("verdict", "wake_source", "next_phase",
                                                   "next_sprint")}, ensure_ascii=False)],
@@ -979,10 +985,13 @@ def cmd_check(args):
                 #    只有一种解释：驱动选定环节根本没走。老 build 不受影响：本门只校当前 --build。
                 rec("报告driver如实性", bool(_waiver),
                     f"driver={_waiver} 豁免留痕" if _waiver else
-                    f"⛔ 已产出 AI测试报告 data/{B}.js，却无 baseline builds[{B}].driver_actual"
-                    f"（报告自述 driver={_claim or '(无)'}）——驱动选定环节未走过。"
-                    f"正确动作：跑 `python3 .aidp/scripts/chrome-mcp-doctor.py check-cli` 选定驱动并写盘；"
-                    f"若确有不可抗原因，须写 builds[].driver_actual_waiver 说明理由")
+                    runtime_text(
+                        f"⛔ 已产出 AI测试报告 data/{B}.js，却无 baseline builds[{B}].driver_actual"
+                        f"（报告自述 driver={_claim or '(无)'}）——驱动选定环节未走过。"
+                        "正确动作：跑 `python3 __AIDP_HOME__/scripts/chrome-mcp-doctor.py check-cli` "
+                        "选定驱动并写盘；若确有不可抗原因，须写 builds[].driver_actual_waiver 说明理由",
+                        __file__,
+                    ))
             elif str(_actual) not in BROWSER_DRIVERS and not _evid:
                 # ★ 非浏览器驱动（curl / jdbc / http …）= 降级出了浏览器测试的范畴，必须举证。
                 #   下游实测：撞 "Missing X server" 就断定"浏览器不可用"改跑 curl+JDBC，
@@ -1525,7 +1534,7 @@ def cmd_check(args):
 # `--no-advance-run-state` 可关闭（保持纯只读的旧行为）。
 def advance_run_state_on_final_pass(root, baseline_rel, version):
     try:
-        sys.path.insert(0, os.path.join(root, ".aidp", "scripts"))
+        sys.path.insert(0, os.path.join(root, runtime_relpath("", __file__), "scripts"))
         from baseline_edit import LockedBaseline   # 持 flock + 锁内重读 + 原子写回
     except ImportError as e:
         print(f"ℹ️ run_state 未推进（取不到 baseline 写入口：{e}）—— 请人工 "

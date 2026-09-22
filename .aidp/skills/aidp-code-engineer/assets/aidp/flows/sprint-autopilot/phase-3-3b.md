@@ -21,7 +21,7 @@
 **检测逻辑**（命令端 Bash）：
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 # ⛔ 上一行刚 eval 出正确版本号，**别再用占位符字面量覆盖它**（原写法即如此，且语法合法、零报错）：
 #   覆盖后下面三个目录路径全 miss → PLANNING_DONE 恒 0；末尾还会把 autopilot_entry_mode /
 #   planning_done 写进一个**伪版本节点**，真实版本恒空。
@@ -94,7 +94,7 @@ fi
 if [ "$ENTRY_MODE" = "incremental" ]; then
   OPEN_N=$(python3 - "$TARGET_VERSION" <<'PY'
 import importlib.util, sys
-s = importlib.util.spec_from_file_location("g", ".aidp/scripts/autopilot-ceremony-gate.py")
+s = importlib.util.spec_from_file_location("g", "{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py")
 m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
 print(len(m._open_sprints(".", sys.argv[1])))
 PY
@@ -112,7 +112,7 @@ fi
 #   一 tick 跑完 → **剩余 N 个 Sprint 被静默丢下**，而部署/报告/通知/收尾门全绿）。
 #   故先存后恢复，只取本次真正需要的 NO_PLANNING。
 _KEEP_ENTRY_MODE="$ENTRY_MODE"; _KEEP_PLANNING_DONE="$PLANNING_DONE"
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # 读回 NO_PLANNING 等本 tick 参数
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 读回 NO_PLANNING 等本 tick 参数
 ENTRY_MODE="$_KEEP_ENTRY_MODE"; PLANNING_DONE="$_KEEP_PLANNING_DONE"
 if [ "${NO_PLANNING:-0}" = "1" ] && [ "$PLANNING_DONE" = "0" ]; then
   echo "⏭️ 用户显式 --no-planning：$TARGET_VERSION 跳过 /version 规划（须在交付台账留痕；收尾门 autopilot-ceremony-gate.py --no-planning 1 认此显式声明、放行规划产物缺失）"
@@ -125,7 +125,7 @@ fi
 #   FALLBACK_DEFAULT="0" → 收尾门（phase-3-9）据此每轮都索要一条 #1 通知，而发送侧在
 #   PLANNING_DONE=1 时正确地不发 → 通知核验必 FAIL → 3 tick 后冻结，且冻结原因
 #   （handoff-exhausted「结构性不可自愈」）与真因（一个变量没落盘）毫无关系。
-python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" \
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" \
   set autopilot_entry_mode "$ENTRY_MODE" autopilot_no_planning "${NO_PLANNING:-0}" \
       planning_done "${PLANNING_DONE:-0}" || true
 # ⛔ 还必须把降级后的值写回 **tick 命名空间**：`phase-3-2` 已经用 `autopilot_tick_flags.py set` 把
@@ -133,8 +133,8 @@ python3 .aidp/scripts/baseline_edit.py --version "$TARGET_VERSION" \
 #    只写 baseline = 本 tick 后续每个分片 `eval "$(… --shell)"` 读回的仍是旧值 `incremental`：
 #    这里刚判定"规划产物不齐 / 还有未关闭 Sprint、必须走全量"，下游却照 incremental 跳过全量规划
 #    与全量 Sprint —— 降级判定形同虚设，且两处各自"正确"、合起来矛盾。
-python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot ENTRY_MODE "$ENTRY_MODE"
-python3 .aidp/scripts/autopilot_tick_flags.py set --command autopilot PLANNING_DONE "${PLANNING_DONE:-0}"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot ENTRY_MODE "$ENTRY_MODE"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PLANNING_DONE "${PLANNING_DONE:-0}"
 ```
 
 判定结果：

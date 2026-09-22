@@ -14,8 +14,8 @@
 > 0.6 收的是 **baseline 配置字段**，批 6 又把**测试账号**划给 `/sprint-aiauto-test`——于是**用例册声明的前置账号/数据**在 Phase 0 无人负责，成了半路暂停的现成借口。本门补这段真空（理据 + 下游实证见 `rationale.md`「0.6bis 前置资源对账」）。判据确定性：上游 `dev-manual-testcase` 的标准占位符 `{待用户填写: <字段中文名>}` 逐个可数，不做模糊解析。
 
 ```bash
-eval "$(python3 .aidp/scripts/autopilot_tick_flags.py --shell)"   # 取 TARGET_VERSION
-python3 .aidp/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --record
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 取 TARGET_VERSION
+python3 {{AIDP_HOME}}/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --record
 ```
 
 - **`no-casebook`（exit 0）** → 用例册由 `/version` Step 2.4.3.5 才生成，**不是缺陷**：放行，由 **Phase 3.1.5 补账**（`phase-3-4.md`）。
@@ -31,7 +31,7 @@ python3 .aidp/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --rec
 
 | 类别 | 就绪项 | 必需性 | 检测位置（单一信源）| 缺失动作 |
 |------|-------|--------|------------------|---------|
-| 工具 | git 仓库 + 可拉码 | 必需 | 0.1 拉码 | 非 git 仓库 → 报错退出 |
+| 工具 | git 仓库 + 可拉码 | 仅 `vcs_mode=git` 必需 | 0.1 拉码 | `vcs_mode=none` → Git 拉码节点记 `skipped/unsupported:vcs-disabled`，继续本地开发；不得报错退出 |
 | 工具 | 里程碑通知渠道（`memory/aidp-config.yaml` 的 `notify` 段）| 可降级 | 0.0 Step 1-2 | 未配置渠道 → `NOTIFY_ENABLED=0` 静默跳过播报（不阻塞、不弹窗）|
 | 工具 | **chrome-devtools-mcp（npm 全局包）** | **chrome-mcp 时必需** | **0.5.5 安装预检** | 未装 → **就地打印安装命令**（`npm i chrome-devtools-mcp@latest -g`；远程再 `claude mcp add … --scope project`）让用户挂测试 loop 前装好 |
 | 环境 | chrome 连接（本机 CLI / 远程 `.mcp.json`）| chrome-mcp 时必需 | 0.0 Step 5 + 0.5.5 | 远程缺 IP → 收集写 `.mcp.json`；`/loop` 中仍缺 → 留给 `/sprint-aiauto-test` 收集 |
@@ -60,7 +60,7 @@ python3 .aidp/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --rec
 #    `test_strategy=chrome-mcp` 只说明"用 chrome 测"，**不等于"用远程 chrome"**。
 #    判据取 Phase 0.5.5 驱动预判写入 baseline 的 chrome_preflight：local-cli-ready = 本机 cli 可跑 → 不要求；
 #    其余状态（remote-* / needs-restart-* / blocked-*）才把远程通路视为必需。
-CHROME_PREFLIGHT=$(python3 .aidp/scripts/baseline_edit.py get chrome_preflight --default "local-cli-ready")
+CHROME_PREFLIGHT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get chrome_preflight --default "local-cli-ready")
 NEEDS_REMOTE_CHROME=0
 # ⛔ 只有**确实要走远程通路**的状态才算必需。此前用「不是这两个就都算必需」的白名单口径，
 #   把 `needs-restart-has-fallback` 与 `blocked-no-fallback` 一并划进去 —— 而这两个在
@@ -73,18 +73,18 @@ case "$CHROME_PREFLIGHT" in
   *)        NEEDS_REMOTE_CHROME=0 ;;
 esac
 REQ=""
-test_strategy=$(python3 .aidp/scripts/baseline_edit.py get test_strategy --default "")   # ★ 跨 Bash 块取回，不能当裸 shell 变量用
+test_strategy=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get test_strategy --default "")   # ★ 跨 Bash 块取回，不能当裸 shell 变量用
 [ "$test_strategy" = "chrome-mcp" ] && [ "$NEEDS_REMOTE_CHROME" = "1" ] && REQ="mcp_chrome"
 # 本门当前唯一的必需项是远程 chrome 通路；REQ 为空 = 无必需项 → 直接放行（其余就绪项均为可降级项，见上表）
 if [ -z "$REQ" ]; then
   echo "✅ 0.7 收尾核验门：本轮无必需项（本地 CLI 驱动 / 非 chrome-mcp）→ 放行"
-elif [ -f .aidp/scripts/autopilot-preflight.py ]; then
-  python3 .aidp/scripts/autopilot-preflight.py gate --require "$REQ" || {
+elif [ -f {{AIDP_HOME}}/scripts/autopilot-preflight.py ]; then
+  python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py gate --require "$REQ" || {
     echo "⛔ 收尾核验门未通过 → 回 0.0 对应 Step 就地补做（写 .mcp.json）后复跑本门，通过才进 Phase 1；绝不带缺失进 Phase 1/2/3 或委派 /sprint-aiauto-test"
     # ⛔ **本 tick 内补做 + 复跑仍不过才走下面**：绝不裸 `exit 1` —— `/loop` 会每 tick 重撞同一处，
     #    零 streak、零 #4、零冻结，表现为完全静默的永久空转（Phase 0-3 的 `_preflight_fail` 定义在
     #    另一个 Bash 块里、跨块取不到，故此处内联同款三件套，不调用它）。
-    BE="python3 .aidp/scripts/baseline_edit.py"
+    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
     S=$($BE bump preflight_fail_streak); $BE set preflight_fail_reason "preflight-gate"
     # ★ 无唤醒源（`--once` / 无 /loop）时没有下一 tick 来把 streak 叠到阈值 ⇒ 阈值恒不可达、
     #   永不冻结，而 exit 0 会被上游读成"前置过了"。故 HAS_WAKE_SOURCE=0 时【当场】按达阈处置。
@@ -100,7 +100,7 @@ elif [ -f .aidp/scripts/autopilot-preflight.py ]; then
       #   「挂着跑却什么都没发生」（与下面达阈分支同一条理由）。⛔ 别退回只 echo 一句"发 #4"——
       #   那是把「静默空转」原样保留下来，而这正是本门要消灭的形态。
       echo "⛔ 前置失败（preflight-gate）第 $S 次 → 发 #4 告警后退本 tick"
-      python3 .aidp/scripts/notify.py $CARD_ID --auto --header-color red \
+      python3 {{AIDP_HOME}}/scripts/notify.py $CARD_ID --auto --header-color red \
         --title "前置受阻：0.7 收口门未过（第 $S 次）" \
         --section "连续 $S 次未过（缺 $REQ），未达阈值 ${PREFLIGHT_THRESHOLD:-3}，本 tick 让位重试。" \
         || [ $? -eq 3 ] || echo "⚠️ #4 未发出（渠道全部失败）——前置仍未过，不静默推进"
@@ -118,13 +118,13 @@ elif [ -f .aidp/scripts/autopilot-preflight.py ]; then
       if [ -n "$PF_V" ]; then
         # 冻结四件套 + **最后一张 #4** 一次做完（熔断条件已由上面的 streak 判定成立 → --freeze-now）。
         # ⛔ 这一张必须真发：本门在整条链路最上游，它把版本挡住而通知渠道零消息 = 「挂着跑却什么都没发生」。
-        python3 .aidp/scripts/autopilot_fail_handle.py --version "$PF_V" --freeze-now \
+        python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$PF_V" --freeze-now \
           --phase 0.7-preflight --reason preflight-incomplete \
           --why "Phase 0.7 前置收口门连续 $S 次未过（缺 $REQ），无人值守无法收集"
       else
         $BE set aiauto_blocked_reason "frozen:preflight-incomplete@preflight"
         # ⛔ 此处**不带 `--node`**（本 tick 无版本号，带了就发不出去，见上方 CARD_ID 说明）。
-        python3 .aidp/scripts/notify.py --auto --header-color red \
+        python3 {{AIDP_HOME}}/scripts/notify.py --auto --header-color red \
           --title "前置受阻：0.7 收口门未过" \
           --section "连续 $S 次未过（缺 $REQ），且本 tick 尚无目标版本号。" \
           || [ $? -eq 3 ] || echo "⚠️ 最后一条 #4 未发出（渠道全部失败）——已熔断待人工，但无人知道"
@@ -133,7 +133,7 @@ elif [ -f .aidp/scripts/autopilot-preflight.py ]; then
     fi
     exit 0; }   # ★ exit 0 让位本 tick（已记账 + 已告警），不是 exit 1 让 /loop 空撞
   # ★ 门通过 = 本作用域失败已恢复 → 解冻（0.1 只清它自己那 5 个 git 类 reason（外加空 reason 分支），本 reason 留给此处）
-  python3 .aidp/scripts/autopilot_unfreeze.py preflight-gate >/dev/null 2>&1 || true
+  python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py preflight-gate >/dev/null 2>&1 || true
 else
   echo "⚠️ preflight 脚本缺失 → 手工逐项核对上表必需项（远程 chrome 时的 .mcp.json），缺则回 0.0 补做；建议重跑 aidp-code-engineer upgrade 补回脚本"
 fi

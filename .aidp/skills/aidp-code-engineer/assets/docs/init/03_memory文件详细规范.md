@@ -548,4 +548,4 @@ cd code/backend/{module-name}
 
 > **运行时状态文件的清单、字段、是否入库一律看 `memory/README.md`**；本节只留下面的并发写铁律。
 
-> ⛔ **并发写铁律**：`.sprint-autopilot-baseline.json` 被**两条链路并发读写**（开发链路 10m tick + 测试链路 5m tick）。**任何写入必须经 `python3 .aidp/scripts/baseline_edit.py`**（`flock` 加锁 + 锁内重读 + 原子替换）——**严禁**直接 `Write` / `jq > file` / 手工编辑该 JSON。裸写只保证"文件不半截"，**不保证"不丢对方刚写的字段"**：长 tick 交叉时会把对方落的 `last_deployed_at` / 各 streak 整体抹掉，表现为门判据错乱、熔断永不达阈。读取可直接读。
+> ⛔ **并发写铁律**：`.sprint-autopilot-baseline.json` 被**两条链路并发读写**（开发链路 10m tick + 测试链路 5m tick）。**任何写入必须经 `python3 {{AIDP_HOME}}/scripts/baseline_edit.py`**（`flock` 加锁 + 锁内重读 + 原子替换）——**严禁**直接 `Write` / `jq > file` / 手工编辑该 JSON。裸写只保证"文件不半截"，**不保证"不丢对方刚写的字段"**：长 tick 交叉时会把对方落的 `last_deployed_at` / 各 streak 整体抹掉，表现为门判据错乱、熔断永不达阈。读取可直接读。

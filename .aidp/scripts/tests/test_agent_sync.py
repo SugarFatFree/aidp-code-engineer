@@ -1234,6 +1234,97 @@ def test_native_runtime_managed_copy_contract():
         _rm(root)
 
 
+def test_managed_copy_tree_drift_is_recursive():
+    print("【managed-copy 树：symlink / 空目录 / mode 漂移】")
+    root = _mkrepo(markers=(".claude",))
+    source = root / ".aidp/skills/demo-skill"
+    (source / "references/empty").mkdir(parents=True)
+    (source / "references/usage.md").write_text("usage\n", encoding="utf-8")
+    try:
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+        target = root / ".claude/skills/demo-skill"
+
+        skill_file = target / "SKILL.md"
+        skill_file.unlink()
+        skill_file.symlink_to(source / "SKILL.md")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
+        check("后代文件 symlink → --check 漂移", rc == 1 and out.get("drift") is True)
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+
+        shutil.rmtree(target / "references")
+        (target / "references").symlink_to(source / "references", target_is_directory=True)
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
+        check("后代目录 symlink → --check 漂移", rc == 1 and out.get("drift") is True)
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+
+        (target / "references/empty").rmdir()
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
+        check("源空目录在目标缺失 → --check 漂移", rc == 1 and out.get("drift") is True)
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+
+        (target / "references/extra-empty").mkdir()
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
+        check("目标额外空目录 → --check 漂移", rc == 1 and out.get("drift") is True)
+    finally:
+        _rm(root)
+
+
+def _nested_plugin(root, plugin_name, rel, frontmatter_name):
+    plugin = root / ".aidp/plugins" / plugin_name
+    (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    (plugin / ".claude-plugin/plugin.json").write_text(
+        json.dumps({"name": plugin_name}), encoding="utf-8")
+    skill = plugin / "skills" / rel
+    skill.mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text(
+        f"---\nname: {frontmatter_name}\n---\n", encoding="utf-8")
+    return skill
+
+
+def test_nested_plugin_skill_conflicts_fail_closed():
+    print("【嵌套插件 SKILL：frontmatter name 递归冲突预检】")
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        _nested_plugin(root, "nested-plugin", "group/renamed-dir", "demo-skill")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("嵌套插件 SKILL 与公共 SKILL 重名 → fail closed",
+              rc == 2 and "冲突" in out.get("error", "") and "demo-skill" in out.get("error", ""))
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        first = _nested_plugin(root, "nested-plugin", "group/a", "same-name")
+        second = _nested_plugin(root, "nested-plugin", "other/b", "same-name")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        error = out.get("error", "")
+        check("同插件嵌套 SKILL 重名 → 错误列出两来源",
+              rc == 2 and first.as_posix() in error and second.as_posix() in error)
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        first = _nested_plugin(root, "plugin-a", "group/a", "cross-name")
+        second = _nested_plugin(root, "plugin-b", "other/b", "cross-name")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        error = out.get("error", "")
+        check("跨插件嵌套 SKILL 重名 → 错误列出两来源",
+              rc == 2 and first.as_posix() in error and second.as_posix() in error)
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
+        _nested_plugin(root, "nested-plugin", "group/a", "sprint-dev")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        check("嵌套插件 SKILL 与命令重名 → fail closed",
+              rc == 2 and "sprint-dev" in out.get("error", ""))
+    finally:
+        _rm(root)
+
+
 def main():
     test_agent_env()
     test_sync_all_agents_managed_copy()
@@ -1241,6 +1332,8 @@ def main():
     test_copy_mode_and_errors()
     test_sync_executes_from_native_runtime_without_root_aidp()
     test_native_runtime_managed_copy_contract()
+    test_managed_copy_tree_drift_is_recursive()
+    test_nested_plugin_skill_conflicts_fail_closed()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0
 

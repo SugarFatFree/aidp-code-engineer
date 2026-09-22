@@ -192,16 +192,28 @@ class Plan:
 
 
 def _tree_equal(a: Path, b: Path) -> bool:
-    def files(base):
-        return {f.relative_to(base).as_posix(): f for f in base.rglob("*")
-                if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc"
-                and f.name != GENERATED_FILE}
-    fa, fb = files(a), files(b)
-    if fa.keys() != fb.keys():
-        return False
-    return all(fa[k].read_bytes() == fb[k].read_bytes()
-               and (fa[k].stat().st_mode & 0o777) == (fb[k].stat().st_mode & 0o777)
-               for k in fa)
+    def inventory(base):
+        directories = {}
+        files = {}
+        for path in base.rglob("*"):
+            rel = path.relative_to(base)
+            if "__pycache__" in rel.parts or path.suffix == ".pyc" or path.name == GENERATED_FILE:
+                continue
+            if path.is_symlink():
+                return None
+            key = rel.as_posix()
+            mode = path.stat().st_mode & 0o777
+            if path.is_dir():
+                directories[key] = mode
+            elif path.is_file():
+                files[key] = (mode, path.read_bytes())
+            else:
+                return None
+        return directories, files
+
+    left = inventory(a)
+    right = inventory(b)
+    return left is not None and right is not None and left == right
 
 
 # ── 记忆文件 ──────────────────────────────────────────────────────────────────
@@ -502,17 +514,22 @@ def sync_claude_plugins(plan: Plan, plugins: list) -> list:
 
 
 def _plugin_skill_dirs(plugins: list) -> dict:
+    """递归发现插件 SKILL；冲突键优先使用 frontmatter `name`。"""
     result = {}
     for plugin in plugins:
         source = plugin / "skills"
         if not source.is_dir():
             continue
-        for skill in sorted(source.iterdir()):
-            if not (skill / "SKILL.md").is_file():
+        for skill_file in sorted(source.rglob("SKILL.md")):
+            if skill_file.is_symlink() or not skill_file.is_file():
                 continue
-            if skill.name in result:
-                raise SystemExit(f"[agent_sync] 插件 SKILL 重名冲突：{skill.name}")
-            result[skill.name] = skill
+            skill = skill_file.parent
+            name = _frontmatter(_read(skill_file)).get("name") or skill.name
+            if name in result:
+                first = result[name]
+                raise SystemExit(
+                    f"[agent_sync] 插件 SKILL 重名冲突：{name}；来源：{first}；{skill}")
+            result[name] = skill
     return result
 
 
@@ -784,8 +801,13 @@ def sync_hooks(plan: Plan, agent: str):
 
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
+def _declared_skill_names(skills: dict) -> set:
+    return {_frontmatter(_read(path / "SKILL.md")).get("name") or path.name
+            for path in skills.values()}
+
+
 def _name_conflicts(root: Path, plugin_skills: dict) -> list:
-    skills = set(_base_skill_dirs(root)) | set(plugin_skills)
+    skills = _declared_skill_names(_base_skill_dirs(root)) | set(plugin_skills)
     commands = {path.stem for path in _command_files(root)}
     return sorted(skills & commands)
 
@@ -977,7 +999,8 @@ def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: di
 def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     plugins = _plugin_dirs(root)
     plugin_skills = _plugin_skill_dirs(plugins) if ({"codex", "dsh"} & set(agents)) else {}
-    public_skills = set(_base_skill_dirs(root))
+    public_skill_dirs = _base_skill_dirs(root)
+    public_skills = _declared_skill_names(public_skill_dirs)
     skill_clash = sorted(public_skills & set(plugin_skills))
     namespace_clash = sorted(public_skills & {plugin.name for plugin in plugins
                                                if (plugin / "skills").is_dir()})

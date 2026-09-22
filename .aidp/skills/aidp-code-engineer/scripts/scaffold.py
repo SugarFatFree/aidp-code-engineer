@@ -298,6 +298,39 @@ class Backup:
         return dst
 
 
+class LegacyChangedDuringMigration(RuntimeError):
+    """Keep post-backup user changes in the legacy tree during rollback."""
+
+
+def _legacy_backup_files(root: Path, legacy: Path, saved: Path, rep: Report) -> list:
+    """Report each backed-up file; classify only against an available old manifest."""
+    baseline = installed_manifest(root)
+    if not isinstance(baseline, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value)
+            for key, value in baseline.items()):
+        baseline = None
+    entries = []
+    for path in sorted(legacy.rglob("*")):
+        if path.is_dir() and not path.is_symlink():
+            continue
+        rel = path.relative_to(legacy).as_posix()
+        if baseline is None:
+            classification = "unclassified"
+        elif rel not in baseline:
+            classification = "added"
+        elif path.is_symlink() or L.sha256(path.read_bytes()) != baseline[rel]:
+            classification = "modified"
+        else:
+            continue
+        entry = {"source": rel,
+                 "backup": (saved / rel).relative_to(root).as_posix(),
+                 "classification": classification}
+        entries.append(entry)
+        rep.note(f"旧运行目录备份（{classification}）：{rel} → {entry['backup']}")
+    return entries
+
+
 def _complete_tree_state(directory: Path) -> dict:
     """Compare a legacy backup without following links or omitting user files."""
     state = {}
@@ -1211,9 +1244,11 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
         try:
             return _run_native_impl(root, a, mode, agents, agent_source, journal,
                                     migrate_legacy=migrate_legacy)
-        except BaseException:
+        except BaseException as exc:
             journal.rollback_created()
             for name in saved:
+                if name == LEGACY_AIDP_DIR and isinstance(exc, LegacyChangedDuringMigration):
+                    continue
                 _restore_native_snapshot(backup / name, root / name)
             raise
 
@@ -1259,6 +1294,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 "orphans": [], "local_overwritten": [], "backup": None,
                 "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     bk = Backup(root, rep)
+    legacy_backup_files = []
     if migrate_legacy:
         try:
             original = _complete_tree_state(legacy)
@@ -1266,6 +1302,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             if saved is None or _complete_tree_state(saved) != original \
                     or _complete_tree_state(legacy) != original:
                 raise RuntimeError("旧运行目录完整备份校验失败")
+            legacy_backup_files = _legacy_backup_files(root, legacy, saved, rep)
         except (OSError, RuntimeError) as exc:
             rep.warn(f"旧运行目录备份失败，已保留原目录：{exc}")
             return {"status": "blocked", "reason": "legacy-backup-failed",
@@ -1410,6 +1447,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         if check.returncode != 0:
             raise RuntimeError(f"原生 Agent 入口校验失败：{(check.stdout or check.stderr).strip()[:300]}")
     if migrate_legacy:
+        if _complete_tree_state(legacy) != original:
+            raise LegacyChangedDuringMigration("旧运行目录在备份后发生变化，拒绝删除并保留最新修改")
         shutil.rmtree(legacy)
         rep.act("remove", LEGACY_AIDP_DIR + "/", "Agent 原生运行包已校验并安装")
     if a.adapter_mode == "link":
@@ -1421,6 +1460,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
             "contract_decision": decision, "pending": bool(queue), "rewrite_queue": queue,
             "orphans": [], "local_overwritten": [], "backup": bk.dir.name if bk.dir else None,
+            "legacy_backup_files": legacy_backup_files,
             "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
 
 

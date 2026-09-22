@@ -871,8 +871,51 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
                              "旧命令正文\n")
             self.assertEqual((root / result["backup"] / ".aidp/reference/team-notes.md").read_text(),
                              "团队自定义内容\n")
+            entries = {item["source"]: item for item in result["legacy_backup_files"]}
+            for rel in ("commands/sprint-dev.md", "reference/team-notes.md"):
+                self.assertEqual(entries[rel]["backup"], f"{result['backup']}/.aidp/{rel}")
+                self.assertEqual(entries[rel]["classification"], "unclassified")
+            self.assertTrue(any("reference/team-notes.md" in note for note in result["notes"]))
             self.assertEqual(scaffold_marker.read_version(root), BUNDLE_VERSION)
             self.assertEqual(agent_sync_check(root)[0], 0)
+
+    def test_legacy_backup_classifies_changes_with_old_manifest(self):
+        with H.TempRepo() as root:
+            self._legacy(root)
+            manifest = root / ".aidp/skills/aidp-code-engineer/assets/CONTRACT_MANIFEST.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"files": {
+                "commands/sprint-dev.md": L.sha256("旧版受管正文\n".encode("utf-8"))
+            }}), encoding="utf-8")
+            result = scaffold(root, "--mode", "migrate", "--agent", "claude")
+            entries = {item["source"]: item for item in result["legacy_backup_files"]}
+            self.assertEqual(entries["commands/sprint-dev.md"]["classification"], "modified")
+            self.assertEqual(entries["reference/team-notes.md"]["classification"], "added")
+            for rel in ("commands/sprint-dev.md", "reference/team-notes.md"):
+                self.assertTrue((root / entries[rel]["backup"]).is_file())
+
+    def test_legacy_change_after_backup_is_not_lost(self):
+        with H.TempRepo() as root:
+            command, extra = self._legacy(root)
+            real_run = S.subprocess.run
+            changed = False
+
+            def modify_after_check(args, *positional, **kwargs):
+                nonlocal changed
+                result = real_run(args, *positional, **kwargs)
+                if (not changed and isinstance(args, list) and "--check" in args
+                        and any("agent_sync.py" in str(arg) for arg in args)):
+                    command.write_text("备份后的新修改\n", encoding="utf-8")
+                    changed = True
+                return result
+
+            with mock.patch.object(S.subprocess, "run", side_effect=modify_after_check):
+                with self.assertRaisesRegex(RuntimeError, "备份后发生变化"):
+                    S.run(root, self._options("migrate", "claude"))
+            self.assertTrue(changed)
+            self.assertEqual(command.read_text(encoding="utf-8"), "备份后的新修改\n")
+            self.assertEqual(extra.read_text(encoding="utf-8"), "团队自定义内容\n")
+            self.assertFalse((root / ".claude/aidp").exists())
 
     def test_legacy_remains_when_agent_entries_are_disabled(self):
         with H.TempRepo() as root:

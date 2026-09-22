@@ -1105,7 +1105,8 @@ def test_copy_mode_and_errors():
         _add_browser_plugin(root)
         legacy = root / ".codex/skills/chrome-devtools-mcp"
         legacy.parent.mkdir(parents=True, exist_ok=True)
-        legacy.symlink_to(root / "missing-old-plugin", target_is_directory=True)
+        legacy.symlink_to(root / ".aidp/plugins/chrome-devtools-mcp/skills/missing-old-plugin",
+                          target_is_directory=True)
         rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
         shared = root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md"
         check("悬空旧 Codex 插件 symlink → 清理且改用共享嵌套 SKILL",
@@ -1265,6 +1266,18 @@ def test_managed_copy_tree_drift_is_recursive():
         (target / "references/extra-empty").mkdir()
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
         check("目标额外空目录 → --check 漂移", rc == 1 and out.get("drift") is True)
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+
+        outside = Path(tempfile.mkdtemp())
+        sentinel = outside / "sentinel"
+        sentinel.write_text("outside\n", encoding="utf-8")
+        (target / "SKILL.md").unlink()
+        os.link(sentinel, target / "SKILL.md")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
+        check("目标 hardlink → --check 漂移且外部字节不变",
+              rc == 1 and out.get("drift") is True
+              and sentinel.read_text(encoding="utf-8") == "outside\n")
+        shutil.rmtree(outside, ignore_errors=True)
     finally:
         _rm(root)
 
@@ -1341,6 +1354,144 @@ def test_nested_plugin_skill_conflicts_fail_closed():
         _rm(root)
 
 
+def test_materialization_is_atomic_and_source_is_safe():
+    print("【managed-copy 原子替换与源树安全】")
+    root = _mkrepo(markers=(".claude",))
+    source = root / ".aidp/skills/demo-skill"
+    target = root / ".claude/skills/demo-skill"
+    try:
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+        before = {p.relative_to(target).as_posix(): p.read_bytes()
+                  for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+        (source / "SKILL.md").write_text("changed\n", encoding="utf-8")
+
+        config = root / ".claude/probe.json"
+        config.write_text("old\n", encoding="utf-8")
+        original_write_text = Path.write_text
+        def broken_text_stage(path, text, *args, **kwargs):
+            if ".stage-" in path.name:
+                original_write_text(path, "partial", *args, **kwargs)
+                raise OSError("text stage probe")
+            return original_write_text(path, text, *args, **kwargs)
+        Path.write_text = broken_text_stage
+        try:
+            try:
+                AS.Plan(root, True, "copy").write_text(config, "new\n")
+                failed = False
+            except OSError:
+                failed = True
+        finally:
+            Path.write_text = original_write_text
+        check("文本 stage 写失败 → 旧文件字节保持",
+              failed and config.read_text(encoding="utf-8") == "old\n")
+
+        original_copytree = AS.shutil.copytree
+        def broken_copytree(src, dst, **kwargs):
+            Path(dst).mkdir(parents=True)
+            (Path(dst) / "partial").write_text("partial", encoding="utf-8")
+            raise OSError("copytree probe")
+        AS.shutil.copytree = broken_copytree
+        try:
+            try:
+                AS.Plan(root, True, "copy").link_dir(target, source)
+                failed = False
+            except OSError:
+                failed = True
+        finally:
+            AS.shutil.copytree = original_copytree
+        after = {p.relative_to(target).as_posix(): p.read_bytes()
+                 for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+        check("目录复制失败 → 旧实体树原样保留", failed and before == after)
+
+        source_file = root / ".aidp/commands/sprint-dev.md"
+        target_file = root / ".claude/commands/sprint-dev.md"
+        old_bytes = target_file.read_bytes()
+        source_file.write_text("changed command\n", encoding="utf-8")
+        original_copy2 = AS.shutil.copy2
+        def broken_copy2(src, dst, **kwargs):
+            Path(dst).write_text("partial", encoding="utf-8")
+            raise OSError("copy2 probe")
+        AS.shutil.copy2 = broken_copy2
+        try:
+            try:
+                AS.Plan(root, True, "copy").link_file(target_file, source_file)
+                failed = False
+            except OSError:
+                failed = True
+        finally:
+            AS.shutil.copy2 = original_copy2
+        check("文件复制失败 → 旧入口字节保持", failed and target_file.read_bytes() == old_bytes)
+
+        original_write_text = Path.write_text
+        def broken_marker(path, text, *args, **kwargs):
+            if path.name == AS.GENERATED_FILE and ".stage-" in path.parent.name:
+                raise OSError("marker probe")
+            return original_write_text(path, text, *args, **kwargs)
+        Path.write_text = broken_marker
+        try:
+            try:
+                AS.Plan(root, True, "copy").link_dir(target, source)
+                failed = False
+            except OSError:
+                failed = True
+        finally:
+            Path.write_text = original_write_text
+        after = {p.relative_to(target).as_posix(): p.read_bytes()
+                 for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+        check("marker 写失败 → 旧实体树原样保留", failed and before == after)
+    finally:
+        _rm(root)
+
+    for kind in ("file-symlink", "dir-symlink", "hardlink", "fifo"):
+        root = _mkrepo(markers=(".claude",))
+        outside = Path(tempfile.mkdtemp())
+        sentinel = outside / "sentinel"
+        sentinel.write_text("outside\n", encoding="utf-8")
+        try:
+            skill = root / ".aidp/skills/demo-skill"
+            if kind == "file-symlink":
+                (skill / "SKILL.md").unlink()
+                (skill / "SKILL.md").symlink_to(sentinel)
+            elif kind == "dir-symlink":
+                (skill / "references").symlink_to(outside, target_is_directory=True)
+            elif kind == "hardlink":
+                os.link(sentinel, skill / "hard-linked.txt")
+            else:
+                os.mkfifo(skill / "nonregular.fifo")
+            rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+            check(f"源树 {kind} → preflight fail closed 且零写入",
+                  rc == 2 and sentinel.read_text(encoding="utf-8") == "outside\n"
+                  and not (root / ".claude/skills/demo-skill").exists()
+                  and not (root / ".claude/commands").exists())
+        finally:
+            _rm(root)
+            shutil.rmtree(outside, ignore_errors=True)
+
+
+def test_legacy_symlink_cleanup_is_lexically_contained():
+    print("【legacy symlink：词法 containment 与保守清理】")
+    root = Path(tempfile.mkdtemp())
+    try:
+        destination = root / ".claude/commands/x.md"
+        destination.parent.mkdir(parents=True)
+        cases = (
+            ("../../.aidp/commands/x.md", True),
+            ("../../.aidp/commands/../commands/missing.md", True),
+            ("../../not.aidp/commands/x.md", False),
+            (str(Path(tempfile.gettempdir()) / ".aidp/commands/x.md"), False),
+            ("../../../outside/.aidp/commands/x.md", False),
+        )
+        results = []
+        for raw, expected in cases:
+            if os.path.lexists(destination):
+                destination.unlink()
+            destination.symlink_to(raw)
+            results.append(AS.cleanup_legacy_link_is_generated(root, destination) == expected)
+        check("仅项目内精确旧 commands/skills/plugins 子树视为生成链接", all(results))
+    finally:
+        _rm(root)
+
+
 def main():
     test_agent_env()
     test_sync_all_agents_managed_copy()
@@ -1350,6 +1501,8 @@ def main():
     test_native_runtime_managed_copy_contract()
     test_managed_copy_tree_drift_is_recursive()
     test_nested_plugin_skill_conflicts_fail_closed()
+    test_materialization_is_atomic_and_source_is_safe()
+    test_legacy_symlink_cleanup_is_lexically_contained()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0
 

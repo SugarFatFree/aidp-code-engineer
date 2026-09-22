@@ -36,6 +36,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -116,6 +117,85 @@ def _is_shell(text: str) -> bool:
     return len(body) == 1 and body[0].strip() == "@AGENTS.md"
 
 
+def _lexical(path: Path) -> Path:
+    return Path(os.path.abspath(os.path.normpath(os.fspath(path))))
+
+
+def _source_boundary(root: Path, source: Path) -> Path:
+    source_abs = _lexical(source)
+    candidates = (RUNTIME_ROOT, root / LEGACY_AIDP_DIR,
+                  root / ".claude/aidp", root / ".agents/aidp")
+    for candidate in candidates:
+        boundary = _lexical(candidate)
+        try:
+            source_abs.relative_to(boundary)
+            return boundary
+        except ValueError:
+            continue
+    raise SystemExit(f"[agent_sync] 复制源路径越出 AIDP 运行包：{source}")
+
+
+def _validate_material_path(root: Path, source: Path, expect_dir: bool):
+    """不跟随链接地验证复制源；普通文件必须是单链接实体。"""
+    boundary = _source_boundary(root, source)
+    source_abs = _lexical(source)
+    current = boundary
+    for part in source_abs.relative_to(boundary).parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            raise SystemExit(f"[agent_sync] 复制源不存在：{current}：{exc}")
+        if stat.S_ISLNK(info.st_mode):
+            raise SystemExit(f"[agent_sync] 复制源包含 symlink：{current}")
+        if current != source_abs and not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(f"[agent_sync] 复制源祖先不是目录：{current}")
+
+    info = source_abs.lstat()
+    if expect_dir and not stat.S_ISDIR(info.st_mode):
+        raise SystemExit(f"[agent_sync] 复制源必须是目录：{source_abs}")
+    if not expect_dir:
+        if not stat.S_ISREG(info.st_mode):
+            raise SystemExit(f"[agent_sync] 复制源必须是普通文件：{source_abs}")
+        if info.st_nlink != 1:
+            raise SystemExit(f"[agent_sync] 复制源文件存在硬链接：{source_abs}")
+        return
+
+    for dirpath, dirnames, filenames in os.walk(source_abs, followlinks=False):
+        base = Path(dirpath)
+        for name in list(dirnames) + list(filenames):
+            path = base / name
+            child = path.lstat()
+            if stat.S_ISLNK(child.st_mode):
+                raise SystemExit(f"[agent_sync] 复制源包含 symlink：{path}")
+            if name in dirnames:
+                if not stat.S_ISDIR(child.st_mode):
+                    raise SystemExit(f"[agent_sync] 复制源包含非目录节点：{path}")
+            else:
+                if not stat.S_ISREG(child.st_mode):
+                    raise SystemExit(f"[agent_sync] 复制源包含非普通文件：{path}")
+                if child.st_nlink != 1:
+                    raise SystemExit(f"[agent_sync] 复制源文件存在硬链接：{path}")
+
+
+def _validate_staged_tree(stage: Path):
+    info = stage.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise SystemExit(f"[agent_sync] 临时目录不是实体目录：{stage}")
+    for dirpath, dirnames, filenames in os.walk(stage, followlinks=False):
+        base = Path(dirpath)
+        for name in list(dirnames) + list(filenames):
+            path = base / name
+            child = path.lstat()
+            if stat.S_ISLNK(child.st_mode):
+                raise SystemExit(f"[agent_sync] 临时副本包含 symlink：{path}")
+            if name in dirnames:
+                if not stat.S_ISDIR(child.st_mode):
+                    raise SystemExit(f"[agent_sync] 临时副本包含非目录节点：{path}")
+            elif not stat.S_ISREG(child.st_mode) or child.st_nlink != 1:
+                raise SystemExit(f"[agent_sync] 临时副本包含非普通或硬链接文件：{path}")
+
+
 class Plan:
     """收集动作；apply=False 时只记录不落盘。"""
 
@@ -136,36 +216,97 @@ class Plan:
         return p.relative_to(self.root).as_posix()
 
     def write_text(self, p: Path, text: str):
-        if _read(p) == text and p.is_file() and not p.is_symlink():
+        if _read(p) == text and p.is_file() and not p.is_symlink() and p.stat().st_nlink == 1:
             return
         self.actions.append({"op": "write", "path": self._rel(p)})
         if self.apply:
-            if p.is_symlink():
-                p.unlink()
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text, encoding="utf-8")
+            fd, raw = tempfile.mkstemp(prefix=f".{p.name}.stage-", dir=str(p.parent))
+            os.close(fd)
+            stage = Path(raw)
+            try:
+                stage.write_text(text, encoding="utf-8")
+                os.chmod(stage, 0o644)
+                info = stage.lstat()
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise SystemExit(f"[agent_sync] 临时文件不是单链接普通文件：{stage}")
+                self._atomic_replace(p, stage)
+            finally:
+                if os.path.lexists(stage):
+                    self._remove(stage)
 
     def link_dir(self, dst: Path, src: Path):
         """兼容旧调用名；新布局始终生成带标记的实体目录副本。"""
+        _validate_material_path(self.root, src, expect_dir=True)
         if dst.is_dir() and not dst.is_symlink() and _tree_equal(src, dst):
             return
         self.actions.append({"op": "copy", "path": self._rel(dst), "from": self._source_label(src)})
         if self.apply:
-            self._remove(dst)
-            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-            (dst / GENERATED_FILE).write_text("directory-copy\n", encoding="utf-8")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            stage = Path(tempfile.mkdtemp(prefix=f".{dst.name}.stage-", dir=str(dst.parent)))
+            try:
+                shutil.copytree(src, stage, symlinks=True, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                (stage / GENERATED_FILE).write_text("directory-copy\n", encoding="utf-8")
+                _validate_material_path(self.root, src, expect_dir=True)
+                _validate_staged_tree(stage)
+                self._atomic_replace(dst, stage)
+            finally:
+                if os.path.lexists(stage):
+                    self._remove(stage)
 
     def link_file(self, dst: Path, src: Path):
         """兼容旧调用名；新布局始终生成保留 mode 的实体文件副本。"""
-        if (dst.is_file() and not dst.is_symlink()
+        _validate_material_path(self.root, src, expect_dir=False)
+        if (dst.is_file() and not dst.is_symlink() and dst.stat().st_nlink == 1
                 and dst.read_bytes() == src.read_bytes()
                 and (dst.stat().st_mode & 0o777) == (src.stat().st_mode & 0o777)):
             return
         self.actions.append({"op": "copy", "path": self._rel(dst), "from": self._source_label(src)})
         if self.apply:
-            self._remove(dst)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            fd, raw = tempfile.mkstemp(prefix=f".{dst.name}.stage-", dir=str(dst.parent))
+            os.close(fd)
+            stage = Path(raw)
+            try:
+                shutil.copy2(src, stage, follow_symlinks=False)
+                _validate_material_path(self.root, src, expect_dir=False)
+                info = stage.lstat()
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise SystemExit(f"[agent_sync] 临时文件不是单链接普通文件：{stage}")
+                self._atomic_replace(dst, stage)
+            finally:
+                if os.path.lexists(stage):
+                    self._remove(stage)
+
+    def _atomic_replace(self, dst: Path, stage: Path):
+        had_previous = os.path.lexists(dst)
+        previous = None
+        installed = False
+        try:
+            if had_previous:
+                if dst.is_dir() and not dst.is_symlink():
+                    previous = Path(tempfile.mkdtemp(
+                        prefix=f".{dst.name}.previous-", dir=str(dst.parent)))
+                else:
+                    fd, raw = tempfile.mkstemp(
+                        prefix=f".{dst.name}.previous-", dir=str(dst.parent))
+                    os.close(fd)
+                    previous = Path(raw)
+                os.replace(dst, previous)
+            try:
+                os.replace(stage, dst)
+                installed = True
+            except Exception:
+                if had_previous and previous is not None and os.path.lexists(previous):
+                    os.replace(previous, dst)
+                raise
+        finally:
+            if not installed and not os.path.lexists(dst) and had_previous \
+                    and previous is not None and os.path.lexists(previous):
+                os.replace(previous, dst)
+            if previous is not None and os.path.lexists(previous):
+                self._remove(previous)
 
     def _source_label(self, src: Path) -> str:
         try:
@@ -202,10 +343,13 @@ def _tree_equal(a: Path, b: Path) -> bool:
             if path.is_symlink():
                 return None
             key = rel.as_posix()
-            mode = path.stat().st_mode & 0o777
+            info = path.stat()
+            mode = info.st_mode & 0o777
             if path.is_dir():
                 directories[key] = mode
             elif path.is_file():
+                if info.st_nlink != 1:
+                    return None
                 files[key] = (mode, path.read_bytes())
             else:
                 return None
@@ -284,14 +428,28 @@ def codex_command_skill(name: str, command_text: str) -> str:
     )
 
 
-def cleanup_legacy_link_is_generated(path: Path) -> bool:
-    """旧适配层可能仍链接到根 `.aidp`；只用于保守清理。"""
-    return path.is_symlink() and LEGACY_AIDP_DIR in os.readlink(path)
+def cleanup_legacy_link_is_generated(root: Path, path: Path) -> bool:
+    """仅接受词法落在项目旧运行真源子树内的 legacy symlink。"""
+    if not path.is_symlink():
+        return False
+    try:
+        raw = Path(os.readlink(path))
+    except OSError:
+        return False
+    target = _lexical(raw if raw.is_absolute() else path.parent / raw)
+    root_abs = _lexical(root)
+    try:
+        relative = target.relative_to(root_abs)
+    except ValueError:
+        return False
+    parts = relative.parts
+    return (len(parts) >= 3 and parts[0] == LEGACY_AIDP_DIR
+            and parts[1] in {"commands", "skills", "plugins"})
 
 
-def _is_generated(p: Path) -> bool:
+def _is_generated(p: Path, root: Path) -> bool:
     if p.is_symlink():
-        return cleanup_legacy_link_is_generated(p)
+        return cleanup_legacy_link_is_generated(root, p)
     if p.is_dir():
         skill_text = _read(p / "SKILL.md")
         return ((p / GENERATED_FILE).is_file() or GENERATED_MARK in skill_text
@@ -313,12 +471,12 @@ def _prune(plan: Plan, base: Path, wanted: set):
     if not base.is_dir():
         return
     for p in sorted(base.iterdir()):
-        if p.name not in wanted and _is_generated(p):
+        if p.name not in wanted and _is_generated(p, plan.root):
             plan.remove(p, "not generated anymore")
 
 
-def _require_generated_or_absent(path: Path, label: str):
-    if (path.exists() or path.is_symlink()) and not _is_generated(path):
+def _require_generated_or_absent(root: Path, path: Path, label: str):
+    if (path.exists() or path.is_symlink()) and not _is_generated(path, root):
         raise SystemExit(f"[agent_sync] {label} 已存在用户内容，拒绝覆盖：{path}")
 
 
@@ -336,7 +494,7 @@ def sync_skill_dir(plan: Plan, rel: str, preserve: set = None) -> list:
     destination = plan.root / rel
     for name, source in sorted(skills.items()):
         target = destination / name
-        _require_generated_or_absent(target, "SKILL 入口")
+        _require_generated_or_absent(plan.root, target, "SKILL 入口")
         plan.link_dir(target, source)
         generated.append(f"{rel}/{name}")
     _prune(plan, destination, set(skills) | set(preserve or ()))
@@ -362,7 +520,7 @@ def sync_file_commands(plan: Plan, rel: str, enabled: bool = True) -> list:
     generated = []
     for command in commands:
         target = destination / command.name
-        if (target.exists() or target.is_symlink()) and command.name not in previous and not _is_generated(target):
+        if (target.exists() or target.is_symlink()) and command.name not in previous and not _is_generated(target, plan.root):
             raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
         plan.link_file(target, command)
         generated.append(f"{rel}/{command.name}")
@@ -381,7 +539,7 @@ def sync_codex_commands(plan: Plan) -> list:
     for command in _command_files(plan.root):
         name = command.stem
         target = destination / name
-        _require_generated_or_absent(target, "Codex 命令 SKILL")
+        _require_generated_or_absent(plan.root, target, "Codex 命令 SKILL")
         wanted.add(name)
         plan.write_text(target / "SKILL.md", codex_command_skill(name, _read(command)))
         plan.write_text(target / "agents/openai.yaml", OPENAI_YAML)
@@ -432,6 +590,17 @@ def _plugin_dirs(root: Path) -> list:
     return sorted(p for p in base.iterdir()
                   if p.is_dir() and ((p / ".claude-plugin" / "plugin.json").is_file()
                                      or (p / "plugin.json").is_file()))
+
+
+def _validate_copy_sources(root: Path, plugins: list):
+    for command in _command_files(root):
+        _validate_material_path(root, command, expect_dir=False)
+    for skill in _base_skill_dirs(root).values():
+        _validate_material_path(root, skill, expect_dir=True)
+    for plugin in plugins:
+        _validate_material_path(root, plugin, expect_dir=True)
+    if STOP_GUARD_SOURCE.exists() or STOP_GUARD_SOURCE.is_symlink():
+        _validate_material_path(root, STOP_GUARD_SOURCE, expect_dir=False)
 
 
 def _plugin_manifest(pdir: Path) -> dict:
@@ -548,7 +717,7 @@ def sync_codex_plugin_skills(plan: Plan, plugins: list) -> list:
     base = plan.root / CODEX_PLUGIN_SKILLS
     for plugin in plugins:
         target = base / plugin.name
-        if target.is_symlink() or _is_generated(target):
+        if _is_generated(target, plan.root):
             plan.remove(target, "legacy Codex plugin skills")
     _prune(plan, base, {"aidp"})
     return []
@@ -564,14 +733,14 @@ def sync_shared_plugin_skills(plan: Plan, plugins: list, enabled: bool = True) -
             continue
         wanted.add(plugin.name)
         target = base / plugin.name
-        _require_generated_or_absent(target, "共享插件 SKILL namespace")
+        _require_generated_or_absent(plan.root, target, "共享插件 SKILL namespace")
         plan.link_dir(target / "skills", source)
         plan.write_text(target / GENERATED_FILE, "plugin-skills\n")
         generated.append(f"{SHARED_SKILLS}/{plugin.name}")
     for plugin in plugins:
         if plugin.name not in wanted:
             target = base / plugin.name
-            if _is_generated(target):
+            if _is_generated(target, plan.root):
                 plan.remove(target, "plugin skills disabled")
     return generated
 
@@ -964,20 +1133,20 @@ def _validate_adapter_namespaces(root: Path, plugins: list):
 def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: dict):
     if "claude" in agents:
         for name in _base_skill_dirs(root):
-            _require_generated_or_absent(root / CLAUDE_SKILLS / name, "Claude SKILL 入口")
+            _require_generated_or_absent(root, root / CLAUDE_SKILLS / name, "Claude SKILL 入口")
         destination = root / CLAUDE_COMMANDS
         previous = _generated_names(destination / GENERATED_FILE)
         for command in _command_files(root):
             target = destination / command.name
             if ((target.exists() or target.is_symlink()) and command.name not in previous
-                    and not _is_generated(target)):
+                    and not _is_generated(target, root)):
                 raise SystemExit(f"[agent_sync] Claude 命令目标已存在用户内容，拒绝覆盖：{target}")
         for plugin in plugins:
-            _require_generated_or_absent(root / CLAUDE_PLUGINS / plugin.name,
+            _require_generated_or_absent(root, root / CLAUDE_PLUGINS / plugin.name,
                                          "Claude 插件目录")
     if "codex" in agents:
         for command in _command_files(root):
-            _require_generated_or_absent(root / CODEX_COMMAND_SKILLS / command.stem,
+            _require_generated_or_absent(root, root / CODEX_COMMAND_SKILLS / command.stem,
                                          "Codex 命令 SKILL")
     if "dsh" in agents:
         destination = root / DSH_COMMANDS
@@ -985,19 +1154,20 @@ def _validate_targets(root: Path, agents: list, plugins: list, plugin_skills: di
         for command in _command_files(root):
             target = destination / command.name
             if ((target.exists() or target.is_symlink()) and command.name not in previous
-                    and not _is_generated(target)):
+                    and not _is_generated(target, root)):
                 raise SystemExit(f"[agent_sync] 原生命令目标已存在用户内容，拒绝覆盖：{target}")
     if "codex" in agents or "dsh" in agents:
         for name in _base_skill_dirs(root):
-            _require_generated_or_absent(root / SHARED_SKILLS / name, "SKILL 入口")
+            _require_generated_or_absent(root, root / SHARED_SKILLS / name, "SKILL 入口")
         for plugin in plugins:
             if (plugin / "skills").is_dir():
-                _require_generated_or_absent(root / SHARED_SKILLS / plugin.name,
+                _require_generated_or_absent(root, root / SHARED_SKILLS / plugin.name,
                                              "共享插件 SKILL namespace")
 
 
 def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     plugins = _plugin_dirs(root)
+    _validate_copy_sources(root, plugins)
     plugin_skills = _plugin_skill_dirs(plugins) if ({"codex", "dsh"} & set(agents)) else {}
     public_skill_dirs = _base_skill_dirs(root)
     public_skills = _declared_skill_names(public_skill_dirs)

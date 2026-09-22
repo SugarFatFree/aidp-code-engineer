@@ -1021,7 +1021,7 @@ class _NativeInstallJournal:
                 paths.update(path.relative_to(self.root) for path in base.rglob("*"))
         return paths
 
-    def record(self, path):
+    def expect(self, path):
         target = Path(path)
         if not target.is_absolute():
             target = self.root / target
@@ -1031,13 +1031,22 @@ class _NativeInstallJournal:
             raise ValueError(f"安装动作越出项目根：{target}") from exc
         if not relative.parts or relative.parts[0] not in self.managed:
             return
-        for parent in (relative, *relative.parents):
-            if parent.parts and parent not in self.initial and os.path.lexists(self.root / parent):
-                self.created.add(parent)
-        if target.is_dir() and not target.is_symlink():
-            self.created.update(child.relative_to(self.root)
-                                for child in target.rglob("*")
-                                if child.relative_to(self.root) not in self.initial)
+        self.created.update(parent for parent in (relative, *relative.parents)
+                            if parent.parts and parent not in self.initial)
+
+    def record(self, path):
+        target = Path(path)
+        if not target.is_absolute():
+            target = self.root / target
+        if os.path.lexists(target):
+            self.expect(target)
+
+    def expect_tree(self, destination: Path, source: Path, include=None):
+        self.expect(destination)
+        for path in source.rglob("*"):
+            relative = path.relative_to(source)
+            if include is None or include(relative):
+                self.expect(destination / relative)
 
     def rollback_created(self):
         for relative in sorted(self.created, key=lambda path: len(path.parts), reverse=True):
@@ -1077,6 +1086,38 @@ def _restore_native_snapshot(original: Path, target: Path):
         shutil.copy2(source, destination, follow_symlinks=False)
     for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
         shutil.copystat(directory, target / directory.relative_to(original))
+
+
+def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, agents: list):
+    home = ".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp"
+    cmd = [sys.executable, str(root / home / "scripts/agent_sync.py"), "--root", str(root),
+           "--agents", ",".join(agents), "--mode", "copy", "--check"]
+    process = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    try:
+        planned = json.loads(process.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError) as exc:
+        raise RuntimeError(f"Agent 入口预登记失败：{process.stderr.strip()}") from exc
+    if process.returncode not in (0, 1):
+        raise RuntimeError(f"Agent 入口预登记失败：{planned.get('error') or process.stderr.strip()}")
+    for action in planned.get("actions", []):
+        if action.get("op") not in {"copy", "write"} or not action.get("path"):
+            continue
+        destination = root / action["path"]
+        journal.expect(destination)
+        if action["op"] != "copy":
+            continue
+        source_name = action.get("from", "")
+        if source_name.startswith("AIDP_HOME/"):
+            family = ".claude/aidp" if action["path"].startswith(".claude/") else ".agents/aidp"
+            source = root / family / source_name[len("AIDP_HOME/"):]
+        else:
+            source = Path(source_name)
+            if not source.is_absolute():
+                source = root / source
+        if source.is_dir() and not source.is_symlink():
+            journal.expect_tree(destination, source, include=lambda path:
+                                "__pycache__" not in path.parts and path.suffix != ".pyc")
+            journal.expect(destination / agent_adapter.GENERATED_FILE)
 
 
 def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
@@ -1149,8 +1190,12 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             current = dest / runtime_layout.RUNTIME_MANIFEST
             if json.loads(current.read_text(encoding="utf-8"))["version"] == scaffold_raw and not a.force:
                 continue
+        journal.expect_tree(dest, source, include=lambda path:
+                            path.parts[0] in runtime_layout.RUNTIME_DIRS
+                            and not runtime_layout._excluded(path.as_posix()))
+        journal.expect(dest / runtime_layout.RUNTIME_MANIFEST)
+        journal.expect(dest.parent / ".aidp-runtime.lock")
         runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind)
-        journal.record(dest.parent / ".aidp-runtime.lock")
         rep.act("install", home + "/", "Agent 原生运行包")
     for ag in agents:
         marker = root / MARKER_DIRS[ag]
@@ -1169,6 +1214,16 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     sync_root_files(root, ctx, rep, bk)
     if decision != "protect":
         sync_memory_file(root, agents, ctx, decision, bool(previous), rep, bk)
+    for rel in (".claude/skills" if "claude" in agents else None,
+                ".agents/skills" if {"codex", "dsh"} & set(agents) else None):
+        if rel is not None:
+            destination = root / rel / L.SKILL_NAME
+            journal.expect_tree(destination, L.SKILL_DIR, include=lambda path:
+                                "__pycache__" not in path.parts
+                                and "sources" not in path.parts
+                                and "tests" not in path.parts
+                                and path.suffix != ".pyc")
+            journal.expect(destination / ".aidp-scaffold-generated")
     _install_native_skill(root, agents, rep)
     manage_gitkeep(root, dirs, rep)
     for rel in dirs:
@@ -1182,10 +1237,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         journal.record(scaffold_marker.CONFIG_REL)
     dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
     if not a.no_agent_sync:
-        adapter_result = run_agent_sync(root, agents, "copy", rep, strict=True)
-        for action in adapter_result.get("actions") or []:
-            if action.get("op") in {"write", "copy", "install"}:
-                journal.record(action.get("path") or "")
+        _expect_agent_adapter_writes(journal, root, agents)
+        run_agent_sync(root, agents, "copy", rep, strict=True)
     if a.adapter_mode == "link":
         rep.actions.append({"op": "normalized", "path": "agent-adapters", "why": "link → managed-copy",
                             "action": "normalized", "from": "link", "to": "managed-copy"})

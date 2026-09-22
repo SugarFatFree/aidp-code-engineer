@@ -644,6 +644,47 @@ class NativePreflightTest(unittest.TestCase):
             self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
             self.assertFalse(os.path.lexists(root / ".claude/aidp"))
 
+    def test_runtime_written_then_error_rolls_back_without_user_loss(self):
+        with H.TempRepo() as root:
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            concurrent = root / ".claude/concurrent-user-file.txt"
+            render = S.runtime_layout.render_runtime
+
+            def render_then_fail(*args, **kwargs):
+                result = render(*args, **kwargs)
+                concurrent.write_text("keep\n", encoding="utf-8")
+                raise OSError("render interrupted")
+
+            with mock.patch.object(S.runtime_layout, "render_runtime", side_effect=render_then_fail):
+                with self.assertRaisesRegex(OSError, "render interrupted"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+
+    def test_agent_entries_written_then_error_roll_back_without_user_loss(self):
+        with H.TempRepo() as root:
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            concurrent = root / ".claude/skills/concurrent-user-file.txt"
+            sync = S.run_agent_sync
+
+            def sync_then_fail(*args, **kwargs):
+                sync(*args, **kwargs)
+                concurrent.write_text("keep\n", encoding="utf-8")
+                raise OSError("adapter interrupted")
+
+            with mock.patch.object(S, "run_agent_sync", side_effect=sync_then_fail):
+                with self.assertRaisesRegex(OSError, "adapter interrupted"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+            self.assertFalse(os.path.lexists(root / ".claude/commands/sprint-dev.md"))
+
     def test_upgrade_failure_restores_runtime_and_user_document(self):
         with H.TempRepo() as root:
             scaffold(root, "--agent", "claude", "--user", "alice")

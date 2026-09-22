@@ -152,11 +152,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
     def _assert_tree_equal(self, left, right):
         left_files = {
             path.relative_to(left).as_posix(): path.read_bytes()
-            for path in left.rglob("*") if path.is_file()
+            for path in left.rglob("*") if path.is_file() and path.name != ".aidp-generated"
         }
         right_files = {
             path.relative_to(right).as_posix(): path.read_bytes()
-            for path in right.rglob("*") if path.is_file()
+            for path in right.rglob("*") if path.is_file() and path.name != ".aidp-generated"
         }
         self.assertEqual(left_files, right_files)
 
@@ -332,6 +332,14 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             claude = self._manifest(root, claude_rel)
             shared = self._manifest(root, shared_rel)
             self.assertEqual(claude["version"], shared["version"])
+            claude_command = (root / ".claude/commands/sprint-test.md").read_text(encoding="utf-8")
+            shared_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
+            self._assert_target_runtime_paths(claude_command, ".claude/aidp")
+            self.assertNotIn(".agents/aidp/", claude_command)
+            self._assert_target_runtime_paths(shared_command, ".agents/aidp")
+            self.assertNotIn(".claude/aidp/", shared_command)
+            rc, output = agent_sync_check(root)
+            self.assertEqual(rc, 0, output)
             self.assertEqual(set(claude["files"]), set(shared["files"]))
             self.assertEqual(
                 self._normalized_runtime(root, claude_rel, claude),
@@ -376,6 +384,93 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             ), res["actions"])
 
 
+class NonGitInitTest(unittest.TestCase):
+    def test_plain_directory_initializes_without_git(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "plain"
+            root.mkdir()
+            res = scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--user", "alice")
+            self.assertEqual(res["vcs_mode"], "none")
+            self.assertFalse(os.path.lexists(root / ".aidp"))
+            self.assertTrue((root / ".claude/aidp/.aidp-runtime.json").is_file())
+            self.assertFalse((root / ".git").exists())
+
+    def test_missing_git_executable_does_not_block_init(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "plain"
+            root.mkdir()
+            bindir = Path(temp) / "empty-bin"
+            bindir.mkdir()
+            env = H.clean_env()
+            env["PATH"] = str(bindir)
+            res = scaffold(root, "--agent", "claude", "--user", "alice", env=env)
+            self.assertEqual(res["vcs_mode"], "none")
+            self.assertTrue((root / ".claude/aidp/.aidp-runtime.json").is_file())
+
+
+class NativeIdempotencyTest(unittest.TestCase):
+    def test_same_version_second_run_keeps_runtime_and_entries(self):
+        with H.TempRepo() as root:
+            first = scaffold(root, "--agent", "claude")
+            before = (root / ".claude/aidp/.aidp-runtime.json").read_bytes()
+            again = scaffold(root)
+            self.assertEqual(first["mode"], "init")
+            self.assertEqual(again["mode"], "upgrade")
+            self.assertEqual(again["contract_decision"], "fill")
+            self.assertEqual((root / ".claude/aidp/.aidp-runtime.json").read_bytes(), before)
+            self.assertFalse([action for action in again["actions"]
+                              if action["op"] in {"create", "update", "backup", "install"}],
+                             again["actions"])
+
+
+class NativePreflightTest(unittest.TestCase):
+    def test_live_legacy_symlink_is_rejected_before_writes(self):
+        import tempfile
+        with H.TempRepo() as root, tempfile.TemporaryDirectory() as outside:
+            external = Path(outside)
+            (external / "sentinel").write_text("keep\n", encoding="utf-8")
+            (root / ".aidp").symlink_to(external, target_is_directory=True)
+            p = subprocess.run([sys.executable, str(H.SCRIPTS / "scaffold.py"), str(root),
+                                "--agent", "claude", "--user", "alice", "--json"],
+                               capture_output=True, text=True, env=H.clean_env())
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+            self.assertEqual((external / "sentinel").read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse((root / "memory").exists())
+            self.assertFalse((root / ".claude/aidp").exists())
+
+    def test_user_command_collision_has_no_partial_install(self):
+        with H.TempRepo() as root:
+            command = root / ".claude/commands/sprint-dev.md"
+            command.parent.mkdir(parents=True)
+            command.write_text("user command\n", encoding="utf-8")
+            p = subprocess.run([sys.executable, str(H.SCRIPTS / "scaffold.py"), str(root),
+                                "--agent", "claude", "--user", "alice", "--json"],
+                               capture_output=True, text=True, env=H.clean_env())
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+            self.assertEqual(command.read_text(encoding="utf-8"), "user command\n")
+            self.assertFalse((root / ".claude/aidp").exists())
+            self.assertFalse((root / "memory").exists())
+
+
+class RuntimeCacheTest(unittest.TestCase):
+    def test_agent_sync_bytecode_does_not_drift_runtime_manifest(self):
+        import runtime_layout
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude")
+            manifest = runtime_layout.validate_runtime(root / ".claude/aidp",
+                                                       expected_home=".claude/aidp")
+            self.assertEqual(manifest["schema"], "aidp.runtime/v1")
+            cache = root / ".claude/aidp/scripts/__pycache__"
+            if cache.exists():
+                shutil.rmtree(cache)
+            cache.symlink_to(root / "memory", target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                runtime_layout.validate_runtime(root / ".claude/aidp",
+                                                expected_home=".claude/aidp")
+
+
 class AgentResolutionTest(unittest.TestCase):
     def test_markers_win_over_argument(self):
         with H.TempRepo() as root:
@@ -397,15 +492,16 @@ class AgentResolutionTest(unittest.TestCase):
 
 
 class DshCommandPluginInstallTest(unittest.TestCase):
-    COMMAND = ["plugin", "--profile", "web", "add", "dsh-plugin-commands@latest"]
-    RETRY = "dsh plugin --profile web add dsh-plugin-commands@latest"
+    COMMAND = ["plugin", "--profile", "web", "add", "github:SugarFatFree/dsh-agent-extension"]
+    RETRY = "dsh plugin --profile web add github:SugarFatFree/dsh-agent-extension"
 
     def test_dsh_init_installs_plugin_once_before_agent_sync(self):
         with H.TempRepo() as root:
             env, log = fake_dsh_env(root)
             res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
             self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
-            self.assertFalse([w for w in res["warnings"] if "dsh-plugin-commands" in w], res["warnings"])
+            self.assertEqual(res["dsh_extensions"], "available")
+            self.assertFalse([w for w in res["warnings"] if "dsh-agent-extension" in w], res["warnings"])
             ops = [a["op"] for a in res["actions"]]
             self.assertEqual(ops.count("dsh-plugin"), 1, ops)
             self.assertLess(ops.index("dsh-plugin"), ops.index("agent-sync"), ops)
@@ -420,7 +516,8 @@ class DshCommandPluginInstallTest(unittest.TestCase):
             self.assertIn("exit 7", warning)
             self.assertIn("plugin install failed", warning)
             self.assertIn(self.RETRY, warning)
-            self.assertTrue((root / ".aidp").is_dir(), "插件安装失败不得回滚脚手架文件")
+            self.assertEqual(res["dsh_extensions"], "unavailable")
+            self.assertTrue((root / ".agents/aidp").is_dir(), "插件安装失败不得回滚脚手架文件")
             self.assertTrue(any(a["op"] == "agent-sync" for a in res["actions"]), res["actions"])
 
     def test_missing_dsh_warns_and_scaffold_continues(self):
@@ -429,7 +526,8 @@ class DshCommandPluginInstallTest(unittest.TestCase):
             warning = "\n".join(res["warnings"])
             self.assertIn("DSH 命令插件安装失败", warning)
             self.assertIn(self.RETRY, warning)
-            self.assertTrue((root / ".aidp").is_dir())
+            self.assertEqual(res["dsh_extensions"], "unavailable")
+            self.assertTrue((root / ".agents/aidp").is_dir())
             self.assertTrue(any(a["op"] == "agent-sync" for a in res["actions"]), res["actions"])
 
     def test_timeout_is_bounded_warns_and_agent_sync_continues(self):
@@ -480,13 +578,13 @@ class DshCommandPluginInstallTest(unittest.TestCase):
                 self.assertFalse(log.exists())
                 self.assertFalse(any(a["op"] == "dsh-plugin" for a in res["actions"]))
 
-    def test_migrate_and_upgrade_do_not_install(self):
+    def test_migrate_and_upgrade_ensure_extension(self):
         with H.TempRepo() as root:
             (root / "app.py").write_text("print('demo')\n", encoding="utf-8")
             env, log = fake_dsh_env(root)
             res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
             self.assertEqual(res["mode"], "migrate")
-            self.assertFalse(log.exists())
+            self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
 
         with H.TempRepo() as root:
             scaffold(root, "--version", "V0.1.0", "--agent", "claude")
@@ -495,7 +593,7 @@ class DshCommandPluginInstallTest(unittest.TestCase):
             res = scaffold(root, env=env)
             self.assertEqual(res["mode"], "upgrade")
             self.assertIn("dsh", res["agents"])
-            self.assertFalse(log.exists())
+            self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
 
 
 class UpgradeTest(unittest.TestCase):

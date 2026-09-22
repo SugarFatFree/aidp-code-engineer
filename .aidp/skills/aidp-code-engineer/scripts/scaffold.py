@@ -39,13 +39,20 @@ sys.path.insert(0, str(HERE))
 import scaffold_lib as L  # noqa: E402
 import scaffold_marker  # noqa: E402
 import migrate  # noqa: E402
+import runtime_layout  # noqa: E402
+
+_runtime_scripts = L.SKILL_DIR.parents[1] / "scripts"
+if not (_runtime_scripts / "vcs.py").is_file():
+    _runtime_scripts = L.BUNDLE_AIDP / "scripts"
+sys.path.insert(0, str(_runtime_scripts))
+import vcs  # noqa: E402
 
 KNOWN_AGENTS = ("claude", "codex", "dsh")
 MARKER_DIRS = {"claude": ".claude", "codex": ".codex", "dsh": ".dsh"}
 AGENT_ALIASES = {"claude-code": "claude", "claudecode": "claude", "deepseek": "dsh",
                  "deepseek-harness": "dsh", "openai-codex": "codex"}
 EXEC_SUFFIX = {".py", ".sh"}
-DSH_COMMAND_PLUGIN = ("dsh", "plugin", "--profile", "web", "add", "dsh-plugin-commands@latest")
+DSH_COMMAND_PLUGIN = ("dsh", "plugin", "--profile", "web", "add", "github:SugarFatFree/dsh-agent-extension")
 DSH_COMMAND_PLUGIN_RETRY = " ".join(DSH_COMMAND_PLUGIN)
 DSH_COMMAND_PLUGIN_TIMEOUT = 120
 DSH_PLUGIN_DETAIL_LIMIT = 300
@@ -108,6 +115,9 @@ def rel_of(root: Path, p: Path) -> str:
 def detect_mode(root: Path):
     if (root / ".aidp").is_dir():
         return "upgrade", "项目根已有 .aidp/"
+    if any((root / home / runtime_layout.RUNTIME_MANIFEST).is_file()
+           for home in runtime_layout.RUNTIME_HOME.values()):
+        return "upgrade", "项目已有 Agent 原生运行包"
     if migrate.has_code(root):
         return "migrate", "检测到已有代码"
     return "init", "未检测到 .aidp/ 与代码"
@@ -180,7 +190,8 @@ def detect(root: Path) -> dict:
         "reason": reason,
         "project": cfg.get("name") or root.name,
         "project_cn": cfg.get("name_cn"),
-        "user": L.git_user(root),
+        "user": vcs.developer_identity(root),
+        "vcs_mode": vcs.detect_mode(root),
         "version_guess": guess_version(root),
         "agents": {"markers": marker_agents(root), "env": env or None,
                    "resolved_without_prompt": (marker_agents(root) or (parse_agents(env) if env else None))},
@@ -673,6 +684,8 @@ def sync_root_files(root: Path, ctx: dict, rep: Report, bk: "Backup"):
 def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: bool, rep: Report, bk: "Backup"):
     tpl_path = L.SKILL_DIR / L.MEMORY_TPL_REL
     rendered = L.render(tpl_path.read_text(encoding="utf-8"), ctx)
+    home = ".claude/aidp" if list(agents) == ["claude"] else ".agents/aidp"
+    rendered = rendered.replace("{{AIDP_HOME}}", home)
     bodies = L.memory_bodies(root)
     target = L.memory_target(root, agents)
     if not bodies:
@@ -763,9 +776,9 @@ def _bounded_detail(value) -> str:
 
 
 def install_dsh_command_plugin(mode: str, agents, rep: Report):
-    """DSH init 尽力安装项目命令发现插件；失败可恢复，不中断脚手架。"""
-    if mode != "init" or "dsh" not in agents:
-        return
+    """DSH 的 commands 与嵌套 SKILL 扩展；三模式均确保安装。"""
+    if "dsh" not in agents:
+        return None
     try:
         p = subprocess.run(DSH_COMMAND_PLUGIN, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=DSH_COMMAND_PLUGIN_TIMEOUT)
@@ -774,25 +787,32 @@ def install_dsh_command_plugin(mode: str, agents, rep: Report):
         suffix = f"：{detail}" if detail else ""
         rep.warn(f"DSH 命令插件安装失败（超时 {DSH_COMMAND_PLUGIN_TIMEOUT} 秒）{suffix}；"
                  f"请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
-        return
+        return "unavailable"
     except OSError as exc:
         detail = _bounded_detail(exc)
         suffix = f"：{detail}" if detail else ""
         rep.warn(f"DSH 命令插件安装失败{suffix}；请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
-        return
+        return "unavailable"
     if p.returncode != 0:
         detail = _bounded_detail(p.stderr or p.stdout)
         suffix = f"：{detail}" if detail else ""
         rep.warn(f"DSH 命令插件安装失败（exit {p.returncode}）{suffix}；"
                  f"请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
-        return
-    rep.act("dsh-plugin", "dsh-plugin-commands@latest", "profile=web")
+        return "unavailable"
+    rep.act("dsh-plugin", DSH_COMMAND_PLUGIN[-1], "profile=web")
+    return "available"
 
 
-def run_agent_sync(root: Path, agents, mode: str, rep: Report) -> dict:
-    script = root / ".aidp/scripts/agent_sync.py"
+def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> dict:
+    home = (".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp")
+    script = root / home / "scripts/agent_sync.py"
+    if not script.is_file() and not strict:
+        script = root / ".aidp/scripts/agent_sync.py"
     if not script.is_file():
-        rep.warn("缺 .aidp/scripts/agent_sync.py，跳过 Agent 装配")
+        message = f"缺 {home}/scripts/agent_sync.py，跳过 Agent 装配"
+        if strict:
+            raise RuntimeError(message)
+        rep.warn(message)
         return {}
     cmd = [sys.executable, str(script), "--root", str(root), "--agents", ",".join(agents), "--mode", mode]
     p = subprocess.run(cmd, capture_output=True, text=True)
@@ -801,18 +821,185 @@ def run_agent_sync(root: Path, agents, mode: str, rep: Report) -> dict:
     except ValueError:
         data = {}
     if p.returncode != 0:
-        rep.warn(f"agent_sync.py 失败（exit {p.returncode}）：{(p.stderr or p.stdout).strip()[:300]}")
+        message = f"agent_sync.py 失败（exit {p.returncode}）：{(p.stderr or p.stdout).strip()[:300]}"
+        if strict:
+            raise RuntimeError(message)
+        rep.warn(message)
     else:
         rep.act("agent-sync", ",".join(agents), f"{len(data.get('actions') or [])} 项（mode={mode}）")
     return data
 
 
+# ── Agent 原生运行包 ─────────────────────────────────────────────────────────
+def _runtime_source() -> Path:
+    template = L.SKILL_DIR.parents[1]
+    if template.name == ".aidp" and (template / "scripts/agent_sync.py").is_file():
+        return template
+    return L.BUNDLE_AIDP
+
+
+def _native_namespaces(root: Path, agents: list):
+    paths = []
+    if "claude" in agents:
+        paths.extend((".claude", ".claude/aidp", ".claude/commands",
+                      ".claude/skills", ".claude/plugins"))
+    if "codex" in agents or "dsh" in agents:
+        paths.extend((".agents", ".agents/aidp", ".agents/skills"))
+    if "codex" in agents:
+        paths.extend((".codex", ".codex/skills", ".codex/skills/aidp"))
+    if "dsh" in agents:
+        paths.extend((".dsh", ".dsh/commands"))
+    for rel in paths:
+        current = root
+        for part in Path(rel).parts:
+            current /= part
+            if current.is_symlink() or (current.exists() and not current.is_dir()):
+                raise ValueError(f"Agent namespace 不是项目内真实目录：{current}")
+    for rel in (".claude/aidp", ".agents/aidp"):
+        target = root / rel
+        if target.is_dir() and not (target / runtime_layout.RUNTIME_MANIFEST).is_file():
+            raise ValueError(f"同名运行目录没有受管 manifest，拒绝覆盖：{target}")
+
+
+def _preflight_native_entries(root: Path, agents: list, source: Path):
+    if any((root / home / runtime_layout.RUNTIME_MANIFEST).is_file()
+           for home in runtime_layout.RUNTIME_HOME.values()):
+        return
+    targets = []
+    commands = (p.stem for p in (source / "commands").glob("*.md")
+                if p.stem.upper() != "README")
+    for name in commands:
+        if "claude" in agents:
+            targets.append(root / ".claude/commands" / f"{name}.md")
+        if "codex" in agents:
+            targets.append(root / ".codex/skills/aidp" / name)
+        if "dsh" in agents:
+            targets.append(root / ".dsh/commands" / f"{name}.md")
+    for skill in (source / "skills").iterdir():
+        if not (skill / "SKILL.md").is_file() or skill.name == L.SKILL_NAME:
+            continue
+        if "claude" in agents:
+            targets.append(root / ".claude/skills" / skill.name)
+        if {"codex", "dsh"} & set(agents):
+            targets.append(root / ".agents/skills" / skill.name)
+    for plugin in (source / "plugins").iterdir():
+        if not plugin.is_dir():
+            continue
+        if "claude" in agents:
+            targets.append(root / ".claude/plugins" / plugin.name)
+        if {"codex", "dsh"} & set(agents) and (plugin / "skills").is_dir():
+            targets.append(root / ".agents/skills" / plugin.name)
+    if "claude" in agents:
+        targets.append(root / ".claude/skills" / L.SKILL_NAME)
+    if {"codex", "dsh"} & set(agents):
+        targets.append(root / ".agents/skills" / L.SKILL_NAME)
+    for target in targets:
+        if os.path.lexists(target):
+            raise ValueError(f"Agent 入口已有用户内容，拒绝覆盖：{target}")
+
+
+def _install_native_skill(root: Path, agents: list, rep: Report):
+    for rel in ((".claude/skills" if "claude" in agents else None),
+                (".agents/skills" if {"codex", "dsh"} & set(agents) else None)):
+        if rel is None:
+            continue
+        target = root / rel / L.SKILL_NAME
+        marker = target / ".aidp-scaffold-generated"
+        if target.exists():
+            if not marker.is_file():
+                raise ValueError(f"脚手架 SKILL 目标是用户内容，拒绝覆盖：{target}")
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(L.SKILL_DIR, target,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "sources"))
+        tests = target / "scripts/tests"
+        if tests.exists():
+            shutil.rmtree(tests)
+        marker.write_text("aidp-code-engineer\n", encoding="utf-8")
+        rep.act("install", f"{rel}/{L.SKILL_NAME}/", "脚手架 SKILL")
+
+
+def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
+    rep = Report()
+    _native_namespaces(root, agents)
+    source = _runtime_source()
+    _preflight_native_entries(root, agents, source)
+    legacy = root / ".aidp"
+    if legacy.is_symlink():
+        if legacy.exists():
+            raise ValueError(f"旧运行目录是 symlink，拒绝跟随：{legacy}")
+        legacy.unlink()
+        rep.act("remove", ".aidp", "清理悬空旧链接")
+    version = a.version or guess_version(root) or "V0.1.0"
+    user = a.user or vcs.developer_identity(root)
+    cfg = read_project_cfg(root)
+    project = cfg.get("name") or root.name
+    ctx = {"project": project, "project_cn": a.name_cn or cfg.get("name_cn") or project,
+           "user": user, "version": version, "date": datetime.now().strftime("%Y-%m-%d")}
+    scaffold_raw = L.bundle_version()
+    previous = scaffold_marker.read_version(root)
+    decision = gate_decision(previous, scaffold_raw, scaffold_marker.read_pending(root),
+                             bool(L.queue_entries(root)), a.force)
+    bk = Backup(root, rep)
+    specs = []
+    if "claude" in agents:
+        specs.append(("claude", ".claude/aidp"))
+    if {"codex", "dsh"} & set(agents):
+        specs.append(("shared", ".agents/aidp"))
+    for kind, home in specs:
+        dest = root / home
+        if dest.is_dir():
+            runtime_layout.validate_runtime(dest, expected_home=home)
+            current = dest / runtime_layout.RUNTIME_MANIFEST
+            if json.loads(current.read_text(encoding="utf-8"))["version"] == scaffold_raw and not a.force:
+                continue
+        runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind)
+        rep.act("install", home + "/", "Agent 原生运行包")
+    for ag in agents:
+        marker = root / MARKER_DIRS[ag]
+        if not marker.is_dir():
+            marker.mkdir(parents=True)
+            rep.act("create", MARKER_DIRS[ag] + "/", "Agent 标记目录")
+    dirs = [d for d in L.skeleton_dirs(root, version, user) if not d.startswith(".aidp/")]
+    for rel in dirs:
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    sync_docs(root, bool(previous), rep, bk)
+    sync_config(root, ctx, rep, bk)
+    sync_memory(root, ctx, bool(previous), rep, bk)
+    sync_root_files(root, ctx, rep, bk)
+    if decision != "protect":
+        sync_memory_file(root, agents, ctx, decision, bool(previous), rep, bk)
+    _install_native_skill(root, agents, rep)
+    manage_gitkeep(root, dirs, rep)
+    ensure_nav_readmes(root, rep)
+    manage_gitkeep(root, dirs, rep)
+    if scaffold_raw and decision != "protect":
+        scaffold_marker.write_version(root, scaffold_raw)
+    dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
+    if not a.no_agent_sync:
+        run_agent_sync(root, agents, "copy", rep, strict=True)
+    if a.adapter_mode == "link":
+        rep.actions.append({"op": "normalized", "path": "agent-adapters", "why": "link → managed-copy",
+                            "action": "normalized", "from": "link", "to": "managed-copy"})
+    return {"mode": mode, "project": project, "version": version, "user": user,
+            "vcs_mode": vcs.detect_mode(root), "dsh_extensions": dsh_extensions,
+            "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
+            "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
+            "contract_decision": decision, "pending": False, "rewrite_queue": [],
+            "orphans": [], "local_overwritten": [], "backup": bk.dir.name if bk.dir else None,
+            "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
+
+
 # ── 主流程 ──────────────────────────────────────────────────────────────────
 def run(root: Path, a) -> dict:
+    if (root / ".aidp").is_symlink() and (root / ".aidp").exists():
+        raise ValueError(f"旧运行目录是 symlink，拒绝跟随：{root / '.aidp'}")
     rep = Report()
     mode = a.mode if a.mode != "auto" else detect_mode(root)[0]
     agents, agent_source = resolve_agents(root, a.agent, interactive=not a.json)
-    user = a.user or L.git_user(root)
+    if not (root / ".aidp").is_dir():
+        return _run_native(root, a, mode, agents, agent_source)
+    user = a.user or vcs.developer_identity(root)
     cfg = read_project_cfg(root)
     project = cfg.get("name") or root.name
     version = a.version or guess_version(root) or "V0.1.0"
@@ -861,7 +1048,7 @@ def run(root: Path, a) -> dict:
         else:
             scaffold_marker.write_version(root, scaffold_raw)
 
-    install_dsh_command_plugin(mode, agents, rep)
+    dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
     if not a.no_agent_sync:
         run_agent_sync(root, agents, a.adapter_mode, rep)
 
@@ -873,6 +1060,7 @@ def run(root: Path, a) -> dict:
 
     return {
         "mode": mode, "project": project, "version": version, "user": user,
+        "vcs_mode": vcs.detect_mode(root), "dsh_extensions": dsh_extensions,
         "agents": agents, "agent_source": agent_source, "adapter_mode": a.adapter_mode,
         "scaffold_version": scaffold_raw, "previous_scaffold_version": proj_raw,
         "contract_decision": decision,
@@ -931,17 +1119,13 @@ def main(argv=None) -> int:
     if a.detect:
         print(json.dumps(detect(root), ensure_ascii=False, indent=2))
         return 0
-    probe = L.git(root, "rev-parse", "--git-dir")
-    if probe is None or probe.returncode != 0:
-        print("⛔ 目标目录不是 git 仓库（先 git init）", file=sys.stderr)
-        return 2
     if L.is_template_project(root):
         print("⛔ 目标是 AIDP 模板项目自身：模板维护请用 mirror_to_bundle.py，不在模板上运行脚手架", file=sys.stderr)
         return 2
     if not (L.BUNDLE_AIDP.is_dir() and L.bundle_version()):
         print("⛔ 脚手架 bundle 不完整（缺 assets/aidp 或 assets/SCAFFOLD_VERSION）", file=sys.stderr)
         return 2
-    user = a.user or L.git_user(root)
+    user = vcs.developer_identity(root, a.user)
     if not user or not L.USER_RE.match(user):
         print(f"⛔ 开发者标识无效：{user!r}（仅字母数字 _ . -；用 --user 指定或设置 git config user.name）",
               file=sys.stderr)
@@ -952,7 +1136,7 @@ def main(argv=None) -> int:
         return 2
     try:
         res = run(root, a)
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         print(f"⛔ {e}", file=sys.stderr)
         return 2
     if a.json:

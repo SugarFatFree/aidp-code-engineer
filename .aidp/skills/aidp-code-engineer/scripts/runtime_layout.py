@@ -176,10 +176,13 @@ def _file_metadata(path: Path) -> dict:
 
 def _runtime_files(runtime: Path):
     for path in sorted(runtime.rglob("*")):
+        relative = path.relative_to(runtime)
         if path.is_symlink():
             raise ValueError(f"运行包不得包含 symlink: {path}")
+        if L.is_ignored(relative.parts):
+            continue
         if path.is_file() and path.name != RUNTIME_MANIFEST:
-            yield path.relative_to(runtime).as_posix(), path
+            yield relative.as_posix(), path
 
 
 def _validate_source_home(source: str, home: str) -> None:

@@ -317,6 +317,8 @@ def _legacy_backup_files(root: Path, legacy: Path, saved: Path, rep: Report) -> 
         rel = path.relative_to(legacy).as_posix()
         if baseline is None:
             classification = "unclassified"
+        elif rel.split("/", 1)[0] not in L.GATED_DIRS:
+            classification = "unclassified"
         elif rel not in baseline:
             classification = "added"
         elif path.is_symlink() or L.sha256(path.read_bytes()) != baseline[rel]:

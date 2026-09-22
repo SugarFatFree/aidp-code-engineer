@@ -894,6 +894,25 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
             for rel in ("commands/sprint-dev.md", "reference/team-notes.md"):
                 self.assertTrue((root / entries[rel]["backup"]).is_file())
 
+    def test_legacy_manifest_does_not_classify_scripts_as_user_added(self):
+        with H.TempRepo() as root:
+            self._legacy(root)
+            script = root / ".aidp/scripts/baseline_edit.py"
+            script.parent.mkdir(parents=True)
+            script.write_text("# Generated script\n", encoding="utf-8")
+            manifest = root / ".aidp/skills/aidp-code-engineer/assets/CONTRACT_MANIFEST.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"files": {
+                "commands/sprint-dev.md": L.sha256("旧命令正文\n".encode("utf-8"))
+            }}), encoding="utf-8")
+            result = scaffold(root, "--mode", "migrate", "--agent", "claude")
+            entries = {item["source"]: item for item in result["legacy_backup_files"]}
+            self.assertEqual(entries["scripts/baseline_edit.py"]["classification"], "unclassified")
+            self.assertEqual(entries["reference/team-notes.md"]["classification"], "added")
+            self.assertNotIn("commands/sprint-dev.md", entries)
+            self.assertEqual((root / entries["scripts/baseline_edit.py"]["backup"]).read_bytes(),
+                             b"# Generated script\n")
+
     def test_legacy_change_after_backup_is_not_lost(self):
         with H.TempRepo() as root:
             command, extra = self._legacy(root)

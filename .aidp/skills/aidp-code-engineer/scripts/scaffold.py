@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -46,6 +47,7 @@ if not (_runtime_scripts / "vcs.py").is_file():
     _runtime_scripts = L.BUNDLE_AIDP / "scripts"
 sys.path.insert(0, str(_runtime_scripts))
 import vcs  # noqa: E402
+import agent_sync as agent_adapter  # noqa: E402
 
 KNOWN_AGENTS = ("claude", "codex", "dsh")
 MARKER_DIRS = {"claude": ".claude", "codex": ".codex", "dsh": ".dsh"}
@@ -862,9 +864,6 @@ def _native_namespaces(root: Path, agents: list):
 
 
 def _preflight_native_entries(root: Path, agents: list, source: Path):
-    if any((root / home / runtime_layout.RUNTIME_MANIFEST).is_file()
-           for home in runtime_layout.RUNTIME_HOME.values()):
-        return
     targets = []
     commands = (p.stem for p in (source / "commands").glob("*.md")
                 if p.stem.upper() != "README")
@@ -894,8 +893,52 @@ def _preflight_native_entries(root: Path, agents: list, source: Path):
     if {"codex", "dsh"} & set(agents):
         targets.append(root / ".agents/skills" / L.SKILL_NAME)
     for target in targets:
-        if os.path.lexists(target):
+        if not os.path.lexists(target):
+            continue
+        marker = target / ".aidp-scaffold-generated"
+        if target.name == L.SKILL_NAME and marker.is_file():
+            continue
+        if target.parent.name == "commands":
+            ledger = target.parent / agent_adapter.GENERATED_FILE
+            if ledger.is_file():
+                try:
+                    records = agent_adapter._command_ledger(ledger)
+                    if target.name in records:
+                        agent_adapter._check_command(
+                            root, target, records[target.name], source / "commands" / target.name)
+                        continue
+                except SystemExit as exc:
+                    raise ValueError(str(exc)) from exc
+        if not agent_adapter._is_generated(target, root):
             raise ValueError(f"Agent 入口已有用户内容，拒绝覆盖：{target}")
+
+
+def _preflight_native_adapter(root: Path, agents: list, source: Path):
+    old_source = agent_adapter.RUNTIME_ROOT
+    try:
+        agent_adapter.RUNTIME_ROOT = source
+        plugins = agent_adapter._plugin_dirs(root)
+        plugin_skills = agent_adapter._plugin_skill_dirs(plugins)
+        public = agent_adapter._base_skill_dirs(root)
+        commands = {path.stem for path in agent_adapter._command_files(root)}
+        public_names = agent_adapter._declared_skill_names(public)
+        plugin_names = {plugin.name for plugin in plugins if (plugin / "skills").is_dir()}
+        if set(public) & plugin_names or public_names & set(plugin_skills) \
+                or commands & (public_names | set(plugin_skills)):
+            raise ValueError("命令、公共 SKILL 与插件名称冲突")
+        servers = agent_adapter._plugin_servers(plugins)
+        agent_adapter._validate_adapter_namespaces(root, plugins)
+        agent_adapter._validate_targets(root, agents, plugins, plugin_skills)
+        agent_adapter._validate_hooks(root, agents)
+        agent_adapter._validate_claude_plugins(root, plugins if "claude" in agents else [])
+        if "codex" in agents:
+            agent_adapter._validate_codex_mcp(root, servers)
+        if "dsh" in agents:
+            agent_adapter._validate_dsh_mcp(root, servers)
+    except SystemExit as exc:
+        raise ValueError(str(exc)) from exc
+    finally:
+        agent_adapter.RUNTIME_ROOT = old_source
 
 
 def _install_native_skill(root: Path, agents: list, rep: Report):
@@ -919,11 +962,58 @@ def _install_native_skill(root: Path, agents: list, rep: Report):
         rep.act("install", f"{rel}/{L.SKILL_NAME}/", "脚手架 SKILL")
 
 
+def _remove_transaction_path(path: Path):
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
 def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
-    rep = Report()
     _native_namespaces(root, agents)
     source = _runtime_source()
     _preflight_native_entries(root, agents, source)
+    _preflight_native_adapter(root, agents, source)
+    version = a.version or guess_version(root) or "V0.1.0"
+    user = a.user or vcs.developer_identity(root)
+    managed = {".aidp", ".claude", ".agents", ".codex", ".dsh", "docs", "memory",
+               "env", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore"}
+    managed.update(Path(rel).parts[0] for rel in L.skeleton_dirs(root, version, user)
+                   if rel and not rel.startswith(".aidp/"))
+    existing = {path.name for path in root.iterdir()}
+    with tempfile.TemporaryDirectory(prefix="aidp-native-rollback-", dir=root.parent) as temp:
+        backup = Path(temp)
+        saved = set()
+        for name in managed & existing:
+            original = root / name
+            if original.is_dir() and not original.is_symlink():
+                shutil.copytree(original, backup / name, symlinks=True)
+            elif original.is_symlink():
+                (backup / name).symlink_to(os.readlink(original))
+            else:
+                shutil.copy2(original, backup / name)
+            saved.add(name)
+        try:
+            return _run_native_impl(root, a, mode, agents, agent_source)
+        except BaseException:
+            for name in saved:
+                _remove_transaction_path(root / name)
+                original = backup / name
+                if original.is_dir() and not original.is_symlink():
+                    shutil.copytree(original, root / name, symlinks=True)
+                elif original.is_symlink():
+                    (root / name).symlink_to(os.readlink(original))
+                else:
+                    shutil.copy2(original, root / name)
+            for path in root.iterdir():
+                if path.name not in existing:
+                    _remove_transaction_path(path)
+            raise
+
+
+def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
+    rep = Report()
+    source = _runtime_source()
     legacy = root / ".aidp"
     if legacy.is_symlink():
         if legacy.exists():

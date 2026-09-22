@@ -576,7 +576,8 @@ def _base_skill_dirs(root: Path) -> dict:
     if not source.is_dir():
         return {}
     return {p.name: p for p in sorted(source.iterdir())
-            if p.name != OBSOLETE_ROUTER and (p / "SKILL.md").is_file()}
+            if p.name not in {OBSOLETE_ROUTER, "aidp-code-engineer"}
+            and (p / "SKILL.md").is_file()}
 
 
 def sync_skill_dir(plan: Plan, rel: str, preserve: set = None) -> list:
@@ -1509,7 +1510,7 @@ def _self_check() -> int:
         command = next((p.stem for p in sorted((runtime / "commands").glob("*.md"))
                         if p.stem.upper() != "README"), "")
         skill = next((p.name for p in sorted((runtime / "skills").iterdir())
-                      if (p / "SKILL.md").is_file()), "")
+                      if p.name != "aidp-code-engineer" and (p / "SKILL.md").is_file()), "")
         plugin = next((p for p in sorted((runtime / "plugins").iterdir())
                        if (p / "skills").is_dir()), None)
         plugin_skill = (next((p.name for p in sorted((plugin / "skills").iterdir())

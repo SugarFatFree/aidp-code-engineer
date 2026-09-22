@@ -454,6 +454,79 @@ class NativePreflightTest(unittest.TestCase):
             self.assertFalse((root / "memory").exists())
 
 
+    def test_invalid_settings_rejected_without_partial_init(self):
+        with H.TempRepo() as root:
+            settings = root / ".claude/settings.json"
+            settings.parent.mkdir(parents=True)
+            settings.write_text("{invalid", encoding="utf-8")
+            before = settings.read_bytes()
+            p = subprocess.run([sys.executable, str(H.SCRIPTS / "scaffold.py"), str(root),
+                                "--agent", "claude", "--user", "alice", "--json"],
+                               capture_output=True, text=True, env=H.clean_env())
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+            self.assertEqual(settings.read_bytes(), before)
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+            self.assertFalse(os.path.lexists(root / "memory"))
+
+    def test_new_agent_collision_preserves_existing_runtime(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            manifest = root / ".claude/aidp/.aidp-runtime.json"
+            before = manifest.read_bytes()
+            command = root / ".dsh/commands/sprint-dev.md"
+            command.parent.mkdir(parents=True)
+            command.write_text("user command\n", encoding="utf-8")
+            p = subprocess.run([sys.executable, str(H.SCRIPTS / "scaffold.py"), str(root),
+                                "--agent", "claude,dsh", "--user", "alice", "--json"],
+                               capture_output=True, text=True, env=H.clean_env())
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+            self.assertEqual(manifest.read_bytes(), before)
+            self.assertEqual(command.read_text(encoding="utf-8"), "user command\n")
+            self.assertFalse(os.path.lexists(root / ".agents/aidp"))
+
+    def test_install_failure_restores_existing_project_tree(self):
+        with H.TempRepo() as root:
+            user_file = root / "docs/private/notes.md"
+            user_file.parent.mkdir(parents=True)
+            user_file.write_text("keep\n", encoding="utf-8")
+
+            def snapshot():
+                return {p.relative_to(root).as_posix():
+                        ("link", os.readlink(p)) if p.is_symlink() else
+                        ("dir", None) if p.is_dir() else ("file", p.read_bytes())
+                        for p in root.rglob("*") if ".git" not in p.relative_to(root).parts}
+
+            before = snapshot()
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            with mock.patch.object(S, "_install_native_skill", side_effect=OSError("injected failure")):
+                with self.assertRaises(OSError):
+                    S.run(root, options)
+            self.assertEqual(snapshot(), before)
+
+    def test_upgrade_failure_restores_runtime_and_user_document(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            document = root / "docs/private/notes.md"
+            document.parent.mkdir(parents=True)
+            document.write_text("keep\n", encoding="utf-8")
+            runtime_manifest = root / ".claude/aidp/.aidp-runtime.json"
+            command = root / ".claude/commands/sprint-dev.md"
+            before = (runtime_manifest.read_bytes(), command.read_bytes(), document.read_bytes())
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            with mock.patch.object(S, "run_agent_sync", side_effect=OSError("injected failure")):
+                with self.assertRaises(OSError):
+                    S.run(root, options)
+            self.assertEqual((runtime_manifest.read_bytes(), command.read_bytes(), document.read_bytes()),
+                             before)
+            self.assertFalse(list(root.glob(".aidp-backup-*")))
+
+
 class RuntimeCacheTest(unittest.TestCase):
     def test_agent_sync_bytecode_does_not_drift_runtime_manifest(self):
         import runtime_layout

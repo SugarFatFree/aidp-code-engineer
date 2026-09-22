@@ -51,6 +51,7 @@ _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_text
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 import argparse
 import json
 import os
@@ -860,6 +861,9 @@ def main(argv=None):
                     help="本轮显式当场级联（约定 22 唯一合法例外）→ 抑制 suspected_cascade_bypass 告警")
     args = ap.parse_args(argv)
 
+    if detect_mode(args.repo_root) != "git":
+        print(json.dumps(unsupported("commit")))
+        return EXIT_UNSUPPORTED
     info = gather(args.repo_root, context=args.context, cascade_now=args.cascade_now)
     info["debts"] = debt_items(info) if info["commit_gate_enabled"] else []
     print(json.dumps(info, ensure_ascii=False))

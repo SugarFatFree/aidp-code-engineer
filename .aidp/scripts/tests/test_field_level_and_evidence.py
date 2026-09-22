@@ -125,6 +125,34 @@ def test_memory_protection_covers_claude_md():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_memory_baseline_without_git():
+    print("\n[nonGit] memory 快照可用，缺快照不得伪报通过")
+    with tempfile.TemporaryDirectory() as d:
+        rel = "memory/projectBrief.md"
+        path = Path(d) / rel
+        path.parent.mkdir()
+        path.write_text("## 约定\n原文\n", encoding="utf-8")
+        def inspect():
+            cp = subprocess.run([sys.executable, MEM, "--root", d, "--file", rel, "--json"],
+                                capture_output=True, text=True)
+            return cp.returncode, json.loads(cp.stdout)
+        code, result = inspect()
+        check("nonGit 无快照时 HEAD 比对 unsupported", code == 3 and result ==
+              {"status": "unsupported", "reason": "vcs-disabled", "capability": "diff"})
+        mem = _load("memory_snap", MEM)
+        mem.take_snapshot(d, [rel])
+        code, result = inspect()
+        check("nonGit 写前快照仍能检测", code == 0 and result["checked"] == 1)
+        path.write_text("## 其它\n原文\n", encoding="utf-8")
+        code, result = inspect()
+        check("nonGit 快照检测段落丢失", code == 1 and any(e["rule"] == "L1" for e in result["errors"]))
+        as_list = mem.run(d, files=[rel])
+        as_generator = mem.run(d, files=(item for item in [rel]))
+        check("nonGit 文件生成器与列表一致：均巡检文件并检出 L1",
+              as_list["checked"] == as_generator["checked"] == 1
+              and any(e["rule"] == "L1" for e in as_generator["errors"]))
+
+
 def test_lock_path_single_source():
     """锁路径三处独立实现 → 收敛成一个函数（否则互斥会在某次改路径时当场归零）。"""
     print("\n[F4] flock 锁路径单一信源 + 收编")
@@ -317,6 +345,7 @@ def test_runtime_dir_bootstrap():
 def main():
     test_decidable_skips_levels()
     test_memory_protection_covers_claude_md()
+    test_memory_baseline_without_git()
     test_lock_path_single_source()
     test_runtime_artifact_paths()
     test_config_consolidation()

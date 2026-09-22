@@ -58,7 +58,7 @@
 
 ## 退出码
 
-  0 = 成功（含"无可归档"）  ·  2 = baseline 不可读写 / 用法错
+  0 = 成功（含"无可归档"）  ·  2 = baseline 不可读写 / 用法错  ·  3 = 无 Git tag 能力
 """
 import argparse
 import json
@@ -70,6 +70,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from baseline_edit import (ARCHIVE_DIRNAME, DEFAULT_BASELINE,  # noqa: E402
                            LockedBaseline, archive_file, now_iso)
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED  # noqa: E402
 
 # ★ 墓碑保留键（主文件留下的全部内容）。每一条都有明确读方，删任何一条都会让某个判据取空：
 #   · internal_released_at —— Phase 0.3.3 的 S2/S3 判据 + `current-version` 的排除条件（最关键）
@@ -163,6 +164,9 @@ def main() -> int:
     if a.keep < 1:
         sys.stderr.write("✗ --keep 至少为 1（准发布要读上一版，留 0 版必然取空）\n")
         return 2
+    if not a.no_require_tag and detect_mode(a.root) != "git":
+        print(json.dumps(unsupported("tag")))
+        return EXIT_UNSUPPORTED
     if not os.path.isfile(a.baseline):
         res = {"baseline": a.baseline, "archived": [], "skipped": [],
                "note": "baseline 不存在，无可归档"}

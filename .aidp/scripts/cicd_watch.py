@@ -57,6 +57,7 @@ _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_text
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 import argparse
 import json
 import os
@@ -230,6 +231,9 @@ def run(argv, root_override=None):
         return 0 if r["passed"] else 1
 
     root = Path(root_override or a.root).resolve()
+    if detect_mode(root) != "git":
+        print(json.dumps(unsupported("cicd-sha"), ensure_ascii=False))
+        return EXIT_UNSUPPORTED
     out = {"ok": False, "mode": a.mode, "checked_at": datetime.now().isoformat(timespec="seconds")}
 
     def emit(code, **kw):
@@ -420,6 +424,7 @@ def selftest():
     saved = (cp.EXEC, cp.HTTP)
     env_saved = {k: os.environ.get(k) for k in ("AIDP_T_GL", "AIDP_T_JU", "AIDP_T_JT")}
     try:
+        subprocess.run(["git", "init", "-q", tmp], check=True, capture_output=True)
         os.makedirs(os.path.join(tmp, "memory"))
         cfg_path = os.path.join(tmp, "memory", "aidp-config.yaml")
 

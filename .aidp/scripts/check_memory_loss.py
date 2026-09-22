@@ -40,6 +40,7 @@ _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_relpath, runtime_text
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 import argparse
 import json
 import os
@@ -163,7 +164,14 @@ def _nonempty(text):
 
 def run(root=".", shrink=0.4, files=None):
     res = {"checked": 0, "skipped": [], "errors": []}
-    for rel in (files or protected_files(root)):
+    targets = list(files or protected_files(root))
+    if detect_mode(root) != "git" and any(
+        os.path.isfile(os.path.join(root, rel)) and
+        not os.path.isfile(os.path.join(root, SNAPSHOT_DIR, rel))
+        for rel in targets
+    ):
+        return unsupported("diff")
+    for rel in targets:
         path = os.path.join(root, rel)
         if not os.path.isfile(path):
             res["skipped"].append({"file": rel, "why": "工作区无此文件"})
@@ -226,6 +234,9 @@ def main(argv=None):
         print("已快照 %d 份受保护文件 → %s" % (len(done), SNAPSHOT_DIR))
         return 0
     r = run(a.root, a.shrink, a.file)
+    if r.get("status") == "unsupported":
+        print(json.dumps(r, ensure_ascii=False))
+        return EXIT_UNSUPPORTED
     if r["passed"] and not a.keep_snapshot and not a.file:
         clear_snapshot(a.root)
     if a.json:

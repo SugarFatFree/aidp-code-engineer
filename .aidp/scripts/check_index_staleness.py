@@ -26,15 +26,17 @@ git 判断「文件改没改」走的是 **stat 快速路径**：index 里记的
 不相等但 `git status` 列出来了 = 正常的未提交改动，**不报**。
 
 扫描面默认 `.aidp`（脚手架契约与 bundle 全在这里），`--path` 可加。
-非 git 仓库 / git 不可用 → 跳过（退出码 0）。
+非 git 仓库 / git 不可用 → unsupported（退出码 3）。
 
-退出码：0 通过或跳过；1 有 ERROR；2 参数错。
+退出码：0 通过；1 有 ERROR；2 参数错；3 无 Git 能力。
 """
 import argparse
 import json
 import os
 import subprocess
 import sys
+
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 
 DEFAULT_PATHS = (".aidp",)
 
@@ -46,10 +48,8 @@ def _git(root, args, stdin=None):
 
 def run(root=".", paths=None):
     res = {"scanned": 0, "errors": [], "skipped": None}
-    if _git(root, ["rev-parse", "--git-dir"]).returncode != 0:
-        res["skipped"] = "非 git 仓库"
-        res["passed"] = True
-        return res
+    if detect_mode(root) != "git":
+        return unsupported("index")
     paths = list(paths or DEFAULT_PATHS)
 
     # ⛔ 两处 git 调用都必须用 `-z`（NUL 分隔、原样输出路径）。默认的 `core.quotepath=on`
@@ -116,6 +116,9 @@ def main(argv=None):
         sc = os.path.join(os.path.dirname(os.path.abspath(__file__)), "selfcheck.py")
         return subprocess.call([sys.executable, sc, "--only", os.path.basename(__file__)])
     r = run(a.root, a.path)
+    if r.get("status") == "unsupported":
+        print(json.dumps(r, ensure_ascii=False))
+        return EXIT_UNSUPPORTED
     if a.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))
     elif r.get("skipped"):

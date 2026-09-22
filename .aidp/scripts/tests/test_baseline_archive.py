@@ -102,7 +102,8 @@ def test_archive_scope_and_idempotency():
     # 阴性①：默认要求 git tag，夹具不是 git 仓库 → 一个都不搬（fail-closed）
     r = run([ARCHIVE, "--baseline", base, "--root", ".", "--json"], root)
     out = json.loads(r.stdout)
-    check("★ 阴性：无 git tag 时默认不归档（fail-closed）", out["archived"] == [])
+    check("★ 非 Git 默认 tag 约束明确 unsupported", r.returncode == 3 and
+          out == {"status": "unsupported", "reason": "vcs-disabled", "capability": "tag"})
     check("  阴性时主文件一字未动", "builds" in _load(root)["versions"]["V0.8.0"])
 
     # 阴性②：dry-run 只报不写

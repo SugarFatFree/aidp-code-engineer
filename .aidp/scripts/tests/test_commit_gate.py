@@ -319,6 +319,8 @@ def test_pending_cicd():
         # classify_commit_change 由 _standalone_push_pending 按仓库内路径调用
         mkfile(os.path.join(d, ".aidp/scripts/classify_commit_change.py"),
                open(os.path.join(SCRIPTS, "classify_commit_change.py"), encoding="utf-8").read())
+        mkfile(os.path.join(d, ".aidp/scripts/vcs.py"),
+               open(os.path.join(SCRIPTS, "vcs.py"), encoding="utf-8").read())
         mkfile(os.path.join(d, "package.json"), "{}\n")
         _git(d, "add", "-A"); _git(d, "commit", "-qm", "init")
         _git(d, "remote", "add", "origin", remote)
@@ -712,7 +714,36 @@ def test_ledger_forms():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_non_git_boundaries():
+    print("【非 Git 根：提交、推送、diff、CICD SHA 与工作区门禁】")
+    with tempfile.TemporaryDirectory() as d:
+        scripts = [
+            ("commit", "commit_gate.py", ["--repo-root", d, "--quiet"]),
+            ("diff", "classify_commit_change.py", ["--root", d, "--json"]),
+            ("diff", "classify_commit_change.py", ["--root", d, "--base-ref", "HEAD", "--json", "src/main.py"]),
+            ("push", "classify_push.py", ["--root", d, "--version", "V0.1", "--standalone"]),
+            ("push", "classify_push.py", ["--root", d, "--version", "V0.1", "--standalone", "--record-terminal", "success"]),
+            ("index", "check_index_staleness.py", ["--root", d, "--json"]),
+            ("cicd-sha", "cicd_watch.py", ["--root", d, "--mode", "detect", "--commit", "abc"]),
+            ("branch", "autopilot-preflight.py", ["gate", "--root", d, "--require", "clean_tree", "--json"]),
+            ("branch", "autopilot-preflight.py", ["gate", "--root", d, "--require", "notify, clean_tree", "--json"]),
+        ]
+        for capability, script, args in scripts:
+            cp = subprocess.run([sys.executable, os.path.join(SCRIPTS, script), *args],
+                                capture_output=True, text=True)
+            try:
+                result = json.loads(cp.stdout.strip().split("---JSON---")[-1])
+            except ValueError:
+                result = {}
+            check(f"{script} nonGit 拒绝 {capability}",
+                  cp.returncode == 3 and result.get("status") == "unsupported"
+                  and result.get("reason") == "vcs-disabled"
+                  and result.get("capability") == capability)
+        check("推送分类不能写入 baseline", not os.path.exists(os.path.join(d, "memory")))
+
+
 def main():
+    test_non_git_boundaries()
     test_gate_pure()
     test_gate_cli_cascade()
     test_family_ledgers()

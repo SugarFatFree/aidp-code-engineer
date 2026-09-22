@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Set
 
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
+
 
 SOURCE_EXTENSIONS = {
     ".c", ".cc", ".cpp", ".cs", ".cxx", ".dart", ".go", ".groovy",
@@ -241,6 +243,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("paths", nargs="*")
     args = parser.parse_args(argv)
+    if (args.base_ref is not None or not args.paths) and detect_mode(args.root) != "git":
+        print(json.dumps(unsupported("diff")))
+        return EXIT_UNSUPPORTED
     result = classify_commit_change(args.root, args.paths or None, args.base_ref)
     print(json.dumps(result, ensure_ascii=True, sort_keys=True))
     return 0

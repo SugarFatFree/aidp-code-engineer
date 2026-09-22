@@ -24,6 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from baseline_edit import LockedBaseline, resolve_build_idx  # noqa: E402
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED  # noqa: E402
 
 REQUIRED_KEYS = {
     "has_formal_code_change",
@@ -299,6 +300,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="不分类，只给 HEAD 对应的推送记录写部署终态：success / failed / unknown:<原因>")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    if detect_mode(root) != "git":
+        print(json.dumps(unsupported("push")))
+        return EXIT_UNSUPPORTED
     baseline = Path(args.baseline).resolve() if args.baseline else root / "memory/.sprint-autopilot-baseline.json"
     if args.record_terminal:
         try:

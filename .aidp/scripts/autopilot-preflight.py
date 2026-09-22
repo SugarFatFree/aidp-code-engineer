@@ -48,6 +48,7 @@ _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_relpath, runtime_text
+from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 
 import argparse
 import importlib.util
@@ -391,10 +392,15 @@ def main(argv=None):
                   help="gate：用户在场的交互式调用——通知启用却无可用渠道时不放行；省略=无人值守（降级放行）")
     a = p.parse_args(argv)
     root = os.path.abspath(a.root)
+    requested = [k.strip() for k in a.require.split(",") if k.strip()]
+    if detect_mode(root) != "git" and (a.mode == "check" or
+                                      "clean_tree" in requested):
+        print(json.dumps(unsupported("branch")))
+        return EXIT_UNSUPPORTED
 
     if a.mode == "gate":
         if a.require.strip():
-            required = [k.strip() for k in a.require.split(",") if k.strip()]
+            required = requested
             unknown = [k for k in required if k not in KNOWN_KEYS]
             if unknown:
                 print(f"❌ 未知 --require 项：{unknown}（可选 {KNOWN_KEYS}）", file=sys.stderr)

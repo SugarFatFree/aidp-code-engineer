@@ -302,6 +302,10 @@ class LegacyChangedDuringMigration(RuntimeError):
     """Keep post-backup user changes in the legacy tree during rollback."""
 
 
+MIGRATION_FAILURE_LEDGER = ".aidp-migration-failure.json"
+MIGRATION_FAILURE_SCHEMA = "aidp.migration-failure/v1"
+
+
 def _legacy_backup_files(root: Path, legacy: Path, saved: Path, rep: Report) -> list:
     """Report each backed-up file; classify only against an available old manifest."""
     baseline = installed_manifest(root)
@@ -350,6 +354,68 @@ def _complete_tree_state(directory: Path) -> dict:
             raise RuntimeError(f"旧运行目录包含无法安全备份的文件类型：{path}")
         state[rel] = value
     return state
+
+
+def _legacy_state_digest(directory: Path) -> str:
+    state = _complete_tree_state(directory)
+    return L.sha256(json.dumps(state, sort_keys=True, ensure_ascii=False,
+                             separators=(",", ":")).encode("utf-8"))
+
+
+def migration_failure_evidence(root: Path):
+    """Accept a failed migration only while its complete backup matches the old tree."""
+    path = root / MIGRATION_FAILURE_LEDGER
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict) or record.get("schema") != MIGRATION_FAILURE_SCHEMA \
+                or record.get("status") != "failed" or record.get("legacy_path") != ".aidp" \
+                or record.get("version") != L.bundle_version() \
+                or record.get("project_version") != scaffold_marker.read_version(root) \
+                or not isinstance(record.get("failure_stage"), str) \
+                or not record["failure_stage"] or not isinstance(record.get("at"), str):
+            return None
+        backup_rel = record.get("backup_path")
+        if not isinstance(backup_rel, str):
+            return None
+        parts = Path(backup_rel).parts
+        if len(parts) != 2 or not re.fullmatch(r"\.aidp-backup-\d{20}", parts[0]) \
+                or parts[1] != ".aidp":
+            return None
+        backup = root.joinpath(*parts)
+        legacy = root / ".aidp"
+        if backup.parent.is_symlink() or backup.is_symlink() \
+                or not backup.is_dir() or legacy.is_symlink() or not legacy.is_dir():
+            return None
+        digest = _legacy_state_digest(legacy)
+        if digest != record.get("legacy_digest") \
+                or digest != record.get("backup_digest") \
+                or _legacy_state_digest(backup) != digest:
+            return None
+        return record
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+        return None
+
+
+def _write_migration_failure(root: Path, evidence: dict, stage: str, exc: Exception):
+    record = {"schema": MIGRATION_FAILURE_SCHEMA, "status": "failed",
+              "legacy_path": ".aidp", "version": L.bundle_version(),
+              "project_version": scaffold_marker.read_version(root),
+              "backup_path": evidence["backup_path"],
+              "legacy_digest": evidence["legacy_digest"],
+              "backup_digest": evidence["backup_digest"],
+              "failure_stage": stage, "at": datetime.now().astimezone().isoformat(),
+              "reason": str(exc)[:300]}
+    fd, temporary = tempfile.mkstemp(prefix=".aidp-migration-failure-", suffix=".tmp", dir=root)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(record, stream, ensure_ascii=False, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, root / MIGRATION_FAILURE_LEDGER)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
 
 
 # ── 契约 ────────────────────────────────────────────────────────────────────
@@ -1106,6 +1172,8 @@ class _NativeInstallJournal:
         self.root, self.managed = root, managed
         self.initial = self._paths()
         self.created = set()
+        self.migration_evidence = None
+        self.migration_stage = "backup"
 
     def _paths(self):
         paths = set()
@@ -1220,13 +1288,16 @@ def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, age
 def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
                 migrate_legacy: bool = False) -> dict:
     _native_namespaces(root, agents)
+    if migrate_legacy and os.path.lexists(root / MIGRATION_FAILURE_LEDGER) \
+            and migration_failure_evidence(root) is None:
+        raise ValueError(f"迁移失败台账含用户内容或证据无效，拒绝覆盖：{root / MIGRATION_FAILURE_LEDGER}")
     version = a.version or guess_version(root) or "V0.1.0"
     user = a.user or vcs.developer_identity(root)
     _preflight_native_project_paths(root, version, user)
     source = _runtime_source()
     _preflight_native_entries(root, agents, source)
     _preflight_native_adapter(root, agents, source)
-    managed = {".aidp", ".claude", ".agents", ".codex", ".dsh", "docs", "memory",
+    managed = {".aidp", MIGRATION_FAILURE_LEDGER, ".claude", ".agents", ".codex", ".dsh", "docs", "memory",
                "env", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
                L.USER_FILLABLE_BASELINE}
     managed.update(Path(rel).parts[0] for rel in L.skeleton_dirs(root, version, user)
@@ -1255,6 +1326,12 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
                 if name == LEGACY_AIDP_DIR and isinstance(exc, LegacyChangedDuringMigration):
                     continue
                 _restore_native_snapshot(backup / name, root / name)
+            if (migrate_legacy and journal.migration_evidence is not None
+                    and not isinstance(exc, LegacyChangedDuringMigration)
+                    and isinstance(exc, Exception)):
+                evidence = journal.migration_evidence
+                if _legacy_state_digest(root / LEGACY_AIDP_DIR) == evidence["legacy_digest"]:
+                    _write_migration_failure(root, evidence, journal.migration_stage, exc)
             raise
 
 
@@ -1308,6 +1385,11 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                     or _complete_tree_state(legacy) != original:
                 raise RuntimeError("旧运行目录完整备份校验失败")
             legacy_backup_files = _legacy_backup_files(root, legacy, saved, rep)
+            journal.migration_evidence = {
+                "backup_path": saved.relative_to(root).as_posix(),
+                "legacy_digest": _legacy_state_digest(legacy),
+                "backup_digest": _legacy_state_digest(saved),
+            }
         except (OSError, RuntimeError) as exc:
             rep.warn(f"旧运行目录备份失败，已保留原目录：{exc}")
             return {"status": "blocked", "reason": "legacy-backup-failed",
@@ -1323,6 +1405,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         specs.append(("claude", ".claude/aidp"))
     if {"codex", "dsh"} & set(agents):
         specs.append(("shared", ".agents/aidp"))
+    journal.migration_stage = "render-runtime"
     for kind, home in specs:
         dest = root / home
         if dest.is_dir():
@@ -1393,6 +1476,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         journal.record(scaffold_marker.CONFIG_REL)
     dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
     if not a.no_agent_sync:
+        journal.migration_stage = "agent-adapters"
         _expect_agent_adapter_writes(journal, root, agents)
         run_agent_sync(root, agents, "copy", rep, strict=True)
     active_homes = {home for _kind, home in specs}
@@ -1452,10 +1536,15 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         if check.returncode != 0:
             raise RuntimeError(f"原生 Agent 入口校验失败：{(check.stdout or check.stderr).strip()[:300]}")
     if migrate_legacy:
+        journal.migration_stage = "remove-legacy"
         if _complete_tree_state(legacy) != original:
             raise LegacyChangedDuringMigration("旧运行目录在备份后发生变化，拒绝删除并保留最新修改")
         shutil.rmtree(legacy)
         rep.act("remove", LEGACY_AIDP_DIR + "/", "Agent 原生运行包已校验并安装")
+        record = root / MIGRATION_FAILURE_LEDGER
+        if record.is_file() and not record.is_symlink():
+            record.unlink()
+            rep.act("remove", MIGRATION_FAILURE_LEDGER, "旧运行目录迁移已完成")
     if a.adapter_mode == "link":
         rep.actions.append({"op": "normalized", "path": "agent-adapters", "why": "link → managed-copy",
                             "action": "normalized", "from": "link", "to": "managed-copy"})

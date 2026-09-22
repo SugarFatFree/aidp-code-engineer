@@ -27,6 +27,7 @@ sys.path.insert(0, str(HERE))
 import scaffold_lib as L  # noqa: E402
 import scaffold_marker  # noqa: E402
 import runtime_layout  # noqa: E402
+import scaffold as scaffold_engine  # noqa: E402
 
 def _vcs_mode(root: Path) -> str:
     try:
@@ -131,7 +132,12 @@ def check_native_runtime(root: Path, r):
         else:
             r.note("Agent 原生运行包双包规范化一致")
     if os.path.lexists(root / ".aidp"):
-        r.error("旧运行目录 .aidp/ 仍有残留；迁移完成后应清除")
+        evidence = scaffold_engine.migration_failure_evidence(root)
+        if evidence is not None:
+            r.warn("旧运行目录 .aidp/ 因迁移失败保留；完整备份："
+                   f"{evidence['backup_path']}；修复后重试 migrate")
+        else:
+            r.error("旧运行目录 .aidp/ 仍有残留且无可核验迁移失败备份；迁移完成后应清除")
 
 READ_ONLY = False
 
@@ -1110,6 +1116,11 @@ def main(argv=None) -> int:
             r.note(f"{capability}: unsupported:vcs-disabled")
     if not template and _runtime_homes(root):
         check_native_runtime(root, r)
+    elif not template and os.path.lexists(root / ".aidp"):
+        evidence = scaffold_engine.migration_failure_evidence(root)
+        if evidence is not None:
+            r.warn("旧运行目录 .aidp/ 因迁移失败保留；完整备份："
+                   f"{evidence['backup_path']}；修复后重试 migrate")
 
     check_directories(root, version, user, template, r)
     check_files(root, template, r)

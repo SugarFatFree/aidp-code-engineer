@@ -937,6 +937,105 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
             self.assertEqual(extra.read_text(encoding="utf-8"), "团队自定义内容\n")
             self.assertFalse((root / ".claude/aidp").exists())
 
+    def test_failed_migration_with_verified_backup_is_warned_and_success_clears_record(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            self._legacy(root)
+            options = self._options("migrate", "claude")
+            options.force = True
+            with mock.patch.object(S.runtime_layout, "render_runtime", side_effect=RuntimeError("probe")):
+                with self.assertRaisesRegex(RuntimeError, "probe"):
+                    S.run(root, options)
+            record = root / ".aidp-migration-failure.json"
+            self.assertTrue(record.is_file())
+            evidence = json.loads(record.read_text(encoding="utf-8"))
+            self.assertEqual(evidence["status"], "failed")
+            self.assertTrue((root / evidence["backup_path"]).is_dir())
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertFalse(any("旧运行目录 .aidp/" in error for error in result.errors))
+            self.assertTrue(any("旧运行目录 .aidp/" in warning for warning in result.warnings))
+            S.run(root, self._options("migrate", "claude"))
+            self.assertFalse(os.path.lexists(root / ".aidp"))
+            self.assertFalse(os.path.lexists(record))
+
+    def test_legacy_only_failure_record_is_visible_to_verify(self):
+        with H.TempRepo() as root:
+            self._legacy(root)
+            with mock.patch.object(S.runtime_layout, "render_runtime", side_effect=RuntimeError("probe")):
+                with self.assertRaisesRegex(RuntimeError, "probe"):
+                    S.run(root, self._options("migrate", "claude"))
+            self.assertFalse((root / ".claude/aidp").exists())
+            _rc, _errors, output = H.verify(root)
+            self.assertIn("迁移失败保留", output)
+            self.assertIn("完整备份", output)
+
+    def test_failed_migration_record_requires_matching_safe_backup(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            self._legacy(root)
+            options = self._options("migrate", "claude")
+            options.force = True
+            with mock.patch.object(S.runtime_layout, "render_runtime", side_effect=RuntimeError("probe")):
+                with self.assertRaisesRegex(RuntimeError, "probe"):
+                    S.run(root, options)
+            record = root / ".aidp-migration-failure.json"
+            original = record.read_text(encoding="utf-8")
+            for change in ({"backup_path": "../outside"}, {"legacy_digest": "0" * 64},
+                           {"version": "V99.0.0"}):
+                evidence = json.loads(original)
+                evidence.update(change)
+                record.write_text(json.dumps(evidence), encoding="utf-8")
+                result = V.VerifyResult()
+                V.check_native_runtime(root, result)
+                self.assertTrue(any("旧运行目录 .aidp/" in error for error in result.errors), change)
+            record.write_text(original, encoding="utf-8")
+            backup = root / json.loads(original)["backup_path"]
+            (backup / "commands/sprint-dev.md").write_text("tampered\n", encoding="utf-8")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertTrue(any("旧运行目录 .aidp/" in error for error in result.errors))
+
+    def test_nonregular_legacy_file_invalidates_failure_evidence(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("此平台不支持 FIFO")
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            self._legacy(root)
+            options = self._options("migrate", "claude")
+            options.force = True
+            with mock.patch.object(S.runtime_layout, "render_runtime", side_effect=RuntimeError("probe")):
+                with self.assertRaisesRegex(RuntimeError, "probe"):
+                    S.run(root, options)
+            self.assertTrue((root / ".aidp-migration-failure.json").is_file())
+            os.mkfifo(root / ".aidp/unsafe-pipe")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertTrue(any("旧运行目录 .aidp/" in error for error in result.errors))
+            self.assertFalse(any("旧运行目录 .aidp/" in warning for warning in result.warnings))
+
+    def test_unowned_failure_record_is_not_replaced(self):
+        with H.TempRepo() as root:
+            self._legacy(root)
+            record = root / ".aidp-migration-failure.json"
+            record.write_text("user note\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "失败台账"):
+                S.run(root, self._options("migrate", "claude"))
+            self.assertEqual(record.read_text(encoding="utf-8"), "user note\n")
+            self.assertFalse((root / ".claude/aidp").exists())
+
+    def test_migration_backup_failure_cannot_claim_verified_warning(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            self._legacy(root)
+            with mock.patch.object(S.Backup, "save_tree", return_value=None):
+                result = S.run(root, self._options("migrate", "claude"))
+            self.assertEqual(result["reason"], "legacy-backup-failed")
+            self.assertFalse(os.path.lexists(root / ".aidp-migration-failure.json"))
+            check = V.VerifyResult()
+            V.check_native_runtime(root, check)
+            self.assertTrue(any("旧运行目录 .aidp/" in error for error in check.errors))
+
     def test_legacy_remains_when_agent_entries_are_disabled(self):
         with H.TempRepo() as root:
             self._legacy(root)

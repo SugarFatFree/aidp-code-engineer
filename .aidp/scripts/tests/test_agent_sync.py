@@ -24,6 +24,7 @@ SCRIPTS = os.path.dirname(HERE)
 sys.path.insert(0, SCRIPTS)
 ENV_PY = os.path.join(SCRIPTS, "agent_env.py")
 SYNC_PY = os.path.join(SCRIPTS, "agent_sync.py")
+REPO = Path(SCRIPTS).resolve().parents[1]
 
 import agent_env as AE  # noqa: E402
 import agent_sync as AS  # noqa: E402
@@ -1422,6 +1423,52 @@ def test_materialization_is_atomic_and_source_is_safe():
             AS.shutil.copy2 = original_copy2
         check("文件复制失败 → 旧入口字节保持", failed and target_file.read_bytes() == old_bytes)
 
+        for mutation in ("content", "mode", "type", "hardlink"):
+            if source_file.is_dir():
+                source_file.rmdir()
+                source_file.write_text("source reset\n", encoding="utf-8")
+            elif source_file.is_symlink() or source_file.stat().st_nlink != 1:
+                source_file.unlink()
+                source_file.write_text("source reset\n", encoding="utf-8")
+            source_file.chmod(0o644)
+            _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+            old_bytes = target_file.read_bytes()
+            old_mode = target_file.stat().st_mode & 0o777
+            source_file.write_text(f"requested file {mutation}\n", encoding="utf-8")
+            original_copy2 = AS.shutil.copy2
+            sentinel = root / f"file-sentinel-{mutation}"
+            sentinel.write_text("sentinel\n", encoding="utf-8")
+            def mutate_file_after_copy(src, dst, _mutation=mutation, **kwargs):
+                result = original_copy2(src, dst, **kwargs)
+                src_path = Path(src)
+                if _mutation == "content":
+                    src_path.write_text("changed during file copy\n", encoding="utf-8")
+                elif _mutation == "mode":
+                    src_path.chmod((src_path.stat().st_mode & 0o777) ^ 0o100)
+                elif _mutation == "type":
+                    src_path.unlink()
+                    src_path.mkdir()
+                else:
+                    src_path.unlink()
+                    os.link(sentinel, src_path)
+                return result
+            AS.shutil.copy2 = mutate_file_after_copy
+            try:
+                try:
+                    AS.Plan(root, True, "copy").link_file(target_file, source_file)
+                    failed = False
+                except SystemExit:
+                    failed = True
+            finally:
+                AS.shutil.copy2 = original_copy2
+            check(f"文件复制期间源 {mutation} 变化 → 拒绝替换并保留旧文件",
+                  failed and target_file.read_bytes() == old_bytes
+                  and (target_file.stat().st_mode & 0o777) == old_mode
+                  and sentinel.read_text(encoding="utf-8") == "sentinel\n")
+
+        before_marker = {p.relative_to(target).as_posix(): p.read_bytes()
+                         for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+        (source / "SKILL.md").write_text("marker requested change\n", encoding="utf-8")
         original_write_text = Path.write_text
         def broken_marker(path, text, *args, **kwargs):
             if path.name == AS.GENERATED_FILE and ".stage-" in path.parent.name:
@@ -1438,7 +1485,79 @@ def test_materialization_is_atomic_and_source_is_safe():
             Path.write_text = original_write_text
         after = {p.relative_to(target).as_posix(): p.read_bytes()
                  for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
-        check("marker 写失败 → 旧实体树原样保留", failed and before == after)
+        check("marker 写失败 → 旧实体树原样保留", failed and before_marker == after)
+
+        for mutation in ("content", "mode", "type", "hardlink"):
+            _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+            old_tree = {p.relative_to(target).as_posix(): p.read_bytes()
+                        for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+            (source / "SKILL.md").write_text(
+                f"requested change before {mutation}\n", encoding="utf-8")
+            original_copytree = AS.shutil.copytree
+            sentinel = root / f"sentinel-{mutation}"
+            sentinel.write_text("sentinel\n", encoding="utf-8")
+            def mutate_after_copy(src, dst, _mutation=mutation, **kwargs):
+                result = original_copytree(src, dst, **kwargs)
+                probe = Path(src) / "SKILL.md"
+                if _mutation == "content":
+                    probe.write_text("changed during copy\n", encoding="utf-8")
+                elif _mutation == "mode":
+                    probe.chmod((probe.stat().st_mode & 0o777) ^ 0o100)
+                elif _mutation == "type":
+                    probe.unlink()
+                    probe.mkdir()
+                else:
+                    probe.unlink()
+                    os.link(sentinel, probe)
+                return result
+            AS.shutil.copytree = mutate_after_copy
+            try:
+                try:
+                    AS.Plan(root, True, "copy").link_dir(target, source)
+                    failed = False
+                except SystemExit:
+                    failed = True
+            finally:
+                AS.shutil.copytree = original_copytree
+            current = {p.relative_to(target).as_posix(): p.read_bytes()
+                       for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+            check(f"目录复制期间源 {mutation} 变化 → 拒绝替换并保留旧树",
+                  failed and current == old_tree and sentinel.read_text(encoding="utf-8") == "sentinel\n")
+            if mutation in ("type", "hardlink"):
+                probe = source / "SKILL.md"
+                if probe.is_dir():
+                    probe.rmdir()
+                else:
+                    probe.unlink()
+                probe.write_text("changed\n", encoding="utf-8")
+
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--mode", "copy")
+        old_tree = {p.relative_to(target).as_posix(): p.read_bytes()
+                    for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+        (source / "SKILL.md").write_text("previous path probe\n", encoding="utf-8")
+        original_replace = AS.os.replace
+        observations = []
+        def windows_style_replace(src, dst):
+            src_path, dst_path = Path(src), Path(dst)
+            observations.append((src_path, dst_path, os.path.lexists(dst_path)))
+            if src_path.name.startswith(f".{target.name}.stage-"):
+                raise OSError("install probe")
+            return original_replace(src, dst)
+        AS.os.replace = windows_style_replace
+        try:
+            try:
+                AS.Plan(root, True, "copy").link_dir(target, source)
+                failed = False
+            except OSError:
+                failed = True
+        finally:
+            AS.os.replace = original_replace
+        current = {p.relative_to(target).as_posix(): p.read_bytes()
+                   for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
+        first_previous = next((item for item in observations if item[0] == target), None)
+        check("目录 previous 在移动前不存在且安装失败可回滚",
+              failed and first_previous is not None and first_previous[2] is False
+              and current == old_tree)
     finally:
         _rm(root)
 
@@ -1463,6 +1582,52 @@ def test_materialization_is_atomic_and_source_is_safe():
                   rc == 2 and sentinel.read_text(encoding="utf-8") == "outside\n"
                   and not (root / ".claude/skills/demo-skill").exists()
                   and not (root / ".claude/commands").exists())
+        finally:
+            _rm(root)
+            shutil.rmtree(outside, ignore_errors=True)
+
+
+def test_native_runtime_ancestors_must_be_real():
+    print("【原生 runtime 祖先：从项目根逐级拒绝 symlink】")
+    root = _mkrepo(markers=())
+    outside = Path(tempfile.mkdtemp())
+    try:
+        shutil.copytree(root / ".aidp", outside / "aidp")
+        shutil.rmtree(root / ".aidp")
+        (root / ".aidp").symlink_to(outside / "aidp", target_is_directory=True)
+        try:
+            AS._validate_material_path(root, root / ".aidp/skills/demo-skill", expect_dir=True)
+            rejected = False
+        except SystemExit:
+            rejected = True
+        check("根 .aidp runtime 自身为 symlink → 复制前拒绝",
+              rejected and not (root / ".claude").exists())
+    finally:
+        _rm(root)
+        shutil.rmtree(outside, ignore_errors=True)
+
+    for runtime_rel, linked_rel in ((".agents/aidp", ".agents"), (".claude/aidp", ".claude")):
+        root = _mkrepo(markers=())
+        outside = Path(tempfile.mkdtemp())
+        try:
+            shutil.rmtree(root / linked_rel, ignore_errors=True)
+            (outside / "aidp").mkdir()
+            shutil.copytree(root / ".aidp", outside / "aidp", dirs_exist_ok=True)
+            (root / ".aidp").rename(root / ".aidp-backup")
+            (root / linked_rel).symlink_to(outside, target_is_directory=True)
+            script = root / runtime_rel / "scripts/agent_sync.py"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / ".aidp/scripts/agent_sync.py", script)
+            shutil.copy2(REPO / ".aidp/scripts/aidp_runtime.py", script.parent / "aidp_runtime.py")
+            shutil.copy2(REPO / ".aidp/scripts/agent_env.py", script.parent / "agent_env.py")
+            sentinel = outside / "sentinel"
+            sentinel.write_text("outside\n", encoding="utf-8")
+            env = _clean_env(AIDP_PROJECT_ROOT=str(root), AIDP_HOME=str(root / runtime_rel))
+            cp = subprocess.run([sys.executable, str(script), "--root", str(root),
+                                 "--agents", "codex"], capture_output=True, text=True, env=env)
+            check(f"{linked_rel} symlink 祖先 → fail closed 且外部不变",
+                  cp.returncode != 0 and sentinel.read_text(encoding="utf-8") == "outside\n"
+                  and not (root / ".codex/skills").exists())
         finally:
             _rm(root)
             shutil.rmtree(outside, ignore_errors=True)
@@ -1502,6 +1667,7 @@ def main():
     test_managed_copy_tree_drift_is_recursive()
     test_nested_plugin_skill_conflicts_fail_closed()
     test_materialization_is_atomic_and_source_is_safe()
+    test_native_runtime_ancestors_must_be_real()
     test_legacy_symlink_cleanup_is_lexically_contained()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0

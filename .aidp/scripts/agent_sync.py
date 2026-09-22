@@ -122,12 +122,14 @@ def _lexical(path: Path) -> Path:
 
 
 def _source_boundary(root: Path, source: Path) -> Path:
+    root_abs = _lexical(root)
     source_abs = _lexical(source)
     candidates = (RUNTIME_ROOT, root / LEGACY_AIDP_DIR,
                   root / ".claude/aidp", root / ".agents/aidp")
     for candidate in candidates:
         boundary = _lexical(candidate)
         try:
+            boundary.relative_to(root_abs)
             source_abs.relative_to(boundary)
             return boundary
         except ValueError:
@@ -135,21 +137,39 @@ def _source_boundary(root: Path, source: Path) -> Path:
     raise SystemExit(f"[agent_sync] 复制源路径越出 AIDP 运行包：{source}")
 
 
-def _validate_material_path(root: Path, source: Path, expect_dir: bool):
-    """不跟随链接地验证复制源；普通文件必须是单链接实体。"""
-    boundary = _source_boundary(root, source)
-    source_abs = _lexical(source)
-    current = boundary
-    for part in source_abs.relative_to(boundary).parts:
+def _validate_real_chain(root: Path, target: Path):
+    root_abs = _lexical(root)
+    target_abs = _lexical(target)
+    try:
+        parts = target_abs.relative_to(root_abs).parts
+    except ValueError as exc:
+        raise SystemExit(f"[agent_sync] 复制源路径越出项目根：{target}") from exc
+    current = root_abs
+    try:
+        root_info = current.lstat()
+    except OSError as exc:
+        raise SystemExit(f"[agent_sync] 项目根不存在：{current}：{exc}")
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        raise SystemExit(f"[agent_sync] 项目根必须是实体目录：{current}")
+    for part in parts:
         current = current / part
         try:
             info = current.lstat()
         except OSError as exc:
             raise SystemExit(f"[agent_sync] 复制源不存在：{current}：{exc}")
         if stat.S_ISLNK(info.st_mode):
-            raise SystemExit(f"[agent_sync] 复制源包含 symlink：{current}")
-        if current != source_abs and not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(f"[agent_sync] 复制源祖先包含 symlink：{current}")
+        if not stat.S_ISDIR(info.st_mode):
             raise SystemExit(f"[agent_sync] 复制源祖先不是目录：{current}")
+
+
+def _validate_material_path(root: Path, source: Path, expect_dir: bool):
+    """从可信项目根开始，不跟随链接地验证复制源。"""
+    boundary = _source_boundary(root, source)
+    source_abs = _lexical(source)
+    _validate_real_chain(root, boundary)
+    if source_abs != boundary:
+        _validate_real_chain(root, source_abs.parent)
 
     info = source_abs.lstat()
     if expect_dir and not stat.S_ISDIR(info.st_mode):
@@ -250,6 +270,8 @@ class Plan:
                 (stage / GENERATED_FILE).write_text("directory-copy\n", encoding="utf-8")
                 _validate_material_path(self.root, src, expect_dir=True)
                 _validate_staged_tree(stage)
+                if not _tree_equal(src, stage):
+                    raise SystemExit("[agent_sync] 复制期间源目录发生变化，拒绝替换")
                 self._atomic_replace(dst, stage)
             finally:
                 if os.path.lexists(stage):
@@ -272,8 +294,12 @@ class Plan:
                 shutil.copy2(src, stage, follow_symlinks=False)
                 _validate_material_path(self.root, src, expect_dir=False)
                 info = stage.lstat()
+                source_info = src.lstat()
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                     raise SystemExit(f"[agent_sync] 临时文件不是单链接普通文件：{stage}")
+                if (source_info.st_nlink != 1 or stage.read_bytes() != src.read_bytes()
+                        or (info.st_mode & 0o777) != (source_info.st_mode & 0o777)):
+                    raise SystemExit("[agent_sync] 复制期间源文件发生变化，拒绝替换")
                 self._atomic_replace(dst, stage)
             finally:
                 if os.path.lexists(stage):
@@ -285,14 +311,11 @@ class Plan:
         installed = False
         try:
             if had_previous:
-                if dst.is_dir() and not dst.is_symlink():
-                    previous = Path(tempfile.mkdtemp(
-                        prefix=f".{dst.name}.previous-", dir=str(dst.parent)))
-                else:
-                    fd, raw = tempfile.mkstemp(
-                        prefix=f".{dst.name}.previous-", dir=str(dst.parent))
-                    os.close(fd)
-                    previous = Path(raw)
+                fd, raw = tempfile.mkstemp(
+                    prefix=f".{dst.name}.previous-", dir=str(dst.parent))
+                os.close(fd)
+                previous = Path(raw)
+                previous.unlink()
                 os.replace(dst, previous)
             try:
                 os.replace(stage, dst)

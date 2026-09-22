@@ -969,15 +969,89 @@ def _remove_transaction_path(path: Path):
         shutil.rmtree(path)
 
 
+def _preflight_native_project_paths(root: Path, version: str, user: str):
+    directories = {"docs", "memory", "env", "code", "scripts"}
+    directories.update(rel for rel in L.skeleton_dirs(root, version, user)
+                       if rel and not rel.startswith(".aidp/"))
+    directories.update((Path("docs") / rel).parent.as_posix()
+                       for rel, _source in L.iter_files(L.ASSETS / "docs"))
+    for rel in sorted(directories):
+        current = root
+        for part in Path(rel).parts:
+            current /= part
+            if current.is_symlink():
+                raise ValueError(f"项目目录包含 symlink，拒绝写入：{current}")
+            if current.exists() and not current.is_dir():
+                raise ValueError(f"项目目录不是目录，拒绝写入：{current}")
+    for base_name in ("docs", "memory"):
+        base = root / base_name
+        if base.is_dir():
+            for path in base.rglob("*"):
+                if path.is_symlink():
+                    raise ValueError(f"项目目录包含 symlink，拒绝写入：{path}")
+    files = {"README.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
+             "memory/aidp-config.yaml", "memory/README.md", "env/.env"}
+    files.update(f"docs/{rel}" for rel, _source in L.iter_files(L.ASSETS / "docs"))
+    files.update(rel for _tpl, rel in L.MEMORY_TEMPLATES)
+    for rel in sorted(files):
+        target = root / rel
+        if target.is_symlink():
+            raise ValueError(f"项目文件是 symlink，拒绝写入：{target}")
+        if target.exists() and not target.is_file():
+            raise ValueError(f"项目文件不是普通文件，拒绝写入：{target}")
+
+
+def _is_native_generated_new(relative: Path, delivered_docs: set) -> bool:
+    parts = relative.parts
+    if not parts:
+        return False
+    if parts[0] in (".claude", ".agents", ".codex", ".dsh"):
+        return len(parts) > 1 and parts[1] in {
+            "aidp", "commands", "skills", "plugins", "hooks.json", "settings.json",
+            "config.toml", "mcp.json", ".aidp-plugins.json", ".aidp-mcp-servers.json",
+        }
+    if parts[0] == "docs":
+        return relative.as_posix() in delivered_docs or relative.name in ("README.md", ".gitkeep")
+    if parts[0] == "memory":
+        return relative.as_posix() in {
+            "memory/aidp-config.yaml", "memory/README.md",
+            *(rel for _tpl, rel in L.MEMORY_TEMPLATES),
+        } or relative.name in ("README.md", ".gitkeep")
+    return relative.as_posix() == "env/.env" or relative.name == ".gitkeep"
+
+
+def _preserve_concurrent_files(root: Path, backup: Path, saved: set):
+    delivered_docs = {f"docs/{rel}" for rel, _source in L.iter_files(L.ASSETS / "docs")}
+    preserved = []
+    for name in saved:
+        current, original = root / name, backup / name
+        if not current.is_dir() or current.is_symlink() or not original.is_dir():
+            continue
+        for path in current.rglob("*"):
+            if path.is_dir() and not path.is_symlink():
+                continue
+            relative = path.relative_to(root)
+            if os.path.lexists(original / path.relative_to(current)) \
+                    or _is_native_generated_new(relative, delivered_docs):
+                continue
+            preserved.append(relative)
+            target = backup / "__concurrent__" / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target, follow_symlinks=False)
+    return preserved
+
+
 def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
     _native_namespaces(root, agents)
+    version = a.version or guess_version(root) or "V0.1.0"
+    user = a.user or vcs.developer_identity(root)
+    _preflight_native_project_paths(root, version, user)
     source = _runtime_source()
     _preflight_native_entries(root, agents, source)
     _preflight_native_adapter(root, agents, source)
-    version = a.version or guess_version(root) or "V0.1.0"
-    user = a.user or vcs.developer_identity(root)
     managed = {".aidp", ".claude", ".agents", ".codex", ".dsh", "docs", "memory",
-               "env", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore"}
+               "env", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
+               L.USER_FILLABLE_BASELINE}
     managed.update(Path(rel).parts[0] for rel in L.skeleton_dirs(root, version, user)
                    if rel and not rel.startswith(".aidp/"))
     existing = {path.name for path in root.iterdir()}
@@ -996,6 +1070,7 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> di
         try:
             return _run_native_impl(root, a, mode, agents, agent_source)
         except BaseException:
+            preserved = _preserve_concurrent_files(root, backup, saved)
             for name in saved:
                 _remove_transaction_path(root / name)
                 original = backup / name
@@ -1005,9 +1080,16 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> di
                     (root / name).symlink_to(os.readlink(original))
                 else:
                     shutil.copy2(original, root / name)
-            for path in root.iterdir():
-                if path.name not in existing:
+            for name in managed - existing:
+                path = root / name
+                if os.path.lexists(path):
                     _remove_transaction_path(path)
+            for relative in preserved:
+                target = root / relative
+                if not os.path.lexists(target):
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup / "__concurrent__" / relative, target,
+                                 follow_symlinks=False)
             raise
 
 

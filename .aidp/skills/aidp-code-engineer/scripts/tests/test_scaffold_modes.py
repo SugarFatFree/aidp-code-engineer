@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -505,6 +506,61 @@ class NativePreflightTest(unittest.TestCase):
                 with self.assertRaises(OSError):
                     S.run(root, options)
             self.assertEqual(snapshot(), before)
+
+    def test_business_directory_symlink_rejected_before_writes(self):
+        for dirname in ("memory", "docs", "docs/init", "docs/custom"):
+            with self.subTest(dirname=dirname), H.TempRepo() as root, tempfile.TemporaryDirectory() as external:
+                target = Path(external)
+                sentinel = target / "sentinel.txt"
+                sentinel.write_text("keep\n", encoding="utf-8")
+                (root / dirname).parent.mkdir(parents=True, exist_ok=True)
+                (root / dirname).symlink_to(target, target_is_directory=True)
+                options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                    version="V0.1.0", name_cn=None, force=False,
+                                    adapter_mode="copy", no_agent_sync=False,
+                                    keep_backups=5, keep_days=30)
+                with self.assertRaisesRegex(ValueError, "symlink"):
+                    S.run(root, options)
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep\n")
+                self.assertEqual(sorted(p.name for p in target.iterdir()), ["sentinel.txt"])
+                self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+
+    def test_rollback_preserves_unrelated_concurrent_file(self):
+        with H.TempRepo() as root:
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            concurrent = root / "concurrent-user-file.txt"
+
+            def fail_after_user_write(*_args, **_kwargs):
+                concurrent.write_text("keep\n", encoding="utf-8")
+                raise OSError("injected failure")
+
+            with mock.patch.object(S, "_install_native_skill", side_effect=fail_after_user_write):
+                with self.assertRaisesRegex(OSError, "injected failure"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+
+    def test_rollback_preserves_concurrent_file_in_existing_docs(self):
+        with H.TempRepo() as root:
+            (root / "docs").mkdir()
+            options = Namespace(mode="auto", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            concurrent = root / "docs/concurrent-user-file.txt"
+
+            def fail_after_user_write(*_args, **_kwargs):
+                concurrent.write_text("keep\n", encoding="utf-8")
+                raise OSError("injected failure")
+
+            with mock.patch.object(S, "_install_native_skill", side_effect=fail_after_user_write):
+                with self.assertRaisesRegex(OSError, "injected failure"):
+                    S.run(root, options)
+            self.assertEqual(concurrent.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
 
     def test_upgrade_failure_restores_runtime_and_user_document(self):
         with H.TempRepo() as root:

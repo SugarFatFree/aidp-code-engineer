@@ -451,10 +451,18 @@ def parse_queue_entry(line: str) -> dict:
 
 
 def project_template_rel(root: Path, tpl: Path) -> str:
-    """队列里的模板路径一律写项目内相对路径：脚手架自身的资产 → 安装位 `.aidp/skills/aidp-code-engineer/…`。"""
+    """队列模板路径指向项目内的脚手架 SKILL 安装位。"""
     tpl = Path(tpl)
     try:
-        return f"{INSTALLED_SKILL_REL}/{tpl.resolve().relative_to(SKILL_DIR.resolve()).as_posix()}"
+        relative = tpl.resolve().relative_to(SKILL_DIR.resolve()).as_posix()
+        project = Path(root)
+        if (project / ".agents/aidp").is_dir():
+            skill = ".agents/skills/aidp-code-engineer"
+        elif (project / ".claude/aidp").is_dir():
+            skill = ".claude/skills/aidp-code-engineer"
+        else:
+            skill = INSTALLED_SKILL_REL
+        return f"{skill}/{relative}"
     except ValueError:
         pass
     try:

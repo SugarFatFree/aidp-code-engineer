@@ -29,6 +29,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,8 @@ sys.path.insert(0, str(_runtime_scripts))
 import vcs  # noqa: E402
 import agent_sync as agent_adapter  # noqa: E402
 
+LEGACY_AIDP_DIR = ".aidp"
+DISABLED_AGENT_MARK = ".aidp-agent-disabled"
 KNOWN_AGENTS = ("claude", "codex", "dsh")
 MARKER_DIRS = {"claude": ".claude", "codex": ".codex", "dsh": ".dsh"}
 AGENT_ALIASES = {"claude-code": "claude", "claudecode": "claude", "deepseek": "dsh",
@@ -146,6 +149,21 @@ def marker_agents(root: Path) -> list:
 
 
 def resolve_agents(root: Path, arg: str, interactive: bool):
+    if any((root / home / runtime_layout.RUNTIME_MANIFEST).is_file()
+           for home in runtime_layout.RUNTIME_HOME.values()):
+        active = []
+        if (root / ".claude/aidp" / runtime_layout.RUNTIME_MANIFEST).is_file():
+            active.append("claude")
+        codex = root / ".codex/skills/aidp"
+        if codex.is_dir() and any(path.is_file() for path in codex.glob("*/SKILL.md")):
+            active.append("codex")
+        if (root / ".dsh/commands/.aidp-generated").is_file():
+            active.append("dsh")
+        for agent in marker_agents(root):
+            if agent not in active and not (root / MARKER_DIRS[agent] / DISABLED_AGENT_MARK).is_file():
+                active.append(agent)
+        if active:
+            return [agent for agent in KNOWN_AGENTS if agent in active], "runtime"
     markers = marker_agents(root)
     if markers:
         return markers, "markers"
@@ -274,11 +292,29 @@ class Backup:
         dst = self._ensure_dir() / rel
         if not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(src, dst, symlinks=True,
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            shutil.copytree(src, dst, symlinks=True)
         if first:
             self.rep.act("backup", self.dir.name, "删除前目录备份")
         return dst
+
+
+def _complete_tree_state(directory: Path) -> dict:
+    """Compare a legacy backup without following links or omitting user files."""
+    state = {}
+    for path in (directory, *directory.rglob("*")):
+        info = path.lstat()
+        rel = path.relative_to(directory).as_posix()
+        mode = stat.S_IMODE(info.st_mode)
+        if stat.S_ISLNK(info.st_mode):
+            value = ("link", mode, os.readlink(path))
+        elif stat.S_ISDIR(info.st_mode):
+            value = ("directory", mode)
+        elif stat.S_ISREG(info.st_mode):
+            value = ("file", mode, L.sha256(path.read_bytes()))
+        else:
+            raise RuntimeError(f"旧运行目录包含无法安全备份的文件类型：{path}")
+        state[rel] = value
+    return state
 
 
 # ── 契约 ────────────────────────────────────────────────────────────────────
@@ -860,6 +896,11 @@ def _native_namespaces(root: Path, agents: list):
             current /= part
             if current.is_symlink() or (current.exists() and not current.is_dir()):
                 raise ValueError(f"Agent namespace 不是项目内真实目录：{current}")
+    for agent in KNOWN_AGENTS:
+        disabled = root / MARKER_DIRS[agent] / DISABLED_AGENT_MARK
+        if os.path.lexists(disabled) and (disabled.is_symlink() or not disabled.is_file()
+                                           or disabled.read_text(encoding="utf-8") != "disabled\n"):
+            raise ValueError(f"Agent 禁用标记含用户内容，拒绝修改：{disabled}")
     for rel in (".claude/aidp", ".agents/aidp"):
         target = root / rel
         if target.is_dir() and not (target / runtime_layout.RUNTIME_MANIFEST).is_file():
@@ -944,25 +985,43 @@ def _preflight_native_adapter(root: Path, agents: list, source: Path):
         agent_adapter.RUNTIME_ROOT = old_source
 
 
-def _install_native_skill(root: Path, agents: list, rep: Report):
+def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
     for rel in ((".claude/skills" if "claude" in agents else None),
                 (".agents/skills" if {"codex", "dsh"} & set(agents) else None)):
         if rel is None:
             continue
         target = root / rel / L.SKILL_NAME
         marker = target / ".aidp-scaffold-generated"
-        if target.exists():
-            if not marker.is_file():
-                raise ValueError(f"脚手架 SKILL 目标是用户内容，拒绝覆盖：{target}")
-            continue
+        if os.path.lexists(target) and (target.is_symlink() or not marker.is_file()):
+            raise ValueError(f"脚手架 SKILL 目标是用户内容，拒绝覆盖：{target}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(L.SKILL_DIR, target,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "sources"))
-        tests = target / "scripts/tests"
-        if tests.exists():
-            shutil.rmtree(tests)
-        marker.write_text("aidp-code-engineer\n", encoding="utf-8")
-        rep.act("install", f"{rel}/{L.SKILL_NAME}/", "脚手架 SKILL")
+        with tempfile.TemporaryDirectory(prefix=".aidp-skill-stage-", dir=target.parent) as td:
+            stage = Path(td) / L.SKILL_NAME
+            shutil.copytree(L.SKILL_DIR, stage, symlinks=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "sources"))
+            tests = stage / "scripts/tests"
+            if tests.exists():
+                shutil.rmtree(tests)
+            (stage / ".aidp-scaffold-generated").write_text("aidp-code-engineer\n", encoding="utf-8")
+            desired = _complete_tree_state(stage)
+            if any(entry[0] == "link" for entry in desired.values()):
+                raise ValueError(f"脚手架 SKILL 真源包含符号链接，拒绝安装：{L.SKILL_DIR}")
+            existing = _complete_tree_state(target) if target.is_dir() else None
+            if existing == desired:
+                continue
+            previous = Path(td) / "previous"
+            if existing is not None:
+                saved = bk.save_tree(f"{rel}/{L.SKILL_NAME}")
+                if saved is None or _complete_tree_state(saved) != existing:
+                    raise RuntimeError(f"脚手架 SKILL 完整备份失败：{target}")
+                os.replace(target, previous)
+            try:
+                os.replace(stage, target)
+            except Exception:
+                if previous.exists() and not os.path.lexists(target):
+                    os.replace(previous, target)
+                raise
+            rep.act("install", f"{rel}/{L.SKILL_NAME}/", "脚手架 SKILL 受管刷新")
 
 
 def _remove_transaction_path(path: Path):
@@ -1120,7 +1179,8 @@ def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, age
             journal.expect(destination / agent_adapter.GENERATED_FILE)
 
 
-def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> dict:
+def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
+                migrate_legacy: bool = False) -> dict:
     _native_namespaces(root, agents)
     version = a.version or guess_version(root) or "V0.1.0"
     user = a.user or vcs.developer_identity(root)
@@ -1149,7 +1209,8 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> di
                 shutil.copy2(original, backup / name)
             saved.add(name)
         try:
-            return _run_native_impl(root, a, mode, agents, agent_source, journal)
+            return _run_native_impl(root, a, mode, agents, agent_source, journal,
+                                    migrate_legacy=migrate_legacy)
         except BaseException:
             journal.rollback_created()
             for name in saved:
@@ -1158,7 +1219,7 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str) -> di
 
 
 def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
-                     journal: _NativeInstallJournal) -> dict:
+                     journal: _NativeInstallJournal, migrate_legacy: bool = False) -> dict:
     rep = Report(journal)
     source = _runtime_source()
     legacy = root / ".aidp"
@@ -1177,7 +1238,44 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     previous = scaffold_marker.read_version(root)
     decision = gate_decision(previous, scaffold_raw, scaffold_marker.read_pending(root),
                              bool(L.queue_entries(root)), a.force)
+    if decision == "protect":
+        rep.warn("项目脚手架版本高于当前脚手架包，保留原运行包和 Agent 入口")
+        dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
+        return {"mode": mode, "project": project, "version": version, "user": user,
+                "vcs_mode": vcs.detect_mode(root), "dsh_extensions": dsh_extensions,
+                "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
+                "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
+                "contract_decision": decision, "pending": False, "rewrite_queue": [],
+                "orphans": [], "local_overwritten": [], "backup": None,
+                "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
+    if migrate_legacy and a.no_agent_sync:
+        rep.warn("旧运行目录迁移需要先校验 Agent 原生命令入口，不能使用 --no-agent-sync")
+        return {"status": "blocked", "reason": "agent-sync-disabled",
+                "mode": mode, "project": project, "version": version, "user": user,
+                "vcs_mode": vcs.detect_mode(root), "dsh_extensions": None,
+                "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
+                "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
+                "contract_decision": decision, "pending": False, "rewrite_queue": [],
+                "orphans": [], "local_overwritten": [], "backup": None,
+                "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     bk = Backup(root, rep)
+    if migrate_legacy:
+        try:
+            original = _complete_tree_state(legacy)
+            saved = bk.save_tree(LEGACY_AIDP_DIR)
+            if saved is None or _complete_tree_state(saved) != original \
+                    or _complete_tree_state(legacy) != original:
+                raise RuntimeError("旧运行目录完整备份校验失败")
+        except (OSError, RuntimeError) as exc:
+            rep.warn(f"旧运行目录备份失败，已保留原目录：{exc}")
+            return {"status": "blocked", "reason": "legacy-backup-failed",
+                    "mode": mode, "project": project, "version": version, "user": user,
+                    "vcs_mode": vcs.detect_mode(root), "dsh_extensions": None,
+                    "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
+                    "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
+                    "contract_decision": decision, "pending": False, "rewrite_queue": [],
+                    "orphans": [], "local_overwritten": [], "backup": bk.dir.name if bk.dir else None,
+                    "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     specs = []
     if "claude" in agents:
         specs.append(("claude", ".claude/aidp"))
@@ -1186,16 +1284,28 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     for kind, home in specs:
         dest = root / home
         if dest.is_dir():
-            runtime_layout.validate_runtime(dest, expected_home=home)
             current = dest / runtime_layout.RUNTIME_MANIFEST
-            if json.loads(current.read_text(encoding="utf-8"))["version"] == scaffold_raw and not a.force:
-                continue
+            manifest = json.loads(current.read_text(encoding="utf-8"))
+            if manifest.get("version") == scaffold_raw and not a.force:
+                try:
+                    runtime_layout.validate_runtime(dest, expected_home=home)
+                except ValueError:
+                    pass  # 受管文件漂移由 render_runtime 完整备份后修复。
+                else:
+                    continue
         journal.expect_tree(dest, source, include=lambda path:
                             path.parts[0] in runtime_layout.RUNTIME_DIRS
                             and not runtime_layout._excluded(path.as_posix()))
         journal.expect(dest / runtime_layout.RUNTIME_MANIFEST)
         journal.expect(dest.parent / ".aidp-runtime.lock")
-        runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind)
+        def backup_runtime(_destination, runtime_home=home):
+            saved = bk.save_tree(runtime_home)
+            if saved is not None:
+                rep.warn(f"受管运行包有本地修改，完整备份：{saved.relative_to(root).as_posix()}")
+            return saved
+
+        runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind,
+                                      backup_callback=backup_runtime)
         rep.act("install", home + "/", "Agent 原生运行包")
     for ag in agents:
         marker = root / MARKER_DIRS[ag]
@@ -1224,7 +1334,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                                 and "tests" not in path.parts
                                 and path.suffix != ".pyc")
             journal.expect(destination / ".aidp-scaffold-generated")
-    _install_native_skill(root, agents, rep)
+    _install_native_skill(root, agents, rep, bk)
     manage_gitkeep(root, dirs, rep)
     for rel in dirs:
         journal.record(root / rel / ".gitkeep")
@@ -1232,13 +1342,76 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     manage_gitkeep(root, dirs, rep)
     for rel in dirs:
         journal.record(root / rel / ".gitkeep")
+    queue = L.queue_entries(root)
     if scaffold_raw and decision != "protect":
-        scaffold_marker.write_version(root, scaffold_raw)
+        if queue:
+            scaffold_marker.write_pending(root, scaffold_raw)
+        else:
+            scaffold_marker.write_version(root, scaffold_raw)
         journal.record(scaffold_marker.CONFIG_REL)
     dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
     if not a.no_agent_sync:
         _expect_agent_adapter_writes(journal, root, agents)
         run_agent_sync(root, agents, "copy", rep, strict=True)
+    active_homes = {home for _kind, home in specs}
+    for home in sorted(set(runtime_layout.RUNTIME_HOME.values()) - active_homes):
+        destination = root / home
+        if not os.path.lexists(destination):
+            continue
+        if destination.is_symlink() or not destination.is_dir() \
+                or not (destination / runtime_layout.RUNTIME_MANIFEST).is_file():
+            raise ValueError(f"未受管运行目录不能清理：{destination}")
+        if runtime_layout._runtime_modified(destination):
+            old_state = _complete_tree_state(destination)
+            saved = bk.save_tree(home)
+            if saved is None or _complete_tree_state(saved) != old_state:
+                raise RuntimeError(f"不再启用的运行包备份失败：{destination}")
+        shutil.rmtree(destination)
+        rep.act("remove", home + "/", "Agent 集合不再启用")
+    for agent in KNOWN_AGENTS:
+        marker_dir = root / MARKER_DIRS[agent]
+        if not marker_dir.is_dir():
+            continue
+        disabled = marker_dir / DISABLED_AGENT_MARK
+        if os.path.lexists(disabled) and (disabled.is_symlink() or not disabled.is_file()
+                                           or disabled.read_text(encoding="utf-8") != "disabled\n"):
+            raise ValueError(f"Agent 禁用标记含用户内容，拒绝修改：{disabled}")
+        if agent in agents:
+            if disabled.is_file():
+                disabled.unlink()
+                rep.act("remove", rel_of(root, disabled), "Agent 重新启用")
+        elif not disabled.is_file():
+            journal.expect(disabled)
+            disabled.write_text("disabled\n", encoding="utf-8")
+            rep.act("create", rel_of(root, disabled), "Agent 已切换为停用")
+    for agent, rel in (("claude", ".claude/skills"), ("shared", ".agents/skills")):
+        enabled = ("claude" in agents if agent == "claude" else bool({"codex", "dsh"} & set(agents)))
+        if enabled:
+            continue
+        target = root / rel / L.SKILL_NAME
+        if not os.path.lexists(target):
+            continue
+        if target.is_symlink() or not (target / ".aidp-scaffold-generated").is_file():
+            raise ValueError(f"未受管脚手架 SKILL 不能清理：{target}")
+        old_state = _complete_tree_state(target)
+        saved = bk.save_tree(f"{rel}/{L.SKILL_NAME}")
+        if saved is None or _complete_tree_state(saved) != old_state:
+            raise RuntimeError(f"脚手架 SKILL 清理前备份失败：{target}")
+        shutil.rmtree(target)
+        rep.act("remove", f"{rel}/{L.SKILL_NAME}/", "Agent 集合不再启用")
+    for _kind, home in specs:
+        runtime_layout.validate_runtime(root / home, expected_home=home)
+    if not a.no_agent_sync:
+        adapter_home = ".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp"
+        check = subprocess.run(
+            [sys.executable, str(root / adapter_home / "scripts/agent_sync.py"),
+             "--root", str(root), "--agents", ",".join(agents), "--mode", "copy", "--check"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        if check.returncode != 0:
+            raise RuntimeError(f"原生 Agent 入口校验失败：{(check.stdout or check.stderr).strip()[:300]}")
+    if migrate_legacy:
+        shutil.rmtree(legacy)
+        rep.act("remove", LEGACY_AIDP_DIR + "/", "Agent 原生运行包已校验并安装")
     if a.adapter_mode == "link":
         rep.actions.append({"op": "normalized", "path": "agent-adapters", "why": "link → managed-copy",
                             "action": "normalized", "from": "link", "to": "managed-copy"})
@@ -1246,7 +1419,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             "vcs_mode": vcs.detect_mode(root), "dsh_extensions": dsh_extensions,
             "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
             "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
-            "contract_decision": decision, "pending": False, "rewrite_queue": [],
+            "contract_decision": decision, "pending": bool(queue), "rewrite_queue": queue,
             "orphans": [], "local_overwritten": [], "backup": bk.dir.name if bk.dir else None,
             "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
 
@@ -1258,78 +1431,13 @@ def run(root: Path, a) -> dict:
     rep = Report()
     mode = a.mode if a.mode != "auto" else detect_mode(root)[0]
     agents, agent_source = resolve_agents(root, a.agent, interactive=not a.json)
-    if not (root / ".aidp").is_dir():
-        return _run_native(root, a, mode, agents, agent_source)
-    user = a.user or vcs.developer_identity(root)
-    cfg = read_project_cfg(root)
-    project = cfg.get("name") or root.name
-    version = a.version or guess_version(root) or "V0.1.0"
-    ctx = {"project": project, "project_cn": a.name_cn or cfg.get("name_cn") or project,
-           "user": user, "version": version, "date": datetime.now().strftime("%Y-%m-%d")}
-
-    scaffold_raw = L.bundle_version()
-    proj_raw = scaffold_marker.read_version(root)
-    pending = scaffold_marker.read_pending(root)
-    was_aidp = (root / ".aidp").is_dir()
-    decision = gate_decision(proj_raw, scaffold_raw, pending, bool(L.queue_entries(root)), a.force)
-
-    bk = Backup(root, rep)
-    if not was_aidp or decision == "overwrite":
-        bk.full(a.keep_backups, a.keep_days)
-    old_files = installed_manifest(root) if was_aidp else None
-    for ag in agents:
-        if not (root / MARKER_DIRS[ag]).is_dir():
-            (root / MARKER_DIRS[ag]).mkdir(parents=True)
-            rep.act("create", MARKER_DIRS[ag] + "/", "Agent 标记目录")
-
-    dirs = L.skeleton_dirs(root, version, user)
-    for rel in dirs:
-        if not (root / rel).is_dir():
-            (root / rel).mkdir(parents=True, exist_ok=True)
-
-    local_overwritten = sync_gated(root, decision, rep, bk, old_files)
-    cleanup_obsolete_router(root, mode, bk, rep)
-    sync_scripts(root, rep)
-    sync_docs(root, was_aidp, rep, bk)
-    sync_config(root, ctx, rep, bk)
-    sync_memory(root, ctx, was_aidp, rep, bk)
-    sync_root_files(root, ctx, rep, bk)
-    if decision != "protect":
-        sync_memory_file(root, agents, ctx, decision, was_aidp, rep, bk)
-    self_install(root, decision, rep)
-    manage_gitkeep(root, dirs, rep)
-    ensure_nav_readmes(root, rep)
-    manage_gitkeep(root, dirs, rep)
-    orphans = report_orphans(root, rep)
-
-    queue = L.queue_entries(root)
-    if decision != "protect" and scaffold_raw:
-        if queue:
-            scaffold_marker.write_pending(root, scaffold_raw)
-        else:
-            scaffold_marker.write_version(root, scaffold_raw)
-
-    dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
-    if not a.no_agent_sync:
-        run_agent_sync(root, agents, a.adapter_mode, rep)
-
-    backups = L.scan_backups(root)
-    total = sum(L.dir_size(p) for p, _ in backups)
-    if len(backups) > L.BACKUP_HYGIENE_MAX_DIRS or total > L.BACKUP_HYGIENE_MAX_BYTES:
-        rep.warn(f"升级备份 {len(backups)} 个 / 共 {L.human_size(total)}；确认无需回滚后可删除："
-                 + " ".join(p.name for p, _ in backups))
-
-    return {
-        "mode": mode, "project": project, "version": version, "user": user,
-        "vcs_mode": vcs.detect_mode(root), "dsh_extensions": dsh_extensions,
-        "agents": agents, "agent_source": agent_source, "adapter_mode": a.adapter_mode,
-        "scaffold_version": scaffold_raw, "previous_scaffold_version": proj_raw,
-        "contract_decision": decision,
-        "pending": bool(queue), "rewrite_queue": queue,
-        "orphans": orphans, "local_overwritten": local_overwritten,
-        "backup": bk.dir.name if bk.dir else None,
-        "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes,
-    }
+    if mode in ("migrate", "upgrade") and a.agent and parse_agents(a.agent):
+        agents, agent_source = parse_agents(a.agent), "argument"
+    if (root / LEGACY_AIDP_DIR).is_dir():
+        if mode == "init":
+            raise ValueError("旧运行目录已存在，不能按 init 覆盖；请使用 migrate")
+        return _run_native(root, a, mode, agents, agent_source, migrate_legacy=True)
+    return _run_native(root, a, mode, agents, agent_source)
 
 
 def print_human(res: dict):
@@ -1404,7 +1512,7 @@ def main(argv=None) -> int:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:
         print_human(res)
-    return 0
+    return 3 if res.get("status") == "blocked" else 0
 
 
 if __name__ == "__main__":

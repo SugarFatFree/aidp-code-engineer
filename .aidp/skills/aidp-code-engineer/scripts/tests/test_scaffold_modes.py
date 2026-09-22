@@ -848,101 +848,240 @@ class DshCommandPluginInstallTest(unittest.TestCase):
             self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
 
 
+class LegacyRuntimeMigrationTest(unittest.TestCase):
+    @staticmethod
+    def _legacy(root):
+        command = root / ".aidp/commands/sprint-dev.md"
+        command.parent.mkdir(parents=True)
+        command.write_text("旧命令正文\n", encoding="utf-8")
+        extra = root / ".aidp/reference/team-notes.md"
+        extra.parent.mkdir(parents=True)
+        extra.write_text("团队自定义内容\n", encoding="utf-8")
+        scaffold_marker.write_version(root, BUNDLE_VERSION)
+        return command, extra
+
+    def test_same_version_migrate_backs_up_modified_legacy_tree(self):
+        with H.TempRepo() as root:
+            self._legacy(root)
+            result = scaffold(root, "--mode", "migrate", "--agent", "claude,codex")
+            self.assertFalse(os.path.lexists(root / ".aidp"))
+            self.assertTrue((root / ".claude/aidp/commands/sprint-dev.md").is_file())
+            self.assertTrue((root / ".agents/aidp/commands/sprint-dev.md").is_file())
+            self.assertEqual((root / result["backup"] / ".aidp/commands/sprint-dev.md").read_text(),
+                             "旧命令正文\n")
+            self.assertEqual((root / result["backup"] / ".aidp/reference/team-notes.md").read_text(),
+                             "团队自定义内容\n")
+            self.assertEqual(scaffold_marker.read_version(root), BUNDLE_VERSION)
+            self.assertEqual(agent_sync_check(root)[0], 0)
+
+    def test_legacy_remains_when_agent_entries_are_disabled(self):
+        with H.TempRepo() as root:
+            self._legacy(root)
+            options = self._options("migrate", "claude")
+            options.no_agent_sync = True
+            result = S.run(root, options)
+            self.assertEqual(result["status"], "blocked")
+            self.assertTrue((root / ".aidp/commands/sprint-dev.md").is_file())
+            self.assertFalse((root / ".claude/aidp").exists())
+            command = H.run_script("scaffold.py", root, "--mode", "migrate", "--agent", "claude",
+                                   "--user", "alice", "--no-agent-sync", "--json", check=False)
+            self.assertEqual(command.returncode, 3)
+            self.assertEqual(json.loads(command.stdout)["reason"], "agent-sync-disabled")
+
+    def test_non_git_migrate_does_not_initialize_git(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "project"
+            root.mkdir()
+            self._legacy(root)
+            result = scaffold(root, "--mode", "migrate", "--agent", "dsh", "--user", "alice",
+                              env=missing_dsh_env(root))
+            self.assertEqual(result["vcs_mode"], "none")
+            self.assertFalse((root / ".git").exists())
+            self.assertFalse(os.path.lexists(root / ".aidp"))
+            self.assertTrue((root / ".agents/aidp/scripts/agent_sync.py").is_file())
+            self.assertEqual(result["dsh_extensions"], "unavailable")
+
+    def test_non_git_native_upgrade_without_git_binary(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "project"
+            root.mkdir()
+            env = H.clean_env()
+            env["PATH"] = str(root / "missing-bin")
+            initial = scaffold(root, "--agent", "claude", "--user", "alice", env=env)
+            self.assertEqual(initial["vcs_mode"], "none")
+            scaffold_marker.write_version(root, "V0.0.1")
+            result = scaffold(root, "--mode", "upgrade", "--user", "alice", env=env)
+            self.assertEqual(result["vcs_mode"], "none")
+            self.assertEqual(result["contract_decision"], "overwrite")
+            self.assertFalse((root / ".git").exists())
+            self.assertTrue((root / ".claude/aidp/.aidp-runtime.json").is_file())
+
+    def test_backup_failure_preserves_legacy_without_native_runtime(self):
+        with H.TempRepo() as root:
+            command, extra = self._legacy(root)
+            with mock.patch.object(S.Backup, "save_tree", side_effect=OSError("backup unavailable")):
+                result = S.run(root, self._options("migrate", "claude"))
+            self.assertEqual(command.read_text(), "旧命令正文\n")
+            self.assertEqual(extra.read_text(), "团队自定义内容\n")
+            self.assertFalse((root / ".claude/aidp").exists())
+            self.assertTrue(any("backup unavailable" in warning for warning in result["warnings"]))
+
+    def test_adapter_verification_failure_keeps_legacy_tree(self):
+        with H.TempRepo() as root:
+            command, extra = self._legacy(root)
+            with mock.patch.object(S, "run_agent_sync", return_value={}):
+                with self.assertRaises(RuntimeError):
+                    S.run(root, self._options("migrate", "claude"))
+            self.assertEqual(command.read_text(), "旧命令正文\n")
+            self.assertEqual(extra.read_text(), "团队自定义内容\n")
+            self.assertFalse((root / ".claude/aidp").exists())
+
+    def test_second_runtime_failure_restores_legacy_and_project_files(self):
+        with H.TempRepo() as root:
+            command, extra = self._legacy(root)
+            original_config = (root / "memory/aidp-config.yaml").read_bytes()
+            render = S.runtime_layout.render_runtime
+            calls = 0
+
+            def fail_second(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("second runtime unavailable")
+                return render(*args, **kwargs)
+
+            with mock.patch.object(S.runtime_layout, "render_runtime", side_effect=fail_second):
+                with self.assertRaises((OSError, RuntimeError)):
+                    S.run(root, self._options("migrate", "claude,codex"))
+            self.assertEqual(command.read_text(), "旧命令正文\n")
+            self.assertEqual(extra.read_text(), "团队自定义内容\n")
+            self.assertEqual((root / "memory/aidp-config.yaml").read_bytes(), original_config)
+            self.assertFalse((root / ".claude/aidp").exists())
+            self.assertFalse((root / ".agents/aidp").exists())
+
+    def test_partial_legacy_removal_restores_deleted_user_file(self):
+        with H.TempRepo() as root:
+            command, extra = self._legacy(root)
+            real_remove = S.shutil.rmtree
+
+            def fail_after_partial_removal(path, *args, **kwargs):
+                if Path(path) == root / ".aidp":
+                    extra.unlink()
+                    raise OSError("partial removal")
+                return real_remove(path, *args, **kwargs)
+
+            with mock.patch.object(S.shutil, "rmtree", side_effect=fail_after_partial_removal):
+                with self.assertRaises(OSError):
+                    S.run(root, self._options("migrate", "claude"))
+            self.assertTrue(command.is_file())
+            self.assertEqual(extra.read_text(), "团队自定义内容\n")
+            self.assertFalse((root / ".claude/aidp").exists())
+
+    def test_legacy_removal_failure_restores_everything(self):
+        with H.TempRepo() as root:
+            command, extra = self._legacy(root)
+            original = (root / "memory/aidp-config.yaml").read_bytes()
+            real_remove = S.shutil.rmtree
+
+            def reject_legacy(path, *args, **kwargs):
+                if Path(path) == root / ".aidp":
+                    raise OSError("legacy removal failed")
+                return real_remove(path, *args, **kwargs)
+
+            with mock.patch.object(S.shutil, "rmtree", side_effect=reject_legacy):
+                with self.assertRaises(OSError):
+                    S.run(root, self._options("upgrade", "claude"))
+            self.assertEqual(command.read_text(), "旧命令正文\n")
+            self.assertEqual(extra.read_text(), "团队自定义内容\n")
+            self.assertEqual((root / "memory/aidp-config.yaml").read_bytes(), original)
+            self.assertFalse((root / ".claude/aidp").exists())
+
+    def test_newer_native_scaffold_version_is_protected(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            scaffold_marker.write_version(root, "V99.0.0")
+            original = (root / ".claude/aidp/commands/sprint-dev.md").read_bytes()
+            skill = root / ".claude/skills/aidp-code-engineer/SKILL.md"
+            skill.write_text("新版脚手架正文\n", encoding="utf-8")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertEqual(result["contract_decision"], "protect")
+            self.assertEqual(scaffold_marker.read_version(root), "V99.0.0")
+            self.assertEqual((root / ".claude/aidp/commands/sprint-dev.md").read_bytes(), original)
+            self.assertEqual(skill.read_text(), "新版脚手架正文\n")
+            self.assertFalse(any(action["op"] == "install" for action in result["actions"]))
+
+    def test_upgrade_backs_up_modified_native_runtime(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            command = root / ".claude/aidp/commands/sprint-dev.md"
+            command.write_text("团队修改\n", encoding="utf-8")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertNotEqual(command.read_text(), "团队修改\n")
+            self.assertEqual((root / result["backup"] / ".claude/aidp/commands/sprint-dev.md").read_text(),
+                             "团队修改\n")
+
+    def test_agent_set_change_removes_only_unused_managed_runtime(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            self.assertTrue((root / ".claude/aidp").is_dir())
+            result = scaffold(root, "--mode", "upgrade", "--agent", "codex")
+            self.assertEqual(result["agents"], ["codex"])
+            self.assertFalse(os.path.lexists(root / ".claude/aidp"))
+            self.assertTrue((root / ".agents/aidp").is_dir())
+            check = subprocess.run([sys.executable, str(root / ".agents/aidp/scripts/agent_sync.py"),
+                                    "--root", str(root), "--agents", "codex", "--check"],
+                                   capture_output=True, text=True)
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            self.assertEqual(scaffold(root)["agents"], ["codex"],
+                             "后续升级应以实际受管运行包发现 Agent，不因旧标记目录误启用 Claude")
+
+    def test_upgrade_refreshes_managed_skill_and_preserves_user_edit(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            skill = root / ".claude/skills/aidp-code-engineer"
+            custom = skill / "team-notes.txt"
+            custom.write_text("团队修改\n", encoding="utf-8")
+            (skill / "SKILL.md").write_text("旧脚手架正文\n", encoding="utf-8")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertEqual((skill / "SKILL.md").read_bytes(),
+                             (L.SKILL_DIR / "SKILL.md").read_bytes())
+            self.assertTrue(result["backup"])
+            backed_up = root / result["backup"] / ".claude/skills/aidp-code-engineer"
+            self.assertEqual((backed_up / "team-notes.txt").read_text(), "团队修改\n")
+            self.assertEqual((backed_up / "SKILL.md").read_text(), "旧脚手架正文\n")
+
+    @staticmethod
+    def _options(mode, agents):
+        return Namespace(mode=mode, agent=agents, json=True, user="alice", name_cn=None,
+                         version="V0.1.0", force=False, keep_backups=L.PRUNE_KEEP_LAST_DEFAULT,
+                         keep_days=L.PRUNE_KEEP_DAYS_DEFAULT, no_agent_sync=False,
+                         adapter_mode="copy")
+
+
 class UpgradeTest(unittest.TestCase):
-    def test_overwrite_protect_and_finalize(self):
+    def test_native_upgrade_keeps_project_content(self):
         with H.TempRepo() as root:
             scaffold(root, "--version", "V0.1.0", "--agent", "claude")
-            subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True, capture_output=True)
-
+            custom = root / "docs/private/team.md"
+            custom.parent.mkdir(parents=True)
+            custom.write_text("团队规则\n", encoding="utf-8")
             scaffold_marker.write_version(root, "V0.0.1")
-            cmd = root / ".aidp/commands/sprint-dev.md"
-            original = cmd.read_bytes()
-            cmd.write_text("本地改动\n", encoding="utf-8")
-            (root / ".aidp/agents/qa.md").unlink()
-            (root / ".aidp/commands/retired-cmd.md").write_text("旧命令\n", encoding="utf-8")
-            (root / ".aidp/skills/my-skill").mkdir()
-            (root / ".aidp/skills/my-skill/SKILL.md").write_text("私有\n", encoding="utf-8")
-            fill = root / ".aidp/reference/子Agent必读.md"
-            fill.write_text(fill.read_text(encoding="utf-8") + "\n- 项目踩坑：接口 A 必须带租户头\n", encoding="utf-8")
-            # 模拟上一版下发的骨架与新版不同（新版骨架有变化才需要语义合并）
-            ledger = json.loads((root / L.USER_FILLABLE_BASELINE).read_text(encoding="utf-8"))
-            ledger["reference/子Agent必读.md"] = L.sha256(b"previous skeleton\n")
-            (root / L.USER_FILLABLE_BASELINE).write_text(json.dumps(ledger), encoding="utf-8")
-            claude_md = root / "CLAUDE.md"
-            claude_md.write_text(claude_md.read_text(encoding="utf-8") + "\n- 团队约定：分支名带工单号\n",
-                                 encoding="utf-8")
-
-            claude_md.write_text(claude_md.read_text(encoding="utf-8").replace("- **当前版本**：V0.1.0",
-                                                                               "- **当前版本**：V0.3.0")
-                                 .replace("## 核心约定", "旧版正文残留行 OLD_BODY_MARK\n\n## 核心约定", 1),
-                                 encoding="utf-8")
-            res = scaffold(root)
-            self.assertEqual(res["mode"], "upgrade")
-            self.assertEqual(res["contract_decision"], "overwrite")
-            self.assertEqual(cmd.read_bytes(), original, "低版本升级必须覆盖契约文件")
-            self.assertIn(".aidp/commands/sprint-dev.md", res["local_overwritten"], "本地改过的契约须逐个列出")
-            self.assertTrue(any("本地改过" in w and res["backup"] in w for w in res["warnings"]), res["warnings"])
-            self.assertEqual((root / res["backup"] / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8"),
-                             "本地改动\n", "被覆盖的本地改动可从备份找回")
-            self.assertTrue((root / ".aidp/agents/qa.md").is_file())
-            self.assertIn("项目踩坑：接口 A 必须带租户头", fill.read_text(encoding="utf-8"), "已填写的用户填充型契约不得覆盖")
-            self.assertEqual((root / ".aidp/skills/my-skill/SKILL.md").read_text(), "私有\n")
-            self.assertIn(".aidp/commands/retired-cmd.md", res["orphans"])
-            self.assertTrue((root / ".aidp/commands/retired-cmd.md").is_file(), "孤儿只报告不删除")
-            queued = {e.split("\t")[0] for e in res["rewrite_queue"]}
-            self.assertEqual(queued, {".aidp/reference/子Agent必读.md"}, "记忆文件按锚点确定性合并，不进队列")
-            for e in res["rewrite_queue"]:
-                self.assertFalse(os.path.isabs(e.split("\t")[1]), "队列模板路径必须是仓库相对路径")
-                self.assertTrue((root / e.split("\t")[1]).is_file(), e)
-            body = claude_md.read_text(encoding="utf-8")
-            self.assertIn("团队约定：分支名带工单号", body)
-            self.assertIn("- **当前版本**：V0.3.0", body, "「当前状态」字段值保留")
-            self.assertNotIn("OLD_BODY_MARK", body, "「项目自定义」之前的正文取新模板")
-            self.assertTrue(any(a["op"] == "merge" and a["path"] == "CLAUDE.md" for a in res["actions"]))
-            self.assertFalse((root / ".aidp/skills/aidp-code-engineer/scripts/tests").exists(), "模板单测不随安装下发")
-            self.assertEqual(scaffold_marker.read_pending(root), BUNDLE_VERSION)
-            self.assertEqual(scaffold_marker.read_version(root), "V0.0.1", "未收口不得推进正式版本")
-            self.assertTrue(L.scan_backups(root))
-            rc, errors, out = H.verify(root)
-            self.assertTrue(any("语义改写队列" in e for e in errors), out)
-
-            self.assertEqual(H.run_script("finalize_upgrade.py", "--root", root, check=False).returncode, 1)
-            fill.write_text(fill.read_text(encoding="utf-8") + "\n<!-- 已按新骨架合并 -->\n", encoding="utf-8")
-            H.run_script("finalize_upgrade.py", "--root", root)
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertEqual(result["contract_decision"], "overwrite")
+            self.assertEqual(custom.read_text(), "团队规则\n")
+            self.assertFalse(os.path.lexists(root / ".aidp"))
+            self.assertTrue((root / ".claude/aidp/.aidp-runtime.json").is_file())
             self.assertEqual(scaffold_marker.read_version(root), BUNDLE_VERSION)
-            self.assertIsNone(scaffold_marker.read_pending(root))
-            self.assertFalse((root / L.REWRITE_QUEUE_FILE).exists())
-
-            # 收口后再跑（同版本 fill / 低版本 overwrite）：骨架未变，已填写的用户填充型契约不得再入队
-            again = scaffold(root)
-            self.assertEqual(again["contract_decision"], "fill")
-            self.assertEqual(again["rewrite_queue"], [])
-            self.assertIsNone(scaffold_marker.read_pending(root))
-            scaffold_marker.write_version(root, "V0.0.1")
-            again = scaffold(root)
-            self.assertEqual(again["contract_decision"], "overwrite")
-            self.assertEqual(again["rewrite_queue"], [], again["actions"])
-            self.assertEqual(scaffold_marker.read_version(root), BUNDLE_VERSION)
-            self.assertEqual(again["local_overwritten"], [], "无本地改动时不误报")
-
-            # 同版本：只补缺失、不覆盖已有正文
-            cmd.write_text("同版本本地改动\n", encoding="utf-8")
-            (root / ".aidp/agents/qa.md").unlink()
-            res = scaffold(root)
-            self.assertEqual(res["contract_decision"], "fill")
-            self.assertEqual(cmd.read_text(encoding="utf-8"), "同版本本地改动\n")
-            self.assertTrue((root / ".aidp/agents/qa.md").is_file())
 
     def test_newer_project_is_protected(self):
         with H.TempRepo() as root:
             scaffold(root, "--agent", "codex")
             scaffold_marker.write_version(root, "V99.0.0")
-            cmd = root / ".aidp/commands/sprint-dev.md"
-            cmd.write_text("更新版本的内容\n", encoding="utf-8")
-            res = scaffold(root)
-            self.assertEqual(res["contract_decision"], "protect")
-            self.assertEqual(cmd.read_text(encoding="utf-8"), "更新版本的内容\n")
+            skill = root / ".agents/skills/aidp-code-engineer/SKILL.md"
+            skill.write_text("新版脚手架正文\n", encoding="utf-8")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "codex")
+            self.assertEqual(result["contract_decision"], "protect")
+            self.assertEqual(skill.read_text(), "新版脚手架正文\n")
             self.assertEqual(scaffold_marker.read_version(root), "V99.0.0")
 
 
@@ -988,21 +1127,17 @@ class OptionalRuleRefreshTest(unittest.TestCase):
     def test_optional_rule_refresh(self):
         tpl_rel, inst_rel = L.OPTIONAL_RULES[0]
         with H.TempRepo() as root:
-            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
-            old_tpl, inst = root / ".aidp" / tpl_rel, root / ".aidp" / inst_rel
+            LegacyRuntimeMigrationTest._legacy(root)
+            old_tpl, installed = root / ".aidp" / tpl_rel, root / ".aidp" / inst_rel
+            old_tpl.parent.mkdir(parents=True, exist_ok=True)
+            installed.parent.mkdir(parents=True, exist_ok=True)
             old_tpl.write_text("旧版可选规则\n", encoding="utf-8")
-            inst.write_text("旧版可选规则\n", encoding="utf-8")
-            scaffold_marker.write_version(root, "V0.0.1")
-            scaffold(root)
-            self.assertEqual(inst.read_bytes(), (L.BUNDLE_AIDP / tpl_rel).read_bytes(), "未改过的安装位随模板升级刷新")
-
-            old_tpl.write_text("旧版可选规则\n", encoding="utf-8")
-            inst.write_text("项目改过的可选规则\n", encoding="utf-8")
-            scaffold_marker.write_version(root, "V0.0.1")
-            res = scaffold(root)
-            self.assertEqual(inst.read_text(encoding="utf-8"), "项目改过的可选规则\n", "反例：本地改过的安装位不覆盖")
-            self.assertTrue(any(inst_rel in w for w in res["warnings"]), res["warnings"])
-            self.assertNotIn(f".aidp/{inst_rel}", res["orphans"], "已安装的可选规则不算孤儿")
+            installed.write_text("项目改过的可选规则\n", encoding="utf-8")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            backup = root / result["backup"] / ".aidp"
+            self.assertEqual((backup / tpl_rel).read_text(), "旧版可选规则\n")
+            self.assertEqual((backup / inst_rel).read_text(), "项目改过的可选规则\n")
+            self.assertFalse(os.path.lexists(root / ".aidp"))
 
 
 class NativeAdapterVerifyTest(unittest.TestCase):
@@ -1087,7 +1222,7 @@ class ObsoleteRouterMigrationTest(unittest.TestCase):
         return Namespace(
             mode=mode, agent="claude", json=True, user=None, name_cn=None,
             version="V0.1.0", force=False, keep_backups=L.PRUNE_KEEP_LAST_DEFAULT,
-            keep_days=L.PRUNE_KEEP_DAYS_DEFAULT, no_agent_sync=True, adapter_mode="link")
+            keep_days=L.PRUNE_KEEP_DAYS_DEFAULT, no_agent_sync=False, adapter_mode="link")
 
     @classmethod
     def _router(cls, root, modified=False):
@@ -1107,8 +1242,9 @@ class ObsoleteRouterMigrationTest(unittest.TestCase):
             before = len(L.scan_backups(root))
             res = S.run(root, self._options())
             self.assertFalse(router.exists())
-            self.assertEqual(len(L.scan_backups(root)), before)
-            self.assertTrue(any(a["op"] == "remove" and a["path"] == ".aidp/skills/aidp-cmd/"
+            self.assertEqual(len(L.scan_backups(root)), before + 1)
+            self.assertTrue((root / res["backup"] / ".aidp/skills/aidp-cmd/SKILL.md").is_file())
+            self.assertTrue(any(a["op"] == "remove" and a["path"] == ".aidp/"
                                 for a in res["actions"]), res["actions"])
 
     def test_modified_router_is_backed_up_then_removed(self):
@@ -1120,8 +1256,7 @@ class ObsoleteRouterMigrationTest(unittest.TestCase):
             self.assertTrue(res["backup"], res)
             saved = root / res["backup"] / ".aidp/skills/aidp-cmd/SKILL.md"
             self.assertIn("项目自定义路由内容", saved.read_text(encoding="utf-8"))
-            self.assertTrue(any("旧命令路由已备份" in w and res["backup"] in w for w in res["warnings"]),
-                            res["warnings"])
+            self.assertTrue((root / res["backup"] / ".aidp/skills/aidp-cmd/agents/openai.yaml").is_file())
 
     def test_generated_router_with_extra_content_is_backed_up_completely(self):
         with H.TempRepo() as root:
@@ -1135,19 +1270,20 @@ class ObsoleteRouterMigrationTest(unittest.TestCase):
             backup = root / res["backup"] / ".aidp/skills/aidp-cmd"
             self.assertEqual((backup / "notes.md").read_text(encoding="utf-8"), "用户补充说明\n")
             self.assertEqual((backup / "custom/rule.txt").read_text(encoding="utf-8"), "用户规则\n")
-            self.assertTrue(any("旧命令路由已备份" in w for w in res["warnings"]), res["warnings"])
+            self.assertFalse(os.path.lexists(root / ".aidp"))
 
     def test_backup_failure_preserves_modified_router(self):
         with H.TempRepo() as root:
             scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--no-agent-sync")
             router = self._router(root, modified=True)
             original = (router / "SKILL.md").read_text(encoding="utf-8")
-            with mock.patch.object(S.shutil, "copytree", side_effect=OSError("disk full")):
+            with mock.patch.object(S.Backup, "save_tree", side_effect=OSError("disk full")):
                 res = S.run(root, self._options())
             self.assertTrue(router.is_dir())
             self.assertEqual((router / "SKILL.md").read_text(encoding="utf-8"), original)
-            self.assertTrue(any("旧命令路由备份失败" in w and "disk full" in w for w in res["warnings"]),
+            self.assertTrue(any("旧运行目录备份失败" in w and "disk full" in w for w in res["warnings"]),
                             res["warnings"])
+            self.assertEqual(res["status"], "blocked")
 
     def test_missing_router_is_noop_and_init_does_not_migrate(self):
         with H.TempRepo() as root:

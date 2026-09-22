@@ -35,9 +35,10 @@
 1. **生成变更影响清单**（命令端用 Bash 扫描，输出表）：
 
    ```bash
-   # 信号源（本 Sprint 起始 commit ↔ HEAD）
+   # vcs_mode=git：信号源 = 本 Sprint 起始 commit ↔ HEAD
    git diff {sprint-start-sha}..HEAD --stat
    git log --oneline {sprint-start-sha}..HEAD
+   # vcs_mode=none：禁用以上 Git 命令，改取下面的逐文件 sha256 前后态（含新增/删除）
    # 接口信号
    grep -rE "@(Get|Post|Put|Delete|Patch)Mapping|@RestController" code/backend/ | grep -v test
    # DDL 信号
@@ -46,6 +47,29 @@
    ls code/frontend/{子项目}/src/views/ ; ls code/frontend/{子项目}/src/components/
    # 业务规则/状态机信号（grep 关键注释关键词）
    grep -rE "// 状态机|// 业务规则|@Enum|TODO\[GAP\]|❓ 待澄清" code/
+   ```
+
+   `vcs_mode=none` 时先执行以下本地对账（`SNAP`/`CHANGES` 均按真实版本、身份、Sprint 编号展开；缺快照直接非零，不可空结果放行）：
+
+   ```bash
+SNAP="memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json"
+CHANGES="memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json"
+SNAP="$SNAP" CHANGES="$CHANGES" VERSION="{version}" python3 - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+snap, output = Path(os.environ["SNAP"]), Path(os.environ["CHANGES"])
+if not snap.is_file():
+    raise SystemExit("evidence-missing: Sprint 开发前文件快照缺失")
+before = json.loads(snap.read_text(encoding="utf-8"))
+roots = [Path("code"), Path("env"), Path("docs/deployment") / os.environ["VERSION"]]
+after = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+         for root in roots if root.exists() for p in root.rglob("*") if p.is_file()}
+changed = [{"path": p, "before_sha256": before.get(p), "after_sha256": after.get(p),
+            "kind": "added" if p not in before else "deleted" if p not in after else "modified"}
+           for p in sorted(before.keys() | after.keys()) if before.get(p) != after.get(p)]
+output.write_text(json.dumps(changed, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"本地文件变更：{len(changed)}；证据：{output}")
+PY
    ```
 
    输出 `memory/{version}/{user}/sprints/sprint-{NNN}-upstream-impact-{YYYYMMDD-HHMM}.md`：
@@ -59,7 +83,8 @@
    | 5 | 计划偏差 | Sprint-{NNN} 实际工时 8d vs 计划 5d | 工时记录 | 01_研发执行计划.md | L3+L4 |
    | 6 | ★ 第三方 Mock→真实对接 | 第三方交付后切真实（删 Mock 桩/拦截、`VITE_USE_MOCK` 或 `@Profile("mock")` 关、`.env.*` baseURL 切真实端点）| xxxClient / .env.* / mock 开关 | **01_详细设计.md / 03_接口设计.md**（契约变了 +**01_研发需求.md**）| L2+L3+L4（契约变 +L1）|
 
-   > 本步骤的 git diff + 代码结构对比 + 维度判定即「变更检测」的权威实现；`postdev-writeback-2.md` 的 Step X.2~X.3 仅在用户绕过 X.0.0 直接走兜底人工模式时单独触发。
+   > **`vcs_mode=none` 确定性本地证据**：在任何 Phase 0A.5 删除或 Phase 1 代码改写之前，`sprint-dev.md` 已将 `code/`、`env/`、本版 `docs/deployment/` 文件内容哈希存至 `memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json`。本步按同样三棵目录再算 sha256，路径并集逐项比较前后值（含新增/删除），形成带 `path / before_sha256 / after_sha256 / kind` 的变更清单；再从**这些实际变化的文件**提取接口、DDL、页面、业务规则与配置事实的具体内容，写入上述影响表。空 Git diff / 单纯扫描当前代码结构均不足以判「零漂移」；前态快照缺失或文件无法读取时记 `evidence-missing` 并审计本 Sprint 涉及的全部业务文件与上游文档，不得跳过 X.0/X.2/X.3。`DEV_FILES` 与 X.7 都消费**这一份相对路径清单**，不得各用一套判据。
+   > 本步骤在 `vcs_mode=git` 的 git diff + 代码结构对比 + 维度判定即「变更检测」的权威实现；`postdev-writeback-2.md` 的 Step X.2~X.3 仅在用户绕过 X.0.0 直接走兜底人工模式时单独触发。
    >
    > ★ **检测项 6「Mock→真实对接」要点**（约定 22 + 约定 26 阶段②/④）：切真实常**不表现为新增接口**（接口名没变、只是实现换成真实 client + baseURL），故易漏判。（余下理据见同目录 `rationale.md`）
 
@@ -95,6 +120,8 @@
                   git log --name-only --pretty=format: @{u}..HEAD -- code/ 2>/dev/null
                 } | sort -u | grep -vE '^$|\.(md|json|ya?ml)$' | wc -l | tr -d ' ')
    ```
+
+   **`vcs_mode=none` 用本地证据替换上面整段 Git 计数**（不可在 Git 命令得到 0 后回退 S 档）：`DEV_FILES=$(CHANGES="memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json" python3 -c 'import json,os; from pathlib import Path; p=Path(os.environ["CHANGES"]); assert p.is_file(), "evidence-missing"; print(sum(x["path"].startswith("code/") and not x["path"].endswith((".md",".json",".yaml",".yml")) for x in json.loads(p.read_text(encoding="utf-8"))))')`。删除文件也计入改动，快照/清单缺失则停止档位自动判定并补证据或按 L 档审计，不得判 S。
 
    `HAS_API` / `HAS_DDL` / `HAS_SEMANTIC` / `HAS_CONFIG` 取自**上一步已产出的检测项表**（1 新增接口 /
    2 新增表 / 3 新增业务规则 · 6 Mock→真实 · 语义口径变更 · 新增配置项），不另行判定、不与其冲突。

@@ -39,10 +39,31 @@
 
 ## 前置流程
 
+**VCS 能力分流（先于任何 Git 命令）**：以 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 取得 `vcs_mode=git|none`；`{user}` 以同模块 `developer_identity(Path.cwd())` 解析（显式身份 → 本地 Git 身份 → `AIDP_USER` → OS 用户），不再要求 Git 身份存在。`vcs_mode=none` 时仍执行本地 Sprint 取号、需求/设计/代码开发与静态验证；所有 Git-only 差异、commit、push、CICD 检查分别记 `unsupported:vcs-disabled`（`status=unsupported`，不是 passed），不执行 Git 命令，也不因缺 Git 中止本地开发。Phase 0B.0 的 tag 检测仅适用于 `git`；`none` 时用项目记忆/部署产物等本地发布信号判定，未知发布状态走既有保守版本落点门，绝不把无 Git 等同未发布。后续 `/sprint-test`、`/sprint-close` 沿用同一模式。
+
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
-2. **{user}** ← `git config user.name`
+2. **{user}** ← `vcs.py developer_identity(Path.cwd())`（无 Git 也可确定身份）
 3. 确认版本规划文档已生成（由 `/version` 完成）
+
+**`vcs_mode=none` 本地文件变更证据（分支 A/B 共用）**：在已确定 `{version}/{user}/{NNN}` 且任何代码删除/改写前拍 `memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json`；分支 A 必须在 Phase 0A.5 前拍，分支 B 在 Phase 0B.2 后、Phase 1 前拍。快照缺失不得把空 diff 判「零变更」，应补从本 Sprint 的逐文件改动记录取得前态；仍无法确认则扩大审计范围而非跳过。每次重入复用原快照，不覆盖开发前态：
+
+```bash
+SNAP="memory/{version}/{user}/sprints/sprint-{NNN}-local-before.json"
+mkdir -p "$(dirname "$SNAP")"
+if [ ! -f "$SNAP" ]; then
+  SNAP="$SNAP" VERSION="{version}" python3 - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+roots = [Path("code"), Path("env"), Path("docs/deployment") / os.environ["VERSION"]]
+files = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+         for root in roots if root.exists() for p in root.rglob("*") if p.is_file()}
+Path(os.environ["SNAP"]).write_text(json.dumps(files, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+PY
+fi
+```
+
+回写时读取此快照，重新对相同目录逐文件算 sha256，比较 `before.get(path) != after.get(path)` 取新增/修改文件，`before.keys() - after.keys()` 取删除文件；按相对路径去重，输出确定性变更清单。禁止拿文件 mtime 代替内容哈希或以空 Git diff 当无改动。
 
 ## 参数解析与路径分支
 
@@ -357,10 +378,10 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 | 情形 | 默认行为 | 是否弹 AskUserQuestion |
 |------|---------|----------------------|
 | **A 仍在用 + 增量增强** | 按约定 28 复用，正常往下写 | 否 |
-| **B 死代码 + 重做（默认）** | **自动 `git rm`** 全部归类为 B 的旧文件（含连带文件，清单见 agents 文档） + 同步补 `99_回滚脚本.sql` DROP（如涉及表） + 在 `*事实清单.md` 「死代码删除清单」段追加表格 | 否（默认无问询，避免打扰用户） |
+| **B 死代码 + 重做（默认）** | `vcs_mode=git` 自动 `git rm`；`vcs_mode=none` 对已确认归类为 B 的旧文件逐项 `Path.unlink()` 本地删除（仅文件，不删未核对目录，缺失文件如实记录），含连带文件；同步补 `99_回滚脚本.sql` DROP（如涉及表） + 在 `*事实清单.md` 「死代码删除清单」段追加表格 | 否（默认无问询，避免打扰用户） |
 | **C 仍在用 + 需求重构** | 弹 `AskUserQuestion`：「① 并存切流量（推荐）/ ② 直接替换 / ③ 单写新版保留旧版」三选一 | **是** |
 
-★ **关键铁律**：归类为 B 的文件必须**在 Phase 0A.5 内完成 `git rm`**（命令端用 Bash 执行），**不可**留待开发执行步骤里"边写边删"——否则 Agent 可能误以为"旧文件仍存在所以可以叠加"，反而触发反模式。
+★ **关键铁律**：归类为 B 的文件必须**在 Phase 0A.5 内完成实际删除**（`vcs_mode=git` 用 `git rm`；`vcs_mode=none` 经 Python `Path.unlink()` 删除已确认的本地文件，并用文件存在性复核），**不可**留待开发执行步骤里"边写边删"——否则 Agent 可能误以为"旧文件仍存在所以可以叠加"，反而触发反模式。
 
 ★ **情形 C 的 `--unattended` 降级（无人值守不挂死）**：`/loop` 无人值守（带 `--unattended`）下情形 C **不弹 `AskUserQuestion`**——优先消费 PRD `autopilot_decisions` 死代码处置预声明；无预声明则取**保守默认「① 并存切流量」**（新版并存 → 切流量 → 旧版留待人工删除，最不破坏现网），并在终端 + autopilot #4 里程碑通知 WARN「死代码情形 C 走无人值守默认①，旧版删除待人工复核」，**绝不挂起等待**。仅交互式（无 `--unattended`）才弹三选一。
 

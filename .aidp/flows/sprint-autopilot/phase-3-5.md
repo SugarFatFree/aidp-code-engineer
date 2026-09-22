@@ -128,9 +128,12 @@ else
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
   CICD_BOUND="${CICD_PIPELINE_BOUND:-0}"   # ← memory/aidp-config.yaml cicd 段（provider + pipelines.<env>，同 cicd_watch.py 的真源）
   READY_CFG="${CLOUD_READY_URL:-}"         # ← PRD autopilot_decisions.deployment（按版本取）
-  if [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ "${CICD_BOUND:-0}" != "0" ]; then
+  # 无 Git 的 cloud 不能 push，也不能进入 3.2.1-deploy/probe 游标等待不存在的远端部署。
+  # VCS_MODE 从本围栏 tick flags 取回；未提供时以入口能力检测为准，不可把 none 默认成 git。
+  VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+  if [ "${VCS_MODE:-git}" = "git" ] && [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ "${CICD_BOUND:-0}" != "0" ]; then
     NEXT_PHASE_AFTER_DEV="3.2.1-deploy"
-  elif [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ -n "$READY_CFG" ]; then
+  elif [ "${VCS_MODE:-git}" = "git" ] && [ "${DEPLOY_MODE:-none}" = "cloud" ] && [ "${SKIP_DEPLOY:-0}" != "1" ] && [ -n "$READY_CFG" ]; then
     NEXT_PHASE_AFTER_DEV="3.2.1-probe"
   else
     NEXT_PHASE_AFTER_DEV="3.3-audit"

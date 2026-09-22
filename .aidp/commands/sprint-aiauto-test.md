@@ -42,6 +42,8 @@
 - AI 自动化测试可独立跑（研发验证 bug 修复 / 临时跑回归 / 手动触发 UAT 验证）
 - 部署失败不阻塞 sprint-autopilot 的 SQL/文档归档主流程
 
+**VCS 能力分流**：Phase 0 前以 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 读取 `vcs_mode=git|none`，身份由 `developer_identity(Path.cwd())` 解析。`none` 下不运行 Git fetch/pull、Git diff、commit/push；这些 Git-only 节点记 `unsupported:vcs-disabled`（非 passed），继续已有本地部署 URL 的探测与浏览器测试。没有实际部署就绪证据时不冒充已部署、不测旧服务：记本轮测试 skipped，保留本地测试准备产物与可恢复状态；不得因缺 Git 走 git-pull-conflict 熔断。`git` 沿用原流程。
+
 ## 命令语法
 
 ```

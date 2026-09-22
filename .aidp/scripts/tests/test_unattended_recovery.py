@@ -152,9 +152,21 @@ def test_clear_and_manual():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_vcs_disabled_unattended_flow_contract():
+    print("\n[R4] 无 Git 时跳过远端节点、继续本地开发")
+    base = REPO / ".aidp/flows/sprint-autopilot"
+    preflight = (base / "phase-0-3.md").read_text(encoding="utf-8")
+    push = (base / "phase-3-5b.md").read_text(encoding="utf-8")
+    cicd = (base / "phase-3-6.md").read_text(encoding="utf-8")
+    check("拉码无 Git 不冻结本地开发", "vcs_mode=none" in preflight and "不冻结" in preflight)
+    check("推送无 Git 记 skipped 且继续", "vcs_mode=none" in push and "unsupported:vcs-disabled" in push and "skipped" in push)
+    check("CICD 无 Git 不误判成功", "vcs_mode=none" in cicd and "unsupported:vcs-disabled" in cicd and "不得标记通过" in cicd)
+
+
 if __name__ == "__main__":
     test_fail_handle()
     test_env_reprobe()
     test_clear_and_manual()
+    test_vcs_disabled_unattended_flow_contract()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

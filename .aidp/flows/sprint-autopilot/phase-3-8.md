@@ -63,8 +63,15 @@
    #    `frontend_changed=true`，而 ceremony-gate 3e 是 `if/elif` 无 `else`：字段非 True 就一行
    #    都不输出 ⇒ 「前端改了却没部署」这类半截部署静默放行，正是本段要堵的东西。
    BUILD_BASE_COMMIT=$($BEB get push_base_ref --default "")
-   FE_CHANGED=$(git diff --name-only "${BUILD_BASE_COMMIT:-HEAD~1}"..HEAD 2>/dev/null \
-                  | grep -q '^code/frontend/' && echo true || echo false)
+   VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+   if [ "$VCS_MODE" = none ]; then
+     # X.0.0 的逐文件哈希清单含新增/修改/删除；缺证据时保守置 true，让 3e 要求部署覆盖度复核。
+     CHANGES_ROOT="memory/${TARGET_VERSION}"
+     FE_CHANGED=$(CHANGES_ROOT="$CHANGES_ROOT" python3 -c 'import json,os; from pathlib import Path; paths=list(Path(os.environ["CHANGES_ROOT"]).glob("*/sprints/sprint-*-local-changes.json")); print("true" if not paths or any(x["path"].startswith("code/frontend/") for p in paths for x in json.loads(p.read_text(encoding="utf-8"))) else "false")') || exit 1
+   else
+     FE_CHANGED=$(git diff --name-only "${BUILD_BASE_COMMIT:-HEAD~1}"..HEAD 2>/dev/null \
+                    | grep -q '^code/frontend/' && echo true || echo false)
+   fi
    $BEB set status dev_done finished_at @now frontend_changed "$FE_CHANGED"
    ```
 
@@ -85,12 +92,29 @@
    #   直接用裸 shell 变量会取空：`[ "" != "none" ]` 恒真 → mode=none 也被判成"将有浏览器测试"
    #   → 静态-only 路径下 autopilot 不做 R-4、#3 永不发、build 永不关闭。
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-   # 将有浏览器测试 = 有可测部署（deployment.mode != none 且未 --skip-deploy）；test-only 入口预设有可测部署
+   # 将有浏览器测试 = 有本 build 就绪的部署（test-only 可复用已核实的部署）；mode 字段本身不是就绪证据。
    # ★ `--skip-aiauto-test` 是【用户显式裁剪】，与 `--skip-deploy` 同档压成 0：
    #   它被 `sprint-autopilot.md` 与 phase-3-2 的 P0-0 总纲列为「唯一合法跳过 AI 测试」的授权来源，
    #   ⛔ 若此处不消费，该 flag 就只有解析器、零消费者 —— 用户显式要跳过的那件事照跑，
    #   chrome 不可用时还会被收尾门按 `--stage final` 索要 AI测试报告而卡死收工。
-   WILL_BROWSER_TEST=$( { [ "${SKIP_AIAUTO_TEST:-0}" != 1 ] && { [ "${ENTRY_MODE}" = "test-only" ] || { [ "${DEPLOY_MODE:-none}" != "none" ] && [ "${SKIP_DEPLOY:-0}" != 1 ]; }; }; } && echo 1 || echo 0 )   # test-only 恒有可测部署（上一行注释的承诺，此前漏在表达式外）
+   VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
+   DEPLOYED_AT=$($BE --version "$TARGET_VERSION" get last_deployed_at --default "")
+   HANDOFF_AT=$($BE --version "$TARGET_VERSION" get phase_beta_done_at --default "")
+   BUILD_STARTED=$($BE --version "$TARGET_VERSION" --build "$BUILD" get started_at --default "")
+   DEPLOY_READY=0
+   # test-only 可复用已有可测部署；开发路径必须看到本 build 开始后真实就绪的部署证据。
+   # vcs_mode=none + cloud 即便遗留旧 last_deployed_at 也不具备本轮部署能力。
+   if { [ "$VCS_MODE" = git ] || [ "${DEPLOY_MODE:-none}" = local ]; } \
+      && [ -n "$DEPLOYED_AT" ] && [ -n "$HANDOFF_AT" ]; then
+     if [ "${ENTRY_MODE:-}" = test-only ]; then
+       DEPLOY_READY=1
+     elif [ -n "$BUILD_STARTED" ] && [ "$(date -d "$DEPLOYED_AT" +%s 2>/dev/null || echo 0)" -ge "$(date -d "$BUILD_STARTED" +%s 2>/dev/null || echo 1)" ]; then
+       DEPLOY_READY=1
+     fi
+   fi
+   WILL_BROWSER_TEST=$( { [ "${SKIP_AIAUTO_TEST:-0}" != 1 ] && [ "${SKIP_DEPLOY:-0}" != 1 ] && { [ "${ENTRY_MODE:-}" = test-only ] || [ "${DEPLOY_MODE:-none}" != none ]; } && [ "$DEPLOY_READY" = 1 ]; } && echo 1 || echo 0 )
+   [ "$DEPLOY_READY" = 0 ] && echo "⚠️ 无可验证部署（vcs_mode=$VCS_MODE，mode=${DEPLOY_MODE:-none}）：浏览器测试不交接旧服务，报告如实标记未执行"
    # ★ 落盘供下游收尾门（phase-3-9.md）读回 —— 它据此定 GATE_STAGE 与期望通知集
    python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot WILL_BROWSER_TEST "$WILL_BROWSER_TEST"
    # ★ 同时落 baseline 版本级真源：3-8/3-9 出口都写 `3.4-finish`，从该游标断点续跑的 tick

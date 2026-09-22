@@ -90,7 +90,7 @@
    - 后端 CORS / 跳转 URL / 接口设计.md / 数据库 / Redis key 前缀（如复用 base 作为命名空间）
    - Nginx / Docker / K8s
 4. 如某消费者点本次确实无需联动 → 在「已联动消费者点」列以括号注明"无需联动 — 原因 XXX"
-5. 漏改的消费者点常导致下次"双前缀 404 / SSE 走错地址 / nginx 反代失效"等级联事故 —— 提交前用 `git diff --name-only` 与事实清单「路径消费者点」表对账，缺项要么补改要么注明"无需联动"
+5. 漏改的消费者点常导致下次"双前缀 404 / SSE 走错地址 / nginx 反代失效"等级联事故 —— `vcs_mode=git` 提交前用 `git diff --name-only`；`vcs_mode=none` 用 X.0.0 的本地 sha256 变更清单与事实清单「路径消费者点」表对账，缺项要么补改要么注明"无需联动"
 6. **★ 消费者点集合是"会变大"的、不止 base 改动才动本表**：Phase 1.3 Step 1「请求通道单一判据 + 消费者点登记门」在**新增请求通道**（新 composable / 工具 / `fetch`·`EventSource`·`WebSocket`）时就要往「路径消费者点」表**补登记新行**——本 Step X.6 管的是 base/context-path **改动时的联动**，二者互补。集合悄悄变大而无人登记，会让下次 base 变更漏掉新通道（双前缀 404 温床）。
 
 #### Step X.7：★ 维护配置项清单
@@ -104,7 +104,7 @@
 - **禁止**：① 在 .md 复抄整个配置文件（再大也别贴）；② 维护 key → 示例值的全量大表（已被代码文件本身覆盖）；③ 创建 `.env.example` / `application.example.yml` 等示例副本文件（真实文件 + 差异片段已足够，示例副本会双信源歧义）
 - **★ 分层也约束两份 .md 之间（部署流程 vs 配置项清单，Step X.8 联动）**：约定 25「同一份信息只在一处维护」不仅管"配置文件 vs .md"，也管 `部署流程/部署流程.md` 与 `配置文件/增量/配置项清单.md` **两份 .md 之间不得双写配置项内容**——**配置项明细/后果/敏感项加固归本清单**；**部署流程只声明"是否需要改 + 指向本清单"**（全部有默认值 → 一句"默认即可，见清单"；确有必填 → 只列 key 名、后果归清单）。分工口诀：**流程文档讲怎么做，清单讲配什么**。
 
-**触发条件**：本 Sprint 改动了任一配置文件（git diff 命中以下任一）**或新增/修改了代码内动态配置注入**：
+**触发条件**：本 Sprint 改动了任一配置文件（`vcs_mode=git` 据 git diff；`vcs_mode=none` 据 `sprint-dev.md` 开发前 `sprint-{NNN}-local-before.json` 与 X.0.0 的 `sprint-{NNN}-local-changes.json` 逐文件 sha256 前后态，按 `path` 过滤以下模式，含新增/删除）**或新增/修改了代码内动态配置注入**。无 Git 时清单缺失是 `evidence-missing`，不得将空 Git diff 解释为「无需更新配置项清单」：
 - 后端 Spring：`code/**/application*.{yml,yaml,properties}` / `code/**/bootstrap*.{yml,yaml,properties}`
 - 后端其他：`code/**/{config,settings}.{json,toml,ini,py}`
 - 前端：`code/**/.env*` / `code/**/vite.config.*` 中可配置常量段
@@ -152,7 +152,7 @@ ec:
 **首次创建 / 增量更新（同一套动作，幂等）**：
 
 0. **先建目录**：`mkdir -p docs/deployment/{version}/配置文件/增量`
-1. 取本 Sprint 的配置 diff（`git diff` 命中「触发条件」列出的文件 + 代码内动态配置注入新增的 key）
+1. 取本 Sprint 的配置变更（`vcs_mode=git` 用 `git diff`；`vcs_mode=none` 从 `memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json` 按上方配置路径过滤，逐条用 `before_sha256` / `after_sha256` 证实新增、修改、删除，再与当前文件内容及开发前快照对应文件的旧内容/本 Sprint 逐文件改动记录核对 key 级增删；快照只有哈希、不含旧内容，无法还原旧 key 时记 `evidence-missing` 并人工核对旧文件或按本版全部配置项保守审计，不得臆造删除项）+ 代码内动态配置注入新增的 key
 2. 新增项 → 追加进「1. 新增配置」对应分组代码块；删除项 → 追加进「2. 删除配置」，**按上面的缩进粒度写**
 3. nginx/compose/k8s 有改动 → 追加进「3. 运行时配置文件变更」（片段 + 位置 + 生效动作）
 4. **敏感项不另起段**，在新增代码块里对应行标 `# 必填·敏感`（发布期由 `全量/00_索引.md` 汇总成上线 checklist）

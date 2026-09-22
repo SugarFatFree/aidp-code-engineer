@@ -31,7 +31,7 @@ python3 {{AIDP_HOME}}/scripts/check_testdata_prereq.py --version "$TARGET_VERSIO
 
 | 类别 | 就绪项 | 必需性 | 检测位置（单一信源）| 缺失动作 |
 |------|-------|--------|------------------|---------|
-| 工具 | git 仓库 + 可拉码 | 必需 | 0.1 拉码 | 非 git 仓库 → 报错退出 |
+| 工具 | git 仓库 + 可拉码 | 仅 `vcs_mode=git` 必需 | 0.1 拉码 | `vcs_mode=none` → Git 拉码节点记 `skipped/unsupported:vcs-disabled`，继续本地开发；不得报错退出 |
 | 工具 | 里程碑通知渠道（`memory/aidp-config.yaml` 的 `notify` 段）| 可降级 | 0.0 Step 1-2 | 未配置渠道 → `NOTIFY_ENABLED=0` 静默跳过播报（不阻塞、不弹窗）|
 | 工具 | **chrome-devtools-mcp（npm 全局包）** | **chrome-mcp 时必需** | **0.5.5 安装预检** | 未装 → **就地打印安装命令**（`npm i chrome-devtools-mcp@latest -g`；远程再 `claude mcp add … --scope project`）让用户挂测试 loop 前装好 |
 | 环境 | chrome 连接（本机 CLI / 远程 `.mcp.json`）| chrome-mcp 时必需 | 0.0 Step 5 + 0.5.5 | 远程缺 IP → 收集写 `.mcp.json`；`/loop` 中仍缺 → 留给 `/sprint-aiauto-test` 收集 |

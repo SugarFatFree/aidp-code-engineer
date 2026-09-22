@@ -52,6 +52,8 @@ fi
 
 ### 0.1 拉取远端全部分支 + 当前分支最新代码 + 脏树决策门
 
+> **`vcs_mode=none` 前置出口**：先消费命令入口经 `{{AIDP_HOME}}/scripts/vcs.py` 检测的模式；无 Git 时整段 fetch/pull/脏树门跳过并记录 `status=skipped, reason=unsupported:vcs-disabled`，直接继续 Phase 0.3 的本地 PRD 扫描。不运行下方 Bash 块，不把 Git 命令失败当 `dirty-tree` / `git-pull-conflict`，不冻结本地开发。`git` 时下方原流程不变。
+
 > 排在 0.0 之后：进入本节时 **通知渠道就绪已打印**（0.0 完成），故脏树**不静默 `exit 1` 击穿前置交互**——非 PRD 改动走下方「脏树决策门」（交互三选一 / `/loop` 安全默认）。
 
 ★ **为什么仍要先拉码**：定时执行（`/loop` 唤起 / OS cron）时，产品可能刚 push 了新 PRD 到 origin；命令端不先拉则本地 git log 仍是旧版本，Phase 1 baseline 检测会误判"PRD 无变化"漏跑。**先 `git fetch --all` 拉全部分支**（产品/其他成员可能把新 PRD 或 Sprint 推到非当前分支，全分支 fetch 才不漏；也让后续版本扫描看得到所有分支的 close 记录），**再对当前分支 `git pull --rebase` 取最新代码**。

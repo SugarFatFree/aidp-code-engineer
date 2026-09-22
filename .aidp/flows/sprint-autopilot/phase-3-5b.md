@@ -16,6 +16,8 @@
 
 2.5 **★ 部署触发前置 → 部署前安全网 → 部署动作（任何开发路径完成后都从这里执行：`/sprint-batch`、逐 tick 单 Sprint 全部关闭、incremental、自动修复复测轮；⛔ 不属于 `/sprint-batch` 步骤）**
 
+   > **`vcs_mode=none` 独立出口（优先于下方 Git 推送围栏）**：开发/测试/Sprint 关闭成果仍留在本地。对提交、推送、推送分类、远端 CICD 各节点写当前 build `steps[]` 为 `status=skipped`、`reason=unsupported:vcs-disabled`，baseline 同步保留未推送事实；不执行 `git status/add/commit/push`，不伪造 `push_commit` / `push_at` / `cicd_skipped=true`（该字段只表示 Git push 后按内容分类跳过 CICD）。`mode=local` 不经过 Git/CICD，必须探本地服务真实就绪（启动命令成功不等于就绪）；就绪后按下方「部署完成 → 落盘交接信号」写 `last_deployed_at` + `phase_beta_done_at` 并记录本地探活 URL/结果，未就绪则不得写证据或交接测试；依赖 Git push 的 cloud 路径只记未部署，不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d 部署成功通知，不启动对旧代码的浏览器测试。随后继续 Phase 3.3 本地审计、Phase 3.4 报告和收尾；不得因跳过 Git 节点冻结本地开发。`git` 时执行下方原围栏。
+
    - **★ 部署触发前置：开发成果提交 + 分类 + 推送（确定性步骤，绝不可省）**：dev 循环 /（incremental）增量改动完成后、执行下方「部署动作」**之前**，必须把本轮改动提交并推到 origin。本步以 `git status --porcelain` 为准兜底，不依赖子命令是否已提交：
      1. **授权即入口**：用户执行 `/sprint-autopilot` 即授权自动 `git add`+`commit`+`push` 到本轮解析出的 **DEV_BRANCH**。只 push DEV_BRANCH；按 Phase 0.4 的 `PENDING_MERGE_TO` 对齐部署源；绝不打 tag。
      2. **确定性提交**：在提交前先确定本次 push 的分类基准并写入当前 build，再决定是否提交：

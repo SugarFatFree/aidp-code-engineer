@@ -13,6 +13,8 @@
 
 ## 前置流程
 
+**VCS 能力分流**：从 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 读取 `vcs_mode=git|none`，用 `developer_identity(Path.cwd())` 取得 `{user}`；向 `code-verification-loop` 验收子 Agent 透传模式。`vcs_mode=none` 时继续本地用例、代码静态检查与验收，Git-only diff/commit/push/CICD 检查逐项记 `unsupported:vcs-disabled`（不是 passed，也不折算为全绿）；不能用 Git 差异判定测试范围时以 Sprint 计划与 `activeContext.md` 的本地文件清单为依据。Git 模式保持原有验收语义。
+
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`

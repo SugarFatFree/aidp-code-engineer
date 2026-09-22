@@ -13,6 +13,8 @@
 
 ## 前置流程
 
+**VCS 能力分流**：`{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 给出 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 给出 `{user}`。`vcs_mode=none` 时 Step 1–5 本地验收结论、走查、Sprint 归档与 memory 更新仍可完成；缺 Git 差异时使用 `activeContext.md` 的涉及文件清单作为走查范围。Git-only commit/push/发布交接标 `unsupported:vcs-disabled`，不是 passed；Sprint 本地归档完成不等于版本发布完成，也不得提示已推送或已发布。Git 模式沿用原流程。
+
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
 2. **{user}** ← `git config user.name`

@@ -7,6 +7,7 @@
 · 命令文档中脚手架调用可被 scaffold.py 的 argparse 接受（位置参数只有 root）；
 · 发布欠账台账 / 版本落点门 fail-closed / 命令↔SKILL 调用契约 / SQL 两轨隔离 / SKILL 脚本委派接线。
 """
+import json
 import os
 import re
 import subprocess
@@ -160,6 +161,74 @@ def test_skill_invocation_contracts():
               "flow-qr-dispatch.md" in t and "原样跑全部脚本" in t)
 
 
+def test_vcs_mode_command_contracts():
+    print("\n[vcs_mode 命令入口与无 Git 语义]")
+    for name in ("sprint-dev", "sprint-test", "sprint-autopilot", "sprint-aiauto-test", "sprint-close", "version"):
+        text = (REPO / f".aidp/commands/{name}.md").read_text(encoding="utf-8")
+        check(f"{name} 消费 vcs_mode=git|none", "vcs_mode" in text and "git|none" in text)
+        check(f"{name} 无 Git 留痕 unsupported:vcs-disabled", "unsupported:vcs-disabled" in text)
+    version = (REPO / ".aidp/commands/version.md").read_text(encoding="utf-8")
+    check("version 非 Git 发布禁止宣布 released", "vcs_mode=none" in version and "不得宣布已发布" in version)
+    close = (REPO / ".aidp/commands/sprint-close.md").read_text(encoding="utf-8")
+    check("close 非 Git 本地归档允许完成但发布不通过", "本地归档" in close and "发布" in close)
+
+
+def test_vcs_disabled_downstream_contracts():
+    print("\n[无 Git 下游门禁与本地变更证据]")
+    auto = REPO / ".aidp/flows/sprint-autopilot"
+    dev = REPO / ".aidp/flows/sprint-dev"
+    def flow(path):
+        return path.read_text(encoding="utf-8")
+
+    p09 = flow(auto / "phase-0-9.md")
+    p35 = flow(auto / "phase-3-5.md")
+    p36 = flow(auto / "phase-3-6.md")
+    p38 = flow(auto / "phase-3-8.md")
+    p39 = flow(auto / "phase-3-9.md")
+    p1 = flow(dev / "postdev-writeback-1.md")
+    p2 = flow(dev / "postdev-writeback-2.md")
+    command = flow(REPO / ".aidp/commands/sprint-dev.md")
+    version = flow(REPO / ".aidp/commands/version.md")
+    check("0.7 Git 必需性按 vcs_mode 分支", "仅 `vcs_mode=git`" in p09 and "不得报错退出" in p09)
+    check("3.2 云游标由 Git 能力约束", '"${VCS_MODE:-git}" = "git"' in p35)
+    check("3.2.1 保留无 Git 本地部署就绪", "mode=local" in p36 and "本地就绪" in p36)
+    check("3.4 无部署不委派浏览器", "DEPLOY_READY" in p38 and "vcs_mode=none" in p38)
+    check("3.4 前端覆盖度消费本地变更证据", "CHANGES_ROOT" in p38 and 'startswith("code/frontend/")' in p38)
+    check("3.4 门禁无部署不等待测试", "DEPLOY_READY" in p39 and "vcs_mode=none" in p39)
+    check("finalize-docs 未知发布状态不改写", "--finalize-docs" in version and "无法核实已发布状态" in version)
+    check("死代码无 Git 使用文件删除", "vcs_mode=none" in command and "Path.unlink" in command)
+    check("开发入口留代码快照", "-local-before.json" in command)
+    check("回写阶段消费本地哈希变更", "-local-before.json" in p1 and "sha256" in p1)
+    check("配置清单消费本地哈希变更", "-local-before.json" in p2 and "sha256" in p2)
+
+
+def test_local_file_change_evidence():
+    print("\n[无 Git 开发前后文件快照实跑]")
+    command = (REPO / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
+    flow = (REPO / ".aidp/flows/sprint-dev/postdev-writeback-1.md").read_text(encoding="utf-8")
+    capture = re.search(r'```bash\n(SNAP="memory/\{version\}/\{user\}/sprints/sprint-\{NNN\}-local-before\.json".*?\nfi)\n```', command, re.S)
+    compare = re.search(r'```bash\n(SNAP="memory/\{version\}/\{user\}/sprints/sprint-\{NNN\}-local-before\.json".*?\nPY)\n\s*```', flow, re.S)
+    check("快照与比较脚本可提取", bool(capture and compare))
+    if not capture or not compare:
+        return
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "code").mkdir()
+        (root / "code/changed.py").write_text("before", encoding="utf-8")
+        (root / "code/removed.py").write_text("remove", encoding="utf-8")
+        for script in (capture.group(1), compare.group(1)):
+            if script == compare.group(1):
+                (root / "code/changed.py").write_text("after", encoding="utf-8")
+                (root / "code/removed.py").unlink()
+                (root / "code/added.py").write_text("add", encoding="utf-8")
+            script = script.replace("{version}", "V1.0.0").replace("{user}", "tester").replace("{NNN}", "001")
+            r = subprocess.run(["bash", "-e", "-c", script], cwd=td, capture_output=True, text=True)
+            check("本地快照脚本可执行" if script.startswith("SNAP=") and "if [ ! -f" in script else "本地差异脚本可执行", r.returncode == 0)
+        out = root / "memory/V1.0.0/tester/sprints/sprint-001-local-changes.json"
+        changes = json.loads(out.read_text(encoding="utf-8")) if out.exists() else []
+        check("新增修改删除均入清单", {x["kind"] for x in changes} == {"added", "modified", "deleted"})
+
+
 def test_sql_isolation_two_track():
     print("\n[SQL 版本隔离门识别两轨布局]")
     sc = REPO / ".aidp/skills/dev-logic-architect/scripts/check_sql_version_isolation.py"
@@ -209,6 +278,9 @@ def main():
     test_release_debt_ledger()
     test_released_version_gate_fail_closed()
     test_skill_invocation_contracts()
+    test_vcs_mode_command_contracts()
+    test_vcs_disabled_downstream_contracts()
+    test_local_file_change_evidence()
     test_sql_isolation_two_track()
     test_skill_ref_freshness_delegation()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")

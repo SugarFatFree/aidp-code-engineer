@@ -23,6 +23,16 @@
    #    → 3 tick 后按 handoff-exhausted 冻结版本。详见 rationale.md「收尾门的跨分片变量」。
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    V="${TARGET_VERSION}"; B="${BUILD}"; BN="${BUILD_SEQ}"
+   # 从 3.4-finish 续跑也要读版本级决定；无 Git 云部署不等待一条根本不会产生的测试交接。
+   VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+   WILL_BROWSER_TEST=$($BE --version "$V" get will_browser_test --default 0)
+   DEPLOY_READY=1
+   if [ "$VCS_MODE" = none ] && [ "${DEPLOY_MODE:-none}" = cloud ]; then DEPLOY_READY=0; fi
+   if [ "$DEPLOY_READY" = 0 ]; then
+     WILL_BROWSER_TEST=0
+     $BE --version "$V" set will_browser_test 0
+     echo "⚠️ vcs_mode=none 且云部署未执行：收尾门按静态-only 收口，不等待浏览器测试或 #1d"
+   fi
    RPT_AI="docs/reports/${V}/AI执行报告"; RPT_TEST="docs/reports/${V}/AI测试报告"
    FAIL=0; ok(){ echo "  ✅ $1"; }; bad(){ echo "  ❌ $1 — $2"; FAIL=1; }
 
@@ -48,7 +58,7 @@
    fi
    # ★ 测试链路活跃 = 缺失计数的恢复信号：就地清零（跨复测 build 不累加）
    [ "$TEST_ALIVE" = "1" ] && { $BE --version "$V" del test_loop_missing_streak >/dev/null 2>&1 || true; }
-   if [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; then
+   if [ "${WILL_BROWSER_TEST:-0}" = "1" ] && { [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; }; then
      GATE_STAGE=skeleton; else GATE_STAGE=final; fi
    # ★★ 根因分诊 —— **必须先于 ceremony 闸**（理据见 rationale.md「测试链路缺失为何不能交给收尾门」）：
    #    本版需浏览器实测（WILL_BROWSER_TEST=1）却检测不到测试链路活跃时，上一行判 final，而 final 的
@@ -127,6 +137,8 @@
    : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"
    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
    V="${TARGET_VERSION}"; B="${BUILD}"; BN="${BUILD_SEQ}"
+   # 同一版本级真源；不能在新 Bash 围栏重新拾取旧 tick 的 WILL_BROWSER_TEST=1。
+   WILL_BROWSER_TEST=$($BE --version "$V" get will_browser_test --default 0)
    GATE="${GATE:-{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py}"
    # ⛔⛔ **GATE_STAGE 必须在本围栏【重新推导】**——它在上一个围栏（本片 stage 分流处）赋值，
    #    而本围栏开头那行注释说得很清楚：新围栏 = 新 Bash 调用、上个围栏的变量一律不存活。
@@ -146,7 +158,7 @@
      echo "   ⛔ 不计入 test_loop_missing_streak（那会把脚本故障误诊成运维少挂了一条 loop），让位本 tick"
      exit 0
    fi
-   if [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; then
+   if [ "${WILL_BROWSER_TEST:-0}" = "1" ] && { [ -n "$DELEGATED" ] || [ "$TEST_ALIVE" = "1" ]; }; then
      GATE_STAGE=skeleton; else GATE_STAGE=final; fi
    RPT_AI="docs/reports/${V}/AI执行报告"; RPT_TEST="docs/reports/${V}/AI测试报告"
    GATE="{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py"

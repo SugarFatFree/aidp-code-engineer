@@ -11,6 +11,8 @@
 
 ### 3.2.1 CICD 编排 + 部署就绪探针（`cicd-provider` 触发，或正式代码 push 触发）
 
+> **`vcs_mode=none` 优先出口**：仅跳过依赖 push commit 的 cloud CICD 触发/监听与远端就绪探针，记 `status=skipped, reason=unsupported:vcs-disabled`，不得标记通过，也不得借 `cicd_skipped=true` 冒充「已成功推送且无需流水线」。`mode=cloud` 不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d、不等待旧部署；转 Phase 3.3/3.4 继续本地审计和报告。**`mode=local` 的本地就绪不依赖 Git**：依 `phase-3-5b.md` 先探实际服务/端口，未就绪不得写证据；本地就绪后写 `last_deployed_at` + `phase_beta_done_at`，保留测试交接与可验证部署证据，不能把本地部署同远端 CICD 一起跳过。不因 Git 能力缺失冻结本地开发。仅 `git` 模式走下方分类缺失 fail-closed 与推送绑定逻辑。
+
 > **★ 进入本 Phase 前置判定**：读取当前 build 的 `change_classification`（由 Phase 3.2 push 前分类写入）。`cicd_skipped=true` 且 `classification_error=false` 时，本 Phase **整段跳过**：push 已成功校验，直接记录 push 完成，不触发/监听远端 CICD、不等待部署、不跑就绪探针，也不读取远端状态反推分类。分类记录缺失、脚本失败或 `classification_error=true` 时一律按正式代码路径进入本 Phase（fail-closed）。
 > **适用条件**：分类允许监听，且项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none`、`cicd.pipelines.<env>` 已配、提供方 CLI/凭据可用）。`cicd-provider` 模式可主动触发（`cicd_watch.py --mode trigger`，要求该流水线在平台侧允许手动/API 触发，如 GitHub Actions 的 `workflow_dispatch`）；`git-push`/`ci-pipeline` 由 push/外部自动触发后只检测并接管运行。两类 trigger 的失败监控、最多 `cicd.max_retries`（默认 3）次重试和就绪探针相同。
 > **不适用（回落轻量路径）**：分类明确跳过，或 `cicd.provider=none`、未配置 `cicd.pipelines`、提供方 CLI/凭据不可用（`cicd_watch.py` 退出码 3）、`manual-script`、`mode=local`、`mode=none`。分类明确跳过按上条直接完成；其余按 Phase 3.2 轻量分支处理。

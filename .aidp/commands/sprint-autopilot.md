@@ -31,6 +31,8 @@
 > **全部 flag 落 0，含 `--unattended`** → `LOOP_UNATTENDED=0` + `HAS_WAKE_SOURCE=0` →
 > Phase 1 落到「输出引导文案 → 退出」，**每 tick 刷一屏引导、永不开工**。
 
+**VCS 能力分流（Phase 0.1 前先执行）**：由 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 得到 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 提供身份；把模式传给 Phase 0/2/3 与 `/sprint-dev`、`/sprint-test`、`/sprint-close`、`/sprint-aiauto-test`。`none` 下跳过 fetch/pull、Git 差异/commit/push 与以推送为前提的 CICD/云部署，逐节点在当前 build `steps[]` 和 baseline 记录 `status=skipped`、`reason=unsupported:vcs-disabled`（不是 passed），继续本地规划、Sprint 开发、测试、归档与 AI执行报告。无 Git 不作为 `dirty-tree` 或 `git-pull-conflict` 冻结理由；不可写 `last_deployed_at`、`internal_released_at` 或声称发布/部署成功。需要部署后浏览器实测时如实标记未部署并跳过，不对未部署的旧服务测试。Git 模式的推送分类、CICD 与仪式门保持原样；能力缺失不豁免本地仪式产物。
+
 ## 命令语法
 
 ```

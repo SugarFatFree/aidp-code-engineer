@@ -28,6 +28,8 @@
 
 ## 前置流程
 
+**VCS 能力门（先于补跑短路和 Step 1）**：调用 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 取得 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 取得 `{user}`。`git` 保持原规划/发布流程；`none` 仍允许本地版本规划；`--finalize-docs` 只有能从可信本地发布台账核实未发布状态才允许本地整理，否则在任何文档改写前 fail-closed 并报告「无法核实已发布状态」，不得拿缺 tag 当未发布。其中 Git-only tag 核验、commit/push 均记 `unsupported:vcs-disabled`（非 passed），不得据此认定已发布。任何正式发布路径（含 `--release`、普通情况 B-3、`--no-tag` 准发布）的 tag/分支/push 在 `vcs_mode=none` 下一律 fail-closed：发布操作开始前退出，明确报告 `unsupported:vcs-disabled`，不写 `internal_released_at` 或发布完成标记、不得宣布已发布。`--rebuild-baseline` 在无 Git 时只可处理不依赖 tag 的未发布本地基线；无法确认是否已发布则停止，不改写可能已发布的产物。此门不改变 Git 模式的发布语义。
+
 1. **{version}** ← 命令参数（显式提供，不从项目记忆文件读取）
 2. **{user}** ← `git config user.name`
 3. 校验 {version} 格式；不合法时按 `docs/init/06_版本与用户目录约定.md` 第 6 节话术重问。
@@ -56,7 +58,7 @@
 > 用于**发布时 Step 3.3.7 / 3.3.10 / 3.3.11 / 3.3.13 因流程脆弱触发失败兜底被跳过**后，一键事后补齐——不必重跑整个 `/version`、不重新打 tag。当本次调用带 `--finalize-docs` 时**在 Step 1 模式决议之前短路**：
 
 - **前置**：{version} 必须**已存在版本规划产物**（`docs/design/detail/{version}/` 或 `docs/plans/{version}/` 存在）；否则报错「{version} 尚未规划，请先 `/version {version}` 规划/发布」并退出。
-- **★ 已发布版本保护**：{version} 已打 tag 时同 `--rebuild-baseline` 的「已发布版本保护」——交互式先过改写授权门、无人值守拒绝执行并登记欠账；获授权后各步以 tag 对应代码为事实源（`git worktree add` 取 tag 工作树）。
+- **★ 已发布版本保护**：`vcs_mode=none` 时，在读取欠账或改写任何文件之前先核对项目记忆中的版本状态与 baseline `internal_released_at`、本地发布台账；任一显示已发布或互相矛盾、缺失而无法核实已发布状态 → fail-closed 退出并报告 `unsupported:vcs-disabled`，不执行五步、不勾销欠账（不能用无 tag 推断未发布）。仅有明确一致的「未发布」本地状态才可做本地文档整理，Git 提交/推送记 skipped。`vcs_mode=git` 时已打 tag 同 `--rebuild-baseline` 的「已发布版本保护」——交互式先过改写授权门、无人值守拒绝执行并登记欠账；获授权后各步以 tag 对应代码为事实源（`git worktree add` 取 tag 工作树）。
 - **只跑五步、按序**：① **Step 3.3.9.5**（收口开发期变更台账 —— ⛔ 必须先于 3.3.10，否则台账内容赶不上主文档合并）② **Step 3.3.7**（部署产物整理完善——A/B/C 三部分，**B/C 独立强制执行**，见其解耦说明）③ **Step 3.3.10**（版本规划文档收敛——历史归一 + 取代链消解 + 族级/项级粒度合并）④ **Step 3.3.11**（全量详细设计重算——**默认变更范围增量**〔只重算动过的专题、其余前滚，见 `release-6.md`〕，可叠 `--full-rebuild` 强制全量；带 `--no-tag` 时同正式发布口径跳过，纯 `--finalize-docs` 视为正式补跑、执行）⑤ **Step 3.3.13**（代码内版本标识对齐复核——补跑场景下**只复核 + 更新台账状态**，不自动改代码〔改代码须回正式发布的交互式确认门〕）。**跳过**其余全部（Step 0 ~ 3.3.5、Step 3.3.8/3.3.9/3.3.12bis、Step 3.4.x 发布提交/打 tag）。
 - **★ 欠账驱动**：开始先读 `docs/audit/{version}/发布欠账.md`（若存在）——**优先补齐其中登记的跳过项**（按「精确定位」逐条处理），补齐成功即 `release_debt.py resolve` 勾销对应步骤；台账不存在则对四步全量重跑一遍（幂等：已整理干净的族/产物 no-op、不重复动）。
 - **提交**：本短路**自行 `git add` 四步产物 + commit**（消息 `docs({version}): finalize-docs 补齐发布期整理`）+ `git push` 本分支，但**绝不打 tag、不推送 tag、不建/不推版本分支**（tag 与大写版本分支都仍由正式 `/version {version}` 管控）。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。

@@ -1286,6 +1286,22 @@ def test_nested_plugin_skill_conflicts_fail_closed():
 
     root = _mkrepo(markers=(".codex",))
     try:
+        (root / ".aidp/skills/demo-skill/SKILL.md").write_text(
+            "---\nname: renamed-public-skill\n---\n", encoding="utf-8")
+        plugin_skill = _nested_plugin(root, "demo-skill", "group/a", "plugin-contract")
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        error = out.get("error", "")
+        check("公共 SKILL 目录名与插件 namespace 重名 → 写入前 fail closed",
+              rc == 2 and "demo-skill" in error
+              and (root / ".aidp/skills/demo-skill").as_posix() in error
+              and plugin_skill.parents[2].as_posix() in error
+              and not (root / ".agents").exists()
+              and not (root / ".codex/skills").exists())
+    finally:
+        _rm(root)
+
+    root = _mkrepo(markers=(".codex",))
+    try:
         _nested_plugin(root, "nested-plugin", "group/renamed-dir", "demo-skill")
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
         check("嵌套插件 SKILL 与公共 SKILL 重名 → fail closed",

@@ -1001,11 +1001,18 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     plugin_skills = _plugin_skill_dirs(plugins) if ({"codex", "dsh"} & set(agents)) else {}
     public_skill_dirs = _base_skill_dirs(root)
     public_skills = _declared_skill_names(public_skill_dirs)
+    plugins_with_skills = {plugin.name: plugin for plugin in plugins
+                           if (plugin / "skills").is_dir()}
+    path_clash = sorted(set(public_skill_dirs) & set(plugins_with_skills))
+    if path_clash:
+        details = "; ".join(
+            f"{name}：{public_skill_dirs[name]}；{plugins_with_skills[name]}"
+            for name in path_clash)
+        raise SystemExit(f"[agent_sync] 共享 SKILL namespace 冲突：{details}")
     skill_clash = sorted(public_skills & set(plugin_skills))
-    namespace_clash = sorted(public_skills & {plugin.name for plugin in plugins
-                                               if (plugin / "skills").is_dir()})
-    if skill_clash or namespace_clash:
-        names = sorted(set(skill_clash) | set(namespace_clash))
+    declared_namespace_clash = sorted(public_skills & set(plugins_with_skills))
+    if skill_clash or declared_namespace_clash:
+        names = sorted(set(skill_clash) | set(declared_namespace_clash))
         raise SystemExit(f"[agent_sync] 插件 SKILL 与公共 SKILL 同名冲突：{', '.join(names)}")
     clash = _name_conflicts(root, plugin_skills)
     if clash:

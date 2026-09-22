@@ -808,11 +808,28 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
 
 def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
     readme = root / "README.md"
+    home = ".claude/aidp" if list(agents) == ["claude"] else ".agents/aidp"
     if not readme.exists():
-        home = ".claude/aidp" if list(agents) == ["claude"] else ".agents/aidp"
         body = L.render((L.ASSETS / "root/README.md.tpl").read_text(encoding="utf-8"), ctx)
         readme.write_text(body.replace("{{AIDP_HOME}}", home), encoding="utf-8")
         rep.act("create", "README.md")
+    else:
+        try:
+            original = readme.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            rep.warn("README.md 不是 UTF-8，保留原文件，跳过运行路径归一")
+        else:
+            refreshed = original
+            for old_home in (".aidp", ".claude/aidp", ".agents/aidp"):
+                if old_home != home:
+                    refreshed = refreshed.replace(
+                        f"python3 {old_home}/scripts/aidp_scheduler.py",
+                        f"python3 {home}/scripts/aidp_scheduler.py")
+                    refreshed = refreshed.replace(f"├── {old_home}/", f"├── {home}/")
+            if refreshed != original:
+                bk.save("README.md")
+                readme.write_text(refreshed, encoding="utf-8")
+                rep.act("update", "README.md", "仅归一调度命令与运行目录示例")
     env = root / "env/.env"
     if not env.exists():
         env.parent.mkdir(parents=True, exist_ok=True)

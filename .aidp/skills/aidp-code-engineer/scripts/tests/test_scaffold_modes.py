@@ -1330,10 +1330,31 @@ class DeliveredFilesTest(unittest.TestCase):
                 if "codex" in agents:
                     self.assertIn("$sprint-dev", readme)
 
+    def test_switch_to_shared_keeps_readme_custom_content(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude")
+            readme = root / "README.md"
+            note = "\n## 项目自定义\n保留 .claude/aidp/ 作为历史说明。\n"
+            readme.write_text(readme.read_text(encoding="utf-8") + note, encoding="utf-8")
+            scaffold(root, "--mode", "upgrade", "--agent", "codex")
+            text = readme.read_text(encoding="utf-8")
+            self.assertIn("python3 .agents/aidp/scripts/aidp_scheduler.py install", text)
+            self.assertIn("├── .agents/aidp/", text)
+            self.assertNotIn("python3 .claude/aidp/scripts/aidp_scheduler.py", text)
+            self.assertIn(note, text)
+
     def test_switch_to_claude_renders_docs_to_target_home(self):
         with H.TempRepo() as root:
             scaffold(root, "--agent", "codex")
+            readme = root / "README.md"
+            readme.write_text(readme.read_text(encoding="utf-8") + "\n## 项目自定义\n保留这段说明。\n",
+                              encoding="utf-8")
             scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            root_doc = readme.read_text(encoding="utf-8")
+            self.assertIn("python3 .claude/aidp/scripts/aidp_scheduler.py install", root_doc)
+            self.assertIn("├── .claude/aidp/", root_doc)
+            self.assertNotIn("python3 .agents/aidp/scripts/aidp_scheduler.py", root_doc)
+            self.assertIn("保留这段说明。", root_doc)
             self.assertFalse((root / ".agents/aidp").exists())
             doc = (root / "docs/init/README.md").read_text(encoding="utf-8")
             self.assertRegex(doc, r"(?m)^├── \.claude/aidp/\s+#")

@@ -168,14 +168,8 @@ else
   fi
 fi
 
-# 前置检查走完且工作区干净 → 清零前置熔断计数（落地「特别说明」的"成功一次自动清零/解冻"）
-# ⛔ **必须按 reason 分辨作用域，不能无条件清**：本行位于 0.1，每 tick 必跑；而**同一个**
-#    `preflight_fail_streak` 还被 0.1 之后的三个失败点复用（0.3.1 PRD root 缺失 /
-#    0.4 遗留 Sprint 收口失败 / 0.7 收尾钢门）。无条件清零 ⇒ 那三类失败每 tick 都被重置回 0、
-#    **永远达不到阈值 3**：既不冻结、也不停，只是每 10 分钟刷一次 #4 通知，无限刷屏且永不推进
-#    （工作区干净正是 7×24 常态，所以这条 100% 成立）。
-#    正确口径：只清**本段自己**产生的那些 reason（0.1 作用域）；其余 reason 说明失败发生在
-#    后续步骤，本段无权判定它是否已恢复，留给各自的成功路径去清。
+# 工作区恢复后只清 0.1 自己的失败原因；其它前置熔断由各自成功路径清零。
+# ⛔ 不按 reason 隔离会让后续失败计数每 tick 被重置，熔断永不达阈；根因见 rationale.md。
 PF_REASON=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get preflight_fail_reason --default "")
 case "$PF_REASON" in
   ""|detached-head|git-pull-conflict|git-fetch-failed|dirty-tree|remote-unreachable)

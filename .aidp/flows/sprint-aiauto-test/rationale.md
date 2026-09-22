@@ -6,6 +6,12 @@
 
 命令主体原 1715 行、含 50 个 `⛔` 硬门，一次性整份入上下文会触发「lost in the middle」漏步、几十条硬门互相稀释、长流程「满足即止」跳步。按 `{{AIDP_HOME}}/flows/README.md` 约定，把三段最大且最自包含的 Phase 段外置为 `phase-0-*.md` / `phase-2-*.md` / `phase-3-*.md`（各段又按 20KB 上限二次切分，实际分片清单见命令主体骨架表；⛔ 这三个不带序号的文件名**已不存在**），命令主体压到 ~280 行、每段留「关键硬门 + 骨架表 + Read 指针」薄壳，进入该 Phase 的第一动作即按需 `Read` 对应 flow 文件。
 
+## 报告产物与轮次通知的边界
+
+AI测试报告的官方交付物是 HTML 离线 SPA，结论和截图引用写入 `data/{BUILD}.js`；根层另写叙述性 Markdown 会产生两份互相漂移的结论。但 `build-*/round-*/tasks.md` 和 `run-context.md` 是 SKILL 的进度与上下文产物，不能把“禁止 Markdown 报告”错误扩大到这些文件，否则断点续跑状态丢失。
+
+每轮未收敛且未达冻结阈值时，提前让位之前必须真正发送 #R；只在终端 `echo` 一句“只发 #R”不会登记通知台账。达到冻结阈值时依既有仪式收口与 #4 路径处置。
+
 ## Phase 0.2 相关根因（对应 `phase-0-6.md`）
 
 - **心跳 ≠ 能干活（双链路互等死锁）**——"loop 进程还在跑"与"本版本还能推进"是两件事。若只写 `aiauto_test_heartbeat_at`，冻结门 `exit 0` 之后 autopilot 侧会读到新鲜心跳判 `TEST_LOOP_ALIVE=1` → 准发布"暂缓、不累加 missing-streak、不冻结"，而测试侧其实已 `needs_human` 冻结待人——**双方互等、零告警、build 永不收口**。故必须同时维护 `aiauto_blocked_reason`。

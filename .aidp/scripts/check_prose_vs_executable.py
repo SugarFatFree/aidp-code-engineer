@@ -60,7 +60,7 @@ IGNORE_LINE_RE = re.compile(r"<!--\s*proseexec-check:\s*ignore\b")
 EXEMPT_BASENAMES = {"rationale.md", "usage-guard.md", "README.md", "invariants.md"}
 
 
-_PLACEHOLDER_LINE = re.compile(r"#N\b|<[^>\n]{1,24}>|\{[A-Za-z_]+\}|\.\.\.|…")
+_PLACEHOLDER_LINE = re.compile(r"#N\b|<[^>\n]{1,24}>|(?<!\{)\{[A-Za-z_]+\}(?!\})|\.\.\.|…")
 
 # ★ 第二类判据：**围栏内 `echo` 承诺发通知、同围栏零调用**。
 #   为什么 ACTIONS 词表抓不到它：承诺是用中文写的（`echo "→ 已冻结，发 #4 后让位本 tick"`），
@@ -68,7 +68,7 @@ _PLACEHOLDER_LINE = re.compile(r"#N\b|<[^>\n]{1,24}>|\{[A-Za-z_]+\}|\.\.\.|…")
 #   而这恰是最坏的一种形态——分支把版本冻住了，通知渠道一个字都没有。
 #   ⛔ 收得比"全文提到发卡"窄是刻意的：跨分片交叉引用（"#4 由收尾门发"）合法且大量存在，
 #   一律判死会淹掉真信号；只有**可执行围栏里的那一句 echo 就是该分支的全部动作**才是缺陷。
-_PROMISE_CARD = re.compile(r"(?<![已未不别无])发\s*(?:出\s*)?#[0-9A-Za-z]")
+_PROMISE_CARD = re.compile(r"(?<![已未不别无])(?<!禁止)(?<!不要)(?<!不准)(?<!不得)(?<!无需)发\s*(?:出\s*)?#[0-9A-Za-z]")
 _ECHO_LINE = re.compile(r"^\s*(?:echo|print|printf)\b")
 
 

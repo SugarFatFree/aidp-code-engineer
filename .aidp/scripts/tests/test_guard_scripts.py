@@ -4516,9 +4516,30 @@ def test_suite_has_invoker():
           "verify.py 不跑它" in cm or "单测是模板项目自有" in cm or "verify.py 不跑单测" in cm)
 
 
+def test_prose_notify_runtime_home_and_negative_promise():
+    print("\n[72] 通知承诺守卫：运行根占位符与否定句")
+    script = REPO_ROOT / ".aidp/scripts/check_prose_vs_executable.py"
+    with tempfile.TemporaryDirectory() as td:
+        flow = Path(td) / ".aidp/flows/demo"
+        flow.mkdir(parents=True)
+        entry = flow / "phase.md"
+
+        def findings(body):
+            entry.write_text("```bash\n" + body + "\n```\n", encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(script), "--root", td, "--json"],
+                                  capture_output=True, text=True)
+            return json.loads(proc.stdout)["findings"]
+
+        check("真实 notify.py 调用中的运行根 token 不算模板占位符",
+              not findings('echo "发 #4 后继续"\npython3 {{AIDP_HOME}}/scripts/notify.py --node 4'))
+        check("禁止发 #F 是负向要求，不算发通知承诺",
+              not findings('echo "禁止发 #F；先补齐报告"'))
+
+
 def main():
     # ★ 新增 test_* 函数必须登记到这里，否则永远不执行（历史上出现过定义了却没跑的测试）
     test_readme_policy()
+    test_prose_notify_runtime_home_and_negative_promise()
     test_readme_three_tier_and_scan_noise()
     test_cascade_landing_gate()
     test_cascade_residue_gate()
@@ -7473,6 +7494,11 @@ def test_design_goal_formal_landings():
           "release-7c.md" in r7 and "推送失败" in r7)
     check("★ G-CHAIN-2 边界：tag/branch 用 if 而非 `[ -n ] && push`（空值不得误判成失败）",
           'if [ -n "$TAG_NAME" ]; then' in r7 and 'if [ -n "$BRANCH_NAME" ]; then' in r7)
+    flow = (repo / ".aidp/flows/sprint-aiauto-test/phase-3-3b.md").read_text(encoding="utf-8")
+    branch = flow.split('if [ "$STREAK" -lt "$FREEZE_AT" ]; then', 1)[1].split("  fi", 1)[0]
+    check("未冻结分支 exit 0 前调用 notify.py --node #R",
+          'notify.py --node "#R"' in branch
+          and branch.index('notify.py --node "#R"') < branch.index("exit 0"))
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@
 
 ## Phase 3：测试报告生成（HTML — AI测试报告）
 
-> ⛔⛔ **RED FLAG（最高优先级，先读再动手）**：**测试报告唯一形态 = HTML 离线 SPA**。如果你此刻正打算"写一份 markdown 测试报告"（如 `AI自动化测试报告-{V}-build{N}.md` / `动态测试报告-*.md` / 任何 `.md` 报告）—— **立即停止，这是执行违规**。正确动作只有一条：**`cp` 模板 `index.html`+`assets/` → 写 `data/{BUILD}.js` 数据文件 → 注册 `<script>`**（详见 3.2.6）。测试结论/统计/缺陷/截图全部进 `data/{BUILD}.js`（结构化数据），由 `index.html` 渲染，**不另写任何 markdown 叙述报告**。**禁止范围 = `AI测试报告/` 根层的叙述性 `.md`**（各级 `README.md` 除外）。⛔ **`build-*/round-*/` 下 SKILL 的契约产物一律豁免、绝不删**——`tasks.md` 是 `auto-test-runner` 断点续跑的唯一进度真相、`run-context.md` 是其运行上下文，按 SKILL 契约必产（约定 21）；把它们当"markdown 报告"删掉会直接把状态机归零，而 3.2.5bis 维度 3 扫的正是被删的那份。
+> ⛔⛔ **RED FLAG：测试报告唯一形态 = HTML 离线 SPA**。禁止在 `AI测试报告/` 根层另写叙述性 `.md`（各级 `README.md` 除外）；按 3.2.6 经模板生成 `index.html`+`assets/`、写 `data/{BUILD}.js` 并注册脚本。**`build-*/round-*/` 下 SKILL 契约产物一律保留、绝不删**，尤其 `tasks.md` 与 `run-context.md`。误删会破坏断点续跑；根因见 `rationale.md`。
 >
 > ★ 自检口诀：测试跑完、要落报告时，问自己"我是在 `cp` HTML 模板 + 写 `.js` 数据，还是在写 `.md`？"——若是后者，回到 3.2.6 重来。
 

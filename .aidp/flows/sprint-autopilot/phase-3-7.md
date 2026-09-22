@@ -97,16 +97,12 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
 
 ## ⛳ 本 Phase 出口：`run_state` 写盘（Step D 自己的出口，不可省）
 
-> ⛔ **为什么 Step D 必须有独立出口**：上一分片 `phase-3-6.md`（Step A–C）出口写的是 `next=3.2.1-probe`，就绪探针要靠**本片**把它推进到 `3.3-audit`。本片若不写盘，游标会永远停在 `3.2.1-probe`：探针明明过了，下一 tick 仍从头重探，`last_deployed_at` 反复重写、Phase 3.3 永不开始。（`invariants.md`「阶段推进不变式」：只在 `invariants` 里描述 `run_state` 而分片不写盘 = 状态机不存在。）
+> ⛔ Step D 必须独立写 `run_state`：探针通过推进到 `3.3-audit`，否则停在 `3.2.1-probe`。详见 `invariants.md` 与 `rationale.md`。
 
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
-# ★ 读回上文当场落盘的探针结论。⛔ 绝不能直接读 shell 变量 `$PROBE_PASSED`：本段与上文
-#   探针判定分属**不同 Bash 工具调用**，shell state 不跨调用持久 —— ⛔ 这里不得写成
-#   `${PROBE_PASSED:-0}`，而全仓无人给它赋值 → 恒取 0 → 恒走 else → 探针明明过了游标也
-#   永远停在 `3.2.1-probe`，下 tick 从头重探、`last_deployed_at` 反复重写，Phase 3.3/3.4
-#   永不开始、build 永不收口，最后只能靠通用 stuck 熔断（8 tick + 滞留 2h）冻结待人。
+# 读回已落盘的探针结论；不同 Bash 调用的 shell 变量不能当作跨分片证据。
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 # 事实兜底：只认当前 build 的显式探针证据，禁止用版本级 last_deployed_at 反推。
 #   —— 旧版本的部署时间戳不能证明本 build 已就绪，否则失败/未探测的新部署会被放行。

@@ -22,6 +22,12 @@
 
 - **`config-missing` 必须按心跳解冻（双侧死锁）**——根因：该冻结由 Phase 3.9 / Phase 2 在「本版需实测但测试链路无心跳」达阈时写入，其 `#4` 通知明写「补挂 `/loop 5m /sprint-aiauto-test --unattended` 后自动解冻重测」。但两条既有解冻路径都够不着它：① autopilot 已把该版剔出候选 → **永不再为它部署**，"新部署"路径不可达；② 测试链路侧的配置类解冻只认 `docs/testing/**/*.md` 与 `skills/*/config.json` 的 **mtime**，而"挂 loop"这两者都不变。于是用户照着通知提示补挂了 loop 也解不开，只能人工清 baseline。
 
+## 分片压缩后保留的判据根因
+
+Phase 0.1 每 tick 都会检查工作区，但 `preflight_fail_streak` 还供后续 PRD、遗留 Sprint 和 0.7 收尾门复用。若工作区干净就无条件清零，后续失败永远无法累计到冻结阈值，通知可能每 tick 刷屏。因此只能按 `preflight_fail_reason` 清理本段自己的失败。
+
+Phase 3.4 必须按 build 起始提交 `push_base_ref` 判断前端改动；回退 `HEAD~1` 会漏掉跨多个 commit 的改动，部署覆盖门可能静默放行。`DEPLOY_MODE`、`SKIP_DEPLOY` 和 `WILL_BROWSER_TEST` 必须从 baseline 回读并写回，不能依赖不同 Bash 工具调用之间的 shell 变量。`--skip-aiauto-test` 是用户显式裁剪，关闭方判定要消费该值。静态-only build 由 autopilot 关闭，必须写 `ai_report_finalized`，否则 Stop hook 与准发布门误判报告未完成。
+
 ## Phase 3 相关根因（对应 `phase-3-*.md`）
 
 - **3.2.1 出口写 `3.2.1-probe` 而非 `3.3-audit`**——根因：Step A–C（`phase-3-6.md`，触发部署 + 等流水线）与 Step D（`phase-3-7.md`，就绪探针）分属两个分片，探针轮询可长达 `cloud_ready_timeout_seconds`。原出口直接写 `3.3-audit`、摘要还写着"探针就绪、`last_deployed_at` 已写"——tick 在探针中途中断，下一 tick 就从 `3.3-audit` 续跑，**整段就绪探针被跳过**：`last_deployed_at` 永不写入 → 测试链路无从触发；Phase 2 的 0a 门又因它为空而累计 `prerelease_deploy_block_streak`，最终把一个其实部署成功的版本误冻结成「部署就绪从未通过」。

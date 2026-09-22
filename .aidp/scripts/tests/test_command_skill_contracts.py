@@ -189,6 +189,11 @@ def test_vcs_disabled_downstream_contracts():
     p2 = flow(dev / "postdev-writeback-2.md")
     command = flow(REPO / ".aidp/commands/sprint-dev.md")
     version = flow(REPO / ".aidp/commands/version.md")
+    aiauto_freeze = flow(REPO / ".aidp/flows/sprint-aiauto-test/phase-3-3b.md")
+    check("测试链路冻结仅在 Git 模式读取 HEAD",
+          'if [ "$VCS_MODE" = "git" ]; then' in aiauto_freeze
+          and 'FROZEN_HEAD="$(git rev-parse HEAD' in aiauto_freeze
+          and 'unconverged_frozen_head "$FROZEN_HEAD"' in aiauto_freeze)
     check("0.7 Git 必需性按 vcs_mode 分支", "仅 `vcs_mode=git`" in p09 and "不得报错退出" in p09)
     check("3.2 云游标由 Git 能力约束", '"${VCS_MODE:-git}" = "git"' in p35)
     check("3.2.1 保留无 Git 本地部署就绪", "mode=local" in p36 and "本地就绪" in p36)

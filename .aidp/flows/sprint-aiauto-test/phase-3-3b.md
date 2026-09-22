@@ -83,18 +83,25 @@
   #   解冻自我封闭类 —— 冻后不再为它部署，解冻证据也就永远不到），偏松则永不冻。
   FREEZE_AT=$($BE --version "$V" get aiauto_unconverged_freeze_threshold --default 10)
   if [ "$STREAK" -lt "$FREEZE_AT" ]; then
-    echo "⚠️ 未收敛第 $STREAK 轮（< 冻结阈值 $FREEZE_AT）→ 只发 #R、不冻结，下一 tick 继续重测"
+    python3 {{AIDP_HOME}}/scripts/notify.py --node "#R" --auto --header-color orange \
+      --title "AI 测试未收敛：第 $STREAK 轮" --version "$V" --build "$B" \
+      --section "第 $STREAK 轮未收敛（冻结阈值 $FREEZE_AT）；下一 tick 继续重测。" || true
+    echo "⚠️ 未收敛第 $STREAK 轮：#R 已尝试发送；不冻结，下一 tick 继续重测"
     exit 0
   fi
   # 先落 build 级定稿位：报告已 finalize + 已对外播报 ⇒ 此后不可变（两把锁都读它）
   $BE --version "$V" --build "$B" set ai_report_finalized true ai_report_finalized_at @now
   # 再落版本级冻结四件套
-  # ★ 一并快照冻结时刻的 HEAD：`unconverged` 的自动解冻判据是"冻结后有人提交过"，
-  #   若不快照就只能拿活指针 `last_autopilot_head` 顶替——而它只在"云端 CICD（`cicd.provider`，默认 GitHub Actions）+ 就绪探针通过"
-  #   一条路径上被写过，其余部署形态下恒空 ⇒ 判据恒假 ⇒ 永久冻结（另一条 by-deploy 证据
-  #   也因"冻结版本被选版剔除、不再为它部署"而同时不可达）。
+  # 仅 Git 项目快照冻结时的 HEAD；无 Git 时该 SHA 能力为 unsupported:vcs-disabled。
+  VCS_MODE=$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+  FROZEN_HEAD=""
+  if [ "$VCS_MODE" = "git" ]; then
+    FROZEN_HEAD="$(git rev-parse HEAD 2>/dev/null)" || exit 1
+  elif [ "$VCS_MODE" != "none" ]; then
+    echo "⛔ 无法判定 VCS 模式，停止冻结写入" >&2; exit 1
+  fi
   $BE --version "$V" set needs_human true aiauto_frozen_at @now freeze_reason unconverged \
-    unconverged_frozen_head "$(git rev-parse HEAD 2>/dev/null || echo '')" \
+    unconverged_frozen_head "$FROZEN_HEAD" \
     needs_human_reason "连续 $STREAK 轮未收敛，判定不通过、暂停本版自动重测待人工介入"
   # ★ 第 4 件套（顶层）必写：只写版本级三件，开发链路会读到「心跳还在刷」误判测试链路健康、
   #   走 prerelease_test_hold_streak「暂缓」而非熔断 ⇒ 白等到第 12 个 tick 才再冻一次、且冻结原因与真因错位。

@@ -58,10 +58,7 @@
    ```bash
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
    BEB="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?} --build ${BUILD:?}"
-   # ⛔ 起始 commit 取真源 `builds[].push_base_ref`（phase-3-5b 推送围栏落的盘），
-   #    ⛔ 不要用一个全仓无人写入的变量名——恒落 `HEAD~1` 时，跨多个 commit 的 build 算不出
-   #    `frontend_changed=true`，而 ceremony-gate 3e 是 `if/elif` 无 `else`：字段非 True 就一行
-   #    都不输出 ⇒ 「前端改了却没部署」这类半截部署静默放行，正是本段要堵的东西。
+   # 起始 commit 取 builds[].push_base_ref；不得凭 HEAD~1 推断本 build 前端改动。
    BUILD_BASE_COMMIT=$($BEB get push_base_ref --default "")
    VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
    if [ "$VCS_MODE" = none ]; then
@@ -88,15 +85,10 @@
 
    **1.6 ★ 关闭方判定 + R-4 分流（「产出骨架」与「finalize + 发送」解耦的核心）**：
    ```bash
-   # ★ 先读回本 tick 变量（DEPLOY_MODE 由 phase-3-5 落盘、SKIP_DEPLOY 由 0.0.0 解析落盘）——
-   #   直接用裸 shell 变量会取空：`[ "" != "none" ]` 恒真 → mode=none 也被判成"将有浏览器测试"
-   #   → 静态-only 路径下 autopilot 不做 R-4、#3 永不发、build 永不关闭。
+   # 从 baseline 读回 DEPLOY_MODE/SKIP_DEPLOY；不得用跨 Bash 调用的裸变量决定关闭方。
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
    # 将有浏览器测试 = 有本 build 就绪的部署（test-only 可复用已核实的部署）；mode 字段本身不是就绪证据。
-   # ★ `--skip-aiauto-test` 是【用户显式裁剪】，与 `--skip-deploy` 同档压成 0：
-   #   它被 `sprint-autopilot.md` 与 phase-3-2 的 P0-0 总纲列为「唯一合法跳过 AI 测试」的授权来源，
-   #   ⛔ 若此处不消费，该 flag 就只有解析器、零消费者 —— 用户显式要跳过的那件事照跑，
-   #   chrome 不可用时还会被收尾门按 `--stage final` 索要 AI测试报告而卡死收工。
+   # 用户显式 --skip-aiauto-test 或 --skip-deploy 时不得交接浏览器测试。
    VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
    DEPLOYED_AT=$($BE --version "$TARGET_VERSION" get last_deployed_at --default "")
@@ -117,8 +109,7 @@
    [ "$DEPLOY_READY" = 0 ] && echo "⚠️ 无可验证部署（vcs_mode=$VCS_MODE，mode=${DEPLOY_MODE:-none}）：浏览器测试不交接旧服务，报告如实标记未执行"
    # ★ 落盘供下游收尾门（phase-3-9.md）读回 —— 它据此定 GATE_STAGE 与期望通知集
    python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot WILL_BROWSER_TEST "$WILL_BROWSER_TEST"
-   # ★ 同时落 baseline 版本级真源：3-8/3-9 出口都写 `3.4-finish`，从该游标断点续跑的 tick
-   #   不会重跑本段派生 —— 没有版本级回落时 `${WILL_BROWSER_TEST:-0}` 恒取 0（自锁根因）。
+   # 同时落版本级真源，供从 3.4-finish 游标恢复时回读。
    python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" \
      set will_browser_test "$WILL_BROWSER_TEST"
    ```
@@ -145,13 +136,7 @@
      set ai_report_finalized true ai_report_finalized_at @now
    ```
 
-   ⛔ **不能省**：`ai_report_finalized` 全仓三处写（本处静态-only / `phase-3-3b` 冻结 /
-   aiauto `phase-3-5` 正常 finalize），互斥三条终局路径——省掉哪条哪条永停非终态。
-   静态-only 路径（`WILL_BROWSER_TEST=0`）由 autopilot 自己关 build、测试链路根本不跑，
-   于是该键**永远为空**——而它有两个消费者：① `autopilot-stop-guard.py` 判
-   `status != closed and not ai_report_finalized` → 每次 Stop 都拦、要求"回对应 Phase 补产"，
-   而报告其实早已产完；② Phase 2 门 0b 取 `FIN` 为空 → 判该版未收敛 → 准发布卡住。
-   两个消费者的诊断都指向"报告没产"，真因却是"产了但没标"。
+   ⛔ 静态-only 由 autopilot 关闭 build，必须写 `ai_report_finalized`；Stop hook 和准发布门均消费该字段。三条终局写入路径的根因见 `rationale.md`。
 
 3. **★【R-4 收尾·仅 `WILL_BROWSER_TEST=0` 时由 autopilot 执行】里程碑通知 #3（AI 执行报告里程碑，绿色 header；完整模板见 0.1bis「#3 AI执行报告通知完整模板」）**——经 `python3 {{AIDP_HOME}}/scripts/notify.py --node '#3' --auto --version "$V" --build "$BUILD" …` 发出——⛔ 不要手工拼发送命令：渠道选择与台账登记已收编进 `--auto`（按 `notify.channels` 依次尝试，见 0.1bis）。退出码 3（未配置任何渠道）= 静默跳过本节点、不算失败。通知正文按该模板填充：执行情况 / 需求功能执行清单 / **测试结论（纯静态：「静态自测、无浏览器测试」+ code-verification-loop 通过率）** / 缺陷统计 / 风险建议 / 下一步导航；「查看完整报告」= `$AI_REPORT_URL`（报告相对路径 / 静态托管链接，直达本次 build 结果页）。**`WILL_BROWSER_TEST=1` 时本步整段跳过** —— #3 改由测试链路在 **#F 之后**发出、且携带**真实浏览器测试结论**（见 aiauto-test Phase 3.7）。
 

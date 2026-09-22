@@ -16,6 +16,7 @@ import _helpers as H
 import scaffold as S
 import scaffold_lib as L
 import scaffold_marker
+import runtime_layout
 import verify as V
 
 BUNDLE_VERSION = L.bundle_version()
@@ -1202,7 +1203,208 @@ class OptionalRuleRefreshTest(unittest.TestCase):
             self.assertFalse(os.path.lexists(root / ".aidp"))
 
 
+class NativeRuntimeVerifyTest(unittest.TestCase):
+    def test_manifest_validation_on_minimal_native_runtime(self):
+        with H.TempRepo() as root:
+            home = root / ".claude/aidp"
+            for dirname in runtime_layout.RUNTIME_DIRS:
+                (home / dirname).mkdir(parents=True)
+            target = home / "commands/example.md"
+            target.write_text("valid\n", encoding="utf-8")
+            manifest = runtime_layout.build_runtime_manifest(home, "V0.0.1", "claude", ".claude/aidp")
+            (home / ".aidp-runtime.json").write_text(json.dumps(manifest), encoding="utf-8")
+            scaffold_marker.write_version(root, "V0.0.1")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertEqual(result.errors, [])
+            self.assertTrue(any("完整" in note for note in result.info))
+            target.chmod(target.stat().st_mode ^ 0o100)
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertTrue(any("指纹漂移" in error for error in result.errors))
+
+    def test_native_runtime_variants_verify_cleanly(self):
+        for agents in ("claude", "codex", "dsh", "claude,codex,dsh"):
+            with self.subTest(agents=agents), H.TempRepo() as root:
+                env = fake_dsh_env(root)[0] if "dsh" in agents else None
+                scaffold(root, "--version", "V0.1.0", "--agent", agents, env=env)
+                rc, errors, output = H.verify(root)
+                self.assertEqual((rc, errors), (0, []), output)
+                self.assertIn("Agent 原生运行包", output)
+
+    def test_manifest_hash_and_mode_drift_are_errors(self):
+        for change in ("content", "mode"):
+            with self.subTest(change=change), H.TempRepo() as root:
+                scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+                target = root / ".claude/aidp/commands/sprint-dev.md"
+                if change == "content":
+                    target.write_bytes(target.read_bytes() + b"\nchanged\n")
+                else:
+                    target.chmod(target.stat().st_mode ^ 0o100)
+                rc, errors, output = H.verify(root)
+                self.assertEqual(rc, 1, output)
+                self.assertTrue(any("运行包" in error for error in errors), output)
+
+    def test_manifest_source_and_version_are_errors(self):
+        for field, value in (("source", "shared"), ("version", "V0.0.1")):
+            with self.subTest(field=field), H.TempRepo() as root:
+                scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+                path = root / ".claude/aidp/.aidp-runtime.json"
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+                manifest[field] = value
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+                rc, errors, output = H.verify(root)
+                self.assertEqual(rc, 1, output)
+                self.assertTrue(any("运行包" in error for error in errors), output)
+
+    def test_dual_runtime_normalized_mismatch_is_error(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude,codex")
+            home = root / ".agents/aidp"
+            target = home / "commands/sprint-dev.md"
+            target.write_bytes(target.read_bytes() + b"\nshared-only\n")
+            manifest = runtime_layout.build_runtime_manifest(home, BUNDLE_VERSION, "shared", ".agents/aidp")
+            (home / ".aidp-runtime.json").write_text(json.dumps(manifest), encoding="utf-8")
+            rc, errors, output = H.verify(root)
+            self.assertEqual(rc, 1, output)
+            self.assertTrue(any("双包" in error for error in errors), output)
+
+    def test_runtime_unresolved_token_and_old_path_are_errors(self):
+        for leak in ("{{AIDP_UNKNOWN}}", ".aidp/commands/sprint-dev.md"):
+            with self.subTest(leak=leak), H.TempRepo() as root:
+                scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+                home = root / ".claude/aidp"
+                target = home / "commands/sprint-dev.md"
+                target.write_bytes(target.read_bytes() + leak.encode())
+                manifest = runtime_layout.build_runtime_manifest(home, BUNDLE_VERSION, "claude", ".claude/aidp")
+                (home / ".aidp-runtime.json").write_text(json.dumps(manifest), encoding="utf-8")
+                rc, errors, output = H.verify(root)
+                self.assertEqual(rc, 1, output)
+                self.assertTrue(any("运行包" in error for error in errors), output)
+
+    def test_legacy_root_residue_is_error(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            (root / ".aidp").mkdir()
+            rc, errors, output = H.verify(root)
+            self.assertEqual(rc, 1, output)
+            self.assertTrue(any(".aidp/" in error for error in errors), output)
+
+    def test_forged_migration_failure_ledger_cannot_downgrade_legacy_residue(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            (root / ".aidp").mkdir()
+            (root / ".aidp-migration-failure.json").write_text(
+                json.dumps({"status": "failed", "version": BUNDLE_VERSION, "legacy_path": ".aidp"}),
+                encoding="utf-8")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertTrue(any(".aidp/" in error for error in result.errors), result.errors)
+
+    def test_native_manifest_cannot_hide_deleted_file_at_current_version(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            home = root / ".claude/aidp"
+            target = home / "commands/sprint-dev.md"
+            target.unlink()
+            manifest_path = home / ".aidp-runtime.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            del manifest["files"]["commands/sprint-dev.md"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertTrue(any("文件清单" in error for error in result.errors), result.errors)
+
+    def test_native_manifest_recomputed_after_tampering_is_still_error(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            home = root / ".claude/aidp"
+            target = home / "commands/sprint-dev.md"
+            target.write_bytes(target.read_bytes() + b"\nmodified\n")
+            manifest = runtime_layout.build_runtime_manifest(home, BUNDLE_VERSION, "claude", ".claude/aidp")
+            (home / ".aidp-runtime.json").write_text(json.dumps(manifest), encoding="utf-8")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertTrue(any("文件与当前脚手架" in error for error in result.errors), result.errors)
+
+    def test_older_native_runtime_warns_about_upgrade_without_inventory_error(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            home = root / ".claude/aidp"
+            manifest_path = home / ".aidp-runtime.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["version"] = "V0.0.1"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            scaffold_marker.write_version(root, "V0.0.1")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            V.check_contract_drift(root, result)
+            self.assertEqual(result.errors, [])
+            self.assertTrue(any("低于当前脚手架" in warning for warning in result.warnings), result.warnings)
+
+    def test_pending_upgrade_runtime_version_matches_pending(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            scaffold_marker.write_version(root, "V0.0.1")
+            scaffold_marker.write_pending(root, BUNDLE_VERSION)
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertEqual(result.errors, [])
+
+    def test_guard_runner_uses_native_runtime_script(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            data, error = V._run_guard(root, "check_ghost_flags")
+            self.assertIsNone(error)
+            self.assertIsInstance(data, dict)
+            self.assertIn("undefined", data)
+
+    def test_native_flow_size_guard_checks_runtime_flows(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            (root / ".claude/aidp/flows/oversized.md").write_text("x" * 20481, encoding="utf-8")
+            result = V.VerifyResult()
+            V.check_flow_slice_size(root, result)
+            self.assertTrue(any("flows 分片超" in error for error in result.errors), result.errors)
+
+    def test_native_scripts_readme_guard_checks_runtime_scripts(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "codex")
+            (root / ".agents/aidp/scripts/unlisted_probe.py").write_text("pass\n", encoding="utf-8")
+            result = V.VerifyResult()
+            V.check_scripts_readme_coverage(root, result)
+            self.assertTrue(any("unlisted_probe.py" in warning for warning in result.warnings), result.warnings)
+
+    def test_native_contract_drift_keeps_old_version_warning(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            scaffold_marker.write_version(root, "V0.0.1")
+            result = V.VerifyResult()
+            V.check_contract_drift(root, result)
+            self.assertTrue(any("低于当前脚手架" in warning for warning in result.warnings), result.warnings)
+
+    def test_plain_directory_vcs_mode_is_none(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(V._vcs_mode(Path(temp)), "none")
+
+    def test_non_git_verify_marks_tracking_unsupported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "plain"
+            root.mkdir()
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude", "--user", "alice")
+            rc, errors, output = H.verify(root, user="alice")
+            self.assertEqual((rc, errors), (0, []), output)
+            self.assertIn("vcs_mode=none", output)
+            self.assertIn("unsupported:vcs-disabled", output)
+            self.assertNotIn("运行时产物入库策略一致", output)
+
+
 class NativeAdapterVerifyTest(unittest.TestCase):
+    def test_copy_mode_detects_native_runtime_without_legacy_source(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            self.assertEqual(V._adapter_mode(root, None), "copy")
+
     def test_copy_mode_detects_codex_and_dsh_native_entries(self):
         with H.TempRepo() as root:
             source = root / ".aidp/commands/sprint-dev.md"

@@ -26,6 +26,112 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import scaffold_lib as L  # noqa: E402
 import scaffold_marker  # noqa: E402
+import runtime_layout  # noqa: E402
+
+def _vcs_mode(root: Path) -> str:
+    try:
+        result = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "none"
+    return "git" if result.returncode == 0 and result.stdout.strip() == "true" else "none"
+
+
+def _runtime_homes(root: Path):
+    return {source: root / home for source, home in runtime_layout.RUNTIME_HOME.items()
+            if os.path.lexists(root / home)}
+
+
+def _contract_root(root: Path) -> Path:
+    homes = _runtime_homes(root)
+    return homes.get("shared", homes.get("claude", root / ".aidp"))
+
+
+def _contract_path(root: Path, relative: str, template: bool = False) -> Path:
+    if not template and relative.startswith(".aidp/"):
+        return _contract_root(root) / relative[len(".aidp/"):]
+    return root / relative
+
+
+def _runtime_source() -> Path:
+    template = L.SKILL_DIR.parents[1]
+    if template.name == ".aidp" and (template / "scripts/agent_sync.py").is_file():
+        return template
+    return L.BUNDLE_AIDP
+
+
+def _source_runtime_files(source: Path):
+    for dirname in runtime_layout.RUNTIME_DIRS:
+        for relative, path in L.iter_files(source / dirname):
+            name = f"{dirname}/{relative}"
+            if not any(name == item.rstrip("/") or
+                       (item.endswith("/") and name.startswith(item))
+                       for item in runtime_layout.RUNTIME_EXCLUDES):
+                yield name, path
+
+
+def check_native_runtime(root: Path, r):
+    homes = _runtime_homes(root)
+    if not homes:
+        r.error("缺少 Agent 原生运行包（.aidp-runtime.json）")
+        return
+    project_version = scaffold_marker.read_version(root)
+    pending_version = scaffold_marker.read_pending(root)
+    current_version = L.bundle_version()
+    manifests = {}
+    for source, home in homes.items():
+        relative = home.relative_to(root).as_posix()
+        try:
+            manifest = runtime_layout.validate_runtime(home, expected_home=relative)
+        except (ValueError, OSError) as exc:
+            r.error(f"Agent 原生运行包 {relative} 校验失败：{exc}")
+            continue
+        manifests[source] = manifest
+        expected_version = pending_version or project_version
+        if expected_version and manifest["version"] != expected_version:
+            r.error(f"Agent 原生运行包 {relative} 版本 {manifest['version']} 与项目脚手架版本 {expected_version} 不同")
+        else:
+            r.note(f"Agent 原生运行包 {relative} 完整（{len(manifest['files'])} 文件）")
+        if manifest["version"] == current_version:
+            source = _runtime_source()
+            source_files = dict(_source_runtime_files(source))
+            missing = sorted(set(source_files) - set(manifest["files"]))
+            extra = sorted(set(manifest["files"]) - set(source_files))
+            if missing or extra:
+                r.error(f"Agent 原生运行包 {relative} 文件清单与当前脚手架 {current_version} 不一致："
+                        f"缺失 {_head(missing)}；多出 {_head(extra)}")
+            for name in sorted(set(source_files) & set(manifest["files"])):
+                if name in L.USER_FILLABLE_CONTRACTS:
+                    continue
+                data = source_files[name].read_bytes()
+                if runtime_layout._is_text(data):
+                    data = runtime_layout.render_text(data.decode("utf-8"), relative,
+                                                      template_root=source).encode("utf-8")
+                actual = home / name
+                if actual.read_bytes() != data or actual.stat().st_mode & 0o777 != source_files[name].stat().st_mode & 0o777:
+                    r.error(f"Agent 原生运行包 {relative} 文件与当前脚手架 {current_version} 不一致：{name}")
+                    break
+    expected = set()
+    if (root / ".claude").is_dir() and not (root / ".claude/.aidp-agent-disabled").is_file():
+        expected.add("claude")
+    if any((root / marker).is_dir() and not (root / marker / ".aidp-agent-disabled").is_file()
+           for marker in (".codex", ".dsh")):
+        expected.add("shared")
+    for source in sorted(expected - set(homes)):
+        r.error(f"Agent 原生运行包缺失：{runtime_layout.RUNTIME_HOME[source]}")
+    if len(manifests) == 2:
+        if manifests["claude"]["version"] != manifests["shared"]["version"]:
+            r.error("Agent 原生运行包双包版本不一致")
+        if set(manifests["claude"]["files"]) != set(manifests["shared"]["files"]):
+            r.error("Agent 原生运行包双包文件集合不一致")
+        claude, shared = (homes[source] for source in ("claude", "shared"))
+        if runtime_layout.normalize_runtime(claude, runtime_layout.RUNTIME_HOME["claude"]) != \
+                runtime_layout.normalize_runtime(shared, runtime_layout.RUNTIME_HOME["shared"]):
+            r.error("Agent 原生运行包双包规范化内容或权限不一致")
+        else:
+            r.note("Agent 原生运行包双包规范化一致")
+    if os.path.lexists(root / ".aidp"):
+        r.error("旧运行目录 .aidp/ 仍有残留；迁移完成后应清除")
 
 READ_ONLY = False
 
@@ -99,7 +205,9 @@ def check_directories(root: Path, version, user, template: bool, r: VerifyResult
     version_level = set() if template else set(L.version_dirs(version or "", user or ""))
     allow_version = template or may_create_version_dirs(root, version, user)
     for rel in dirs:
-        p = root / rel
+        p = _contract_path(root, rel, template)
+        if not template and rel.startswith(".aidp/") and _runtime_homes(root):
+            continue  # 运行包自身的必需目录由 validate_runtime 校验。
         if p.is_dir():
             continue
         if (rel not in version_level or allow_version) and _may_mkdir(p):
@@ -119,11 +227,11 @@ REQUIRED_DOCS_INIT = ("README.md", "00_AIDP范式主文档.md", "01_初始化输
 
 def check_files(root: Path, template: bool, r: VerifyResult):
     for name in REQUIRED_SCRIPTS:
-        if not (root / ".aidp/scripts" / name).is_file():
+        if not _contract_path(root, f".aidp/scripts/{name}", template).is_file():
             r.error(f"缺失脚本: .aidp/scripts/{name}")
-    if not (root / ".aidp/hooks/autopilot-stop-guard.py").is_file():
+    if not _contract_path(root, ".aidp/hooks/autopilot-stop-guard.py", template).is_file():
         r.error("缺失 hook: .aidp/hooks/autopilot-stop-guard.py")
-    if not (root / ".aidp/agents/aidp-compliance.md").is_file():
+    if not _contract_path(root, ".aidp/agents/aidp-compliance.md", template).is_file():
         r.warn("缺失合规 Agent: .aidp/agents/aidp-compliance.md")
     for name in REQUIRED_DOCS_INIT:
         if not (root / "docs/init" / name).is_file():
@@ -151,7 +259,7 @@ def check_memory_structure(root: Path, version, user, r: VerifyResult):
 
 # ── 3. 多 Agent：记忆文件形态 + 适配层漂移 ───────────────────────────────────
 def _agent_env(root: Path):
-    p = root / ".aidp/scripts/agent_env.py"
+    p = _contract_root(root) / "scripts/agent_env.py"
     if not p.is_file():
         return None
     try:
@@ -223,7 +331,7 @@ def _link_points_into_aidp(root: Path, path: Path) -> bool:
 def _managed_adapter_entries(root: Path) -> set:
     """据当前 `.aidp/` 真源列出可证明由 AIDP 管理的适配入口。"""
     out = set()
-    commands = root / ".aidp/commands"
+    commands = _contract_root(root) / "commands"
     if commands.is_dir():
         for command in commands.glob("*.md"):
             if command.stem.upper() == "README":
@@ -231,21 +339,22 @@ def _managed_adapter_entries(root: Path) -> set:
             out.update((root / ".claude/commands" / command.name,
                         root / ".dsh/commands" / command.name,
                         root / ".codex/skills/aidp" / command.stem))
-    skills = root / ".aidp/skills"
+    skills = _contract_root(root) / "skills"
     if skills.is_dir():
         for skill in skills.iterdir():
             if skill.name == "aidp-cmd" or not (skill / "SKILL.md").is_file():
                 continue
             out.update((root / ".claude/skills" / skill.name,
                         root / ".agents/skills" / skill.name))
-    plugins = root / ".aidp/plugins"
+    plugins = _contract_root(root) / "plugins"
     if plugins.is_dir():
         for plugin in plugins.iterdir():
             source = plugin / "skills"
             if not source.is_dir():
                 continue
             out.update((root / ".claude/plugins" / plugin.name,
-                        root / ".codex/skills" / plugin.name / "skills"))
+                        root / ".codex/skills" / plugin.name / "skills",
+                        root / ".agents/skills" / plugin.name / "skills"))
             for skill in source.iterdir():
                 if (skill / "SKILL.md").is_file():
                     out.add(root / ".agents/skills" / skill.name)
@@ -259,6 +368,8 @@ def _adapter_mode(root: Path, override):
     """仅依据可证明由 AIDP 管理的入口判断 link/copy，忽略用户自有 symlink。"""
     if override:
         return override
+    if _runtime_homes(root):
+        return "copy"
     seen = False
     for entry in _managed_adapter_entries(root):
         if _link_points_into_aidp(root, entry):
@@ -269,7 +380,7 @@ def _adapter_mode(root: Path, override):
 
 
 def check_agent_adapters(root: Path, mode_override, r: VerifyResult):
-    script = root / ".aidp/scripts/agent_sync.py"
+    script = _contract_root(root) / "scripts/agent_sync.py"
     if not script.is_file():
         return
     mode = _adapter_mode(root, mode_override)
@@ -472,8 +583,8 @@ def check_sql_version_dir_consistency(root: Path, r: VerifyResult):
 
 # ── 7. 运行时产物入库策略 / 凭证 ────────────────────────────────────────────
 def check_runtime_artifact_vcs(root: Path, r: VerifyResult):
-    script = root / ".aidp/scripts/aidp_paths.py"
-    if not script.is_file() or not (root / ".git").exists():
+    script = _contract_root(root) / "scripts/aidp_paths.py"
+    if not script.is_file() or _vcs_mode(root) != "git":
         return
     try:
         out = subprocess.run([sys.executable, str(script), "--root", str(root), "--json"],
@@ -557,6 +668,8 @@ def check_backup_hygiene(root: Path, r: VerifyResult):
     else:
         r.note(msg)
     for p, _ in backups:
+        if _vcs_mode(root) != "git":
+            continue
         listed = L.git(root, "ls-files", "--", p.name)
         if listed is not None and listed.stdout.strip():
             r.error(f"备份目录 {p.name}/ 被 git 跟踪 → `git rm -r --cached {p.name}`")
@@ -578,6 +691,12 @@ def check_pending_rewrite_queue(root: Path, r: VerifyResult):
 
 
 def check_contract_drift(root: Path, r: VerifyResult):
+    if _runtime_homes(root):
+        current = L.bundle_version()
+        project = scaffold_marker.read_version(root)
+        if project and L.parse_ver(project) and L.parse_ver(current) and L.parse_ver(project) < L.parse_ver(current):
+            r.warn(f"项目脚手架版本 {project} 低于当前脚手架 {current} → 跑 aidp-code-engineer upgrade")
+        return  # 原生运行包文件完整性由 check_native_runtime 校验。
     try:
         manifest = json.loads((L.SKILL_DIR / L.MANIFEST_REL).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -688,7 +807,7 @@ def check_convention_anchor_consistency(root: Path, r: VerifyResult):
 
 
 def check_scripts_readme_coverage(root: Path, r: VerifyResult):
-    d = root / ".aidp/scripts"
+    d = _contract_root(root) / "scripts"
     text = L.read_text(d / "README.md")
     if not text:
         return
@@ -698,7 +817,7 @@ def check_scripts_readme_coverage(root: Path, r: VerifyResult):
 
 
 def check_flow_slice_size(root: Path, r: VerifyResult):
-    flows = root / ".aidp/flows"
+    flows = _contract_root(root) / "flows"
     if not flows.is_dir():
         return
     exempt = {"invariants.md", "usage-guard.md", "rationale.md", "README.md"}
@@ -722,7 +841,7 @@ def check_flow_slice_size(root: Path, r: VerifyResult):
 
 # ── 11. 委派守卫（判据单一信源在 .aidp/scripts/check_*.py）───────────────────
 def _run_guard(root: Path, name: str, extra=None, timeout=180):
-    script = root / ".aidp/scripts" / f"{name}.py"
+    script = _contract_root(root) / "scripts" / f"{name}.py"
     if not script.is_file():
         return None, None
     try:
@@ -864,7 +983,7 @@ def check_design_goals(root: Path, r: VerifyResult):
 
 
 def check_cicd_watch_selftest(root: Path, r: VerifyResult):
-    sc = root / ".aidp/scripts/cicd_watch.py"
+    sc = _contract_root(root) / "scripts/cicd_watch.py"
     if not sc.is_file():
         return
     try:
@@ -984,6 +1103,13 @@ def main(argv=None) -> int:
     if not template:
         print(f"[verify] 版本: {version}, 用户: {user}")
     r = VerifyResult()
+    vcs_mode = _vcs_mode(root)
+    print(f"[verify] vcs_mode={vcs_mode}")
+    if vcs_mode == "none":
+        for capability in ("runtime-artifact-tracking", "credential-tracking", "backup-tracking"):
+            r.note(f"{capability}: unsupported:vcs-disabled")
+    if not template and _runtime_homes(root):
+        check_native_runtime(root, r)
 
     check_directories(root, version, user, template, r)
     check_files(root, template, r)
@@ -1002,8 +1128,9 @@ def main(argv=None) -> int:
     check_deployment_docs(root, r)
     check_deployment_tools(root, r)
     check_sql_version_dir_consistency(root, r)
-    check_runtime_artifact_vcs(root, r)
-    check_tracked_credentials(root, r)
+    if vcs_mode == "git":
+        check_runtime_artifact_vcs(root, r)
+        check_tracked_credentials(root, r)
     if not template:
         check_gitignore(root, r)
     check_unreplaced_placeholders(root, r)

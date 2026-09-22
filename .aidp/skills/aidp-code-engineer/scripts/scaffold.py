@@ -708,9 +708,9 @@ def sync_delivered_file(root: Path, rel: str, sp: Path, bundle_rel: str, bk: "Ba
         rep.act("queue", rel, "项目改过的下发文件，待语义合并新版")
 
 
-def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup"):
+def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup", agents: list):
     base = L.ASSETS / "docs"
-    home = ".agents/aidp" if (root / ".agents/aidp").is_dir() else ".claude/aidp"
+    home = ".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp"
     for rel, sp in L.iter_files(base):
         dp = root / "docs" / rel
         data = sp.read_bytes()
@@ -806,11 +806,12 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
         rep.note("memory/README.md 已存在且非 AIDP 版本，保留原文")
 
 
-def sync_root_files(root: Path, ctx: dict, rep: Report, bk: "Backup"):
+def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
     readme = root / "README.md"
     if not readme.exists():
-        readme.write_text(L.render((L.ASSETS / "root/README.md.tpl").read_text(encoding="utf-8"), ctx),
-                          encoding="utf-8")
+        home = ".claude/aidp" if list(agents) == ["claude"] else ".agents/aidp"
+        body = L.render((L.ASSETS / "root/README.md.tpl").read_text(encoding="utf-8"), ctx)
+        readme.write_text(body.replace("{{AIDP_HOME}}", home), encoding="utf-8")
         rep.act("create", "README.md")
     env = root / "env/.env"
     if not env.exists():
@@ -1090,8 +1091,9 @@ def _preflight_native_adapter(root: Path, agents: list, source: Path):
 
 
 def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
-    for rel in ((".claude/skills" if "claude" in agents else None),
-                (".agents/skills" if {"codex", "dsh"} & set(agents) else None)):
+    for rel, home in ((".claude/skills", ".claude/aidp") if "claude" in agents else (None, None),
+                      (".agents/skills", ".agents/aidp") if {"codex", "dsh"} & set(agents)
+                      else (None, None)):
         if rel is None:
             continue
         target = root / rel / L.SKILL_NAME
@@ -1106,6 +1108,9 @@ def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
             tests = stage / "scripts/tests"
             if tests.exists():
                 shutil.rmtree(tests)
+            skill_file = stage / "SKILL.md"
+            skill_file.write_text(skill_file.read_text(encoding="utf-8").replace("{{AIDP_HOME}}", home),
+                                  encoding="utf-8")
             (stage / ".aidp-scaffold-generated").write_text("aidp-code-engineer\n", encoding="utf-8")
             desired = _complete_tree_state(stage)
             if any(entry[0] == "link" for entry in desired.values()):
@@ -1156,7 +1161,7 @@ def _preflight_native_project_paths(root: Path, version: str, user: str):
                 if path.is_symlink():
                     raise ValueError(f"项目目录包含 symlink，拒绝写入：{path}")
     files = {"README.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
-             "memory/aidp-config.yaml", "memory/README.md", "env/.env"}
+             L.USER_FILLABLE_BASELINE, "memory/aidp-config.yaml", "memory/README.md", "env/.env"}
     files.update(f"docs/{rel}" for rel, _source in L.iter_files(L.ASSETS / "docs"))
     files.update(rel for _tpl, rel in L.MEMORY_TEMPLATES)
     for rel in sorted(files):
@@ -1165,6 +1170,8 @@ def _preflight_native_project_paths(root: Path, version: str, user: str):
             raise ValueError(f"项目文件是 symlink，拒绝写入：{target}")
         if target.exists() and not target.is_file():
             raise ValueError(f"项目文件不是普通文件，拒绝写入：{target}")
+        if target.is_file() and target.stat().st_nlink > 1:
+            raise ValueError(f"项目文件是硬链接，拒绝写入：{target}")
 
 
 class _NativeInstallJournal:
@@ -1405,13 +1412,23 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         specs.append(("claude", ".claude/aidp"))
     if {"codex", "dsh"} & set(agents):
         specs.append(("shared", ".agents/aidp"))
+    overlay_updates = set()
+    if len(specs) == 2 and all((root / home).is_dir() for _kind, home in specs):
+        overlays = {home: runtime_layout._user_overlay(root / home, home, kind)
+                    for kind, home in specs}
+        first, second = (home for _kind, home in specs)
+        for relative in overlays[first].keys() & overlays[second].keys():
+            if overlays[first][relative] != overlays[second][relative]:
+                raise RuntimeError(f"双包用户文件冲突: {relative}")
+        if overlays[first] != overlays[second]:
+            overlay_updates.update((first, second))
     journal.migration_stage = "render-runtime"
     for kind, home in specs:
         dest = root / home
         if dest.is_dir():
             current = dest / runtime_layout.RUNTIME_MANIFEST
             manifest = json.loads(current.read_text(encoding="utf-8"))
-            if manifest.get("version") == scaffold_raw and not a.force:
+            if manifest.get("version") == scaffold_raw and not a.force and home not in overlay_updates:
                 try:
                     runtime_layout.validate_runtime(dest, expected_home=home)
                 except ValueError:
@@ -1441,12 +1458,12 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     for rel in dirs:
         (root / rel).mkdir(parents=True, exist_ok=True)
         journal.record(rel)
-    sync_docs(root, bool(previous), rep, bk)
+    sync_docs(root, bool(previous), rep, bk, agents)
     journal.record(L.USER_FILLABLE_BASELINE)
     sync_config(root, ctx, rep, bk)
     sync_memory(root, ctx, bool(previous), rep, bk)
     journal.record(L.USER_FILLABLE_BASELINE)
-    sync_root_files(root, ctx, rep, bk)
+    sync_root_files(root, ctx, agents, rep, bk)
     if decision != "protect":
         sync_memory_file(root, agents, ctx, decision, bool(previous), rep, bk)
     for rel in (".claude/skills" if "claude" in agents else None,

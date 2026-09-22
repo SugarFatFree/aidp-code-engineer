@@ -73,13 +73,13 @@
 - **单Sprint/分步/辅助**：`/sprint-full NNN` · `/sprint-start;/sprint-dev;/sprint-test;/sprint-close` · `/memory-sync` · `/health-check`
 - **7×24 全自动（★ 开发 + 测试两条链路必须同时运行才是完整闭环）**：
   ```bash
-  python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 操作系统调度：开发链路 10m + 测试链路 5m 各一个定时任务（三种 Agent 通用）
+  python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 操作系统调度：开发 10m + 测试 5m + 独立 watchdog 5m（三种 Agent 通用）
   python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务 + 两条链路心跳
   # Claude Code 会话内交互式短期用法（会话级、7 天过期、空闲才触发、同会话两条串行）：
   /loop 10m /sprint-autopilot --unattended
   /loop 5m  /sprint-aiauto-test --unattended
   ```
-  > ⚠️ 只跑开发链路 → 浏览器实测永不自动开始（约 3 tick 后静态-only finalize + 冻结待人）。**headless 裸 `--once` 须叠 `--unattended`**（否则首个 AskUserQuestion 无人可答挂起；`agent_loop.sh` 已自动补齐）。冻结 / 告警恒写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl`。前置（`notify` 通知渠道 / chrome-mcp / PRD `autopilot_decisions` / CICD `cicd.provider` + `cicd.pipelines` 等）详见 `{{AIDP_HOME}}/reference/命令速查.md`。
+  > ⚠️ 只跑开发链路 → 浏览器实测永不自动开始（约 3 tick 后静态-only finalize + 冻结待人）。**headless 裸 `--once` 须叠 `--unattended`**（否则首个 AskUserQuestion 无人可答挂起；`agent_loop.sh` 已自动补齐）。冻结 / 告警恒写本地告警台账 `memory/.aidp/alerts.jsonl`。前置（`notify` 通知渠道 / chrome-mcp / PRD `autopilot_decisions` / CICD `cicd.provider` + `cicd.pipelines` 等）详见 `{{AIDP_HOME}}/reference/命令速查.md`。
 
 ## ★ Sprint 命令清单 + 意图路由
 

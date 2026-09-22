@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""aidp_scheduler.py —— 7×24 无人值守的操作系统调度装配器（开发链路 + 测试链路各一个定时任务）。
+"""aidp_scheduler.py —— 7×24 无人值守的操作系统调度装配器（开发、测试与独立巡检定时任务）。
 
 ## 为什么用操作系统调度
 
 `/sprint-autopilot`（开发链路）与 `/sprint-aiauto-test`（测试链路）都是「被反复唤起的单次执行体」。
 Claude Code 会话内的 `/loop` 是会话级定时任务：会话关闭即停、定时任务 7 天后过期、只在会话空闲时触发，
 同一会话里挂两条时实际串行。7×24 需要两个**独立进程**分别按周期唤起两条链路，互不阻塞，
-这正是操作系统调度器（systemd timer / cron / launchd / Windows 计划任务）的职责。
+并用第三个任务独立巡检（两条链路均未启动时也能告警），这正是操作系统调度器
+（systemd timer / cron / launchd / Windows 计划任务）的职责。
 
 每个定时任务调用 `AIDP_HOME/scripts/agent_loop.sh --once <命令> --unattended`：
 agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥、写日志；本脚本只负责装配与巡检。
@@ -17,13 +18,13 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
     install    [--agent A] [--dev-interval 10m] [--test-interval 5m] [--platform P] [--dry-run] [--json]
     uninstall  [--platform P] [--dry-run] [--json]
     status     [--platform P] [--json]
-    watchdog   [--quiet] [--json]          # 心跳巡检：任一链路超过 stale_cycles × 周期无心跳 → 本地告警 + 通知
+    watchdog   [--quiet] [--json]          # 心跳巡检：定时唤醒时无心跳从首次巡检起计时，超时告警
     --self-check
 
 平台（`--platform` 缺省自动判定）：
-  systemd   Linux 且 `systemctl --user` 可用 → `~/.config/systemd/user/aidp-<项目>-{dev,test}.{service,timer}`
-  cron      Linux 无 systemd 用户实例 → 用户 crontab 中带 `# AIDP-SCHEDULER <项目>` 标记的两行
-  launchd   macOS → `~/Library/LaunchAgents/com.aidp.<项目>.{dev,test}.plist`
+  systemd   Linux 且 `systemctl --user` 可用 → `~/.config/systemd/user/aidp-<项目>-{dev,test,watchdog}.{service,timer}`
+  cron      Linux 无 systemd 用户实例 → 用户 crontab 中带 `# AIDP-SCHEDULER <项目>` 标记的三行
+  launchd   macOS → `~/Library/LaunchAgents/com.aidp.<项目>.{dev,test,watchdog}.plist`
   schtasks  Windows → 只输出 `schtasks` 命令（需在 Git Bash / WSL 等可运行 bash 的环境下执行），不自动执行
 
 配置：`memory/aidp-config.yaml` 的 `scheduler` 段（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `exec`），
@@ -126,6 +127,11 @@ def chain_argv(root, chain):
             "--once", CHAINS[chain]["command"], "--unattended"]
 
 
+def watchdog_argv(root):
+    return [sys.executable, os.path.join(root, runtime_relpath("scripts/aidp_scheduler.py", __file__)),
+            "watchdog", "--scheduled", "--root", root, "--quiet"]
+
+
 def chain_env(agent):
     """定时任务环境：装配时刻的 PATH（调度器默认 PATH 通常找不到 claude / codex 等 CLI）+ 可选 AIDP_AGENT。
 
@@ -172,6 +178,25 @@ def render_systemd(root, agent, intervals):
             "Persistent=true\n\n"
             "[Install]\n"
             "WantedBy=timers.target\n")
+    unit = f"aidp-{slug}-watchdog"
+    argv = " ".join(_q(a) if " " in a else a for a in watchdog_argv(root))
+    files[os.path.join(d, unit + ".service")] = (
+        "[Unit]\n"
+        f"Description=AIDP 心跳巡检 · {root}\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        f"WorkingDirectory={root}\n"
+        f"ExecStart={argv}\n")
+    files[os.path.join(d, unit + ".timer")] = (
+        "[Unit]\n"
+        f"Description=AIDP 心跳巡检定时器 · {root}\n\n"
+        "[Timer]\n"
+        "OnBootSec=2min\n"
+        "OnUnitActiveSec=5min\n"
+        f"Unit={unit}.service\n"
+        "Persistent=true\n\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n")
     return files
 
 
@@ -192,6 +217,8 @@ def render_cron(root, agent, intervals):
         cmd = " ".join(_q(a) for a in chain_argv(root, chain))
         lines.append(f"{_cron_schedule(intervals[chain])} cd {_q(root)} && "
                      f"{(env + ' ') if env else ''}{cmd} >/dev/null 2>&1 {CRON_MARK} {slug} {chain}")
+    cmd = " ".join(_q(a) for a in watchdog_argv(root))
+    lines.append(f"*/5 * * * * cd {_q(root)} && {cmd} >/dev/null 2>&1 {CRON_MARK} {slug} watchdog")
     return lines
 
 
@@ -223,6 +250,22 @@ def render_launchd(root, agent, intervals):
             f"  <key>StandardOutPath</key><string>{_xml(log)}</string>\n"
             f"  <key>StandardErrorPath</key><string>{_xml(log)}</string>\n"
             "</dict>\n</plist>\n")
+    label = f"com.aidp.{slug}.watchdog"
+    args = "".join(f"    <string>{_xml(a)}</string>\n" for a in watchdog_argv(root))
+    log = os.path.join(root, "memory", ".aidp", "logs", "launchd-watchdog.log")
+    files[os.path.join(d, label + ".plist")] = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n<dict>\n'
+        f"  <key>Label</key><string>{_xml(label)}</string>\n"
+        f"  <key>ProgramArguments</key>\n  <array>\n{args}  </array>\n"
+        f"  <key>WorkingDirectory</key><string>{_xml(root)}</string>\n"
+        "  <key>StartInterval</key><integer>300</integer>\n"
+        "  <key>RunAtLoad</key><true/>\n"
+        f"  <key>StandardOutPath</key><string>{_xml(log)}</string>\n"
+        f"  <key>StandardErrorPath</key><string>{_xml(log)}</string>\n"
+        "</dict>\n</plist>\n")
     return files
 
 
@@ -233,17 +276,24 @@ def _xml(s):
 def render_schtasks(root, agent, intervals, uninstall=False):
     slug = project_slug(root)
     cmds = []
-    for chain in CHAINS:
+    for chain in (*CHAINS, "watchdog"):
         name = f"AIDP\\{slug}-{chain}"
         if uninstall:
             cmds.append(f'schtasks /Delete /TN "{name}" /F')
             continue
-        env = "".join(f"export {k}={v}; " for k, v in chain_env(agent).items())
-        inner = runtime_text(
-            f"cd '{root}' && {env}__AIDP_HOME__/scripts/agent_loop.sh --once {CHAINS[chain]['command']} --unattended",
-            __file__,
-        )
-        mins = max(1, intervals[chain] // 60)
+        if chain == "watchdog":
+            inner = runtime_text(
+                f"cd '{root}' && python3 __AIDP_HOME__/scripts/aidp_scheduler.py watchdog --scheduled --root . --quiet",
+                __file__,
+            )
+            mins = 5
+        else:
+            env = "".join(f"export {k}={v}; " for k, v in chain_env(agent).items())
+            inner = runtime_text(
+                f"cd '{root}' && {env}__AIDP_HOME__/scripts/agent_loop.sh --once {CHAINS[chain]['command']} --unattended",
+                __file__,
+            )
+            mins = max(1, intervals[chain] // 60)
         cmds.append(f'schtasks /Create /SC MINUTE /MO {mins} /TN "{name}" /TR "bash -lc \\"{inner}\\"" /F')
     return cmds
 
@@ -471,21 +521,41 @@ def do_watchdog(root, a, now=None, send_notify=True):
             state = {}
     except (OSError, ValueError):
         state = {}
+    now = now or datetime.now(timezone.utc)
     stale, alerted = [], []
     for chain, r in rep.items():
-        if r["state"] != "stale":
-            state.pop(chain, None)
+        missing_key = f"{chain}_missing_since"
+        if r["state"] == "unknown" and not getattr(a, "scheduled", False):
+            continue
+        if r["state"] == "unknown":
+            missing_since = _parse_ts(state.get(missing_key))
+            if missing_since is None:
+                missing_since = now
+                state[missing_key] = now.isoformat()
+            r["age_seconds"] = max(0, int((now - missing_since).total_seconds()))
+            if r["age_seconds"] > r["threshold_seconds"]:
+                r["state"] = "running" if lock_held(root, r["command"]) else "never-started"
+            else:
+                state.pop(chain, None)
+        else:
+            state.pop(missing_key, None)
+        if r["state"] not in ("stale", "never-started"):
+            if r["state"] == "fresh":
+                state.pop(chain, None)
             continue
         stale.append(chain)
-        if state.get(chain) == r["heartbeat_at"]:
-            continue                      # 同一陈旧心跳只告警一次
-        state[chain] = r["heartbeat_at"]
+        marker = r["heartbeat_at"] if r["state"] == "stale" else "never-started"
+        if state.get(chain) == marker:
+            continue                      # 同一失联状态只告警一次
+        state[chain] = marker
         label = CHAINS[chain]["label"]
+        last = f"最后心跳 {r['heartbeat_at']}" if r["heartbeat_at"] else "从未收到心跳"
         msg = (runtime_text(f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
-               f"（阈值 {r['threshold_seconds'] // 60} 分钟，最后心跳 {r['heartbeat_at']}）。"
+               f"（阈值 {r['threshold_seconds'] // 60} 分钟，{last}）。"
                "请检查定时任务：python3 __AIDP_HOME__/scripts/aidp_scheduler.py status", __file__))
         rec = {"at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
-               "source": "aidp_scheduler.watchdog", "kind": "loop-heartbeat-stale",
+               "source": "aidp_scheduler.watchdog", "kind": ("loop-heartbeat-never-started"
+               if r["state"] == "never-started" else "loop-heartbeat-stale"),
                "chain": chain, "command": r["command"], "heartbeat_at": r["heartbeat_at"],
                "age_seconds": r["age_seconds"], "threshold_seconds": r["threshold_seconds"],
                "message": msg}
@@ -523,7 +593,7 @@ def do_status(root, a):
             installed[os.path.basename(p)] = os.path.isfile(p)
     elif plat == "cron":
         tab = _read_crontab()
-        for chain in CHAINS:
+        for chain in (*CHAINS, "watchdog"):
             installed[f"cron:{chain}"] = any(f"{CRON_MARK} {slug} {chain}" in ln for ln in tab)
     return 0, {"action": "status", "platform": plat, "root": root, "slug": slug,
                "installed": installed, "config": scheduler_config(root),
@@ -542,31 +612,41 @@ def _self_check():
     try:
         iv = {"dev": 600, "test": 300}
         sd = render_systemd(d, "codex", iv)
-        ok.append(("systemd 渲染 2 service + 2 timer", len(sd) == 4))
+        ok.append(("systemd 渲染 3 service + 3 timer", len(sd) == 6))
         ok.append(("systemd ExecStart 走 agent_loop --once 且带 --unattended",
                    all("agent_loop.sh --once" in v and "--unattended" in v
-                       for k, v in sd.items() if k.endswith(".service"))))
+                       for k, v in sd.items() if k.endswith(".service") and "-watchdog." not in k)))
+        ok.append(("systemd 独立 watchdog 定时唤醒", any("watchdog --scheduled" in v for v in sd.values())))
         ok.append(("systemd 周期正确", any("OnUnitInactiveSec=10min" in v for v in sd.values())
                    and any("OnUnitInactiveSec=5min" in v for v in sd.values())))
         cr = render_cron(d, "auto", iv)
-        ok.append(("cron 两行带标记", len(cr) == 2 and all(CRON_MARK in ln for ln in cr)
-                   and cr[0].startswith("*/10 ") and cr[1].startswith("*/5 ")))
-        ok.append(("launchd 渲染 StartInterval", any("<integer>300</integer>" in v
-                                                    for v in render_launchd(d, "auto", iv).values())))
-        ok.append(("schtasks 输出两条", len(render_schtasks(d, "auto", iv)) == 2))
+        ok.append(("cron 三行带标记", len(cr) == 3 and all(CRON_MARK in ln for ln in cr)
+                   and cr[0].startswith("*/10 ") and cr[1].startswith("*/5 ")
+                   and "watchdog' '--scheduled'" in cr[2]))
+        ld = render_launchd(d, "auto", iv)
+        ok.append(("launchd 三条任务含 watchdog", len(ld) == 3 and any("<integer>300</integer>" in v
+                   and "<string>--scheduled</string>" in v for v in ld.values())))
+        ok.append(("schtasks 输出三条", len(render_schtasks(d, "auto", iv)) == 3))
         ok.append(("周期解析", parse_interval("10m") == 600 and parse_interval("30s") is None
                    and parse_interval("x") is None))
         os.makedirs(os.path.join(d, "memory"))
         old = "2000-01-01T00:00:00+00:00"
         with open(os.path.join(d, BASELINE_REL), "w", encoding="utf-8") as fh:
             json.dump({"aiauto_test_heartbeat_at": old}, fh)
-        ns = argparse.Namespace(quiet=True, json=True)
+        ns = argparse.Namespace(quiet=True, json=True, scheduled=True)
         rc, res = do_watchdog(d, ns, send_notify=False)
         ok.append(("watchdog：测试链路陈旧 → rc=3 + 告警台账", rc == 3 and res["stale"] == ["test"]
                    and os.path.isfile(os.path.join(d, ALERTS_REL))))
-        ok.append(("watchdog：开发链路无心跳记录 → unknown 不告警", res["chains"]["dev"]["state"] == "unknown"))
+        ok.append(("watchdog：首次无心跳记录 → unknown 不告警", res["chains"]["dev"]["state"] == "unknown"))
         rc2, res2 = do_watchdog(d, ns, send_notify=False)
         ok.append(("watchdog：同一陈旧心跳不重复告警", rc2 == 3 and res2["alerted"] == []))
+        with open(os.path.join(d, WATCHDOG_STATE_REL), encoding="utf-8") as fh:
+            missing_since = _parse_ts(json.load(fh)["dev_missing_since"])
+        overdue = missing_since.timestamp() + res["chains"]["dev"]["threshold_seconds"] + 1
+        rc3, res3 = do_watchdog(d, ns, now=datetime.fromtimestamp(overdue, timezone.utc), send_notify=False)
+        ok.append(("watchdog：无心跳超过宽限 → never-started 告警", rc3 == 3
+                   and res3["chains"]["dev"]["state"] == "never-started"
+                   and res3["alerted"] == ["dev"]))
     finally:
         if old_home is None:
             os.environ.pop("HOME", None)
@@ -624,6 +704,7 @@ def main(argv=None):
     ap.add_argument("--root", default=".")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true")
     a = ap.parse_args(argv)

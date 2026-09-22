@@ -607,6 +607,13 @@ def test_autopilot_flow_contracts():
     phase = os.path.join(repo, "flows/sprint-autopilot/phase-3-5.md")
     command = os.path.join(repo, "commands/sprint-autopilot.md")
     release = os.path.join(repo, "flows/version/release-7.md")
+    poll_flow = os.path.join(repo, "flows/sprint-autopilot/phase-3-6b.md")
+    with open(poll_flow, encoding="utf-8") as f:
+        poll_text = f.read()
+    check("Step C 从本 build 的 push_commit 读取轮询预期 SHA",
+          'get push_commit --default ""' in poll_text and '--commit "$GIT_PUSH_COMMIT"' in poll_text)
+    check("Step C 不以轮询返回的 RUN_COMMIT 覆盖基线",
+          'set cicd_run.run_commit "$RUN_COMMIT"' not in poll_text)
     with open(phase, encoding="utf-8") as f:
         p = f.read()
     with open(command, encoding="utf-8") as f:

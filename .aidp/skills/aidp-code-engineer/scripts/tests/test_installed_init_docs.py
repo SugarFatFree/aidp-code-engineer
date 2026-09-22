@@ -27,7 +27,8 @@ class InstalledInitDocsTest(unittest.TestCase):
                         (runtime / kind / item.name).touch()
                 report = S.Report()
                 with mock.patch.object(S.L, "ASSETS", REPO):
-                    S.sync_docs(root, False, report, S.Backup(root, report))
+                    agents = ["claude"] if home == ".claude/aidp" else ["codex"]
+                    S.sync_docs(root, False, report, S.Backup(root, report), agents)
                 for doc in (root / "docs/init").rglob("*.md"):
                     text = doc.read_text(encoding="utf-8")
                     self.assertNotIn("{{AIDP_HOME}}", text, str(doc))

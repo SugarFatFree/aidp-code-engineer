@@ -371,7 +371,7 @@ def test_copy_mode_and_errors():
         # 预置用户已有的 hooks / config，验证合并而非覆盖
         (root / ".claude/settings.json").write_text(json.dumps({
             "permissions": {"allow": ["Bash(git status)"]},
-            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": f"python3 old/{AS.STOP_GUARD_REL}"}]}]}}),
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": f"python3 {AS.STOP_GUARD_REL}"}]}]}}),
             encoding="utf-8")
         (root / ".codex/config.toml").write_text('model = "demo"\n\n[features]\nother = 1\n', encoding="utf-8")
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--mode", "copy")
@@ -1175,6 +1175,75 @@ def test_copy_mode_and_errors():
     check("agent_sync --self-check 通过", rc == 0 and out.get("self_check") == "pass")
 
 
+def test_user_stop_hook_with_same_basename_is_preserved():
+    print("【Stop hook：用户同名脚本不可覆盖】")
+    root = _mkrepo(markers=(".claude",))
+    try:
+        custom = {"type": "command", "command": "python3 tools/autopilot-stop-guard.py", "timeout": 15}
+        external = {"type": "command", "command": "python3 /opt/user-tools/.aidp/hooks/autopilot-stop-guard.py"}
+        other = {"type": "command", "command": "python3 tools/notify.py"}
+        settings = {
+            "permissions": {"allow": ["Bash(git status)"]},
+            "hooks": {"Stop": [{"matcher": "", "hooks": [custom, external, other]}],
+                      "PreToolUse": [{"hooks": [other]}]},
+        }
+        path = root / ".claude/settings.json"
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        merged = json.loads(_read(path))
+        stop = merged["hooks"]["Stop"]
+        check("用户同名 Stop hook 及其他配置保持不变，AIDP hook 独立存在",
+              rc == 0 and merged["permissions"] == settings["permissions"]
+              and merged["hooks"]["PreToolUse"] == settings["hooks"]["PreToolUse"]
+              and stop[0] == settings["hooks"]["Stop"][0]
+              and len(stop) == 2
+              and stop[1]["hooks"] == [{"type": "command", "command": AS._hook_cmd("claude")}])
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
+        check("用户同名 Stop hook 与 AIDP hook 二次同步幂等",
+              rc == 0 and out.get("actions") == [])
+    finally:
+        _rm(root)
+
+
+def test_managed_stop_hook_path_boundaries():
+    print("【Stop hook：只识别项目内托管路径】")
+    root = Path(tempfile.mkdtemp()) / "demo-app"
+    root.mkdir()
+    try:
+        legacy = AS.STOP_GUARD_REL
+        claude = AS._hook_rel("claude")
+        shared = AS._hook_rel("codex")
+        managed = (
+            f"python3 {legacy}",
+            f'python3 "$CLAUDE_PROJECT_DIR/{legacy}"',
+            AS._hook_cmd("claude"),
+            AS._hook_cmd("codex"),
+            AS._hook_cmd("dsh"),
+            f"python3 {root / legacy}",
+            f'python3 "{root / claude}"',
+            f"python3 {root / shared} --agent codex",
+        )
+        for command in managed:
+            check(f"识别项目内托管 hook：{command}", AS._is_managed_stop_hook(command, root))
+
+        external = (
+            f"python3 /opt/user-tools/{legacy}",
+            f"python3 /opt/user-tools/{claude}",
+            f"python3 /opt/user-tools/{shared} --agent codex",
+            f"python3 {root.parent / (root.name + '-other') / legacy}",
+            f"python3 {root}/../outside/{legacy}",
+            f"python3 old/{legacy}",
+            f'python3 "$CLAUDE_PROJECT_DIR/../outside/{claude}"',
+            f'python3 "${{PWD}}/../outside/{shared}" --agent codex',
+            f'python3 "{root / legacy}',
+        )
+        for command in external:
+            check(f"拒绝非托管 hook：{command}", not AS._is_managed_stop_hook(command, root))
+        check("没有项目根时拒绝绝对路径", not AS._is_managed_stop_hook(f"python3 {root / legacy}"))
+    finally:
+        _rm(root)
+
+
 def test_sync_executes_from_native_runtime_without_root_aidp():
     print("【agent_sync：从 Agent 原生 runtime 执行，无根 .aidp】")
     cases = (
@@ -1795,6 +1864,8 @@ def main():
     test_sync_all_agents_managed_copy()
     test_memory_migration_shapes()
     test_copy_mode_and_errors()
+    test_user_stop_hook_with_same_basename_is_preserved()
+    test_managed_stop_hook_path_boundaries()
     test_sync_executes_from_native_runtime_without_root_aidp()
     test_native_runtime_managed_copy_contract()
     test_managed_copy_tree_drift_is_recursive()

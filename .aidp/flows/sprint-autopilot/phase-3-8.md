@@ -121,9 +121,9 @@
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"; mkdir -p memory/.aidp
    python3 {{AIDP_HOME}}/scripts/emit-report.py --kind exec --version "$TARGET_VERSION" --build "$BUILD" \
      --data "docs/reports/$TARGET_VERSION/AI执行报告/.build-input-${BUILD}.json" \
-     --baseline memory/.sprint-autopilot-baseline.json --json > memory/{{AIDP_HOME}}/emit-exec-${BUILD}.json
+     --baseline memory/.sprint-autopilot-baseline.json --json > memory/.aidp/emit-exec-${BUILD}.json
    # 脚本自动：写 data 结果态 + 注册两页（报告落本地 docs/reports/）→ 回写 baseline report_deliveries.exec_report
-   AI_REPORT_URL=$(jq -r '.access_url // .report_path' memory/{{AIDP_HOME}}/emit-exec-${BUILD}.json)   # 报告仓库内相对路径
+   AI_REPORT_URL=$(jq -r '.access_url // .report_path' memory/.aidp/emit-exec-${BUILD}.json)   # 报告仓库内相对路径
    ```
    - `AI_REPORT_URL` = 报告在仓库内的相对路径（`docs/reports/${TARGET_VERSION}/AI执行报告/index.html#/build/${BUILD}`）；项目配置了 GitHub Pages 等静态托管（由 CI 发布）时可换成对应站点链接，或用 GitHub 文件链接。#3 通知发它。
    - **`WILL_BROWSER_TEST=1` 时本步整段跳过**（exec 报告的定稿 + 交付台账由测试链路在 #F 后经同一 `emit-report.py --kind exec` 执行，见 aiauto-test Phase 3.7）。

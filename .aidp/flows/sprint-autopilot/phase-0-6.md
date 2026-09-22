@@ -69,7 +69,7 @@ if [ ! -d "$PRD_ROOT" ]; then
     --section "PRD root 不存在：$PRD_ROOT（连续第 $S 次）。请确认 docs/requirements/ 下的产品输入已就位后重触发。"
   NRC=$?
   case "$NRC" in
-    0|3) : ;;   # 0 已发 / 3 未配置渠道（合规降级，告警已落 memory/{{AIDP_HOME}}/alerts.jsonl）
+    0|3) : ;;   # 0 已发 / 3 未配置渠道（合规降级，告警已落 memory/.aidp/alerts.jsonl）
     *) echo "⚠️ #4 未发出（notify.py rc=$NRC）——不阻断熔断处置" ;;
   esac
   exit 0

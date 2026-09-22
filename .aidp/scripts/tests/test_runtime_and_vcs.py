@@ -4,6 +4,7 @@
 import getpass
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -179,6 +180,50 @@ class VcsCapabilityTest(unittest.TestCase):
             self.assertEqual(self.vcs.detect_mode(plain), "none")
             self.assertEqual(self.vcs.detect_mode(repo), "git")
 
+    def test_parent_worktree_subdirectory_is_not_its_own_git_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            if subprocess.run(["git", "init", "-q", str(repo)], capture_output=True).returncode:
+                self.skipTest("测试环境无可用 git")
+            project = repo / "project"
+            project.mkdir()
+            self.assertEqual(self.vcs.detect_mode(project), "none")
+            self.assertEqual(self.vcs.detect_mode(repo), "git")
+
+    def test_linked_worktree_inside_parent_is_its_own_git_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            if subprocess.run(["git", "init", "-q", str(repo)], capture_output=True).returncode:
+                self.skipTest("测试环境无可用 git")
+            commit = subprocess.run(
+                ["git", "-C", str(repo), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                 "commit", "-q", "--allow-empty", "-m", "init"], capture_output=True, text=True,
+            )
+            self.assertEqual(commit.returncode, 0, commit.stderr)
+            linked = repo / "linked"
+            added = subprocess.run(
+                ["git", "-C", str(repo), "worktree", "add", "-q", "-b", "linked-test", str(linked)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(added.returncode, 0, added.stderr)
+            self.assertTrue((linked / ".git").is_file())
+            self.assertEqual(self.vcs.detect_mode(linked), "git")
+            ordinary = linked / "ordinary"
+            ordinary.mkdir()
+            self.assertEqual(self.vcs.detect_mode(ordinary), "none")
+
+    def test_symlink_alias_to_git_root_does_not_escape_lexical_project_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            if subprocess.run(["git", "init", "-q", str(repo)], capture_output=True).returncode:
+                self.skipTest("测试环境无可用 git")
+            alias = Path(td) / "alias"
+            alias.symlink_to(repo, target_is_directory=True)
+            self.assertEqual(self.vcs.detect_mode(alias), "none")
+
     def test_git_missing_timeout_and_nonzero_are_none(self):
         root = Path("/tmp/no-git-fixture")
         cases = (
@@ -192,19 +237,27 @@ class VcsCapabilityTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr="bad")
         with mock.patch("subprocess.run", return_value=completed):
             self.assertEqual(self.vcs.detect_mode(root), "none")
+        inside = subprocess.CompletedProcess(["git"], 0, stdout="true\n", stderr="")
+        with mock.patch("subprocess.run", side_effect=[inside, completed]):
+            self.assertEqual(self.vcs.detect_mode(root), "none")
 
     def test_git_probe_is_noninteractive_bounded_and_shell_free(self):
-        completed = subprocess.CompletedProcess(["git"], 0, stdout="true\n", stderr="")
-        with mock.patch("subprocess.run", return_value=completed) as run:
+        inside = subprocess.CompletedProcess(["git"], 0, stdout="true\n", stderr="")
+        top = subprocess.CompletedProcess(["git"], 0, stdout="/p\n", stderr="")
+        with mock.patch("subprocess.run", side_effect=[inside, top]) as run:
             self.assertEqual(self.vcs.detect_mode(Path("/p")), "git")
-        args, kwargs = run.call_args
-        self.assertEqual(args[0], ["git", "-C", "/p", "rev-parse", "--is-inside-work-tree"])
-        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
-        self.assertTrue(kwargs["capture_output"])
-        self.assertTrue(kwargs["text"])
-        self.assertEqual(kwargs["timeout"], 10)
-        self.assertFalse(kwargs["check"])
-        self.assertNotIn("shell", kwargs)
+        self.assertEqual([call.args[0] for call in run.call_args_list], [
+            ["git", "-C", "/p", "rev-parse", "--is-inside-work-tree"],
+            ["git", "-C", "/p", "rev-parse", "--show-toplevel"],
+        ])
+        for call in run.call_args_list:
+            kwargs = call.kwargs
+            self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+            self.assertTrue(kwargs["capture_output"])
+            self.assertTrue(kwargs["text"])
+            self.assertEqual(kwargs["timeout"], 10)
+            self.assertFalse(kwargs["check"])
+            self.assertNotIn("shell", kwargs)
 
     def test_developer_identity_precedence_is_deterministic(self):
         root = Path("/project")
@@ -231,6 +284,51 @@ class VcsCapabilityTest(unittest.TestCase):
                 mock.patch.object(self.vcs, "_git_user_name", return_value="---"), \
                 mock.patch.object(getpass, "getuser", return_value="fallback-user"):
             self.assertEqual(self.vcs.developer_identity(root, "  ,  "), "fallback-user")
+
+
+class DesignFactRenameTest(unittest.TestCase):
+    def test_new_fact_file_renames_in_git_and_non_git_projects(self):
+        command = (SCRIPTS.parent / "commands/sprint-design.md").read_text(encoding="utf-8")
+        section = command.split("#### Step 1.5.1：", 1)[1]
+        fence = re.search(r"```bash\n(.*?)\n```", section, re.S)
+        self.assertIsNotNone(fence)
+        script = fence.group(1).replace("{version}", "V0.1.0")
+        for mode in ("none", "git-untracked", "git-tracked"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                detail = root / "docs/design/detail/V0.1.0"
+                detail.mkdir(parents=True)
+                (detail / "00_索引.md").write_text("index\n", encoding="utf-8")
+                (detail / "事实清单.md").write_text("facts\n", encoding="utf-8")
+                if mode != "none":
+                    subprocess.run(["git", "init", "-q", str(root)], check=True)
+                    if mode == "git-tracked":
+                        subprocess.run(["git", "-C", str(root), "add", "docs/design/detail/V0.1.0/事实清单.md"],
+                                       check=True)
+                result = subprocess.run(["bash", "-e", "-c", script], cwd=root,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((detail / "98_事实清单.md").read_text(encoding="utf-8"), "facts\n")
+                self.assertFalse((detail / "事实清单.md").exists())
+
+    def test_existing_target_fails_without_losing_either_fact_file(self):
+        command = (SCRIPTS.parent / "commands/sprint-design.md").read_text(encoding="utf-8")
+        section = command.split("#### Step 1.5.1：", 1)[1]
+        script = re.search(r"```bash\n(.*?)\n```", section, re.S).group(1).replace("{version}", "V0.1.0")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            detail = root / "docs/design/detail/V0.1.0"
+            detail.mkdir(parents=True)
+            (detail / "00_索引.md").write_text("index\n", encoding="utf-8")
+            source = detail / "事实清单.md"
+            target = detail / "98_事实清单.md"
+            source.write_text("new facts\n", encoding="utf-8")
+            target.write_text("old facts\n", encoding="utf-8")
+            result = subprocess.run(["bash", "-e", "-c", script], cwd=root,
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(source.read_text(encoding="utf-8"), "new facts\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "old facts\n")
 
 
 if __name__ == "__main__":

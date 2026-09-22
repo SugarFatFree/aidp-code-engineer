@@ -12,6 +12,7 @@
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 RBC = str(REPO / ".aidp/scripts/release_baseline_check.py")
 RRG = str(REPO / ".aidp/scripts/check_release_residual_gate.py")
+SQL_FLOW = REPO / ".aidp/flows/sprint-design/step-2to4-架构补充与SQL-2.md"
+PLAN_FLOW = REPO / ".aidp/flows/version/planning-4.md"
 
 _passed = _failed = 0
 
@@ -180,11 +183,149 @@ PF="$3"; state "$1" "$2"
           st("v0.1.0", "tag", "commit") == "PUSHED")
 
 
+def _flow_block(path, index):
+    blocks = re.findall(r"^[ \t]*```bash\n(.*?)\n[ \t]*```", path.read_text(encoding="utf-8"), re.M | re.S)
+    return (blocks[index].replace("{version}", "V0.2.0")
+            .replace("{prev-version}", "V0.1.0").replace("{版本号}", "0.2.0"))
+
+
+def _move_scene(block, source, target, *, git_mode=False, tracked=False, conflict=False,
+                fail_git_mv=False, extra_sources=(), ignored=False):
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        src, dst = root / source, root / target
+        src.parent.mkdir(parents=True, exist_ok=True)
+        is_dir = source.endswith("/")
+        if is_dir:
+            src.mkdir()
+            (src / "02_用例.md").write_text("main\n", encoding="utf-8")
+        else:
+            src.write_text("-- V0.2.0: new\n" if src.suffix == ".sql" else "main\n", encoding="utf-8")
+        for extra in extra_sources:
+            other = root / extra
+            other.parent.mkdir(parents=True, exist_ok=True)
+            other.write_text("other\n", encoding="utf-8")
+            os.utime(other, (1, 1))
+        if git_mode:
+            subprocess.run(["git", "init", "-q", td], check=True)
+            if ignored:
+                (root / ".gitignore").write_text("*.sql\n", encoding="utf-8")
+            if tracked:
+                subprocess.run(["git", "-C", td, "add", source], check=True)
+                subprocess.run(["git", "-C", td, "-c", "user.name=test", "-c", "user.email=test@example.org",
+                                "commit", "-qm", "baseline"], check=True)
+                modified = src / "02_用例.md" if is_dir else src
+                modified.write_text(modified.read_text(encoding="utf-8") + "modified\n", encoding="utf-8")
+        if conflict:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text("existing\n", encoding="utf-8")
+        env = os.environ.copy()
+        if fail_git_mv:
+            shim = root / "bin"
+            shim.mkdir()
+            real_git = shutil.which("git")
+            (shim / "git").write_text(f'#!/bin/sh\n[ "$1" = mv ] && exit 39\nexec "{real_git}" "$@"\n', encoding="utf-8")
+            (shim / "git").chmod(0o755)
+            env["PATH"] = f'{shim}:{env["PATH"]}'
+        marker = root / "skill_start"
+        marker.touch()
+        os.utime(marker, (1, 1))
+        result = subprocess.run(["bash", "-e", "-c", block.replace("/tmp/skill_start", str(marker))],
+                                cwd=root, env=env,
+                                capture_output=True, text=True)
+        content = dst.read_text(encoding="utf-8") if dst.is_file() else ("directory" if dst.is_dir() else None)
+        if is_dir and tracked and git_mode and dst.is_dir():
+            staged = subprocess.run(["git", "-C", td, "ls-files", "--error-unmatch", "--",
+                                     str(dst.relative_to(root) / "02_用例.md")], capture_output=True)
+            content = "tracked-directory" if staged.returncode == 0 else "unstaged-directory"
+        return result.returncode, src.exists(), content
+
+
+def test_flow_move_modes():
+    print("\n[R5] SQL 和规划产物归位（执行围栏）")
+    sql = _flow_block(SQL_FLOW, 1)
+    source = "code/sql/v0.2.0/01_新增.sql"
+    target = "docs/deployment/V0.2.0/sql/增量/01_新增.sql"
+    for mode, tracked in ((False, False), (True, False), (True, True)):
+        rc, src, dst = _move_scene(sql, source, target, git_mode=mode, tracked=tracked)
+        check(f"SQL 搬迁 git={mode} tracked={tracked}", rc == 0 and not src and dst is not None)
+    for stage in ("code/sql/V0.2.0", "code/sql/vV0.2.0"):
+        rc, src, dst = _move_scene(sql, stage + "/01_新增.sql", target)
+        check(f"SQL legacy/双 v 路径归位 {stage}", rc == 0 and not src and dst is not None)
+    rc, src, dst = _move_scene(sql, "code/sql/v0.1.0/01_新增.sql", target,
+                               git_mode=True, tracked=True)
+    check("Git 模式上一版本本轮修改可纠正", rc == 0 and not src and dst is not None)
+    rc, src, dst = _move_scene(sql, "code/sql/v0.1.0/01_新增.sql", target)
+    check("无 Git 的上一版本 SQL 来源不明时阻断", rc != 0 and src and dst is None)
+    rc, src, dst = _move_scene(sql, source, target, git_mode=True, ignored=True)
+    check("被 ignore 的 SQL 不得静默漏搬", rc != 0 and src and dst is None)
+    for conflict, fail_git in ((True, False), (False, True)):
+        rc, src, dst = _move_scene(sql, source, target, git_mode=True, tracked=True,
+                                   conflict=conflict, fail_git_mv=fail_git)
+        check(f"SQL 移动失败 fail-closed conflict={conflict} git_mv={fail_git}",
+              rc != 0 and src and (dst == "existing\n" if conflict else dst is None))
+
+    plan = _flow_block(PLAN_FLOW, 0)
+    for mode, tracked in ((False, False), (True, False), (True, True)):
+        rc, src, dst = _move_scene(plan, "docs/design/detail/V0.2.0/00_详细设计.md",
+                                   "docs/design/detail/V0.2.0/01_详细设计.md", git_mode=mode, tracked=tracked)
+        check(f"规划主文档归一 git={mode} tracked={tracked}", rc == 0 and not src and dst is not None)
+    rc, src, dst = _move_scene(plan, "docs/design/detail/V0.2.0/00_详细设计.md",
+                               "docs/design/detail/V0.2.0/01_详细设计.md", git_mode=True,
+                               tracked=True, fail_git_mv=True)
+    check("规划 git mv 失败不回退普通 mv", rc != 0 and src and dst is None)
+    rc, src, dst = _move_scene(plan, "docs/design/detail/V0.2.0/00_详细设计.md",
+                               "docs/design/detail/V0.2.0/01_详细设计.md", conflict=True)
+    check("规划已有 01 时续编并保留原目标", rc == 0 and not src and dst == "existing\n")
+
+    bare = "docs/design/detail/V0.2.0/"
+    rc, src, dst = _move_scene(plan, bare + "详细设计.md", bare + "01_详细设计.md",
+                               extra_sources=(bare + "数据库设计.md",))
+    check("设计裸名多文件归一", rc == 0 and not src and dst is not None)
+    inc = _flow_block(PLAN_FLOW, 2)
+    for mode, tracked in ((False, False), (True, False), (True, True)):
+        rc, src, dst = _move_scene(inc, "docs/plans/V0.2.0/01_补充-功能.md",
+                                   "docs/plans/V0.2.0/02_功能.md", git_mode=mode, tracked=tracked)
+        check(f"补充规划续编 git={mode} tracked={tracked}", rc == 0 and not src and dst is not None)
+    dedup = ('next_seq() { printf "03"; }\n' +
+             _flow_block(PLAN_FLOW, 3).split('gen_index() {', 1)[0] +
+             '\ndedup_prefix "docs/testing/V0.2.0/研发自测/" || exit 1\n')
+    for mode, tracked in ((False, False), (True, False), (True, True)):
+        directory = "docs/testing/V0.2.0/研发自测/"
+        rc, src, dst = _move_scene(dedup, directory + "02_后.md", directory + "03_后.md",
+                                   git_mode=mode, tracked=tracked,
+                                   extra_sources=(directory + "02_先.md",))
+        check(f"研发自测用例重号归一 git={mode} tracked={tracked}",
+              rc == 0 and not src and dst is not None)
+
+    full_index = _flow_block(PLAN_FLOW, 3)
+    directory = "docs/testing/V0.2.0/研发自测/"
+    rc, src, dst = _move_scene(full_index, directory + "02_后.md", directory + "03_后.md",
+                               extra_sources=(directory + "02_先.md",
+                                              "docs/requirements/V0.2.0/研发需求/01_需求.md",
+                                              "docs/design/detail/V0.2.0/01_详细设计.md",
+                                              "docs/plans/V0.2.0/01_计划.md"))
+    check("索引围栏独立执行且完成重号归一", rc == 0 and not src and dst is not None)
+
+    selftest = _flow_block(PLAN_FLOW, 1)
+    for mode, tracked in ((False, False), (True, False), (True, True)):
+        rc, src, dst = _move_scene(selftest, "docs/testing/V0.2.0/研发自测用例/",
+                                   "docs/testing/V0.2.0/研发自测/", git_mode=mode, tracked=tracked)
+        check(f"研发自测整目录归位 git={mode} tracked={tracked}",
+              rc == 0 and not src and dst == ("tracked-directory" if tracked else "directory"))
+    for mode, tracked in ((False, False), (True, False), (True, True)):
+        rc, src, dst = _move_scene(selftest, "docs/testing/V0.2.0/研发自测.md",
+                                   "docs/testing/V0.2.0/研发自测/02_全量自测用例.md",
+                                   git_mode=mode, tracked=tracked)
+        check(f"研发自测子目录化 git={mode} tracked={tracked}", rc == 0 and not src and dst is not None)
+
+
 def main():
     test_increment_presence()
     test_readonly_collection_declared()
     test_residual_release_gate()
     test_push_state_not_hardcoded()
+    test_flow_move_modes()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0
 

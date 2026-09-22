@@ -116,12 +116,12 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/.aidp/skills/aidp-co
 **推荐：操作系统调度**（Claude Code / Codex / DeepSeek Harness 通用）：
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|dsh]   # 两条链路各装一个用户级定时任务（默认 10m / 5m）
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status                               # 定时任务 + 两条链路心跳
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|dsh]   # 两条链路（10m / 5m）+ 独立 watchdog 巡检（5m）
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status                               # 三条定时任务 + 两条链路心跳
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall
 ```
 
-- Linux 用 systemd --user timer（无 systemd 时 crontab）、macOS 用 launchd、Windows 输出 `schtasks` 命令；每个任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`，自动补 `--no-loop`、flock 互斥、日志落 `memory/.aidp/logs/`。
+- Linux 用 systemd --user timer（无 systemd 时 crontab）、macOS 用 launchd、Windows 输出 `schtasks` 命令；开发和测试任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`，第三条独立 watchdog 任务定期检查两条链路（包括都尚未启动的情形）。Agent 任务自动补 `--no-loop`、flock 互斥，日志落 `memory/.aidp/logs/`。
 - Codex 以 `$sprint-autopilot …` 调用命令，DeepSeek Harness 以 `/sprint-autopilot …` 调用；DeepSeek Harness 的非交互执行命令需在 `memory/aidp-config.yaml` 的 `scheduler.exec.dsh` 配置。
 - 任一链路心跳中断、任何冻结都会写本地告警台账 `memory/.aidp/alerts.jsonl`，配置了通知渠道时同时推送。
 - 非交互执行需预授权工具权限，详见 [`.aidp/reference/agent-tools.md`](.aidp/reference/agent-tools.md) 第三节。

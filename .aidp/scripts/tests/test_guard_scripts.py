@@ -991,6 +991,79 @@ def test_tick_flags_target_version_no_fallback():
           at.get("TARGET_VERSION") == "V0.1.0")
 
 
+def _check_prerelease_cross_shell_gate():
+    """Step 3/5 must consume this tick's verified gate and archive, not shell locals."""
+    import re as _re
+    print("【Phase 2 跨 Bash 准发布门】")
+    repo = Path(os.path.dirname(os.path.dirname(os.path.dirname(HERE))))
+    flow = (repo / ".aidp/flows/sprint-autopilot/phase-2.md").read_text(encoding="utf-8")
+    step3 = _re.search(r'3\. \*\*回写 baseline\*\*.*?```bash\n(.*?)\n\s*```', flow, _re.S)
+    step5 = _re.search(r'5\. \*\*★ 本片收尾.*?```bash\n(.*?)\n\s*```', flow, _re.S)
+    check("步骤 3/5 有可执行 Bash 围栏", bool(step3 and step5))
+    check("门禁与归档判据均由 tick 状态显式写入",
+          'set --command autopilot PRERELEASE_ARCHIVE_OK 1' in flow and
+          '$TF PRERELEASE_GATE_OK 1' in flow and '$TF PRERELEASE_YIELD "$PRERELEASE_YIELD"' in flow)
+    command = (repo / ".aidp/commands/sprint-autopilot.md").read_text(encoding="utf-8")
+    check("无 Git 的 internal_released_at 仅表示核验后的本地归档",
+          "无 Git 本地归档核验成功后可写内部游标 `internal_released_at`" in command and
+          "不可写 `last_deployed_at`、`internal_released_at`" not in command)
+    if not step3 or not step5:
+        return
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "memory").mkdir()
+        (root / ".aidp/scripts").mkdir(parents=True)
+        for name in ("autopilot_tick_flags.py", "baseline_edit.py", "aidp_runtime.py", "vcs.py"):
+            shutil.copy2(repo / ".aidp/scripts" / name, root / ".aidp/scripts" / name)
+        baseline = root / "memory/.sprint-autopilot-baseline.json"
+        script = root / ".aidp/scripts/autopilot_tick_flags.py"
+        baseline.write_text(json.dumps({"versions": {"V0.1.0": {"phase_beta_done_at": "2026-09-01"}},
+                                        "autopilot": {"pre_release_version": "V0.1.0"}}), encoding="utf-8")
+
+        def flags(*args):
+            return subprocess.run([sys.executable, str(script), *args], cwd=root,
+                                  capture_output=True, text=True)
+
+        def fence(text):
+            return subprocess.run(["bash", "-c", text.replace("{{AIDP_HOME}}", ".aidp")],
+                                  cwd=root, capture_output=True, text=True)
+
+        def version():
+            return json.loads(baseline.read_text(encoding="utf-8"))["versions"]["V0.1.0"]
+
+        def state():
+            return version().get("run_state", {})
+
+        def set_flags(gate, hold, yielded, archive):
+            for name, value in (("PRERELEASE_GATE_OK", gate), ("PRERELEASE_HOLD", hold),
+                                ("PRERELEASE_YIELD", yielded), ("PRERELEASE_ARCHIVE_OK", archive)):
+                result = flags("set", "--command", "autopilot", name, value)
+                if result.returncode:
+                    return result
+            return result
+
+        check("新 tick 可解析", flags("parse", "--command", "autopilot", "--arguments", "--once").returncode == 0)
+        for label, values in (("部署/测试暂缓", ("0", "1", "0", "0")),
+                              ("尾段让位", ("0", "0", "1", "0")),
+                              ("归档失败", ("1", "1", "0", "0")),
+                              ("归档未核验", ("1", "0", "0", "0"))):
+            ready = set_flags(*values)
+            fence(step3.group(1))
+            fence(step5.group(1))
+            check(f"{label}：tick 信号可持久化", ready.returncode == 0)
+            check(f"{label}：独立进程不得写内部归档游标", not version().get("internal_released_at"))
+            check(f"{label}：独立进程不得写 done", state().get("next_phase") != "done")
+        ready = set_flags("1", "0", "0", "1")
+        r3, r5 = fence(step3.group(1)), fence(step5.group(1))
+        check("双门通过且归档核验后独立进程写游标", ready.returncode == 0 and
+              r3.returncode == 0 and bool(version().get("internal_released_at")))
+        check("双门通过且归档核验后独立进程写 done", r5.returncode == 0 and state().get("next_phase") == "done")
+        flags("parse", "--command", "autopilot", "--arguments", "--once")
+        shell = flags("--command", "autopilot", "--shell")
+        check("下一 tick 不沿用上轮准发布成功信号", 'PRERELEASE_ARCHIVE_OK=1' not in shell.stdout and
+              'PRERELEASE_GATE_OK=1' not in shell.stdout)
+
+
 # ─────────────────────────────────────────────────────────────
 # check_version_identifier.py — 多层 Maven 反应堆的 parent 引用
 # ─────────────────────────────────────────────────────────────
@@ -3564,7 +3637,7 @@ def test_autopilot_deadlocks_and_gate_bypasses():
     # G-BATCH-2 Step 0.0 不再是询问门
     sb = (repo / ".aidp/commands/sprint-batch.md").read_text(encoding="utf-8")
     check("★ G-B2 Step 0.0 改为纯 INFO 不再二选一",
-          '输入 "y" 或 "继续"' not in sb and "本提示是【纯 INFO】" in sb)
+          '输入 "y" 或 "继续"' not in sb and "本提示仅为 INFO，不是询问门" in sb)
     # ⛔ 断言用「不在此列」而非「已不在此列」：后者是"原来在、现在不在"的变更叙述，
     #   违反约定 30（正文只陈述最终行为）——门与被门约束的正文口径必须一致。
     check("G-B2 体外豁免措辞已订正", "Step 0.0 不在此列" in sb)
@@ -4586,6 +4659,7 @@ def main():
     test_card_title_project_name()
     test_changelog_fix_scope()
     test_tick_flags_target_version_no_fallback()
+    _check_prerelease_cross_shell_gate()
     test_version_identifier_nested_reactor()
     test_md_anchors()
     test_ghost_flags()
@@ -4617,6 +4691,7 @@ def main():
     test_cascade_bypass_and_commit_gate()
     test_doc_numbering_and_selfcheck()
     test_yield_wake_source_plumbing()
+    test_deploy_pending_and_frontend_evidence()
     test_memory_section_loss_guard()
     test_cascade_bypass_structural_shape()
     test_index_staleness_and_mirror_copy()
@@ -4822,6 +4897,29 @@ def test_tick_flags_parse_and_supply():
     check("★ENTRY_MODE 已有供给链（恒空会让 test-only 分支不可达 + 收尾门恒按 full 判）",
           "ENTRY_MODE" not in names)
     check("供给链巡检可运行且产出结构化结果", data.get("applicable") is True)
+
+    import check_tick_var_supply as VS
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        flags = project / VS.FLAGS_REL
+        flags.parent.mkdir(parents=True)
+        flags.write_text('DERIVED_VARS = {"autopilot": {"PRERELEASE_GATE_OK", "PRERELEASE_YIELD"}}\n',
+                         encoding="utf-8")
+        flow = project / VS.SCAN_DIRS[0] / "phase.md"
+        flow.parent.mkdir(parents=True)
+        flow.write_text('''```bash
+TF="python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot"
+$TF PRERELEASE_GATE_OK 1 || exit 1
+$TF PRERELEASE_YIELD "$PRERELEASE_YIELD" || exit 1
+[ "$PRERELEASE_GATE_OK" = "1" ]
+```
+''', encoding="utf-8")
+        result = VS.run(str(project))
+        check("tick set 命令别名写入属于真实供给", result["passed"])
+        flow.write_text('[ "$PRERELEASE_GATE_OK" = "1" ]\n[ "$PRERELEASE_YIELD" = "1" ]\n',
+                        encoding="utf-8")
+        result = VS.run(str(project))
+        check("无别名写入时仍报告供给缺失", not result["passed"])
 
 
 # ────────────────────────────────────────────────────────────
@@ -6632,6 +6730,234 @@ def test_yield_wake_source_plumbing():
     fhs = (repo / ".aidp/scripts/autopilot_fail_handle.py").read_text(encoding="utf-8")
     check("★ fail_handle 内建「无唤醒源 = 等价已达阈」判断仍在",
           'wake == "0"' in fhs and "freeze = streak >= a.threshold" in fhs)
+
+
+def test_deploy_pending_and_frontend_evidence():
+    """Terminal CICD and actual frontend bytes gate deployment evidence."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    repo = Path(__file__).resolve().parents[3]
+    flow = repo / ".aidp/flows/sprint-autopilot"
+    cicd = (flow / "phase-3-6b.md").read_text(encoding="utf-8")
+    probe = (flow / "phase-3-7.md").read_text(encoding="utf-8")
+    c_exit = re.search(r"## ⛳ 本 Phase 出口.*?```bash\n(.*?)\n```", cicd, re.S)
+    check("CICD 出口存在可执行围栏", bool(c_exit))
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "memory").mkdir()
+        (root / ".aidp/scripts").mkdir(parents=True)
+        for name in ("baseline_edit.py", "aidp_runtime.py", "vcs.py", "autopilot_tick_flags.py"):
+            shutil.copy2(repo / ".aidp/scripts" / name, root / ".aidp/scripts" / name)
+        baseline = root / "memory/.sprint-autopilot-baseline.json"
+        poll = root / "memory/.aidp/cicd-poll.json"
+        poll.parent.mkdir(parents=True)
+
+        def run_exit(verdict, wake, commit="abc"):
+            baseline.write_text(json.dumps({"autopilot": {"target_version": "V0.1", "wake_source_this_tick": wake},
+                                            "versions": {"V0.1": {"current_build": "V0.1_build1001",
+                                                                    "cicd_run": {"run_id": "r1"},
+                                                                    "builds": [{"build": "V0.1_build1001", "push_commit": "abc"}]}}}),
+                                encoding="utf-8")
+            poll.write_text(json.dumps({"verdict": verdict, "run_id": "r1", "run_commit": commit}), encoding="utf-8")
+            if not c_exit:
+                return {}
+            result = subprocess.run(["bash", "-c", c_exit.group(1).replace("{{AIDP_HOME}}", ".aidp")],
+                                    cwd=root, capture_output=True, text=True)
+            state = json.loads(baseline.read_text(encoding="utf-8"))["versions"]["V0.1"].get("run_state", {})
+            return state if result.returncode == 0 else {}
+
+        check("CICD success 立即进入探针", run_exit("success", 1).get("next_phase") == "3.2.1-probe")
+        check("CICD success 的 commit 与本 build 不符不得放行",
+              run_exit("success", 1, "other").get("next_phase") == "3.2.1-deploy")
+        check("CICD running 有唤醒源时留部署游标", run_exit("running", 1).get("next_phase") == "3.2.1-deploy")
+        check("无唤醒源 running 必须有有限续轮询/终止分支",
+              '[ "${HAS_WAKE_SOURCE:-0}" = "0" ]' in cicd and '--timeout 120' in cicd and
+              '--freeze-now --phase 3.2.1-deploy --reason deploy-unreachable' in cicd)
+        c_poll = re.search(r"轮询由 .*?```bash\n(.*?)\n```", cicd, re.S)
+        d_watch = re.search(r"探针轮询 = .*?```bash\n(.*?)\n  ```", probe, re.S)
+        check("CICD 与就绪探针各有可执行围栏", bool(c_poll and d_watch))
+        (root / ".aidp/scripts/cicd_watch.py").write_text(
+            "import json,os,sys\n"
+            "p='memory/poll-count'; n=int(open(p).read())+1 if os.path.exists(p) else 1\n"
+            "open(p,'w').write(str(n))\n"
+            "v='success' if os.environ.get('MOCK_FINISH')=='1' and n==2 else 'running'\n"
+            "print(json.dumps({'verdict':v,'run_id':'r1','run_commit':'abc'}))\n", encoding="utf-8")
+        (root / ".aidp/scripts/autopilot-deploy-watch.py").write_text(
+            "import json,os,sys\n"
+            "p='memory/probe-count'; n=int(open(p).read())+1 if os.path.exists(p) else 1\n"
+            "open(p,'w').write(str(n))\n"
+            "done=os.environ.get('MOCK_FINISH')=='1' and n==2\n"
+            "print(json.dumps({'ready':done}))\n"
+            "sys.exit(0 if done else 4)\n", encoding="utf-8")
+        (root / ".aidp/scripts/autopilot_fail_handle.py").write_text(
+            "open('memory/freeze-called','w').write('frozen')\n", encoding="utf-8")
+
+        def run_pending(fence, wake, finish):
+            baseline.write_text(json.dumps({"autopilot": {"target_version": "V0.1", "wake_source_this_tick": wake},
+                                            "versions": {"V0.1": {"current_build": "V0.1_build1001",
+                                                                    "cicd_run": {"run_id": "r1"},
+                                                                    "builds": [{"build": "V0.1_build1001",
+                                                                                "push_commit": "abc"}]}}}),
+                                encoding="utf-8")
+            for marker in ("poll-count", "probe-count", "freeze-called"):
+                (root / "memory" / marker).unlink(missing_ok=True)
+            if not fence:
+                return -1, False
+            cp = subprocess.run(["bash", "-c", fence.group(1).replace("{{AIDP_HOME}}", ".aidp")],
+                                cwd=root, env={**os.environ, "MOCK_FINISH": str(finish)},
+                                capture_output=True, text=True)
+            counter = root / "memory" / ("poll-count" if fence is c_poll else "probe-count")
+            return (int(counter.read_text()) if counter.exists() else -1,
+                    (root / "memory/freeze-called").exists())
+
+        check("CICD running 有唤醒源只轮询一次且不冻结", run_pending(c_poll, 1, 0) == (1, False))
+        check("CICD running 无唤醒源本 tick 续轮询并可成功", run_pending(c_poll, 0, 1) == (2, False))
+        check("CICD 无唤醒源两次 running 后有限冻结", run_pending(c_poll, 0, 0) == (2, True))
+        check("探针 rc=4 有唤醒源只探一次且不冻结", run_pending(d_watch, 1, 0) == (1, False))
+        check("探针 rc=4 无唤醒源本 tick 续探并可成功", run_pending(d_watch, 0, 1) == (2, False))
+        check("探针无唤醒源两次 rc=4 后有限冻结", run_pending(d_watch, 0, 0) == (2, True))
+
+        class Handler(BaseHTTPRequestHandler):
+            marker = b"new-feature-2026"
+
+            def do_GET(self):
+                if self.path == "/":
+                    body = b'<html><script src="/assets/index.js"></script></html>'
+                elif self.path == "/assets/index.js":
+                    body = self.marker
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            prd = root / "docs/requirements/V0.1/产品提供/01.md"
+            prd.parent.mkdir(parents=True)
+            prd.write_text("---\nautopilot_decisions:\n  deployment:\n    deploy_ends:\n"
+                           "      frontend:\n        trigger: cicd-provider\n        ready_asset_probe:\n"
+                           f"          url: http://127.0.0.1:{server.server_port}/\n"
+                           "          must_contain:\n            - new-feature-2026\n---\n", encoding="utf-8")
+            script = repo / ".aidp/scripts/frontend_asset_probe.py"
+
+            def asset_probe():
+                if not script.exists():
+                    return 127, {}
+                result = subprocess.run([sys.executable, str(script), "--version", "V0.1"],
+                                        cwd=root, capture_output=True, text=True)
+                try:
+                    return result.returncode, json.loads(result.stdout)
+                except ValueError:
+                    return result.returncode, {}
+
+            rc, data = asset_probe()
+            check("前端资源实际含特征才可通过", rc == 0 and data.get("verified") is True)
+            Handler.marker = b"old-feature"
+            rc, data = asset_probe()
+            check("前端资源缺特征时拒绝", rc != 0 and "new-feature-2026" in str(data.get("missing", [])))
+            landing = re.search(r"判定当场落盘结论.*?```bash\n(.*?)\n  ```", probe, re.S)
+            p_exit = re.search(r"## ⛳ 本 Phase 出口.*?```bash\n(.*?)\n```", probe, re.S)
+            check("Step D 证据和出口围栏可执行", bool(landing and p_exit))
+            for name in ("frontend_asset_probe.py", "autopilot_decisions_merge.py"):
+                shutil.copy2(repo / ".aidp/scripts" / name, root / ".aidp/scripts" / name)
+            (root / ".aidp/scripts/baseline_edit.py").rename(root / ".aidp/scripts/baseline_edit_real.py")
+            (root / ".aidp/scripts/baseline_edit.py").write_text(
+                "import os,sys\nimport baseline_edit_real as real\n"
+                "class LockedBaseline(real.LockedBaseline):\n"
+                " def __exit__(self, typ, value, tb):\n"
+                "  if os.environ.get('INJECT_BASELINE_FAIL') in ('probe_passed','last_deployed_at') and typ is None:\n"
+                "   raise OSError('injected locked write failure')\n"
+                "  return super().__exit__(typ,value,tb)\n"
+                "if __name__=='__main__':\n"
+                " key=os.environ.get('INJECT_BASELINE_FAIL','')\n"
+                " if key and 'set' in sys.argv and key in sys.argv and "
+                "(key!='probe_passed' or 'true' in sys.argv):\n"
+                "  sys.exit(7)\n"
+                " sys.exit(real.main())\n", encoding="utf-8")
+
+            git_dir = root / "mock-bin"
+            git_dir.mkdir()
+            fake_git = git_dir / "git"
+            fake_git.write_text('#!/bin/sh\ncase "$*" in\n'
+                                ' *"--is-inside-work-tree") printf "true\\n";;\n'
+                                ' *"--show-toplevel") pwd;;\n'
+                                ' "rev-parse HEAD") printf "abc\\n";;\n'
+                                ' *) exit 1;;\nesac\n', encoding="utf-8")
+            fake_git.chmod(0o755)
+
+            def run_landing(marker, fail_key="", non_git=False, git_mode=False):
+                Handler.marker = marker
+                build = {"build": "V0.1_build1001"}
+                if not non_git:
+                    build["push_commit"] = "abc"
+                baseline.write_text(json.dumps({"autopilot": {"target_version": "V0.1", "wake_source_this_tick": 1},
+                                                "versions": {"V0.1": {"deployment_mode": "local",
+                                                                        "current_build": "V0.1_build1001",
+                                                                        "builds": [build]}}}), encoding="utf-8")
+                if not landing or not p_exit:
+                    return {}, {}, 127
+                env = {**os.environ, "INJECT_BASELINE_FAIL": fail_key}
+                if git_mode:
+                    env["PATH"] = f"{git_dir}:{env.get('PATH', '')}"
+                result = subprocess.run(["bash", "-c", landing.group(1).replace("{{AIDP_HOME}}", ".aidp")],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                exit_result = subprocess.run(["bash", "-c", p_exit.group(1).replace("{{AIDP_HOME}}", ".aidp")],
+                                             cwd=root, env=env, capture_output=True, text=True)
+                version = json.loads(baseline.read_text(encoding="utf-8"))["versions"]["V0.1"]
+                top = json.loads(baseline.read_text(encoding="utf-8"))
+                return version, version["builds"][0], (result.returncode, exit_result.returncode), top
+
+            version, build, rc, _ = run_landing(b"old-feature")
+            check("前端旧资源不得写就绪时间与 probe_passed，游标保留探针",
+                  rc == (0, 0) and not version.get("last_deployed_at") and
+                  build.get("probe_passed") is False and
+                  version.get("run_state", {}).get("next_phase") == "3.2.1-probe")
+            version, build, rc, _ = run_landing(b"new-feature-2026")
+            check("前端命中后才写当前 build 与版本级部署证据，游标推进审计",
+                  rc == (0, 0) and bool(version.get("last_deployed_at")) and
+                  build.get("probe_passed") is True and build.get("frontend_deploy_verified") is True and
+                  not build.get("probe_commit") and
+                  version.get("run_state", {}).get("next_phase") == "3.3-audit")
+            for key in ("probe_passed", "last_deployed_at"):
+                version, build, rc, _ = run_landing(b"new-feature-2026", fail_key=key)
+                check(f"注入 {key} 写失败无任何成功证据且不推进游标",
+                      rc[0] != 0 and rc[1] == 0 and not version.get("last_deployed_at") and
+                      not version.get("phase_beta_done_at") and build.get("probe_passed") is not True and
+                      build.get("frontend_deploy_verified") is not True and
+                      not build.get("probe_at") and not build.get("probe_commit") and
+                      version.get("run_state", {}).get("next_phase") == "3.2.1-probe")
+            version, build, rc, top = run_landing(b"new-feature-2026", non_git=True)
+            check("vcs_mode=none 本地就绪无需 Git/推送 SHA 且不写 HEAD",
+                  rc == (0, 0) and bool(version.get("last_deployed_at")) and
+                  build.get("probe_passed") is True and not build.get("probe_commit") and
+                  not top.get("last_autopilot_head") and
+                  version.get("run_state", {}).get("next_phase") == "3.3-audit")
+            version, build, rc, top = run_landing(b"new-feature-2026", git_mode=True)
+            check("vcs_mode=git 仅此路径校验推送 SHA 并记录 HEAD",
+                  rc == (0, 0) and build.get("probe_commit") == "abc" and
+                  top.get("last_autopilot_head") == "abc" and
+                  version.get("run_state", {}).get("next_phase") == "3.3-audit")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    check("前端探针与 build/版本部署证据原子落盘",
+          "frontend_asset_probe.py" in probe and "--record-ready" in probe and
+          "with LockedBaseline(baseline, write=True)" in script.read_text(encoding="utf-8"))
+    check("无唤醒源探针 rc=4 不能直接 yield",
+          'if [ "$DRC" = "4" ] && [ "${HAS_WAKE_SOURCE:-0}" = "0" ]' in probe and
+          '--max-seconds 120' in probe and '--freeze-now --phase 3.2.1-probe --reason probe-timeout' in probe)
+    check("flow 分片遵守 20KiB 上限", all((flow / name).stat().st_size < 20480
+                                      for name in ("phase-3-6b.md", "phase-3-7.md")))
 
 
 def test_memory_section_loss_guard():

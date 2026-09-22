@@ -179,6 +179,8 @@ def _runtime_files(runtime: Path):
         relative = path.relative_to(runtime)
         if path.is_symlink():
             raise ValueError(f"运行包不得包含 symlink: {path}")
+        if path.is_file() and path.stat().st_nlink != 1:
+            raise ValueError(f"运行包不得包含 hardlink: {path}")
         if L.is_ignored(relative.parts):
             continue
         if path.is_file() and path.name != RUNTIME_MANIFEST:
@@ -222,6 +224,57 @@ def _read_manifest(runtime: Path) -> dict:
     return data
 
 
+def _user_owned_path(relative: str) -> bool:
+    parts = relative.split("/")
+    return (all(part not in {"", ".", ".."} and "\\" not in part for part in parts)
+            and (relative in L.USER_FILLABLE_CONTRACTS
+                 or relative.startswith("reference/")
+                 or relative.startswith("skills/custom/")))
+
+
+def _manifest_user_files(manifest: dict) -> set:
+    expected = manifest.get("files")
+    if not isinstance(expected, dict):
+        raise ValueError("运行包 manifest files 必须是对象")
+    for relative, metadata in expected.items():
+        if not isinstance(relative, str) or not isinstance(metadata, dict) \
+                or set(metadata) != {"sha256", "mode"} \
+                or not isinstance(metadata.get("sha256"), str) \
+                or not re.fullmatch(r"[0-9a-f]{64}", metadata["sha256"]) \
+                or not isinstance(metadata.get("mode"), str) \
+                or not re.fullmatch(r"[0-7]{4}", metadata["mode"]):
+            raise ValueError(f"运行包 manifest 文件元数据非法: {relative}")
+    user_files = manifest.get("user_files", [])
+    if not isinstance(user_files, list) or any(
+            not isinstance(name, str) or not _user_owned_path(name)
+            or name not in expected for name in user_files) \
+            or len(user_files) != len(set(user_files)):
+        raise ValueError("运行包 manifest user_files 非法")
+    return set(user_files)
+
+
+def _user_overlay(runtime: Path, home: str, source: str) -> Dict[str, dict]:
+    manifest = _read_manifest(runtime)
+    if manifest.get("schema") != "aidp.runtime/v1" or manifest.get("source") != source:
+        raise ValueError(f"运行包 manifest 身份非法: {runtime}")
+    _validate_version(manifest.get("version"))
+    user_files = _manifest_user_files(manifest)
+    expected = manifest["files"]
+    actual = dict(_runtime_files(runtime))
+    overlay = {}
+    for relative, path in actual.items():
+        if not _user_owned_path(relative):
+            continue
+        if relative in user_files or relative not in expected \
+                or (relative in L.USER_FILLABLE_CONTRACTS
+                    and _file_metadata(path) != expected[relative]):
+            data = path.read_bytes()
+            if _is_text(data):
+                data = data.decode("utf-8").replace(home, "{{AIDP_HOME}}").encode("utf-8")
+            overlay[relative] = {"content": data, "mode": _file_mode(path)}
+    return overlay
+
+
 def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict:
     runtime = Path(runtime)
     _validate_required_dirs(runtime, "运行包", ValueError)
@@ -231,17 +284,8 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
     if manifest.get("source") not in RUNTIME_HOME:
         raise ValueError("运行包 manifest source 非法")
     _validate_version(manifest.get("version"))
-    expected_files = manifest.get("files")
-    if not isinstance(expected_files, dict):
-        raise ValueError("运行包 manifest files 必须是对象")
-    for relative, metadata in expected_files.items():
-        if not isinstance(relative, str) or not isinstance(metadata, dict) \
-                or set(metadata) != {"sha256", "mode"} \
-                or not isinstance(metadata.get("sha256"), str) \
-                or not re.fullmatch(r"[0-9a-f]{64}", metadata["sha256"]) \
-                or not isinstance(metadata.get("mode"), str) \
-                or not re.fullmatch(r"[0-7]{4}", metadata["mode"]):
-            raise ValueError(f"运行包 manifest 文件元数据非法: {relative}")
+    _manifest_user_files(manifest)
+    expected_files = manifest["files"]
     actual = {relative: _file_metadata(path) for relative, path in _runtime_files(runtime)}
     if dict(sorted(expected_files.items())) != dict(sorted(actual.items())):
         raise ValueError("运行包文件指纹漂移")
@@ -488,12 +532,51 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                     if tree_digest(destination) != expected_destination_digest:
                         raise RuntimeError("备份期间运行包发生并发修改，拒绝替换")
 
+            overlay = (_user_overlay(destination, home, source)
+                       if _lexists(destination) else {})
+            counterpart = None
+            counterpart_digest = None
+            if destination == boundary / RUNTIME_HOME[source]:
+                other_source = "shared" if source == "claude" else "claude"
+                candidate = _assert_contained(boundary / RUNTIME_HOME[other_source], boundary)
+                if _lexists(candidate):
+                    if not candidate.is_dir() or not (candidate / RUNTIME_MANIFEST).is_file():
+                        raise RuntimeError(f"双包运行目录未受管: {candidate}")
+                    counterpart = candidate
+                    counterpart_digest = tree_digest(candidate)
+                    other_overlay = _user_overlay(candidate, RUNTIME_HOME[other_source],
+                                                  other_source)
+                    for relative, entry in other_overlay.items():
+                        if relative in overlay and overlay[relative] != entry:
+                            raise RuntimeError(f"双包用户文件冲突: {relative}")
+                        overlay[relative] = entry
+
             stage.mkdir(parents=True, exist_ok=False)
             render_tree(Path(source_root), stage, home)
+            for relative, entry in sorted(overlay.items()):
+                target = stage / relative
+                if target.exists() and relative not in L.USER_FILLABLE_CONTRACTS:
+                    rendered = target.read_bytes()
+                    if _is_text(rendered):
+                        rendered = rendered.decode("utf-8").replace(
+                            home, "{{AIDP_HOME}}").encode("utf-8")
+                    if entry != {"content": rendered, "mode": _file_mode(target)}:
+                        raise RuntimeError(f"私有文件与新受管真源冲突: {relative}")
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    data = entry["content"]
+                    if _is_text(data):
+                        data = data.replace(b"{{AIDP_HOME}}", home.encode("utf-8"))
+                    target.write_bytes(data)
+                    target.chmod(int(entry["mode"], 8))
             manifest = build_runtime_manifest(
                 stage, version=version, source=source, home=home)
+            if overlay:
+                manifest["user_files"] = sorted(overlay)
             _write_manifest(stage, manifest)
             validate_runtime(stage, expected_home=home)
+            if counterpart is not None and tree_digest(counterpart) != counterpart_digest:
+                raise RuntimeError("安装前另一运行包发生并发修改，拒绝替换")
             if _lexists(destination):
                 if tree_digest(destination) != expected_destination_digest:
                     raise RuntimeError("安装前运行包发生并发修改，拒绝替换")

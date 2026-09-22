@@ -1,6 +1,6 @@
 # /sprint-autopilot — 7×24 全自动开发编排器
 
-> ⚠️⚠️ **本命令不会自己创建定时器（务必看清）**：`/sprint-autopilot` 是**被反复唤起的被调用方**、它自身**不自举定时循环**。**直接调用 `/sprint-autopilot` 默认只跑配置向导**；只有 `/loop`、明确执行意图、`--once` 或其他执行 flag 才跑一轮。**★ 执行一轮 = 把这一对版本的全流程【完整做完】**——含研发执行计划里**全部 Sprint**（不是一个 Sprint 就收工）+ 部署 + AI 测试；**⛔ 无外部调度（操作系统定时任务 / `/loop`）时禁止中途 `UNATTENDED_YIELD`**（`HAS_WAKE_SOURCE=0`，见 Phase 0.0.0 派生 + Phase 3.2 执行粒度）——yield 了没有下一 tick 来接，就是把没干完的活儿丢回给人。要 **7×24 无人值守持续运行，由操作系统调度两条链路**：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install`——为开发链路（本命令，默认 10m）与测试链路（`/sprint-aiauto-test`，默认 5m）各装一个独立定时任务，每轮经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once` 以 `--unattended --no-loop` 唤起，并巡检两条链路心跳。Claude Code 会话内的 `/loop 10m /sprint-autopilot --unattended` + `/loop 5m /sprint-aiauto-test --unattended` 只作交互式短期用法（会话级、定时任务 7 天过期、只在会话空闲时触发、同会话两条串行）。文中「7×24 全自动」指的是"装上外部调度后"的能力，**不是** autopilot 会自己起循环。
+> ⚠️⚠️ **本命令不会自己创建定时器（务必看清）**：`/sprint-autopilot` 是**被反复唤起的被调用方**、它自身**不自举定时循环**。**直接调用 `/sprint-autopilot` 默认只跑配置向导**；只有 `/loop`、明确执行意图、`--once` 或其他执行 flag 才跑一轮。**★ 执行一轮 = 把这一对版本的全流程【完整做完】**——含研发执行计划里**全部 Sprint**（不是一个 Sprint 就收工）+ 部署 + AI 测试；**⛔ 无外部调度（操作系统定时任务 / `/loop`）时禁止中途 `UNATTENDED_YIELD`**（`HAS_WAKE_SOURCE=0`，见 Phase 0.0.0 派生 + Phase 3.2 执行粒度）——yield 了没有下一 tick 来接，就是把没干完的活儿丢回给人。要 **7×24 无人值守持续运行，由操作系统调度两条链路**：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install`——为开发链路（本命令，默认 10m）与测试链路（`/sprint-aiauto-test`，默认 5m）各装一个独立定时任务，每轮经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once` 以 `--unattended --no-loop` 唤起；另装第三条独立 watchdog 定时任务巡检两条链路心跳（含从未启动）。Claude Code 会话内的 `/loop 10m /sprint-autopilot --unattended` + `/loop 5m /sprint-aiauto-test --unattended` 只作交互式短期用法（会话级、定时任务 7 天过期、只在会话空闲时触发、同会话两条串行）。文中「7×24 全自动」指的是"装上外部调度后"的能力，**不是** autopilot 会自己起循环。
 > - **可选·调度自举（有持久副作用、必经确认门）**：直接调用（非调度上下文）且你表达了"持续运行 / 挂着自动跑 / 7×24"意图时，命令端**可用 `AskUserQuestion` 询问是否代你安装调度**——确认后执行 `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install`（先 `--dry-run` 展示将写入的定时任务）；**绝不静默创建**（定时任务是持久副作用）。不确认则按"只跑一轮"执行并在收尾提示上述挂载方式。
 
 你正在执行 `/sprint-autopilot` 命令，启动从「产品在需求大目录下创建版本子目录 + 上传 PRD」到「等 review/merge PR + 等正式打 tag」全链路无人值守开发。
@@ -31,7 +31,7 @@
 > **全部 flag 落 0，含 `--unattended`** → `LOOP_UNATTENDED=0` + `HAS_WAKE_SOURCE=0` →
 > Phase 1 落到「输出引导文案 → 退出」，**每 tick 刷一屏引导、永不开工**。
 
-**VCS 能力分流（Phase 0.1 前先执行）**：由 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 得到 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 提供身份；把模式传给 Phase 0/2/3 与 `/sprint-dev`、`/sprint-test`、`/sprint-close`、`/sprint-aiauto-test`。`none` 下跳过 fetch/pull、Git 差异/commit/push 与以推送为前提的 CICD/云部署，逐节点在当前 build `steps[]` 和 baseline 记录 `status=skipped`、`reason=unsupported:vcs-disabled`（不是 passed），继续本地规划、Sprint 开发、测试、归档与 AI执行报告。无 Git 不作为 `dirty-tree` 或 `git-pull-conflict` 冻结理由；不可写 `last_deployed_at`、`internal_released_at` 或声称发布/部署成功。需要部署后浏览器实测时如实标记未部署并跳过，不对未部署的旧服务测试。Git 模式的推送分类、CICD 与仪式门保持原样；能力缺失不豁免本地仪式产物。
+**VCS 能力分流（Phase 0.1 前先执行）**：由 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 得到 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 提供身份；把模式传给 Phase 0/2/3 与 `/sprint-dev`、`/sprint-test`、`/sprint-close`、`/sprint-aiauto-test`。`none` 下跳过 fetch/pull、Git 差异/commit/push 与以推送为前提的 CICD/云部署，逐节点在当前 build `steps[]` 和 baseline 记录 `status=skipped`、`reason=unsupported:vcs-disabled`（不是 passed），继续本地规划、Sprint 开发、测试、归档与 AI执行报告。无 Git 不作为 `dirty-tree` 或 `git-pull-conflict` 冻结理由；不可写 `last_deployed_at` 或声称发布/部署成功；无 Git 本地归档核验成功后可写内部游标 `internal_released_at`，仅供选版，不代表正式发布。需要部署后浏览器实测时如实标记未部署并跳过，不对未部署的旧服务测试。Git 模式的推送分类、CICD 与仪式门保持原样；能力缺失不豁免本地仪式产物。
 
 ## 命令语法
 
@@ -39,7 +39,7 @@
 /sprint-autopilot [PRD_root] [flags]
 
 # ★ 标准用法（生产 7×24）：操作系统调度两条链路，缺一不成完整闭环 ★★
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 开发链路（本命令，10m）+ 测试链路（/sprint-aiauto-test，5m）各一个定时任务
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 开发（10m）+ 测试（5m）+ 独立 watchdog（5m）三条任务
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 + 两条链路心跳
 # 交互式短期用法（Claude Code 会话内；会话级、7 天过期、空闲才触发、同会话两条串行）：
 /loop 10m /sprint-autopilot --unattended    # 开发链路：扫 docs/requirements/ → /version → /sprint-batch → 触发部署（不跑浏览器）
@@ -130,7 +130,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 +
 | 子步骤 | 作用（一句话） | 所在分片 | 适用条件（P1-3 — 不满足则整片跳过、无需 Read）|
 |---|---|---|---|
 | **0.0.0** | 规范化无人值守信号 `LOOP_UNATTENDED`（所有无人值守分支的统一开关，**必须最先派生**）| `phase-0-1.md` | 总是 |
-| **0.0.0bis / 0.0.0ter** | 上一轮遗留自检（`autopilot.last_handback`）+ **收尾护栏 fail-open 台账自检**（`memory/{{AIDP_HOME}}/stop-guard-skips.jsonl`：Stop hook「本可介入却放行」的留痕；放行 ≠ 收口）| `phase-0-1.md` | 总是 |
+| **0.0.0bis / 0.0.0ter** | 上一轮遗留自检（`autopilot.last_handback`）+ **收尾护栏 fail-open 台账自检**（`memory/.aidp/stop-guard-skips.jsonl`：Stop hook「本可介入却放行」的留痕；放行 ≠ 收口）| `phase-0-1.md` | 总是 |
 | **0.0** | 通道与配置就绪（notify 渠道 / 远程 chrome 配置 —— ★ 最前，任何可能 exit 的门之前必跑）| `phase-0-1.md`（Step 0–1）→ `phase-0-2.md`（Step 2–3）→ `phase-0-3.md`（Step 5）| 总是 |
 | **0.1** | 拉取远端全部分支 + 当前分支最新代码 + 脏树决策门 | `phase-0-3.md` | 总是 |
 | **0.1bis** | 通知机制：里程碑通知节点表（单一信源）| `phase-0-4.md`（渠道选择/回落/公共字段）+ `phase-0-5.md`（通知骨架/应发通知集矩阵/#F·#3·#1d 模板）| **发通知前必读**（渠道选择 + 失败回落判据）；**仅** `NOTIFY_ENABLED=0`（`notify.enabled=false`）/ `--no-notify` 时整片跳过。⛔ 渠道可用 = 更要读，别读反 |
@@ -181,7 +181,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 +
 
 ## Phase 2：上版准发布（仅当 PRE_RELEASE_VERSION 非 null）
 
-跑「`/version <PRE_RELEASE_VERSION> --no-tag`」做归档但不打 tag（SQL 整理 + 文档清理 + memory 同步），让上版 SQL/文档/memory 进入"已归档"态；tag 留运维正式部署时手动 `/version <PRE_RELEASE_VERSION>` 补打。
+Git 模式跑 `/version <PRE_RELEASE_VERSION> --no-tag` 准发布归档；无 Git 模式只核验 SQL / 文档 / memory 本地归档（未发布）。两路的成功依据均以 `phase-2.md` 为准。
 
 > ⛔ **准发布前置双门（不可绕过的【跳过门】）**：S2「所有 Sprint 已关闭」≠「可准发布」——每 tick 重入本 Phase 时先过 **0a 部署就绪**（本应部署却 `last_deployed_at` 空 = 部署未完成/就绪探针从未通过 → 暂缓 + `prerelease_deploy_block_streak` 熔断/`needs_human` 冻结）+ **0b 测试收敛**（本 build 浏览器测试已收敛；未收敛按测试链路是否**真能干活**分流——存活判据 = 新鲜心跳 **且** 顶层 `aiauto_blocked_reason` 为空——存活走 `prerelease_test_hold_streak` 暂缓/告警/冻结，不存活走 `test_loop_missing_streak` 熔断）两门；任一未过（`PRERELEASE_HOLD=1`）→ **跳过 Phase 2 的 1~4 步**、不写 `internal_released_at`、不把版本移出 aiauto-test 候选，**但不 `exit`**（同 tick 的 Phase 3 是另一个版本、须照常继续），强制性靠「streak 记账 + 达阈 #4/冻结 + `run-state` 写盘」三件结构化动作保证。
 >
@@ -193,8 +193,8 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 +
 |---|---|---|
 | **0（前置双门）** | 0a 部署就绪校验 + 0b 测试收敛校验（任一未过 → 跳过 1~4 步、本 tick 暂缓准发布，含 `prerelease_deploy_block_streak` / `prerelease_test_hold_streak` / `test_loop_missing_streak` 三条熔断 → `needs_human` 冻结）| `phase-2.md` |
 | **1** | 里程碑通知 #pre-start（准发布启动，见 0.1bis）| `phase-2.md` |
-| **2** | 跑 `/version {PRE_RELEASE_VERSION} --no-tag --unattended`（归档不打 tag，走 Step 3.1~3.6）| `phase-2.md` |
-| **3** | 回写 baseline（`versions.<V>.internal_released_at`，标记已准发布）| `phase-2.md` |
+| **2** | Git 走 `/version --no-tag --unattended`；无 Git 核验本地归档；逐项核验后写本 tick `PRERELEASE_ARCHIVE_OK` | `phase-2.md` |
+| **3** | 仅门禁、未让位、归档核验均通过时写 `internal_released_at` 内部游标（无 Git 不代表已发布）| `phase-2.md` |
 | **4** | 里程碑通知 #pre-done（准发布完成，提示手动补打 tag）| `phase-2.md` |
 | **5** | ★ 分片收尾必写 `run_state`（`baseline_edit.py run-state`，见 `invariants.md` 阶段推进不变式）| `phase-2.md` |
 

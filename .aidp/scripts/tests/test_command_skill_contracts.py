@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -121,6 +122,8 @@ def test_release_debt_ledger():
     check("★ version 流程无手写 `>> 发布欠账.md`（一律经 release_debt.py）", raw == [])
     r7 = (REPO / ".aidp/flows/version/release-7.md").read_text(encoding="utf-8")
     check("★ Step 3.4.1 提交前跑终态落账门", "release_debt.py gate" in r7 and "--register-missing" in r7)
+    check("正式发布首次 poll 绑定本次 push SHA",
+          bool(re.search(r'--mode poll --run-id "\$RUN_ID"\s*\\\n\s*--commit "\$PUSH_COMMIT"', r7)))
 
 
 def test_released_version_gate_fail_closed():
@@ -131,11 +134,168 @@ def test_released_version_gate_fail_closed():
     if not m:
         return
     with tempfile.TemporaryDirectory() as td:
-        script = "V=V0.2.0\n" + m.group(1).split("\n", 1)[1]
+        script = "VCS_MODE=git\nV=V0.2.0\n" + m.group(1).split("\n", 1)[1]
         r = subprocess.run(["bash", "-c", script], cwd=td, capture_output=True, text=True,
                            env={**os.environ, "GIT_DIR": os.path.join(td, "nope")})
         check("★ 非 git 仓库（TAG_OK=0）→ RELEASED 非空，进决策门而非静默累进",
               "RELEASED=unknown(tag-query-failed)" in r.stdout)
+
+
+def test_released_version_gate_without_git():
+    print("\n[sprint-dev 无 Git 版本落点门]")
+    md = (REPO / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
+    m = re.search(r"\*\*① 检测「当前版本已发布[^\n]*\n```bash\n(.*?)```", md, re.S)
+    check("找到无 Git 版本落点检测块", bool(m))
+    if not m:
+        return
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "bin").mkdir()
+        (root / "bin/git").write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> git-calls\nexit 1\n", encoding="utf-8")
+        (root / "bin/git").chmod(0o755)
+        script = 'VCS_MODE=none\nV=V0.2.0\n' + m.group(1).split("\n", 1)[1]
+        env = {**os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]}
+
+        def run():
+            return subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True, env=env)
+
+        unknown = run()
+        check("无 Git 未知发布状态进入落点门", "RELEASED=unknown(" in unknown.stdout)
+        check("无 Git 状态检测不调用任何 git 命令", not (root / "git-calls").exists())
+
+        progress = root / "memory/V0.2.0/dev1/progress.md"
+        progress.parent.mkdir(parents=True)
+        progress.write_text("# 版本历史\nV0.2.0 ✅ 已发布\n", encoding="utf-8")
+        released = run()
+        check("无 Git 按版本目录中的本地发布记录拦截", "RELEASED=V0.2.0(状态已发布)" in released.stdout)
+        check("本地发布记录检查不借道 git config", not (root / "git-calls").exists())
+        progress.write_text("# 版本历史\nV0.2.0 未发布\n", encoding="utf-8")
+        unreleased = run()
+        check("明确本地未发布状态允许正常累进", "RELEASED=\n" in unreleased.stdout)
+        progress.write_text("V0.2.0 ✅ 已发布\nV0.2.0 未发布\n", encoding="utf-8")
+        conflicting = run()
+        check("本地发布记录冲突时 fail-closed", "RELEASED=unknown(local-release-state-conflict)" in conflicting.stdout)
+    gate = md.split("**③ `RELEASED` 非空", 1)[1].split("### Phase 0B.1", 1)[0]
+    check("未知状态无人值守不自行选 patch", "`RELEASED=unknown(...)`" in gate and
+          "不使用下方已确认发布版本的默认 patch 路径" in gate)
+
+
+def test_autopilot_local_archive_contract():
+    print("\n[autopilot 无 Git S2 本地归档]")
+    flow = (REPO / ".aidp/flows/sprint-autopilot/phase-2.md").read_text(encoding="utf-8")
+    check("S2 无 Git 显式走本地文档整理", "vcs_mode=none" in flow and
+          "/version {PRE_RELEASE_VERSION} --finalize-docs --unattended" in flow)
+    check("无 Git 不走 --no-tag 发布路径", "无 Git 不走正式发布的 `--no-tag` 路径" in flow)
+    check("本地整理失败不写归档成功状态", "internal_released_at" in flow and
+          "本地归档失败" in flow and "PRERELEASE_HOLD=1" in flow)
+    check("无 Git 正式发布仍不支持", "unsupported:vcs-disabled" in flow and "正式发布" in flow)
+
+
+def test_selftest_move_contract():
+    print("\n[sprint-selftest 无 Git / 未跟踪 / 已跟踪迁移与失败保护]")
+    text = (REPO / ".aidp/flows/sprint-selftest/step-1-2.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```bash\n(.*?)\n```", text, re.S)
+    supplement = re.search(r"(?m)^  selftest_move\(\) \{\n(.*?)\n\n落盘：", text, re.S)
+    check("归一与补充脚本均可提取", len(blocks) == 1 and bool(supplement))
+    if len(blocks) != 1 or not supplement:
+        return
+    scripts = (blocks[0], textwrap.dedent("  selftest_move() {\n" + supplement.group(1)))
+
+    for index, label in enumerate(("归一", "补充")):
+        for mode in ("none", "untracked", "tracked", "collision", "mv-error"):
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                base = root / "docs/testing/V1.0.0"
+                source = base / ("项目名/01_研发自测方案.md" if index == 0 else "研发自测用例.md")
+                destination = base / ("研发自测/01_研发自测方案.md" if index == 0 else "研发自测/02_全量自测用例.md")
+                source.parent.mkdir(parents=True)
+                if index == 0:
+                    destination.parent.mkdir(parents=True)
+                source.write_text("原件", encoding="utf-8")
+                if index == 0:
+                    source.with_name("02_全量自测用例.md").write_text("用例", encoding="utf-8")
+                if mode in ("untracked", "tracked"):
+                    _git(root, "init", "-q")
+                    if mode == "tracked":
+                        _git(root, "add", "--", str(source.relative_to(root)))
+                collision_target = destination if index == 0 else base / "研发自测.md"
+                if mode == "collision":
+                    collision_target.parent.mkdir(parents=True, exist_ok=True)
+                    collision_target.write_text("已有文件", encoding="utf-8")
+                env = os.environ.copy()
+                if mode == "mv-error":
+                    bin_dir = root / "bin"
+                    bin_dir.mkdir()
+                    stub = bin_dir / "mv"
+                    stub.write_text("#!/bin/sh\nexit 42\n", encoding="utf-8")
+                    stub.chmod(0o755)
+                    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+                script = scripts[index].replace("{version}", "V1.0.0")
+                result = subprocess.run(["bash", "-c", script], cwd=root,
+                                        capture_output=True, text=True, env=env)
+                if mode in ("none", "untracked", "tracked"):
+                    check(f"{label} {mode} 文件迁移成功", result.returncode == 0 and
+                          destination.is_file() and destination.read_text(encoding="utf-8") == "原件" and
+                          not source.exists())
+                    if mode == "tracked":
+                        check(f"{label} 已跟踪文件保留 Git 索引迁移",
+                              bool(_git(root, "diff", "--cached", "--name-status").stdout.strip()))
+                else:
+                    check(f"{label} {mode} 硬停并保留源与目标", result.returncode != 0 and
+                          source.is_file() and source.read_text(encoding="utf-8") == "原件" and
+                          (mode != "collision" or collision_target.read_text(encoding="utf-8") == "已有文件"))
+
+    for old, new in (("00_研发自测方案.md", "01_研发自测方案.md"),
+                     ("全量自测用例-旧版.md", "02_全量自测用例.md"),
+                     ("增量自测用例-旧版.md", "02_增量自测用例.md"),
+                     ("02_旧总览.md", "02_自测用例-总览.md")):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            dst = root / "docs/testing/V1.0.0/研发自测"
+            dst.mkdir(parents=True)
+            (dst / old).write_text("旧产物", encoding="utf-8")
+            if old != "00_研发自测方案.md":
+                (dst / "01_研发自测方案.md").write_text("方案", encoding="utf-8")
+                (dst / "02_全量自测用例.md" if old == "02_旧总览.md" else dst / "02_自测用例-总览.md").write_text("用例", encoding="utf-8")
+            else:
+                (dst / "02_全量自测用例.md").write_text("用例", encoding="utf-8")
+            result = subprocess.run(["bash", "-c", scripts[0].replace("{version}", "V1.0.0")],
+                                    cwd=root, capture_output=True, text=True)
+            check(f"归一别名 {old} 迁移到 {new}", result.returncode == 0 and
+                  (dst / new).read_text(encoding="utf-8") == "旧产物" and not (dst / old).exists())
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        dst = root / "docs/testing/V1.0.0/研发自测"
+        dst.mkdir(parents=True)
+        legacy = dst / "00_研发自测方案.md"
+        current = dst / "01_研发自测方案.md"
+        legacy.write_text("旧方案", encoding="utf-8")
+        current.write_text("现有方案", encoding="utf-8")
+        (dst / "02_全量自测用例.md").write_text("用例", encoding="utf-8")
+        result = subprocess.run(["bash", "-c", scripts[0].replace("{version}", "V1.0.0")],
+                                cwd=root, capture_output=True, text=True)
+        check("归一旧方案与新方案并存时硬停且两文件保持原样",
+              result.returncode != 0 and legacy.read_text(encoding="utf-8") == "旧方案" and
+              current.read_text(encoding="utf-8") == "现有方案")
+
+    for old in ("研发自测用例", "研发自测用例-补充-01.md", "研发自测-补充-01.md"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "docs/testing/V1.0.0"
+            base.mkdir(parents=True)
+            source = base / old
+            if old == "研发自测用例":
+                source.mkdir()
+                (source / "00_索引.md").write_text("原件", encoding="utf-8")
+                target = base / "研发自测/00_索引.md"
+            else:
+                source.write_text("原件", encoding="utf-8")
+                target = base / "研发自测" / old
+            result = subprocess.run(["bash", "-c", scripts[1].replace("{version}", "V1.0.0")],
+                                    cwd=root, capture_output=True, text=True)
+            check(f"补充旧布局 {old} 迁移成功", result.returncode == 0 and
+                  target.read_text(encoding="utf-8") == "原件" and not source.exists())
 
 
 def test_skill_invocation_contracts():
@@ -144,6 +304,13 @@ def test_skill_invocation_contracts():
     cvl = (REPO / ".aidp/skills/code-verification-loop/SKILL.md").read_text(encoding="utf-8")
     check("★ /sprint-test 以仅验收模式调 CVL", "mode=verify-only" in st)
     check("★ CVL SKILL 提供 verify-only 模式", "verify-only" in cvl)
+    check("G-TEST-1 在线接口结果不参与静态验收结论",
+          "在线结果不参与静态验收结论" in st
+          and "不一致项按 Critical 转写 bug 记录" not in st)
+    batch = (REPO / ".aidp/commands/sprint-batch.md").read_text(encoding="utf-8")
+    check("G-BATCH-1 顶层循环不调用会停下征询的 executing-plans",
+          "superpowers:executing-plans" not in batch
+          and "for NNN in 执行列表" in batch and "plan_sprints.py" in batch)
     bf = (REPO / ".aidp/skills/bugfix/SKILL.md").read_text(encoding="utf-8")
     check("★ bugfix SKILL 允许无 Sprint 编号（零散模式）", "Sprint 编号（可选）" in bf and "零散模式" in bf)
     mb = (REPO / ".aidp/flows/sprint-bugfix/mode-b.md").read_text(encoding="utf-8")
@@ -181,6 +348,10 @@ def test_vcs_disabled_downstream_contracts():
         return path.read_text(encoding="utf-8")
 
     p09 = flow(auto / "phase-0-9.md")
+    p2 = flow(auto / "phase-2.md")
+    check("准发布双门无 Git 不读取 HEAD",
+          'if [ "$VCS_MODE" = "git" ]; then' in p2
+          and '--extra "unconverged_frozen_head=$FROZEN_HEAD"' in p2)
     p35 = flow(auto / "phase-3-5.md")
     p36 = flow(auto / "phase-3-6.md")
     p38 = flow(auto / "phase-3-8.md")
@@ -282,6 +453,9 @@ def main():
     test_scaffold_invocations_in_commands()
     test_release_debt_ledger()
     test_released_version_gate_fail_closed()
+    test_released_version_gate_without_git()
+    test_autopilot_local_archive_contract()
+    test_selftest_move_contract()
     test_skill_invocation_contracts()
     test_vcs_mode_command_contracts()
     test_vcs_disabled_downstream_contracts()

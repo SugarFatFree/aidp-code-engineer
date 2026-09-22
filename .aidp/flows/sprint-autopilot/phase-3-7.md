@@ -25,8 +25,8 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
     3. **（可选）登录后页面**：若配 `cloud_ready_page_url` 为**登录后**自身首页 / 受保护页（非登录页）→ 带凭证刷新 2 次校验含 `cloud_ready_page_marker`；纯前后端分离项目可只靠步骤 2 的接口信号。
     - **★ HTTP 登录不可脚本化时**（纯第三方 SSO 跳转 / 验证码，无可 `curl` 的自身登录端点）→ **绝不退回用登录页可达性蒙混**；改为：autopilot 仅在「流水线成功 + 等 10s」后**暂记部署完成**，把"登录后就绪确认"**显式交给 `/sprint-aiauto-test` 首次登录**（其登录成功即真正就绪门），并在 #1d 通知标注「就绪以测试链路首次登录为准」。
   - **情形② 应用无登录系统（`cloud_ready_requires_login: false`）**——主信号 = **后端健康端点 UP**，配了 `cloud_ready_api_url`（自身公开取数接口）时再要求连续 2 次 HTTP `200` + 含数据。
-  - **★ 情形③ 前端产物特征探针（`deploy_ends.frontend` 已声明且 `trigger != none` 且 `ready_asset_probe.must_contain` 非空时**必跑**——堵"半截部署：后端更新了、前端产物没换"）**：后端就绪信号（情形①/②）只证明**后端**起来了，**证明不了前端跑的是新版本**。`curl` 抓 `ready_asset_probe.url` 首页 HTML → 提取其引用的主 JS/CSS 资源（`<script src=.../assets/index-*.js>` 等）→ `curl` 拉该主资源 → **grep `must_contain[]` 的每个本次特征串**（本轮新增的占位文案 / 新配置接口路径 / 新路由 slug 等**可判定**串）。**全部命中**才算前端已部署新版本；**任一缺失** = 前端产物仍是旧版（构建未跑 / 发布到别处 / CDN 缓存）→ **不写 `last_deployed_at`**（不放行测试链路对半截部署空转），走「失败处置」#4（正文「前端产物特征探针未命中：首页主资源不含本次特征串 {缺失串}，疑似前端未部署 / 发布了旧产物」）。**命中 → 写 baseline `versions.{V}.builds[current_build].frontend_deploy_verified=true`**（供 ceremony-gate 3e 校半截部署）。`must_contain` 为空（本轮无可判定前端特征）→ 跳过本探针但 #1d/终端 WARN「前端产物特征探针跳过（未提供特征串），无法确认前端是否部署新版本」。
-- **通过**（情形①：登录成功 + 登录后接口连续 2 次取到数据；情形②：公开接口连续 2 次取到数据；**情形③：前端已声明部署则前端产物特征探针一并命中**）→ 先写当前 build 的 `builds[].probe_passed=true`、`probe_at=@now`、`probe_commit=$GIT_PUSH_COMMIT`，再写 baseline `versions.{V}.last_deployed_at`（= 部署就绪、可测信号，aiauto-test 读它触发浏览器实测）+ `phase_beta_done_at`，发 #1d 部署完成通知（正文标注「CICD 流水线已成功 + 部署就绪探针通过：登录后自身接口连续 2 次取到数据〔+ 前端产物特征探针命中〕」）。
+  - **情形③ 前端产物特征探针**：已声明 `deploy_ends.frontend`、`trigger != none` 且 `ready_asset_probe.must_contain` 非空时，必须校验部署首页引用的 JS/CSS 实际包含每个特征串；缺失时不写部署证据，按 `probe-timeout` 失败处置并说明缺失串。全命中才写当前 build 的 `frontend_deploy_verified=true`。空特征串跳过但明确 WARN。判据与动机见 `rationale.md`。
+- **通过**（后端就绪 + 声明前端部署时特征探针命中）→ 同一把锁原子写当前 build 的 `probe_passed=true`、`probe_at`、Git 模式下的 `probe_commit`，以及版本级 `last_deployed_at` / `phase_beta_done_at`；任一写失败均不留半套成功证据、不推进审计。`vcs_mode=none` 仅 `local` 部署可凭同次探针与部署时间写本地就绪证据，绝不借道 Git HEAD。通过后发 #1d；缺失前端特征串只 WARN，不伪造已验证。
   **★ 探针轮询 = `autopilot-deploy-watch.py`（单一实现，⛔ 不在分片里手写轮询循环）**：它内置冷启动容忍、
   health 必要判据（HTML 兜底页不认）、`--auth-url` 连续 2 次取到非空数据、总超时与**单次调用上限**
   （`--max-seconds 480`，适配 Bash 工具时限；到时未就绪 rc=4 = 未探完，下 tick 续探、不记失败）。
@@ -42,17 +42,30 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
   # ★ 跨 tick 续探：冷启动窗口与总超时从「首次探测时刻」起算（首次写入，就绪 / 判超时后删除）
   PSA=$($BE --version "$V" get probe_started_at --default "")
   [ -n "$PSA" ] || { $BE --version "$V" set probe_started_at @now; PSA=$($BE --version "$V" get probe_started_at --default ""); }
+  MAX_SECONDS=480
+  [ "${HAS_WAKE_SOURCE:-0}" = "0" ] && MAX_SECONDS=420
   ARGS=(--version "$V" --timeout "${CLOUD_READY_TIMEOUT:-600}" --interval "${CLOUD_READY_INTERVAL:-15}" \
-        --since "$PSA" --max-seconds 480 --cold-start-seconds "$COLD" --no-write)   # 就绪信号统一由下方落盘块写（情形③ 通过后）
+        --since "$PSA" --max-seconds "$MAX_SECONDS" --cold-start-seconds "$COLD" --no-write)
   [ -n "$HEALTH_URL" ] && ARGS+=(--health-url "$HEALTH_URL")
   [ -n "${CLOUD_READY_URL:-}" ] && ARGS+=(--auth-url "$CLOUD_READY_URL")
   [ -n "$AUTH_HEADER" ] && ARGS+=(--auth-header "$AUTH_HEADER")
-  python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py "${ARGS[@]}" > memory/{{AIDP_HOME}}/deploy-watch.json
-  DRC=$?; cat memory/{{AIDP_HOME}}/deploy-watch.json
+  python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py "${ARGS[@]}" > memory/.aidp/deploy-watch.json
+  DRC=$?; cat memory/.aidp/deploy-watch.json
   TF="python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED"
+  if [ "$DRC" = "4" ] && [ "${HAS_WAKE_SOURCE:-0}" = "0" ]; then
+    python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py "${ARGS[@]}" --max-seconds 120 > memory/.aidp/deploy-watch.json
+    DRC=$?; cat memory/.aidp/deploy-watch.json
+    if [ "$DRC" = "4" ]; then
+      $TF 0; $BE --version "$V" del probe_started_at || true
+      python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "${BUILD:-}" \
+        --freeze-now --phase 3.2.1-probe --reason probe-timeout \
+        --why "本次无唤醒源调用在 540 秒探针预算内未就绪，需人工续跑"
+      exit 0
+    fi
+  fi
   case "$DRC" in
     0) $BE --version "$V" del push_probe_fail_streak probe_started_at || true ;;   # 就绪 → 情形③（如适用）→ 下方落盘
-    4) $TF 0; echo "⏳ 就绪探针本次调用时限内未探完 → 游标留 3.2.1-probe，下 tick 续探（不记失败）"; exit 0 ;;
+    4) $TF 0; echo "⏳ 有唤醒源：就绪探针未探完 → 下 tick 续探（不记失败）"; exit 0 ;;
     5) $TF 0; echo "⚠️ 已就绪但写 last_deployed_at 失败 → 下 tick 原地重试，⛔ 不计 streak、不冻结"; exit 0 ;;
     *) $TF 0; $BE --version "$V" del probe_started_at || true   # 本轮探测结束，下次重新计时
        # rc=2 超时 / rc=3 探针参数缺失：部署成功但未就绪；⛔ 不写 last_deployed_at（不把不通的环境放进测试链路）
@@ -66,28 +79,45 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
   **★ 判定当场落盘结论（不可省，下方出口靠它推进游标）**：
   ```bash
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-  python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED 1
-  # ⛔ 以下三个字段是**跨链路交接信号**，必须落成可执行语句（散文从句不算写入）：
-  #    读侧恒空时，测试链路每 tick 选不出版本、静默 exit 0，而开发链路因心跳还在而判
-  #    "测试链路健康"，两条 loop 都在刷屏、什么都没测，最后冻结在错误的原因上。
-  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
-  # ⛔ `GIT_PUSH_COMMIT` 赋在 phase-3-5b 推送围栏、跨不过 Bash 调用：取空会让出口判据
-  #    `PROBE_COMMIT == PUSH_COMMIT` 恒不等、游标卡在 3.2.1-probe，故从 baseline 读回。
-  [ -n "${GIT_PUSH_COMMIT:-}" ] || GIT_PUSH_COMMIT=$([ -n "${BUILD:-}" ] && $BE --build "$BUILD" get push_commit --default "" || echo "")
-  [ -n "${BUILD:-}" ] && $BE --build "$BUILD" set probe_passed true probe_at @now \
-      probe_commit "${GIT_PUSH_COMMIT:-}"
-  # ★ 情形③（前端产物特征探针命中）必须**可执行地**写 frontend_deploy_verified，
-  #   否则 gate 3e「部署覆盖度」对任何动过前端的 build 恒 FAIL（见 rationale.md）。
-  #   FE_PROBE_OK 由执行体按情形③实测结果就地代入（同 IS_LOOP_CONTEXT 范式）。
-  FE_PROBE_OK=0   # ← 情形③前端产物特征探针命中则改为 1
-  [ "$FE_PROBE_OK" = "1" ] && [ -n "${BUILD:-}" ] \
-    && $BE --build "$BUILD" set frontend_deploy_verified true
-  $BE set last_deployed_at @now phase_beta_done_at @now
-  # 新部署完成 = 自动修复闭环的「修复 + 重部署」已落地 → 清进行中标记，测试链路据此对新部署复测
+  V="${TARGET_VERSION:?}"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version $V"
+  BUILD=$($BE get current_build --default "")
+  [ -n "$BUILD" ] || { echo "⛔ 未找到当前 build，禁止写部署证据"; exit 1; }
+  VCS_MODE=$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+  GIT_PUSH_COMMIT=""
+  if [ "$VCS_MODE" = "git" ]; then
+    GIT_PUSH_COMMIT=$($BE --build "$BUILD" get push_commit --default "")
+    [ -n "$GIT_PUSH_COMMIT" ] || { echo "⛔ push_commit 缺失，禁止写 Git 部署证据"; exit 1; }
+  elif [ "${DEPLOY_MODE:-}" != "local" ]; then
+    echo "⛔ vcs_mode=none 仅 local 部署可写本地就绪证据"; exit 1
+  fi
+  # 前端验证与版本/build 部署证据同锁原子落盘，写失败不留半套成功字段。
+  RECORD=(--version "$V" --record-ready --build "$BUILD")
+  [ -n "$GIT_PUSH_COMMIT" ] && RECORD+=(--commit "$GIT_PUSH_COMMIT")
+  python3 {{AIDP_HOME}}/scripts/frontend_asset_probe.py "${RECORD[@]}" > memory/.aidp/frontend-probe.json
+  FRC=$?; cat memory/.aidp/frontend-probe.json
+  python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED 0 || exit 1
+  if [ "$FRC" = "2" ]; then
+    echo "⛔ 部署证据写盘失败，本 tick 不推进、不按探针超时冻结"; exit 1
+  fi
+  if [ "$FRC" != "0" ]; then
+    $BE --build "$BUILD" set probe_passed false frontend_deploy_verified false || exit 1
+    $BE --build "$BUILD" del probe_at probe_commit || exit 1
+    MISSING=$(jq -c '.missing // []' memory/.aidp/frontend-probe.json)
+    REASON=$(jq -r '.reason // ""' memory/.aidp/frontend-probe.json)
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$BUILD" \
+      --phase 3.2.1-probe --reason probe-timeout --streak-key push_probe_fail_streak --threshold 3 \
+      --why "前端产物特征探针未通过：$REASON；缺失特征串 $MISSING"
+    exit 0
+  fi
+  if [ "$(jq -r '.skipped' memory/.aidp/frontend-probe.json)" = "true" ]; then
+    echo "⚠️ 前端产物特征探针跳过（未声明部署或未提供特征串），无法确认前端是否部署新版本"
+  fi
+  python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED 1 || exit 1
   $BE del auto_fix_in_progress_since || true
-  # 本轮 autopilot 推到的 HEAD：retest-cap 的"人工修复"判别靠它与 retest_frozen_head 双重不等；
-  # 恒空则第二个不等式恒真 → 自动解冻 → 3 轮上限退化为无限自动复测。
-  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set last_autopilot_head "$(git rev-parse HEAD)"
+  if [ "$VCS_MODE" = "git" ]; then
+    HEAD=$(git rev-parse HEAD) || exit 1
+    [ -n "$HEAD" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py set last_autopilot_head "$HEAD"
+  fi
   ```
 - **超 `cloud_ready_timeout_seconds` 仍未通过**（脚本 rc=2）→ 部署成功但服务未就绪 / 登录不通（与"流水线失败"不同，重跑流水线通常无济于事）→ 上方代码块已按 `push_probe_fail_streak` 记账（连续 3 次冻结 `probe-timeout`，环境类自动复探），**不写 `last_deployed_at`**；`PROBE_PASSED=0` 已当场落盘。
 - **情形③ 前端特征探针未命中**（脚本 rc=0 之后）→ 同样调 `autopilot_fail_handle.py --reason probe-timeout --streak-key push_probe_fail_streak --threshold 3`（正文写明缺失的特征串），`PROBE_PASSED=0`，⛔ 不执行下方「判定当场落盘结论」。
@@ -101,26 +131,27 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
 
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
-# 读回已落盘的探针结论；不同 Bash 调用的 shell 变量不能当作跨分片证据。
-eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-# 事实兜底：只认当前 build 的显式探针证据，禁止用版本级 last_deployed_at 反推。
-#   —— 旧版本的部署时间戳不能证明本 build 已就绪，否则失败/未探测的新部署会被放行。
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+# 每次只认当前 build 的完整落盘证据；本 tick 显式失败不能被旧证据覆盖。
+TICK_PROBE_PASSED="${PROBE_PASSED:-}"
+VCS_MODE=$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
 BUILD=$($BE --version "$V" get current_build --default "")
-if [ -z "$PROBE_PASSED" ] && [ -n "$BUILD" ]; then
+PROBE_PASSED=0
+if [ -n "$BUILD" ]; then
   PROBE_PASSED=$($BE --version "$V" --build "$BUILD" get probe_passed --default "0")
   PROBE_COMMIT=$($BE --version "$V" --build "$BUILD" get probe_commit --default "")
   PUSH_COMMIT=$($BE --version "$V" --build "$BUILD" get push_commit --default "")
-  # ⛔ 运算符优先级：`[ A ] || [ B ] && C` 在 shell 里结合为 `(A || B) && C` ——
-  #    写成一行时 PUSH_COMMIT 为空即无条件把 PROBE_PASSED 清 0。必须用显式 if。
-  if [ -z "$PUSH_COMMIT" ] || [ "$PROBE_COMMIT" != "$PUSH_COMMIT" ]; then
+  PROBE_AT=$($BE --version "$V" --build "$BUILD" get probe_at --default "")
+  DEPLOYED_AT=$($BE --version "$V" get last_deployed_at --default "")
+  if [ "$VCS_MODE" = "git" ]; then
+    [ -n "$PUSH_COMMIT" ] && [ "$PROBE_COMMIT" = "$PUSH_COMMIT" ] || PROBE_PASSED=0
+  elif [ "${DEPLOY_MODE:-}" != "local" ] || [ -n "$PROBE_COMMIT" ] || \
+       [ -z "$PROBE_AT" ] || [ "$PROBE_AT" != "$DEPLOYED_AT" ]; then
     PROBE_PASSED=0
   fi
 fi
-# ★ 值域归一：写侧是 `set probe_passed true`（存 JSON 真值，读回打印字符串 `true`），
-#   而下方判据比的是 `= "1"` —— 不归一则**恒假**，游标永远留在 3.2.1-probe、
-#   Phase 3.3/3.4 永不开始（同围栏的 cicd_skipped 用的就是 `= "true"`，本处曾是单点漏改）。
 case "${PROBE_PASSED:-0}" in true|True|TRUE|1) PROBE_PASSED=1 ;; *) PROBE_PASSED=0 ;; esac
+[ "$TICK_PROBE_PASSED" = "0" ] && PROBE_PASSED=0
 # ★ 本 push 无正式代码变更（cicd_skipped）时【没有部署要等、也没有探针会跑】——
 #   必须直接把游标推到 3.3-audit。否则探针恒 0 → 恒走 else → 游标永远留在 3.2.1-probe，
 #   下 tick 重来一遍，last_deployed_at 永不写、Phase 3.3/3.4 永不开始，最后只能靠通用

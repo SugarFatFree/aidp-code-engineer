@@ -214,6 +214,7 @@ class ManifestContractTest(RuntimeLayoutTestCase):
             source = make_source(Path(td) / "source-fixture")
             installed = Path(td) / ".claude/aidp"
             R.render_runtime(source, installed, ".claude/aidp", "V1.2.3", "claude")
+            original_manifest = (installed / R.RUNTIME_MANIFEST).read_text(encoding="utf-8")
             for version in (None, "", 1, "1.2.3", "V1.2"):
                 manifest = json.loads((installed / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
                 manifest["version"] = version
@@ -222,6 +223,9 @@ class ManifestContractTest(RuntimeLayoutTestCase):
                 with self.subTest(validate_version=version):
                     with self.assertRaises(ValueError):
                         R.validate_runtime(installed, expected_home=".claude/aidp")
+                    with self.assertRaises(ValueError):
+                        R.render_runtime(source, installed, ".claude/aidp", "V1.2.3", "claude")
+            (installed / R.RUNTIME_MANIFEST).write_text(original_manifest, encoding="utf-8")
             R.render_runtime(source, installed, ".claude/aidp", "V1.2.3", "claude")
 
     def test_source_and_home_mapping_is_enforced_at_every_layer(self):
@@ -332,6 +336,127 @@ class ManifestContractTest(RuntimeLayoutTestCase):
 
 
 class AtomicInstallTest(RuntimeLayoutTestCase):
+    def test_upgrade_preserves_user_reference_and_private_files_across_both_homes(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            reference = "reference/子Agent必读.md"
+            (source / reference).write_text("skeleton\n", encoding="utf-8")
+            homes = [("claude", ".claude/aidp"), ("shared", ".agents/aidp")]
+            for kind, home in homes:
+                R.render_runtime(source, base / home, home, "V1.0.0", kind)
+            first = base / homes[0][1]
+            (first / reference).write_text("project-specific\n", encoding="utf-8")
+            (first / "skills/custom/my-tool/SKILL.md").parent.mkdir(parents=True)
+            (first / "skills/custom/my-tool/SKILL.md").write_text("custom\n", encoding="utf-8")
+            (first / "reference/private.md").write_text("private\n", encoding="utf-8")
+            (source / reference).write_text("new skeleton\n", encoding="utf-8")
+            (source / "commands/sprint-dev.md").write_text("new {{AIDP_HOME}}\n", encoding="utf-8")
+
+            for version in ("V1.0.1", "V1.0.2"):
+                for kind, home in homes:
+                    R.render_runtime(source, base / home, home, version, kind,
+                                     backup_callback=lambda runtime: shutil.copytree(
+                                         runtime, base / ("backup-" + kind + "-" + version)))
+                    self.assertEqual(R.validate_runtime(base / home, home)["version"], version)
+                    self.assertEqual((base / home / reference).read_text(), "project-specific\n")
+                    self.assertEqual((base / home / "skills/custom/my-tool/SKILL.md").read_text(), "custom\n")
+                    self.assertEqual((base / home / "reference/private.md").read_text(), "private\n")
+                    self.assertEqual((base / home / "commands/sprint-dev.md").read_text(),
+                                     "new " + home + "\n")
+                self.assertEqual(R.normalize_runtime(base / homes[0][1], homes[0][1]),
+                                 R.normalize_runtime(base / homes[1][1], homes[1][1]))
+
+    def test_user_overlay_requires_full_backup_and_keeps_original_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            reference = "reference/子Agent必读.md"
+            (source / reference).write_text("skeleton\n", encoding="utf-8")
+            runtime = base / ".agents/aidp"
+            R.render_runtime(source, runtime, ".agents/aidp", "V1.0.0", "shared")
+            (runtime / reference).write_text("project entry\n", encoding="utf-8")
+            before = R.tree_digest(runtime)
+            with self.assertRaisesRegex(RuntimeError, "完整备份"):
+                R.render_runtime(source, runtime, ".agents/aidp", "V1.0.1", "shared")
+            self.assertEqual(R.tree_digest(runtime), before)
+            R.render_runtime(source, runtime, ".agents/aidp", "V1.0.1", "shared",
+                             backup_callback=lambda old: shutil.copytree(old, base / "backup"))
+            self.assertEqual((base / "backup" / reference).read_text(), "project entry\n")
+            self.assertEqual((runtime / reference).read_text(), "project entry\n")
+            self.assertEqual(R.validate_runtime(runtime, ".agents/aidp")["version"], "V1.0.1")
+
+    def test_invalid_user_provenance_in_manifest_rejects_upgrade(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".agents/aidp"
+            R.render_runtime(source, runtime, ".agents/aidp", "V1.0.0", "shared")
+            manifest_path = runtime / R.RUNTIME_MANIFEST
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["user_files"] = ["commands/sprint-dev.md"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            before = R.tree_digest(runtime)
+            with self.assertRaises(ValueError):
+                R.render_runtime(source, runtime, ".agents/aidp", "V1.0.1", "shared")
+            self.assertEqual(R.tree_digest(runtime), before)
+
+    def test_user_overlay_conflict_fails_without_replacing_either_runtime(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            reference = "reference/子Agent必读.md"
+            (source / reference).write_text("skeleton\n", encoding="utf-8")
+            claude, shared = base / ".claude/aidp", base / ".agents/aidp"
+            R.render_runtime(source, claude, ".claude/aidp", "V1.0.0", "claude")
+            R.render_runtime(source, shared, ".agents/aidp", "V1.0.0", "shared")
+            (claude / reference).write_text("claude edit\n", encoding="utf-8")
+            (shared / reference).write_text("shared edit\n", encoding="utf-8")
+            before = (R.tree_digest(claude), R.tree_digest(shared))
+            with self.assertRaisesRegex(RuntimeError, "冲突"):
+                R.render_runtime(source, claude, ".claude/aidp", "V1.0.1", "claude",
+                                 backup_callback=lambda runtime: shutil.copytree(runtime, base / "backup"))
+            self.assertEqual((R.tree_digest(claude), R.tree_digest(shared)), before)
+
+    def test_private_overlay_collision_with_new_managed_source_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".agents/aidp"
+            R.render_runtime(source, runtime, ".agents/aidp", "V1.0.0", "shared")
+            private = runtime / "reference/private.md"
+            private.write_text("project data\n", encoding="utf-8")
+            (source / "reference/private.md").write_text("new managed data\n", encoding="utf-8")
+            before = R.tree_digest(runtime)
+            with self.assertRaisesRegex(RuntimeError, "冲突"):
+                R.render_runtime(source, runtime, ".agents/aidp", "V1.0.1", "shared",
+                                 backup_callback=lambda old: shutil.copytree(old, base / "backup"))
+            self.assertEqual(R.tree_digest(runtime), before)
+
+    def test_user_overlay_hardlink_and_symlink_fail_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".agents/aidp"
+            R.render_runtime(source, runtime, ".agents/aidp", "V1.0.0", "shared")
+            external = base / "external"
+            external.write_text("external content\n", encoding="utf-8")
+            private = runtime / "reference/private.md"
+            try:
+                os.link(external, private)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前平台不支持 hardlink: {exc}")
+            with self.assertRaisesRegex((RuntimeError, ValueError), "hardlink"):
+                R.render_runtime(source, runtime, ".agents/aidp", "V1.0.1", "shared",
+                                 backup_callback=lambda old: shutil.copytree(old, base / "backup-hardlink"))
+            self.assertEqual(external.read_text(), "external content\n")
+            private.unlink()
+            private.symlink_to(external)
+            with self.assertRaisesRegex((RuntimeError, ValueError), "symlink"):
+                R.render_runtime(source, runtime, ".agents/aidp", "V1.0.1", "shared",
+                                 backup_callback=lambda old: shutil.copytree(old, base / "backup-symlink"))
+            self.assertEqual(external.read_text(), "external content\n")
+
     def test_replaces_existing_valid_runtime_atomically(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

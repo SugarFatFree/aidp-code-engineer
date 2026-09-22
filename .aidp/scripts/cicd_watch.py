@@ -27,7 +27,7 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
         --version V0.1.0 [--push-at "2026-08-20T10:00:00"] [--post-push-wait 10]
 
     python3 AIDP_HOME/scripts/cicd_watch.py --mode detect  --commit <sha> --env test
-    python3 AIDP_HOME/scripts/cicd_watch.py --mode poll    --run-id <id>  --env test
+    python3 AIDP_HOME/scripts/cicd_watch.py --mode poll    --run-id <id> --commit <push-sha> --env test
     python3 AIDP_HOME/scripts/cicd_watch.py --mode trigger --env test [--ref <branch>]
     python3 AIDP_HOME/scripts/cicd_watch.py --mode retry   --run-id <id>  --env test
     python3 AIDP_HOME/scripts/cicd_watch.py --selftest     # 离线自测（假平台输出，不访问网络）
@@ -180,6 +180,10 @@ def do_poll(provider, pipeline, run_id, args):
                 return "vanished", None, f"锚定运行 {run_id} 不存在（疑被删除或配置不符）：{s[len(cp.NOT_FOUND):]}"
             return "unreachable", None, s
         verdict = classify(res)
+        observed = str((res or {}).get("commit") or "").strip()
+        if (observed or verdict != "running") and not cp.match_commit(res, args.commit):
+            return "commit-mismatch", None, (f"锚定运行 {run_id} 的 commit "
+                                             f"{observed or '<empty>'} 与本次 push {args.commit} 不一致")
         if verdict in ("success", "failed"):
             return verdict, res, status_text(res)
         if verdict == "unknown":
@@ -246,6 +250,8 @@ def run(argv, root_override=None):
         return emit(3, verdict="bad-args", next_action="abort", reason=f"{a.mode} 模式必须传 --commit")
     if a.mode in ("poll", "retry") and not a.run_id:
         return emit(3, verdict="bad-args", next_action="abort", reason=f"{a.mode} 模式必须传 --run-id")
+    if a.mode == "poll" and not (a.commit or "").strip():
+        return emit(3, verdict="bad-args", next_action="abort", reason="poll 模式必须传 --commit（本次 push SHA）")
 
     try:
         cfg = load_cicd_config(root)
@@ -331,6 +337,8 @@ def run(argv, root_override=None):
                         retry_run_id=run_id, retry_commit=(got or {}).get("commit"),
                         retry_cmd=_cmd("retry", a.env, a.pipeline, run_id))
         return emit(2, ok=False, next_action="abort", reason=f"{why}；重试已用尽（{retried}/{max_retries}）")
+    if verdict == "commit-mismatch":
+        return emit(2, ok=False, next_action="abort")
     if verdict == "parse-error":
         return emit(2, ok=False, next_action="abort",
                     reason=f"{why}｜⚠️ 这是解析缺陷（非平台不可达），请检查 CICD 适配配置或报修脚本；"
@@ -416,7 +424,11 @@ def selftest():
                     {"number": 11, "building": False, "result": "SUCCESS",
                      "actions": [{"lastBuiltRevision": {"SHA1": "f" * 40}}]}]}), {}
             if "/job/team/job/deploy-test/12/api/json" in url:
-                return 200, json.dumps({"number": 12, "building": True, "result": None}), {}
+                view = sc.get("jenkins_views")
+                if view:
+                    return 200, json.dumps(view.pop(0)), {}
+                return 200, json.dumps({"number": 12, "building": True, "result": None,
+                                        "actions": [{"lastBuiltRevision": {"SHA1": sha}}]}), {}
             return 200, json.dumps({"mode": "NORMAL"}), {}
         raise OSError("unreachable host")
 
@@ -481,24 +493,36 @@ def selftest():
         sc["view"] = {"databaseId": 77, "status": "completed", "conclusion": "success", "headSha": sha}
         code, o = go(["--commit", sha, "--env", "test"])
         case("[github] watch 成功 → exit 0 / probe", code == 0 and o["next_action"] == "probe")
+        code, o = go(["--mode", "poll", "--run-id", "77", "--env", "test"])
+        case("[github] poll 缺预期 commit → bad-args", code == 3 and o["verdict"] == "bad-args")
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha[:8], "--env", "test"])
+        case("[github] poll 短 SHA 匹配 → probe", code == 0 and o["next_action"] == "probe")
+        sc["view"]["headSha"] = "f" * 40
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha, "--env", "test"])
+        case("[github] poll 错提交成功态 → fail-closed", code == 2 and o["next_action"] == "abort"
+             and o["verdict"] == "commit-mismatch" and o["run_commit"] is None)
+        sc["view"].pop("headSha")
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha, "--env", "test"])
+        case("[github] poll 缺提交成功态 → fail-closed", code == 2 and o["next_action"] == "abort"
+             and o["verdict"] == "commit-mismatch" and o["run_commit"] is None)
         sc["view"] = {"databaseId": 77, "status": "completed", "conclusion": "failure", "headSha": sha}
-        code, o = go(["--mode", "poll", "--run-id", "77", "--env", "test", "--retry-count", "1"])
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha, "--env", "test", "--retry-count", "1"])
         case("[github] 失败且配额未尽 → exit 1 / retry",
              code == 1 and o["next_action"] == "retry" and o["next_retry_count"] == 2
              and o["retry_commit"] == sha and "--mode retry --env test --run-id 77" in o["retry_cmd"])
-        code, o = go(["--mode", "poll", "--run-id", "77", "--env", "test", "--retry-count", "3"])
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha, "--env", "test", "--retry-count", "3"])
         case("[github] 重试已用尽 → exit 2", code == 2 and o["next_action"] == "abort")
         code, o = go(["--mode", "retry", "--run-id", "77", "--env", "test"])
         case("[github] retry → exit 0 / 沿用 run_id 继续 poll", code == 0 and o["run_id"] == "77"
              and o["next_action"] == "poll")
         sc["view"] = "404"
-        code, o = go(["--mode", "poll", "--run-id", "77", "--env", "test"])
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha, "--env", "test"])
         case("[github] 运行不存在 → exit 2 / vanished", code == 2 and o["verdict"] == "vanished")
         sc["view"] = "garbage"
-        code, o = go(["--mode", "poll", "--run-id", "77", "--env", "test"])
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha, "--env", "test"])
         case("[github] 输出不可解析 → exit 2 / parse-error", code == 2 and o["verdict"] == "parse-error")
-        sc["view"] = {"databaseId": 77, "status": "completed", "conclusion": "neutral"}
-        code, o = go(["--mode", "poll", "--run-id", "77", "--env", "test", "--unknown-tolerance", "1"])
+        sc["view"] = {"databaseId": 77, "status": "completed", "conclusion": "neutral", "headSha": sha}
+        code, o = go(["--mode", "poll", "--run-id", "77", "--commit", sha, "--env", "test", "--unknown-tolerance", "1"])
         case("[github] 含糊终态 → exit 2 / unknown-status", code == 2 and o["verdict"] == "unknown-status")
 
         # gitlab-ci
@@ -529,10 +553,37 @@ def selftest():
         sc.clear()
         code, o = go(["--mode", "detect", "--commit", sha, "--env", "test"])
         case("[jenkins] 按 lastBuiltRevision.SHA1 命中构建 12", code == 0 and o["run_id"] == "12")
-        code, o = go(["--mode", "poll", "--run-id", "12", "--env", "test", "--timeout", "0"])
+        code, o = go(["--mode", "poll", "--run-id", "12", "--commit", sha, "--env", "test", "--timeout", "0"])
         case("[jenkins] building → 单次调用到上限仍在运行 → exit 0 / running / next_action=poll",
              code == 0 and o["verdict"] == "running" and o["next_action"] == "poll" and o["run_id"] == "12")
         case("输出恒带 run_commit 键", "run_commit" in o)
+        queued = {"number": 12, "building": False, "result": None, "actions": []}
+        building = {"number": 12, "building": True, "result": None,
+                    "actions": [{"lastBuiltRevision": {"SHA1": sha}}]}
+        success = {"number": 12, "building": False, "result": "SUCCESS",
+                   "actions": [{"lastBuiltRevision": {"SHA1": sha}}]}
+        sc["jenkins_views"] = [queued, dict(building, actions=[]), building, success]
+        code, o = go(["--mode", "poll", "--run-id", "12", "--commit", sha, "--env", "test", "--timeout", "0"])
+        case("[jenkins] queued 无 SHA → 继续 poll，无部署证据",
+             code == 0 and o["verdict"] == "running" and o["next_action"] == "poll"
+             and o["run_commit"] is None and "retry_commit" not in o)
+        code, o = go(["--mode", "poll", "--run-id", "12", "--commit", sha, "--env", "test", "--timeout", "0"])
+        case("[jenkins] building 无 SHA → 继续 poll，无部署证据",
+             code == 0 and o["verdict"] == "running" and o["next_action"] == "poll"
+             and o["run_commit"] is None and "retry_commit" not in o)
+        code, o = go(["--mode", "poll", "--run-id", "12", "--commit", sha, "--env", "test", "--timeout", "0"])
+        case("[jenkins] building SHA 出现且匹配 → 继续 poll",
+             code == 0 and o["verdict"] == "running" and o["run_commit"] == sha)
+        code, o = go(["--mode", "poll", "--run-id", "12", "--commit", sha, "--env", "test", "--timeout", "0"])
+        case("[jenkins] success SHA 匹配 → probe", code == 0 and o["next_action"] == "probe"
+             and o["run_commit"] == sha)
+        sc["jenkins_views"] = [dict(success, actions=[]),
+                                dict(success, actions=[{"lastBuiltRevision": {"SHA1": "f" * 40}}]),
+                                dict(building, actions=[{"lastBuiltRevision": {"SHA1": "f" * 40}}])]
+        for label in ("success 无 SHA", "success SHA 不匹配", "building SHA 不匹配"):
+            code, o = go(["--mode", "poll", "--run-id", "12", "--commit", sha, "--env", "test", "--timeout", "0"])
+            case(f"[jenkins] {label} → abort", code == 2 and o["verdict"] == "commit-mismatch"
+                 and o["next_action"] == "abort" and o["run_commit"] is None)
         code, o = go(["--mode", "trigger", "--env", "test"])
         posted = [h for m, u, h in sc["http"] if m == "POST" and u.endswith("/job/team/job/deploy-test/build")]
         case("[jenkins] trigger 带 crumb 与 Basic 认证 → next_action=detect",

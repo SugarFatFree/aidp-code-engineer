@@ -51,7 +51,7 @@
 | 调用参数 | PRD/详设/研发执行计划路径 + ★约定 33 规划期基线**显式传参**：PRD 原文 `产品提供/*.md`、原型内容基线、设计令牌、字段处置对照表、表 E、文案落点表（缺则违反约定 33）|
 | ★ WebMCP 入参 | **条件启用、默认不传**：先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`（启用判定唯一实现，⛔ 不自己 grep PRD）；`enabled: true` 才随 prompt 传 `webmcp_enabled: true` + `webmcp_launch_command: <脚本返回的原样，⛔ 不要自拟>` + `webmcp_entry_symbols: <原样数组>` → SKILL 才生成 WebMCP 两类套件（**未启用态套件优先级不低于已启用态**）并启用其维度 20。SKILL **明令不自行探测**，不传 = 用例族永不生成、启用了该能力的项目静默漏测 |
 | 路径占位符 | 显式传 `{测试文档目录}=docs/testing/`，以免 SKILL 按项目现有目录（`docs/test/`、`test/`、`tests/` 等）自适应到别处 |
-| 落盘核验归一 | `git mv` 整体归一到 `docs/testing/{version}/研发自测/`（去 `{项目名}` 子目录、保留 NN_ 前缀不改名）；用例从 `02_` 起、方案 `01_`、索引 `00_索引.md`；缺用例或缺方案 `exit 1` |
+| 落盘核验归一 | 已跟踪文件用 `git mv`，新产物或无 Git 用普通 `mv` 归一到 `docs/testing/{version}/研发自测/`（目标冲突硬停；去 `{项目名}` 子目录、保留 NN_ 前缀）；用例从 `02_` 起、方案 `01_`、索引 `00_索引.md`；缺用例或缺方案 `exit 1` |
 | 补充模式 | `--supplement={NN}` 时先跑历史扁平归位 + 子目录化前置脚本，产出增量 `NN_<业务主题>.md`（不带"补充"字眼、身份记入 `00_索引.md`）|
 
 **进入本段第一动作 = 按序 Read 两片 flow：`{{AIDP_HOME}}/flows/sprint-selftest/step-1-1.md`（启动横幅 / 继承基线定位 / 调用参数 / 输出路径 / 项目级补充 / 路径占位符）+ `{{AIDP_HOME}}/flows/sprint-selftest/step-1-2.md`（调用返回后落盘核验归一 bash / 补充模式前置脚本）**，逐项执行，绝不凭骨架或记忆略过任一子步骤。

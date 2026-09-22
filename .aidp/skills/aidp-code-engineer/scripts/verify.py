@@ -97,7 +97,8 @@ def check_native_runtime(root: Path, r):
             source = _runtime_source()
             source_files = dict(_source_runtime_files(source))
             missing = sorted(set(source_files) - set(manifest["files"]))
-            extra = sorted(set(manifest["files"]) - set(source_files))
+            extra = sorted(set(manifest["files"]) - set(source_files)
+                           - set(manifest.get("user_files", [])))
             if missing or extra:
                 r.error(f"Agent 原生运行包 {relative} 文件清单与当前脚手架 {current_version} 不一致："
                         f"缺失 {_head(missing)}；多出 {_head(extra)}")
@@ -418,8 +419,12 @@ def check_docs_init_sync(root: Path, template: bool, r: VerifyResult):
             continue
         want = dict(L.iter_files(ref))
         have = dict(L.iter_files(init))
+        home = (".agents/aidp" if "shared" in _runtime_homes(root) else ".claude/aidp")
         drift = sorted(k for k in set(want) | set(have)
-                       if k not in want or k not in have or want[k].read_bytes() != have[k].read_bytes())
+                       if k not in want or k not in have or
+                       (want[k].read_bytes() if template else
+                        want[k].read_bytes().replace(b"{{AIDP_HOME}}", home.encode("utf-8")))
+                       != have[k].read_bytes())
         label = ref.relative_to(L.SKILL_DIR).as_posix()
         if drift:
             if template:

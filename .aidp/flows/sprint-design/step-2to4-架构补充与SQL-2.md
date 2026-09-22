@@ -32,25 +32,53 @@ python3 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_sql_style_consist
 
 **所有 .sql 文件统一要求**：建表语句完整可执行 / 索引齐全 / 初始化数据（如有）独立成块 / 兼容项目实际使用的数据库（MySQL/PostgreSQL/达梦 等）。
 
-**★ Step 3.2：SQL 落位到 `docs/deployment/{version}/sql/增量/` + 版本落位一致性防护（两阶段：SKILL 暂存 → 命令端 git mv 归位；堵"补充/增量 SQL 落错版本目录、文件头版本≠目录版本"）**：
+**★ Step 3.2：SQL 落位到 `docs/deployment/{version}/sql/增量/` + 版本落位一致性防护（两阶段：SKILL 暂存 → 命令端归位；堵"补充/增量 SQL 落错版本目录、文件头版本≠目录版本"）**：
 
-> **两阶段落位机制（约定 21：上游 SKILL 只能暂存、最终位置由命令端搬迁）**：AIDP 的 SQL 最终落 `docs/deployment/{version}/sql/增量/`（部署资产）。但上游 `dev-logic-architect` SKILL（职责边界：SKILL 不感知 AIDP 部署目录布局）**原生**把 SQL 生成到 **`{SQL脚本目录}/v{版本号}/`（★ 带 `v` 前缀，SKILL「SQL 版本严格隔离铁律」硬约定，如 `code/sql/v0.2.0/`）**——`{SQL脚本目录}` 经 §2.5.7 映射为 **`code/sql/`（暂存位）**，SKILL 自行在其后追加 `/v{版本号}/`、无法表达"版本在 sql 之前"的目标层级。故**命令端在 SKILL 返回后确定性 `git mv` 把暂存产物搬迁到最终位置**，SKILL 无需改动。**★ 扫描防御式双模式**：命令端搬迁扫描**同时覆盖** `code/sql/v*/`（SKILL 实际输出，含各种 `v` 前缀写法）**与** legacy `code/sql/{version}/`（无 v，历史/兼容），以任一命中的本轮 `.sql` 为搬迁源，避免"glob 只写无 v 路径 → SKILL 的 v 前缀产物匹配不到 → SQL 静默不归位"的功能性断链。
+> **两阶段落位机制（约定 21：上游 SKILL 只能暂存、最终位置由命令端搬迁）**：AIDP 的 SQL 最终落 `docs/deployment/{version}/sql/增量/`（部署资产）。但上游 `dev-logic-architect` SKILL（职责边界：SKILL 不感知 AIDP 部署目录布局）**原生**把 SQL 生成到 **`{SQL脚本目录}/v{版本号}/`（★ 带 `v` 前缀，SKILL「SQL 版本严格隔离铁律」硬约定，如 `code/sql/v0.2.0/`）**——`{SQL脚本目录}` 经 §2.5.7 映射为 **`code/sql/`（暂存位）**，SKILL 自行在其后追加 `/v{版本号}/`、无法表达"版本在 sql 之前"的目标层级。故**命令端在 SKILL 返回后确定性归位暂存产物（已跟踪用 `git mv`，未跟踪/无 Git 用普通 `mv`）**，SKILL 无需改动。**★ 扫描防御式双模式**：命令端搬迁扫描**同时覆盖** `code/sql/v*/`（SKILL 实际输出，含各种 `v` 前缀写法）**与** legacy `code/sql/{version}/`（无 v，历史/兼容），以任一命中的本轮 `.sql` 为搬迁源，避免"glob 只写无 v 路径 → SKILL 的 v 前缀产物匹配不到 → SQL 静默不归位"的功能性断链。
 > **根因（沿用）**：补充/增量模式下，SKILL 若"扫描既有目录推断路径"会复用上一版本目录，导致本轮 SQL 落进旧版本目录、文件头版本与目录版本打架。命令端**显式钉死版本、SKILL 返回后确定性校验纠正 + 搬迁**，不依赖 SKILL 自行推断。
 
 1. **调 SKILL 前**：`mkdir -p "docs/deployment/{version}/sql/增量"`（**无条件预建本次迭代版本的最终 SQL 目录**，哪怕本轮暂无 SQL 也先建，避免惰性创建缺目录）；传参 `{SQL脚本目录}=code/sql/`（暂存位，§2.5.7），并**显式钉死** `{version}`=前置流程解析的**当前迭代版本**（不是 `{prev-version}`），要求文件头版本注释一律写 `{version}`、**禁止 SKILL 把本轮产物写进 `{prev-version}` 目录**。
 2. **SKILL 返回后（确定性 搬迁 + 校验 + 纠正）**：
    ```bash
-   # ★ 防御式双模式：SKILL 实际把 SQL 生成到带 v 前缀的 code/sql/v{版本号}/（如 code/sql/v0.2.0/），
-   #   历史/兼容也可能落无 v 的 code/sql/{version}/。以下扫描【两种都覆盖】，避免只写无 v 路径漏搬。
-   #   STAGE_DIRS = 本轮所有可能的 SQL 暂存目录（v 前缀 glob + 无 v 精确 + 上一版本目录）
-   STAGE_DIRS="code/sql/v* code/sql/{version} code/sql/{prev-version} code/sql/v{prev-version}"
-   # ① 版本落位提示：本轮新增/改动 SQL 若落进上一版本目录（v{prev} 或 {prev}）→ 一并纳入下方搬迁、并 WARN
-   git status --porcelain -- code/sql/{prev-version}/ code/sql/v{prev-version}/ 2>/dev/null | grep -E '\.sql$' && \
-     echo "⚠️ 本轮 SQL 落入上一版本暂存目录 → 将随搬迁归位到 docs/deployment/{version}/sql/增量/"
-   # ② ★ 搬迁到最终位置（Option A 核心）：把本轮 SKILL 暂存产物（任一 STAGE_DIRS 命中的 *.sql）→ docs/deployment/{version}/sql/增量/
-   #    只搬本轮新增/变更文件（git status 挑），不动 Step 3.1 继承来的历史文件；dedup 同名
-   for f in $(git status --porcelain -- $STAGE_DIRS 2>/dev/null | grep -E '\.sql$' | sed 's/^...//' | sort -u); do
-     [ -f "$f" ] && git mv -k "$f" "docs/deployment/{version}/sql/增量/$(basename "$f")"
+   # ★ 每次 Bash 独立执行；目标冲突或移动失败均停止，不能在 git mv 失败后回退普通 mv。
+   sql_move() {
+     if [ -e "$2" ] || [ -L "$2" ]; then printf '❌ SQL 目标已存在：%s\n' "$2" >&2; return 1; fi
+     mkdir -p "$(dirname "$2")" || return 1
+     if git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+        git ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+       git mv -- "$1" "$2" || return 1
+     else
+       mv -n -- "$1" "$2" || return 1
+       [ ! -e "$1" ] || { printf '❌ SQL 移动未完成：%s\n' "$1" >&2; return 1; }
+     fi
+   }
+   # ① 当前版兼容 v0.2.0、vV0.2.0 与无 v 路径；Git 模式亦扫描其他 v*，只取本轮变化的文件。
+   #    无 Git 时无法证明其他版本目录里的 SQL 是本轮新增，故仅自动归位当前版目录。
+   VERSION="{version}"
+   DEST="docs/deployment/{version}/sql/增量"
+   for d in code/sql/v* "code/sql/$VERSION" "code/sql/{prev-version}"; do
+     [ -d "$d" ] || continue
+     for f in "$d"/*.sql; do
+       [ -f "$f" ] || continue
+       if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+         changed=$(git -c core.quotePath=false status --porcelain --untracked-files=all -- "$f") || exit 1
+         if [ -z "$changed" ]; then
+           if ! git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+             printf '❌ 未跟踪 SQL 未进入 git status（可能被 ignore）：%s\n' "$f" >&2
+             exit 1
+           fi
+           continue   # 不搬历史版本里未改动的 SQL
+         fi
+       else
+         case "$d" in "code/sql/v${VERSION#V}"|"code/sql/v$VERSION"|"code/sql/$VERSION") ;;
+           *) printf '⚠️ 无 Git：无法判定其他版本暂存 SQL 是否为本轮产物：%s\n' "$f" >&2; exit 1 ;;
+         esac
+       fi
+       case "$d" in "code/sql/v{prev-version}"|"code/sql/{prev-version}")
+         printf '⚠️ 本轮 SQL 落入上一版本暂存目录：%s\n' "$f" >&2 ;;
+       esac
+       sql_move "$f" "$DEST/$(basename "$f")" || exit 1
+     done
    done
    # 清理搬空后的暂存目录（v 前缀 + 无 v 都试）
    for d in code/sql/v{版本号} code/sql/v{version} code/sql/{version}; do
@@ -58,13 +86,14 @@ python3 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_sql_style_consist
    done
    # ③ 文件头版本号 ≠ 目录版本 → 以目录版本为准修正（搬迁后在最终位置校验）
    for f in docs/deployment/{version}/sql/增量/*.sql; do
+     [ -f "$f" ] || continue
      head -8 "$f" | grep -oE 'V[0-9]+\.[0-9]+(\.[0-9]+)?' | grep -qxF "{version}" || \
        [ -z "$(head -8 "$f" | grep -oE 'V[0-9]+\.[0-9]+(\.[0-9]+)?')" ] || \
        echo "⚠️ $f 文件头版本号与目录版本 {version} 不一致 → 需修正文件头为 {version}"
    done
    ```
 3. **④ 回写设计文档 SQL 引用路径（搬迁配套）**：SKILL 生成的详细设计/数据库设计正文（Module D 交付物清单、数据表来源 SQL 路径等）里若引用了暂存位 SQL 路径（`code/sql/v{版本号}/*.sql` 带 v 前缀，或历史无 v 的 `code/sql/{version}/*.sql`），命令端**同步 Edit 回写为最终位置 `docs/deployment/{version}/sql/增量/*.sql`**，避免"SQL 已搬走、设计文档仍指暂存位"的断链。
-   命中任一 ⚠️ → 命令端**自动 `git mv` 归位/搬迁 + Edit 修正文件头与文档引用**（使"文件头版本 == 所在目录版本 == 本次迭代版本"三者恒一致、且 SQL 落最终 `docs/deployment/{version}/sql/增量/`），终端 WARN 记录纠正动作、**不静默放过**。继承的历史文件（Step 3.1 从 `{prev-version}` 复制来、头部标旧版本）不在校验/搬迁范围——只处理**本轮新增/变更**的 SQL。
+   命中任一 ⚠️ → 命令端**按源文件跟踪状态归位/搬迁 + Edit 修正文件头与文档引用**（使"文件头版本 == 所在目录版本 == 本次迭代版本"三者恒一致、且 SQL 落最终 `docs/deployment/{version}/sql/增量/`），终端 WARN 记录纠正动作、**不静默放过**。继承的历史文件（Step 3.1 从 `{prev-version}` 复制来、头部标旧版本）不在校验/搬迁范围——只处理**本轮新增/变更**的 SQL。
 
 ### Step 4：★ 动态更新 docs/architecture/
 

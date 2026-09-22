@@ -11,16 +11,16 @@
 ### #1 ★ 标准用法：操作系统调度双进程（推荐）
 
 ```bash
-# ★ 一次装齐两条链路：开发链路（默认 10m）+ 测试链路（默认 5m），各自独立进程、互不阻塞
+# ★ 一次装齐两条链路（默认 10m / 5m）与第三条独立 watchdog（5m），互不阻塞
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m]
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status      # 定时任务是否在位 + 两条链路心跳
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除两个定时任务
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除三个定时任务
 ```
 
 - 平台：Linux = systemd --user timer（无 systemd 用户实例时用 crontab）；macOS = launchd；Windows = 输出 `schtasks` 命令手工执行。Linux 注销后仍要运行需执行一次 `loginctl enable-linger "$USER"`。
-- 每个定时任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`：自动补 `--no-loop`（`HAS_WAKE_SOURCE=1`，允许分 tick 让位）、导出 `AIDP_TICK_COMMAND`（Stop 护栏只拦 autopilot tick）与 `ARGUMENTS`、flock 互斥（上一轮未结束则本轮跳过）、日志落 `memory/{{AIDP_HOME}}/logs/<命令>.log`、加载可选的 `~/.config/aidp/env`（通知 webhook / CICD 令牌等凭据环境变量）。
+- 开发和测试定时任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`：自动补 `--no-loop`（`HAS_WAKE_SOURCE=1`，允许分 tick 让位）、导出 `AIDP_TICK_COMMAND`（Stop 护栏只拦 autopilot tick）与 `ARGUMENTS`、flock 互斥（上一轮未结束则本轮跳过）、日志落 `memory/.aidp/logs/<命令>.log`、加载可选的 `~/.config/aidp/env`（通知 webhook / CICD 令牌等凭据环境变量）。
 - ⚠️ **两条链路缺一不可**：autopilot 只管开发链路（PRD→/version→/sprint-batch→触发部署），浏览器实测由 aiauto-test 链路负责；只跑第一条 = 测试半环永久缺失（Phase 3.4 step4③ 累加 `test_loop_missing_streak`，连续 ≥3 tick 后把 build 按静态-only 收尾 + 冻结告警）。
-- **存活巡检**：每轮开跑前 `aidp_scheduler.py watchdog` 检查两条链路心跳（`autopilot_loop_heartbeat_at` / `aiauto_test_heartbeat_at`）；任一链路超过 `scheduler.stale_cycles × 周期` 无心跳且不在执行中 → 写本地告警台账 `memory/{{AIDP_HOME}}/alerts.jsonl` + 发里程碑通知（同一次中断只告警一次）。
+- **存活巡检**：第三条独立 watchdog 定时任务每 5 分钟检查两条链路心跳（`autopilot_loop_heartbeat_at` / `aiauto_test_heartbeat_at`）；首次无心跳经宽限期后、或已有心跳超过 `scheduler.stale_cycles × 周期` 且不在执行中 → 写本地告警台账 `memory/.aidp/alerts.jsonl` + 发里程碑通知（同一次中断只告警一次）。链路开跑前也会巡检已有心跳。
 - ★ **权限前置（headless 必做）**：非交互执行时未预授权的工具调用会被拒绝、整轮零进展。Claude Code 在 `.claude/settings.json` 的 `permissions.allow` 放行命令所需的 `Bash` / `Agent` / MCP 工具等（内置执行命令为 `claude -p --permission-mode acceptEdits {prompt}`）；Codex 需 `codex exec --sandbox workspace-write`（内置默认）且项目已 trust；DeepSeek Harness 须在 `memory/aidp-config.yaml` 的 `scheduler.exec.dsh` 填入其非交互执行命令。各 CLI 参数以所用版本官方文档为准，详见 `{{AIDP_HOME}}/reference/agent-tools.md` 第三节。
 
 ### #2 会话内 `/loop`（Claude Code 交互式短期用法）
@@ -52,7 +52,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除两
 
 | 用法 | 适用场景 | 会话关闭后 | 推荐度 |
 |------|---------|----------|------|
-| `aidp_scheduler.py install` | 7×24 无人值守（两条链路独立进程 + 心跳巡检）| 不受影响 | ★★★ |
+| `aidp_scheduler.py install` | 7×24 无人值守（两条链路任务 + 独立 watchdog）| 不受影响 | ★★★ |
 | `/loop 10m /sprint-autopilot --unattended`（+ 测试链路一条）| 会话内临时观察 / 演示 | 停止（且 7 天过期）| ★ |
 | `/sprint-autopilot`（直接调）| 首次配置补全 + 引导 | 不适用 | 配置 |
 | `/sprint-autopilot --once` | PRD 已就绪，临时跑一次 | 不适用 | 单次 |
@@ -66,14 +66,11 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除两
 
 ---
 
-
----
-
 ## 停止机制
 
 | 方式 | 效果 |
 |------|------|
-| `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall` | 停用并删除两条链路的操作系统定时任务 |
+| `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall` | 停用并删除两条链路与独立 watchdog 的操作系统定时任务 |
 | Claude Code 终端 Ctrl+C | 立即中止本次命令；如外层有 `/loop` 包装，需另跑 `/loops` 看面板停 |
 | `/loops` + 中止对应 loop | 停掉会话内 /loop；后续不再唤起命令 |
 | 关闭 Claude Code 会话 | 会话内 `/loop` 随之消失（操作系统定时任务不受影响）|
@@ -87,7 +84,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除两
 | 命令 | 关系 |
 |------|------|
 | `/sprint-autopilot` | **顶层一键编排器**（本命令）|
-| `{{AIDP_HOME}}/scripts/aidp_scheduler.py` ★ | **7×24 守护标准方式**：为开发链路 / 测试链路各装一个操作系统定时任务（经 `agent_loop.sh --once`），并做两条链路心跳巡检 |
+| `{{AIDP_HOME}}/scripts/aidp_scheduler.py` ★ | **7×24 守护标准方式**：为开发链路 / 测试链路各装一个操作系统定时任务（经 `agent_loop.sh --once`），另装第三条独立 watchdog 巡检任务 |
 | `/loop` | 会话内交互式短期用法（会话级、7 天过期、空闲触发、同会话串行）|
 | `/version` | Phase 3.1 内部调用（上版准发布走 Phase 2 `/version --no-tag`）|
 | `/sprint-batch` | Phase 3.2 内部调用 |
@@ -107,7 +104,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除两
 5. **chrome 检测 / 安装 / 远端 IP 全部移至 `/sprint-aiauto-test`**：本命令不涉及 chrome（详见注意事项 11 + Phase 0.2）；MCP 安装方式见 `/sprint-aiauto-test` 命令文档
 6. **首次使用必看 Phase 0.1**：按需配置 `memory/aidp-config.yaml` 的 `notify` 段（里程碑通知渠道，webhook 地址/密钥只经环境变量引用；未配置则所有通知节点静默跳过、不阻塞）；使用 CICD 流水线部署时先配置 `cicd.provider` / `cicd.pipelines` 并完成提供方登录或令牌环境变量
 7. **★ `/sprint-autopilot` 的"准发布" ≠ 正式发布**：Phase 2 跑 `/version <prev> --no-tag` 只归档 SQL/文档/memory 但**不打 tag**；要正式打 tag + 部署，仍需运维手动跑 `/version <version>`（不带任何 flag = 完整发布模式，自动补打 tag）
-8. **循环交给外部调度**：命令不自管循环。7×24 用 `aidp_scheduler.py install`（操作系统定时任务，两条链路独立进程）；会话内 `/loop` 仅作交互式短期用法（会话级、7 天过期、同会话串行）
+8. **循环交给外部调度**：命令不自管循环。7×24 用 `aidp_scheduler.py install`（两条链路定时任务 + 独立 watchdog）；会话内 `/loop` 仅作交互式短期用法（会话级、7 天过期、同会话串行）
 9. **本地 dev server 端口冲突**：`deployment.mode=local` 时如果其他进程占用相同端口，命令会跳过启动并发 #4 通知提醒用户；多份 PRD 并行测试请配置不同端口
 10. **云端部署探测超时不是部署失败**：`cloud_deploy_check_url` 探测超时只意味着"chrome 暂时没法测"，命令会发 #4 通知并暂停（保留状态）；用户人工确认部署成功后重新唤起命令即可继续
 11. **★ AI 自动化实测/浏览器测试已独立为 `/sprint-aiauto-test`**：chrome-devtools-mcp 检测 / 智能启动 / 远端 IP / 登录元数据 / 账号收集 / credentials 文件 / 浏览器测试段全部由该命令承担（见 0.2），本命令只管开发链路、不触发浏览器。生产守护两条链路同时运行（`aidp_scheduler.py install`：开发链路监听 PRD + 测试链路监听部署），状态经 `memory/.sprint-autopilot-baseline.json` 共享。

@@ -216,6 +216,22 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertEqual(manifest["source"], "claude")
             self.assertEqual(res["agents"], ["claude"])
 
+    def test_installed_skill_renders_home_without_changing_bundle(self):
+        source = (L.SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("{{AIDP_HOME}}", source)
+        for agent, home, skill_dir in (
+            ("claude", ".claude/aidp", ".claude/skills"),
+            ("codex", ".agents/aidp", ".agents/skills"),
+        ):
+            with self.subTest(agent=agent), H.TempRepo() as root:
+                scaffold(root, "--agent", agent)
+                installed = (root / skill_dir / "aidp-code-engineer/SKILL.md").read_text(encoding="utf-8")
+                self.assertNotIn("{{AIDP_HOME}}", installed)
+                self.assertEqual(installed, source.replace("{{AIDP_HOME}}", home))
+                bundled = (root / skill_dir / "aidp-code-engineer/assets/docs/init/README.md").read_text(
+                    encoding="utf-8")
+                self.assertIn("{{AIDP_HOME}}", bundled)
+
     def test_codex_and_dsh_share_native_runtime_and_nested_plugin_skills(self):
         with H.TempRepo() as root:
             env, _ = fake_dsh_env(root)
@@ -331,6 +347,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             )
             self.assertTrue((root / claude_rel / ".aidp-runtime.json").is_file())
             self.assertTrue((root / shared_rel / ".aidp-runtime.json").is_file())
+            for family, skill_dir in ((".claude/aidp", ".claude/skills"),
+                                      (".agents/aidp", ".agents/skills")):
+                text = (root / skill_dir / "aidp-code-engineer/SKILL.md").read_text(encoding="utf-8")
+                self.assertNotIn("{{AIDP_HOME}}", text)
+                self.assertIn(family + "/reference/agent-tools.md", text)
             claude = self._manifest(root, claude_rel)
             shared = self._manifest(root, shared_rel)
             self.assertEqual(claude["version"], shared["version"])
@@ -425,6 +446,52 @@ class NativeIdempotencyTest(unittest.TestCase):
             self.assertFalse([action for action in again["actions"]
                               if action["op"] in {"create", "update", "backup", "install"}],
                              again["actions"])
+
+    def test_dual_runtime_user_overlay_syncs_from_either_family(self):
+        for origin in (".claude/aidp", ".agents/aidp"):
+            with self.subTest(origin=origin), H.TempRepo() as root:
+                scaffold(root, "--agent", "claude,codex")
+                other = ".agents/aidp" if origin == ".claude/aidp" else ".claude/aidp"
+                private = root / origin / "reference/team-only.md"
+                private.write_text(f"see {origin}/reference\n", encoding="utf-8")
+                result = scaffold(root)
+                self.assertEqual(result["mode"], "upgrade")
+                self.assertEqual((root / other / "reference/team-only.md").read_text(encoding="utf-8"),
+                                 f"see {other}/reference\n")
+                self.assertEqual(runtime_layout.normalize_runtime(root / origin, origin),
+                                 runtime_layout.normalize_runtime(root / other, other))
+                for home in (origin, other):
+                    manifest = runtime_layout.validate_runtime(root / home, expected_home=home)
+                    self.assertIn("reference/team-only.md", manifest["user_files"])
+                again = scaffold(root)
+                self.assertFalse([action for action in again["actions"] if action["op"] == "install"
+                                  and action["path"] in {origin + "/", other + "/"}],
+                                 again["actions"])
+
+    def test_dual_runtime_filled_reference_syncs_from_either_family(self):
+        for origin in (".claude/aidp", ".agents/aidp"):
+            with self.subTest(origin=origin), H.TempRepo() as root:
+                scaffold(root, "--agent", "claude,codex")
+                other = ".agents/aidp" if origin == ".claude/aidp" else ".claude/aidp"
+                relative = "reference/子Agent必读.md"
+                (root / origin / relative).write_text("# 已填写\n团队要求\n", encoding="utf-8")
+                scaffold(root)
+                self.assertEqual((root / other / relative).read_text(encoding="utf-8"),
+                                 "# 已填写\n团队要求\n")
+                self.assertEqual(runtime_layout.normalize_runtime(root / origin, origin),
+                                 runtime_layout.normalize_runtime(root / other, other))
+
+    def test_dual_runtime_conflicting_user_files_leave_both_unchanged(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude,codex")
+            for home, text in ((".claude/aidp", "Claude private\n"),
+                               (".agents/aidp", "Shared private\n")):
+                (root / home / "reference/team-only.md").write_text(text, encoding="utf-8")
+            before = {home: runtime_layout.tree_digest(root / home)
+                      for home in (".claude/aidp", ".agents/aidp")}
+            with self.assertRaisesRegex(RuntimeError, "双包用户文件冲突"):
+                S.run(root, LegacyRuntimeMigrationTest._options("upgrade", "claude,codex"))
+            self.assertEqual({home: runtime_layout.tree_digest(root / home) for home in before}, before)
 
 
 class NativePreflightTest(unittest.TestCase):
@@ -1205,8 +1272,9 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
             custom.write_text("团队修改\n", encoding="utf-8")
             (skill / "SKILL.md").write_text("旧脚手架正文\n", encoding="utf-8")
             result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
-            self.assertEqual((skill / "SKILL.md").read_bytes(),
-                             (L.SKILL_DIR / "SKILL.md").read_bytes())
+            self.assertEqual((skill / "SKILL.md").read_text(encoding="utf-8"),
+                             (L.SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+                             .replace("{{AIDP_HOME}}", ".claude/aidp"))
             self.assertTrue(result["backup"])
             backed_up = root / result["backup"] / ".claude/skills/aidp-code-engineer"
             self.assertEqual((backed_up / "team-notes.txt").read_text(), "团队修改\n")
@@ -1248,6 +1316,48 @@ class UpgradeTest(unittest.TestCase):
 
 
 class DeliveredFilesTest(unittest.TestCase):
+    def test_new_root_readme_uses_installed_runtime_home(self):
+        for agents, home in (("claude", ".claude/aidp"), ("codex", ".agents/aidp"),
+                             ("claude,codex", ".agents/aidp")):
+            with self.subTest(agents=agents), H.TempRepo() as root:
+                scaffold(root, "--agent", agents)
+                readme = (root / "README.md").read_text(encoding="utf-8")
+                self.assertIn(f"python3 {home}/scripts/aidp_scheduler.py install", readme)
+                self.assertIn(f"├── {home}/", readme)
+                self.assertNotIn("python3 .aidp/scripts/aidp_scheduler.py", readme)
+                self.assertNotIn("├── .aidp/", readme)
+                self.assertNotIn("{{AIDP_HOME}}", readme)
+                if "codex" in agents:
+                    self.assertIn("$sprint-dev", readme)
+
+    def test_switch_to_claude_renders_docs_to_target_home(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "codex")
+            scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertFalse((root / ".agents/aidp").exists())
+            doc = (root / "docs/init/README.md").read_text(encoding="utf-8")
+            self.assertRegex(doc, r"(?m)^├── \.claude/aidp/\s+#")
+            self.assertNotRegex(doc, r"(?m)^├── \.agents/aidp/\s+#")
+            self.assertNotIn("{{AIDP_HOME}}", doc)
+            result = V.VerifyResult()
+            V.check_docs_init_sync(root, False, result)
+            self.assertFalse(result.warnings, result.warnings)
+
+    def test_rejects_hardlinked_files_before_any_write(self):
+        for relative in (".gitignore", "memory/projectBrief.md", "docs/init/README.md",
+                         L.USER_FILLABLE_BASELINE):
+            with self.subTest(relative=relative), H.TempRepo() as root:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory() as outside:
+                    sentinel = Path(outside) / "sentinel"
+                    sentinel.write_text("{{project}} external sentinel\n", encoding="utf-8")
+                    os.link(sentinel, path)
+                    with self.assertRaisesRegex(ValueError, "硬链接"):
+                        S.run(root, LegacyRuntimeMigrationTest._options("init", "claude"))
+                    self.assertEqual(sentinel.read_text(encoding="utf-8"), "{{project}} external sentinel\n")
+                    self.assertFalse((root / ".claude/aidp").exists())
+
     def test_docs_readme_and_memory_templates(self):
         with H.TempRepo() as root:
             scaffold(root, "--version", "V0.1.0", "--agent", "codex")
@@ -1399,6 +1509,45 @@ class NativeRuntimeVerifyTest(unittest.TestCase):
             result = V.VerifyResult()
             V.check_native_runtime(root, result)
             self.assertTrue(any(".aidp/" in error for error in result.errors), result.errors)
+
+    def test_native_user_files_survive_upgrade_without_inventory_error(self):
+        for agents, relative in (("claude", ".claude/aidp"), ("codex", ".agents/aidp")):
+            with self.subTest(agents=agents), H.TempRepo() as root:
+                scaffold(root, "--version", "V0.1.0", "--agent", agents)
+                home = root / relative
+                filled = home / "reference/子Agent必读.md"
+                filled.write_text("# 项目约定\n保留本地填写内容\n", encoding="utf-8")
+                private_reference = home / "reference/team-only.md"
+                private_reference.write_text("# 项目参考\n", encoding="utf-8")
+                private_skill = home / "skills/custom/local/SKILL.md"
+                private_skill.parent.mkdir(parents=True)
+                private_skill.write_text("---\nname: local\n---\n", encoding="utf-8")
+                scaffold(root, "--mode", "upgrade", "--agent", agents, "--force")
+                manifest = json.loads((home / ".aidp-runtime.json").read_text(encoding="utf-8"))
+                self.assertEqual(
+                    set(manifest["user_files"]),
+                    {"reference/子Agent必读.md", "reference/team-only.md",
+                     "skills/custom/local/SKILL.md"},
+                )
+                self.assertIn("保留本地填写内容", filled.read_text(encoding="utf-8"))
+                result = V.VerifyResult()
+                V.check_native_runtime(root, result)
+                self.assertEqual(result.errors, [], result.errors)
+
+    def test_user_files_cannot_hide_modified_template_reference(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--version", "V0.1.0", "--agent", "claude")
+            home = root / ".claude/aidp"
+            target = home / "reference/skills.md"
+            target.write_bytes(target.read_bytes() + b"\nchanged\n")
+            manifest = runtime_layout.build_runtime_manifest(
+                home, BUNDLE_VERSION, "claude", ".claude/aidp")
+            manifest["user_files"] = ["reference/skills.md"]
+            (home / ".aidp-runtime.json").write_text(json.dumps(manifest), encoding="utf-8")
+            result = V.VerifyResult()
+            V.check_native_runtime(root, result)
+            self.assertTrue(any("文件与当前脚手架" in error for error in result.errors),
+                            result.errors)
 
     def test_native_manifest_cannot_hide_deleted_file_at_current_version(self):
         with H.TempRepo() as root:

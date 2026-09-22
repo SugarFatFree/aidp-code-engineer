@@ -137,12 +137,30 @@ def main():
               == ["hardcoded-runtime-path"])
 
         (root / ".aidp/flows/x/bad.md").unlink()
+        write(root, ".aidp/flows/x/state.md", "python3 tool.py > memory/{{AIDP_HOME}}/probe.json\n")
+        rc, data = run(root)
+        check("状态文件不能把运行根拼入 memory 目录",
+              rc == 1 and [x.get("kind") for x in data.get("findings", [])]
+              == ["runtime-state-home-confusion"])
+        (root / ".aidp/flows/x/state.md").unlink()
         rc, data = run(root, "--rendered")
         check("渲染态抓未解析 AIDP_HOME",
               rc == 1 and [x.get("kind") for x in data.get("findings", [])]
               == ["unresolved-runtime-home"])
 
         (root / ".aidp/commands/ok.md").write_text("ok\n", encoding="utf-8")
+        write(root, ".aidp/flows/x/state.md", "python3 tool.py > memory/.claude/aidp/probe.json\n")
+        rc, data = run(root, "--rendered")
+        check("渲染态禁止 memory 下嵌 Agent 运行根",
+              rc == 1 and [x.get("kind") for x in data.get("findings", [])]
+              == ["runtime-state-home-confusion"])
+        (root / ".aidp/flows/x/state.md").unlink()
+        write(root, ".aidp/AIDP-AGENTS.md", "告警台账 memory/{{AIDP_HOME}}/alerts.jsonl\n")
+        rc, data = run(root)
+        check("下发记忆正文也须检查状态目录归属",
+              rc == 1 and [x.get("kind") for x in data.get("findings", [])]
+              == ["runtime-state-home-confusion"])
+        (root / ".aidp/AIDP-AGENTS.md").unlink()
         write(root, ".aidp/scripts/ast_probe.py",
               "from pathlib import Path\nimport os\n"
               "LEGACY_AIDP_DIR = '.aidp'\n"

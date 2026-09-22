@@ -43,6 +43,9 @@ def check(name, cond):
 
 def _run(*args):
     env = {k: v for k, v in os.environ.items() if k != "AIDP_AGENT"}
+    if "--root" in args:
+        root = Path(args[args.index("--root") + 1]).resolve()
+        env.update({"AIDP_PROJECT_ROOT": str(root), "AIDP_HOME": str(root / ".aidp")})
     cp = subprocess.run([sys.executable, SYNC_PY, *args], capture_output=True, text=True, env=env, timeout=60)
     try:
         out = json.loads(cp.stdout.strip().splitlines()[-1]) if cp.stdout.strip() else {}
@@ -73,6 +76,8 @@ def _discover_codex_skills(root: Path, max_depth=6) -> set:
 def _mkrepo() -> Path:
     root = Path(tempfile.mkdtemp())
     (root / ".aidp/commands").mkdir(parents=True)
+    (root / ".aidp/plugins").mkdir()
+    (root / ".aidp/scripts").mkdir()
     (root / ".aidp/commands/version.md").write_text(
         "# /version — 版本管理命令（★）\n\n参数：$ARGUMENTS\n", encoding="utf-8")
     (root / ".aidp/commands/sprint-dev.md").write_text(
@@ -135,6 +140,8 @@ def test_real_command_discovery_and_chaining():
     root = Path(tempfile.mkdtemp())
     try:
         shutil.copytree(REPO / ".aidp/commands", root / ".aidp/commands")
+        (root / ".aidp/plugins").mkdir()
+        (root / ".aidp/scripts").mkdir()
         (root / ".aidp/skills/demo").mkdir(parents=True)
         (root / ".aidp/skills/demo/SKILL.md").write_text(
             "---\nname: demo\ndescription: d\n---\n", encoding="utf-8")

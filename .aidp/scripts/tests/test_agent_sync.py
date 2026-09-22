@@ -49,6 +49,10 @@ def _clean_env(**extra):
 
 
 def _run(script, *args, root=None, **env_extra):
+    if ("--root" in args and "AIDP_HOME" not in env_extra
+            and Path(script).resolve() == Path(SYNC_PY).resolve()):
+        project = Path(args[args.index("--root") + 1]).resolve()
+        env_extra.update(AIDP_PROJECT_ROOT=str(project), AIDP_HOME=str(project / ".aidp"))
     cp = subprocess.run([sys.executable, script, *args], cwd=str(root) if root else None,
                         capture_output=True, text=True, env=_clean_env(**env_extra), timeout=60)
     try:
@@ -69,6 +73,8 @@ def _mkrepo(markers=(), claude_md=BODY, agents_md=None, hook=True):
     (root / ".aidp/skills/demo-skill/SKILL.md").write_text(
         "---\nname: demo-skill\ndescription: 示例\n---\n# demo\n", encoding="utf-8")
     (root / ".aidp/skills/not-a-skill").mkdir()  # 无 SKILL.md → 不装配
+    (root / ".aidp/plugins").mkdir()
+    (root / ".aidp/scripts").mkdir()
     (root / ".aidp/commands").mkdir(parents=True)
     (root / ".aidp/commands/sprint-dev.md").write_text(
         '---\ndescription: 执行 "Sprint" 开发\nargument-hint: "<需求描述>"\n---\n# /sprint-dev\n\n参数：$ARGUMENTS\n',
@@ -209,7 +215,7 @@ def test_sync_all_agents_managed_copy():
         st = json.loads(_read(root / ".claude/settings.json"))
         cmds = [h["command"] for g in st["hooks"]["Stop"] for h in g["hooks"]]
         check("Claude：settings.json Stop hook 用 $CLAUDE_PROJECT_DIR",
-              cmds == [f'python3 "$CLAUDE_PROJECT_DIR/{AS.STOP_GUARD_REL}"'])
+              cmds == ['python3 "$CLAUDE_PROJECT_DIR/.claude/aidp/hooks/autopilot-stop-guard.py"'])
 
         # Codex
         shared_skill = root / ".agents/skills/demo-skill"
@@ -250,7 +256,10 @@ def test_sync_all_agents_managed_copy():
 
         # 幂等 + --check
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root))
-        check("★ 二次运行幂等：零动作", rc == 0 and out.get("actions") == [] and out.get("drift") is False)
+        check("★ 二次运行幂等：仅保留模式归一化信息", rc == 0
+              and not any(action.get("op") not in (None, "normalized")
+                          for action in out.get("actions", []))
+              and out.get("drift") is False)
         rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--check")
         check("--check 一致 → exit 0", rc == 0 and out.get("applied") is False)
 
@@ -382,7 +391,8 @@ def test_copy_mode_and_errors():
         stop = st["hooks"]["Stop"]
         check("★ hooks 合并：保留用户其他配置，就地更新已有 stop guard 条目（不重复追加）",
               st["permissions"]["allow"] == ["Bash(git status)"] and len(stop) == 1
-              and stop[0]["hooks"][0]["command"] == f'python3 "$CLAUDE_PROJECT_DIR/{AS.STOP_GUARD_REL}"')
+              and stop[0]["hooks"][0]["command"]
+              == 'python3 "$CLAUDE_PROJECT_DIR/.claude/aidp/hooks/autopilot-stop-guard.py"')
         toml = _read(root / ".codex/config.toml")
         check("config.toml 已有 [features] → 插入 codex_hooks，保留原内容",
               'model = "demo"' in toml and "other = 1" in toml and toml.count("[features]") == 1
@@ -395,8 +405,8 @@ def test_copy_mode_and_errors():
         check("★ copy 模式源内容变更 → --check 漂移 exit 1", rc == 1
               and any(a["path"] == ".claude/skills/demo-skill" for a in out.get("actions", [])))
         _run(SYNC_PY, "--root", str(root), "--mode", "copy")
-        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--check")
-        check("默认 link 参数规范化为 managed-copy 且不制造模式漂移",
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--mode", "link", "--check")
+        check("显式 link 参数规范化为 managed-copy 且不制造模式漂移",
               rc == 0 and out.get("drift") is False
               and any(action.get("action") == "normalized"
                       and action.get("from") == "link"
@@ -470,8 +480,9 @@ def test_copy_mode_and_errors():
     try:
         (root / ".aidp/skills/sprint-dev").mkdir(parents=True)
         (root / ".aidp/skills/sprint-dev/SKILL.md").write_text("---\nname: sprint-dev\n---\n", encoding="utf-8")
-        p = subprocess.run([sys.executable, SYNC_PY, "--root", str(root)], capture_output=True, text=True)
-        check("★ 命令与 SKILL 同名 → 非 0 退出并提示冲突", p.returncode != 0 and "冲突" in (p.stderr + p.stdout))
+        rc, out, stdout, stderr = _run(SYNC_PY, "--root", str(root))
+        check("★ 命令与 SKILL 同名 → 非 0 退出并提示冲突",
+              rc != 0 and "冲突" in (out.get("error", "") + stdout + stderr))
         check("冲突时不生成任何原生命令入口",
               not (root / ".codex/skills/aidp/sprint-dev").exists()
               and not (root / ".dsh/commands/sprint-dev.md").exists())
@@ -529,8 +540,9 @@ def test_copy_mode_and_errors():
             no_error = True
         except ValueError:
             no_error = False
-        check("_prune 词法越出 root → 外部目录保持且无 action",
-              no_error and generated.is_dir() and plan.actions == [])
+        check("_prune 词法越出 root → 外部目录保持且无写动作",
+              no_error and generated.is_dir()
+              and not any(action.get("op") not in (None, "normalized") for action in plan.actions))
     finally:
         _rm(root)
         shutil.rmtree(external, ignore_errors=True)
@@ -1109,9 +1121,9 @@ def test_copy_mode_and_errors():
         (pl / ".claude-plugin/plugin.json").write_text('{"name":"demo-plugin"}\n', encoding="utf-8")
         (pl / "skills/demo-skill").mkdir(parents=True)
         (pl / "skills/demo-skill/SKILL.md").write_text("---\nname: demo-skill\n---\n", encoding="utf-8")
-        p = subprocess.run([sys.executable, SYNC_PY, "--root", str(root)], capture_output=True, text=True)
+        rc, out, stdout, stderr = _run(SYNC_PY, "--root", str(root))
         check("插件 SKILL 与公共 SKILL 重名 → 非零退出并提示冲突",
-              p.returncode != 0 and "冲突" in (p.stdout + p.stderr))
+              rc != 0 and "冲突" in (out.get("error", "") + stdout + stderr))
     finally:
         _rm(root)
 

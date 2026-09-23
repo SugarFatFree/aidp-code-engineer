@@ -20,6 +20,28 @@ RUNTIME_MANIFEST = ".aidp-runtime.json"
 RUNTIME_HOME = {"claude": ".claude/aidp", "shared": ".agents/aidp"}
 RUNTIME_DIRS = L.RUNTIME_DIRS
 RUNTIME_EXCLUDES = L.RUNTIME_EXCLUDES
+# 运行根下**唯一**归脚手架所有的顶层条目。⛔ 这是所有权边界：枚举、比对、替换、删除
+# 一律只在这个集合内进行；集合之外的东西（运行根降到 `.claude` / `.agents` 之后，那里还住着
+# Claude Code 的 settings.json、git 的 worktrees/、项目自有的 skill 与命令）**一律不碰**。
+OWNED_TOPLEVEL = tuple(RUNTIME_DIRS) + (RUNTIME_MANIFEST,)
+
+
+def owned_entries(root: Path):
+    """运行根下受管的**直接子条目**（`commands/<file>`、`skills/<name>` 这一层）。
+
+    替换粒度定在这一层而不是顶层目录：`commands/`、`skills/`、`agents/` 里可能混着项目自有的
+    条目，整目录换掉等于把用户的东西删了。定在这一层，脚手架只换自己那几个、其余原地不动。
+    """
+    for dirname in RUNTIME_DIRS:
+        base = root / dirname
+        if not base.is_dir():
+            continue
+        for child in sorted(base.iterdir()):
+            if L.is_ignored((dirname, child.name)):
+                continue
+            yield f"{dirname}/{child.name}", child
+
+
 _TOKEN_RE = re.compile(r"\{\{AIDP_[A-Z0-9_]+\}\}")
 _VERSION_RE = re.compile(r"^V\d+\.\d+\.\d+$")
 _IGNORE_PATH_RE = re.compile(r"runtime-path-ignore:\s*\S+")
@@ -177,7 +199,19 @@ def _file_metadata(path: Path) -> dict:
 
 
 def _runtime_files(runtime: Path):
-    for path in sorted(runtime.rglob("*")):
+    """运行包内受管文件。
+
+    ⛔ 只走 `RUNTIME_DIRS`，不 rglob 整个运行根：运行根降到 `.claude` / `.agents` 之后，
+    整根 rglob 会把 `settings.json`、`worktrees/` 这些**别人的东西**算进 manifest，
+    于是它们既会被写进指纹、又会在下次替换时被当成"受管但已消失"删掉。
+    """
+    runtime = Path(runtime)
+    candidates = []
+    for dirname in RUNTIME_DIRS:
+        base = runtime / dirname
+        if base.is_dir():
+            candidates.extend(sorted(base.rglob("*")))
+    for path in candidates:
         relative = path.relative_to(runtime)
         if path.is_symlink():
             raise ValueError(f"运行包不得包含 symlink: {path}")
@@ -227,14 +261,24 @@ def _read_manifest(runtime: Path) -> dict:
 
 
 def _user_owned_path(relative: str) -> bool:
+    """这个相对路径**可以**归用户所有（因而要在重装时原样带过去）。
+
+    ⛔ 这里只做"路径形状合法 + 落在受管目录内"的判定，**不再是白名单**。
+    原先只认 `reference/`、`skills/custom/` 与 user-fillable 契约三类；运行根降到
+    `.claude` / `.agents` 之后，`commands/`、`skills/`、`agents/` 里会混着项目自有的
+    条目（参照项目 `.claude/skills/` 的 16 个里多数是项目自有），白名单一个都不覆盖 ——
+    它们会在重装时被当成"受管但已消失"删掉。
+
+    真正区分"谁的"不靠路径前缀，靠 manifest：`_user_overlay` 只把**不在 manifest 里**
+    的条目当用户物。路径判定在这里只负责挡掉越界形状（`..`、反斜杠、空段）。
+    """
     parts = relative.split("/")
-    return (all(part not in {"", ".", ".."} and "\\" not in part for part in parts)
-            and (relative in L.USER_FILLABLE_CONTRACTS
-                 or relative.startswith("reference/")
-                 or relative.startswith("skills/custom/")))
+    if not parts or any(part in {"", ".", ".."} or "\\" in part for part in parts):
+        return False
+    return parts[0] in RUNTIME_DIRS
 
 
-def _manifest_user_files(manifest: dict) -> set:
+def _manifest_user_files(manifest: dict, contract: Optional[set] = None) -> set:
     expected = manifest.get("files")
     if not isinstance(expected, dict):
         raise ValueError("运行包 manifest files 必须是对象")
@@ -252,15 +296,24 @@ def _manifest_user_files(manifest: dict) -> set:
             or name not in expected for name in user_files) \
             or len(user_files) != len(set(user_files)):
         raise ValueError("运行包 manifest user_files 非法")
+    # ★ 真正的判据是「真源提不提供这个文件」，不是路径前缀：
+    #   把契约文件谎称成用户文件，等于让它跨版本**被钉死**（新版内容永远盖不上去）。
+    #   user-fillable 契约是例外 —— 它们按设计就是"发骨架、项目填内容"。
+    if contract is not None:
+        stolen = sorted(name for name in user_files
+                        if name in contract and name not in L.USER_FILLABLE_CONTRACTS)
+        if stolen:
+            raise ValueError(f"运行包 manifest user_files 声称契约文件归用户所有：{stolen}")
     return set(user_files)
 
 
-def _user_overlay(runtime: Path, home: str, source: str) -> Dict[str, dict]:
+def _user_overlay(runtime: Path, home: str, source: str,
+                  contract: Optional[set] = None) -> Dict[str, dict]:
     manifest = _read_manifest(runtime)
     if manifest.get("schema") != "aidp.runtime/v1" or manifest.get("source") != source:
         raise ValueError(f"运行包 manifest 身份非法: {runtime}")
     _validate_version(manifest.get("version"))
-    user_files = _manifest_user_files(manifest)
+    user_files = _manifest_user_files(manifest, contract)
     expected = manifest["files"]
     actual = dict(_runtime_files(runtime))
     overlay = {}
@@ -496,6 +549,73 @@ def _acquire_runtime_lock(parent: Path, boundary: Path,
         raise
 
 
+def _source_contract_files(source_root: Path):
+    """真源提供的受管相对路径（安装名，已还原 bundle 遮名）。"""
+    for dirname in RUNTIME_DIRS:
+        base = source_root / dirname
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(source_root).as_posix()
+            if L.is_ignored(path.relative_to(source_root).parts) or _excluded(relative):
+                continue
+            yield L.bundle_unmask(relative), path
+
+
+def _owned_names(root: Path):
+    """运行根下实际存在的受管条目名（`commands/a.md` 这一层 + manifest 自身）。"""
+    names = [relative for relative, _path in owned_entries(root)]
+    if (root / RUNTIME_MANIFEST).is_file():
+        names.append(RUNTIME_MANIFEST)
+    return names
+
+
+def _park_owned(destination: Path, previous: Path, replace_func) -> None:
+    """把旧运行包的**受管条目**挪到事务目录待命。
+
+    ⛔ 不整目录搬走：运行根降到 `.claude` / `.agents` 之后，那里还住着 Claude Code 的
+    `settings.json`、git 的 `worktrees/`、项目自有的 skill 与命令 —— 整目录搬走再换上新的，
+    等于把它们一起删了。
+    """
+    previous.mkdir(parents=True, exist_ok=True)
+    for relative in _owned_names(destination):
+        src = destination / relative
+        dst = previous / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        replace_func(src, dst)
+
+
+def _install_owned(stage: Path, destination: Path, replace_func) -> None:
+    """把新运行包的受管条目搬到运行根；同样只碰受管条目。"""
+    destination.mkdir(parents=True, exist_ok=True)
+    for relative in _owned_names(stage):
+        src = stage / relative
+        dst = destination / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if _lexists(dst):
+            raise RuntimeError(f"受管条目落点已被占用，拒绝覆盖: {dst}")
+        replace_func(src, dst)
+
+
+def _restore_owned(previous: Path, destination: Path, replace_func) -> None:
+    """回滚：把待命区里的旧条目搬回原位，逐条覆盖本次已搬入的同名条目。
+
+    ⛔ 只能按 `previous` 的条目逐个覆盖，**不得**先把运行根里所有受管条目清空再搬回：
+    搬移到一半失败时，运行根里还留着**尚未搬走的幸存条目**，而它们并不在 `previous` 里 ——
+    清空再搬回就把这批幸存者永久删掉了（回归 `test_replace_failure_restores_old_runtime`）。
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    for relative in _owned_names(previous):
+        src = previous / relative
+        dst = destination / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if _lexists(dst):
+            remove_tree_safely(dst, boundary=destination)
+        replace_func(src, dst)
+
+
 def render_runtime(source_root: Path, destination: Path, home: str, version: str,
                    source: str, backup_callback: Optional[Callable[[Path], Path]] = None,
                    replace_func: Callable[[object, object], None] = os.replace) -> dict:
@@ -532,7 +652,8 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                     if tree_digest(destination) != expected_destination_digest:
                         raise RuntimeError("备份期间运行包发生并发修改，拒绝替换")
 
-            overlay = (_user_overlay(destination, home, source)
+            contract = {relative for relative, _p in _source_contract_files(Path(source_root))}
+            overlay = (_user_overlay(destination, home, source, contract)
                        if _lexists(destination) else {})
             counterpart = None
             counterpart_digest = None
@@ -545,7 +666,7 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                     counterpart = candidate
                     counterpart_digest = tree_digest(candidate)
                     other_overlay = _user_overlay(candidate, RUNTIME_HOME[other_source],
-                                                  other_source)
+                                                  other_source, contract)
                     for relative, entry in other_overlay.items():
                         if relative in overlay and overlay[relative] != entry:
                             raise RuntimeError(f"双包用户文件冲突: {relative}")
@@ -580,13 +701,15 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
             if _lexists(destination):
                 if tree_digest(destination) != expected_destination_digest:
                     raise RuntimeError("安装前运行包发生并发修改，拒绝替换")
-                replace_func(destination, previous)
+                # ⛔ 先置位再搬：逐条目搬移是**多步**的，搬到一半炸掉时运行根已经半空，
+                #    此时必须让 finally 的回滚接手。置位放在搬完之后 = 中途失败无人兜底。
                 moved_old = True
+                _park_owned(destination, previous, replace_func)
             try:
-                replace_func(stage, destination)
+                _install_owned(stage, destination, replace_func)
             except Exception:
-                if moved_old and _lexists(previous) and not _lexists(destination):
-                    replace_func(previous, destination)
+                if moved_old:
+                    _restore_owned(previous, destination, replace_func)
                     moved_old = False
                 raise
             if _lexists(previous):
@@ -594,8 +717,8 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                 moved_old = False
             return manifest
         finally:
-            if moved_old and _lexists(previous) and not _lexists(destination):
-                replace_func(previous, destination)
+            if moved_old and _lexists(previous):
+                _restore_owned(previous, destination, replace_func)
                 moved_old = False
             if _lexists(transaction):
                 remove_tree_safely(transaction, boundary=destination.parent)

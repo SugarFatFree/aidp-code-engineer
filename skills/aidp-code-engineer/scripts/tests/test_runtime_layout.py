@@ -186,15 +186,24 @@ class ManifestContractTest(RuntimeLayoutTestCase):
         with tempfile.TemporaryDirectory() as td:
             runtime = Path(td) / "aidp"
             runtime.mkdir()
-            (runtime / "b.txt").write_text("b\n", encoding="utf-8")
-            (runtime / "a.txt").write_text("a\n", encoding="utf-8")
+            (runtime / "commands").mkdir()
+            (runtime / "commands/b.md").write_text("b\n", encoding="utf-8")
+            (runtime / "commands/a.md").write_text("a\n", encoding="utf-8")
+            # ★ 运行根**根级**的外来文件必须不进 manifest：运行根降到 `.claude` / `.agents`
+            #   之后，这里住的是 settings.json / settings.local.json 这类别人的东西。
+            #   进了 manifest 就会被算进指纹，并在下次替换时当成"受管但已消失"删掉。
+            (runtime / "settings.json").write_text("{}\n", encoding="utf-8")
+            (runtime / "worktrees").mkdir()
+            (runtime / "worktrees/keep.txt").write_text("k\n", encoding="utf-8")
             manifest = R.build_runtime_manifest(
                 runtime, version="V1.2.3", source="claude", home=".claude/aidp")
             self.assertEqual(manifest["schema"], "aidp.runtime/v1")
             self.assertEqual(manifest["version"], "V1.2.3")
             self.assertEqual(manifest["source"], "claude")
-            self.assertEqual(list(manifest["files"]), ["a.txt", "b.txt"])
+            self.assertEqual(list(manifest["files"]), ["commands/a.md", "commands/b.md"])
             self.assertNotIn(R.RUNTIME_MANIFEST, manifest["files"])
+            self.assertNotIn("settings.json", manifest["files"])
+            self.assertNotIn("worktrees/keep.txt", manifest["files"])
             for metadata in manifest["files"].values():
                 self.assertEqual(set(metadata), {"sha256", "mode"})
                 self.assertRegex(metadata["sha256"], r"^[0-9a-f]{64}$")
@@ -625,6 +634,108 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
             with self.assertRaises(ValueError):
                 R.render_runtime(source, destination, ".agents/aidp", "V1.0.1", "shared")
             self.assertEqual(R.tree_digest(destination), before)
+
+    def test_foreign_root_entries_survive_reinstall_and_are_not_owned(self):
+        """★ 本次改造的目的：运行根里**别人的东西**必须活过重装、且不被算作"运行包被改过"。
+
+        运行根降到 `.claude` / `.agents` 之后，那里住着 Claude Code 的 settings.json、
+        settings.local.json 和 git 的 worktrees/。整目录替换会把它们一起删掉（毁数据），
+        把它们算进 manifest 则会让每次升级都误判成"运行包被用户改过、必须先完整备份"。
+        两种后果都不可接受，所以钉在这里。
+
+        ⚠️ 受管目录**内部**的项目自有条目（如 `skills/project-own/`）不在本用例范围：
+        那条路径归 `_user_overlay` 机制管，随运行根真正降层时一并处理。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".claude/aidp"
+            R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
+
+            foreign = {
+                "settings.json": '{"hooks": {}}\n',
+                "settings.local.json": '{"local": true}\n',
+                "worktrees/wt/keep.txt": "worktree payload\n",
+            }
+            for relative, body in foreign.items():
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(body, encoding="utf-8")
+
+            # ★ 不传 backup_callback：外来条目不得把运行包判成"被改过"，否则每次升级都要求备份。
+            R.render_runtime(source, destination, ".claude/aidp", "V1.0.1", "claude")
+
+            for relative, body in foreign.items():
+                target = destination / relative
+                self.assertTrue(target.is_file(), f"重装后外来条目丢失：{relative}")
+                self.assertEqual(target.read_text(encoding="utf-8"), body, relative)
+
+            manifest = json.loads((destination / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            for relative in foreign:
+                self.assertNotIn(relative, manifest["files"],
+                                 f"运行根根级的外来条目不该进 manifest：{relative}")
+
+    def test_project_own_entries_inside_owned_dirs_survive(self):
+        """★ 受管目录**内部**的项目自有条目必须活过重装。
+
+        运行根降到 `.claude` / `.agents` 之后，`commands/`、`skills/`、`agents/` 里会混着
+        项目自有的东西（参照项目 `.claude/skills/` 的 16 个里多数是项目自有、
+        `.claude/commands/` 的 21 个里也有非 AIDP 的）。原先的用户物白名单只认
+        `reference/` 与 `skills/custom/`，这些一个都不覆盖 —— 重装时会被当成
+        "受管但已消失"删掉。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".claude/aidp"
+            R.render_runtime(source, destination, ".claude/aidp", "V1.0.0", "claude")
+
+            own = {
+                "commands/project-own.md": "# 项目自有命令\n",
+                "skills/project-own/SKILL.md": "---\nname: project-own\n---\n",
+                "agents/project-own.md": "# 项目自有 Agent\n",
+            }
+            for relative, body in own.items():
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(body, encoding="utf-8")
+
+            backups = []
+            R.render_runtime(source, destination, ".claude/aidp", "V1.0.1", "claude",
+                             backup_callback=lambda old: (backups.append(base / "bk"),
+                                                          shutil.copytree(old, base / "bk"))[1])
+
+            for relative, body in own.items():
+                target = destination / relative
+                self.assertTrue(target.is_file(), f"重装后项目自有条目丢失：{relative}")
+                self.assertEqual(target.read_text(encoding="utf-8"), body, relative)
+
+            manifest = json.loads((destination / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            for relative in own:
+                self.assertIn(relative, manifest.get("user_files", []),
+                              f"项目自有条目应登记为 user_files：{relative}")
+
+    def test_contract_file_cannot_be_claimed_as_user_file(self):
+        """⛔ 阳性对照：把契约文件谎称成 user_files 必须被拒。
+
+        放宽用户物判定之后，光看路径已经分不出"谁的"了 —— 判据换成"真源提不提供这个文件"。
+        没有这条拦截，篡改 manifest 就能让某个契约文件**跨版本被钉死**：新版内容永远盖不上去。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".agents/aidp"
+            R.render_runtime(source, runtime, ".agents/aidp", "V1.0.0", "shared")
+            manifest_path = runtime / R.RUNTIME_MANIFEST
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            contract_file = next(name for name in manifest["files"]
+                                 if name.startswith("commands/"))
+            manifest["user_files"] = [contract_file]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            before = R.tree_digest(runtime)
+            with self.assertRaises(ValueError):
+                R.render_runtime(source, runtime, ".agents/aidp", "V1.0.1", "shared")
+            self.assertEqual(R.tree_digest(runtime), before)
 
     def test_replace_failure_restores_old_runtime(self):
         with tempfile.TemporaryDirectory() as td:

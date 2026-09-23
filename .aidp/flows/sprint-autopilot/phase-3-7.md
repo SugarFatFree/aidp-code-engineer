@@ -82,7 +82,7 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
   V="${TARGET_VERSION:?}"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version $V"
   BUILD=$($BE get current_build --default "")
   [ -n "$BUILD" ] || { echo "⛔ 未找到当前 build，禁止写部署证据"; exit 1; }
-  VCS_MODE=$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+  VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
   GIT_PUSH_COMMIT=""
   if [ "$VCS_MODE" = "git" ]; then
     GIT_PUSH_COMMIT=$($BE --build "$BUILD" get push_commit --default "")
@@ -134,7 +134,7 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
 # 每次只认当前 build 的完整落盘证据；本 tick 显式失败不能被旧证据覆盖。
 TICK_PROBE_PASSED="${PROBE_PASSED:-}"
-VCS_MODE=$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
 BUILD=$($BE --version "$V" get current_build --default "")
 PROBE_PASSED=0
 if [ -n "$BUILD" ]; then

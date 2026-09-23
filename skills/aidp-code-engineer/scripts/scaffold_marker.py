@@ -31,7 +31,9 @@ def _read(path):
 
 
 def _write(path, text):
-    with open(path, "w", encoding="utf-8") as f:
+    # newline="" —— 关掉平台行尾翻译，Windows 上也恒写 LF（版本戳落在 memory/aidp-config.yaml，
+    # 混入 CRLF 会让同一份配置在两端算出不同字节指纹）。
+    with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(text)
 
 

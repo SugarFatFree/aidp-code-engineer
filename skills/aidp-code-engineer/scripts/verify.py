@@ -4,9 +4,15 @@
 
 用法：
     python3 verify.py <project_root> <version> <user> [--read-only] [--adapter-mode link|copy] [--no-guards]
+                      [--guard-timeout SEC] [--total-timeout SEC] [--progress] [--json]
     python3 verify.py <template_root> --template [--read-only]      # 模板项目自检
 
-- `--no-guards`：跳过契约正文守卫（flow 分片体积、脚本 README 覆盖、委派 `.aidp/scripts/check_*.py` 的各项），只做结构检查。
+- `--no-guards`：跳过契约正文守卫（flow 分片体积、脚本 README 覆盖、委派 `.aidp/scripts/check_*.py` 的各项）。
+  ⛔ 此时结论只是**结构检查**，上层 init / migrate / upgrade 报告不得据此宣称「完整合规检查完成」。
+- `--guard-timeout SEC`：单个守卫的子进程上限（缺省 180）。超时归入**该守卫**的结果，带守卫名与阈值。
+- `--total-timeout SEC`：全部守卫的总墙钟上限。到点即停并列出已完成 / 未执行清单。
+- `--progress`：逐守卫打印开始与结束（含耗时）。TTY 下缺省开启 —— 外层限额把进程杀掉时也能定位卡点。
+- `--json`：结构化输出每个守卫的状态、耗时与增量计数。
 
 - 默认「发现即修」只做无破坏性的补建目录；`--read-only` 下一律只报告（审计入口必须带）。
 - 模板项目（根有 `版本变更历史.md` 与 `.aidp/AIDP-AGENTS.md`、未打脚手架版本戳）自动进入
@@ -19,6 +25,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -32,7 +39,8 @@ import scaffold as scaffold_engine  # noqa: E402
 def _vcs_mode(root: Path) -> str:
     try:
         result = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10,
+                                env=L.child_env(), **L.TEXT_IO)
     except (OSError, subprocess.TimeoutExpired):
         return "none"
     return "git" if result.returncode == 0 and result.stdout.strip() == "true" else "none"
@@ -60,7 +68,7 @@ def _runtime_source() -> Path:
 
 def _source_runtime_files(source: Path):
     for dirname in runtime_layout.RUNTIME_DIRS:
-        for relative, path in L.iter_files(source / dirname):
+        for relative, path in L.iter_bundle_files(source / dirname):
             name = f"{dirname}/{relative}"
             if not any(name == item.rstrip("/") or
                        (item.endswith("/") and name.startswith(item))
@@ -99,6 +107,10 @@ def check_native_runtime(root: Path, r):
             if missing or extra:
                 r.error(f"Agent 原生运行包 {relative} 文件清单与当前脚手架 {current_version} 不一致："
                         f"缺失 {_head(missing)}；多出 {_head(extra)}")
+            # 逐字比较前先按本运行包的 AIDP_HOME 渲染真源（单一信源 = runtime_layout.render_text），
+            # 所以 `{{AIDP_HOME}}` 占位符本身不会造成不一致；真正的全片漂移只可能来自写入口径
+            # （曾经的 CRLF 文本写入）。⛔ 不要在这里再抽一层渲染 API。
+            drifted = []
             for name in sorted(set(source_files) & set(manifest["files"])):
                 if name in L.USER_FILLABLE_CONTRACTS:
                     continue
@@ -108,8 +120,14 @@ def check_native_runtime(root: Path, r):
                                                       template_root=source).encode("utf-8")
                 actual = home / name
                 if actual.read_bytes() != data or actual.stat().st_mode & 0o777 != source_files[name].stat().st_mode & 0o777:
-                    r.error(f"Agent 原生运行包 {relative} 文件与当前脚手架 {current_version} 不一致：{name}")
-                    break
+                    drifted.append(name)
+            if drifted:
+                # ★ 报总数 + 前 N 个，⛔ 不再「命中第一个就 break」：整包 485 个文件同时漂时只报一个，
+                #   读者会把「写入口径坏了」误读成「某个 README 坏了」，两侧各猜出一套根因。
+                #   这是可观测性修复 —— 级别仍是 ERROR，⛔ 不借机降级。
+                compared = len(set(source_files) & set(manifest["files"]))
+                r.error(f"Agent 原生运行包 {relative} 文件与当前脚手架 {current_version} 不一致："
+                        f"共 {len(drifted)}/{compared} 个文件字节或权限不同；示例：{_head(drifted)}")
     expected = set()
     if (root / ".claude").is_dir() and not (root / ".claude/.aidp-agent-disabled").is_file():
         expected.add("claude")
@@ -138,6 +156,15 @@ def check_native_runtime(root: Path, r):
             r.error("旧运行目录 .aidp/ 仍有残留且无可核验迁移失败备份；迁移完成后应清除")
 
 READ_ONLY = False
+# 控制台状态记号：默认 emoji，main() 起手按实际 stdout 编码决定是否 ASCII 降级（Windows GBK 控制台）。
+MARKS = dict(L._CONSOLE_MARKS)
+
+
+# 守卫编排开关（由 main 依 CLI 覆写）。
+GUARD_TIMEOUT = 180          # 单守卫子进程上限（秒）
+TOTAL_TIMEOUT = 0            # 0 = 不限总时长
+PROGRESS = False             # 逐守卫打印起止
+GUARD_REPORT = []            # [{name, seconds, status, errors, warnings}]
 
 
 class VerifyResult:
@@ -156,17 +183,23 @@ class VerifyResult:
     def fix(self, msg):
         self.fixed.append(msg)
 
-    def summary(self):
+    def summary(self, quiet: bool = False):
+        """quiet=True：只算结论不打印 —— `--json` 下 stdout 必须是**纯 JSON**，
+        混进人读段落会让调用方的 `json.loads` 当场炸（下游就是拿它做机器消费的）。"""
+        if quiet:
+            return not self.errors
         total = len(self.errors) + len(self.warnings) + len(self.info)
         print(f"\n{'=' * 60}\n验证结果: {total} 个检查项\n{'=' * 60}")
-        for title, items, tag in (("✅ 自动修复", self.fixed, "FIXED"), ("❌ 错误", self.errors, "ERROR"),
-                                  ("⚠️  警告", self.warnings, "WARN"), ("ℹ️  信息", self.info, "INFO")):
+        for mark, name, items, tag in ((MARKS["ok"], "自动修复", self.fixed, "FIXED"),
+                                       (MARKS["error"], "错误", self.errors, "ERROR"),
+                                       (MARKS["warn"], "警告", self.warnings, "WARN"),
+                                       (MARKS["info"], "信息", self.info, "INFO")):
             if items:
-                print(f"\n{title} ({len(items)}):")
+                print(f"\n{mark} {name} ({len(items)}):")
                 for x in items:
                     print(f"  [{tag}] {x}")
         if not self.errors and not self.warnings:
-            print("\n🎉 所有检查通过！")
+            print(f"\n{MARKS['done']} 所有检查通过！")
         print()
         return not self.errors
 
@@ -268,7 +301,8 @@ def _agent_env(root: Path):
         return None
     try:
         out = subprocess.run([sys.executable, str(p), "memory-file", "--root", str(root)],
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, timeout=30,
+                             env=L.child_env(), **L.TEXT_IO)
         return json.loads(out.stdout)
     except Exception:
         return None
@@ -390,7 +424,8 @@ def check_agent_adapters(root: Path, mode_override, r: VerifyResult):
     mode = _adapter_mode(root, mode_override)
     try:
         p = subprocess.run([sys.executable, str(script), "--root", str(root), "--check", "--mode", mode],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, text=True, timeout=120,
+                           env=L.child_env(), **L.TEXT_IO)
         data = json.loads(p.stdout.strip().splitlines()[-1])
     except Exception as e:
         r.warn(f"Agent 适配层检查未能执行（{e}）")
@@ -596,7 +631,8 @@ def check_runtime_artifact_vcs(root: Path, r: VerifyResult):
         return
     try:
         out = subprocess.run([sys.executable, str(script), "--root", str(root), "--json"],
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, timeout=30,
+                             env=L.child_env(), **L.TEXT_IO)
         arts = json.loads(out.stdout).get("artifacts", [])
     except Exception as e:
         r.note(f"运行时产物入库策略：清单取不到（{e}），跳过")
@@ -848,18 +884,33 @@ def check_flow_slice_size(root: Path, r: VerifyResult):
 
 
 # ── 11. 委派守卫（判据单一信源在 .aidp/scripts/check_*.py）───────────────────
-def _run_guard(root: Path, name: str, extra=None, timeout=180):
+def _run_guard(root: Path, name: str, extra=None, timeout=None):
     script = _contract_root(root) / "scripts" / f"{name}.py"
     if not script.is_file():
         return None, None
+    timeout = GUARD_TIMEOUT if timeout is None else timeout
     try:
         p = subprocess.run([sys.executable, str(script)] + list(extra or []) + ["--root", str(root), "--json"],
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=True, timeout=timeout,
+                           env=L.child_env(), **L.TEXT_IO)
         data = json.loads(p.stdout or "{}")
+    except subprocess.TimeoutExpired as e:
+        # ★ 超时必须带守卫名与阈值：原先被 except Exception 一把吞成「执行失败」，
+        #   外层限额把进程杀掉时，使用者完全不知道是哪个守卫卡住、卡了多久。
+        tail = e.stderr or e.stdout or ""
+        if isinstance(tail, bytes):
+            tail = tail.decode("utf-8", "replace")
+        tail = " ".join(str(tail).split())[:160]
+        return None, f"超时 {timeout}s（阈值 --guard-timeout）" + (f"：{tail}" if tail else "")
     except Exception as e:
         return None, f"执行失败（{e}）"
     if isinstance(data, dict) and data.get("error"):
         return None, f"脚本报错（{str(data['error'])[:160]}）"
+    # ★ 退出码 3 = 第三态「本环境不适用」（无 bash / 非 Git …），不是环境错。
+    #   当成环境错会让守卫在下游显示成 WARN「检查未能完成」——那既不是警告也不是通过，
+    #   正是下游反馈里要求消掉的那种假红。
+    if p.returncode == 3 or (isinstance(data, dict) and data.get("status") == "unsupported"):
+        return (data if isinstance(data, dict) else {}), None
     if p.returncode not in (0, 1):
         return None, f"退出码 {p.returncode}（{(p.stderr or '').strip()[:160]}）"
     return data, None
@@ -942,7 +993,15 @@ def _make_guard(name, script, label, keys, default, extra, applicable_key):
         if err:
             r.warn(f"{label}检查未能完成：{err}")
             return
-        if data is None or (applicable_key and not data.get(applicable_key)):
+        if data is None:
+            return
+        # ⛔ 必须用 `is False` 而不是 falsy：没升级的老脚本根本没有 applicable 字段，
+        #    `None` 走 falsy 会把它们全部误吞成 N/A —— 那是把门整批关掉，比误报严重得多。
+        if data.get("applicable") is False:
+            reason = data.get("reason") or data.get("na") or "本环境不适用"
+            r.note(f"{label}：N/A（{reason}）—— 本门未执行，⛔ 不等于通过")
+            return
+        if applicable_key and not data.get(applicable_key):
             return
         buckets = {"ERROR": [], "WARN": [], "INFO": []}
         for key in keys:
@@ -996,7 +1055,8 @@ def check_cicd_watch_selftest(root: Path, r: VerifyResult):
         return
     try:
         p = subprocess.run([sys.executable, str(sc), "--selftest", "--root", str(root)],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, text=True, timeout=120,
+                           env=L.child_env(), **L.TEXT_IO)
         data = json.loads(p.stdout or "{}")
     except Exception as e:
         r.warn(f"cicd_watch 自检未能执行（{e}）")
@@ -1010,7 +1070,8 @@ def check_cicd_watch_selftest(root: Path, r: VerifyResult):
 
 # ── 12. 模板项目自检 ────────────────────────────────────────────────────────
 def _run_skill_script(name, *args):
-    p = subprocess.run([sys.executable, str(HERE / name), *args], capture_output=True, text=True, timeout=300)
+    p = subprocess.run([sys.executable, str(HERE / name), *args], capture_output=True, text=True,
+                       timeout=300, env=L.child_env(), **L.TEXT_IO)
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
@@ -1072,17 +1133,74 @@ def check_memory_tpl_sync(root: Path, r: VerifyResult):
         r.error(f"assets/AGENTS.md.tpl 漂移或 .aidp/AIDP-AGENTS.md 结构不符：{out[:300]}")
 
 
+def _dispatch_guards(root: Path, r: "VerifyResult"):
+    """逐守卫执行：计时 + 进度 + 总时限。
+
+    ⛔ 不要退回 `for name in COMMON_GUARDS: globals()[name](root, r)`：那样一旦外层限额把
+    整个 verify 杀掉，使用者拿不到任何「跑到哪了」的信息 —— 下游实测正是卡在这里，
+    120s 被杀、零线索。逐守卫留痕后，即便被杀，已打印的进度行就是卡点。
+    """
+    started = time.monotonic()
+    pending = list(COMMON_GUARDS)
+    while pending:
+        name = pending.pop(0)
+        if TOTAL_TIMEOUT and time.monotonic() - started >= TOTAL_TIMEOUT:
+            not_run = [name] + pending
+            for rest in not_run:
+                GUARD_REPORT.append({"name": rest, "seconds": 0.0, "status": "not-run"})
+            done = [g["name"] for g in GUARD_REPORT if g["status"] != "not-run"]
+            r.error(f"守卫总时限 {TOTAL_TIMEOUT}s 到点：已完成 {len(done)} 项，"
+                    f"未执行 {len(not_run)} 项（{_head(not_run)}）"
+                    f" → 提高 --total-timeout，或用 --guard-timeout 单独排查卡住的那一项")
+            return
+        if PROGRESS:
+            print(f"[guard] > {name}", flush=True)
+        e0, w0 = len(r.errors), len(r.warnings)
+        t0 = time.monotonic()
+        globals()[name](root, r)
+        seconds = round(time.monotonic() - t0, 2)
+        added_e, added_w = len(r.errors) - e0, len(r.warnings) - w0
+        status = "error" if added_e else ("warn" if added_w else "ok")
+        GUARD_REPORT.append({"name": name, "seconds": seconds, "status": status,
+                             "errors": added_e, "warnings": added_w})
+        if PROGRESS:
+            print(f"[guard] < {name} {seconds:.1f}s status={status}", flush=True)
+
+
 # ── main ────────────────────────────────────────────────────────────────────
 COMMON_GUARDS = ["check_flow_slice_size", "check_scripts_readme_coverage"] + [g[0] for g in GUARDS] \
     + ["check_design_goals", "check_cicd_watch_selftest"]
 
 
 def main(argv=None) -> int:
-    global READ_ONLY
+    global READ_ONLY, MARKS, GUARD_TIMEOUT, TOTAL_TIMEOUT, PROGRESS
+    # 先把控制台配成不会因编码抛异常，再按能力决定 emoji / ASCII 记号：
+    # ⛔ 检查跑完了却死在 print 上（GBK 控制台 + ❌）等于整次检查作废。
+    MARKS = L.console_marks()
     argv = list(sys.argv[1:] if argv is None else argv)
     READ_ONLY = "--read-only" in argv
     template = "--template" in argv
     no_guards = "--no-guards" in argv
+    json_out = "--json" in argv
+    # ⛔ 带值 flag 必须从 argv 里删掉：下面按「不以 -- 开头」抽位置参数，
+    #    留在里面会把 `--guard-timeout 60` 的 60 当成 <version> 传进去。
+    for flag, key in (("--guard-timeout", "GUARD_TIMEOUT"), ("--total-timeout", "TOTAL_TIMEOUT")):
+        if flag in argv:
+            i = argv.index(flag)
+            raw = argv[i + 1] if i + 1 < len(argv) else ""
+            del argv[i:i + 2]
+            try:
+                globals()[key] = max(0, int(float(raw)))
+            except ValueError:
+                print(f"错误: {flag} 需要秒数，收到 {raw!r}")
+                return 2
+    # ⛔ isatty 必须兜住：stdout 可能被换成任意代理（GBK 降级流、日志捕获、_SafeConsole…），
+    #    它们不保证实现 isatty。为了"要不要打进度"而把整次检查炸掉，正是缺陷 D 那类错误。
+    try:
+        _tty = bool(sys.stdout.isatty())
+    except Exception:
+        _tty = False
+    PROGRESS = ("--progress" in argv) or (not json_out and _tty)
     mode_override = None
     if "--adapter-mode" in argv:
         i = argv.index("--adapter-mode")
@@ -1109,13 +1227,16 @@ def main(argv=None) -> int:
         print(f"错误: <version> 传入的是范式版本号 {version}；这里要项目业务版本号（模板自检可省略版本参数）")
         return 2
 
-    print(f"[verify] 项目根: {root}")
-    print(f"[verify] 模式: {'模板项目自检' if template else '下游项目'}" + ("（只读）" if READ_ONLY else ""))
+    _say = (lambda *a, **k: None) if json_out else print
+    _say(f"[verify] 项目根: {root}")
+    _say(f"[verify] 模式: {'模板项目自检' if template else '下游项目'}"
+          + ("（只读）" if READ_ONLY else "")
+          + ("（仅结构检查·未跑守卫）" if no_guards else ""))
     if not template:
-        print(f"[verify] 版本: {version}, 用户: {user}")
+        _say(f"[verify] 版本: {version}, 用户: {user}")
     r = VerifyResult()
     vcs_mode = _vcs_mode(root)
-    print(f"[verify] vcs_mode={vcs_mode}")
+    _say(f"[verify] vcs_mode={vcs_mode}")
     if vcs_mode == "none":
         for capability in ("runtime-artifact-tracking", "credential-tracking", "backup-tracking"):
             r.note(f"{capability}: unsupported:vcs-disabled")
@@ -1165,10 +1286,18 @@ def main(argv=None) -> int:
         check_env_key_freshness(root, r)
         check_contract_drift(root, r)
     if not no_guards:
-        for name in COMMON_GUARDS:
-            globals()[name](root, r)
+        _dispatch_guards(root, r)
+    else:
+        r.note("本次只做结构检查（--no-guards 跳过了契约正文守卫）—— ⛔ 不等于完整合规检查通过")
 
-    return 0 if r.summary() else 1
+    ok = r.summary(quiet=json_out)
+    if json_out:
+        print(json.dumps({"errors": len(r.errors), "warnings": len(r.warnings),
+                          "info": len(r.info), "no_guards": no_guards,
+                          "scope": "structure-only" if no_guards else "full",
+                          "guard_timeout": GUARD_TIMEOUT, "total_timeout": TOTAL_TIMEOUT,
+                          "guards": GUARD_REPORT}, ensure_ascii=False, indent=2))
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

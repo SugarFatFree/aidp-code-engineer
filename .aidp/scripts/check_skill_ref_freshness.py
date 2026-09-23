@@ -33,6 +33,22 @@
    引用了该脚本，逃逸条件成立。那个不变量是**仓库专属**的（"某张表必须覆盖某个派单清单"），
    放在 `tests/test_guard_scripts.py` 里按清单对清单断言，比在通用脚本里猜哪张表该覆盖哪个 SKILL 更准。
 
+## 扫描面只收 `{{AIDP_HOME}}/skills/`（`contract` 位），⛔ 不收并列安装位
+
+与 `check_skill_ref_drift.py` 的注册表**刻意不同**（那边两个安装位都收，见其 `location` 一节）：
+本门的两类判据 —— 编号新鲜度、以及「SKILL 自带脚本却无人接线」的 WARN —— 都只对
+**随契约下发的公共 SKILL** 成立。把并列安装位的脚手架 SKILL（`aidp-code-engineer`，
+装在 `{{AIDP_HOME}}/../skills/`）收进来会立刻产生两类假信号：
+
+- 它的 `scripts/` 是脚手架引擎（`scaffold.py` / `verify.py` / `mirror_to_bundle.py` …），
+  本来就由 skill 自己编排、不该被命令端逐个接线 ⇒ `unreferenced_skill_scripts` 会一次冒出一批
+  永远消不掉的 WARN，然后这条告警整体失去信号；
+- 它没有「维度 N / 检查项 N」这套编号体系，索引与计数两条判据对它恒空跑。
+
+⚠️ 这不等于"脚手架 SKILL 无人看管"：它的内部文件引用由 `check_skill_ref_drift.py` 覆盖
+（那道门只问"文件在不在"，与安装位无关），本仓自身的镜像/契约一致性另有 `mirror_to_bundle.py --check`。
+⛔ 别为了"覆盖全"把它收进本门——那是用一批恒常 WARN 换一个已经有人管的事实。
+
 ## 豁免
 
     <!-- skillref-check: ignore -->             该行豁免（行尾即可）

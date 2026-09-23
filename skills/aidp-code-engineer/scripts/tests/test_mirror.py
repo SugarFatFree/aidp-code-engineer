@@ -89,7 +89,10 @@ class MirrorLoopTest(unittest.TestCase):
             a = skill / "assets"
             self.assertEqual((a / "SCAFFOLD_VERSION").read_text().strip(), "V2.3.4")
             self.assertTrue((a / "aidp/commands/sprint-dev.md").is_file())
-            self.assertTrue((a / "aidp/skills/demo/SKILL.md").is_file())
+            # ★ bundle 内 SKILL.md 遮名成 SKILL.md.in：递归发现 SKILL 的 Agent 不该在
+            #   脚手架初始化之前就把它旗下的 skill 注册进去（往返不变量见 test_bundle_skill_mask.py）。
+            self.assertTrue((a / "aidp/skills/demo/SKILL.md.in").is_file())
+            self.assertFalse((a / "aidp/skills/demo/SKILL.md").exists(), "bundle 不得留裸 SKILL.md")
             self.assertFalse((a / "aidp/skills/demo/config.json").exists(), "凭证不得进 bundle")
             self.assertFalse((a / "aidp/skills/demo/auth.alice.json").exists(), "凭证不得进 bundle")
             self.assertFalse((a / "aidp/scripts/__pycache__").exists())

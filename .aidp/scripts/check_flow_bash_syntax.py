@@ -40,10 +40,36 @@ bash 会把 `<` 读成输入重定向 → 报假语法错。实测全仓 146 个
     <!-- bashsyntax-check: ignore -->        紧邻围栏上方一行，跳过该围栏
     <!-- bashsyntax-check: ignore-file 理由 -->  整份文件豁免
 
+## bash 能力探针（Windows 零空等的关键）
+
+本门的**唯一外部依赖**是一个能跑 `bash -n` 的 bash。而 `shutil.which("bash")` **不足以判定可用**：
+Windows 上 `C:\Windows\System32\bash.exe` 是 WSL 转发壳，未装发行版时它会挂在那里等交互输入；
+Git-Bash 的 `bash.exe` 在无 MSYS 运行时的机器上也可能存在但起不来。实测代价 = 每个围栏各挂一次，
+调用方（`verify.py::_run_guard`）180 秒超时才收场，**一次 verify 被一条环境事实拖死**。
+
+故执行前先做两段探测，任一失败即判「不适用」：
+  ① `shutil.which("bash")` 找得到；
+  ② 用它跑一次 `bash -c exit 0`（`BASH_PROBE_TIMEOUT` 秒上限、stdin 接 DEVNULL），rc 必须为 0。
+探针本身有上限，所以**无论 bash 多坏，本门的最坏耗时都是常数**。
+逐围栏的 `bash -n` 另设 `BASH_FENCE_TIMEOUT`：探针过了而某个围栏把 bash 挂住，同样立刻收敛成「不适用」，
+⛔ 不允许退化成"等到调用方超时"。
+
+## 退出码
+
+| 码 | 含义 |
+|----|------|
+| 0 | 全部通过 |
+| 1 | 有语法错 |
+| 2 | 用法 / 参数错 |
+| 3 | **不适用**（`N/A(bash-unavailable)`）：本机没有可用 bash，本门**一个围栏都没验过** |
+
+⛔ 3 既不是"通过"也不是"环境炸了"：返回 0 会把"没验过"伪装成"验过且没问题"（假绿，最坏），
+返回 2 会让调用方按环境错处理。3 是独立的第三态，JSON 里同时给 `applicable=false` /
+`status="unsupported"` / `reason="bash-unavailable"` / `level="INFO"`，
+调用方既可按退出码、也可按字段判，两条路同源。
+
 用法:
     python3 AIDP_HOME/scripts/check_flow_bash_syntax.py [--root <仓库根>] [--json]
-
-退出码: 0 = 全部通过；1 = 有语法错；2 = 环境错（无 bash）。
 """
 
 from __future__ import annotations
@@ -90,6 +116,48 @@ IGNORE_FILE_RE = re.compile(r"<!--\s*bashsyntax-check:\s*ignore-file")
 PLACEHOLDER_RE = re.compile(r"(?<!<)<(?!!)([^<>\n'\"/]{1,120})>")
 MUSTACHE_RE = re.compile(r"\{\{[^{}\n]{1,80}\}\}")
 
+# ★ 两个上限都必须存在，且都要**小到人能等**。
+#   探针：一次 `bash -c exit 0` 的正常耗时是毫秒级，5 秒已经宽到离谱；给它留大值没有收益，
+#   只会让"不可用"这一结论迟迟不出来——而本门的调用方（verify.py）是串行跑几十道门的。
+#   围栏：`bash -n` 不执行任何命令，正常也是毫秒级；10 秒仍不返回 = 这个 bash 有问题，
+#   不是这个围栏有问题，故按「不适用」收敛而**不是**记一条 finding（记 finding 等于把
+#   环境故障栽赃给契约正文，会让人去改一段本来没错的 bash）。
+BASH_PROBE_TIMEOUT = 5
+BASH_FENCE_TIMEOUT = 10
+EXIT_NOT_APPLICABLE = 3
+
+
+class BashUnavailable(RuntimeError):
+    """本机没有可用 bash（或 bash 中途挂死）→ 本门不适用，⛔ 既不是通过也不是失败。"""
+
+
+def probe_bash():
+    """→ bash 可执行路径；不可用则抛 `BashUnavailable(原因)`。
+
+    ⛔ 不要退回成只用 `shutil.which`：Windows 的 `bash.exe` 大量以"存在但起不来"的形态出现
+    （WSL 转发壳未装发行版 / Git-Bash 缺 MSYS 运行时），which 对它们一律返回真。
+    实测代价是每个围栏各挂一次，调用方 180 秒超时才收场。探针是这道门在 Windows 上
+    **唯一**能把最坏耗时钉成常数的地方。
+    """
+    exe = shutil.which("bash")
+    if not exe:
+        return _fail("PATH 上找不到 bash")
+    try:
+        p = subprocess.run([exe, "-c", "exit 0"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=BASH_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _fail("`%s -c \"exit 0\"` %d 秒未返回（存在但不可用，典型如未装发行版的 WSL 转发壳）"
+                     % (exe, BASH_PROBE_TIMEOUT))
+    except OSError as e:
+        return _fail("`%s` 无法执行：%s" % (exe, e))
+    if p.returncode != 0:
+        return _fail("`%s -c \"exit 0\"` 退出码 %d（存在但不可用）" % (exe, p.returncode))
+    return exe
+
+
+def _fail(reason):
+    raise BashUnavailable(reason)
+
 
 def _neutralize(code: str) -> str:
     code = PLACEHOLDER_RE.sub("PLACEHOLDER", code)
@@ -120,7 +188,7 @@ def iter_fences(text: str):
         i = j + 1
 
 
-def run(root: Path):
+def run(root: Path, bash: str = "bash"):
     findings, scanned, waived = [], 0, 0
     for d in SCAN_DIRS:
         base = root / runtime_relpath("", __file__) / d
@@ -146,8 +214,18 @@ def run(root: Path):
                     scanned += 1
                     if not code.strip():
                         continue
-                    p = subprocess.run(["bash", "-n"], input=_neutralize(code),
-                                       capture_output=True, text=True)
+                    try:
+                        p = subprocess.run([bash, "-n"], input=_neutralize(code),
+                                           capture_output=True, text=True,
+                                           timeout=BASH_FENCE_TIMEOUT)
+                    except (subprocess.TimeoutExpired, OSError) as e:
+                        # 探针刚刚还是好的，这里却挂/炸 ⇒ 是 bash 的问题、不是围栏的问题。
+                        # 立刻整门收敛成「不适用」，⛔ 不要 continue 到下一个围栏——
+                        # 那会让剩下的上百个围栏一个个各挂 BASH_FENCE_TIMEOUT 秒，
+                        # 正是本次要消灭的"空等到调用方超时"。
+                        raise BashUnavailable(
+                            "%s:%d 的围栏跑 `bash -n` 时 bash 未能返回（%s）——"
+                            "已巡检 %d 个围栏后中止" % (rel, line_no, type(e).__name__, scanned))
                     if p.returncode != 0:
                         msg = (p.stderr or "").strip().splitlines()
                         findings.append({
@@ -209,15 +287,34 @@ def main(argv=None):
         sys.exit(run_self_check(os.path.basename(__file__),
                                 json_out=getattr(args, "json", False)))
 
-    if not shutil.which("bash"):
-        sys.stderr.write("未找到 bash，跳过语法检查\n")
-        return 2
-
     root = Path(args.root).resolve()
-    findings, scanned, waived = run(root)
+    try:
+        bash = probe_bash()
+        findings, scanned, waived = run(root, bash)
+    except BashUnavailable as e:
+        # ★ 「不适用」必须是一个**自带字段**的结论，不能只靠退出码：
+        #   调用方 `verify.py::_run_guard` 先 `json.loads(stdout)` 再看退出码，
+        #   stdout 不是合法 JSON 就会被当成"脚本执行失败"。故 --json 下必须照常吐 JSON。
+        payload = {
+            "applicable": False, "status": "unsupported", "level": "INFO",
+            "reason": "bash-unavailable", "na": "N/A(bash-unavailable)",
+            "detail": str(e),
+            # ⛔ 这三个计数必须是 0/空：本门一个围栏都没验过。
+            #    给个非零数或省略它们，读的人（和聚合脚本）会当成"验过且没问题"。
+            "scanned_fences": 0, "waived": 0, "errors": 0, "findings": [],
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print("[INFO] N/A(bash-unavailable) —— %s；本门 0 个围栏被验证，"
+                  "⛔ 这不等于通过" % e)
+        sys.stderr.write("N/A(bash-unavailable): %s\n" % e)
+        return EXIT_NOT_APPLICABLE
 
     if args.json:
-        print(json.dumps({"scanned_fences": scanned, "waived": waived,
+        # ★ `applicable` 与 N/A 分支成对出现：只在 N/A 时给字段，按字段判的调用方会把
+        #   一次**真跑过且没问题**读成「不适用」而整门跳过（假绿）。两条路必须同源。
+        print(json.dumps({"applicable": True, "scanned_fences": scanned, "waived": waived,
                           "errors": len(findings), "findings": findings},
                          ensure_ascii=False, indent=2))
     elif not findings:

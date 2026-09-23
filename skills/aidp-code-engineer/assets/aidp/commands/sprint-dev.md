@@ -107,7 +107,7 @@ fi
 ```bash
 V={version}                 # 形如 V0.2.0
 VNUM=${V#V}                 # 去 V 前缀 → 0.2.0
-VCS_MODE="${VCS_MODE:-$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))')}"
+VCS_MODE="${VCS_MODE:-$(python3 {{AIDP_HOME}}/scripts/vcs.py mode)}"
 if [ "$VCS_MODE" = "git" ]; then
 # 已发布信号（任一命中即已发布）：① 该版本存在 release tag（三风格全覆盖，与 version.md「tag 风格识别约定」同口径）
 # ⛔ 必须区分「判定失败」与「判定为未发布」：两者都产出空值时，浅克隆 / 未 fetch --tags /

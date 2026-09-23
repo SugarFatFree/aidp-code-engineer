@@ -4706,6 +4706,7 @@ def main():
     test_exec_report_inherits_cases()
     test_card_section_file_and_render_scope()
     test_design_goal_formal_landings()
+    test_environment_degradation_gates()
     test_autopilot_reset()
     test_freeze_contract()
     test_skill_gate_list()
@@ -7825,6 +7826,285 @@ def test_design_goal_formal_landings():
     check("未冻结分支 exit 0 前调用 notify.py --node #R",
           'notify.py --node "#R"' in branch
           and branch.index('notify.py --node "#R"') < branch.index("exit 0"))
+
+
+# ────────────────────────────────────────────────────────────
+# [73] 环境降级三道门：无 bash / 无 Git / SKILL 安装位
+#   ★ 这一组守的是**下游真实环境**（Windows PowerShell · 非 Git 目录 · skill 装在并列位）。
+#     三条误报/空等都曾让一次 verify 要么被拖死 180 秒、要么挂上永远消不掉的 WARN。
+#   ⛔ 每条放宽都必须同时有【阴性判据】与【阳性对照】：只加阴性 = 把门关小了，
+#     而"门关小了"与"门还在且没问题"在输出上完全同形——正是本仓反复吃亏的那种形态。
+# ────────────────────────────────────────────────────────────
+def test_environment_degradation_gates():
+    print("\n[73] 环境降级：无 bash / 无 Git / SKILL 安装位（阴性 + 阳性成对）")
+    import time
+    repo = Path(__file__).resolve().parents[3]
+    SC = repo / ".aidp/scripts"
+
+    # ══ ① check_flow_bash_syntax：无可用 bash → 快速 N/A，⛔ 不空等到调用方超时 ══
+    bs = SC / "check_flow_bash_syntax.py"
+
+    def run_bash_gate(path_dir, root, timeout=120):
+        env = dict(os.environ, PATH=str(path_dir))
+        t0 = time.time()
+        cp = subprocess.run([sys.executable, str(bs), "--root", str(root), "--json"],
+                            capture_output=True, text=True, env=env, timeout=timeout)
+        return cp, time.time() - t0
+
+    probe_root = Path(tempfile.mkdtemp())
+    (probe_root / ".aidp/flows/x").mkdir(parents=True)
+    (probe_root / ".aidp/flows/x/a.md").write_text('```bash\necho "未闭合\n```\n', encoding="utf-8")
+
+    # —— 阴性①a：PATH 上根本没有 bash ——
+    empty = Path(tempfile.mkdtemp())
+    cp, dt = run_bash_gate(empty, probe_root)
+    out = json.loads(cp.stdout)
+    check("★★无 bash：< 5 秒返回（旧实现每个围栏各挂一次，verify 的 180s 超时才收场）", dt < 5)
+    check("★无 bash：退出码 3 = 不适用（⛔ 不是 0「假装通过」，也不是 2「让调用方按环境错炸」）",
+          cp.returncode == 3)
+    check("★无 bash：JSON 自带 applicable=false / reason=bash-unavailable / level=INFO"
+          "（调用方按字段判与按退出码判必须同源）",
+          out.get("applicable") is False and out.get("reason") == "bash-unavailable"
+          and out.get("level") == "INFO" and out.get("na") == "N/A(bash-unavailable)")
+    check("★★无 bash：计数必须是 0 —— 一个围栏都没验过，给非零数就等于把「没验过」写成「验过没问题」",
+          out.get("scanned_fences") == 0 and out.get("errors") == 0 and out.get("findings") == [])
+
+    # —— 阴性①b：bash **存在但不可用**（Windows 上未装发行版的 WSL 转发壳就是这一形态）——
+    #    ⛔ 只用 shutil.which 判定会在这里整门挂死：which 对它返回真。
+    fake = Path(tempfile.mkdtemp())
+    (fake / "bash").write_text("#!%s\nimport time\ntime.sleep(600)\n" % sys.executable, encoding="utf-8")
+    (fake / "bash").chmod(0o755)
+    cp, dt = run_bash_gate(fake, probe_root)
+    check("★★伪 bash（存在但挂死）：仍在探针上限内收敛成 N/A，⛔ 不退化成空等",
+          cp.returncode == 3 and dt < 30)
+    check("★伪 bash：原因写明「存在但不可用」，别只说找不到（两种环境的修法完全不同）",
+          "不可用" in (json.loads(cp.stdout).get("detail") or ""))
+
+    # —— 阳性①：bash 可用时门原样还在（这条证明上面的 N/A 不是把门删了）——
+    if shutil.which("bash"):
+        cp = subprocess.run([sys.executable, str(bs), "--root", str(probe_root), "--json"],
+                            capture_output=True, text=True)
+        check("★★阳性对照：bash 可用时，真语法错照样 ERROR + 退出码 1（N/A 分支 ⛔ 不得吞掉真检查）",
+              cp.returncode == 1 and json.loads(cp.stdout)["errors"] == 1)
+        check("★★阳性对照：真跑过的那次也必须带 applicable=true —— 字段只在 N/A 分支出现，"
+              "按字段判的调用方会把「跑过且没问题」读成「不适用」而整门跳过（假绿）",
+              json.loads(cp.stdout).get("applicable") is True)
+    else:
+        skip("check_flow_bash_syntax 阳性对照", "本机无 bash")
+    shutil.rmtree(probe_root, ignore_errors=True)
+
+    # ══ ② 非 Git → INFO / N/A(vcs-disabled)：既不计 WARN，也不得当作 pass ══
+    #    单一信源 = `vcs.py::detect_mode`（git | none），⛔ 两个脚本都不许自己再探一套。
+    def git_init(d):
+        subprocess.run(["git", "init", "-q", str(d)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.email", "t@example.com"], check=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.name", "t"], check=True)
+
+    MEM = ("# 项目简介\n\n## 业务背景\n" + "".join("背景第 %d 行\n" % i for i in range(1, 9))
+           + "\n## 目标用户\n" + "".join("用户第 %d 行\n" % i for i in range(1, 9)) + "\n")
+    MEM_LOST = MEM.split("## 目标用户")[0]          # 整段「目标用户」被吞
+
+    def mk_mem(with_git):
+        d = Path(tempfile.mkdtemp())
+        (d / "memory").mkdir()
+        (d / "memory/projectBrief.md").write_text(MEM, encoding="utf-8")
+        if with_git:
+            git_init(d)
+            subprocess.run(["git", "-C", str(d), "add", "-A"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(d), "commit", "-qm", "init"], check=True, capture_output=True)
+        return d
+
+    def run_json(script, *args):
+        cp = subprocess.run([sys.executable, str(SC / script), *args, "--json"],
+                            capture_output=True, text=True)
+        try:
+            return json.loads(cp.stdout), cp.returncode
+        except ValueError:
+            return {}, cp.returncode
+
+    # —— 阴性②a：非 Git + 无快照 → N/A ——
+    d = mk_mem(with_git=False)
+    (d / "memory/projectBrief.md").write_text(MEM_LOST, encoding="utf-8")
+    res, rc = run_json("check_memory_loss.py", "--root", str(d))
+    check("★非 Git 无快照：check_memory_loss 退出码 3 = 不适用", rc == 3)
+    check("★非 Git：status/reason 直取 vcs.py 的 `vcs-disabled`，别另造一套说法",
+          res.get("status") == "unsupported" and res.get("reason") == "vcs-disabled"
+          and res.get("na") == "N/A(vcs-disabled)")
+    check("★非 Git：level=INFO 且 applicable=false —— 调用方分桶时落 INFO，⛔ 不进 WARN 区"
+          "（恒常 WARN 几轮之后会让人整体无视 WARN）",
+          res.get("level") == "INFO" and res.get("applicable") is False)
+    check("★★非 Git：⛔ 不得出现 passed —— 写 True 是假绿（memory 覆盖即永久丢失、其实没人看过），"
+          "写 False 是假红；「没查过」必须与两者可区分",
+          "passed" not in res and res.get("errors") == [])
+    shutil.rmtree(d, ignore_errors=True)
+
+    # —— 阳性②a：同样是非 Git，但有写前快照 ⇒ 基线存在 ⇒ 门照常判红 ——
+    #    这条是上面那次放宽的**精确负判据**：N/A 只覆盖"连基线都没有"，⛔ 不是"非 Git 就免检"。
+    d = mk_mem(with_git=False)
+    subprocess.run([sys.executable, str(SC / "check_memory_loss.py"), "--root", str(d), "--snapshot"],
+                   check=True, capture_output=True)
+    (d / "memory/projectBrief.md").write_text(MEM_LOST, encoding="utf-8")
+    res, rc = run_json("check_memory_loss.py", "--root", str(d))
+    check("★★阳性对照：非 Git 但有写前快照 → 整段被吞照样 ERROR（N/A ⛔ 不是"
+          "「非 Git 就免检」的总开关）",
+          rc == 1 and any(e.get("rule") == "L1" for e in res.get("errors") or []))
+    shutil.rmtree(d, ignore_errors=True)
+
+    # —— 阳性②b：有 Git 时门原样还在 ——
+    d = mk_mem(with_git=True)
+    (d / "memory/projectBrief.md").write_text(MEM_LOST, encoding="utf-8")
+    res, rc = run_json("check_memory_loss.py", "--root", str(d))
+    check("★★阳性对照：Git 项目里段落消失仍判 ERROR（退出码 1）",
+          rc == 1 and any(e.get("rule") == "L1" for e in res.get("errors") or []))
+    check("★applicable 双路对称：check_memory_loss 真跑时给 applicable=true"
+          "（缺字段 = 「通过」被读成「不适用」）", res.get("applicable") is True)
+    shutil.rmtree(d, ignore_errors=True)
+
+    # —— 阴性②c / 阳性②c：check_index_staleness 同口径 ——
+    d = Path(tempfile.mkdtemp())
+    (d / ".aidp").mkdir()
+    (d / ".aidp/x.txt").write_text("hello\n", encoding="utf-8")
+    res, rc = run_json("check_index_staleness.py", "--root", str(d))
+    check("★非 Git：check_index_staleness 退出码 3 + N/A(vcs-disabled) + level=INFO",
+          rc == 3 and res.get("na") == "N/A(vcs-disabled)" and res.get("level") == "INFO")
+    check("★★非 Git：同样 ⛔ 不得给 passed（没有 index 就没有「index 与磁盘分叉」可言，"
+          "但那是「没法查」不是「查过没事」）", "passed" not in res)
+    git_init(d)
+    subprocess.run(["git", "-C", str(d), "add", "-A"], check=True, capture_output=True)
+    res, rc = run_json("check_index_staleness.py", "--root", str(d))
+    check("★★阳性对照：Git 项目里门真的跑起来（有 passed、巡检数 > 0、退出码 0/1）",
+          rc in (0, 1) and res.get("passed") is True and res.get("scanned", 0) > 0)
+    check("★applicable 双路对称：check_index_staleness 真跑时给 applicable=true",
+          res.get("applicable") is True)
+    shutil.rmtree(d, ignore_errors=True)
+
+    # ══ ③ SKILL 注册表带 location：散文抽取必须落到**结构化注册表**上 ══
+    sys.path.insert(0, str(SC))
+    import importlib
+    DRIFT = importlib.import_module("check_skill_ref_drift")
+
+    reg = DRIFT.installed_skills(str(repo))
+    check("★注册表按安装位分类：公共契约 SKILL 落 `contract`",
+          reg.get("dev-logic-architect") == "contract")
+    check("★★注册表收得到并列安装位：`aidp-code-engineer` 装在 `{{AIDP_HOME}}/../skills/`，"
+          "落 `sibling` —— 它挪位那天本门对每一处 `aidp-code-engineer/scripts/*.py` 引用"
+          "同时**静默**失明，而那正是 /sprint-init 真要跑的几行",
+          reg.get("aidp-code-engineer") == "sibling")
+    check("★★阴性：`emit-report` 是 `{{AIDP_HOME}}/scripts/` 下的**脚本**、不是 SKILL —— "
+          "结构化注册表里查无此名，散文里的「经 `emit-report`」⛔ 不该被当成 skill 引用",
+          "emit-report" not in reg and (SC / "emit-report.py").is_file())
+    check("★阴性：本仓契约正文里合法的 `aidp-code-engineer/...` 引用一处都不报"
+          "（它们指向真实存在的脚手架文件）",
+          not DRIFT.scan(str(repo))["findings"])
+
+    def mk_skill_proj(docs, contract_skills=(), sibling_skills=(), files=()):
+        root = Path(tempfile.mkdtemp())
+        (root / ".aidp/flows/x").mkdir(parents=True)
+        (root / ".aidp/scripts").mkdir(parents=True)
+        (root / ".aidp/scripts/emit-report.py").write_text("# stub\n", encoding="utf-8")
+        for n in contract_skills:
+            (root / ".aidp/skills" / n / "scripts").mkdir(parents=True)
+        for n in sibling_skills:
+            (root / "skills" / n / "scripts").mkdir(parents=True)
+        for rel in files:
+            fp = root / rel
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text("# stub\n", encoding="utf-8")
+        (root / ".aidp/flows/x/a.md").write_text(docs, encoding="utf-8")
+        return root
+
+    # 阴性：散文里点名 emit-report（本仓 rationale.md 的真实措辞）
+    p1 = mk_skill_proj("已在 step2 经 `emit-report` 写了交付台账 → `final`。\n"
+                       "`emit-report/scripts/whatever.py` 也不该被当成 SKILL 内部文件。\n",
+                       contract_skills=("bugfix",))
+    check("★★阴性：`emit-report` 相关引用 0 误报（它不在注册表里 ⇒ 不归本门管）",
+          not DRIFT.scan(str(p1))["findings"])
+
+    # 阳性：契约位 SKILL 的悬空引用照样 ERROR
+    p2 = mk_skill_proj("跑 `bugfix/scripts/gone.py`。\n", contract_skills=("bugfix",))
+    f2 = DRIFT.scan(str(p2))["findings"]
+    check("★★阳性对照：契约位 SKILL 的悬空引用仍判 ERROR（location=contract）",
+          len(f2) == 1 and f2[0]["location"] == "contract")
+
+    # 阳性：并列安装位 SKILL 的悬空引用**也**要 ERROR —— 证明拓宽注册表是加门不是放水
+    p3 = mk_skill_proj("跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/gone.py`。\n",
+                       sibling_skills=("aidp-code-engineer",))
+    f3 = DRIFT.scan(str(p3))["findings"]
+    check("★★阳性对照：并列安装位 SKILL 的悬空引用同样判 ERROR（location=sibling）——"
+          "拓宽注册表是**加门**，⛔ 不是给它开豁免",
+          len(f3) == 1 and f3[0]["location"] == "sibling")
+
+    # 阴性：并列安装位 SKILL 的引用文件真实存在 → 不报
+    p4 = mk_skill_proj("跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py`。\n",
+                       sibling_skills=("aidp-code-engineer",),
+                       files=("skills/aidp-code-engineer/scripts/verify.py",))
+    check("★阴性：并列安装位里文件确实存在 → 0 误报",
+          not DRIFT.scan(str(p4))["findings"])
+    for p in (p1, p2, p3, p4):
+        shutil.rmtree(p, ignore_errors=True)
+
+    # ══ ④ 新鲜度门刻意只收 `contract` 位（拆表，⛔ 不是给脚手架 skill 加豁免）══
+    FRESH = importlib.import_module("check_skill_ref_freshness")
+    truth = FRESH.load_truth(repo / ".aidp/skills")
+    check("★★拆表：脚手架 SKILL ⛔ 不进新鲜度门的真值源 —— 它的 scripts/ 是引擎、"
+          "不该被命令端逐个接线，收进来会一次冒出一批永远消不掉的 WARN",
+          "aidp-code-engineer" not in truth and "dev-logic-architect" in truth)
+    check("★阳性对照：公共契约 SKILL 仍被新鲜度门覆盖（拆表不等于少管）",
+          bool(truth.get("dev-logic-architect", {}).get("scripts")))
+
+    # ══ ⑤ 下游真实安装形态回放：`.agents/aidp/` 运行包 + `.agents/skills/` 并列 SKILL ══
+    #   ★ 上面 ③ 跑的是**模板仓库**布局（运行包 `.aidp/` + 并列位恰好是仓库根 `skills/`），
+    #     而下游 Codex 装出来的是 `.agents/aidp/` + `.agents/skills/` —— 正是这次误报的现场。
+    #     两者走的是 `skill_roots()` 里同一行 `os.path.dirname(home)`，但模板布局下 dirname 为
+    #     空串、命中的是那行的 `else` 分支：**模板布局全绿证明不了下游布局也对**。
+    #   ⛔ 这条不能改成直接 import 后传 root：`runtime_relpath` 是按**脚本自身所在位置**解析
+    #     运行根的，只有把脚本真放进 `.agents/aidp/scripts/` 再子进程跑，才是下游的那条代码路径。
+    def mk_agents_proj(doc, present=()):
+        root = Path(tempfile.mkdtemp())
+        sc = root / ".agents/aidp/scripts"
+        sc.mkdir(parents=True)
+        for n in ("aidp_runtime.py", "check_skill_ref_drift.py"):
+            shutil.copy2(SC / n, sc / n)
+        (root / ".agents/aidp/flows/x").mkdir(parents=True)
+        (root / ".agents/aidp/flows/x/a.md").write_text(doc, encoding="utf-8")
+        (root / ".agents/aidp/skills/dev-logic-architect/scripts").mkdir(parents=True)
+        (root / ".agents/skills/aidp-code-engineer/scripts").mkdir(parents=True)
+        for rel in present:
+            (root / rel).write_text("# stub\n", encoding="utf-8")
+        return root
+
+    def agents_scan(root):
+        cp = subprocess.run([sys.executable,
+                             str(root / ".agents/aidp/scripts/check_skill_ref_drift.py"),
+                             "--root", str(root), "--json"],
+                            capture_output=True, text=True)
+        return json.loads(cp.stdout), cp.returncode
+
+    REF_DOC = ("跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . --read-only`，\n"
+               "失败再跑 `aidp-code-engineer/scripts/scaffold.py`。\n")
+
+    # 阴性：两个被引用的脚手架脚本都在 `.agents/skills/` 下真实存在 → 0 误报
+    d = mk_agents_proj(REF_DOC, present=(".agents/skills/aidp-code-engineer/scripts/verify.py",
+                                         ".agents/skills/aidp-code-engineer/scripts/scaffold.py"))
+    res, rc = agents_scan(d)
+    check("★★下游形态（`.agents/aidp/` + `.agents/skills/`）：脚手架 SKILL 被识别为 `sibling`，"
+          "⛔ 不是查无此名（查无此名 = 对它的每一处引用静默失明）",
+          res.get("skills", {}).get("aidp-code-engineer") == "sibling")
+    check("★下游形态：公共契约 SKILL 仍落 `contract`（两个安装位互不吞并）",
+          res.get("skills", {}).get("dev-logic-architect") == "contract")
+    check("★★阴性：下游合法的 `aidp-code-engineer/scripts/*.py` 引用 0 误报、退出码 0",
+          rc == 0 and not res["findings"])
+    shutil.rmtree(d, ignore_errors=True)
+
+    # 阳性：同一份正文，只删掉 scaffold.py → 必须报出来（证明上面的 0 误报不是门没开）
+    d = mk_agents_proj(REF_DOC, present=(".agents/skills/aidp-code-engineer/scripts/verify.py",))
+    res, rc = agents_scan(d)
+    check("★★阳性对照：下游形态下 `.agents/skills/` 里缺失的脚本仍判 ERROR（退出码 1、"
+          "location=sibling）——这道门在下游是**真跑**的，不是恒绿",
+          rc == 1 and len(res["findings"]) == 1
+          and res["findings"][0]["location"] == "sibling"
+          and res["findings"][0]["ref"].endswith("scaffold.py"))
+    shutil.rmtree(d, ignore_errors=True)
 
 
 if __name__ == "__main__":

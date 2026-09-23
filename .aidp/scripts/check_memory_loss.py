@@ -32,7 +32,19 @@
 
 豁免：文件在 HEAD 中不存在（新建）→ 跳过；显式 `<!-- memory-loss: ignore 理由 -->` 在文件头 8 行内。
 
-退出码：0 通过（或无可比基线）；1 有 ERROR；2 参数错。
+## 非 Git 且无快照 = 不适用，⛔ 既不是警告也不是通过
+
+本门是**差分**门：没有基线就没有"丢了什么"可言。基线有两个来源——写前快照（`--snapshot`）
+与 `git HEAD`。非 Git 项目上快照仍然有效，所以**只有"非 Git **且**受保护文件连快照都没有"**
+才判不适用（判定见 `run()`）。Git 能力走 `vcs.py::detect_mode` 这一个信源，⛔ 不另写探测。
+
+不适用时输出 `N/A(vcs-disabled)`，JSON 带 `applicable=false` / `status="unsupported"` /
+`reason="vcs-disabled"` / `level="INFO"`，`errors` 为空且 **不给 `passed`**：
+- 给 `passed=true` ⇒ 非 Git 项目每次"通过"，而 memory 覆盖即永久丢失、根本没人在看（假绿）；
+- 记成 WARN ⇒ 非 Git 项目恒挂一条永远消不掉的警告，最终大家一起无视 WARN 区。
+  真正的修法是 `/memory-sync` 写前先跑 `--snapshot`，那样非 Git 项目也照样有基线。
+
+退出码：0 通过（或无可比基线）；1 有 ERROR；2 参数错；3 **不适用**（`N/A(vcs-disabled)`）。
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
@@ -71,6 +83,21 @@ HEAD_RE = re.compile(r"^(#{2,4})\s+(.+?)\s*$")
 IGNORE_RE = re.compile(r"<!--\s*memory-loss:\s*ignore\b")
 # 占位标记：含它的标题只按"前缀"比对（填掉占位 = 合规动作，不是段落消失）
 PLACEHOLDER_RE = re.compile(r"（待[填补][充写]）|\(待[填补][充写]\)|\{\{[^}]*\}\}|（待确认）")
+
+
+def na_vcs_disabled(capability):
+    """「不适用」结论体：能力判定的单一信源是 `vcs.py`，本函数只负责把它渲染成结论。"""
+    res = dict(unsupported(capability))          # {"status","reason":"vcs-disabled","capability"}
+    res.update({
+        "applicable": False,
+        "level": "INFO",                          # 调用方按级别分桶时落进 INFO，不进 WARN
+        "vcs_mode": "none",
+        "na": "N/A(%s)" % res["reason"],
+        "errors": [],
+        "checked": 0,
+    })
+    # ⛔ 刻意**不写** `passed`：写 True 是假绿、写 False 是假红。「没查过」必须能与两者区分开。
+    return res
 
 
 def protected_files(root):
@@ -163,14 +190,15 @@ def _nonempty(text):
 
 
 def run(root=".", shrink=0.4, files=None):
-    res = {"checked": 0, "skipped": [], "errors": []}
+    # ★ 同 check_index_staleness：`applicable` 两条路都给，缺了就会让"通过"被读成"不适用"。
+    res = {"applicable": True, "checked": 0, "skipped": [], "errors": []}
     targets = list(files or protected_files(root))
     if detect_mode(root) != "git" and any(
         os.path.isfile(os.path.join(root, rel)) and
         not os.path.isfile(os.path.join(root, SNAPSHOT_DIR, rel))
         for rel in targets
     ):
-        return unsupported("diff")
+        return na_vcs_disabled("diff")
     for rel in targets:
         path = os.path.join(root, rel)
         if not os.path.isfile(path):
@@ -235,7 +263,12 @@ def main(argv=None):
         return 0
     r = run(a.root, a.shrink, a.file)
     if r.get("status") == "unsupported":
-        print(json.dumps(r, ensure_ascii=False))
+        if a.json:
+            print(json.dumps(r, ensure_ascii=False, indent=2))
+        else:
+            print("[INFO] %s —— 非 Git 项目且无写前快照，无可比基线，本门 0 份 memory 被比对；"
+                  "⛔ 这不等于通过（修法：写前先跑 `--snapshot`）" % r["na"])
+        sys.stderr.write("%s: 非 Git 项目且无写前快照，本门不适用\n" % r["na"])
         return EXIT_UNSUPPORTED
     if r["passed"] and not a.keep_snapshot and not a.file:
         clear_snapshot(a.root)

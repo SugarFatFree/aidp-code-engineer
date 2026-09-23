@@ -58,6 +58,9 @@ def promote_ledger(root: Path, states: list):
 
 
 def main(argv=None) -> int:
+    # 与 scaffold.py / verify.py 同口径：先把控制台配成不会因编码抛异常（Windows GBK 控制台上
+    # `✅`/`⛔` 一 print 就 UnicodeEncodeError），⛔ 不能让打印把一次成功的收口判成失败。
+    L.configure_console()
     ap = argparse.ArgumentParser(description="脚手架交付收口：语义改写队列逐条核验完成才提升版本戳")
     ap.add_argument("--root", default=".")
     ap.add_argument("--accept", action="append", default=[], metavar="路径",

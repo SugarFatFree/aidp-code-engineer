@@ -333,7 +333,9 @@ def main():
     print()
     print("[reverse-gen] 生成技术选型.md ...")
     content = generate_tech_selection(backend, frontend, db, deploy)
-    tech_doc.write_text(content, encoding="utf-8")
+    # ⛔ 不用 write_text：Windows 文本模式会写出 CRLF。本脚本产出的文档虽不参与任何字节比对，
+    #    但全仓落盘口径必须只有一个 —— 留一处例外，下一个人就会照着它写出参与比对的那处。
+    tech_doc.write_bytes(content.encode("utf-8"))
     print(f"  → 写入 {tech_doc.relative_to(root)} ({len(content)} 字节)")
 
     print()

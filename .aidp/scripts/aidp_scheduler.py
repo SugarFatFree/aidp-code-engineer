@@ -282,10 +282,11 @@ def render_schtasks(root, agent, intervals, uninstall=False):
             cmds.append(f'schtasks /Delete /TN "{name}" /F')
             continue
         if chain == "watchdog":
-            inner = runtime_text(
-                f"cd '{root}' && python3 __AIDP_HOME__/scripts/aidp_scheduler.py watchdog --scheduled --root . --quiet",
-                __file__,
-            )
+            # ⛔ 不写死 python3：Windows 上通常只有 python / py，写死即 "不是内部或外部命令"。
+            #    systemd / cron / launchd 三条路径早已走 watchdog_argv()（sys.executable），
+            #    唯独这里漏了 —— 而 schtasks 恰恰只在 Windows 上用。
+            argv = " ".join(_q(a) if " " in a else a for a in watchdog_argv(root))
+            inner = f"cd '{root}' && {argv}"
             mins = 5
         else:
             env = "".join(f"export {k}={v}; " for k, v in chain_env(agent).items())

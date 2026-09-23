@@ -87,6 +87,21 @@ python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py {project_ro
 |--------|------|----------|
 | `aidp-code-engineer` | 本模板项目本身的名字 | WARN（除非该项目就是 aidp-code-engineer 本身——通过 `project.name` 判定） |
 
+**★ 判据不是「字面量出现」，是「出现在非路径、非 SKILL 名的位置」**——只按字面量 grep 必然恒红，实测三类合法出现：
+
+| 合法形态 | 例子 | 为什么合法 |
+|---------|------|-----------|
+| 路径 | `{{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py` | 脚手架 skill 的真实安装位，命令要照着跑 |
+| 反引号 SKILL 名 | 「调用 `aidp-code-engineer` 脚手架技能」 | 它就是这个 SKILL 的名字，改掉就调不起来 |
+| 本规则自身 | 本文件这一段 | 规则正文必须写出要扫的关键词，否则没法表达判据 |
+
+故命中后先按下列顺序剔除，**剩下的才报**：
+1. 匹配行含 `skills/aidp-code-engineer`（路径形态，含 `.claude/` `.agents/` `{{AIDP_HOME}}/../` 各种前缀）→ 跳过；
+2. 匹配片段被反引号包住且紧邻上下文是 SKILL 调用语（`调用` / `脚手架` / `skill` / `SKILL`）→ 跳过；
+3. 文件是本规则文件自身（`{{AIDP_HOME}}/agents/aidp-compliance.md`）→ 跳过。
+
+剔完仍有命中，才是真正的"模板名混进了项目正文"。
+
 扫描范围：
 
 ```
@@ -104,6 +119,8 @@ docs/init/00_AIDP范式主文档.md
 
 ```
 {{AIDP_HOME}}/../skills/aidp-code-engineer/**       # 脚手架 skill 本体
+{{AIDP_HOME}}/agents/aidp-compliance.md   # 本规则文件自身（正文必须写出关键词，否则自我报警）
+{{AIDP_HOME}}/reference/skills.md         # SKILL 注册表（脚手架那一行就是它的名字）
 docs/init/0?_*.md                         # 范式文档（在举例时合法出现）
 .aidp-backup-*/**                         # 历史备份
 ```
@@ -200,7 +217,15 @@ grep -rEoh "(使用|用)[ ]*\`Skill\`[ ]*工具?调用?[ ]*\`[a-z][a-z0-9:-]+\`|
 ```
 
 > ⚠️ 命令**从不**用 `Skill(name)` 函数语法触发 SKILL，全部是上面多种自然语言写法；grep 尽量匹配这些写法，否则 `S_cmd` 漏项、本检查对那些 skill 空跑（false-negative）。
-> 抽出反引号内的 skill 名构成命中集合 `S_cmd`。再列出 `{{AIDP_HOME}}/skills/` 下实际目录集合 `S_actual`（含 superpowers 插件 skill 名形如 `superpowers:xxx`——它们不在本地目录，但是合法插件名，需要白名单豁免）。
+> 抽出反引号内的 skill 名构成命中集合 `S_cmd`。
+>
+> **`S_actual` 取算出来的真值表，⛔ 不要 `ls {{AIDP_HOME}}/skills/`**：那样会漏掉装在并列位（`sibling`）的 `aidp-code-engineer`，且与 Step 3.2 两处口径各自漂。
+>
+> ```bash
+> python3 {{AIDP_HOME}}/scripts/check_skill_ref_drift.py --json | jq -r '.skills | keys[]'
+> ```
+>
+> 该命令的 `skills` 字段形如 `{名: contract|sibling}`，是本仓唯一算出来的 SKILL 真值表（单一信源见 `{{AIDP_HOME}}/scripts/README.md` 的 `check_skill_ref_drift.py` 小节）。再叠加两个减项：superpowers 等插件白名单（见下），以及 **`{{AIDP_HOME}}/reference/skills.md` 的「配套脚本（非 skill）」表**——`emit-report`、`notify`、`cicd_watch` 这类带连字符的脚本名与子命令动词形似 skill 名，靠词形分不开，只有对着这张表减一次才分得开。
 
 `S_cmd - S_actual - 已知插件白名单` 非空 → **WARN**「命令 X 疑似引用未登记的 skill Y」（**不是硬 ERROR**：prose 抽取会把 SKILL 的**子命令动词**（带连字符的动词型 token）误当 skill 名——这些是合法子命令、非独立 skill，故降级为 WARN 交人工甄别）。**skill 存在性的硬对账以 Step 3.2「Skills 表 ↔ 目录」为权威**（结构化、无 prose 误报）；本步只作 prose 侧补充提醒。
 
@@ -208,7 +233,10 @@ grep -rEoh "(使用|用)[ ]*\`Skill\`[ ]*工具?调用?[ ]*\`[a-z][a-z0-9:-]+\`|
 
 **3.2 Skills 注册表 ↔ 实际目录对账**
 
-读取 `{{AIDP_HOME}}/reference/skills.md` 中标题含 `{{AIDP_HOME}}/skills/` 的那张表（「本项目自带的 Skills」，按锚点 `{{AIDP_HOME}}/skills/` 匹配标题、不按全名）（**不是**项目记忆文件——Skills 详表在 reference 下），与 `{{AIDP_HOME}}/skills/` 实际子目录集合双向对账：
+读取 `{{AIDP_HOME}}/reference/skills.md` 中标题含 `{{AIDP_HOME}}/skills/` 的那张表（「本项目自带的 Skills」，按锚点 `{{AIDP_HOME}}/skills/` 匹配标题、不按全名）（**不是**项目记忆文件——Skills 详表在 reference 下），与 `{{AIDP_HOME}}/skills/` 实际子目录集合双向对账。
+
+> ⛔ **只对 `contract` 位对账**：`aidp-code-engineer` 装在并列位 `{{AIDP_HOME}}/../skills/`，在 skills.md 里已单列为「脚手架 Skill」小节、**不在上述那张表内**。锚点 `{{AIDP_HOME}}/skills/` 只会匹配到契约位那张表的标题，故按锚点读即天然排除；若把它算进来，会恒报「注册了 skill aidp-code-engineer 但目录不存在」。位置归属以 `check_skill_ref_drift.py --json` 的 `.skills[名]` 值（`contract` / `sibling`）为准。
+
 - 表里有，目录里没有 → ERROR「skills.md 注册了 skill X 但目录不存在」
 - 目录里有，表里没有 → WARN「skill X 已存在但未在 skills.md 注册」
 

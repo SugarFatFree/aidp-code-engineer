@@ -26,9 +26,19 @@ git 判断「文件改没改」走的是 **stat 快速路径**：index 里记的
 不相等但 `git status` 列出来了 = 正常的未提交改动，**不报**。
 
 扫描面默认 `.aidp`（脚手架契约与 bundle 全在这里），`--path` 可加。
-非 git 仓库 / git 不可用 → unsupported（退出码 3）。
 
-退出码：0 通过；1 有 ERROR；2 参数错；3 无 Git 能力。
+## 非 Git 项目 = 不适用，⛔ 既不是警告也不是通过
+
+本门的判据**整体建立在 index 上**——没有 index 就没有"index 与磁盘分叉"这回事，
+一个字节都没法比。Git 能力判定走 `vcs.py::detect_mode`（`git` / `none`），
+**⛔ 本脚本不自己再探一套**：两套探测迟早会给出不同答案，而"哪一套说了算"没有信源。
+
+不适用时输出 `N/A(vcs-disabled)`，JSON 带 `applicable=false` / `status="unsupported"` /
+`reason="vcs-disabled"` / `level="INFO"`，且 **`errors` 为空、不给 `passed`**：
+- 给 `passed=true` ⇒ 非 Git 项目每次都"通过"，而它其实一次都没查过（假绿）；
+- 记成 WARN ⇒ 每个非 Git 项目恒挂一条永远消不掉的警告，几轮之后所有人开始无视 WARN 区。
+
+退出码：0 通过；1 有 ERROR；2 参数错；3 **不适用**（`N/A(vcs-disabled)`）。
 """
 import argparse
 import json
@@ -41,15 +51,33 @@ from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 DEFAULT_PATHS = (".aidp",)
 
 
+def na_vcs_disabled(capability):
+    """「不适用」结论体：能力判定的单一信源是 `vcs.py`，本函数只负责把它渲染成结论。"""
+    res = dict(unsupported(capability))          # {"status","reason":"vcs-disabled","capability"}
+    res.update({
+        "applicable": False,
+        "level": "INFO",                          # 调用方按级别分桶时落进 INFO，不进 WARN
+        "vcs_mode": "none",
+        "na": "N/A(%s)" % res["reason"],
+        "errors": [],
+    })
+    # ⛔ 刻意**不写** `passed`：写 True 是假绿、写 False 是假红。「没查过」必须能与两者区分开。
+    return res
+
+
 def _git(root, args, stdin=None):
     return subprocess.run(["git", "-C", root] + args, capture_output=True,
                           text=True, input=stdin)
 
 
 def run(root=".", paths=None):
-    res = {"scanned": 0, "errors": [], "skipped": None}
+    # ★ `applicable` 在**两条路上都要有**：不适用分支写 False、适用分支写 True。
+    #   只在不适用时给字段，按 `data.get("applicable")` 判的调用方会把一次**正常通过**
+    #   读成「不适用」而整门跳过——那是比误报更难发现的假绿。docstring 说的
+    #   「按退出码判与按字段判同源」只有字段恒在时才成立。
+    res = {"applicable": True, "scanned": 0, "errors": [], "skipped": None}
     if detect_mode(root) != "git":
-        return unsupported("index")
+        return na_vcs_disabled("index")
     paths = list(paths or DEFAULT_PATHS)
 
     # ⛔ 两处 git 调用都必须用 `-z`（NUL 分隔、原样输出路径）。默认的 `core.quotepath=on`
@@ -117,7 +145,12 @@ def main(argv=None):
         return subprocess.call([sys.executable, sc, "--only", os.path.basename(__file__)])
     r = run(a.root, a.path)
     if r.get("status") == "unsupported":
-        print(json.dumps(r, ensure_ascii=False))
+        if a.json:
+            print(json.dumps(r, ensure_ascii=False, indent=2))
+        else:
+            print("[INFO] %s —— 非 Git 项目，index 不存在，本门 0 份文件被比对；"
+                  "⛔ 这不等于通过" % r["na"])
+        sys.stderr.write("%s: 非 Git 项目，本门不适用\n" % r["na"])
         return EXIT_UNSUPPORTED
     if a.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))

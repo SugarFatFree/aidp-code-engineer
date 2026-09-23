@@ -15,13 +15,24 @@
 | `auto-test-runner` ★ | 端无关自动化测试执行器（分模块批量 / 执行模式分级 / 感知-执行-校验-决策闭环 / 断点续跑 / 固定报告结构；驱动可插拔 Web·小程序·APP·桌面，消费 `dev-manual-testcase` 标准用例）| `/sprint-aiauto-test` Phase 2 委派执行内核（命令只做环境准备 + 运行时错误升级 + 报告 finalize + 里程碑通知，执行方法论不复述）|
 | `code-verification-loop` | 代码验收循环（多维度核验，维度清单以 SKILL.md 为单一信源；`mode=verify-only` 仅验收）| `/sprint-test`（仅验收模式）；开发期预检直调其脚本：`/sprint-dev`、Frontend/Backend Agent |
 | `bugfix` | Bug 修复流程 | `/sprint-bugfix` |
-| `aidp-code-engineer` | 项目 AIDP 范式脚手架（init/migrate/upgrade）| 按需手动 |
+
+### 脚手架 Skill（`{{AIDP_HOME}}/../skills/`——⛔ 不在上表那张契约位表里）
+
+> 它是**安装器**，不是下发契约的一部分：装在 Agent 的并列发现位（下游 `.agents/skills/` 或 `.claude/skills/`），
+> 不在 `{{AIDP_HOME}}/skills/` 下。**故不参与「Skills 表 ↔ `{{AIDP_HOME}}/skills/` 目录」双向对账**——
+> 把它算进那张表会恒报「注册了但目录不存在」。真值表见 `check_skill_ref_drift.py --json` 的 `skills` 字段，
+> 该字段用 `location`（`contract` / `sibling`）区分两个位置，对账时只取 `contract`。
+
+| Skill | 用途 | 安装位 | 被谁调用 |
+|-------|------|--------|---------|
+| `aidp-code-engineer` | 项目 AIDP 范式脚手架（init/migrate/upgrade）| `{{AIDP_HOME}}/../skills/`（`sibling`）| 按需手动 |
 
 ### 配套脚本（非 skill）
 
 | 脚本 | 用途 | 被谁调用 |
 |-------|------|---------|
 | `{{AIDP_HOME}}/scripts/notify.py` ★ | 里程碑通知发送（`--auto` 按 `memory/aidp-config.yaml` 的 `notify.channels` 依次尝试飞书 webhook / lark-cli / 钉钉 / 企业微信 / 自定义命令，成功即停；未配置渠道退出码 3 = 静默跳过；单一信源见约定 32）| `/sprint-autopilot` + `/sprint-aiauto-test` 里程碑通知 |
+| `{{AIDP_HOME}}/scripts/emit-report.py` | AI 执行 / 测试报告确定性产出器（`--kind exec|test`；`verify-reports` 批量契约校验）。⚠️ **它是脚本、不是 SKILL**——散文里「经 `emit-report` 写台账」这类写法带连字符，形似 skill 名，必须靠本表作减项才不会被当成未登记 SKILL 报出来 | `/sprint-dev`、`/sprint-aiauto-test`、`/sprint-autopilot` 报告落盘 |
 | `{{AIDP_HOME}}/scripts/cicd_watch.py` | CICD 流水线监听与触发 / 重试（`--mode` watch / detect / poll / trigger / retry；平台 = `cicd.provider`，默认 GitHub Actions，适配层 `cicd_providers.py`；单一信源见约定 31.5）| `/sprint-autopilot` 部署阶段、链外 push 后监听 |
 
 ### 随仓库分发的插件

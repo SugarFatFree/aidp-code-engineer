@@ -307,7 +307,8 @@ class Plan:
             os.close(fd)
             stage = Path(raw)
             try:
-                stage.write_text(text, encoding="utf-8")
+                # ⛔ 不用 write_text：Windows 文本模式会把 \n 写成 \r\n，与真源 LF 字节比较必然假漂移。
+                stage.write_bytes(text.encode("utf-8"))
                 os.chmod(stage, 0o644)
                 info = stage.lstat()
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -334,7 +335,7 @@ class Plan:
             try:
                 shutil.copytree(src, stage, symlinks=True, dirs_exist_ok=True,
                                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-                (stage / GENERATED_FILE).write_text(_directory_marker(stage), encoding="utf-8")
+                (stage / GENERATED_FILE).write_bytes(_directory_marker(stage).encode("utf-8"))
                 _validate_material_path(self.root, src, expect_dir=True)
                 _validate_staged_tree(stage)
                 if not _tree_equal(src, stage):
@@ -572,13 +573,28 @@ def _require_generated_or_absent(root: Path, path: Path, label: str):
         raise SystemExit(f"[agent_sync] {label} 已存在用户内容，拒绝覆盖：{path}")
 
 
+# 脚手架 bundle 里 SKILL.md 被遮名成 SKILL.md.in（避免递归发现的 Agent 在初始化前就注册它们）。
+# ⛔ 识别 SKILL 时两种名字都要认：scaffold 的适配层预检会把 RUNTIME_ROOT 临时指向 bundle，
+#    只认 SKILL.md 就会**一个公共 SKILL 都发现不到**，命令/SKILL/插件的重名冲突检测当场空跑。
+SKILL_ENTRY_NAMES = ("SKILL.md", "SKILL.md.in")
+
+
+def _skill_entry(directory: Path):
+    """目录里的 SKILL 声明文件（兼容 bundle 遮名）；没有则 None。"""
+    for name in SKILL_ENTRY_NAMES:
+        candidate = directory / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _base_skill_dirs(root: Path) -> dict:
     source = RUNTIME_ROOT / "skills"
     if not source.is_dir():
         return {}
     return {p.name: p for p in sorted(source.iterdir())
             if p.name not in {OBSOLETE_ROUTER, "aidp-code-engineer"}
-            and (p / "SKILL.md").is_file()}
+            and _skill_entry(p) is not None}
 
 
 def sync_skill_dir(plan: Plan, rel: str, preserve: set = None) -> list:
@@ -828,7 +844,8 @@ def _plugin_skill_dirs(plugins: list) -> dict:
         source = plugin / "skills"
         if not source.is_dir():
             continue
-        for skill_file in sorted(source.rglob("SKILL.md")):
+        for skill_file in sorted(list(source.rglob("SKILL.md"))
+                                 + list(source.rglob("SKILL.md.in"))):
             if skill_file.is_symlink() or not skill_file.is_file():
                 continue
             skill = skill_file.parent
@@ -1135,7 +1152,7 @@ def sync_hooks(plan: Plan, agent: str):
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 def _declared_skill_names(skills: dict) -> set:
-    return {_frontmatter(_read(path / "SKILL.md")).get("name") or path.name
+    return {_frontmatter(_read(_skill_entry(path) or path / "SKILL.md")).get("name") or path.name
             for path in skills.values()}
 
 
@@ -1512,8 +1529,8 @@ def _self_check() -> int:
         runtime = root / AGENT_RUNTIME_HOME["codex"]
         shutil.copytree(RUNTIME_ROOT, runtime,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
-        (root / "CLAUDE.md").write_text("# 正文\n", encoding="utf-8")
-        (root / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+        (root / "CLAUDE.md").write_bytes("# 正文\n".encode("utf-8"))
+        (root / ".gitignore").write_bytes(b"node_modules/\n")
         for directory in (".claude", ".codex", ".dsh"):
             (root / directory).mkdir()
 

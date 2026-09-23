@@ -19,11 +19,42 @@ AI 才会发现"文件不存在"，那时已经在下游业务项目的运行现
 
 扫 `AIDP_HOME/{commands,agents,flows,reference,rules}/**.md` 正文里形如
 `<skill-name>/{scripts,references,assets}/<file>` 的引用：
-  · `<skill-name>` 命中 `AIDP_HOME/skills/` 下真实存在的 SKILL 目录 → 该文件必须存在，否则 **ERROR**
+  · `<skill-name>` 命中**注册表**（见下节，含两个安装位）里真实存在的 SKILL 目录 → 该文件必须存在，否则 **ERROR**
   · `<skill-name>` 不是已安装的 SKILL → 跳过（可能是别的项目/示例路径，不归本门管）
 
 ⛔ 刻意**不查**维度编号、参数名、章节标题：那些要语义匹配，误报率高，
    一个恒红的门比没有门更糟。本门只做"文件在不在"这一件确定的事。
+
+## SKILL 注册表带 `location`（为什么不是一张手维护的表 / 一条豁免）
+
+SKILL 在磁盘上有**两个**合法安装位，二者语义不同：
+
+| location | 位置 | 是什么 |
+|----------|------|--------|
+| `contract` | `{{AIDP_HOME}}/skills/<名>` | 随契约下发的公共 SKILL（`dev-logic-architect` 等），受版本门控 |
+| `sibling`  | `{{AIDP_HOME}}/../skills/<名>` | 与运行包**并列**安装的 SKILL；脚手架自身 `aidp-code-engineer` 就在这里 —— 模板仓库是根 `skills/`，下游是 `.agents/skills/`（Codex / DSH）或 `.claude/skills/`（Claude Code） |
+
+两个根都由 `aidp_runtime` 的运行包解析**算出来**，⛔ 不写死 `.agents` / `.claude` 字面量，
+也⛔ 不靠一张人维护的 SKILL 名单或一条针对 `aidp-code-engineer` 的豁免——
+
+- 写死字面量：换 Agent（或将来多一种运行包形态）就漂，而漂了没有任何检出器；
+- 手维护名单 / 单点豁免：`aidp-code-engineer` 从 `{{AIDP_HOME}}/skills/` 挪到并列位这一次
+  已经证明了它会腐烂 —— 挪动当天，本门对契约正文里**每一处** `aidp-code-engineer/scripts/*.py`
+  引用同时失明（`skill not in skills` → "不归本门管"，且**静默**），而这些引用正是
+  `/sprint-init` / `/health-check` / `aidp-compliance` 真要执行的那几行 `scaffold.py` /
+  `verify.py`。加一条针对它的豁免只会把这个洞永久钉死。
+
+`location` 同时是给上层对账用的信源：**只有 `contract` 的 SKILL 才该被拉进"公共 SKILL 表"
+双向对账**（`sibling` 的不在 `{{AIDP_HOME}}/skills/` 下，按公共表口径对账必然报"表里有、
+目录里没有"的假红）。本门自己两类都查——它查的是"被引用的文件在不在"，与安装位无关。
+
+## `--json` 的 `skills` 字段 = 对外的**结构化 SKILL 注册表**
+
+`--json` 输出里的 `skills`（`{名: contract|sibling}`）是本仓唯一算出来的 SKILL 真值表，
+刻意对外暴露，供**散文侧**的判定（如 `aidp-compliance` 的「命令调用的 skill 必须存在」）
+作减项信源：散文里带连字符的反引号 token（`emit-report`、`record-card`、`run-state` …）
+大量是脚本名 / 子命令动词，**不是 SKILL**；靠词形永远分不开，只有对着真实目录减一次才分得开。
+⛔ 别再各自 `ls {{AIDP_HOME}}/skills/`：那样既漏掉 `sibling` 位，两处口径还会各自漂。
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
@@ -62,11 +93,32 @@ def _is_install_time_file(skill_dir, sub, fname):
     return os.path.isfile(os.path.join(skill_dir, sub, f"{stem}.example.{ext}"))
 
 
+def skill_roots(root):
+    """→ [(绝对目录, location)]：公共契约位 + 并列安装位，全部由运行包解析算出。"""
+    home = runtime_relpath("", __file__).rstrip("/")            # `.aidp` / `<agent>/aidp` 两种
+    sibling_parent = os.path.dirname(home)                      # ``（模板仓库根）/ `.claude` / `.agents`
+    return [
+        (os.path.join(root, home, "skills"), "contract"),
+        (os.path.join(root, sibling_parent, "skills") if sibling_parent
+         else os.path.join(root, "skills"), "sibling"),
+    ]
+
+
 def installed_skills(root):
-    base = os.path.join(root, runtime_relpath("", __file__), "skills")
-    if not os.path.isdir(base):
-        return set()
-    return {n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n))}
+    """→ {skill 名: location}。同名时 `contract` 优先（公共契约是权威）。"""
+    out = {}
+    for base, location in skill_roots(root):
+        if not os.path.isdir(base):
+            continue
+        for n in sorted(os.listdir(base)):
+            if os.path.isdir(os.path.join(base, n)):
+                out.setdefault(n, location)
+    return out
+
+
+def skill_dir(root, name, location):
+    base = dict((loc, b) for b, loc in skill_roots(root))[location]
+    return os.path.join(base, name)
 
 
 def scan(root="."):
@@ -99,18 +151,20 @@ def scan(root="."):
                         if skill not in skills:
                             continue          # 不是已安装 SKILL，不归本门管
                         checked += 1
-                        skill_dir = os.path.join(root, runtime_relpath("", __file__), "skills", skill)
-                        target = os.path.join(skill_dir, kind, fname)
-                        if _is_install_time_file(skill_dir, kind, fname):
+                        location = skills[skill]
+                        sk_dir = skill_dir(root, skill, location)
+                        target = os.path.join(sk_dir, kind, fname)
+                        if _is_install_time_file(sk_dir, kind, fname):
                             continue          # 安装态生成（有同名 .example.）—— 仓库里不存在是常态
                         if not os.path.isfile(target):
                             findings.append({
                                 "level": "ERROR", "file": rel, "line": i,
-                                "ref": f"{skill}/{kind}/{fname}",
+                                "ref": f"{skill}/{kind}/{fname}", "location": location,
                                 "detail": ("引用的 SKILL 内部文件不存在——上游改名/删除后本项目未跟进，"
                                            "该步骤到执行现场才会失败"),
                             })
-    return {"applicable": True, "findings": findings, "checked": checked, "files": files}
+    return {"applicable": True, "findings": findings, "checked": checked, "files": files,
+            "skills": skills}
 
 
 def main():

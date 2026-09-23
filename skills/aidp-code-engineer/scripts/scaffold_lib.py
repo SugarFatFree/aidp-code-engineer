@@ -119,8 +119,143 @@ def iter_files(base: Path):
         yield rel.as_posix(), p
 
 
+# -- bundle 内的「遮名」文件 ----------------------------------------------
+# 脚手架自带的契约 bundle 里有 13 份 SKILL.md（7 个下发 SKILL + 6 个插件内嵌 SKILL）。
+# 有的 Agent 会递归发现 SKILL.md —— 于是脚手架**还没初始化**，它旗下的 skill 就先被注册了。
+# 故 bundle 内一律存为 `SKILL.md.in`，读出 / 安装时还原；安装结果与遮名前逐字节一致。
+BUNDLE_MASK_SUFFIX = ".in"
+BUNDLE_MASKED_NAMES = ("SKILL.md",)
+
+
+def bundle_mask(rel: str) -> str:
+    """安装路径 → bundle 内存放路径。"""
+    return rel + BUNDLE_MASK_SUFFIX if rel.rpartition("/")[2] in BUNDLE_MASKED_NAMES else rel
+
+
+def bundle_unmask(rel: str) -> str:
+    """bundle 内存放路径 → 安装路径。
+
+    ⛔ 调用方**无条件**调它、不要按来源分支：真实的 `.aidp/` 树里永远不会出现 `SKILL.md.in`，
+    对它是空操作。按来源判断则每新增一个读 bundle 的地方都得记得判一次，必漏。
+    """
+    if rel.endswith(BUNDLE_MASK_SUFFIX):
+        base = rel[: -len(BUNDLE_MASK_SUFFIX)]
+        if base.rpartition("/")[2] in BUNDLE_MASKED_NAMES:
+            return base
+    return rel
+
+
+def iter_bundle_files(base: Path):
+    """同 `iter_files`，但把 bundle 遮名还原成安装名。读 bundle 一律走这个。"""
+    for rel, p in iter_files(base):
+        yield bundle_unmask(rel), p
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# ── 确定性写入与控制台 ──────────────────────────────────────────────────────
+def write_text_lf(path: Path, text: str) -> None:
+    r"""确定性写文本：恒为 UTF-8 + LF。
+
+    ⛔ 不得退回 `Path.write_text(..., encoding="utf-8")`：Windows 上文本模式把每个 `\n` 翻成
+    `\r\n`，写出的字节与 LF 真源逐字不等 —— 运行包 manifest、bundle 比对、agent_sync 漂移
+    检测都会整片假红（一个 262 行的 flow 分片会凭空胖 262 字节，还能顶穿分片体积上限）。
+    """
+    Path(path).write_bytes(text.encode("utf-8"))
+
+
+_CONSOLE_MARKS = {"ok": "✅", "error": "❌", "warn": "⚠️", "info": "ℹ️",
+                  "done": "🎉", "pending": "⏳", "block": "⛔"}
+_CONSOLE_ASCII = {"ok": "[OK]", "error": "[X]", "warn": "[!]", "info": "[i]",
+                  "done": "[DONE]", "pending": "[..]", "block": "[STOP]"}
+
+
+def _stream_can_encode(stream, probe: str) -> bool:
+    encoding = getattr(stream, "encoding", None)
+    if not encoding:
+        return False
+    try:
+        probe.encode(encoding)
+    except (UnicodeEncodeError, LookupError, TypeError):
+        return False
+    return True
+
+
+class _SafeConsole:
+    """兜底输出代理：编码不了的字符就地替换，⛔ 不让一次 print 把整次执行判死。
+
+    ASCII 降级只解决**状态记号**；正文里还有 `↔`、`★`、中文标点等 GBK 未必收录的字符
+    （`verify.py` 的护栏标题就带 `↔`）。检查全跑完了、结论也算出来了，却死在汇报上是最坏的
+    结局，所以这里按流自身的编码做一次有损重写，信息损失一个字符好过丢掉整份报告。
+    """
+
+    def __init__(self, stream, encoding: str):
+        self._stream = stream
+        self.encoding = encoding
+
+    def write(self, text):
+        try:
+            return self._stream.write(text)
+        except UnicodeEncodeError:
+            safe = text.encode(self.encoding, "backslashreplace").decode(self.encoding, "replace")
+            return self._stream.write(safe)
+
+    def flush(self):
+        flush = getattr(self._stream, "flush", None)
+        if flush is not None:
+            flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def configure_console() -> bool:
+    """把本进程 stdout/stderr 配成不会因编码而抛异常；返回是否还能打印非 ASCII 记号。
+
+    Windows 控制台默认 GBK：`❌`/`⚠️` 一 print 就 UnicodeEncodeError，检查全跑完了却死在汇报上。
+    三层处置：① 先尝试切 UTF-8（绝大多数情况一步到位，零开销）；② 切不动就把 errors 降级成
+    backslashreplace；③ 仍然编不出记号的流，套 `_SafeConsole` 兜底，并由返回值告诉调用方
+    改用 ASCII 记号。幂等：重复调用不会层层套壳。
+    """
+    probe = "".join(_CONSOLE_MARKS.values())
+    capable = True
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (ValueError, OSError, LookupError):
+                try:
+                    reconfigure(errors="backslashreplace")
+                except (ValueError, OSError, LookupError):
+                    pass
+        if _stream_can_encode(stream, probe):
+            continue
+        capable = False
+        if not isinstance(stream, _SafeConsole):
+            setattr(sys, name, _SafeConsole(stream, getattr(stream, "encoding", None) or "ascii"))
+    return capable
+
+
+def console_marks() -> dict:
+    """当前控制台可用的状态记号（不支持 emoji 时自动 ASCII 降级）。"""
+    return dict(_CONSOLE_MARKS) if configure_console() else dict(_CONSOLE_ASCII)
+
+
+def child_env(env=None) -> dict:
+    """子进程环境：强制 UTF-8 stdio，免得子脚本在 GBK 控制台上打印时炸掉整次检查。"""
+    base = dict(os.environ if env is None else env)
+    base["PYTHONUTF8"] = "1"
+    base["PYTHONIOENCODING"] = "utf-8"
+    return base
+
+
+TEXT_IO = {"encoding": "utf-8", "errors": "replace"}
 
 
 # ── 版本号 ──────────────────────────────────────────────────────────────────
@@ -408,8 +543,8 @@ def uf_record(root: Path, label: str, blob: bytes):
     data = _uf_load(root)
     data[label] = sha256(blob)
     try:
-        (root / USER_FILLABLE_BASELINE).write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_text_lf(root / USER_FILLABLE_BASELINE,
+                      json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     except OSError:
         pass
 
@@ -503,7 +638,7 @@ def enqueue(root: Path, rel: str, tpl: Path):
     target = root / rel
     before = sha256(target.read_bytes()) if target.is_file() else ""
     entries.append(f"{rel}\t{project_template_rel(root, tpl)}\t{before}")
-    (root / REWRITE_QUEUE_FILE).write_text(QUEUE_HEADER + "\n".join(entries) + "\n", encoding="utf-8")
+    write_text_lf(root / REWRITE_QUEUE_FILE, QUEUE_HEADER + "\n".join(entries) + "\n")
     return True
 
 
@@ -590,7 +725,8 @@ def prune_backups(root: Path, keep_last=PRUNE_KEEP_LAST_DEFAULT, keep_days=PRUNE
 # ── git 小工具 ──────────────────────────────────────────────────────────────
 def git(root: Path, *args, check=False):
     try:
-        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=check)
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                              check=check, env=child_env(), **TEXT_IO)
     except (OSError, subprocess.SubprocessError):
         return None
 

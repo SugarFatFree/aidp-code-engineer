@@ -20,7 +20,11 @@
 
 ## vcs.py — Git 能力检测与非 Git 降级
 
-供脚手架和 Git 专属脚本导入 `detect_mode()`、`developer_identity()`、`unsupported()`；非 Git 能力返回 `vcs-disabled`，退出码为 3。它是库模块，不作为独立命令调用。
+供脚手架和 Git 专属脚本导入 `detect_mode()`、`developer_identity()`、`unsupported()`；非 Git 能力返回 `vcs-disabled`，退出码为 3。
+
+另带一个极薄 CLI 供 flow / 命令的 bash 段取值：
+`python3 {{AIDP_HOME}}/scripts/vcs.py mode [--root DIR]` → 打印 `git` 或 `none`。
+⛔ **别再写内联 `python3 -c 'from vcs import detect_mode …'`**：那种写法此前在 flows / commands 里逐字复制了 6 份，既撑分片体积（单处 ~90B），又把「探测口径」散成 6 处——改判据时必漏一处。
 
 ## chrome-mcp-doctor.py — chrome-devtools-mcp 远程连接配置强制校验 + 配置器
 
@@ -409,6 +413,10 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 判三类（全部要求**同行出现 SKILL 名**才纳入判定）：**索引引用**（`维度 11`）编号须存在 · **计数声明**
 （`11 维度`）须等于最大编号 · **脚本引用**（`check_xxx.py`）须真在那个 SKILL 的 `scripts/` 下。
 
+**真值源只收 `{{AIDP_HOME}}/skills/`（`contract` 安装位）**，⛔ 不收并列安装的脚手架 SKILL（`aidp-code-engineer` 在 `{{AIDP_HOME}}/../skills/`）——与 `check_skill_ref_drift.py` 的注册表**刻意不同**（那边两位都收）。
+它的 `scripts/` 是脚手架引擎、本就由 skill 自己编排、不该被命令端逐个接线，收进来只会让 `unreferenced_skill_scripts` 一次冒出一批永远消不掉的 WARN，这条告警随即整体失去信号；它也没有「维度 N / 检查项 N」这套编号体系，索引与计数两条判据对它恒空跑。
+⚠️ 这不是"脚手架 SKILL 无人看管"：它的内部文件引用归 `check_skill_ref_drift.py`（只问"文件在不在"，与安装位无关），镜像一致性归 `mirror_to_bundle.py --check`。**拆表 ⛔ 不等于加豁免**——豁免会连"文件在不在"一起放掉。
+
 用法：`python3 {{AIDP_HOME}}/scripts/check_skill_ref_freshness.py [--root <仓库根>] [--json]`。
 退出码：`0`=无 ERROR / `1`=有 ERROR / `2`=用法错。已挂进 `verify.py::check_skill_ref_freshness`。
 豁免：行尾 `<!-- skillref-check: ignore -->`；整份 `<!-- skillref-check: ignore-file 理由 -->`。
@@ -429,8 +437,14 @@ SKILL 名 713 字符，那不是归属是噪音（窗口调小到 120 会漏掉�
 判两类：**A. `bash -n`**（纯语法解析、不执行任何命令）；**B. 续行吞注释** —— 行尾 `\` 的下一行是注释时，
 续行会把两行并成一条命令、`#` 之后的参数被静默吞掉。B 类**语法完全合法**，`bash -n` 查不出，只能按词法判。
 
+**bash 能力探针（Windows 上零空等的关键）**：执行前先 `shutil.which("bash")`，再用它跑一次 `bash -c exit 0`（5 秒上限、stdin 接 DEVNULL）。
+⛔ 只靠 `which` 不够——Windows 上 `C:\Windows\System32\bash.exe`（未装发行版的 WSL 转发壳）与缺 MSYS 运行时的 Git-Bash 都是"**存在但起不来**"，`which` 对它们一律为真，于是每个围栏各挂一次、直到调用方 180 秒超时才收场，**一次 verify 被一条环境事实拖死**。
+逐围栏的 `bash -n` 另设 10 秒上限：探针过了却在某个围栏挂住，同样立刻整门收敛成「不适用」（⛔ 不记成 finding——那是把环境故障栽赃给契约正文）。
+
 用法：`python3 {{AIDP_HOME}}/scripts/check_flow_bash_syntax.py [--root <仓库根>] [--json]`。
-退出码：`0`=全通过 / `1`=有语法错 / `2`=环境无 bash。已挂进 `verify.py::check_flow_bash_syntax`。
+退出码：`0`=全通过 / `1`=有语法错 / `2`=用法错 / **`3`=不适用（`N/A(bash-unavailable)`，本机无可用 bash，一个围栏都没验过）**。已挂进 `verify.py::check_flow_bash_syntax`。
+⛔ `3` 既不是通过也不是"环境炸了"：返回 `0` 会把"没验过"伪装成"验过且没问题"（假绿，最坏），返回 `2` 会让调用方按环境错处理。`--json` 下同时给 `applicable=false` / `status="unsupported"` / `reason="bash-unavailable"` / `level="INFO"`，按退出码判与按字段判同源。
+`applicable` **两条路都给**（真跑过 = `true`，不适用 = `false`）：只在 N/A 分支给字段，按 `data.get("applicable")` 判的调用方会把一次「跑过且没问题」读成「不适用」而整门跳过——那是比误报更难发现的假绿。
 豁免：围栏上方一行加 `<!-- bashsyntax-check: ignore -->`；整份加 `<!-- bashsyntax-check: ignore-file 理由 -->`。
 
 ★ 三处口径别"优化"掉（都是实测误报的固化）：① 占位符 `<…>` 必须中和，否则被 bash 读成重定向（实测 7 处假红）；
@@ -590,8 +604,12 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 ## check_skill_ref_drift.py — 命令/Agent 对 SKILL 内部文件的引用有效性（确定性，**ERROR 级**）
 
 命令端按约定 21 只做编排，但正文里大量出现 `dev-logic-architect/scripts/check_ddl_consistency.py`、`auto-test-runner/references/report-format.md` 这类**对 SKILL 内部文件的事实性引用**。SKILL 改个脚本名、并个 reference 时，命令侧的引用不会跟着变，就此悬空——而且**完全静默**，verify 全绿、测试全过，只有真去执行那一步的 AI 才发现文件不存在，那时已在下游业务项目的运行现场。
-判据：扫 `{{AIDP_HOME}}/{commands,agents,flows,reference,rules}/**.md` 里形如 `<skill>/scripts/<f>.py`、`<skill>/references/<f>.md` 的引用，`<skill>` 命中 `{{AIDP_HOME}}/skills/` 下真实 SKILL 时该文件必须存在。⛔ 刻意**不查**维度编号/参数名/章节标题：那些要语义匹配、误报率高，一个恒红的门比没有门更糟。
+判据：扫 `{{AIDP_HOME}}/{commands,agents,flows,reference,rules}/**.md` 里形如 `<skill>/scripts/<f>.py`、`<skill>/references/<f>.md` 的引用，`<skill>` 命中**注册表**里真实存在的 SKILL 时该文件必须存在。
+**注册表带 `location`，两个安装位都收**：`contract` = `{{AIDP_HOME}}/skills/<名>`（随契约下发的公共 SKILL）；`sibling` = `{{AIDP_HOME}}/../skills/<名>`（与运行包并列安装，脚手架自身 `aidp-code-engineer` 就在这里——模板仓库是根 `skills/`，下游是 `.agents/skills/` 或 `.claude/skills/`）。
+两个根都由运行包解析算出，⛔ 不写死 Agent 目录字面量、也⛔ 不用手维护名单或单点豁免：`aidp-code-engineer` 从契约位挪到并列位那天，本门对契约正文里每一处 `aidp-code-engineer/scripts/*.py` 引用同时**静默**失明，而那正是 `/sprint-init`、`/health-check`、`aidp-compliance` 真要跑的几行 `scaffold.py` / `verify.py`——加豁免只会把这个洞永久钉死。
+`location` 同时是给上层对账用的信源：**只有 `contract` 的 SKILL 才该被拉进"公共 SKILL 表"双向对账**，`sibling` 的按公共表口径对账必然报"表里有、目录里没有"的假红。相应地，`check_skill_ref_freshness.py` **刻意只收 `contract` 位**（脚手架 `scripts/` 是引擎、不该被命令端逐个接线，收进来会一次冒出一批消不掉的 WARN）。⛔ 刻意**不查**维度编号/参数名/章节标题：那些要语义匹配、误报率高，一个恒红的门比没有门更糟。
 用法：`python3 {{AIDP_HOME}}/scripts/check_skill_ref_drift.py [--root <仓库根>] [--json]`。退出码：`0`=全部有效或无 skills 目录（N/A）/ `1`=检出悬空引用。
+`--json` 的 **`skills` 字段（`{名: contract|sibling}`）是本仓唯一算出来的 SKILL 真值表**，刻意对外暴露：散文侧判定（如 `aidp-compliance`「命令调用的 skill 必须存在」）应拿它作减项信源——散文里带连字符的反引号 token（`emit-report`、`record-card`、`run-state` …）大量是脚本名 / 子命令动词而非 SKILL，靠词形分不开，只有对着真实目录减一次才分得开。⛔ 别再各自 `ls {{AIDP_HOME}}/skills/`：漏 `sibling` 位，且两处口径会各自漂。
 
 ## check_flow_shell_escapes.py — flow/命令 shell 围栏内的双重转义（确定性，**ERROR 级**）
 
@@ -862,6 +880,11 @@ python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --command 
 调用方：`/memory-sync` Step 0 写前快照 + Step 3 收尾（硬门，exit 1）+ `verify.py`（WARN，只要可见）。
 `--file` 可显式指定扫描面。
 
+**非 Git 且无快照 = 不适用**（退出码 `3`，`N/A(vcs-disabled)`）：本门是差分门，没有基线就没有"丢了什么"可言。
+Git 能力判定的**单一信源**是 `vcs.py::detect_mode`（`git` / `none`），⛔ 本脚本不另写一套探测（两套探测迟早给出不同答案，而"谁说了算"没有信源）。
+⚠️ 判据是"非 Git **且**连快照都没有"——非 Git 项目跑过 `--snapshot` 后基线照样成立、门照常判红，故 **N/A ⛔ 不是"非 Git 就免检"的总开关**。
+`--json` 下给 `applicable=false` / `reason="vcs-disabled"` / `level="INFO"`、`errors` 为空，且**刻意不给 `passed`**：写 `true` 是假绿（memory 覆盖即永久丢失、其实一次都没查过），写 `false` 是假红，「没查过」必须与两者可区分。（适用时照常给 `applicable=true` + `passed`，字段两路对称。）
+
 ## check_index_staleness.py — 内容变了但 `git status` 报 clean
 
 git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与磁盘一致就不重新哈希。
@@ -875,6 +898,10 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 正常的未提交改动（status 看得见）**不报**。扫描面默认 `.claude`（1700+ 文件约 1s）。
 
 根因已修（`mirror_to_bundle.py` 改 `write_bytes`，见 `_copy_content`），本脚本是**防复发兜底**。
+
+**非 Git 项目 = 不适用**（退出码 `3`，`N/A(vcs-disabled)`）：没有 index 就没有"index 与磁盘分叉"这回事，一个字节都没法比。
+能力判定同走 `vcs.py::detect_mode` 这一个信源。`--json` 下给 `applicable=false` / `reason="vcs-disabled"` / `level="INFO"`、`errors` 为空、**不给 `passed`**。（适用时给 `applicable=true` + `passed`，字段两路对称。）
+⛔ 既不能记成 pass（假绿），也不该落进 WARN 区——非 Git 项目会为此恒挂一条永远消不掉的警告，几轮之后所有人开始整体无视 WARN。
 
 ## check_release_ask_whitelist.py — 发布路径 AskUserQuestion 的白名单归属门
 

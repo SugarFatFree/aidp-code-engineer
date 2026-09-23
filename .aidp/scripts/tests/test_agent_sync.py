@@ -1442,13 +1442,18 @@ def test_materialization_is_atomic_and_source_is_safe():
 
         config = root / ".claude/probe.json"
         config.write_text("old\n", encoding="utf-8")
-        original_write_text = Path.write_text
-        def broken_text_stage(path, text, *args, **kwargs):
+        # ★ 注入点必须跟着实现走：Plan.write_text 为了 Windows 上的 LF 确定性改用了 write_bytes，
+        #   若这里仍 patch write_text，故障永远注入不进去 —— 本用例会变成空跑。
+        #   fired 就是防这个的：注入没打中就直接判红，而不是"没抛异常 = 实现变好了"。
+        original_write_bytes = Path.write_bytes
+        fired = []
+        def broken_text_stage(path, data, *args, **kwargs):
             if ".stage-" in path.name:
-                original_write_text(path, "partial", *args, **kwargs)
+                fired.append(path.name)
+                original_write_bytes(path, b"partial", *args, **kwargs)
                 raise OSError("text stage probe")
-            return original_write_text(path, text, *args, **kwargs)
-        Path.write_text = broken_text_stage
+            return original_write_bytes(path, data, *args, **kwargs)
+        Path.write_bytes = broken_text_stage
         try:
             try:
                 AS.Plan(root, True, "copy").write_text(config, "new\n")
@@ -1456,7 +1461,8 @@ def test_materialization_is_atomic_and_source_is_safe():
             except OSError:
                 failed = True
         finally:
-            Path.write_text = original_write_text
+            Path.write_bytes = original_write_bytes
+        check("★ 文本 stage 故障注入真的打中了（没打中 = 本用例空跑）", bool(fired))
         check("文本 stage 写失败 → 旧文件字节保持",
               failed and config.read_text(encoding="utf-8") == "old\n")
 
@@ -1543,12 +1549,15 @@ def test_materialization_is_atomic_and_source_is_safe():
         before_marker = {p.relative_to(target).as_posix(): p.read_bytes()
                          for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
         (source / "SKILL.md").write_text("marker requested change\n", encoding="utf-8")
-        original_write_text = Path.write_text
-        def broken_marker(path, text, *args, **kwargs):
+        # ★ 同上：marker 落盘也已改走 write_bytes，注入点必须同步，否则本用例空跑。
+        original_write_bytes = Path.write_bytes
+        marker_fired = []
+        def broken_marker(path, data, *args, **kwargs):
             if path.name == AS.GENERATED_FILE and ".stage-" in path.parent.name:
+                marker_fired.append(path.name)
                 raise OSError("marker probe")
-            return original_write_text(path, text, *args, **kwargs)
-        Path.write_text = broken_marker
+            return original_write_bytes(path, data, *args, **kwargs)
+        Path.write_bytes = broken_marker
         try:
             try:
                 AS.Plan(root, True, "copy").link_dir(target, source)
@@ -1556,7 +1565,8 @@ def test_materialization_is_atomic_and_source_is_safe():
             except OSError:
                 failed = True
         finally:
-            Path.write_text = original_write_text
+            Path.write_bytes = original_write_bytes
+        check("★ marker 故障注入真的打中了（没打中 = 本用例空跑）", bool(marker_fired))
         after = {p.relative_to(target).as_posix(): p.read_bytes()
                  for p in target.rglob("*") if p.is_file() and not p.is_symlink()}
         check("marker 写失败 → 旧实体树原样保留", failed and before_marker == after)

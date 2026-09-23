@@ -67,3 +67,24 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall
 ```
 
 `/loop` 是**会话级**定时任务：会话关闭即停；定时任务 **7 天后自动过期**；只在会话空闲的轮次之间触发，同一会话里挂两条时**实际串行**（长 tick 期间另一条被推迟）。适合临时观察、演示；7×24 用上面的操作系统调度。
+
+## 四、Python 解释器（跨平台）
+
+本仓库全部示例统一写 `python3`。**Windows 上通常没有 `python3` 这个名字**（只有 `python`，或 Windows 启动器 `py`），照抄会得到「不是内部或外部命令」。
+
+**执行前先探测，取第一个可用的**：
+
+```bash
+# POSIX：python3 → python
+command -v python3 >/dev/null && PY=python3 || PY=python
+```
+
+```powershell
+# Windows PowerShell：python → py -3
+$PY = if (Get-Command python -EA SilentlyContinue) { "python" } else { "py -3" }
+```
+
+然后把文档里的 `python3 …` 读作 `$PY …`。
+
+- ⛔ **不要去改文档里的 `python3` 字面量**：它同时是 `check_cli_invocation.py` 的识别形状（现巡检 1100+ 处调用），改写等于把那道门连根拔掉。
+- ✅ **脚本内部起子进程一律用 `sys.executable`**，不受本节影响——当前实现已全部如此，`aidp_scheduler.py` 生成的 systemd / cron / launchd / schtasks 四类定时任务也都由它派生。

@@ -57,10 +57,29 @@ MARKER_DIRS = {"claude": ".claude", "codex": ".codex", "dsh": ".dsh"}
 AGENT_ALIASES = {"claude-code": "claude", "claudecode": "claude", "deepseek": "dsh",
                  "deepseek-harness": "dsh", "openai-codex": "codex"}
 EXEC_SUFFIX = {".py", ".sh"}
-DSH_COMMAND_PLUGIN = ("dsh", "plugin", "--profile", "web", "add", "github:SugarFatFree/dsh-agent-extension")
+DSH_PLUGIN_PACKAGE = "github:SugarFatFree/dsh-agent-extension"
+DSH_PLUGIN_NAME = "dsh-agent-extension"
+DSH_COMMAND_PLUGIN = ("dsh", "plugin", "--profile", "web", "add", DSH_PLUGIN_PACKAGE)
+DSH_PLUGIN_LIST_JSON = ("dsh", "plugin", "--profile", "web", "list", "--json")
+DSH_PLUGIN_LIST = ("dsh", "plugin", "--profile", "web", "list")
+DSH_PLUGIN_VERSION = ("dsh", "--version")
 DSH_COMMAND_PLUGIN_RETRY = " ".join(DSH_COMMAND_PLUGIN)
 DSH_COMMAND_PLUGIN_TIMEOUT = 120
+DSH_PLUGIN_PROBE_TIMEOUT = 30
 DSH_PLUGIN_DETAIL_LIMIT = 300
+# 扩展状态取值；⛔ 「本进程调不起 dsh」不得推论成「扩展没装」。
+DSH_STATE_READY = ("already-installed", "installed")
+DSH_STATE_LABEL = {
+    "already-installed": "已安装，本次未执行 add",
+    "installed": "本次安装并复查命中",
+    "not-installed": "add 返回 0 但清单未命中，按未装处理",
+    "cli-unavailable": "本进程找不到 dsh，安装状态未验证（⛔ 不等于扩展缺失）",
+    "unknown": "dsh 在但状态无从判断（⛔ 不等于扩展缺失）",
+    "install-failed": "安装失败，见 WARN 与重试命令",
+}
+
+# 控制台状态记号：默认 emoji，main() 起手按实际 stdout 编码决定是否 ASCII 降级（GBK 控制台）。
+MARKS = dict(L._CONSOLE_MARKS)
 
 NAV_PURPOSES = {
     "产品提供": "产品方提供的原始输入（PRD、需求说明等）",
@@ -409,7 +428,7 @@ def _write_migration_failure(root: Path, evidence: dict, stage: str, exc: Except
               "reason": str(exc)[:300]}
     fd, temporary = tempfile.mkstemp(prefix=".aidp-migration-failure-", suffix=".tmp", dir=root)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
             json.dump(record, stream, ensure_ascii=False, sort_keys=True)
             stream.write("\n")
         os.replace(temporary, root / MIGRATION_FAILURE_LEDGER)
@@ -584,7 +603,7 @@ def sync_gated(root: Path, decision: str, rep: Report, bk: "Backup" = None, old_
         return local_overwritten
     refresh_optional_rules(root, rep)
     for d in L.GATED_DIRS:
-        for rel, sp in L.iter_files(L.BUNDLE_AIDP / d):
+        for rel, sp in L.iter_bundle_files(L.BUNDLE_AIDP / d):
             label = f"{d}/{rel}"
             if label.startswith("skills/aidp-cmd/"):
                 continue
@@ -627,7 +646,7 @@ def sync_gated(root: Path, decision: str, rep: Report, bk: "Backup" = None, old_
 
 def sync_scripts(root: Path, rep: Report):
     for d in L.UNGATED_DIRS:
-        for rel, sp in L.iter_files(L.BUNDLE_AIDP / d):
+        for rel, sp in L.iter_bundle_files(L.BUNDLE_AIDP / d):
             if L.is_template_owned(f"{d}/{rel}"):
                 continue
             dp = root / ".aidp" / d / rel
@@ -767,7 +786,7 @@ def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup"):
     dst = root / "memory/aidp-config.yaml"
     if not dst.exists():
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(tpl, encoding="utf-8")
+        L.write_text_lf(dst, tpl)
         rep.act("create", "memory/aidp-config.yaml")
         return
     have = dst.read_text(encoding="utf-8")
@@ -775,7 +794,7 @@ def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup"):
     missing = [(k, v) for k, v in _yaml_top_blocks(tpl).items() if k not in present]
     if missing:
         bk.save("memory/aidp-config.yaml")
-        dst.write_text(have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing), encoding="utf-8")
+        L.write_text_lf(dst, have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing))
         rep.act("update", "memory/aidp-config.yaml", "补齐配置段：" + "、".join(k for k, _ in missing))
 
 
@@ -785,14 +804,14 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
         dst = root / rel
         if not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(L.render((src / tpl).read_text(encoding="utf-8"), ctx), encoding="utf-8")
+            L.write_text_lf(dst, L.render((src / tpl).read_text(encoding="utf-8"), ctx))
             rep.act("create", rel)
             continue
         cur = L.read_text(dst)
         rendered = L.render(cur, ctx)          # 只替换残留的占位符本身，已填写的段落原样保留
         if rendered != cur:
             bk.save(rel)
-            dst.write_text(rendered, encoding="utf-8")
+            L.write_text_lf(dst, rendered)
             rep.act("render", rel, "替换残留占位符")
     readme_src, readme = src / "README.md", root / "memory/README.md"
     data = readme_src.read_bytes()
@@ -811,7 +830,7 @@ def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
     home = ".claude/aidp" if list(agents) == ["claude"] else ".agents/aidp"
     if not readme.exists():
         body = L.render((L.ASSETS / "root/README.md.tpl").read_text(encoding="utf-8"), ctx)
-        readme.write_text(body.replace("{{AIDP_HOME}}", home), encoding="utf-8")
+        L.write_text_lf(readme, body.replace("{{AIDP_HOME}}", home))
         rep.act("create", "README.md")
     else:
         try:
@@ -828,7 +847,7 @@ def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
                     refreshed = refreshed.replace(f"├── {old_home}/", f"├── {home}/")
             if refreshed != original:
                 bk.save("README.md")
-                readme.write_text(refreshed, encoding="utf-8")
+                L.write_text_lf(readme, refreshed)
                 rep.act("update", "README.md", "仅归一调度命令与运行目录示例")
     env = root / "env/.env"
     if not env.exists():
@@ -840,7 +859,7 @@ def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
     want = L.merge_gitignore(have, (L.ASSETS / "root/gitignore.tpl").read_text(encoding="utf-8"))
     if have != want:
         bk.save(".gitignore")
-        gi.write_text(want, encoding="utf-8")
+        L.write_text_lf(gi, want)
         rep.act("create" if have is None else "update", ".gitignore", "AIDP 托管区")
 
 
@@ -852,7 +871,7 @@ def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: boo
     bodies = L.memory_bodies(root)
     target = L.memory_target(root, agents)
     if not bodies:
-        (root / target).write_text(rendered, encoding="utf-8")
+        L.write_text_lf(root / target, rendered)
         rep.act("create", target, "项目记忆文件")
         return
     body_file = target if target in bodies else next(iter(bodies))
@@ -864,11 +883,11 @@ def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: boo
         merged = L.merge_memory_upgrade(bodies[body_file], rendered)
         if merged != bodies[body_file]:
             bk.save(body_file)
-            (root / body_file).write_text(merged, encoding="utf-8")
+            L.write_text_lf(root / body_file, merged)
             rep.act("merge", body_file, "按新版模板合并，保留「当前状态」字段值与「项目自定义」段")
         return
     bk.save(target)
-    (root / target).write_text(migrate.merge_custom(rendered, bodies), encoding="utf-8")
+    L.write_text_lf(root / target, migrate.merge_custom(rendered, bodies))
     rep.act("merge", target, "原记忆文件内容并入「项目自定义」段：" + "、".join(sorted(bodies)))
     L.enqueue(root, target, tpl_path)
     rep.act("queue", target, "复核「项目自定义」段：去重、与 AIDP 约定冲突项交用户裁决")
@@ -910,7 +929,7 @@ def ensure_nav_readmes(root: Path, rep: Report):
                 continue
             decision = policy.is_readme_required_directory(d, None, root=root)
             if decision.get("required") and decision.get("reason") == "navigation-hub":
-                (d / "README.md").write_text(_nav_body(d, policy), encoding="utf-8")
+                L.write_text_lf(d / "README.md", _nav_body(d, policy))
                 rep.act("create", f"{rel_of(root, d)}/README.md", "导航 README")
 
 
@@ -938,32 +957,153 @@ def _bounded_detail(value) -> str:
     return text
 
 
+def _dsh_run(command, timeout: int):
+    """跑一条 dsh 子命令。返回 (returncode, stdout, stderr, failure)；failure 非空表示进程没跑起来。"""
+    try:
+        p = subprocess.run(list(command), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=timeout,
+                           env=L.child_env(), **L.TEXT_IO)
+    except subprocess.TimeoutExpired as exc:
+        return None, "", _bounded_detail(exc.stderr or exc.stdout), f"超时 {timeout} 秒"
+    except OSError as exc:
+        return None, "", _bounded_detail(exc), f"{type(exc).__name__}：{_bounded_detail(exc)}"
+    return p.returncode, p.stdout or "", p.stderr or "", ""
+
+
+def _dsh_normalize_name(token: str) -> str:
+    """把一个清单 token 归一成扩展名：剥引号 → 取最后一段路径/命名空间 → 去掉 `@版本`。"""
+    token = str(token).strip().strip("\"'`,;|()[]{}")
+    token = token.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    return token.split("@", 1)[0].strip().lower()
+
+
+def _dsh_names_from_json(text: str):
+    """从 `list --json` 输出里收集扩展名；不是合法 JSON 返回 None（交给文本回落）。"""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    names, stack = set(), [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str) and key.lower() in {"name", "id", "package", "plugin",
+                                                              "source", "spec", "ref"}:
+                    names.add(_dsh_normalize_name(value))
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+        elif isinstance(node, str):
+            names.add(_dsh_normalize_name(node))
+    return {n for n in names if n}
+
+
+def _dsh_names_from_text(text: str) -> set:
+    """容错解析人读清单：逐行逐 token 归一后收集，⛔ 不写依赖固定列宽/表头的脆正则。"""
+    names = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or set(line) <= set("-=+*_ |"):
+            continue
+        for token in re.split(r"[\s,;|]+", line):
+            name = _dsh_normalize_name(token)
+            if name:
+                names.add(name)
+    return names
+
+
+def _dsh_installed_plugins():
+    """profile=web 已装扩展名集合；返回 (names, detail)，names 为 None = 状态无从判断。"""
+    # ① 优先机器可读：CLI 不支持 `--json` 时它会非零退出或吐非 JSON，两种都安静回落到 ② 文本清单
+    code, out, _err, _failure = _dsh_run(DSH_PLUGIN_LIST_JSON, DSH_PLUGIN_PROBE_TIMEOUT)
+    if code == 0 and out.strip():
+        names = _dsh_names_from_json(out)
+        if names is not None:
+            return names, "list --json"
+    code, out, err, failure = _dsh_run(DSH_PLUGIN_LIST, DSH_PLUGIN_PROBE_TIMEOUT)
+    if failure:
+        return None, failure
+    if code != 0:
+        return None, f"exit {code}：{_bounded_detail(err or out)}"
+    return _dsh_names_from_text(out), "list"
+
+
+def _dsh_cli_diagnostics(exception_kind: str = "") -> str:
+    """CLI 探测诊断串。
+
+    脱敏口径：只报 `platform`、PATH **条目数**与 `which(dsh)` 是否命中，
+    ⛔ 绝不外显 PATH 原文或解析出的绝对路径（其中常含用户名与私有目录）；
+    子进程输出一律先过 `_bounded_detail` 压成单行并截断到 300 字符。
+    """
+    entries = [x for x in os.environ.get("PATH", "").split(os.pathsep) if x.strip()]
+    found = shutil.which("dsh")
+    parts = [f"platform={sys.platform}",
+             f"PATH 条目 {len(entries)} 个（已脱敏，不外显具体路径）",
+             f"which(dsh)={'命中' if found else '未命中'}"]
+    if exception_kind:
+        parts.append(f"异常={exception_kind}")
+    return "；".join(parts)
+
+
 def install_dsh_command_plugin(mode: str, agents, rep: Report):
-    """DSH 的 commands 与嵌套 SKILL 扩展；三模式均确保安装。"""
+    """DSH 的 commands 与嵌套 SKILL 扩展：**先探测状态，再决定是否安装**。
+
+    ⛔ 铁律：「本进程调不起 dsh」≠「扩展没装」。Windows 上 `dsh` 往往是 PowerShell 上的
+    shim，Python 子进程一句 OSError [WinError 2] 就找不到它，而同一台机器 `dsh plugin
+    --profile web list` 里明明有 `dsh-agent-extension@0.1.4`。所以状态机只允许这些取值：
+
+      already-installed  profile=web 已有目标扩展 → 不执行 add，走 INFO 不是 WARN
+      installed          本次 add 成功且**复查清单命中**
+      not-installed      add 返回 0，但复查清单里仍没有目标扩展（不得当成可用）
+      cli-unavailable    PATH 里找不到 dsh 可执行文件 → 安装状态**未验证**
+      unknown            dsh 在，但版本/清单探测失败 → 安装状态**无从判断**
+      install-failed     add 非零退出 / 超时 / 起不来
+
+    诊断信息的脱敏口径见 `_dsh_cli_diagnostics`。
+    """
     if "dsh" not in agents:
         return None
-    try:
-        p = subprocess.run(DSH_COMMAND_PLUGIN, capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, timeout=DSH_COMMAND_PLUGIN_TIMEOUT)
-    except subprocess.TimeoutExpired as exc:
-        detail = _bounded_detail(exc.stderr or exc.stdout)
-        suffix = f"：{detail}" if detail else ""
-        rep.warn(f"DSH 命令插件安装失败（超时 {DSH_COMMAND_PLUGIN_TIMEOUT} 秒）{suffix}；"
-                 f"请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
-        return "unavailable"
-    except OSError as exc:
-        detail = _bounded_detail(exc)
-        suffix = f"：{detail}" if detail else ""
-        rep.warn(f"DSH 命令插件安装失败{suffix}；请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
-        return "unavailable"
-    if p.returncode != 0:
-        detail = _bounded_detail(p.stderr or p.stdout)
-        suffix = f"：{detail}" if detail else ""
-        rep.warn(f"DSH 命令插件安装失败（exit {p.returncode}）{suffix}；"
-                 f"请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
-        return "unavailable"
-    rep.act("dsh-plugin", DSH_COMMAND_PLUGIN[-1], "profile=web")
-    return "available"
+    if not shutil.which("dsh"):
+        rep.warn(f"当前子进程无法定位 dsh 可执行文件，插件实际安装状态**未验证**（未验证 ⛔ 不等于扩展缺失）："
+                 f"{_dsh_cli_diagnostics()}。若 dsh 在你的终端里可用，请自行确认："
+                 f"{' '.join(DSH_PLUGIN_LIST)}；需要时手工执行：{DSH_COMMAND_PLUGIN_RETRY}")
+        return "cli-unavailable"
+    code, out, err, failure = _dsh_run(DSH_PLUGIN_VERSION, DSH_PLUGIN_PROBE_TIMEOUT)
+    if code != 0:
+        reason = failure or f"exit {code}：{_bounded_detail(err or out)}"
+        rep.warn(f"已定位 dsh，但 `{' '.join(DSH_PLUGIN_VERSION)}` 未成功（{reason}）；"
+                 f"插件实际安装状态无从判断：{_dsh_cli_diagnostics()}；"
+                 f"请手工复核：{' '.join(DSH_PLUGIN_LIST)}")
+        return "unknown"
+    version = _bounded_detail(out or err)
+    installed, detail = _dsh_installed_plugins()
+    if installed is None:
+        rep.warn(f"dsh {version} 可用，但读不出 profile=web 扩展清单（{detail}），"
+                 f"插件实际安装状态无从判断；请手工复核：{' '.join(DSH_PLUGIN_LIST)}")
+        return "unknown"
+    if DSH_PLUGIN_NAME in installed:
+        rep.note(f"DSH 扩展 {DSH_PLUGIN_NAME} 已在 profile=web（dsh {version}），本次不执行 add")
+        return "already-installed"
+    code, out, err, failure = _dsh_run(DSH_COMMAND_PLUGIN, DSH_COMMAND_PLUGIN_TIMEOUT)
+    if code != 0:
+        reason = failure or f"exit {code}"
+        extra = _bounded_detail(err or out)
+        rep.warn(f"DSH 命令插件安装失败（{reason}）" + (f"：{extra}" if extra else "")
+                 + f"；请手工重试：{DSH_COMMAND_PLUGIN_RETRY}")
+        return "install-failed"
+    confirmed, detail = _dsh_installed_plugins()
+    if confirmed is None:
+        rep.warn(f"DSH 命令插件 add 已返回 0，但复查清单失败（{detail}），无法确认是否真的装上；"
+                 f"请手工复核：{' '.join(DSH_PLUGIN_LIST)}")
+        return "unknown"
+    if DSH_PLUGIN_NAME not in confirmed:
+        rep.warn(f"DSH 命令插件 add 返回 0，但 profile=web 清单里仍看不到 {DSH_PLUGIN_NAME}；"
+                 f"⛔ 不得据此认为可用，请手工复核：{' '.join(DSH_PLUGIN_LIST)}")
+        return "not-installed"
+    rep.act("dsh-plugin", DSH_PLUGIN_PACKAGE, "profile=web")
+    return "installed"
 
 
 def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> dict:
@@ -978,7 +1118,7 @@ def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> 
         rep.warn(message)
         return {}
     cmd = [sys.executable, str(script), "--root", str(root), "--agents", ",".join(agents), "--mode", mode]
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = subprocess.run(cmd, capture_output=True, text=True, env=L.child_env(), **L.TEXT_IO)
     try:
         data = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
     except ValueError:
@@ -1059,7 +1199,7 @@ def _preflight_native_entries(root: Path, agents: list, source: Path):
         if not os.path.lexists(target):
             continue
         marker = target / ".aidp-scaffold-generated"
-        if target.name == L.SKILL_NAME and marker.is_file():
+        if target.name == L.SKILL_NAME and (marker.is_file() or _is_self_skill_target(target)):
             continue
         if target.parent.name == "commands":
             ledger = target.parent / agent_adapter.GENERATED_FILE
@@ -1104,6 +1244,34 @@ def _preflight_native_adapter(root: Path, agents: list, source: Path):
         agent_adapter.RUNTIME_ROOT = old_source
 
 
+def _is_self_skill_target(target: Path) -> bool:
+    """安装目标就是本次正在执行的脚手架 skill 自身。
+
+    下游把 skill 装在项目自己的 `.agents/skills/aidp-code-engineer/`（或 `.claude/skills/…`）里跑
+    init 时，「安装源」与「安装目标」是同一个目录。它按定义不是用户内容 —— 它就是本次执行的真源，
+    所以不该被「无 `.aidp-scaffold-generated` 标记即拒绝覆盖」挡住。仍然要求它长得像脚手架 skill，
+    免得把一个恰好同名的用户目录误判成自举源；对真正的用户目录，标记判定原样保留。
+    """
+    try:
+        if target.resolve() != L.SKILL_DIR.resolve():
+            return False
+    except OSError:
+        return False
+    return (target / "SKILL.md").is_file() and (target / "scripts/scaffold.py").is_file()
+
+
+def _skill_tree_state(directory: Path) -> dict:
+    """脚手架 SKILL 目录的受管状态：⛔ 剔除 `__pycache__` / `*.pyc`。
+
+    ★ 幂等性铁律：下游是**跑着这份已安装的 skill** 去执行 scaffold 的，import 会就地落下
+    `__pycache__/`。若把它算进比较，则「同版本第二次 upgrade」永远 `existing != desired`，
+    每跑一次就多备份一次整个 skill（近 10MB）、多刷一次受管副本。字节码缓存既不是用户内容、
+    也不是受管契约（journal 的 `expect_tree` 早已按同一口径排除），故比较时一并忽略。
+    """
+    return {rel: value for rel, value in _complete_tree_state(directory).items()
+            if "__pycache__" not in rel.split("/") and not rel.endswith(".pyc")}
+
+
 def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
     for rel, home in ((".claude/skills", ".claude/aidp") if "claude" in agents else (None, None),
                       (".agents/skills", ".agents/aidp") if {"codex", "dsh"} & set(agents)
@@ -1112,7 +1280,8 @@ def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
             continue
         target = root / rel / L.SKILL_NAME
         marker = target / ".aidp-scaffold-generated"
-        if os.path.lexists(target) and (target.is_symlink() or not marker.is_file()):
+        if os.path.lexists(target) and (target.is_symlink()
+                                        or not (marker.is_file() or _is_self_skill_target(target))):
             raise ValueError(f"脚手架 SKILL 目标是用户内容，拒绝覆盖：{target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".aidp-skill-stage-", dir=target.parent) as td:
@@ -1123,19 +1292,19 @@ def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
             if tests.exists():
                 shutil.rmtree(tests)
             skill_file = stage / "SKILL.md"
-            skill_file.write_text(skill_file.read_text(encoding="utf-8").replace("{{AIDP_HOME}}", home),
-                                  encoding="utf-8")
-            (stage / ".aidp-scaffold-generated").write_text("aidp-code-engineer\n", encoding="utf-8")
-            desired = _complete_tree_state(stage)
+            L.write_text_lf(skill_file,
+                            skill_file.read_text(encoding="utf-8").replace("{{AIDP_HOME}}", home))
+            L.write_text_lf(stage / ".aidp-scaffold-generated", "aidp-code-engineer\n")
+            desired = _skill_tree_state(stage)
             if any(entry[0] == "link" for entry in desired.values()):
                 raise ValueError(f"脚手架 SKILL 真源包含符号链接，拒绝安装：{L.SKILL_DIR}")
-            existing = _complete_tree_state(target) if target.is_dir() else None
+            existing = _skill_tree_state(target) if target.is_dir() else None
             if existing == desired:
                 continue
             previous = Path(td) / "previous"
             if existing is not None:
                 saved = bk.save_tree(f"{rel}/{L.SKILL_NAME}")
-                if saved is None or _complete_tree_state(saved) != existing:
+                if saved is None or _skill_tree_state(saved) != existing:
                     raise RuntimeError(f"脚手架 SKILL 完整备份失败：{target}")
                 os.replace(target, previous)
             try:
@@ -1228,11 +1397,18 @@ class _NativeInstallJournal:
             self.expect(target)
 
     def expect_tree(self, destination: Path, source: Path, include=None):
+        """按源树推算「本次会创建哪些路径」，供失败时整体回滚。
+
+        ⛔ 必须与写入端同一套命名：源若是脚手架 bundle，里面的 `SKILL.md` 是遮名的 `SKILL.md.in`，
+        而 `runtime_layout.render_tree` 落盘时会还原成 `SKILL.md`。这里不还原就会登记一个**不存在的**
+        路径、同时漏掉真正被创建的那个 —— 回滚时它留在原地，失败后的运行包**删不干净**
+        （回归 `test_downstream_portability::test_failure_during_atomic_replace_rolls_back_completely`）。
+        """
         self.expect(destination)
         for path in source.rglob("*"):
             relative = path.relative_to(source)
             if include is None or include(relative):
-                self.expect(destination / relative)
+                self.expect(destination / L.bundle_unmask(relative.as_posix()))
 
     def rollback_created(self):
         for relative in sorted(self.created, key=lambda path: len(path.parts), reverse=True):
@@ -1278,7 +1454,8 @@ def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, age
     home = ".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp"
     cmd = [sys.executable, str(root / home / "scripts/agent_sync.py"), "--root", str(root),
            "--agents", ",".join(agents), "--mode", "copy", "--check"]
-    process = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    process = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             env=L.child_env(), **L.TEXT_IO)
     try:
         planned = json.loads(process.stdout.strip().splitlines()[-1])
     except (IndexError, ValueError) as exc:
@@ -1539,7 +1716,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 rep.act("remove", rel_of(root, disabled), "Agent 重新启用")
         elif not disabled.is_file():
             journal.expect(disabled)
-            disabled.write_text("disabled\n", encoding="utf-8")
+            L.write_text_lf(disabled, "disabled\n")
             rep.act("create", rel_of(root, disabled), "Agent 已切换为停用")
     for agent, rel in (("claude", ".claude/skills"), ("shared", ".agents/skills")):
         enabled = ("claude" in agents if agent == "claude" else bool({"codex", "dsh"} & set(agents)))
@@ -1563,7 +1740,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         check = subprocess.run(
             [sys.executable, str(root / adapter_home / "scripts/agent_sync.py"),
              "--root", str(root), "--agents", ",".join(agents), "--mode", "copy", "--check"],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            env=L.child_env(), **L.TEXT_IO)
         if check.returncode != 0:
             raise RuntimeError(f"原生 Agent 入口校验失败：{(check.stdout or check.stderr).strip()[:300]}")
     if migrate_legacy:
@@ -1610,6 +1788,12 @@ def print_human(res: dict):
     print(f"[scaffold] Agent {','.join(res['agents'])}（来源 {res['agent_source']}）· 适配层 {res['adapter_mode']}")
     print(f"[scaffold] 脚手架 {res['previous_scaffold_version'] or '未建立'} → {res['scaffold_version']}"
           f"（契约处置：{res['contract_decision']}）")
+    state = res.get("dsh_extensions")
+    if state:
+        # ⛔ 不得把 `cli-unavailable` / `unknown` 说成「未安装」：那是本进程的探测能力问题，不是扩展状态。
+        mark = MARKS["ok"] if state in DSH_STATE_READY else MARKS["warn"]
+        print(f"[scaffold] {mark} DSH 扩展 {DSH_PLUGIN_NAME}：{state}"
+              f"（{DSH_STATE_LABEL.get(state, '状态未知')}）")
     counts = {}
     for x in res["actions"]:
         counts[x["op"]] = counts.get(x["op"], 0) + 1
@@ -1618,17 +1802,21 @@ def print_human(res: dict):
         if x["op"] not in ("create", "update") or not x["path"].startswith(".aidp/"):
             print(f"  {x['op']:10} {x['path']}" + (f"（{x['why']}）" if x["why"] else ""))
     for w in res["warnings"]:
-        print(f"  ⚠️ {w}")
+        print(f"  {MARKS['warn']} {w}")
     for n in res["notes"]:
-        print(f"  ℹ️ {n}")
+        print(f"  {MARKS['info']} {n}")
     if res["pending"]:
-        print(f"[scaffold] ⏳ 语义改写待办 {len(res['rewrite_queue'])} 条（{L.REWRITE_QUEUE_FILE}）："
+        print(f"[scaffold] {MARKS['pending']} 语义改写待办 {len(res['rewrite_queue'])} 条（{L.REWRITE_QUEUE_FILE}）："
               "逐条语义改写后跑 finalize_upgrade.py（核验每条已改写、删除队列并收口；无需改动的条目用 --accept 标记）")
     else:
-        print("[scaffold] ✅ 无语义改写待办，scaffold.version 已写入")
+        print(f"[scaffold] {MARKS['ok']} 无语义改写待办，scaffold.version 已写入")
 
 
 def main(argv=None) -> int:
+    # ① 先把控制台配成不会因编码抛异常（Windows GBK 下 emoji 一 print 就 UnicodeEncodeError），
+    #    ② 再按实际能力决定用 emoji 还是 ASCII 记号。⛔ 绝不能让「打印」把整次执行判死。
+    global MARKS
+    MARKS = L.console_marks()
     ap = argparse.ArgumentParser(description="AIDP 脚手架：init / migrate / upgrade")
     ap.add_argument("root", nargs="?", default=".")
     ap.add_argument("--detect", action="store_true", help="只探测并输出 JSON")
@@ -1654,24 +1842,25 @@ def main(argv=None) -> int:
         print(json.dumps(detect(root), ensure_ascii=False, indent=2))
         return 0
     if L.is_template_project(root):
-        print("⛔ 目标是 AIDP 模板项目自身：模板维护请用 mirror_to_bundle.py，不在模板上运行脚手架", file=sys.stderr)
+        print(f"{MARKS['block']} 目标是 AIDP 模板项目自身：模板维护请用 mirror_to_bundle.py，不在模板上运行脚手架",
+              file=sys.stderr)
         return 2
     if not (L.BUNDLE_AIDP.is_dir() and L.bundle_version()):
-        print("⛔ 脚手架 bundle 不完整（缺 assets/aidp 或 assets/SCAFFOLD_VERSION）", file=sys.stderr)
+        print(f"{MARKS['block']} 脚手架 bundle 不完整（缺 assets/aidp 或 assets/SCAFFOLD_VERSION）", file=sys.stderr)
         return 2
     user = vcs.developer_identity(root, a.user)
     if not user or not L.USER_RE.match(user):
-        print(f"⛔ 开发者标识无效：{user!r}（仅字母数字 _ . -；用 --user 指定或设置 git config user.name）",
+        print(f"{MARKS['block']} 开发者标识无效：{user!r}（仅字母数字 _ . -；用 --user 指定或设置 git config user.name）",
               file=sys.stderr)
         return 2
     a.user = user
     if a.version and not L.VERSION_RE.match(a.version):
-        print(f"⛔ 版本号格式应为 V0.1.0：{a.version}", file=sys.stderr)
+        print(f"{MARKS['block']} 版本号格式应为 V0.1.0：{a.version}", file=sys.stderr)
         return 2
     try:
         res = run(root, a)
     except (ValueError, RuntimeError) as e:
-        print(f"⛔ {e}", file=sys.stderr)
+        print(f"{MARKS['block']} {e}", file=sys.stderr)
         return 2
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))

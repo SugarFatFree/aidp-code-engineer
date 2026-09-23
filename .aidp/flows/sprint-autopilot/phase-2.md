@@ -101,7 +101,7 @@ PY
 )
        if [ "$TEST_LOOP_ALIVE" = "1" ]; then
          # fail_handle 统一记账、判阈和冻结告警；未达阈只记账（见 rationale.md）。
-         VCS_MODE=$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+         VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
          FROZEN_HEAD=""
          if [ "$VCS_MODE" = "git" ]; then
            FROZEN_HEAD="$(git rev-parse HEAD 2>/dev/null)" || exit 1
@@ -205,7 +205,7 @@ PY
   python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PRERELEASE_HOLD 1 || exit 1
   python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PRERELEASE_ARCHIVE_OK 0 || exit 1
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-  VCS_MODE=$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))')
+  VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode)
   ARCHIVE_REASON=release-blocked; ARCHIVE_WHY="准发布归档失败：归档流程 Step 3.1~3.6 未走完"
   if [ "$VCS_MODE" = "none" ]; then
     ARCHIVE_REASON=local-archive-failed; ARCHIVE_WHY="本地归档失败：文档/SQL/memory 未全部完成或本地发布状态无法核实（Git 发布 unsupported:vcs-disabled）"
@@ -250,7 +250,7 @@ PY
       [ "$PRERELEASE_YIELD" = "0" ] && [ "$PRERELEASE_ARCHIVE_OK" = "1" ] &&
       [ -n "$PRE_RELEASE_VERSION" ] &&
       [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" get internal_released_at --default '')" ]; then
-     VCS_MODE=$(PYTHONPATH={{AIDP_HOME}}/scripts python3 -c 'from pathlib import Path; from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
+     VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
      if [ "$VCS_MODE" = "none" ]; then
        ARCHIVE_SUMMARY="本地归档完成（未发布；Git 发布 unsupported:vcs-disabled），已写 internal_released_at，#pre-done 已发"
      else

@@ -31,29 +31,71 @@ def scaffold(root, *args, env=None):
     return json.loads(p.stdout)
 
 
-def fake_dsh_env(root, exit_code=0):
+# 假 dsh：**带状态**的 CLI —— 新实现先探测（--version / plugin list）再决定是否 add，
+# 一个「记下 argv 就退出」的哑桩已经不够用了。每次调用把 argv 追加进日志，便于断言「是否真的 add 过」。
+FAKE_DSH_SH = """#!/bin/sh
+argv="$*"
+printf '%s\n' "$argv" >> "$DSH_TEST_LOG"
+if [ "$1" = "--version" ]; then printf '0.1.5-rc.2\n'; exit 0; fi
+case "$argv" in
+  *"list --json"*)
+      printf 'error: unexpected argument --json\n' >&2
+      exit 2 ;;
+  *"list"*)
+      printf 'NAME                       VERSION   PROFILE\n'
+      printf -- '-------------------------  --------  -------\n'
+      # ⛔ 只用 shell 内建：用例把 PATH 收窄到只剩假 dsh，`cat` 这类外部命令根本不在
+      if [ -f "$DSH_TEST_STATE" ]; then
+        while IFS= read -r line; do printf '%s\n' "$line"; done < "$DSH_TEST_STATE"
+      fi
+      exit 0 ;;
+  *" add "*)
+      if [ "${DSH_TEST_EXIT:-0}" -ne 0 ]; then
+        printf '%s\n' "${DSH_TEST_MESSAGE:-plugin install failed}" >&2
+        exit "${DSH_TEST_EXIT}"
+      fi
+      if [ "${DSH_TEST_ADD_EFFECT:-install}" = "install" ]; then
+        printf 'dsh-agent-extension@0.1.4  0.1.4  web\n' >> "$DSH_TEST_STATE"
+      fi
+      exit 0 ;;
+esac
+printf 'dsh: unknown command\n' >&2
+exit 2
+"""
+
+
+def fake_dsh_env(root, exit_code=0, preinstalled=False, add_effect="install"):
     """隔离 DSH 调用；PATH 只暴露假 dsh 与真实 git。"""
     bindir = root.parent / ".test-bin"
     bindir.mkdir(exist_ok=True)
     log = root.parent / ".dsh-plugin-argv"
+    state = root.parent / ".dsh-plugin-state"
+    state.write_text("dsh-agent-extension@0.1.4  0.1.4  web\n" if preinstalled else "",
+                     encoding="utf-8")
     dsh = bindir / "dsh"
-    dsh.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' \"$@\" > \"$DSH_TEST_LOG\"\n"
-        "if [ \"${DSH_TEST_EXIT:-0}\" -ne 0 ]; then "
-        "printf '%s\\n' \"${DSH_TEST_MESSAGE:-plugin install failed}\" >&2; fi\n"
-        "exit \"${DSH_TEST_EXIT:-0}\"\n",
-        encoding="utf-8")
+    dsh.write_text(FAKE_DSH_SH, encoding="utf-8")
     dsh.chmod(0o755)
     git = shutil.which("git")
     if not git:
         raise AssertionError("测试环境缺 git")
-    (bindir / "git").symlink_to(git)
+    if not (bindir / "git").exists():
+        (bindir / "git").symlink_to(git)
     env = H.clean_env()
     env["PATH"] = str(bindir)
     env["DSH_TEST_LOG"] = str(log)
+    env["DSH_TEST_STATE"] = str(state)
     env["DSH_TEST_EXIT"] = str(exit_code)
+    env["DSH_TEST_ADD_EFFECT"] = add_effect
     return env, log
+
+
+def dsh_calls(log):
+    return [line for line in log.read_text(encoding="utf-8").splitlines() if line] \
+        if log.is_file() else []
+
+
+def dsh_add_calls(log):
+    return [c for c in dsh_calls(log) if " add " in f" {c} "]
 
 
 def missing_dsh_env(root):
@@ -819,34 +861,60 @@ class DshCommandPluginInstallTest(unittest.TestCase):
         with H.TempRepo() as root:
             env, log = fake_dsh_env(root)
             res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
-            self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
-            self.assertEqual(res["dsh_extensions"], "available")
+            self.assertEqual(dsh_add_calls(log), [" ".join(self.COMMAND)])
+            # ★ add 之后必须再 list 一次复查，否则「返回 0 但其实没装上」会被当成可用
+            self.assertGreaterEqual(len([c for c in dsh_calls(log) if "list" in c]), 2, dsh_calls(log))
+            self.assertEqual(res["dsh_extensions"], "installed")
+            self.assertIn(res["dsh_extensions"], S.DSH_STATE_READY)
             self.assertFalse([w for w in res["warnings"] if "dsh-agent-extension" in w], res["warnings"])
             ops = [a["op"] for a in res["actions"]]
             self.assertEqual(ops.count("dsh-plugin"), 1, ops)
             self.assertLess(ops.index("dsh-plugin"), ops.index("agent-sync"), ops)
 
+    def test_already_installed_skips_add(self):
+        """⛔ 已装就不该再 add：那是一次多余的写动作，也是下游误报的源头。"""
+        with H.TempRepo() as root:
+            env, log = fake_dsh_env(root, preinstalled=True)
+            res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
+            self.assertEqual(res["dsh_extensions"], "already-installed")
+            self.assertEqual(dsh_add_calls(log), [], dsh_calls(log))
+            self.assertFalse([w for w in res["warnings"] if "dsh" in w.lower()], res["warnings"])
+            self.assertFalse(any(a["op"] == "dsh-plugin" for a in res["actions"]), res["actions"])
+
+    def test_add_succeeds_but_recheck_misses_is_not_available(self):
+        with H.TempRepo() as root:
+            env, log = fake_dsh_env(root, add_effect="noop")
+            res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
+            self.assertEqual(res["dsh_extensions"], "not-installed")
+            self.assertNotIn(res["dsh_extensions"], S.DSH_STATE_READY)
+            self.assertEqual(len(dsh_add_calls(log)), 1)
+            self.assertIn("仍看不到", "\n".join(res["warnings"]))
+
     def test_nonzero_install_warns_and_scaffold_continues(self):
         with H.TempRepo() as root:
             env, log = fake_dsh_env(root, exit_code=7)
             res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
-            self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
+            self.assertEqual(dsh_add_calls(log), [" ".join(self.COMMAND)])
             warning = "\n".join(res["warnings"])
             self.assertIn("DSH 命令插件安装失败", warning)
             self.assertIn("exit 7", warning)
             self.assertIn("plugin install failed", warning)
             self.assertIn(self.RETRY, warning)
-            self.assertEqual(res["dsh_extensions"], "unavailable")
+            self.assertEqual(res["dsh_extensions"], "install-failed")
             self.assertTrue((root / ".agents/aidp").is_dir(), "插件安装失败不得回滚脚手架文件")
             self.assertTrue(any(a["op"] == "agent-sync" for a in res["actions"]), res["actions"])
 
-    def test_missing_dsh_warns_and_scaffold_continues(self):
+    def test_missing_dsh_is_unverified_not_absent(self):
+        """⛔ 「本进程定位不到 dsh」既不是「安装失败」也不是「未安装」，只是**未验证**。"""
         with H.TempRepo() as root:
             res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=missing_dsh_env(root))
             warning = "\n".join(res["warnings"])
-            self.assertIn("DSH 命令插件安装失败", warning)
+            self.assertEqual(res["dsh_extensions"], "cli-unavailable")
+            self.assertIn("未验证", warning)
+            self.assertNotIn("未安装", warning)
+            self.assertNotIn("安装失败", warning)
+            self.assertIn("which(dsh)=", warning)
             self.assertIn(self.RETRY, warning)
-            self.assertEqual(res["dsh_extensions"], "unavailable")
             self.assertTrue((root / ".agents/aidp").is_dir())
             self.assertTrue(any(a["op"] == "agent-sync" for a in res["actions"]), res["actions"])
 
@@ -860,17 +928,26 @@ class DshCommandPluginInstallTest(unittest.TestCase):
                     install_kwargs.update(kwargs)
                     raise subprocess.TimeoutExpired(cmd, kwargs["timeout"],
                                                     stderr="plugin timed out\nstill running")
+                # 探测阶段照常放行：先 --version、再 list（清单为空 = 确实没装，才轮到 add）
+                if tuple(cmd) == S.DSH_PLUGIN_VERSION:
+                    return subprocess.CompletedProcess(cmd, 0, "0.1.5-rc.2\n", "")
+                if tuple(cmd) in (S.DSH_PLUGIN_LIST_JSON, S.DSH_PLUGIN_LIST):
+                    return subprocess.CompletedProcess(cmd, 0, "NAME  VERSION\n", "")
                 return real_run(cmd, *args, **kwargs)
 
             options = Namespace(
                 mode="auto", agent="dsh", json=True, user=None, name_cn=None,
                 version="V0.1.0", force=False, keep_backups=L.PRUNE_KEEP_LAST_DEFAULT,
                 keep_days=L.PRUNE_KEEP_DAYS_DEFAULT, no_agent_sync=False, adapter_mode="link")
-            with mock.patch.object(S.subprocess, "run", side_effect=run_with_timeout):
+            with mock.patch.object(S.subprocess, "run", side_effect=run_with_timeout), \
+                 mock.patch.object(S.shutil, "which",
+                                   side_effect=lambda name: "/usr/bin/dsh" if name == "dsh"
+                                   else shutil.which(name)):
                 res = S.run(root, options)
 
             self.assertIs(install_kwargs["stdin"], subprocess.DEVNULL)
             self.assertEqual(install_kwargs["timeout"], 120)
+            self.assertEqual(res["dsh_extensions"], "install-failed")
             warning = "\n".join(res["warnings"])
             self.assertIn("超时 120 秒", warning)
             self.assertIn("plugin timed out still running", warning)
@@ -880,7 +957,7 @@ class DshCommandPluginInstallTest(unittest.TestCase):
     def test_nonzero_detail_is_single_line_and_bounded(self):
         with H.TempRepo() as root:
             env, _ = fake_dsh_env(root, exit_code=9)
-            env["DSH_TEST_MESSAGE"] = "first line\n" + ("x" * 600) + "\nlast line"
+            env["DSH_TEST_MESSAGE"] = "first line " + ("x" * 600) + " last line"
             res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
             warning = next(w for w in res["warnings"] if "DSH 命令插件安装失败" in w)
             self.assertNotIn("\n", warning)
@@ -904,7 +981,8 @@ class DshCommandPluginInstallTest(unittest.TestCase):
             env, log = fake_dsh_env(root)
             res = scaffold(root, "--version", "V0.1.0", "--agent", "dsh", env=env)
             self.assertEqual(res["mode"], "migrate")
-            self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
+            self.assertEqual(dsh_add_calls(log), [" ".join(self.COMMAND)])
+            self.assertEqual(res["dsh_extensions"], "installed")
 
         with H.TempRepo() as root:
             scaffold(root, "--version", "V0.1.0", "--agent", "claude")
@@ -913,7 +991,8 @@ class DshCommandPluginInstallTest(unittest.TestCase):
             res = scaffold(root, env=env)
             self.assertEqual(res["mode"], "upgrade")
             self.assertIn("dsh", res["agents"])
-            self.assertEqual(log.read_text(encoding="utf-8").splitlines(), self.COMMAND)
+            self.assertEqual(dsh_add_calls(log), [" ".join(self.COMMAND)])
+            self.assertEqual(res["dsh_extensions"], "installed")
 
 
 class LegacyRuntimeMigrationTest(unittest.TestCase):
@@ -1128,7 +1207,7 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
             self.assertFalse((root / ".git").exists())
             self.assertFalse(os.path.lexists(root / ".aidp"))
             self.assertTrue((root / ".agents/aidp/scripts/agent_sync.py").is_file())
-            self.assertEqual(result["dsh_extensions"], "unavailable")
+            self.assertEqual(result["dsh_extensions"], "cli-unavailable")
 
     def test_non_git_native_upgrade_without_git_binary(self):
         with tempfile.TemporaryDirectory() as td:

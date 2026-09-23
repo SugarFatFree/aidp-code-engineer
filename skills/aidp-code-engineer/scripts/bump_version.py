@@ -54,7 +54,9 @@ def main(argv=None) -> int:
     if a.dry_run:
         print("（dry-run，未写入）")
         return 0
-    log.write_text(new_text, encoding="utf-8")
+    # ⛔ 不用 write_text：版本变更历史.md 是 `changelog_version()` 的解析对象，
+    #    Windows 写出 CRLF 会把版本号后面带上 \r，进而污染 SCAFFOLD_VERSION 与 CONTRACT_MANIFEST。
+    log.write_bytes(new_text.encode("utf-8"))
     p = subprocess.run([sys.executable, str(HERE / "mirror_to_bundle.py"), "--root", str(root)],
                        capture_output=True, text=True)
     print((p.stdout or "").strip().splitlines()[0] if p.stdout.strip() else "")

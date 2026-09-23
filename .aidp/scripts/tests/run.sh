@@ -24,7 +24,14 @@ failed_suites=()
 total_pass=0
 total_fail=0
 total_skip=0
-log="$(mktemp)"
+lost_suites=()
+# ⛔ 日志不放系统 /tmp：实测同机其它进程的启动清理会把 /tmp 下的文件删掉，
+#   一旦日志中途蒸发，本套件的「N passed / M failed」行就抽不到 → 断言数**静默少算**
+#   （判定不受影响：rc 取子进程退出码，与日志无关；但计数会缩水，正是本仓「分母注水」要防的形态）。
+#   落到仓库内已 gitignore 的本地运行态目录，并在每个套件后硬检测日志是否还在。
+log_dir="$root/memory/.aidp"
+mkdir -p "$log_dir" 2>/dev/null || log_dir="$root"
+log="$(mktemp "$log_dir/test-run.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
 # run <标题> <命令...>：执行一个套件，汇总其「══ 结果：N passed / M failed[ / K skipped] ══」行
@@ -35,6 +42,13 @@ run() {
   suites=$((suites + 1))
   local code=0
   "$@" >"$log" 2>&1 || code=$?
+  if [ ! -f "$log" ]; then
+    # ★ 日志被外部删了：本套件的断言数无从统计。**大声报出来**，不能默默加 0 ——
+    #   静默少算会让总数看起来一切正常，而真实分母已经缺了一块。
+    echo "⚠️ 本套件输出丢失（日志文件被外部清理）：${title} —— 断言计数未计入，子进程退出码 ${code}"
+    lost_suites+=("$title")
+    : >"$log"
+  fi
   cat "$log"
   local line
   line="$(grep -E '══ 结果：[0-9]+ passed / [0-9]+ failed' "$log" | tail -1)"
@@ -103,7 +117,11 @@ run "test_scaffold_lib.py（脚手架侧：脚手架库）" python3 skills/aidp-
 run "test_runtime_layout.py（脚手架侧：Agent 原生运行包渲染）" python3 skills/aidp-code-engineer/scripts/tests/test_runtime_layout.py
 run "test_installed_init_docs.py（脚手架侧：下发文档运行路径）" python3 skills/aidp-code-engineer/scripts/tests/test_installed_init_docs.py
 run "test_scaffold_modes.py（脚手架侧：init / migrate / upgrade 三模式）" python3 skills/aidp-code-engineer/scripts/tests/test_scaffold_modes.py
+run "test_verify_guard_observability.py（脚手架侧：守卫编排可观测性与超时治理）" python3 skills/aidp-code-engineer/scripts/tests/test_verify_guard_observability.py
+run "test_bundle_skill_mask.py（脚手架侧：bundle SKILL 遮名往返）" python3 skills/aidp-code-engineer/scripts/tests/test_bundle_skill_mask.py
 run "test_sync_memory_md.py（脚手架侧：项目记忆文件同步）" python3 skills/aidp-code-engineer/scripts/tests/test_sync_memory_md.py
+run "test_downstream_portability.py（脚手架侧：下游可移植性 —— bundle 布局 / skill 自举安装 / LF 确定性写入 / 非 UTF-8 控制台 / 漂移可观测性）" python3 skills/aidp-code-engineer/scripts/tests/test_downstream_portability.py
+run "test_dsh_plugin_state.py（脚手架侧：DSH 扩展状态机 —— 已装不重复 add / 探测不到 ≠ 未安装 / add 后复查）" python3 skills/aidp-code-engineer/scripts/tests/test_dsh_plugin_state.py
 
 # ── 渲染（需 node）──
 if command -v node >/dev/null 2>&1; then
@@ -118,6 +136,10 @@ echo ""
 echo "════════════════════════════════════════"
 echo "套件 ${suites} 个 · 断言 ${total_pass} passed / ${total_fail} failed / ${total_skip} skipped"
 echo "（跳过项含：依赖脚手架 skill 内部实现的分组，设 AIDP_TEST_SKILL_INTERNALS=1 开启）"
+if [ ${#lost_suites[@]} -gt 0 ]; then
+  echo "⚠️ 有 ${#lost_suites[@]} 个套件的输出丢失、断言数未计入上面的总数：${lost_suites[*]}"
+  echo "   （判定仍以各套件退出码为准；要拿准确计数请单独重跑这些套件）"
+fi
 if [ $rc -eq 0 ]; then
   echo "✅ 全部单测通过"
 else

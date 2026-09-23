@@ -137,8 +137,20 @@ def test_memory_baseline_without_git():
                                 capture_output=True, text=True)
             return cp.returncode, json.loads(cp.stdout)
         code, result = inspect()
-        check("nonGit 无快照时 HEAD 比对 unsupported", code == 3 and result ==
-              {"status": "unsupported", "reason": "vcs-disabled", "capability": "diff"})
+        # ⛔ 不做全字典严格相等：第三态载荷是**会长的契约**（后续新增 applicable / level / na …），
+        #    严格相等会把"补字段"也判成回归，逼着人每加一个字段就改一次断言 —— 那是把门变成噪音。
+        #    这里只钉住消费方真正依赖的几项，外加一条"不得伪报通过"的负断言。
+        check("nonGit 无快照时 HEAD 比对 unsupported",
+              code == 3
+              and result.get("status") == "unsupported"
+              and result.get("reason") == "vcs-disabled"
+              and result.get("capability") == "diff")
+        check("★ 第三态必须带 applicable=false / INFO / N/A 文案（verify 靠这三项判 N/A）",
+              result.get("applicable") is False
+              and str(result.get("level")).upper() == "INFO"
+              and "vcs-disabled" in str(result.get("na")))
+        check("★ 第三态**不得**给 passed（给 true 是假绿、给 false 是假红，两者都比没有更糟）",
+              "passed" not in result)
         mem = _load("memory_snap", MEM)
         mem.take_snapshot(d, [rel])
         code, result = inspect()

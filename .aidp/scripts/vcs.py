@@ -68,3 +68,25 @@ def developer_identity(root: Path | str, explicit_user: str | None = None) -> st
     if env_user:
         return env_user
     return _identity(getpass.getuser()) or "unknown"
+
+def main(argv=None) -> int:
+    """CLI 入口：`python3 {{AIDP_HOME}}/scripts/vcs.py mode [--root DIR]`。
+
+    ⛔ 存在的理由是**消掉双写**：此前 flows / commands 里有 6 处逐字相同的
+    `PYTHONPATH=…/scripts python3 -c 'from vcs import detect_mode; …'` 内联探测。
+    那种写法既撑爆分片体积，又让「探测口径」散成 6 份 —— 改判据时必漏。
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Git 能力探测")
+    ap.add_argument("action", choices=("mode",), help="mode = 打印 git / none")
+    ap.add_argument("--root", default=".", help="项目根（缺省当前目录）")
+    a = ap.parse_args(argv)
+    print(detect_mode(Path(a.root)))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

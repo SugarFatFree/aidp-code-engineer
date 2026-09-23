@@ -17,6 +17,8 @@
 | `版本变更历史.md`「当前范式版本」 | `assets/SCAFFOLD_VERSION` |
 | （派生）受版本门控契约文件的 sha256 指纹 | `assets/CONTRACT_MANIFEST.json` |
 
+可执行位随内容一起镜像（本体 +x → bundle +x）：运行包由 `runtime_layout.render_tree` 经 `shutil.copymode` 从 bundle 取模式，bundle 丢 +x 等于下游所有脚本都丢 +x。`--check` 把模式差异也算作漂移。
+
 `assets/` 完全由本脚本派生：本体已删除的文件会从 bundle 删除，未登记文件视为孤儿（`--check` 报漂移，执行时删除）。
 忽略 `__pycache__`、`*.pyc`、`.DS_Store`、任何 `config.json` / `auth.*.json` / `.env` 凭证文件。
 
@@ -141,19 +143,19 @@ def docs_readme_sources(root: Path):
 
 
 def build_desired(root: Path, skill_dir: Path) -> dict:
-    """{skill 内相对路径: 期望字节}。"""
+    """{skill 内相对路径: 期望字节}；可执行位另由 `desired_exec()` 单独推导。"""
     want = {}
     src_aidp = root / ".aidp"
     for d in L.MIRROR_DIRS:
         for rel, p in L.iter_files(src_aidp / d):
             if L.is_template_owned(f"{d}/{rel}"):
                 continue
-            want[f"assets/aidp/{d}/{rel}"] = p.read_bytes()
+            want[f"assets/aidp/{d}/{L.bundle_mask(rel)}"] = p.read_bytes()
     skills = src_aidp / "skills"
     if skills.is_dir():
         for s in sorted(x for x in skills.iterdir() if x.is_dir() and x.name != L.SKILL_NAME):
             for rel, p in L.iter_files(s):
-                want[f"assets/aidp/skills/{s.name}/{rel}"] = p.read_bytes()
+                want[f"assets/aidp/skills/{s.name}/{L.bundle_mask(rel)}"] = p.read_bytes()
     for src, dst in docs_readme_sources(root):
         want[dst] = src.read_bytes()
     for rel, p in L.iter_files(root / "docs/init"):
@@ -184,13 +186,43 @@ def build_desired(root: Path, skill_dir: Path) -> dict:
     for rel in sorted(want):
         if not rel.startswith("assets/aidp/"):
             continue
-        sub = rel[len("assets/aidp/"):]
+        # ★ 指纹键用**安装路径**、不用 bundle 遮名：键一变，同版本下游会被整批判成契约漂移。
+        sub = L.bundle_unmask(rel[len("assets/aidp/"):])
         if sub.split("/", 1)[0] in L.GATED_DIRS:
             files[sub] = L.sha256(want[rel])
     manifest = {"_doc": "受版本门控的契约文件指纹（相对 .aidp/）；由 mirror_to_bundle.py 生成。",
                 "scaffold_version": version, "files": files}
     want[L.MANIFEST_REL] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     return want
+
+
+def desired_exec(root: Path, skill_dir: Path) -> set:
+    """应带可执行位的 bundle 相对路径集合（口径 = 本体源文件自身的 +x）。
+
+    ⛔ 不能只镜像内容不镜像模式：`runtime_layout.render_tree` 用 `shutil.copymode(source, target)`
+    从 bundle 取模式铺运行包，bundle 全是 644 就意味着**下游运行包里所有脚本都没有 +x**。
+    `aidp_scheduler.py` 生成的 Windows schtasks 定时任务是 `bash -lc "… AIDP_HOME/scripts/agent_loop.sh --once …"`，
+    直接执行该文件 —— 没有 +x 就是 Permission denied，7×24 链路起不来。
+    """
+    execs = set()
+    src_aidp = root / ".aidp"
+    for d in L.MIRROR_DIRS:
+        for rel, p in L.iter_files(src_aidp / d):
+            if L.is_template_owned(f"{d}/{rel}"):
+                continue
+            if p.stat().st_mode & 0o111:
+                execs.add(f"assets/aidp/{d}/{L.bundle_mask(rel)}")
+    skills = src_aidp / "skills"
+    if skills.is_dir():
+        for sk in sorted(x for x in skills.iterdir() if x.is_dir() and x.name != L.SKILL_NAME):
+            for rel, p in L.iter_files(sk):
+                if p.stat().st_mode & 0o111:
+                    execs.add(f"assets/aidp/skills/{sk.name}/{L.bundle_mask(rel)}")
+    return execs
+
+
+def _is_exec(path: Path) -> bool:
+    return bool(path.stat().st_mode & 0o111)
 
 
 def existing_files(skill_dir: Path) -> set:
@@ -207,17 +239,18 @@ def existing_files(skill_dir: Path) -> set:
 
 def plan(root: Path, skill_dir: Path) -> dict:
     want = build_desired(root, skill_dir)
+    execs = desired_exec(root, skill_dir)
     have = existing_files(skill_dir)
     create, update, delete = [], [], []
     for rel, data in sorted(want.items()):
         p = skill_dir / rel
         if rel not in have:
             create.append(rel)
-        elif p.is_symlink() or p.read_bytes() != data:
-            update.append(rel)
+        elif p.is_symlink() or p.read_bytes() != data or _is_exec(p) != (rel in execs):
+            update.append(rel)          # ★ 模式差异也是漂移：只比字节则 +x 丢了永远检不出来
     for rel in sorted(have - set(want)):
         delete.append(rel)
-    return {"want": want, "create": create, "update": update, "delete": delete}
+    return {"want": want, "execs": execs, "create": create, "update": update, "delete": delete}
 
 
 def apply(skill_dir: Path, pl: dict):
@@ -227,6 +260,7 @@ def apply(skill_dir: Path, pl: dict):
             p.unlink()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(pl["want"][rel])       # 只写内容、不带 mtime，避免 git stat 快速路径漏判
+        p.chmod(0o755 if rel in pl["execs"] else 0o644)
     for rel in pl["delete"]:
         (skill_dir / rel).unlink()
     for top in SCAN_ROOTS:                   # 清空目录

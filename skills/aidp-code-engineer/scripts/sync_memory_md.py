@@ -97,7 +97,9 @@ def main(argv=None) -> int:
         print(f"❌ {TPL_REL} 与 {SOURCE_REL} 不一致 → 跑 sync_memory_md.py（或 mirror_to_bundle.py）")
         return 1
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(want, encoding="utf-8")
+    # ⛔ 不用 write_text：本文件产出的 assets/AGENTS.md.tpl **直接参与 mirror 的逐字节比对**，
+    #    Windows 文本模式写出 CRLF 会让 `mirror --check` 当场判漂移，且每次"修复"又写回 CRLF，死循环。
+    dst.write_bytes(want.encode("utf-8"))
     print(f"✅ 已写入 {TPL_REL}")
     return 0
 

@@ -8,6 +8,21 @@ from pathlib import Path
 from typing import Mapping
 
 
+def _is_scaffold_bundle(root: Path) -> bool:
+    """`<skill>/assets/aidp/` —— 脚手架 skill 自带的契约 bundle（模板副本，不是已安装的运行包）。
+
+    只认「三件套齐全」的严格形态：`assets/SCAFFOLD_VERSION`、`assets/CONTRACT_MANIFEST.json`
+    与 skill 自身的 `SKILL.md`。上面两支认的真实运行根（模板维护目录、Agent 原生运行包）都不会
+    命中这一支，所以不放松真实运行根的解析。
+    """
+    assets = root.parent
+    if root.name != "aidp" or assets.name != "assets":
+        return False
+    return ((assets / "SCAFFOLD_VERSION").is_file()
+            and (assets / "CONTRACT_MANIFEST.json").is_file()
+            and (assets.parent / "SKILL.md").is_file())
+
+
 def _natural_layout(script_file: Path | str) -> tuple[Path, Path]:
     path = Path(script_file).expanduser()
     if path.parent.name != "scripts":
@@ -17,6 +32,11 @@ def _natural_layout(script_file: Path | str) -> tuple[Path, Path]:
         return root, root.parent
     if root.name == "aidp" and root.parent.name in {".claude", ".agents"}:
         return root, root.parent.parent
+    # 脚手架 bundle：被 scaffold.py / verify.py 以库的形式 import —— 下游装好的项目里没有模板
+    # 维护目录，bundle 是唯一来源。边界取 `assets/`（bundle 自身的容器）；调用方使用运行根前
+    # 会自行改写 RUNTIME_ROOT，这里只保证 import 期不炸。
+    if _is_scaffold_bundle(root):
+        return root, root.parent
     raise RuntimeError(f"无法从脚本位置解析 AIDP 运行根: {path}")
 
 

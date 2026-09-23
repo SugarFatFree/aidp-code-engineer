@@ -138,7 +138,9 @@ def render_tree(source_root: Path, destination: Path, home: str) -> None:
             relative = source.relative_to(source_root).as_posix()
             if L.is_ignored(source.relative_to(source_root).parts) or _excluded(relative):
                 continue
-            target = destination / relative
+            # bundle 里 SKILL.md 被遮名成 SKILL.md.in，运行包必须落回安装名；
+            # 真源是模板 `.aidp/` 时本调用为空操作（那边不存在遮名）。
+            target = destination / L.bundle_unmask(relative)
             if source.is_symlink():
                 raise RuntimeError(f"运行包真源不得包含 symlink: {source}")
             if source.is_dir():
@@ -149,10 +151,10 @@ def render_tree(source_root: Path, destination: Path, home: str) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             data = source.read_bytes()
             if _is_text(data):
-                target.write_text(
-                    render_text(data.decode("utf-8"), home, template_root=source_root),
-                    encoding="utf-8",
-                )
+                # 必须走字节写：manifest 指纹 / bundle 逐字比对 / 双包规范化三处都按 LF 字节算账，
+                # 用 write_text 会在 Windows 上被翻成 CRLF，整包假漂移。
+                L.write_text_lf(target, render_text(data.decode("utf-8"), home,
+                                                    template_root=source_root))
                 shutil.copymode(source, target)
             else:
                 shutil.copy2(source, target)
@@ -366,10 +368,8 @@ def _runtime_modified(destination: Path) -> bool:
 
 
 def _write_manifest(runtime: Path, manifest: dict) -> None:
-    (runtime / RUNTIME_MANIFEST).write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    L.write_text_lf(runtime / RUNTIME_MANIFEST,
+                    json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
 def _validate_backup(backup: Path, destination: Path, transaction: Path,

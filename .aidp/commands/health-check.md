@@ -83,8 +83,8 @@
 
 ### 9. ★ 脚手架漂移比对（约定 16 回检；仅 AIDP 脚手架项目）
 
-- 若存在 `{{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py` 且 `{version}` 已解析 → 跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . {version} {user} --read-only`（`{version}` 由「前置流程」第 2 步解析，**不写死**），把其 FAIL/ERROR/WARN（尤其契约漂移）汇总为本项状态；`{version}` 缺省 → 标 N/A
-- 命中漂移 → ⚠️ 提示「重跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --mode upgrade` 同步」；无 verify.py（非脚手架项目）→ 标 N/A
+- 若存在 `{{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py` 且 `{version}` 已解析 → 跑 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py . {version} {user} --read-only`（`{version}` 由「前置流程」第 2 步解析，**不写死**），把其 FAIL/ERROR/WARN（尤其契约漂移）汇总为本项状态；`{version}` 缺省 → 标 N/A
+- 命中漂移 → ⚠️ 提示「重跑 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/scaffold.py . --mode upgrade` 同步」；无 verify.py（非脚手架项目）→ 标 N/A
 
 ### 9bis. ★ 已发布 AI 报告的完整性巡检（只读）
 

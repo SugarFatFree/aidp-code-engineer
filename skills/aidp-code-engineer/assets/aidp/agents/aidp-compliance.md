@@ -20,7 +20,7 @@
 |------|---------|---------|
 | `docs/audit/合规检查-{YYYYMMDD}.md` | 创建/修改 | 每次合规检查后归档（仅当存在 ERROR 或 ≥5 个 WARN 时写盘；通过性检查只在终端输出，不污染 docs/） |
 
-> 本 Agent 是**只读审查角色**，**禁止**直接修改任何项目文件（memory/、docs/、{{AIDP_HOME}}/、.claude/ 等）——**唯一例外 = 上表白名单里的 `docs/audit/合规检查-{YYYYMMDD}.md`**。即使发现项目记忆文件 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`）残留 `aidp-code-engineer`、memory 还是模板骨架，也只**报告 + 给出修复指令**，不代用户改写。
+> 本 Agent 是**只读审查角色**，**禁止**直接修改任何项目文件（memory/、docs/、{{AIDP_HOME}}/ 等）——**唯一例外 = 上表白名单里的 `docs/audit/合规检查-{YYYYMMDD}.md`**。即使发现项目记忆文件 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`）残留 `aidp-code-engineer`、memory 还是模板骨架，也只**报告 + 给出修复指令**，不代用户改写。
 
 ---
 
@@ -52,7 +52,7 @@
 ### Step 0：执行 verify.py 拿到全部脚本检查事实
 
 ```bash
-python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py {project_root} {version} {user} --read-only
+python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py {project_root} {version} {user} --read-only
 ```
 
 > verify.py 是**唯一可信的结构化事实源**。你必须先跑它，再做语义判断；不要自己重写它的检查逻辑。
@@ -75,7 +75,7 @@ python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py {project_ro
 | 契约正文守卫 | flow 分片体积、站内锚点、单一信源指针、WebMCP、术语、约定 30 正文、shell 围栏、计数声明、幽灵旗标等（委派 `{{AIDP_HOME}}/scripts/check_*.py`）；仓库根有 `设计目标.md` 时加设计目标棘轮 |
 | 模板自检（仅 `--template`） | 本体 ↔ 脚手架 bundle 一致（`mirror_to_bundle.py --check`）、`assets/AGENTS.md.tpl` 与 `{{AIDP_HOME}}/AIDP-AGENTS.md`（下发记忆源）一致、`版本变更历史.md` / `SCAFFOLD_VERSION` / `CONTRACT_MANIFEST.json` 版本一致 |
 
-> 在 AIDP 模板仓库自身执行时，命令改为 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . --template --read-only`（不传项目版本号，避免按范式版本号建出迭代目录）。
+> 在 AIDP 模板仓库自身执行时，命令改为 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py . --template --read-only`（不传项目版本号，避免按范式版本号建出迭代目录）。
 
 ### Step 1：语义维度 1 — 模板项目残留 + memory 真填充
 
@@ -91,12 +91,12 @@ python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py {project_ro
 
 | 合法形态 | 例子 | 为什么合法 |
 |---------|------|-----------|
-| 路径 | `{{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py` | 脚手架 skill 的真实安装位，命令要照着跑 |
+| 路径 | `{{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py` | 脚手架 skill 的真实安装位，命令要照着跑 |
 | 反引号 SKILL 名 | 「调用 `aidp-code-engineer` 脚手架技能」 | 它就是这个 SKILL 的名字，改掉就调不起来 |
 | 本规则自身 | 本文件这一段 | 规则正文必须写出要扫的关键词，否则没法表达判据 |
 
 故命中后先按下列顺序剔除，**剩下的才报**：
-1. 匹配行含 `skills/aidp-code-engineer`（路径形态，含 `.claude/` `.agents/` `{{AIDP_HOME}}/../` 各种前缀）→ 跳过；
+1. 匹配行含 `skills/aidp-code-engineer`（路径形态，含 `.claude/` `.agents/` 两种运行根前缀）→ 跳过；  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 2. 匹配片段被反引号包住且紧邻上下文是 SKILL 调用语（`调用` / `脚手架` / `skill` / `SKILL`）→ 跳过；
 3. 文件是本规则文件自身（`{{AIDP_HOME}}/agents/aidp-compliance.md`）→ 跳过。
 
@@ -118,7 +118,7 @@ docs/init/00_AIDP范式主文档.md
 **排除路径**（这些是允许出现模板名的"参考层"，不要在这里报警）：
 
 ```
-{{AIDP_HOME}}/../skills/aidp-code-engineer/**       # 脚手架 skill 本体
+{{AIDP_HOME}}/skills/aidp-code-engineer/**       # 脚手架 skill 本体
 {{AIDP_HOME}}/agents/aidp-compliance.md   # 本规则文件自身（正文必须写出关键词，否则自我报警）
 {{AIDP_HOME}}/reference/skills.md         # SKILL 注册表（脚手架那一行就是它的名字）
 docs/init/0?_*.md                         # 范式文档（在举例时合法出现）
@@ -235,7 +235,7 @@ grep -rEoh "(使用|用)[ ]*\`Skill\`[ ]*工具?调用?[ ]*\`[a-z][a-z0-9:-]+\`|
 
 读取 `{{AIDP_HOME}}/reference/skills.md` 中标题含 `{{AIDP_HOME}}/skills/` 的那张表（「本项目自带的 Skills」，按锚点 `{{AIDP_HOME}}/skills/` 匹配标题、不按全名）（**不是**项目记忆文件——Skills 详表在 reference 下），与 `{{AIDP_HOME}}/skills/` 实际子目录集合双向对账。
 
-> ⛔ **只对 `contract` 位对账**：`aidp-code-engineer` 装在并列位 `{{AIDP_HOME}}/../skills/`，在 skills.md 里已单列为「脚手架 Skill」小节、**不在上述那张表内**。锚点 `{{AIDP_HOME}}/skills/` 只会匹配到契约位那张表的标题，故按锚点读即天然排除；若把它算进来，会恒报「注册了 skill aidp-code-engineer 但目录不存在」。位置归属以 `check_skill_ref_drift.py --json` 的 `.skills[名]` 值（`contract` / `sibling`）为准。
+> ⛔ **只对 `contract` 位对账**：`aidp-code-engineer` 装在并列位 `{{AIDP_HOME}}/skills/`，在 skills.md 里已单列为「脚手架 Skill」小节、**不在上述那张表内**。锚点 `{{AIDP_HOME}}/skills/` 只会匹配到契约位那张表的标题，故按锚点读即天然排除；若把它算进来，会恒报「注册了 skill aidp-code-engineer 但目录不存在」。位置归属以 `check_skill_ref_drift.py --json` 的 `.skills[名]` 值（`contract` / `sibling`）为准。
 
 - 表里有，目录里没有 → ERROR「skills.md 注册了 skill X 但目录不存在」
 - 目录里有，表里没有 → WARN「skill X 已存在但未在 skills.md 注册」

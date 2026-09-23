@@ -46,8 +46,8 @@ class BundleMaskTest(unittest.TestCase):
 
     def test_render_tree_restores_installed_names(self):
         with tempfile.TemporaryDirectory() as td:
-            dest = Path(td) / ".agents/aidp"
-            RL.render_tree(L.BUNDLE_AIDP, dest, ".agents/aidp")
+            dest = Path(td) / ".agents"
+            RL.render_tree(L.BUNDLE_AIDP, dest, ".agents")
             leftover = sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*.in"))
             self.assertEqual(leftover, [], f"运行包残留遮名文件：{leftover}")
             restored = sorted(p.relative_to(dest).as_posix() for p in dest.rglob("SKILL.md"))
@@ -97,10 +97,10 @@ class ConsumersTolerateMaskTest(unittest.TestCase):
             src = root / "src"
             (src / "skills/demo").mkdir(parents=True)
             (src / "skills/demo/SKILL.md.in").write_text("x\n", encoding="utf-8")
-            journal.expect_tree(root / ".agents/aidp", src)
+            journal.expect_tree(root / ".agents", src)
             created = {p.as_posix() for p in journal.created}
-            self.assertIn(".agents/aidp/skills/demo/SKILL.md", created)
-            self.assertNotIn(".agents/aidp/skills/demo/SKILL.md.in", created)
+            self.assertIn(".agents/skills/demo/SKILL.md", created)
+            self.assertNotIn(".agents/skills/demo/SKILL.md.in", created)
 
 
 if __name__ == "__main__":

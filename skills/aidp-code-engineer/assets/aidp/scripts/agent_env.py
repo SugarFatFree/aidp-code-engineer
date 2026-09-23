@@ -12,7 +12,7 @@
 
 判定顺序（`detect_agents`）：
   1. 环境变量 `AIDP_AGENT`（逗号分隔，如 `claude,codex`）—— 显式声明优先；
-  2. 根目录标记目录：`.codex/` → codex、`.dsh/` → dsh、`.claude/` → claude；
+  2. 根目录标记目录：`.codex/` → codex、`.dsh/` → dsh、`.claude/` → claude；  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
   3. 都没有 → `["claude"]`。
 
 `memory_file` 额外规则：`AGENTS.md` 已存在且 `CLAUDE.md` 仅为 `@AGENTS.md` 薄壳 → `AGENTS.md`

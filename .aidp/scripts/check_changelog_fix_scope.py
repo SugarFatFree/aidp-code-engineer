@@ -55,7 +55,7 @@ EMPTY_DECL = "本版无面向已发布版本的缺陷修复"
 _LEGACY_AIDP_PREFIX = re.escape(".aidp") + "/"
 NON_CODE_RE = re.compile(
     r"^(docs/|memory/|" + _LEGACY_AIDP_PREFIX
-    + r"|\.claude/|\.agents/|\.codex/|\.dsh/|tests/|[^/]*\.md$|README)"
+    + r"|\.claude/|\.agents/|\.codex/|\.dsh/|tests/|[^/]*\.md$|README)"  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
 )
 
 

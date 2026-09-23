@@ -23,7 +23,7 @@
 ## Phase 0：★ 确定性骨架产出（与 `/sprint-init` 同一步，⛔ 不靠"记得手工建"）
 
 ```bash
-python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}
+python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}
 ```
 
 目录骨架 / 契约文件 / 工具脚本一律由脚手架产出（`{{AIDP_HOME}}/scripts/`、`.claude/settings.json`、

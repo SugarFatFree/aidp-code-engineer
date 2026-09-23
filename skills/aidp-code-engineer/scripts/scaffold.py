@@ -171,7 +171,7 @@ def resolve_agents(root: Path, arg: str, interactive: bool):
     if any((root / home / runtime_layout.RUNTIME_MANIFEST).is_file()
            for home in runtime_layout.RUNTIME_HOME.values()):
         active = []
-        if (root / ".claude/aidp" / runtime_layout.RUNTIME_MANIFEST).is_file():
+        if (root / runtime_layout.RUNTIME_HOME["claude"] / runtime_layout.RUNTIME_MANIFEST).is_file():
             active.append("claude")
         codex = root / ".codex/skills/aidp"
         if codex.is_dir() and any(path.is_file() for path in codex.glob("*/SKILL.md")):
@@ -729,7 +729,7 @@ def sync_delivered_file(root: Path, rel: str, sp: Path, bundle_rel: str, bk: "Ba
 
 def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup", agents: list):
     base = L.ASSETS / "docs"
-    home = ".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp"
+    home = runtime_home_for(agents)
     for rel, sp in L.iter_files(base):
         dp = root / "docs" / rel
         data = sp.read_bytes()
@@ -827,7 +827,7 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
 
 def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
     readme = root / "README.md"
-    home = ".claude/aidp" if list(agents) == ["claude"] else ".agents/aidp"
+    home = runtime_home_for(agents)
     if not readme.exists():
         body = L.render((L.ASSETS / "root/README.md.tpl").read_text(encoding="utf-8"), ctx)
         L.write_text_lf(readme, body.replace("{{AIDP_HOME}}", home))
@@ -839,7 +839,10 @@ def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
             rep.warn("README.md 不是 UTF-8，保留原文件，跳过运行路径归一")
         else:
             refreshed = original
-            for old_home in (".aidp", ".claude/aidp", ".agents/aidp"):
+            # ⛔ 顺序必须「长在前」：`.claude/aidp` 要先于 `.claude` 匹配，否则前缀先被换掉、
+            #    留下 `/aidp` 尾巴。历史两种嵌套形态与当前两种平铺形态都要能归一。
+            for old_home in (".claude/aidp", ".agents/aidp", ".aidp",
+                             *sorted(runtime_layout.RUNTIME_HOME.values())):
                 if old_home != home:
                     refreshed = refreshed.replace(
                         f"python3 {old_home}/scripts/aidp_scheduler.py",
@@ -866,7 +869,7 @@ def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
 def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: bool, rep: Report, bk: "Backup"):
     tpl_path = L.SKILL_DIR / L.MEMORY_TPL_REL
     rendered = L.render(tpl_path.read_text(encoding="utf-8"), ctx)
-    home = ".claude/aidp" if list(agents) == ["claude"] else ".agents/aidp"
+    home = runtime_home_for(agents)
     rendered = rendered.replace("{{AIDP_HOME}}", home)
     bodies = L.memory_bodies(root)
     target = L.memory_target(root, agents)
@@ -1107,7 +1110,7 @@ def install_dsh_command_plugin(mode: str, agents, rep: Report):
 
 
 def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> dict:
-    home = (".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp")
+    home = runtime_home_for(agents)
     script = root / home / "scripts/agent_sync.py"
     if not script.is_file() and not strict:
         script = root / ".aidp/scripts/agent_sync.py"
@@ -1134,6 +1137,26 @@ def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> 
 
 
 # ── Agent 原生运行包 ─────────────────────────────────────────────────────────
+def _target_runtime_homes(agents) -> set:
+    """本次装配会铺出的全部运行根（并存时两个）。"""
+    homes = set()
+    if "claude" in agents:
+        homes.add(runtime_layout.RUNTIME_HOME["claude"])
+    if {"codex", "dsh"} & set(agents):
+        homes.add(runtime_layout.RUNTIME_HOME["shared"])
+    return homes
+
+
+def runtime_home_for(agents) -> str:
+    """本次装配的运行根。单一信源 = `runtime_layout.RUNTIME_HOME`。
+
+    ⛔ 别再就地写 `".agents/aidp" if ... else ".claude/aidp"`：此前全文散了 7 处，
+    其中两处还用了另一种等价写法（`list(agents) == ["claude"]`）—— 改运行根时必漏。
+    """
+    key = "shared" if {"codex", "dsh"} & set(agents) else "claude"
+    return runtime_layout.RUNTIME_HOME[key]
+
+
 def _runtime_source() -> Path:
     return L.template_aidp() or L.BUNDLE_AIDP
 
@@ -1141,10 +1164,10 @@ def _runtime_source() -> Path:
 def _native_namespaces(root: Path, agents: list):
     paths = []
     if "claude" in agents:
-        paths.extend((".claude", ".claude/aidp", ".claude/commands",
+        paths.extend((".claude", ".claude/commands",
                       ".claude/skills", ".claude/plugins"))
     if "codex" in agents or "dsh" in agents:
-        paths.extend((".agents", ".agents/aidp", ".agents/skills"))
+        paths.extend((".agents", ".agents/skills"))
     if "codex" in agents:
         paths.extend((".codex", ".codex/skills", ".codex/skills/aidp"))
     if "dsh" in agents:
@@ -1160,10 +1183,12 @@ def _native_namespaces(root: Path, agents: list):
         if os.path.lexists(disabled) and (disabled.is_symlink() or not disabled.is_file()
                                            or disabled.read_text(encoding="utf-8") != "disabled\n"):
             raise ValueError(f"Agent 禁用标记含用户内容，拒绝修改：{disabled}")
+    # 历史嵌套形态（`.claude/aidp`）若还在，同样要求受管 manifest 才允许接管；
+    # 新形态的运行根是 `.claude` / `.agents` 本身，它天然含别人的东西，不能按这条判。
     for rel in (".claude/aidp", ".agents/aidp"):
         target = root / rel
         if target.is_dir() and not (target / runtime_layout.RUNTIME_MANIFEST).is_file():
-            raise ValueError(f"同名运行目录没有受管 manifest，拒绝覆盖：{target}")
+            raise ValueError(f"旧运行目录没有受管 manifest，拒绝接管：{target}")
 
 
 def _preflight_native_entries(root: Path, agents: list, source: Path):
@@ -1172,24 +1197,35 @@ def _preflight_native_entries(root: Path, agents: list, source: Path):
                 if p.stem.upper() != "README")
     for name in commands:
         if "claude" in agents:
-            targets.append(root / ".claude/commands" / f"{name}.md")
+            if f"{runtime_layout.RUNTIME_HOME['claude']}/commands" != ".claude/commands":
+                targets.append(root / ".claude/commands" / f"{name}.md")
         if "codex" in agents:
             targets.append(root / ".codex/skills/aidp" / name)
         if "dsh" in agents:
             targets.append(root / ".dsh/commands" / f"{name}.md")
+    # ⛔ 恒等落点不进预登记：运行根降层之后 `.claude/skills` / `.agents/skills` 既是 Agent 的
+    #    发现位、又是运行包自己的 skills 目录 —— 那里的条目由 render_runtime 铺出，天然没有
+    #    适配层的生成标记。把它们当"待写入的适配入口"预检，必然一律判成"已有用户内容"。
+    def _adapter_rel(agent_home: str, sub: str) -> str:
+        return f"{agent_home}/{sub}"
+
+    _identity = {f"{home}/skills" for home in runtime_layout.RUNTIME_HOME.values()}
+    _identity |= {f"{home}/commands" for home in runtime_layout.RUNTIME_HOME.values()}
+    _identity |= {f"{home}/plugins" for home in runtime_layout.RUNTIME_HOME.values()}
     for skill in (source / "skills").iterdir():
         if not (skill / "SKILL.md").is_file() or skill.name == L.SKILL_NAME:
             continue
-        if "claude" in agents:
+        if "claude" in agents and _adapter_rel(".claude", "skills") not in _identity:
             targets.append(root / ".claude/skills" / skill.name)
-        if {"codex", "dsh"} & set(agents):
+        if {"codex", "dsh"} & set(agents) and _adapter_rel(".agents", "skills") not in _identity:
             targets.append(root / ".agents/skills" / skill.name)
     for plugin in (source / "plugins").iterdir():
         if not plugin.is_dir():
             continue
-        if "claude" in agents:
+        if "claude" in agents and ".claude/plugins" not in _identity:
             targets.append(root / ".claude/plugins" / plugin.name)
-        if {"codex", "dsh"} & set(agents) and (plugin / "skills").is_dir():
+        if {"codex", "dsh"} & set(agents) and (plugin / "skills").is_dir() \
+                and ".agents/skills" not in _identity:
             targets.append(root / ".agents/skills" / plugin.name)
     if "claude" in agents:
         targets.append(root / ".claude/skills" / L.SKILL_NAME)
@@ -1218,8 +1254,13 @@ def _preflight_native_entries(root: Path, agents: list, source: Path):
 
 def _preflight_native_adapter(root: Path, agents: list, source: Path):
     old_source = agent_adapter.RUNTIME_ROOT
+    old_expected = agent_adapter.EXPECTED_RUNTIME_REL
     try:
         agent_adapter.RUNTIME_ROOT = source
+        # 预检期运行包还没铺出，探测不到；直接告知本次**全部**目标运行根。
+        # ⛔ 必须是集合：Claude 与 Codex/DSH 并存时要装两个运行包，只告知其一会让
+        #    另一个的目录被当成"真适配位"，预检把运行包将要铺出的条目判成用户内容拒绝覆盖。
+        agent_adapter.EXPECTED_RUNTIME_REL = _target_runtime_homes(agents)
         plugins = agent_adapter._plugin_dirs(root)
         plugin_skills = agent_adapter._plugin_skill_dirs(plugins)
         public = agent_adapter._base_skill_dirs(root)
@@ -1242,6 +1283,7 @@ def _preflight_native_adapter(root: Path, agents: list, source: Path):
         raise ValueError(str(exc)) from exc
     finally:
         agent_adapter.RUNTIME_ROOT = old_source
+        agent_adapter.EXPECTED_RUNTIME_REL = old_expected
 
 
 def _is_self_skill_target(target: Path) -> bool:
@@ -1273,8 +1315,10 @@ def _skill_tree_state(directory: Path) -> dict:
 
 
 def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
-    for rel, home in ((".claude/skills", ".claude/aidp") if "claude" in agents else (None, None),
-                      (".agents/skills", ".agents/aidp") if {"codex", "dsh"} & set(agents)
+    _claude_home = runtime_layout.RUNTIME_HOME["claude"]
+    _shared_home = runtime_layout.RUNTIME_HOME["shared"]
+    for rel, home in ((".claude/skills", _claude_home) if "claude" in agents else (None, None),
+                      (".agents/skills", _shared_home) if {"codex", "dsh"} & set(agents)
                       else (None, None)):
         if rel is None:
             continue
@@ -1451,7 +1495,7 @@ def _restore_native_snapshot(original: Path, target: Path):
 
 
 def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, agents: list):
-    home = ".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp"
+    home = runtime_home_for(agents)
     cmd = [sys.executable, str(root / home / "scripts/agent_sync.py"), "--root", str(root),
            "--agents", ",".join(agents), "--mode", "copy", "--check"]
     process = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -1471,7 +1515,8 @@ def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, age
             continue
         source_name = action.get("from", "")
         if source_name.startswith("AIDP_HOME/"):
-            family = ".claude/aidp" if action["path"].startswith(".claude/") else ".agents/aidp"
+            family = (runtime_layout.RUNTIME_HOME["claude"] if action["path"].startswith(".claude/")
+                      else runtime_layout.RUNTIME_HOME["shared"])
             source = root / family / source_name[len("AIDP_HOME/"):]
         else:
             source = Path(source_name)
@@ -1600,11 +1645,16 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                     "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     specs = []
     if "claude" in agents:
-        specs.append(("claude", ".claude/aidp"))
+        specs.append(("claude", runtime_layout.RUNTIME_HOME["claude"]))
     if {"codex", "dsh"} & set(agents):
-        specs.append(("shared", ".agents/aidp"))
+        specs.append(("shared", runtime_layout.RUNTIME_HOME["shared"]))
     overlay_updates = set()
-    if len(specs) == 2 and all((root / home).is_dir() for _kind, home in specs):
+    # ⛔ 判据是「受管 manifest 在不在」，不是「目录在不在」：运行根降层后就是 `.claude` /
+    #    `.agents` 本身，而它们作为 Agent 标记目录**空着也存在**，按目录判会去读不存在的 manifest。
+    def _installed(home: str) -> bool:
+        return (root / home / runtime_layout.RUNTIME_MANIFEST).is_file()
+
+    if len(specs) == 2 and all(_installed(home) for _kind, home in specs):
         overlays = {home: runtime_layout._user_overlay(root / home, home, kind)
                     for kind, home in specs}
         first, second = (home for _kind, home in specs)
@@ -1616,7 +1666,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     journal.migration_stage = "render-runtime"
     for kind, home in specs:
         dest = root / home
-        if dest.is_dir():
+        if _installed(home):
             current = dest / runtime_layout.RUNTIME_MANIFEST
             manifest = json.loads(current.read_text(encoding="utf-8"))
             if manifest.get("version") == scaffold_raw and not a.force and home not in overlay_updates:
@@ -1736,7 +1786,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     for _kind, home in specs:
         runtime_layout.validate_runtime(root / home, expected_home=home)
     if not a.no_agent_sync:
-        adapter_home = ".agents/aidp" if {"codex", "dsh"} & set(agents) else ".claude/aidp"
+        adapter_home = runtime_home_for(agents)
         check = subprocess.run(
             [sys.executable, str(root / adapter_home / "scripts/agent_sync.py"),
              "--root", str(root), "--agents", ",".join(agents), "--mode", "copy", "--check"],

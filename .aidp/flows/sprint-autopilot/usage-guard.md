@@ -62,7 +62,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除三
 
 ## 输出示例
 
-> 📄 各场景（PRD 无变化 / 有更新触发 / 首次缺 autopilot_decisions / 规划已存在跳过）的**终端输出示例**已外置到 `{{AIDP_HOME}}/../skills/aidp-code-engineer/references/autopilot/output-examples.md`（纯说明、执行时无需载入；想看命令打印样子时按需查阅）。
+> 📄 各场景（PRD 无变化 / 有更新触发 / 首次缺 autopilot_decisions / 规划已存在跳过）的**终端输出示例**已外置到 `{{AIDP_HOME}}/skills/aidp-code-engineer/references/autopilot/output-examples.md`（纯说明、执行时无需载入；想看命令打印样子时按需查阅）。
 
 ---
 

@@ -49,4 +49,4 @@
 
 1. 必须有**至少一处指针**指过来 —— 否则实际上没人会读到它。⚠️ **这一条目前没有机器门**：`verify.py` 的孤儿检查只管本体↔bundle 镜像，`check_singlesource_pointer.py` 只做**正向**指针可解析性，都不反向校验「本目录某文件有没有被指过」。靠人守。
 2. 在上表登记一行。
-3. 跑一次 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/mirror_to_bundle.py` 镜像进脚手架。
+3. 跑一次 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/mirror_to_bundle.py` 镜像进脚手架。

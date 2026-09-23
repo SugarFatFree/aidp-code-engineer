@@ -17,7 +17,12 @@ from typing import Callable, Dict, Optional
 import scaffold_lib as L
 
 RUNTIME_MANIFEST = ".aidp-runtime.json"
-RUNTIME_HOME = {"claude": ".claude/aidp", "shared": ".agents/aidp"}
+# 运行包互斥锁：本机运行态（0 字节载体，按设计释放后保留供下次复用），不入库。
+RUNTIME_LOCK = ".aidp-runtime.lock"
+# 运行根即 Agent 自己的目录，契约平铺其下（对齐 Claude Code 原生发现路径：
+# .claude/agents|commands|skills|hooks 都是官方位置，套一层 aidp/ 等于谁也发现不了）。
+# 所有权边界见 OWNED_TOPLEVEL：运行根里还住着 settings.json / worktrees/ 与项目自有条目。
+RUNTIME_HOME = {"claude": ".claude", "shared": ".agents"}
 RUNTIME_DIRS = L.RUNTIME_DIRS
 RUNTIME_EXCLUDES = L.RUNTIME_EXCLUDES
 # 运行根下**唯一**归脚手架所有的顶层条目。⛔ 这是所有权边界：枚举、比对、替换、删除
@@ -37,9 +42,10 @@ def owned_entries(root: Path):
         if not base.is_dir():
             continue
         for child in sorted(base.iterdir()):
-            if L.is_ignored((dirname, child.name)):
+            relative = f"{dirname}/{child.name}"
+            if L.is_ignored((dirname, child.name)) or _excluded(relative):
                 continue
-            yield f"{dirname}/{child.name}", child
+            yield relative, child
 
 
 _TOKEN_RE = re.compile(r"\{\{AIDP_[A-Z0-9_]+\}\}")
@@ -81,6 +87,8 @@ def _assert_contained(path: Path, boundary: Path) -> Path:
 
 
 def _default_boundary(destination: Path) -> Path:
+    # 运行根就是 `.claude` / `.agents` 本身，其父目录即项目根 = 受管边界。
+    # （历史嵌套形态 `.claude/aidp` 的父目录是 `.claude`，需再上一级，故两支都留。）
     parent = destination.parent
     if parent.name in {".claude", ".agents"}:
         return parent.parent
@@ -118,13 +126,40 @@ def _template_path_leaks(line: str, template_root: object) -> bool:
     return bool(pattern.search(normalized_line))
 
 
+def _reject_hardcoded_home(text: str, home: str) -> None:
+    """契约正文不得把**别的 Agent 的**运行根写死（该用 `{{AIDP_HOME}}`）。
+
+    判据有四层收窄，缺一不可：
+    1. **只查非本次渲染目标的那个运行根** —— 运行根降层后就是 `.claude` / `.agents` 本身，
+       渲染进 `.claude` 的包里出现 `.claude/commands/` 与 `{{AIDP_HOME}}/commands/` 渲染结果
+       逐字相同、无害；真正会出错的是把**另一个** Agent 的根烙进去（`.agents/...` 进了
+       Claude 包），那才是这道门存在的理由。
+    2. **只认「运行根 + 受管目录」**，不认运行根裸串 —— 正文里合法地提到
+       `.claude/settings.json`、`.claude/skills/aidp-code-engineer` 这类非运行契约的落点。
+    3. **排除 `~/` 前缀** —— `~/.claude/plugins/cache/…` 是用户级路径，与项目运行根无关；
+       `reference/skills.md` 正是靠"项目级 vs 用户级"的对比在讲清楚一件事。
+    4. **认 `runtime-path-ignore:` 豁免** —— 适配位对照表要逐字写出两个 Agent 的目录。
+    """
+    foreign = [value for value in RUNTIME_HOME.values() if value != home]
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if _IGNORE_PATH_RE.search(line):
+            continue
+        for hardcoded_home in foreign:
+            for owned in RUNTIME_DIRS:
+                needle = f"{hardcoded_home}/{owned}/"
+                index = line.find(needle)
+                while index != -1:
+                    if line[max(0, index - 2):index] != "~/":
+                        raise ValueError(
+                            f"模板必须使用 {{{{AIDP_HOME}}}}，不得硬编码 {needle}（第 {line_no} 行）")
+                    index = line.find(needle, index + 1)
+
+
 def render_text(text: str, home: str, template_root: object = None) -> str:
     """渲染 UTF-8 契约，并拒绝 token、旧路径和模板绝对路径泄露。"""
     if home not in RUNTIME_HOME.values():
         raise ValueError(f"未知 AIDP_HOME: {home}")
-    for hardcoded_home in RUNTIME_HOME.values():
-        if hardcoded_home in text:
-            raise ValueError(f"模板必须使用 {{{{AIDP_HOME}}}}，不得硬编码 {hardcoded_home}")
+    _reject_hardcoded_home(text, home)
     rendered = text.replace("{{AIDP_HOME}}", home)
     unknown = sorted(set(_TOKEN_RE.findall(rendered)))
     if unknown:
@@ -219,6 +254,12 @@ def _runtime_files(runtime: Path):
             raise ValueError(f"运行包不得包含 hardlink: {path}")
         if L.is_ignored(relative.parts):
             continue
+        # ⛔ 必须应用 RUNTIME_EXCLUDES：运行根降层之后，脚手架 skill 装在
+        #    `skills/aidp-code-engineer/` —— 那是**安装器自身**、不是运行契约，
+        #    它的 SKILL.md 里合法地写着 `.aidp/`（维护文档）。不排除的话：
+        #    ① 旧路径检查当场判红；② 它的文件被算成"运行包多出来的"造成指纹漂移。
+        if _excluded(relative.as_posix()):
+            continue
         if path.is_file() and path.name != RUNTIME_MANIFEST:
             yield relative.as_posix(), path
 
@@ -307,6 +348,23 @@ def _manifest_user_files(manifest: dict, contract: Optional[set] = None) -> set:
     return set(user_files)
 
 
+ADAPTER_MARKER = ".aidp-generated"
+
+
+def _adapter_generated(runtime: Path, relative: str) -> bool:
+    """这个条目属于**适配层产物**（`agent_sync` 生成的入口），既非运行契约也非用户文件。
+
+    降层之后适配层会把插件 SKILL 命名空间写进 `skills/<plugin>/` —— 那正落在运行包自己的
+    受管目录里。不排除它：① 会被当成用户文件跨版本携带；② Claude 包与 shared 包各自生成的
+    内容不同，双包比对当场报"用户文件冲突"，升级直接失败。判据用适配层自己的生成标记。
+    """
+    parts = relative.split("/")
+    for depth in range(1, len(parts)):
+        if (runtime.joinpath(*parts[:depth]) / ADAPTER_MARKER).is_file():
+            return True
+    return False
+
+
 def _user_overlay(runtime: Path, home: str, source: str,
                   contract: Optional[set] = None) -> Dict[str, dict]:
     manifest = _read_manifest(runtime)
@@ -318,7 +376,7 @@ def _user_overlay(runtime: Path, home: str, source: str,
     actual = dict(_runtime_files(runtime))
     overlay = {}
     for relative, path in actual.items():
-        if not _user_owned_path(relative):
+        if not _user_owned_path(relative) or _adapter_generated(runtime, relative):
             continue
         if relative in user_files or relative not in expected \
                 or (relative in L.USER_FILLABLE_CONTRACTS
@@ -342,8 +400,20 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
     _manifest_user_files(manifest)
     expected_files = manifest["files"]
     actual = {relative: _file_metadata(path) for relative, path in _runtime_files(runtime)}
-    if dict(sorted(expected_files.items())) != dict(sorted(actual.items())):
-        raise ValueError("运行包文件指纹漂移")
+    # ⛔ 判据是「清单内的文件缺了或变了」，不是「实际集合与清单完全相等」：
+    #    运行根降层之后那批目录是**共享的** —— 脚手架 skill 装在 `skills/aidp-code-engineer/`、
+    #    插件 namespace 由 agent_sync 铺在 `skills/<plugin>/`、项目还会有自有的 skill 与命令。
+    #    按"完全相等"判，这些统统算漂移，而它们本就不归运行包管。
+    missing = sorted(set(expected_files) - set(actual))
+    changed = sorted(name for name, meta in expected_files.items()
+                     if name in actual and actual[name] != meta)
+    if missing or changed:
+        detail = []
+        if missing:
+            detail.append(f"缺失 {len(missing)} 个（{'、'.join(missing[:3])}）")
+        if changed:
+            detail.append(f"改动 {len(changed)} 个（{'、'.join(changed[:3])}）")
+        raise ValueError("运行包文件指纹漂移：" + "；".join(detail))
     home = expected_home or RUNTIME_HOME[manifest["source"]]
     _validate_source_home(manifest["source"], home)
     for relative, path in _runtime_files(runtime):
@@ -358,21 +428,143 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
                 raise ValueError(f"运行包含旧路径: {relative}")
         if "{{AIDP_HOME}}" in text:
             raise ValueError(f"运行包含未解析 AIDP_HOME: {relative}")
-        for configured_home in RUNTIME_HOME.values():
-            if configured_home != home and configured_home in text:
-                raise ValueError(f"运行包含其他目标的 AIDP_HOME: {relative}")
+        # 与 `_reject_hardcoded_home` 同一口径：只查「别的 Agent 的运行根 + 受管目录」，
+        # 且认 `runtime-path-ignore` 豁免。按裸串查会把适配位对照表（必须同时写出
+        # `.claude/skills/` 与 `.agents/skills/`）整片判红，而那些行正是要逐字写出来的。
+        for line in text.splitlines():
+            if _IGNORE_PATH_RE.search(line):
+                continue
+            for configured_home in RUNTIME_HOME.values():
+                if configured_home == home:
+                    continue
+                for owned in RUNTIME_DIRS:
+                    needle = f"{configured_home}/{owned}/"
+                    index = line.find(needle)
+                    while index != -1:
+                        if line[max(0, index - 2):index] != "~/":
+                            raise ValueError(
+                                f"运行包含其他目标的 AIDP_HOME: {relative}（{needle}）")
+                        index = line.find(needle, index + 1)
     if home not in RUNTIME_HOME.values():
         raise ValueError(f"非法 expected_home: {home}")
     return manifest
 
 
+# Agent 自己在运行根下拥有的**非运行契约**条目。降层后运行根与 Agent 目录同名，
+# `.claude/settings.json` 这类字面量与 `{{AIDP_HOME}}/commands/` 这类渲染产物混在同一行里，
+# 只能靠"后面跟的是谁的东西"区分。⛔ 这个名单只收**确定不属于运行契约**的条目。
+AGENT_OWNED_ENTRIES = frozenset({
+    "settings.json", "settings.local.json", "worktrees",
+    "hooks.json", "mcp.json", "config.toml", "statsig", "ide",
+})
+_LEADING_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def _restore_home_token(line: str, home: str) -> str:
+    """把渲染出的运行根反解回 `{{AIDP_HOME}}`，**只认渲染端会产出的两种形态**。
+
+    渲染端只做一件事：`{{AIDP_HOME}}` → home。于是反解的合法输入也只有两种 ——
+    `home/<受管目录>` 与裸 `home/`（其后不接标识符字符）。
+
+    ⛔ 不能无差别 `line.replace(home, token)`：`.claude/settings.json` 里的 `.claude`
+    不是运行路径而是 Agent 目录，反解后 Claude 包会变成 `{{AIDP_HOME}}/settings.json`、
+    shared 包保持原样 —— 双包规范化当场分叉，而两包本该规范化成同一份。
+    """
+    out, index = [], 0
+    needle = home + "/"
+    while True:
+        found = line.find(needle, index)
+        if found == -1:
+            out.append(line[index:])
+            break
+        out.append(line[index:found])
+        rest = line[found + len(needle):]
+        segment = _LEADING_SEGMENT_RE.match(rest)
+        literal = (line[max(0, found - 2):found] == "~/"         # 用户级路径 `~/.claude/...`
+                   or (segment and segment.group(0) in AGENT_OWNED_ENTRIES))
+        out.append(needle if literal else "{{AIDP_HOME}}/")
+        index = found + len(needle)
+    line = "".join(out)
+    # 裸运行根（后面不接 `/`，如用户文件内容 "new .claude"）：同样要反解，
+    # 否则双包比较会因这类内容天然不同而分叉。`~` 前缀仍排除。
+    out, index = [], 0
+    while True:
+        found = line.find(home, index)
+        if found == -1:
+            out.append(line[index:])
+            break
+        after = line[found + len(home): found + len(home) + 1]
+        out.append(line[index:found])
+        keep = after == "/" or line[max(0, found - 1):found] == "~" or after.isalnum()
+        out.append(home if keep else "{{AIDP_HOME}}")
+        index = found + len(home)
+    return "".join(out)
+
+
+def rendered_from_source(source_root: Path, home: str) -> Dict[str, dict]:
+    """真源按 `home` 渲染后的**期望内容**（安装名 + 内容 + 权限）。
+
+    ★ 双包一致性的判据用它，而不是"把各自运行根反解回 token 再比"：降层之后运行根字符串
+    与 Agent 自有路径同名（`.claude/settings.json` 与 `{{AIDP_HOME}}/commands/` 同现一行），
+    反解无法可靠区分谁是渲染产物、谁是本来就该写死的字面量 —— 那条路是结构性不可判定的。
+    直接比"包 == 同一真源按各自 home 渲染的结果"既无歧义，又比反解更强。
+    """
+    expected = {}
+    for relative, path in _source_contract_files(Path(source_root)):
+        data = path.read_bytes()
+        if _is_text(data):
+            data = render_text(data.decode("utf-8"), home,
+                               template_root=source_root).encode("utf-8")
+        expected[relative] = {"content": data, "mode": _file_mode(path)}
+    return expected
+
+
+def packages_share_one_source(packages, source_root: Path) -> bool:
+    """`packages` = [(运行包路径, home), …]：两包是否**一致**。
+
+    分两侧判，缺一不可：
+    · **契约侧** —— 每个包里由真源提供的文件，必须逐字等于该真源按自己 home 渲染的结果。
+    · **用户侧** —— manifest 登记的 `user_files`（项目自己填的、跨包同步的那些）在两包间
+      规范化后必须相同；它们不在真源里，只能靠反解比较。
+
+    ⛔ 别退回"整包反解后相等"：运行根降层后运行根字符串与 Agent 自有路径同名，
+    契约正文里的字面量无法与渲染产物区分，那条路结构性不可判定（见 `_restore_home_token`）。
+    """
+    user_views = []
+    for runtime, home in packages:
+        runtime = Path(runtime)
+        expected = rendered_from_source(Path(source_root), home)
+        # ⛔ 适配层产物（agent_sync 生成的插件 SKILL 命名空间）要排除：它落在运行包的受管目录里，
+        #    但既不是契约（真源里没有）也不是用户物，两包各自生成的内容还不同 —— 算进来必然判不一致。
+        actual = {relative: {"content": path.read_bytes(), "mode": _file_mode(path)}
+                  for relative, path in _runtime_files(runtime)
+                  if not _adapter_generated(runtime, relative)}
+        user_names = set(_read_manifest(runtime).get("user_files") or []) \
+            if (runtime / RUNTIME_MANIFEST).is_file() else set()
+        contract_actual = {k: v for k, v in actual.items() if k not in user_names}
+        if contract_actual != {k: v for k, v in expected.items() if k not in user_names}:
+            return False
+        user_views.append({k: normalize_runtime(runtime, home)[k]
+                           for k in user_names if k in actual})
+    return all(view == user_views[0] for view in user_views[1:])
+
+
 def normalize_runtime(runtime: Path, home: str) -> Dict[str, dict]:
-    """把运行根反向规范化为 token，并保留权限模式供双包比较。"""
+    """把运行根反向规范化为 token，并保留权限模式供双包比较。
+
+    ⛔ 带 `runtime-path-ignore` 的行**原样保留**，与渲染端同口径：那些是适配位对照表，
+    逐字写着各 Agent 的目录（`.claude/skills/` 与 `.agents/skills/` 同现一行）。
+    若在这里也做反解，Claude 包会把 `.claude/...` 变成 token、shared 包不会，
+    双包比较当场分叉 —— 而两包本就该规范化成同一份。
+    """
     normalized = {}
     for relative, path in _runtime_files(Path(runtime)):
         data = path.read_bytes()
         if _is_text(data):
-            data = data.decode("utf-8").replace(home, "{{AIDP_HOME}}").encode("utf-8")
+            lines = data.decode("utf-8").split("\n")
+            data = "\n".join(line if _IGNORE_PATH_RE.search(line)
+                             else _restore_home_token(line, home)
+                             for line in lines).encode("utf-8")
         normalized[relative] = {"content": data, "mode": _file_mode(path)}
     return normalized
 
@@ -502,7 +694,7 @@ def _verify_open_lock_identity(lock: Path, fd: int) -> os.stat_result:
 
 def _acquire_runtime_lock(parent: Path, boundary: Path,
                           _after_lock_precheck=None) -> _RuntimeLock:
-    lock = _assert_contained(parent / ".aidp-runtime.lock", boundary)
+    lock = _assert_contained(parent / RUNTIME_LOCK, boundary)
     if _lexists(lock):
         info = os.lstat(str(lock))
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
@@ -638,10 +830,28 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
             if _lexists(destination):
                 if destination.is_symlink() or not destination.is_dir():
                     raise RuntimeError(f"运行包目标不是受管目录: {destination}")
+                # ⛔ 判据是「像不像一个未受管的运行包」，不是「目录在不在」：运行根降层后就是
+                #    `.claude` / `.agents` 本身，它们作为 Agent 标记目录在首次安装前**本来就存在**
+                #    （里面可能已有 settings.json）。按"存在即必须有 manifest"判会让 init 直接失败。
+                #    真正要拦的是：里面已有受管目录却没有 manifest —— 那是来路不明的同名运行包。
                 if not (destination / RUNTIME_MANIFEST).is_file():
-                    raise RuntimeError(f"同名目录缺少运行包 manifest，拒绝覆盖: {destination}")
+                    # ⛔ 安装器自身不算占位：下游把脚手架 skill 装在 `<运行根>/skills/` 下
+                    #    （自举形态），那会让 `skills/` 先于运行包存在 —— 按"有受管目录即拒"
+                    #    会把正常的首次安装挡死。只有**除它以外**还有内容才算来路不明的运行包。
+                    def _occupied(name: str) -> bool:
+                        directory = destination / name
+                        if not directory.is_dir():
+                            return False
+                        return any(child.name != L.SKILL_NAME for child in directory.iterdir())
+
+                    squatters = sorted(name for name in RUNTIME_DIRS if _occupied(name))
+                    if squatters:
+                        raise RuntimeError(
+                            f"同名目录已有受管目录却缺运行包 manifest，拒绝覆盖: {destination}"
+                            f"（{'、'.join(squatters[:4])}）")
                 expected_destination_digest = tree_digest(destination)
-                if _runtime_modified(destination):
+                # 首次接管（目录已在、但还没装过）无 manifest 可比，谈不上"被改过"。
+                if (destination / RUNTIME_MANIFEST).is_file() and _runtime_modified(destination):
                     if backup_callback is None:
                         raise RuntimeError(f"运行包含用户修改，必须先完整备份: {destination}")
                     backup = backup_callback(destination)
@@ -653,15 +863,17 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                         raise RuntimeError("备份期间运行包发生并发修改，拒绝替换")
 
             contract = {relative for relative, _p in _source_contract_files(Path(source_root))}
+            # 用户物叠加要读上一版 manifest —— 只有**装过**才有。运行根降层后目录本身可能
+            # 早已存在（Agent 标记目录），按"目录在不在"触发会去读不存在的 manifest。
             overlay = (_user_overlay(destination, home, source, contract)
-                       if _lexists(destination) else {})
+                       if (destination / RUNTIME_MANIFEST).is_file() else {})
             counterpart = None
             counterpart_digest = None
             if destination == boundary / RUNTIME_HOME[source]:
                 other_source = "shared" if source == "claude" else "claude"
                 candidate = _assert_contained(boundary / RUNTIME_HOME[other_source], boundary)
-                if _lexists(candidate):
-                    if not candidate.is_dir() or not (candidate / RUNTIME_MANIFEST).is_file():
+                if (candidate / RUNTIME_MANIFEST).is_file():
+                    if not candidate.is_dir():
                         raise RuntimeError(f"双包运行目录未受管: {candidate}")
                     counterpart = candidate
                     counterpart_digest = tree_digest(candidate)

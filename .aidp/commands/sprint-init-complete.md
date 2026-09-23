@@ -30,7 +30,7 @@
 脚本调用都会 `No such file`。
 
 ```bash
-python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}
+python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}
 ```
 
 产出物与幂等性同 `/sprint-init` Phase 0（create-if-missing，已存在一律不动）。
@@ -55,7 +55,7 @@ python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --versi
 
 ```bash
 # ⛔ 目录骨架不在本步手搓：单一信源 = scaffold_lib.py::skeleton_dirs（约定 21），手搓块是第二份骨架真相、必然漂移。本步只核验：
-python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . {version} {user} 2>&1 | grep -E "\[ERROR\].*(目录|directory)" && {
+python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py . {version} {user} 2>&1 | grep -E "\[ERROR\].*(目录|directory)" && {
   echo "❌ 骨架不完整——先跑下方 Phase 0 的 scaffold.py，⛔ 不要手工 mkdir 补"; exit 1
 }
 echo "✅ 目录骨架核验通过"

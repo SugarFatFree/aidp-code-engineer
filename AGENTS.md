@@ -30,7 +30,7 @@
 
 - **本仓库不携带 Agent 适配层**（`.claude/`、`.codex/`、`.dsh/`、`.agents/` 已整目录忽略）：维护者本地用哪个 Agent，就建对应标记目录后跑 `python3 .aidp/scripts/agent_sync.py`。
 - **两个单一信源分开放**：`.aidp/` = 下发给下游的契约本体（命令 / 流程 / 规则 / 下发 SKILL / 脚本 …）；根级 `skills/aidp-code-engineer/` = 脚手架引擎自身（标准 skill 仓库结构，不属于下发契约，由 `mirror_to_bundle.py` 把 `.aidp/` 镜像进它的 `assets/`）。
-- **模板 `.aidp/` 只用于维护**：下游安装后不存在根 `.aidp/`；仅 Claude Code 时运行真源为 `.claude/aidp/`，使用 Codex / DeepSeek Harness（含并存）时共享真源为 `.agents/aidp/`，Claude Code 从 `.claude/aidp/` 读取装配副本。下发文档以 `{{AIDP_HOME}}` 表示安装后的运行真源。
+- **模板 `.aidp/` 只用于维护**：下游安装后不存在根 `.aidp/`；仅 Claude Code 时运行真源为 `.claude/`，使用 Codex / DeepSeek Harness（含并存）时共享真源为 `.agents/`，Claude Code 从 `.claude/` 读取装配副本。下发文档以 `{{AIDP_HOME}}` 表示安装后的运行真源。
 - **命令适配由 `agent_sync.py` 生成**：Claude Code → `.claude/commands/`，Codex → 官方发现根 `.codex/skills/aidp/`，DeepSeek Harness → `.dsh/commands/`；增删 `.aidp/commands/` 后重跑该脚本。Codex 命令正文中的 `/foo args` 按适配前言确定性读取 `.aidp/commands/foo.md`，并原样传递子命令 `$ARGUMENTS`。
 
 ## 提交规范

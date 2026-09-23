@@ -268,14 +268,14 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 ## commit_gate.py — 约定 24 提交前门禁（确定性、可单测）
 
 每次 `git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON。作用域 = **变更事实**、与命令入口无关（裸对话路径同样适用）。总开关 = `memory/aidp-config.yaml` 的 `commit_gate.enabled`（缺省 true）。
-输出字段：`commit_gate_enabled` / `is_template_project`（脚手架 skill 的任一落点——模板仓库根级 `skills/`、下游 `.claude/skills/` 或 `.agents/skills/`、历史的 `{{AIDP_HOME}}/skills/`——下 `SKILL.md` 与 `scripts/sync_memory_md.py` 都在、且 `scaffold_marker.py` 判为非下游）/ `working_tree_dirty` / `has_business_code_change` / `is_scaffold_only_change` / `today` /
+输出字段：`commit_gate_enabled` / `is_template_project`（脚手架 skill 的任一落点——模板仓库根级 `skills/`、下游 `.claude/skills/` 或 `.agents/skills/`、历史的 `各 Agent 的运行根/skills/`——下 `SKILL.md` 与 `scripts/sync_memory_md.py` 都在、且 `scaffold_marker.py` 判为非下游）/ `working_tree_dirty` / `has_business_code_change` / `is_scaffold_only_change` / `today` /<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 `pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `should_dispatch_cascade`（= `stale>0`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送欠账：`cicd.provider != none` 时按 HEAD commit 查分类记录；正式代码推送超 1 小时无部署终态〔`deploy_terminal` / `last_deployed_at` / `probe_passed`〕计欠账，`unknown:<原因>` 终态不计欠账但可见）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单）。
 可 import：`pending_cascade()` / `cascade_ledger_paths()` / `CASCADE_FAMILIES` / `suspected_cascade_bypass()` / `has_business_code_change()` / `is_scaffold_only_change()` / `pending_cicd()` / `offchain_budget()` / `gather()`。
 **★ 欠账告警恒打印 + 退出码说话**：未落地义务告警**不受 `--quiet` 压制**；退出码 `0`=无欠账 / `3`=有未落地义务（台账积压 · 已级联未清理 · 格式漂移 · 归档标记未删 · 🔴 破坏性变更未登记失准点 · 疑似绕过攒批 · CICD 推送欠账）/ `4`=阻塞级（保留档位：当前判据集不产生该值，消费方仍须按阻塞处理）。**Why**：约定 24 强制的写法就是 `--quiet`，提醒若住在 `if not args.quiet:` 里就等于在唯一被强制执行的路径上从不打印。⚠️ 3/4 的语义是"本轮结束前有一项义务未落地"，**不是"禁止 commit"**；逃生阀 `--no-fail-on-debt`。其余参数：`--context bare-conversation|aidp-command`（留痕 + 约定 41 适用性）。
 
 ## agent_env.py — 启用的 AI Agent 与项目记忆文件落点
 
-`detect_agents(root)`：`AIDP_AGENT` 环境变量（逗号分隔）> 根目录标记（`.codex/`→codex、`.dsh/`→dsh、`.claude/`→claude）> 缺省 `["claude"]`。
+`detect_agents(root)`：`AIDP_AGENT` 环境变量（逗号分隔）> 根目录标记（`.codex/`→codex、`.dsh/`→dsh、`.claude/`→claude）> 缺省 `["claude"]`。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 `memory_file(root)`：只有 claude → `CLAUDE.md`；否则 `AGENTS.md`；`AGENTS.md` 存在且 `CLAUDE.md` 仅为 `@AGENTS.md` 薄壳 → `AGENTS.md`。读写项目记忆文件的脚本一律经它取路径，⛔ 不自行拼文件名。
 用法：`python3 {{AIDP_HOME}}/scripts/agent_env.py detect|memory-file [--root .]`（输出 JSON）；`--self-check` 自测。
 
@@ -413,7 +413,7 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 判三类（全部要求**同行出现 SKILL 名**才纳入判定）：**索引引用**（`维度 11`）编号须存在 · **计数声明**
 （`11 维度`）须等于最大编号 · **脚本引用**（`check_xxx.py`）须真在那个 SKILL 的 `scripts/` 下。
 
-**真值源只收 `{{AIDP_HOME}}/skills/`（`contract` 安装位）**，⛔ 不收并列安装的脚手架 SKILL（`aidp-code-engineer` 在 `{{AIDP_HOME}}/../skills/`）——与 `check_skill_ref_drift.py` 的注册表**刻意不同**（那边两位都收）。
+**真值源只收 `{{AIDP_HOME}}/skills/`（`contract` 安装位）**，⛔ 不收并列安装的脚手架 SKILL（`aidp-code-engineer` 在 `{{AIDP_HOME}}/skills/`）——与 `check_skill_ref_drift.py` 的注册表**刻意不同**（那边两位都收）。
 它的 `scripts/` 是脚手架引擎、本就由 skill 自己编排、不该被命令端逐个接线，收进来只会让 `unreferenced_skill_scripts` 一次冒出一批永远消不掉的 WARN，这条告警随即整体失去信号；它也没有「维度 N / 检查项 N」这套编号体系，索引与计数两条判据对它恒空跑。
 ⚠️ 这不是"脚手架 SKILL 无人看管"：它的内部文件引用归 `check_skill_ref_drift.py`（只问"文件在不在"，与安装位无关），镜像一致性归 `mirror_to_bundle.py --check`。**拆表 ⛔ 不等于加豁免**——豁免会连"文件在不在"一起放掉。
 
@@ -605,7 +605,7 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 
 命令端按约定 21 只做编排，但正文里大量出现 `dev-logic-architect/scripts/check_ddl_consistency.py`、`auto-test-runner/references/report-format.md` 这类**对 SKILL 内部文件的事实性引用**。SKILL 改个脚本名、并个 reference 时，命令侧的引用不会跟着变，就此悬空——而且**完全静默**，verify 全绿、测试全过，只有真去执行那一步的 AI 才发现文件不存在，那时已在下游业务项目的运行现场。
 判据：扫 `{{AIDP_HOME}}/{commands,agents,flows,reference,rules}/**.md` 里形如 `<skill>/scripts/<f>.py`、`<skill>/references/<f>.md` 的引用，`<skill>` 命中**注册表**里真实存在的 SKILL 时该文件必须存在。
-**注册表带 `location`，两个安装位都收**：`contract` = `{{AIDP_HOME}}/skills/<名>`（随契约下发的公共 SKILL）；`sibling` = `{{AIDP_HOME}}/../skills/<名>`（与运行包并列安装，脚手架自身 `aidp-code-engineer` 就在这里——模板仓库是根 `skills/`，下游是 `.agents/skills/` 或 `.claude/skills/`）。
+**注册表带 `location`，两个安装位都收**：`contract` = `各 Agent 的运行根/skills/<名>`（随契约下发的公共 SKILL）；`sibling` = `各 Agent 的运行根/skills/<名>`（与运行包并列安装，脚手架自身 `aidp-code-engineer` 就在这里——模板仓库是根 `skills/`，下游是 `.agents/skills/` 或 `.claude/skills/`）。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 两个根都由运行包解析算出，⛔ 不写死 Agent 目录字面量、也⛔ 不用手维护名单或单点豁免：`aidp-code-engineer` 从契约位挪到并列位那天，本门对契约正文里每一处 `aidp-code-engineer/scripts/*.py` 引用同时**静默**失明，而那正是 `/sprint-init`、`/health-check`、`aidp-compliance` 真要跑的几行 `scaffold.py` / `verify.py`——加豁免只会把这个洞永久钉死。
 `location` 同时是给上层对账用的信源：**只有 `contract` 的 SKILL 才该被拉进"公共 SKILL 表"双向对账**，`sibling` 的按公共表口径对账必然报"表里有、目录里没有"的假红。相应地，`check_skill_ref_freshness.py` **刻意只收 `contract` 位**（脚手架 `scripts/` 是引擎、不该被命令端逐个接线，收进来会一次冒出一批消不掉的 WARN）。⛔ 刻意**不查**维度编号/参数名/章节标题：那些要语义匹配、误报率高，一个恒红的门比没有门更糟。
 用法：`python3 {{AIDP_HOME}}/scripts/check_skill_ref_drift.py [--root <仓库根>] [--json]`。退出码：`0`=全部有效或无 skills 目录（N/A）/ `1`=检出悬空引用。

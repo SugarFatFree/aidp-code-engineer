@@ -62,7 +62,7 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-eng
 | DeepSeek Harness | `.dsh/` | `.agents/skills/` | `.dsh/commands/`，`/sprint-dev` | `AGENTS.md` |
 
 - 可用环境变量 `AIDP_AGENT=claude|codex|dsh` 显式覆盖自动判定。
-- 本模板仓库的 `.aidp/` **仅是维护源**，不在下游项目根创建 `.aidp/`。下游仅 Claude Code 时运行真源为 `.claude/aidp/`；使用 Codex 或 DeepSeek Harness（含多 Agent 并存）时共享真源为 `.agents/aidp/`，Claude Code 从 `.claude/aidp/` 读取装配副本。下发契约中的 `{{AIDP_HOME}}` 在安装时渲染为运行路径。
+- 本模板仓库的 `.aidp/` **仅是维护源**，不在下游项目根创建 `.aidp/`。下游仅 Claude Code 时运行真源为 `.claude/`；使用 Codex 或 DeepSeek Harness（含多 Agent 并存）时共享真源为 `.agents/`，Claude Code 从 `.claude/` 读取装配副本。下发契约中的 `{{AIDP_HOME}}` 在安装时渲染为运行路径。
 - **命令与 SKILL 在源头分开**：AIDP 命令只在 `{{AIDP_HOME}}/commands/`，公共 SKILL 契约只在 `{{AIDP_HOME}}/skills/`，模板仓库对应目录位于 `.aidp/`。`agent_sync.py` 分别生成 Claude Code 命令文件、Codex 官方发现根 `.codex/skills/aidp/` 下的显式调用命令 SKILL、DeepSeek Harness 命令文件；命令参数正文保持 `$ARGUMENTS` 语义不变。Codex 命令正文明确串联 `/foo args` 时，确定性读取 `{{AIDP_HOME}}/commands/foo.md` 并把 `args` 原样传为子命令 `$ARGUMENTS`，未知命令 fail closed。
 - **插件**：模板 `.aidp/plugins/` 随仓库分发浏览器插件（内置 `chrome-devtools-mcp`：浏览器自动化 MCP + 配套调试 SKILL，Apache-2.0）。Claude Code 以项目级插件启用，MCP 工具名使用插件命名空间 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`；Codex / DeepSeek Harness 的插件 SKILL 共用 `.agents/skills/chrome-devtools-mcp/skills/`；MCP 分别写入 `.codex/config.toml`、`.dsh/mcp.json`。
 - **适配入口不入库**：`.claude/commands|skills|plugins`、`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`、`.agents/skills` 下的生成入口由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 维护并自动写入 `.gitignore` 托管块；clone 后先跑一次该命令（脚手架 init / migrate / upgrade 会自动执行）。
@@ -74,7 +74,7 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-eng
 
 ```
 <project>/
-├── {{AIDP_HOME}}/        # 运行真源：仅 Claude → .claude/aidp；有 Codex / DSH → .agents/aidp
+├── {{AIDP_HOME}}/        # 运行真源：仅 Claude → .claude；有 Codex / DSH → .agents
 │   ├── commands/          #   命令定义（/version、/sprint-* 等）
 │   ├── agents/            #   角色 Agent（architect / frontend / backend / qa / ui …）
 │   ├── flows/             #   命令分片流程

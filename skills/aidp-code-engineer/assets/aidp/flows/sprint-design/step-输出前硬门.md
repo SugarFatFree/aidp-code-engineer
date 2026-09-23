@@ -173,7 +173,7 @@ fi
 # 单层调用即可，无需命令侧 grep 兜底
 MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_money_field.py"
 if [ ! -f "$MONEY_CHECK_SCRIPT" ]; then
-  MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/../skills/aidp-code-engineer/assets/aidp/skills/dev-logic-architect/scripts/check_money_field.py"
+  MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/skills/aidp-code-engineer/assets/aidp/skills/dev-logic-architect/scripts/check_money_field.py"
 fi
 if [ -f "$MONEY_CHECK_SCRIPT" ]; then
   CRITICAL_COUNT=$(python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" --json 2>/dev/null \

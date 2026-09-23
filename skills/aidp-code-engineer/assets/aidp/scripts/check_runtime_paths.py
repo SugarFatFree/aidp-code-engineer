@@ -38,7 +38,10 @@ OLD_RUNTIME_RE = re.compile(
     r"(?<!memory/)(?<![\w{])" + re.escape(LEGACY_AIDP_DIR) + r"/"
 )
 TOKEN = "{{" + "AIDP_HOME" + "}}"
-STATE_HOME_RE = re.compile(r"memory/(?:\{\{AIDP_HOME\}\}|\.(?:claude|agents)/aidp)/")
+# 本地运行态目录是 `memory/.aidp/`，**不随运行根变**。把运行根拼进 memory 下
+# （`memory/各 Agent 的运行根/`、`memory/.claude/`、历史的 `memory/.claude/aidp/`）都是同一类错。  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
+STATE_HOME_RE = re.compile(
+    r"memory/(?:\{\{AIDP_HOME\}\}|\.(?:claude|agents)(?:/aidp)?)/")
 RUNTIME_REL = runtime_relpath("", __file__)
 IGNORE_RE = re.compile(r"runtime-path-ignore:\s*\S")
 MAX_BYTES = 2 * 1024 * 1024

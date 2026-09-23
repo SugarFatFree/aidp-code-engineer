@@ -57,15 +57,15 @@ def test_real_source_renders_for_both_runtime_homes():
 
     base = Path(tempfile.mkdtemp(prefix="aidp-real-runtime-", dir=str(REPO)))
     try:
-        claude = base / ".claude/aidp"
-        shared = base / ".agents/aidp"
-        layout.render_runtime(REPO / ".aidp", claude, ".claude/aidp", "V1.0.0", "claude")
-        layout.render_runtime(REPO / ".aidp", shared, ".agents/aidp", "V1.0.0", "shared")
-        layout.validate_runtime(claude, expected_home=".claude/aidp")
-        layout.validate_runtime(shared, expected_home=".agents/aidp")
-        check("真实源可渲染 Claude/shared 且规范化一致",
-              layout.normalize_runtime(claude, ".claude/aidp")
-              == layout.normalize_runtime(shared, ".agents/aidp"))
+        claude = base / ".claude"
+        shared = base / ".agents"
+        layout.render_runtime(REPO / ".aidp", claude, ".claude", "V1.0.0", "claude")
+        layout.render_runtime(REPO / ".aidp", shared, ".agents", "V1.0.0", "shared")
+        layout.validate_runtime(claude, expected_home=".claude")
+        layout.validate_runtime(shared, expected_home=".agents")
+        check("真实源可渲染 Claude/shared 且两包同源一致",
+              layout.packages_share_one_source(
+                  [(claude, ".claude"), (shared, ".agents")], REPO / ".aidp"))
         results = []
         for checker in (claude / "scripts/check_runtime_paths.py",
                         shared / "scripts/check_runtime_paths.py"):
@@ -149,7 +149,7 @@ def main():
               == ["unresolved-runtime-home"])
 
         (root / ".aidp/commands/ok.md").write_text("ok\n", encoding="utf-8")
-        write(root, ".aidp/flows/x/state.md", "python3 tool.py > memory/.claude/aidp/probe.json\n")
+        write(root, ".aidp/flows/x/state.md", "python3 tool.py > memory/.claude/probe.json\n")
         rc, data = run(root, "--rendered")
         check("渲染态禁止 memory 下嵌 Agent 运行根",
               rc == 1 and [x.get("kind") for x in data.get("findings", [])]
@@ -188,7 +188,7 @@ def main():
               rc == 1 and any(x.get("kind") == "runtime-state-in-source" for x in data.get("findings", [])))
         shutil.rmtree(root / ".aidp/memory")
 
-        native = root / ".agents/aidp"
+        native = root / ".agents"
         (native / "scripts").mkdir(parents=True)
         shutil.copy2(REPO / ".aidp/scripts/aidp_runtime.py", native / "scripts/aidp_runtime.py")
         skill_script = native / "skills/dev-execution-planner/scripts/scan_aidp.py"
@@ -204,7 +204,7 @@ def main():
             payload = {}
         check("Skill 脚本可从原生 runtime 定位运行包",
               p.returncode == 0 and any(x.get("type") == "aidp_directory"
-                                        and ".agents/aidp" in x.get("source", "")
+                                        and ".agents" in x.get("source", "")
                                         for x in payload.get("sources", [])))
         shutil.rmtree(root / ".agents")
 

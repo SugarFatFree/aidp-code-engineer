@@ -111,7 +111,7 @@ def test_native_command_skills():
         check("Codex 命令适配前言声明参数与内联串联规则",
               "Codex 命令适配规则" in text
               and "$sprint-dev args" in text
-              and "读取 `.agents/aidp/commands/<命令名>.md`" in text
+              and "读取 `.agents/commands/<命令名>.md`" in text
               and "未知命令" in text and "fail closed" in text
               and "读取 `.aidp/commands/" not in text)
         check("Codex 命令正文逐字保真",
@@ -164,7 +164,7 @@ def test_real_command_discovery_and_chaining():
                 (root / ".aidp/commands" / f"{ref}.md").is_file() for ref in refs)
             prefaces = prefaces and all(token in generated for token in (
                 "Codex 命令适配规则", f"${command_name} args", "$ARGUMENTS",
-                "读取 `.agents/aidp/commands/<命令名>.md`", "当前执行链内联执行", "未知命令",
+                "读取 `.agents/commands/<命令名>.md`", "当前执行链内联执行", "未知命令",
             ))
             bodies_exact = (bodies_exact and CODEX_BODY_MARKER in generated
                             and generated.split(CODEX_BODY_MARKER, 1)[1] == source)

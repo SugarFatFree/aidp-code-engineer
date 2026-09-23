@@ -97,8 +97,13 @@ def _mkrepo(markers=(), claude_md=BODY, agents_md=None, hook=True):
 def _move_source_into_runtime(root, runtime_rel):
     source = root / ".aidp"
     runtime = root / runtime_rel
-    runtime.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source), str(runtime))
+    runtime.mkdir(parents=True, exist_ok=True)
+    # ⛔ 搬**内容**而不是搬目录：运行根降层后 `runtime` 就是 `.claude` / `.agents`，
+    #    而它作为 Agent 标记目录往往已存在 —— `shutil.move(dir, existing_dir)` 会把整个
+    #    `.aidp` 塞进去变成 `.claude/.aidp`，夹具静默建错形态。
+    for item in sorted(source.iterdir()):
+        shutil.move(str(item), str(runtime / item.name))
+    source.rmdir()
     scripts = runtime / "scripts"
     scripts.mkdir(exist_ok=True)
     for name in ("agent_sync.py", "agent_env.py", "aidp_runtime.py"):
@@ -216,7 +221,7 @@ def test_sync_all_agents_managed_copy():
         st = json.loads(_read(root / ".claude/settings.json"))
         cmds = [h["command"] for g in st["hooks"]["Stop"] for h in g["hooks"]]
         check("Claude：settings.json Stop hook 用 $CLAUDE_PROJECT_DIR",
-              cmds == ['python3 "$CLAUDE_PROJECT_DIR/.claude/aidp/hooks/autopilot-stop-guard.py"'])
+              cmds == ['python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/autopilot-stop-guard.py"'])
 
         # Codex
         shared_skill = root / ".agents/skills/demo-skill"
@@ -393,7 +398,7 @@ def test_copy_mode_and_errors():
         check("★ hooks 合并：保留用户其他配置，就地更新已有 stop guard 条目（不重复追加）",
               st["permissions"]["allow"] == ["Bash(git status)"] and len(stop) == 1
               and stop[0]["hooks"][0]["command"]
-              == 'python3 "$CLAUDE_PROJECT_DIR/.claude/aidp/hooks/autopilot-stop-guard.py"')
+              == 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/autopilot-stop-guard.py"')
         toml = _read(root / ".codex/config.toml")
         check("config.toml 已有 [features] → 插入 codex_hooks，保留原内容",
               'model = "demo"' in toml and "other = 1" in toml and toml.count("[features]") == 1
@@ -1247,9 +1252,9 @@ def test_managed_stop_hook_path_boundaries():
 def test_sync_executes_from_native_runtime_without_root_aidp():
     print("【agent_sync：从 Agent 原生 runtime 执行，无根 .aidp】")
     cases = (
-        ("claude", ".claude/aidp", ".claude/aidp/scripts/agent_sync.py",
+        ("claude", ".claude", ".claude/scripts/agent_sync.py",
          ".claude/commands/sprint-dev.md", ".claude/skills/demo-skill/SKILL.md"),
-        ("codex,dsh", ".agents/aidp", ".agents/aidp/scripts/agent_sync.py",
+        ("codex,dsh", ".agents", ".agents/scripts/agent_sync.py",
          ".dsh/commands/sprint-dev.md", ".agents/skills/demo-skill/SKILL.md"),
     )
     for agents, runtime_rel, script_rel, command_rel, skill_rel in cases:
@@ -1690,7 +1695,7 @@ def test_native_runtime_ancestors_must_be_real():
         _rm(root)
         shutil.rmtree(outside, ignore_errors=True)
 
-    for runtime_rel, linked_rel in ((".agents/aidp", ".agents"), (".claude/aidp", ".claude")):
+    for runtime_rel, linked_rel in ((".agents", ".agents"), (".claude", ".claude")):
         root = _mkrepo(markers=())
         outside = Path(tempfile.mkdtemp())
         try:

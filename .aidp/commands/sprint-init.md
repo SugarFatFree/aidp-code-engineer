@@ -27,8 +27,8 @@
 契约文件 / 工具脚本**是确定性的，必须由脚手架脚本产出：
 
 ```bash
-python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --detect          # 先探测模式（init / migrate / upgrade）
-python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}   # 模式默认 auto；需指定时加 --mode <mode> --agent <agents>
+python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/scaffold.py . --detect          # 先探测模式（init / migrate / upgrade）
+python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/scaffold.py . --version {version} --user {user}   # 模式默认 auto；需指定时加 --mode <mode> --agent <agents>
 ```
 
 它负责（本命令**不重复实现、也不用 `mkdir -p` + `touch` 手搓**）：`{{AIDP_HOME}}/scripts/`（约定 24 要求每次
@@ -54,7 +54,7 @@ commit 前跑的 `commit_gate.py` 就在其中）、`.claude/settings.json`（Cl
 # ⛔ 目录骨架不在本步手搓：Phase 0 的脚手架已确定性建出全部目录（手搓块是第二份骨架真相、必然漂移）。
 #    骨架缺 docs/requirements/{version}/研发需求 会让 /sprint-start 前置门直接以"需求文档不存在"停止。
 #    ★ 目录清单单一信源 = scaffold_lib.py::skeleton_dirs（约定 21）。本步只做核验：
-python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . {version} {user} 2>&1 | grep -E "\[ERROR\].*(目录|directory)" && {
+python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py . {version} {user} 2>&1 | grep -E "\[ERROR\].*(目录|directory)" && {
   echo "❌ Phase 0 骨架不完整——回到 Phase 0 重跑 scaffold.py，⛔ 不要在此手工 mkdir 补"; exit 1
 }
 echo "✅ 目录骨架核验通过（由 Phase 0 脚手架产出）"

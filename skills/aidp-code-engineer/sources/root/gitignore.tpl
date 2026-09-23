@@ -84,6 +84,8 @@ memory/.sprint-autopilot-credentials.json
 memory/.autopilot-ceremony-ledger.json
 # 本地运行态目录（锁文件、提交前门禁台账等）
 memory/.aidp/
+# 运行包互斥锁（0 字节载体，按设计释放后保留供下次复用；运行根即 Agent 目录，故落在项目根）
+.aidp-runtime.lock
 # baseline 的 flock 锁载体：0 字节、每次加锁被重开，纯本地 churn，无共享价值
 # ⛔ 必须两条：数据文件本身就是点开头的，而 `memory/*.lock` 的 `*` 不匹配前导点
 memory/*.lock

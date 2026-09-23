@@ -69,7 +69,7 @@
 
 Phase 序列连续无缺口（本目录约定 7）；每个 flow 目录另含 `rationale.md`（理据剥离位，执行期不载）。
 
-**本目录约定 6 的达标情况以现算为准**（⛔ 不在本文写死结论：写死必漂，与本 README 上方「写死必漂」同一条教训）——跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . <项目版本号> <user>` 看「flows 分片超 20480B」一项。**判据 = `> 20480` 才违规、恰好 20480 合规**（与 `check_flow_slice_size` 逐字一致）。`sprint-autopilot/invariants.md`（显著超出）属**顶层不变式类、按本目录约定 6 不受 ≤20KB 约束**——它在进入执行链前一次性加载、非按 Phase 轮换，但**仍偏大、应持续精简**（Phase 专属内容回归对应 `phase-N.md`）。临时自查一行（⛔ 判据以 verify 为准，本行只是就手看看）：`find {{AIDP_HOME}}/flows -name '*.md' ! -name 'README.md' ! -name 'rationale.md' ! -name 'invariants.md' ! -name 'usage-guard.md' -size +20480c`——`find` 的 `+N` 是**严格大于**，故 `+20480c` 与闸门口径完全一致；**必须扫全部执行分片**：只匹配 `phase-*.md` 会漏掉 `version/planning-*`·`release-*`、`sprint-design/step-*`、`sprint-dev/*` 等多片。
+**本目录约定 6 的达标情况以现算为准**（⛔ 不在本文写死结论：写死必漂，与本 README 上方「写死必漂」同一条教训）——跑 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py . <项目版本号> <user>` 看「flows 分片超 20480B」一项。**判据 = `> 20480` 才违规、恰好 20480 合规**（与 `check_flow_slice_size` 逐字一致）。`sprint-autopilot/invariants.md`（显著超出）属**顶层不变式类、按本目录约定 6 不受 ≤20KB 约束**——它在进入执行链前一次性加载、非按 Phase 轮换，但**仍偏大、应持续精简**（Phase 专属内容回归对应 `phase-N.md`）。临时自查一行（⛔ 判据以 verify 为准，本行只是就手看看）：`find {{AIDP_HOME}}/flows -name '*.md' ! -name 'README.md' ! -name 'rationale.md' ! -name 'invariants.md' ! -name 'usage-guard.md' -size +20480c`——`find` 的 `+N` 是**严格大于**，故 `+20480c` 与闸门口径完全一致；**必须扫全部执行分片**：只匹配 `phase-*.md` 会漏掉 `version/planning-*`·`release-*`、`sprint-design/step-*`、`sprint-dev/*` 等多片。
 
 **骨架表分片列的列名为「所在分片」或「分片」**。未落地该列的命令以段内指针指向 flow 片即可 —— 骨架表只在**分片数 ≥4** 的命令上才有必要，只有一两片的命令加一列纯属噪音。
 

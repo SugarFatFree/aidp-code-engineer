@@ -16,7 +16,7 @@ import scaffold as S
 
 class InstalledInitDocsTest(unittest.TestCase):
     def test_installed_docs_render_runtime_links_for_each_layout(self):
-        for home in (".claude/aidp", ".agents/aidp"):
+        for home in (".claude", ".agents"):
             with self.subTest(home=home), tempfile.TemporaryDirectory() as td:
                 root = Path(td)
                 source = REPO / ".aidp"
@@ -27,7 +27,7 @@ class InstalledInitDocsTest(unittest.TestCase):
                         (runtime / kind / item.name).touch()
                 report = S.Report()
                 with mock.patch.object(S.L, "ASSETS", REPO):
-                    agents = ["claude"] if home == ".claude/aidp" else ["codex"]
+                    agents = ["claude"] if home == ".claude" else ["codex"]
                     S.sync_docs(root, False, report, S.Backup(root, report), agents)
                 for doc in (root / "docs/init").rglob("*.md"):
                     text = doc.read_text(encoding="utf-8")

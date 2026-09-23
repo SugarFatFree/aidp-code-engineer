@@ -2,7 +2,7 @@
 
 ## 本项目使用的 Skills
 
-> 按约定 21，下表只给**一句话用途 + 被谁调用**；各 SKILL 的维度/原则/检查细则是单一信源，详见对应 `SKILL.md`，不在此复述。模板 `.aidp` 中的 skills 仅用于维护，下游公共 SKILL 从 `.agents/skills/`（Codex / DSH）或 `.claude/skills/`（Claude）调用，契约真源在 `{{AIDP_HOME}}/skills/`。
+> 按约定 21，下表只给**一句话用途 + 被谁调用**；各 SKILL 的维度/原则/检查细则是单一信源，详见对应 `SKILL.md`，不在此复述。模板 `.aidp` 中的 skills 仅用于维护，下游公共 SKILL 从 `.agents/skills/`（Codex / DSH）或 `.claude/skills/`（Claude）调用，契约真源在 `各 Agent 的运行根/skills/`。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 
 ### 本项目自带的 Skills（`{{AIDP_HOME}}/skills/`；**可改性以约定 16 为准**——全部由 AIDP 模板仓库维护、在模板仓库内可直接改，下游项目内不应直接改）
 
@@ -16,16 +16,16 @@
 | `code-verification-loop` | 代码验收循环（多维度核验，维度清单以 SKILL.md 为单一信源；`mode=verify-only` 仅验收）| `/sprint-test`（仅验收模式）；开发期预检直调其脚本：`/sprint-dev`、Frontend/Backend Agent |
 | `bugfix` | Bug 修复流程 | `/sprint-bugfix` |
 
-### 脚手架 Skill（`{{AIDP_HOME}}/../skills/`——⛔ 不在上表那张契约位表里）
+### 脚手架 Skill（`{{AIDP_HOME}}/skills/`——⛔ 不在上表那张契约位表里）
 
-> 它是**安装器**，不是下发契约的一部分：装在 Agent 的并列发现位（下游 `.agents/skills/` 或 `.claude/skills/`），
+> 它是**安装器**，不是下发契约的一部分：装在 Agent 的并列发现位（下游 `.agents/skills/` 或 `.claude/skills/`），<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 > 不在 `{{AIDP_HOME}}/skills/` 下。**故不参与「Skills 表 ↔ `{{AIDP_HOME}}/skills/` 目录」双向对账**——
 > 把它算进那张表会恒报「注册了但目录不存在」。真值表见 `check_skill_ref_drift.py --json` 的 `skills` 字段，
 > 该字段用 `location`（`contract` / `sibling`）区分两个位置，对账时只取 `contract`。
 
 | Skill | 用途 | 安装位 | 被谁调用 |
 |-------|------|--------|---------|
-| `aidp-code-engineer` | 项目 AIDP 范式脚手架（init/migrate/upgrade）| `{{AIDP_HOME}}/../skills/`（`sibling`）| 按需手动 |
+| `aidp-code-engineer` | 项目 AIDP 范式脚手架（init/migrate/upgrade）| `{{AIDP_HOME}}/skills/`（`sibling`）| 按需手动 |
 
 ### 配套脚本（非 skill）
 
@@ -39,14 +39,14 @@
 
 | 名称 | 用途 | 安装 |
 |------|------|------|
-| `chrome-devtools-mcp`（插件） | 浏览器实测驱动 MCP + 6 份配套调试 SKILL（`/sprint-aiauto-test`、`dev-manual-testcase` 推荐）| 随仓库分发于 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/`（Apache-2.0）：Claude Code 使用 `.claude/plugins/` 完整项目插件（工具名 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`）；Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json` |
+| `chrome-devtools-mcp`（插件） | 浏览器实测驱动 MCP + 6 份配套调试 SKILL（`/sprint-aiauto-test`、`dev-manual-testcase` 推荐）| 随仓库分发于 `各 Agent 的运行根/plugins/chrome-devtools-mcp/`（Apache-2.0）：Claude Code 使用 `.claude/plugins/` 完整项目插件（工具名 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`）；Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json` |<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 
 ### Superpowers 插件 Skills（★ 全局内置插件，非项目 vendored）
 
 > 📍 **安装位置在【用户级全局】，不在项目里**——Claude Code 下来自 `claude-plugins-official` 市场，
 > 落点 `~/.claude/plugins/cache/claude-plugins-official/superpowers`；其他 Agent 未装时按下表回落。
 >
-> ⚠️ **不能据「项目 `.claude/plugins/` 里没有」判它未安装**：项目级 `.claude/plugins/` 与项目
+> ⚠️ **不能据「项目 `.claude/plugins/` 里没有」判它未安装**：项目级 `.claude/plugins/` 与项目<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 > `settings.json` 的 `enabledPlugins` **本来就不会列全局插件**。
 > **要判可用性就直接看 Skill 工具的可用清单**，那才是运行时事实。
 

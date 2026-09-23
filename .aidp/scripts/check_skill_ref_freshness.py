@@ -38,7 +38,7 @@
 与 `check_skill_ref_drift.py` 的注册表**刻意不同**（那边两个安装位都收，见其 `location` 一节）：
 本门的两类判据 —— 编号新鲜度、以及「SKILL 自带脚本却无人接线」的 WARN —— 都只对
 **随契约下发的公共 SKILL** 成立。把并列安装位的脚手架 SKILL（`aidp-code-engineer`，
-装在 `{{AIDP_HOME}}/../skills/`）收进来会立刻产生两类假信号：
+装在 `{{AIDP_HOME}}/skills/`）收进来会立刻产生两类假信号：
 
 - 它的 `scripts/` 是脚手架引擎（`scaffold.py` / `verify.py` / `mirror_to_bundle.py` …），
   本来就由 skill 自己编排、不该被命令端逐个接线 ⇒ `unreferenced_skill_scripts` 会一次冒出一批

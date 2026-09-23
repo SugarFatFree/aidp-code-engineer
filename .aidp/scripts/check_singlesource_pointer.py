@@ -103,7 +103,7 @@ def _resolve(root, base_dir, ref):
     #    （目录改名、分片迁移后没跟着改）这一整类断链就此全部隐身。
     if "/" in ref or os.sep in ref:
         return False
-    # 脚手架 bundle 的位置随安装形态变（模板仓库根级 `skills/`、下游 `.claude|.agents/skills/`、
+    # 脚手架 bundle 的位置随安装形态变（模板仓库根级 `skills/`、下游 `.claude|.agents/skills/`、  # runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录
     # 历史的 `AIDP_HOME/skills/`）→ 按路径片段识别，不写死某一种落点。
     _BUNDLE = os.path.join("aidp-code-engineer", "assets")
     for rel in SCAN + [runtime_text('__AIDP_HOME__/scripts', __file__), runtime_text('__AIDP_HOME__/skills', __file__), runtime_text('__AIDP_HOME__/templates', __file__), "docs"]:

@@ -164,7 +164,7 @@ class SelfInstalledSkillTest(unittest.TestCase):
                             "自举安装后目标必须带受管标记")
             body = (skill / "SKILL.md").read_text(encoding="utf-8")
             self.assertNotIn("{{AIDP_HOME}}", body)
-            self.assertIn(".agents/aidp", body)
+            self.assertIn(".agents", body)
             self.assertTrue((skill / "scripts/scaffold.py").is_file(), "自举后 skill 必须仍可执行")
             self.assertEqual(list((project / ".agents/skills").glob(".aidp-skill-stage-*")), [],
                              "⛔ 不得遗留临时装配目录")
@@ -233,7 +233,15 @@ class SelfInstalledSkillTest(unittest.TestCase):
             self.assertIn("injected", p.stdout + p.stderr)
             self.assertEqual(tree_digest(skill), before, "skill 自身必须逐字回滚")
             self.assertFalse((skill / ".aidp-scaffold-generated").exists())
-            self.assertFalse((project / ".agents/aidp").exists(), "运行包必须整体回滚")
+            # ⛔ 断言的是「运行包没装上」，不是「`.agents` 整个目录消失」：运行根降层后
+            #    `.agents` 就是 Agent 自己的目录，本用例里它还住着**正在执行的那份脚手架 skill**
+            #    （`.agents/skills/aidp-code-engineer`，自举形态）—— 回滚删掉它才是灾难。
+            import runtime_layout as _rl
+            self.assertFalse((project / ".agents" / _rl.RUNTIME_MANIFEST).exists(),
+                             "回滚后不该留下运行包 manifest")
+            leftover = [name for name in _rl.RUNTIME_DIRS
+                        if name != "skills" and (project / ".agents" / name).is_dir()]
+            self.assertEqual(leftover, [], f"回滚后残留受管目录：{leftover}")
             self.assertEqual(list((project / ".agents/skills").glob(".aidp-skill-stage-*")), [])
 
 
@@ -250,7 +258,7 @@ class DeterministicLfWriteTest(unittest.TestCase):
             self.assertEqual(target.read_bytes(), "第一行\n第二行\n".encode("utf-8"))
 
     def test_rendered_runtime_is_lf_only_and_passes_manifest_immediately(self):
-        for source_kind, home in (("claude", ".claude/aidp"), ("shared", ".agents/aidp")):
+        for source_kind, home in (("claude", ".claude"), ("shared", ".agents")):
             with self.subTest(home=home), tempfile.TemporaryDirectory() as td:
                 destination = Path(td) / home
                 with mock.patch.object(Path, "write_text",
@@ -360,14 +368,14 @@ class RuntimeDriftObservabilityTest(unittest.TestCase):
             project.mkdir()
             skill = plant_skill(project)
             init_downstream(project, "codex", skill)
-            runtime = project / ".agents/aidp"
+            runtime = project / ".agents"
             touched = 0
             for _relative, path in runtime_layout._runtime_files(runtime):
                 data = path.read_bytes()
                 if runtime_layout._is_text(data) and b"\n" in data:
                     path.write_bytes(data.replace(b"\n", b"\r\n"))   # Windows 文本模式的等价效果
                     touched += 1
-            self._reseal(runtime, ".agents/aidp", "shared")
+            self._reseal(runtime, ".agents", "shared")
             self.assertGreater(touched, 100)
             errors = runtime_errors(project, skill)
             self.assertEqual(len(errors), 1, errors)
@@ -381,11 +389,11 @@ class RuntimeDriftObservabilityTest(unittest.TestCase):
             project.mkdir()
             skill = plant_skill(project)
             init_downstream(project, "codex", skill)
-            runtime = project / ".agents/aidp"
+            runtime = project / ".agents"
             victim = runtime / "agents/aidp-compliance.md"
             self.assertTrue(victim.is_file())
             victim.write_bytes(victim.read_bytes() + "\n<!-- 真实内容改动 -->\n".encode("utf-8"))
-            self._reseal(runtime, ".agents/aidp", "shared")
+            self._reseal(runtime, ".agents", "shared")
             errors = runtime_errors(project, skill)
             self.assertEqual(len(errors), 1, errors)
             self.assertIn("共 1/", errors[0])
@@ -393,7 +401,7 @@ class RuntimeDriftObservabilityTest(unittest.TestCase):
 
     def test_both_homes_verify_clean_after_install(self):
         """`{{AIDP_HOME}}` 渲染成两种运行根后都必须 verify 通过（阴性对照）。"""
-        for agent, home in (("claude", ".claude/aidp"), ("codex", ".agents/aidp")):
+        for agent, home in (("claude", ".claude"), ("codex", ".agents")):
             with self.subTest(home=home), tempfile.TemporaryDirectory() as td:
                 project = Path(td) / "proj"
                 project.mkdir()
@@ -427,7 +435,7 @@ class DownstreamIdempotencyTest(unittest.TestCase):
             project.mkdir()
             init_downstream(project, "codex")
             p = subprocess.run(
-                [sys.executable, str(project / ".agents/aidp/scripts/agent_sync.py"),
+                [sys.executable, str(project / ".agents/scripts/agent_sync.py"),
                  "--root", str(project), "--agents", "codex", "--mode", "copy", "--check"],
                 capture_output=True, text=True, env=downstream_env(), stdin=subprocess.DEVNULL)
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

@@ -33,8 +33,8 @@ class RuntimeRootTest(unittest.TestCase):
     def test_parses_template_claude_and_shared_layouts_without_git(self):
         cases = (
             (Path("/p/.aidp/scripts/x.py"), Path("/p/.aidp"), Path("/p")),
-            (Path("/p/.claude/aidp/scripts/x.py"), Path("/p/.claude/aidp"), Path("/p")),
-            (Path("/p/.agents/aidp/scripts/x.py"), Path("/p/.agents/aidp"), Path("/p")),
+            (Path("/p/.claude/scripts/x.py"), Path("/p/.claude"), Path("/p")),
+            (Path("/p/.agents/scripts/x.py"), Path("/p/.agents"), Path("/p")),
         )
         with mock.patch("subprocess.run", side_effect=AssertionError("运行根解析不得调用 Git")):
             for script, runtime, project in cases:
@@ -47,10 +47,10 @@ class RuntimeRootTest(unittest.TestCase):
             self.runtime.runtime_root("/p/scripts/x.py", environ={})
 
     def test_runtime_text_expands_only_internal_token(self):
-        script = Path("/p/.claude/aidp/scripts/x.py")
+        script = Path("/p/.claude/scripts/x.py")
         self.assertEqual(
             self.runtime.runtime_text("run __AIDP_HOME__/scripts/x.py", script),
-            "run .claude/aidp/scripts/x.py",
+            "run .claude/scripts/x.py",
         )
         self.assertEqual(
             self.runtime.runtime_text("memory/.aidp/alerts.jsonl", script),
@@ -60,12 +60,12 @@ class RuntimeRootTest(unittest.TestCase):
     def test_relative_overrides_resolve_inside_project(self):
         with tempfile.TemporaryDirectory() as td:
             project = Path(td) / "project"
-            runtime = project / ".claude/aidp"
+            runtime = project / ".claude"
             scripts = runtime / "scripts"
             scripts.mkdir(parents=True)
             script = scripts / "x.py"
             script.write_text("# fixture\n", encoding="utf-8")
-            env = {"AIDP_PROJECT_ROOT": str(project), "AIDP_HOME": ".claude/aidp"}
+            env = {"AIDP_PROJECT_ROOT": str(project), "AIDP_HOME": ".claude"}
             self.assertEqual(self.runtime.project_root(script, environ=env), project)
             self.assertEqual(self.runtime.runtime_root(script, environ=env), runtime)
 
@@ -73,7 +73,7 @@ class RuntimeRootTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             project = base / "project"
-            runtime = project / ".claude/aidp"
+            runtime = project / ".claude"
             runtime.mkdir(parents=True)
             script = runtime / "scripts/x.py"
             script.parent.mkdir()
@@ -116,14 +116,15 @@ class RuntimeRootTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             project = base / "workspace/project"
-            runtime = project / ".claude/aidp"
+            runtime = project / ".claude"
             runtime.mkdir(parents=True)
             script = runtime / "scripts/x.py"
             script.parent.mkdir()
             script.write_text("# fixture\n", encoding="utf-8")
             env = {
                 "AIDP_PROJECT_ROOT": str(base / "workspace/other/../project"),
-                "AIDP_HOME": ".claude/tmp/../aidp",
+                # 运行根已降层为 `.claude`；本例验证的是带 `..` 的覆盖值能被规范化
+                "AIDP_HOME": ".claude/tmp/..",
             }
             self.assertEqual(self.runtime.project_root(script, environ=env), project)
             self.assertEqual(self.runtime.runtime_root(script, environ=env), runtime)
@@ -139,7 +140,7 @@ class RuntimeRootTest(unittest.TestCase):
             link.symlink_to(outside, target_is_directory=True)
             script = outside / "aidp/scripts/x.py"
             script.write_text("# fixture\n", encoding="utf-8")
-            env = {"AIDP_PROJECT_ROOT": str(project), "AIDP_HOME": ".claude/aidp"}
+            env = {"AIDP_PROJECT_ROOT": str(project), "AIDP_HOME": ".claude"}
             with self.assertRaisesRegex(RuntimeError, "symlink"):
                 self.runtime.runtime_root(script, environ=env)
 
@@ -151,7 +152,7 @@ class RuntimeRootTest(unittest.TestCase):
             template_script = project / ".aidp/scripts/x.py"
             template_script.parent.mkdir(parents=True)
             template_script.write_text("# fixture\n", encoding="utf-8")
-            env = {"AIDP_PROJECT_ROOT": str(project), "AIDP_HOME": ".claude/aidp"}
+            env = {"AIDP_PROJECT_ROOT": str(project), "AIDP_HOME": ".claude"}
             with self.assertRaisesRegex(RuntimeError, "非目录"):
                 self.runtime.runtime_root(template_script, environ=env)
 

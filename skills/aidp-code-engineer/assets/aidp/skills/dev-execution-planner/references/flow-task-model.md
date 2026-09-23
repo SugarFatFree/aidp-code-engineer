@@ -62,7 +62,7 @@
 1. **设计来源必须精确到章节 + 行号范围** — 不接受"参考详细设计"这类模糊引用,必须标注到"`<设计文档路径>` > `A.3 biz_user 表定义` > `L120-L180`"级别,方便执行代码的 Agent 快速定位
 2. **必须有"AI 执行指令"代码块** — 每个 Task 必须包含一个 `**AI 执行指令**` 小标题及其下的 markdown 代码块;代码块内容 = AI 工具中的 slash 命令(或工具指令) + 完整提示词;用户复制整块即可投递到 Claude Code/Cursor/AIDP 等 AI 工具中执行
 3. **AI 执行指令的首行必须是具体命令,不是描述** — 代码块第一行是可直接输入的指令,如 `/dev-logic-architect`、`/项目-api-gen`、`aidp gen:mapper --table biz_user`;不接受"请使用 xxx 工具"这类模糊描述
-4. **命令选择必须遵循 5 级指令优先级** — L1 AIDP 命令 > L2 项目 `.claude/` 资源 > L3 系统 Claude Code 资源 > L4 通用工具 > L5 Shell 脚本,详见本文件「可用指令清单」
+4. **命令选择必须遵循 5 级指令优先级** — L1 AIDP 命令 > L2 项目 `.claude/` 资源 > L3 系统 Claude Code 资源 > L4 通用工具 > L5 Shell 脚本,详见本文件「可用指令清单」  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 5. **提示词必须引用前序产出与设计章节** — AI 执行指令代码块内的提示词必须:(a) 显式引用依赖 Task 的产出;(b) 显式标注设计来源章节和行号;(c) 不复述设计中已定义的字段/接口/枚举等具体内容,仅以章节引用代替
 6. **验收标准必须包含"设计一致性"检查** — 必须有一项验收检查代码与详细设计的一致性(如"字段名/类型/约束与 A.3 章节定义完全一致"),不得全部为功能性检查
 7. **验收标准必须可自动化** — 至少一项验收标准是可通过命令执行验证的(如静态检查命令、研发自测用例 ID、`/code-verification-loop`;⛔ 不写需要启动服务的 `curl localhost` 类,见约定 35),不得全部为主观判断项
@@ -97,12 +97,12 @@
 5. 检查 `pom.xml` 的 plugin 配置(如 mybatis-plus-generator)
 6. 检查项目 README 中"开发工具"、"代码生成"、"脚手架"章节
 
-**第 2 层:项目 `.claude/` 下的 commands/skills/plugins/agents/mcp(次优先)**
+**第 2 层:项目 `.claude/` 下的 commands/skills/plugins/agents/mcp(次优先)**  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 
-扫描当前项目根目录下的 `.claude/` 配置,提取项目级 Claude Code 资源:
+扫描当前项目根目录下的 `.claude/` 配置,提取项目级 Claude Code 资源:  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 - `{{AIDP_HOME}}/commands/*.md` — 项目级 slash 命令(如 `/项目slash`)
 - `{{AIDP_HOME}}/skills/*/SKILL.md` — 项目级 skill(含名称、description、触发条件)
-- `.claude/plugins/` — 项目级 plugin
+- `.claude/plugins/` — 项目级 plugin<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 - `{{AIDP_HOME}}/agents/*.md` — 项目级 subagent 定义
 - `.claude/mcp.json` 或 `.claude/settings.json` 中的 `mcpServers` — 项目级 MCP server
 - `AGENTS.md` — 项目约定(可能包含命令使用规范)
@@ -125,7 +125,7 @@
 - `aidp gen:mapper --table <name>` — 来源:AIDP.md 第 3 章
 - `aidp scaffold:controller` — 来源:`.aidp.yml`
 
-### L2 — 项目 .claude/ 资源(项目团队约定)
+### L2 — 项目 .claude/ 资源(项目团队约定)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 - `/项目-api-gen` — 来源:`{{AIDP_HOME}}/commands/项目-api-gen.md`
 - skill: `project-entity-gen` — 来源:`{{AIDP_HOME}}/skills/project-entity-gen/SKILL.md`
 
@@ -181,7 +181,7 @@ python3 <SKILL_DIR>/scripts/check_sql_path_handoff.py <研发执行计划路径>
 
 **使用原则**:每个 Task 中优先使用 L1 层资源;L1 层不满足时降级到 L2;L2 不满足时降级到 L3,依此类推。**同层资源同时可用时优先"项目专属"而非"通用",因为项目资源更贴合团队约定和代码仓库现状。**
 
-**降级示例**:若项目无任何 AIDP 命令、范式文档或脚手架,退而使用项目 `.claude/` 下的资源,再退用系统 Claude Code 的 skill/plugin,最后才用通用工具命令。
+**降级示例**:若项目无任何 AIDP 命令、范式文档或脚手架,退而使用项目 `.claude/` 下的资源,再退用系统 Claude Code 的 skill/plugin,最后才用通用工具命令。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 
 **来源标注规则(四源原则,与本文件「L3 Task 级引用」一致):**
 

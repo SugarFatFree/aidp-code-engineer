@@ -21,13 +21,13 @@
 
 ## 一、可用指令清单(按优先级)
 
-> 生成本计划前已按 5 层优先级扫描项目资源(`{{AIDP_HOME}}/`、`AIDP*.md`、`.claude/`、`~/.claude/`、`package.json scripts`、`Makefile`、`pom.xml`、README)。**若项目存在 L1/L2 资源,Task 必须优先采用**;本虚构项目扫描结果如下。
+> 生成本计划前已按 5 层优先级扫描项目资源(`各 Agent 的运行根/`、`AIDP*.md`、`~/.claude/`、`package.json scripts`、`Makefile`、`pom.xml`、README)。**若项目存在 L1/L2 资源,Task 必须优先采用**;本虚构项目扫描结果如下。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 
 ### L1 — AIDP 命令与范式(项目专属,最高优先级)
 - 无(`{{AIDP_HOME}}/`、`AIDP*.md` 均未发现)
 
-### L2 — 项目 .claude/ 资源(项目团队约定)
-- 无(项目 `.claude/` 下无 commands/skills/agents)
+### L2 — 项目 .claude/ 资源(项目团队约定)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+- 无(项目 `.claude/` 下无 commands/skills/agents)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 
 ### L3 — 系统 Claude Code 资源(全局)
 - `/dev-logic-architect` — 来源:`~/{{AIDP_HOME}}/skills/dev-logic-architect/`

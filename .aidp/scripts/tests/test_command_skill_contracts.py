@@ -89,7 +89,10 @@ def test_memory_snapshot():
 
 def test_scaffold_invocations_in_commands():
     print("\n[命令文档中的 scaffold.py 调用可被 argparse 接受]")
-    pat = re.compile(r"python3 \{\{AIDP_HOME\}\}/\.\./skills/aidp-code-engineer/scripts/scaffold\.py ([^\n`#]*)")
+    # 运行根降层后脚手架 skill 就在 `{{AIDP_HOME}}/skills/` 下，那层 `../` 是嵌套结构的产物、已收敛。
+    # 两种写法都收：仓库里还可能残留旧形态，漏掉就等于本门空跑。
+    pat = re.compile(
+        r"python3 \{\{AIDP_HOME\}\}/(?:\.\./)?skills/aidp-code-engineer/scripts/scaffold\.py ([^\n`#]*)")
     hits = 0
     for md in sorted((REPO / ".aidp/commands").glob("*.md")):
         for m in pat.finditer(md.read_text(encoding="utf-8")):

@@ -30,6 +30,9 @@ def _natural_layout(script_file: Path | str) -> tuple[Path, Path]:
     root = path.parent.parent
     if root.name == ".aidp":
         return root, root.parent
+    if root.name in {".claude", ".agents"}:
+        return root, root.parent
+    # 历史嵌套形态 `<root>/.claude/aidp/scripts`：留着，未迁移的项目还在用。
     if root.name == "aidp" and root.parent.name in {".claude", ".agents"}:
         return root, root.parent.parent
     # 脚手架 bundle：被 scaffold.py / verify.py 以库的形式 import —— 下游装好的项目里没有模板

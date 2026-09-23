@@ -32,7 +32,7 @@ SKILL 在磁盘上有**两个**合法安装位，二者语义不同：
 | location | 位置 | 是什么 |
 |----------|------|--------|
 | `contract` | `{{AIDP_HOME}}/skills/<名>` | 随契约下发的公共 SKILL（`dev-logic-architect` 等），受版本门控 |
-| `sibling`  | `{{AIDP_HOME}}/../skills/<名>` | 与运行包**并列**安装的 SKILL；脚手架自身 `aidp-code-engineer` 就在这里 —— 模板仓库是根 `skills/`，下游是 `.agents/skills/`（Codex / DSH）或 `.claude/skills/`（Claude Code） |
+| `sibling`  | `各 Agent 的运行根/skills/<名>` | 与运行包**并列**安装的 SKILL；脚手架自身 `aidp-code-engineer` 就在这里 —— 模板仓库是根 `skills/`，下游是 `.agents/skills/`（Codex / DSH）或 `.claude/skills/`（Claude Code） |  # runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录
 
 两个根都由 `aidp_runtime` 的运行包解析**算出来**，⛔ 不写死 `.agents` / `.claude` 字面量，
 也⛔ 不靠一张人维护的 SKILL 名单或一条针对 `aidp-code-engineer` 的豁免——
@@ -97,28 +97,56 @@ def skill_roots(root):
     """→ [(绝对目录, location)]：公共契约位 + 并列安装位，全部由运行包解析算出。"""
     home = runtime_relpath("", __file__).rstrip("/")            # `.aidp` / `<agent>/aidp` 两种
     sibling_parent = os.path.dirname(home)                      # ``（模板仓库根）/ `.claude` / `.agents`
-    return [
-        (os.path.join(root, home, "skills"), "contract"),
-        (os.path.join(root, sibling_parent, "skills") if sibling_parent
-         else os.path.join(root, "skills"), "sibling"),
-    ]
+    # 并列位：模板仓库是根级 `skills/`；下游降层后运行根本身就是 Agent 目录，
+    # 安装器与公共 SKILL 同在 `<运行根>/skills/`，此时并列根即契约根。
+    sibling = (os.path.join(root, sibling_parent, "skills") if sibling_parent
+               else os.path.join(root, "skills"))
+    contract = os.path.join(root, home, "skills")
+    if not os.path.isdir(sibling):
+        sibling = contract
+    return [(contract, "contract"), (sibling, "sibling")]
+
+
+INSTALLER_SKILL = "aidp-code-engineer"
 
 
 def installed_skills(root):
-    """→ {skill 名: location}。同名时 `contract` 优先（公共契约是权威）。"""
-    out = {}
+    """→ {skill 名: location}。同名时 `contract` 优先（公共契约是权威）。
+
+    ⛔ 安装器（`aidp-code-engineer`）恒为 `sibling`，**按名字定、不按目录位置定**：
+    运行根降层之后它物理上也落在 `<运行根>/skills/` 里、与公共 SKILL 同目录，但它
+    不在运行包契约清单内 —— 按目录位置判会把它算成 `contract`，于是又被拉进公共 SKILL
+    表强制对账，恒报"表里注册了但目录不存在"（这正是拆出 location 要消掉的那个假红）。
+    """
+    out = {INSTALLER_SKILL: "sibling"}
     for base, location in skill_roots(root):
         if not os.path.isdir(base):
             continue
         for n in sorted(os.listdir(base)):
             if os.path.isdir(os.path.join(base, n)):
                 out.setdefault(n, location)
+    if not any(os.path.isdir(os.path.join(b, INSTALLER_SKILL)) for b, _l in skill_roots(root)):
+        out.pop(INSTALLER_SKILL, None)          # 项目里根本没装安装器 → 不该出现在真值表里
     return out
 
 
 def skill_dir(root, name, location):
-    base = dict((loc, b) for b, loc in skill_roots(root))[location]
-    return os.path.join(base, name)
+    """SKILL 的实际目录。
+
+    ⛔ 按 location 选根是不够的：运行根降层之后，安装器（location=`sibling`）物理上就落在
+    `<运行根>/skills/` 里、与公共 SKILL 同目录；只有模板仓库里它才真的在并列的根级 `skills/`。
+    所以这里**按名字在全部根里找**，找到哪个算哪个 —— 找错根的后果是对它的每一处引用
+    都判"文件不存在"，把一道本该零误报的门变成恒红。
+    """
+    roots = dict((loc, b) for b, loc in skill_roots(root))
+    preferred = roots.get(location)
+    if preferred and os.path.isdir(os.path.join(preferred, name)):
+        return os.path.join(preferred, name)
+    for base, _loc in skill_roots(root):
+        candidate = os.path.join(base, name)
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(preferred or roots.get("contract", root), name)
 
 
 def scan(root="."):

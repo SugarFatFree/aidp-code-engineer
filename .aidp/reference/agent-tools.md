@@ -8,12 +8,12 @@
 
 | 项 | Claude Code | Codex | DeepSeek Harness |
 |----|-------------|-------|------------------|
-| 判定依据（项目根） | `.claude/` | `.codex/` | `.dsh/` |
+| 判定依据（项目根） | `.claude/` | `.codex/` | `.dsh/` |  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 | 运行契约真源 | 当前 Agent 的 `{{AIDP_HOME}}/` 渲染副本 | 当前 Agent 的 `{{AIDP_HOME}}/` 共享运行包 | 当前 Agent 的 `{{AIDP_HOME}}/` 共享运行包 |
 | 项目记忆文件 | `CLAUDE.md`（与其他 Agent 并存时为 `@AGENTS.md` 薄壳） | `AGENTS.md` | `AGENTS.md` |
-| SKILL 目录 | `.claude/skills/` | `.agents/skills/` | `.agents/skills/`（与 Codex 共用） |
-| AIDP 命令入口 | `/sprint-dev …`（`.claude/commands/`） | `$sprint-dev …`（`.codex/skills/aidp/`，仅显式调用） | `/sprint-dev …`（`.dsh/commands/`） |
-| 插件（`{{AIDP_HOME}}/plugins/`） | `.claude/plugins/<name>/` + settings 登记 marketplace 并启用 | 嵌套 SKILL 位于 `.agents/skills/<name>/skills/`，MCP 合并到 `.codex/config.toml` | 嵌套 SKILL 与 Codex 共用 `.agents/skills/<name>/skills/`，MCP 汇总到 `.dsh/mcp.json` |
+| SKILL 目录 | `.claude/skills/` | `.agents/skills/` | `.agents/skills/`（与 Codex 共用） |<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
+| AIDP 命令入口 | `/sprint-dev …`（`.claude/commands/`） | `$sprint-dev …`（`.codex/skills/aidp/`，仅显式调用） | `/sprint-dev …`（`.dsh/commands/`） |<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
+| 插件（`各 Agent 的运行根/plugins/`） | `.claude/plugins/<name>/` + settings 登记 marketplace 并启用 | 嵌套 SKILL 位于 `.agents/skills/<name>/skills/`，MCP 合并到 `.codex/config.toml` | 嵌套 SKILL 与 Codex 共用 `.agents/skills/<name>/skills/`，MCP 汇总到 `.dsh/mcp.json` |<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 | Stop hook | `.claude/settings.json` | `.codex/hooks.json`（`config.toml` 需 `codex_hooks = true`） | `.dsh/hooks.json`，由 hooks 插件加载 |
 
 模板仓库的 `.aidp` 仅供维护，下游根目录没有该源码目录；以下 `{{AIDP_HOME}}` 是安装后解析的运行目录。入口全部由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；命令只在 `{{AIDP_HOME}}/commands/`、公共 SKILL 只在 `{{AIDP_HOME}}/skills/`、插件只在 `{{AIDP_HOME}}/plugins/`。Codex 命令位于官方发现根 `.codex/skills/aidp/`，带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`。其正文明确串联 `/foo args` 时，读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 内联执行；未知命令或无法唯一映射时 fail closed。`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。

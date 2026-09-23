@@ -7986,7 +7986,7 @@ def test_environment_degradation_gates():
     reg = DRIFT.installed_skills(str(repo))
     check("★注册表按安装位分类：公共契约 SKILL 落 `contract`",
           reg.get("dev-logic-architect") == "contract")
-    check("★★注册表收得到并列安装位：`aidp-code-engineer` 装在 `{{AIDP_HOME}}/../skills/`，"
+    check("★★注册表收得到并列安装位：`aidp-code-engineer` 装在 `{{AIDP_HOME}}/skills/`，"
           "落 `sibling` —— 它挪位那天本门对每一处 `aidp-code-engineer/scripts/*.py` 引用"
           "同时**静默**失明，而那正是 /sprint-init 真要跑的几行",
           reg.get("aidp-code-engineer") == "sibling")
@@ -8027,7 +8027,7 @@ def test_environment_degradation_gates():
           len(f2) == 1 and f2[0]["location"] == "contract")
 
     # 阳性：并列安装位 SKILL 的悬空引用**也**要 ERROR —— 证明拓宽注册表是加门不是放水
-    p3 = mk_skill_proj("跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/gone.py`。\n",
+    p3 = mk_skill_proj("跑 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/gone.py`。\n",
                        sibling_skills=("aidp-code-engineer",))
     f3 = DRIFT.scan(str(p3))["findings"]
     check("★★阳性对照：并列安装位 SKILL 的悬空引用同样判 ERROR（location=sibling）——"
@@ -8035,7 +8035,7 @@ def test_environment_degradation_gates():
           len(f3) == 1 and f3[0]["location"] == "sibling")
 
     # 阴性：并列安装位 SKILL 的引用文件真实存在 → 不报
-    p4 = mk_skill_proj("跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py`。\n",
+    p4 = mk_skill_proj("跑 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py`。\n",
                        sibling_skills=("aidp-code-engineer",),
                        files=("skills/aidp-code-engineer/scripts/verify.py",))
     check("★阴性：并列安装位里文件确实存在 → 0 误报",
@@ -8052,22 +8052,22 @@ def test_environment_degradation_gates():
     check("★阳性对照：公共契约 SKILL 仍被新鲜度门覆盖（拆表不等于少管）",
           bool(truth.get("dev-logic-architect", {}).get("scripts")))
 
-    # ══ ⑤ 下游真实安装形态回放：`.agents/aidp/` 运行包 + `.agents/skills/` 并列 SKILL ══
+    # ══ ⑤ 下游真实安装形态回放：`.agents/` 运行包 + `.agents/skills/` 并列 SKILL ══
     #   ★ 上面 ③ 跑的是**模板仓库**布局（运行包 `.aidp/` + 并列位恰好是仓库根 `skills/`），
-    #     而下游 Codex 装出来的是 `.agents/aidp/` + `.agents/skills/` —— 正是这次误报的现场。
+    #     而下游 Codex 装出来的是 `.agents/` + `.agents/skills/` —— 正是这次误报的现场。
     #     两者走的是 `skill_roots()` 里同一行 `os.path.dirname(home)`，但模板布局下 dirname 为
     #     空串、命中的是那行的 `else` 分支：**模板布局全绿证明不了下游布局也对**。
     #   ⛔ 这条不能改成直接 import 后传 root：`runtime_relpath` 是按**脚本自身所在位置**解析
-    #     运行根的，只有把脚本真放进 `.agents/aidp/scripts/` 再子进程跑，才是下游的那条代码路径。
+    #     运行根的，只有把脚本真放进 `.agents/scripts/` 再子进程跑，才是下游的那条代码路径。
     def mk_agents_proj(doc, present=()):
         root = Path(tempfile.mkdtemp())
-        sc = root / ".agents/aidp/scripts"
+        sc = root / ".agents/scripts"
         sc.mkdir(parents=True)
         for n in ("aidp_runtime.py", "check_skill_ref_drift.py"):
             shutil.copy2(SC / n, sc / n)
-        (root / ".agents/aidp/flows/x").mkdir(parents=True)
-        (root / ".agents/aidp/flows/x/a.md").write_text(doc, encoding="utf-8")
-        (root / ".agents/aidp/skills/dev-logic-architect/scripts").mkdir(parents=True)
+        (root / ".agents/flows/x").mkdir(parents=True)
+        (root / ".agents/flows/x/a.md").write_text(doc, encoding="utf-8")
+        (root / ".agents/skills/dev-logic-architect/scripts").mkdir(parents=True)
         (root / ".agents/skills/aidp-code-engineer/scripts").mkdir(parents=True)
         for rel in present:
             (root / rel).write_text("# stub\n", encoding="utf-8")
@@ -8075,19 +8075,19 @@ def test_environment_degradation_gates():
 
     def agents_scan(root):
         cp = subprocess.run([sys.executable,
-                             str(root / ".agents/aidp/scripts/check_skill_ref_drift.py"),
+                             str(root / ".agents/scripts/check_skill_ref_drift.py"),
                              "--root", str(root), "--json"],
                             capture_output=True, text=True)
         return json.loads(cp.stdout), cp.returncode
 
-    REF_DOC = ("跑 `python3 {{AIDP_HOME}}/../skills/aidp-code-engineer/scripts/verify.py . --read-only`，\n"
+    REF_DOC = ("跑 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py . --read-only`，\n"
                "失败再跑 `aidp-code-engineer/scripts/scaffold.py`。\n")
 
     # 阴性：两个被引用的脚手架脚本都在 `.agents/skills/` 下真实存在 → 0 误报
     d = mk_agents_proj(REF_DOC, present=(".agents/skills/aidp-code-engineer/scripts/verify.py",
                                          ".agents/skills/aidp-code-engineer/scripts/scaffold.py"))
     res, rc = agents_scan(d)
-    check("★★下游形态（`.agents/aidp/` + `.agents/skills/`）：脚手架 SKILL 被识别为 `sibling`，"
+    check("★★下游形态（`.agents/` + `.agents/skills/`）：脚手架 SKILL 被识别为 `sibling`，"
           "⛔ 不是查无此名（查无此名 = 对它的每一处引用静默失明）",
           res.get("skills", {}).get("aidp-code-engineer") == "sibling")
     check("★下游形态：公共契约 SKILL 仍落 `contract`（两个安装位互不吞并）",

@@ -47,8 +47,13 @@ def _vcs_mode(root: Path) -> str:
 
 
 def _runtime_homes(root: Path):
+    """已安装的运行包。判据是**受管 manifest 在不在**，不是目录在不在。
+
+    ⛔ 降层之后运行根就是 `.claude` / `.agents` 本身 —— 任何用过 Claude Code 的项目都有
+    `.claude/`，按"目录存在"判会把**没装 AIDP 的项目**误判成已装运行包，后续检查全线错位。
+    """
     return {source: root / home for source, home in runtime_layout.RUNTIME_HOME.items()
-            if os.path.lexists(root / home)}
+            if (root / home / runtime_layout.RUNTIME_MANIFEST).is_file()}
 
 
 def _contract_root(root: Path) -> Path:
@@ -101,8 +106,13 @@ def check_native_runtime(root: Path, r):
         if manifest["version"] == current_version:
             source = _runtime_source()
             source_files = dict(_source_runtime_files(source))
-            missing = sorted(set(source_files) - set(manifest["files"]))
-            extra = sorted(set(manifest["files"]) - set(source_files)
+            # ⛔ 适配层产物不算「多出」：`agent_sync` 生成的插件 SKILL 命名空间落在运行包的
+            #    `skills/` 里（运行根降层后两者同目录），它既不是契约、也不是用户物，
+            #    算进来会让每个装了插件的下游项目恒报"文件清单不一致"。
+            managed = {name for name in manifest["files"]
+                       if not runtime_layout._adapter_generated(home, name)}
+            missing = sorted(set(source_files) - managed)
+            extra = sorted(managed - set(source_files)
                            - set(manifest.get("user_files", [])))
             if missing or extra:
                 r.error(f"Agent 原生运行包 {relative} 文件清单与当前脚手架 {current_version} 不一致："
@@ -111,7 +121,7 @@ def check_native_runtime(root: Path, r):
             # 所以 `{{AIDP_HOME}}` 占位符本身不会造成不一致；真正的全片漂移只可能来自写入口径
             # （曾经的 CRLF 文本写入）。⛔ 不要在这里再抽一层渲染 API。
             drifted = []
-            for name in sorted(set(source_files) & set(manifest["files"])):
+            for name in sorted(set(source_files) & managed):
                 if name in L.USER_FILLABLE_CONTRACTS:
                     continue
                 data = source_files[name].read_bytes()
@@ -142,11 +152,14 @@ def check_native_runtime(root: Path, r):
         if set(manifests["claude"]["files"]) != set(manifests["shared"]["files"]):
             r.error("Agent 原生运行包双包文件集合不一致")
         claude, shared = (homes[source] for source in ("claude", "shared"))
-        if runtime_layout.normalize_runtime(claude, runtime_layout.RUNTIME_HOME["claude"]) != \
-                runtime_layout.normalize_runtime(shared, runtime_layout.RUNTIME_HOME["shared"]):
-            r.error("Agent 原生运行包双包规范化内容或权限不一致")
+        # ★ 判据 = 两包都等于「同一真源按各自 home 渲染的结果」，不再"各自反解回 token 再比"：
+        #   运行根降层后与 Agent 自有路径同名，反解无法区分渲染产物与本就写死的字面量。
+        if runtime_layout.packages_share_one_source(
+                [(claude, runtime_layout.RUNTIME_HOME["claude"]),
+                 (shared, runtime_layout.RUNTIME_HOME["shared"])], _runtime_source()):
+            r.note("Agent 原生运行包双包同源一致")
         else:
-            r.note("Agent 原生运行包双包规范化一致")
+            r.error("Agent 原生运行包双包内容或权限与真源不一致")
     if os.path.lexists(root / ".aidp"):
         evidence = scaffold_engine.migration_failure_evidence(root)
         if evidence is not None:
@@ -451,7 +464,8 @@ def check_docs_init_sync(root: Path, template: bool, r: VerifyResult):
             continue
         want = dict(L.iter_files(ref))
         have = dict(L.iter_files(init))
-        home = (".agents/aidp" if "shared" in _runtime_homes(root) else ".claude/aidp")
+        home = (runtime_layout.RUNTIME_HOME["shared"] if "shared" in _runtime_homes(root)
+                else runtime_layout.RUNTIME_HOME["claude"])
         drift = sorted(k for k in set(want) | set(have)
                        if k not in want or k not in have or
                        (want[k].read_bytes() if template else

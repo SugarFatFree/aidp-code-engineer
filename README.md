@@ -27,20 +27,20 @@
 
 ### 2. 安装脚手架 skill
 
-脚手架 skill `aidp-code-engineer` 位于本仓库 [`.aidp/skills/aidp-code-engineer/`](.aidp/skills/aidp-code-engineer/)。把它复制到目标项目中你所用 Agent 的 skills 目录：
+脚手架 skill `aidp-code-engineer` 位于本仓库 [`skills/aidp-code-engineer/`](skills/aidp-code-engineer/)。把它复制到目标项目中你所用 Agent 的 skills 目录：
 
 ```bash
 git clone https://github.com/SugarFatFree/aidp-code-engineer.git
 cd <你的项目>
 
 # Claude Code
-mkdir -p .claude/skills && cp -r ../aidp-code-engineer/.aidp/skills/aidp-code-engineer .claude/skills/
+mkdir -p .claude/skills && cp -r ../aidp-code-engineer/skills/aidp-code-engineer .claude/skills/
 
 # Codex
-mkdir -p .codex .agents/skills && cp -r ../aidp-code-engineer/.aidp/skills/aidp-code-engineer .agents/skills/
+mkdir -p .codex .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-engineer .agents/skills/
 
 # DeepSeek Harness（与 Codex 共用 .agents/skills）
-mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/.aidp/skills/aidp-code-engineer .agents/skills/
+mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-engineer .agents/skills/
 ```
 
 ### 3. 初始化项目
@@ -79,7 +79,7 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/.aidp/skills/aidp-co
 │   ├── agents/            #   角色 Agent（architect / frontend / backend / qa / ui …）
 │   ├── flows/             #   命令分片流程
 │   ├── rules/ reference/  #   规则与约定细则
-│   ├── skills/            #   Skills（含脚手架 aidp-code-engineer）
+│   ├── skills/            #   Skills（脚手架 aidp-code-engineer 不在这里，见 .claude/skills 或 .agents/skills）
 │   ├── scripts/           #   确定性脚本（commit_gate / cicd_watch / notify / baseline_edit …）
 │   ├── hooks/             #   Hook（autopilot Stop 护栏）
 │   └── templates/         #   报告 / 部署模板

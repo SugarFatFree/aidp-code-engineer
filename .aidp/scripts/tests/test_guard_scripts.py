@@ -28,7 +28,7 @@ import check_version_identifier as VI
 
 _passed = _failed = _skipped = 0
 REPO_ROOT = Path(HERE).resolve().parents[2]
-SKILL_DIR = REPO_ROOT / ".aidp/skills/aidp-code-engineer"
+SKILL_DIR = REPO_ROOT / "skills/aidp-code-engineer"
 
 
 def skip(name, reason):
@@ -4569,7 +4569,7 @@ def test_suite_has_invoker():
     #   「没有调用方的套件可以长期红而无人知」，自己漏扫一整个目录等于给它开了个后门。
     missing = []
     for _sub in (".aidp/scripts/tests",
-                 ".aidp/skills/aidp-code-engineer/scripts/tests"):
+                 "skills/aidp-code-engineer/scripts/tests"):
         tdir = repo / _sub
         if not tdir.is_dir():
             continue

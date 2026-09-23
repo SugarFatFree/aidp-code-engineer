@@ -4,7 +4,7 @@
 # 用法（仓库根）：bash .aidp/scripts/tests/run.sh
 #
 # ★ 收录铁律：**全仓每一个** `tests/` 目录下的 test_*.py / test_*.js 都必须在此登记
-#   —— 当前有两处：`.aidp/scripts/tests/` 与 `.aidp/skills/aidp-code-engineer/scripts/tests/`。
+#   —— 当前有两处：`.aidp/scripts/tests/` 与 `skills/aidp-code-engineer/scripts/tests/`。
 #   ⛔ 别把"tests/"默读成只有前者：后者守的是脚手架 skill 自身（镜像器 / 脚手架库 / 记忆文件同步器），
 #   漏收即它红了也没人知道。漏收 = 该套件永远绿不了也红不了（与"护栏无调用方"同类）。
 #   新增测试文件时同步加一行；勿依赖通配自动发现（顺序与跳过条件需显式可读）。
@@ -97,13 +97,13 @@ run "test_runtime_paths.py（下发运行路径抽象守卫）" python3 .aidp/sc
 run "test_command_skill_contracts.py（命令 ↔ SKILL 调用契约）" python3 .aidp/scripts/tests/test_command_skill_contracts.py
 run "test_doc_reference_guards.py（符号引用 / CLI 归属 / 私有痕迹 三道门）" python3 .aidp/scripts/tests/test_doc_reference_guards.py
 
-# ── 脚手架 skill 侧（.aidp/skills/aidp-code-engineer/scripts/tests/）──
-run "test_mirror.py（脚手架侧：本体→bundle 镜像）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_mirror.py
-run "test_scaffold_lib.py（脚手架侧：脚手架库）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_scaffold_lib.py
-run "test_runtime_layout.py（脚手架侧：Agent 原生运行包渲染）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_runtime_layout.py
-run "test_installed_init_docs.py（脚手架侧：下发文档运行路径）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_installed_init_docs.py
-run "test_scaffold_modes.py（脚手架侧：init / migrate / upgrade 三模式）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_scaffold_modes.py
-run "test_sync_memory_md.py（脚手架侧：项目记忆文件同步）" python3 .aidp/skills/aidp-code-engineer/scripts/tests/test_sync_memory_md.py
+# ── 脚手架 skill 侧（skills/aidp-code-engineer/scripts/tests/）──
+run "test_mirror.py（脚手架侧：本体→bundle 镜像）" python3 skills/aidp-code-engineer/scripts/tests/test_mirror.py
+run "test_scaffold_lib.py（脚手架侧：脚手架库）" python3 skills/aidp-code-engineer/scripts/tests/test_scaffold_lib.py
+run "test_runtime_layout.py（脚手架侧：Agent 原生运行包渲染）" python3 skills/aidp-code-engineer/scripts/tests/test_runtime_layout.py
+run "test_installed_init_docs.py（脚手架侧：下发文档运行路径）" python3 skills/aidp-code-engineer/scripts/tests/test_installed_init_docs.py
+run "test_scaffold_modes.py（脚手架侧：init / migrate / upgrade 三模式）" python3 skills/aidp-code-engineer/scripts/tests/test_scaffold_modes.py
+run "test_sync_memory_md.py（脚手架侧：项目记忆文件同步）" python3 skills/aidp-code-engineer/scripts/tests/test_sync_memory_md.py
 
 # ── 渲染（需 node）──
 if command -v node >/dev/null 2>&1; then

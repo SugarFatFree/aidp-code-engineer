@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 20
       - name: Compile scripts
-        run: python -m compileall -q .aidp
+        run: python -m compileall -q .aidp skills
       - name: Script self-checks
         run: python3 .aidp/scripts/selfcheck.py
       - name: Regression tests (includes scaffold skill tests)
@@ -30,8 +30,8 @@ jobs:
           python3 .aidp/scripts/check_cli_invocation.py
           python3 .aidp/scripts/check_private_markers.py
       - name: Memory template in sync
-        run: python3 .aidp/skills/aidp-code-engineer/scripts/sync_memory_md.py --check
+        run: python3 skills/aidp-code-engineer/scripts/sync_memory_md.py --check
       - name: Scaffold bundle in sync
-        run: python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py --check
+        run: python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py --check
       - name: Template self-verify (read-only)
-        run: python3 .aidp/skills/aidp-code-engineer/scripts/verify.py . --template --read-only
+        run: python3 skills/aidp-code-engineer/scripts/verify.py . --template --read-only

@@ -55,10 +55,7 @@ def _contract_path(root: Path, relative: str, template: bool = False) -> Path:
 
 
 def _runtime_source() -> Path:
-    template = L.SKILL_DIR.parents[1]
-    if template.name == ".aidp" and (template / "scripts/agent_sync.py").is_file():
-        return template
-    return L.BUNDLE_AIDP
+    return L.template_aidp() or L.BUNDLE_AIDP
 
 
 def _source_runtime_files(source: Path):
@@ -692,13 +689,13 @@ def check_pending_rewrite_queue(root: Path, r: VerifyResult):
     entries = L.queue_entries(root)
     if entries:
         r.error(f"存在未消费的语义改写队列 {L.REWRITE_QUEUE_FILE}（{len(entries)} 条）：{_head(e.split(chr(9))[0] for e in entries)}"
-                f" → 逐条语义改写后跑 `python3 .aidp/skills/aidp-code-engineer/scripts/finalize_upgrade.py`"
+                f" → 逐条语义改写后跑 `python3 skills/aidp-code-engineer/scripts/finalize_upgrade.py`"
                 f"（核验改写并删除队列；无需改动的条目加 --accept）")
     elif (root / L.REWRITE_QUEUE_FILE).is_file():
         r.warn(f"{L.REWRITE_QUEUE_FILE} 存在但无条目 → 跑 finalize_upgrade.py 清理")
     if pending:
         r.error(f"脚手架交付未收口：scaffold.pending = {pending} → 队列清空后跑 "
-                f"`python3 .aidp/skills/aidp-code-engineer/scripts/finalize_upgrade.py`")
+                f"`python3 skills/aidp-code-engineer/scripts/finalize_upgrade.py`")
 
 
 def check_contract_drift(root: Path, r: VerifyResult):
@@ -1022,7 +1019,7 @@ def check_template_bundle(root: Path, r: VerifyResult):
     if rc == 0:
         r.note("本体 ↔ 脚手架 bundle 一致（mirror_to_bundle.py --check）")
     elif rc == 1:
-        r.error("本体 ↔ 脚手架 bundle 漂移 → 跑 `python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py`："
+        r.error("本体 ↔ 脚手架 bundle 漂移 → 跑 `python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py`："
                 + " ".join(out.splitlines()[:6]))
     else:
         r.error(f"mirror_to_bundle.py --check 异常：{out[:300]}")
@@ -1039,7 +1036,10 @@ def check_template_bundle(root: Path, r: VerifyResult):
 
 
 # 根 .gitignore 里只服务模板仓库自身、不下发的规则
-TEMPLATE_ONLY_GITIGNORE = {"/.claude/", "/.codex/", "/.dsh/", "/.agents/"}
+TEMPLATE_ONLY_GITIGNORE = {"/.claude/", "/.codex/", "/.dsh/", "/.agents/",
+                           # 根级 skills/ 只有模板仓库有（脚手架引擎真源），下游不存在
+                           "skills/*/*-config.json", "skills/*/.env",
+                           "skills/*/config.json", "skills/*/assets/config.json"}
 
 
 def _gitignore_rules(text: str) -> set:

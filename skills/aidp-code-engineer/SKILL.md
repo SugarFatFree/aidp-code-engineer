@@ -42,7 +42,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 
 ## 资源位置
 
-`{SKILL_DIR}` = 本 SKILL 所在目录（模板仓库为 `.aidp/skills/aidp-code-engineer/`；安装后契约在 `{{AIDP_HOME}}/skills/aidp-code-engineer/`，Agent 可发现入口在 `.claude/skills/` 或 `.agents/skills/`）。模板 `.aidp/` 只作维护源，目标项目根不创建 `.aidp/`。仅 Claude Code 时 `{{AIDP_HOME}}=.claude/aidp`；有 Codex / DeepSeek Harness 时 `{{AIDP_HOME}}=.agents/aidp`，Claude Code 并存时使用 `.claude/aidp` 装配副本。
+`{SKILL_DIR}` = 本 SKILL 所在目录（模板仓库为根级 `skills/aidp-code-engineer/`；安装后契约在 `{{AIDP_HOME}}/skills/aidp-code-engineer/`，Agent 可发现入口在 `.claude/skills/` 或 `.agents/skills/`）。模板 `.aidp/` 只作维护源，目标项目根不创建 `.aidp/`。仅 Claude Code 时 `{{AIDP_HOME}}=.claude/aidp`；有 Codex / DeepSeek Harness 时 `{{AIDP_HOME}}=.agents/aidp`，Claude Code 并存时使用 `.claude/aidp` 装配副本。
 
 ```
 {SKILL_DIR}/
@@ -255,9 +255,9 @@ python3 {SKILL_DIR}/scripts/verify.py <项目根> {version} {user} --read-only
 改动模板仓库的 `.aidp/`、`.aidp/AIDP-AGENTS.md`、`docs/init`、`docs/**/README.md`、`docs/architecture/` 三份约束骨架、`memory/README.md`、`memory/aidp-config.yaml` 或本 skill 的 `sources/` 后：
 
 ```bash
-python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py                  # 本体 → assets/（含 AGENTS.md.tpl、SCAFFOLD_VERSION、CONTRACT_MANIFEST.json）
-python3 .aidp/skills/aidp-code-engineer/scripts/verify.py . --template --read-only   # 模板自检（含 mirror --check、sync_memory_md --check、gitignore.tpl 覆盖）
-python3 -m unittest discover -s .aidp/skills/aidp-code-engineer/scripts/tests
+python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py                  # 本体 → assets/（含 AGENTS.md.tpl、SCAFFOLD_VERSION、CONTRACT_MANIFEST.json）
+python3 skills/aidp-code-engineer/scripts/verify.py . --template --read-only   # 模板自检（含 mirror --check、sync_memory_md --check、gitignore.tpl 覆盖）
+python3 -m unittest discover -s skills/aidp-code-engineer/scripts/tests
 ```
 
-只在用户明确要求时提升范式版本：`python3 .aidp/skills/aidp-code-engineer/scripts/bump_version.py V1.0.1`（改写 `版本变更历史.md`「当前范式版本」并在内部重跑 `mirror_to_bundle.py` 派生 `SCAFFOLD_VERSION` 与 `CONTRACT_MANIFEST.json`），再跑上面的模板自检，由人补写变更记录。
+只在用户明确要求时提升范式版本：`python3 skills/aidp-code-engineer/scripts/bump_version.py V1.0.1`（改写 `版本变更历史.md`「当前范式版本」并在内部重跑 `mirror_to_bundle.py` 派生 `SCAFFOLD_VERSION` 与 `CONTRACT_MANIFEST.json`），再跑上面的模板自检，由人补写变更记录。

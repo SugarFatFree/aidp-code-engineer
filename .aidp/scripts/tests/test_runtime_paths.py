@@ -50,7 +50,7 @@ def load_script(name):
 
 
 def test_real_source_renders_for_both_runtime_homes():
-    scripts = REPO / ".aidp/skills/aidp-code-engineer/scripts"
+    scripts = REPO / "skills/aidp-code-engineer/scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
     import runtime_layout as layout

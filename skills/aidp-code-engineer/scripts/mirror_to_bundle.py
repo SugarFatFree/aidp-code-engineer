@@ -7,7 +7,7 @@
 | 源（模板项目） | 目标（skill 内） |
 | :- | :- |
 | `.aidp/{agents,commands,rules,flows,reference,scripts,hooks,templates,plugins}`（不含 `L.TEMPLATE_OWNED`：模板回归单测、设计目标 baseline） | `assets/aidp/<同名>` |
-| `.aidp/skills/<X>`（不含 aidp-code-engineer 自身） | `assets/aidp/skills/<X>` |
+| `.aidp/skills/<X>`（脚手架 skill 自身在仓库根 `skills/`，天然不在此列） | `assets/aidp/skills/<X>` |
 | `docs/README.md` + `docs/**/README.md`（不含 init 与版本目录）+ `docs/architecture/` 三份约束骨架 | `assets/docs/…` |
 | `docs/init/*` | `assets/docs/init/` |
 | 脚手架 `sources/root/*.tpl`、`sources/memory/*.md.tpl`（下游根文件与项目级 memory 模板的真源） | `assets/root/`、`assets/memory/` |
@@ -21,9 +21,9 @@
 忽略 `__pycache__`、`*.pyc`、`.DS_Store`、任何 `config.json` / `auth.*.json` / `.env` 凭证文件。
 
 用法：
-    python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py           # 执行镜像
-    python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py --check   # 干运行，有漂移 exit 1
-    python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py --json
+    python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py           # 执行镜像
+    python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py --check   # 干运行，有漂移 exit 1
+    python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py --json
 
 退出码：0 已一致 / 镜像完成 · 1 `--check` 发现漂移 · 2 环境错误（非模板项目、源文件结构不符）
 """
@@ -151,7 +151,7 @@ def build_desired(root: Path, skill_dir: Path) -> dict:
             want[f"assets/aidp/{d}/{rel}"] = p.read_bytes()
     skills = src_aidp / "skills"
     if skills.is_dir():
-        for s in sorted(x for x in skills.iterdir() if x.is_dir() and x.name != skill_dir.name):
+        for s in sorted(x for x in skills.iterdir() if x.is_dir() and x.name != L.SKILL_NAME):
             for rel, p in L.iter_files(s):
                 want[f"assets/aidp/skills/{s.name}/{rel}"] = p.read_bytes()
     for src, dst in docs_readme_sources(root):
@@ -247,9 +247,9 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     skill_dir = HERE.parent
-    root = Path(a.root).resolve() if a.root else skill_dir.parents[2]
+    root = Path(a.root).resolve() if a.root else skill_dir.parents[1]
     if not ((root / ".aidp").is_dir() and (root / L.PARADIGM_MEMORY_REL).is_file()
-            and (root / ".aidp/skills" / skill_dir.name).resolve() == skill_dir.resolve()):
+            and (root / "skills" / skill_dir.name).resolve() == skill_dir.resolve()):
         print(f"⛔ {root} 不是本 skill 所在的模板项目根", file=sys.stderr)
         return 2
     try:
@@ -277,7 +277,7 @@ def main(argv=None) -> int:
                 if len(pl[key]) > 30:
                     print(f"  {tag} …（另 {len(pl[key]) - 30} 个）")
             if a.check:
-                print("→ 跑 `python3 .aidp/skills/aidp-code-engineer/scripts/mirror_to_bundle.py` 修复")
+                print("→ 跑 `python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py` 修复")
     return 1 if (a.check and drift) else 0
 
 

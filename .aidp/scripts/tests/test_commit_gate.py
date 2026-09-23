@@ -78,9 +78,10 @@ def test_gate_pure():
     print("【commit_gate 纯函数：模板判定 / 业务代码 / 纯脚手架】")
     with tempfile.TemporaryDirectory() as d:
         check("空目录 → 非模板项目", G.is_template_project(d) is False)
-        mkfile(os.path.join(d, G.SCAFFOLD_SKILL_REL))
+        skill_base = G.SCAFFOLD_SKILL_ROOTS[0]
+        mkfile(os.path.join(d, skill_base, "SKILL.md"))
         check("只有 SKILL.md、缺同步脚本 → 非模板项目", G.is_template_project(d) is False)
-        mkfile(os.path.join(d, G.SCAFFOLD_SYNC_REL))
+        mkfile(os.path.join(d, skill_base, "scripts/sync_memory_md.py"))
         check("SKILL.md + 同步脚本都在、无下游标记 → 模板项目", G.is_template_project(d) is True)
         mkfile(os.path.join(d, "memory/aidp-config.yaml"), "scaffold:\n  version: V1.0.0\n")
         check("★ 有 scaffold.version（下游标记）→ 即便带脚手架也不是模板项目",
@@ -525,7 +526,7 @@ def test_classify_push_flow():
         check("无 current_build 的 standalone 发布写版本级分类", standalone_record["cicd_skipped"] is True)
     script = os.path.join(os.path.dirname(HERE), "classify_push.py")
     bundle_script = os.path.join(os.path.dirname(HERE),
-                                 "../skills/aidp-code-engineer/assets/aidp/scripts/classify_push.py")
+                                 "../../skills/aidp-code-engineer/assets/aidp/scripts/classify_push.py")
 
     def run_case(files, changed, script_path=script, uncommitted=()):
         with tempfile.TemporaryDirectory() as d:

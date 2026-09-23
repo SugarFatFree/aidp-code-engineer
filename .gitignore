@@ -54,10 +54,15 @@ env/.env.*
 .dsh/*.local.*
 
 # === Skill 本地凭证变体（本机私有，禁止入库）===
+# 下发 skill（.aidp/skills/）与本仓库根级脚手架 skill（skills/）各一组。
 .aidp/skills/*/*-config.json
 .aidp/skills/*/.env
 .aidp/skills/*/config.json
 .aidp/skills/*/assets/config.json
+skills/*/*-config.json
+skills/*/.env
+skills/*/config.json
+skills/*/assets/config.json
 
 # === AIDP 脚手架 ===
 .aidp-backup-*
@@ -90,7 +95,8 @@ memory/.test-report-*.json
 memory/_facts/code-inventory.json
 
 # === Agent 适配层（模板仓库不入库）===
-# 本仓库是 AIDP 模板本体，单一信源只有 .aidp/；各 Agent 的入口目录由脚手架在下游按实际 Agent 生成。
+# 本仓库是 AIDP 模板本体，下发契约的单一信源是 .aidp/、脚手架引擎的单一信源是根级 skills/；
+# 各 Agent 的入口目录由脚手架在下游按实际 Agent 生成。
 # 维护者在本仓库用哪个 Agent，就在本地建对应标记目录后跑 `python3 .aidp/scripts/agent_sync.py`。
 /.claude/
 /.codex/

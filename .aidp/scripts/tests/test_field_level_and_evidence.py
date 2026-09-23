@@ -235,7 +235,7 @@ def test_runtime_artifact_paths():
     check("凭据文件标「永不入库」", any(x["vcs"].endswith("永不入库") for x in inv))
 
     # 入库策略体检：凭据被跟踪必须 ERROR
-    vp = str(REPO / ".aidp/skills/aidp-code-engineer/scripts/verify.py")
+    vp = str(REPO / "skills/aidp-code-engineer/scripts/verify.py")
     d = Path(tempfile.mkdtemp())
     subprocess.run(["git", "init", "-q", str(d)], check=True)
     for k, v in (("user.email", "alice@example.com"), ("user.name", "alice")):
@@ -311,7 +311,7 @@ def test_config_consolidation():
     check("脚本自带双侧对照可独立跑通（--self-check）",
           subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aidp_config.py"),
                           "--self-check"], capture_output=True).returncode == 0)
-    _sm = REPO / ".aidp/skills/aidp-code-engineer/scripts/scaffold_marker.py"
+    _sm = REPO / "skills/aidp-code-engineer/scripts/scaffold_marker.py"
     if _sm.is_file():
         check("版本戳访问器自带双侧对照可独立跑通",
               subprocess.run([sys.executable, str(_sm), "--self-check"],
@@ -334,7 +334,7 @@ def test_runtime_dir_bootstrap():
     check("★ tick 热路径挂了兜底（存量项目不跑 scaffold 也能有这个目录）",
           "ensure_runtime_dir" in tf)
 
-    for f in (".gitignore", ".aidp/skills/aidp-code-engineer/assets/root/gitignore.tpl"):
+    for f in (".gitignore", "skills/aidp-code-engineer/assets/root/gitignore.tpl"):
         fp = REPO / f
         if not fp.is_file():
             skip(f"{f} 覆盖 memory/.aidp/", "文件未就位")

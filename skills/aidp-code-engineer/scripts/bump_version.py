@@ -7,7 +7,7 @@
 `assets/CONTRACT_MANIFEST.json`。变更记录条目由人撰写（只写使用者可感知的能力变化）。
 
 用法：
-    python3 .aidp/skills/aidp-code-engineer/scripts/bump_version.py <新版本> [--date YYYY-MM-DD] [--root DIR] [--dry-run]
+    python3 skills/aidp-code-engineer/scripts/bump_version.py <新版本> [--date YYYY-MM-DD] [--root DIR] [--dry-run]
 
 退出码：0 成功 · 1 派生失败 · 2 参数或环境错误
 """
@@ -39,7 +39,7 @@ def main(argv=None) -> int:
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", a.date):
         print(f"⛔ 日期须形如 YYYY-MM-DD：{a.date}", file=sys.stderr)
         return 2
-    root = Path(a.root).resolve() if a.root else HERE.parents[3]
+    root = Path(a.root).resolve() if a.root else L.SKILL_DIR.parents[1]
     log = root / L.CHANGELOG
     text = L.read_text(log)
     old = L.changelog_version(root)

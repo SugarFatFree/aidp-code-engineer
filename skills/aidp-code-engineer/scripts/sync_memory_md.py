@@ -14,8 +14,8 @@
 否则 `AGENTS.md`，并存时 `CLAUDE.md` 为 `@AGENTS.md` 薄壳，由 `.aidp/scripts/agent_sync.py` 装配）。
 
 用法（在模板项目任意目录）：
-    python3 .aidp/skills/aidp-code-engineer/scripts/sync_memory_md.py            # 写入
-    python3 .aidp/skills/aidp-code-engineer/scripts/sync_memory_md.py --check    # 只比对，有漂移 exit 1
+    python3 skills/aidp-code-engineer/scripts/sync_memory_md.py            # 写入
+    python3 skills/aidp-code-engineer/scripts/sync_memory_md.py --check    # 只比对，有漂移 exit 1
 
 退出码：0 已一致 / 已写入 · 1 `--check` 发现漂移 · 2 源文件结构不符或环境错误
 """
@@ -61,7 +61,7 @@ def render_downstream(source: str) -> str:
 def find_template_root(start: Path) -> Path:
     cur = start.resolve()
     for _ in range(10):
-        if (cur / SOURCE_REL).is_file() and (cur / ".aidp/skills/aidp-code-engineer/SKILL.md").is_file():
+        if (cur / SOURCE_REL).is_file() and (cur / "skills/aidp-code-engineer/SKILL.md").is_file():
             return cur
         if cur.parent == cur:
             break
@@ -81,7 +81,7 @@ def main(argv=None) -> int:
     try:
         root = Path(a.root).resolve() if a.root else find_template_root(SKILL_DIR)
     except SystemExit:
-        print(f"未找到模板项目根（需含 {SOURCE_REL} 与 .aidp/skills/aidp-code-engineer/）", file=sys.stderr)
+        print(f"未找到模板项目根（需含 {SOURCE_REL} 与 skills/aidp-code-engineer/）", file=sys.stderr)
         return 2
     try:
         want = build(root)

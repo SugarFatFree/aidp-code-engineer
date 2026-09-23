@@ -42,7 +42,10 @@ def make_template(root: Path):
     (root / ".aidp/skills/demo/SKILL.md").write_text("---\nname: demo\n---\n", encoding="utf-8")
     (root / ".aidp/skills/demo/config.json").write_text('{"token": "secret"}', encoding="utf-8")
     (root / ".aidp/skills/demo/auth.alice.json").write_text("{}", encoding="utf-8")
-    skill = root / ".aidp/skills/aidp-code-engineer"
+    # 遗留下游形态：`.aidp/skills/` 下若残留同名脚手架副本，镜像必须跳过它（不得镜像自身）
+    (root / ".aidp/skills/aidp-code-engineer").mkdir(parents=True)
+    (root / ".aidp/skills/aidp-code-engineer/SKILL.md").write_text("legacy\n", encoding="utf-8")
+    skill = root / "skills/aidp-code-engineer"
     shutil.copytree(H.SCRIPTS, skill / "scripts", ignore=shutil.ignore_patterns("__pycache__", "tests"))
     (skill / "SKILL.md").write_text("---\nname: aidp-code-engineer\n---\n", encoding="utf-8")
     (skill / "sources/root").mkdir(parents=True)

@@ -20,6 +20,26 @@ SKILL_NAME = "aidp-code-engineer"
 SKILL_DIR = Path(__file__).resolve().parent.parent
 ASSETS = SKILL_DIR / "assets"
 BUNDLE_AIDP = ASSETS / "aidp"
+# 模板仓库里脚手架 skill 的落点（标准 skill 仓库结构：根级 `skills/<name>/`）。
+TEMPLATE_SKILL_REL = f"skills/{SKILL_NAME}"
+
+
+def template_aidp():
+    """脚手架 skill 就地所在的模板仓库 `.aidp/`；不在模板仓库内（下游安装位）时返回 None。
+
+    兼容两种落点：根级 `skills/<name>/`（当前标准结构，`parents[1]` 即仓库根）与
+    历史的 `.aidp/skills/<name>/`（`parents[1]` 即 `.aidp` 本身）。
+    """
+    for cand in (SKILL_DIR.parents[1], SKILL_DIR.parents[1] / ".aidp"):
+        if cand.name == ".aidp" and (cand / "scripts/agent_sync.py").is_file():
+            return cand
+    return None
+
+
+def template_root():
+    """脚手架 skill 就地所在的模板仓库根；不在模板仓库内时返回 None。"""
+    aidp = template_aidp()
+    return aidp.parent if aidp else None
 
 # ── 契约目录 ────────────────────────────────────────────────────────────────
 # 受版本门控：项目版本 < 脚手架版本才覆盖已有文件；同版本只补缺失文件。
@@ -606,8 +626,12 @@ def move_path(root: Path, src_rel: str, dst_rel: str, copy=False):
 
 # ── 项目侧共享脚本加载（readme_policy 等）──────────────────────────────────
 def load_project_module(name: str):
-    """从脚手架 bundle（`assets/aidp/scripts`）或模板项目 `.aidp/scripts` 加载模块。"""
-    for base in (BUNDLE_AIDP / "scripts", SKILL_DIR.parents[1] / "scripts"):
+    """从脚手架 bundle（`assets/aidp/scripts`）或模板仓库 `.aidp/scripts` 加载模块。"""
+    bases = [BUNDLE_AIDP / "scripts"]
+    aidp = template_aidp()
+    if aidp:
+        bases.append(aidp / "scripts")
+    for base in bases:
         p = base / f"{name}.py"
         if p.is_file():
             spec = importlib.util.spec_from_file_location(f"_aidp_{name}", p)
@@ -623,10 +647,13 @@ def load_project_module(name: str):
 
 
 def is_template_project(root: Path) -> bool:
-    """AIDP 模板项目自身：携带 `版本变更历史.md` + 下发记忆源 `.aidp/AIDP-AGENTS.md`，且未被脚手架打过版本戳。"""
+    """AIDP 模板项目自身：携带 `版本变更历史.md` + 下发记忆源 `.aidp/AIDP-AGENTS.md`
+    + 脚手架 skill 真源（根级 `skills/aidp-code-engineer/`，兼容历史 `.aidp/skills/` 落点），
+    且未被脚手架打过版本戳。"""
     import scaffold_marker  # 同目录
     if scaffold_marker.is_downstream(root):
         return False
     return ((root / CHANGELOG).is_file()
             and (root / PARADIGM_MEMORY_REL).is_file()
-            and (root / ".aidp/skills" / SKILL_NAME / "SKILL.md").is_file())
+            and any((root / rel / "SKILL.md").is_file()
+                    for rel in (TEMPLATE_SKILL_REL, INSTALLED_SKILL_REL)))

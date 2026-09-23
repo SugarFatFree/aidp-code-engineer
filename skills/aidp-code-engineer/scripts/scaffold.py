@@ -18,7 +18,7 @@ Agent 判定：项目根已有 `.claude/` `.codex/` `.dsh/` 之一或多者 → 
   备份 → 目录骨架 → `.aidp/` 契约（版本门控 + 用户填充型保护 + 本地改动覆盖清单）→ `.aidp/scripts/`（字节不同即覆盖）
   → docs 范式文档与结构性 README（项目改过的进语义改写队列）→ memory 配置与模板
   → 根 README / env / .gitignore 托管区 → 项目记忆文件（按锚点确定性合并）
-  → 脚手架 skill 自身安装到 `.aidp/skills/aidp-code-engineer/` → 导航 README 与 .gitkeep
+  → 脚手架 skill 自身受管安装到 Agent 可发现位（`.claude/skills/` 与 `.agents/skills/`）→ 导航 README 与 .gitkeep
   → 孤儿契约报告 → 版本戳（有语义改写待办时写 scaffold.pending）→ agent_sync 装配。
   任何覆盖已有文件的写入之前都先备份到 `.aidp-backup-<时间戳>/`。
 
@@ -43,7 +43,7 @@ import scaffold_marker  # noqa: E402
 import migrate  # noqa: E402
 import runtime_layout  # noqa: E402
 
-_runtime_scripts = L.SKILL_DIR.parents[1] / "scripts"
+_runtime_scripts = (L.template_aidp() or L.BUNDLE_AIDP) / "scripts"
 if not (_runtime_scripts / "vcs.py").is_file():
     _runtime_scripts = L.BUNDLE_AIDP / "scripts"
 sys.path.insert(0, str(_runtime_scripts))
@@ -995,10 +995,7 @@ def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> 
 
 # ── Agent 原生运行包 ─────────────────────────────────────────────────────────
 def _runtime_source() -> Path:
-    template = L.SKILL_DIR.parents[1]
-    if template.name == ".aidp" and (template / "scripts/agent_sync.py").is_file():
-        return template
-    return L.BUNDLE_AIDP
+    return L.template_aidp() or L.BUNDLE_AIDP
 
 
 def _native_namespaces(root: Path, agents: list):

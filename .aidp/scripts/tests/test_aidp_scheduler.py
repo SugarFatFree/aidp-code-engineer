@@ -313,7 +313,7 @@ def test_scheduler_docs():
     repo = os.path.dirname(os.path.dirname(SCRIPTS))
     paths = ("README.md", "memory/aidp-config.yaml", ".aidp/commands/sprint-autopilot.md",
              ".aidp/commands/sprint-aiauto-test.md", ".aidp/flows/sprint-autopilot/usage-guard.md",
-             ".aidp/skills/aidp-code-engineer/sources/root/README.md.tpl", ".aidp/scripts/README.md")
+             "skills/aidp-code-engineer/sources/root/README.md.tpl", ".aidp/scripts/README.md")
     for relative in paths:
         with open(os.path.join(repo, relative), encoding="utf-8") as fh:
             text = fh.read()

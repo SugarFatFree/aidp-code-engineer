@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
-REPO = SCRIPTS.parents[3]
+REPO = SCRIPTS.parents[2]
 sys.path.insert(0, str(SCRIPTS))
 
 import scaffold as S

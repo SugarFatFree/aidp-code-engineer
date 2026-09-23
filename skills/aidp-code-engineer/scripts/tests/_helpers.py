@@ -10,7 +10,13 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 SKILL_DIR = SCRIPTS.parent
-REPO = SKILL_DIR.parents[2]
+REPO = SKILL_DIR.parents[1]
+# ⛔ 硬校验：REPO 必须真的是本模板仓库根。用例会把 REPO 直接喂给 scaffold.py（`test_template_project_is_refused`），
+#    一旦落点层数算错（skill 目录搬家时最容易），scaffold 会在**仓库外的某个目录**铺出整套项目骨架。
+#    这里 fail fast，好过让一次回归污染磁盘。
+if not ((REPO / "版本变更历史.md").is_file() and (REPO / ".aidp/AIDP-AGENTS.md").is_file()
+        and (REPO / "skills" / SKILL_DIR.name / "SKILL.md").is_file()):
+    raise RuntimeError(f"测试解析出的模板仓库根不成立：{REPO}（脚手架 skill 落点变了？请同步本文件）")
 sys.path.insert(0, str(SCRIPTS))
 
 

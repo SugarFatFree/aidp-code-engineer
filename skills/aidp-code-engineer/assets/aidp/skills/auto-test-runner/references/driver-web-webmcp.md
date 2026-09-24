@@ -1,5 +1,7 @@
 # 驱动适配层 · Web 端补充能力：WebMCP 工具调用（`invoke`，可选 · 条件启用）
 
+> ★ **定位**：「客户端 MCP 能力」是**跨端**功能点（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**（`client_type=web` + `implementation_kind=webmcp`）。跨端总纲见 [`driver-client-mcp.md`](./driver-client-mcp.md)；本文件只讲 Web 端怎么落地。
+
 > **本文件只在调用方传入 `webmcp_enabled: true` 时适用。** 为 `false` 或未传时，本文件描述的
 > 一切**整体不适用**：不做版本校验、不写 run-context 相关字段、不产生告警、报告里不留位置。
 >

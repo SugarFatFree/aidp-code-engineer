@@ -75,7 +75,13 @@ PRECONDITION_STATUS_ENUM = {'satisfied', 'unmet', 'probe-error'}
 ENTRY_KIND_ENUM = {'case', 'free-scan'}
 # 本条用例的主要执行机制。⚠️ `webmcp` 只允许用于**状态准备/数据构造/非视觉断言**类用例;
 #    视觉还原度类严禁(C14),见 references/execution-methodology.md「WebMCP 分层铁律」。
-MECHANISM_ENUM = {'dom', 'webmcp', 'mixed'}
+MECHANISM_ENUM = {'dom', 'webmcp', 'app-mcp', 'mixed'}
+# ★「客户端 MCP 能力」是**跨端**功能点(Web / 小程序 / 移动 / 桌面),WebMCP 只是它的 **Web 端实现**。
+#   `app-mcp` = 被测应用自己向 AI 暴露业务工具;`webmcp` 保留为 Web 端的历史写法(等价于
+#   client_type=web + implementation_kind=webmcp)。
+# ⛔⛔ 两条轴绝不可混:**测试驱动**(chrome-devtools / Appium / 小程序驱动去操控客户端)用的也是
+#   MCP 协议,但那是「AI 操控客户端」,不是「应用提供了 MCP 能力」。把 driver 可用当成应用能力的证据
+#   是本检查要拦的头号形态 —— 判定唯一实现见命令端 `AIDP_HOME/scripts/check_client_mcp.py`。
 # 判「这条是不是视觉还原度类」的信号:上游 dev-manual-testcase 的用例族标记会透传到
 # type / test_name / case_id。⚠️ 刻意用**多字段任一命中**:标记透传到哪个字段各端不一致,
 #    只认一个字段会在别的端静默失配 —— 而失配方向正是 C14 要防的假绿。
@@ -97,6 +103,78 @@ NON_RESULT_FILES = {'env-facts.json', 'token-usage.json', 'run-context.json'}
 
 def _issue(issues, level, rule, msg):
     issues.append({'level': level, 'rule': rule, 'msg': msg})
+
+
+# 应用 MCP 能力的四态。⛔ 后一态不得由前一态推断:声明了不等于有入口、有入口不等于注册了、
+#    注册了不等于真调用过 —— 每一态都必须自带 source + observed_at,取不到一律记 unavailable。
+APPLICATION_MCP_STATES = ('declared', 'entry', 'registration', 'invocation')
+APPLICATION_MCP_FACT_STATUS = {'verified', 'failed', 'unavailable'}
+# ⛔ 这些是**测试驱动**的事实,不是应用能力的证据。出现在 source 里即判 Critical。
+DRIVER_SOURCE_MARKERS = ('chrome-devtools', 'appium', 'cdp', 'playwright', 'selenium',
+                         'driver', 'mcp-remote', '小程序驱动')
+
+
+def _check_application_mcp(data, name, issues):
+    """`application_mcp` 四态事实校验(缺省不写本字段 = 本用例与应用 MCP 无关,不判)。
+
+    ⛔ 本函数一个字节的**驱动信息**都不该接受作为证据:「Appium 装好了」「chrome-devtools 能连」
+    与「这个应用提供了业务工具」毫无关系,读了就会把前者当后者 —— 那正是把整个功能点判成假绿的路径。
+    """
+    mcp = data.get('application_mcp')
+    if mcp is None:
+        return
+    if not isinstance(mcp, dict):
+        _issue(issues, 'Critical', 'bad_application_mcp',
+               f'{name}: application_mcp 应为对象或 null(实为 {type(mcp).__name__})')
+        return
+    kind = mcp.get('implementation_kind')
+    client = mcp.get('client_type')
+    if kind == 'webmcp' and client not in (None, 'web'):
+        _issue(issues, 'Critical', 'app_mcp_kind_mismatch',
+               f'{name}: implementation_kind=webmcp 只适用于 client_type=web(实为 {client!r}) —— '
+               f'非 Web 端应为 app-service 或 bridge')
+    for state in APPLICATION_MCP_STATES:
+        fact = mcp.get(state)
+        if fact is None:
+            continue
+        if not isinstance(fact, dict):
+            _issue(issues, 'Critical', 'bad_application_mcp_fact',
+                   f'{name}: application_mcp.{state} 应为对象(实为 {type(fact).__name__})')
+            continue
+        status = fact.get('status') or fact.get('value')
+        if isinstance(status, str) and status not in APPLICATION_MCP_FACT_STATUS \
+                and state != 'declared':
+            _issue(issues, 'Important', 'bad_application_mcp_status',
+                   f'{name}: application_mcp.{state}.status={status!r} 不在 '
+                   f'{sorted(APPLICATION_MCP_FACT_STATUS)} 内')
+        source = str(fact.get('source') or '')
+        if not source.strip() or not str(fact.get('observed_at') or '').strip():
+            _issue(issues, 'Critical', 'app_mcp_fact_unsourced',
+                   f'{name}: application_mcp.{state} 缺 source / observed_at —— '
+                   f'⛔ 无出处的事实不能作为应用 MCP 能力的证据(取不到应记 status=unavailable)')
+        low = source.lower()
+        if any(marker in low for marker in DRIVER_SOURCE_MARKERS):
+            _issue(issues, 'Critical', 'app_mcp_driver_as_evidence',
+                   f'{name}: application_mcp.{state}.source 指向**测试驱动**({source!r}) —— '
+                   f'⛔ 驱动可用不是「应用提供了 MCP 能力」的证据,两条轴不可混')
+    invocation = mcp.get('invocation')
+    if isinstance(invocation, dict):
+        registered = set()
+        reg = mcp.get('registration')
+        if isinstance(reg, dict) and isinstance(reg.get('tools'), list):
+            registered = {str(t) for t in reg['tools']}
+        for call in (invocation.get('calls') or []):
+            if not isinstance(call, dict):
+                continue
+            tool = str(call.get('tool_name') or '')
+            if registered and tool and tool not in registered:
+                _issue(issues, 'Critical', 'app_mcp_tool_unregistered',
+                       f'{name}: 调用了未在当前实例注册的工具 {tool!r} —— '
+                       f'⛔ 注册清单之外的调用不构成能力证据')
+            if not str(call.get('evidence_artifact') or '').strip():
+                _issue(issues, 'Critical', 'app_mcp_call_unevidenced',
+                       f'{name}: 工具调用 {tool or "?"} 缺 evidence_artifact —— '
+                       f'⛔ 一句「called」不是调用证据,须指向 evidence[].artifact 里的真实日志')
 
 
 def _iso_span_ms(start, end):
@@ -329,6 +407,8 @@ def check_one(data, name):
     if data.get('is_environment_issue') is not None and not isinstance(data['is_environment_issue'], bool):
         _issue(issues, 'Important', 'bad_env_flag',
                f'{name}: is_environment_issue 应为布尔(实为 {type(data["is_environment_issue"]).__name__})')
+
+    _check_application_mcp(data, name, issues)
 
     return issues
 

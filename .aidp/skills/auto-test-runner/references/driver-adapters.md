@@ -114,6 +114,7 @@
       4. **driver 字段须如实记录实际所用驱动**,严禁静默切换、严禁用了降级驱动却填首选值;
       5. `detect_drivers.py <端>` 对「仅共享/远程变体可用、本机独立驱动缺失」返回 `manual_confirm_required=true`(需人工确认、非自动可用),据此按 1~4 处理。
     - **端专有落地**(各类驱动的具体命令/工具名、driver 字段取值枚举、诊断修复步骤)见对应 `driver-<端>.md`;Web 端见 `driver-web.md`「三·补一:本地 CLI ↔ 共享/远程 MCP 变体硬边界」。
+| **应用 MCP（跨端）** | [`driver-client-mcp.md`](./driver-client-mcp.md) | 被测应用**自己**向 AI 暴露业务工具（Web / 小程序 / 移动 / 桌面）。⛔ 与「测试驱动用 MCP 操控客户端」是两条轴，不可混：判定唯一实现 = 命令端 `check_client_mcp.py` |
 - **混合项目**(如 iOS APP + Web 后台):按用例所属端分别探测 + 加载对应适配器,某端缺失只跳过该端,不影响另一端。
 
 ---

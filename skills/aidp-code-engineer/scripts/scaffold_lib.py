@@ -69,7 +69,8 @@ def is_template_owned(rel_to_aidp: str) -> bool:
 USER_FILLABLE_CONTRACTS = {"reference/子Agent必读.md"}
 USER_FILLABLE_BASELINE = ".aidp-user-fillable.json"
 # 按需安装的可选规则：(模板位, 安装位)，均相对**运行根**（`.claude/` 或 `.agents/`；⛔ 不是模板的 `.aidp/`）。
-OPTIONAL_RULES = (("templates/optional-rules/webmcp.md", "rules/webmcp.md"),)
+OPTIONAL_RULES = (("templates/optional-rules/webmcp.md", "rules/webmcp.md"),
+                  ("templates/optional-rules/client-mcp.md", "rules/client-mcp.md"))
 OPTIONAL_INSTALLED_CONTRACTS = {inst for _, inst in OPTIONAL_RULES}
 
 REWRITE_QUEUE_FILE = ".aidp-rewrite-queue.txt"

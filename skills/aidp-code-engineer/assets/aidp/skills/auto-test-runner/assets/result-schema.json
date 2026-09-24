@@ -5,32 +5,80 @@
     "$note": "★数组字段的元素形状硬契约(由 scripts/check_result.py 校验)。此前本文件只给了一个对象数组样例、没有 items 约束,执行方把 evidence 写成字符串数组 [\"round-1/evidence/x.png\"] 时无任何提示,直到 gen_report.py 聚合期 AttributeError 崩掉整份报告。现在:聚合器兼容解析并告警,check_result.py 在落盘时就拦。",
     "evidence": {
       "type": "array",
-      "items": {"type": "object", "required": ["artifact"], "optional": ["step", "summary"]},
+      "items": {
+        "type": "object",
+        "required": [
+          "artifact"
+        ],
+        "optional": [
+          "step",
+          "summary"
+        ]
+      },
       "字符串元素": "非规范形状(Important):聚合器按 artifact 兼容解析,但请改写成对象",
       "artifact": "证据产物相对路径,如 round-1/evidence/TC-USER-001-step5.png;缺失则报告证据列显示 —",
       "direct_pass约束": "execution_mode=direct 且 status=pass 时,evidence 至少有一条 summary 或 artifact 非空的轻量事实;不要求截图类型"
     },
     "runtimeErrors": {
       "type": "array",
-      "items": {"type": "object", "required": ["type", "message", "severity"], "optional": ["detail", "artifact"]},
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "message",
+          "severity"
+        ],
+        "optional": [
+          "detail",
+          "artifact"
+        ]
+      },
       "type枚举": "console | network | pageError",
       "severity枚举": "P1 | P2 | P3"
     },
     "db_assertion": {
       "type": "object | null",
-      "required": ["pageValue", "sqlValue", "match"],
+      "required": [
+        "pageValue",
+        "sqlValue",
+        "match"
+      ],
       "约束": "match=false 时 status 必须为 fail"
     },
     "precondition_probe": {
       "type": "object | null",
-      "required": ["id", "status", "detail", "evidence"],
+      "required": [
+        "id",
+        "status",
+        "detail",
+        "evidence"
+      ],
       "status枚举": "satisfied | unmet | probe-error",
       "约束": "unmet → block_reason=precondition-unmet; probe-error 不得伪装成 unmet"
     },
     "self_heal_trace": {
       "type": "object | null",
-      "required": ["cause", "recovery", "outcome"],
+      "required": [
+        "cause",
+        "recovery",
+        "outcome"
+      ],
       "约束": "self_heal_applied=true 时必须非空"
+    },
+    "application_mcp": {
+      "type": "object | null（项目显式声明才写；缺省关闭 = 本用例与应用 MCP 无关）",
+      "fields": [
+        "client_type",
+        "implementation_kind",
+        "declared",
+        "entry",
+        "registration",
+        "invocation"
+      ],
+      "client_type枚举": "web | miniprogram | mobile | desktop",
+      "implementation_kind": "Web = webmcp；非 Web = app-service 或 bridge",
+      "四态": "declared / entry / registration / invocation，每态各带 status(verified|failed|unavailable) + source + observed_at",
+      "约束": "⛔ 后一态不得由前一态推断（声明了≠有入口，有入口≠注册了，注册了≠真调用过），取不到一律记 unavailable；⛔ source 不得指向**测试驱动**（chrome-devtools / Appium / 小程序驱动 …）—— 驱动可用与「应用提供了业务工具」是两条轴，混了会把整个功能点判成假绿；工具调用须已在当前实例 registration.tools 内，且每次调用带 evidence_artifact 指向 evidence[].artifact 的真实日志（一句 called 不算证据）。★「客户端 MCP 能力」是**跨端**功能点，WebMCP 只是其 Web 端实现；旧 Web 写法 webmcp 字段继续兼容读取。"
     }
   },
   "case_id": "TC-USER-001",
@@ -96,15 +144,35 @@
       "status": "fail",
       "block_reason": null,
       "error": "关键预期验证失败:点击『保存』后未出现成功 Toast,列表未新增(实际停留在表单页)",
-      "runtimeErrors": [{"type": "console", "message": "Uncaught TypeError", "detail": "TypeError: cannot read 'id' of undefined (user.js:42)", "severity": "P1", "artifact": "round-1/evidence/TC-USER-009-console.png"}],
-      "evidence": [{"step": 5, "summary": "表单页仍显示,无 Toast", "artifact": "round-1/evidence/TC-USER-009-step5.png"}]
+      "runtimeErrors": [
+        {
+          "type": "console",
+          "message": "Uncaught TypeError",
+          "detail": "TypeError: cannot read 'id' of undefined (user.js:42)",
+          "severity": "P1",
+          "artifact": "round-1/evidence/TC-USER-009-console.png"
+        }
+      ],
+      "evidence": [
+        {
+          "step": 5,
+          "summary": "表单页仍显示,无 Toast",
+          "artifact": "round-1/evidence/TC-USER-009-step5.png"
+        }
+      ]
     },
     "block_retry_exhausted": {
       "status": "block",
       "block_reason": "retry-exhausted",
       "error": "单操作连续失败 3 次:『部门』下拉框元素定位不到(driver 报 element not found)",
       "runtimeErrors": [],
-      "evidence": [{"step": 3, "summary": "下拉框未渲染", "artifact": "round-1/evidence/TC-USER-010-step3.png"}]
+      "evidence": [
+        {
+          "step": 3,
+          "summary": "下拉框未渲染",
+          "artifact": "round-1/evidence/TC-USER-010-step3.png"
+        }
+      ]
     },
     "block_driver_missing": {
       "status": "block",
@@ -119,13 +187,27 @@
       "block_reason": "driver-hung",
       "error": "驱动进程级无响应:连续 3 次原子调用全超时且探活(driverAlive=false)无回应;已执行 3 次 resetSession 重建+重登自愈均未恢复(重建返回见证据)",
       "runtimeErrors": [],
-      "evidence": [{"step": 0, "summary": "探活输出 + 3 次重建返回 + 时间戳", "artifact": "round-1/evidence/TC-USER-014-driver-hung.log"}]
+      "evidence": [
+        {
+          "step": 0,
+          "summary": "探活输出 + 3 次重建返回 + 时间戳",
+          "artifact": "round-1/evidence/TC-USER-014-driver-hung.log"
+        }
+      ]
     },
     "block_network": {
       "status": "block",
       "block_reason": "network-error",
       "error": "登录接口不可达,连续 3 次 5xx",
-      "runtimeErrors": [{"type": "network", "message": "登录接口 503", "detail": "POST /api/login 503", "severity": "P1", "artifact": ""}],
+      "runtimeErrors": [
+        {
+          "type": "network",
+          "message": "登录接口 503",
+          "detail": "POST /api/login 503",
+          "severity": "P1",
+          "artifact": ""
+        }
+      ],
       "evidence": []
     },
     "self_heal_recovered": {
@@ -140,7 +222,13 @@
       },
       "retries": 1,
       "error": null,
-      "evidence": [{"step": 6, "summary": "重试后 Toast『提交成功』,列表计数 3→4", "artifact": "round-1/evidence/TC-ORDER-005-step6.png"}]
+      "evidence": [
+        {
+          "step": 6,
+          "summary": "重试后 Toast『提交成功』,列表计数 3→4",
+          "artifact": "round-1/evidence/TC-ORDER-005-step6.png"
+        }
+      ]
     },
     "self_heal_still_fail": {
       "$note": "self-heal 模式:恢复后重试仍失败,落定 block。",
@@ -155,7 +243,13 @@
       },
       "retries": 1,
       "error": "恢复后重试仍失败:待审工单列表为空,无法进入审批流",
-      "evidence": [{"step": 2, "summary": "工单列表为空", "artifact": "round-1/evidence/TC-ORDER-008-step2.png"}]
+      "evidence": [
+        {
+          "step": 2,
+          "summary": "工单列表为空",
+          "artifact": "round-1/evidence/TC-ORDER-008-step2.png"
+        }
+      ]
     },
     "regression_fail_locked_critical": {
       "$note": "[回归] 用例族:即便是 P2 用例,失败也锁 Critical(覆盖 P2→P3 常规映射)。缺陷等级由 gen_report 判用例族后锁定,非 result JSON 直接写等级。",
@@ -166,7 +260,13 @@
       "is_regression": true,
       "related_defect_id": "BUG-2024-0311",
       "error": "回归验证失败:原缺陷 BUG-2024-0311 场景复现,金额仍显示为负数",
-      "evidence": [{"step": 4, "summary": "金额列显示 -100.00", "artifact": "round-1/evidence/TC-ORDER-020-step4.png"}]
+      "evidence": [
+        {
+          "step": 4,
+          "summary": "金额列显示 -100.00",
+          "artifact": "round-1/evidence/TC-ORDER-020-step4.png"
+        }
+      ]
     },
     "dual_source_mismatch": {
       "$note": "[双源对账] 用例:页面值与 DB 真值不一致,db_assertion.match=false → 判 fail。SQL 由 DB 断言驱动执行(端专有调用只在 driver-adapters.md)。",
@@ -179,7 +279,13 @@
         "match": false
       },
       "error": "双源对账不一致:管理控制台统计页显示 128,DB 等价 SQL 取回 130(订单中心删单未同步统计)",
-      "evidence": [{"step": 3, "summary": "统计卡片显示『订单总数 128』", "artifact": "round-1/evidence/TC-STAT-007-step3.png"}]
+      "evidence": [
+        {
+          "step": 3,
+          "summary": "统计卡片显示『订单总数 128』",
+          "artifact": "round-1/evidence/TC-STAT-007-step3.png"
+        }
+      ]
     },
     "copy_consistency_stale_text": {
       "$note": "[文案一致性] 反向用例:语义/口径变更(用量口径由仅企业扩为企业+个人)后旧文案残留,反向断言『不存在文本X』命中 → 判 fail;is_reverse=true 透传。缺陷等级由 gen_report 判用例族后锁 Critical(覆盖 P2→P3 常规映射),口径误导对账。",
@@ -189,7 +295,13 @@
       "status": "fail",
       "is_reverse": true,
       "error": "文案口径残留:用量统计口径已扩为企业+个人,但该 tooltip 仍显示『仅统计企业级、不含员工个人消费』,反向断言『不存在文本\"仅统计企业级\"』命中,与实际展示值相反",
-      "evidence": [{"step": 2, "summary": "tooltip 文案仍含『仅统计企业级』", "artifact": "round-1/evidence/TC-STAT-011-step2.png"}]
+      "evidence": [
+        {
+          "step": 2,
+          "summary": "tooltip 文案仍含『仅统计企业级』",
+          "artifact": "round-1/evidence/TC-STAT-011-step2.png"
+        }
+      ]
     }
   }
 }

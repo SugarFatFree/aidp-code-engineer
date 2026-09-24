@@ -385,6 +385,18 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 未启用 → `applicable:false` + 退出码 `0` + **零 finding**，`verify.py` 侧连 `note()` 都不发。启用后跑三项守卫：① **详规已安装**（ERROR — `rules/*.md` 是路径触发加载的，不在那儿就永不加载 = 规则等于不存在）② **详规未过期**（WARN — 与模板位不一致，即自动刷新没跑到或副本被本地改过）③ **「测试环境与账号」已回写 WebMCP 段**（ERROR，**只判最新版本**不连坐旧版；下游踩过：用例三处指向该文档、文档里从未写，文件在锚点空、链接检查查不出来）。
 用法：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py [--root <仓库根>] [--detect] [--install-rule] [--force] [--json]`，退出码 `0`（通过或 N/A）/`1`/`2`；由 `verify.py::check_webmcp` 映射为 **ERROR**（仅启用时）。★ 命令端据 `--detect` 的输出把 `webmcp_enabled` / `webmcp_entry_symbols` 传给四个上游 SKILL（`dev-logic-architect` 维度 33 / `dev-manual-testcase` 用例族 + 维度 20 / `code-verification-loop` 维度 9 / `auto-test-runner` `invoke` 能力）——它们**全部入参门控且明令不自行探测**，⛔ **不传 = 那些维度永不启用**，启用了该能力的项目会静默漏掉四层质量门。
 
+## check_client_mcp.py — 「客户端 MCP 能力暴露」的跨端声明判定【唯一实现】
+
+★ **先分清两条轴，混了必错**：**应用能力** = 被测应用**自己**向 AI 暴露业务工具（带 Schema、权限、审计）—— 本脚本管的就是它；**测试驱动** = AI 用 chrome-devtools / Appium / 小程序驱动去**操控**客户端 —— ⛔ 本脚本**一个字节的驱动信息都不读**。两者用的都是 MCP 协议，但「AI 能操控客户端」与「这个应用提供了业务工具」毫无关系，读了就会把前者当后者的证据，把整个功能点判成假绿。
+
+「客户端 MCP 能力」是**跨端**功能点（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**（`client_type=web` + `implementation_kind=webmcp`）。存量 Web 项目的 `webmcp_declared` / `webmcp_entry_available` / `requires_webmcp` 继续作为别名接收。
+
+用法：`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py [--root .] [--json] [--self-check]`；可选规则模板位 `{{AIDP_HOME}}/templates/optional-rules/client-mcp.md` → 安装位 `{{AIDP_HOME}}/rules/client-mcp.md`（已登记进 `scaffold_lib.py::OPTIONAL_RULES`，随升级自动刷新、也不会被误报孤儿）。
+
+## aiauto_readiness.py — 客户端用例的前置状态（⛔ 绝不产 pass）
+
+消费**运行期取证**，输出 `ready / block / unverified`；⛔ 不自行探测、不读驱动信息、不执行登录、不读凭据。四态与 `auto-test-runner/references/driver-client-mcp.md` 一一对应（⛔ 别在两处各立一套）：`declared ↔ client_mcp_declared`、`entry ↔ client_mcp_entry_available`、`registration ↔ registered_tools`、`invocation ↔ invoked_tools + invocation_evidence`。声明缺失时该类专项用例一律 block（`block_reason=precondition-unmet`），⛔ **测试驱动可用不是应用提供 MCP 能力的证据**，故 `driver_*` 一类事实**根本不参与判定**。
+
 ## 规划计量与预检（`/version` Step 2.3.9 / 2.4.6.5 配套，⛔ 都不参与质量判定）
 
 - **`aidp_run_metrics.py`** — `--root <仓库根> --version V --run-id ID start|end|wait|summary`。阶段计时与等待区间独立存 `docs/audit/{V}/metrics-{ID}.json`。`unclassified_seconds` 只是**墙钟扣除已记录等待的余额**，⛔ 不等于模型工作时间；`model_work_seconds` 只有拿到可靠独立计时才显式传入，否则为 `null`；用量取不到记 `null`，⛔ **不用文件篇幅推算 token**（推算值看起来像计量、实则是捏造的证据）。指标记录失败只告警，⛔ 不改变任何质量门结论。

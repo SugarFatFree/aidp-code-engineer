@@ -82,7 +82,7 @@ class RenderContractTest(RuntimeLayoutTestCase):
         for invalid in (
             "{{AIDP_UNKNOWN_TOKEN}}\n",
             "python3 .aidp/scripts/tool.py\n",
-            "read /iflytek/workspace/private/.aidp/x\n",
+            "read /srv/workspace/private/.aidp/x\n",   # 绝对路径里的旧运行根同样要拦
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):

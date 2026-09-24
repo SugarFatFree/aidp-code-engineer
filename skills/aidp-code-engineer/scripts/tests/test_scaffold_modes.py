@@ -327,8 +327,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             self.assertTrue((root / ".agents/skills/bugfix/SKILL.md").is_file())
             self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
             codex_skill = (root / ".codex/skills/aidp/sprint-test/SKILL.md").read_text(encoding="utf-8")
-            marker = "## 原始命令正文（逐字保真）\n\n"
+            # Codex 入口是**指针**：权威正文留在运行根的 commands/ 下，本文件只做参数传递与串联。
+            # 故这里核的是「指针指向的运行根对不对」——⛔ 不是「正文有没有被抄进来」。
+            marker = "## 权威正文位置\n\n"
             self.assertIn(marker, codex_skill)
+            self.assertNotIn("## 原始命令正文", codex_skill)   # 抄正文进入口 = 双份会各自演进
             self._assert_target_runtime_paths(codex_skill.split(marker, 1)[1], ".agents")
             self.assertTrue((root / ".dsh/commands/sprint-dev.md").is_file())
             dsh_command = (root / ".dsh/commands/sprint-test.md").read_text(encoding="utf-8")
@@ -361,8 +364,11 @@ class NativeRuntimeLayoutContractTest(unittest.TestCase):
             )
             self.assertTrue((root / ".codex/skills/aidp/sprint-dev/SKILL.md").is_file())
             codex_skill = (root / ".codex/skills/aidp/sprint-test/SKILL.md").read_text(encoding="utf-8")
-            marker = "## 原始命令正文（逐字保真）\n\n"
+            # Codex 入口是**指针**：权威正文留在运行根的 commands/ 下，本文件只做参数传递与串联。
+            # 故这里核的是「指针指向的运行根对不对」——⛔ 不是「正文有没有被抄进来」。
+            marker = "## 权威正文位置\n\n"
             self.assertIn(marker, codex_skill)
+            self.assertNotIn("## 原始命令正文", codex_skill)   # 抄正文进入口 = 双份会各自演进
             self._assert_target_runtime_paths(codex_skill.split(marker, 1)[1], ".agents")
             self._assert_absent(root / ".dsh/commands")
             self.assertTrue((root / ".agents/skills/chrome-devtools-mcp/skills/chrome-devtools/SKILL.md").is_file())

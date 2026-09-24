@@ -57,6 +57,9 @@ docs/
 | `bugfix/{version}/` | Bug 记录（一人一天一份汇总） | 发现者 + 修复者 |
 | `implementation/{version}/{user}/` | 个人踩坑笔记 | 各开发者 |
 
+> `superpowers/`（plans / specs）是**模板仓库自身维护期**的规格与计划留档，**不属于下游文档体系**，
+> 故不在上表内，也不进文档导航（`verify.py::NAV_SCAN_EXCLUDED` 已登记）。
+
 ## 文件命名规范
 
 详见各子目录的 `README.md`，或 [`init/06_版本与用户目录约定.md`](init/06_版本与用户目录约定.md)。

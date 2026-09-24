@@ -410,17 +410,77 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
     if (!modal) return;
     var imgEl = modal.querySelector(".shot-modal-img");
     var capEl = modal.querySelector(".shot-modal-cap");
+    var zoomEl = modal.querySelector(".shot-modal-zoom");   // 倍数提示，缺了也不影响缩放
+
+    /* 缩放/平移状态：scale=倍数，tx/ty=平移量（px，作用在缩放前的坐标系上）。
+     * ⛔ 三者必须在每次 open 时重置——否则上一张图放大到 4x，下一张一打开就是 4x 且偏移在外面，
+     * 表现成"点开是空白"，比不能缩放更难排查。 */
+    var MIN_SCALE = 0.2, MAX_SCALE = 8, STEP = 1.15;
+    var scale = 1, tx = 0, ty = 0;
+    var dragging = false, dragStartX = 0, dragStartY = 0, movedWhileDragging = false;
+
+    function applyTransform() {
+      // translate 在前、scale 在后：平移量按未缩放坐标算，锚点公式才成立
+      imgEl.style.transform = "translate(" + tx.toFixed(1) + "px, " + ty.toFixed(1) + "px) scale("
+        + (Math.round(scale * 1000) / 1000) + ")";
+      imgEl.style.cursor = scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in";
+      if (zoomEl) zoomEl.textContent = Math.round(scale * 100) + "%";
+    }
+    function resetTransform() { scale = 1; tx = 0; ty = 0; dragging = false; applyTransform(); }
+
     function open(src, caption) {
       imgEl.setAttribute("src", src);
       capEl.textContent = caption || "";
       modal.hidden = false;
       document.body.style.overflow = "hidden";   // 弹窗期间禁滚动底层
+      resetTransform();                          // ★ 每次打开都回到 1:1
     }
     function close() {
       modal.hidden = true;
       imgEl.removeAttribute("src");
       document.body.style.overflow = "";
+      resetTransform();
     }
+
+    /* ---- 滚轮缩放（以光标位置为锚点，光标下的那个像素保持不动）----
+     * `passive: false` 不可省：现代浏览器对 wheel 默认按 passive 处理，
+     * 不显式声明时 preventDefault() 被忽略 → 缩放的同时底层页面跟着滚。 */
+    modal.addEventListener("wheel", function (e) {
+      if (modal.hidden) return;
+      e.preventDefault();
+      var prev = scale;
+      scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, prev * (e.deltaY < 0 ? STEP : 1 / STEP)));
+      if (scale === prev) { applyTransform(); return; }
+      var rect = imgEl.getBoundingClientRect ? imgEl.getBoundingClientRect() : null;
+      if (rect && e.clientX != null && e.clientY != null) {
+        var cx = e.clientX - (rect.left + rect.width / 2);   // 光标相对图片中心的偏移
+        var cy = e.clientY - (rect.top + rect.height / 2);
+        var k = scale / prev;
+        tx = cx - k * (cx - tx);
+        ty = cy - k * (cy - ty);
+      }
+      applyTransform();
+    }, { passive: false });
+
+    /* ---- 拖拽平移：放大后不能拖就等于只能看中间那块 ---- */
+    imgEl.addEventListener("mousedown", function (e) {
+      if (modal.hidden || (e.button != null && e.button !== 0)) return;
+      e.preventDefault();                        // 顺带压掉浏览器原生图片拖拽
+      dragging = true; movedWhileDragging = false;
+      dragStartX = e.clientX - tx; dragStartY = e.clientY - ty;
+      applyTransform();
+    });
+    document.addEventListener("mousemove", function (e) {
+      if (!dragging) return;
+      movedWhileDragging = true;
+      tx = e.clientX - dragStartX; ty = e.clientY - dragStartY;
+      applyTransform();
+    });
+    document.addEventListener("mouseup", function () {
+      if (!dragging) return;
+      dragging = false; applyTransform();
+    });
+    imgEl.addEventListener("dblclick", function (e) { e.preventDefault(); resetTransform(); });
     // 委托：点击任意缩略图开图
     document.addEventListener("click", function (e) {
       var t = e.target;
@@ -432,7 +492,10 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
     var closeBtn = modal.querySelector(".shot-modal-close");
     if (closeBtn) closeBtn.addEventListener("click", close);
     var backdrop = modal.querySelector(".shot-modal-backdrop");
-    if (backdrop) backdrop.addEventListener("click", close);
+    if (backdrop) backdrop.addEventListener("click", function () {
+      if (movedWhileDragging) { movedWhileDragging = false; return; }   // 拖拽收尾不当作关闭
+      close();
+    });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });
     // 缩略图加载失败 → 降级为「—」（error 不冒泡，用捕获阶段委托）
     document.addEventListener("error", function (e) {

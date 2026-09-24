@@ -126,10 +126,11 @@ run "test_dsh_plugin_state.py（脚手架侧：DSH 扩展状态机 —— 已装
 # ── 渲染（需 node）──
 if command -v node >/dev/null 2>&1; then
   run "test_report_render.js（报告渲染口径）" node .aidp/scripts/tests/test_report_render.js
+  run "test_report_lightbox.js（截图灯箱缩放/拖拽交互）" node .aidp/scripts/tests/test_report_lightbox.js
 else
   echo ""
-  echo "⏭️ 无 node → 跳过 test_report_render.js（渲染类断言需 node）"
-  total_skip=$((total_skip + 1))
+  echo "⏭️ 无 node → 跳过 test_report_render.js / test_report_lightbox.js（渲染与交互类断言需 node）"
+  total_skip=$((total_skip + 2))
 fi
 
 echo ""

@@ -227,7 +227,19 @@ table.report-table tr.clickable { cursor: pointer; }
 .shot-modal-img {
   max-width: 92vw; max-height: 80vh; object-fit: contain;
   border-radius: 8px; background: #fff; box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+  /* 滚轮缩放 / 拖拽平移：变换原点居中，锚点公式才成立；
+     禁原生图片拖拽与文字选中，否则按住拖会变成"拖动图片副本"而不是平移画布。 */
+  transform-origin: center center; cursor: zoom-in;
+  user-select: none; -webkit-user-select: none; -webkit-user-drag: none;
 }
+/* 放大后图片会溢出 body，关闭按钮与说明必须压在上层，否则点不到 */
+.shot-modal-close { z-index: 3; }
+.shot-modal-cap, .shot-modal-zoom { position: relative; z-index: 2; }
+.shot-modal-zoom {
+  color: #fff; font-size: 12px; opacity: .78; letter-spacing: .3px;
+  background: rgba(15, 23, 42, .55); border-radius: 999px; padding: 2px 10px;
+}
+.shot-modal-tip { color: #fff; font-size: 12px; opacity: .6; }
 .shot-modal-cap { color: #fff; font-size: 13px; max-width: 92vw; text-align: center; word-break: break-all; }
 .shot-modal-close {
   position: absolute; top: -14px; right: -14px; width: 36px; height: 36px;

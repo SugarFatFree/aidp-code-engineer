@@ -10,6 +10,7 @@
 |------|------|------|------|
 | `test_report_schema.py` | `emit-report.py` 数据契约校验（`validate_payload`）+ `buildNo` 派生 + **示例文件自校验（示例即契约、永不分叉）** + 改坏必红 | `python3 .aidp/scripts/tests/test_report_schema.py` | Python 标准库；③④ 加载 JS 示例需 `node`（缺则跳过、非失败） |
 | `test_report_render.js` | 渲染口径（`pct` 经渲染路径：0.84→84%、100.0→100% 不出 10000%）+ 坏数据健壮性（risks 分组对象不白屏 / cases 别名无 undefined / 无 buildNo 不 `#undefined`） | `node .aidp/scripts/tests/test_report_render.js` | `node` |
+| `test_report_lightbox.js` | 截图灯箱交互：滚轮缩放（含以光标为锚点、上下限、阻止页面滚动）、放大后拖拽平移、双击复位、换图重置。⛔ 判据是**真触发 wheel/mousedown 再断言 transform**，不是「源码里有没有 wheel 字样」——那种字符串匹配改坏了照样绿 | `node .aidp/scripts/tests/test_report_lightbox.js` | `node` |
 | `test_commit_gate.py` | `commit_gate.py`（约定 24）：模板项目判定 / 业务代码与纯脚手架判定 / 约定 22 台账积压（stale、多态识别、已级联未清理、归档标记、格式漂移）/ `suspected_cascade_bypass` / 约定 41 `offchain` 档位 / `pending_cicd` 推送欠账 / CLI 退出码 0·3 与 `--quiet` 告警恒打印 / `commit_gate.enabled` 总开关；另含 `classify_commit_change` · `classify_push` 分类（按 commit 键控记录、部署终态） | `python3 .aidp/scripts/tests/test_commit_gate.py` | Python 标准库 + `git` |
 | `test_notify.py` | `notify.py`（约定 32）：feishu / dingtalk / wecom / lark-cli / command 渠道渲染与发送、飞书 · 钉钉签名、`--auto` 渠道回落、`--sender`、`--print-only` / `--json` 结构、退出码 0/1/2/3、项目名解析与 `--check-name`、发送成功才登记台账 | `python3 .aidp/scripts/tests/test_notify.py` | Python 标准库（本地 127.0.0.1 HTTP 桩 + 假 lark-cli，不联网） |
 | `cicd_watch.py --selftest`（脚本自带，非本目录文件） | CICD 多提供方监听（`cicd_watch.py` + `cicd_providers.py`）的离线自测，由 `run.sh` 一并调起 | `python3 .aidp/scripts/cicd_watch.py --selftest` | Python 标准库 |

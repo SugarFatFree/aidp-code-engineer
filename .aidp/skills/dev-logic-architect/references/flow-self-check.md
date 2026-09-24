@@ -120,6 +120,7 @@
 - `scripts/check_column_consumer_evidence.py` — 「新增列举证表」结构性核验:凡设计出现 `ALTER TABLE ... ADD`,核查是否有 6 列举证表(`列名 | 类型 | 业务含义 | 谁读它 | 不加会怎样 | 与既有近似列的区别`)、逐格填实、「谁读它」举得出**具体读取方**(「上游有这个字段」「以后可能要用」「备用」「预留」一律不算)、并与 DDL 双向对账(对应维度 39 Critical / 核心原则 32)。**须传目录**;缺表判 Important、表在而缺列或举不出消费者判 Critical
 - `scripts/check_ddl_column_comment.py` — DDL 新增列注释配对核验:每个 `ADD COLUMN` 是否有配对列注释,**MySQL 内联 `COMMENT '...'` 与达梦/Oracle 独立 `COMMENT ON COLUMN t.c IS '...'` 两种方言形态都认**(只认前者会在国产库项目上静默失效)。**须传目录**(对应维度 39 Critical / 核心原则 32)
 - `scripts/check_sibling_family_spec.py` — 同族增量项声明表结构核验(对应检查项 41,**Important 档**;Author 27 项无对应自检编号;支持 `--self-check`)
+- `scripts/run_qr_checks.py` — **QR 步骤 0 的一次性采集入口**:并发跑齐全部机器门并汇总为 JSON。⛔ 采集器、非判定者;`skipped` / `collector` / `inconclusive` / `unavailable` **都不等于通过**
 
 > 检查项 41 的脚本由 [`flow-qr-dispatch.md`](./flow-qr-dispatch.md) 的 **QR 步骤 0** 调用。命令端只负责把该步骤派给独立 QR Agent,**无需重复实现判据**;否则同一判据两份实现必然漂移。
 

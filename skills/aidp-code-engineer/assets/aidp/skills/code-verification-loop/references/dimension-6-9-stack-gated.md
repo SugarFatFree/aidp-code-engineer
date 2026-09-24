@@ -1,4 +1,4 @@
-# code-verification-loop · 维度 6（DI 依赖可解析性）· 维度 7（CSS 预处理器）· 维度 8（请求通道 URL）· 维度 9（WebMCP）
+# code-verification-loop · 维度 6（DI 依赖可解析性）· 维度 7（CSS 预处理器）· 维度 8（请求通道 URL）· 维度 9（客户端应用 MCP）
 
 > 本文件是 `SKILL.md` 的按需加载分片：执行到对应维度 / 步骤时 Read。通用判据（严重度定义、三方冲突裁决、最高约束「全程静态」、基线对照有效性铁律）以 `SKILL.md` 为准，本文件不重复。
 
@@ -129,7 +129,7 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录>
 - **维度 4「HTTP 客户端配置硬编码」** 管的是**端点/凭证被写死进源码**（该走配置驱动），与「拼装判据有几份」正交。
 - **维度 5** 只收非阻断技术债，本维度命中的平行实现属结构性缺陷，**不降级到维度 5**。
 
-#### 维度 9: WebMCP 前端能力实现合规（**条件启用**·`webmcp_enabled` 门控）
+#### 维度 9: 客户端应用 MCP 业务能力实现合规（**条件启用**·`client_mcp.enabled` / 旧 Web `webmcp_enabled` 门控；WebMCP = Web 端实现）
 
 > 🎯 **与维度 6/7/8 同一类的门控型维度，只是门控信号不同**：那三个由**技术栈**门控（扫不到该栈
 > 源码即整维度跳过），本维度由**调用方入参**门控。判据同样是**纯静态分析**——符合本 SKILL
@@ -139,11 +139,15 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录>
 
 | 项 | 口径 |
 | :- | :- |
-| **启用条件** | 调用方显式传入 `webmcp_enabled: true`。**为 `false` 或未传 → 整维度跳过**：不计入通过/不通过、不影响其它维度结论、**不产生任何告警**、**不在验收报告里留行** |
-| **⛔ 严禁自行探测** | 不 grep PRD、不扫代码找相关标识符。**Why：判定散落多处必然漂移，而一处判错就会给未启用的项目凭空长出 Critical。** 判定权归调用方，本 SKILL 只消费该输入 |
-| **入口标识符** | 由 `webmcp_entry_symbols`（数组）传入。⚠️ **挂载位置已迁移过一次、规范仍在演进，脚本与文档都不得写死任何一个名字**——写死后的失效方向是「扫不到 → 0 命中 → **假绿**」。缺该入参时**报入参错而不是猜默认值** |
+| **启用条件** | 调用方显式 `client_mcp.enabled: true` 或旧 Web `webmcp_enabled: true`；两者均未启用 → 整维度不告警、**报告不留行**。两声明的客户端/启停/形态冲突须报错,不静默覆盖 |
+| **⛔ 严禁自行探测** | 不 grep PRD/代码或据 Chrome/Appium **测试驱动 MCP** 推断应用已提供业务工具,启用权只归调用方 |
+| **入口标识符** | **仅 Web+WebMCP** 由 `webmcp_entry_symbols`（数组）传入。⚠️ **挂载位置已迁移过一次、规范仍在演进，脚本与文档都不得写死任何一个名字**——写死后的失效方向是「扫不到 → 0 命中 → **假绿**」。缺该入参时**报入参错而不是猜默认值** |
 
 ★ 跨端总纲见 [`references/flow-client-mcp.md`](./references/flow-client-mcp.md)——WebMCP 只是 Web 端实现;非 Web 已声明应用 MCP 时维度 9 的通用静态半场照跑。
+
+**通用静态半场(已声明端均查):** 必读 [`references/flow-client-mcp.md`](./references/flow-client-mcp.md),对设计工具清单/入出 Schema、应用自有实现落点、主体权限、写确认、生命周期、错误、审计日志逐项读源码。非 Web 没有已证实的**应用自有 MCP 服务或桥接**则不能判实现通过;不启动服务/浏览器。Web 通用半场只补下面六项未覆盖的声明/Schema 来源/审计落点,同一权限/确认/错误问题只登记一次;非 Web 则完整执行通用半场。
+
+**9.1 / 9.2 / 9.3 与 `check_webmcp_adapter.py` 仅 Web+WebMCP 时执行**（判据全文见 [`references/flow-webmcp.md`](./references/flow-webmcp.md)）;**9.4 / 9.5 / 9.6 对所有已声明端执行**——⚠️ 这三条是**端无关的安全判据**(写操作走哪条通道、凭据出不出工具通道、可调用集合是白名单还是黑名单),与浏览器无关;整族划进 Web 专属会让**非 Web 启用项目的三条 Critical 无人查**,而通用半场并不覆盖它们。⛔ 别把它们再抄进 `flow-client-mcp.md` 的正文判据——判据本体只在本表这一份，那边只写结论指回来：**
 
 **六项检查（判据全文见 [`references/flow-webmcp.md`](./references/flow-webmcp.md)）：**
 

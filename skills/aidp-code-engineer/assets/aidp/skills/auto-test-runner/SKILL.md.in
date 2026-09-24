@@ -11,10 +11,6 @@ description: >
   当用户提到自动化测试执行、批量跑用例、无人值守测试、UI 自动化执行、跨端测试执行、chrome-devtools 执行用例、Appium/小程序自动化执行、测试执行报告时触发。
 ---
 
-由调用方入参门控的可选能力(当前:`client_mcp` 之于**应用业务工具**、`webmcp_enabled`/`webmcp.enabled` 之于 **Web 叶子**),**未启用时整段不适用**:run-context 不写相关字段、报告不留相关位置、不产生告警、不占篇幅。**⛔ 本 skill 不自行探测是否启用**(判定散落多处必然漂移,一处判错就给未启用项目凭空长出 block 项与报告位)。⛔ 驱动版本不足时**不得静默降级为「就当没有该能力」**——标 block + 证据,否则这一整类用例会全绿式消失、报告看不出漏测。
-> **(仅 Web 叶子)WebMCP 驱动版本校验:** 旧 `webmcp_enabled: true` 或新 `client_mcp.enabled: true` 且 Web+WebMCP 时,探测命令加
-**运行真实性前置:** 实际认证实例/账号角色 + 登录后的项目自身受保护接口 + 前端部署指纹须先取证,故障注入能力只对依赖它的用例前置核验;结果写 `runtime_preflight` 的逐项来源/时间/证据。失效时受影响用例 block 并继续其余用例,首页 200 / 单测 / 相似浏览器场景均不是 pass 证据。项目声明启用 WebMCP 时还要区分入口、**本页注册**和该用例实际工具调用;零注册的专项用例 block,普通业务可如实记 DOM/CDP 回退。`tasks_state.py` 的 init/update 使用独占锁+原子替换防**并发写入**丢状态,锁失败返回环境错误,不得手写状态覆盖他人更新。细则见 [`references/execution-methodology.md`](./references/execution-methodology.md)「运行真实性前置」和 [`references/driver-web-webmcp.md`](./references/driver-web-webmcp.md)。
-
 # 自动化测试执行器 (Auto Test Runner)
 
 ## 角色定义
@@ -102,7 +98,7 @@ description: >
 
 **驱动能力探测:** 运行 `python3 <SKILL_DIR>/scripts/detect_drivers.py <端类型> --json`(端类型为位置参数 `web`/`miniprogram`/`mobile`/`desktop`/`all`)探测目标端驱动是否就绪;不可用则在 run-context 标 `驱动缺失` 并**优雅降级**——该端用例整体标 `block(driver-missing)`,不硬失败、不挂起。
 
-> **(条件启用)WebMCP 驱动版本校验:** **仅当**调用方传入 `webmcp_enabled: true` 时,探测命令加
+> **(仅 Web 叶子)WebMCP 驱动版本校验:** 旧 `webmcp_enabled: true` 或新 `client_mcp.enabled: true` 且 Web+WebMCP 时,探测命令加
 > `--webmcp`(`python3 <SKILL_DIR>/scripts/detect_drivers.py web --webmcp --json`),校验
 > `chrome-devtools-mcp` **≥ 1.8.0**(该版本起才具备列出页面 WebMCP 工具的能力)。**不加该参数时
 > 输出里完全没有 `webmcp` 段**(不占位、不留空)。
@@ -178,7 +174,6 @@ description: >
 3. **只在模块开头走一次入口流程**(打开端 → 登录 → 进工作台),模块内用例通过导航切换连续执行,**不重复登录**。
 4. 每条用例执行完写结果 JSON(`round-{M}/results/{TC-ID}.json`,schema 见 [`assets/result-schema.json`](./assets/result-schema.json)),并据结果把状态 `[>] → [√]`(pass)或 `[>] → [!]`(fail/block/na);`na` 必须带不适用理由,且不等同于本轮跳过。
    > **★形状校验(模块收尾跑一次即可):** `python3 <SKILL_DIR>/scripts/check_result.py <round目录>/results/ --require-runtime-preflight --json`(旧 Web `webmcp_enabled: true`（或 `webmcp.enabled: true`）、或 `client_mcp.enabled: true` 且客户端=Web、实现形态=WebMCP 时再加 `--webmcp-enabled`,不得自行猜测;⛔ 只认旧 flag 会让只传 `client_mcp` 的 Web 项目永不开启本轮门;历史结果复核不带新参数)。`evidence` / `runtimeErrors` **必须是对象数组**(`evidence` 元素含 `artifact`),写成字符串数组会让证据路径与运行时错误统计失真;`block_reason` 必须落枚举——**环境类阻塞漏标枚举会被误计成产品缺陷**。校验失败按无人值守规则处理(记录 + 继续),不挂起。
-   > **★形状校验(模块收尾跑一次即可):** `python3 <SKILL_DIR>/scripts/check_result.py <round目录>/results/ --json`。`evidence` / `runtimeErrors` **必须是对象数组**(`evidence` 元素含 `artifact`),写成字符串数组会让证据路径与运行时错误统计失真;`block_reason` 必须落枚举——**环境类阻塞漏标枚举会被误计成产品缺陷**。校验失败按无人值守规则处理(记录 + 继续),不挂起。
 5. 更新 run-context「当前页面/会话状态」,供下一条用例感知复用。
 6. **存活心跳**:run-context「三、执行参数」给了 `heartbeat_cmd` 时,**每完成一个模块(及模块内每 10 条用例)执行一次**该命令(失败忽略、不阻断)。编排层据此区分「测试链路仍在跑长批次」与「测试链路已掉线」;未提供则跳过。
 
@@ -340,7 +335,6 @@ run-context `free_scan: true` 时,在**全部模块用例跑完之后、报告�
 | `detect_drivers.py` | 驱动能力探测:按端类型探测驱动是否就绪,输出可用/缺失 + 降级建议(优雅降级依据)。**`--webmcp`(条件启用)** 额外校验 WebMCP 工具列出与调用所需的 `chrome-devtools-mcp` ≥ 1.8.0,输出 `webmcp.{detected_version,version_source,satisfied,block_reason}`;**不加该参数时输出里没有 `webmcp` 段**,且**版本结论不影响退出码**(版本不足 ≠ 驱动缺失) |
 | `gen_report.py` | 从 `results/*.json` 聚合生成固定结构报告 + 统计(总数/pass/fail/block/**na**/通过率(分母排除 na)/**自动化率 + 自动化覆盖率·成功率(按 block_reason 细分,driver-missing=0 时与旧口径一致)**/各模块;**缺陷分级先判用例族——`[回归]`(`is_regression`)/`[PRD存在性]`/`[文案一致性]` 失败锁 Critical,覆盖优先级映射(**环境类 block_reason 除外**)**;聚合 self-heal 失败复测追溯 `self_heal_trace`;校验无证据的 verified pass) |
 | `check_result.py` | **结果 JSON 落盘前校验**:形状(`evidence`/`runtimeErrors` 必须是**对象数组**,元素含 `artifact` / `type`+`message`+`severity`)、artifact 必须是当前 `round/evidence` 内的相对路径（禁绝对路径/`..`/旧轮次，results/结果 JSON/round/evidence 根均不得是符号链接）、实际文件存在且非 0 字节、截图扩展名兼容集(`.webp/.png/.jpg/.jpeg`)与最小容器结构校验、截图文件名须绑定当前 case_id/step、同一截图跨字段/递归磁盘索引禁止多格式副本（后缀大小写/符号链接不绕过）、`status` 枚举(含 `na`)、`na` 理由、`block_reason` 枚举、verified/self-heal 的 pass 是否有证据、`self_heal_applied` ⟷ `self_heal_trace`、`db_assertion` 结构与「match=false 必判 fail」。`assets/result-schema.json` 是**示例而非可校验 Schema**,机器约束由本脚本承载;校验 `entry_kind` 枚举与**漏标巡检项**;`target` 支持多路径(跨轮次 glob),某个 target 空匹配会报 Important 防「少校验一整轮却显示通过」 |
-| `check_result.py` | **结果 JSON 落盘前校验**:形状(`evidence`/`runtimeErrors` 必须是**对象数组**,元素含 `artifact` / `type`+`message`+`severity`)、`status` 枚举(含 `na`)、`na` 理由、`block_reason` 枚举、verified/self-heal 的 pass 是否有证据、`self_heal_applied` ⟷ `self_heal_trace`、`db_assertion` 结构与「match=false 必判 fail」。`assets/result-schema.json` 是**示例而非可校验 Schema**,机器约束由本脚本承载;校验 `entry_kind` 枚举与**漏标巡检项**;`target` 支持多路径(跨轮次 glob),某个 target 空匹配会报 Important 防「少校验一整轮却显示通过」 |
 | `check_layer_isolation.py` | 两层解耦检查:扫方法论层是否泄漏端专有 API(质量维度 1) |
 | `check_env_facts.py` | 运行环境事实取证校验(**判据口径以 `references/execution-methodology.md` 第十节为单一信源**):必备字段齐全且类型合契约 / 事实字段与 `XSource` **双向成对** / 来源落五类枚举且形态合法 / `null` 与「未取到」互为充要条件 / 无模板占位残留 / `reusedInstance` 为 true 或未取到时渲染模式不得声称「显式指定」;带 `--report` 时**在「一、测试概况」章节范围内**核对报告与取证事实一致。**新增事实字段自动纳管**(除 `$`/`_` 开头与元数据白名单外,任何字段都要求配套 `XSource`),无需改脚本 |
 
@@ -413,7 +407,7 @@ tasks.md 4 态状态机持久化;续跑跳过 `[√]`,不从头重来。
 
 ### 约束 9：条件启用能力不留痕
 
-由调用方入参门控的可选能力(当前:`webmcp_enabled` 之于 WebMCP 工具调用),**未启用时整段不适用**:run-context 不写相关字段、报告不留相关位置、不产生告警、不占篇幅。**⛔ 本 skill 不自行探测是否启用**(判定散落多处必然漂移,一处判错就给未启用项目凭空长出 block 项与报告位)。⛔ 驱动版本不足时**不得静默降级为「就当没有该能力」**——标 block + 证据,否则这一整类用例会全绿式消失、报告看不出漏测。
+由调用方入参门控的可选能力(当前:`client_mcp` 之于**应用业务工具**、`webmcp_enabled`/`webmcp.enabled` 之于 **Web 叶子**),**未启用时整段不适用**:run-context 不写相关字段、报告不留相关位置、不产生告警、不占篇幅。**⛔ 本 skill 不自行探测是否启用**(判定散落多处必然漂移,一处判错就给未启用项目凭空长出 block 项与报告位)。⛔ 驱动版本不足时**不得静默降级为「就当没有该能力」**——标 block + 证据,否则这一整类用例会全绿式消失、报告看不出漏测。
 
 ### 约束 10：事实字段可溯源、禁模板默认
 
@@ -437,3 +431,7 @@ tasks.md 4 态状态机持久化;续跑跳过 `[√]`,不从头重来。
 ⚠️ **「非执行开销」这类差值不能直接当作可优化的开销**（实证提醒）：
 `总耗时 − evidence 首尾跨度` 把报告生成、终审、文档级联这些**交付物本身**也算了进去。
 在单条 `elapsed_ms` 落地之前，针对「开销」的任何优化都无法验证是否生效 —— **先做计时，再谈开销**。
+
+### 约束 12：运行真实性前置
+
+**运行真实性前置:** 实际认证实例/账号角色 + 登录后的项目自身受保护接口 + 前端部署指纹须先取证,故障注入能力只对依赖它的用例前置核验;结果写 `runtime_preflight` 的逐项来源/时间/证据。失效时受影响用例 block 并继续其余用例,首页 200 / 单测 / 相似浏览器场景均不是 pass 证据。项目声明启用 WebMCP 时还要区分入口、**本页注册**和该用例实际工具调用;零注册的专项用例 block,普通业务可如实记 DOM/CDP 回退。`tasks_state.py` 的 init/update 使用独占锁+原子替换防**并发写入**丢状态,锁失败返回环境错误,不得手写状态覆盖他人更新。细则见 [`references/execution-methodology.md`](./references/execution-methodology.md)「运行真实性前置」和 [`references/driver-web-webmcp.md`](./references/driver-web-webmcp.md)。

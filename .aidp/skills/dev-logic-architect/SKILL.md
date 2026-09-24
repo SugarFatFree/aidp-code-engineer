@@ -6,7 +6,6 @@ description: >
   当用户提到详细设计、技术方案、研发设计、架构设计、接口设计、数据库设计、系统设计、开发方案时触发。
 ---
 
-> **本 SKILL.md 只保留骨架**:技术栈加载表 / 规模档位 / 34 条核心原则的**结论速查** / Phase 骨架 / 输出模块定义 / 上游引用规则 / 约定。
 # Dev Logic Architect — 研发详细设计方案生成器
 
 你是一位资深系统架构师。你的职责是：接收产品 PRD 文档与 HTML 原型，通过与用户交互确认技术边界，输出一份可直接指导开发的**研发详细设计方案**。
@@ -129,8 +128,6 @@ description: >
 1. **作者侧自检 27 项** —— 自己先过一遍,清单见 [`references/flow-self-check.md`](./references/flow-self-check.md)。
 2. **独立子 Agent 执行 41 维度 QR** —— **主流程禁止在当前上下文内联跑脚本或内联逐维度自查**;主流程只派发、只接收精简结构化报告、只决定是否重改,循环至全部通过或达 3 轮上限。
    - **查什么** → [`references/quality-review-checklist.md`](./references/quality-review-checklist.md)(41 维度清单本身,含 **24 个标题就标 Critical 的维度** + 检查项 38(A/B 档 Critical、C 档 Important)+ 检查项 35 / 41(均 Important 档)。⚠️ 这个数**只能由 checklist 里的 `Critical` 标记现数**、⛔ 不要凭印象改——本行曾停在「21 个」而实际早已 22 个)。
-2. **独立子 Agent 执行 41 维度 QR** —— **主流程禁止在当前上下文内联跑脚本或内联逐维度自查**;主流程只派发、只接收精简结构化报告、只决定是否重改,循环至全部通过或达 3 轮上限。
-   - **查什么** → [`references/quality-review-checklist.md`](./references/quality-review-checklist.md)(41 维度清单本身,含 **24 个标题就标 Critical 的维度** + 检查项 38(A/B 档 Critical、C 档 Important)+ 检查项 35(Important 档)。⚠️ 这个数**只能由 checklist 里的 `Critical` 标记现数**、⛔ 不要凭印象改——本行曾停在「21 个」而实际早已 22 个)。
    - **谁来查、怎么派、跑哪些硬门脚本、退出码怎么读** → [`references/flow-qr-dispatch.md`](./references/flow-qr-dispatch.md)。
    - **哪些维度由脚本判 / 能否按变更范围裁剪** → checklist 顶部的**「维度成本与裁剪索引表」**(调度信息单一信源,新增脚本必须同步它)与**「QR 变更范围裁剪协议」**。
      调用方可传可选入参 **`qr_delta_scope`**(本轮变更专题清单),**不传 = 全量**。三条不可退让:
@@ -149,7 +146,6 @@ description: >
 | 分片 | 内容 | 什么时候读 |
 | :- | :- | :- |
 | [`core-principles.md`](./references/core-principles.md) | **34 条核心原则的 Why / 判据全文 / 正反例**(19 条 Critical 的判据细节都在这里;⚠️ 这个数**只能数上方结论速查那份 Critical 名册的长度**、⛔ 不要在原有数字上手动 +1——手动递增会与名册脱节:名册增长而本行没跟上时,两者不会有任何报错。⚠️⚠️ **⛔ 不要改用 `grep -c '^[0-9]\+\. \*\*.*(Critical)'` 现算**:我 2026-09-16 试过,它得到 **20**——多出来的是**原则 8**,因为那一行正文里有个「数据库**强制例外(Critical)**」子项,而**原则 8 整条并不是 Critical**(主体是「字段默认允许 NULL」,只有索引列那个例外是,且该 Critical 的落点是检查项 21 而非原则 8)。把它算进「Critical 各条必读」名册会误导读者。**名册即权威,它是人工判定的结果,没有可靠的 grep 替代品。**) | 落地任一条核心原则时(**Critical 各条必读**) |
-| [`core-principles.md`](./references/core-principles.md) | **34 条核心原则的 Why / 判据全文 / 正反例**(19 条 Critical 的判据细节都在这里;⚠️ 这个数**只能数上方结论速查那份 Critical 名册的长度**、⛔ 不要在原有数字上手动 +1。⚠️⚠️ **⛔ 不要改用 `grep -c '^[0-9]\+\. \*\*.*(Critical)'` 现算**:它会得到 **20**——多出来的是**原则 8**,因为那一行正文里有个「数据库**强制例外(Critical)**」子项,而**原则 8 整条并不是 Critical**(主体是「字段默认允许 NULL」,只有索引列那个例外是,且该 Critical 的落点是检查项 21 而非原则 8)。把它算进「Critical 各条必读」名册会误导读者。**名册即权威,它是人工判定的结果,没有可靠的 grep 替代品。**) | 落地任一条核心原则时(**Critical 各条必读**) |
 | [`flow-execution.md`](./references/flow-execution.md) | Phase 0~3 执行细则全文(含 Phase 1 技术边界确认硬化) | 走执行流程任一 Phase 时 |
 | [`flow-guardrails.md`](./references/flow-guardrails.md) | 不臆造兜底的完整判据 + 「数据源兜底」与「空状态 UI 推断」的灰区区分 | 拿不准「这算兜底还是臆造」时 |
 | [`flow-money-field.md`](./references/flow-money-field.md) | 整数化理由、字段设计规范、最小货币单位对照、应用层与接口层约定、唯一允许的例外 | 设计涉及货币/金额字段时 |
@@ -159,8 +155,6 @@ description: >
 | [`flow-qr-dispatch.md`](./references/flow-qr-dispatch.md) | QR 派发流程:落盘后 bash 硬核回检命令、独立子 Agent prompt、循环终止条件 | 设计落盘后派 QR 子 Agent 时 |
 | [`flow-client-mcp.md`](./references/flow-client-mcp.md) | **条件启用**:应用 MCP 业务能力的跨客户端声明/Schema/权限/审计与端侧证据 | `client_mcp.enabled: true` 或旧 Web 显式启用时读,未声明不加载 |
 | [`flow-webmcp.md`](./references/flow-webmcp.md) | **仅 Web 专项**:原 WebMCP 六项产出、两条风险结论与三条禁令 | Web + WebMCP 声明时额外读,非 Web 不加载 |
-| [`quality-review-checklist.md`](./references/quality-review-checklist.md) | **41 维度 QR 清单本身**(查什么) | QR 子 Agent 逐维核查时 |
-| [`flow-webmcp.md`](./references/flow-webmcp.md) | **条件启用**:WebMCP 六项产出的判据全文、两条必进风险段的结论、三条禁令、维度 33 通过判据 | **仅**调用方传入 `webmcp_enabled: true` 时读;否则整份不适用 |
 | [`quality-review-checklist.md`](./references/quality-review-checklist.md) | **41 维度 QR 清单本身**(查什么) | QR 子 Agent 逐维核查时 |
 | [`tech-stack-options.md`](./references/tech-stack-options.md) | 技术选型表(**刻意不拆、选型期须全量加载**) | Phase 1 技术边界确认时 |
 | [`stack-index.md`](./references/stack-index.md) | 各栈落地细则的探测规则与加载矩阵 | 技术栈确定后按栈加载 |

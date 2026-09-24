@@ -717,6 +717,25 @@ def _check_command(root: Path, path: Path, expected: dict, source: Path = None):
 
 
 def sync_file_commands(plan: Plan, rel: str, enabled: bool = True) -> list:
+    """把命令真源materialize到「文件即命令」型入口（DSH `.dsh/commands/`；Claude 同址时跳过）。
+
+    ⛔ **别学 Codex 改成指针**（`codex_command_skill` 那种「正文在别处，去 Read」）。
+    两边的文件构成不同，结论相反：
+      · Codex 的入口 = **必需的外壳**（frontmatter + 适配前言）+ 正文。外壳无论如何都得有，
+        正文是白搭的，指针搭外壳的便车、近乎零成本。
+      · 这里的入口 = **正文本身**，没有外壳。`.dsh/commands/<cmd>.md` 就是那条命令，
+        是 DSH 原生消费的形态。换成指针 = 把原生能直接拿到的正文换成一句「去读另一个文件」，
+        只省下已被 gitignore 的磁盘，却凭空引入「模型不去读就开跑」的风险，
+        并让 DSH 比 Claude Code（同址拿到真正文）更差 —— 这个不对称没有道理。
+
+    也不要改回 symlink：`link_file` 是遗留命名，实际始终生成实体副本，为的是 Windows
+    无符号链接权限时同样可用（`verify._adapter_mode` 在 `nt` 上强制 copy）。
+    而 DSH 的命令目录**不可配置**成指向 `commands/` 真源（扩展读固定的项目级
+    `.dsh/commands/`），所以「第二个发现位必须有实体文件」是硬约束、不是可优化项。
+
+    副本不会悄悄分叉：字节级同一 + sha256 钉在 `GENERATED_FILE` 账本里，
+    `_check_command` 见到不一致即 fail closed，`verify` 另跑 `agent_sync --check`。
+    """
     if enabled and _adapter_is_identity(plan, rel, "commands"):
         return []
     destination = plan.root / rel

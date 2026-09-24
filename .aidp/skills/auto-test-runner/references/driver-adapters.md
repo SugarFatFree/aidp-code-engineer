@@ -15,6 +15,8 @@
 | 移动 APP（Appium / UIAutomator2 / XCUITest） | `driver-mobile.md` | 部分（伪代码，未端到端验证） |
 | 桌面客户端（Playwright-Electron / WinAppDriver） | `driver-desktop.md` | 预留未验证 |
 | **DB 断言驱动**（`[双源对账]` 用例，可插拔） | `driver-db-assertion.md` | 与被测端正交，需要时**额外**加载 |
+| **应用 MCP 业务工具**（独立于测试驱动的条件能力） | `driver-client-mcp.md` | 调用方显式 `client_mcp.enabled: true` 或旧 Web 显式启用才加载;**不是第五个 UI 原子能力**,驱动用 MCP 协议不构成应用能力证据 |
+| **WebMCP 工具调用**（仅 Web 适配叶子） | `driver-web-webmcp.md` | **不是第五个端**;只在 Web+WebMCP 声明时额外加载,secure context/Chrome 前提不扩散到非 Web |
 | **WebMCP 工具调用**（Web 适配器的可选补充能力 `invoke`，**条件启用**） | `driver-web-webmcp.md` | **不是第五个端**——仍在浏览器里、仍经同一个 Web 驱动；**仅**调用方传入 `webmcp_enabled: true` 时**额外**加载，否则整份不适用 |
 
 > ⚠️ **维度 1-2 Critical「方法论层零端专有 API」的落点**：端专有 API（`mcp__chrome-devtools__*`、`miniprogram-automator`、Appium `driver.*`、SQL/DB MCP 调用等）**只允许出现在 `driver-*.md` 适配层文件内**；`SKILL.md`、`execution-methodology.md` 与本文件的端无关部分**一律不得出现**。拆分后这条约束的检查边界更清晰：`check_layer_isolation.py` 扫方法论层文件即可。
@@ -30,7 +32,9 @@
 | **locate** | `locate(语义定位符) → 句柄` | 可见文案 / 角色+名称 / label(**非底层选择器**) | 元素句柄(端内部引用) | 定位优先用页面可见语义,保证用例端无关。定位不到返回空句柄(交由 act 触发失败分级) |
 | **act** | `act(句柄, 动作词, 数据?) → 结果` | 句柄 + 端无关动作词 + 可选数据 | 操作结果(成功/失败 + 增量状态) | 动作词枚举见下;数据为输入文本/选项/文件名等 |
 | **observe** | `observe() → 结构化状态` | — | `{当前页, 标题, 可见元素[], 关键文本, 列表计数, 登录态, (可选) console[], network[], env{}, driverAlive}` | 读当前页面/会话状态,支持感知链与断言。**三条可选、端相关的附加通道**:① **运行时错误通道(console/network)**——Web 端可拉 console 消息 + network 请求(供 `runtimeErrors` 捕获,见 execution-methodology 第三节步骤 4);② **运行环境通道(env)**——见下;③ **健康探活通道(`driverAlive`)**——见下。三通道若某端驱动不提供,均返回空/`null`、相应字段留空(优雅降级,不因缺通道失败) |
-| **capture** | `capture(标签) → 证据路径` | 证据标签(如 `TC-001-step3`) | 归档文件路径 | 产物形态由端决定(截图/快照/控件树),接口统一 |
+| **capture** | `capture(标签) → 实际证据路径` | 证据标签(如 `TC-001-step3`) | 实际生成且可读取的一张截图路径 | 每次只归档一张实际截图,扩展名由适配器决定;快照/控件树归 `observe`,接口统一 |
+
+**capture 端无关硬契约:** 每次 capture 只生成一种实际可用的证据格式,不得为统一扩展名转码或同时保留 WebP+PNG 双份截图;返回值必须是本次真实生成的 artifact 路径,截图失败时不得创建空文件或伪造路径。调用方只把该返回值写进 `results/*.json` 的 `evidence[].artifact`,不得按 TC-ID 自行补 `.png` / `.webp`;扩展名由适配器决定。
 
 **端无关动作词枚举(act 的第二参数):**
 
@@ -114,7 +118,6 @@
       4. **driver 字段须如实记录实际所用驱动**,严禁静默切换、严禁用了降级驱动却填首选值;
       5. `detect_drivers.py <端>` 对「仅共享/远程变体可用、本机独立驱动缺失」返回 `manual_confirm_required=true`(需人工确认、非自动可用),据此按 1~4 处理。
     - **端专有落地**(各类驱动的具体命令/工具名、driver 字段取值枚举、诊断修复步骤)见对应 `driver-<端>.md`;Web 端见 `driver-web.md`「三·补一:本地 CLI ↔ 共享/远程 MCP 变体硬边界」。
-| **应用 MCP（跨端）** | [`driver-client-mcp.md`](./driver-client-mcp.md) | 被测应用**自己**向 AI 暴露业务工具（Web / 小程序 / 移动 / 桌面）。⛔ 与「测试驱动用 MCP 操控客户端」是两条轴，不可混：判定唯一实现 = 命令端 `check_client_mcp.py` |
 - **混合项目**(如 iOS APP + Web 后台):按用例所属端分别探测 + 加载对应适配器,某端缺失只跳过该端,不影响另一端。
 
 ---
@@ -125,3 +128,6 @@
 2. 在 `detect_drivers.py` 增加该端探测分支(命令/包/服务检测)。
 3. **方法论层零改动**——只要新适配器实现了 locate/act/observe/capture 四能力,批量调度/模式分级/闭环/失败分级/断点/报告全部自动复用。
 4. **端专有 API 只写进新建的 `driver-<端>.md`**;`SKILL.md`/`execution-methodology.md`/`report-format.md`/`usecase-format.md` 一律零改动,改完跑 `python3 <SKILL_DIR>/scripts/check_layer_isolation.py <SKILL_DIR>` 自检。
+
+| `driver-client-mcp.md` | **条件启用**：应用自有 MCP 业务工具四态取证与测试驱动严格分轴,各端只依据已证实实现适配;无实现明确未提供 |
+| `driver-web-webmcp.md` | **仅 Web 条件启用**：WebMCP 工具调用（Web 适配器可选能力 `invoke`）——驱动版本要求（≥1.8.0）、两个作用域不同的浏览器开关与 origin 三段精确匹配、连接后两行自检、调用约定（异步列出 / 两个参数形态 / 原型上没有 unregister）、与 CDP 的分工、报告纪律。**它不是被测端**，不适用 env 通道声明要求；未启用时整份不加载 |

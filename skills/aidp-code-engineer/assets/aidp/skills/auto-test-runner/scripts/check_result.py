@@ -50,7 +50,11 @@
 """
 import argparse
 import json
+import os
+import re
+import struct
 import sys
+import zlib
 from collections import Counter
 from pathlib import Path
 
@@ -105,76 +109,247 @@ def _issue(issues, level, rule, msg):
     issues.append({'level': level, 'rule': rule, 'msg': msg})
 
 
-# 应用 MCP 能力的四态。⛔ 后一态不得由前一态推断:声明了不等于有入口、有入口不等于注册了、
-#    注册了不等于真调用过 —— 每一态都必须自带 source + observed_at,取不到一律记 unavailable。
-APPLICATION_MCP_STATES = ('declared', 'entry', 'registration', 'invocation')
-APPLICATION_MCP_FACT_STATUS = {'verified', 'failed', 'unavailable'}
-# ⛔ 这些是**测试驱动**的事实,不是应用能力的证据。出现在 source 里即判 Critical。
+# ── 应用 MCP 能力（跨端）──────────────────────────────────────────────────────
+# ★「客户端 MCP 能力」是**跨端**功能点(Web / 小程序 / 移动 / 桌面),WebMCP 只是 Web 端实现。
+# ⛔⛔ 与**测试驱动**严格分轴：chrome-devtools / Appium / 小程序驱动用的也是 MCP 协议，
+#     但那是「AI 操控客户端」，不是「应用提供了业务工具」。把驱动可用当成应用能力的证据，
+#     整个功能点就是假绿 —— 这簇检查的头号防守对象。
+# ⛔ 后一态不得由前一态推断：声明了≠有入口，有入口≠注册了，注册了≠真调用过。
+
+def _valid_tool_calls(calls, registered, evidence, require_fact=False):
+    """筛出「确有其事」的工具调用记录。
+
+    判据三合一:工具必须在**当前实例注册清单**里、调用须指向一条真实的
+    `evidence[].artifact`、且该证据条目的 summary 里点到了这个工具名 ——
+    三者缺一,「调用过」就只是一句自称。
+    ⚠️ 本函数是该口径的**单一信源**。此前新旧两条通道各写了一份几乎相同的推导式,
+       而同一份代码的多份拷贝正是本仓库登记的最高频漂移源(标记识别那三份就已经漂过)。
+    `require_fact`:新通道额外要求调用记录自带 source + observed_at(四态各自取证)。
+    """
+    result = []
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        tool = call.get('tool_name')
+        artifact = call.get('evidence_artifact')
+        if not isinstance(tool, str) or tool not in registered:
+            continue
+        if require_fact and not _mcp_fact(call):
+            continue
+        if not isinstance(artifact, str):
+            continue
+        if any(isinstance(item, dict) and item.get('artifact') == artifact
+               and tool in str(item.get('summary') or '') for item in evidence):
+            result.append(call)
+    return result
+
+
+def _signal_label(data):
+    """把用例上一切可能承载族标记的字段拼成一条检索串。
+
+    ⚠️ **必须用 FIDELITY_SIGNAL_FIELDS 全集,⛔ 不要只取 test_name + tags**:
+       标记透传到哪个字段各端不一致,只认一个字段会在别的端静默失配 ——
+       而失配方向正是假绿(标了 `[WebMCP]` 却一条判据都不报)。实测 `case_family`
+       与 `type` 两种落点曾整条零告警。本函数是该口径的**单一信源**,
+       ⛔ 别在调用点再各自拼一份。
+    """
+    labels = []
+    for field in FIDELITY_SIGNAL_FIELDS:
+        value = data.get(field)
+        if isinstance(value, (list, tuple)):
+            labels.extend(str(item) for item in value)
+        elif value is not None:
+            labels.append(str(value))
+    return ' '.join(labels)
+TIMING_FIELDS = ('started_at', 'finished_at', 'elapsed_ms')
+# 上游约定的巡检项 case_id 形态(`运行时-<页面>`),用于反查漏标 entry_kind
+FREE_SCAN_ID_PREFIX = '运行时-'
+# 非用例产物(与 gen_report.NON_RESULT_FILES 同口径),整目录校验时跳过
+NON_RESULT_FILES = {'env-facts.json', 'token-usage.json', 'run-context.json'}
+SCREENSHOT_EXTENSIONS = {'.webp', '.png', '.jpg', '.jpeg'}
+# 仅拦「明确是图片、但不在截图兼容白名单」的扩展名。`.json`/`.log`/`.txt` 等是合法的
+# 非截图证据,不能因为 artifact 字段同时承载它们就一刀切成四种图片后缀。
+UNSUPPORTED_IMAGE_EXTENSIONS = {
+    '.gif', '.bmp', '.tif', '.tiff', '.svg', '.avif', '.heic', '.heif',
+    '.jfif', '.ico', '.jxl', '.jp2', '.j2k', '.apng', '.psd', '.raw', '.dng',
+    '.qoi', '.exr', '.tga', '.dds', '.ppm', '.pgm', '.pbm', '.pnm', '.hdr',
+}
+KNOWN_IMAGE_EXTENSIONS = SCREENSHOT_EXTENSIONS | UNSUPPORTED_IMAGE_EXTENSIONS
+PATH_EXCEPTIONS = (OSError, RuntimeError, ValueError)
+
+
+# ⛔ 这些是**测试驱动**的事实，不是应用能力的证据。出现在四态的 source 里即判 Critical。
+# ★ 本条是本仓库在上游实现之上**额外加的**：上游只校形状与四态一致性，没有拦
+#   「拿驱动可用冒充应用能力」——而那正是本功能点立论的核心形态（见 check_client_mcp.py 开篇）。
+#   少了它，一份把 source 写成「appium 已连接」的结果能全绿通过。
 DRIVER_SOURCE_MARKERS = ('chrome-devtools', 'appium', 'cdp', 'playwright', 'selenium',
-                         'driver', 'mcp-remote', '小程序驱动')
+                         'mcp-remote', '小程序驱动', '测试驱动')
+
+
+def _driver_source_issues(app, name, issues):
+    for state in ('declared', 'entry', 'registration', 'invocation'):
+        fact = app.get(state)
+        if not isinstance(fact, dict):
+            continue
+        source = str(fact.get('source') or '').lower()
+        if any(marker in source for marker in DRIVER_SOURCE_MARKERS):
+            _issue(issues, 'Critical', 'application_mcp_driver_as_evidence',
+                   f'{name}: application_mcp.{state}.source 指向**测试驱动**'
+                   f'({fact.get("source")!r}) —— ⛔ 驱动可用不是「应用提供了 MCP 能力」的证据，'
+                   f'两条轴不可混')
+
+
+def _mcp_fact(value):
+    if not isinstance(value, dict) or not all(
+            isinstance(value.get(key), str) and value[key].strip()
+            for key in ('source', 'observed_at')):
+        return False
+    if value['source'].strip().startswith('未取到') and (
+            value.get('value') is True or
+            value.get('status') in ('connected', 'registered', 'called')):
+        return False
+    return True
 
 
 def _check_application_mcp(data, name, issues):
-    """`application_mcp` 四态事实校验(缺省不写本字段 = 本用例与应用 MCP 无关,不判)。
+    """只核实应用业务工具的四态证据；测试驱动不参与能力判定。"""
+    status = data.get('status')
+    mechanism = data.get('mechanism')
+    client = data.get('client')
+    label = _signal_label(data)
+    app = data.get('application_mcp')
+    legacy = data.get('webmcp')
+    negative = any(word in label for word in ('未启用', '关闭态', '禁用态'))
+    marked = '[应用MCP]' in label and not negative
+    web_marked = app is not None and client == 'web' and '[WebMCP]' in label and not negative
+    legacy_required = app is not None and data.get('webmcp_required') is True
+    requires_registration = data.get('mcp_required') is True or legacy_required or marked or web_marked
+    requires_call = (data.get('mcp_required') is True or legacy_required
+                     or ((marked or web_marked) and '工具调用' in label))
+    if app is None:
+        if status == 'block' and requires_registration and legacy is None:
+            _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+                   f'{name}: 专项用例 block 也须分别记录声明/入口/注册/调用未取到的来源')
+        if status == 'pass' and requires_registration:
+            _issue(issues, 'Critical', 'application_mcp_required_without_entry',
+                   f'{name}: 应用 MCP 专项用例缺应用能力入口事实,不得以 UI 驱动结果充 pass')
+        if status == 'pass' and mechanism == 'app-mcp':
+            _issue(issues, 'Critical', 'application_mcp_claim_without_call',
+                   f'{name}: driver 可用不等于应用实际调用了业务工具')
+        return
+    if not isinstance(app, dict):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: application_mcp 须为逐态对象')
+        return
 
-    ⛔ 本函数一个字节的**驱动信息**都不该接受作为证据:「Appium 装好了」「chrome-devtools 能连」
-    与「这个应用提供了业务工具」毫无关系,读了就会把前者当后者 —— 那正是把整个功能点判成假绿的路径。
-    """
-    mcp = data.get('application_mcp')
-    if mcp is None:
+    declared = app.get('declared')
+    if not _mcp_fact(declared) or not isinstance(declared.get('value'), bool):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 应用能力声明缺布尔值/来源/观测时间')
         return
-    if not isinstance(mcp, dict):
-        _issue(issues, 'Critical', 'bad_application_mcp',
-               f'{name}: application_mcp 应为对象或 null(实为 {type(mcp).__name__})')
+    _driver_source_issues(app, name, issues)
+    if app.get('client_type') != client:
+        _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+               f'{name}: 声明客户端与结果 client 不一致')
+    if legacy is not None:
+        if (client != 'web' or not isinstance(legacy, dict)
+                or legacy.get('declared_enabled') != declared['value']):
+            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+                   f'{name}: 新旧应用 MCP 声明冲突,不得静默覆盖')
+    if not declared['value']:
+        if any(isinstance(app.get(key), dict) and app[key].get('status') == state
+               for key, state in (('entry', 'connected'), ('registration', 'registered'),
+                                  ('invocation', 'called'))):
+            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+                   f'{name}: 项目声明未提供应用 MCP,结果却称入口/注册/调用已发生')
+        if status == 'pass' and (requires_registration or mechanism in ('app-mcp', 'mixed')):
+            _issue(issues, 'Critical', 'application_mcp_claim_without_call',
+                   f'{name}: 项目声明未提供应用 MCP,不能报业务工具调用通过')
         return
-    kind = mcp.get('implementation_kind')
-    client = mcp.get('client_type')
-    if kind == 'webmcp' and client not in (None, 'web'):
-        _issue(issues, 'Critical', 'app_mcp_kind_mismatch',
-               f'{name}: implementation_kind=webmcp 只适用于 client_type=web(实为 {client!r}) —— '
-               f'非 Web 端应为 app-service 或 bridge')
-    for state in APPLICATION_MCP_STATES:
-        fact = mcp.get(state)
-        if fact is None:
-            continue
-        if not isinstance(fact, dict):
-            _issue(issues, 'Critical', 'bad_application_mcp_fact',
-                   f'{name}: application_mcp.{state} 应为对象(实为 {type(fact).__name__})')
-            continue
-        status = fact.get('status') or fact.get('value')
-        if isinstance(status, str) and status not in APPLICATION_MCP_FACT_STATUS \
-                and state != 'declared':
-            _issue(issues, 'Important', 'bad_application_mcp_status',
-                   f'{name}: application_mcp.{state}.status={status!r} 不在 '
-                   f'{sorted(APPLICATION_MCP_FACT_STATUS)} 内')
-        source = str(fact.get('source') or '')
-        if not source.strip() or not str(fact.get('observed_at') or '').strip():
-            _issue(issues, 'Critical', 'app_mcp_fact_unsourced',
-                   f'{name}: application_mcp.{state} 缺 source / observed_at —— '
-                   f'⛔ 无出处的事实不能作为应用 MCP 能力的证据(取不到应记 status=unavailable)')
-        low = source.lower()
-        if any(marker in low for marker in DRIVER_SOURCE_MARKERS):
-            _issue(issues, 'Critical', 'app_mcp_driver_as_evidence',
-                   f'{name}: application_mcp.{state}.source 指向**测试驱动**({source!r}) —— '
-                   f'⛔ 驱动可用不是「应用提供了 MCP 能力」的证据,两条轴不可混')
-    invocation = mcp.get('invocation')
-    if isinstance(invocation, dict):
-        registered = set()
-        reg = mcp.get('registration')
-        if isinstance(reg, dict) and isinstance(reg.get('tools'), list):
-            registered = {str(t) for t in reg['tools']}
-        for call in (invocation.get('calls') or []):
-            if not isinstance(call, dict):
-                continue
-            tool = str(call.get('tool_name') or '')
-            if registered and tool and tool not in registered:
-                _issue(issues, 'Critical', 'app_mcp_tool_unregistered',
-                       f'{name}: 调用了未在当前实例注册的工具 {tool!r} —— '
-                       f'⛔ 注册清单之外的调用不构成能力证据')
-            if not str(call.get('evidence_artifact') or '').strip():
-                _issue(issues, 'Critical', 'app_mcp_call_unevidenced',
-                       f'{name}: 工具调用 {tool or "?"} 缺 evidence_artifact —— '
-                       f'⛔ 一句「called」不是调用证据,须指向 evidence[].artifact 里的真实日志')
+
+    valid_kind = {'web': ('webmcp',), 'miniprogram': ('app-service', 'bridge'),
+                  'mobile': ('app-service', 'bridge'), 'desktop': ('app-service', 'bridge')}
+    implementation_evidence = app.get('implementation_evidence')
+    evidence_present = (isinstance(implementation_evidence, str)
+                        and bool(implementation_evidence.strip()))
+    unresolved = evidence_present and implementation_evidence.strip().startswith('未取到')
+    unresolved_block = status == 'block' and unresolved
+    if (not evidence_present or (unresolved and status != 'block') or
+            (app.get('implementation_kind') not in valid_kind.get(client, ())
+             and not unresolved_block)):
+        _issue(issues, 'Critical', 'application_mcp_implementation_unverified',
+               f'{name}: 未给出该端已证实的应用自有实现形态/证据;'
+               '未交付仅可注明未取到并 block 专项用例')
+
+    entry, registry, invocation = (app.get(key) for key in
+                                   ('entry', 'registration', 'invocation'))
+    if any(not _mcp_fact(fact) for fact in (entry, registry, invocation)):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 入口/当前实例注册/本用例调用各须独立来源和观测时间')
+        return
+    tools = registry.get('tools')
+    calls = invocation.get('calls')
+    if (entry.get('status') not in ('connected', 'disconnected', 'unavailable')
+            or registry.get('status') not in ('registered', 'none', 'unavailable')
+            or invocation.get('status') not in ('called', 'not-called', 'unavailable')
+            or not isinstance(tools, list) or not all(isinstance(t, str) for t in tools)
+            or not isinstance(calls, list)):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 四态取值或工具/调用清单形状不合契约')
+        return
+    if ((registry['status'] == 'registered') != bool(tools)
+            or (invocation['status'] == 'called') != bool(calls)
+            or (registry['status'] == 'unavailable' and tools)
+            or (invocation['status'] == 'unavailable' and calls)):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 注册/调用状态与实际工具清单或调用记录矛盾')
+    # ★ Web 页面注册特有的作用域事实。⚠️ 这条**必须在新通道里也有**:旧 `webmcp` 字段
+    #   靠 `scope` 守「浏览器全量工具清单不能冒充本页注册」,而结果一旦只写
+    #   `application_mcp`,旧通道整段被短路,该判据会**整条消失**——方向是假绿,
+    #   且消失的正是整份跨端契约最核心的那一条。
+    # ⛔ 只对 client_type=web + implementation_kind=webmcp 生效:scope 是页面注册的概念,
+    #   向 App/小程序/桌面强加它就是「照搬 Web 前提」,那是本轮明令禁止的。
+    if app.get('client_type') == 'web' and app.get('implementation_kind') == 'webmcp':
+        scope = registry.get('scope')
+        if scope not in ('page', 'browser'):
+            _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+                   f'{name}: Web+WebMCP 的当前实例注册须写 scope(page|browser)')
+        elif scope != 'page' and (mechanism in ('webmcp', 'app-mcp', 'mixed')
+                                  or registry['status'] == 'registered'):
+            _issue(issues, 'Critical', 'application_mcp_scope_not_page',
+                   f'{name}: 浏览器全量工具清单不能证明本页实际注册')
+    if legacy is not None and isinstance(legacy, dict) and client == 'web':
+        old_calls = legacy.get('invocations')
+        new_keys = [(call.get('tool_name'), call.get('evidence_artifact'))
+                    for call in calls if isinstance(call, dict)]
+        old_keys = ([(call.get('tool_name'), call.get('evidence_artifact'))
+                     for call in old_calls if isinstance(call, dict)]
+                    if isinstance(old_calls, list) else None)
+        if (app.get('implementation_kind') != 'webmcp'
+                or legacy.get('entry_detected') != (entry['status'] == 'connected')
+                or legacy.get('scope') != 'page'
+                or legacy.get('registered_tools') != tools
+                or old_keys != new_keys):
+            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+                   f'{name}: 新旧 Web 形态/入口/本页注册/调用证据冲突')
+    if (status == 'pass' and (requires_registration or invocation['status'] == 'called'
+                              or mechanism in ('app-mcp', 'webmcp', 'mixed'))
+            and entry['status'] != 'connected'):
+        _issue(issues, 'Critical', 'application_mcp_required_without_entry',
+               f'{name}: 应用 MCP 入口未连接,专项用例须 block')
+    if status == 'pass' and requires_registration and (registry['status'] != 'registered' or not tools):
+        _issue(issues, 'Critical', 'application_mcp_required_without_registration',
+               f'{name}: 当前应用实例未注册工具,专项用例须 block')
+    evidence = data.get('evidence')
+    evidence = evidence if isinstance(evidence, list) else []
+    valid_calls = _valid_tool_calls(calls, tools, evidence, require_fact=True)
+    if (status == 'pass' and (mechanism in ('app-mcp', 'webmcp', 'mixed') or requires_call)
+            or invocation['status'] == 'called') and not valid_calls:
+        _issue(issues, 'Critical', 'application_mcp_claim_without_call',
+               f'{name}: 无已注册工具的真实调用 artifact,不得报应用 MCP 调用通过')
+    if status == 'pass' and valid_calls and mechanism == 'dom':
+        _issue(issues, 'Critical', 'application_mcp_mechanism_mismatch',
+               f'{name}: 结果记录了应用业务工具调用却声明纯 UI 驱动机制')
 
 
 def _iso_span_ms(start, end):
@@ -217,7 +392,544 @@ def has_lightweight_evidence(value):
     return False
 
 
-def check_one(data, name):
+# ── 产物契约（证据文件必须真实存在且是合法图片）────────────────────────────────
+# ★ 这簇检查防的是**伪造证据**：结果 JSON 里写一个 artifact 路径谁都会写，而
+#   「路径指向的文件到底在不在、是不是 0 字节、是不是真图片、有没有跨用例复用同一张」
+#   在报告上**完全看不出来** —— 报告照样绿、截图位照样有个链接，点开才是 404。
+# ⛔ 同时拦路径逃逸：绝对路径 / `..` 穿越 / 软链指到轮次目录外，都会让「证据」指向
+#   本轮根本没产出的东西。
+
+SCREENSHOT_EXTENSIONS = {'.webp', '.png', '.jpg', '.jpeg'}
+# 仅拦「明确是图片、但不在截图兼容白名单」的扩展名。`.json`/`.log`/`.txt` 等是合法的
+# 非截图证据,不能因为 artifact 字段同时承载它们就一刀切成四种图片后缀。
+
+
+UNSUPPORTED_IMAGE_EXTENSIONS = {
+    '.gif', '.bmp', '.tif', '.tiff', '.svg', '.avif', '.heic', '.heif',
+    '.jfif', '.ico', '.jxl', '.jp2', '.j2k', '.apng', '.psd', '.raw', '.dng',
+    '.qoi', '.exr', '.tga', '.dds', '.ppm', '.pgm', '.pbm', '.pnm', '.hdr',
+}
+
+
+KNOWN_IMAGE_EXTENSIONS = SCREENSHOT_EXTENSIONS | UNSUPPORTED_IMAGE_EXTENSIONS
+
+
+PATH_EXCEPTIONS = (OSError, RuntimeError, ValueError)
+
+
+def _artifact_candidates(artifact, result_path):
+    """返回 artifact 的词法候选路径,不在此处触碰文件系统。
+
+    `round-1/evidence/x.webp` 相对 build 根,`evidence/x.webp` 相对 round 根。
+    文件存在性、符号链接与目录归属在 `_check_artifact_contract` 内统一判,确保异常能转成
+    稳定 JSON finding,而不是从 `Path.resolve/is_file` 泄漏 traceback。
+    """
+    p = Path(artifact)
+    if p.is_absolute():
+        return [p]
+    if result_path is None:
+        return [Path.cwd() / p]
+    round_dir = result_path.parent.parent
+    # 合法形态只有两种:`evidence/x`(相对 round)与 `round-N/evidence/x`(相对 build)。
+    # 不再从 results/round/build 三层猜第一个存在文件,避免 results/evidence 的同名残留抢先命中。
+    if p.parts and p.parts[0] == 'evidence':
+        return [round_dir / p]
+    if len(p.parts) >= 2 and p.parts[0] == round_dir.name and p.parts[1] == 'evidence':
+        return [round_dir.parent / p]
+    return [round_dir / p]
+
+
+def _is_file_safely(path):
+    try:
+        return path.is_file(), None
+    except PATH_EXCEPTIONS as exc:
+        return False, exc
+
+
+def _resolve_safely(path):
+    try:
+        return path.resolve(strict=False), None
+    except PATH_EXCEPTIONS as exc:
+        return None, exc
+
+
+def _is_within(path, root):
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _png_expected_bytes(width, height, bit_depth, color_type, interlace):
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color_type)
+    valid_depths = {
+        0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8},
+        4: {8, 16}, 6: {8, 16},
+    }
+    if channels is None or bit_depth not in valid_depths[color_type] or width <= 0 or height <= 0:
+        return None
+    def pass_size(x0, y0, dx, dy):
+        pw = max(0, (width - x0 + dx - 1) // dx)
+        ph = max(0, (height - y0 + dy - 1) // dy)
+        return 0 if not pw or not ph else ph * (1 + (pw * channels * bit_depth + 7) // 8)
+    if interlace == 0:
+        return height * (1 + (width * channels * bit_depth + 7) // 8)
+    if interlace == 1:
+        return sum(pass_size(*p) for p in (
+            (0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4),
+            (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)))
+    return None
+
+
+def _valid_image_signature(path, suffix):
+    """标准库容器校验,拦文本、仅剩魔数以及缺关键图像段的截断空壳。"""
+    try:
+        size = path.stat().st_size
+        with path.open('rb') as fh:
+            if suffix == '.png':
+                if fh.read(8) != b'\x89PNG\r\n\x1a\n':
+                    return False, None
+                saw_ihdr = saw_idat = saw_iend = False
+                inflater = zlib.decompressobj()
+                expected_output = None
+                decompressed_size = 0
+                max_output = 256 * 1024 * 1024  # 防压缩炸弹;远高于常规 4K RGBA 截图
+                while fh.tell() < size:
+                    raw_len = fh.read(4)
+                    chunk_type = fh.read(4)
+                    if len(raw_len) != 4 or len(chunk_type) != 4:
+                        return False, None
+                    length = int.from_bytes(raw_len, 'big')
+                    if length > size - fh.tell() - 4:
+                        return False, None
+                    data = fh.read(length)
+                    raw_crc = fh.read(4)
+                    if len(data) != length or len(raw_crc) != 4:
+                        return False, None
+                    expected_crc = zlib.crc32(chunk_type + data) & 0xffffffff
+                    if int.from_bytes(raw_crc, 'big') != expected_crc:
+                        return False, None
+                    if chunk_type == b'IHDR':
+                        if saw_ihdr or length != 13:
+                            return False, None
+                        width = int.from_bytes(data[0:4], 'big')
+                        height = int.from_bytes(data[4:8], 'big')
+                        expected_output = _png_expected_bytes(
+                            width, height, data[8], data[9], data[12])
+                        if expected_output is None or expected_output > max_output:
+                            return False, None
+                        if data[10] != 0 or data[11] != 0:
+                            return False, None
+                        saw_ihdr = True
+                    elif chunk_type == b'IDAT':
+                        if not saw_ihdr or expected_output is None:
+                            return False, None
+                        saw_idat = True
+                        remaining = expected_output - decompressed_size + 1
+                        if remaining <= 0:
+                            return False, None
+                        out = inflater.decompress(data, remaining)
+                        decompressed_size += len(out)
+                        if decompressed_size > expected_output or inflater.unconsumed_tail:
+                            return False, None
+                    elif chunk_type == b'IEND':
+                        if length != 0:
+                            return False, None
+                        saw_iend = True
+                        break
+                if not (saw_ihdr and saw_idat and saw_iend and fh.tell() == size
+                        and expected_output is not None):
+                    return False, None
+                try:
+                    remaining = expected_output - decompressed_size + 1
+                    tail = inflater.flush(max(1, remaining))
+                    decompressed_size += len(tail)
+                except zlib.error:
+                    return False, None
+                return inflater.eof and decompressed_size == expected_output, None
+
+            if suffix in {'.jpg', '.jpeg'}:
+                if fh.read(2) != b'\xff\xd8':
+                    return False, None
+                saw_sof = saw_sos = False
+                sof_markers = {0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7,
+                               0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf}
+                while fh.tell() < size:
+                    byte = fh.read(1)
+                    if byte != b'\xff':
+                        continue
+                    marker_raw = fh.read(1)
+                    while marker_raw == b'\xff':
+                        marker_raw = fh.read(1)
+                    if not marker_raw:
+                        return False, None
+                    marker = marker_raw[0]
+                    if marker == 0xda:  # SOS:后续是熵编码数据,只需确认容器以 EOI 收尾
+                        saw_sos = True
+                        break
+                    if marker == 0xd9:
+                        break
+                    if marker in {0x01, *range(0xd0, 0xd8)}:
+                        continue
+                    raw_len = fh.read(2)
+                    if len(raw_len) != 2:
+                        return False, None
+                    seg_len = int.from_bytes(raw_len, 'big')
+                    if seg_len < 2 or fh.tell() + seg_len - 2 > size:
+                        return False, None
+                    if marker in sof_markers:
+                        saw_sof = True
+                    fh.seek(seg_len - 2, 1)
+                if not (saw_sof and saw_sos and size >= 4):
+                    return False, None
+                fh.seek(-2, 2)
+                return fh.read(2) == b'\xff\xd9', None
+
+            if suffix == '.webp':
+                header = fh.read(12)
+                if (len(header) != 12 or header[:4] != b'RIFF'
+                        or header[8:12] != b'WEBP'
+                        or int.from_bytes(header[4:8], 'little') + 8 != size):
+                    return False, None
+                saw_image_chunk = False
+                while fh.tell() < size:
+                    fourcc = fh.read(4)
+                    raw_len = fh.read(4)
+                    if len(fourcc) != 4 or len(raw_len) != 4:
+                        return False, None
+                    chunk_len = int.from_bytes(raw_len, 'little')
+                    padded = chunk_len + (chunk_len & 1)
+                    if fh.tell() + padded > size:
+                        return False, None
+                    # VP8X 只是扩展画布头,本身没有像素;静态图须有 VP8/VP8L,
+                    # 动画须有 ANMF 帧。只含 VP8X 的空壳不得算有效截图。
+                    if fourcc in {b'VP8 ', b'VP8L', b'ANMF'} and chunk_len > 0:
+                        saw_image_chunk = True
+                    fh.seek(padded, 1)
+                return saw_image_chunk and fh.tell() == size, None
+    except (PATH_EXCEPTIONS, zlib.error) as exc:
+        return False, exc
+    return True, None
+
+
+def _detect_image_content(path):
+    """识别常见图片内容,防止把真实 PNG/GIF 等改成 `.bin` 绕过截图白名单。"""
+    try:
+        with path.open('rb') as fh:
+            prefix = fh.read(32)
+    except PATH_EXCEPTIONS as exc:
+        return None, exc
+    if prefix.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'png', None
+    if prefix.startswith(b'\xff\xd8\xff'):
+        return 'jpeg', None
+    if len(prefix) >= 12 and prefix[:4] == b'RIFF' and prefix[8:12] == b'WEBP':
+        return 'webp', None
+    signatures = (
+        (b'GIF87a', 'gif'), (b'GIF89a', 'gif'), (b'BM', 'bmp'),
+        (b'II*\x00', 'tiff'), (b'MM\x00*', 'tiff'), (b'qoif', 'qoi'),
+        (b'v/1\x01', 'exr'), (b'DDS ', 'dds'), (b'\x00\x00\x01\x00', 'ico'),
+    )
+    for magic, kind in signatures:
+        if prefix.startswith(magic):
+            return kind, None
+    # PNM 不是看到 `P1`~`P6` 就算图片;至少要有合法的 magic + 宽高数字头,
+    # 否则普通日志 `P1 failure...` 会被误判成截图。
+    if re.match(br'^P[1-6][ \t\r\n]+(?:#[^\r\n]*[\r\n][ \t]*)*\d+[ \t\r\n]+\d+[ \t\r\n]', prefix):
+        return 'pnm', None
+    if len(prefix) >= 12 and prefix[4:8] == b'ftyp':
+        brand = prefix[8:12]
+        if brand in {b'heic', b'heix', b'hevc', b'hevx', b'mif1', b'msf1'}:
+            return 'heic', None
+        if brand in {b'avif', b'avis'}:
+            return 'avif', None
+    return None, None
+
+
+def _parse_screenshot_stem(stem):
+    for style, pattern in (
+            ('canonical', r'^(?P<case>.+)-step(?P<step>[^/]+)$'),
+            ('legacy-dash', r'^(?P<case>.+)-(?P<step>\d+)$'),
+            ('legacy-cn', r'^(?P<case>.+)_步骤(?P<step>[^/]+)$')):
+        m = re.fullmatch(pattern, stem)
+        if m:
+            return m.group('case'), m.group('step'), style
+    return None, None, None
+
+
+def _scan_evidence_directory(evidence_dir):
+    """递归建立 `stem -> 目录项[]` 索引,每 round 一次,后续 sibling 查询近似 O(1)。"""
+    try:
+        entries = list(evidence_dir.rglob('*'))
+    except PATH_EXCEPTIONS as exc:
+        return {}, exc
+    by_stem = {}
+    for entry in entries:
+        try:
+            parent_key = entry.parent.relative_to(evidence_dir).as_posix()
+        except ValueError:
+            continue
+        by_stem.setdefault((parent_key, entry.stem), []).append(entry)
+    return by_stem, None
+
+
+def _check_artifact_contract(data, name, result_path, issues, artifact_index=None,
+                             artifact_owners=None):
+    """校验 artifact 的本轮归属、格式、唯一性、文件头与实际存在性。"""
+    screenshot_stems = {}
+    actual_screenshots = []
+    if artifact_owners is None:
+        artifact_owners = {}
+    registered_lexical_paths = set()
+    seen_actual_artifacts = set()
+    evidence_root = None
+    evidence_dir = None
+    sibling_entries, sibling_scan_error = (artifact_index if artifact_index is not None else (None, None))
+    if result_path is not None:
+        round_dir = result_path.parent.parent
+        try:
+            round_is_symlink = round_dir.is_symlink()
+        except PATH_EXCEPTIONS as exc:
+            round_is_symlink = False
+            _issue(issues, 'Critical', 'artifact_invalid_path',
+                   f'{name}: 无法读取当前 round 目录状态({exc})')
+        if round_is_symlink:
+            _issue(issues, 'Critical', 'artifact_round_symlink',
+                   f'{name}: 当前 round 目录是符号链接 `{round_dir}`;'
+                   f'不得把旧轮次或外部目录冒充本轮结果与证据根')
+        evidence_dir = round_dir / 'evidence'
+        try:
+            root_is_symlink = evidence_dir.is_symlink()
+        except PATH_EXCEPTIONS as exc:
+            root_is_symlink = False
+            _issue(issues, 'Critical', 'artifact_invalid_path',
+                   f'{name}: 无法读取当前 round/evidence 目录状态({exc})')
+        if root_is_symlink:
+            _issue(issues, 'Critical', 'artifact_evidence_root_symlink',
+                   f'{name}: 当前 round/evidence 是符号链接 `{evidence_dir}`;'
+                   f'不得把旧轮次或外部目录冒充本轮证据根')
+        evidence_root, root_error = _resolve_safely(evidence_dir)
+        if root_error is not None:
+            _issue(issues, 'Critical', 'artifact_invalid_path',
+                   f'{name}: 无法解析当前 round/evidence 目录({root_error})')
+        if sibling_entries is None:
+            sibling_entries, sibling_scan_error = _scan_evidence_directory(evidence_dir)
+    if sibling_entries is None:
+        sibling_entries = {}
+
+    for field in ('evidence', 'runtimeErrors'):
+        value = data.get(field)
+        if not isinstance(value, list):
+            continue
+        for i, item in enumerate(value):
+            # evidence 的历史字符串简写按 artifact 兼容;runtimeErrors 的字符串更可能是错误消息,
+            # 只能报形状 Important,不得把 `GET /api 500` 当文件路径升级成 Critical。
+            artifact = (item if field == 'evidence' and isinstance(item, str) else
+                        item.get('artifact') if isinstance(item, dict) else None)
+            if not isinstance(artifact, str) or not artifact.strip():
+                continue
+            artifact = artifact.strip()
+            if '\x00' in artifact:
+                _issue(issues, 'Critical', 'artifact_invalid_path',
+                       f'{name}: `{field}[{i}].artifact` 含 NUL 字节,无法作为文件路径')
+                continue
+            try:
+                artifact_path = Path(artifact)
+            except (TypeError, ValueError) as exc:
+                _issue(issues, 'Critical', 'artifact_invalid_path',
+                       f'{name}: `{field}[{i}].artifact` 路径非法({exc})')
+                continue
+            if artifact_path.is_absolute():
+                _issue(issues, 'Critical', 'artifact_absolute_path',
+                       f'{name}: `{field}[{i}].artifact` 必须是当前轮次相对路径,不得写绝对路径 `{artifact}`')
+                continue
+            if '..' in artifact_path.parts:
+                _issue(issues, 'Critical', 'artifact_parent_traversal',
+                       f'{name}: `{field}[{i}].artifact` 含 `..` 路径穿越段 `{artifact}`')
+                continue
+            if (result_path is not None and len(artifact_path.parts) >= 2
+                    and artifact_path.parts[1] == 'evidence'
+                    and artifact_path.parts[0].startswith('round-')
+                    and artifact_path.parts[0] != result_path.parent.parent.name):
+                _issue(issues, 'Critical', 'artifact_outside_round',
+                       f'{name}: `{field}[{i}].artifact` 指向旧轮次 `{artifact_path.parts[0]}`;'
+                       f'只允许当前 `{result_path.parent.parent.name}` 的 evidence')
+                continue
+
+            suffix = artifact_path.suffix.lower()
+            unsupported_image_suffix = (suffix in KNOWN_IMAGE_EXTENSIONS
+                                        and suffix not in SCREENSHOT_EXTENSIONS)
+            if unsupported_image_suffix:
+                _issue(issues, 'Critical', 'unsupported_screenshot_extension',
+                       f'{name}: `{field}[{i}].artifact` 使用 {suffix} 截图格式;'
+                       f'兼容格式仅 {sorted(SCREENSHOT_EXTENSIONS)}')
+
+            candidates = _artifact_candidates(artifact, result_path)
+            existing = None
+            path_error = None
+            for candidate in candidates:
+                _, candidate_resolve_error = _resolve_safely(candidate)
+                if candidate_resolve_error is not None:
+                    path_error = candidate_resolve_error
+                    continue
+                is_file, error = _is_file_safely(candidate)
+                if error is not None:
+                    path_error = error
+                    continue
+                if is_file:
+                    existing = candidate
+                    break
+            if existing is None:
+                if path_error is not None:
+                    _issue(issues, 'Critical', 'artifact_invalid_path',
+                           f'{name}: `{field}[{i}].artifact` 无法稳定解析 `{artifact}`({path_error})')
+                else:
+                    _issue(issues, 'Critical', 'artifact_not_found',
+                           f'{name}: `{field}[{i}].artifact` 指向不存在的文件 `{artifact}`;'
+                           f'不得伪造路径或用空文件冒充取证结果')
+                continue
+
+            resolved, resolve_error = _resolve_safely(existing)
+            if resolve_error is not None:
+                _issue(issues, 'Critical', 'artifact_invalid_path',
+                       f'{name}: `{field}[{i}].artifact` 无法解析 `{artifact}`({resolve_error})')
+                continue
+            if evidence_root is not None and not _is_within(resolved, evidence_root):
+                _issue(issues, 'Critical', 'artifact_outside_round',
+                       f'{name}: `{field}[{i}].artifact` 实际落点 `{resolved}` 不在当前轮次 '
+                       f'`{evidence_root}` 内,不得引用旧 round 或外部文件')
+                continue
+
+            if resolved in seen_actual_artifacts:
+                _issue(issues, 'Important', 'duplicate_artifact_entry',
+                       f'{name}: `{field}[{i}].artifact` 重复登记同一个实际文件 `{resolved}`;'
+                       f'每个步骤只登记一个 artifact')
+            else:
+                seen_actual_artifacts.add(resolved)
+            registered_lexical_paths.add(existing.absolute())
+            if suffix in SCREENSHOT_EXTENSIONS:
+                case_id = str(data.get('case_id') or '')
+                file_stem = existing.stem
+                stem_case, stem_step, stem_style = _parse_screenshot_stem(file_stem)
+                if field == 'evidence' and isinstance(item, dict) and item.get('step') is not None:
+                    step = str(item.get('step'))
+                    expected_stem = f'{case_id}-step{step}'
+                    if case_id and stem_case != case_id:
+                        _issue(issues, 'Critical', 'artifact_case_mismatch',
+                               f'{name}: `evidence[{i}]` 截图主干 `{file_stem}` 的 case 为 '
+                               f'`{stem_case or "无法解析"}`(应为 `{case_id}`)')
+                    elif stem_step != step:
+                        _issue(issues, 'Critical', 'artifact_step_mismatch',
+                               f'{name}: `evidence[{i}]` step={step} 但截图主干为 '
+                               f'`{file_stem}`(应为 `{expected_stem}`)')
+                    elif stem_style in {'legacy-dash', 'legacy-cn'}:
+                        _issue(issues, 'Important', 'legacy_artifact_name',
+                               f'{name}: `evidence[{i}]` 使用历史截图主干 `{file_stem}`;'
+                               f'继续兼容但新产物统一写 `{expected_stem}`')
+                elif field == 'runtimeErrors':
+                    if stem_style is not None:
+                        if case_id and stem_case != case_id:
+                            _issue(issues, 'Critical', 'artifact_case_mismatch',
+                                   f'{name}: `runtimeErrors[{i}]` 截图主干 `{file_stem}` 的 case 为 '
+                                   f'`{stem_case}`(应为 `{case_id}`)')
+                    else:
+                        labels = {'console', 'network', 'pageError', 'error'}
+                        if isinstance(item, dict) and item.get('type'):
+                            labels.add(str(item.get('type')))
+                        allowed = {f'{case_id}-{label}' for label in labels}
+                        if case_id and file_stem not in allowed:
+                            _issue(issues, 'Critical', 'artifact_case_mismatch',
+                                   f'{name}: `runtimeErrors[{i}]` 截图主干 `{file_stem}` '
+                                   f'不属于 case_id `{case_id}`')
+                previous_owner = artifact_owners.get(resolved)
+                if previous_owner is not None and previous_owner != case_id:
+                    _issue(issues, 'Critical', 'artifact_cross_case_reuse',
+                           f'{name}: case_id `{case_id}` 与 `{previous_owner}` 复用同一个实际截图 '
+                           f'`{resolved}`;每条用例必须有自己的证据')
+                else:
+                    artifact_owners[resolved] = case_id
+                stem = str(resolved.with_suffix(''))
+                previous = screenshot_stems.get(stem)
+                if previous is not None and previous != suffix:
+                    _issue(issues, 'Critical', 'duplicate_screenshot_artifact',
+                           f'{name}: evidence/runtimeErrors 同一实际截图主干 `{stem}` 同时登记 '
+                           f'{previous} 与 {suffix};每次 capture 只生成并登记一种实际格式')
+                else:
+                    screenshot_stems[stem] = suffix
+                actual_screenshots.append((field, i, existing, resolved, suffix))
+
+            try:
+                empty = existing.stat().st_size == 0
+            except PATH_EXCEPTIONS as exc:
+                _issue(issues, 'Critical', 'artifact_invalid_path',
+                       f'{name}: `{field}[{i}].artifact` 无法读取文件状态({exc})')
+                continue
+            if empty:
+                _issue(issues, 'Critical', 'artifact_empty',
+                       f'{name}: `{field}[{i}].artifact` 指向 0 字节空文件 `{artifact}`;'
+                       f'截图失败残留的空壳不能算有效证据')
+                continue
+            detected_image, detect_error = _detect_image_content(existing)
+            if detect_error is not None:
+                _issue(issues, 'Critical', 'artifact_invalid_path',
+                       f'{name}: `{field}[{i}].artifact` 无法识别文件类型({detect_error})')
+            elif (detected_image is not None and suffix not in SCREENSHOT_EXTENSIONS
+                  and not unsupported_image_suffix):
+                _issue(issues, 'Critical', 'unsupported_screenshot_extension',
+                       f'{name}: `{field}[{i}].artifact` 内容是 {detected_image} 图片,但后缀为 '
+                       f'`{suffix or "<无>"}`;截图只允许 {sorted(SCREENSHOT_EXTENSIONS)}')
+            if suffix in SCREENSHOT_EXTENSIONS:
+                valid_image, image_error = _valid_image_signature(existing, suffix)
+                if image_error is not None:
+                    _issue(issues, 'Critical', 'artifact_invalid_path',
+                           f'{name}: `{field}[{i}].artifact` 无法读取文件头({image_error})')
+                elif not valid_image:
+                    _issue(issues, 'Critical', 'artifact_invalid_image',
+                           f'{name}: `{field}[{i}].artifact` 后缀为 {suffix},但文件头不是该图片格式;'
+                           f'非图片文本/空壳不得冒充截图证据')
+
+    # summary/计数证据不需要 evidence 目录;只有确实登记了截图时才把目录扫描失败判 Critical。
+    if actual_screenshots and sibling_scan_error is not None:
+        _issue(issues, 'Critical', 'artifact_invalid_path',
+               f'{name}: 无法扫描当前 round/evidence 目录({sibling_scan_error})')
+        return
+
+    # 目录索引按 round 只建一次,键包含相对父目录 + stem:不同端子目录的同名截图不互相误伤。
+    for field, i, existing, resolved, suffix in actual_screenshots:
+        try:
+            parent_key = existing.parent.relative_to(evidence_dir).as_posix()
+        except (ValueError, AttributeError):
+            parent_key = ''
+        for sibling in sibling_entries.get((parent_key, existing.stem), []):
+            if sibling.name == existing.name:
+                continue
+            is_file, file_error = _is_file_safely(sibling)
+            if file_error is not None:
+                _issue(issues, 'Critical', 'artifact_invalid_path',
+                       f'{name}: 同主干候选 `{sibling}` 无法读取({file_error})')
+                continue
+            if not is_file:
+                continue
+            sibling_suffix = sibling.suffix.lower()
+            if sibling_suffix not in KNOWN_IMAGE_EXTENSIONS:
+                detected, detect_error = _detect_image_content(sibling)
+                if detect_error is not None:
+                    _issue(issues, 'Critical', 'artifact_invalid_path',
+                           f'{name}: 同主干候选 `{sibling}` 无法识别({detect_error})')
+                    continue
+                if detected is None:
+                    continue
+            # 用词法路径判「有没有第二个目录项」;不能按 resolve 后目标去重,否则 `.png -> .webp`
+            # 这种未登记符号链接会因目标相同被误当成已登记。
+            if sibling.absolute() in registered_lexical_paths:
+                continue
+            _issue(issues, 'Critical', 'duplicate_screenshot_file',
+                   f'{name}: `{field}[{i}].artifact` 的同目录同主干还残留 `{sibling.name}`;'
+                   f'每次 capture 只能保留一种实际截图格式,回退前须清理失败半成品')
+
+
+def check_one(data, name, result_path=None, artifact_index=None, artifact_owners=None):
     """校验单条结果对象,返回 issues 列表。"""
     issues = []
     if not isinstance(data, dict):
@@ -409,6 +1121,11 @@ def check_one(data, name):
                f'{name}: is_environment_issue 应为布尔(实为 {type(data["is_environment_issue"]).__name__})')
 
     _check_application_mcp(data, name, issues)
+    # 产物契约只在调用方给出结果文件路径时才可判（要靠它解析相对路径）；
+    # ⛔ 取不到就跳过，不臆造 basedir —— 那会把「路径对的」判成 not_found。
+    if result_path is not None:
+        _check_artifact_contract(data, name, result_path, issues,
+                                 artifact_index=artifact_index, artifact_owners=artifact_owners)
 
     return issues
 
@@ -494,7 +1211,7 @@ def main():
         except (json.JSONDecodeError, OSError) as e:
             _issue(all_issues, 'Critical', 'unreadable', f'{name}: 无法解析 JSON({e})')
             continue
-        all_issues.extend(check_one(data, name))
+        all_issues.extend(check_one(data, name, result_path=f))
 
     crit = [i for i in all_issues if i['level'] == 'Critical']
     imp = [i for i in all_issues if i['level'] == 'Important']

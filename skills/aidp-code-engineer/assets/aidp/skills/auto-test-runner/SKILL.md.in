@@ -11,6 +11,10 @@ description: >
   当用户提到自动化测试执行、批量跑用例、无人值守测试、UI 自动化执行、跨端测试执行、chrome-devtools 执行用例、Appium/小程序自动化执行、测试执行报告时触发。
 ---
 
+由调用方入参门控的可选能力(当前:`client_mcp` 之于**应用业务工具**、`webmcp_enabled`/`webmcp.enabled` 之于 **Web 叶子**),**未启用时整段不适用**:run-context 不写相关字段、报告不留相关位置、不产生告警、不占篇幅。**⛔ 本 skill 不自行探测是否启用**(判定散落多处必然漂移,一处判错就给未启用项目凭空长出 block 项与报告位)。⛔ 驱动版本不足时**不得静默降级为「就当没有该能力」**——标 block + 证据,否则这一整类用例会全绿式消失、报告看不出漏测。
+> **(仅 Web 叶子)WebMCP 驱动版本校验:** 旧 `webmcp_enabled: true` 或新 `client_mcp.enabled: true` 且 Web+WebMCP 时,探测命令加
+**运行真实性前置:** 实际认证实例/账号角色 + 登录后的项目自身受保护接口 + 前端部署指纹须先取证,故障注入能力只对依赖它的用例前置核验;结果写 `runtime_preflight` 的逐项来源/时间/证据。失效时受影响用例 block 并继续其余用例,首页 200 / 单测 / 相似浏览器场景均不是 pass 证据。项目声明启用 WebMCP 时还要区分入口、**本页注册**和该用例实际工具调用;零注册的专项用例 block,普通业务可如实记 DOM/CDP 回退。`tasks_state.py` 的 init/update 使用独占锁+原子替换防**并发写入**丢状态,锁失败返回环境错误,不得手写状态覆盖他人更新。细则见 [`references/execution-methodology.md`](./references/execution-methodology.md)「运行真实性前置」和 [`references/driver-web-webmcp.md`](./references/driver-web-webmcp.md)。
+
 # 自动化测试执行器 (Auto Test Runner)
 
 ## 角色定义
@@ -66,6 +70,8 @@ description: >
 | 研发自测方案 | 可选 | 若用例配套了 `01_研发自测方案.md`(历史旧锚 `00_研发自测方案.md` 亦可),读取其通过准则、证据要求 |
 | 前置数据 | 可选 | 用例依赖的已有数据准备说明;若用例带「前置探测」结构化字段,先在浏览器前按 `ED-NNN` 归组批量只读探测;若用例带「前置数据编排」段,再按 run-context 联动的关联系统入口+账号+`datasource` 造/删数(DB 途径经 DB 断言驱动 SQL,或第二隔离会话 UI),缺省则仅只读、不主动造删数 |
 | 环境探针档案 | 可选 | 上一轮环境观测事实(驱动通道限制 / 鉴权头形态 / 未登录真实响应 / 三类取证可用性 / 元素定位方式 / 已知需重试项);仅作启动前提示与预热,非权威契约,与本轮观测冲突时以本轮为准 |
+| `client_mcp` | 可选(默认关闭) | **被测应用主动暴露业务工具**的显式声明,含客户端类型/实现形态/来源/工具清单及 Schema;未传不探测、不产专项用例或报告行。与 Chrome/Appium/小程序**测试驱动 MCP** 分轴,仅已证实应用自有服务/桥接可触发非 Web 能力。细则见 [`references/driver-client-mcp.md`](./references/driver-client-mcp.md) |
+| `webmcp_enabled` / `webmcp.enabled` | 可选(旧 Web 兼容) | 任一 `true` 只表示 Web+WebMCP;两旧别名冲突须报错,仍由调用方提供 `webmcp_entry_symbols`/`webmcp_launch_command` 且只在 Web 分支消费;与 `client_mcp` 客户端/启停/形态冲突须明确报错,不静默覆盖。不传/false 且新声明未启用时整段不留痕;⛔ 本 skill 不自行探测。Web 叶子见 [`references/driver-web-webmcp.md`](./references/driver-web-webmcp.md) |
 | `webmcp_enabled` | 可选(默认 `false`) | **条件启用能力的唯一开关**,由编排层显式传入。为 `false` 或未传 → WebMCP 工具调用整段不适用(run-context 不写相关字段、报告不留位置、不产生告警)。传 `true` 时另需 `webmcp_entry_symbols`(能力入口标识符,**写死必过期**)与 `webmcp_launch_command`(带参浏览器完整启动命令,**自拟无法复现**)。⛔ **本 skill 不自行探测是否启用**;细则见 [`references/driver-web-webmcp.md`](./references/driver-web-webmcp.md)。⚠️ 本行是**输入契约**、不是「报告留位置」,与「未启用不留痕」铁律不冲突——否则调用方无处可传、执行 Agent 无处可读,而细则又只在启用后才加载,闭环断在入口 |
 | DB datasource | 可选 | `[双源对账]` 用例数据真值对账 / SQL 造删数所需的 DB 连接(会话已连 DB MCP 或 run-context `datasource`),**须带 `environment` 环境标识**;缺省时该类用例走 UI 断言或标 block(precondition-unmet),不影响其余用例。**执行期必须先过「数据源归属校验」**(方法论第十一节),不通过则该驱动整体停用 |
 
@@ -87,7 +93,7 @@ description: >
 (部署形态 / 服务端日志通道 / 靶场资产 / 项目数据形态)也在第零步一次性探明,与用例册声明的
 `EC-NNN` 做**集合运算**,开跑前直接分出「可执行集 / 前置不满足集」;后者**一条都不进浏览器**,
 直接落 `block(precondition-unmet)` 并写明缺什么。
-> **立论:** 下游实证两轮 116 条里 **41 条(35%)因前置不满足被 block,且全部是逐条执行到前置检查才发现的** ——
+> **立论:** 实测两轮 116 条里 **41 条(35%)因前置不满足被 block,且全部是逐条执行到前置检查才发现的** ——
 > 每条白走一遍「导航 → 等待 → 探测 → 判定」,耗时全落在执行跨度里。**这与驱动缺失时整体标
 > `block(driver-missing)` 而不逐条试是同一思路的推广**:一次性判出来的 41 个 block 与逐条试出来的结论完全相同。
 > ⚠️ 三条不可退让(未识别能力标识须回落旧流程而**非**静默当满足或当缺位 / 无声明 = 无前置 /
@@ -100,6 +106,9 @@ description: >
 > `--webmcp`(`python3 <SKILL_DIR>/scripts/detect_drivers.py web --webmcp --json`),校验
 > `chrome-devtools-mcp` **≥ 1.8.0**(该版本起才具备列出页面 WebMCP 工具的能力)。**不加该参数时
 > 输出里完全没有 `webmcp` 段**(不占位、不留空)。
+>
+> **Web 叶子门控:** 旧 `webmcp_enabled: true` 或新 `client_mcp.enabled: true` 且 client=web/shape=webmcp 才加载本段。两者均未启用时不写 run-context/报告位置;非 Web 应用 MCP 启用时通用半场仍运行、但**本 Web 叶子不适用**。⛔ 不自行探测启用。另两个 Web 入参
+> **应用 MCP 业务工具**先按 [`references/driver-client-mcp.md`](./references/driver-client-mcp.md) 核项目声明、入口实连、本应用实例注册、该用例实际调用四态及各自来源;`driver=cli|appium|mcp-remote` 只表示**测试驱动**,不证明应用调用业务工具。无已证实服务/桥接的非 Web 客户端写「不支持/未提供」或未取到,专项用例 block、普通 UI 照跑;UI 四原子能力不变。
 >
 > - 版本不足 → 给升级命令 `npm i chrome-devtools-mcp@latest -g`,相关用例标 **`block(webmcp-driver-too-old)`**;
 >   版本**取不到** → **fail-closed** 标 `block(webmcp-driver-version-unknown)`(确认不了达标就不能声称可用)。
@@ -168,6 +177,7 @@ description: >
 2. 执行子 Agent 内,对每条用例走**感知-执行-校验-决策闭环**(见下),并按**执行模式分级**(见下)决定取证强度与自愈策略。
 3. **只在模块开头走一次入口流程**(打开端 → 登录 → 进工作台),模块内用例通过导航切换连续执行,**不重复登录**。
 4. 每条用例执行完写结果 JSON(`round-{M}/results/{TC-ID}.json`,schema 见 [`assets/result-schema.json`](./assets/result-schema.json)),并据结果把状态 `[>] → [√]`(pass)或 `[>] → [!]`(fail/block/na);`na` 必须带不适用理由,且不等同于本轮跳过。
+   > **★形状校验(模块收尾跑一次即可):** `python3 <SKILL_DIR>/scripts/check_result.py <round目录>/results/ --require-runtime-preflight --json`(旧 Web `webmcp_enabled: true`（或 `webmcp.enabled: true`）、或 `client_mcp.enabled: true` 且客户端=Web、实现形态=WebMCP 时再加 `--webmcp-enabled`,不得自行猜测;⛔ 只认旧 flag 会让只传 `client_mcp` 的 Web 项目永不开启本轮门;历史结果复核不带新参数)。`evidence` / `runtimeErrors` **必须是对象数组**(`evidence` 元素含 `artifact`),写成字符串数组会让证据路径与运行时错误统计失真;`block_reason` 必须落枚举——**环境类阻塞漏标枚举会被误计成产品缺陷**。校验失败按无人值守规则处理(记录 + 继续),不挂起。
    > **★形状校验(模块收尾跑一次即可):** `python3 <SKILL_DIR>/scripts/check_result.py <round目录>/results/ --json`。`evidence` / `runtimeErrors` **必须是对象数组**(`evidence` 元素含 `artifact`),写成字符串数组会让证据路径与运行时错误统计失真;`block_reason` 必须落枚举——**环境类阻塞漏标枚举会被误计成产品缺陷**。校验失败按无人值守规则处理(记录 + 继续),不挂起。
 5. 更新 run-context「当前页面/会话状态」,供下一条用例感知复用。
 6. **存活心跳**:run-context「三、执行参数」给了 `heartbeat_cmd` 时,**每完成一个模块(及模块内每 10 条用例)执行一次**该命令(失败忽略、不阻断)。编排层据此区分「测试链路仍在跑长批次」与「测试链路已掉线」;未提供则跳过。
@@ -255,6 +265,7 @@ run-context `free_scan: true` 时,在**全部模块用例跑完之后、报告�
 | **locate(定位元素)** | 用**语义定位符**(可见文案 / 角色+名称 / label,非底层选择器)定位元素 | `语义定位符` → `元素句柄` |
 | **act(执行动作)** | 执行一个**端无关动作词**(tap/input/select/swipe/scroll/back/upload/dialog/waitFor) | `(句柄, 动作词, 数据)` → `操作结果` |
 | **observe(读取页面状态)** | 读当前结构化页面/会话状态(当前页/标题/可见元素/文本/计数/登录态);另有两条**可选、端相关**的附加通道:**运行时错误通道**(console/network)与**运行环境通道**(env,供环境准备阶段的运行环境取证) | `()` → `结构化状态` |
+| **capture(截图取证)** | 每次只归档一张实际截图;快照/控件树由 `observe` 单独提供,不与截图打成双格式副本 | `(标签)` → `实际证据路径` |
 | **capture(截图取证)** | 产出可归档证据(Web:截图+快照;移动/桌面:截图+控件树;小程序:截图) | `()` → `证据产物路径` |
 
 **适配器矩阵(至少覆盖四端;★成熟度标注,下游据此判各端可用程度,勿误以为四端等价可跑):**
@@ -313,6 +324,9 @@ run-context `free_scan: true` 时,在**全部模块用例跑完之后、报告�
 
 - **取证时机**:登录 / 提交 / 状态变化 / 断言通过或失败 / 报错——这些关键步骤 `capture` 取证。
 - **强度按模式**:direct 的 pass 至少记录一条轻量事实(实际值/命中文案/列表计数/产物路径),不要求截图;verified/self-heal 每个 pass 都要完整证据。
+- **端相关产物**:每次 `capture` 只归档一张截图;Web 的无障碍树/DOM 快照、移动/桌面的控件树由 `observe` 单独提供,需要留痕时作为独立 evidence 条目,不与同一截图生成多格式副本。**capture 接口统一,截图扩展名由适配器决定**。
+- **单产物 + 真实路径契约**:`capture(标签) → 实际证据路径`;每次 capture 只生成一种实际可用格式,失败时不创建空文件、不伪造 artifact。调用方只把返回值原样写入 `results/*.json` 的 `evidence[].artifact`,严禁按 TC-ID 自行补 `.png` / `.webp`。截图兼容 `.webp/.png/.jpg/.jpeg`,JPEG 仅作已有驱动兼容,不作 UI 默认格式。
+- **归档**:`round-{M}/evidence/{TC-ID}-step{步骤号}.{ext}`;缺证据的 verified pass 视为未验证,格式变化不降低 verified / self-heal 的取证强度。
 - **端相关产物**:Web 出「截图 + 无障碍树/DOM 快照」;移动/桌面出「截图 + 控件树」;小程序出「截图」。**capture 接口统一,产物形态由适配器决定**。
 - **归档**:`round-{M}/evidence/{TC-ID}-{步骤号}.{png|json}`;结果 JSON 的 `evidence` 字段记录关键证据摘要 + 产物路径。缺证据的 verified pass 视为未验证。
 
@@ -325,6 +339,7 @@ run-context `free_scan: true` 时,在**全部模块用例跑完之后、报告�
 | `tasks_state.py` | tasks.md 状态机:`init`(建)/ `update`(改状态)/ `scan`(统计各态)/ `resume`(列续跑项);断点续跑内核。另有 `selftest`:校验套件/用例标题形态**与 `--select` 优先级形态**识别未被收窄(改解析正则后必跑,收窄 = 静默漏跑);**`init --select all|smoke|regression` 执行选集**(复用既有 P0 与 `[回归]`,不新增标签;子集 tasks.md 头部写留痕行;`regression` 禁用于新 build 回归轮) |
 | `detect_drivers.py` | 驱动能力探测:按端类型探测驱动是否就绪,输出可用/缺失 + 降级建议(优雅降级依据)。**`--webmcp`(条件启用)** 额外校验 WebMCP 工具列出与调用所需的 `chrome-devtools-mcp` ≥ 1.8.0,输出 `webmcp.{detected_version,version_source,satisfied,block_reason}`;**不加该参数时输出里没有 `webmcp` 段**,且**版本结论不影响退出码**(版本不足 ≠ 驱动缺失) |
 | `gen_report.py` | 从 `results/*.json` 聚合生成固定结构报告 + 统计(总数/pass/fail/block/**na**/通过率(分母排除 na)/**自动化率 + 自动化覆盖率·成功率(按 block_reason 细分,driver-missing=0 时与旧口径一致)**/各模块;**缺陷分级先判用例族——`[回归]`(`is_regression`)/`[PRD存在性]`/`[文案一致性]` 失败锁 Critical,覆盖优先级映射(**环境类 block_reason 除外**)**;聚合 self-heal 失败复测追溯 `self_heal_trace`;校验无证据的 verified pass) |
+| `check_result.py` | **结果 JSON 落盘前校验**:形状(`evidence`/`runtimeErrors` 必须是**对象数组**,元素含 `artifact` / `type`+`message`+`severity`)、artifact 必须是当前 `round/evidence` 内的相对路径（禁绝对路径/`..`/旧轮次，results/结果 JSON/round/evidence 根均不得是符号链接）、实际文件存在且非 0 字节、截图扩展名兼容集(`.webp/.png/.jpg/.jpeg`)与最小容器结构校验、截图文件名须绑定当前 case_id/step、同一截图跨字段/递归磁盘索引禁止多格式副本（后缀大小写/符号链接不绕过）、`status` 枚举(含 `na`)、`na` 理由、`block_reason` 枚举、verified/self-heal 的 pass 是否有证据、`self_heal_applied` ⟷ `self_heal_trace`、`db_assertion` 结构与「match=false 必判 fail」。`assets/result-schema.json` 是**示例而非可校验 Schema**,机器约束由本脚本承载;校验 `entry_kind` 枚举与**漏标巡检项**;`target` 支持多路径(跨轮次 glob),某个 target 空匹配会报 Important 防「少校验一整轮却显示通过」 |
 | `check_result.py` | **结果 JSON 落盘前校验**:形状(`evidence`/`runtimeErrors` 必须是**对象数组**,元素含 `artifact` / `type`+`message`+`severity`)、`status` 枚举(含 `na`)、`na` 理由、`block_reason` 枚举、verified/self-heal 的 pass 是否有证据、`self_heal_applied` ⟷ `self_heal_trace`、`db_assertion` 结构与「match=false 必判 fail」。`assets/result-schema.json` 是**示例而非可校验 Schema**,机器约束由本脚本承载;校验 `entry_kind` 枚举与**漏标巡检项**;`target` 支持多路径(跨轮次 glob),某个 target 空匹配会报 Important 防「少校验一整轮却显示通过」 |
 | `check_layer_isolation.py` | 两层解耦检查:扫方法论层是否泄漏端专有 API(质量维度 1) |
 | `check_env_facts.py` | 运行环境事实取证校验(**判据口径以 `references/execution-methodology.md` 第十节为单一信源**):必备字段齐全且类型合契约 / 事实字段与 `XSource` **双向成对** / 来源落五类枚举且形态合法 / `null` 与「未取到」互为充要条件 / 无模板占位残留 / `reusedInstance` 为 true 或未取到时渲染模式不得声称「显式指定」;带 `--report` 时**在「一、测试概况」章节范围内**核对报告与取证事实一致。**新增事实字段自动纳管**(除 `$`/`_` 开头与元数据白名单外,任何字段都要求配套 `XSource`),无需改脚本 |

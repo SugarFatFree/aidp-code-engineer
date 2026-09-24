@@ -11,7 +11,7 @@
   - `locate` → Electron:Playwright locator;WinAppDriver:find_element(AutomationId/Name)。
   - `act` → click / type / select / scroll / back / file dialog。
   - `observe` → Electron:DOM/快照;WinAppDriver:控件树 dump。
-  - `capture` → 截图 + 控件树。
+  - `capture` → 每次只生成一张驱动原生 PNG 截图并返回实际 `.png` 路径;控件树由 `observe` 单独提供,不转码、不额外生成 WebP 副本。
 - **observe 的运行环境通道(env,见 `driver-adapters.md` 第一节)**:
   - `runConfig` → Electron:启动 `args`/`app.getVersion()`;WinAppDriver:desired capabilities(权威)。
   - `renderSignals` → **桌面客户端一般恒为有头**(GUI 应用需渲染窗口);`renderMode` 写 `headed` + `运行取证(桌面 GUI 应用恒有头)`,**不要照抄 Web 的无头判据**。
@@ -33,3 +33,7 @@
 
 > 本行是**显式声明**、不是留空——按本 skill 既有惯例（如 `observe` 运行环境通道），
 > **留空视为漏写、不视为不适用**。契约见 [`driver-web-webmcp.md`](./driver-web-webmcp.md)。
+
+## 应用自有 MCP 服务或桥接（与桌面测试驱动分轴）
+
+默认**不支持/未提供**;Playwright-Electron/WinAppDriver 等驱动即使经 MCP 接入也只是 UI 操作。仅项目显式 `client_mcp.enabled: true` 且证实应用自有 MCP 服务或配套桥接的入口、身份、实例绑定与工具清单,才按真实实现采集 `application_mcp` 四态;未取到则专项 block,其他桌面 UI 用例继续。⛔ 不照搬 Chrome/WebMCP 运行前提或编造统一入口,通用契约见 [`driver-client-mcp.md`](./driver-client-mcp.md)。

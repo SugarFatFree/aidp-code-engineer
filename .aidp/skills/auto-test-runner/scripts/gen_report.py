@@ -55,16 +55,22 @@ def has_lightweight_evidence(value):
     for item in value:
         if isinstance(item, str) and item.strip():
             return True
-        if isinstance(item, dict) and (str(item.get('summary') or '').strip()
-                                       or str(item.get('artifact') or '').strip()):
-            return True
+        if isinstance(item, dict):
+            summary = item.get('summary')
+            artifact = item.get('artifact')
+            if ((isinstance(summary, str) and summary.strip())
+                    or (isinstance(artifact, str) and artifact.strip())):
+                return True
     return False
 
 
 def evidence_artifact(ev):
-    """从 evidence 数组取首条证据的产物路径,**对形状不合契约的元素降级而非崩溃**。
+    """从 evidence 数组原样取首个非空实际产物路径,不按 TC-ID 推断或补写扩展名。
 
-    2026-08-18 上游实测反馈:执行方把 evidence 写成字符串数组
+    截图可在同一轮混合 WebP/PNG/JPEG;本聚合器只透传 `artifact`,实际文件存在性与
+    单截图单格式契约由 check_result.py 前置校验。**对形状不合契约的元素降级而非崩溃**。
+
+    实测中出现过:执行方把 evidence 写成字符串数组
     `["round-1/evidence/x.png"]`,而本脚本两处直接 `ev[0].get('artifact')` →
     `AttributeError: 'str' object has no attribute 'get'`,**整份报告聚合中断**。
     结果 JSON 由执行子 Agent 手写、形状本就会漂,聚合器必须容错:
@@ -74,12 +80,20 @@ def evidence_artifact(ev):
     形状告警由 collect_shape_warnings 单独收集,写进报告「遗留风险」,不静默。"""
     if not ev or not isinstance(ev, list):
         return ''
-    first = ev[0]
-    if isinstance(first, dict):
-        return str(first.get('artifact') or '')
-    if isinstance(first, str):
-        return first
+    for item in ev:
+        if isinstance(item, dict):
+            artifact = item.get('artifact')
+            if isinstance(artifact, str) and artifact.strip():
+                return artifact.strip()
+        elif isinstance(item, str) and item.strip():
+            return item.strip()
     return ''
+
+
+def md_cell(value):
+    """转义 Markdown 表格单元格中的外部文本,防 `|`/换行拆列或注入新行。"""
+    text = str(value if value is not None else '')
+    return text.replace('\\', '\\\\').replace('|', '\\|').replace('\r', ' ').replace('\n', '<br>')
 
 
 def collect_shape_warnings(results):
@@ -236,6 +250,9 @@ def aggregate(all_entries):
     timings, timing_missing = [], []
     self_heal_actual = 0
     mode_counts, mech_counts = {}, {}
+    driver_counts = {}
+    application_mcp_counts = {'declared': 0, 'connected': 0, 'registered': 0, 'called': 0}
+    legacy_mcp_unverified = 0
     for r in results:
         st = r.get('status', 'block')
         counts[st] = counts.get(st, 0) + 1
@@ -246,7 +263,8 @@ def aggregate(all_entries):
         mode = r.get('execution_mode', 'direct')
         if st == 'block' and r.get('block_reason') == 'driver-missing':
             driver_missing += 1
-        if st == 'pass' and mode in ('verified', 'self-heal') and not r.get('evidence'):
+        if (st == 'pass' and mode in ('verified', 'self-heal')
+                and not has_lightweight_evidence(r.get('evidence'))):
             no_evidence.append(r.get('case_id', '?'))
         elif st == 'pass' and mode == 'direct' and not has_lightweight_evidence(r.get('evidence')):
             direct_pass_without_evidence.append(r.get('case_id', '?'))
@@ -274,6 +292,28 @@ def aggregate(all_entries):
         mkey = r.get('mechanism')
         mkey = str(mkey) if isinstance(mkey, str) and mkey.strip() else '未声明'
         mech_counts[mkey] = mech_counts.get(mkey, 0) + 1
+        driver = r.get('driver')
+        driver = driver if isinstance(driver, str) and driver.strip() else '未声明'
+        driver_counts[driver] = driver_counts.get(driver, 0) + 1
+        app = r.get('application_mcp')
+        if isinstance(app, dict):
+            declared = app.get('declared')
+            if isinstance(declared, dict) and declared.get('value') is True:
+                application_mcp_counts['declared'] += 1
+            entry = app.get('entry')
+            if isinstance(entry, dict) and entry.get('status') == 'connected':
+                application_mcp_counts['connected'] += 1
+            registry = app.get('registration')
+            if (isinstance(registry, dict) and registry.get('status') == 'registered'
+                    and registry.get('tools')):
+                application_mcp_counts['registered'] += 1
+            invocation = app.get('invocation')
+            if (isinstance(invocation, dict) and invocation.get('status') == 'called'
+                    and invocation.get('calls')):
+                application_mcp_counts['called'] += 1
+        elif isinstance(r.get('webmcp'), dict):
+            # 历史 Web 结果没有逐态来源,不能把旧布尔值伪装成已核验四态。
+            legacy_mcp_unverified += 1
 
         # self-heal 失败反思追溯(可选字段;缺省则不收集)
         sht = r.get('self_heal_trace')
@@ -379,6 +419,9 @@ def aggregate(all_entries):
         'self_heal_actual': self_heal_actual,
         'mode_counts': mode_counts,
         'mech_counts': mech_counts,
+        'driver_counts': driver_counts,
+        'application_mcp_counts': application_mcp_counts,
+        'legacy_mcp_unverified': legacy_mcp_unverified,
         'product_defect_count': product_defect_count,
         'env_issue_count': env_issue_count,
         'env_issue_by_reason': env_issue_by_reason,
@@ -421,8 +464,7 @@ def to_md(agg, results):
     L.append('| 模块 | 用例数 | Pass | Fail | Block | N/A | 通过率 |')
     L.append('| :- | :-: | :-: | :-: | :-: | :-: | :-: |')
     for name, m in agg['modules'].items():
-        L.append(f"| {name} | {m['total']} | {m['pass']} | {m.get('fail', 0)} | "
-                 f"{m.get('block', 0)} | {m.get('na', 0)} | {m['pass_rate']:.1%} |")
+        L.append(f"| {md_cell(name)} | {m['total']} | {m['pass']} | {m.get('fail', 0)} | "                 f"{m.get('block', 0)} | {m.get('na', 0)} | {m['pass_rate']:.1%} |")
     L.append('')
 
     L.append('### 2.3 缺陷列表\n')
@@ -447,12 +489,15 @@ def to_md(agg, results):
             no = f'ENV-{ei:03d}'
         ev_path = evidence_artifact(d.get('evidence')) or '—'
         case_defect.setdefault(d['case_id'], no)
-        L.append(f"| {no} | {d['level']} | {d['category']} | {d['suite']} | {detail} | {ev_path} | {d['case_id']} |")
+        L.append(f"| {no} | {md_cell(d['level'])} | {md_cell(d['category'])} | "
+                 f"{md_cell(d['suite'])} | {md_cell(detail)} | {md_cell(ev_path)} | "
+                 f"{md_cell(d['case_id'])} |")
     # pass 用例携带的运行时错误(供升级 bug)
     for i, e in enumerate(agg['runtime_findings'], 1):
         detail = f"[{e['type']}] {(e['error'] or '')[:50]}".replace('\n', ' ')
-        L.append(f"| RT-{i:03d} | {e['level']} | 运行时错误 | {e['suite']} | {detail} | "
-                 f"{e.get('artifact') or '—'} | {e['case_id']} |")
+        L.append(f"| RT-{i:03d} | {md_cell(e['level'])} | 运行时错误 | "
+                 f"{md_cell(e['suite'])} | {md_cell(detail)} | "
+                 f"{md_cell(e.get('artifact') or '—')} | {md_cell(e['case_id'])} |")
     if not agg['defects'] and not agg['runtime_findings']:
         L.append('| — | — | — | — | 无缺陷 | — | — |')
     L.append('')
@@ -465,9 +510,10 @@ def to_md(agg, results):
         icon = RESULT_ICON.get(r.get('status', 'block'), '?')
         err = (r.get('error') or '')[:50].replace('\n', ' ')
         ev_path = evidence_artifact(r.get('evidence')) or '—'
-        L.append(f"| {cid} | {r.get('test_name', '')} | "
-                 f"{r.get('priority', '')} | {r.get('execution_mode', '')} | {icon} | {err} | "
-                 f"{case_defect.get(cid, '—')} | {ev_path} |")
+        L.append(f"| {md_cell(cid)} | {md_cell(r.get('test_name', ''))} | "
+                 f"{md_cell(r.get('priority', ''))} | {md_cell(r.get('execution_mode', ''))} | "
+                 f"{icon} | {md_cell(err)} | {md_cell(case_defect.get(cid, '—'))} | "
+                 f"{md_cell(ev_path)} |")
 
     # 结果 JSON 形状告警(仅在有不合契约形状时输出;供报告「三、结论 → 遗留风险」引用)
     shape_warns = agg.get('shape_warnings') or []
@@ -493,9 +539,10 @@ def to_md(agg, results):
             icon = RESULT_ICON.get(t.get('status', 'block'), '?')
             cause = (t.get('cause') or '')[:50].replace('\n', ' ')
             recovery = (t.get('recovery') or '')[:60].replace('\n', ' ')
-            L.append(f"| {t['case_id']} | {icon} | {cause} | {recovery} | {t.get('outcome', '')} |")
+            L.append(f"| {md_cell(t['case_id'])} | {icon} | {md_cell(cause)} | "
+                     f"{md_cell(recovery)} | {md_cell(t.get('outcome', ''))} |")
 
-    # 自由巡检(仅 free_scan 开启且有巡检项时输出;缺省整段不出)
+    # 自由巡检(仅 free_scan 开启且有巡检项时输出;缺省整段不出,与旧版本一致)
     scan_findings = agg.get('scan_findings') or []
     if scan_findings:
         L.append('')
@@ -522,7 +569,8 @@ def to_md(agg, results):
             # 导航失败项的失败原因都在 error 里,不回落这两类信息整条不进报告
             if not summary:
                 summary = (f.get('error') or '')[:80].replace('\n', ' ') or '—'
-            L.append(f"| {f['page']} | {icon} | {f['error_count']} | {top} | {summary} |")
+            L.append(f"| {md_cell(f['page'])} | {icon} | {f['error_count']} | "
+                     f"{md_cell(top)} | {md_cell(summary)} |")
     # ── 2.7 耗时分布(2026-09-10 新增) ──
     # ⚠️ **本节存在的全部理由**:下游实证两轮 116 条里,`TC-PXY-F01` **一条占总时长 25%**,
     #    而这个结论是靠三个 evidence 文件的 mtime 跨度**手工反推**才发现的 —— 只要那条用例少产
@@ -545,7 +593,7 @@ def to_md(agg, results):
             L.append('| :-: | :- | :- | :-: | -: | -: |')
             for i, t in enumerate(timings[:10], 1):
                 pct = (t['elapsed_ms'] / tot * 100) if tot else 0.0
-                L.append(f"| {i} | {t['case_id']} | {t['suite']} | "
+                L.append(f"| {i} | {md_cell(t['case_id'])} | {md_cell(t['suite'])} | "
                          f"{RESULT_ICON.get(t['status'], '?')} | {_fmt_ms(t['elapsed_ms'])} | {pct:.1f}% |")
             if len(timings) > 10:
                 L.append(f"\n> 只列耗时最长的 10 条(共 {len(timings)} 条)。")
@@ -560,9 +608,27 @@ def to_md(agg, results):
                      f"调优方向当场被带偏。两个数必须并排看。")
         mech = agg.get('mech_counts') or {}
         if mech and set(mech) - {'dom'}:
-            L.append(f"\n> **执行机制分布**:{' / '.join(f'{k}={v}' for k, v in sorted(mech.items()))}"
-                     f"(枚举 dom / webmcp / mixed;`未声明` = **结果 JSON 没填 `mechanism`**,"
-                     f"⛔ 不等于 dom —— 那一档没测量,`[还原度]` 类若实际走了 WebMCP 在这里看不出来)。")
+            # mechanism 来自结果 JSON,是外部字符串:未转义时其中的换行会截断整个引用块,
+            # 与同段 driver 名走 md_cell 的口径保持一致(⛔ 别只转一半)。
+            L.append(f"\n> **结果声明机制分布**:"
+                     f"{' / '.join(f'{md_cell(k)}={v}' for k, v in sorted(mech.items()))}"
+                     f"(枚举 dom / webmcp / app-mcp / mixed;`未声明` = **结果 JSON 没填 `mechanism`**,"
+                     f"⛔ 不等于 dom;此分布只统计自述,不能证明实际工具调用。WebMCP 须以"
+                     f" `check_result.py` 的当前应用实例注册与调用 artifact 校验为准)。")
+        app_counts = agg.get('application_mcp_counts') or {}
+        legacy_count = agg.get('legacy_mcp_unverified', 0)
+        if any(app_counts.values()) or legacy_count:
+            drivers = agg.get('driver_counts') or {}
+            L.append("\n> **测试驱动分布**:" + ' / '.join(
+                f'{md_cell(key)}={value}' for key, value in sorted(drivers.items()))
+                + ';驱动通过 MCP 协议不构成应用能力证据。')
+            L.append("\n> **应用 MCP 四态**(结果逐态声明,须由 check_result 核来源和 artifact):"
+                     + ' / '.join(f'{key}={app_counts.get(key, 0)}' for key in
+                                ('declared', 'connected', 'registered', 'called'))
+                     + ';上一态不能推断下一态。')
+            if legacy_count:
+                L.append(f"> 历史 Web `webmcp` 结果 {legacy_count} 条无逐态来源,"
+                         "未并入已取证四态;新旧同存只算一次应用声明。")
     return '\n'.join(L)
 
 

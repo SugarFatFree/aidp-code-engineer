@@ -11,7 +11,7 @@
   - `locate` → `driver.find_element(By.id / By.xpath / -android uiautomator / -ios predicate)`,优先 accessibility id / 可见文本。
   - `act` → element.click(tap)/ send_keys(input)/ swipe / press back / push_file+选择(upload)/ alert accept。
   - `observe` → `driver.page_source`(控件树)/ current_activity / 当前 context(NATIVE_APP↔WEBVIEW)。
-  - `capture` → `driver.get_screenshot_as_file()`(截图)+ page_source(控件树)。
+  - `capture` → 每次只用 `driver.get_screenshot_as_file()` 生成一张原生 PNG 截图并返回实际 `.png` 路径;page_source 控件树由 `observe` 单独提供,不转码、不额外生成 WebP 副本。
 - **observe 的运行环境通道(env,见 `driver-adapters.md` 第一节)**:
   - `runConfig` → `driver.capabilities`(实际生效的 desired capabilities,含 platformVersion / deviceName / app —— **权威信源**,优先于任何推断)。
   - `renderSignals` → **本端不适用**:移动 APP 无"无头/有头"之分;`renderMode` 写 `null` + `未取到(本端无渲染模式概念)`。**真机与模拟器的区别**属另一事实字段(可按端扩展 `deviceType`),别塞进 `renderMode`。
@@ -56,8 +56,9 @@ class MobileAdapter:
 
     def capture(self, tag):
         path = f"evidence/{tag}.png"
-        self.driver.get_screenshot_as_file(path)
-        return path                    # 移动端另可附 page_source 控件树
+        if not self.driver.get_screenshot_as_file(path):
+            raise RuntimeError(f"截图失败,未生成 artifact:{path}")
+        return path                    # 仅成功后返回实际 PNG 路径;page_source 由 observe 单独提供
 ```
 
 > **注意**:`locate` 内部即便用到 xpath,那是**适配层内部实现细节**,对方法论层透明——方法论层只传"语义文案 sem",不感知 xpath。这正是两层解耦的意义。
@@ -72,3 +73,7 @@ class MobileAdapter:
 
 > 本行是**显式声明**、不是留空——按本 skill 既有惯例（如 `observe` 运行环境通道），
 > **留空视为漏写、不视为不适用**。契约见 [`driver-web-webmcp.md`](./driver-web-webmcp.md)。
+
+## 应用自有 MCP 服务或桥接（与 Appium 测试驱动分轴）
+
+默认**不支持/未提供**;Appium 驱动即使通过 MCP 接入,也只操控移动 UI。仅 `client_mcp.enabled: true` 且已证实本 App 自有 MCP 服务或桥接的入口、身份、实例绑定及工具清单时,按真实实现取 `application_mcp` 四态;无证据写未取到并 block 专项用例,其余 Appium UI 用例继续。⛔ 不继承 Chrome secure context/启动参数,不自造通用 URL。端无关判据见 [`driver-client-mcp.md`](./driver-client-mcp.md)。

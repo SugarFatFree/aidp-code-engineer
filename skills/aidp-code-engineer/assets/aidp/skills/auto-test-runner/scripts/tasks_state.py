@@ -22,8 +22,13 @@ build/round 作用域(重要):
 """
 import argparse
 import json
+import os
 import re
+import stat
 import sys
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 STATE_MARK = {'todo': ' ', 'running': '>', 'done': '√', 'block': '!'}
@@ -51,6 +56,107 @@ SELECT_MODES = {
 # tasks.md 条目:- [ ] TC-001 - 名称
 ITEM_RE = re.compile(r'^\s*-\s*\[([ >√x!])\]\s*(TC-[\w\-]+)\s*-\s*(.*)$')
 GROUP_RE = re.compile(r'^##\s+(.*)$')
+
+
+# 写锁由**内核**持有,不靠 mtime 猜「持有者是不是死了」。
+# ⚠️⚠️ 这里曾用「锁文件 + mtime 判陈旧 + rename 接管」,已实测出**双持有者**:
+#    判陈旧(lstat)与搬走(rename)不是原子的 —— 两步之间若另一进程已接管并建了新鲜锁,
+#    搬走的就是那把**活锁**;在「搬走」与「搬回」之间锁路径是空的,第三个进程能直接
+#    O_EXCL 进来,两个持有者同时读改写 tasks.md(丢更新),随后「原样放回」又覆盖后来者的锁。
+#    ⛔ 任何基于时间戳的陈旧判定都无法做到原子,别再走回那条路。
+# 内核锁的性质正好补上这个缺口:持有者进程无论正常退出还是被 SIGKILL/OOM 带走,
+# 内核都会立即释放,故**不需要任何陈旧计时器**,崩溃后下一次 checkpoint 立刻能拿到锁。
+try:                                    # POSIX(Linux / macOS)
+    import fcntl
+
+    def _try_acquire(fd):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
+    def _release(fd):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+except ImportError:                     # Windows
+    import msvcrt
+
+    def _try_acquire(fd):
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def _release(fd):
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+
+
+@contextmanager
+def _locked_tasks(path):
+    """对 tasks.md 取跨进程独占写锁。
+
+    ⚠️ 锁文件**故意不删**:删除会让「已打开该 inode 并正在等锁的进程」与
+       「刚新建同名文件的进程」锁在两个不同 inode 上 —— 又是一条无锁并发写的路。
+       残留的是一个 0 字节隐藏文件,代价远小于丢更新。
+    """
+    lock = path.with_name('.' + path.name + '.lock')
+    fd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = time.monotonic() + 5
+    try:
+        while not _try_acquire(fd):
+            if time.monotonic() >= deadline:
+                raise OSError(f'tasks.md 写锁等待超时:{lock}')
+            time.sleep(0.05)
+    except BaseException:
+        os.close(fd)
+        raise
+    try:
+        yield
+    finally:
+        _release(fd)
+        os.close(fd)
+
+
+def _default_file_mode():
+    """按当前 umask 算出普通文件的默认权限(与 write_text 的行为一致)。
+
+    ⚠️ 读 umask 只能靠「设了再设回去」,中间有极窄窗口;本脚本是单线程 CLI,
+       可接受。⛔ 别把它搬进多线程场景。
+    """
+    mask = os.umask(0)
+    os.umask(mask)
+    return 0o666 & ~mask
+
+
+def _atomic_write(path, content):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8', dir=str(path.parent),
+                prefix='.' + path.name + '.', suffix='.tmp', delete=False) as output:
+            temporary = Path(output.name)
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        if path.exists():
+            os.chmod(str(temporary), stat.S_IMODE(path.stat().st_mode))
+        else:
+            # 新建时没有旧 mode 可继承,而 NamedTemporaryFile 恒给 0600。
+            # 旧的 write_text 走 umask,不补这一步就是静默收紧权限:
+            # 团队/CI 下同机另一账号读同一份 tasks.md 会被拒。
+            os.chmod(str(temporary), _default_file_mode())
+        os.replace(str(temporary), str(path))
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
 
 
 def _resolve_input(args, name, usage):
@@ -159,7 +265,12 @@ def cmd_init(args):
     content = '\n'.join(lines)
 
     if args.output:
-        Path(args.output).write_text(content, encoding='utf-8')
+        output_path = Path(args.output)
+        try:
+            with _locked_tasks(output_path):
+                _atomic_write(output_path, content)
+        except OSError as exc:
+            return _err(args, f'tasks.md 初始化失败:{exc}')
     result = {'suites': len([g for g in groups if g[1]]), 'cases': total,
               'output': args.output or None, 'select': select,
               'skipped_by_select': skipped, 'unlabeled_kept': unlabeled_kept}
@@ -209,15 +320,19 @@ def cmd_update(args):
     if args.state not in STATE_MARK:
         return _err(args, f'未知状态:{args.state}(可选 {list(STATE_MARK)})')
     mark = STATE_MARK[args.state]
-    lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
     changed = 0
     ids = set(args.id)
-    for idx, line in enumerate(lines):
-        im = ITEM_RE.match(line)
-        if im and im.group(2) in ids:
-            lines[idx] = re.sub(r'\[([ >√x!])\]', f'[{mark}]', line, count=1)
-            changed += 1
-    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    try:
+        with _locked_tasks(path):
+            lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+            for idx, line in enumerate(lines):
+                im = ITEM_RE.match(line)
+                if im and im.group(2) in ids:
+                    lines[idx] = re.sub(r'\[([ >√x!])\]', f'[{mark}]', line, count=1)
+                    changed += 1
+            _atomic_write(path, '\n'.join(lines) + '\n')
+    except OSError as exc:
+        return _err(args, f'tasks.md 更新失败:{exc}')
     result = {'updated': changed, 'ids': list(ids), 'state': args.state}
     print(json.dumps(result, ensure_ascii=False) if args.json
           else f'✅ 更新 {changed} 条为 [{mark}]')

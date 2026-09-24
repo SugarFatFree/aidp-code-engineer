@@ -1,5 +1,11 @@
 # 驱动适配层 · Web 端补充能力：WebMCP 工具调用（`invoke`，可选 · 条件启用）
 
+- 逐项记 `declared_enabled`(调用方声明)、`entry_detected`(本次浏览器实际入口)、`registered_tools`(**本页注册**的工具名)与 `invocations`(本用例实际调用)。`driver=cli`、声明启用、或能力入口可探测,均不等于已调用。
+- 路径 A 的 `list_webmcp_tools` 返回本页清单,可作为 `scope=page` 的注册证据;路径 B 的 `getTools()` 返回浏览器全量清单,须以本页设计工具清单与本页观测交叉核对,**不能仅凭浏览器全量清单填写本页注册**。只能调用已注册且适配当前动作的工具。
+- 每次真正调用后留本轮 `evidence[].artifact`(JSON/日志,脱敏记录工具名、实际返回摘要、调用时刻),在 `webmcp.invocations[].evidence_artifact` 原样引用该路径,对应 evidence.summary 点名工具;不保存凭据和敏感入参。无调用证据不得声称 `mechanism=webmcp|mixed`。
+- `registered_tools=0` 时 WebMCP 专项用例标 `block(precondition-unmet)` 并取证,不拿 DOM 模拟充 pass;普通业务动作可如实记 `mechanism=dom` 和 `fallback_reason` 后继续。正向专项用例在结果 `test_name` 或 `tags` 使用 `[WebMCP]` 标记,已启用态套件的 `suite` 带 WebMCP 标识与「已启用态」;两者都须核本页注册。**仅实际工具调用类**再填 `webmcp_required=true`,并绑定 invocation artifact;单纯工具清单齐备性可只核注册,不得虚报调用。校验器对 `[WebMCP]工具调用` 漏填布尔仍会兜住纯 DOM pass。`[WebMCP]未启用态`/关闭态反向用例不要求调用工具,但仍要验零元素/零错误及既有功能。
+
+> **本文件仅 Web 客户端适用**,通用应用能力四态先按 `driver-client-mcp.md` 登记。调用方传入旧 `webmcp_enabled: true` 或新 `client_mcp.enabled: true` 且客户端 Web/形态 WebMCP 才加载本叶子;否则本文件的浏览器版本/secure context/启动参数全部不适用。非 Web 应用自有服务/桥接即使启用 MCP 也不读本文件。
 > ★ **定位**：「客户端 MCP 能力」是**跨端**功能点（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**（`client_type=web` + `implementation_kind=webmcp`）。跨端总纲见 [`driver-client-mcp.md`](./driver-client-mcp.md)；本文件只讲 Web 端怎么落地。
 
 > **本文件只在调用方传入 `webmcp_enabled: true` 时适用。** 为 `false` 或未传时，本文件描述的
@@ -15,6 +21,7 @@
 
 | 入参 | 形态 | 说明 |
 | :- | :- | :- |
+| `webmcp_enabled` | `true` / `false` | Web 旧版兼容开关;与新 `client_mcp` 显式声明冲突时报错,不静默覆盖。非 Web 不因本字段开启 |
 | `webmcp_enabled` | `true` / `false` | **唯一开关**。为 `false` 或未传 → 本文件整体不适用 |
 | `webmcp_entry_symbols` | 数组 | 该项目**实测**的能力入口标识符。⚠️ 挂载位置已迁移过一次、规范仍在演进，**写死任何名字都会过期**，故由调用方传入 |
 | `webmcp_launch_command` | 字符串 | 带参浏览器的**完整启动命令**。⛔ **不要自拟**——自拟命令即使跑通了也**无法复现** |

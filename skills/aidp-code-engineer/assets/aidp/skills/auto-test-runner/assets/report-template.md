@@ -58,7 +58,10 @@
 
 | 用例编号 | 名称 | 优先级 | 模式 | 结果 | 失败原因 | 关联缺陷 | 证据 |
 | :- | :- | :-: | :-: | :-: | :- | :- | :- |
-| TC-USER-001 | 新增用户成功 | P0 | verified | ✅Pass | — | — | round-1/evidence/TC-USER-001-step5.png |
+| TC-USER-001 | 新增用户成功 | P0 | verified | ✅Pass | — | — | round-1/evidence/TC-USER-001-step5.webp |
+| TC-MOBILE-002 | 移动端列表加载 | P1 | verified | ✅Pass | — | — | round-1/evidence/TC-MOBILE-002-step2.png |
+
+> 证据列原样透传 `results/*.json` 的 `evidence[].artifact`,允许同一轮混合 `.webp/.png/.jpg/.jpeg`;不得按 TC-ID 补扩展名,同一截图只登记一种实际格式。
 
 ### 2.5 self-heal 失败复测追溯(仅有 self-heal 触发时出现;否则整段省略)
 

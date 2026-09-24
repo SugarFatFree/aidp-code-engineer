@@ -27,7 +27,7 @@
 | `block_reason` | string\|null | ✅ | 仅 status=block 时非空。枚举:`retry-exhausted` / `driver-missing` / `driver-hung` / `precondition-unmet` / `network-error` / `env-unavailable` / `account-invalid` /(**条件启用**)`webmcp-driver-too-old` / `webmcp-driver-version-unknown`。**缺陷分级与去重按此枚举,不靠 error 文本 grep**;**除 `retry-exhausted` 外均属环境类**(见 §2.3) |
 | `is_environment_issue` | bool\|null | 可选 | 执行方显式标注本次阻塞是否属环境问题,**优先级高于 `block_reason` 枚举推断**;缺省 null → 回落枚举判定(向后兼容)。仅 status=block 生效 |
 | `error` | string\|null | ✅ | pass 时 null;fail/block 记详细原因 |
-| `evidence` | array | ✅ | 证据条目 `[{step, summary, artifact}]`;verified/self-heal 的 pass 必须有完整证据,direct 的 pass 至少有一条轻量事实(实际值/命中文案/列表计数/产物路径),不要求截图类型 |
+| `evidence` | array | ✅ | 证据条目 `[{step, summary, artifact}]`;`artifact` 必须是 capture 实际生成的当前 `round/evidence` 相对路径（evidence 根不得是符号链接）,文件存在且非 0 字节;截图允许 `.webp/.png/.jpg/.jpeg` 且最小容器结构须匹配,新截图文件名须匹配 `{case_id}-step{step}`（历史 `{case_id}-{step}` / `{case_id}_步骤{step}` 兼容告警）,同一截图只登记一种格式,调用方不得按 TC-ID 猜扩展名;verified/self-heal 的 pass 必须有完整证据,direct 的 pass 至少有一条轻量事实(实际值/命中文案/列表计数/产物路径),不要求截图类型 |
 | `runtimeErrors` | array | ✅ | ★运行时错误全程捕获(**P3 告警类受 run-context `capture_warnings` 控制、默认关;P1/P2 恒记录** —— 故 P3 缺失不等于采集不全,勿据此判「采集不完整」),`[{type, message, detail, severity, artifact}]`;`type`=console\|network\|pageError,`detail`=`METHOD PATH 状态码` 或 console 首行,`severity`=P1\|P2\|P3。**每条用例执行后附带拉一次 console/network 写入**;pass 用例也可能非空 |
 | `retries` | int | ✅ | 实际重试次数 |
 | `self_heal_applied` | bool | — | self-heal 模式是否触发过状态恢复重试 |
@@ -37,7 +37,7 @@
 | `finished_at` | string | ✅ | ★同上,ISO-8601 带时区 |
 | `elapsed_ms` | int | ✅ | ★同上,整数毫秒。与 `finished_at−started_at` 相差 > 2s 由 **I9** 告警(两者不是同一次计时);与旧字段 `duration_ms` 并存且不等由 **I10** 告警。`gen_report.py` 据本字段产出 **§2.7 耗时分布** |
 | `duration_ms` | int | — | 旧字段,与 `elapsed_ms` **同义**,仅为兼容存量结果保留(聚合时 `elapsed_ms` 优先、缺失才回落它)。**新结果一律填 `elapsed_ms`**,两者都写且不等会被 I10 判不可信 |
-| `mechanism` | string | — | ★本条用例的**主要执行机制**,枚举 `dom`(缺省)/ `webmcp` / `mixed`。⚠️⚠️ **`[还原度]` 及一切视觉/布局/样式断言禁止填 `webmcp`** —— WebMCP 读的是页面**声明的能力**、不是**渲染结果**,用它验还原度会让渲染层缺陷 **100% 漏测且全绿**(`check_result.py` **C14 判 Critical**;`mixed` = 状态准备走 WebMCP、断言走 DOM,**是被鼓励的形态,不判**)。枚举外取值由 **C15** 判 Critical。判据全文见 [`execution-methodology.md`](./execution-methodology.md) 一·补三「WebMCP 分层铁律」。⚠️ **未填 ≠ 已确认是 dom**:`gen_report.py` 把未填的单列成 `未声明` 一档、**不并进 `dom`**(并进去等于替执行方断言「这条走的是 DOM」);`webmcp_enabled: true` 的轮次**必须逐条如实填**,否则 C14 够不着、这一档等于没测 |
+| `mechanism` | string | — | ★本条用例的**主要执行机制**,枚举 `dom`(缺省)/ `webmcp` / `app-mcp`(应用自有业务工具)/ `mixed`。⚠️⚠️ **`[还原度]` 及一切视觉/布局/样式断言禁止填 `webmcp`** —— WebMCP 读的是页面**声明的能力**、不是**渲染结果**,用它验还原度会让渲染层缺陷 **100% 漏测且全绿**(`check_result.py` **C14 判 Critical**;`mixed` = 状态准备走 WebMCP、断言走 DOM,**是被鼓励的形态,不判**)。枚举外取值由 **C15** 判 Critical。判据全文见 [`execution-methodology.md`](./execution-methodology.md) 一·补三「WebMCP 分层铁律」。⚠️ **未填 ≠ 已确认是 dom**:`gen_report.py` 把未填的单列成 `未声明` 一档、**不并进 `dom`**(并进去等于替执行方断言「这条走的是 DOM」);`webmcp_enabled: true` 的轮次**必须逐条如实填**,否则 C14 够不着、这一档等于没测 |
 
 **status 语义**:`pass` 全部预期通过;`fail` 关键预期验证失败;`block` 重试到顶仍失败 / 前置不满足 / 驱动缺失 / 网络不可用——**具体原因由 `block_reason` 枚举承载**(不再靠 error 文本判定)。浏览器前前置探测产生的 `precondition_probe.status=unmet` 才能使用 `precondition-unmet`;`probe-error` 必须按网络/环境错误归因,不得伪装成数据缺位。
 
@@ -93,7 +93,7 @@
 
   > **★环境类 block 一律不计产品缺陷(优先级最高,先于用例族锁定):** 环境类 `block_reason` 集合 = **`driver-missing` / `driver-hung` / `precondition-unmet` / `network-error` / `env-unavailable` / `account-invalid`**(单一信源 `gen_report.ENV_BLOCK_REASONS`),命中即判「环境问题」、编号 `ENV-NNN`、**不计产品缺陷、不锁 Critical**——即便是回归/PRD存在性/文案一致性用例族,**环境没起来也不是产品缺陷**(锁 Critical 只对"真跑起来了但结果不对"有意义)。执行方可用**显式布尔 `is_environment_issue`** 覆盖枚举推断(枚举归不了类的环境阻塞用它)。
   > ⚠️ **`retry-exhausted` 刻意不在环境类集合内**:"单操作重试到顶"既可能是环境抖动,也可能是页面根本没渲染出来这种真缺陷,保守留在「待验证」侧由人复核。
-  > ⚠️ **本条是 2026-08-18 上游实测反馈的直接落地**:一轮 32 条用例全部 `block(precondition-unmet)`(前置环境未就绪),旧口径下 `is_product_defect=True` → 报告显示「**产品缺陷 32 条**」并编号成 `BUG-xxx`,把纯环境阻塞误报成 32 个产品 bug,还会污染下游「缺陷→升级 bug→回写问题汇总清单」链路。**勿改回「只有 driver-missing 算环境问题」。**
+  > ⚠️ **本条来自实测**:一轮 32 条用例全部 `block(precondition-unmet)`(前置环境未就绪),旧口径下 `is_product_defect=True` → 报告显示「**产品缺陷 32 条**」并编号成 `BUG-xxx`,把纯环境阻塞误报成 32 个产品 bug,还会污染下游「缺陷→升级 bug→回写问题汇总清单」链路。**勿改回「只有 driver-missing 算环境问题」。**
   > **★用例族锁定 Critical(次高,先于优先级映射):** `is_regression=true`(`[回归]`)、`[PRD存在性]` 或 `[文案一致性]` 用例族一旦失败(fail / **非环境类**的 block),缺陷等级**一律锁 Critical**,**覆盖**"按用例优先级 P0→P1/P1→P2/P2→P3"的常规映射——即便用例本身是 P2,这三类用例族失败也判 Critical、不许降级。`[文案一致性]` 锁 Critical 的理由:语义/口径变更后旧文案残留(反向断言"不存在文本X"命中)或新语义未落地,直接误导对账,是确定性产品缺陷。`driver-missing` 是环境问题(非真失败),不在锁定范围。`gen_report.py` 在 `FAIL_LEVEL` 映射前先判用例族标记(`is_regression` / `[PRD存在性]` / `[文案一致性]`),命中即锁 Critical。
   > **分级依据 `block_reason` 枚举,不再 grep error 文本**;**缺陷数 ≠ fail+block 数**:环境类 block 不计产品缺陷、同用例 error+runtimeErrors 去重,pass 用例的运行时错误另列 RT-NNN,故缺陷列表口径与原始 fail/block 数不同——报告须据此口径。
 - **2.4 用例执行明细**:表格,`用例编号 | 名称 | 优先级 | 模式 | 结果(✅Pass/❌Fail/⚠️Block) | 失败原因 | 关联缺陷 | 证据`。
@@ -158,7 +158,7 @@
 **数据源:** 每条结果 JSON 的 `started_at` / `finished_at` / `elapsed_ms` 三件套
 (旧字段 `duration_ms` 兼容回落)。**列:** `# | 用例 | 套件 | 结果 | 耗时 | 占已采集合计`,只列最长 10 条。
 
-⚠️ **本节存在的全部理由(下游实证):** 两轮 116 条里 **`TC-PXY-F01` 一条占整轮总时长 25%(36.8 min)**,
+⚠️ **本节存在的全部理由(实测依据):** 两轮 116 条里 **`TC-PXY-F01` 一条占整轮总时长 25%(36.8 min)**,
 而这个结论此前只能靠**三个 evidence 文件的 mtime 跨度手工反推** —— 只要那条用例少产一个证据文件,
 它就**整条漏掉**。**没有单条耗时,任何优化都无法验证是否生效。**
 
@@ -168,9 +168,9 @@
 **同节附两行语义纠偏(必读):**
 
 - **`execution_mode` 分布必须与「实际触发自愈次数」并排给出。** `execution_mode=self-heal` 表示
-  「**具备**自愈能力」,**不表示「实际自愈了」**——下游实证曾把「43 条 self-heal」读成「43 条在重跑」,
+  「**具备**自愈能力」,**不表示「实际自愈了」**——实测中曾把「43 条 self-heal」读成「43 条在重跑」,
   而实际只重试过 **1** 次,调优方向当场被带偏。
-- **执行机制分布(`dom` / `webmcp` / `mixed` / `未声明`)**:仅当出现非 `dom` 值时输出。
+- **执行机制分布(`dom` / `webmcp` / `app-mcp` / `mixed` / `未声明`)**:仅当出现非 `dom` 值时输出。
   ⚠️ **`未声明` 是独立的一档、⛔ 不并进 `dom`** —— 结果 JSON 没填 `mechanism` 时报告写 `dom=N`
   等于替执行方断言「这条走的是 DOM」,而事实是**没人填过这一格**(与约束 10「事实字段可溯源、
   禁模板默认」冲突);方向是假绿:真用 WebMCP 验了还原度、却没填 `mechanism` 的那条,C14 够不着、

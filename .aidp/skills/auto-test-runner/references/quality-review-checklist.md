@@ -1,5 +1,19 @@
 # auto-test-runner 质量检查清单(8 维度)
 
+**★(条件启用)WebMCP 达成路径如实标注核查(折入本维度 · 计数不变):** **仅当**旧 Web 显式启用或新 `client_mcp` 声明 Web+WebMCP 时核;否则只跳过本 Web 子项,非 Web 应用能力四态仍按通用项核,不核、不告警、**报告里不留位置**(⛔ 严禁自行探测是否启用)。启用时核:用了 **WebMCP 工具调用**达成的用例,其 `driver` 字段与证据须体现是**经 WebMCP** 而非**纯 CDP 模拟点击**,⛔ **不得混为一谈**——两者失败形态完全不同(工具调用失败 = 业务能力或契约问题;模拟点击失败 = 界面或定位问题),混记会让**缺陷归因整体走偏**。另核:因驱动版本不足/取不到而 block 的用例,其 `block_reason` 落 `webmcp-driver-too-old` / `webmcp-driver-version-unknown`,并出现在「缺陷列表 + 遗留风险」里。**不通过标志:** WebMCP 达成的用例证据只有截图、看不出走的哪条路径;或版本类 block 被静默降级成「就当没有 WebMCP」而在报告里**全绿式消失**。
+
+**★报告两轴分列(折入本维度,条件启用):** 仅调用方 `client_mcp.enabled: true` 或旧 Web 显式启用时核;两类均未启用 → **不核、不告警、报告不留行**(门控铁律;⚠️ 漏门控会让未启用项目凭空多一行)。 报告中的 `driver`/测试驱动统计不等于应用工具调用;`application_mcp` 四态各有来源,未取到写未取到,不能从声明推入口、从入口推注册、从注册推调用。旧 Web `webmcp` 和新字段同存只算一份应用事实,冲突判不通过。
+
+**★WebMCP 四项事实(折入本维度,仅 Web+WebMCP 入参启用时):** 四项事实分别登记、`driver=cli` 不等于 WebMCP、`registered_tools=0` 的专项用例须 block、路径 A 本页清单不得与路径 B 浏览器全量清单混作同一作用域、无调用证据的 `mechanism=webmcp|mixed` 判不通过。⚠️ **判据全文的单一信源是 [`driver-web-webmcp.md`](./driver-web-webmcp.md)**,本行只列「查什么」——⛔ 别把判据再抄一份回来:同一判据三处并存是本仓库登记的最高频漂移源。
+**目标:** 报告含 一概况 / 二汇总(2.1 数据·2.2 各模块·2.3 缺陷列表·2.4 执行明细·2.7 耗时分布)/ 三结论(3.1 上线条件·3.2 遗留风险·3.3 改进建议),不缺章节;统计口径(通过率/自动化率)由脚本聚合、与明细一致。证据列须原样透传 `evidence[].artifact`,同一轮允许 WebP/PNG/JPEG 混合,不得按 TC-ID 推断扩展名。**注意 `gen_report.py --md` 只产出「二」章**,「一」「三」须按 [`../assets/report-template.md`](../assets/report-template.md) 由报告子 Agent 补写——**只交脚本输出即判本维度不通过**。
+**自动化辅助:** `python3 <SKILL_DIR>/scripts/gen_report.py <round目录> --json` 输出 `verified_pass_without_evidence` 计数,非 0 即不通过,并输出 `direct_pass_without_evidence` 供报告单列;另跑 `python3 <SKILL_DIR>/scripts/check_result.py <round目录>/results/ --json` 校验**结果 JSON 形状与 artifact 真实性**(`evidence`/`runtimeErrors` 须为对象数组、元素含 `artifact` / `type`+`message`+`severity`,`artifact` 必须是当前 `round/evidence` 内的相对路径（禁绝对路径/`..`/旧轮次，且 evidence 根不得是符号链接）,非空时实际文件必须存在且非 0 字节;截图只允许 `.webp/.png/.jpg/.jpeg` 且最小容器结构须匹配扩展名（仅魔数的截断空壳不算）;results 目录/结果 JSON/round/evidence 根均不得是符号链接;新截图文件名须按 `{case_id}-step{step}` 与当前用例对应（历史 `{case_id}-{step}` / `{case_id}_步骤{step}` 兼容告警）;跨 `evidence`/`runtimeErrors` 的同一截图不得登记多格式副本,递归磁盘索引也不得残留未登记的同主干其它格式（含 `.PNG` 大小写、非兼容格式与符号链接变体）;`status` 含 `na` 且 `na` 有非空理由,`block_reason` 落枚举,`db_assertion.match=false` 必判 fail)。⚠️ **形状不对不只是不好看**:`evidence` 写成字符串数组曾直接崩掉整份报告聚合(已改为兼容解析 + 形状告警);**路径字符串非空也不等于有证据**——文件不存在仍判 Critical;`block_reason` 漏标枚举会让**纯环境阻塞被误计成产品缺陷**。`gen_report --json` 的 `shape_warnings` 非空时,须把这些告警写进报告「三、结论 → 遗留风险」。
+
+**★应用 MCP 业务能力事实(折入本维度,条件启用):** 调用方 `client_mcp.enabled: true` 或旧 Web 显式启用时,`check_result.py` 逐项核 `application_mcp` 的项目声明/入口实连/当前应用实例注册/本用例真实调用及每态来源;测试驱动即使走 MCP 也不构成产品工具调用证据。非 Web 无证实的应用自有服务/桥接不得编入口;专项缺入口/工具 block、普通 UI 继续。Web 旧 `webmcp` 字段可兼容,新旧冲突须报错,Web 专项不重复执行一次通用判据。未启用时不增 QR 行,原 8 维不变。
+
+**★运行真实性前置(折入本维度):** 本轮新结果运行 `check_result.py <results/> --require-runtime-preflight --json`;仅 旧 Web `webmcp_enabled: true`（或 `webmcp.enabled: true`）、或 `client_mcp.enabled: true` 且客户端=Web、实现形态=WebMCP 时追加 `--webmcp-enabled`（只约束 `client=web` 的结果,混合目录中的移动/小程序/桌面结果不因此假红）。`runtime_preflight.required` 应覆盖实际认证实例/角色、登录后的**项目受保护接口**、前端部署指纹,仅需故障注入的用例再覆盖注入能力;逐项有来源/时间/证据。受保护接口 401、OAuth2 失效、指纹不符或注入未生效不得记 pass,只 block 相关用例并继续其余。旧结果离线复核不带新开关,避免历史结果假红;QR 仍人工核对 required 是否少列了该用例实际依赖。
+**★(条件启用)WebMCP `invoke` 能力归属核查(折入本维度 · 计数不变):** **仅当**旧 Web 显式启用或新 `client_mcp` 声明 Web+WebMCP 时核这一条;否则只跳过本 Web 子项(非 Web 通用应用能力仍须核),不核、不告警、**不在报告里留行**(⛔ 本 Agent 严禁自行探测是否启用)。启用时核:① **WebMCP 不被当成第五个「端」** —— 它是 **Web 适配器的可选补充能力 `invoke`**(列出/调用页面登记的工具),端专有调用约定只落 [`driver-web-webmcp.md`](./driver-web-webmcp.md),**方法论层零改动**;② 该文件已被 `driver-adapters.md` 索引登记;③ 其它端明写「本端不适用」而非留空;④ `detect_drivers.py --webmcp` 的版本校验存在且**不影响退出码**(版本不足 ≠ 驱动缺失);⑤ 版本不足/取不到时标 `block(webmcp-driver-too-old)` / `block(webmcp-driver-version-unknown)`,**⛔ 不得静默降级为「就当没有 WebMCP」**。**不通过标志:** 把 WebMCP 建成第五个端类型;端专有 API 写进方法论层(应被 `check_layer_isolation.py` 拦下,维度 1);版本不足被静默降级(这一整类用例会**全绿式消失**、报告看不出漏测);未启用时仍在 run-context 或报告里留了位置。
+**★截图格式的两层归属核查(折入本维度):** 方法论层只声明 `capture(标签) → 实际证据路径`、每次 capture 只生成一种格式、扩展名由适配器决定,不得写死 WebP 参数;`driver-web.md` 才声明 Chrome DevTools MCP/CLI 优先 WebP quality=90、明确不支持时本次只生成 PNG,Playwright 保持原生 PNG且不转码;移动/小程序/桌面端保持各自原生 PNG。**不通过标志:** `quality=90`/`format=webp` 泄漏进方法论层;或引入 Pillow/Sharp/ImageMagick/cwebp 转码;或同一次 capture 留 WebP+PNG 双份。
+
 > 执行与报告产出后,由**独立子 Agent**逐维核验。主流程禁止在当前上下文内联跑检查,派独立子 Agent 回传精简结构化报告(每维度通过/不通过 + 证据 + 修订建议),据报告决定重跑或修订,循环至通过或达轮次上限。
 
 ---
@@ -157,6 +171,7 @@
   | 形态 | 什么意思 | 报告怎么呈现 |
   | :- | :- | :- |
   | **N/A(范围判定)** | 本轮压根不测那个端 / 没有那类数据(维度 2 端子项、`§2.5`/`§2.6` 可选节) | **留行**,写明范围理由 |
+  | **不适用(入参门控)** | 旧 Web 与新 Web+WebMCP 均未启用 → 仅两条 Web 叶子不适用;若非 Web `client_mcp.enabled=true`,通用核查照跑 | **不留行**(门控铁律,⛔ 严禁自行探测是否启用) |
   | **不适用(入参门控)** | `webmcp_enabled` 非 `true` → 两条 WebMCP 条件启用子核查**整条不适用** | **不留行**(门控铁律,⛔ 严禁自行探测是否启用) |
   | **可选子核查缺数据** | 标「可选」的子核查(环境探针档案 / run-context 预置定位符段)输入整段缺失 | 退回旧路径,**不判不通过** |
 - **⚠️ 标 N/A ≠ 豁免。** 上表第一行的 N/A 是**范围判定**(本轮不测那个端),不是「查了没过、放它一马」。

@@ -4,7 +4,7 @@
 
 > **★补充能力(条件启用):** WebMCP 工具调用(`invoke`)是本适配器的**可选第五能力**——
 > 端专有调用约定、驱动版本要求、两个浏览器开关与连接后自检见
-> [`driver-web-webmcp.md`](./driver-web-webmcp.md);**仅调用方传入 `webmcp_enabled: true` 时加载**。
+> [`driver-web-webmcp.md`](./driver-web-webmcp.md);**仅 旧 Web `webmcp_enabled: true`（或 `webmcp.enabled: true`）、或 `client_mcp.enabled: true` 且客户端=Web、实现形态=WebMCP 时加载**。⚠️ **两条门都要认**——只认旧 flag 会让「只传新声明 `client_mcp`」的 Web 项目扫不到本文件，整条 Web 叶子静默消失，方向是**假绿**。
 
 ---
 
@@ -22,7 +22,18 @@
   - `locate` → 从操作返回的无障碍树快照取元素 `ref`(getByText / getByRole+name);或 Playwright locator。
   - `act` → click / fill / selectOption / scroll / goBack / setInputFiles / handleDialog…
   - `observe` → 动作自动返回的增量快照 / 全量快照(chrome-devtools 用 `take_snapshot`、Playwright-MCP 用 `browser_snapshot`,勿混,见下方变体说明)/ DOM;**运行时错误通道**:拉 console 消息列表 + network 请求列表(non-2xx),写入 `runtimeErrors`;**运行环境通道(env)**:见下方「三·补三、Web 运行环境取证」。
-  - `capture` → 截图(screenshot)+ 无障碍树快照文本。
+  - `capture` → 每次只生成一张 screenshot 并返回实际 artifact 路径;无障碍树快照文本由 `observe` 单独提供,需要归档时另写 evidence 条目。
+
+### 截图格式策略(仅 Web 适配层)
+
+- **Chrome DevTools MCP / CLI 首选 WebP quality=90**(视觉近乎无损,不宣称数学意义像素无损),文件名 `{TC-ID}-step{N}.webp`:
+  - MCP:`take_screenshot(format="webp", quality=90, filePath="...webp")`
+  - CLI:`chrome-devtools take_screenshot <pageId> --format webp --quality 90 --filePath "...webp"`（`pageId` 为必填位置参数，先由 `list_pages` 取得）
+- **明确不支持 WebP 才回退 PNG**:若当前工具版本明确拒绝 `format=webp`,本次 capture 清理可能产生的失败半成品后,只生成 `{TC-ID}-step{N}.png`,返回该 `.png` 的真实路径。不得先留一份失败/残缺 WebP 再额外生成 PNG,也不得把一次 capture 登记成两份等价截图。
+- **Playwright 保持原生 PNG**:当前 screenshot API 不原生支持 WebP 时直接输出 PNG,不增加转码步骤。其他已有驱动产出的 `.jpg/.jpeg` 可兼容,但 JPEG 不作为 UI 截图默认格式。
+- **不引入转码链**:不得为统一扩展名引入 Pillow、Sharp、ImageMagick、cwebp 等依赖。每次 capture 只生成一个实际可用的图片文件,并把返回路径原样写入 `evidence[].artifact`;失败时不创建空文件或伪造路径。
+- **日志如实记录**:`capture TC-USER-001-step3 → webp q90`；回退时记 `capture TC-USER-001-step3 → png（驱动不支持 WebP）`。
+
 ### 客户端故障注入(标准手段)
 
 Web 端对只验证前端呈现的失败/变慢/空响应场景,使用浏览器初始化脚本注入方式包裹 XHR/fetch(执行参数记作 `--initScript`),在页面加载前安装拦截逻辑;只允许返回失败、延迟或 `200 + 空数据`,不得写服务端配置、改业务代码或写业务数据。
@@ -63,12 +74,13 @@ class WebAdapter:
                 "texts": self.page.locator("body").inner_text()[:2000]}
 
     def capture(self, tag):
+        # Playwright 原生截图保持 PNG,不为追求统一扩展名引入转码。
         path = f"evidence/{tag}.png"
         self.page.screenshot(path=path)
-        return path                    # Web 另可附无障碍树快照文本
+        return path                    # 返回实际生成路径;Web 另可附无障碍树快照文本
 ```
 
-> chrome-devtools-mcp 变体:`locate`+`observe` 共用一次 `take_snapshot` 无障碍树快照(元素 `uid` 即句柄),`act` 调 `click`/`fill`/`fill_form` 等(chrome-devtools MCP 工具是**裸名**,不带 `browser_` 前缀),`capture` 调 `take_screenshot`。Playwright-MCP 变体才对应 `browser_click`/`browser_fill_form`/`browser_snapshot` 等 `browser_*` 工具——两者勿混。
+> chrome-devtools-mcp 变体:`locate`+`observe` 共用一次 `take_snapshot` 无障碍树快照(元素 `uid` 即句柄),`act` 调 `click`/`fill`/`fill_form` 等(chrome-devtools MCP 工具是**裸名**,不带 `browser_` 前缀),`capture` 调 `take_screenshot` 并按上节优先 WebP q90。Playwright-MCP 变体才对应 `browser_click`/`browser_fill_form`/`browser_snapshot` 等 `browser_*` 工具,截图保持原生 PNG——两者勿混。
 
 ---
 

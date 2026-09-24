@@ -11,7 +11,7 @@
   - `locate` → `page.$(selector)` / `page.$$` 按类名/文本。
   - `act` → element.tap / input / picker 选择 / scrollTo / navigateBack。
   - `observe` → `page.data()` / `page.wxml()` / 当前路由。
-  - `capture` → `miniProgram.screenshot()`(截图)。
+  - `capture` → `miniProgram.screenshot()`(驱动原生 PNG 截图),返回实际 `.png` 路径;不转码、不额外生成 WebP 副本。
 - **observe 的运行环境通道(env,见 `driver-adapters.md` 第一节)**:
   - `runConfig` → `miniProgram.appid` / 启动时的 `projectPath` + 编译模式(权威,由 launch 配置直给)。
   - `renderSignals` → **本端不适用**:小程序由开发者工具承载,无"无头/有头"之分;`renderMode` 写 `null` + `未取到(本端无渲染模式概念)`。
@@ -31,3 +31,7 @@
 
 > 本行是**显式声明**、不是留空——按本 skill 既有惯例（如 `observe` 运行环境通道），
 > **留空视为漏写、不视为不适用**。契约见 [`driver-web-webmcp.md`](./driver-web-webmcp.md)。
+
+## 应用自有 MCP 服务或桥接（与小程序测试驱动分轴）
+
+默认**不支持/未提供**;小程序自动化驱动的 MCP 连接不说明小程序自身暴露业务工具。仅 `client_mcp.enabled: true` 且已证实应用配套 MCP 服务或桥接的入口、身份、实例绑定及工具清单时,按实际来源记录 `application_mcp` 四态;未取到则相关专项用例 block,普通小程序 UI 用例继续。⛔ 不套浏览器 WebMCP API、Chrome 版本或 secure context,不自造统一入口。通用契约见 [`driver-client-mcp.md`](./driver-client-mcp.md)。

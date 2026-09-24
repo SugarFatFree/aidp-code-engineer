@@ -123,17 +123,35 @@ for ROLE in 主测账号 备用账号; do
   :
 done
 
-# 全部候选账号冒烟失败 → 不进 Phase 2 空跑：
-#   - 无人值守（LOOP_UNATTENDED=1）→ 冻结四件套 + #4 **一次调用做完**（**配置类**，解冻看配置文件 mtime）：
-#       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
-#         --phase 0.4-account --reason account-invalid \
-#         --why "配置的候选账号全部登录失败（现象：<逐个写清>），请在 研发自测/ 换有效账号"
-#     再 `exit 0` 退本 tick。⛔ 别只写四件套不发 #4 —— 那是停得住但停不响，一条通知都没有。
-#     ⛔ 别写 `UNATTENDED_YIELD`——它不是命令，逐字执行会 command not found 且不退出。
-#     解冻 = 在 研发自测/ 换有效账号（文件 mtime 更新）或人工 retry —— **不要等 last_deployed_at**：
-#     换账号不产生新部署，按部署解冻等于永不解冻。
-#   - 交互式 → #4 @用户「配置的账号均登录失败（现象:...），请换有效账号后重试」，暂停本轮
 # ★ 冒烟通过的账号写回 run-context 作主用；失效账号在报告「测试概况」标注，不计入产品缺陷（环境阻塞）
+```
+
+<!-- flowvar-check: allow SMOKE_OK 上方冒烟循环选出的主用账号 ROLE（为空 = 全部失败）-->
+<!-- flowvar-check: allow SMOKE_FAILURES 上方冒烟循环逐个记下的失效现象 -->
+
+**全部候选账号冒烟失败 → 不进 Phase 2 空跑。** ⛔ 下面这段**必须原样执行**，不得退化成注释：
+注释态下执行体跑完围栏就穿过去了，既不冻结也不告警 —— 心跳照刷、开发链路读到「测试链路健康」
+走暂缓，12 tick 后按 `unconverged` 误冻，而真因完全不可见（同 `flows/sprint-batch/rationale.md`
+「散文承诺 ≠ 可执行落点」）。
+
+```bash
+# ⛔ shell state 不跨 Bash 调用：本围栏要用 tick 变量就必须自己 eval 一次读回。
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+# SMOKE_OK 为空 = 所有候选账号都登录失败
+if [ -z "${SMOKE_OK:-}" ]; then
+  if [ "${LOOP_UNATTENDED:-0}" = 1 ]; then
+    # 冻结四件套 + #4 **一次调用做完**（**配置类**，解冻看配置文件 mtime）。
+    # ⛔ 别只写四件套不发 #4 —— 那是停得住但停不响，一条通知都没有。
+    # ⛔ 别写 `UNATTENDED_YIELD`——它不是命令，逐字执行会 command not found 且不退出。
+    # 解冻 = 在 研发自测/ 换有效账号（文件 mtime 更新）或人工 retry —— **不要等 last_deployed_at**：
+    # 换账号不产生新部署，按部署解冻等于永不解冻。
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test \
+      --version "$TARGET_VERSION" --freeze-now --phase 0.4-account --reason account-invalid \
+      --why "配置的候选账号全部登录失败（现象：${SMOKE_FAILURES:-见上方逐个现象}），请在 研发自测/ 换有效账号"
+    exit 0
+  fi
+  # 交互式 → #4 @用户「配置的账号均登录失败（现象:...），请换有效账号后重试」，暂停本轮
+fi
 ```
 
 - **落点**：本步在 0.4 账号加载**成功后**（`CREDS_DONE=1`）、**进入 Phase 1 之前**执行；`static-only` / `mode=none` / `--skip-login` 直接跳过。

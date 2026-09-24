@@ -1,6 +1,6 @@
 # 版本规划产物审计报告目录
 
->  两类写入者：**版本规划产物审计**由 `/version` Step 2.4.7 写入，单一信源 `.aidp/agents/version-auditor.md`；**范式合规检查**由 `aidp-compliance` Agent 写入，单一信源 `.aidp/agents/aidp-compliance.md`。
+>  两类写入者：**版本规划产物审计**由 `/version` Step 2.4.7 写入，单一信源 `{{AIDP_HOME}}/agents/version-auditor.md`；**范式合规检查**由 `aidp-compliance` Agent 写入，单一信源 `{{AIDP_HOME}}/agents/aidp-compliance.md`。
 
 ## 目录结构
 
@@ -19,7 +19,7 @@ docs/audit/
 
 ## 报告生成时机
 
-- **fresh 模式**：`/version V0.X.0` 在 Step 2.4.6 完成后自动触发 Step 2.4.7，调用独立子 Agent `.aidp/agents/version-auditor.md`
+- **fresh 模式**：`/version V0.X.0` 在 Step 2.4.6 完成后自动触发 Step 2.4.7，调用独立子 Agent `{{AIDP_HOME}}/agents/version-auditor.md`
 - **补充模式（B-2）**：每次 `/version V0.X.0`（PRD/原型已变）执行补充流程末段同样触发审计
 
 ## 报告内容（8 项审计）
@@ -41,7 +41,7 @@ docs/audit/
 - 报告 `overall: warn` → 继续 + Step 2.8 报告追加警告区块
 - 报告 `overall: block` → `AskUserQuestion` 三选一（自动按 fix_actions 回调 SKILL / 用户手工 / 强制忽略）
 
-详见 `.aidp/agents/version-auditor.md` 第四节「审计报告输出」与第五节「与命令端的交互协议」。
+详见 `{{AIDP_HOME}}/agents/version-auditor.md` 第四节「审计报告输出」与第五节「与命令端的交互协议」。
 
 ---
 

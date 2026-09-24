@@ -33,7 +33,7 @@
 
 ## ★ 多 Agent 兼容（Claude Code / Codex / DeepSeek Harness）
 
-- **运行目录**：本项目的 AIDP 真源为 `各 Agent 的运行根/` —— 即 Agent 自己的目录，契约平铺其下；模板仓库的 `.aidp/` 是维护源，**下游项目根没有这个目录**。Claude Code 与其他 Agent 并存时从 `.claude/` 的装配副本读取。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+- **运行目录**：本项目的 AIDP 真源为 `各 Agent 的运行根/` —— 即 Agent 自己的目录，契约平铺其下；模板仓库的 `.aidp` 目录是维护源，**下游项目根没有这个目录**。Claude Code 与其他 Agent 并存时从 `.claude/` 的装配副本读取。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 - **无 Git 分流**：先读取脚手架返回的 `vcs_mode=git|none`；`none` 仍可规划、开发、本地测试和本地归档，Git 提交、推送、tag、CICD 监听不可假定成功，正式发布必须 fail closed、不得宣布已发布。是否建立 Git 仓库由用户决定，不自动 `git init`。
 
 - **单一信源 = `{{AIDP_HOME}}/`**：命令、角色、规则、流程、脚本、hook、模板、SKILL、插件只在这里维护；各 Agent 的入口（`.claude/commands|skills|plugins`、`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`、`.agents/skills`、各 Agent hook / MCP 配置等）由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成，⛔ 不手改生成物；生成入口登记在根 `.gitignore` 托管块、不入库，clone 后先跑一次。
@@ -183,7 +183,7 @@
 | `bugfix` | `/sprint-bugfix` |
 | `notify.py`（脚本，非 skill）★ | `/sprint-autopilot`·`/sprint-aiauto-test` 里程碑通知（约定 32，渠道按 `memory/aidp-config.yaml` `notify.channels`）|
 | `aidp-code-engineer` | 脚手架 init/migrate/upgrade |
-| `superpowers:*`（tdd/subagent/debugging/executing-plans/verification）| `/sprint-dev`（tdd/subagent/verification）·`bugfix` SKILL（debugging）·`/sprint-batch`（executing-plans/verification）·`/sprint-test`·`/sprint-bugfix` 方式 B（verification） |
+| `superpowers:*`（tdd/subagent/debugging/verification）| `/sprint-dev`（tdd/subagent/verification）·`bugfix` SKILL（debugging）·`/sprint-batch`（verification）·`/sprint-test`·`/sprint-bugfix` 方式 B（verification）。⛔ `executing-plans` 会停下征询，与 G-BATCH-1「零询问连跑」冲突，**不得**用于 `/sprint-batch` 顶层循环 |
 
 > 外部可选：`api-tester` 等（未装即跳过）；浏览器实测驱动 `chrome-devtools-mcp` 随仓库分发于 `各 Agent 的运行根/plugins/chrome-devtools-mcp/`：Claude Code 使用完整项目插件，Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json`（见 `各 Agent 的运行根/reference/skills.md`）。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 

@@ -55,7 +55,7 @@ docs/references/
 
 1. **版本规划期**（`/version` 规划流程）
    - ① 确保 `docs/references/{version}/` 存在；
-   - ②「提给第三方的需求」由 [`/sprint-design`](../../.aidp/commands/sprint-design.md) 落盘到此；
+   - ②「提给第三方的需求」由 [`/sprint-design`](../../{{AIDP_HOME}}/commands/sprint-design.md) 落盘到此；
    - ③ ★ **引用链强制**：本目录规划期生成的文件**必须**被研发需求（`00_索引.md` + `01_研发需求.md`）+ 详细设计（`00_索引.md` + `01_详细设计.md`）在「关联文档」中引用——**缺失即 `version-auditor` E 引用链审计告警**（与「研发需求 ↔ 详设引用密度」铁律同级）。
 2. **开发期**（`/sprint-dev` / `/sprint-design` 读取）
    - 消费端读「对方接口资料」时**同时覆盖两处**：`docs/references/{version}/`（版本专属）+ `docs/references/` 根（通用）。
@@ -87,4 +87,4 @@ docs/references/
 
 - [`../init/06_版本与用户目录约定.md`](../init/06_版本与用户目录约定.md) §2.6 — 版本化与生命周期（权威）
 - [`../init/04_agents详细规范.md`](../init/04_agents详细规范.md) — Agent 读写边界
-- [`../../.aidp/agents/version-auditor.md`](../../.aidp/agents/version-auditor.md) — E 引用链审计
+- [`../../{{AIDP_HOME}}/agents/version-auditor.md`](../../{{AIDP_HOME}}/agents/version-auditor.md) — E 引用链审计

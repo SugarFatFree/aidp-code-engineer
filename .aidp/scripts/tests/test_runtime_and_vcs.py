@@ -42,6 +42,28 @@ class RuntimeRootTest(unittest.TestCase):
                     self.assertEqual(self.runtime.runtime_root(script, environ={}), runtime)
                     self.assertEqual(self.runtime.project_root(script, environ={}), project)
 
+    def test_parses_legacy_nested_layout_for_unmigrated_projects(self):
+        """运行根降层前的嵌套形态 `<root>/.claude/aidp/scripts`。
+
+        `aidp_runtime._natural_layout` 明确保留这一支给未迁移的存量项目——脚手架的
+        upgrade 迁移要先认出旧形态才能搬它。降层改造把其余断言都换成了平铺形态，
+        这一支一度失去覆盖：一旦被顺手删掉，存量项目会在升级前的第一次脚本调用就炸。
+        """
+        cases = (
+            (Path("/p/.claude/aidp/scripts/x.py"), Path("/p/.claude/aidp"), Path("/p")),
+            (Path("/p/.agents/aidp/scripts/x.py"), Path("/p/.agents/aidp"), Path("/p")),
+        )
+        with mock.patch("subprocess.run", side_effect=AssertionError("运行根解析不得调用 Git")):
+            for script, runtime, project in cases:
+                with self.subTest(script=script):
+                    self.assertEqual(self.runtime.runtime_root(script, environ={}), runtime)
+                    self.assertEqual(self.runtime.project_root(script, environ={}), project)
+
+    def test_rejects_unknown_nested_layout(self):
+        """阴性对照：只有 `.claude` / `.agents` 下的 `aidp` 才是合法旧形态。"""
+        with self.assertRaisesRegex(RuntimeError, "解析 AIDP 运行根"):
+            self.runtime.runtime_root("/p/.vscode/aidp/scripts/x.py", environ={})
+
     def test_rejects_script_outside_runtime_scripts_directory(self):
         with self.assertRaisesRegex(RuntimeError, "解析 AIDP 运行根"):
             self.runtime.runtime_root("/p/scripts/x.py", environ={})

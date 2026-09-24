@@ -186,7 +186,7 @@ PY
    > `prerelease_transitional=true` 时，通知**加一行如实说明**（不得省略、不得说成"已收敛"）：
    > `🔀 中间过渡版本：{NEWER_V} 已开始规划，本版未经部署/测试收敛（{FR}）即归档，不做正式发布`
 
-2. **按 VCS 模式归档**（用 `Skill` 工具或命令端编排；两路均始终传 `--unattended`）：
+2. **按 VCS 模式归档**（命令端编排；⛔ `/version` 是**命令**不是 SKILL，`Skill` 工具调不起它、且失败形态静默；两路均始终传 `--unattended`）：
    - `vcs_mode=git`：跑 `/version {PRE_RELEASE_VERSION} --no-tag --unattended`，维持原 Step 3.1~3.6：跳过 Step 3.4.2 tag，Step 3.4.3 仍 push commit（含 SQL 归档），Step 3.6 输出准发布报告。
    - `vcs_mode=none`：**无 Git 不走正式发布的 `--no-tag` 路径**。先核对版本记忆、baseline、本地台账均明确未发布；已发布、矛盾或不明则按本地归档失败处置。跑 `/version {PRE_RELEASE_VERSION} --finalize-docs --unattended`，核验 Step 3.3.9.5 → 3.3.7 → 3.3.10 → 3.3.11 → 3.3.13；逐项检查 `docs/deployment/{PRE_RELEASE_VERSION}/sql/`（无 SQL 记不适用）、引用、`memory/{PRE_RELEASE_VERSION}/` Sprint 归档及项目记忆「本地已归档（未发布）」。`--finalize-docs` 仅覆盖文档，不证明 SQL / memory 已完成；欠账须核对。Git commit / push / tag / 分支均记 `unsupported:vcs-disabled`（非 passed）；不得记「✅ 已发布」「🟡 已准发布」或宣布 released。
    - **成功落账**：门禁放行、必需归档步骤成功且逐项核验后才运行；`--finalize-docs` 返回码不等于归档完成：

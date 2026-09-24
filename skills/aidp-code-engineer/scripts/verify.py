@@ -1114,7 +1114,13 @@ def check_template_bundle(root: Path, r: VerifyResult):
 TEMPLATE_ONLY_GITIGNORE = {"/.claude/", "/.codex/", "/.dsh/", "/.agents/",
                            # 根级 skills/ 只有模板仓库有（脚手架引擎真源），下游不存在
                            "skills/*/*-config.json", "skills/*/.env",
-                           "skills/*/config.json", "skills/*/assets/config.json"}
+                           "skills/*/config.json", "skills/*/assets/config.json",
+                           # `.aidp/skills/` 同理 —— 模板仓库的维护源目录，下游项目根没有它。
+                           # ⛔ 这不是豁免掉「skill 凭证不入库」这条规则：下游侧由
+                           #    gitignore.tpl 的 `.claude/skills/*` + `.agents/skills/*` 两组承担
+                           #    （运行根降层后 SKILL 就落在那里），两侧覆盖面等价、只是路径不同。
+                           ".aidp/skills/*/*-config.json", ".aidp/skills/*/.env",
+                           ".aidp/skills/*/config.json", ".aidp/skills/*/assets/config.json"}
 
 
 def _gitignore_rules(text: str) -> set:

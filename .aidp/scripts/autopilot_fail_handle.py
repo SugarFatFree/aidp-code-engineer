@@ -67,7 +67,10 @@ sys.path.insert(0, HERE)
 
 
 def _be(args):
-    return subprocess.run([sys.executable, BE] + args, capture_output=True, text=True)
+    # ⛔ 必须带 timeout：baseline_edit 是阻塞式 flock(LOCK_EX)，对面持锁挂死时
+    #    这里会无限期等下去 —— 而本函数正是熔断自己要走的那一步。
+    return subprocess.run([sys.executable, BE] + args, capture_output=True, text=True,
+                          timeout=60)
 
 
 WAKE_KEY = {"autopilot": "autopilot.wake_source_this_tick",

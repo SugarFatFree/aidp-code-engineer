@@ -65,6 +65,15 @@ BE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline_edit.py"
 CARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notify.py")
 
 
+def _alert(kind, **fields):
+    """本地告警台账（旁路）。⛔ 与通知渠道无关：没有渠道时它就是「停得响」的唯一承载面。"""
+    try:
+        import aidp_paths
+        aidp_paths.append_alert(".", kind=kind, **fields)
+    except Exception:  # noqa: BLE001 —— 告警台账是旁路，写不进也要在 stderr 喊一声
+        sys.stderr.write("🚨 [AIDP-ALERT] %s %s\n" % (kind, fields))
+
+
 def _send_stuck_card(version: str, out: dict) -> None:
     """冻结成立即**由本脚本自己发 #4**，不把发通知义务留给调用方。
 
@@ -76,6 +85,15 @@ def _send_stuck_card(version: str, out: dict) -> None:
     if not os.path.isfile(CARD):
         out["card_sent"] = False
         out["card_error"] = "notify.py 不存在"
+        # ⛔ 不能就这么 return：`stuck-phase` ∈ `_HUMAN_ONLY`，没有任何探针能自动解冻。
+        #    notify.py 不在 = 连「写本地告警台账」这条兜底也没人做 → 静默永冻，
+        #    正是本门开篇那段注释要防的形态。口径与 `autopilot_fail_handle.py` 的
+        #    `elif freeze: _alert(...)` 对齐：冻结成立即恒落台账，通知渠道有无都不影响。
+        _alert("stuck-phase-freeze", version=version,
+               phase=out.get("current_phase", "?"),
+               phase_enter_count=out.get("phase_enter_count", 0),
+               age_minutes=int(out.get("age_seconds", 0)) // 60,
+               why="notify.py 不存在，#4 无法发出；本条即唯一可查记录")
         return
     cmd = [sys.executable, CARD, "--node", "#4", "--auto", "--header-color", "red",
            "--title", "已冻结：%s 原地打转（stuck-phase）" % version,
@@ -90,6 +108,11 @@ def _send_stuck_card(version: str, out: dict) -> None:
         out["card_skipped"] = "not-configured"     # 未配置渠道 = 合法降级；告警已由 notify.py 写入本地告警台账
     elif cr.returncode != 0:
         out["card_error"] = (cr.stderr or "").strip()[:160]
+        # 发送真失败（≠ 未配置渠道的合法降级）：notify.py 的台账写入路径未必走到，
+        # 这里补一条，保证「冻结了」这件事恒有本地可查记录。
+        _alert("stuck-phase-freeze", version=version,
+               phase=out.get("current_phase", "?"),
+               why="#4 发送失败：" + (out.get("card_error") or "未知"))
 
 
 def _to_epoch(ts) -> float:
@@ -113,8 +136,9 @@ def _be(baseline: str, *args) -> int:
     读写不同文件，既让 `--baseline` 形同虚设，也会让测试/演练把冻结态写进真实仓库 baseline
     （本项目已因此误提交过一次冻结版本键）。
     """
+    # ⛔ 必须带 timeout：阻塞式 flock 无上限，对面持锁挂死会把本门一起挂住。
     return subprocess.run([sys.executable, BE, "--baseline", baseline, *args],
-                          capture_output=True, text=True).returncode
+                          capture_output=True, text=True, timeout=60).returncode
 
 
 def run(baseline: str, version: str, enter_threshold: int, age_seconds: int, apply: bool,

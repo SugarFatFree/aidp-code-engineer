@@ -167,6 +167,23 @@ def test_watchdog():
             rc, res = S.do_watchdog(root, ns, send_notify=False)
             check("陈旧但本轮仍持锁执行（长 tick）→ running、不判失联",
                   rc == 0 and res["chains"]["test"]["state"] == "running")
+        # ★★ 持锁超期 = 挂死，必须响。⛔ 「持锁即 running」不能无上限：Agent 进程挂死时
+        #    锁被永久持有 → 后续每轮调度被 `flock -n` 跳过 → watchdog 永远判 running
+        #    → 永不 stale、永不告警、台账一行不写 = 整条链路静默停摆（G-AUTOPILOT-6 非法形态）。
+        lock_path = os.path.join(lockd, "loop-sprint-aiauto-test.lock")
+        with open(lock_path, "w") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            os.utime(lock_path, (0, 0))          # mtime 拉到远古 = 持锁已远超上限
+            before = len(open(alerts, encoding="utf-8").read().splitlines()) \
+                if os.path.isfile(alerts) else 0
+            rc, res = S.do_watchdog(root, ns, send_notify=False)
+            chain = res["chains"]["test"]
+            after = open(alerts, encoding="utf-8").read().splitlines()
+            check("★★持锁超期（挂死）→ state=hung、rc=3、进 stale 名单",
+                  chain["state"] == "hung" and rc == 3 and res["stale"] == ["test"])
+            check("★★挂死必落告警台账 kind=loop-tick-hung（没有通知渠道也要停得响）",
+                  len(after) == before + 1
+                  and json.loads(after[-1])["kind"] == "loop-tick-hung")
         os.remove(bp)
         rc, res = S.do_watchdog(root, ns, send_notify=False)
         check("baseline 缺失 → 两链路 unknown、rc=0",

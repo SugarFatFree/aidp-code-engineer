@@ -37,6 +37,19 @@ LEGACY_AIDP_DIR = ".aidp"
 OLD_RUNTIME_RE = re.compile(
     r"(?<!memory/)(?<![\w{])" + re.escape(LEGACY_AIDP_DIR) + r"/"
 )
+# 运行根降层（`.claude/aidp` → `.claude`、`.agents/aidp` → `.agents`）之后，嵌套形态只剩一个
+# 合法用途：认出**未迁移**存量项目的旧布局（`aidp_runtime.py` 的兼容分支 + 它的回归用例）。
+# 除此之外，任何契约正文或下发文档里再写 `.claude/aidp` / `.agents/aidp` 都是改造残留——
+# 它会把下游引到一个安装后根本不存在的目录，且靠人读散文守不住。
+NESTED_RUNTIME_RE = re.compile(r"(?<![\w.])\.(?:claude|agents)/aidp(?![\w-])")
+# 契约目录之外、但同样会下发到下游（或被下游逐字照做）的文档面。
+# ⛔ 这批只做嵌套形态体检，不套 OLD_RUNTIME_RE——它们要正当地把模板维护源目录称作维护源。
+DELIVERED_DOC_STARTS = (
+    "docs/init",
+    "memory/README.md",
+    "skills/aidp-code-engineer/SKILL.md",
+    "skills/aidp-code-engineer/references",
+)
 TOKEN = "{{" + "AIDP_HOME" + "}}"
 # 本地运行态目录是 `memory/.aidp/`，**不随运行根变**。把运行根拼进 memory 下
 # （`memory/各 Agent 的运行根/`、`memory/.claude/`、历史的 `memory/.claude/aidp/`）都是同一类错。  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
@@ -51,6 +64,26 @@ LEGACY_FUNCTION_PREFIXES = ("cleanup_", "_cleanup_", "prune_legacy", "_prune_leg
 
 def _is_excluded(rel: str) -> bool:
     return rel in EXCLUDED_FILES or any(rel.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
+
+
+def iter_delivered_docs(root: Path):
+    """下发文档面（只体检嵌套运行根形态）。"""
+    for item in DELIVERED_DOC_STARTS:
+        start = root / item
+        if not start.exists() or start.is_symlink():
+            continue
+        paths = [start] if start.is_file() else start.rglob("*")
+        for path in paths:
+            if not path.is_file() or path.is_symlink():
+                continue
+            if path.suffix.lower() not in TEXT_SUFFIXES:
+                continue
+            try:
+                if path.stat().st_size > MAX_BYTES:
+                    continue
+            except OSError:
+                continue
+            yield path
 
 
 def iter_contract_files(root: Path, selected: list[str] | None = None):
@@ -243,6 +276,12 @@ def scan(root: Path, selected: list[str] | None = None, rendered: bool = False) 
                     "kind": "hardcoded-runtime-path", "path": rel,
                     "line": lineno, "value": old_hits[0].group(0),
                 })
+            nested = NESTED_RUNTIME_RE.search(line)
+            if nested:
+                findings.append({
+                    "kind": "stale-nested-runtime-path", "path": rel,
+                    "line": lineno, "value": nested.group(0),
+                })
             if rendered and TOKEN in line:
                 findings.append({
                     "kind": "unresolved-runtime-home", "path": rel,
@@ -251,6 +290,27 @@ def scan(root: Path, selected: list[str] | None = None, rendered: bool = False) 
             # 豁免只用于其它路径示例；不能盖掉上述两个硬错误。
             if IGNORE_RE.search(line):
                 continue
+    if not selected:
+        findings.extend(_scan_delivered_docs(root))
+    return findings
+
+
+def _scan_delivered_docs(root: Path) -> list[dict]:
+    """下发文档面只做一件事：拦嵌套运行根残留。"""
+    findings = []
+    for path in iter_delivered_docs(root):
+        rel = path.relative_to(root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            nested = NESTED_RUNTIME_RE.search(line)
+            if nested:
+                findings.append({
+                    "kind": "stale-nested-runtime-path", "path": rel,
+                    "line": lineno, "value": nested.group(0),
+                })
     return findings
 
 
@@ -268,9 +328,30 @@ def self_check() -> bool:
         )
         source = scan(root)
         rendered = scan(root, rendered=True)
+        # 阳性：契约正文 + 下发文档面各一条嵌套运行根残留，都必须被抓到。
+        nested_contract = root / LEGACY_AIDP_DIR / "flows/probe/nested.md"
+        nested_contract.parent.mkdir(parents=True)
+        nested_contract.write_text(
+            "运行真源 .claude" + "/aidp # runtime-path-ignore: 豁免不得掩盖嵌套残留\n",
+            encoding="utf-8")
+        doc = root / "docs/init/probe.md"
+        doc.parent.mkdir(parents=True)
+        doc.write_text("下游运行目录 .agents" + "/aidp/\n", encoding="utf-8")
+        # 阴性：平铺形态与「模板 .aidp 是维护源」的正当说法都不该被下发文档面误报。
+        clean = root / "memory/README.md"
+        clean.parent.mkdir(parents=True)
+        # ⛔ 阴性样本里的旧运行根必须**拼**出来，不能写成字面量：本文件同样要经
+        #    `runtime_layout.render_text` 渲染进运行包，而那道门见到字面 `<旧根>/` 就 raise。
+        clean.write_text("运行契约在 .claude/ 或 .agents/；模板 "
+                         + LEGACY_AIDP_DIR + "/ 仅作维护源。\n", encoding="utf-8")
+        nested = [x for x in scan(root) if x["kind"] == "stale-nested-runtime-path"]
+        nested_paths = sorted(x["path"] for x in nested)
         return ([x["kind"] for x in source] == ["hardcoded-runtime-path"]
                 and sorted(x["kind"] for x in rendered)
-                == ["hardcoded-runtime-path", "unresolved-runtime-home"])
+                == ["hardcoded-runtime-path", "unresolved-runtime-home"]
+                and nested_paths == sorted([
+                    "docs/init/probe.md",
+                    LEGACY_AIDP_DIR + "/flows/probe/nested.md"]))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

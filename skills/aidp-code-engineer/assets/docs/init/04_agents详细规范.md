@@ -1,7 +1,7 @@
 # 04 — Agents 详细规范
 
 > **文档定位**：本文档是 Agent 角色体系的**总览和索引**。
-> 下游 Agent 指令位于 `{{AIDP_HOME}}/agents/`，AI Agent 运行时从该目录读取（仅 Claude 为 `.claude/aidp/`，有 Codex / DSH 为 `.agents/aidp/`）。下方链接指向下游已安装的运行目录；模板仓库中的维护源位于 `.aidp/agents/`。
+> 下游 Agent 指令位于 `{{AIDP_HOME}}/agents/`，AI Agent 运行时从该目录读取（仅 Claude 为 `.claude/`，有 Codex / DSH 为 `.agents/`）。下方链接指向下游已安装的运行目录；模板仓库中的维护源位于 `.aidp/agents/`。
 > 本文档**不再重复** Agent 内部细节，仅提供角色职责、协作关系、调用规则的全局视图。
 
 ---

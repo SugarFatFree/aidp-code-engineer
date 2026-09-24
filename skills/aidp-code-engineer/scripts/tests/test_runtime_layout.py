@@ -688,6 +688,84 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
                 self.assertNotIn(relative, manifest["files"],
                                  f"运行根根级的外来条目不该进 manifest：{relative}")
 
+    def test_credential_named_user_files_survive_and_trigger_backup(self):
+        """★ 被下发忽略集命中的用户文件（`config.json` / `.env` / `auth.*.json`）必须活过重装。
+
+        `scaffold_lib.is_ignored` 是**镜像 / 下发**口径——排除这批名字是为了不把凭据打进
+        bundle。把同一口径套到**已安装运行包**上，语义正好反过来：它们恰恰是用户自己填的
+        凭据（`{{AIDP_HOME}}/skills/*/config.json` 就是范式内的落点）。沿用下发口径会让
+        它们对重装完全隐形——既不进 manifest 指纹（`_runtime_modified` 看不见 → 不触发
+        备份），也不进 `_user_overlay`（→ 随 previous 一起被丢弃）。凭据 + gitignore +
+        无备份 = 不可恢复。本用例同时钉住「活下来」与「触发备份」两件事。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".claude"
+            R.render_runtime(source, destination, ".claude", "V1.0.0", "claude")
+
+            own = {
+                "skills/project-own/SKILL.md": "---\nname: project-own\n---\n",
+                "skills/project-own/config.json": '{"token": "USER-SECRET"}\n',
+                "skills/project-own/.env": "API_KEY=USER-SECRET\n",
+                "skills/project-own/auth.github.json": '{"pat": "USER-SECRET"}\n',
+            }
+            for relative, body in own.items():
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(body, encoding="utf-8")
+
+            backups = []
+
+            def _backup(old):
+                backups.append(old)
+                return shutil.copytree(old, base / "bk")
+
+            R.render_runtime(source, destination, ".claude", "V1.0.1", "claude",
+                             backup_callback=_backup)
+
+            self.assertTrue(backups, "运行包内有用户文件却没触发完整备份")
+            for relative, body in own.items():
+                target = destination / relative
+                self.assertTrue(target.is_file(), f"重装后用户文件丢失：{relative}")
+                self.assertEqual(target.read_text(encoding="utf-8"), body, relative)
+
+            manifest = json.loads((destination / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            for relative in own:
+                self.assertIn(relative, manifest.get("user_files", []),
+                              f"用户文件应登记为 user_files：{relative}")
+
+            # 第二轮：已登记进 manifest 之后仍须携带（走 `relative in user_files` 那一支）。
+            R.render_runtime(source, destination, ".claude", "V1.0.2", "claude",
+                             backup_callback=_backup)
+            for relative, body in own.items():
+                self.assertEqual((destination / relative).read_text(encoding="utf-8"), body,
+                                 f"第二轮重装后用户文件丢失：{relative}")
+
+    def test_pure_derivatives_stay_out_of_runtime_manifest(self):
+        """阴性对照：纯派生物（`__pycache__/`、`*.pyc`）仍不得进 manifest。
+
+        上一条把运行包的忽略口径收窄到「只排除纯派生物」。这条钉住收窄没有过头——
+        否则每次跑完脚本产生的 `__pycache__` 都会被算成用户文件跨版本携带。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            destination = base / ".claude"
+            R.render_runtime(source, destination, ".claude", "V1.0.0", "claude")
+
+            cache = destination / "scripts/__pycache__"
+            cache.mkdir(parents=True, exist_ok=True)
+            (cache / "x.cpython-312.pyc").write_bytes(b"\x00derived")
+            (destination / "scripts/y.pyc").write_bytes(b"\x00derived")
+
+            R.render_runtime(source, destination, ".claude", "V1.0.1", "claude")
+
+            manifest = json.loads((destination / R.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            for relative in ("scripts/__pycache__/x.cpython-312.pyc", "scripts/y.pyc"):
+                self.assertNotIn(relative, manifest["files"], relative)
+                self.assertNotIn(relative, manifest.get("user_files", []), relative)
+
     def test_project_own_entries_inside_owned_dirs_survive(self):
         """★ 受管目录**内部**的项目自有条目必须活过重装。
 

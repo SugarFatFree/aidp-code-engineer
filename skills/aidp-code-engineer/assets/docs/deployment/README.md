@@ -58,7 +58,7 @@ docs/deployment/
 
 ## 双轨部署基线（增量轨 / 全量轨）★
 
-> **权威定义见 [AGENTS.md 约定 37](../../AGENTS.md) + 细则 [`../../.aidp/reference/约定细则-5.md`](../../.aidp/reference/约定细则-5.md)**；本节为运维视角速览。
+> **权威定义见 [AGENTS.md 约定 37](../../AGENTS.md) + 细则 [`../../{{AIDP_HOME}}/reference/约定细则-5.md`](../../{{AIDP_HOME}}/reference/约定细则-5.md)**；本节为运维视角速览。
 
 | | 增量轨 `sql/增量/` + `配置文件/增量/` | 全量轨 `sql/全量/` + `配置文件/全量/` |
 |---|---|---|
@@ -76,7 +76,7 @@ docs/deployment/
 
 **⛔ 全程只读**：DDL 经元数据视图导出、配置经只读 API 拉取，**不执行任何 DDL/DML、不改任何环境配置、不启动任何服务**。基线环境须用户确认，不得拿研发环境冒充生产。
 
-**机器门（不靠自觉）**：产出后必须跑 `python3 .aidp/scripts/release_baseline_check.py --version <version>`，覆盖 12 项确定性校验（结构完整性 / YAML 语法 / SQL 环境绑定物残留 / 明文凭据扫描 / 占位变量名唯一性 / `${a.b}` 引用目标存在性 / 注释完备性 / 生效形态唯一 / 相对链接有效性 / **增量极简度**）。
+**机器门（不靠自觉）**：产出后必须跑 `python3 {{AIDP_HOME}}/scripts/release_baseline_check.py --version <version>`，覆盖 12 项确定性校验（结构完整性 / YAML 语法 / SQL 环境绑定物残留 / 明文凭据扫描 / 占位变量名唯一性 / `${a.b}` 引用目标存在性 / 注释完备性 / 生效形态唯一 / 相对链接有效性 / **增量极简度** / **全量核对可复核**（`00_索引.md` 须写明剔除结论 + 导出源 + 只读采集方式）/ **DDL 注释实查**（本版有 `ADD COLUMN` 时须实查库并落 SQL执行台账））。
 
 ## `tools/` — 跨版本运维 / 一次性工具归档（非版本隔离）
 
@@ -96,7 +96,7 @@ docs/deployment/
 
 **命名**：SQL / 文档文件名**尽量中文**（描述用途）+ **保留日期前缀**（如 `20260715_字典表历史数据修复.sql`）；**可运行工具**（含被 README 交叉引用的 `.py`/`.sql`）**内部文件名保持稳定**、仅外层目录中文化；**不纳入构建产物**（`__pycache__` 等）。
 
-**范式层职责（轻量）**：只做「识别 + 规范位置 + README 索引」，**不为工具生成/校验 SQL 内容**。`/version` 发布时纳入整理（README 索引对齐 + 清 `__pycache__`，见 [`/version`](../../.aidp/commands/version.md) Step 3.3.7.8）；`README.md` 属**用户内容**，脚手架 create-if-missing 不覆盖。
+**范式层职责（轻量）**：只做「识别 + 规范位置 + README 索引」，**不为工具生成/校验 SQL 内容**。`/version` 发布时纳入整理（README 索引对齐 + 清 `__pycache__`，见 [`/version`](../../{{AIDP_HOME}}/commands/version.md) Step 3.3.7.8）；`README.md` 属**用户内容**，脚手架 create-if-missing 不覆盖。
 
 ## 文件分工
 
@@ -157,7 +157,7 @@ docs/deployment/{version}/                       docs/deployment/{version}/
 | **配置中心迁移** | 用户手动触发 | `git mv 配置项清单.md 配置项清单-{中心}.md`（仍在 `增量/` 下）+ 更新代码块内的 dataId 坐标 |
 | **发布期** | `/version` 发布 | 增量只**校准**不重造（基线区间 = 上一已发布 tag → 本版，用 `release_scope.py` 算，须跨过中间过渡版本）；`配置文件/全量/` 于 Step 3.3.7.9 产出 |
 
-详细骨架 + 各场景操作步骤见 [`../../.aidp/commands/sprint-dev.md`](../../.aidp/commands/sprint-dev.md) Step X.7。
+详细骨架 + 各场景操作步骤见 [`../../{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) Step X.7。
 
 ## 部署清单内容（`{version}-deployment-checklist.md` 推荐结构）
 
@@ -194,15 +194,15 @@ docs/deployment/{version}/                       docs/deployment/{version}/
 
 ## 相关命令
 
-- [`/sprint-design`](../../.aidp/commands/sprint-design.md) Step 3.2 — 生成增量 SQL 并搬迁到 `sql/增量/`
-- [`/sprint-dev`](../../.aidp/commands/sprint-dev.md) Step X.7 — 维护 `配置文件/增量/配置项清单.md`（写代码改配置时自动触发）；Step X.8 — 维护 `部署流程/`（检测驱动）
-- [`/sprint-bugfix`](../../.aidp/commands/sprint-bugfix.md) — 修 bug 改配置时同步触发 Step X.7
-- [`/version`](../../.aidp/commands/version.md) — 发布时（Step 3.3.7）对整个 `docs/deployment/{version}/` 做优化整理完善：SQL 归档整合 + 部署流程/配置清单/checklist 完善 + 跨文档 SQL 引用对齐；**Step 3.3.7.9** 产出双轨基线（`sql/全量/` + `配置文件/全量/`，可 `/version --rebuild-baseline` 单步补跑）
+- [`/sprint-design`](../../{{AIDP_HOME}}/commands/sprint-design.md) Step 3.2 — 生成增量 SQL 并搬迁到 `sql/增量/`
+- [`/sprint-dev`](../../{{AIDP_HOME}}/commands/sprint-dev.md) Step X.7 — 维护 `配置文件/增量/配置项清单.md`（写代码改配置时自动触发）；Step X.8 — 维护 `部署流程/`（检测驱动）
+- [`/sprint-bugfix`](../../{{AIDP_HOME}}/commands/sprint-bugfix.md) — 修 bug 改配置时同步触发 Step X.7
+- [`/version`](../../{{AIDP_HOME}}/commands/version.md) — 发布时（Step 3.3.7）对整个 `docs/deployment/{version}/` 做优化整理完善：SQL 归档整合 + 部署流程/配置清单/checklist 完善 + 跨文档 SQL 引用对齐；**Step 3.3.7.9** 产出双轨基线（`sql/全量/` + `配置文件/全量/`，可 `/version --rebuild-baseline` 单步补跑）
 
 ## 相关文档
 
 - [`../init/06_版本与用户目录约定.md`](../init/06_版本与用户目录约定.md) §2.5.4 — 版本目录隔离 + 部署产物固定命名契约（权威）
-- [`../../AGENTS.md`](../../AGENTS.md) 约定 37 — 版本发布双轨部署基线（细则见 [`../../.aidp/reference/约定细则-5.md`](../../.aidp/reference/约定细则-5.md)）
+- [`../../AGENTS.md`](../../AGENTS.md) 约定 37 — 版本发布双轨部署基线（细则见 [`../../{{AIDP_HOME}}/reference/约定细则-5.md`](../../{{AIDP_HOME}}/reference/约定细则-5.md)）
 - [`../../AGENTS.md`](../../AGENTS.md) 约定 25 — 配置文件分层硬规范（`配置文件/全量/` 为唯一例外，见细则 37.7）
 - [`../../AGENTS.md`](../../AGENTS.md) 约定 22 — 上游文档级联同步（配置变更也会触发）
-- [`../../.aidp/scripts/README.md`](../../.aidp/scripts/README.md) — `release_baseline_check.py`（双轨基线 12 项机器门）
+- [`../../{{AIDP_HOME}}/scripts/README.md`](../../{{AIDP_HOME}}/scripts/README.md) — `release_baseline_check.py`（双轨基线 12 项机器门）

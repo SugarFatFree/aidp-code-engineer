@@ -14,11 +14,11 @@
 | `step-1.6-落盘后回检.md` | 落盘后回检（Step 1.6 / 1.6.5 / 1.7 / 1.7.5 / 1.8）+ SKILL 脚本复核 | 496–652 |
 | `step-2to4-*.md（已二次切分）` | Step 2 Architect 补充 + Step 3 生成 SQL（含两阶段落位）+ Step 4 动态更新 architecture | 653–842 |
 | `step-6.5-对外接口在线化.md` | Step 6.5 对外开放接口 OpenAPI 文档化（状态判定 + 首次/增量子 Agent 派单 prompt + `openapi.yaml` 结构/SHA256 契约）| 877–1111 |
-| `step-输出前硬门.md` | 输出前硬门（A 回检清单 11 项 + B 三合一回写校验脚本）| 1118–1297 |
+| `step-输出前硬门.md` | 输出前硬门（A 回检清单 12 项 + B 三合一回写校验脚本）| 1118–1297 |
 
 ## 维护边界（约定 16）
 
-命令主体与其 flow 文件必须**成对同步**；改动后镜像进脚手架 bundle `assets/aidp/commands/sprint-design.md` + `assets/aidp/flows/sprint-design/`（由 `scaffold.py::sync_gated` 下发）。下游项目不直接手改。
+命令主体与其 flow 文件必须**成对同步**；改动后镜像进脚手架 bundle `assets/aidp/commands/sprint-design.md` + `assets/aidp/flows/sprint-design/`（由 `runtime_layout.py::render_runtime` 下发）。下游项目不直接手改。
 
 
 ## 「项目级兜底回检」的边界（对应 `step-1.6-落盘后回检.md`）

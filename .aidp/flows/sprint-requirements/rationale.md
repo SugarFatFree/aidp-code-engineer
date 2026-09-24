@@ -26,7 +26,7 @@ SKILL 已把专职索引与内容主文档改为索引态原生产出：索引�
 
 ## 维护
 
-命令主体与 flow 文件必须成对同步；改 flow 后镜像进脚手架 bundle `assets/aidp/flows/sprint-requirements/`（`scaffold.py::sync_gated` 下发）。
+命令主体与 flow 文件必须成对同步；改 flow 后镜像进脚手架 bundle `assets/aidp/flows/sprint-requirements/`（`runtime_layout.py::render_runtime` 下发）。
 
 ## 表 E 完整性门与「表 F 机读副本」为何是两次调用
 

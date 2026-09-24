@@ -166,7 +166,7 @@ PC
 ```
 🎉 {项目名称} {TARGET_VERSION}_Build{N} · 最终测试完成 —— 测试结论：✅ 通过      ← 标题（`--title`，按 0.1bis 固定前缀）
 测试版本：{TARGET_VERSION} / 第 {ROUND} 轮
-测试用例总数：{TOTAL}　通过：{PASS}　失败：{FAIL}　阻塞：{BLOCK}　忽略：{SKIP}
+测试用例总数：{TOTAL}　通过：{PASS}　失败：{FAIL}　阻塞：{BLOCK}　不适用：{NA}
 自动化过程发现缺陷数：{BUGS_FOUND}　回归验证通过数：{BUGS_VERIFIED}
 测试报告：{TEST_REPORT_URL}（仓库相对路径 docs/reports/{V}/AI测试报告/index.html#/build/{BUILD}，直达 {BUILD} 子页）
 ```

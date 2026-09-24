@@ -137,7 +137,31 @@ run_one() {
     quoted=$(printf '%q' "$prompt")
     echo "[agent_loop] $(date '+%F %T') 开始 agent=$agent prompt=$prompt" >>"$log"
     rc=0
-    eval "${exec_tpl//\{prompt\}/$quoted}" >>"$log" 2>&1 || rc=$?
+    cmdline="${exec_tpl//\{prompt\}/$quoted}"
+    # ★ tick 必须有硬超时。⛔ 裸 `eval` 没有上限时的失效形态是**最安静的一种**：
+    #   Agent 进程挂死（网络悬停 / 模型侧无响应 / 等一个永不回来的工具结果）→ 本函数永不返回
+    #   → 互斥锁被永久持有 → 之后每次调度都走上面的「上一轮仍在运行，跳过」
+    #   → watchdog 看见锁被持有就判 `running` → **永不 stale、永不告警、台账一行不写**。
+    #   整条 7×24 链路静默停摆，且没有任何恢复路径。
+    #   `AIDP_TICK_MAX_SECONDS=0` 可显式关掉（不推荐）；`timeout` 不可用时退回裸 eval 并告警。
+    # 环境变量优先，其次 memory/aidp-config.yaml 的 scheduler.tick_max_seconds，最后 7200。
+    tick_max="${AIDP_TICK_MAX_SECONDS:-}"
+    if [ -z "$tick_max" ]; then
+      tick_max=$(python3 "$AIDP_HOME/scripts/aidp_config.py" get scheduler.tick_max_seconds 2>/dev/null || true)
+    fi
+    case "$tick_max" in ""|*[!0-9]*) tick_max=7200 ;; esac
+    if [ "$tick_max" -gt 0 ] 2>/dev/null && command -v timeout >/dev/null 2>&1; then
+      timeout --signal=TERM --kill-after=60 "$tick_max" bash -c "$cmdline" >>"$log" 2>&1 || rc=$?
+      if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+        echo "[agent_loop] $(date '+%F %T') ⏱️ 本轮超过 ${tick_max}s 上限，已终止（rc=$rc）" >>"$log"
+        printf '🚨 [AIDP-ALERT] %s tick 超过 %ss 上限被终止（rc=%s），见 %s\n' \
+          "$cmd" "$tick_max" "$rc" "$log" >&2
+      fi
+    else
+      [ "$tick_max" -gt 0 ] 2>/dev/null && \
+        printf '⚠️ [agent_loop] 无 timeout 命令，本轮 tick 无硬超时保护（挂死将静默停摆）\n' >&2
+      eval "$cmdline" >>"$log" 2>&1 || rc=$?
+    fi
     echo "[agent_loop] $(date '+%F %T') 结束 rc=$rc" >>"$log"
     exit "$rc"
   ) 9>"$lock"

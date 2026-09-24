@@ -1,4 +1,4 @@
-# Hooks 使用说明
+# {{AIDP_HOME}}/hooks/ — Hook 脚本（autopilot Stop 护栏）
 
 ## 文件说明
 

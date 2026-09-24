@@ -447,33 +447,57 @@ def gate_decision(proj_raw, scaffold_raw, pending, queue_nonempty, force) -> str
     return "protect"
 
 
-def refresh_optional_rules(root: Path, rep: Report):
-    """已安装的可选规则随模板位刷新；安装副本被本地改过则保留并告警（须在 templates 同步前调用）。"""
-    for tpl_rel, inst_rel in L.OPTIONAL_RULES:
-        new_tpl = L.BUNDLE_AIDP / tpl_rel
-        old_tpl = root / ".aidp" / tpl_rel
-        inst = root / ".aidp" / inst_rel
-        if not new_tpl.is_file() or not inst.is_file():
-            continue
-        new = new_tpl.read_bytes()
-        modified = old_tpl.is_file() and inst.read_bytes() != old_tpl.read_bytes()
-        if inst.read_bytes() == new:
-            continue
-        if modified:
-            rep.warn(f".aidp/{inst_rel} 与本地模板位不一致（疑似本地修改），未覆盖；"
-                     f"确认后跑 `python3 .aidp/scripts/check_webmcp.py --install-rule` 重装")
-            continue
-        write_if_diff(inst, new)
-        rep.act("update", f".aidp/{inst_rel}", "已安装的可选规则随模板升级")
+def snapshot_optional_rules(root: Path, homes) -> dict:
+    """装运行包**之前**先留一份：可选规则的「上一版模板」与「已安装副本」字节。
+
+    ⛔ 必须在安装前取：`templates/` 是受管契约，安装后模板位已是**新版**，
+    再比就分不出「用户改过」和「版本升级」了。
+    """
+    snapshot = {}
+    for home in homes:
+        for tpl_rel, inst_rel in L.OPTIONAL_RULES:
+            tpl, inst = root / home / tpl_rel, root / home / inst_rel
+            if not inst.is_file():
+                continue
+            snapshot[(home, tpl_rel, inst_rel)] = (
+                tpl.read_bytes() if tpl.is_file() else None, inst.read_bytes())
+    return snapshot
+
+
+def refresh_optional_rules(root: Path, homes, snapshot: dict, rep: Report):
+    """已安装的可选规则随模板位刷新；安装副本被本地改过则保留并告警。
+
+    ★ 这条通道是**必须的**：可选规则的安装位（`<运行根>/rules/webmcp.md`）不在下发面里 ——
+    契约真源里没有它，运行包把它当用户文件原样带过去，两条同步路径都碰不到。
+    不专门刷新，它就永久停在安装那天的版本（`rules/README.md` 与 `templates/README.md`
+    都对外承诺了「随升级自动刷新」）。
+    """
+    for home in homes:
+        for tpl_rel, inst_rel in L.OPTIONAL_RULES:
+            new_tpl, inst = root / home / tpl_rel, root / home / inst_rel
+            if not new_tpl.is_file() or not inst.is_file():
+                continue
+            old_tpl, old_inst = snapshot.get((home, tpl_rel, inst_rel), (None, None))
+            new = new_tpl.read_bytes()
+            if inst.read_bytes() == new:
+                continue
+            # 「本地改过」的判据 = 安装副本 ≠ **上一版**模板；取不到上一版时保守判为改过。
+            modified = old_tpl is None or old_inst is None or old_inst != old_tpl
+            if modified:
+                rep.warn(f"{home}/{inst_rel} 与上一版模板位不一致（疑似本地修改），未覆盖；"
+                         f"确认后跑 `python3 {home}/scripts/check_webmcp.py --install-rule --force` 重装")
+                continue
+            write_if_diff(inst, new)
+            rep.act("update", f"{home}/{inst_rel}", "已安装的可选规则随模板升级")
 
 
 def installed_manifest(root: Path):
-    """项目里上一版脚手架安装的契约指纹（`.aidp/skills/aidp-code-engineer/assets/CONTRACT_MANIFEST.json`）。
+    """项目里上一版脚手架安装的契约指纹（`<运行根>/skills/aidp-code-engineer/assets/CONTRACT_MANIFEST.json`）。
 
     运行中的脚手架就是项目内安装位时，它已是新版指纹，无法区分「本地改动」与「版本差异」→ 返回 None。
     """
-    target = root / L.INSTALLED_SKILL_REL
-    if target.resolve() == L.SKILL_DIR.resolve():
+    target = L.installed_skill_dir(root, L.MANIFEST_REL)
+    if target is None or target.resolve() == L.SKILL_DIR.resolve():
         return None
     try:
         return json.loads((target / L.MANIFEST_REL).read_text(encoding="utf-8")).get("files") or {}
@@ -595,126 +619,43 @@ def cleanup_obsolete_router(root: Path, mode: str, bk: "Backup", rep: Report):
     rep.act("remove", LEGACY_ROUTER_REL + "/", "原生命令适配不再使用统一路由")
 
 
-def sync_gated(root: Path, decision: str, rep: Report, bk: "Backup" = None, old_files=None):
-    """契约同步。`old_files` = 上一版安装的契约指纹：`overwrite` 时据此列出「本地改过、被新版覆盖」的文件。"""
-    local_overwritten = []
-    if decision == "protect":
-        rep.warn("项目脚手架版本高于当前脚手架包，跳过契约同步以保护项目；请换用新版脚手架")
-        return local_overwritten
-    refresh_optional_rules(root, rep)
-    for d in L.GATED_DIRS:
-        for rel, sp in L.iter_bundle_files(L.BUNDLE_AIDP / d):
-            label = f"{d}/{rel}"
-            if label.startswith("skills/aidp-cmd/"):
-                continue
-            dp = root / ".aidp" / d / rel
-            new = sp.read_bytes()
-            if label in L.USER_FILLABLE_CONTRACTS and dp.is_file():
-                verdict = L.decide_user_fillable(root, label, dp.read_bytes(), new)
-                if verdict == "uptodate":
-                    L.uf_record(root, label, new)
-                elif verdict == "refresh":
-                    if bk:
-                        bk.save(f".aidp/{label}")
-                    write_if_diff(dp, new)
-                    L.uf_record(root, label, new)
-                    rep.act("refresh", f".aidp/{label}", "未填写的骨架")
-                elif L.enqueue(root, f".aidp/{label}", sp):
-                    rep.act("queue", f".aidp/{label}", "已填写内容，待语义合并新骨架")
-                continue
-            if not dp.exists():
-                write_if_diff(dp, new)
-                if label in L.USER_FILLABLE_CONTRACTS:
-                    L.uf_record(root, label, new)
-                rep.act("create", f".aidp/{label}")
-            elif decision == "overwrite":
-                cur = dp.read_bytes() if dp.is_file() else None
-                if cur is not None and cur != new and old_files is not None \
-                        and old_files.get(label) != L.sha256(cur):
-                    local_overwritten.append(f".aidp/{label}")
-                if bk and cur != new:
-                    bk.save(f".aidp/{label}")
-                if write_if_diff(dp, new):
-                    rep.act("update", f".aidp/{label}")
-    if local_overwritten:
-        where = f"原文见 {bk.dir.name}/" if bk and bk.dir else "原文见本轮备份目录"
-        rep.warn(f"{len(local_overwritten)} 个契约文件本地改过、已被新版覆盖（{where}；项目特有规则应写进项目记忆文件"
-                 f"「项目自定义」段）：" + "、".join(local_overwritten[:20])
-                 + (f" …（另 {len(local_overwritten) - 20} 个）" if len(local_overwritten) > 20 else ""))
-    return local_overwritten
-
-
-def sync_scripts(root: Path, rep: Report):
-    for d in L.UNGATED_DIRS:
-        for rel, sp in L.iter_bundle_files(L.BUNDLE_AIDP / d):
-            if L.is_template_owned(f"{d}/{rel}"):
-                continue
-            dp = root / ".aidp" / d / rel
-            existed = dp.exists()
-            if write_if_diff(dp, sp.read_bytes()):
-                rep.act("update" if existed else "create", f".aidp/{d}/{rel}")
-
-
-def self_install(root: Path, decision: str, rep: Report):
-    """把运行中的脚手架 skill 安装到项目 `.aidp/skills/aidp-code-engineer/`（下游据此跑 verify / 收口）。
-
-    模板回归单测（`L.SELF_INSTALL_EXCLUDE`）不随安装下发。
-    """
-    target = root / ".aidp/skills" / L.SKILL_NAME
-    if decision == "protect" or L.SKILL_DIR.resolve() == target.resolve():
-        return
-    want = {rel: sp for rel, sp in L.iter_files(L.SKILL_DIR)
-            if not any(rel.startswith(x) for x in L.SELF_INSTALL_EXCLUDE)}
-    n = 0
-    for rel, sp in want.items():
-        if write_if_diff(target / rel, sp.read_bytes()):
-            n += 1
-    for rel, p in list(L.iter_files(target)):
-        if rel not in want:
-            p.unlink()
-            n += 1
-    if n:
-        rep.act("install", f".aidp/skills/{L.SKILL_NAME}/", f"{n} 个文件")
-
-
-def report_orphans(root: Path, rep: Report):
-    try:
-        manifest = json.loads((L.SKILL_DIR / L.MANIFEST_REL).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    expected = set(manifest.get("files") or {})
-    skills_in_manifest = {k.split("/")[1] for k in expected if k.startswith("skills/")}
-    orphans = []
-    for d in L.GATED_DIRS:
-        for rel, _ in L.iter_files(root / ".aidp" / d):
-            label = f"{d}/{rel}"
-            if label in expected or label in L.OPTIONAL_INSTALLED_CONTRACTS:
-                continue
-            if d == "skills":
-                name = rel.split("/", 1)[0]
-                if name == L.SKILL_NAME or name not in skills_in_manifest:
-                    continue
-            orphans.append(f".aidp/{label}")
-    if orphans:
-        rep.warn(f"{len(orphans)} 个契约文件已不在当前脚手架中（只报告、不删除；确认不再需要后手工删除）："
-                 + "、".join(orphans[:10]) + (" …" if len(orphans) > 10 else ""))
-    return orphans
-
 
 # ── docs / memory / 根文件 ─────────────────────────────────────────────────
 def _prev_delivered(root: Path, bundle_rel: str):
     """上一版脚手架安装进项目的同名下发件字节（运行中的脚手架即安装位时无从比较 → None）。"""
-    target = root / L.INSTALLED_SKILL_REL
-    if target.resolve() == L.SKILL_DIR.resolve():
+    target = L.installed_skill_dir(root, bundle_rel)
+    if target is None or target.resolve() == L.SKILL_DIR.resolve():
         return None
     p = target / bundle_rel
     return p.read_bytes() if p.is_file() else None
 
 
-def sync_delivered_file(root: Path, rel: str, sp: Path, bundle_rel: str, bk: "Backup", rep: Report):
+def render_home_bytes(data: bytes, home: str) -> bytes:
+    """把下发文本里的 `{{AIDP_HOME}}` 渲染成本次装配的运行根。
+
+    ⛔ 下发文档**不能**写死 `.aidp/`：那是模板仓库的维护源，下游项目根**没有**这个目录，
+    于是 `docs/**/README.md`、`memory/README.md`、`memory/aidp-config.yaml` 里那批
+    「见 `.aidp/agents/version-auditor.md`」「跑 `python3 .aidp/scripts/commit_gate.py`」
+    在下游**全是死链 / 跑不起来的命令**。此前只有 `docs/init/*.md` 走渲染，其余三类漏了。
+    """
+    try:
+        return data.decode("utf-8").replace("{{AIDP_HOME}}", home).encode("utf-8")
+    except UnicodeDecodeError:
+        return data
+
+
+def sync_delivered_file(root: Path, rel: str, sp: Path, bundle_rel: str, bk: "Backup", rep: Report,
+                        home: str = None):
     """项目会改写的下发文件（docs 结构性 README、memory/README.md）：未改过才刷新，改过的进语义改写队列。"""
     dp, data = root / rel, sp.read_bytes()
-    verdict = L.decide_user_fillable(root, rel, dp.read_bytes(), data, _prev_delivered(root, bundle_rel))
+    prev = _prev_delivered(root, bundle_rel)
+    if home:
+        # ⛔ 两侧必须同口径渲染：只渲染新件、不渲染上一版下发件，会让「项目没改过」被误判成「改过了」，
+        #    刷新退化成入队，用户每次升级都收到一堆本该自动完成的语义改写待办。
+        data = render_home_bytes(data, home)
+        if prev is not None:
+            prev = render_home_bytes(prev, home)
+    verdict = L.decide_user_fillable(root, rel, dp.read_bytes(), data, prev)
     if verdict == "uptodate":
         if dp.read_bytes() == data:
             L.uf_record(root, rel, data)
@@ -733,8 +674,10 @@ def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup", agents: lis
     for rel, sp in L.iter_files(base):
         dp = root / "docs" / rel
         data = sp.read_bytes()
-        if rel.startswith("init/") and rel.endswith(".md"):
-            data = data.decode("utf-8").replace("{{AIDP_HOME}}", home).encode("utf-8")
+        if rel.endswith(".md"):
+            # ⛔ 不能只渲染 `init/`：`docs/**/README.md` 同样逐字下发给下游，
+            #    写死的运行契约路径在那边一律断链（见 render_home_bytes）。
+            data = render_home_bytes(data, home)
         if rel.startswith("architecture/") and rel.count("/") == 1 and not rel.endswith("README.md"):
             if not dp.exists():
                 write_if_diff(dp, data)
@@ -751,7 +694,8 @@ def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup", agents: lis
                 write_if_diff(dp, data)
                 rep.act("update", f"docs/{rel}")
         elif was_aidp:
-            sync_delivered_file(root, f"docs/{rel}", sp, f"assets/docs/{rel}", bk, rep)
+            sync_delivered_file(root, f"docs/{rel}", sp, f"assets/docs/{rel}", bk, rep,
+                                home=home if rel.endswith(".md") else None)
         elif dp.read_bytes() != data:
             rep.note(f"docs/{rel} 已存在且非 AIDP 版本，保留原文；AIDP 版见 {rel_of(L.SKILL_DIR.parent, sp)}")
 
@@ -781,8 +725,99 @@ def _yaml_top_blocks(text: str) -> dict:
     return blocks
 
 
-def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup"):
+_TOP_KEY_RE = re.compile(r"^([A-Za-z_][\w-]*):")
+_SUB_KEY_RE = re.compile(r"^  ([A-Za-z_][\w-]*):")
+
+
+def _yaml_sub_entries(block: str) -> "dict[str, list[str]]":
+    """顶层段内**恰好两格缩进**的直接子键 → 该子键的完整行片段（含其前置注释）。
+
+    只认两格缩进；更深的缩进、列表项、续行都并进它所属的子键。
+    """
+    entries: "dict[str, list[str]]" = {}
+    cur, buf, pending = None, [], []
+    for line in block.splitlines()[1:]:          # 跳过顶层 `key:` 那一行
+        matched = _SUB_KEY_RE.match(line)
+        if matched:
+            if cur is not None:
+                entries[cur] = buf
+            cur, buf, pending = matched.group(1), pending + [line], []
+        elif cur is None:
+            if line.strip().startswith("#"):
+                pending.append(line)
+        elif line.strip().startswith("#") or not line.strip():
+            pending.append(line)               # 归属未定：可能是下一个子键的前置注释
+        else:
+            buf.extend(pending)
+            pending = []
+            buf.append(line)
+    if cur is not None:
+        entries[cur] = buf
+    return entries
+
+
+def _fill_missing_sub_keys(have: str, tpl: str) -> "tuple[str, list[str]]":
+    """把模板里新增的**二级配置键**补进项目已有的同名顶层段，已有键一字不动。
+
+    ⛔ 只补不改：新版本在 `notify:` / `cicd:` / `commit_gate:` 这类**已存在**的段里加子键时，
+    原先只比顶层 key 的做法会让下游永远收不到——新功能读到 `None` 静默失效，且无任何告警。
+    风格不一致（项目段里一个两格子键都认不出、却又非空）时**整段跳过**，⛔ 宁可不补也不
+    往里塞一份缩进对不上的 YAML。
+    """
+    tpl_blocks = _yaml_top_blocks(tpl)
+    lines = have.splitlines()
+    # 顶层段的起止行号（右开区间），尾部空行不算在段内。
+    bounds, current, start = {}, None, 0
+    for index, line in enumerate(lines):
+        matched = _TOP_KEY_RE.match(line)
+        if matched:
+            if current is not None:
+                bounds[current] = (start, index)
+            current, start = matched.group(1), index
+    if current is not None:
+        bounds[current] = (start, len(lines))
+
+    additions, filled = {}, []
+    for key, (begin, end) in bounds.items():
+        tpl_block = tpl_blocks.get(key)
+        if tpl_block is None:
+            continue
+        tpl_entries = _yaml_sub_entries(tpl_block)
+        if not tpl_entries:
+            continue
+        block_lines = lines[begin:end]
+        have_names = {m.group(1) for m in
+                      (_SUB_KEY_RE.match(line) for line in block_lines[1:]) if m}
+        body = [line for line in block_lines[1:] if line.strip()]
+        if body and not have_names:
+            continue                            # 缩进风格对不上，不碰
+        missing = [name for name in tpl_entries if name not in have_names]
+        if not missing:
+            continue
+        chunk = []
+        for name in missing:
+            chunk.extend(tpl_entries[name])
+            filled.append(f"{key}.{name}")
+        tail = end
+        while tail > begin and not lines[tail - 1].strip():
+            tail -= 1
+        additions[tail] = chunk
+
+    if not additions:
+        return have, []
+    out = []
+    for index, line in enumerate(lines):
+        if index in additions:
+            out.extend(additions.pop(index))
+        out.append(line)
+    for chunk in additions.values():            # 插入点落在文件末尾
+        out.extend(chunk)
+    return "\n".join(out).rstrip("\n") + "\n", filled
+
+
+def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claude",)):
     tpl = L.render((L.SKILL_DIR / L.CONFIG_TPL_REL).read_text(encoding="utf-8"), ctx)
+    tpl = tpl.replace("{{AIDP_HOME}}", runtime_home_for(agents))
     dst = root / "memory/aidp-config.yaml"
     if not dst.exists():
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -793,12 +828,22 @@ def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup"):
     present = set(re.findall(r"^([A-Za-z_][\w-]*):", have, re.M))
     missing = [(k, v) for k, v in _yaml_top_blocks(tpl).items() if k not in present]
     if missing:
-        bk.save("memory/aidp-config.yaml")
-        L.write_text_lf(dst, have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing))
-        rep.act("update", "memory/aidp-config.yaml", "补齐配置段：" + "、".join(k for k, _ in missing))
+        have = have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing)
+    have, filled = _fill_missing_sub_keys(have, tpl)
+    if not missing and not filled:
+        return
+    bk.save("memory/aidp-config.yaml")
+    L.write_text_lf(dst, have)
+    detail = []
+    if missing:
+        detail.append("补齐配置段：" + "、".join(k for k, _ in missing))
+    if filled:
+        detail.append("补齐配置键：" + "、".join(filled))
+    rep.act("update", "memory/aidp-config.yaml", "；".join(detail))
 
 
-def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"):
+def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup",
+                agents=("claude",)):
     src = L.ASSETS / "memory"
     for tpl, rel in L.MEMORY_TEMPLATES:
         dst = root / rel
@@ -814,13 +859,15 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
             L.write_text_lf(dst, rendered)
             rep.act("render", rel, "替换残留占位符")
     readme_src, readme = src / "README.md", root / "memory/README.md"
-    data = readme_src.read_bytes()
+    home = runtime_home_for(agents)
+    data = render_home_bytes(readme_src.read_bytes(), home)
     if not readme.exists():
         write_if_diff(readme, data)
         L.uf_record(root, "memory/README.md", data)
         rep.act("create", "memory/README.md")
     elif was_aidp:
-        sync_delivered_file(root, "memory/README.md", readme_src, "assets/memory/README.md", bk, rep)
+        sync_delivered_file(root, "memory/README.md", readme_src, "assets/memory/README.md",
+                            bk, rep, home=home)
     elif readme.read_bytes() != data:
         rep.note("memory/README.md 已存在且非 AIDP 版本，保留原文")
 
@@ -1331,10 +1378,16 @@ def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
         with tempfile.TemporaryDirectory(prefix=".aidp-skill-stage-", dir=target.parent) as td:
             stage = Path(td) / L.SKILL_NAME
             shutil.copytree(L.SKILL_DIR, stage, symlinks=True,
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "sources"))
-            tests = stage / "scripts/tests"
-            if tests.exists():
-                shutil.rmtree(tests)
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            # 不随安装下发的子树按 `SELF_INSTALL_EXCLUDE` 剔除。⛔ 别把这份清单再抄一遍进
+            # `ignore_patterns`：那是按 basename 匹配的，既表达不了 `scripts/tests/` 这种路径，
+            # 又会和常量各说一套——漏掉一边的后果是把模板单测/下游模板真源也装到下游去。
+            for _rel in L.SELF_INSTALL_EXCLUDE:
+                victim = stage / _rel.rstrip("/")
+                if victim.is_dir():
+                    shutil.rmtree(victim)
+                elif victim.exists():
+                    victim.unlink()
             skill_file = stage / "SKILL.md"
             L.write_text_lf(skill_file,
                             skill_file.read_text(encoding="utf-8").replace("{{AIDP_HOME}}", home))
@@ -1664,6 +1717,9 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         if overlays[first] != overlays[second]:
             overlay_updates.update((first, second))
     journal.migration_stage = "render-runtime"
+    # ⛔ 快照必须在安装前取：`templates/` 是受管契约，安装后模板位已是新版、再比就分不出
+    #    「用户改过」与「版本升级」。
+    optional_rules_before = snapshot_optional_rules(root, [home for _kind, home in specs])
     for kind, home in specs:
         dest = root / home
         if _installed(home):
@@ -1690,6 +1746,12 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind,
                                       backup_callback=backup_runtime)
         rep.act("install", home + "/", "Agent 原生运行包")
+    # 可选规则的安装位不在下发面里（真源没有它、运行包当用户文件原样带走），
+    # 不专门刷新就永久停在安装那天的版本。失败只告警，绝不影响已完成的安装事务。
+    try:
+        refresh_optional_rules(root, [home for _kind, home in specs], optional_rules_before, rep)
+    except OSError as exc:  # noqa: BLE001
+        rep.warn(f"可选规则刷新失败（不影响本次安装）：{exc}")
     for ag in agents:
         marker = root / MARKER_DIRS[ag]
         if not marker.is_dir():
@@ -1701,8 +1763,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         journal.record(rel)
     sync_docs(root, bool(previous), rep, bk, agents)
     journal.record(L.USER_FILLABLE_BASELINE)
-    sync_config(root, ctx, rep, bk)
-    sync_memory(root, ctx, bool(previous), rep, bk)
+    sync_config(root, ctx, rep, bk, agents)
+    sync_memory(root, ctx, bool(previous), rep, bk, agents)
     journal.record(L.USER_FILLABLE_BASELINE)
     sync_root_files(root, ctx, agents, rep, bk)
     if decision != "protect":

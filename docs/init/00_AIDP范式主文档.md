@@ -6,7 +6,7 @@
 >
 > 📌 本文只描述当前生效的范式结构与流程，不记录逐版变更（约定 30）。
 >
-> 完整目录规则见 `06_版本与用户目录约定.md`（单一权威来源）。本文中模板仓库 `.aidp/` 仅作维护源；下游运行契约用 `{{AIDP_HOME}}/` 表示（仅 Claude 为 `.claude/aidp/`，有 Codex / DSH 时为 `.agents/aidp/`），下游项目根不创建 `.aidp/`。无 Git 可规划、开发、本地测试与归档，但提交、推送、tag、CICD 和正式发布不可用，不自动 `git init`。
+> 完整目录规则见 `06_版本与用户目录约定.md`（单一权威来源）。本文中模板仓库 `.aidp/` 仅作维护源；下游运行契约用 `{{AIDP_HOME}}/` 表示（仅 Claude 为 `.claude/`，有 Codex / DSH 时为 `.agents/`；十个契约目录平铺其下、不再套中间层），下游项目根不创建 `.aidp/`。无 Git 可规划、开发、本地测试与归档，但提交、推送、tag、CICD 和正式发布不可用，不自动 `git init`。
 
 ---
 
@@ -76,7 +76,7 @@ project-root/
 ├── AGENTS.md                             # ★ 项目记忆文件：会话流程 / 命令 / Agent 入口 / Skills / 核心约定（Claude Code 下为 CLAUDE.md）
 ├── README.md                             # 项目说明
 │
-├── {{AIDP_HOME}}/                        # ★ 下游运行真源：仅 Claude 为 .claude/aidp；有 Codex / DSH 为 .agents/aidp
+├── {{AIDP_HOME}}/                        # ★ 下游运行真源：仅 Claude 为 .claude；有 Codex / DSH 为 .agents（契约平铺其下）
 │   ├── agents/                           # 9 个 Agent 角色指令（7 业务 + 1 合规 + 1 版本审计）
 │   ├── commands/                         # 自定义斜杠命令
 │   │   ├── sprint-init.md                # /sprint-init            项目初始化
@@ -657,7 +657,7 @@ Sprint-001（执行期）
 | | `/sprint-design` | 生成详细设计文档 | `dev-logic-architect` |
 | | `/sprint-plan` | 生成研发执行计划 | `dev-execution-planner` |
 | | `/sprint-selftest` | 生成研发自测（方案+用例+测试环境） | `dev-manual-testcase` |
-| **Sprint 执行** | `/sprint-batch` | 批量执行多个 Sprint（主体为循环 `/sprint-full`，末段 Step 6 触发部署 + AI 自动化测试） | `superpowers:executing-plans`（执行框架） |
+| **Sprint 执行** | `/sprint-batch` | 批量执行多个 Sprint（主体为循环 `/sprint-full`，末段 Step 6 触发部署 + AI 自动化测试） | `superpowers:verification-before-completion`（输出前硬门；⛔ 顶层循环**不用** `executing-plans`——它会停下征询，与「零询问连跑」冲突）|
 | | `/sprint-full` | 单 Sprint 一键执行 | - |
 | | `/sprint-start` | 启动 Sprint | - |
 | | `/sprint-dev` | 开发阶段（支持独立使用 + 自动累进） | `superpowers:test-driven-development` + `superpowers:subagent-driven-development` |
@@ -904,7 +904,7 @@ main                              生产分支（每个版本发布后合并，�
 
 ### 10.1 Skills 概述
 
-Skills 是可复用的能力模块，契约定义放在 `{{AIDP_HOME}}/skills/`，由 `.claude/skills/` 或 `.agents/skills/` 的发现入口通过各 Agent 的 Skill 机制调用。
+Skills 是可复用的能力模块，契约定义放在 `{{AIDP_HOME}}/skills/` —— 它同时就是各 Agent 的原生发现位（`.claude/skills/` 或 `.agents/skills/`），运行根降层后不再有「真源一处、入口另一处」两层。
 
 ### 10.2 常见能力诉求 → 对应落点
 

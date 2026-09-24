@@ -42,7 +42,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 
 ## 资源位置
 
-`{SKILL_DIR}` = 本 SKILL 所在目录（模板仓库为根级 `skills/aidp-code-engineer/`；安装后契约在 `{{AIDP_HOME}}/skills/aidp-code-engineer/`，Agent 可发现入口在 `.claude/skills/` 或 `.agents/skills/`）。模板 `.aidp/` 只作维护源，目标项目根不创建 `.aidp/`。仅 Claude Code 时 `{{AIDP_HOME}}=.claude/aidp`；有 Codex / DeepSeek Harness 时 `{{AIDP_HOME}}=.agents/aidp`，Claude Code 并存时使用 `.claude/aidp` 装配副本。
+`{SKILL_DIR}` = 本 SKILL 所在目录（模板仓库为根级 `skills/aidp-code-engineer/`；安装后落在 `{{AIDP_HOME}}/skills/aidp-code-engineer/` —— 那同时就是 Agent 的原生发现位（`.claude/skills/` 或 `.agents/skills/`），但它**被排除出运行包受管清单**、由安装器自己维护）。模板 `.aidp/` 只作维护源，目标项目根不创建 `.aidp/`。仅 Claude Code 时 `{{AIDP_HOME}}=.claude`；有 Codex / DeepSeek Harness 时 `{{AIDP_HOME}}=.agents`，Claude Code 并存时使用 `.claude` 装配副本（十个契约目录平铺运行根下）。
 
 ```
 {SKILL_DIR}/
@@ -84,7 +84,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --detect
    ```
 
-   输出 JSON：`mode`（已安装 `.claude/aidp/` 或 `.agents/aidp/` → upgrade；未安装但有代码 → migrate；否则 init）、`user`、`version_guess`、`agents.markers`、`scaffold`（脚手架版本 / 项目版本 / pending / 队列条数）、`memory_files`、`code_units`、`docs`、`inputs`（根目录 PRD / 原型）。
+   输出 JSON：`mode`（已安装 `.claude/` 或 `.agents/` 运行包 → upgrade；未安装但有代码 → migrate；否则 init）、`user`、`version_guess`、`agents.markers`、`scaffold`（脚手架版本 / 项目版本 / pending / 队列条数）、`memory_files`、`code_units`、`docs`、`inputs`（根目录 PRD / 原型）。
 
 2. 确定模式：`$ARGUMENTS` 显式给出则用之；否则用探测结果，并用 `AskUserQuestion` 向用户确认（可切换）。
 3. 确定 `{version}`：`--version` → `version_guess` → 询问（默认 `V0.1.0`，格式 `V主.次[.修订]`）。
@@ -192,7 +192,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 
 ## 多 Agent 说明
 
-- 单一信源是目标项目的 `{{AIDP_HOME}}/`（仅 Claude 为 `.claude/aidp/`；有 Codex / DSH 为 `.agents/aidp/`）；模板 `.aidp/` 不下发到项目根；Claude Code 的 `.claude/commands|skills|plugins`、Codex 的 `.codex/skills/aidp` / `.codex/skills`、DeepSeek Harness 的 `.dsh/commands`、共用 `.agents/skills` 及各 Agent hook / MCP 配置均由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成，不手改。
+- 单一信源是目标项目的 `{{AIDP_HOME}}/`（仅 Claude 为 `.claude/`；有 Codex / DSH 为 `.agents/`）；模板 `.aidp/` 不下发到项目根；Codex 的 `.codex/skills/aidp` / `.codex/skills`、DeepSeek Harness 的 `.dsh/commands`、并存时的 `.agents/skills` 及各 Agent hook / MCP 配置由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成，不手改；★ 而 `.claude/commands|skills|plugins` 在降层后与运行真源**同址**，`agent_sync.py` 判定 identity 后整体跳过——它们是**运行契约本体、必须入库**，不是生成物。
 - 装配方式：`link` 用相对符号链接，`copy` 为实体副本（不支持符号链接的环境）；改了下游 `{{AIDP_HOME}}/` 后重跑 `agent_sync.py` 即可同步（模板契约须在模板仓库修改并由脚手架升级）。
 - 记忆文件形态切换（例如后来加入 Codex）由 `agent_sync.py` 搬迁正文，不丢内容。
 - 命令入口：Claude Code 为 `.claude/commands` + `/命令`，Codex 为官方发现根 `.codex/skills/aidp` + `$命令`，DeepSeek Harness 为 `.dsh/commands` + `/命令`。Codex 命令 SKILL 内联执行原始正文明确串联的 `/foo args`：读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样传为 `$ARGUMENTS`；未知命令 fail closed。

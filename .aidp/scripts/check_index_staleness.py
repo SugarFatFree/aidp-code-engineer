@@ -46,9 +46,12 @@ import os
 import subprocess
 import sys
 
+from aidp_runtime import runtime_relpath
 from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 
-DEFAULT_PATHS = (".aidp",)
+# ⛔ 不能写死模板维护源目录名：`scripts/` 不受版本门控、字节相同即原样下发，而下游没有它——
+#    写死等于这道门在**每一个下游项目**上恒扫空、恒绿。真源一律经运行根派生。
+DEFAULT_PATHS = (runtime_relpath("", __file__).rstrip("/") or ".",)
 
 
 def na_vcs_disabled(capability):

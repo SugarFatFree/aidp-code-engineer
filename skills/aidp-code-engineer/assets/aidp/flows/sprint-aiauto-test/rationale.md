@@ -525,7 +525,7 @@ FALLBACK_DEFAULT）同时补齐，缺省取 `0`（fail-closed：判不出就按"
 
 ## 运行时错误写入缺陷清单的列映射与 R-NNN 前缀
 
-- 列映射：**序号 = `R-NNN`**（`R-` 前缀 = chrome 运行时错误，与 sprint-batch Step 6.5 写的失败用例 `C-NNN`、零散 bug `B-NNN`、用例 `T-NNN` 隔离，互不冲突，便于审计）；用例 ID = 触发用例 ID（自由巡检/登录流程类填 `运行时-<页面>`）；**问题描述加前缀 `[chrome运行时]`**（如 `[chrome运行时] GET /api/dashboard/stats 返回 500`）；严重程度 = skill `runtimeErrors[].severity`；复现步骤 = `角色 <role> 在 <页面URL> <触发动作>（详见 AI测试报告 {BUILD} 子页「运行时错误」R<N>）`；状态 = `待修复`
+- 列映射：**序号 = `R-NNN`**（`R-` 前缀 = chrome 运行时错误，与 sprint-batch Step 6.5 写的失败用例 `C-NNN`、零散 bug `B-NNN`、用例 `TC-*` 隔离，互不冲突，便于审计）；用例 ID = 触发用例 ID（自由巡检/登录流程类填 `运行时-<页面>`）；**问题描述加前缀 `[chrome运行时]`**（如 `[chrome运行时] GET /api/dashboard/stats 返回 500`）；严重程度 = skill `runtimeErrors[].severity`；复现步骤 = `角色 <role> 在 <页面URL> <触发动作>（详见 AI测试报告 {BUILD} 子页「运行时错误」R<N>）`；状态 = `待修复`
 
 ---
 

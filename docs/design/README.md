@@ -5,7 +5,7 @@
 >
 > ★ **约定 22 攒批级联落点**：`{version}/_开发期设计增量.md`（`_` 起头 → 不占 `NN_` 序号、不进 `00_索引.md`，
 > 发布期 `/version` Step 3.3.9.5 合并回 `01_` 主文档）。受 `check_cascade_landing.py` 硬门约束；
-> 详规见 `.aidp/reference/开发期族增量.md`。
+> 详规见 `{{AIDP_HOME}}/reference/开发期族增量.md`。
 
 ## 目录结构
 

@@ -25,7 +25,7 @@ docs/reports/{version}/
 └── delivery-report.md                   # 人工：团队级版本交付报告（sprint-close / 版本交付）
 ```
 
-> 📌 各报告子目录的骨架与说明见 `.aidp/templates/reports/`（`AI执行报告/` `AI测试报告/` `版本测试报告/`），由命令首次产出报告时从模板拷贝；`AI数据清理/` 由 `/sprint-aiauto-test` 在 autopilot 驱动的测试后按 build 生成时才创建。
+> 📌 各报告子目录的骨架与说明见 `{{AIDP_HOME}}/templates/reports/`（`AI执行报告/` `AI测试报告/` `版本测试报告/`），由命令首次产出报告时从模板拷贝；`AI数据清理/` 由 `/sprint-aiauto-test` 在 autopilot 驱动的测试后按 build 生成时才创建。
 
 ## 报告族 ①：AI 全自动开发/测试报告（命令自动生成）
 
@@ -37,7 +37,7 @@ docs/reports/{version}/
 | 版本测试报告（单文件对外交付）| `版本测试报告/{version}-测试报告.html` | `/version` | 正式发布时取 build 号最大的一轮（最终验收态）|
 
 - **build 号**：`{version}_build{N}`（N 从 1001 自增，`/sprint-autopilot` Phase 3.1.5 铸造、3.4 finalize，不打 git 分支/tag）。
-- **模板 / 数据契约 / 离线铁律以 [`.aidp/templates/reports/`](../../.aidp/templates/reports/README.md) 为权威**（含各级 README + `index.html`/`assets`/`data` 骨架）。
+- **模板 / 数据契约 / 离线铁律以 [`{{AIDP_HOME}}/templates/reports/`](../../{{AIDP_HOME}}/templates/reports/README.md) 为权威**（含各级 README + `index.html`/`assets`/`data` 骨架）。
 
 ## 报告族 ②：走查 / 交付报告（人工生成）
 
@@ -50,7 +50,7 @@ docs/reports/{version}/
 
 ## 相关文档
 
-- 报告模板库：[`../../.aidp/templates/reports/README.md`](../../.aidp/templates/reports/README.md)
+- 报告模板库：[`../../{{AIDP_HOME}}/templates/reports/README.md`](../../{{AIDP_HOME}}/templates/reports/README.md)
 - 相关命令：`/sprint-autopilot`、`/sprint-aiauto-test`、`/version`、`/sprint-close`
 - 目录约定：[`../init/06_版本与用户目录约定.md`](../init/06_版本与用户目录约定.md) §2.2.2「reports 文件命名约定」
 - Reviewer 职责：[`../init/04_agents详细规范.md`](../init/04_agents详细规范.md)

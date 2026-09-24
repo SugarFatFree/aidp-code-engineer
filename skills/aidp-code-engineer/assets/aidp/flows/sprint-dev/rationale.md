@@ -17,7 +17,7 @@
 
 ## 维护
 
-命令主体与 flow 文件必须成对同步；改 flow 后镜像进脚手架 bundle `assets/aidp/flows/sprint-dev/`（`scaffold.py::sync_gated` 下发）。
+命令主体与 flow 文件必须成对同步；改 flow 后镜像进脚手架 bundle `assets/aidp/flows/sprint-dev/`（`runtime_layout.py::render_runtime` 下发）。
 
 ## Sprint 编号为何必须跨版本扫（路径不得带 `{version}` 限定）
 

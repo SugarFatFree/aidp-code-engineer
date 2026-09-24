@@ -53,17 +53,28 @@
    - 有该条目 → 打印「`.mcp.json` 已配好远程 IP `<ip>`，但本次启动时它还未被加载（首次需信任批准）— 见步骤 2 重启」
    - 无该条目 → 进 2
 
+<!-- flowvar-check: allow REMOTE_IP Step 0 已确定的 chrome 远端 IP（测试方案预填 / baseline），由命令端在进入本围栏前注入 -->
+
 2. **确认远端 chrome 可达性**（命令端只验证 chrome 进程在不在监听，**不**为 MCP 改任何配置）：
 
    ```bash
    # IP 来源：Step 0 已确定（测试方案预填 / baseline）；仅 Step 0 case ③（无任何已知 IP）+ Phase 0.0.6 Step 5 也未收到远程 IP 时才用
    # ★ 无人值守（LOOP_UNATTENDED=1）→ 绝不 AskUserQuestion：远程 IP 属测试方案配置缺失，冻结后退出本 tick
-   #   （补 研发自测/「二·Chrome Remote Debugging 地址」后按 mtime 自动解冻）：
-   #   python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --freeze-now \
-   #     --phase 0.1.5-remote --reason testplan-incomplete --why "强制远程但无已知 chrome 远端 IP，无人值守无法收集"; exit 0
+   #   （补 研发自测/「二·Chrome Remote Debugging 地址」后按 mtime 自动解冻）。
+   #   ⛔ 这段**必须是可执行语句、不能写成注释**：注释态下执行体跑完围栏就穿过去了，
+   #      既不冻结也不告警 —— 心跳照刷、开发链路读到「测试链路健康」走暂缓，
+   #      12 tick 后按 unconverged 误冻，而真因完全不可见（散文≠落盘，见 flows/sprint-batch/rationale.md）。
+   # ⛔ shell state 不跨 Bash 调用：本围栏要用 tick 变量就必须自己 eval 一次读回。
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+   if [ -z "${REMOTE_IP:-}" ] && [ "${LOOP_UNATTENDED:-0}" = 1 ]; then
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test \
+       --version "$TARGET_VERSION" --freeze-now --phase 0.1.5-remote --reason testplan-incomplete \
+       --why "强制远程但无已知 chrome 远端 IP，无人值守无法收集"
+     exit 0
+   fi
    # 交互式：AskUserQuestion 收集 chrome 所在电脑 IP（含 192.168.x.x / 10.x.x.x / 172.16.x.x + Other），收集后回填 Step 0 的文件。
    # ★ 正常路径下远程 IP 已在 0.0.6 Step 5「一次性收全」阶段问过，此处不重复弹窗（见 0.0.6 一次性收全守卫）。
-   curl -s -m 5 http://<ip>:9222/json/version
+   curl -s -m 5 "http://${REMOTE_IP}:9222/json/version"
    ```
    - 200 → chrome 监听 OK；进 3 引导用户重启
    - 失败 → 打印失败原因（chrome 没启 / portproxy 未配 / 防火墙拦截）+ 让用户先按下方"完整启动命令"在自己电脑上把 chrome 跑起来，跑通后再回来运行 `/sprint-aiauto-test`

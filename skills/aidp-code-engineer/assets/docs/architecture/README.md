@@ -48,4 +48,4 @@ docs/architecture/
 
 - [`../init/00_AIDP范式主文档.md`](../init/00_AIDP范式主文档.md) — 6.7 节文档动态同步机制
 - [`../init/04_agents详细规范.md`](../init/04_agents详细规范.md) — Architect Agent / UI Agent 职责
-- [`../../.aidp/commands/sprint-design.md`](../../.aidp/commands/sprint-design.md) — Step 4 动态更新 architecture 说明
+- [`../../{{AIDP_HOME}}/commands/sprint-design.md`](../../{{AIDP_HOME}}/commands/sprint-design.md) — Step 4 动态更新 architecture 说明

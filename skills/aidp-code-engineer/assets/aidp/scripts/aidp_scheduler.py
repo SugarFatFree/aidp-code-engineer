@@ -50,6 +50,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -447,6 +448,21 @@ def _parse_ts(v):
     return dt
 
 
+def lock_hold_age(root, command):
+    """锁被持有了多久（秒）。未被持有返回 None。
+
+    ★ 判据取锁文件 mtime：`agent_loop.sh` 每轮用 `9>"$lock"` 打开（truncate），
+    于是 mtime ≈ 本轮 tick 的起点。
+    """
+    if not lock_held(root, command):
+        return None
+    p = os.path.join(root, "memory", ".aidp", "locks", f"loop-{command}.lock")
+    try:
+        return max(0, int(time.time() - os.path.getmtime(p)))
+    except OSError:
+        return None
+
+
 def lock_held(root, command):
     """该链路的 agent_loop 互斥锁当前是否被持有（= 一轮正在执行，长 tick 不算失联）。"""
     p = os.path.join(root, "memory", ".aidp", "locks", f"loop-{command}.lock")
@@ -483,6 +499,9 @@ def heartbeat_report(root, now=None, intervals=None):
         secs = (intervals or {}).get(chain) or parse_interval(cfg.get(meta["interval_key"])) \
             or parse_interval({"dev": "10m", "test": "5m"}[chain])
         threshold = int(cfg.get("stale_cycles") or 3) * secs + GRACE_SECONDS
+        # 挂死阈值：一轮 tick 再慢也不该跑过这个数。取「stale 阈值」与 `tick_max_seconds`
+        # 的较大者，且有 1h 下限 —— 单 Sprint 实测可达 1h 量级，压太低会把正常长 tick 误杀。
+        hung_threshold = max(threshold, int(cfg.get("tick_max_seconds") or 0), 3600)
         raw = bl.get(meta["heartbeat"])
         dt = _parse_ts(raw)
         age = int((now - dt).total_seconds()) if dt else None
@@ -490,7 +509,19 @@ def heartbeat_report(root, now=None, intervals=None):
                       "heartbeat_at": raw, "age_seconds": age, "threshold_seconds": threshold,
                       "state": "unknown" if dt is None else ("stale" if age > threshold else "fresh")}
         if out[chain]["state"] == "stale" and lock_held(root, meta["command"]):
-            out[chain]["state"] = "running"     # 本轮仍在执行（长 tick），不判失联
+            # ⛔ 「持锁 = 正在跑」**不能无上限**：Agent 进程挂死（网络悬停 / 模型侧无响应 /
+            #    等一个永不回来的工具结果）时锁被永久持有，后续每次调度都被
+            #    `agent_loop.sh` 的 `flock -n` 判成「上一轮仍在运行，跳过」，而这里又判
+            #    `running` —— 于是**永不 stale、永不告警、告警台账一行不写**。
+            #    tick 内部的 stuck 熔断也救不了：那跑在 tick 里，而 tick 根本没开始。
+            #    净效果 = 整条链路静默停摆、零信号、无恢复路径（G-AUTOPILOT-6 的非法形态）。
+            hold = lock_hold_age(root, meta["command"])
+            out[chain]["lock_hold_seconds"] = hold
+            out[chain]["lock_hung_threshold_seconds"] = hung_threshold
+            if hold is not None and hold > hung_threshold:
+                out[chain]["state"] = "hung"    # 持锁超期 = 挂死，必须响
+            else:
+                out[chain]["state"] = "running"     # 本轮仍在执行（长 tick），不判失联
     return out
 
 
@@ -540,23 +571,32 @@ def do_watchdog(root, a, now=None, send_notify=True):
                 state.pop(chain, None)
         else:
             state.pop(missing_key, None)
-        if r["state"] not in ("stale", "never-started"):
+        if r["state"] not in ("stale", "never-started", "hung"):
             if r["state"] == "fresh":
                 state.pop(chain, None)
             continue
         stale.append(chain)
-        marker = r["heartbeat_at"] if r["state"] == "stale" else "never-started"
+        marker = r["heartbeat_at"] if r["state"] == "stale" else r["state"]
         if state.get(chain) == marker:
             continue                      # 同一失联状态只告警一次
         state[chain] = marker
         label = CHAINS[chain]["label"]
         last = f"最后心跳 {r['heartbeat_at']}" if r["heartbeat_at"] else "从未收到心跳"
-        msg = (runtime_text(f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
-               f"（阈值 {r['threshold_seconds'] // 60} 分钟，{last}）。"
-               "请检查定时任务：python3 __AIDP_HOME__/scripts/aidp_scheduler.py status", __file__))
+        if r["state"] == "hung":
+            msg = (runtime_text(
+                f"{label}（{r['command']}）本轮 tick 已持锁 {(r.get('lock_hold_seconds') or 0) // 60} 分钟"
+                f"未结束（上限 {(r.get('lock_hung_threshold_seconds') or 0) // 60} 分钟，{last}）——"
+                "疑似 Agent 进程挂死，后续每轮调度都会被互斥锁跳过、链路已静默停摆。"
+                "处置：杀掉该 tick 进程（或删 memory/.aidp/locks/loop-<命令>.lock 后重启调度），"
+                "再跑 python3 __AIDP_HOME__/scripts/aidp_scheduler.py status 复核", __file__))
+        else:
+            msg = (runtime_text(f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
+                   f"（阈值 {r['threshold_seconds'] // 60} 分钟，{last}）。"
+                   "请检查定时任务：python3 __AIDP_HOME__/scripts/aidp_scheduler.py status", __file__))
         rec = {"at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
-               "source": "aidp_scheduler.watchdog", "kind": ("loop-heartbeat-never-started"
-               if r["state"] == "never-started" else "loop-heartbeat-stale"),
+               "source": "aidp_scheduler.watchdog", "kind": {
+                   "never-started": "loop-heartbeat-never-started",
+                   "hung": "loop-tick-hung"}.get(r["state"], "loop-heartbeat-stale"),
                "chain": chain, "command": r["command"], "heartbeat_at": r["heartbeat_at"],
                "age_seconds": r["age_seconds"], "threshold_seconds": r["threshold_seconds"],
                "message": msg}

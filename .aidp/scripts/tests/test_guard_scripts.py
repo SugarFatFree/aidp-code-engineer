@@ -4716,8 +4716,79 @@ def main():
     test_subagent_cascade_contract()
     test_project_count_claims()
     test_conv30_baseline_key()
+    test_version_audit_landed()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed / {_skipped} skipped ══")
     return 1 if _failed else 0
+
+
+# ────────────────────────────────────────────────────────────
+# check_version_audit_landed.py — 版本规划产物审计「真的跑过」（ERROR）
+# G-VERSION-2 此前的唯一承载是散文铁律：「跑了且通过」与「压根没跑」在终端上同形。
+# ────────────────────────────────────────────────────────────
+def test_version_audit_landed():
+    import check_version_audit_landed as VAL
+    print("【check_version_audit_landed 审计落地门】")
+
+    check("自检通过（阳性 + 两类阴性 + 豁免四条内建用例）", VAL.self_check())
+
+    root = Path(tempfile.mkdtemp(prefix="aidp-val-"))
+    try:
+        # 适用范围：没有任何规划产物 → N/A 跳过（⛔ 不是"缺失"：那会指错方向，
+        # 真问题在上游 Step 2.4 没跑完）。
+        res = VAL.scan(root, "V0.1.0")
+        check("★无规划产物 → 适用范围外、N/A 跳过（不误报缺失）",
+              res["ok"] and res.get("skipped") == "no-planning-artifacts")
+        planning = root / "docs/requirements/V0.1.0"
+        planning.mkdir(parents=True)
+        (planning / "01_研发需求.md").write_text("# 需求\n", encoding="utf-8")
+
+        # 阴性①：有规划产物却没有审计报告 → 必须判缺失，⛔ 不得静默放行
+        res = VAL.scan(root, "V0.1.0")
+        check("★缺审计报告 → 不通过且 kind=audit-report-missing",
+              not res["ok"]
+              and [f["kind"] for f in res["findings"]] == ["audit-report-missing"])
+
+        # 阴性②：占位空壳报告同样不算跑过 —— 失效形态正是「建个空文件把门骗过去」
+        d = root / "docs/audit/V0.1.0"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "version-output-audit-2026-01-01.md").write_text("# 审计\n\n待补\n", encoding="utf-8")
+        res = VAL.scan(root, "V0.1.0")
+        check("★空壳报告 → 仍不通过且 kind=audit-report-stub",
+              not res["ok"]
+              and [f["kind"] for f in res["findings"]] == ["audit-report-stub"])
+
+        # 阳性：八项齐备 + 结论字样的实质报告 → 通过（证明上面两条不是"恒红"）
+        body = ("# 版本规划产物审计\n\n## A 存在性\nok\n## B 边界\nok\n"
+                "## C 覆盖完整性\nok\n## D 增量一致性\nok\n## E 引用链\nok\n"
+                "## F 原型覆盖度\nok\n## G 语义变更派生完整性\nok\n"
+                "## H 跨版本需求作废完整性\nok\n\noverall: pass\n" + "详情。\n" * 40)
+        (d / "version-output-audit-2026-01-01.md").write_text(body, encoding="utf-8")
+        res = VAL.scan(root, "V0.1.0")
+        check("★阳性对照：实质审计报告 → 通过、零 findings（门不是恒红）",
+              res["ok"] and res["findings"] == [])
+
+        # 补丁命名也要认（补充模式产物 `-补丁-NN.md`）
+        (d / "version-output-audit-2026-01-01.md").unlink()
+        (d / "version-output-audit-补丁-03.md").write_text(body, encoding="utf-8")
+        check("补充模式的 `-补丁-NN.md` 命名同样被识别为审计产出",
+              VAL.scan(root, "V0.1.0")["ok"])
+
+        # 豁免：唯一合法跳过是用户显式 --skip-audit，且必须留下「未经审计」的事实
+        res = VAL.scan(root, "V9.9.9", skip_audit=True)
+        check("★--skip-audit 豁免放行，但恒留 audit-skipped-by-flag 供报告如实登记"
+              "（⛔ 豁免不等于「审计通过」）",
+              res["ok"]
+              and [f["kind"] for f in res["findings"]] == ["audit-skipped-by-flag"])
+
+        # 命令端真的接了这道门（护栏无调用方 = 等于没有）
+        flow = (REPO_ROOT / ".aidp/flows/version/planning-8.md").read_text(encoding="utf-8")
+        skel = (REPO_ROOT / ".aidp/commands/version.md").read_text(encoding="utf-8")
+        check("★flow 分片 planning-8.md 真的调用了本门（否则护栏无调用方）",
+              "check_version_audit_landed.py" in flow)
+        check("★命令骨架表登记了 Step 2.5.0",
+              "2.5.0" in skel and "check_version_audit_landed.py" in skel)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 # ────────────────────────────────────────────────────────────

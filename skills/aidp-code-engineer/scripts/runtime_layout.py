@@ -31,6 +31,25 @@ RUNTIME_EXCLUDES = L.RUNTIME_EXCLUDES
 OWNED_TOPLEVEL = tuple(RUNTIME_DIRS) + (RUNTIME_MANIFEST,)
 
 
+def _runtime_ignored(rel_parts) -> bool:
+    """**已安装运行包内**的忽略口径：只排除纯派生物（`__pycache__/`、`*.pyc`）。
+
+    ⛔ 这里绝不能复用 `scaffold_lib.is_ignored` —— 那是**镜像 / 下发**口径，它额外排除
+    `config.json`、`.env`、`auth.*.json`，为的是不把凭据打进 bundle。在已安装的运行包里
+    这批名字的含义正好**相反**：它们是用户自己填的凭据，`{{AIDP_HOME}}/skills/*/config.json`
+    本就是范式内的落点（见 `scripts/autopilot_unfreeze.py` 的解冻扫描）。
+    沿用下发口径的后果是它们对重装**完全隐形**：既不进 manifest 指纹（于是
+    `_runtime_modified` 看不见、不触发备份），也不进 `_user_overlay`（于是重装时
+    随 `previous` 一起被丢弃）——凭据 + gitignore + 无备份 = 不可恢复，直接违反
+    「升级不丢项目自有内容」。
+    """
+    parts = list(rel_parts)
+    if any(part in L.IGNORE_DIRS for part in parts):
+        return True
+    name = parts[-1] if parts else ""
+    return Path(name).suffix in L.IGNORE_SUFFIX
+
+
 def owned_entries(root: Path):
     """运行根下受管的**直接子条目**（`commands/<file>`、`skills/<name>` 这一层）。
 
@@ -43,7 +62,7 @@ def owned_entries(root: Path):
             continue
         for child in sorted(base.iterdir()):
             relative = f"{dirname}/{child.name}"
-            if L.is_ignored((dirname, child.name)) or _excluded(relative):
+            if _runtime_ignored((dirname, child.name)) or _excluded(relative):
                 continue
             yield relative, child
 
@@ -252,7 +271,7 @@ def _runtime_files(runtime: Path):
             raise ValueError(f"运行包不得包含 symlink: {path}")
         if path.is_file() and path.stat().st_nlink != 1:
             raise ValueError(f"运行包不得包含 hardlink: {path}")
-        if L.is_ignored(relative.parts):
+        if _runtime_ignored(relative.parts):
             continue
         # ⛔ 必须应用 RUNTIME_EXCLUDES：运行根降层之后，脚手架 skill 装在
         #    `skills/aidp-code-engineer/` —— 那是**安装器自身**、不是运行契约，

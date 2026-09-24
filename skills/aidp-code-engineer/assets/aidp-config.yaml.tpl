@@ -12,12 +12,12 @@ project:
   name_cn: "{{project_cn}}"
 
 commit_gate:
-  # 提交前门禁总开关（约定 24：每次 git commit 前跑 .aidp/scripts/commit_gate.py）。
+  # 提交前门禁总开关（约定 24：每次 git commit 前跑 {{AIDP_HOME}}/scripts/commit_gate.py）。
   # 关掉之后：不再检查台账积压 / CICD 推送欠账。
   enabled: true
 
 notify:
-  # 里程碑通知总开关（约定 32：.aidp/scripts/notify.py）。
+  # 里程碑通知总开关（约定 32：{{AIDP_HOME}}/scripts/notify.py）。
   # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。
   enabled: false
   # 一个渠道失败时是否尝试下一个
@@ -53,7 +53,7 @@ stop_guard:
   enabled: true
 
 scheduler:
-  # 7×24 操作系统调度（python3 .aidp/scripts/aidp_scheduler.py install）：
+  # 7×24 操作系统调度（python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install）：
   # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。
   dev_interval: 10m
   test_interval: 5m
@@ -61,6 +61,11 @@ scheduler:
   agent: auto
   # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知
   stale_cycles: 3
+  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久
+  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。
+  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；
+  # watchdog 用 max(stale 阈值, 本值, 1h) 作「持锁超期 = 挂死」的判据。0 = 不设上限（不推荐）。
+  tick_max_seconds: 7200
   # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。
   # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。
   exec: {}

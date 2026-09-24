@@ -68,7 +68,7 @@ def is_template_owned(rel_to_aidp: str) -> bool:
 # 用户填充型契约：脚手架发骨架、项目持续填写；填过的不覆盖，改入语义改写队列。
 USER_FILLABLE_CONTRACTS = {"reference/子Agent必读.md"}
 USER_FILLABLE_BASELINE = ".aidp-user-fillable.json"
-# 按需安装的可选规则：(模板位, 安装位)，均相对 `.aidp/`。
+# 按需安装的可选规则：(模板位, 安装位)，均相对**运行根**（`.claude/` 或 `.agents/`；⛔ 不是模板的 `.aidp/`）。
 OPTIONAL_RULES = (("templates/optional-rules/webmcp.md", "rules/webmcp.md"),)
 OPTIONAL_INSTALLED_CONTRACTS = {inst for _, inst in OPTIONAL_RULES}
 
@@ -589,7 +589,35 @@ QUEUE_HEADER = (
     "# 全部处理完【不要手工删除本文件】：跑 finalize_upgrade.py，它逐条核验目标文件已改写后删除本文件并收口；\n"
     "# 确认某条无需改动时，用 finalize_upgrade.py --accept <目标路径> 显式标记。\n\n"
 )
-INSTALLED_SKILL_REL = f".aidp/skills/{SKILL_NAME}"
+# 历史（降层前）的安装位。⛔ 保留只为认出未迁移的存量项目，**不再是当前落点**。
+LEGACY_INSTALLED_SKILL_REL = f".aidp/skills/{SKILL_NAME}"
+# 脚手架 SKILL 在项目里**可能**的安装位，按优先级。运行根降层后它落在 `<运行根>/skills/<名>`；
+# ⛔ 别再写死 `.aidp/skills/…` —— 那是降层前的位置，下游根本没有 `.aidp/`，于是
+# 「上一版下发件」「上一版契约指纹」两处比对**恒取空**，判据静默退化成内容启发式。
+INSTALLED_SKILL_RELS = (f".claude/skills/{SKILL_NAME}", f".agents/skills/{SKILL_NAME}",
+                        LEGACY_INSTALLED_SKILL_REL)
+
+
+def installed_skill_candidates(root: Path):
+    """`INSTALLED_SKILL_RELS` 中**实际装着** SKILL 的那些；一个都没装到时原样返回全表。"""
+    root = Path(root)
+    hit = [rel for rel in INSTALLED_SKILL_RELS if (root / rel / "SKILL.md").is_file()]
+    return hit or list(INSTALLED_SKILL_RELS)
+
+
+def installed_skill_dir(root: Path, marker: str = "SKILL.md"):
+    """项目里已安装的脚手架 SKILL 目录（找不到返回 None）。
+
+    `marker` = 调用方真正要读的那个文件的相对路径。⛔ 别一律按 `SKILL.md` 找：
+    未迁移的存量项目里，上一版脚手架可能只留下 `assets/CONTRACT_MANIFEST.json`
+    这类产物而没有完整的 SKILL 目录 —— 按 `SKILL.md` 找会返回 None，
+    于是「上一版契约指纹」取空、分类静默退化成 unclassified。
+    """
+    root = Path(root)
+    for rel in INSTALLED_SKILL_RELS:
+        if (root / rel / marker).is_file():
+            return root / rel
+    return None
 
 
 def queue_entries(root: Path) -> list:
@@ -610,13 +638,10 @@ def project_template_rel(root: Path, tpl: Path) -> str:
     tpl = Path(tpl)
     try:
         relative = tpl.resolve().relative_to(SKILL_DIR.resolve()).as_posix()
-        project = Path(root)
-        if (project / ".agents/aidp").is_dir():
-            skill = ".agents/skills/aidp-code-engineer"
-        elif (project / ".claude/aidp").is_dir():
-            skill = ".claude/skills/aidp-code-engineer"
-        else:
-            skill = INSTALLED_SKILL_REL
+        # ⛔ 判据是「SKILL 装在哪」，不是「有没有那个降层前的中间目录」：
+        #    原先靠 `.agents/aidp` / `.claude/aidp` 存在与否分流，降层后两者都不存在，
+        #    于是队列里的模板路径全部回落到根本不存在的 `.aidp/skills/…`。
+        skill = installed_skill_candidates(Path(root))[0]
         return f"{skill}/{relative}"
     except ValueError:
         pass
@@ -791,5 +816,5 @@ def is_template_project(root: Path) -> bool:
         return False
     return ((root / CHANGELOG).is_file()
             and (root / PARADIGM_MEMORY_REL).is_file()
-            and any((root / rel / "SKILL.md").is_file()
-                    for rel in (TEMPLATE_SKILL_REL, INSTALLED_SKILL_REL)))
+            and ((root / TEMPLATE_SKILL_REL / "SKILL.md").is_file()
+                 or installed_skill_dir(root) is not None))

@@ -1,7 +1,7 @@
 # memory/ — AI 记忆系统（Memory Bank）
 
 > AIDP 范式的 AI 记忆系统，解决 AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）无跨会话记忆的问题。
-> 完整规范见 [`docs/init/03_memory文件详细规范.md`](../docs/init/03_memory文件详细规范.md)。模板仓库 `.aidp/` 仅是维护源；下游运行契约位于 `{{AIDP_HOME}}/`（仅 Claude 为 `.claude/aidp`，有 Codex / DSH 为 `.agents/aidp`），脚本引用一律指向下游运行目录。
+> 完整规范见 [`docs/init/03_memory文件详细规范.md`](../docs/init/03_memory文件详细规范.md)。模板仓库 `.aidp/` 仅是维护源；下游运行契约位于 `{{AIDP_HOME}}/`（仅 Claude 为 `.claude`，有 Codex / DSH 为 `.agents`），脚本引用一律指向下游运行目录。
 
 ## 分层结构
 

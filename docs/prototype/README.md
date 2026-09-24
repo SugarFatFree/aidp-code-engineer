@@ -41,7 +41,7 @@ docs/prototype/
 
 **优先级排序**：**人工高保真图片 > AI 生成高保真原型 > 原型代码（情形 B/C 作为视觉基准）**
 
-情形 C/D 必须由用户显式选择（详见 `../init/04_agents详细规范.md` UI Agent / `.aidp/agents/ui.md` 流程 A Step 0）。
+情形 C/D 必须由用户显式选择（详见 `../init/04_agents详细规范.md` UI Agent / `{{AIDP_HOME}}/agents/ui.md` 流程 A Step 0）。
 
 ## 相关命令
 

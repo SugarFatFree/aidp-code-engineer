@@ -4,6 +4,25 @@
 > 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
+### Step 2.5.0：★ 审计落地门（进 Step 2.5 前的第一件事）
+
+Step 2.4.7 的独立审计是规划产物「经审计才算数」的**唯一**承载者（也是 PRD 条目去处与
+原型覆盖度两个 Critical 硬门的唯一落点）。⛔ 「跑了且通过」与「压根没跑」在终端上
+**长得一模一样**——散文管不住这种形态，故本步以确定性脚本判定：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/check_version_audit_landed.py --version {version} --json
+# 用户显式传了 --skip-audit 时改为：… --version {version} --skip-audit --json
+AUDIT_LANDED_EXIT=$?
+```
+
+- 退出码 `0` 且无 findings → 审计已落地，继续 Step 2.5。
+- 退出码 `0` 且 findings 为 `audit-skipped-by-flag` → 合规豁免，但 **Step 2.8 报告必须如实写
+  「本次规划产物未经独立审计（`--skip-audit`）」**，⛔ 不得写成「审计通过」。
+- 退出码 `1` → **回跑 Step 2.4.7**（`planning-7.md`）。**交互式**：报出 findings 后停下；
+  **无人值守**：按 `planning-7.md` 的 `audit-block` 同款处置交 autopilot 熔断，
+  ⛔ 不得因为"看起来一切正常"就往下走。
+
 ### Step 2.5：初始化 memory/{version}/{user}/progress.md
 
 如该文件不存在，按 `03_memory文件详细规范.md` 第 7 节（`progress.md`）模板创建，

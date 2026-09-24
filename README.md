@@ -65,7 +65,8 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-eng
 - 本模板仓库的 `.aidp/` **仅是维护源**，不在下游项目根创建 `.aidp/`。下游仅 Claude Code 时运行真源为 `.claude/`；使用 Codex 或 DeepSeek Harness（含多 Agent 并存）时共享真源为 `.agents/`，Claude Code 从 `.claude/` 读取装配副本。下发契约中的 `{{AIDP_HOME}}` 在安装时渲染为运行路径。
 - **命令与 SKILL 在源头分开**：AIDP 命令只在 `{{AIDP_HOME}}/commands/`，公共 SKILL 契约只在 `{{AIDP_HOME}}/skills/`，模板仓库对应目录位于 `.aidp/`。`agent_sync.py` 分别生成 Claude Code 命令文件、Codex 官方发现根 `.codex/skills/aidp/` 下的显式调用命令 SKILL、DeepSeek Harness 命令文件；命令参数正文保持 `$ARGUMENTS` 语义不变。Codex 命令正文明确串联 `/foo args` 时，确定性读取 `{{AIDP_HOME}}/commands/foo.md` 并把 `args` 原样传为子命令 `$ARGUMENTS`，未知命令 fail closed。
 - **插件**：模板 `.aidp/plugins/` 随仓库分发浏览器插件（内置 `chrome-devtools-mcp`：浏览器自动化 MCP + 配套调试 SKILL，Apache-2.0）。Claude Code 以项目级插件启用，MCP 工具名使用插件命名空间 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`；Codex / DeepSeek Harness 的插件 SKILL 共用 `.agents/skills/chrome-devtools-mcp/skills/`；MCP 分别写入 `.codex/config.toml`、`.dsh/mcp.json`。
-- **适配入口不入库**：`.claude/commands|skills|plugins`、`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`、`.agents/skills` 下的生成入口由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 维护并自动写入 `.gitignore` 托管块；clone 后先跑一次该命令（脚手架 init / migrate / upgrade 会自动执行）。
+- **适配入口不入库**：由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 维护的**生成入口**（`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`，以及 Claude Code 与其它 Agent 并存时的 `.agents/skills`）自动写入 `.gitignore` 托管块；clone 后先跑一次该命令（脚手架 init / migrate / upgrade 会自动执行）。
+- ★ **`.claude/commands|skills|plugins` 是运行契约本体、必须入库**：运行根降层后它们与运行真源**同址**，`agent_sync.py` 判定为 identity 后**整体跳过**（既不生成、也不进 `.gitignore` 托管块）。⛔ 别按「生成物」对待它们——那会把整个 AIDP 运行契约漏在版本库外。
 - 同时使用多种 Agent 时，`AGENTS.md` 为正文，`CLAUDE.md` 仅引用它（`@AGENTS.md`）。模板仓库查询记忆文件用 `python3 .aidp/scripts/agent_env.py memory-file`；下游改用 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file`。
 
 **非 Git 能力边界**：`vcs_mode=none` 时仍可安装运行契约、规划、开发、本地测试及本地归档；Git diff / commit / push / tag 与依赖 commit SHA 的 CICD 监听均不适用，不能以跳过这些步骤冒充发布成功。需要正式发布时先由项目负责人明确建立并配置 Git 仓库，再复核发布门禁；脚手架不会自动 `git init`。
@@ -79,7 +80,7 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-eng
 │   ├── agents/            #   角色 Agent（architect / frontend / backend / qa / ui …）
 │   ├── flows/             #   命令分片流程
 │   ├── rules/ reference/  #   规则与约定细则
-│   ├── skills/            #   Skills（脚手架 aidp-code-engineer 不在这里，见 .claude/skills 或 .agents/skills）
+│   ├── skills/            #   公共 SKILL 契约（脚手架 aidp-code-engineer 同住此处，但不进运行包受管清单）
 │   ├── scripts/           #   确定性脚本（commit_gate / cicd_watch / notify / baseline_edit …）
 │   ├── hooks/             #   Hook（autopilot Stop 护栏）
 │   └── templates/         #   报告 / 部署模板

@@ -246,7 +246,8 @@ _NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 def _be(args, capture=True):
     """shell out 到 baseline_edit.py（唯一加锁写入口）。"""
     cmd = [sys.executable, BASELINE_EDIT] + args
-    return subprocess.run(cmd, capture_output=capture, text=True)
+    # ⛔ 必须带 timeout：阻塞式 flock 无上限，对面持锁挂死时本 tick 会永远停在这一行。
+    return subprocess.run(cmd, capture_output=capture, text=True, timeout=60)
 
 
 def _get_tick(command: str = "autopilot") -> dict:

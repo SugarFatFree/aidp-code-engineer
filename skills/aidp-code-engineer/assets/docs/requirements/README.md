@@ -4,7 +4,7 @@
 
 > ★ **约定 22 攒批级联产物（受 `check_cascade_landing.py` 硬门约束）**：
 > `{version}/研发需求/_开发期需求增量.md`（约定 22 族增量册·需求，append-only，收口即删；与 `01_研发需求.md` 同目录；`_` 起头 → 不占 `NN_` 序号、不进 `00_索引.md`、SKILL 命名门豁免）。
-> 详规单一信源 = `.aidp/reference/开发期族增量.md`。
+> 详规单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`。
 
 ## 目录结构
 
@@ -72,4 +72,4 @@ docs/requirements/
 
 - [`../init/02_迭代输入指导.md`](../init/02_迭代输入指导.md) — 迭代输入说明与约定 15 拆分规则（§10.4）
 - [`../init/06_版本与用户目录约定.md`](../init/06_版本与用户目录约定.md) — 路径规则
-- [`../../.aidp/commands/sprint-requirements.md`](../../.aidp/commands/sprint-requirements.md) — 命令详细执行步骤
+- [`../../{{AIDP_HOME}}/commands/sprint-requirements.md`](../../{{AIDP_HOME}}/commands/sprint-requirements.md) — 命令详细执行步骤

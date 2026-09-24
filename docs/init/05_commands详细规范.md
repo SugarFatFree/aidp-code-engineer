@@ -1,7 +1,7 @@
 # 05 — Commands 详细规范
 
 > **文档定位**：本文档是斜杠命令体系的**总览和索引**。
-> 下游命令定义位于 `{{AIDP_HOME}}/commands/`（仅 Claude 为 `.claude/aidp/`，有 Codex / DSH 为 `.agents/aidp/`），适配入口分别为 `.claude/commands/`、`.codex/skills/aidp/`、`.dsh/commands/`。下方 Markdown 链接指向下游已安装的命令定义；模板仓库中的维护源位于 `.aidp/commands/`。
+> 下游命令定义位于 `{{AIDP_HOME}}/commands/`（仅 Claude 为 `.claude/`，有 Codex / DSH 为 `.agents/`），适配入口分别为 `.claude/commands/`、`.codex/skills/aidp/`、`.dsh/commands/`。下方 Markdown 链接指向下游已安装的命令定义；模板仓库中的维护源位于 `.aidp/commands/`。
 > 本文档**不再重复**每个命令的内部细节，仅提供命令层次、执行模式、调用关系的全局视图。
 
 ---
@@ -70,7 +70,7 @@
 | | `/sprint-design` | 生成详细设计 + 动态更新 architecture | `dev-logic-architect` | [`{{AIDP_HOME}}/commands/sprint-design.md`](../../{{AIDP_HOME}}/commands/sprint-design.md) |
 | | `/sprint-plan` | 生成研发执行计划 | `dev-execution-planner` | [`{{AIDP_HOME}}/commands/sprint-plan.md`](../../{{AIDP_HOME}}/commands/sprint-plan.md) |
 | | `/sprint-selftest` | 生成研发自测（方案 + 自测用例 + 测试环境与账号） | `dev-manual-testcase` | [`{{AIDP_HOME}}/commands/sprint-selftest.md`](../../{{AIDP_HOME}}/commands/sprint-selftest.md) |
-| **Sprint 执行** | `/sprint-batch [范围]` | 批量执行多个 Sprint | `superpowers:executing-plans` | [`{{AIDP_HOME}}/commands/sprint-batch.md`](../../{{AIDP_HOME}}/commands/sprint-batch.md) |
+| **Sprint 执行** | `/sprint-batch [范围]` | 批量执行多个 Sprint | `superpowers:verification-before-completion`（⛔ 不用 `executing-plans`：它会停下征询，与「零询问连跑」冲突）| [`{{AIDP_HOME}}/commands/sprint-batch.md`](../../{{AIDP_HOME}}/commands/sprint-batch.md) |
 | | `/sprint-full {NNN}\|"<描述>"` | 单 Sprint 一键（支持按计划或自动累进） | 串联下方 5 个 | [`{{AIDP_HOME}}/commands/sprint-full.md`](../../{{AIDP_HOME}}/commands/sprint-full.md) |
 | | `/sprint-start {NNN}` | 启动单个 Sprint | - | [`{{AIDP_HOME}}/commands/sprint-start.md`](../../{{AIDP_HOME}}/commands/sprint-start.md) |
 | | `/sprint-dev [scope\|"描述"]` | 开发阶段（★ 支持独立累进） | `superpowers:test-driven-development` + `superpowers:subagent-driven-development` | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |

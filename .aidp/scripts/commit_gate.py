@@ -856,7 +856,7 @@ def main(argv=None):
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--quiet", action="store_true", help="只输出 JSON，不输出状态叙述（未落地义务告警仍打印）")
     ap.add_argument("--no-fail-on-debt", action="store_true",
-                    help="有未落地义务时仍返回 0（逃生阀；⛔ 不要在约定 24 的常规判定调用里加）")
+                    help="有未落地义务时仍返回 0（逃生阀；⛔ 不要在约定 24 的常规判定调用里加。⚠️ 用掉它会往 memory/.aidp/alerts.jsonl 落一条 commit-gate-debt-waived）")
     ap.add_argument("--context", default="bare-conversation",
                     choices=["bare-conversation", "aidp-command"],
                     help="调用上下文，仅作留痕与约定 41 档位适用性判定。"
@@ -887,6 +887,16 @@ def main(argv=None):
     _print_obligations(info)
 
     if args.no_fail_on_debt:
+        if info["debts"]:
+            # 逃生阀不是消音器：退出码可以被压成 0，但「本轮有欠账、且被显式豁免」这件事
+            # 必须留在本地可查的告警台账里，否则它与「真的没有欠账」在任何地方都分不开。
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                import aidp_paths
+                aidp_paths.append_alert(args.repo_root, kind="commit-gate-debt-waived",
+                                        context=args.context, debts=info["debts"])
+            except Exception:  # noqa: BLE001 —— 台账是旁路，写不进也已在 stderr 喊过
+                pass
         return 0
     return 3 if info["debts"] else 0
 

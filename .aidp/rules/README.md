@@ -36,7 +36,7 @@
 >   镜像跑过就失去基准、正常升级会被误判成"本地修改过"而永久拒绝刷新
 >   （脚手架单测 `test_scaffold_modes.OptionalRuleRefreshTest` 含反例）。另有 `check_webmcp.py` 的 `rule-stale`
 >   **WARN** 做兜底可见性；
-> - **升级不会删**：`scaffold.py::sync_gated` 是纯单向拷贝，装好的那份不会在下次 upgrade 被抹掉；
+> - **升级不会删**：可选规则的安装位不在契约真源里，运行包把它当用户文件原样带过去，装好的那份不会在下次 upgrade 被抹掉；
 > - **不会误报孤儿**：`scaffold_lib.py::OPTIONAL_INSTALLED_CONTRACTS` 已登记，
 >   否则每个启用了该能力的下游都会永久顶着一条假的"脚手架孤儿文件"告警。
 >
@@ -61,4 +61,4 @@ paths:                    # 必填，glob 模式列表；应尽量具体、只�
 
 ## 维护边界（约定 16）
 
-本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更详规 → 改模板项目的 `{{AIDP_HOME}}/rules/` 本体 → 镜像进脚手架 bundle（rules **与重跑 `sync_memory_md.py` 无关**：不进 tpl 内联，由 `scaffold.py::sync_gated` 直接下发）。下游若确需项目特化，改用**嵌套 `code/{子项目}/AGENTS.md`（Claude Code 下为 `CLAUDE.md`）** 承载项目专属规则（属项目保护范围、不被覆盖）。
+本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更详规 → 改模板项目的 `{{AIDP_HOME}}/rules/` 本体 → 镜像进脚手架 bundle（rules **与重跑 `sync_memory_md.py` 无关**：不进 tpl 内联，由 `runtime_layout.py::render_runtime` 整包渲染下发）。下游若确需项目特化，改用**嵌套 `code/{子项目}/AGENTS.md`（Claude Code 下为 `CLAUDE.md`）** 承载项目专属规则（属项目保护范围、不被覆盖）。

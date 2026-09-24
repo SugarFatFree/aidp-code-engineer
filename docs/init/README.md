@@ -57,7 +57,7 @@ AIDP 项目的标准目录结构：
 
 ```
 project/
-├── {{AIDP_HOME}}/              # ★ 运行真源：仅 Claude 为 .claude/aidp；有 Codex / DSH 为 .agents/aidp
+├── {{AIDP_HOME}}/              # ★ 运行真源：仅 Claude 为 .claude；有 Codex / DSH 为 .agents（契约平铺其下）
 │   ├── agents/                 # Agent 定义（PM/架构师/前端/后端/QA/审查员/UI/AIDP-Compliance/Version-Auditor，共 9 个）
 │   ├── commands/               # 命令定义（/version /sprint-* 等）
 │   ├── skills/                 # 公共技能定义
@@ -286,7 +286,7 @@ AIDP 范式提供了完整的理论层文档（位于 `docs/init/`），包含�
 ├── agents/     → 9 个 Agent 指令（7 业务 + 1 合规 + 1 版本审计，运行时读取）
 ├── commands/   → 19 个命令定义（/xxx 触发读取，含 /version /sprint-* /sprint-autopilot /sprint-aiauto-test 等）
 ├── skills/     → 7 个 skill（生成/执行类：研发需求、详细设计、执行计划、自测用例、自动化测试执行、代码验证、缺陷修复，被命令内部调用）
-│                 ⛔ 脚手架 `aidp-code-engineer` 不在此列：它是安装器，落在 Agent 可发现位 `.claude/skills/` 或 `.agents/skills/`
+│                 ⛔ 脚手架 `aidp-code-engineer` 不在此列：它与公共 SKILL 同住本目录，但被排除出运行包受管清单（它是安装器、不是下发契约）
 ├── rules/      → 路径限定规则（`paths:` glob 匹配到才加载）：代码向核心约定详规
 ├── flows/      → 长命令的 Phase 分片（命令本体留骨架，Phase 正文按需 Read）
 ├── reference/  → 按需 Read 的查阅分片（命令速查 / skills 用途 / 约定细则 / 初始化与文档索引）

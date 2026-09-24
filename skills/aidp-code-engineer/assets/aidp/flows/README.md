@@ -47,7 +47,7 @@
 
 ## 维护边界（约定 16）
 
-本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更 → 改模板项目 `{{AIDP_HOME}}/flows/` 本体 → 镜像进脚手架 bundle（`assets/aidp/flows/`，由 `scaffold.py::sync_gated` recurse 下发）。命令主体与其 flow 文件必须**成对同步**，避免"薄命令指向的 phase 文件缺失/过期"。
+本目录是**脚手架契约文件**，随 `aidp-code-engineer` 脚手架下发/升级同步——**下游项目不应直接手改**（改后无法回流、下次升级被覆盖）。需变更 → 改模板项目 `{{AIDP_HOME}}/flows/` 本体 → 镜像进脚手架 bundle（`assets/aidp/flows/`，由 `runtime_layout.py::render_runtime` 整包渲染下发）。命令主体与其 flow 文件必须**成对同步**，避免"薄命令指向的 phase 文件缺失/过期"。
 
 ## 现状
 

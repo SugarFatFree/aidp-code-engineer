@@ -18,9 +18,9 @@ docs/prompts/
 - 记录成功的 Prompt 工程实践
 - 供新成员参考学习
 
-## 与 `.aidp/skills/` 的区别
+## 与 `{{AIDP_HOME}}/skills/` 的区别
 
-| 对比项 | `.aidp/skills/` | `docs/prompts/{version}/` |
+| 对比项 | `{{AIDP_HOME}}/skills/` | `docs/prompts/{version}/` |
 |--------|------------------|---------------------------|
 | 范围 | 项目级（跨版本） | 版本级 |
 | 调用方式 | Claude 自动调用 | 人工复制粘贴 |

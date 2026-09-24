@@ -37,8 +37,9 @@ RESETS = {
 
 
 def _be(baseline, *args):
+    # ⛔ 必须带 timeout：阻塞式 flock 无上限。
     return subprocess.run([sys.executable, BE, "--baseline", baseline] + list(args),
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, timeout=60)
 
 
 def run(baseline, tokens):

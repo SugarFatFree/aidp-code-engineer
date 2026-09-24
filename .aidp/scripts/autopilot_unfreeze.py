@@ -315,9 +315,16 @@ def notify_reprobe(root="."):
         pass
     if not ev:
         return {"reprobed": False, "note": "尚无恢复证据（通知配置未变）"}
+    errors = []
     for k in ("notify_enabled", "notify_disabled_reason", "notify_disabled_at"):
-        subprocess.run([sys.executable, be, "--baseline", bp, "del", k],
-                       capture_output=True, text=True)
+        # ⛔ 不得丢弃返回码：删失败却照打「🔓 通知通道已重开」= 恒报成功，
+        #    而 notify_enabled=false 还在盘上，播报节点继续静默跳过。
+        cp = subprocess.run([sys.executable, be, "--baseline", bp, "del", k],
+                            capture_output=True, text=True, timeout=60)
+        if cp.returncode != 0:
+            errors.append("%s: %s" % (k, (cp.stderr or "").strip()[:80]))
+    if errors:
+        return {"reprobed": False, "note": "通知字段清除失败", "errors": errors}
     return {"reprobed": True, "evidence": ev}
 
 
@@ -436,6 +443,7 @@ def env_reprobe(root, version, apply=False, now=None):
         out["attempts"] = attempts + 1
         if failed:
             out["note"] = "⛔ 放行未完成：" + "；".join(failed)
+            out["errors"] = failed        # 供 main 转成非零退出码：写盘失败不得报成功
     return out
 
 
@@ -487,6 +495,10 @@ def main():
         print(json.dumps(r, ensure_ascii=False) if args.json else
               ("🔓 %s 环境类复探放行（第 %s 次）" % (args.env_reprobe, r.get("attempts"))
                if r.get("applied") else "🔒 %s：%s" % (args.env_reprobe, r.get("note") or "到期可放行（未 --apply）")))
+        # 「到期未放行」是正常态（rc=0）；只有**该放行却写盘失败**才是错。
+        if r.get("errors"):
+            sys.stderr.write("❌ 环境类复探写盘失败：%s\n" % r["errors"])
+            return 1
         return 0
     if args.clear:
         if not args.clear_reason:
@@ -495,6 +507,11 @@ def main():
         r = clear_if_reason(args.root, args.clear, args.clear_reason)
         print(json.dumps(r, ensure_ascii=False) if args.json else
               ("🔓 %s 已解冻（%s）" % (args.clear, args.clear_reason) if r.get("cleared") else "ℹ️ %s" % r.get("note", r)))
+        # ⛔ 写失败必须非零：`errors` 非空 = 冻结字段还在盘上，而上面已经打印了「已解冻」。
+        #    丢弃它 = 恒报成功，调用方与人都以为解冻了，下个 tick 照样被冻（本文件开篇的同病）。
+        if r.get("errors"):
+            sys.stderr.write("❌ 解冻写盘失败：%s\n" % r["errors"])
+            return 1
         return 0
     if args.manual:
         r = manual_unfreeze(args.root, args.manual)
@@ -510,6 +527,10 @@ def main():
             print("🔓 里程碑通知通道已重开（%s）" % r["evidence"])
         else:
             print("🔒 里程碑通知保持关闭（%s）" % r.get("note", ""))
+        # 「没有恢复证据」是正常态（rc=0）；清字段失败则必须非零，否则恒报「已重开」。
+        if r.get("errors"):
+            sys.stderr.write("❌ 通知字段清除失败：%s\n" % r["errors"])
+            return 1
         return 0
     if args.aiauto_probe_all:
         res = aiauto_probe_all(args.root)

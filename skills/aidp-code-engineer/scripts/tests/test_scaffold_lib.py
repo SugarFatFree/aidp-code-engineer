@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""scaffold_lib / scaffold_marker / finalize_upgrade 的单元测试。"""
+"""scaffold_lib / scaffold_marker / finalize_upgrade / 配置补键的单元测试。"""
 import json
 import os
 import tempfile
@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import _helpers as H
+import scaffold
 import scaffold_lib as L
 import scaffold_marker
 
@@ -165,6 +166,148 @@ class TemplateGitignoreTplTest(unittest.TestCase):
             r = verify.VerifyResult()
             verify.check_template_gitignore_tpl(root, r)
             self.assertTrue(any("secret-only-in-template/" in e for e in r.errors), r.errors)
+
+    def test_downstream_tpl_ignores_skill_credentials_at_runtime_home(self):
+        """★ 下游 skill 本地凭证必须被忽略，且路径要落在**降层后的运行根**上。
+
+        `.aidp/skills/*` 只存在于模板仓库；把它写进下游模板等于一条都匹配不上 ——
+        下游 `.claude/skills/<name>/.env`、`config.json` 这类含密钥的文件不再被忽略，
+        误提交风险直接落地。gitignore 由 `merge_gitignore` 原样写入、**不渲染**
+        `{{AIDP_HOME}}`，所以只能逐字写出两个运行根。
+        """
+        tpl = (L.SKILL_DIR / "sources/root/gitignore.tpl").read_text(encoding="utf-8")
+        for home in (".claude", ".agents"):
+            for pattern in ("/skills/*/config.json", "/skills/*/.env",
+                            "/skills/*/*-config.json", "/skills/*/assets/config.json"):
+                self.assertIn(home + pattern, tpl, home + pattern)
+        # 阴性：下游模板里不该再出现只有模板仓库才有的 `.aidp/skills/` 形态
+        self.assertNotIn(".aidp/skills/", tpl)
+        # 阴性：也不该写成永远不会被渲染的 token
+        self.assertNotIn("{{AIDP_HOME}}/skills/", tpl)
+
+
+class ConfigSubKeyFillTest(unittest.TestCase):
+    """★ 升级时补齐**二级**配置键。
+
+    只比顶层 key 的老做法有一个必然失效面：新版本在**已存在**的 `notify:` / `cicd:` /
+    `commit_gate:` 段里加子键时，下游永远收不到——新功能读到 `None` 静默失效，
+    且没有任何告警。这组用例钉住「补新键 / 不动旧值 / 幂等 / 风格不一致时宁可不补」。
+    """
+
+    TPL = ("project:\n  name: demo\n\n"
+           "notify:\n"
+           "  # 总开关\n  enabled: false\n"
+           "  # 一个渠道失败时试下一个\n  fallback: true\n"
+           "  channels: []\n\n"
+           "cicd:\n  provider: none\n  max_retries: 3\n")
+
+    def test_fills_missing_sub_keys_with_their_comments(self):
+        have = ("project:\n  name: demo\n\n"
+                "notify:\n  enabled: true\n\n"
+                "cicd:\n  provider: none\n")
+        out, filled = scaffold._fill_missing_sub_keys(have, self.TPL)
+        self.assertEqual(filled, ["notify.fallback", "notify.channels", "cicd.max_retries"])
+        self.assertIn("  fallback: true", out)
+        self.assertIn("  # 一个渠道失败时试下一个", out)
+        self.assertIn("  max_retries: 3", out)
+        # 用户改过的值一字不动。
+        self.assertIn("  enabled: true", out)
+        self.assertNotIn("  enabled: false", out)
+
+    def test_is_idempotent(self):
+        have = "project:\n  name: demo\n\nnotify:\n  enabled: true\n"
+        once, _ = scaffold._fill_missing_sub_keys(have, self.TPL)
+        twice, filled = scaffold._fill_missing_sub_keys(once, self.TPL)
+        self.assertEqual(twice, once)
+        self.assertEqual(filled, [])
+
+    def test_skips_block_whose_indent_style_differs(self):
+        """阴性判据：认不出两格子键、段又非空 → 整段不碰。
+
+        ⛔ 宁可不补，也不能往一份缩进对不上的 YAML 里塞两格键 —— 那会直接把用户的
+        配置文件弄成解析不了的东西。
+        """
+        have = "notify:\n    enabled: true\n"
+        out, filled = scaffold._fill_missing_sub_keys(have, self.TPL)
+        self.assertEqual(out.rstrip("\n"), have.rstrip("\n"))
+        self.assertEqual(filled, [])
+
+    def test_leaves_unknown_top_blocks_alone(self):
+        have = "project:\n  name: demo\n\nmy_own:\n  whatever: 1\n"
+        out, filled = scaffold._fill_missing_sub_keys(have, self.TPL)
+        self.assertIn("my_own:\n  whatever: 1", out)
+        self.assertNotIn("my_own.", "".join(filled))
+
+
+class OptionalRuleRefreshTest(unittest.TestCase):
+    """★ 可选规则安装位（`<运行根>/rules/webmcp.md`）随升级刷新。
+
+    它**不在下发面里**：契约真源没有它，运行包把它当用户文件原样带过去，两条同步路径都碰不到。
+    不专门刷新，它就永久停在安装那天的版本 —— 而 `rules/README.md` 与
+    `templates/README.md` 都对外承诺了「随升级自动刷新」。
+    """
+
+    def _mk(self, base, home, tpl_bytes, inst_bytes):
+        tpl_rel, inst_rel = L.OPTIONAL_RULES[0]
+        tpl, inst = base / home / tpl_rel, base / home / inst_rel
+        tpl.parent.mkdir(parents=True, exist_ok=True)
+        inst.parent.mkdir(parents=True, exist_ok=True)
+        tpl.write_bytes(tpl_bytes)
+        inst.write_bytes(inst_bytes)
+        return tpl, inst
+
+    def test_unmodified_copy_follows_new_template(self):
+        with tempfile.TemporaryDirectory() as td:
+            base, home = Path(td), ".claude"
+            old = b"# old rule\n"
+            tpl, inst = self._mk(base, home, old, old)          # 副本 == 上一版模板 = 没改过
+            snap = scaffold.snapshot_optional_rules(base, [home])
+            tpl.write_bytes(b"# new rule\n")                    # 升级把模板位换成新版
+            rep = scaffold.Report()
+            scaffold.refresh_optional_rules(base, [home], snap, rep)
+            self.assertEqual(inst.read_bytes(), b"# new rule\n",
+                             "未改过的安装副本必须跟上新模板，否则永久冻在安装那天")
+
+    def test_locally_modified_copy_is_kept_and_warned(self):
+        """阴性对照：本地改过的副本不覆盖、且必须告警（⛔ 刷新不是无差别覆盖）。"""
+        with tempfile.TemporaryDirectory() as td:
+            base, home = Path(td), ".claude"
+            mine = b"# mine\n"
+            tpl, inst = self._mk(base, home, b"# old rule\n", mine)
+            snap = scaffold.snapshot_optional_rules(base, [home])
+            tpl.write_bytes(b"# new rule\n")
+            rep = scaffold.Report()
+            scaffold.refresh_optional_rules(base, [home], snap, rep)
+            self.assertEqual(inst.read_bytes(), mine, "本地改过的副本必须原样保留")
+            self.assertTrue(rep.warnings, "未覆盖必须告警，⛔ 不得静默")
+
+    def test_snapshot_must_be_taken_before_install(self):
+        """没有快照（拿不到上一版模板）时保守判为「改过」，不覆盖。
+
+        这条钉住时序：快照必须在装运行包**之前**取 —— 装完模板位已是新版，
+        再比就分不出「用户改过」与「版本升级」，无差别覆盖会吃掉用户内容。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            base, home = Path(td), ".claude"
+            mine = b"# mine\n"
+            tpl, inst = self._mk(base, home, b"# new rule\n", mine)
+            rep = scaffold.Report()
+            scaffold.refresh_optional_rules(base, [home], {}, rep)
+            self.assertEqual(inst.read_bytes(), mine)
+            self.assertTrue(rep.warnings)
+
+    def test_absent_optional_rule_is_a_noop(self):
+        """未安装可选规则的项目：什么都不做、不凭空创建。"""
+        with tempfile.TemporaryDirectory() as td:
+            base, home = Path(td), ".claude"
+            tpl_rel, inst_rel = L.OPTIONAL_RULES[0]
+            (base / home / tpl_rel).parent.mkdir(parents=True, exist_ok=True)
+            (base / home / tpl_rel).write_bytes(b"# tpl\n")
+            rep = scaffold.Report()
+            snap = scaffold.snapshot_optional_rules(base, [home])
+            scaffold.refresh_optional_rules(base, [home], snap, rep)
+            self.assertEqual(snap, {})
+            self.assertFalse((base / home / inst_rel).exists())
 
 
 class HelpTest(unittest.TestCase):

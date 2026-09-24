@@ -2,7 +2,7 @@
 
 ## 本项目使用的 Skills
 
-> 按约定 21，下表只给**一句话用途 + 被谁调用**；各 SKILL 的维度/原则/检查细则是单一信源，详见对应 `SKILL.md`，不在此复述。模板 `.aidp` 中的 skills 仅用于维护，下游公共 SKILL 从 `.agents/skills/`（Codex / DSH）或 `.claude/skills/`（Claude）调用，契约真源在 `各 Agent 的运行根/skills/`。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
+> 按约定 21，下表只给**一句话用途 + 被谁调用**；各 SKILL 的维度/原则/检查细则是单一信源，详见对应 `SKILL.md`，不在此复述。模板 `.aidp` 中的 skills 仅用于维护；下游公共 SKILL 的**契约真源与调用位同址** = `各 Agent 的运行根/skills/`（`.claude/skills/` 或 `.agents/skills/`）——运行根降层后不再有「真源一处、入口另一处」两层。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 
 ### 本项目自带的 Skills（`{{AIDP_HOME}}/skills/`；**可改性以约定 16 为准**——全部由 AIDP 模板仓库维护、在模板仓库内可直接改，下游项目内不应直接改）
 
@@ -16,12 +16,14 @@
 | `code-verification-loop` | 代码验收循环（多维度核验，维度清单以 SKILL.md 为单一信源；`mode=verify-only` 仅验收）| `/sprint-test`（仅验收模式）；开发期预检直调其脚本：`/sprint-dev`、Frontend/Backend Agent |
 | `bugfix` | Bug 修复流程 | `/sprint-bugfix` |
 
-### 脚手架 Skill（`{{AIDP_HOME}}/skills/`——⛔ 不在上表那张契约位表里）
+### 脚手架 Skill（与公共 SKILL **同住** `{{AIDP_HOME}}/skills/`，但⛔ 不在上表那张契约位表里）
 
-> 它是**安装器**，不是下发契约的一部分：装在 Agent 的并列发现位（下游 `.agents/skills/` 或 `.claude/skills/`），<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
-> 不在 `{{AIDP_HOME}}/skills/` 下。**故不参与「Skills 表 ↔ `{{AIDP_HOME}}/skills/` 目录」双向对账**——
-> 把它算进那张表会恒报「注册了但目录不存在」。真值表见 `check_skill_ref_drift.py --json` 的 `skills` 字段，
-> 该字段用 `location`（`contract` / `sibling`）区分两个位置，对账时只取 `contract`。
+> 它是**安装器**，不是下发契约的一部分：被 `scaffold_lib.py::RUNTIME_EXCLUDES` 排除出运行包、
+> 不进 `.aidp-runtime.json` 受管清单，由安装器自己单独装与刷新。
+> ⚠️ **区别在「归不归运行包管」，不在路径**——运行根降层后它与公共 SKILL 物理同址，别再按目录去分它们。
+> **故不参与「Skills 表 ↔ 契约 SKILL」双向对账**——把它算进那张表会恒报「注册了但不在受管清单里」。
+> 真值表见 `check_skill_ref_drift.py --json` 的 `skills` 字段，该字段用 `location`（`contract` / `sibling`）
+> 区分两类归属，对账时只取 `contract`。
 
 | Skill | 用途 | 安装位 | 被谁调用 |
 |-------|------|--------|---------|
@@ -55,7 +57,6 @@
 | `superpowers:test-driven-development` | TDD 开发方法 | `/sprint-dev`（`/sprint-full` 经其调用）| 手工守 TDD 纪律：先写测试再写实现 |
 | `superpowers:subagent-driven-development` | 并行 subagent 开发 | `/sprint-dev`（`/sprint-full` 经其调用）| 串行实现（慢但等价） |
 | `superpowers:systematic-debugging` | 系统化调试 | `bugfix` SKILL 根因定位（经 `/sprint-bugfix`）| 按 `bugfix` SKILL Step 3 手工定位：复现 → 根因 → 最小修复 → 回归 |
-| `superpowers:executing-plans` | 计划执行 | `/sprint-batch` | 普通循环（本就仅作循环脚手架） |
 | `superpowers:verification-before-completion` | 完成前验证 | `/sprint-dev`、`/sprint-test`、`/sprint-batch`、`/sprint-bugfix` 方式 B | 走该命令自身的输出前硬门 |
 
 > **外部市场可选 Skills**（非自带，未装则跳过）：`api-tester`（Spring Boot 后端接口测试，由 `/sprint-test` / `/sprint-full` 在"环境可用"前提下条件调用）等；命令端以"可选/且可用"保护调用，缺失即跳过。

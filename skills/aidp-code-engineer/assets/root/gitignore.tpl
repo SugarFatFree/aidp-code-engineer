@@ -61,10 +61,16 @@ Thumbs.db
 
 # === Skill 本地凭证变体（本机私有，禁止入库）===
 # 其他含密钥的 skill 配置由项目团队自行在**本托管区之外**追加忽略行（区间内会被升级覆盖）。
-.aidp/skills/*/*-config.json
-.aidp/skills/*/.env
-.aidp/skills/*/config.json
-.aidp/skills/*/assets/config.json
+# ⛔ 这里必须逐字写出两个运行根：gitignore 由 merge_gitignore 原样写入、**不渲染** {{AIDP_HOME}}，
+#    写 token 等于一条都匹配不上。运行根降层后 SKILL 落在 `.claude/skills/` 与 `.agents/skills/`。
+.claude/skills/*/*-config.json
+.claude/skills/*/.env
+.claude/skills/*/config.json
+.claude/skills/*/assets/config.json
+.agents/skills/*/*-config.json
+.agents/skills/*/.env
+.agents/skills/*/config.json
+.agents/skills/*/assets/config.json
 
 # === AIDP 脚手架 ===
 # 升级前备份（按保留策略自动清理）

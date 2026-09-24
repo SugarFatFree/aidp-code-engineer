@@ -29,6 +29,7 @@ jobs:
           python3 .aidp/scripts/check_code_symbol_refs.py
           python3 .aidp/scripts/check_cli_invocation.py
           python3 .aidp/scripts/check_private_markers.py
+          python3 .aidp/scripts/check_runtime_paths.py --root .
       - name: Memory template in sync
         run: python3 skills/aidp-code-engineer/scripts/sync_memory_md.py --check
       - name: Scaffold bundle in sync

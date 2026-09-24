@@ -5,7 +5,7 @@
 
 > ★ **约定 22 攒批级联落点**：`{version}/研发自测/_开发期用例增量.md`（`_` 起头 → 不占 `NN_` 序号、不进 `00_索引.md`，
 > 发布期 `/version` Step 3.3.9.5 合并回用例主文档 `02_…`）。受 `check_cascade_landing.py` 硬门约束；
-> 详规见 `.aidp/reference/开发期族增量.md`。
+> 详规见 `{{AIDP_HOME}}/reference/开发期族增量.md`。
 
 ## 目录结构
 
@@ -50,5 +50,5 @@ docs/testing/
 
 - [`../init/06_版本与用户目录约定.md`](../init/06_版本与用户目录约定.md) — docs/testing 结构权威定义（§2.2）
 - [`../init/04_agents详细规范.md`](../init/04_agents详细规范.md) — QA Agent 职责
-- [`../../.aidp/skills/dev-manual-testcase/SKILL.md`](../../.aidp/skills/dev-manual-testcase/SKILL.md) — 研发自测用例 + 测试方案生成规则
-- [`../../.aidp/skills/dev-manual-testcase/references/chrome-devtools-mcp-setup.md`](../../.aidp/skills/dev-manual-testcase/references/chrome-devtools-mcp-setup.md) — chrome-devtools-mcp 安装/启动/端口转发（仅 Web 项目）
+- [`../../{{AIDP_HOME}}/skills/dev-manual-testcase/SKILL.md`](../../{{AIDP_HOME}}/skills/dev-manual-testcase/SKILL.md) — 研发自测用例 + 测试方案生成规则
+- [`../../{{AIDP_HOME}}/skills/dev-manual-testcase/references/chrome-devtools-mcp-setup.md`](../../{{AIDP_HOME}}/skills/dev-manual-testcase/references/chrome-devtools-mcp-setup.md) — chrome-devtools-mcp 安装/启动/端口转发（仅 Web 项目）

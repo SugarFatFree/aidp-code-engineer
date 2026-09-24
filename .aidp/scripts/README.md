@@ -37,6 +37,8 @@
 
 ```bash
 python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py check                 # 体检（默认）：读 .mcp.json + 连通预检 + 污染检测 + 生效指引
+python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py check-cli             # 本地 CLI 驱动可用性（五类驱动判定的单一信源）
+python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py explain-error         # 把 chrome / MCP 报错串翻成处置建议
 python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py check --ip 192.0.2.5:9222   # 指定目标做连通预检
 python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py set --ip 192.0.2.5:9222     # 写/合并远程条目 chrome-{git_user} 后自动体检
 python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py set --local-headless       # 本地无头兜底：切 chrome-devtools-cli（清 MCP 条目、免重启）
@@ -221,7 +223,7 @@ Phase 1「PRD 变化检测」的确定性程序。内联 bash 的常见失效是
 
 `/sprint-autopilot` 部署后的确定性就绪探针：**先 health 判 UP（⛔ 不用登录页可达性判就绪）→ 冷启动窗口内 502/503/连接拒绝属正常不判失败 → `--auth-url` 给出时要求鉴权接口连续 2 次取到非空数据 → 就绪后写 baseline `versions.{version}.last_deployed_at` 放行测试链路**。超时 / 间隔由 `autopilot_tick_flags.py` 的 `CLOUD_READY_TIMEOUT` / `CLOUD_READY_INTERVAL` 从 PRD 供给。
 **单次调用有上限、跨 tick 续探**：`--max-seconds`（默认 480，短于宿主工具 10 分钟上限）到时未就绪且总超时未到 → `exit 4`（pending），下个 tick 带同一 `--since <首次探测时刻>` 续探，冷启动窗口与 `--timeout` 均从 `--since` 起算、不记失败。
-用法：`python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py --health-url <health端点> [--auth-url <鉴权取数接口> --auth-header 'Authorization: Bearer <token>'] [--cold-start-seconds 55] [--timeout 300] [--interval N] [--since <ISO>] [--max-seconds 480] --version <V> [--no-write]`。退出码：`0`=就绪（不带 `--no-write` 时写 last_deployed_at）；`2`=总超时仍未就绪（命令端递增 `push_probe_fail_streak` 熔断，⛔ 不重跑流水线）；`3`=参数错误；`4`=本次调用到上限、下 tick 续探。autopilot Step D 使用 `--no-write`，完成前端校验后才统一落部署证据。
+用法：`python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py --health-url <health端点> [--auth-url <鉴权取数接口> --auth-header 'Authorization: Bearer <token>'] [--cold-start-seconds 55] [--timeout 300] [--interval N] [--since <ISO>] [--max-seconds 480] --version <V> [--no-write]`。退出码：`0`=就绪（不带 `--no-write` 时写 last_deployed_at）；`2`=总超时仍未就绪（命令端递增 `push_probe_fail_streak` 熔断，⛔ 不重跑流水线）；`3`=参数错误；`4`=本次调用到上限、下 tick 续探；`5`=**已就绪但写 `last_deployed_at` 失败**（⛔ 刻意不与 `2` 共用：`probe-timeout` 的解冻证据正是 `last_deployed_at`，按超时熔断等于把恢复路径一起堵死）。autopilot Step D 使用 `--no-write`，完成前端校验后才统一落部署证据。
 
 ## frontend_asset_probe.py — 前端产物特征探针与部署证据原子落盘
 
@@ -271,7 +273,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 输出字段：`commit_gate_enabled` / `is_template_project`（脚手架 skill 的任一落点——模板仓库根级 `skills/`、下游 `.claude/skills/` 或 `.agents/skills/`、历史的 `各 Agent 的运行根/skills/`——下 `SKILL.md` 与 `scripts/sync_memory_md.py` 都在、且 `scaffold_marker.py` 判为非下游）/ `working_tree_dirty` / `has_business_code_change` / `is_scaffold_only_change` / `today` /<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 `pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `should_dispatch_cascade`（= `stale>0`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送欠账：`cicd.provider != none` 时按 HEAD commit 查分类记录；正式代码推送超 1 小时无部署终态〔`deploy_terminal` / `last_deployed_at` / `probe_passed`〕计欠账，`unknown:<原因>` 终态不计欠账但可见）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单）。
 可 import：`pending_cascade()` / `cascade_ledger_paths()` / `CASCADE_FAMILIES` / `suspected_cascade_bypass()` / `has_business_code_change()` / `is_scaffold_only_change()` / `pending_cicd()` / `offchain_budget()` / `gather()`。
-**★ 欠账告警恒打印 + 退出码说话**：未落地义务告警**不受 `--quiet` 压制**；退出码 `0`=无欠账 / `3`=有未落地义务（台账积压 · 已级联未清理 · 格式漂移 · 归档标记未删 · 🔴 破坏性变更未登记失准点 · 疑似绕过攒批 · CICD 推送欠账）/ `4`=阻塞级（保留档位：当前判据集不产生该值，消费方仍须按阻塞处理）。**Why**：约定 24 强制的写法就是 `--quiet`，提醒若住在 `if not args.quiet:` 里就等于在唯一被强制执行的路径上从不打印。⚠️ 3/4 的语义是"本轮结束前有一项义务未落地"，**不是"禁止 commit"**；逃生阀 `--no-fail-on-debt`。其余参数：`--context bare-conversation|aidp-command`（留痕 + 约定 41 适用性）。
+**★ 欠账告警恒打印 + 退出码说话**：未落地义务告警**不受 `--quiet` 压制**；退出码 `0`=无欠账 / `3`=有未落地义务（台账积压 · 已级联未清理 · 格式漂移 · 归档标记未删 · 🔴 破坏性变更未登记失准点 · 疑似绕过攒批 · CICD 推送欠账）/ `4`=阻塞级（保留档位：当前判据集不产生该值，消费方仍须按阻塞处理）。**Why**：约定 24 强制的写法就是 `--quiet`，提醒若住在 `if not args.quiet:` 里就等于在唯一被强制执行的路径上从不打印。⚠️ 3/4 的语义是"本轮结束前有一项义务未落地"，**不是"禁止 commit"**；逃生阀 `--no-fail-on-debt`：压退出码但**不消音**——用掉它会往告警台账 `memory/.aidp/alerts.jsonl` 落一条 `commit-gate-debt-waived`（否则「豁免过的欠账」与「真的没欠账」在任何地方都分不开）。其余参数：`--context bare-conversation|aidp-command`（留痕 + 约定 41 适用性）。
 
 ## agent_env.py — 启用的 AI Agent 与项目记忆文件落点
 
@@ -287,12 +289,14 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 ## agent_loop.sh — 非交互唤起 AIDP 命令
 
 `--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过）、日志追加到 `memory/.aidp/logs/<命令>.log`。
+**tick 硬超时**：`AIDP_TICK_MAX_SECONDS`（默认 7200，`0` = 关闭）给每轮 tick 套 `timeout`；超时按 rc `124/137` 记日志并打 `🚨 [AIDP-ALERT]`。⛔ 裸 `eval` 没有上限时，挂死的 tick 会永久持锁、让整条链路静默停摆。`timeout` 命令不可用时退回裸 `eval` 并告警。
+
 Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 取 `agent_env.py detect` 第一个）；执行模板（`{prompt}` 占位）：`AIDP_AGENT_EXEC` > `scheduler.exec.<agent>` > 内置默认（Claude Code `claude -p --permission-mode acceptEdits {prompt}`、Codex `codex exec --sandbox workspace-write {prompt}`；DeepSeek Harness 无内置默认、须配置，写法以所用版本官方文档为准）。
 
 ## aidp_scheduler.py — 7×24 操作系统调度装配（开发链路 + 测试链路 + 独立 watchdog）
 
 7×24 的运行载体：为**开发链路**（`sprint-autopilot`）与**测试链路**（`sprint-aiauto-test`）各装一个用户级定时任务，分别调用 `agent_loop.sh --once <命令> --unattended`；第三条独立 watchdog 任务默认每 5 分钟巡检，即使两条链路都从未启动也可在宽限期后告警。平台自动选择：Linux `systemd --user` timer（无 systemd 时 crontab）、macOS launchd、Windows 输出 `schtasks` 命令供手工执行。
-`watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。
+`watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。另判 **`hung`（挂死）**：链路已 stale 但互斥锁仍被持有、且持锁时长超过 `max(stale 阈值, scheduler.tick_max_seconds, 1h)` → 写 `loop-tick-hung` 告警。⛔ 这一档必须有：Agent 进程挂死时锁被永久持有，之后每次调度都被 `agent_loop.sh` 的 `flock -n` 跳过，而 watchdog 只按「持锁 = 正在跑」判 `running` —— 于是永不 stale、零告警、整条链路静默停摆（tick 内部的 stuck 熔断救不了：tick 根本没开始）。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。
 用法：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install|uninstall|status|watchdog [--agent auto|claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m] [--platform systemd|cron|launchd|schtasks] [--dry-run] [--json]`；`--self-check` 离线自测（临时目录渲染三条任务）。配置段 = `memory/aidp-config.yaml` 的 `scheduler`（`aidp_config.scheduler_config()`）。
 
 ## aidp_state.py — 项目级运行时状态（baseline 的 `project_state` 段）
@@ -304,7 +308,7 @@ Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 
 
 `memory/.sprint-autopilot-baseline.json` 被**两条 `/loop` 并发写**（开发链路 `/sprint-autopilot` 写 run_state / 部署 / build / 决策字段，测试链路 `/sprint-aiauto-test` 写心跳 / 测试结果 / 冻结字段）。`jq '…' f > tmp && mv tmp f` 式的裸读改写**只原子、不加锁**，长 tick 交叉即丢更新（典型形态：aiauto-test 刚写的 `ai_report_finalized` 被 autopilot 的 run_state 整体回写覆盖，导致重复 finalize / 收尾门判据错乱）。本脚本把 `emit-report.py::record_baseline` 已验证的范式（flock + **锁内重读** + `os.replace`）抽成通用工具，所有写点共用同一把锁。
 **铁律：flow / 命令端一律经本脚本写 baseline，不写裸 `jq … > tmp && mv`**（只读 `jq -r` 查询不受限）。路径用点号分段、**含点的键必须加双引号**（`versions."V0.1.0".needs_human`），`--version V0.1.0` 会给后续相对路径自动加 `versions."V0.1.0".` 前缀。
-子命令：`get` / `set`（可多组 path/value）/ `del` / `bump [--by N]` / `touch`（写当前 ISO8601）/ `now` / `current-version`（解析「当前开发版本」，两条 loop 共用的单一信源）。
+子命令：`get` / `set`（可多组 path/value）/ `del` / `bump [--by N]` / `touch`（写当前 ISO8601）/ `now` / `current-version`（解析「当前开发版本」，两条 loop 共用的单一信源）/ `run-state`（Phase 游标：`current_phase` / `next_phase` / `next_sprint` / `phase_summary` / `pending_actions` / `phase_enter_count` / `phase_first_entered_at` 的**唯一**维护者，⛔ 别在别处 bump `phase_enter_count`）。
 
 ## autopilot_stuck_check.py — 通用 stuck 熔断（"既不失败也不推进"的兜底）
 
@@ -351,7 +355,7 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 一次审计抓出 **16 个**同形状缺陷。**★ 另有二级校验**：一级只问「变量名在不在回落表里」，答"在"即放行、**从不追问那个 baseline 键有没有人写**——于是「回落链指向一个无人写的键」这类缺陷能在全绿之下长期存活（实测：`deployment_mode` 全仓无写入者、`autopilot_entry_mode` 在 test-only 路径无写入者）。二级校验对 `BASELINE_FALLBACK` 的每个 `(scope,key)` 反查写入者，缺失且无 `DYNAMIC_FALLBACK` 兜底即报 WARN。`autopilot_tick_flags.py` 的 `DERIVED_VARS` 只是**声明变量存在**，不等于它会被写入：若全仓无 `autopilot_tick_flags.py set <NAME>` 落点、又不在 `BASELINE_FALLBACK`/`DERIVED_FROM`/`FALLBACK_DEFAULT` 里，`--shell` 对它**恒输出空串**，消费方 `${VAR:-默认}` / `[ "$VAR" = "x" ]` 于是**判据恒取默认、恒为假且零报错**。实测后果：`ENTRY_MODE` 恒空 → test-only 分支不可达 + 收尾门恒按 full 拼期望卡集 → 3 tick 冻结；`NEXT_SPRINT_NO` 恒空 → 首个 Sprint 关闭后即写 `next_sprint=done`、**剩余 Sprint 被静默丢弃**。
 **为什么 `check_flow_var_refs.py --strict` 抓不到**：它有一行 `if TICK_EVAL_RE.search(text): file_allow |= tickvars` —— 把「文件里出现 `--shell` eval」当成「这个变量取得到值」的证明，而 eval 只对有供给链的变量返回真值。本脚本补的正是这一格：不看有没有 eval，只看**到底有没有人写**。
 判据：无供给 + 有消费 → ERROR；无供给 + 无消费 → WARN（死登记）；豁免 = 登记行加 `# supply-check: ignore <原因>`。
-用法：`python3 {{AIDP_HOME}}/scripts/check_tick_var_supply.py [--root <仓库根>] [--json]`，退出码 `0`/`1`/`2`；由 `verify.py::check_tick_var_supply` 映射为 **ERROR 硬门**（存量已全部补齐，实测 `declared=33 / findings=0`）。
+用法：`python3 {{AIDP_HOME}}/scripts/check_tick_var_supply.py [--root <仓库根>] [--json]`，退出码 `0`/`1`/`2`；由 `verify.py::check_tick_var_supply` 映射为 **ERROR 硬门**（存量已全部补齐，`findings=0`；⛔ 这里不写 `declared` 的具体数字——它随登记变量增减而变，写死必腐烂）。
 
 ## check_step_index_coverage.py — 命令骨架表 ↔ flow 分片 Step 编号覆盖（确定性）
 
@@ -548,6 +552,11 @@ SKILL 名 713 字符，那不是归属是噪音（窗口调小到 120 会漏掉�
 豁免：`<!-- countclaim-check: ignore -->` / `ignore-file` / `ignore-begin`…`ignore-end`（讲历史演进的段落用）。
 用法：`python3 {{AIDP_HOME}}/scripts/check_count_claims.py [--root <仓库根>] [--json]`。退出码：`0`=全部一致 / `1`=检出过期计数 / `2`=用法错。
 
+**`--project-claims <设计目录>`（业务计数全库回扫）**：读「业务计数声明表」（5 列）后全库回扫，
+报两类候选（非动态而数字对不上 / 已声明动态却仍写成「共 N·恰 N」）。**一律 WARN、判定权在人**
+——"取值域全集 14 项"是合法留存、"恰 14 行"是必须改的断言，脚本只负责把候选列全。
+表不存在即整段跳过，不影响原有三类检查。散落面列写正则，`\|` 等 markdown 表格转义会自动还原。
+
 ## check_cascade_obligation.py
 
 约定 22 义务登记门：Sprint 归档里写下的「须按约定 22 回灌」必须同轮落进对应族的 `_开发期{族}增量.md`。
@@ -605,7 +614,7 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 
 命令端按约定 21 只做编排，但正文里大量出现 `dev-logic-architect/scripts/check_ddl_consistency.py`、`auto-test-runner/references/report-format.md` 这类**对 SKILL 内部文件的事实性引用**。SKILL 改个脚本名、并个 reference 时，命令侧的引用不会跟着变，就此悬空——而且**完全静默**，verify 全绿、测试全过，只有真去执行那一步的 AI 才发现文件不存在，那时已在下游业务项目的运行现场。
 判据：扫 `{{AIDP_HOME}}/{commands,agents,flows,reference,rules}/**.md` 里形如 `<skill>/scripts/<f>.py`、`<skill>/references/<f>.md` 的引用，`<skill>` 命中**注册表**里真实存在的 SKILL 时该文件必须存在。
-**注册表带 `location`，两个安装位都收**：`contract` = `各 Agent 的运行根/skills/<名>`（随契约下发的公共 SKILL）；`sibling` = `各 Agent 的运行根/skills/<名>`（与运行包并列安装，脚手架自身 `aidp-code-engineer` 就在这里——模板仓库是根 `skills/`，下游是 `.agents/skills/` 或 `.claude/skills/`）。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
+**注册表带 `location`，两类归属都收**：`contract` = 随运行包下发、进 `.aidp-runtime.json` 受管清单的公共 SKILL；`sibling` = 与运行包**并列安装、不进受管清单**的（脚手架自身 `aidp-code-engineer` 就是这一类，由 `scaffold_lib.py::RUNTIME_EXCLUDES` 排除出运行包、由安装器单独装/刷新）。⚠️ **运行根降层后两者物理同址**（都在 `各 Agent 的运行根/skills/<名>`：模板仓库是根 `skills/`，下游是 `.claude/skills/` 或 `.agents/skills/`），区别在**归属**而不在路径 —— 别再按路径去分它们。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 两个根都由运行包解析算出，⛔ 不写死 Agent 目录字面量、也⛔ 不用手维护名单或单点豁免：`aidp-code-engineer` 从契约位挪到并列位那天，本门对契约正文里每一处 `aidp-code-engineer/scripts/*.py` 引用同时**静默**失明，而那正是 `/sprint-init`、`/health-check`、`aidp-compliance` 真要跑的几行 `scaffold.py` / `verify.py`——加豁免只会把这个洞永久钉死。
 `location` 同时是给上层对账用的信源：**只有 `contract` 的 SKILL 才该被拉进"公共 SKILL 表"双向对账**，`sibling` 的按公共表口径对账必然报"表里有、目录里没有"的假红。相应地，`check_skill_ref_freshness.py` **刻意只收 `contract` 位**（脚手架 `scripts/` 是引擎、不该被命令端逐个接线，收进来会一次冒出一批消不掉的 WARN）。⛔ 刻意**不查**维度编号/参数名/章节标题：那些要语义匹配、误报率高，一个恒红的门比没有门更糟。
 用法：`python3 {{AIDP_HOME}}/scripts/check_skill_ref_drift.py [--root <仓库根>] [--json]`。退出码：`0`=全部有效或无 skills 目录（N/A）/ `1`=检出悬空引用。
@@ -696,7 +705,7 @@ SKILL **改一份名单**——比如把「不可豁免 = 维度 1/3/5/7」改�
 于是形成一个恰好落在最要命处的缺口：某命令把入参解析放在 flow 分片里做，命令正文却没写
 `$ARGUMENTS` → 解析器恒收空串 → **该命令全部 flag 落 0**。实测两条 7×24 loop 命令曾同时踩中：
 `--unattended` 收不到 ⇒ Phase 1 输出引导文案后退出，**每 tick 刷一屏引导、永不开工**；
-而全仓另外 13 个命令都写了这一行。失败形态是「读起来完全正确」——flow 里那句解析写得一丝不苟，
+而全仓其余命令都写了这一行。失败形态是「读起来完全正确」——flow 里那句解析写得一丝不苟，
 只是它拿到的永远是空串。
 
 判据：某命令自己或它的 `{{AIDP_HOME}}/flows/<cmd>/**` 里出现 `$ARGUMENTS` → 命令正文必须也出现，
@@ -782,7 +791,7 @@ migrate 的改名说明）必须原样保留禁用词——它们就是规则本
 设计目标是审计维度「目标 ↔ 实现背离」的**参照系**，它的全部价值来自**稳定**：命令天天改、
 目标跟着动，审计就退化成"拿今天的实现核对今天刚按实现改过的目标"——恒绿且毫无意义。
 实测形态正是每次改命令都顺手把目标改一点，几轮下来目标里塞满「违约信号 / 边界例外」、
-体积涨到 33KB，写进去的早已不是目标而是实现。
+体积不断膨胀，写进去的早已不是目标而是实现。
 
 两道判据：**① 指纹棘轮** —— 每条 `G-<域>-<序号>` 的正文做指纹存 baseline，改一个字 / 删一条
 即 ERROR（**新增放行**：新增不改变老编号的含义，改写与删除会）；**② 实现名词体检** —— 目标句里
@@ -895,7 +904,7 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 于是每个下游初始化后天生带一批清不掉的契约漂移 WARN。
 
 判据：index blob ≠ `git hash-object <文件>` **且** `git status` 没列出它 → ERROR。
-正常的未提交改动（status 看得见）**不报**。扫描面默认 `.claude`（1700+ 文件约 1s）。
+正常的未提交改动（status 看得见）**不报**。扫描面默认取**当前运行根**（`DEFAULT_PATHS` 经 `aidp_runtime.runtime_relpath` 派生：模板仓库是维护源目录、下游是 `.claude` 或 `.agents`）。
 
 根因已修（`mirror_to_bundle.py` 改 `write_bytes`，见 `_copy_content`），本脚本是**防复发兜底**。
 
@@ -950,16 +959,6 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 **为什么不做统一或手写速查表**：统一 CLI 会破坏既有调用，且各 SKILL 脚本各自演进；手写速查表必然过期——那是又一处"加东西的人不会想起去改"的副本。故做成**现场生成**。
 
 用法：`python3 {{AIDP_HOME}}/scripts/scripts_usage.py [名字片段] [--root <仓库根>] [--json]`，退出码恒 `0`。
-
----
-
-### check_count_claims.py 的 `--project-claims`（业务计数全库回扫）
-
-见该脚本文件头。要点：`--project-claims <设计目录>` 读「业务计数声明表」（5 列）后全库回扫，
-报两类候选（非动态而数字对不上 / 已声明动态却仍写成「共 N·恰 N」）。**一律 WARN、判定权在人**
-——"取值域全集 14 项"是合法留存、"恰 14 行"是必须改的断言，脚本只负责把候选列全。
-表不存在即整段跳过，不影响原有三类检查。散落面列写正则，`\|` 等 markdown 表格转义会自动还原。
-
 
 ## check_doc_numbering.py — 结构性文档编号连续性 / 唯一性（确定性）
 
@@ -1020,8 +1019,9 @@ PRD 未声明时兜底。挑兜底文件的判据是「**有没有声明**」而
 
 ## baseline_archive.py — baseline 历史版本节点归档
 
-把已发布版本的节点搬进 `memory/{version}/` 的归档文件，控制 baseline 体积；
-`--json` 为 dry-run，不传才写盘。
+把已发布版本的节点搬进 `memory/.aidp-baseline-archive/baseline-{version}.json`（落点单一信源 = `baseline_edit.py::ARCHIVE_DIRNAME`），控制 baseline 体积。
+用法：`python3 {{AIDP_HOME}}/scripts/baseline_archive.py [--baseline <path>] [--root <仓库根>] [--keep N（默认 2，保留最近 N 个已发布版本节点）] [--no-require-tag] [--dry-run] [--json]`。
+⚠️ **预演开关是 `--dry-run`，不是 `--json`**——`--json` 只切输出格式、照常写盘。
 
 ## check_comment_ratio.py — 约定 17 反向门（注释写太多同样是缺陷）
 
@@ -1067,9 +1067,17 @@ Sprint 内按守护面裁剪是合法的，发布前必须全跑一次，否则�
 判据：扫 `.md` 里的 `python3 <路径>.py …` 调用（代码块与行内代码都算，`\` 续行拼接，`[--flag X]` 可选写法与 `--a|--b` 并列写法照常判定）：① 路径含占位（`<SKILL_DIR>` 等）时按文件名找，优先与文档同属一个 SKILL 的那份；`{{AIDP_HOME}}/` 下写死的路径不存在 → `missing-script`；② 每个 `--flag` 必须是目标脚本（及同目录被 import 的模块）源码里的字符串常量或可被 argparse 缩写唯一匹配 → 否则 `unknown-flag`；③ 目标脚本有 `add_subparsers` 时，紧跟路径的首个非 flag 词须是 `add_parser` 名，首个位置参数声明了 `choices` 时须落在其内 → 否则 `unknown-subcommand`；④ 非 argparse 脚本被传 flag → WARN `non-argparse`。
 豁免：行内 `cli-check: ignore <原因>`。用法：`python3 {{AIDP_HOME}}/scripts/check_cli_invocation.py [--root <仓库根>] [--path <相对路径>] [--json]`；`--self-check`。退出码：`0`=无 ERROR / `1`=有 ERROR / `2`=用法错。CI 必跑。
 
+## check_version_audit_landed.py — 版本规划产物审计「真的跑过」（确定性，**ERROR 级**）
+
+`/version` Step 2.4.7 的独立审计是「规划产物经审计才算数」的唯一承载者（PRD 条目去处 = 审计 C/C-4、原型覆盖度 = 审计 F，都是 Critical 硬门），而**「跑了且通过」与「压根没跑」在终端上长得一模一样**——散文管不住这种形态：`docs/audit/{version}/` 为空、没有任何 flag、命令照样往下走。本门把它变成可判定的。
+判据只做**存在性 + 非空壳**，⛔ 不碰审计结论（pass/warn/block 是审计自己的事）：`docs/audit/{version}/version-output-audit-*.md` 至少一份（fresh 与 `-补丁-NN` 两种命名都认），且报告须命中八项审计标记中的 ≥5 项 + 含结论字样 + ≥512B，否则判空壳。
+**适用范围**：该版本有规划产物（`docs/{requirements,design/detail,plans,testing}/{version}/` 任一含 `.md`）才判；一个都没有 = Step 2.4 还没跑完，报「审计缺失」会指错方向 → N/A 跳过。
+**唯一豁免** = `--skip-audit`（对应用户显式给 `/version` 传的同名旗标）：退出 0，但恒打印 `audit-skipped-by-flag`，供 Step 2.8 报告如实登记「本次未经审计」，⛔ 不得写成「审计通过」。
+调用方 = `{{AIDP_HOME}}/flows/version/planning-8.md` Step 2.5.0。用法：`python3 {{AIDP_HOME}}/scripts/check_version_audit_landed.py --version <V> [--root <仓库根>] [--skip-audit] [--json]`；`--self-check`。退出码：`0`=已落地 / 豁免 / N/A；`1`=缺失或空壳；`2`=用法错。
+
 ## check_runtime_paths.py — 下发运行路径抽象守卫（确定性，**ERROR 级**）
 
-扫描下发运行契约真源，拒绝非迁移语义的根 `{{AIDP_HOME}}/` 路径；加 `--rendered` 时同时拒绝未解析 `{{AIDP_HOME}}`。排除脚手架自身、模板测试与维护 baseline。用法：`python3 {{AIDP_HOME}}/scripts/check_runtime_paths.py [--root <仓库根>] [--path <相对路径>] [--rendered] [--json]`；`--self-check`。退出码：`0`=无命中 / `1`=有命中 / `2`=用法错。
+扫描下发运行契约真源，拒绝**硬编码的旧运行根**（迁移语义之外一律须写成 `{{AIDP_HOME}}/`）；同时拒绝**降层前的嵌套形态**（运行根下再套一层 `aidp/` 中间目录，判为 `stale-nested-runtime-path`）——后者的扫描面除契约目录外还含**下发文档面**（`docs/init/`、`memory/README.md`、脚手架 `SKILL.md` 与其 `references/`），因为那批文件同样逐字下发、写错就把下游引到一个安装后不存在的目录。加 `--rendered` 时另拒未解析 `{{AIDP_HOME}}`。排除脚手架自身、模板测试与维护 baseline。用法：`python3 {{AIDP_HOME}}/scripts/check_runtime_paths.py [--root <仓库根>] [--path <相对路径>] [--rendered] [--json]`；`--self-check`。退出码：`0`=无命中 / `1`=有命中 / `2`=用法错。CI 必跑。  <!-- runtime-path-ignore: 说明检查器自身的判据，必须逐字写出被拒的形态 -->
 
 ## check_private_markers.py — 开源模板里的私有环境痕迹（确定性，**ERROR 级**）
 

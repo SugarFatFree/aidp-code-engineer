@@ -108,12 +108,18 @@ fi
 
 ### Step 2：调用 code-verification-loop skill（★ 核心）
 
-> ★ **WebMCP 条件启用入参**（默认不传；绝大多数项目无此段）：`code-verification-loop` 的**维度 9（WebMCP 前端能力实现合规）**是**入参门控**、
-> 且 SKILL 明令**不自行探测是否启用**——**命令端不传 = 该维度永不启用**，启用了该能力的项目会
-> 静默漏掉这一层质量门。故调 SKILL 前先取判定（启用判定的唯一实现，⛔ 不要自己 grep PRD）：
+> ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`code-verification-loop` 的
+> **维度 9**（标题以 SKILL 为准）是**入参门控**、且 SKILL 明令**不自行探测是否启用**——
+> **命令端不传 = 该维度永不启用**，启用了该能力的项目会静默漏掉这一层质量门。
+> ⚠️ 该能力**是跨端的**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**：
+> 只按 WebMCP 判，非 Web 项目恒得 `enabled: false`，而 SKILL 侧「非 Web 已声明即通用半场照跑」
+> 那一半就永远不会执行——**失效方向是全绿**。故调 SKILL 前取**两级**判定：
 >
 > ```bash
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json    # → enabled / entry_symbols
+> python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json  # 跨端判定唯一实现
+> #   → declared / capability_state / client_type / implementation
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json      # 仅 Web 叶子的专有事实
+> #   → enabled / entry_symbols（client_type=web 且 implementation=webmcp 时才需要）
 > ```
 >
 > ★ **临时 Mock 协议入参（`--third-party-mode`，同属入参门控，⛔ 别漏）**：维度 2A 的
@@ -135,9 +141,14 @@ fi
 > `DEV_MOCK` 三字段 `since`·`owner`·`REMOVE_WHEN`）；缺字段由 2B 判 Critical，⛔ 不存在
 > "写个裸标记就能关掉 2A"这条后门。判据与字段集以 `code-verification-loop` SKILL 为单一信源，本处不复制。
 
-> `enabled: true` → 随 prompt 传 `webmcp_enabled: true` + `webmcp_entry_symbols: <脚本返回的数组原样>`
-> （⚠️ 后者**不可省略也不可写死**：挂载位置已迁移过一次、规范仍在演进，上游缺该入参会直接报错而非猜默认值）；
-> `enabled: false` → **什么都不传**，不提、不留位置。
+> `check_client_mcp.py` 的 `declared: true` → 随 prompt 传整个 **`client_mcp`** 对象
+> （`client_type` / `implementation` / `capability_state` / 工具清单出处，脚本返回什么就传什么）；
+> **另**当 `client_type=web` 且 `implementation=webmcp` 时**再加**传 `webmcp_enabled: true`
+> + `webmcp_entry_symbols: <check_webmcp.py 返回的数组原样>`（⚠️ 后者**不可省略也不可写死**：挂载位置已迁移过一次、
+> 规范仍在演进，上游缺该入参会直接报错而非猜默认值）。
+> 两者均未声明 → **什么都不传**，不提、不留位置。
+> ⛔ **非 Web 项目不要传 `webmcp_*`**：它们只是 Web 适配输入，传过去不会为非 Web 创建入口，
+> 只会让 SKILL 把客户端判成 web（新旧声明冲突时 SKILL 侧须报错，⛔ 不静默覆盖）。
 
 
 > ★ **独立子 Agent 派发（隔离上下文，不占 /sprint-test 主对话）**：`code-verification-loop` SKILL 已声明「作为更大编排流程的一环被调用时，应把**整个验收循环**作为一个独立子 Agent 派发」——其扫描脚本（`scan_mock_data.py` / `scan_third_party_mock_antipatterns.py` 等）+ 多维度核验都在验收子 Agent 自身上下文内跑，主流程**只接收精简结构化报告**（各维度 Pass/Fail + 阻塞项 file:line + 修复建议），脚本 stdout 不污染主上下文。因此本步**不在主对话直接用 `Skill` 工具调**，而是用 `Agent` 工具派一个子 Agent，prompt 为「用 Skill 工具调 `code-verification-loop`，**把下方『调用参数』与『额外提示』两段的全部内容逐项传全**，跑完只回传精简验收结论」。⛔ **别把模板句写成「传入代码/设计/接口路径」**：那会漏掉同步骤要求的 `--third-party-mode` 门控旗标、`webmcp_enabled`/`webmcp_entry_symbols`、被测项目根、被验收版本号——漏传的失效方向全是「维度静默落不适用」或「合规代码被判假红」，而不是报错。与 `/sprint-design` Step 1.6 子 Agent 派发同款。
@@ -157,7 +168,8 @@ fi
   - **维度 10「UI 还原度确定性检查」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`
   - **维度 12「上游调用日志可见性与脱敏」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py`
   - **维度 13「实现偏离设计」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py`
-  三个脚本都由 AIDP 脚手架经 `ensure_root_scripts` 下发到**被测项目侧**（不在 SKILL 内、不受版本门控），本仓均已下发；⛔ **不传或传错 → 对应维度落到「不适用（未下发）」档**——维度 10 里**约定39-R10「导出只导当前页」是零豁免的 Critical**、维度 12 里 **C1 零日志 / C2 成功路径不可见也是 Critical**，等于静默放过硬门。（同一个根路径三维共用，传一次即可。）
+  - **维度 15「同族增量项一致性」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_sibling_family.py`
+  四个脚本都由 AIDP 脚手架经 `ensure_root_scripts` 下发到**被测项目侧**（不在 SKILL 内、不受版本门控），本仓均已下发；⛔ **不传或传错 → 对应维度落到「不适用（未下发）」档**——维度 10 里**约定39-R10「导出只导当前页」是零豁免的 Critical**、维度 12 里 **C1 零日志 / C2 成功路径不可见也是 Critical**，等于静默放过硬门；维度 15 里 **F2「成员未登记」也是 Critical**，漏传只关掉它的机器半场（15.1~15.3 语义核对仍照跑）。（同一个根路径四维共用，传一次即可。）
 - **被验收版本号**：`{version}`（如 `V0.14.0`）——**维度 13 专用且必填**。它比维度 10/12 多这一个参数，SKILL 侧明令「值由调用方传入，⛔ 不得自拟或省略；取不到就按『不适用（未取到 `--version` 值）』留行」。⚠️ **漏传不会报错、只会让维度 13 恒落「不适用」**：脚本缺 `--version` 值时 argparse 直接 `exit 2`（用法错），而 SKILL 对 exit 2 的处置是「修正参数后重跑」——既不计过也不计不过，报告里两侧都不留痕。故本行与上一行是**两个独立参数**，不要合并、不要省略。
 
 **额外提示**（命令端补充给 skill 的上下文）：
@@ -165,6 +177,7 @@ fi
 - 推荐附加输入：
   - PRD（用于三方冲突裁决的样式/文案/业务规则裁决）：`docs/requirements/{version}/研发需求/`
   - 迭代执行计划（任务清单）：`docs/plans/{version}/01_研发执行计划.md`
+  - **同族增量项声明表**（`dev-logic-architect` 检查项 41 的 5 列表，在 `docs/design/detail/{version}/` 内）：维度 15 的基准表——第 2 列即 F1/F4 的比对对象、第 4~5 列即 F2/F3 的比对对象；上游没产出时 SKILL 侧回退纯代码判断并报 🟡「设计缺声明表」，⛔ 不静默放过
 - **★ 规划期基线类文档（约定 33 强制传入，供 SKILL「PRD↔实现」直接比对 + 视觉还原 L1 + 内容完整性核对消费）**——把下列路径显式作输入传给 SKILL，笼统标注"以这些基线为准回检实现有无漏项/漏列/偏离"（约定 21 只传路径、不复述 SKILL 维度）：
   - **PRD 原文（产品提供）**：`docs/requirements/{version}/产品提供/*.md`（作**独立比对基准**，供「PRD↔实现」直接比对维度回检"实现里到底有没有这个按钮/这一列"，绕过设计文档同源污染）
   - **原型内容基线**：`docs/design/detail/{version}/NN_原型内容基线.md`（内容完整性逐页核对：原型有/实现无或行为不符/未标处置 → Critical）

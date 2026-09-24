@@ -104,5 +104,23 @@
    下一步：自动进入 Sprint-{NNN+1}
    ```
 
-4. **`--single-sprint` 模式特殊处理**：每次 #2 通知后暂停，等用户在当前会话回 `continue` 才进下一 Sprint（里程碑通知是单向推送，不从通知渠道读回复）；30 分钟无响应自动暂停（不退出、保留状态）。
+4. **`--single-sprint` 模式特殊处理（★ 仅交互式成立，判据可执行、⛔ 不靠读这句话）**：
+
+   ```bash
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   # 只有「交互式 + 有人能答 + 有下一 tick 兜底」三者同时成立，暂停等 continue 才是合法动作。
+   # ⛔ 其余任一不成立即【不得暂停】：无人值守下没有人会回 continue，
+   #    「暂停不退出」的表现与「还在正常跑」完全同形，且不写冻结、不发 #4、不落告警台账。
+   if [ "${SINGLE_SPRINT:-0}" = "1" ] && [ "${LOOP_UNATTENDED:-0}" = "0" ] \
+      && [ "${HAS_WAKE_SOURCE:-0}" = "1" ]; then
+     SINGLE_SPRINT_PAUSE=1   # 每次 #2 通知后暂停，等用户在当前会话回 `continue` 才进下一 Sprint
+   else
+     SINGLE_SPRINT_PAUSE=0   # 无人值守 / 无唤醒源：与默认同行为，本轮内连跑到底
+   fi
+   echo "SINGLE_SPRINT_PAUSE=$SINGLE_SPRINT_PAUSE"
+   ```
+
+   `SINGLE_SPRINT_PAUSE=1` 时：每次 #2 通知后暂停等 `continue`（里程碑通知是单向推送，不从通知渠道读回复）；
+   **超时上限 30 分钟**，到点即**按无响应处理并继续下一 Sprint**，⛔ 不是「无限期挂着」——
+   挂着既不冻结也不告警，恰好是本命令最不该有的那种停法。
     - ⚠️ **无人值守下 `--single-sprint` 与默认同行为**（无人可答「回 `continue`」，且 `HAS_WAKE_SOURCE=1` 时逐 tick 单 Sprint 本就是默认）；⛔ `HAS_WAKE_SOURCE=0` 时它同样不得 yield，本轮内连跑到底。完整论证见 `rationale.md`「`--single-sprint` 在无人值守下…」。

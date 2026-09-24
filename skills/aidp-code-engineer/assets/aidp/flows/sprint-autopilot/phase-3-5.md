@@ -59,8 +59,15 @@
    SPRINT_NO=$($BE --version "$V" get run_state.next_sprint --default "")
    # ★ 游标丢失必须显式 fail：空数组 + 空模式会互相命中，最坏组合反被判成功（rationale.md）
    if [ -z "$SPRINT_NO" ]; then
-     S=$($BE --version "$V" bump dev_fail_streak)
+     # ⛔ 不能只 bump 就 exit：无唤醒源（--once / 无 loop）时【没有下一 tick 可叠 streak】，
+     #    这一条路径会停下来且不冻结、不发 #4、不写告警台账 —— 与「还在正常跑」完全同形。
+     #    统一走 autopilot_fail_handle：记账 → 判阈（内含「无唤醒源即当场达阈」）→ 冻结四件套 → #4 + 本地告警。
      $BE --version "$V" set dev_fail_phase "3.2-dev"
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" \
+       --phase 3.2-dev --reason handoff-exhausted \
+       --streak-key dev_fail_streak --threshold "${DEV_FAIL_FREEZE_THRESHOLD:-3}" \
+       --why "run_state.next_sprint 为空（游标丢失），无法定位本轮该跑哪个 Sprint，结构性不可自愈"
+     S=$($BE --version "$V" get dev_fail_streak --default 0)
      echo "⛔ run_state.next_sprint 为空（游标丢失，dev_fail_streak=$S）→ 让位本 tick"; exit 0
    fi
    # ⛔ 失败不能裸 exit 1（记账范式同 phase-3-9，根因见 rationale.md「裸退让熔断永不达阈」）
@@ -80,7 +87,15 @@
          --section "Sprint-$SPRINT_NO 连续 $S tick 无 close 归档（3.2-dev），已冻结本版待人工。" || true   # 退出码 3 = 未配置通知渠道，静默跳过
        echo "⛔ Sprint-$SPRINT_NO 连续 $S tick 无 close 归档（≥ 阈值 ${DEV_FAIL_FREEZE_THRESHOLD:-3}）→ needs_human 冻结本版止损"; exit 0
      fi
-     echo "⛔ Sprint-$SPRINT_NO 无 close 归档产物（dev_fail_streak=$S）→ 让位本 tick"; exit 0
+     # ★ 未达阈也要断言唤醒源：无唤醒源时「让位」= 就此收场，必须当场冻结止损而不是静默退出。
+     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+     if [ "${HAS_WAKE_SOURCE:-0}" != "1" ]; then
+       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" \
+         --phase 3.2-dev --reason handoff-exhausted --freeze-now \
+         --why "Sprint-$SPRINT_NO 无 close 归档且本轮无唤醒源（HAS_WAKE_SOURCE=0），没有下一 tick 可重试"
+       echo "⛔ Sprint-$SPRINT_NO 无 close 归档且无唤醒源 → 当场冻结本版止损"; exit 0
+     fi
+     echo "UNATTENDED_YIELD ⛔ Sprint-$SPRINT_NO 无 close 归档产物（dev_fail_streak=$S）→ 让位本 tick"; exit 0
    fi
    $BE --version "$V" del dev_fail_streak dev_fail_phase || true
    # 本块开头那次 plan_sprints 扫描发生在子 Agent 收工【之后】，CLOSED/REMAIN 已是最新态

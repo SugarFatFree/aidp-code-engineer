@@ -1,6 +1,6 @@
 <!-- 本文件是 `/sprint-autopilot` Phase 0.3.4 的执行分片，由 `phase-0-6.md` 指向。 -->
 
-# sprint-autopilot · Phase 0.3.4：选版 + 熔断冻结跳过 / 解冻
+# sprint-autopilot · Phase 0 详情分片 [6b2/11]（0.3.4 选版 + 熔断冻结跳过 / 解冻）
 
 > 本片覆盖 **Phase 0.3.4** 全文。前置 0.3.1–0.3.3 与后续 0.3.5 决策矩阵见 `phase-0-6.md`。
 > ⚠️ **权威性**：进入 0.3.4 后以本文件为准逐项执行。理据见同目录 `rationale.md`。
@@ -23,6 +23,9 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 if [ -n "${TARGET_FLAG_VALUE:-}" ]; then
   TARGET_VERSION="$TARGET_FLAG_VALUE"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
   # ⛔ 清单与解冻块同源，漏一个计数 = 刚解冻又达阈重冻（理据见 rationale）。
+  # ★ 本块刻意保留显式 del：`--target` 是**逃生口**，即便 baseline 里没有该版本记录也必须能清干净；
+  #   下面两处常规解冻一律改调 `autopilot_unfreeze.py --manual`（清单单一信源 = `manual_unfreeze`），
+  #   ⛔ 不要再复制本清单——三份手抄过的字段集曾各不相同。
   $BE --version "$TARGET_VERSION" del needs_human needs_human_reason \
     needs_human_kind aiauto_frozen_at freeze_reason \
     dev_fail_streak dev_fail_phase auto_retest_streak retest_cap_frozen_at retest_frozen_head \
@@ -84,10 +87,11 @@ fi
 > #   ⛔ 只调 probe-all 不消费它的 `unfreezable[]` 等于没探 —— 它只打印、不写盘。
 > for _v in $(python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --aiauto-probe-all --json 2>/dev/null \
 >             | python3 -c "import json,sys;print(' '.join((json.load(sys.stdin).get('unfreezable') or [])))" 2>/dev/null); do
->   $BE --version "$_v" del needs_human needs_human_reason needs_human_kind aiauto_frozen_at freeze_reason \
->     dev_fail_streak dev_fail_phase auto_retest_streak test_loop_missing_streak \
->     probe_fail_streak push_probe_fail_streak cicd_unreachable_streak cicd_cli_fail_streak \
->     prerelease_deploy_block_streak prerelease_test_hold_streak
+>   # ⛔ 不要在这里手抄 del 清单：本文件三处解冻各抄一份、字段集互不相同，
+>   #   漏掉 auto_retest_streak / retest_cap_frozen_at 一类计数 = **刚解冻下一 tick 又达阈重冻**。
+>   #   `--manual` 一次清干净冻结四件套 + needs_human_kind + retest_cap_frozen_at + 全部 STREAK_FIELDS，
+>   #   且逐个字段检查返回码；清单单一信源 = `autopilot_unfreeze.py::manual_unfreeze`。
+>   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual "$_v" --json >/dev/null
 >   case "$($BE get aiauto_blocked_reason)" in *"@$_v") $BE del aiauto_blocked_reason;; esac
 >   echo "🔓 $_v 具备解冻证据 → 已解冻重回候选"
 > done
@@ -95,7 +99,9 @@ fi
 > PROBE=$([ -n "$V" ] && python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --aiauto-probe "$V" --json 2>/dev/null || echo '{}')
 > UNFZ=$(printf '%s' "$PROBE" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('evidence','') if d.get('unfreeze') else '')" 2>/dev/null)
 > if [ -n "$UNFZ" ]; then
->   $BE --version "$V" del needs_human needs_human_reason aiauto_frozen_at freeze_reason test_loop_missing_streak
+>   # ⛔ 同上：手抄清单必然发散。少清一个计数（needs_human_kind / auto_retest_streak /
+>   #   retest_cap_frozen_at 等）⇒ 解冻后下一 tick 立刻达阈重冻。
+>   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual "$V" --json >/dev/null
 >   # 顶层 aiauto_blocked_reason 只在指向本版时才清（可能是别的版本写的）
 >   case "$($BE get aiauto_blocked_reason)" in *"@$V") $BE del aiauto_blocked_reason;; esac
 >   echo "🔓 $V $UNFZ → 解冻重回候选，下轮铸新 build 复测"

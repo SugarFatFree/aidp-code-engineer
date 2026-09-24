@@ -21,7 +21,7 @@ paths:
 - **注意**：热刷新通常会重建组件实例，长生命周期持有者需避免缓存旧引用（如 Spring 用 `ObjectProvider` 或每次 get）
 - **本文件即约定 27 的详规单一信源**（⛔ 不要再把读者弹去 `agents/backend.md` —— 那是副本）；回检 = `code-verification-loop` 维度 4 扫"注入配置中心可变 key 但未声明热刷新"。
 
-## 前端能力开关的服务端一侧（★ 可选，仅当项目启用了 WebMCP 等前端可选能力时适用）
+## 客户端能力开关的服务端一侧（★ 可选，仅当项目启用了客户端应用 MCP 等可选能力时适用）
 
 > **先判定，判定为否就没有本节**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json` 判
 > `enabled: false`（默认、绝大多数项目）→ **整节不适用**，不新增任何字段、接口、告警。

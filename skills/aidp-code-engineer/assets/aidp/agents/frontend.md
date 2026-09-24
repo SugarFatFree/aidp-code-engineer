@@ -387,21 +387,38 @@ Step 5: ★ README 强制维护
 > 不必靠无障碍树快照猜 DOM。⚠️ **它不是网络协议、没有传输层**——消费方必须先能进入该页面的 JS 上下文；
 > 它提升的是「已能操作该页面的 Agent」的调用效率与准确性，**不为远端 Agent 新增接入通道**。
 
-**第一动作 = 判定，而不是实现**：
+> ★ **WebMCP 是「客户端应用 MCP 业务能力」的 Web 端实现**，不是一个独立能力。本节只管 Web；
+> 小程序 / 移动 / 桌面的同一能力走 `{{AIDP_HOME}}/rules/client-mcp.md`（端无关详规），
+> 由各端负责人按 `check_client_mcp.py --install-rule` 安装，**⛔ 不要把本节的浏览器前提套过去**。
+
+**第一动作 = 判定，而不是实现**（两级：先跨端、再 Web 叶子）：
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json   # → {"enabled": true|false, "source": "..."}
+python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json  # 跨端判定唯一实现
+#   → {"declared": true|false, "client_type": "web|miniprogram|mobile|desktop", "implementation": "..."}
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json      # 仅 client_type=web 时才跑
 ```
 
 | 判定 | 本节行为 |
 | :- | :- |
-| **`enabled: false`（默认，绝大多数项目）** | **整节跳过**。不写任何相关代码、不产任何产物位、不发任何告警、界面上不出现任何相关元素 |
-| `enabled: true` | **第一动作 = 确保详规已安装**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`（幂等）——详规默认**不在** `rules/` 下（模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），未装则永远不会自动加载。装好后按 **`{{AIDP_HOME}}/rules/webmcp.md`** 执行 |
+| **`declared: false`（默认，绝大多数项目）** | **整节跳过**。不写任何相关代码、不产任何产物位、不发任何告警、界面上不出现任何相关元素 |
+| `declared: true` 但 `client_type != web` | **本节整节不适用**（前端不实现别端的能力）；该端按 `{{AIDP_HOME}}/rules/client-mcp.md` 走 |
+| `declared: true` + `client_type=web` + `implementation=webmcp` | **第一动作 = 确保详规已安装**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`（幂等）——详规默认**不在** `rules/` 下（模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），未装则永远不会自动加载。装好后按 **`{{AIDP_HOME}}/rules/webmcp.md`** 执行 |
 
-**★ 一次性推荐提示（仅当项目【从未做过】该决策时）**：本项目既未启用、PRD 也无 `webmcp` 段（即
-`source` 为「未声明（默认关闭）」）且本 Sprint 确在写**带业务操作面的前端页面**时，**可在本 Sprint 汇报里
-用一句话告知**「本项目可选启用 WebMCP，让 AI Agent 直接调页面业务函数；如需启用请在 PRD
-`autopilot_decisions.webmcp.enabled: true` 声明」。
+**★ 一次性推荐提示（仅当项目【从未做过】该决策时）**：本项目既未启用、PRD 也无 `client_mcp` / `webmcp` 段
+（即 `check_client_mcp.py` 的 `capability_state` 为 `not-declared`）且本 Sprint 确在写**带业务操作面的前端页面**时，
+**可在本 Sprint 汇报里用一句话告知**「本项目可选启用客户端应用 MCP，让 AI Agent 直接调页面业务函数；
+如需启用请在 PRD 声明：
+
+```yaml
+autopilot_decisions:
+  client_mcp:
+    enabled: true
+    client_type: web          # web | miniprogram | mobile | desktop
+    implementation: webmcp    # web 端即 webmcp；别端为 app-native | bridge
+```
+」。⛔ **别推荐只写 `autopilot_decisions.webmcp.enabled: true`**：那是**存量 Web 项目的兼容输入**，
+写给非 Web 项目会被归一成 `client_type=web`，端选错的表现是「能力入口探不到」，排查必然走偏。
 
 - ⛔ **提示 ≠ 启用**：告知后**照常按未启用继续开发**，不写任何相关代码、不建任何文件、不改 PRD。
   启用是项目的显式决策，**不得自行代为声明**。

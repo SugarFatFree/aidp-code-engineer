@@ -96,12 +96,17 @@ if [ -f {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py ]; then
   #   ⛔ 白名单取脚本 `_issue()` 的 **rule 实名（snake_case）**，⛔ 不用文档里的 `I` 编号
   #   （编号从不出现在 `issues[].rule` 里，用它做白名单恒不匹配；理据见 rationale）。
   #   其余 Important 一律单列告警、不阻断（开放式表述，别再腐化成闭集）。
+  # ★ 本轮新结果必带 `--require-runtime-preflight`；不传 = 该门恒不跑、缺取证也过形状校验（假绿）。
+  #   `--webmcp-enabled` 只约束 client=web，故仅 Web+WebMCP 时追加（判定唯一实现 = check_webmcp.py）。
+  CR_WEBMCP=""
+  if python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json 2>/dev/null \
+       | grep -q '"enabled": true'; then CR_WEBMCP="--webmcp-enabled"; fi
   CR_JSON=$(python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py \
-    "${BTR}/build-${BUILD}"/round-*/results/ --json 2>/dev/null); CR_EXIT=$?
+    "${BTR}/build-${BUILD}"/round-*/results/ --require-runtime-preflight ${CR_WEBMCP} --json 2>/dev/null); CR_EXIT=$?
   CR_BLOCKING=$(printf '%s' "$CR_JSON" | python3 -c "import json,sys
 d=json.load(sys.stdin)
-B={'evidence_string_item','runtime_error_incomplete','bad_env_flag','empty_target'}
-print(len([i for i in (d.get('issues') or []) if i.get('rule') in B or i.get('level')=='Critical']))" 2>/dev/null || echo -1)
+B={'evidence_string_item','runtime_error_incomplete','bad_env_flag','empty_target'}  # 兼容旧名，新契约一律靠下面的 level
+print(len([i for i in (d.get('issues') or []) if i.get('level')=='Critical' or i.get('rule') in B]))" 2>/dev/null || echo -1)
   if [ "$CR_EXIT" -ge 2 ] || [ "${CR_BLOCKING:-0}" != "0" ]; then
       echo "❌ 执行结果不合 auto-test-runner 结果契约（阻断项 ${CR_BLOCKING} 条）→ 在报告标「证据形状不合契约」并跳过 artifact 兜底分支"
       SHAPE_BAD=1

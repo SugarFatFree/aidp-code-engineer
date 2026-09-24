@@ -49,7 +49,7 @@
 | 启动横幅 | 调 SKILL 前输出 `🚀 [Step 1]` 横幅（列输入/输出路径），横幅后必有 `Skill dev-manual-testcase` 调用 |
 | 继承基线定位 | bash 找 `PREV_TEST_V`（< 当前版本、最近一个有配置的旧版），把上一版方案「环境」段 + `01_测试环境与账号.md` 喂给 SKILL 作继承源 |
 | 调用参数 | PRD/详设/研发执行计划路径 + ★约定 33 规划期基线**显式传参**：PRD 原文 `产品提供/*.md`、原型内容基线、设计令牌、字段处置对照表、表 E、文案落点表（缺则违反约定 33）|
-| ★ WebMCP 入参 | **条件启用、默认不传**：先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`（启用判定唯一实现，⛔ 不自己 grep PRD）；`enabled: true` 才随 prompt 传 `webmcp_enabled: true` + `webmcp_launch_command: <脚本返回的原样，⛔ 不要自拟>` + `webmcp_entry_symbols: <原样数组>` → SKILL 才生成 WebMCP 两类套件（**未启用态套件优先级不低于已启用态**）并启用其维度 20。SKILL **明令不自行探测**，不传 = 用例族永不生成、启用了该能力的项目静默漏测 |
+| ★ 客户端应用 MCP 入参 | **条件启用、默认不传**：该能力**跨端**（Web / 小程序 / 移动 / 桌面），WebMCP 只是 Web 端实现。先跑**跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`（⛔ 不自己 grep PRD），`declared: true` 才随 prompt 传整个 `client_mcp` 对象（`client_type`/`implementation`/`capability_state`/工具清单出处）→ SKILL 才按 `flow-client-mcp.md` 生成通用 `[应用MCP]` 用例族并启用其维度 20；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**跑 `check_webmcp.py --detect --json` 并补传 `webmcp_enabled: true` + `webmcp_launch_command: <脚本返回的原样，⛔ 不要自拟>` + `webmcp_entry_symbols: <原样数组>` → 才另生成 Web 双窗口两类套件（**未启用态套件优先级不低于已启用态**）。SKILL **明令不自行探测**，不传 = 用例族永不生成、启用了该能力的项目静默漏测；⛔ 非 Web 不传 `webmcp_*`，新旧声明冲突须报错不静默覆盖 |
 | 路径占位符 | 显式传 `{测试文档目录}=docs/testing/`，以免 SKILL 按项目现有目录（`docs/test/`、`test/`、`tests/` 等）自适应到别处 |
 | 落盘核验归一 | 已跟踪文件用 `git mv`，新产物或无 Git 用普通 `mv` 归一到 `docs/testing/{version}/研发自测/`（目标冲突硬停；去 `{项目名}` 子目录、保留 NN_ 前缀）；用例从 `02_` 起、方案 `01_`、索引 `00_索引.md`；缺用例或缺方案 `exit 1` |
 | 补充模式 | `--supplement={NN}` 时先跑历史扁平归位 + 子目录化前置脚本，产出增量 `NN_<业务主题>.md`（不带"补充"字眼、身份记入 `00_索引.md`）|

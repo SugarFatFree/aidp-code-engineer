@@ -85,14 +85,27 @@ autopilot_decisions:
     #      / user_roles / login_after_seconds
     # 详见 /sprint-aiauto-test 命令文档 Phase 0.3 节
 
-  # === ★ WebMCP 可选能力段（⛔ 不计入必填决策段；【整段不存在 = 未启用】，绝大多数项目就该没有这段）===
+  # === ★ 客户端应用 MCP 可选能力段（⛔ 不计入必填决策段；【整段不存在 = 未启用】，绝大多数项目就该没有这段）===
   # ⛔ Phase 0.6 的字段缺失收集【不得】把本段当缺失项去问、去补、去填默认值——
   #    "段不存在"本身就是完整且正确的答案（默认关闭），凭空补一段 enabled:false 只会制造噪音。
-  # 判定唯一实现：python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json（各处禁止自行 grep）
-  # 详规单一信源：{{AIDP_HOME}}/rules/webmcp.md（★ 按需安装：默认在模板位
-  #   {{AIDP_HOME}}/templates/optional-rules/webmcp.md，启用后跑 check_webmcp.py --install-rule 装到 rules/）
-  webmcp:
+  # ★ 该能力【跨端】（Web / 小程序 / 移动 / 桌面），WebMCP 只是它的 Web 端实现。
+  #   新项目写 client_mcp:，它是设计期 / 测试期 / 验收期三侧读取的那一个键；
+  #   ⛔ 只写下面的 webmcp: 兼容段，非 Web 项目会被归一成 client_type=web，
+  #      端选错的表现是「能力入口探不到」，与「端不对」完全不同形态、排查必走偏。
+  # 跨端判定唯一实现：python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json（各处禁止自行 grep）
+  # Web 叶子专有事实（secure context / 浏览器版本 / 启动开关）：check_webmcp.py --detect --json
+  # 详规单一信源：{{AIDP_HOME}}/rules/client-mcp.md（跨端）+ {{AIDP_HOME}}/rules/webmcp.md（Web 叶子）
+  #   （★ 两者均按需安装：默认在模板位 {{AIDP_HOME}}/templates/optional-rules/，
+  #     启用后跑 check_client_mcp.py --install-rule / check_webmcp.py --install-rule 装到 rules/）
+  client_mcp:
     enabled: true                                     # 仅当项目【显式决定】启用才写本段
+    client_type: web                                  # web | miniprogram | mobile | desktop
+    implementation: webmcp                            # webmcp | app-native | bridge | none
+                                                      # ⛔ 声明了能力却没有实现形态 = declared-unimplemented，
+                                                      #    刻意不算启用（无法被任何一端验证）
+  # --- 以下 webmcp: 段仅为【存量 Web 项目兼容输入】，与 client_mcp 同时声明且不一致 → 脚本 exit 2 明确报错 ---
+  webmcp:
+    enabled: true                                     # 归一为 client_type=web + implementation=webmcp
     entry_symbols: ["navigator.modelContext"]         # 本项目实测的能力入口标识符（挂载位置已迁移过一次、
                                                       # 规范仍在演进；留空则用脚本内置默认，可能过期）
 ---

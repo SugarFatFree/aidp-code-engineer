@@ -121,9 +121,9 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 | **0.3** | `phase-0-7.md` | 部署 + 测试元数据（研发自测配置优先 → PRD `deployment` 段兜底）|
 | **0.4** | `phase-0-7.md` | 测试账号加载（研发自测配置优先 → credentials 文件兜底）|
 | **0.4bis** | `phase-0-7.md` | ★ 账号登录冒烟预检（跑用例**前**断言账号真能登进去，别等 Phase 2 白跑一轮）|
-| **0.1.6** ★ | `phase-0-8.md` | **WebMCP 驱动就绪（可选能力）**：`check_webmcp.py --detect` 判启用 → 未启用**整段跳过、零痕迹**；启用则校验驱动版本 + 两个浏览器开关 + 两行自检 + 调用约定。⛔ 版本不足**标 block 不静默降级**、不终止整轮 |
+| **0.1.6** ★ | `phase-0-8.md` | **客户端应用 MCP 就绪（可选能力·跨端）**：`check_client_mcp.py --detect` 判**跨端**声明 → 未声明**整段跳过、零痕迹**；Web 叶子（`client_type=web` + `implementation=webmcp`）另经 `check_webmcp.py` 校验驱动版本 + 两个浏览器开关 + 两行自检 + 调用约定；非 Web（小程序/移动/桌面）改经 `aiauto_readiness.py` 评估应用自有服务/桥接的运行期前置。⛔ 版本不足或前置缺失**标 block 不静默降级**、不终止整轮 |
 
-> 收口：Phase 0 全部跑完 → 进入 Phase 1。**执行前务必已按上表逐分片 Read（`phase-0-1.md` … `phase-0-6.md` / `phase-0-6b.md` / `phase-0-7.md`；`phase-0-8.md` 仅当 WebMCP 已启用时才需 Read）并逐项完成，不能只看本表。**
+> 收口：Phase 0 全部跑完 → 进入 Phase 1。**执行前务必已按上表逐分片 Read（`phase-0-1.md` … `phase-0-6.md` / `phase-0-6b.md` / `phase-0-7.md`；`phase-0-8.md` 仅当客户端应用 MCP 已声明时才需 Read）并逐项完成，不能只看本表。**
 
 ---
 
@@ -165,7 +165,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 | **2.3** | `phase-2-2.md` | `--skip-login` 模式（测公开页）|
 | **2.4** | `phase-2-2.md` | ★ 运行时错误全程捕获与 bug 记录（不在用例里也要记）|
 
-> ★ **WebMCP 条件启用入参**（默认不传）：`auto-test-runner` 的 **`invoke` 补充能力**（列出/调用页面登记的工具，属 **Web 适配器的可选能力、不是第五个端**）与其**驱动版本校验**均为**入参门控**，SKILL **明令不自行探测**。组装 run-context（2.0.5）时先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`，`enabled: true` 才把 `webmcp_enabled: true` + `webmcp_entry_symbols` + `webmcp_launch_command` 写进 run-context 并在派子 Agent 的 prompt 里点明；**不传 = `invoke` 与版本校验永不启用**。⛔ 版本不足时由 SKILL 标 `block(webmcp-driver-too-old)`，**不得静默降级为「就当没有 WebMCP」**——那会让这一整类用例全绿式消失、报告看不出漏测。Phase 0.1.6（`phase-0-8.md`）已做驱动就绪预检，本处只负责把入参传下去。
+> ★ **WebMCP 条件启用入参**（默认不传）：`auto-test-runner` 的 **`invoke` 补充能力**（列出/调用页面登记的工具，属 **Web 适配器的可选能力、不是第五个端**）与其**驱动版本校验**均为**入参门控**，SKILL **明令不自行探测**。组装 run-context（2.0.5）时**先跑跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`，`declared: true` 即把整个 `client_mcp` 对象（`client_type`/`implementation`/`capability_state`）写进 run-context——它是 SKILL 侧 `application_mcp` 四态（declared / entry / registration / invocation）的唯一入口，**不写 = 非 Web 项目的四态永远取不到、专项用例既不 block 也不留痕**；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**跑 `check_webmcp.py --detect --json`，`enabled: true` 才把 `webmcp_enabled: true` + `webmcp_entry_symbols` + `webmcp_launch_command` 一并写进 run-context 并在派子 Agent 的 prompt 里点明；**不传 = `invoke` 与版本校验永不启用**。⛔ 非 Web 不传 `webmcp_*`。⛔ 版本不足时由 SKILL 标 `block(webmcp-driver-too-old)`，**不得静默降级为「就当没有 WebMCP」**——那会让这一整类用例全绿式消失、报告看不出漏测。Phase 0.1.6（`phase-0-8.md`）已做驱动就绪预检，本处只负责把入参传下去。
 
 > 收口：auto-test-runner 跑完 → 进入 Phase 3 生成报告。**执行前务必已 Read `phase-2-1.md` + `phase-2-2.md`。**
 

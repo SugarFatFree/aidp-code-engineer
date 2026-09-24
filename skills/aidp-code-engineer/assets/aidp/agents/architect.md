@@ -106,13 +106,25 @@
 - 统一错误码规范
 - 认证要求说明
 
-**Step 4.5：WebMCP 能力设计（★ 可选，未启用即整步跳过）**
+**Step 4.5：客户端应用 MCP 能力设计（★ 可选，未启用即整步跳过）**
 
-**先判定，判定为否就没有本步**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`
-（启用判定的**唯一实现**，⛔ 不要自己 grep PRD）。`enabled: false`（默认、绝大多数项目）→
+**先判定，判定为否就没有本步**：`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`
+（**跨端**启用判定的**唯一实现**，⛔ 不要自己 grep PRD）。`declared: false`（默认、绝大多数项目）→
 **本步整步跳过**，不产任何章节、不占产物位、不发告警。
 
-`enabled: true` 时，**先确保详规已安装**（`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`，幂等；
+⚠️ **该能力跨端**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**——⛔ 别用
+`check_webmcp.py` 做这一步的判定：非 Web 项目恒得 `enabled: false`，于是**声明了应用 MCP 的
+小程序 / App / 桌面项目一个设计章节都不会产出**，而下游 `dev-logic-architect` 检查项 33 的
+通用半场仍会来核它——失效方向是**设计整段缺失却全绿**。
+
+`declared: true` 且 `client_type != web` 时，**先确保端无关详规已安装**
+（`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --install-rule`，幂等；模板位
+`{{AIDP_HOME}}/templates/optional-rules/client-mcp.md`），再按 `flow-client-mcp.md` 的十列强制产出表
+逐工具落**应用自有 MCP 服务或桥接**的实现位置 / 工具类别三档 / 入出 Schema / 身份权限来源 /
+写操作确认 / 生命周期 / 错误契约 / 审计日志 / 调用证据载体；⛔ 不造通用对象名、统一桥接 URL、
+Chrome 版本门或 secure context 前提——那些是 Web 专有。
+
+`declared: true` 且 `client_type = web` 且 `implementation = webmcp` 时，**先确保详规已安装**（`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`，幂等；
 详规默认不在 `rules/` 下、模板位在 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），
 再按其规则产出以下**额外**六项（细则一律见 WebMCP 可选规则，本处不复述——该规则**默认不安装**，权威模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，启用后经 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` 装到 `{{AIDP_HOME}}/rules/webmcp.md`）：<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计 -->
 

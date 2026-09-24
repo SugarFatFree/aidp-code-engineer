@@ -13,7 +13,7 @@
 
 > autopilot 在最开始就统一收集后续流程所需的工具/环境/配置（里程碑通知渠道 / **远程 chrome 连接**），缺失即问、记录到 baseline 两命令共享。远程 chrome 自动化测试（Claude Code 与 Chrome **不同机**，走 `chrome-devtools-mcp`）依赖**项目根 `.mcp.json`**；本步在拿到远程 IP 时即写/合并该文件，让后续 `/sprint-aiauto-test` 直接用、无需等到跑测时才建。**本机 chrome（同机，走 `chrome-devtools-cli`）或 `test_strategy=static-only` 不需要 `.mcp.json`，本步跳过。**
 
-1. **判定是否需要远程 chrome**：读 PRD `autopilot_decisions.test_strategy`（`static-only` → 跳过本步）；无法判定时在配置补全阶段 `AskUserQuestion` 问「本项目 AI 自动化测试用**远程** chrome 吗？（Claude Code 与 Chrome 不同机）」——否（本机 / 不测）→ 跳过本步。
+1. **判定是否需要远程 chrome**：读 PRD `autopilot_decisions.test_strategy`（`static-only` → 跳过本步）；无法判定时：**交互式**在配置补全阶段 `AskUserQuestion` 问「本项目 AI 自动化测试用**远程** chrome 吗？（Claude Code 与 Chrome 不同机）」——否（本机 / 不测）→ 跳过本步；**`/loop` 无人值守（`LOOP_UNATTENDED=1`）⛔ 不弹窗**（无人可答 → 整 tick 挂到 `tick_max` 超时，其间每个 tick 只打印「上一轮仍在运行」，表现为长时间占空却零告警），**默认按「本机 chrome」跳过本步**，远程与否留给 `/sprint-aiauto-test` 按 `.mcp.json` 实际内容判定。
 2. **读项目根 `.mcp.json` 复用**：`jq -r --arg k "chrome-$(git config user.name|tr -d ' ')" '.mcpServers[$k].args[]? | select(test("^https?://"))' .mcp.json 2>/dev/null`——已有 `chrome-{git_user}` 远程地址条目 → 复用、确保文件存在即可（清空重收用 `/sprint-aiauto-test --reset-chrome-ip`，删 `.mcp.json` 该条目）。**远程地址只存 `.mcp.json`（按 git 用户名分键、入库共享），baseline 不再存 `chrome_remote_ip`。**
 3. **缺失 → 一次性 `AskUserQuestion` 收集远程 chrome `IP:端口`**（如 `192.0.2.10:9222`；提示先在该机启动 chrome 调试 + 端口转发，详见 `/sprint-aiauto-test` 0.1.5 / 测试方案「二·2.2」）；写/合并项目根 `.mcp.json` 的 `chrome-{git_user}` 条目（见下方第 4 项脚本）。**无人值守 `/loop` 中若 `.mcp.json` 仍缺该条目（补全阶段没收集到）→ 跳过本步不阻塞**，留给 `/sprint-aiauto-test` 跑测时收集。
 4. **写/合并项目根 `.mcp.json`**（server 条目 `chrome-{git_user}`，与 `/sprint-aiauto-test` Phase 0.0.5 同一套**合并**逻辑——只增改 chrome key、保留团队其它 server、不整体覆盖；入库提交、不 gitignore）：

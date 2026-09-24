@@ -7,7 +7,7 @@
 | 文件 | `paths`（含历史目录命名兼容） | 承载的核心约定详规 |
 |------|------|------|
 | `frontend.md` | `code/frontend/**`、`code/web/**`、`web/**` | 约定 4（UI 优先级：视觉+内容+操作逻辑三层对齐 / 字段裁剪三件套 / 设计令牌 / L1·L2 分级 / 叶子组件白名单 / 图标语义化 + <!-- singlesource-scope: R1六类 -->**约定 39 R1「原型内容基线六类结构」单一信源**） + **约定 20 前端特例：UI 组件公共化**（视觉单元第二次出现即抽 / 技术债两必填字段 / 整族+全参数化 / `SYNC-WITH` / 样式编译等价性对照）|
-| `backend.md` | `code/backend/**`、`code/server/**`、`server/**` | 约定 27（配置中心动态配置热刷新）+ **约定 40 实现侧**（上游调用日志的挂载点表 + 「挂了拦截器业务侧读不到响应体」的坑 + 拦截器抵扣边界）+ 后端 DI 依赖可解析性静态检查（`code-verification-loop` 维度 6 门控的动机与判定口径详规）+ **前端可选能力开关的服务端一侧**（WebMCP 的 L2 层：挂既有配置接口、运行时可变、默认关；未启用即不适用）|
+| `backend.md` | `code/backend/**`、`code/server/**`、`server/**` | 约定 27（配置中心动态配置热刷新）+ **约定 40 实现侧**（上游调用日志的挂载点表 + 「挂了拦截器业务侧读不到响应体」的坑 + 拦截器抵扣边界）+ 后端 DI 依赖可解析性静态检查（`code-verification-loop` 维度 6 门控的动机与判定口径详规）+ **客户端可选能力开关的服务端一侧**（客户端应用 MCP 的 L2 层，Web/小程序/移动/桌面同款：挂既有配置接口、运行时可变、默认关；未启用即不适用）|
 | `code.md` | `code/**`、`web/**`、`server/**` | 约定 17 注释 / 18 目录 / 19 README / 20 复杂度 / 23 DB 约束 **+ 其姊妹条「错误契约与失败可见性 + fail-closed + 上游契约权威」** / 26 Mock / 28 组件复用 / 29 死代码 / 35 运行时验证纪律 / **39 通用还原度规则集（R1–R13）** / **40 上游/第三方接口调用日志** |
 
 ## ★ 按需安装的可选规则（默认不在本目录）
@@ -17,7 +17,8 @@
 
 | 可选规则 | 模板位 | 安装命令 | 承载内容 |
 |------|------|------|------|
-| `webmcp.md` | `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` | `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` | 前端 WebMCP：secure context 运行前提 / 三层 AND 开关与时序 / 能力入口 API 表面实测事实 / 10 条实现铁律 |
+| `client-mcp.md` | `{{AIDP_HOME}}/templates/optional-rules/client-mcp.md` | `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --install-rule` | **跨端**（小程序 / 移动 / 桌面）客户端应用 MCP 业务能力：端无关的声明 / 工具契约 / 身份与权限 / 写确认 / 审计与调用证据（⛔ 不套浏览器运行前提）|
+| `webmcp.md` | `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` | `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` | 同一能力的 **Web 端实现**：secure context 运行前提 / 三层 AND 开关与时序 / 能力入口 API 表面实测事实 / 10 条实现铁律 |
 
 > ★ **为什么不直接放本目录**：本目录的加载是**路径触发**的——只要编辑的文件命中 `paths:`，
 > **整份文件就进上下文**。可选规则若常驻这里，**绝大多数根本不启用该能力的项目**每次编辑对应代码
@@ -41,8 +42,18 @@
 >   否则每个启用了该能力的下游都会永久顶着一条假的"脚手架孤儿文件"告警。
 >
 > **改动一律改模板位**（那是权威源）；装到本目录的是副本，改了无法回流、下次重装被覆盖。
-> 启用判定的**唯一实现** = `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect`，各处一律调它、
-> **禁止各自 grep PRD**——一处判错就会给未启用项目凭空长出告警，直接违反其「默认关闭」总原则。
+> **★ 两个脚本分两层，别混用**（混用的失效方向是**全绿**）：
+> - **跨端启用判定的唯一实现** = `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect`
+>   —— 客户端应用 MCP 能力**是跨端的**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**。
+>   任何"这个项目启没启用该能力"的判断一律调它；它读 `autopilot_decisions.client_mcp`，
+>   并把存量的 `autopilot_decisions.webmcp` 兼容归一为 `client_type=web + implementation=webmcp`。
+> - **Web 端专有事实**（secure context / 浏览器版本 / 启动开关 / `entry_symbols` / `launch_command`）
+>   = `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect`，**仅在 `client_type=web` 且
+>   `implementation=webmcp` 时才调**。⛔ 拿它去判非 Web 项目恒得 `enabled: false`，
+>   通用半场就永远不会执行。
+>
+> 各处一律调对应那一个、**禁止各自 grep PRD**——一处判错就会给未启用项目凭空长出告警，
+> 直接违反其「默认关闭」总原则。
 
 项目记忆文件（AGENTS.md / CLAUDE.md）的「核心约定」段只保留这些约定的**一行索引锚点**（编号 1–41 不变），正文写「详规见 `{{AIDP_HOME}}/rules/X`」——「见约定 N」始终能解析到索引摘要 + 本目录详规。
 

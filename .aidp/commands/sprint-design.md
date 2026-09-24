@@ -205,17 +205,25 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 > 详细规则查 `{{AIDP_HOME}}/skills/dev-logic-architect/SKILL.md`；命令端只负责：① 传参（PRD/原型/前版基线/变更清单/`HAS_OPEN_API`+`HAS_THIRD_PARTY_DEP` 信号）② Step 1.5 落盘文件名 override（项目级中文文件名约定）③ Step 1.6~1.7.5 + SKILL 脚本复核 + 1.8 落盘后回检（统一派子 Agent 执行，脚本清单以 SKILL Quality Review 为单一信源）。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 设计上下文路径）：
-> ★ **WebMCP 条件启用入参**（默认不传；绝大多数项目无此段）：`dev-logic-architect` 的**检查项 33「WebMCP 前端能力设计完整性」**（上游称「检查项 N」，本文档余处简称维度 N）是**入参门控**、
+> ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`dev-logic-architect` 的**检查项 33**（标题以 SKILL 为准；上游称「检查项 N」，本文档余处简称维度 N）是**入参门控**、
 > 且 SKILL 明令**不自行探测是否启用**——**命令端不传 = 该维度永不启用**，启用了该能力的项目会
 > 静默漏掉这一层质量门。故调 SKILL 前先取判定（启用判定的唯一实现，⛔ 不要自己 grep PRD）：
 >
+> ⚠️ 该能力**是跨端的**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**——
+> 只按 `check_webmcp.py` 判，非 Web 项目恒得 `enabled: false`，通用半场永不执行，**失效方向是全绿**。
+> 故先跑**跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`
+> （→ `declared` / `capability_state` / `client_type` / `implementation`），`declared: true` 即随 prompt 传整个
+> `client_mcp` 对象；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**补跑 `check_webmcp.py --detect --json`
+> 取 Web 叶子专有入参。⛔ 非 Web 不传 `webmcp_*`（它们只是 Web 适配输入，不为非 Web 创建入口；
+> 新旧声明冲突时 SKILL 侧须报错、不静默覆盖）。
+>
 > ```bash
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json    # → enabled / entry_symbols / launch_command
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json    # 仅 Web 叶子 → enabled / entry_symbols / launch_command
 > ```
 >
-> `enabled: true` → 随 prompt 传 `webmcp_enabled: true` + `webmcp_entry_symbols: <脚本返回的数组原样>` + `webmcp_launch_command: <脚本返回的原样>`（⛔ 三个 SKILL 都明写「不要自拟」）
-> （⚠️ 后者**不可省略也不可写死**：挂载位置已迁移过一次、规范仍在演进，上游缺该入参会直接报错而非猜默认值）；
-> `enabled: false` → **什么都不传**，不提、不留位置。
+> Web 叶子 `enabled: true` → 另传 `webmcp_enabled: true` + `webmcp_entry_symbols: <脚本返回的数组原样>` + `webmcp_launch_command: <脚本返回的原样>`（⛔ 三个 SKILL 都明写「不要自拟」）
+> （⚠️ 后两者**不可省略也不可写死**：挂载位置已迁移过一次、规范仍在演进，上游缺该入参会直接报错而非猜默认值）；
+> 两级均未声明 → **什么都不传**，不提、不留位置。
 
 - **PRD 路径**：`docs/requirements/{version}/研发需求/`（含 `01_研发需求.md`（历史裸 `00_研发需求.md` 兼容）或拆分的 `0?_*.md`）
 - **原型路径**：

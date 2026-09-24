@@ -1,0 +1,17 @@
+# 脚手架 bundle 的 assets/ 是**生成物**：由 `skills/aidp-code-engineer/scripts/mirror_to_bundle.py`
+# 从 `.aidp/`（契约真源）单向镜像而来，541 个派生文件。
+#
+# 它必须入库、不能做成符号链接、也不能改成安装时生成 —— 下游的安装动作是
+# `cp -r <本仓库>/skills/aidp-code-engineer <目标>/.claude/skills/`（见 README），
+# 没有构建步骤，所以 bundle 必须**自包含**；而它又不能引用 `../../.aidp/`，那个路径在下游不存在。
+#
+# 代价是每次改契约，diff 里都会多出一份等量的镜像改动，把真正要看的改动淹掉。
+# 下面两个属性只改**呈现**，不改内容与分发：
+#   linguist-generated  → GitHub 的 PR / 文件视图默认折叠
+#   -diff               → 本地 `git diff` / `git log -p` 不展开正文（仍会在 --stat 里显示该文件变了）
+#
+# ⚠️ 副作用要知道：有人**手改** assets/（本仓库明令禁止）时，这份改动在 review 里看不见。
+#    兜底是机器门而不是人眼 —— CI 与提交前清单都跑 `mirror_to_bundle.py --check`，
+#    镜像与真源有任何字节差异即 exit 1。⛔ 所以那道 check 不许删、不许加豁免。
+#    需要临时看镜像正文时：`git diff --text -- skills/aidp-code-engineer/assets`
+skills/aidp-code-engineer/assets/** linguist-generated=true -diff

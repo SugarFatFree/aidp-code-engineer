@@ -209,7 +209,12 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
         #   ② 它是**活指针**（每次 push 刷新）不是快照：若冻结前最后一次人工提交早于
         #      autopilot 最后一次 push，`cur != frozen_head` 在冻结瞬间就成立，冻结当场被解掉。
         #   故写冻结契约时一并快照 `unconverged_frozen_head`（与 `retest_frozen_head` 同款）。
+        #   ★ `retest_frozen_head` 必须在链里：`retest-cap` 冻结（phase-0-6b 分支①）写的是**它**，
+        #     而那条冻结的 freeze_reason 同样是 `unconverged`。漏掉它 → 快照恒取不到 →
+        #     只能落到下面的 `code/` mtime 兜底（活指针、跨版本误判），而该版一旦 needs_human
+        #     又会被选版剔除、不再为它部署 ⇒ `_UNFREEZE_BY_DEPLOY` 也走不通 = **自锁**。
         frozen_head = (vn.get("unconverged_frozen_head")
+                       or vn.get("retest_frozen_head")
                        or vn.get("frozen_head")
                        or data.get("last_autopilot_head")
                        or vn.get("last_autopilot_head") or "")

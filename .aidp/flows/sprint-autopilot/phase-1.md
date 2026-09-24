@@ -145,7 +145,15 @@ python3 {{AIDP_HOME}}/scripts/autopilot_stuck_check.py --version "$TARGET_VERSIO
 case "$SC" in   # ⛔ 必须按码分流；禁写 `|| exit 0`（见 rationale）
   1) echo "→ 已冻结（#4 由脚本自己发出）"; exit 0;;
   2) echo "⚠️ 入参/环境错（如本块未代入 TARGET_VERSION）→ 跳过本门继续，不据此退出";;
-  3) echo "⛔ stuck 但写盘失败（#4 已发）→ 让位，⛔ 不当已冻结"; exit 0;;
+  3) # stuck 成立但冻结写盘失败。有下一 tick → 让位重试；⛔ 无唤醒源时「让位」= 就此收场，
+     #    而 stuck 恰恰是「既不失败也不推进」——静默退出与它本身完全同形，必须留下冻结记录。
+     if [ "${HAS_WAKE_SOURCE:-0}" = "1" ]; then
+       echo "⛔ stuck 但写盘失败（#4 已发）→ 让位，⛔ 不当已冻结"; exit 0
+     fi
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" \
+       --phase 1.3ter-stuck --reason stuck-phase --freeze-now \
+       --why "stuck 熔断成立但冻结写盘失败，且本轮无唤醒源（HAS_WAKE_SOURCE=0），没有下一 tick 可重试"
+     echo "⛔ stuck 但写盘失败且无唤醒源 → 已补写冻结记录止损"; exit 0;;
 esac
 ```
 

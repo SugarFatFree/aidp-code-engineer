@@ -43,6 +43,7 @@ BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
 $BE --version "$V" set needs_human true needs_human_kind retest-cap \
   retest_cap_frozen_at @now aiauto_frozen_at @now freeze_reason unconverged \
   retest_frozen_head "$(git rev-parse HEAD 2>/dev/null || echo '')" \
+  unconverged_frozen_head "$(git rev-parse HEAD 2>/dev/null || echo '')" \
   needs_human_reason "自动修复复测已达上限（auto_retest_streak≥CAP），转人工介入" \
   || { echo "⛔ retest-cap 冻结写盘失败，本版未冻结"; exit 1; }
 # ★ 与冻结契约同口径：freeze_reason / aiauto_frozen_at / 顶层 blocked_reason 三者齐备，

@@ -47,7 +47,11 @@ SCAN_DIRS = (os.path.join(runtime_relpath("", __file__), "flows"),)
 # ⛔ 只认**围栏内的真实退出动作**：`exit 0` 且同行注释说明它是让位。
 #   散文里谈论"让位本 tick"的句子不是动作 —— 把它们算进来，这道门第一天就红几十条，
 #   而一道恒红的门只会被关掉，比没有更糟（`check_chain_unattended.py` 的 docstring 记的是同一课）。
-YIELD_RE = re.compile(r"^\s*>?\s*exit\s+0\b.*(?:让位|yield)")
+# ⛔ 不要给 `exit 0` 加行首锚点：最常见的写法是 `echo "…让位本 tick"; exit 0`，
+#   `exit` 在行中而不在行首。加了锚点，这一整类站点整个落在巡检面之外，
+#   而门照报「N 站点 / 0 ERROR / 通过」——2026-09-24 审计在 phase-3-5 抓到两处实例。
+#   不必担心误伤散文：调用方只在 ```bash 围栏内取行，围栏外的句子根本到不了这里。
+YIELD_RE = re.compile(r"\bexit\s+0\b.*(?:让位|yield)|(?:让位|yield).*\bexit\s+0\b")
 # ★ 第二形态：`exit 0` 不在行首、而是与协议信号 `UNATTENDED_YIELD` 写在同一行，如
 #   `[ -n "$REMAIN" ] && { echo "UNATTENDED_YIELD"; exit 0; }`。只认「同行既发信号又退出」，
 #   不认散文里单独提到 UNATTENDED_YIELD 的句子 —— 恒红的门会被关掉，比没有更糟。
@@ -108,6 +112,11 @@ def run(root=".", window=WINDOW):
                             in_fence, fence_start = True, i + 1
                         continue
                     if not in_fence or DEFINE_RE.search(ln):
+                        continue
+                    # ⛔ 围栏内的**注释行**不是动作：`# … exit 0 让位本 tick` 是在解释口径。
+                    #   放宽 YIELD_RE 的行首锚点后，不排除它们会把说明句报成缺守卫的站点，
+                    #   而假红常驻 = 硬门迟早被关掉（本文件开头记的是同一课）。
+                    if st.lstrip().startswith("#"):
                         continue
                     if not (YIELD_RE.search(ln) or YIELD_RE2.search(ln)):
                         continue

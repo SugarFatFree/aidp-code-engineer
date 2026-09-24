@@ -184,7 +184,7 @@
     "skills/auto-test-runner/references/usecase-format.md": "dde8bbeac2b111320fab39d829d0c4c5bd654904f6edf8bff3e22c3a8f02fe2c",
     "skills/auto-test-runner/scripts/check_env_facts.py": "e1357e6aeb0d93fcbd4b43852ab702b64ea387eed24cc5d383bdf1073dbc0127",
     "skills/auto-test-runner/scripts/check_layer_isolation.py": "f253cada53e93cda9c71b973e28d15668673e0810597c3a6ab0848da5d71e252",
-    "skills/auto-test-runner/scripts/check_result.py": "df7c67db72f15b2d251fa9ed8227bd50ff6f04c200b6568032c22a5c7a9d39a5",
+    "skills/auto-test-runner/scripts/check_result.py": "6efb92eb837fc8d052942538bbc210895b2dee4623a271700f511d8c1552ca2c",
     "skills/auto-test-runner/scripts/detect_drivers.py": "e3bd8bd2656a478739b92a15d7ad9caceb431bda6027f3bd894d8f4fe8fa6a54",
     "skills/auto-test-runner/scripts/gen_report.py": "95d91fdaaa2208b7a8fee3dce08e011fe6a0276903569c88fbf3ac3ae6e0b32d",
     "skills/auto-test-runner/scripts/tasks_state.py": "1d8d781c68979021a35c8833c609885b995fe3386b5e1fc298f291aa7fce2cee",

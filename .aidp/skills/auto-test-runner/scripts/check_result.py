@@ -929,7 +929,8 @@ def _check_artifact_contract(data, name, result_path, issues, artifact_index=Non
                    f'每次 capture 只能保留一种实际截图格式,回退前须清理失败半成品')
 
 
-def check_one(data, name, result_path=None, artifact_index=None, artifact_owners=None):
+def check_one(data, name, result_path=None, artifact_index=None, artifact_owners=None,
+              require_preflight=False, webmcp_enabled=False):
     """校验单条结果对象,返回 issues 列表。"""
     issues = []
     if not isinstance(data, dict):
@@ -1120,6 +1121,51 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
         _issue(issues, 'Important', 'bad_env_flag',
                f'{name}: is_environment_issue 应为布尔(实为 {type(data["is_environment_issue"]).__name__})')
 
+    # ── 运行真实性前置（--require-runtime-preflight 开启时才判）──────────────
+    # ★ 它回答的是「这一轮到底跑在真环境上没有」：实际认证实例/角色、登录后的**项目自身
+    #   受保护接口**、前端部署指纹，故障注入类用例再加注入能力。
+    # ⛔ 首页 200 / 单测通过 / 相似浏览器场景**都不是** pass 证据 —— 那些在环境根本没起来时
+    #   也全绿，正是这道门要拆穿的形态。
+    preflight = data.get('runtime_preflight')
+    # ⚠️ 必须按 status 门控,与下方紧邻的 `runtime_preflight_required_missing` 同口径:
+    #    block / na / 巡检项按定义没有「本轮认证实例、受保护接口、部署指纹」可取,
+    #    对它们判 Critical 时作者**除了编造前置事实没有别的改法** —— 而「取不到不许编」
+    #    正是本开关自己要守的纪律,那样就成了硬门在逼人造假。
+    if (require_preflight and preflight is None and status == 'pass'
+            and data.get('entry_kind') != 'free-scan'):
+        _issue(issues, 'Critical', 'missing_runtime_preflight',
+               f'{name}: 本轮要求运行真实性前置事实,但结果未登记 runtime_preflight')
+    if preflight is not None:
+        if not isinstance(preflight, dict) or not isinstance(preflight.get('required'), list):
+            _issue(issues, 'Critical', 'bad_runtime_preflight',
+                   f'{name}: runtime_preflight 须含 required 数组及逐项探测事实')
+        else:
+            allowed = {'identity', 'protected_api', 'frontend_build', 'fault_injection'}
+            required = preflight['required']
+            if require_preflight and status == 'pass' and not all(
+                    key in required for key in
+                    ('identity', 'protected_api', 'frontend_build')):
+                _issue(issues, 'Critical', 'runtime_preflight_required_missing',
+                       f'{name}: 本轮 pass 须核实认证实例、项目受保护接口和前端部署指纹')
+            if any(not isinstance(key, str) or key not in allowed for key in required):
+                _issue(issues, 'Critical', 'bad_runtime_preflight',
+                       f'{name}: runtime_preflight.required 含未知探针')
+            for key in allowed:
+                fact = preflight.get(key)
+                if fact is None and key not in required:
+                    continue
+                if not isinstance(fact, dict) or fact.get('status') not in (
+                        'verified', 'failed', 'unavailable') or any(
+                        not isinstance(fact.get(field), str) or not fact[field].strip()
+                        for field in ('source', 'observed_at', 'evidence')):
+                    _issue(issues, 'Critical', 'bad_runtime_preflight',
+                           f'{name}: {key} 缺状态/来源/时间/证据')
+                elif key in required and status == 'pass' and fact['status'] != 'verified':
+                    _issue(issues, 'Critical', 'unverified_runtime_preflight_pass',
+                           f'{name}: 必需探针 {key}={fact["status"]},不得将相关用例记为 pass')
+
+    webmcp = data.get('webmcp')
+
     _check_application_mcp(data, name, issues)
     # 产物契约只在调用方给出结果文件路径时才可判（要靠它解析相对路径）；
     # ⛔ 取不到就跳过，不臆造 basedir —— 那会把「路径对的」判成 not_found。
@@ -1188,6 +1234,12 @@ def main():
                     help='结果 JSON 文件或 results/ 目录(**可多个**;支持 shell glob 展开的跨轮次路径,\n'
                          '如 build-3/round-*/results/)')
     ap.add_argument('--json', action='store_true', help='JSON 输出(供 Agent 解析)')
+    ap.add_argument('--require-runtime-preflight', action='store_true',
+                    help='要求每条结果登记 runtime_preflight（本轮新结果用；历史结果复核不带）')
+    ap.add_argument('--webmcp-enabled', action='store_true',
+                    help='本轮为 Web + WebMCP（旧 webmcp_enabled 或新 client_mcp 且端=web、形态=webmcp）：'
+                         '对 client=web 的结果追加 WebMCP 专项判据。⛔ 只约束 client=web，'
+                         '混合目录里的移动/小程序/桌面结果不因此假红')
     ap.add_argument('--strict', action='store_true', help='Important 也计入失败')
     args = ap.parse_args()
 
@@ -1211,7 +1263,9 @@ def main():
         except (json.JSONDecodeError, OSError) as e:
             _issue(all_issues, 'Critical', 'unreadable', f'{name}: 无法解析 JSON({e})')
             continue
-        all_issues.extend(check_one(data, name, result_path=f))
+        all_issues.extend(check_one(data, name, result_path=f,
+                                    require_preflight=args.require_runtime_preflight,
+                                    webmcp_enabled=args.webmcp_enabled))
 
     crit = [i for i in all_issues if i['level'] == 'Critical']
     imp = [i for i in all_issues if i['level'] == 'Important']

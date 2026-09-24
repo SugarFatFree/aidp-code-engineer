@@ -1,8 +1,12 @@
-# WebMCP 用例族（条件启用 · 维度 20 判据全文）
+# WebMCP 用例族（条件启用 · 维度 20 **Web 专项**）
 
-> **本文件只在调用方传入 `webmcp_enabled: true` 时适用。** 为 `false` 或未传时，本文件描述的
-> 两类套件、维度 20 **整体不适用**：不生成用例、不产生检查项、不发告警、不在覆盖矩阵或统计摘要
-> 里占位、不在 QR 报告里留行。
+> ★ **本文件仅 Web 客户端适用**；跨端的应用工具用例先读 [`flow-client-mcp.md`](./flow-client-mcp.md)。
+> ⛔ Appium / 小程序驱动即使也用 MCP 连接，**也不能套用本页的「页面注册」与 Chrome 前提** ——
+> 那是测试驱动，不是应用能力。
+>
+> **本文件只在 `webmcp_enabled: true`（或归一后 `client_mcp.enabled: true` 且客户端 = Web、形态 = WebMCP）时适用。**
+> ⚠️ Web 叶子未启用**只省略本文件的双窗口两类套件**——非 Web 已声明 `client_mcp.enabled: true` 时，
+> 通用用例与维度 20 **仍须执行**。⛔ 两类应用能力**都**未启用才不产专项用例、不占覆盖矩阵与统计摘要、不在 QR 报告里留行。
 
 ---
 
@@ -24,7 +28,7 @@ AI Agent 可直接调用业务函数，不必靠无障碍树快照猜 DOM。
 
 | 入参 | 形态 | 说明 |
 | :- | :- | :- |
-| `webmcp_enabled` | `true` / `false` | **唯一开关**。为 `false` 或未传 → 本文件整体不适用 |
+| `webmcp_enabled` | `true` / `false` | Web 旧版兼容开关；新 `client_mcp.enabled: true` 且客户端 = Web / 形态 = WebMCP 同样启用本叶子。⛔ 非 Web 的通用用例**不依赖它** |
 | `webmcp_entry_symbols` | 数组 | 该项目**实测**的能力入口标识符。⚠️ 挂载位置已迁移过一次、规范仍在演进，**写死任何名字都会过期** |
 | `webmcp_launch_command` | 字符串 | 带参浏览器的完整启动命令。**用例里一律引用它、不要自拟** |
 

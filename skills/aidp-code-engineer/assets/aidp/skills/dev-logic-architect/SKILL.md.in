@@ -105,6 +105,7 @@ description: >
   一处判错就给未启用项目凭空长出告警和产物位**。判定权归调用方,本 SKILL 只消费该输入。
 - **另两个入参同样由调用方传入、不得写死**:`webmcp_entry_symbols`(能力入口标识符,**挂载位置已
   迁移过一次、写死必过期**)、`webmcp_launch_command`(带参浏览器完整启动命令)。
+- ★ **跨端总纲先读 [`references/flow-client-mcp.md`](./references/flow-client-mcp.md)**：「客户端 MCP 能力」是**跨端**功能点(Web / 小程序 / 移动 / 桌面),下面这条 WebMCP 只是它的 **Web 端实现**;⛔ 非 Web 端已声明应用 MCP 时,通用半场照跑、不因 `webmcp_enabled` 未开而跳过。
 - **启用时:必读 [`references/flow-webmcp.md`](./references/flow-webmcp.md) 并按其执行。** 六项产出
   (分层落点表 / 工具清单表 / 错误契约表 / 三层开关与时序图 / 运行前提表 / ADR)、两条必进
   **Module E 待澄清问题清单**的结论、三条禁令(不新造后端接口·不新增表与错误码 / 不新增独立命令

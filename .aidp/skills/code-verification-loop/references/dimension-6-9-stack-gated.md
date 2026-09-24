@@ -143,6 +143,8 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录>
 | **⛔ 严禁自行探测** | 不 grep PRD、不扫代码找相关标识符。**Why：判定散落多处必然漂移，而一处判错就会给未启用的项目凭空长出 Critical。** 判定权归调用方，本 SKILL 只消费该输入 |
 | **入口标识符** | 由 `webmcp_entry_symbols`（数组）传入。⚠️ **挂载位置已迁移过一次、规范仍在演进，脚本与文档都不得写死任何一个名字**——写死后的失效方向是「扫不到 → 0 命中 → **假绿**」。缺该入参时**报入参错而不是猜默认值** |
 
+★ 跨端总纲见 [`references/flow-client-mcp.md`](./references/flow-client-mcp.md)——WebMCP 只是 Web 端实现;非 Web 已声明应用 MCP 时维度 9 的通用静态半场照跑。
+
 **六项检查（判据全文见 [`references/flow-webmcp.md`](./references/flow-webmcp.md)）：**
 
 | # | 检查 | 判据要点 | severity |

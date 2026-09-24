@@ -91,6 +91,7 @@ Codex 已支持多层级 SKILL 目录，DSH 可通过 `dsh-plugin-commands` 读�
 2. `description` 优先取命令 frontmatter，其次取首个 H1，仍无值时使用稳定的通用描述。
 3. 设置为仅允许用户显式调用，禁止隐式模型调用。
 4. frontmatter 后写入确定性适配前言，再原样附加 `.aidp/commands/<command>.md` 正文。
+   > ⚠️ **本条已废弃（2026-09-24）**：改为只写**指向真源的指针**、不内联正文。理由见 `agent_sync.py::codex_command_skill` 的 docstring。
 5. 用户以 `$<command> args` 调用时，`args` 全部文字原样作为 `$ARGUMENTS`，不增删、不改写、不调整顺序与引号。
 6. 原始正文明确调用或串联 `/foo args` 时，读取 `.aidp/commands/foo.md`，确认文件存在后把 `args` 原样作为子命令 `$ARGUMENTS`，在当前执行链内联执行；命令未知、文件不存在或无法唯一映射时 fail closed。
 7. 适配层不得改写原始命令正文。
@@ -216,7 +217,7 @@ DSH:         /<command> <args>
 - `link` 与 `copy` 模式。
 - 公共 SKILL 同步到 `.agents/skills`，Claude 额外同步到 `.claude/skills`。
 - Claude、Codex、DSH 三类命令生成路径与调用元数据。
-- Codex frontmatter、H1 描述提取、命令正文逐字保真、`$ARGUMENTS` 保留。
+- Codex frontmatter、H1 描述提取、`$ARGUMENTS` 保留。（原「命令正文逐字保真」已于 2026-09-24 废弃，改为指针入口。）
 - DSH 命令与 SKILL 重名时拒绝生成。
 - 切换 Agent 后清理旧生成物，但保留项目自有文件。
 - 旧 `.agents/skills/aidp-cmd` 被清理。

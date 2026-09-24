@@ -195,7 +195,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 - 单一信源是目标项目的 `{{AIDP_HOME}}/`（仅 Claude 为 `.claude/`；有 Codex / DSH 为 `.agents/`）；模板 `.aidp/` 不下发到项目根；Codex 的 `.codex/skills/aidp` / `.codex/skills`、DeepSeek Harness 的 `.dsh/commands`、并存时的 `.agents/skills` 及各 Agent hook / MCP 配置由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成，不手改；★ 而 `.claude/commands|skills|plugins` 在降层后与运行真源**同址**，`agent_sync.py` 判定 identity 后整体跳过——它们是**运行契约本体、必须入库**，不是生成物。
 - 装配方式：`link` 用相对符号链接，`copy` 为实体副本（不支持符号链接的环境）；改了下游 `{{AIDP_HOME}}/` 后重跑 `agent_sync.py` 即可同步（模板契约须在模板仓库修改并由脚手架升级）。
 - 记忆文件形态切换（例如后来加入 Codex）由 `agent_sync.py` 搬迁正文，不丢内容。
-- 命令入口：Claude Code 为 `.claude/commands` + `/命令`，Codex 为官方发现根 `.codex/skills/aidp` + `$命令`，DeepSeek Harness 为 `.dsh/commands` + `/命令`。Codex 命令 SKILL 内联执行原始正文明确串联的 `/foo args`：读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样传为 `$ARGUMENTS`；未知命令 fail closed。
+- 命令入口：Claude Code 为 `.claude/commands` + `/命令`，Codex 为官方发现根 `.codex/skills/aidp` + `$命令`，DeepSeek Harness 为 `.dsh/commands` + `/命令`。Codex 命令 SKILL 是指针入口（不内联正文，第一动作 Read `{{AIDP_HOME}}/commands/<命令>.md`）；正文明确串联的 `/foo args` 同法读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样传为 `$ARGUMENTS`；未知命令 fail closed。
 - 浏览器自动化插件 `chrome-devtools-mcp` 的模板真源在 `.aidp/plugins/`、下游运行契约在 `{{AIDP_HOME}}/plugins/`：Claude Code 登记完整项目插件；Codex / DeepSeek Harness 将插件 SKILL 装配进共享 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别合并到 `.codex/config.toml` / `.dsh/mcp.json`。本机需要 Node.js（`npx`），Codex 需项目 trust；DSH init 会尝试安装 `github:SugarFatFree/dsh-agent-extension`，失败时报告 WARN 和重试命令。
 - 命令、工具名、定时循环在各 Agent 下的写法见 `{{AIDP_HOME}}/reference/agent-tools.md`。
 

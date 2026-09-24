@@ -70,7 +70,7 @@ PLUGINS_SRC = "plugins"
 CLAUDE_PLUGINS = ".claude/plugins"
 CODEX_PLUGIN_SKILLS = ".codex/skills"
 OPENAI_YAML = "policy:\n  allow_implicit_invocation: false\n"
-CODEX_BODY_MARKER = "## 原始命令正文（逐字保真）\n\n"
+CODEX_BODY_MARKER = "## 权威正文位置\n\n"
 CODEX_MCP_BEGIN = "# >>> AIDP-MCP {name} >>>"
 CODEX_MCP_END = "# <<< AIDP-MCP {name} <<<"
 DSH_MCP_MANAGED = ".dsh/.aidp-mcp-servers.json"
@@ -496,20 +496,44 @@ def _command_description(name: str, text: str) -> str:
     return (match.group(1).strip() if match else f"AIDP command {name}").replace('"', "'")
 
 
+def _codex_command_rel(name: str) -> str:
+    return f"{AGENT_RUNTIME_HOME['codex']}/commands/{name}.md"
+
+
 def _codex_command_preamble(name: str) -> str:
     return (
         "## Codex 命令适配规则\n\n"
         f"1. 用户以 `${name} args` 调用本命令时，`args` 的全部文字原样作为本命令的 `$ARGUMENTS`；"
         "不增删、不改写、不调整顺序与引号。\n"
-        "2. 当下方原始命令正文明确调用或串联 `/foo args` 时，不依赖隐式 SKILL 调用，而是读取 "
+        f"2. 本命令的权威正文**不在本文件里**，在 `{_codex_command_rel(name)}`。"
+        "**进入本命令的第一动作 = Read 该文件**，然后逐条执行它的全部内容（把上面的 `args` 作为其 `$ARGUMENTS`）。"
+        "⛔ 不得凭本文件、描述行或记忆推断该命令的流程与硬门 —— 本文件只是入口，不含任何步骤。\n"
+        "3. 当正文明确调用或串联 `/foo args` 时，同法读取 "
         f"`{AGENT_RUNTIME_HOME['codex']}/commands/<命令名>.md`（此处命令名为 `foo`）。确认文件存在后，将 `args` 原样作为"
         "子命令的 `$ARGUMENTS`，在当前执行链内联执行。\n"
-        "3. 被引用的命令文件不存在、命令名未知或无法唯一映射时，必须 fail closed：停止执行并报告未知命令，严禁猜测或跳过。\n"
-        "4. 本适配层只负责参数传递和命令串联；不得改写下方原始命令正文。\n\n"
+        "4. 被引用的命令文件不存在、命令名未知或无法唯一映射时，必须 fail closed：停止执行并报告未知命令，严禁猜测或跳过。\n"
+        "5. 本适配层只负责参数传递和命令串联；不得改写权威正文，也不得把正文抄进本文件。\n\n"
     )
 
 
 def codex_command_skill(name: str, command_text: str) -> str:
+    """Codex 命令入口 = frontmatter + 适配前言 + **指向真源的指针**，⛔ 不内联正文。
+
+    Codex 的 skill 必须带 frontmatter 与适配前言，没法像 DSH 那样直接 symlink 到
+    `commands/<name>.md`，所以这里必须生成实体文件 —— 但「必须生成文件」不等于
+    「必须把正文抄进去」。
+
+    ⛔ 历史上这里内联整份正文（14 个命令约 505KB，`sprint-autopilot` 单个 70KB），
+    理由是「逐字保真」。那是错的，两点：
+      ① 同一份前言的规则 3 已经让 Codex 按需去 `commands/` 读**子命令**正文 ——
+         `/sprint-autopilot` 串联的 8 个子命令（各 37–63KB、各自带硬门）全靠这条规则，
+         一个都没内联。顶层正文没有任何理由破例。
+      ② 命令正文本身只是骨架 + 索引：`/sprint-autopilot` 正文 70KB，而它 `Read` 的
+         flow 分片有 599KB —— 真正的指令 89% 本来就在磁盘上按需读。
+    内联反而引入一个静默失效形态：脚手架升了 `commands/` 与 flow 分片、`agent_sync`
+    没重跑时，Codex 执行**旧骨架**、读到**新分片**，Step 编号对不上。指针让这类分叉
+    不可能发生（而不是靠 verify 事后抓）。
+    """
     return (
         "---\n"
         f"name: {name}\n"
@@ -519,7 +543,8 @@ def codex_command_skill(name: str, command_text: str) -> str:
         "---\n\n"
         f"{_codex_command_preamble(name)}"
         f"{CODEX_BODY_MARKER}"
-        f"{command_text}"
+        f"`{_codex_command_rel(name)}` —— 这是 `/{name}` 的唯一真源，"
+        "由 AIDP 脚手架按版本门控维护。本文件是 `agent_sync.py` 生成的入口，⛔ 勿手改。\n"
     )
 
 

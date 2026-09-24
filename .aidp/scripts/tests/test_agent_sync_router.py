@@ -24,7 +24,7 @@ SCRIPTS = os.path.dirname(HERE)
 sys.path.insert(0, SCRIPTS)
 SYNC_PY = os.path.join(SCRIPTS, "agent_sync.py")
 REPO = Path(__file__).resolve().parents[3]
-CODEX_BODY_MARKER = "## 原始命令正文（逐字保真）\n\n"
+CODEX_BODY_MARKER = "## 权威正文位置\n\n"
 
 import agent_sync as AS  # noqa: E402
 
@@ -114,8 +114,17 @@ def test_native_command_skills():
               and "读取 `.agents/commands/<命令名>.md`" in text
               and "未知命令" in text and "fail closed" in text
               and "读取 `.aidp/commands/" not in text)
-        check("Codex 命令正文逐字保真",
-              CODEX_BODY_MARKER in text and text.split(CODEX_BODY_MARKER, 1)[1] == source)
+        # ★★ 入口是**指针**，⛔ 不内联正文。内联（历史做法）会让脚手架升了 commands/
+        #    与 flow 分片、agent_sync 未重跑时，Codex 执行旧骨架 / 读新分片，Step 编号对不上。
+        check("★★Codex 入口指向真源而非内联正文",
+              CODEX_BODY_MARKER in text
+              and "`.agents/commands/sprint-dev.md`" in text
+              and "第一动作 = Read 该文件" in text)
+        # 判据用「正文特征行在不在」，⛔ 不用体量：本用例的合成命令只有几十字节，
+        # 按体量判会恒假；而 H1 标题是正文独有、前言绝不会产生的串。
+        body_h1 = "# /sprint-dev — 开发阶段"
+        check("★★命令正文未被抄进入口（正文 H1 不出现在入口里）",
+              body_h1 in source and body_h1 not in text)
         check("Codex explicit invocation policy",
               "allow_implicit_invocation: false" in
               _read(root / ".codex/skills/aidp/sprint-dev/agents/openai.yaml"))
@@ -167,10 +176,11 @@ def test_real_command_discovery_and_chaining():
                 "读取 `.agents/commands/<命令名>.md`", "当前执行链内联执行", "未知命令",
             ))
             bodies_exact = (bodies_exact and CODEX_BODY_MARKER in generated
-                            and generated.split(CODEX_BODY_MARKER, 1)[1] == source)
+                            and f"`.agents/commands/{command_name}.md`" in generated
+                            and len(generated) < 2000 < len(source))
         check("三条编排命令均带确定性 Codex 适配前言", prefaces)
         check("三条编排命令引用的 /sprint-* 均可映射到真源", all_mapped)
-        check("三条编排命令原始正文逐字保真", bodies_exact)
+        check("★★三条编排命令入口均为指针、均未内联正文", bodies_exact)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

@@ -1,5 +1,14 @@
 # Quality Review Checklist（质量检查清单）
 
+### 维度 20:客户端应用 MCP 用例族完整性(**Critical**,**条件启用**)
+
+> **门控:** 仅调用方显式 `client_mcp.enabled: true` 或旧 Web `webmcp_enabled: true` 时核;未启用时不生成用例/检查行/告警,**报告不留行**。不 grep PRD 或凭 Chrome/Appium 测试驱动 MCP 自行开启;新旧声明冲突明确报错,不静默覆盖。
+
+**通用半场:** 以 [`flow-client-mcp.md`](./flow-client-mcp.md) 为准,按已声明工具逐项核输入/输出 Schema、身份权限、写操作确认、生命周期、错误契约、审计日志及调用证据正反向用例。非 Web 仅在**应用自有 MCP 服务或桥接**已证实后生成可执行专项用例;声明启用而入口/工具缺失时专项 block、其余 UI 继续;明确不支持/未提供则不造工具套件。**Web 专项只执行一次**,下方 1~10 的 Web 原有判据与本半场重合部分不得重复造 TC-ID。
+
+**Web 叶子检查目标:** 仅 Web+WebMCP 时须生成**两类套件**(未启用态 + 已启用态),覆盖齐全、无三条已知写错形态。Web 判据全文仍在 [`flow-webmcp.md`](./flow-webmcp.md),不移给 App/小程序/桌面。
+
+**以下核验清单 1~10 仅 Web+WebMCP 分支适用,仍是 Web 的唯一一次核验;通用半场只补 Web 清单未覆盖项(输入/输出 Schema 来源、审计调用证据等),不重复造用例或记录同一问题。非 Web 全部走通用半场:**
 > 本文件隶属于 `dev-manual-testcase` SKILL，供 Quality Review Agent 执行检查时使用。
 > 上级文档：`../SKILL.md`
 >
@@ -42,6 +51,7 @@
 | 17 | 列集合 vs 需求字段核对用例覆盖 | 语义 | — | Δ |
 | 18 | 覆盖矩阵逐维确认 + 方法论套用 | 兼有 | `check_residual_assertions.py`（仅「零残留断言登记表」子条；覆盖矩阵/BVA/状态机部分无机器门） | **基线缩放** |
 | 19 | 用例数量基线 + 优先级分布 + 统计摘要 | 兼有 | `check_case_stats.py` | **基线缩放** |
+| 20 | 客户端应用 MCP 用例族完整性〔条件启用,WebMCP 为 Web 叶子〕 | 语义 | — | Δ |
 | 20 | WebMCP 用例族完整性〔条件启用〕 | 语义 | — | Δ |
 | 21 | 通用还原度套件完整性 | 兼有 | `check_fidelity_suite.py` | Δ |
 
@@ -838,6 +848,7 @@ find . -path "*/enums/*" -o -path "*/constants/*" | xargs grep -n "enum\|const"
 - [ ] **(Critical 强制前置)** 若方案选用**远程 `chrome-devtools-mcp`**(需注册 MCP 服务),注册命令必须满足:① **服务名 = `chrome-<git_user>`**（`git config user.name`，如 `chrome-alice`），**禁止**固定通用名 `chrome-devtools`（多人共享项目 `.mcp.json` 会冲突）；② **作用域 `--scope project`**（写入项目根 `.mcp.json`），**禁止 `--scope user`/全局**；③ 安装用 `npm i chrome-devtools-mcp@latest -g`。**方案 / 用例文档给出的注册命令若违反服务名或作用域规则 → 不通过**（本地 `chrome-devtools-cli` 路径免 MCP 注册，不受此项约束）
 - [ ] **(Critical 强制前置 · 本地侧对偶)** 若方案 §2.2 判为**本地模式 / 同机**(同机 + 项目根无 `.mcp.json`、未注册 `chrome-<git_user>` 远程服务),执行入口**必须指向 `chrome-devtools-cli`(CLI 直调)**;**§2.2 写"本地模式/同机"却把执行入口指向 MCP 变体、或无用户后缀通用名 `chrome-devtools` / `mcp__chrome-devtools__*`(而非 `chrome-devtools-cli`)→ 不通过**。它是上一条"远程注册须 `chrome-<git_user>` + `--scope project`、禁用通用名"规则的**本地侧对偶**:MCP 变体驱动共享 / 远程 Chrome,本机误用会连错实例、`list_pages` 混入他人标签页串测污染;**本地模式默认走 `chrome-devtools-cli`,不得回退到连共享 / 远程实例的通用名 MCP 变体**。本机若疑似缺 `chrome-devtools` 命令(注意技能名 `chrome-devtools-cli` ≠ 命令名 `chrome-devtools`),方案 / 入口须体现**先诊断命令名 / PATH**(查 `command -v chrome-devtools` / `chrome-devtools status`,多数一修即回落本地);短期修不了才可用**显式声明的**降级——同插件隔离实例 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`(自起本机独立 Chrome)并如实写报告 driver 字段(`cli | mcp-remote | mcp-plugin-fallback | manual`)。**仅静默切换到通用名 `mcp__chrome-devtools__*` / 共享远程实例 → 不通过**(显式声明的插件隔离实例降级不判失败)
 - [ ] **(Critical 强制前置)** 若方案选用 chrome-devtools-mcp,§2.2 必须标注**单步操作等待上限**(默认每步操作 ≤ 3 秒、首次打开页面 ≤ 30 秒),且标明"默认值,待用户确认";用户确认/调整前不得据此默认值进入 AI 自动执行;AI 执行入口指令须写明单步超限即判卡死、记录 URL+截图后继续下一步、不无限等待。**§2.2 缺单步等待上限字段 → 不通过**
+- [ ] **(Critical 强制前置)** 若方案选用 chrome-devtools-mcp,§2.2 必须标注**关键步骤截图要求**——关键步骤(登录/提交/状态变化/断言/报错)必须截图留痕,**有头/无头都要求**(无头无可见窗口,截图是唯一执行证据);AI 执行入口指令须同步要求 AI 工具在关键步骤截图并保存。命名只规定 `{用例ID}-step{步骤号}.{ext}` 主干,不得把 PNG 写成唯一格式:Web Chrome DevTools 优先 WebP quality=90,其它驱动保留原生 PNG,`.jpg/.jpeg` 仅兼容;每个步骤只登记一个 artifact,不生成多格式副本,实际路径以 auto-test-runner `evidence[].artifact` 为准。**§2.2 缺关键步骤截图字段或仍写死 `.png` → 不通过**
 - [ ] **(Critical 强制前置)** 若方案选用 chrome-devtools-mcp,§2.2 必须标注**关键步骤截图要求**——关键步骤(登录/提交/状态变化/断言/报错)必须截图留痕,**有头/无头都要求**(无头无可见窗口,截图是唯一执行证据);AI 执行入口指令须同步要求 AI 工具在关键步骤截图并保存。**§2.2 缺关键步骤截图字段 → 不通过**
 - [ ] 用例文档元素定位仍使用"用户可见文案"(为手动执行人友好,也兼容 AI 浏览器)
 

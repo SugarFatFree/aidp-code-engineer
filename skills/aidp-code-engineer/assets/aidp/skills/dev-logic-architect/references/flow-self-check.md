@@ -7,6 +7,7 @@
 
 > **本节与 Quality Review Agent 41 维度的关系:** 本清单是作者侧的工程性自检(关注脚本辅助、文件结构、命名规范);下文 "Post-Generation Quality Review" 章节调用的独立 Agent 执行**业务/契约/溯源层面的深度审查**(完整 41 维度详见 `references/quality-review-checklist.md`)。两套清单**编号不一一对应**,但目标互补、共同保障详细设计质量。下表给出**简明映射**便于交叉查阅:
 >
+> **⚠️ 上表仅覆盖 27 项工程自检对应的 QR 维度。** 未在上表出现的 **QR 维度 1 / 3 / 6 / 16 / 24 / 25 / 26 / 27 / 28 / 29 / 33 / 34 / 35 / 36 / 37 / 38 / 39 / 40 / 41** 在 Author 侧无对应自检项,**由 Post-Generation Quality Review 独立 Agent 执行**——其中**维度 16(待澄清清单完整性)、24(原型版本基底对齐)、25(代码事实采集深度)、26(第三方依赖反向兜底)、27(复用识别完整性)、28(数据单位标注与转换)、29(需求字段对账闭环·接口环)、34(统计指标口径五要素)、36(业务计数声明表)、37(渲染层归并声明表)、38A/B(结论型断言证据来源)、39(新增列举证 + 重复性对账 + DDL 注释配对)、维度 40(权限与可见范围约束落地)均为 Critical;35(上游调用日志与脱敏声明)、38C(禁令反向边界)与维度 41(同族增量项的公共单元与排序规则声明)是 Important 档——**缺表判 Important 不等于可以不补**,同样要过**。**严禁因"27 项自检已过"就认为这些维度已覆盖**,它们必须经独立 QR Agent 单独核验(脚本见 `references/quality-review-checklist.md` 对应维度;维度 29 配套 `check_field_impl_inventory.py` 做「字段实现清单」结构性反向覆盖回检;⚠️ **维度 29 与维度 39 方向相反、并存互补**——29 查**上游出处**(需求字段有没有落地),39 查**下游消费者**(新增的这一列有没有人读),⛔ 勿合并,语义层"研发需求字段是否逐字段落地"仍由 QR Agent 纯语义审查)。
 > ### ⚠️ 多套编号并存，且**映射是任意的——严禁靠算**
 >
 > 本 skill 内并行存在**三套**编号，**它们是不同的清单、不是同一份清单的几种叫法**：
@@ -119,6 +120,11 @@
 - `scripts/check_copy_landing_table.py` — 语义/口径变更类需求「文案落点表」结构性核验:扫描详设,检测到「文案落点表」(表头含 `改前文案`+`改后文案`)时校验表头 5 列齐全(`# | 文件路径 | 展示位 | 改前文案 | 改后文案`)+ 改前/改后文案逐行非空无占位(`待定`/`按实际调整`/`TBD` 等);缺列/空文案/占位 → 退出码 1,未检测到「文案落点表」→ exit 0 跳过(对应维度 29 字段比对门·文案落点姊妹子表 Critical 子项)。语义层覆盖(表 E 每个改写项是否落地 + 不改边界是否完整)由 QR 子 Agent 以上游「表 E」为基准判定
 - `scripts/check_column_consumer_evidence.py` — 「新增列举证表」结构性核验:凡设计出现 `ALTER TABLE ... ADD`,核查是否有 6 列举证表(`列名 | 类型 | 业务含义 | 谁读它 | 不加会怎样 | 与既有近似列的区别`)、逐格填实、「谁读它」举得出**具体读取方**(「上游有这个字段」「以后可能要用」「备用」「预留」一律不算)、并与 DDL 双向对账(对应维度 39 Critical / 核心原则 32)。**须传目录**;缺表判 Important、表在而缺列或举不出消费者判 Critical
 - `scripts/check_ddl_column_comment.py` — DDL 新增列注释配对核验:每个 `ADD COLUMN` 是否有配对列注释,**MySQL 内联 `COMMENT '...'` 与达梦/Oracle 独立 `COMMENT ON COLUMN t.c IS '...'` 两种方言形态都认**(只认前者会在国产库项目上静默失效)。**须传目录**(对应维度 39 Critical / 核心原则 32)
+- `scripts/check_permission_constraint.py` — 权限与可见范围约束落点表结构核验(对应检查项 40,**Critical**;Author 27 项无对应自检编号)
+- `scripts/check_sibling_family_spec.py` — 同族增量项声明表结构核验(对应检查项 41,**Important 档**;Author 27 项无对应自检编号;支持 `--self-check`)
+- `scripts/run_qr_checks.py` — **试验性 QR 机器结果采集器**,只调用现有 25 条脚本并保留原始输出,不增加 Author 自检项或 QR 维度,未接入正式 QR 步骤 0;`skipped`/`collector`/`unavailable` 不等于通过。
+
+> 上述检查项 40/41 两个脚本均由 [`flow-qr-dispatch.md`](./flow-qr-dispatch.md) 的 **QR 步骤 0** 调用。命令端只负责把该步骤派给独立 QR Agent,**命令端无需重复实现判据**;否则同一判据两份实现必然漂移。
 - `scripts/check_sibling_family_spec.py` — 同族增量项声明表结构核验(对应检查项 41,**Important 档**;Author 27 项无对应自检编号;支持 `--self-check`)
 - `scripts/run_qr_checks.py` — **QR 步骤 0 的一次性采集入口**:并发跑齐全部机器门并汇总为 JSON。⛔ 采集器、非判定者;`skipped` / `collector` / `inconclusive` / `unavailable` **都不等于通过**
 

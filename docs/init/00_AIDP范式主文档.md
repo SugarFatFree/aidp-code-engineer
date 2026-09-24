@@ -913,7 +913,7 @@ Skills 是可复用的能力模块，契约定义放在 `{{AIDP_HOME}}/skills/` 
 | 能力诉求 | 落点 |
 |---------|------|
 | 前端页面自动化功能测试 | `/sprint-aiauto-test`（chrome-devtools-mcp 浏览器仿真测试） |
-| 代码质量自动审查 | `code-verification-loop`（维度 0 静态基线门 + 14 维度验收） |
+| 代码质量自动审查 | `code-verification-loop`（维度 0 静态基线门 + 15 维度验收） |
 | 数据库迁移脚本生成 | `dev-logic-architect`（数据库设计 + SQL 生成）+ `/sprint-design` |
 | API Mock 服务 | 第三方接口临时 Mock 协议（`THIRD_PARTY_MOCK` 走前端拦截器 / 后端 `@Profile("mock")` 运行时开关；`DEV_MOCK` 走构建期裁掉，见约定 26 的分流） |
 

@@ -115,6 +115,10 @@
 
 ---
 
+**应用 MCP 业务能力条件核验(折入检查项 1/6/14,不新增维度):** 上游 `client_mcp.enabled: true` 或旧 Web `webmcp_enabled: true` 时,逐工具核 PRD 业务语义→设计中的客户端类型/输入输出 Schema/身份权限/写确认/生命周期/错误/审计/调用证据→Task 步骤/验收/AI 指令/依赖是否闭合;**非 Web 只能用已证实的应用自有 MCP 服务或桥接**。项目 `{{AIDP_HOME}}/mcp.json` 或全局 `mcpServers` 属开发**测试驱动 MCP**/工具盘点,不能证明应用具备能力。未声明时不新增 Task/Phase/检查行;新旧声明冲突明确判不通过,不能静默覆盖;依赖环和 EPIC 全局核验照跑。
+
+---
+
 #### 检查项 2:详细设计完备性评估
 
 **检查目标:** 在生成计划前,检查详细设计是否完备。
@@ -192,7 +196,7 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py <研发执行计划路径>
 **指令来源优先级(检查时必须核验):**
 
 1. **项目 AIDP 命令/范式文档**(L1,最高优先级) — 如 `aidp gen:mapper`、`aidp scaffold:controller`
-2. **项目 `.claude/` 下的 commands/skills/plugins/agents/mcp**(L2) — 如项目级 `/项目slash`、项目级 skill、项目级 agent、项目级 MCP server  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+2. **项目 `{{AIDP_HOME}}/` 下的 commands/skills/plugins/agents/mcp**(L2) — 如项目级 `/项目slash`、项目级 skill、项目级 agent、项目级 MCP server  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 3. **系统 Claude Code 的 commands/skills/plugins/agents/mcp**(L3) — 如 `/dev-logic-architect`、`/code-verification-loop`、`/api-tester`、全局 plugin、全局 agent、全局 MCP server
 4. **通用构建/代码生成工具**(L4) — 如 `mvn archetype:generate`、`mybatis-plus-generator`、`pnpm create vite`、`go mod init`
 5. **Shell / 脚本**(L5,兜底) — 如 `bash scripts/init-db.sh`、`git commit -m "..."`、`curl xxx`
@@ -207,9 +211,9 @@ python3 <SKILL_DIR>/scripts/scan_aidp.py [项目根目录] --json
 
 **指令检查清单:**
 
-- [ ] 生成计划前,Agent 已按 5 层优先级扫描项目可用资源(扫描位置:`各 Agent 的运行根/`、`.aidp.yml`、`aidp.json`、**项目根目录及 `docs/`、`doc/` 下的 `AIDP*.md`**、`各 Agent 的运行根/commands/`、`各 Agent 的运行根/skills/`、`.claude/plugins/`、`各 Agent 的运行根/agents/`、`.claude/mcp.json`、`~/各 Agent 的运行根/skills/`、`~/各 Agent 的运行根/commands/`、`~/.claude/plugins/`、`~/各 Agent 的运行根/agents/`、`package.json scripts`、`Makefile`、`pom.xml plugin`、项目 README)<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
+- [ ] 生成计划前,Agent 已按 5 层优先级扫描项目可用资源(扫描位置:`各 Agent 的运行根/`、`.aidp.yml`、`aidp.json`、**项目根目录及 `docs/`、`doc/` 下的 `AIDP*.md`**、`各 Agent 的运行根/commands/`、`各 Agent 的运行根/skills/`、`{{AIDP_HOME}}/plugins/`、`各 Agent 的运行根/agents/`、`{{AIDP_HOME}}/mcp.json`、`~/各 Agent 的运行根/skills/`、`~/各 Agent 的运行根/commands/`、`~/.claude/plugins/`、`~/各 Agent 的运行根/agents/`、`package.json scripts`、`Makefile`、`pom.xml plugin`、项目 README)<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 - [ ] 若项目有 AIDP 命令(L1),Task 的 AI 执行指令优先使用 AIDP 命令而非 L2-L5
-- [ ] 若项目 `.claude/` 有对应 skill/command(L2),优先于系统全局(L3)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+- [ ] 若项目 `{{AIDP_HOME}}/` 有对应 skill/command(L2),优先于系统全局(L3)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 - [ ] 每个 Task 必须有 `**AI 执行指令**` 小标题及其下的 markdown 代码块,代码块第一行是可直接复制执行的命令(不是描述)
 - [ ] 每个 Task 有"指令来源"字段标明所选层级(L1/L2/L3/L4/L5),以及"降级方案"字段给出下一层级替代
 - [ ] 命令选择示例:`aidp gen:mapper --table biz_user`(L1 项目 AIDP)、`/项目-api-gen`(L2 项目 .claude/ Skill)、`/dev-logic-architect`(L3 系统 Skill)、`mvn mybatis-plus:generate`(L4 通用工具)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
@@ -261,7 +265,7 @@ aidp gen:mapper --table biz_user --design <设计文档路径>#A.3
 - Task 仅用"执行步骤 1/2/3"序号列表描述,无 `**AI 执行指令**` 代码块
 - AI 执行指令代码块第一行不是可执行命令(如写"请使用 Claude Code 生成...")
 - 项目存在 AIDP 命令(L1),但 Task 使用 L3/L4 命令,未优先使用项目已有工具链
-- 项目 `.claude/` 有对应 skill/command(L2),但 Task 使用系统全局(L3),未优先使用项目级资源  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+- 项目 `{{AIDP_HOME}}/` 有对应 skill/command(L2),但 Task 使用系统全局(L3),未优先使用项目级资源  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 - 缺失"指令来源"或"降级方案"字段
 - 执行计划开头缺失"可用指令清单"(按 5 层分组展示)
 

@@ -1,5 +1,6 @@
 # 质量检查派发流程(QR Dispatch)+ 检查报告模板
 
+> ⚠️ **派发时必须显式转发 `client_mcp` 与旧 Web `webmcp_enabled`(取 `true`/`false`,由调用方给;Web+WebMCP 启用时另传
 > 本文件是 `SKILL.md` 的 QR **派发流程**分片(bash 硬核回检命令 + 子 Agent prompt + 报告模板 + 循环终止),按需 Read。
 > **21 维度清单本身不在这里**,在 [`quality-review-checklist.md`](./quality-review-checklist.md) —— 清单是「查什么」,本文件是「谁来查、怎么派、跑哪些脚本、报告长什么样」。
 
@@ -97,6 +98,8 @@ Agent({
   subagent_type: "general-purpose",
   prompt: "你是一位资深 QA Lead。**开始前先 Read `{SKILL_DIR}/references/quality-review-checklist.md`——21 维度的判据全文以该文件为唯一信源**(本派发文件只列索引、不含判据)。然后对 {用例文档路径} 执行 21 维度检查,严格对照 PRD {PRD路径}、详细设计 {设计路径}、研发执行计划 {计划路径}(增量模式)、研发自测方案 {自测方案路径}、测试设计方法论 {SKILL_DIR}/references/test-design-methodology.md、**原型内容基线 {原型内容基线路径/DESIGN-MANIFEST 路径}(AIDP,若上游已产出则强制消费为维度 18『原型内容基线覆盖度』的对照基准,无则回退对照原型 code/ 现场;路径自适应项目结构、不臆造)**。
 
+  **应用业务工具门控:** `client_mcp` 或旧 Web `webmcp_enabled` 只消费调用方显式声明,均未启用时维度 20 不留行;新旧客户端/启停/形态冲突明确报错。启用时读 `{SKILL_DIR}/references/flow-client-mcp.md` 先核应用自有工具,仅 Web+WebMCP 再读 `flow-webmcp.md` 核原 Web 双窗口九项;非 Web 只验已证实应用服务/桥接,测试驱动 MCP 不构成应用提供业务工具的证据。
+
   **关键认知:用例采用'测试套件 (Test Suite)'组织方式** — 一次登录后连续测试多个功能,只在套件开始时走入口流程,套件内用例通过菜单切换连续执行。检查时需验证套件结构而非每条用例的独立入口。
 
   执行步骤(必须按顺序):
@@ -136,6 +139,7 @@ Agent({
      - 维度 16: 自测方案对齐与引用闭环(**Critical** — 主动询问、双向引用、默认手动执行核验)
      - 维度 17: 列集合 vs 需求字段核对用例覆盖(**Critical** — 表格/表单功能点必须有列展示名(语义)/展示顺序/缺多列/与「需求字段→处置」对照表一致的逐列核对用例,而非仅"页面可打开")
      - 维度 18: 覆盖矩阵逐维确认 + 测试设计方法论套用(**Critical** — 正向9维F1-F9+反向12维R1-R12逐维过一遍或标不适用;BVA/等价类/状态机非法迁移/并发 C1-C6 按方法论套用;R12 依赖/数据源故障注入按方法论第八节触发条件套用;可用 check_case_stats.py --coverage-matrix 出维度→用例交叉表)。**另含『零残留断言登记表』子条:文档里每条 `断言(反向):不存在文本"X"` 是否都在登记表里有行、守护面是否导出自实跑、**方向二·阳性对照是否有 ≥1 命中记录**(只跑方向一的断言可能是恒 0 假绿)、退役理由是否合法;`check_residual_assertions.py` 机检表形态,「两个方向是不是真跑过」须你语义核。** **含『原型内容基线覆盖度』子条:核对原型内容基线(AIDP 有则消费无则回退原型 code/)处置=实现的元素/交互态/操作逻辑是否各有 ≥1 用例、裁剪/延期/改逻辑项是否登记不覆盖原因,三层完整比对由你语义完成——用例集须一一对应原型内容基线的实现项、无遗漏**
+     - 维度 20: 客户端应用 MCP 用例族完整性(**Critical**,**条件启用**) — 本轮 `client_mcp = {显式声明/未传}` + 旧 Web `webmcp_enabled = {true|false/未传}`(均由调用方传入,**严禁自行探测**;⚠️ **槽位不可删**——没有可填的位置，调用方就无处传值，维度 20 退化成死代码),未启用**报告不留行**;启用时先读 `references/flow-client-mcp.md` 核通用正反向用例,仅 Web+WebMCP 再读 `references/flow-webmcp.md` 对照原 Web 专项清单核一次,不重复造 TC;新旧声明冲突报错,非 Web 不套 Chrome 门
      - 维度 20: WebMCP 用例族完整性(**Critical**,**条件启用**) — 本轮 `webmcp_enabled = {true|false}`(调用方传入,**严禁自行探测**):为 false / 未传则整维度跳过、**报告里不留行**;为 true 则读 `references/flow-webmcp.md` 并按 checklist 维度 20 的 9 条核验清单逐条判
      - 维度 21: 通用还原度套件完整性(**Critical**) — 读 `references/flow-fidelity-suite.md` 第三节四类页面模板,按 checklist 维度 21 的 10 条核验清单(1~9 + 7-2)逐条判;**先跑 `check_fidelity_suite.py` 拿结构性结论,再人工核「10 条模板项是不是都真写了」**
      - 维度 19: 用例数量基线 + 优先级分布 + 统计摘要(**Critical** — 数量基线达标或说明原因、P0/P1/P2 分布、反向占比 ≥40%、文档末尾附「用例统计摘要」;check_case_stats.py 机检)
@@ -181,6 +185,7 @@ Agent({
 - 维度 17:列集合 vs 需求字段核对用例覆盖(**Critical**) → 详见 `quality-review-checklist.md` > 维度 17
 - 维度 18:覆盖矩阵逐维确认 + 测试设计方法论套用(**Critical**) → 详见 `quality-review-checklist.md` > 维度 18
 - 维度 19:用例数量基线 + 优先级分布 + 统计摘要(**Critical**) → 详见 `quality-review-checklist.md` > 维度 19
+- 维度 20:客户端应用 MCP 用例族完整性(**Critical**,**条件启用**——调用方显式 `client_mcp.enabled: true` 或旧 Web `webmcp_enabled: true` 才判;两者都未启用则不留行;仅 Web+WebMCP 执行原双窗口九项,非 Web 只核已证实服务/桥接) → 详见 `quality-review-checklist.md` > 维度 20
 - 维度 20:WebMCP 用例族完整性(**Critical**,**条件启用**——仅 `webmcp_enabled: true` 时判;为 false / 未传则**整维度跳过、报告里连行都不留**,⛔ 严禁自行探测) → 详见 `quality-review-checklist.md` > 维度 20
 - 维度 21:通用还原度套件完整性(**Critical**,无门控入参——对任何有 UI 页面的项目都适用;四类页面固定模板 + 「通用还原度覆盖表」,**列表页 ≥10 条**是硬基线) → 详见 `quality-review-checklist.md` > 维度 21
 

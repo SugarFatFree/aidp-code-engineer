@@ -1,5 +1,9 @@
 # Quality Review Checklist（15 维度质量检查清单）
 
+**应用 MCP 业务能力声明（折入检查项 4/6,不新增维度）:** 仅项目显式 `client_mcp.enabled: true` 或 Web 旧 `webmcp_enabled: true` 时核验工具逐项业务语义、客户端类型/实现来源、输入输出、身份权限、写确认、生命周期、错误和审计证据;正式 JSON Schema 由下游详细设计承接,不能在 PRD 填代码级字段或端点。**测试驱动 MCP**（Chrome DevTools/Appium 的接入配置）绝非应用能力来源;非 Web 未证实实现不得臆造入口。无声明时本子项不适用、不单独留报告行;新旧声明冲突须明确列出且判不通过,不能靠“以新为准”掩盖。
+
+---
+
 > 本文件隶属于 `ux-logic-extractor` SKILL，供 Quality Review Agent 执行检查时使用。
 > 上级文档：`../SKILL.md`
 >

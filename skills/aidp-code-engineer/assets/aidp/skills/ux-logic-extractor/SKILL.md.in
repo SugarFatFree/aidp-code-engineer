@@ -46,6 +46,12 @@ description: >
 | **AIDP 原型内容基线** | 有则强制消费 | 有则强制消费 | `docs/design/{version}/原型内容基线.md`（示例路径，自适应项目结构）——逐页可见元素 + 操作逻辑 + 处置列；**上游已产出则作原型覆盖度基准，无则回退直接从原型 `code/` 现场逐页清点**（见「原型对齐三层原则」） |
 | **AIDP 设计令牌 / 原型 manifest** | 有则读取 | 有则读取 | `docs/design/{version}/设计令牌.md`、原型目录内 `DESIGN-MANIFEST.json` / `DESIGN-HANDOFF.md`（`screens/appModules/requiredStates/tokens/flows`）——有则读取扩充覆盖清单，无则跳过；**不臆造、不硬依赖** |
 
+### 客户端 MCP 业务能力（仅项目显式声明）
+
+`client_mcp.enabled` 缺省为 `false`。本功能点指**应用业务工具主动向 AI 暴露**,不指 AI 借 Chrome DevTools/Appium/小程序**测试驱动**（即便驱动通过 MCP 协议连接）操控界面。未声明不从原型技术栈或驱动配置推断启用、不在 PRD/QR 留专项位置。旧 `webmcp_enabled: true` 或 `webmcp.enabled: true` 只视为 Web 客户端的显式声明,两旧别名彼此冲突也须报错,`webmcp_entry_symbols`/`webmcp_launch_command` 只交 Web 适配层；与新声明的客户端类型或启停冲突时就地报冲突并登记待澄清,不得静默覆盖。
+
+启用时按 [`references/flow-steps.md`](./references/flow-steps.md) Step 2 登记客户端类型、应用提供形态及可核对来源、工具清单与输入/输出**业务语义**、身份与权限、写操作确认、生命周期、错误契约、审计日志及调用证据要求。WebMCP 仅是 Web 端可能的实现;非 Web 没有已证实的应用自有服务/桥接时写「未提供/实现未取到」,不自拟入口或照搬 Chrome 前提。正式 JSON Schema、协议与文件落点归 `dev-logic-architect`,本 PRD 仍守零代码级字段/技术选型边界。
+
 **信息优先级原则（模式 B 必须遵守）：**
 
 > **产品需求文档是第一信源，原型仅作为交互设计的辅助参考。**

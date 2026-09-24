@@ -981,9 +981,15 @@ GUARDS = (
     ("check_arguments_channel_guard", "check_arguments_channel", "$ARGUMENTS 接收通道", ("findings",), "ERROR", None, "applicable"),
     ("check_prose_vs_executable_guard", "check_prose_vs_executable", "散文承诺↔可执行落点", ("findings",), "ERROR", None, "applicable"),
     ("check_doc_numbering", "check_doc_numbering", "文档编号重号", ("errors",), "ERROR", None, None),
-    ("check_tick_var_supply", "check_tick_var_supply", "tick 变量供给链", ("findings",), "INFO", None, "applicable"),
+    # ⛔ 不要把它降回 INFO：INFO 不进 ERROR 计数，等于这道门永远不会让 verify 变红，
+    #   而它守的正是「tick 间变量没供上 → 下一 tick 取到空值 → 判据恒假」这一类静默失效
+    #   （该脚本 docstring 记着它上线时一次性检出 13 个 Critical）。姊妹门 check_flow_var_refs
+    #   已是 ERROR，两者覆盖面互补、严重度不该差一档。
+    ("check_tick_var_supply", "check_tick_var_supply", "tick 变量供给链", ("findings",), "ERROR", None, "applicable"),
     ("check_sprint_convention", "check_sprint_numbering", "Sprint 编号 / 划分", ("findings",), "INFO", ["check"], "applicable"),
     ("check_ghost_flags", "check_ghost_flags", "幽灵旗标", ("undefined",), "ERROR", None, None),
+    # 「护栏必须有调用方」：没有调用方的确定性脚本等于不存在（本仓铁律）。
+    ("check_script_callers", "check_script_callers", "脚本无调用方", ("findings",), "ERROR", None, "applicable"),
     ("check_loop_examples", "check_loop_examples", "/loop 示例 --unattended", ("violations",), "ERROR", None, None),
     ("check_line_refs", "check_line_refs", "硬编码行号引用", ("findings",), "WARN", None, None),
     ("check_shard_counts", "check_shard_counts", "分片计数声明", ("findings",), "ERROR", None, None),

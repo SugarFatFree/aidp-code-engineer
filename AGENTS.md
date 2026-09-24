@@ -54,6 +54,7 @@ python3 .aidp/scripts/check_code_symbol_refs.py
 python3 .aidp/scripts/check_cli_invocation.py
 python3 .aidp/scripts/check_private_markers.py
 python3 .aidp/scripts/check_runtime_paths.py --root .
+python3 .aidp/scripts/check_script_callers.py            # 护栏必须有调用方：新脚本没接进调用方即 ERROR
 ```
 
 - **需同步的范围**：`.aidp/AIDP-AGENTS.md`、`.aidp/{agents,commands,rules,flows,reference,hooks,templates,skills,plugins}`（受版本门控，单一信源 = `scaffold_lib.py::GATED_DIRS`）、`.aidp/scripts/`（不受版本门控，字节不同即覆盖下发；模板回归单测 `tests/` 与设计目标 baseline 不下发，见 `scaffold_lib.py::TEMPLATE_OWNED`）、`docs/init/`、`docs/**/README.md`（不含版本目录）、`docs/architecture/` 三份约束骨架、`memory/README.md`、`memory/aidp-config.yaml`、脚手架 `sources/`（下游根文件与项目级 memory 模板真源）。

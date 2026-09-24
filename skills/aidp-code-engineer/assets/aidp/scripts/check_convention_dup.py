@@ -104,6 +104,12 @@ def extract_main_lines(main_text):
     return out
 
 
+# 主行常以「**★ <标题>**：」或「**<标题>**：」开头；复制方往往**丢掉标题前缀**只抄正文，
+# 于是带标题的探针一个字都匹配不上。⛔ 不能只留一种形态 —— 2026-09-24 审计实测：
+# 约定 23 的主行正文被逐字抄进 `rules/code.md`，本门照报「无一条主行被复制」。
+_TITLE_PREFIX_RE = re.compile(r"^★?\s*[^：:]{2,60}[：:]\s*")
+
+
 def make_probe(body):
     """取首句探针：切到首个句末标点；不足 MIN_PROBE_CHARS 则继续向后取。"""
     norm = normalize(body)
@@ -209,17 +215,25 @@ def run(root):
 
     dups = []
     for num, body in mains:
-        probe = make_probe(body)
-        if len(probe) < MIN_PROBE_CHARS and len(normalize(body)) >= MIN_PROBE_CHARS:
-            continue  # 理论不可达；防御性跳过过短探针，避免误报
-        for rel, text in details:
-            if probe and probe in text:
-                dups.append({
-                    "convention": num,
-                    "file": rel,
-                    "probe": probe,
-                    "probe_chars": len(probe),
-                })
+        probes = []
+        for cand in (make_probe(body), make_probe(_TITLE_PREFIX_RE.sub("", normalize(body), count=1))):
+            if cand and cand not in probes and len(cand) >= MIN_PROBE_CHARS:
+                probes.append(cand)
+        if not probes and len(normalize(body)) < MIN_PROBE_CHARS:
+            probes = [make_probe(body)]
+        for probe in probes:
+            if len(probe) < MIN_PROBE_CHARS and len(normalize(body)) >= MIN_PROBE_CHARS:
+                continue  # 防御性跳过过短探针，避免误报
+            for rel, text in details:
+                if probe and probe in text:
+                    if any(d["convention"] == num and d["file"] == rel for d in dups):
+                        continue   # 同一条主行两种探针命中同一文件，只登记一次
+                    dups.append({
+                        "convention": num,
+                        "file": rel,
+                        "probe": probe,
+                        "probe_chars": len(probe),
+                    })
     overlong = [{"convention": num, "chars": len(body)}
                 for num, body in mains if len(body) > MAX_MAIN_CHARS]
     return {

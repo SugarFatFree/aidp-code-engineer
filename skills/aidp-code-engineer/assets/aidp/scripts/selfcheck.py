@@ -163,6 +163,15 @@ def _p_sql_ledger_comment(root):
            "ALTER TABLE T_X ADD COLUMN STATUS INT;\n")
 
 
+@probe("check_script_callers.py")
+def _p_script_callers(root):
+    # 注入一个谁都不调的确定性脚本 —— 必须被抓到。
+    # ⚠️ 名字刻意不出现在任何契约正文 / .py / CI 里；若本探针不再变红，
+    #    多半是判据被放宽成「README 里有条目就算接线」，而那正是它要堵的伪装。
+    _write(root, runtime_text('__AIDP_HOME__/scripts/check_selfcheck_orphan_probe.py', __file__),
+           '#!/usr/bin/env python3\n"""探针：无调用方的确定性脚本。"""\n')
+
+
 @probe("check_underscore_glob.py")
 def _p_underscore_glob(root):
     # 注入一条四族目录的通配式 .md 扫描、且漏排 `_*` —— 必须被抓到。

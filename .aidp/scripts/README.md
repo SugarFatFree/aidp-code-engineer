@@ -435,6 +435,23 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 只挂在自己那个 `RestTemplate` 上，全局抵扣会放过隔壁真正零日志的客户端；对象存储 SDK 也不在 HTTP 拦截器覆盖面内）。
 已知盲区（刻意不做）：`@FeignClient` 接口整体排除、序列化后对象内嵌的凭据静态不可判、个人信息字段默认不检（`--pii` 开）。
 
+## check_script_callers.py — 确定性脚本没有调用方（"护栏必须有调用方"的机器门）
+
+`check_skill_ref_freshness.py::unreferenced_scripts` 只管 **SKILL 自带的** `skills/*/scripts/`，
+而**本目录**的上百个脚本一个都不在它的巡检面内——一个脚本可以写完、进本 README、然后永远不被
+任何命令 / 流程 / 门调起，而全仓检查全绿。**失效形态是「写了就等于接了」**：docstring 自称
+「唯一实现」、README 里也有条目，读者据此以为它在跑。
+
+已接线 = 被契约正文（`commands`/`flows`/`agents`/`rules`/`reference`/`hooks`/`templates`/`skills`
+下的 `.md`）按名提到，**或**被同仓任一 `.py`（含 `verify.py` 的门登记表、`tests/` 单测）
+或 `.github/workflows/` 提到，**或**登记在 `script-callers-baseline.txt`。
+⛔ **本 README 的条目不算**（"目录里有一行"正是孤儿脚本最典型的伪装），
+⛔ **`selfcheck.py` 的探针登记也不算**（探针证明"这个检查抓得到东西"，不是"有人在跑它"），
+⛔ 脚本自身内容不算（否则人人自证合格）。
+
+用法：`python3 {{AIDP_HOME}}/scripts/check_script_callers.py [--root <仓库根>] [--json] [--self-check]`。
+退出码：`0`=全部有调用方 / `1`=有孤儿 / `2`=用法错。已挂进 `verify.py::check_script_callers`（**ERROR 级**）。
+
 ## check_skill_ref_freshness.py — 命令/Agent 引用 SKILL 内部编号的新鲜度守卫
 
 `{{AIDP_HOME}}/{commands,agents,flows,rules,reference}` 里大量写着「`code-verification-loop` 维度 11」

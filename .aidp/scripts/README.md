@@ -383,6 +383,14 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 未启用 → `applicable:false` + 退出码 `0` + **零 finding**，`verify.py` 侧连 `note()` 都不发。启用后跑三项守卫：① **详规已安装**（ERROR — `rules/*.md` 是路径触发加载的，不在那儿就永不加载 = 规则等于不存在）② **详规未过期**（WARN — 与模板位不一致，即自动刷新没跑到或副本被本地改过）③ **「测试环境与账号」已回写 WebMCP 段**（ERROR，**只判最新版本**不连坐旧版；下游踩过：用例三处指向该文档、文档里从未写，文件在锚点空、链接检查查不出来）。
 用法：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py [--root <仓库根>] [--detect] [--install-rule] [--force] [--json]`，退出码 `0`（通过或 N/A）/`1`/`2`；由 `verify.py::check_webmcp` 映射为 **ERROR**（仅启用时）。★ 命令端据 `--detect` 的输出把 `webmcp_enabled` / `webmcp_entry_symbols` 传给四个上游 SKILL（`dev-logic-architect` 维度 33 / `dev-manual-testcase` 用例族 + 维度 20 / `code-verification-loop` 维度 9 / `auto-test-runner` `invoke` 能力）——它们**全部入参门控且明令不自行探测**，⛔ **不传 = 那些维度永不启用**，启用了该能力的项目会静默漏掉四层质量门。
 
+## check_sibling_family.py — 约定 20 姊妹条「同族增量项」确定性检查（F0–F4）
+
+向**已有 ≥2 个同构成员**的家族（运维入口 / 菜单项 / 版本区块 / 增量脚本 / 索引条目 / 枚举项 / 页签…）追加成员时，拦「没有公共外壳、各抄一份」与「顺序靠物理位置 + 注释提醒」。**判据是「有没有兄弟」，不是「我写了几遍」**——约定 20 的阈值判据（第 2/3 次即抽）在这类场景下不触发：执行体主观上是在复用家族里已有的东西。失败形态是"看起来正常"（类型检查/lint/构建全绿，只有并排比对才看得见），故必须有机器门。
+
+★ **家族必须显式声明**（`SIBLING-FAMILY: name=… members=<glob> registry=… [shell=…] [order=registry]`，只在 `code/` 与 `docs/` 下扫描），⛔ **刻意不做自动家族识别**：按「同目录 ≥3 个同命名模板」自动识别会命中本仓库自己的 `flows/sprint-autopilot/phase-3-*.md`、`reference/约定细则-*.md`、下游 `sql/NN_*.sql` —— 而它们的顺序**本就该由文件名序号决定、也不该有注册表**，对其恒红会让下游直接关掉整个脚本。
+
+用法：`python3 {{AIDP_HOME}}/scripts/check_sibling_family.py [--root .] [--json] [--changed-only] [--check F2] [--self-check]`。退出码：`0`=无 Critical；`1`=有 Critical；`2`=用法错。检查项：**F0 声明漂移 / F1 成员自带外壳 / F2 成员未登记 = Critical**；**F3 顺序未数据化 / F4 疑似家族无公共外壳 = Important**。豁免 `sibling-family-ignore: <F号> <原因>`（**原因必填**，注释结束符 `-->` 不算原因）。调用落点 = `/sprint-dev` Phase 1.3 Step 4.6（默认执行，带 `--changed-only`）；规则单一信源 = `{{AIDP_HOME}}/rules/code.md`「约定 20 姊妹条 —『同族增量项』」。
+
 ## check_ui_fidelity.py — 约定 39 通用还原度规则集的确定性机器检查（R2 / R3 / R10）
 
 约定 39 共 13 条（R1–R13），**只有三条是确定性可机检的**，本脚本就做这三条：**R2** 状态标签内容随数据变化而 `type`/`color` 是字面量常量（不同取值共用同一视觉编码）→ Important；**R3** 文本截断（`text-overflow:ellipsis` / `-webkit-line-clamp` / `truncate` 原子类）而同节点或父节点无 `title`/tooltip → Important；**R10** 导出方法体内透传分页参数（导出只导当前页）→ **Critical**。其余 10 条依赖语义判断，归 `version-auditor` 审计 F（R1）/ `code-verification-loop`（R5–R9）/ `dev-manual-testcase`（通用还原度套件），本脚本**不涉足**。

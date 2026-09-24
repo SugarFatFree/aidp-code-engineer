@@ -2,7 +2,7 @@
 name: dev-logic-architect
 description: >
   从 PRD 需求文档与 HTML 原型生成研发详细设计方案(技术架构、接口定义、数据库设计、测试方案)。
-  生成后强制执行 40 维度独立 Agent 检查。
+  生成后强制执行 41 维度独立 Agent 检查。
   当用户提到详细设计、技术方案、研发设计、架构设计、接口设计、数据库设计、系统设计、开发方案时触发。
 ---
 
@@ -115,8 +115,8 @@ description: >
 详细设计落盘后**两道关卡都要过**,顺序固定:
 
 1. **作者侧自检 27 项** —— 自己先过一遍,清单见 [`references/flow-self-check.md`](./references/flow-self-check.md)。
-2. **独立子 Agent 执行 40 维度 QR** —— **主流程禁止在当前上下文内联跑脚本或内联逐维度自查**;主流程只派发、只接收精简结构化报告、只决定是否重改,循环至全部通过或达 3 轮上限。
-   - **查什么** → [`references/quality-review-checklist.md`](./references/quality-review-checklist.md)(40 维度清单本身,含 **24 个标题就标 Critical 的维度** + 检查项 38(A/B 档 Critical、C 档 Important)+ 检查项 35(Important 档)。⚠️ 这个数**只能由 checklist 里的 `Critical` 标记现数**、⛔ 不要凭印象改——本行曾停在「21 个」而实际早已 22 个)。
+2. **独立子 Agent 执行 41 维度 QR** —— **主流程禁止在当前上下文内联跑脚本或内联逐维度自查**;主流程只派发、只接收精简结构化报告、只决定是否重改,循环至全部通过或达 3 轮上限。
+   - **查什么** → [`references/quality-review-checklist.md`](./references/quality-review-checklist.md)(41 维度清单本身,含 **24 个标题就标 Critical 的维度** + 检查项 38(A/B 档 Critical、C 档 Important)+ 检查项 35(Important 档)。⚠️ 这个数**只能由 checklist 里的 `Critical` 标记现数**、⛔ 不要凭印象改——本行曾停在「21 个」而实际早已 22 个)。
    - **谁来查、怎么派、跑哪些硬门脚本、退出码怎么读** → [`references/flow-qr-dispatch.md`](./references/flow-qr-dispatch.md)。
    - **哪些维度由脚本判 / 能否按变更范围裁剪** → checklist 顶部的**「维度成本与裁剪索引表」**(调度信息单一信源,新增脚本必须同步它)与**「QR 变更范围裁剪协议」**。
      调用方可传可选入参 **`qr_delta_scope`**(本轮变更专题清单),**不传 = 全量**。三条不可退让:
@@ -124,7 +124,7 @@ description: >
      语义/口径类变更**强制扩散**到受影响专题。QR 报告**强制附「执行台账」**逐维度写明本轮范围与依据——
      没有台账就无法区分「这项过了」与「这项没跑」,而后者会以全绿的形态存在。
 
-> ⚠️ **两套编号不可换算**:作者自检 27 项与 QR 40 维度是**两套体系**(如 QR「检查项 11」对应自检「自检 12」),**刻意不合并**——合并会让既有映射关系失效。
+> ⚠️ **两套编号不可换算**:作者自检 27 项与 QR 41 维度是**两套体系**(如 QR「检查项 11」对应自检「自检 12」),**刻意不合并**——合并会让既有映射关系失效。
 
 ## 📚 分片索引(细则外置,按需 Read)
 
@@ -140,10 +140,10 @@ description: >
 | [`flow-money-field.md`](./references/flow-money-field.md) | 整数化理由、字段设计规范、最小货币单位对照、应用层与接口层约定、唯一允许的例外 | 设计涉及货币/金额字段时 |
 | [`flow-output-examples.md`](./references/flow-output-examples.md) | A.3 数据定义 / B.2 API 契约 / 建表 DDL / 枚举类 / 状态机 各自的示例片段 | 写 A.3 / B.2 / DDL / 枚举 / 状态机时 |
 | [`flow-output-format.md`](./references/flow-output-format.md) | 输出规范全文(含多文件拆分)、路径占位符实施指南 | 落盘产出、决定拆几册时 |
-| [`flow-self-check.md`](./references/flow-self-check.md) | 作者侧 27 项自检清单(与 QR 40 维度清单是两套编号,不可换算) | 设计写完、派 QR 之前自己过一遍 |
+| [`flow-self-check.md`](./references/flow-self-check.md) | 作者侧 27 项自检清单(与 QR 41 维度清单是两套编号,不可换算) | 设计写完、派 QR 之前自己过一遍 |
 | [`flow-qr-dispatch.md`](./references/flow-qr-dispatch.md) | QR 派发流程:落盘后 bash 硬核回检命令、独立子 Agent prompt、循环终止条件 | 设计落盘后派 QR 子 Agent 时 |
 | [`flow-webmcp.md`](./references/flow-webmcp.md) | **条件启用**:WebMCP 六项产出的判据全文、两条必进风险段的结论、三条禁令、维度 33 通过判据 | **仅**调用方传入 `webmcp_enabled: true` 时读;否则整份不适用 |
-| [`quality-review-checklist.md`](./references/quality-review-checklist.md) | **40 维度 QR 清单本身**(查什么) | QR 子 Agent 逐维核查时 |
+| [`quality-review-checklist.md`](./references/quality-review-checklist.md) | **41 维度 QR 清单本身**(查什么) | QR 子 Agent 逐维核查时 |
 | [`tech-stack-options.md`](./references/tech-stack-options.md) | 技术选型表(**刻意不拆、选型期须全量加载**) | Phase 1 技术边界确认时 |
 | [`stack-index.md`](./references/stack-index.md) | 各栈落地细则的探测规则与加载矩阵 | 技术栈确定后按栈加载 |
 | [`currency-unit-reference.md`](./references/currency-unit-reference.md) | 最小货币单位查表 | 与 `flow-money-field.md` 配套 |
@@ -229,7 +229,7 @@ description: >
 1. **无独立 mode / 参数开关** — 本 SKILL **没有** `mode=supplement` 之类的模式参数;增量补充完全由**调用方在 prompt 中描述「本次增量范围 + 关联主文档」**驱动(prompt 驱动增量)。严禁臆造、要求或假设一个并不存在的 mode 参数。
 2. **增量产物命名续编最大序号 + 索引标类型=补充** — 增量设计产物与全量产物**同目录**,统一 `NN_<业务主题>.md` 纯数字前缀(两位序号在文件名最前),序号**接已有最大序号自动累进**(不跳号、不嵌套二级序号)。**文件名一律不带「补充」/「追加」字样**(遵循 [`references/flow-output-format.md`](./references/flow-output-format.md) >「文件命名强制要求」,反例 `补充-01-用户域.md` → 正确 `03_用户域数据表.md`);增量身份靠「产物头部回链 + `00_索引.md` 追加一行(类型=补充 + 生成时间 `date +\"%Y-%m-%d %H:%M\"` 打戳)」体现,而非文件名前缀,且 `--supplement` 产出时**不改**内容主文档正文(⛔ 本条只约束 `--supplement` 分册路径;约定 22 攒批级联 `--ledger-cascade` 反过来**就地改内容主文档正文、不新建 `NN_` 分册**,两条路径按调用方传的 flag 分流,不可混用)。
 3. **增量产物头部回链(三类)** — 每个增量产物头部必须回链:① **专职索引**(`00_索引.md`);② **本轮输入来源**(本次增量所依据的 PRD / 原型 / 既有代码 / 口述需求,且保留条目级 PRD 溯源);③ **同轮其他层补充**(如有,如同一轮里其它 SKILL 产出的增量文档,便于跨层对齐)。
-4. **增量仍跑 40 维度 QR** — 增量模式下**照常执行**本 SKILL 的 40 维度独立 Agent 质量检查,只是**检查范围限定在本次增量内容 + 与主文档的一致性**(引用 / 编号 / 术语 / 命名 / 枚举编码 / 外键约束必须与主文档一致)。
+4. **增量仍跑 41 维度 QR** — 增量模式下**照常执行**本 SKILL 的 41 维度独立 Agent 质量检查,只是**检查范围限定在本次增量内容 + 与主文档的一致性**(引用 / 编号 / 术语 / 命名 / 枚举编码 / 外键约束必须与主文档一致)。
    ⚠️ **「不必重扫未改动的全量产物」有明确例外,别当成整份产物都不用看**:裁剪的**可执行判据**以
    [`references/quality-review-checklist.md`](./references/quality-review-checklist.md) 的
    **「QR 变更范围裁剪协议」**为准(调用方传 `qr_delta_scope`,不传 = 全量)——**机器门一律全量跑**,

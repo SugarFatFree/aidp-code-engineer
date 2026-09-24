@@ -204,6 +204,7 @@ done
 | **2.1.5** | ★ 自动派生里程碑名称（AUTO_NO_HINT / AUTO_FROM_HINT） | `planning-1.md` |
 | **2.2** | 读取上下文 | `planning-2.md` |
 | **2.3** | 创建版本目录骨架（含 requirements 标准子目录 + 散落 PRD 自动归位） | `planning-2.md` |
+| **2.3.9** | 规划运行计量（`aidp_run_metrics.py`）+ 共享代码事实快照（`version_fact_snapshot.py`）★ 不参与质量判定 | `planning-2.md` |
 | **2.4** | ★ 协调调用四个文档生成步骤（requirements/design/plan/selftest） | `planning-2.md` |
 | **2.4.0** | 生成输入变更摘要（仅补充模式 B-2） | `planning-2.md` |
 | **2.4.0.8** | ★ 上游契约待确认点前置提取（fresh / 补充**两种模式都执行**；非阻塞）| `planning-2.md` |
@@ -211,6 +212,7 @@ done
 | **2.4.4** | ★ 产物归一 + `00_索引.md` 维护（约定 15） | `planning-4.md` |
 | **2.4.5 / 2.4.5.5 / 2.4.5.6** | 串联说明 + 索引补充登记 + 结论取代传播（补充模式） | `planning-5.md` |
 | **2.4.6** | ★ 关联文档交叉引用校验 | `planning-6.md` |
+| **2.4.6.5** | ★ 调用前机械预检：`version_preflight.py` 聚合各阶段确定性检查器的真实结果（⛔ 未执行/空扫描/空输出一律不算通过；⛔ 不替代 2.4.7 独立审计）| `planning-7.md` |
 | **2.4.7** | ⛔ ★ 版本规划产物全量审计（独立子 Agent；强制铁律；唯一跳过 `--skip-audit`） | `planning-7.md` |
 | **2.5.0** | ⛔ ★ 审计落地门：`check_version_audit_landed.py` 确定性核验 2.4.7 真的产出过审计报告（⛔ 「跑了」与「没跑」在终端上同形，只能靠机器判）| `planning-8.md` |
 | **2.5 / 2.6** | 初始化 progress.md / activeContext.md | `planning-8.md` |

@@ -58,6 +58,46 @@ cd -
 
 **输出**：终端打印归位行数：`📦 已归位 N 份产品文档到 产品提供/`
 
+### Step 2.3.9：规划运行计量与共享代码事实（★ 不参与质量门判定）
+
+**规划运行计量**：进入本 Step 时生成一次 `RUN_ID`（UTC 时间戳 + 随机后缀），作为本轮命令上下文传给全部子命令 / 独立 Agent。
+每次调用 `/sprint-requirements`、`/sprint-design`、`/sprint-plan`、`/sprint-selftest` 前后分别以
+`start --phase requirements|design|plan|selftest`、`end --phase <同一阶段>` 记录；独立审计用 `audit` 阶段。
+
+<!-- flowvar-check: allow RUN_ID 本 Step 开头生成的本轮规划运行标识，由编排上下文显式保存并传给各子命令/审计 -->
+
+```bash
+RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM}"   # ⛔ 本行不可省：shell state 不跨 Bash 调用
+M="python3 {{AIDP_HOME}}/scripts/aidp_run_metrics.py --root . --version {version} --run-id $RUN_ID"
+$M start --phase requirements
+# …调用 /sprint-requirements…
+$M end --phase requirements --status pass --artifact docs/requirements/{version}/01_研发需求.md
+$M summary --json          # 末尾汇总，终端展示
+```
+
+- 子 Agent 的 `--agent`、返工的 `--retry-round` **必须随事件传递**，重复轮次⛔ 不得共用同一键。
+- 失败也要用 `end --status fail|block` 收口；中途退出保留 `incomplete`。
+- ⛔ **用量只记真实可取的值**（token / cache / tool / read_bytes），拿不到一律留 `null`，
+  **绝不按篇幅推算** —— 推算出来的数字看起来像计量，实则是凭空捏造的证据。
+- `unclassified_seconds` 只是墙钟扣除已记录等待的**余额**，⛔ 不等于模型工作时间。
+- 事件独立存 `docs/audit/{version}/metrics-{RUN_ID}.json`，**不写 autopilot baseline**；
+  ⛔ 计量失败只告警、**不得冒充质量失败**改变任何门的结论。
+- `RUN_ID` 须在编排上下文显式保存 —— ⛔ 不依赖跨 Bash 调用的临时环境变量（shell state 不跨调用）。
+
+**共享代码事实**：规划起点**只调用一次** `code_inventory.py update`（写唯一缓存 `memory/_facts/code-inventory.json`），
+之后一律用 `show/render/delta` 读缓存：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/code_inventory.py update --root . --json
+python3 {{AIDP_HOME}}/scripts/version_fact_snapshot.py --root . --version {version} \
+  create --file memory/_facts/code-inventory.json     # → memory/{version}/.aidp-version-facts.json
+```
+
+把生成的快照路径传给四个子命令及审计；**每次消费前先 `verify`**，失效就重新 `update` / `create`。
+⛔ 仍无法确认时退回读取原始代码与 PRD，**不得把「缺失或过期的快照」当成「无变化」** ——
+那是最省事也最危险的默认：它会让一轮基于旧事实的规划看起来完全正常。
+清单只是**来源哈希引用**，不代替原文与已有 PRD / 原型输入快照。
+
 ### Step 2.4：协调调用四个文档生成步骤（★）
 
 > **★ 串联场景铁律（必须传递给每个子命令）**：上游来源文件（PRD / 原型 / 研发需求 / 详细设计 / 研发执行计划）在本项目 `/version` 串联场景下**齐全可用**。各子命令在调用 SKILL 时必须**额外追加"项目级 prompt 增强"**（详见各 sprint-* 命令文档），强制 SKILL 在产出每个 REQ / 数据表 / API / 功规点 / Task / 测试套件段都标完整的上游引用四源/五源；引用密度 < 100% 即 SKILL QR 不通过。这是因为 SKILL 独立使用时上游不一定齐全，规则强制度有"模糊度"，但本项目串联场景下必须强制 100% 落实。每个子命令在调用 SKILL 前**必须**完成下列动作：

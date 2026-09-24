@@ -385,6 +385,12 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 未启用 → `applicable:false` + 退出码 `0` + **零 finding**，`verify.py` 侧连 `note()` 都不发。启用后跑三项守卫：① **详规已安装**（ERROR — `rules/*.md` 是路径触发加载的，不在那儿就永不加载 = 规则等于不存在）② **详规未过期**（WARN — 与模板位不一致，即自动刷新没跑到或副本被本地改过）③ **「测试环境与账号」已回写 WebMCP 段**（ERROR，**只判最新版本**不连坐旧版；下游踩过：用例三处指向该文档、文档里从未写，文件在锚点空、链接检查查不出来）。
 用法：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py [--root <仓库根>] [--detect] [--install-rule] [--force] [--json]`，退出码 `0`（通过或 N/A）/`1`/`2`；由 `verify.py::check_webmcp` 映射为 **ERROR**（仅启用时）。★ 命令端据 `--detect` 的输出把 `webmcp_enabled` / `webmcp_entry_symbols` 传给四个上游 SKILL（`dev-logic-architect` 维度 33 / `dev-manual-testcase` 用例族 + 维度 20 / `code-verification-loop` 维度 9 / `auto-test-runner` `invoke` 能力）——它们**全部入参门控且明令不自行探测**，⛔ **不传 = 那些维度永不启用**，启用了该能力的项目会静默漏掉四层质量门。
 
+## 规划计量与预检（`/version` Step 2.3.9 / 2.4.6.5 配套，⛔ 都不参与质量判定）
+
+- **`aidp_run_metrics.py`** — `--root <仓库根> --version V --run-id ID start|end|wait|summary`。阶段计时与等待区间独立存 `docs/audit/{V}/metrics-{ID}.json`。`unclassified_seconds` 只是**墙钟扣除已记录等待的余额**，⛔ 不等于模型工作时间；`model_work_seconds` 只有拿到可靠独立计时才显式传入，否则为 `null`；用量取不到记 `null`，⛔ **不用文件篇幅推算 token**（推算值看起来像计量、实则是捏造的证据）。指标记录失败只告警，⛔ 不改变任何质量门结论。
+- **`version_fact_snapshot.py`** — `--root <仓库根> --version V create --file <来源相对路径>` 生成来源 SHA 清单（来源含 `code-inventory.json` 时逐个核对其列出的源码 SHA）；`verify` 检出源文件变化。⛔ 过期即重读刷新，**不得把「缺失或过期的快照」当成「无变化」**；清单只是来源哈希引用，不代替源码 / PRD 正文。条目形状不符或缺 `sha` 时 fail closed 并给出明确原因（⛔ 不放行、也不抛 traceback）。
+- **`version_preflight.py`** — `--input <已运行检查器结果清单.json> --json` 合并来源、最高严重度与定位。输入为数组，每项 `{source, executed, exit_code, output_present, scanned_files?, skipped?, findings:[{check_id,file,anchor?,severity}]}`。⛔ `executed=false`、空输出、`scanned_files=0`、`skipped=true` 或异常退出码**一律不得判 pass**；⛔ 不重写任何检查器的判据，也**不替代** `version-auditor` 的八项独立审计。
+
 ## check_sibling_family.py — 约定 20 姊妹条「同族增量项」确定性检查（F0–F4）
 
 向**已有 ≥2 个同构成员**的家族（运维入口 / 菜单项 / 版本区块 / 增量脚本 / 索引条目 / 枚举项 / 页签…）追加成员时，拦「没有公共外壳、各抄一份」与「顺序靠物理位置 + 注释提醒」。**判据是「有没有兄弟」，不是「我写了几遍」**——约定 20 的阈值判据（第 2/3 次即抽）在这类场景下不触发：执行体主观上是在复用家族里已有的东西。失败形态是"看起来正常"（类型检查/lint/构建全绿，只有并排比对才看得见），故必须有机器门。

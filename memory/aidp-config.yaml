@@ -46,6 +46,13 @@ cicd:
   # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}
   # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}
   # command:   {list: "...", view: "...", trigger: "...", retry: "...", check: "..."}
+  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。
+  # 只记事实、不改 CICD 配置。由 `{{AIDP_HOME}}/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。
+  push_auto_deploy: false
+  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4
+  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻
+  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。
+  push_deploy_min_wait_seconds: 300
 
 stop_guard:
   # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。

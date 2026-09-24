@@ -115,6 +115,22 @@ def set_enabled(root: Path, section: str, enabled: bool) -> bool:
     return bool(enabled)
 
 
+def cicd_push_autodeploy(root: Path) -> bool:
+    """本项目推送后是否会自动部署（约定 31.5）：`cicd.push_auto_deploy`，⛔ 缺省 False。
+
+    ★ 缺省必须是 False：默认 True 会让「其实需要主动触发」的项目永远不触发流水线，
+    推送后干等到 `push_deploy_min_wait_seconds` 再降级放行 —— 部署压根没发生，
+    而就绪探针会去探一个旧版本，最终以「探到了旧的」冒充成功。宁可多触发一次。
+    """
+    return _cfg().cicd_push_auto_deploy(str(root))
+
+
+def set_cicd_push_autodeploy(root: Path, enabled: bool) -> bool:
+    """记录「推送即自动部署」这一**事实**。⛔ 只记事实，绝不改 CICD 平台上的任何配置。"""
+    _cfg().set_scalar(str(root), "cicd.push_auto_deploy", bool(enabled))
+    return bool(enabled)
+
+
 def main(argv) -> int:
     ap = argparse.ArgumentParser(description="通用项目级运行时状态记录（baseline project_state 段）")
     ap.add_argument("--repo-root", default=".")
@@ -133,6 +149,12 @@ def main(argv) -> int:
     sub.add_parser("notify-enabled", help="读里程碑通知总开关（true/false；缺省=false）")
     sub.add_parser("notify-enable", help="开启里程碑通知（notify.enabled=true）")
     sub.add_parser("notify-disable", help="关闭里程碑通知（notify.enabled=false）")
+    sub.add_parser("cicd-push-autodeploy",
+                   help="读「推送后是否会自动部署」的记录（true/false；★ 缺省 false）")
+    sub.add_parser("cicd-push-autodeploy-yes",
+                   help="记录本项目推送即自动部署（只记事实，⛔ 不改 CICD 平台配置）")
+    sub.add_parser("cicd-push-autodeploy-no",
+                   help="记录本项目推送不会自动部署（只记事实）")
 
     args = ap.parse_args(argv)
     root = Path(args.repo_root)
@@ -170,6 +192,16 @@ def main(argv) -> int:
     if args.cmd in ("notify-enable", "notify-disable"):
         val = set_enabled(root, "notify", args.cmd == "notify-enable")
         print(f"[aidp_state] notify.enabled = {str(val).lower()}")
+        return 0
+
+    if args.cmd == "cicd-push-autodeploy":
+        print("true" if cicd_push_autodeploy(root) else "false")
+        return 0
+
+    if args.cmd in ("cicd-push-autodeploy-yes", "cicd-push-autodeploy-no"):
+        val = set_cicd_push_autodeploy(root, args.cmd.endswith("-yes"))
+        print(f"[aidp_state] cicd.push_auto_deploy = {str(val).lower()}"
+              "（只记事实，未改动 CICD 平台配置）")
         return 0
 
     return 1

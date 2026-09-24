@@ -168,6 +168,17 @@
 >   - **`retry`（重跑上次失败的运行）**：执行输出里的 `retry_cmd`，即 `cicd_watch.py --mode retry --env <env> --run-id <失败运行 id>` → 按其 `next_action` 以输出的 `run_id` poll（或按 commit 再 detect）继续监听。重试针对的是**失败运行的原 commit**，不主动取分支上更新的 HEAD——"重跑"与"部署一份从未被确认的新代码"两件事不混用。
 >   - **写动作闸门 = `cicd.auto_trigger`（默认 true）**：为 true 时无人值守直接执行、无需人工确认；为 false 时**不执行任何写动作** → 按「冻结字段写入契约」置 `needs_human=true` + `aiauto_frozen_at=@now` + `freeze_reason=cicd-auto-trigger-off`、发 #4 后冻结，**绝不静默跳过监听**。
 >   ⛔ **场景边界**：流水线配了 push 自动触发 → 正常路径是脚本 detect 直接命中 `probe`/`poll`，出现 `trigger` 说明自动触发没起来、属异常，须在执行写动作的同时打印告警；流水线仅支持手动/API 触发时，`trigger` 是常规路径、按 `cicd.auto_trigger` 执行。
+>   - **`degraded`（退出码 4，仅当已记录「推送即自动部署」）**：平台给不出状态（不可达 / 运行消失 / 状态未知），
+>     或压根没观测到本次 commit 起跑的运行 —— 脚本已补等满 `cicd.push_deploy_min_wait_seconds`（缺省 300），
+>     返回 `next_action=probe` + `degraded=true`。**⛔ 不冻结、不重试、不主动触发，照 rc=0 直接进就绪探针。**
+>     ★ 它防的是一个**自锁**误冻：那类项目的流水线**无法被单独触发**（推送本身就是触发），
+>     于是「未起跑 → 主动触发」恒失败、「取不到状态 → 按 streak 熔断」必然冻结，
+>     而冻结的解冻证据又恰恰是部署成功。⛔ 代价要如实记进部署证据：**未经平台确认**、
+>     部署失败不会自动重试、构建慢于等待时长时就绪探针可能探到**旧服务** ——
+>     故 `degraded=true` 必须随部署证据落盘，**不得当作"已确认成功"**。
+>     启用方式：`python3 {{AIDP_HOME}}/scripts/aidp_state.py cicd-push-autodeploy-yes`（只记事实，⛔ 不改 CICD 平台配置）。
+>     ⛔ 退出码 3（CLI 未装 / 未登录 / 凭据失效）**不走本通道**：那是可自动复探的 `cicd-cli-unavailable`，
+>     装上 CLI 即恢复；对它降级只会让「CLI 没装」永久静默、CICD 观测形同虚设。
 >
 >   **④⑤⑥ 冷启动等待 + 就绪探针 + 写 `last_deployed_at`** —— `{{AIDP_HOME}}/scripts/autopilot-deploy-watch.py`：
 >   ```bash

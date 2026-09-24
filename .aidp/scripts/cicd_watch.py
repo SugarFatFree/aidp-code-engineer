@@ -39,6 +39,18 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
          poll / watch 到 `--timeout` 仍在运行（verdict=running，next_action=poll：下个 tick 继续 poll 同一 run_id，
          不交人工、不耗重试配额；`--timeout` 默认 480s，保证单次调用短于宿主工具的 10 分钟上限）
     1 —— **需要调用方做写动作**：next_action=trigger（未被触发）或 next_action=retry（失败且配额未尽）
+    4 —— **降级放行就绪探针**（仅当 `cicd.push_auto_deploy` 已记录为 true）：
+         平台给不出状态（不可达 / 运行消失 / 状态未知）或压根没观测到本次 commit 起跑的运行时，
+         补等满 `cicd.push_deploy_min_wait_seconds`（缺省 300）后以 `verdict=…` `next_action=probe`
+         `degraded=true` 放行 —— 调用方**照 rc=0 进就绪探针，⛔ 不冻结**。
+         ★ 它防的是一个**自锁**的误冻：那类项目的流水线无法被单独触发（推送本身就是触发），
+         于是「未起跑 → 主动触发」恒失败、「取不到状态 → 熔断」必然冻结，
+         而冻结的解冻证据又是部署成功。⛔ 代价要记进部署证据：未经平台确认、失败不会自动重试、
+         构建慢于等待时长时可能探到旧服务（故输出带 `degraded=true`，不得当作"确认成功"）。
+         ⛔ `failed`（取到了明确失败态）**绝不降级**——那是真失败。
+         ⛔ `cli-missing` / `unauthenticated` / `provider-unavailable`（rc=3）**同样不降级**：
+         它们冻结成**可自动复探**的 `cicd-cli-unavailable`，装上 CLI / 重新登录即自行恢复，
+         不是本路径要救的自锁形态；对它们降级只会让「CLI 没装」永久静默、CICD 观测形同虚设。
     2 —— **需人工介入或按 streak 记账**：重试已用尽 / 锚定运行消失 / 平台不可达 / 写动作被拒
          （★ parse-error / unreachable / failed 三态分开：**解析不了** ≠ **取不到状态**
            ≠ **取到了失败态**——处置方向完全不同：报修脚本 / 修环境 / 直接重试。
@@ -76,6 +88,71 @@ SELF = runtime_text('python3 __AIDP_HOME__/scripts/cicd_watch.py', __file__)
 
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+def push_autodeploy_policy(root, override="auto", min_wait=None):
+    """→ `(enabled, min_wait_seconds)`。`override`：auto 读配置 / yes / no；`min_wait` 显式给出时优先。"""
+    enabled, wait = False, 300
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import aidp_config
+        enabled = bool(aidp_config.cicd_push_auto_deploy(str(root)))
+        wait = int(aidp_config.cicd_push_deploy_min_wait(str(root)))
+    except Exception:  # noqa: BLE001 —— 读不到配置 → 保持「未记录」，⛔ 绝不凭空降级
+        pass
+    if override == "yes":
+        enabled = True
+    elif override == "no":
+        enabled = False
+    if min_wait is not None and min_wait >= 0:
+        wait = min_wait
+    return enabled, wait
+
+
+def _epoch(iso):
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(str(iso).strip().replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def remaining_wait(push_at, min_wait, now=None):
+    """推送后还需等几秒才满最短时长。
+
+    `push_at` 缺失 / 解析不了 → **从现在起等满**（保守侧）：宁可多等，也不要把
+    「推送后还没来得及起跑」当成「平台取不到状态」而立刻降级。
+    """
+    now = time.time() if now is None else now
+    pushed = _epoch(push_at)
+    if pushed is None:
+        return float(min_wait)
+    return max(0.0, float(min_wait) - (now - pushed))
+
+
+def degrade_to_probe(out, verdict, why, push_at, min_wait):
+    """已记录「推送即自动部署」+ 平台给不出状态 → 补等满最短时长后以 **rc=4** 放行就绪探针。
+
+    ★ 这条通道防的是一个**无恢复路径**的误冻：那类项目里流水线**无法被单独触发**
+    （推送本身就是触发），于是「未起跑 → 主动触发」恒失败、「取不到状态 → 按 streak 熔断」
+    必然冻结，而冻结的解冻证据又是部署成功 —— 自锁。
+    ⛔ 代价必须讲明：本路径**未经平台确认**流水线结果，部署失败不会自动重试，
+    构建慢于等待时长时就绪探针可能探到**旧服务**。故 `degraded=true` 必须落进输出，
+    调用方要把它记进部署证据、不得当作"确认成功"。
+    """
+    left = remaining_wait(push_at, min_wait)
+    if left > 0:
+        log(f"⏳ 平台取不到流水线状态，本项目已记录推送即自动部署："
+            f"补等 {int(left)}s（推送后至少 {min_wait}s）再交就绪探针…")
+        time.sleep(left)
+    log("⚠️ 未经平台确认流水线结果 → 降级为就绪探针；"
+        "部署失败不会自动重试，构建慢于等待时长时可能探到旧服务")
+    out.update(ok=True, verdict=verdict, next_action="probe", degraded=True,
+               degraded_reason=why, min_wait_seconds=min_wait, waited_seconds=int(left),
+               push_at=push_at or None)
+    print(json.dumps(out, ensure_ascii=False))
+    return 4
 
 
 def classify(run):
@@ -212,6 +289,10 @@ def run(argv, root_override=None):
     ap.add_argument("--selftest", action="store_true", help="离线自测（假平台输出，不访问网络）")
     ap.add_argument("--commit", help="本次 push 的 HEAD commit（detect 的强绑定依据）")
     ap.add_argument("--push-at", help="push 完成时刻 ISO 串；同一 commit 多次运行时取其后最新的一条")
+    ap.add_argument("--push-auto-deploy", choices=("auto", "yes", "no"), default="auto",
+                    help="本项目是否推送即自动部署：auto 读 cicd.push_auto_deploy（缺省 false）/ yes / no")
+    ap.add_argument("--min-wait", type=int, default=None,
+                    help="推送即自动部署时，推送后最短等待秒数；不传读 cicd.push_deploy_min_wait_seconds（缺省 300）")
     ap.add_argument("--run-id", help="poll / retry 模式必填：平台上的运行 id")
     ap.add_argument("--env", help="dev|test|prod…（取 cicd.pipelines[env]）")
     ap.add_argument("--pipeline", help="显式流水线标识，优先于 --env")
@@ -245,6 +326,11 @@ def run(argv, root_override=None):
         out.setdefault("run_commit", None)
         print(json.dumps(out, ensure_ascii=False))
         return code
+
+    # ⛔ 用归一后的 `root`（它吃 `root_override`），不是原始 `a.root` ——
+    #    否则离线自测与任何传 override 的调用方都会去读**当前目录**的配置，判据静默取错。
+    push_auto, push_min_wait = push_autodeploy_policy(root, a.push_auto_deploy, a.min_wait)
+    out["push_auto_deploy"] = push_auto
 
     if a.mode in ("watch", "detect") and not a.commit:
         return emit(3, verdict="bad-args", next_action="abort", reason=f"{a.mode} 模式必须传 --commit")
@@ -305,9 +391,19 @@ def run(argv, root_override=None):
             return emit(2, triggered=False, verdict="parse-error", next_action="abort",
                         reason=reason[len("parse-error:"):] + "｜⚠️ 平台输出解析失败，请检查 CICD 适配配置或报修脚本")
         if hit is None and reason.startswith("unreachable:"):
+            why = reason[len("unreachable:"):]
+            if push_auto:
+                return degrade_to_probe(out, "unreachable", why, a.push_at, push_min_wait)
             return emit(2, triggered=False, verdict="unreachable", next_action="abort",
-                        reason=reason[len("unreachable:"):])
+                        reason=why)
         if hit is None:
+            # ⛔ 推送即自动部署的项目不得走 trigger：那类流水线**无法被单独触发**，
+            #    主动触发恒失败 → 按失败熔断 → 冻结，而解冻证据又是部署成功（自锁）。
+            #    改为补等满最短时长后降级放行就绪探针（rc=4）。
+            if push_auto:
+                return degrade_to_probe(out, "not-observed",
+                                        "已记录推送即自动部署，但未观测到本次 commit 起跑的运行",
+                                        a.push_at, push_min_wait)
             return emit(1, ok=True, triggered=False, verdict="not-triggered", next_action="trigger",
                         reason="本次 commit 未起跑该流水线的任何运行",
                         trigger_cmd=_cmd("trigger", a.env, a.pipeline))
@@ -345,6 +441,10 @@ def run(argv, root_override=None):
                            f"报修前若需推进，按约定 31.5 口径**直接重试**（CICD 失败的第一动作恒为重试），"
                            f"**不要回头查业务代码**")
     # unreachable / vanished / unknown-status —— 交调用方处置（unreachable 按 streak 记账），不消耗重试配额
+    # ★ 例外：已记录推送即自动部署时，"取不到状态"不构成冻结理由（见 degrade_to_probe）。
+    #   ⛔ 但 `failed`（取到了明确失败态）绝不降级 —— 那是真失败，上面已先行返回。
+    if push_auto and verdict in ("unreachable", "vanished", "unknown-status"):
+        return degrade_to_probe(out, verdict, why or verdict, a.push_at, push_min_wait)
     return emit(2, ok=False, next_action="abort")
 
 
@@ -608,6 +708,38 @@ def selftest():
         write_cfg("cicd:\n  provider: circleci\n")
         code, o = go(["--mode", "detect", "--commit", sha, "--env", "test"])
         case("未知 provider → exit 3 / not-configured", code == 3 and o["verdict"] == "not-configured")
+
+        # ── 推送即自动部署的降级通道（rc=4）★ 含阴性对照，证明它不是恒降级 ─────────
+        # 平台给不出状态（list/view 恒失败）+ 已记录推送即自动部署 → 补等后 rc=4 放行就绪探针。
+        # 夹具口径：`check` 走假平台的成功分支（preflight 通过），`list` 带 boom 触发失败
+        # —— 必须让 preflight 先过，否则停在 `provider-unavailable`(rc=3) 根本走不到降级分支。
+        dead = ('cicd:\n  provider: command\n  pipelines: {test: web}\n'
+                '  push_auto_deploy: %s\n  push_deploy_min_wait_seconds: 1\n'
+                '  command: {list: "list boom", view: "view", check: "trigger"}\n')
+        write_cfg(dead % "true")
+        code, o = go(["--mode", "detect", "--commit", sha, "--env", "test",
+                      "--push-at", "2020-01-01T00:00:00", "--min-wait", "0"])
+        case("★★[降级] 已记录推送即自动部署 + 取不到状态 → exit 4 / next_action=probe / degraded",
+             code == 4 and o["next_action"] == "probe" and o.get("degraded") is True
+             and o["verdict"] == "unreachable")
+        # ⛔ 阴性对照：未记录推送即自动部署时**绝不降级** —— 否则任何平台故障都会被静默放行。
+        write_cfg(dead % "false")
+        code, o = go(["--mode", "detect", "--commit", sha, "--env", "test",
+                      "--push-at", "2020-01-01T00:00:00"])
+        case("★★[阴性] 未记录推送即自动部署 → 仍 exit 2 / abort，⛔ 不降级",
+             code == 2 and o["next_action"] == "abort" and not o.get("degraded"))
+        # 显式 --push-auto-deploy yes 覆盖配置（供演练与一次性放行）
+        code, o = go(["--mode", "detect", "--commit", sha, "--env", "test",
+                      "--push-auto-deploy", "yes", "--min-wait", "0"])
+        case("[降级] --push-auto-deploy yes 覆盖配置 → exit 4", code == 4 and o.get("degraded") is True)
+        # push_at 缺失 → 从现在起等满（保守侧），⛔ 不得当成"已等够"立刻降级
+        case("★remaining_wait：push_at 缺失 → 返回完整 min_wait（保守侧，不得归零）",
+             remaining_wait(None, 300) == 300.0)
+        case("remaining_wait：推送已过半 → 只等剩余部分",
+             int(remaining_wait("2026-01-01T00:00:00", 300,
+                                now=_epoch("2026-01-01T00:02:00"))) == 180)
+        case("★push_autodeploy_policy：读不到配置时保持未记录（⛔ 不凭空降级）",
+             push_autodeploy_policy("/nonexistent-aidp-root")[0] is False)
     finally:
         cp.EXEC, cp.HTTP = saved
         for k, v in env_saved.items():

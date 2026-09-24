@@ -228,7 +228,8 @@ def notify_config(root="."):
 
 
 def cicd_config(root="."):
-    """CICD 配置（约定 31.5）→ {provider, auto_trigger, max_retries, pipelines, <provider>: {...}}。
+    """CICD 配置（约定 31.5）→ {provider, auto_trigger, max_retries, pipelines,
+    push_auto_deploy, push_deploy_min_wait_seconds, <provider>: {...}}。
 
     `provider` ∈ github-actions（默认）/ gitlab-ci / jenkins / command / none；
     `pipelines` = 部署环境 → 流水线标识（含义随 provider 而定，见 cicd_providers.py）；
@@ -243,16 +244,42 @@ def cicd_config(root="."):
         retries = int(sec.get("max_retries", 3))
     except (TypeError, ValueError):
         retries = 3
+    try:
+        min_wait = int(sec.get("push_deploy_min_wait_seconds", 300))
+    except (TypeError, ValueError):
+        min_wait = 300
     out = {
         "provider": str(sec.get("provider") or "github-actions"),
         "auto_trigger": get_bool(root, "cicd.auto_trigger", True),
         "max_retries": retries,
         "pipelines": pl,
+        # ⛔ 新增键必须在这里显式登记：本函数是**白名单式构造**，不是原样透传 ——
+        #    漏登记的键对所有消费者恒取缺省，且不报错（配置写了也不生效）。
+        "push_auto_deploy": get_bool(root, "cicd.push_auto_deploy", False),
+        "push_deploy_min_wait_seconds": min_wait if min_wait > 0 else 300,
     }
     for name in ("github-actions", "gitlab-ci", "jenkins", "command"):
         if isinstance(sec.get(name), dict):
             out[name] = sec[name]
     return out
+
+def cicd_push_deploy_min_wait(root="."):
+    """推送即自动部署时，推送后最短等待秒数（`cicd.push_deploy_min_wait_seconds`，缺省 300）。
+
+    ⛔ 不接受 0/负数：那等于"不等就降级放行"，把「推送后还没来得及起跑」误判成
+    「平台取不到状态」，于是每次都降级、CICD 观测形同虚设。
+    """
+    raw = (cicd_config(root) or {}).get("push_deploy_min_wait_seconds")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 300
+    return value if value > 0 else 300
+
+
+def cicd_push_auto_deploy(root="."):
+    """本项目是否已记录「推送即自动部署」（`cicd.push_auto_deploy`，缺省 False）。"""
+    return bool((cicd_config(root) or {}).get("push_auto_deploy"))
 
 
 def stop_guard_enabled(root="."):

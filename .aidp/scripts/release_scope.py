@@ -40,8 +40,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-# 版本目录/tag 的通用形态：V1 / v0.11 / V0.11.1 / V1.2.3.4（段数不限），可带 `-rc1` 之类后缀
-_VER_RE = re.compile(r"^[Vv](\d+(?:\.\d+)*)(.*)$")
+# 版本目录/tag 的通用形态：V1 / v0.11 / V0.11.1 / V1.2.3.4（段数不限），可带 `-rc1` 之类后缀。
+# ★ `release-` 前缀必须认：本仓库历史上用过**三种** tag 风格（`V*` / `release-V*` / `v*`，
+#   权威清单见 `flows/version/release-1.md`「tag 风格识别约定」，正则 `^(release-)?[Vv]\d+…`）。
+# ⛔ 漏掉 `release-V*` 的后果不是少认一个 tag，而是**整个发布变成不可见**：
+#   `released_tags` 取不到它 → `prev_released_tag` 退成 null（误判"首次发布"）→ 过渡版本收口范围算错；
+#   而消费本脚本做「当前版本是否已发布」判定的调用方会据此判"未发布"并往**已发布版本**里累进 Sprint
+#   （正是 `设计目标.md` G-BUGFIX-1 明令禁止的事）。⛔ 别把前缀收窄回去。
+#   ⚠️ 前缀只在**捕获**时剥掉，`released_tags` 仍回原始 tag 名——调用方要拿它去 `git` 里用。
+_VER_RE = re.compile(r"^(?:release-)?[Vv](\d+(?:\.\d+)*)(.*)$")
 
 # 版本目录会出现在这些位置（取并集——有的版本只有需求没有设计，有的只有计划）
 _VERSION_DIRS = ("docs/requirements", "docs/design/detail", "docs/plans", "memory")

@@ -40,7 +40,7 @@
 > 发布当时未必满足。当本次调用带 `--rebuild-baseline` 时**在 Step 1 模式决议之前短路**：
 
 - **前置**：`{version}` 必须**已存在版本规划产物**（`docs/design/detail/{version}/` 或 `docs/plans/{version}/` 存在）；否则报错并退出。
-- **★ 已发布版本保护**（`git tag -l "v${VERSION#V}"` 或远端 `git ls-remote --tags origin` 命中 = 已打 tag）：全量基线「随 tag 冻结」，补跑即改写已发布产物 → 走「改写已发布版本授权门」（发布路径白名单第 4 处，见 `release-1.md`）：**交互式**二选一（① 授权改写 ② 中止，改为新补丁版本补齐）；**无人值守拒绝执行**（登记 `release_debt.py add --step 3.3.7.9 --title "补跑被拒：版本已打 tag"` 后退出）。获授权后**采集基于 tag 对应代码**（`git worktree add <临时目录> v${VERSION#V}`，在该工作树内读 ORM 声明与配置消费面，⛔ 不用 HEAD 代码），产物写回主工作区。
+- **★ 已发布版本保护**（本地 `python3 {{AIDP_HOME}}/scripts/release_scope.py --version "$VERSION" --json` 的 `released_tags` 命中本版本，或远端 `git ls-remote --tags origin` 命中 = 已打 tag；⛔ tag 识别一律经该脚本，**不要自己拼 glob**——本仓库的 tag 有**三种**风格〔`V*` / `release-V*` / `v*`，权威清单见 `flows/version/release-1.md`「tag 风格识别约定」〕，只认其中一种就会让这道保护被静默绕过、去改写一个**已发布**版本并移动已推送的 tag）：全量基线「随 tag 冻结」，补跑即改写已发布产物 → 走「改写已发布版本授权门」（发布路径白名单第 4 处，见 `release-1.md`）：**交互式**二选一（① 授权改写 ② 中止，改为新补丁版本补齐）；**无人值守拒绝执行**（登记 `release_debt.py add --step 3.3.7.9 --title "补跑被拒：版本已打 tag"` 后退出）。获授权后**采集基于 tag 对应代码**（`git worktree add <临时目录> v${VERSION#V}`，在该工作树内读 ORM 声明与配置消费面，⛔ 不用 HEAD 代码），产物写回主工作区。
 - **只跑一步**：**Step 3.3.7.9**（D 部分双轨部署基线 —— 产 `sql/全量/` + `配置文件/全量/` 全量轨
   + 增量轨发布期校准 + `release_baseline_check.py` 12 项机器门）。**跳过其余全部**
   （Step 0 ~ 3.3.7.8、3.3.8 ~ 3.3.13、3.4.x 发布提交/打 tag 一律不执行）。

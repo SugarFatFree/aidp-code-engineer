@@ -115,7 +115,12 @@ if [ "$VCS_MODE" = "git" ]; then
 #    都会静默判"未发布"并累进，即把"版本未发布"当默认假设、不实际判定。
 TAG_OK=1; git rev-parse --git-dir >/dev/null 2>&1 || TAG_OK=0
 git fetch --tags --quiet 2>/dev/null || true          # 拿不到远端 tag 不致命，但要试一次
-TAGS=$(git tag -l "v$VNUM" "V$VNUM" "$V" "release-$V" "release-v$VNUM" 2>/dev/null) || TAG_OK=0
+# ★ tag 识别**不自己拼 glob**，一律问 `release_scope.py` —— 它是三种风格（`V*` / `release-V*` / `v*`，
+#   权威清单见 `flows/version/release-1.md`「tag 风格识别约定」）的单一信源。
+#   ⛔ 别在这里自己拼 glob：与脚本各写一遍同一判据，任一处漏一种风格，
+#   这道门就会把**已发布**版本判成未发布并往里累进（G-BUGFIX-1 禁止的事）。
+TAGS=$(python3 {{AIDP_HOME}}/scripts/release_scope.py --version "$V" --json 2>/dev/null \
+       | python3 -c 'import json,sys;d=json.load(sys.stdin);print("\n".join(t for t in (d.get("released_tags") or []) if __import__("re").sub(r"^(release-)?[Vv]","",t).split("-")[0]==sys.argv[1]))' "$VNUM" 2>/dev/null) || TAG_OK=0
 RELEASED=$(printf '%s\n' "$TAGS" | head -1)
 # ③ 第三信号（不依赖 tag 与文件名约定）：baseline 的 internal_released_at + 随 tag 冻结的部署基线
 [ -z "$RELEASED" ] && [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" get internal_released_at --default "" 2>/dev/null)" ] && RELEASED="internal_released_at"

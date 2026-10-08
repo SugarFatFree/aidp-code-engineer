@@ -1528,6 +1528,41 @@ def test_release_scope_covers_transitional_versions():
           o.get("transitional_versions") == ["V0.11"])
     check("未来版本 V0.12 不进覆盖集", "V0.12" not in (o.get("covered_versions") or []))
 
+    # ★★ 三种 tag 风格必须全覆盖（权威清单 = flows/version/release-1.md「tag 风格识别约定」：
+    #    `V*` / `release-V*` / `v*`）。⛔ 漏掉 `release-V*` 不是"少认一个 tag"：
+    #    `released_tags` 取不到它 → `prev_released_tag` 退成 null（误判"首次发布"）→ 过渡版本收口范围算错；
+    #    而消费本脚本做「当前版本是否已发布」判定的 `/sprint-dev` Phase 0B.0 会据此判"未发布"，
+    #    往**已发布版本**里累进 Sprint —— 正是 `设计目标.md` G-BUGFIX-1 明令禁止的形态。
+    check("★★parse_version 认 `release-V*` 前缀（三种风格之一）",
+          RS.parse_version("release-V0.1.0") is not None
+          and RS.parse_version("release-V0.1.0")[0] == RS.parse_version("V0.1.0")[0])
+    check("parse_version 认小写 `v*`",
+          RS.parse_version("v0.1.0") is not None
+          and RS.parse_version("v0.1.0")[0] == RS.parse_version("V0.1.0")[0])
+    # ⛔ 阴性：前缀后面必须紧跟 `[Vv]数字`，否则 `release-notes` 这类名字会被误收成版本 tag
+    check("★`release-notes` / `nightly-build` 不被误判成版本",
+          RS.parse_version("release-notes") is None
+          and RS.parse_version("nightly-build") is None)
+
+    root2 = Path(tempfile.mkdtemp())
+    (root2 / "docs" / "requirements").mkdir(parents=True)
+    for v in ("V0.1.0", "V0.2.0", "V0.3.0"):
+        (root2 / "docs" / "requirements" / v).mkdir()
+    (root2 / "f").write_text("x", encoding="utf-8")
+    for c in (["init", "-q", "."], ["config", "user.email", "a@b.c"], ["config", "user.name", "t"],
+              ["add", "-A"], ["commit", "-qm", "c1"],
+              ["tag", "release-V0.1.0"], ["tag", "v0.2.0"], ["tag", "release-notes"]):
+        subprocess.run(["git", "-C", str(root2), *c], capture_output=True)
+    p2 = subprocess.run([sys.executable, S, "--version", "V0.3.0", "--root", str(root2), "--json"],
+                        capture_output=True, text=True)
+    o2 = json.loads(p2.stdout or "{}")
+    check("★★混合风格仓库：release-V0.1.0 与 v0.2.0 都进 released_tags",
+          o2.get("released_tags") == ["release-V0.1.0", "v0.2.0"])
+    check("released_tags 回原始 tag 名（调用方要拿它去 git 里用，⛔ 不可归一化）",
+          "release-V0.1.0" in (o2.get("released_tags") or []))
+    check("`release-notes` 未被收进 released_tags",
+          not any("notes" in t for t in (o2.get("released_tags") or [])))
+
     rc, o = scope("V0.10.2")
     check("已随自己 tag 收口过的 V0.9.2 不再重复纳入",
           o.get("covered_versions") == ["V0.10", "V0.10.2"]
@@ -7319,9 +7354,16 @@ def test_mock_guard_split_by_marker():
             return r.returncode, []
         return r.returncode, [i for x in data.get("results", []) for i in x.get("issues", [])]
 
+    # ⛔ 日期**必须按当天相对生成**，不能写死：`since` / `expected_ready` 一旦硬编码，
+    #    过了脚本的容忍期（默认 14 天）这两条阴性对照就会**自己变红**——红的是日历、不是代码。
+    #    （本套件此前就是这么坏掉的：夹具写 `since: 2026-09-10`，到期即 `dev_mock_stale`。）
+    from datetime import datetime, timedelta as _td
+    _fresh = (datetime.now() - _td(days=2)).strftime("%Y-%m-%d")     # 两天前：绝不触发过期
+    _soon = (datetime.now() + _td(days=10)).strftime("%Y-%m-%d")     # 十天后：expected_ready 未到期
+
     DEV_OK = ("if (import.meta.env.DEV) {\n"
               "  // DEV_MOCK: 后端接口未部署\n"
-              "  // since: 2026-09-10\n  // owner: FE-x\n  // REMOVE_WHEN: 后端上线后删\n"
+              "  // since: " + _fresh + "\n  // owner: FE-x\n  // REMOVE_WHEN: 后端上线后删\n"
               "  doMock();\n}\n")
     rc, iss = hits(DEV_OK)
     check("★ 行为对照·阴性：DEV_MOCK + 构建期守卫 → 0 命中（这正是上游推荐写法）",
@@ -7350,7 +7392,7 @@ def test_mock_guard_split_by_marker():
 
     _T = "THIRD_PARTY" + "_MOCK"
     JAVA_OK = ("class Pay {\n  /*\n" + _T + ": 支付宝\nvendor: alipay\napi: /gw\n"
-               "since: 2026-09-01\nexpected_ready: 2026-09-20\nowner: BE-y\n"
+               "since: " + _fresh + "\nexpected_ready: " + _soon + "\nowner: BE-y\n"
                "REMOVE_WHEN: 联调通过\n  */\n  void f(){ mockPay(); }\n}\n")
     rc, iss = hits(JAVA_OK, "Pay.java")
     check("★ 行为对照·阴性：Java 块注释顶格 marker 仍被识别（⛔ 防修成假绿）",

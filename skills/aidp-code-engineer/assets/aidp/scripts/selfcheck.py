@@ -163,6 +163,32 @@ def _p_sql_ledger_comment(root):
            "ALTER TABLE T_X ADD COLUMN STATUS INT;\n")
 
 
+@probe("check_sibling_family.py", args=("--json",))
+def _p_sibling_family(root):
+    # 声明一个家族，再往 members 里放一个**没登记进注册表**的成员 → F2 必判 Critical。
+    # ⚠️ 声明行刻意放 docs/ 下：脚本只扫 `code/` 与 `docs/`（见其 DECL_ROOTS 注释）。
+    _write(root, "docs/ops/README.md",
+           "SIBLING-FAMILY: name=ops members=code/ops/*Entry.ts registry=code/ops/registry.ts\n")
+    _write(root, "code/ops/registry.ts", "export default [a];\n")
+    _write(root, "code/ops/aEntry.ts", "export const a = 1;\n")
+    _write(root, "code/ops/bEntry.ts", "export const b = 2;\n")   # ← 未登记，F2
+
+
+@probe("check_client_mcp.py", args=("--json",))
+def _p_client_mcp(root):
+    # 声明面 = **PRD 头部** `autopilot_decisions`（`docs/requirements/{V}/产品提供/*.md`，
+    # 见 check_webmcp._prd_files）—— ⛔ 不是 `memory/aidp-config.yaml`。
+    # 声明启用（非 Web 端）而端无关详规未安装 → `rule-not-installed` ERROR。
+    # ⚠️ 刻意不用「新旧声明冲突」那条：它走 `exit 2`（入参/配置错），而本自检的「变红」判据
+    #    认的是 `exit 1` + findings —— 用 rc=2 的注入会让探针恒判「没变红」，假的是探针不是脚本。
+    # ⛔ 也刻意不写任何**测试驱动**事实（chrome-devtools / Appium…）：驱动可用不是应用能力的
+    #    证据；哪天本探针因为补了驱动信息而变绿，说明判据被混进了另一条轴。
+    _write(root, "docs/requirements/V0.1.0/产品提供/01_PRD.md",
+           "# PRD\n\nautopilot_decisions:\n"
+           "  client_mcp:\n    enabled: true\n    client_type: miniprogram\n"
+           "    implementation: app-native\n")
+
+
 @probe("check_script_callers.py")
 def _p_script_callers(root):
     # 注入一个谁都不调的确定性脚本 —— 必须被抓到。

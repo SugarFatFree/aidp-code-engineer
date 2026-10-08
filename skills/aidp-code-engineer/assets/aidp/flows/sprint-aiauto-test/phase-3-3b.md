@@ -1,7 +1,7 @@
 <!-- 二次切分 · phase-3 片3b/6：覆盖 3.4 里程碑通知 #R（每轮结束）+ #F（最终完成）-->
 <!-- flowvar-check: allow THIS_ROUND_DIRECT_NOEV 由 phase-3-3 落盘、本片经 tick_flags --shell 回读 -->
 <!-- flowvar-check: allow THIS_ROUND_NA 由 phase-3-3 落盘、本片经 autopilot_tick_flags --shell 回读 -->
-# /sprint-aiauto-test · 执行分片 分片 [3b/6]（3.4 里程碑通知 #R（每轮结束）+ #F（最终完成））
+# sprint-aiauto-test · 执行分片 [3b/6]（3.4 里程碑通知 #R（每轮结束）+ #F（最终完成））
 
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
 > ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-3-3b.md`。理据见同目录 `rationale.md`。

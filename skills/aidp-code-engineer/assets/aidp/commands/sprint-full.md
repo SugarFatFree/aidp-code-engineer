@@ -45,8 +45,16 @@
    <!-- dup-check: ignore 前置检查清单需各命令自包含，读者不应为一行 glob 跳转 -->
    - 研发执行计划：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/0[0-9]_M*研发执行计划.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**，理由同上一行研发需求；合法布局见 `/sprint-plan` Step 1「输出」）
    - 任一缺失 → **停止执行**，提示先执行 `/version {version} "{里程碑}"`
-2. 读取 `memory/{version}/{user}/activeContext.md`：
-   - 如有进行中的 Sprint → **停止执行**并要求先 `/sprint-close`（与独立 `/sprint-start` 同档——约定 9 是硬停不是提示）
+2. ★ **约定 9 前置门（确定性判据，⛔ 不读 `activeContext.md` 自行裁量）**：
+
+   ```bash
+   python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --json
+   OPEN_RC=$?        # 0=无未关闭（含适用范围外）→ 继续；1=有 → 停止执行
+   ```
+   - 退出码 `1` → **停止执行**并把 `open[]` 列给用户，要求先 `/sprint-close`
+     （与独立 `/sprint-start` 同档——约定 9 是**硬停**不是提示）。
+   - 判据单一信源 = 该脚本（跨用户扫描 `memory/{version}/*/progress.md` 的同行 ✅）；
+     ⛔ 别改回读 `activeContext.md`：那是单用户视角、格式无约束，判不出来时的方向是**放行**。
 
 ## 参数解析
 

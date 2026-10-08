@@ -158,6 +158,15 @@
 > 存在**未关闭 Sprint** 时**立即停下**要求先 `/sprint-close`，⛔ 不得继续。先于版本落点门：若先在落点门选了「新开 patch / minor」
 > 再被本门拦下，新版本目录已建、旧 Sprint 成为跨版本孤儿。判据与话术同 `/sprint-dev` Phase 0B.00。
 
+```bash
+python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --json
+OPEN_RC=$?        # 0=无未关闭（含适用范围外）→ 继续；1=有 → 立即停下，列出 open[] 要求先 /sprint-close
+```
+
+> **判据单一信源 = `check_open_sprints.py`**（计划集合取 `docs/plans/{version}/*.md` 的 `Sprint-NNN`，
+> 已关闭集合取 `memory/{version}/*/progress.md` 里**同一行**带 ✅ 的条目，**跨用户扫描**）。
+> ⛔ 不自行裁量、不记告警后继续 —— 本门漏判的方向是**放行**，而放行的代价是上面那段写的孤儿产物。
+
 ### Phase 0C.0：★ 版本落点决策门（累进前置，先于任何持久副作用）
 
 > **同 `/sprint-dev` 分支 B「Phase 0B.0 版本落点决策门」**：当前版本已发布且未开始新版本规划时，**先弹版本落点门再动任何持久副作用**——三选一（re-release / 新 patch / 新 minor）与各自的 tag 影响、无人值守保守默认，**单一信源见 `/sprint-dev` Phase 0B.0，本处不复述**（约定 21）。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->

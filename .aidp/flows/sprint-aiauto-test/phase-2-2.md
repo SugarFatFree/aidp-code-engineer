@@ -1,5 +1,5 @@
 <!-- 二次切分 · phase-2 片2/2：覆盖 2.0.5 委派auto-test-runner / 2.1 登录测试循环 / 2.2 浏览器调用 / 2.3 skip-login / 2.4 运行时错误捕获-->
-# /sprint-aiauto-test · 执行分片 分片 [2/2]（2.0.5 委派auto-test-runner / 2.1 登录测试循环 / 2.2 浏览器调用 / 2.3 skip-login / 2）
+# sprint-aiauto-test · 执行分片 [2/2]（2.0.5 委派auto-test-runner / 2.1 登录测试循环 / 2.2 浏览器调用 / 2.3 skip-login / 2）
 
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
 > ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-2-2.md`。理据见同目录 `rationale.md`。

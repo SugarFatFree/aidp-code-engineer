@@ -163,6 +163,15 @@ def _p_sql_ledger_comment(root):
            "ALTER TABLE T_X ADD COLUMN STATUS INT;\n")
 
 
+@probe("check_open_sprints.py", args=("--json", "--version", "SELFCHECK"))
+def _p_open_sprints(root):
+    # 计划里登记 Sprint-001，而 progress.md 不给同行 ✅ → 必判「有未关闭 Sprint」。
+    # ⛔ 刻意把 ✅ 放在**另一行**：整份文件里有 ✅ 不构成关闭证据（progress.md 里 ✅ 是高频符号），
+    #    若哪天本探针因为这个 ✅ 而变绿，说明判据从「同一行」放宽成了「同一文件」。
+    _write(root, "docs/plans/SELFCHECK/01_研发执行计划.md", "# 计划\n\n- Sprint-001 登录\n")
+    _write(root, "memory/SELFCHECK/alice/progress.md", "- 阶段检查通过 ✅\n\n- Sprint-001 进行中\n")
+
+
 @probe("check_sibling_family.py", args=("--json",))
 def _p_sibling_family(root):
     # 声明一个家族，再往 members 里放一个**没登记进注册表**的成员 → F2 必判 Critical。

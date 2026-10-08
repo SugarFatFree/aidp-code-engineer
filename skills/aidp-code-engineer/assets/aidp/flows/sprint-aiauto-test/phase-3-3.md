@@ -1,4 +1,6 @@
 <!-- 二次切分 · phase-3 片3/6：覆盖 3.2.7 AI执行报告完成核验门 / 3.2.8 环境探针档案 / 3.3 baseline更新-->
+
+# sprint-aiauto-test · 执行分片 [3/6]（3.2.7 AI 执行报告完成核验门 / 3.2.8 环境探针档案 / 3.3 baseline 回写）
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
 > ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-3-3.md`。理据见同目录 `rationale.md`。
 

@@ -1,5 +1,5 @@
 <!-- 二次切分 · phase-0 片5/9：覆盖 0.1.5 远端用户机引导-->
-# /sprint-aiauto-test · 执行分片 分片 [5/9]（0.1.5 远端用户机引导）
+# sprint-aiauto-test · 执行分片 [5/9]（0.1.5 远端用户机引导）
 
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
 > ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-0-5.md`。理据见同目录 `rationale.md`。

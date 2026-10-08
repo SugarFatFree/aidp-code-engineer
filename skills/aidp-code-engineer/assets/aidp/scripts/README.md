@@ -403,6 +403,14 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 - **`version_fact_snapshot.py`** — `--root <仓库根> --version V create --file <来源相对路径>` 生成来源 SHA 清单（来源含 `code-inventory.json` 时逐个核对其列出的源码 SHA）；`verify` 检出源文件变化。⛔ 过期即重读刷新，**不得把「缺失或过期的快照」当成「无变化」**；清单只是来源哈希引用，不代替源码 / PRD 正文。条目形状不符或缺 `sha` 时 fail closed 并给出明确原因（⛔ 不放行、也不抛 traceback）。
 - **`version_preflight.py`** — `--input <已运行检查器结果清单.json> --json` 合并来源、最高严重度与定位。输入为数组，每项 `{source, executed, exit_code, output_present, scanned_files?, skipped?, findings:[{check_id,file,anchor?,severity}]}`。⛔ `executed=false`、空输出、`scanned_files=0`、`skipped=true` 或异常退出码**一律不得判 pass**；⛔ 不重写任何检查器的判据，也**不替代** `version-auditor` 的八项独立审计。
 
+## check_open_sprints.py — 约定 9「未归档不得开下一个 Sprint」的确定性判定【单一信源】
+
+约定 9 / `设计目标.md` G-CLOSE-1 的**唯一可执行判据**，由四个命令共用：`/sprint-start` 步骤 1、`/sprint-dev` Phase 0B.00、`/sprint-bugfix` Phase 0C.00、`/sprint-full` 前置检查 2。「有没有未关闭 Sprint」是**完全确定性**的（计划集合 ∖ 已关闭集合），⛔ 不交给执行体按理解判（看 `activeContext.md` 的、看 baseline 的、看最近 commit 的各判一套）—— 本门**漏判的方向是放行**：判不出来就继续，于是 Sprint 号被消耗、六类 `NN_*.md` 增量落盘，上一轮产物成为无 Sprint 归属的孤儿。
+
+判据（⛔ 与 `autopilot-ceremony-gate.py::_open_sprints` 同源，本脚本是其提取）：计划集合 = `docs/plans/{V}/*.md` 里的 `Sprint-NNN`；已关闭集合 = `memory/{V}/*/progress.md` 里**同一行**同时出现 `Sprint-NNN` 与 ✅ 的条目。两点刻意如此：① **跨用户扫描**（baseline 已扁平化为项目级，只看本机 `git config user.name` 会把别人关闭的 Sprint 误判成未关闭、这道门于是恒红）；② **同一行**（progress.md 里 ✅ 是高频符号，按「同一文件」判会放行一切）。
+
+用法：`python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version <V> [--root .] [--json]`；`--self-check`（阳性 + 跨用户 + 同行两类阴性对照）。退出码：`0`=无未关闭（含「无研发执行计划 → 适用范围外」，⛔ 不等于「已全部关闭」）/ `1`=有未关闭、**调用方须停下** / `2`=用法错。⚠️ 退出码 1 的语义是「本命令不得继续」，⛔ 不是「记一笔告警然后往下走」—— 那等于这道门不存在。
+
 ## check_sibling_family.py — 约定 20 姊妹条「同族增量项」确定性检查（F0–F4）
 
 向**已有 ≥2 个同构成员**的家族（运维入口 / 菜单项 / 版本区块 / 增量脚本 / 索引条目 / 枚举项 / 页签…）追加成员时，拦「没有公共外壳、各抄一份」与「顺序靠物理位置 + 注释提醒」。**判据是「有没有兄弟」，不是「我写了几遍」**——约定 20 的阈值判据（第 2/3 次即抽）在这类场景下不触发：执行体主观上是在复用家族里已有的东西。失败形态是"看起来正常"（类型检查/lint/构建全绿，只有并排比对才看得见），故必须有机器门。

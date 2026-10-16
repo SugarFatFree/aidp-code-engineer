@@ -27,7 +27,12 @@
 
 **批次粒度 = 一个模块(套件)。** 每个模块启动一个执行子 Agent,在其内部**串行**执行本模块全部用例。
 
-> ⚠️ **执行子 Agent 无 Skill 工具,必须先用 `Read` 读方法论文件:** 通过 Task/Agent 工具派生的执行子 Agent **拿不到 Skill 工具**(即便 `tools:*` 也没有,Skill 是主循环级能力),**加载不了本 skill、拿不到方法论**。因此主 Agent 派发时必须在 Task prompt 里**要求子 Agent 先 `Read` 本 skill 的 `SKILL.md` + `references/execution-methodology.md`(以及本模块用到的 `references/driver-adapters.md`/`references/usecase-format.md`)拿到完整方法论,再用驱动执行**。主 Agent 只传「方法论文件路径 + 本模块用例文件路径 + run-context 路径」,不把方法论正文塞进 prompt(既拿到完整方法论又不牺牲降 token)。
+> ⚠️ **执行子 Agent 无 Skill 工具,必须先用 `Read` 读契约文件:** 通过 Task/Agent 工具派生的执行子 Agent **拿不到 Skill 工具**(即便 `tools:*` 也没有,Skill 是主循环级能力),**加载不了本 skill、拿不到方法论**。主 Agent 只传「文件路径 + 本模块用例文件路径 + run-context 路径」,**不把正文塞进 prompt**。
+>
+> **★默认只读一份:[`execution-contract-lite.md`](./execution-contract-lite.md)**(精简执行契约:三条红线 / 状态机 / 四态与 `block_reason` 枚举 / 产物契约 / 「判不准翻哪一页」索引)。遇到判不准的情形**再按它的第五节索引按需 `Read` 对应全文**(本文件、`report-format.md`、`driver-adapters.md` + 本端 `driver-<端>.md`、`usecase-format.md`)。
+>
+> ⚠️⚠️ **为什么不派四份全文:** 每组 prompt 都 `Read` SKILL.md + 本文件 + `driver-web.md` + `report-format.md`,一轮 5 个 Agent 就是 **4× 重复加载** —— 实测 **2.11M tokens / 479 次工具调用**,而绝大多数用例只用到其中一小部分,「读完整方法论」成了每个子 Agent 的**固定开销**。
+> ⚠️ **收的是加载量、不是强制度**:精简契约每一条都是硬要求,⛔ 不得因为"没读全文"而自行发挥;⛔ 也不得反过来把全文判据抄进精简契约(那就成了同一判据两份实现,精简契约开头已写明它不是信源,并有 `tests/test_execution_contract_lite.py` 逐枚举守着)。
 
 - **会话复用**:模块内所有用例**共享同一会话 / 一次登录**。执行子 Agent 内浏览器/驱动会话执行完不关闭,后续用例复用;只在模块开头走一次入口流程(打开端 → 登录 → 进工作台),模块内用例通过导航切换连续执行,**禁止逐条重登录**。
 - **降 token 做法**:① 同模块一次性把全部用例交给一个子 Agent,避免每条重新加载文档 + 重付 Agent 启动开销;② 会话/导航上下文复用(不重复导航登录);③ observe 优先用动作返回的**增量状态**,不每步全量重读页面。
@@ -376,7 +381,7 @@
 第四步 report   聚合 results/*.json → 固定结构报告(见 report-format.md)
 ```
 
-**子 Agent 协同**:主流程只做编排(维护 tasks.md、派发执行/检查/报告子 Agent、聚合结果),**不直接调驱动**;执行子 Agent 在隔离上下文内跑一个模块并回传结果,避免污染主上下文。派发时须按第一节要求让子 Agent 先 `Read` 方法论文件(子 Agent 无 Skill 工具)。
+**子 Agent 协同**:主流程只做编排(维护 tasks.md、派发执行/检查/报告子 Agent、聚合结果),**不直接调驱动**;执行子 Agent 在隔离上下文内跑一个模块并回传结果,避免污染主上下文。派发时须按第一节要求让子 Agent 先 `Read` **`references/execution-contract-lite.md`**(子 Agent 无 Skill 工具),全文按需再读。
 
 **★驱动连接后、跑用例前的「环境准备」——两件事,★频次不同,别混为一谈:**
 

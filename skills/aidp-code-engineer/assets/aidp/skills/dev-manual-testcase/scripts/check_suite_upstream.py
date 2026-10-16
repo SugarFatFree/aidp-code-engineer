@@ -56,7 +56,42 @@ SUITE_HEADER_RE = re.compile(
 
 # 6 行来源标注关键词
 S0_TEST_PLAN = re.compile(r"自测方案章节|自测方案来源|自测方案\s*[::]")
-S1_PRD = re.compile(r"PRD\s*来源|研发需求来源|需求来源|关联\s*REQ|REQ-\d+")
+# >>> SHARED-SEGMENT: req-id-pattern >>>
+# ── 需求条目编号的合法形态(判据单一信源)──────────────────────────────────────────
+# ⚠️⚠️ **本段在四个 SKILL 的脚本里各持一份逐字节相同的副本**(遵 SKILL 独立性:不得跨 SKILL 引用):
+#      · ux-logic-extractor/scripts/check_req_upstream.py
+#      · dev-logic-architect/scripts/check_upstream_reference.py
+#      · dev-execution-planner/scripts/check_task_granularity.py
+#      · dev-manual-testcase/scripts/check_suite_upstream.py
+#      改一处必须四处同改,**连空格都要一致** —— 仓库级硬门
+#      `scripts/check_shared_segment_sync.py` 会逐字节比对同名段,漏改即 Critical。
+#
+# 两种形态**缺一不可**:
+#   · `REQ-004`          —— 无版本段(既有存量 PRD 大量如此)
+#   · `REQ-V0.17.0-004`  —— 带版本段,通用规则 约定34「跨版本需求作废清算」要求的形态,
+#                           目的是让「被本版推翻的历史需求」能被**跨版本检索**并打上作废标记
+#
+# ⚠️ **只认 `REQ-\d+` 的失效方向是假绿、不是假红**(2026-10-09 下游实测):带版本段的段头
+#    一条都匹配不上 → 整份 PRD 被判「零功规点」→ 打印「未发现功规点段,跳过核验」并
+#    **exit 0**,而维度 5 / 检查项 15 这一档是 Critical、不可豁免 —— 覆盖率统计整档失真。
+# ⚠️ 版本段必须**原样保留、⛔ 不许归一化掉**:约定34 的跨版本检索要的就是它。
+# ⚠️ 编号一律**按字符串处理,⛔ 不得 `int()`** ——`V0.17.0-004` 不是整数,排序须按
+#    「版本段 + 序号」双键;顺手写个 `int(m.group(1))` 会当场 ValueError 把整档打成 exit 1。
+# ⚠️⚠️ **两侧词边界 `(?<![0-9A-Za-z])` / `(?![0-9A-Za-z])` 都不可省。**
+#    `REQ-3P-NNN` / `REQ-3P-CB-NNN` 是第三方能力条目的**另一套命名空间**
+#    (ux `check_3p_capability.py` 专管),与需求条目编号不是一回事。
+#    ⚠️ **据实订正(独立审计复核)**:此处原只写一句「⛔ 不要并进来」,而**无边界的式子早就把
+#    `REQ-3P-001` 前缀匹配成了 `REQ-3`** —— 即那句保证**不成立**,还被逐字节复制了四份:
+#      · architect R1 / dmtc S1 是裸 `search`,一行只写 `REQ-3P-007` 的表格行被判「有上游来源」(**假绿**);
+#      · planner 的 `REQ_ID_RE.findall()` 会产出伪编号 `REQ-3`,两条不同的 3P 编号还会
+#        在 REQ↔EPIC 索引里**折叠成同一个 key 互相覆盖**。
+#    左边界同时挡掉 `SUBREQ-9`→`REQ-9`、`PREQ-005`→`REQ-005` 这类前缀误切。
+#    ⚠️ 右边界刻意**不含 `-`**:`REQ-007-A` 仍按 `REQ-007` 命中(无害),含进来会把它整条判不认。
+REQ_ID_CORE = r"(?<![0-9A-Za-z])REQ-(?:[Vv][0-9]+(?:\.[0-9]+)*-)?[0-9]+(?![0-9A-Za-z])"
+# <<< SHARED-SEGMENT: req-id-pattern <<<
+
+# ⚠️ 末支必须是 REQ_ID_CORE:套件头只写编号(`关联 REQ-V0.17.0-004`)时它是唯一上游信号。
+S1_PRD = re.compile(r"PRD\s*来源|研发需求来源|需求来源|关联\s*REQ|" + REQ_ID_CORE)
 S2_PROTOTYPE = re.compile(r"原型来源|原型文件|N/A.*纯后端|无\s*UI\s*关联")
 S3_DESIGN = re.compile(r"详细设计来源|设计来源")
 S4_PLAN = re.compile(r"研发执行计划来源|Sprint-\d+")

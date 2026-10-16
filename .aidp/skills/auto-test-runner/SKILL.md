@@ -161,11 +161,14 @@ description: >
 **这是降 token 的核心:每个模块启动一个执行子 Agent,在其内部串行执行本模块全部用例,共享同一会话/一次登录**(实测相比逐条调度降 token ~3.6×)。
 
 > ⚠️ **执行子 Agent 无 Skill 工具,必须用 `Read` 读方法论文件(标准姿势,不可省):** 通过 Task/Agent 工具派生的子 Agent **拿不到 Skill 工具**(即便 `tools:*` 也没有——Skill 是主循环级能力),因此**子 Agent 加载不了本 skill、拿不到方法论**,若不喂路径会变成"不知道怎么测"的空白 Agent。所以**主 Agent 派执行子 Agent 时,必须在 Task prompt 里要求子 Agent 先用 `Read` 工具读**:
-> - `<本 skill 安装目录>/SKILL.md` + `<本 skill 安装目录>/references/execution-methodology.md`(拿完整执行方法论);
-> - 以及本模块要用到的 `references/driver-adapters.md`(端无关契约/探测降级/端文件索引) **+ 被测端对应的 `references/driver-<端>.md`(该端四能力映射与样例,只读命中的那一份)**、`references/usecase-format.md`(解析用例);
+> - **默认只读一份:[`references/execution-contract-lite.md`](./references/execution-contract-lite.md)**(精简执行契约:三条红线 / 状态机 / 四态与 `block_reason` 枚举 / 产物契约 / 「判不准翻哪一页」索引);
+> - 以及**被测端对应的** `references/driver-<端>.md`(该端四能力映射与样例,**只读命中的那一份**);
+> - **其余全文按需再读** —— 判不准时照精简契约第五节的索引取(`execution-methodology.md` / `report-format.md` / `driver-adapters.md` / `usecase-format.md`);
 > - **读完再用驱动(如 chrome-devtools MCP 插件工具)执行**。
 >
-> 主 Agent 只在 prompt 里传**「方法论文件路径 + 本模块用例文件路径 + run-context.md 路径」**,**不把方法论正文塞进 prompt**——既让子 Agent 拿到完整方法论,又不牺牲降 token(正文由子 Agent 自行 Read,不占主上下文/prompt)。
+> 主 Agent 只在 prompt 里传**「契约文件路径 + 本模块用例文件路径 + run-context.md 路径」**,**不把正文塞进 prompt**。
+>
+> ⚠️⚠️ **⛔ 不派「SKILL.md + 方法论 + driver + report-format」四份全文**:一轮 5 个 Agent 就是 **4× 重复加载**(**2.11M tokens / 479 次工具调用**),而绝大多数用例只用到其中一小部分 ——「读完整方法论」成了每个子 Agent 的**固定开销**。⚠️ **收的是加载量、不是强制度**:精简契约每一条都是硬要求,⛔ 不得因"没读全文"自行发挥。
 
 对每个模块:
 
@@ -337,6 +340,7 @@ run-context `free_scan: true` 时,在**全部模块用例跑完之后、报告�
 | `check_result.py` | **结果 JSON 落盘前校验**:形状(`evidence`/`runtimeErrors` 必须是**对象数组**,元素含 `artifact` / `type`+`message`+`severity`)、artifact 必须是当前 `round/evidence` 内的相对路径（禁绝对路径/`..`/旧轮次，results/结果 JSON/round/evidence 根均不得是符号链接）、实际文件存在且非 0 字节、截图扩展名兼容集(`.webp/.png/.jpg/.jpeg`)与最小容器结构校验、截图文件名须绑定当前 case_id/step、同一截图跨字段/递归磁盘索引禁止多格式副本（后缀大小写/符号链接不绕过）、`status` 枚举(含 `na`)、`na` 理由、`block_reason` 枚举、verified/self-heal 的 pass 是否有证据、`self_heal_applied` ⟷ `self_heal_trace`、`db_assertion` 结构与「match=false 必判 fail」。`assets/result-schema.json` 是**示例而非可校验 Schema**,机器约束由本脚本承载;校验 `entry_kind` 枚举与**漏标巡检项**;`target` 支持多路径(跨轮次 glob),某个 target 空匹配会报 Important 防「少校验一整轮却显示通过」 |
 | `check_layer_isolation.py` | 两层解耦检查:扫方法论层是否泄漏端专有 API(质量维度 1) |
 | `check_env_facts.py` | 运行环境事实取证校验(**判据口径以 `references/execution-methodology.md` 第十节为单一信源**):必备字段齐全且类型合契约 / 事实字段与 `XSource` **双向成对** / 来源落五类枚举且形态合法 / `null` 与「未取到」互为充要条件 / 无模板占位残留 / `reusedInstance` 为 true 或未取到时渲染模式不得声称「显式指定」;带 `--report` 时**在「一、测试概况」章节范围内**核对报告与取证事实一致。**新增事实字段自动纳管**(除 `$`/`_` 开头与元数据白名单外,任何字段都要求配套 `XSource`),无需改脚本 |
+| `check_probe_archive.py` | **环境探针档案有效性校验(可选输入)**:每条必填 `事实性质(不变量/绝对值)` + `verified_at` + `verdict(valid/superseded)`;校验列齐、逐格非空非占位、两个枚举二选一、`verified_at` 可解析;超 `--stale-days`(默认 14)未复验判 Important,`绝对值`类事实判 Important(易漂移),含 `superseded` 条目出 Info 提醒**注入 prompt 前必须过滤**。⚠️ **整行仍是占位的模板行跳过并计进 `template_rows`**(否则自家模板被自家硬门判死);⚠️ **无档案 → `skipped: true` + exit 0,⛔ 不判缺表也不等于档案没问题** |
 
 ---
 

@@ -122,6 +122,9 @@
   "started_at": "2026-09-10T09:14:03+08:00",
   "finished_at": "2026-09-10T09:14:07+08:00",
   "elapsed_ms": 4200,
+  "elapsed_is_amortized": false,
+  "batch_id": null,
+  "batch_elapsed_ms": null,
   "duration_ms": 4200,
   "mechanism": "dom",
   "$field_notes": {
@@ -131,10 +134,11 @@
     "is_environment_issue": "★可选布尔,执行方**显式**标注本次阻塞是否属环境问题,优先级高于 block_reason 枚举推断(执行方最了解阻塞性质)。缺省 null → 回落枚举判定,行为与旧版本一致。用途:枚举归不了类的环境阻塞(如被测环境证书过期、依赖的第三方沙箱停服)也能正确排除出产品缺陷,避免报告把纯环境阻塞编号成 BUG-xxx 误导。只有 status=block 时生效。",
     "runtimeErrors": "★运行时错误全程捕获(P3 告警类受 run-context capture_warnings 控制、默认关;P1/P2 恒记录——P3 缺失不等于采集不全):每条用例执行后附带拉一次 console/network,把 console 报错 / network 非 2xx / 页面级错误 UI 写入本数组,供下游『运行时错误→升级 bug→回写问题汇总清单』直接消费,无需命令端二次扫描。type=console|network|pageError;detail 写『METHOD PATH 状态码』或 console 首行;severity=P1|P2|P3;pass 用例也可能带 runtimeErrors(页面能用但有后台报错)。",
     "started_at / finished_at / elapsed_ms": "★**单条耗时三件套(必填)**。`started_at`/`finished_at` 为 ISO-8601 带时区字符串,`elapsed_ms` 为整数毫秒。⚠️ **为什么升为必填(2026-09-10 下游实证)**:此前只有一个从不被校验、也从不被聚合的 `duration_ms` 示例字段,于是**没有人填**,调优只能靠 evidence 文件 mtime 反推——而那只对产出了**多个** evidence 的用例有效。下游实测两轮 116 条:`TC-PXY-F01` **一条占总时长 25%(36.8 min)**,这个结论是靠三个证据文件的时间戳跨度才发现的,**非常容易整条漏掉**。**没有单条耗时,任何优化都无法验证是否生效** —— 这是所有后续调优的前提。`duration_ms` 作为旧字段保留(与 `elapsed_ms` 同义),`check_result.py` 会在两者都在且不等时告警。",
-    "mechanism": "★可选,本条用例的**主要执行机制**。枚举:`dom`(经 DOM/CDP 操作与断言,缺省)| `webmcp`(经页面注册的 WebMCP 工具调用)| `mixed`(状态准备走 WebMCP、断言走 DOM)。⚠️⚠️ **`[还原度]` 用例(以及一切视觉/布局/样式断言)禁止填 `webmcp`**——WebMCP 读的是**页面声明的能力**,不是**渲染结果**,用它验还原度会让渲染层缺陷 **100% 漏测且全绿**。`check_result.py` C14 拦这条。详见 `references/execution-methodology.md`「WebMCP 分层铁律」。",
+    "mechanism": "★可选,本条用例的**主要执行机制**。枚举:`dom`(经端 UI 驱动操作与断言,缺省)| `webmcp`(经页面注册的 WebMCP 工具调用,= Web 端的客户端 MCP 实现)| `app-mcp`(被测应用自有业务工具,**跨端**:Web/小程序/移动/桌面)| `mixed`(状态准备走应用工具、断言走 UI 驱动)。⚠️ 四个值必须与 `scripts/check_result.py::MECHANISM_ENUM` 逐项相同(回检 `{{AIDP_HOME}}/scripts/tests/test_execution_contract_lite.py`)——本说明是执行方**照着写 result 的依据**,少登记一个值的后果不是报错,而是该机制的用例被填成相邻值:`app-mcp` 缺位时跨端应用自有 MCP 会被记成 `webmcp`,正是「测试驱动用了 MCP」与「应用提供了 MCP 能力」两条轴的混淆。⚠️⚠️ **`[还原度]` 用例(以及一切视觉/布局/样式断言)禁止填 `webmcp`**——WebMCP 读的是**页面声明的能力**,不是**渲染结果**,用它验还原度会让渲染层缺陷 **100% 漏测且全绿**。`check_result.py` C14 拦这条。详见 `references/execution-methodology.md`「WebMCP 分层铁律」。",
     "self_heal_attempts": "★可选整数,**实际触发自愈的次数**(缺省 0)。⚠️ **它与 `execution_mode` 不是一回事,这正是下游被带偏的地方**:`execution_mode=self-heal` 表示「**具备**自愈能力」,不表示「**实际自愈了**」。下游实测 43 条 `execution_mode=self-heal`,而 `retries` 合计只有 **1** 次 —— 分析者第一反应是「43 条在重跑,先治自愈」,真相是自愈几乎没触发。有了本字段,「有多少条真的自愈过」可直接统计,不必再拿两个语义不同的字段并排猜。",
     "execution_mode": "★执行模式 = **本条用例被授予的执行策略**(direct | verified | self-heal),⚠️ **是「能力/策略」不是「实际发生了什么」**。`self-heal` 只表示**允许**失败后自愈重跑,**不代表真的重跑过**——实际发生看 `retries` 与 `self_heal_attempts`。⚠️ 两个字段并排出现时极易把调优方向带偏(下游实证:43 条 self-heal vs 实际 1 次重试),**报告里出现 execution_mode 分布时必须同时给出 `self_heal_attempts` 合计**,`gen_report.py` 已如此实现。",
     "self_heal_trace": "★可选,失败复测追溯。仅当 self_heal_applied=true 时要求非空;其余用例省略或 null(不增加普通用例负担)。三要素:cause(失败根因判断,如『网络超时致按钮未响应』/『前置数据缺失』) | recovery(执行的恢复动作 + observe 恢复检验结果,证据来源即 execution-methodology.md『observe 恢复检验清单』,不新造机制) | outcome(复测结论,枚举 recovered-pass | still-fail-block)。缺省时行为与旧版本一致(旧版本无此字段)。",
+    "elapsed_is_amortized / batch_id / batch_elapsed_ms": "★**耗时来源标注**(2026-10-09 下游反馈落地)。契约要求逐条 `elapsed_ms`,而方法论规定**按套件批量执行**(一次登录、会话复用)——两者冲突,于是执行方只能填**批次窗口的均摊值**(「窗口 ÷ N」)。`elapsed_is_amortized: true` 就是如实标出这件事,此时 `batch_id` **必填**(说清是哪个窗口),`batch_elapsed_ms` 可选(填了「均摊值 = 它 ÷ 批内条数」才可核对)。⚠️ 不标的后果是报告 §2.7 把均摊值当逐条真值排名,产出「某条用例耗时 28 分钟」这种**假事实**;执行方把说明写进 `note` **不算** —— `gen_report.py` 不读 `note`。⚠️ 标了 `true` 后 **I9(elapsed 与 finished−started 不符)对该条豁免**:均摊值与窗口本就不等,那是**定义**;不豁免就成了「如实标注反而换来一条告警」,即硬门在**奖励撒谎**。⚠️ 同一轮 ≥2 条**共享同一执行窗口**且 `elapsed_ms` **近似相同**(相差 ≤ 批内条数 ms)而未标注 → **I14** Important(那是均摊的签名,纯算术、零语义;< 1s 的不判,小用例撞号是现实可能)。⚠️ 必须**两条同时成立**:只看值相同会让 ±1ms 抖动逃脱(假绿)、也会把独立用例的整秒耗时判红(假红)。⚠️ `batch_elapsed_ms` 一旦填写即被 **I15** 比对「批内合计 ⟷ 声明值」(>5% 或同批不一致即告警)。",
     "is_regression": "★是否回归用例(上游 [回归] 标记透传,是=true)。为 true 时该用例失败(fail / 非环境类的 block)缺陷等级一律锁 Critical,覆盖优先级映射(gen_report 用例族锁定)。缺省 false,行为与旧版本一致。",
     "related_defect_id": "★回归用例关联的缺陷 ID(上游 `关联缺陷: {缺陷ID}` 字段);非回归用例为 null。供报告与下游回写关联原缺陷。",
     "db_assertion": "★[双源对账] 用例的数据真值对账结果,由驱动适配层 DB 断言驱动产出(执行用例『双源对账』段等价 SQL 与页面取值比对)。结构 {pageValue(页面取值), sqlValue(等价 SQL 取回的 DB 真值), match(是否一致)};match=false 则该用例判 fail。非双源对账用例为 null。端专有的 SQL/MCP 调用只在 references/driver-db-assertion.md 出现,方法论层不写。"

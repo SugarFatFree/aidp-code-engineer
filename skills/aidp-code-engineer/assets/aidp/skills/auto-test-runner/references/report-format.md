@@ -35,7 +35,10 @@
 | `self_heal_attempts` | int | — | ★**实际触发自愈的次数**(缺省 0)。⚠️ 与 `execution_mode` **不是一回事**:`execution_mode=self-heal` 只表示「**具备**」自愈能力,不表示「**实际自愈了**」(实证:43 条 self-heal vs 实际重试 1 次)。报告出现 `execution_mode` 分布时**必须并排给出本字段合计**;`check_result.py` I11 在 `self-heal` 且 `retries=0` 且本字段为 0 时提醒 |
 | `started_at` | string | ✅ | ★**单条耗时三件套之一**,ISO-8601 带时区。**没有单条耗时,任何耗时优化都无法验证是否生效**(实证:一条用例占整轮 25%,此前只能靠 evidence 文件 mtime 反推、少产一个证据文件就整条漏掉)。缺失由 `check_result.py` **I8 判 Important**(不判 Critical 是因为存量一条都没有,判死会让整个校验被绕过) |
 | `finished_at` | string | ✅ | ★同上,ISO-8601 带时区 |
-| `elapsed_ms` | int | ✅ | ★同上,整数毫秒。与 `finished_at−started_at` 相差 > 2s 由 **I9** 告警(两者不是同一次计时);与旧字段 `duration_ms` 并存且不等由 **I10** 告警。`gen_report.py` 据本字段产出 **§2.7 耗时分布** |
+| `elapsed_ms` | int | ✅ | ★同上,整数毫秒。与 `finished_at−started_at` 相差 > 2s 由 **I9** 告警(两者不是同一次计时);与旧字段 `duration_ms` 并存且不等由 **I10** 告警。`gen_report.py` 据本字段产出 **§2.7 耗时分布**。⚠️⚠️ **若它是批次窗口的均摊值(「窗口 ÷ N」)而非逐条打点,必须同时填 `elapsed_is_amortized: true` + `batch_id`** —— 本 SKILL 的执行形态**本就是按套件批量**(一次登录、会话复用),逐条打点不是常态;不标的后果是报告 §2.7 把「窗口 ÷ N」当逐条真值排名,产出「某条用例耗时 28 分钟」这种**假事实**(下游实测)。同一轮里 ≥2 条**共享同一个执行窗口**(`started_at`/`finished_at` 相同)且 `elapsed_ms` **近似相同**(相差 ≤ 批内条数 ms,即整除余数)而未标注,由 **I14** 告警 —— 那是均摊的签名,纯算术判定、**不读 `note` 自述**。⚠️ 判据**两条同时成立**才报:只看「值相同」会让 `1680000/1680001/1679999` 这种整除不尽的 ±1ms 抖动**全部逃脱**(假绿),也会把两条独立用例恰好都填成整秒的情形判红(假红) |
+| `elapsed_is_amortized` | bool | — | ★**耗时来源标注**(缺省 `false` = 逐条打点)。为 `true` 时:① 必须同时给 `batch_id`(否则 **I15** 告警 —— 说不清是哪个窗口均摊的,等于来源标注只写了一半);② **I9 对该条豁免**(均摊值与 `finished_at−started_at` 本就不等,那是**定义**;不豁免就成了「如实标注反而换来一条告警」,即硬门在**奖励撒谎**);③ 报告 §2.7 把它渲染成 `~8.5s` 并写明**不可用于单条性能判断**。⚠️ 与 `XSource` 来源标注同一条纪律:**事实必须带来源,均摊就如实标均摊**,⛔ 不许把均摊说明只写在 `note` 里(`gen_report.py` 不读 `note`,照样当真值排名) |
+| `batch_id` | string | — | ★所属批次标识(`elapsed_is_amortized: true` 时**必填**)。同一次批量执行窗口内的用例填同一个值,报告「耗时来源」列据此显示 `均摊(batch-xxx)`。⚠️ 只作标识、不参与任何统计 |
+| `batch_elapsed_ms` | int | — | ★该批次窗口的**实测**总耗时(可选)。填了它,「均摊值 = 本字段 ÷ 批内用例数」这句话才**真的**可核对——`check_result.py` **I15** 会比对「批内 `elapsed_ms` 合计 ⟷ 本字段」,相差 > 5% 或同批各条声明值互不一致即 Important。⚠️ 不填不影响任何判据;⛔ 但别把它当装饰:填了就会被核 |
 | `duration_ms` | int | — | 旧字段,与 `elapsed_ms` **同义**,仅为兼容存量结果保留(聚合时 `elapsed_ms` 优先、缺失才回落它)。**新结果一律填 `elapsed_ms`**,两者都写且不等会被 I10 判不可信 |
 | `mechanism` | string | — | ★本条用例的**主要执行机制**,枚举 `dom`(缺省)/ `webmcp` / `app-mcp`(应用自有业务工具)/ `mixed`。⚠️⚠️ **`[还原度]` 及一切视觉/布局/样式断言禁止填 `webmcp`** —— WebMCP 读的是页面**声明的能力**、不是**渲染结果**,用它验还原度会让渲染层缺陷 **100% 漏测且全绿**(`check_result.py` **C14 判 Critical**;`mixed` = 状态准备走 WebMCP、断言走 DOM,**是被鼓励的形态,不判**)。枚举外取值由 **C15** 判 Critical。判据全文见 [`execution-methodology.md`](./execution-methodology.md) 一·补三「WebMCP 分层铁律」。⚠️ **未填 ≠ 已确认是 dom**:`gen_report.py` 把未填的单列成 `未声明` 一档、**不并进 `dom`**(并进去等于替执行方断言「这条走的是 DOM」);`webmcp_enabled: true` 的轮次**必须逐条如实填**,否则 C14 够不着、这一档等于没测 |
 
@@ -149,6 +152,9 @@
 | `modules[*]`(各模块统计) | `testSummary.byModule[*]` | 各模块 total/pass/fail/block/通过率 |
 | `defects[*]`(缺陷列表,已按 §2.3 分级去重) | `testSummary.defects[*]` | driver-missing 不计产品缺陷、同用例 error+fail 去重后的口径 |
 | `runtime_findings[*]`(pass 用例携带的运行时错误) | `testSummary.runtimeErrors[*]` | 供「运行时错误→升级 bug→回写问题汇总清单」直接消费 |
+| `timings[*].elapsed_ms` | `elapsedMs` | 单条耗时(毫秒);取不到写 `null` 展示「未采集」,⛔ 不写 0 |
+| `timings[*].amortized` | `elapsedIsAmortized` | 是否批次窗口均摊值;SPA 据此渲染 `~8.5s` 并挂「不可用于单条性能判断」title |
+| `timings[*].batch_id` | `batchId` | 所属批次标识;均摊值靠它才能回溯到窗口 |
 
 - **对账口径一致性**:`testSummary.passed + failed + blocked == total`;缺陷数走 §2.3 分级映射口径(≠ fail+block 原始数)。
 - **单向数据流**:本 skill 产出 `results/*.json` → `gen_report.py` 聚合 → 编排层回填 autopilot `data/{BUILD}.js`;本 skill 不直接写 autopilot 文件(职责隔离)。
@@ -156,7 +162,20 @@
 ### 2.7 耗时分布(2026-09-10 新增,由 `gen_report.py` 产出)
 
 **数据源:** 每条结果 JSON 的 `started_at` / `finished_at` / `elapsed_ms` 三件套
-(旧字段 `duration_ms` 兼容回落)。**列:** `# | 用例 | 套件 | 结果 | 耗时 | 占已采集合计`,只列最长 10 条。
+(旧字段 `duration_ms` 兼容回落)。**列:** `# | 用例 | 套件 | 结果 | 耗时 | 占已采集合计 | 耗时来源`,只列最长 10 条。
+
+> **★生成命令(⛔ 统计字段一律不得手填,照抄这一行即可):**
+> ```bash
+> python3 <SKILL_DIR>/scripts/gen_report.py <round_dir> --json   # 聚合为 JSON
+> python3 <SKILL_DIR>/scripts/gen_report.py <round_dir> --md     # 直接产出「二、汇总」章 markdown
+> ```
+
+⚠️⚠️ **均摊值与逐条打点必须在表里长得不一样。** 本 SKILL 的执行形态**本就是按套件批量**
+(一次登录、会话复用),因此 `elapsed_ms` 常常是「批次窗口 ÷ N」。标了
+`elapsed_is_amortized: true` 的条目渲染为 **`~8.5s`**、「耗时来源」列写 `均摊(batch-xxx)`,
+并在表上方写明**不可用于单条性能判断** —— 按均摊值排名只说明「这条属于哪个慢批次」,
+**不说明「这条本身慢」**。下游实测过不标注的后果:报告出现「`TC-LIST-G09` 耗时 28 分钟」这种
+**假事实**,而执行方其实已经在 `note` 里写了「均摊值」—— `gen_report.py` 不读 `note`。
 
 ⚠️ **本节存在的全部理由(实测依据):** 两轮 116 条里 **`TC-PXY-F01` 一条占整轮总时长 25%(36.8 min)**,
 而这个结论此前只能靠**三个 evidence 文件的 mtime 跨度手工反推** —— 只要那条用例少产一个证据文件,

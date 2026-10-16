@@ -144,8 +144,23 @@ def collect(root):
             for n in NUM_RE.findall(cell):
                 in_table.add(_norm(n))
 
+        # ③ 「适用条件」列覆盖（`flows/README.md` 规则第 8 条的落地）
+        #    该列是执行体「先判后读、不读用不上的片」的**唯一机制**：骨架表已在上下文，
+        #    据它判某片当次适不适用，不适用则整片跳过、无需 Read。
+        # ★ **逐表判**，⛔ 不判「命令里至少有一张表有」：一个命令常有多张骨架表，
+        #   只要一张有就算过，其余几张的缺口完全隐身 —— 而执行体读的是**它当前那一段**那张表。
+        # 判据取「表头含『所在分片』」：有分片列 = 这张表就是用来先判后读的，必须配适用条件。
+        #   零假阳性，且不带分片列的硬门判定表**不会**被要求补列（那类表不是用来跳片的）。
+        _cmd_text = _read(cmd_md)
+        _head_rows = [ln for ln in _cmd_text.split("\n")
+                      if ln.lstrip().lstrip(">").lstrip().startswith("|") and "所在分片" in ln]
+        tables_missing = [ln.strip()[:60] for ln in _head_rows if "适用条件" not in ln]
+
         out[name] = {"in_shard": in_shard, "in_table": in_table,
-                     "ranges": ranges, "shard_of": shard_of}
+                     "ranges": ranges, "shard_of": shard_of,
+                     "shard_count": len(shards),
+                     "shard_tables": len(_head_rows),
+                     "tables_missing_applicability": tables_missing}
     return out
 
 
@@ -195,6 +210,20 @@ def run(root):
                           f"本门对该命令**结构上无法报出任何缺口**（比对基准为空）。"
                           f"要么补骨架表，要么在此显式记录该命令不走骨架表索引。",
             })
+        # ★ 「适用条件」列缺口（WARN，⛔ 不占退出码）
+        #   补列是内容工作、不该拦住别人的提交；但缺口必须有人看见 ——
+        #   没有这列，执行体只能把每一片都 Read 一遍（7×24 下那是逐 tick 的固定开销）。
+        #   只对「分片数 ≥4」的命令要求：片少时逐片读的成本本来就不高。
+        if d.get("shard_count", 0) >= 4:
+            for head in d.get("tables_missing_applicability") or []:
+                findings.append({
+                    "level": "WARN", "command": cmd, "step": "-", "kind": "骨架表缺适用条件列",
+                    "detail": f"`/{cmd}` 有一张带「所在分片」列的骨架表缺「适用条件」列："
+                              f"`{head}…` —— 该列是执行体「先判后读」的唯一机制，缺了它这张表"
+                              f"覆盖的分片只能全部 Read。补列时恒适用的写「恒适用」，"
+                              f"⛔ 不许留空（留空与「忘了填」同形），也⛔ 不写「视情况」"
+                              f"「按需」这类判不出真假的话。",
+                })
         dangling = []
         for n in missing:
             findings.append({

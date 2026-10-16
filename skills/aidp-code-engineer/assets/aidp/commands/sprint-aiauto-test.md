@@ -108,20 +108,20 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 
 **Phase 0 子步骤骨架（每步先 Read「所在分片」再执行）**：
 
-| 子步骤 | 所在分片 | 作用（一句话） |
-|---|---|---|
-| **0.0.0** | `phase-0-1.md` | 规范化无人值守信号 `LOOP_UNATTENDED`（所有无人值守分支的统一开关，**必须最先派生**）|
-| **0.0** | `phase-0-1.md` | 拉取远端最新代码（同 `/sprint-autopilot` Phase 0.0）|
-| **0.0.5** | `phase-0-1.md` | 读取测试方案文档（主配置入口 — 测试环境与账号，独立成文或内嵌皆识别）|
-| **0.0.6** | `phase-0-2.md` | 测试方案 AI 自动化段预检 + 自动补全 + 信息收集（供 autopilot / sprint-batch 提前调用）|
-| **0.0.7** | `phase-0-2.md` | ★ 连接模式判定护栏（同机无 `.mcp.json` 必走本地 CLI，禁 MCP 变体顶替）|
-| **0.1** | `phase-0-3.md`(0.1/0.1.1/0.1.1.4) + `phase-0-4.md`(0.1.1.5/0.1.2/0.1.2.1/0.1.3/0.1.3.5/0.1.4) + `phase-0-5.md`(0.1.5) | chrome-devtools-mcp 检测 + 智能启动（本地 `cli` / 远程 `mcp` 双驱动、无头/有头）|
-| **0.2**（子步骤 1–4 + 2.5bis 选集护栏）| `phase-0-6.md` | baseline 读取 + 版本解析（心跳/已测去重门/冻结字段写入契约/熔断冻结门/报告生成门/2.5.1 自愈交接**判定**/deployment/通知配置/报告落点）|
-| **0.2**（执行铁律）| `phase-0-6b.md` | 自愈式交接**执行**铁律（`NEED_HANDOFF=1` 必读，含 `handoff_fail_streak` 本地熔断）+ #0a / 通知配置 / 报告落点两路径归属分工 |
-| **0.3** | `phase-0-7.md` | 部署 + 测试元数据（研发自测配置优先 → PRD `deployment` 段兜底）|
-| **0.4** | `phase-0-7.md` | 测试账号加载（研发自测配置优先 → credentials 文件兜底）|
-| **0.4bis** | `phase-0-7.md` | ★ 账号登录冒烟预检（跑用例**前**断言账号真能登进去，别等 Phase 2 白跑一轮）|
-| **0.1.6** ★ | `phase-0-8.md` | **客户端应用 MCP 就绪（可选能力·跨端）**：`check_client_mcp.py --detect` 判**跨端**声明 → 未声明**整段跳过、零痕迹**；Web 叶子（`client_type=web` + `implementation=webmcp`）另经 `check_webmcp.py` 校验驱动版本 + 两个浏览器开关 + 两行自检 + 调用约定；非 Web（小程序/移动/桌面）改经 `aiauto_readiness.py` 评估应用自有服务/桥接的运行期前置。⛔ 版本不足或前置缺失**标 block 不静默降级**、不终止整轮 |
+| 子步骤 | 所在分片 | 作用（一句话） | 适用条件（不满足则整片跳过、无需 Read） |
+|---|---|---|---|
+| **0.0.0** | `phase-0-1.md` | 规范化无人值守信号 `LOOP_UNATTENDED`（所有无人值守分支的统一开关，**必须最先派生**）| 恒适用 |
+| **0.0** | `phase-0-1.md` | 拉取远端最新代码（同 `/sprint-autopilot` Phase 0.0）| 恒适用 |
+| **0.0.5** | `phase-0-1.md` | 读取测试方案文档（主配置入口 — 测试环境与账号，独立成文或内嵌皆识别）| 恒适用 |
+| **0.0.6** | `phase-0-2.md` | 测试方案 AI 自动化段预检 + 自动补全 + 信息收集（供 autopilot / sprint-batch 提前调用）| 恒适用 |
+| **0.0.7** | `phase-0-2.md` | ★ 连接模式判定护栏（同机无 `.mcp.json` 必走本地 CLI，禁 MCP 变体顶替）| 恒适用（**判定步**，⛔ 不得预判跳过） |
+| **0.1** | `phase-0-3.md`(0.1/0.1.1/0.1.1.4) + `phase-0-4.md`(0.1.1.5/0.1.2/0.1.2.1/0.1.3/0.1.3.5/0.1.4) + `phase-0-5.md`(0.1.5) | chrome-devtools-mcp 检测 + 智能启动（本地 `cli` / 远程 `mcp` 双驱动、无头/有头）| 被测端含 `web`（由 0.0.5 读到的测试方案 `client` 字段算出） |
+| **0.2**（子步骤 1–4 + 2.5bis 选集护栏）| `phase-0-6.md` | baseline 读取 + 版本解析（心跳/已测去重门/冻结字段写入契约/熔断冻结门/报告生成门/2.5.1 自愈交接**判定**/deployment/通知配置/报告落点）| 恒适用 |
+| **0.2**（执行铁律）| `phase-0-6b.md` | 自愈式交接**执行**铁律（`NEED_HANDOFF=1` 必读，含 `handoff_fail_streak` 本地熔断）+ #0a / 通知配置 / 报告落点两路径归属分工 | `NEED_HANDOFF=1`（由 0.2 子步 2.5.1 判定算出） |
+| **0.3** | `phase-0-7.md` | 部署 + 测试元数据（研发自测配置优先 → PRD `deployment` 段兜底）| 恒适用 |
+| **0.4** | `phase-0-7.md` | 测试账号加载（研发自测配置优先 → credentials 文件兜底）| 恒适用 |
+| **0.4bis** | `phase-0-7.md` | ★ 账号登录冒烟预检（跑用例**前**断言账号真能登进去，别等 Phase 2 白跑一轮）| 恒适用 |
+| **0.1.6** ★ | `phase-0-8.md` | **客户端应用 MCP 就绪（可选能力·跨端）**：`check_client_mcp.py --detect` 判**跨端**声明 → 未声明**整段跳过、零痕迹**；Web 叶子（`client_type=web` + `implementation=webmcp`）另经 `check_webmcp.py` 校验驱动版本 + 两个浏览器开关 + 两行自检 + 调用约定；非 Web（小程序/移动/桌面）改经 `aiauto_readiness.py` 评估应用自有服务/桥接的运行期前置。⛔ 版本不足或前置缺失**标 block 不静默降级**、不终止整轮 | `check_client_mcp.py --detect` 判为**已声明**；未声明整段跳过、零痕迹 |
 
 > 收口：Phase 0 全部跑完 → 进入 Phase 1。**执行前务必已按上表逐分片 Read（`phase-0-1.md` … `phase-0-6.md` / `phase-0-6b.md` / `phase-0-7.md`；`phase-0-8.md` 仅当客户端应用 MCP 已声明时才需 Read）并逐项完成，不能只看本表。**
 
@@ -153,17 +153,17 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 
 **Phase 2 子步骤骨架（每步先 Read「所在分片」再执行）**：
 
-| 子步骤 | 所在分片 | 作用（一句话） |
-|---|---|---|
-| **2.0.0** | `phase-2-1.md` | ⛔⛔ 用例增量未级联前置门（台账未收口即不许开测）|
-| **2.0.0bis** | `phase-2-1.md` | 用例增量前置门的补充判据 |
-| **2.0** | `phase-2-1.md` | 用例来源优先级解析（★ 测试人员为主 + 研发自测查漏补充 + 跨版本 `[回归]` 继承 + 渲染模式拆分）|
-| **2.0.5** | `phase-2-2.md` | 组装 run-context + 派测试执行子 Agent（★ 执行内核入口）|
-| **2.0.7** | `phase-2-1.md` | ★ 前置数据体检门（用例声明的前置数据是否真的在）|
-| **2.1** | `phase-2-2.md` | 登录 → 测试 → 登出循环（★ skill 内部行为示意，命令端不手写直驱）|
-| **2.2** | `phase-2-2.md` | chrome-devtools-mcp 调用（★ skill 内部行为示意 — auto-test-runner「Web 端驱动适配器」执行）|
-| **2.3** | `phase-2-2.md` | `--skip-login` 模式（测公开页）|
-| **2.4** | `phase-2-2.md` | ★ 运行时错误全程捕获与 bug 记录（不在用例里也要记）|
+| 子步骤 | 所在分片 | 作用（一句话） | 适用条件（不满足则整片跳过、无需 Read） |
+|---|---|---|---|
+| **2.0.0** | `phase-2-1.md` | ⛔⛔ 用例增量未级联前置门（台账未收口即不许开测）| 恒适用（**检出步** —— 台账未收口即不许开测） |
+| **2.0.0bis** | `phase-2-1.md` | 用例增量前置门的补充判据 | 恒适用 |
+| **2.0** | `phase-2-1.md` | 用例来源优先级解析（★ 测试人员为主 + 研发自测查漏补充 + 跨版本 `[回归]` 继承 + 渲染模式拆分）| 恒适用 |
+| **2.0.5** | `phase-2-2.md` | 组装 run-context + 派测试执行子 Agent（★ 执行内核入口）| 恒适用（执行内核入口） |
+| **2.0.7** | `phase-2-1.md` | ★ 前置数据体检门（用例声明的前置数据是否真的在）| 恒适用（**检出步**） |
+| **2.1** | `phase-2-2.md` | 登录 → 测试 → 登出循环（★ skill 内部行为示意，命令端不手写直驱）| `--skip-login` 未传（否则走 2.3） |
+| **2.2** | `phase-2-2.md` | chrome-devtools-mcp 调用（★ skill 内部行为示意 — auto-test-runner「Web 端驱动适配器」执行）| 被测端含 `web`（由 Phase 0.0.5 的测试方案 `client` 字段算出） |
+| **2.3** | `phase-2-2.md` | `--skip-login` 模式（测公开页）| `--skip-login` 已传 |
+| **2.4** | `phase-2-2.md` | ★ 运行时错误全程捕获与 bug 记录（不在用例里也要记）| 恒适用（运行时错误全程捕获，⛔ 不随用例集裁剪） |
 
 > ★ **WebMCP 条件启用入参**（默认不传）：`auto-test-runner` 的 **`invoke` 补充能力**（列出/调用页面登记的工具，属 **Web 适配器的可选能力、不是第五个端**）与其**驱动版本校验**均为**入参门控**，SKILL **明令不自行探测**。组装 run-context（2.0.5）时**先跑跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`，`declared: true` 即把整个 `client_mcp` 对象（`client_type`/`implementation`/`capability_state`）写进 run-context——它是 SKILL 侧 `application_mcp` 四态（declared / entry / registration / invocation）的唯一入口，**不写 = 非 Web 项目的四态永远取不到、专项用例既不 block 也不留痕**；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**跑 `check_webmcp.py --detect --json`，`enabled: true` 才把 `webmcp_enabled: true` + `webmcp_entry_symbols` + `webmcp_launch_command` 一并写进 run-context 并在派子 Agent 的 prompt 里点明；**不传 = `invoke` 与版本校验永不启用**。⛔ 非 Web 不传 `webmcp_*`。⛔ 版本不足时由 SKILL 标 `block(webmcp-driver-too-old)`，**不得静默降级为「就当没有 WebMCP」**——那会让这一整类用例全绿式消失、报告看不出漏测。Phase 0.1.6（`phase-0-8.md`）已做驱动就绪预检，本处只负责把入参传下去。
 
@@ -179,21 +179,21 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 
 **Phase 3 子步骤骨架（每步先 Read「所在分片」再执行）**：
 
-| 子步骤 | 所在分片 | 作用（一句话） |
-|---|---|---|
-| **3.0** | `phase-3-1.md` | 报告生成门（AI测试报告仅 autopilot 流水线驱动时生成）|
-| **3.1** | `phase-3-1.md` | 报告产物（HTML 唯一形态 — 不产出 docs/testing markdown 报告）|
-| **3.2** | `phase-3-1.md` | 报告内容（捕获后渲染进 HTML 的数据）|
-| **3.2.5** | `phase-3-1.md` | ★ 归集 skill 证据 + 截图落盘硬核验（强制；缺失绝不生成"完成"报告）|
-| **3.2.5bis** | `phase-3-1.md` | ★ 8 维度独立质量检查子 Agent（Critical 门，⛔ 不得跳过）|
-| **3.2.6** | `phase-3-2.md` | ★ 生成 AI测试报告 HTML（该 build 子页 + 综合首页刷新）|
-| **3.2.7** | `phase-3-3.md` | ★ AI执行报告完成核验门（入口无关，下沉到测试链路）|
-| **3.2.8** | `phase-3-3.md` | ★ 沉淀「环境探针档案」（与用例无关的环境事实，供下轮 0.0.5 复用）|
-| **3.3** | `phase-3-3.md` | baseline 更新（★ CONVERGED 无条件先算好，供各消费点复用）|
-| **3.4** | `phase-3-3b.md` | ★ 里程碑通知 #R（每轮结束）+ #F（最终完成）|
-| **3.5** | `phase-3-4.md` | ★ 本轮收敛判定（本地 + 远程通用）+ 切有头提醒（仅 `DRIVER=mcp-remote` 远程）|
-| **3.6** | `phase-3-4.md` | ★ 无头跑完后「自动有头眼检」（按环境有头能力自动决策，不询问用户）|
-| **3.7** | `phase-3-5.md` | ★ finalize AI执行报告 + 发 #3 里程碑通知（#F 之后 · 本 build 收尾 · R-4）|
+| 子步骤 | 所在分片 | 作用（一句话） | 适用条件（不满足则整片跳过、无需 Read） |
+|---|---|---|---|
+| **3.0** | `phase-3-1.md` | 报告生成门（AI测试报告仅 autopilot 流水线驱动时生成）| 恒适用（**判定步** —— 报告生成门自己判要不要产报告，⛔ 不由本列预判跳过） |
+| **3.1** | `phase-3-1.md` | 报告产物（HTML 唯一形态 — 不产出 docs/testing markdown 报告）| `REPORT_ENABLED=1`（由 3.0 算出） |
+| **3.2** | `phase-3-1.md` | 报告内容（捕获后渲染进 HTML 的数据）| `REPORT_ENABLED=1`（由 3.0 算出） |
+| **3.2.5** | `phase-3-1.md` | ★ 归集 skill 证据 + 截图落盘硬核验（强制；缺失绝不生成"完成"报告）| 恒适用（证据归集与截图核验与报告是否生成无关） |
+| **3.2.5bis** | `phase-3-1.md` | ★ 8 维度独立质量检查子 Agent（Critical 门，⛔ 不得跳过）| 恒适用（Critical 门） |
+| **3.2.6** | `phase-3-2.md` | ★ 生成 AI测试报告 HTML（该 build 子页 + 综合首页刷新）| `REPORT_ENABLED=1`（由 3.0 算出） |
+| **3.2.7** | `phase-3-3.md` | ★ AI执行报告完成核验门（入口无关，下沉到测试链路）| 恒适用 |
+| **3.2.8** | `phase-3-3.md` | ★ 沉淀「环境探针档案」（与用例无关的环境事实，供下轮 0.0.5 复用）| 恒适用（**留痕步**，产物供下一轮 0.0.5 复用） |
+| **3.3** | `phase-3-3.md` | baseline 更新（★ CONVERGED 无条件先算好，供各消费点复用）| 恒适用 |
+| **3.4** | `phase-3-3b.md` | ★ 里程碑通知 #R（每轮结束）+ #F（最终完成）| `notify` 已装配（渠道未配时由 `notify.py` 自身豁免退出，⛔ 不由本列预判跳过） |
+| **3.5** | `phase-3-4.md` | ★ 本轮收敛判定（本地 + 远程通用）+ 切有头提醒（仅 `DRIVER=mcp-remote` 远程）| 恒适用（收敛判定恒跑；「切有头提醒」子条仅 `DRIVER=mcp-remote`） |
+| **3.6** | `phase-3-4.md` | ★ 无头跑完后「自动有头眼检」（按环境有头能力自动决策，不询问用户）| 无头跑完且环境有有头能力（由 3.5 算出） |
+| **3.7** | `phase-3-5.md` | ★ finalize AI执行报告 + 发 #3 里程碑通知（#F 之后 · 本 build 收尾 · R-4）| `REPORT_ENABLED=1`（由 3.0 算出） |
 
 > 收口：Phase 3 全部跑完 → 本 build 报告 finalize 冻结、里程碑通知完成。**执行前务必已按上表逐分片 Read（`phase-3-1.md` … `phase-3-3.md` / `phase-3-3b.md` / `phase-3-4.md` … `phase-3-5.md`）。**
 

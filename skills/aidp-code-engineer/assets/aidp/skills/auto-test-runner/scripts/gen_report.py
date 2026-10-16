@@ -274,8 +274,18 @@ def aggregate(all_entries):
         if not isinstance(el, (int, float)) or isinstance(el, bool):
             el = r.get('duration_ms')
         if isinstance(el, (int, float)) and not isinstance(el, bool) and el >= 0:
+            # ★ `amortized` 必须跟着值一起走(2026-10-09 下游反馈):方法论要求**按套件批量执行**,
+            #   于是 `elapsed_ms` 常常是**批次窗口的均摊值**。丢掉这个标记,下面 §2.7 就会把
+            #   「窗口 / N」当逐条真值排名,产出「某条用例耗时 28 分钟」这种假事实。
             timings.append({'case_id': r.get('case_id', '?'), 'suite': suite,
-                            'status': st, 'elapsed_ms': float(el)})
+                            'status': st, 'elapsed_ms': float(el),
+                            # ⚠️ **truthy 而非 `is True`**:`elapsed_is_amortized: "true"`
+                            #    (字符串)曾被 `is True` 判否 → 本表按「逐条打点」渲染,
+                            #    而执行体**明确表达过**这是均摊值 —— 假绿,被误导的是报告读者。
+                            #    fail-closed 朝「标上均摊」那一侧;类型不规范由
+                            #    `check_result.py` 的 `bad_elapsed_is_amortized` 出声。
+                            'amortized': bool(r.get('elapsed_is_amortized')),
+                            'batch_id': r.get('batch_id')})
         else:
             timing_missing.append(r.get('case_id', '?'))
         # ★ 实际触发自愈的次数 ≠ execution_mode=self-heal(后者只表示「具备」自愈能力)
@@ -589,12 +599,23 @@ def to_md(agg, results):
             L.append(f'> 已采集 {len(timings)} 条,合计 {_fmt_ms(tot)}'
                      + (f';**另有 {len(tmiss)} 条未采集耗时**(其真实耗时不在下表内,'
                         f'⛔ 不要把本表合计当作全轮执行时长)' if tmiss else '') + '。\n')
-            L.append('| # | 用例 | 套件 | 结果 | 耗时 | 占已采集合计 |')
-            L.append('| :-: | :- | :- | :-: | -: | -: |')
+            # ★ 均摊值必须**长得不一样**,否则等于没标(下游实测:报告把均摊值当逐条真值排名,
+            #   出现「TC-LIST-G09 耗时 28 分钟」这种假事实)。渲染为 `~8.5s` + 本节显式写边界。
+            amort = [t for t in timings if t.get('amortized')]
+            if amort:
+                L.append(f'> ⚠️ 其中 **{len(amort)} 条为批次窗口的均摊值**(耗时前缀 `~`,'
+                         f'由批量执行、会话复用的执行形态决定),**不可用于单条性能判断**;'
+                         f'按均摊值排名只说明「这条属于哪个慢批次」,不说明「这条本身慢」。\n')
+            L.append('| # | 用例 | 套件 | 结果 | 耗时 | 占已采集合计 | 耗时来源 |')
+            L.append('| :-: | :- | :- | :-: | -: | -: | :- |')
             for i, t in enumerate(timings[:10], 1):
                 pct = (t['elapsed_ms'] / tot * 100) if tot else 0.0
+                is_am = bool(t.get('amortized'))
+                shown = ('~' if is_am else '') + _fmt_ms(t['elapsed_ms'])
+                src = (f"均摊({md_cell(str(t.get('batch_id') or '未标 batch_id'))})"
+                       if is_am else '逐条打点')
                 L.append(f"| {i} | {md_cell(t['case_id'])} | {md_cell(t['suite'])} | "
-                         f"{RESULT_ICON.get(t['status'], '?')} | {_fmt_ms(t['elapsed_ms'])} | {pct:.1f}% |")
+                         f"{RESULT_ICON.get(t['status'], '?')} | {shown} | {pct:.1f}% | {src} |")
             if len(timings) > 10:
                 L.append(f"\n> 只列耗时最长的 10 条(共 {len(timings)} 条)。")
         # ★ execution_mode 语义纠偏:两个字段并排出现时极易被读反

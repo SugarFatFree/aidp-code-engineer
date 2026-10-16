@@ -40,6 +40,18 @@
   I10 elapsed_ms 与旧字段 duration_ms 并存且不等
   I11 execution_mode=self-heal 但 retries=0 且 self_heal_attempts=0(= **具备**自愈能力而**未曾**自愈,
       本身完全正常;报出来是为了让「43 条 self-heal」不被读成「43 条在重跑」——下游实证的误导点)
+  I12 同一个实际 artifact 在 evidence/runtimeErrors 中重复登记
+  I13 截图仍使用历史 `{TC-ID}-{N}` / `{TC-ID}_步骤{N}` 主干(兼容但提示迁移)
+  I14 批次窗口均摊值未如实标注(同一轮内 ≥2 条共享同一执行窗口且 elapsed_ms 近似相同,
+      却未标 `elapsed_is_amortized` + `batch_id`)
+  I15 `batch_elapsed_ms` 与批内 elapsed_ms 合计相差 > 5%,或同批各条声明值互不一致
+  I16 `elapsed_is_amortized` 不是布尔值(已按 truthy 当作均摊处理,fail-closed)
+  ⚠️⚠️ **新增 Important 判据一律从本清单的最大编号往后编,⛔ 不得复用已占用的号。**
+      实测踩过:三条均摊判据最初被写成 I12/I13,而这两个号**早已**属于
+      「artifact 重复登记」与「历史截图主干」,于是 `report-format.md` / `result-schema.json` /
+      项目记忆文件 三处文档的「I12 告警」指向了完全无关的规则 ——
+      顺着编号去查会**查错对象**,正是本仓库「编号消歧铁律」要消灭的形态
+      (那条铁律原话:失效方向是「看着像懂了、实际查错了对象」)。
 
 仅标准库。退出码:0 = 无 Critical(`--strict` 时还须无 Important);1 = 有 Critical;2 = 输入错误。
 用法:
@@ -1048,11 +1060,31 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
             _issue(issues, 'Important', 'bad_elapsed_ms',
                    f'{name}: elapsed_ms={el!r} 不是非负数值')
         else:
+            # ── 均摊值的来源标注(I14~I16)─────────────
+            # 契约要求逐条 `elapsed_ms`,而方法论要求**按套件批量执行**(一次登录、会话复用)。
+            # 两者冲突 ⇒ 执行方只能填**批次窗口的均摊值**,而报告把它当真值排名,
+            # 于是出现「某条用例耗时 28 分钟」这种**假事实**(下游实测)。
+            # 处置:承载面保留,但必须**如实标注来源** —— 与本 SKILL 的 `XSource` 纪律同构。
+            amortized_raw = data.get('elapsed_is_amortized')
+            amortized = bool(amortized_raw)   # ⚠️ truthy:理由见 main() 采集处
+            if amortized_raw is not None and not isinstance(amortized_raw, bool):
+                _issue(issues, 'Important', 'bad_elapsed_is_amortized',
+                       f'{name}: elapsed_is_amortized={amortized_raw!r} 不是布尔值 —— '
+                       f'已按 truthy 当作均摊处理(fail-closed),但请填真布尔')
+            if amortized and not str(data.get('batch_id') or '').strip():
+                _issue(issues, 'Important', 'elapsed_amortized_no_batch_id',
+                       f'{name}: elapsed_is_amortized=true 但缺 batch_id —— '
+                       f'说不清是哪一个批次窗口均摊出来的,等于来源标注只写了一半')
             span = _iso_span_ms(data.get('started_at'), data.get('finished_at'))
-            if span is not None and abs(span - el) > 2000:
+            # ⚠️⚠️ **已标均摊时必须豁免 I9**:均摊值 = 窗口 / N,与 `finished_at−started_at`
+            #    本就不等 —— 那是**定义**,不是「两者不是同一次计时」。不豁免的后果是
+            #    「如实标注反而换来一条告警」,即硬门在**奖励撒谎**(本仓库反复记录的形态)。
+            #    ⛔ 别顺手把这个 `not amortized` 删掉。
+            if not amortized and span is not None and abs(span - el) > 2000:
                 _issue(issues, 'Important', 'timing_inconsistent',
                        f'{name}: elapsed_ms={int(el)} 与 finished_at−started_at={int(span)} 相差 '
-                       f'{int(abs(span - el))}ms(>2s)—— 两者不是同一次计时,数据不可信')
+                       f'{int(abs(span - el))}ms(>2s)—— 两者不是同一次计时,数据不可信'
+                       f'(若它本就是批次窗口的均摊值,应标 elapsed_is_amortized: true + batch_id)')
             dur = data.get('duration_ms')
             if isinstance(dur, (int, float)) and not isinstance(dur, bool) and abs(dur - el) > 1:
                 _issue(issues, 'Important', 'duration_ms_mismatch',
@@ -1220,6 +1252,84 @@ def label_for(f, dup_names):
     return '/'.join(f.parts[-3:]) if len(f.parts) >= 3 else str(f)
 
 
+# 低于该值不判:小用例毫秒级撞号是现实可能,判了就是假红常驻 —— 而本仓库的教训是
+# 「假红常驻 = 硬门被绕过」。均摊值天然是「窗口 / N」,量级远在 1s 以上(实测 10.9s ~ 28min)。
+AMORTIZED_MIN_MS = 1000
+
+
+def _check_amortized_elapsed(elapsed_by_round, issues):
+    """I14 / I15:批次窗口均摊值未如实标注 / `batch_elapsed_ms` 与批内合计不符。
+
+    ★ **签名是「同一个执行窗口 + 近似相同的 elapsed」两条同时成立**,而不是「值逐毫秒相同」。
+      一个批次里每条拿到的都是同一个「窗口 ÷ N」,所以它们的 `started_at`/`finished_at`
+      是**同一个窗口**、`elapsed_ms` 只差整除余数(≤ N-1 ms)。纯算术、零语义,
+      ⛔ **不读 `note` 自述** —— 自述正是本缺陷的现状(执行方把「这是均摊值」写进 `note`,
+      而 `gen_report.py` 不读 `note`、照样当逐条真值排名)。
+
+    ⚠️⚠️ **为什么必须带「同一窗口」这一条**(独立审计实测出两个方向都错):
+      · 只看「值逐毫秒相同」→ `1680000 / 1680001 / 1679999` 这种**整除不尽的 ±1ms 抖动
+        全部逃脱**,而那恰恰是均摊的典型形态(**假绿**);
+      · 也会把两条**独立**用例判红 —— AI 执行体把耗时填成整秒(5000 / 3000)极常见,
+        两条恰好都 5000ms 但窗口相隔一分钟,本是逐条真值(**假红**,而假红常驻 = 硬门被绕过)。
+
+    ⚠️ **按 round 分组**:跨轮次比对必假红(不同轮的均摊窗口本来就可能相同)。
+    ⚠️ **窗口两端任一为空就不参与本判据**:那时拿不到窗口身份,只能靠值相同猜,
+       两个方向都不可靠;缺耗时三件套本身由 I8 出声。
+    ⚠️ **判 Important 不判 Critical**:存量结果一条都没有这两个字段,判死会让整档校验被绕过。
+    ⚠️ 每组**只报一条**(点名那一组),⛔ 不逐条报 —— 同一批 N 条刷 N 条告警会把别的发现淹掉。
+    """
+    for round_dir, rows in sorted(elapsed_by_round.items(), key=lambda kv: str(kv[0])):
+        groups = {}
+        for row in rows:
+            if not all(row['window']):
+                continue
+            groups.setdefault(row['window'], []).append(row)
+        for window, members in sorted(groups.items()):
+            if len(members) < 2:
+                continue
+            values = [m['el'] for m in members]
+            lo, hi = min(values), max(values)
+            # 容差 = 批内条数:`窗口 ÷ N` 的整数余数最多让各条相差 N-1 ms。
+            # ⛔ 别放宽成百分比 —— 那会把同窗口内真实各异的耗时也圈进来。
+            tolerance = max(len(members), 2)
+            if lo < AMORTIZED_MIN_MS or hi - lo > tolerance:
+                continue
+            if any(m['amortized'] for m in members):
+                continue
+            names = ', '.join(m['name'] for m in members[:4])
+            more = f' 等 {len(members)} 条' if len(members) > 4 else ''
+            _issue(issues, 'Important', 'elapsed_amortized_unmarked',
+                   f'{names}{more}: 共享同一个执行窗口 {window[0]}~{window[1]} 且 elapsed_ms '
+                   f'近似相同({int(lo)}~{int(hi)}) —— 这是**批次窗口均摊**的签名。'
+                   f'若确为均摊值须标 elapsed_is_amortized: true + batch_id,'
+                   f'否则报告 §2.7 会把它当逐条真值排名,'
+                   f'产出「某条用例耗时 {int(lo) // 60000} 分钟」这种假事实')
+
+    # I15:`batch_elapsed_ms` 与批内 elapsed 合计对不上。
+    # ⚠️ 没有这一条,`report-format.md` 那句「填了它『均摊值 = 本字段 ÷ 批内条数』才是可核对的」
+    #    就是**空头承诺** —— 本轮立论是「事实必须带来源、均摊要可核对」,这一环不能是空的。
+    # ⚠️ 阈值取 5%:均摊是整除,合计与窗口的差只应来自余数与取整;5% 之外就是对不上。
+    for round_dir, rows in sorted(elapsed_by_round.items(), key=lambda kv: str(kv[0])):
+        batches = {}
+        for row in rows:
+            if row['batch_id'] and isinstance(row['batch_elapsed_ms'], (int, float)) \
+                    and not isinstance(row['batch_elapsed_ms'], bool):
+                batches.setdefault(row['batch_id'], []).append(row)
+        for batch_id, members in sorted(batches.items()):
+            declared = float(members[0]['batch_elapsed_ms'])
+            if any(float(m['batch_elapsed_ms']) != declared for m in members):
+                _issue(issues, 'Important', 'batch_elapsed_ms_inconsistent',
+                       f'批次 {batch_id}: 各条声明的 batch_elapsed_ms 不一致 —— '
+                       f'同一个窗口只能有一个实测总耗时')
+                continue
+            total = sum(m['el'] for m in members)
+            if declared <= 0 or abs(total - declared) > declared * 0.05:
+                _issue(issues, 'Important', 'batch_elapsed_ms_mismatch',
+                       f'批次 {batch_id}: 批内 elapsed_ms 合计 {int(total)} 与声明的 '
+                       f'batch_elapsed_ms={int(declared)} 相差超 5% —— '
+                       f'「均摊值 = batch_elapsed_ms ÷ 批内条数」对不上,两者至少有一个不是实测值')
+
+
 def main():
     ap = argparse.ArgumentParser(
         description='用例结果 JSON 落盘前校验:形状(evidence/runtimeErrors 必须是对象数组)、'
@@ -1251,6 +1361,10 @@ def main():
 
     dup_names = {n for n, c in Counter(f.name for f in files).items() if c > 1}
     all_issues = []
+    # I14/I15 是**跨结果 JSON 的聚合判定**,按轮次分组(跨轮次比对会假红:
+    # 不同轮的均摊窗口本来就可能相同)。分组键取该结果所在的 `results/` 目录 ——
+    # 一轮的全部结果同住一个目录,⛔ 别换成文件名或 case_id(那不是轮次身份)。
+    elapsed_by_round = {}
     # 部分 target 收不到文件 → 出声,别让「少校验一整轮」冒充通过
     for t in empty_targets:
         _issue(all_issues, 'Important', 'empty_target',
@@ -1266,6 +1380,21 @@ def main():
         all_issues.extend(check_one(data, name, result_path=f,
                                     require_preflight=args.require_runtime_preflight,
                                     webmcp_enabled=args.webmcp_enabled))
+        el = data.get('elapsed_ms')
+        if isinstance(el, (int, float)) and not isinstance(el, bool):
+            elapsed_by_round.setdefault(f.parent, []).append({
+                'name': name, 'el': float(el),
+                # ⚠️ **truthy 而非 `is True`**:`elapsed_is_amortized: "true"`(字符串)会被
+                #    `is True` 判否 → 当成逐条真值,而执行体**明确表达过**这是均摊值(假绿)。
+                #    fail-closed 朝「标上均摊」那一侧,与「事实必须带来源」同向;
+                #    类型不规范另有 `bad_elapsed_is_amortized` 出声。
+                'amortized': bool(data.get('elapsed_is_amortized')),
+                'batch_id': str(data.get('batch_id') or '').strip(),
+                'batch_elapsed_ms': data.get('batch_elapsed_ms'),
+                'window': (str(data.get('started_at') or ''), str(data.get('finished_at') or '')),
+            })
+
+    _check_amortized_elapsed(elapsed_by_round, all_issues)
 
     crit = [i for i in all_issues if i['level'] == 'Critical']
     imp = [i for i in all_issues if i['level'] == 'Important']

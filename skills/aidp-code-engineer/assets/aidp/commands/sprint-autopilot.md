@@ -189,14 +189,14 @@ Git 模式跑 `/version <PRE_RELEASE_VERSION> --no-tag` 准发布归档；无 Gi
 
 **Phase 2 子步骤骨架（详见 `phase-2.md` —— 单片，不切分）**：
 
-| 子步骤 | 作用（一句话） | 所在分片 |
-|---|---|---|
-| **0（前置双门）** | 0a 部署就绪校验 + 0b 测试收敛校验（任一未过 → 跳过 1~4 步、本 tick 暂缓准发布，含 `prerelease_deploy_block_streak` / `prerelease_test_hold_streak` / `test_loop_missing_streak` 三条熔断 → `needs_human` 冻结）| `phase-2.md` |
-| **1** | 里程碑通知 #pre-start（准发布启动，见 0.1bis）| `phase-2.md` |
-| **2** | Git 走 `/version --no-tag --unattended`；无 Git 核验本地归档；逐项核验后写本 tick `PRERELEASE_ARCHIVE_OK` | `phase-2.md` |
-| **3** | 仅门禁、未让位、归档核验均通过时写 `internal_released_at` 内部游标（无 Git 不代表已发布）| `phase-2.md` |
-| **4** | 里程碑通知 #pre-done（准发布完成，提示手动补打 tag）| `phase-2.md` |
-| **5** | ★ 分片收尾必写 `run_state`（`baseline_edit.py run-state`，见 `invariants.md` 阶段推进不变式）| `phase-2.md` |
+| 子步骤 | 作用（一句话） | 所在分片 | 适用条件（P1-3 — 不满足则整片跳过、无需 Read）|
+|---|---|---|---|
+| **0（前置双门）** | 0a 部署就绪校验 + 0b 测试收敛校验（任一未过 → 跳过 1~4 步、本 tick 暂缓准发布，含 `prerelease_deploy_block_streak` / `prerelease_test_hold_streak` / `test_loop_missing_streak` 三条熔断 → `needs_human` 冻结）| `phase-2.md` | 恒适用 |
+| **1** | 里程碑通知 #pre-start（准发布启动，见 0.1bis）| `phase-2.md` | 恒适用（渠道未配时由 `notify.py` 自身豁免退出，⛔ 不由本列预判跳过） |
+| **2** | Git 走 `/version --no-tag --unattended`；无 Git 核验本地归档；逐项核验后写本 tick `PRERELEASE_ARCHIVE_OK` | `phase-2.md` | 恒适用 |
+| **3** | 仅门禁、未让位、归档核验均通过时写 `internal_released_at` 内部游标（无 Git 不代表已发布）| `phase-2.md` | 门禁 + 未让位 + `PRERELEASE_ARCHIVE_OK`（三者由第 0/2 步算出） |
+| **4** | 里程碑通知 #pre-done（准发布完成，提示手动补打 tag）| `phase-2.md` | 恒适用（渠道未配时由 `notify.py` 自身豁免退出） |
+| **5** | ★ 分片收尾必写 `run_state`（`baseline_edit.py run-state`，见 `invariants.md` 阶段推进不变式）| `phase-2.md` | 恒适用（分片收尾必写 `run_state`） |
 
 > 收口：双门通过 + 1~4 步完成 → 按 Phase 0.3.5 决策矩阵决定是否继续 Phase 3；任一门未过 → 本 tick 结束 Phase 2。**执行前务必已 Read `phase-2.md` 并按其逐项完成，不能只看本表。**
 

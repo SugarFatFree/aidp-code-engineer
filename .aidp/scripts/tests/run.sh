@@ -109,6 +109,7 @@ run "test_agent_sync_router.py（原生命令生成 + 参数保真）" python3 .
 run "test_runtime_and_vcs.py（运行根解析 + VCS 能力降级）" python3 .aidp/scripts/tests/test_runtime_and_vcs.py
 run "test_runtime_paths.py（下发运行路径抽象守卫）" python3 .aidp/scripts/tests/test_runtime_paths.py
 run "test_command_skill_contracts.py（命令 ↔ SKILL 调用契约）" python3 .aidp/scripts/tests/test_command_skill_contracts.py
+run "test_execution_contract_lite.py（精简执行契约 ↔ 权威枚举 三方对账）" python3 .aidp/scripts/tests/test_execution_contract_lite.py
 run "test_doc_reference_guards.py（符号引用 / CLI 归属 / 私有痕迹 三道门）" python3 .aidp/scripts/tests/test_doc_reference_guards.py
 
 # ── 脚手架 skill 侧（skills/aidp-code-engineer/scripts/tests/）──

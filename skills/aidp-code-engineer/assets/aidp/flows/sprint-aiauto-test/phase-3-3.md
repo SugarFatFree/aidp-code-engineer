@@ -53,9 +53,48 @@ fi
 形态**（可能返 302 跳转体**而非 401**，按 401 判会误判）· 三类取证各自可用性 · 元素定位与
 跳转链路、懒加载区块 · 已知需重试项。
 
-⛔ **只记环境、不记用例结论**；⛔ **追加不覆盖**，被后轮推翻的条目**改写为"已失效 + 新结论"**、
-不静默删；⛔ **不进硬门**，写失败打印一行继续。
+**★ 表头按 7 列产出**（`探针类别 | 上一轮观测事实 | 事实性质 | verified_at | verdict | 来源/轮次 | 本轮处置`）
+—— **列定义与两个枚举（`事实性质 ∈ 不变量|绝对值`、`verdict ∈ valid|superseded`）的单一信源 =
+`{{AIDP_HOME}}/skills/auto-test-runner/assets/run-context-template.md` 四·补节**，命令端不复述。
+⛔ **四列表（只有类别/事实/轮次/证据）会让「已失效」无处表达** —— 下面那条「改写为已失效」就只能
+靠删行或塞进备注，而删行恰好违反「追加不覆盖」；`check_probe_archive.py` 的 P1 判 Critical。
+⛔ **「绝对值」类事实慎记**：上游数据会在测试窗口内被并发改动，固定条数基线必过期并制造**假性失败**；
+稳定成立的是不变量（集合包含关系、差集成员名不变这一类）。
+
+⛔ **只记环境、不记用例结论**；⛔ **追加不覆盖**，被后轮推翻的条目把该行 `verdict` 改成
+`superseded`、`本轮处置` 写新结论，**⛔ 不删行**（留痕是下一轮判断该条可信度的依据，
+且删行同时违反上面那条「追加不覆盖」）；
+⛔ **不进硬门**，写失败打印一行继续。
 消费方 = 下一轮 **Phase 0.0.5 必读**并注入执行子 Agent。
+
+**★ 写完即核验（`check_probe_archive.py`，本步是它的调用方）**：
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+RC_DIR="docs/testing/${TARGET_VERSION:?}/研发自测"
+python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_probe_archive.py "$RC_DIR" --json \
+  > "$RC_DIR/.probe-archive-check.json" 2>&1 || true
+python3 -c "
+import json,sys
+try: d=json.load(open('$RC_DIR/.probe-archive-check.json'))
+except Exception as e: print('ℹ️ 探针档案核验未取到结论（%s）—— 不阻塞' % e); sys.exit(0)
+# ⛔ 字段名按 check_probe_archive.py 的真实契约：findings[] = {level, rule, file, msg}，
+#    level ∈ Critical|Important|Info。写成 severity/detail 这类不存在的键 ⇒ 取值恒 None
+#    ⇒ 过滤器空转、「须处理」恒等于总数，把脚本刻意标 Info 的条目
+#    （如 probe_superseded_present「留痕是对的、⛔ 不许静默删」）当 ⛔ 须处理项打出来。
+#    本步是档案失效条目注入下一轮 prompt 的唯一出声点，真信号会被这种噪音淹掉。
+bad=[f for f in (d.get('findings') or []) if f.get('level') != 'Info']
+print('🔎 探针档案核验：%d 条（其中须处理 %d）' % (len(d.get('findings') or []), len(bad)))
+for f in bad[:5]: print('   ⛔', '[%s] %s' % (f.get('level') or '?', str(f.get('msg') or f)[:140]))
+"
+```
+
+⛔ **这一步不阻塞本轮**（档案是**下一轮**的输入、不是本轮的产物），但**必须出声**：
+档案最危险的失效形态是**失效条目被当成有效结论注入下一轮子 Agent 的 prompt** ——
+实测某行写着「主测账号口令失效、三条独立路径同结论」，而档案按契约会注入 prompt
+⇒ 子 Agent 收到一个**错误结论**，那正是上一轮 31 条登录态用例集体 `block` 的成因。
+核验报出的 `superseded` / 超期未复验条目，**下一轮 Phase 0.0.5 注入前必须过滤掉**。
+⚠️ `skipped: true` 只等于「本轮没提供档案」，**⛔ 不等于档案没问题**。
 
 ### 3.3 baseline 更新
 
@@ -151,8 +190,15 @@ fi
 >       | python3 -c "import json,sys;d=json.load(sys.stdin);c=d.get('counts') or {};\
 print(json.dumps({'total':d.get('total'),'pass':c.get('pass'),'failed':c.get('fail'),\
 'block':c.get('block'),'na':c.get('na'),'elapsed_total_ms':d.get('elapsed_total_ms'),\
-'self_heal_actual':d.get('self_heal_actual')},ensure_ascii=False))" 2>/dev/null)
+'self_heal_actual':d.get('self_heal_actual'),\
+'runtime_errors':d.get('runtime_finding_count')},ensure_ascii=False))" 2>/dev/null)
 > [ -n "$RES" ] && $BEV set aiauto_test_result "$RES"
+> # ★ `runtime_errors` **必须在列**：`/sprint-batch` step-6b 的判据是
+> #   `failed > 0 || runtime_errors > 0`，并明写「用例全通过但 runtime_errors > 0
+> #   同样不是绿灯、不可直接发布」。它不写 ⇒ 读侧恒取不到 ⇒ 该判据退化成 `failed > 0`
+> #   ⇒「全绿但有 N 个运行时错误」恒判绿灯并进入发布判断，且全程零告警。
+> #   源字段 = `gen_report.py` 的 `runtime_finding_count`（⛔ 不是 `runtime_errors`，
+> #   那是 baseline 侧的键名；两端键名不同是刻意的，别把其中一个改成另一个）。
 > if [ "${REPORT_ENABLED:-0}" = "1" ]; then
 >   $BEV set aiauto_test_report "$RPT" aiauto_test_build_data "$BDJS"
 > else

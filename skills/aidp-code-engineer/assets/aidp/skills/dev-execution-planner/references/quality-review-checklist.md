@@ -81,7 +81,7 @@
 
 | 维度 | 本轮范围 | 机器门退出码 | 语义结论 | 依据 |
 | :-: | :-: | :-: | :-: | :- |
-| 3 | Δ（T-07~T-09） | `check_task_granularity.py` = 0 | 通过 | — |
+| 3 | Δ（Task 3.1~3.3） | `check_task_granularity.py` = 0 (`skipped:false`, `scanned_tasks:43`) | 通过 | 语义核对 Δ = 3 个 Task;机器门全量扫 43 个 |
 | 6 | 全量 | — | 通过 | 全量档：环由新旧 Task 共同构成 |
 | 10 | **N/A** | — | 未触发 | **单用户模式**（条件维度，未触发也留行） |
 | 11 | **N/A** | `check_doc_split.py` = 0 (`skipped:true`) | 未触发 | **单文件模式** |
@@ -90,9 +90,11 @@
 **四条硬要求：**
 - **14 行一行不少**——**条件维度 10 / 11 未触发时照样留行**，写明 `N/A + 触发条件为何不满足`。
   这正是下游反馈的痛点：现在只拿得到结论，分不清「过了」还是「压根没跑」。
-- 条件维度的 `skipped:true` 属**跳过不是通过**，台账里必须写成 `N/A`，⛔ 不得记为「通过」。
+- 条件维度的 `skipped:true` 属**跳过不是通过**，台账里必须写成 `N/A`，⛔ 不得记为「通过」；**必查维度**的 `skipped:true` 见下条，记「未核验」。
 - 标 `前滚` 的行**必须**写明依据的上一轮报告；写不出来一律按**未跑**处理、退回该维度全量核对。
 - 机器门那一列**照抄退出码**，不写「通过」二字——退出码是证据，「通过」是结论。
+  ⚠️ **采集量一并照抄**(`scanned_tasks` / `total_sections` / `total_enums` / `testcase_count` / `table_a_count` 等,及 `skipped` 读数):这些脚本**一个段落都没识别到时同样 exit 0**,只贴一个 `0` 会把「没核验」记成「通过」。
+  ⚠️ **必查维度**(非条件维度)的脚本 `skipped:true` 或采集量为 0 ⇒ 记「**未核验**」、该维度判**不通过**并转人工核对,⛔ 既不记「通过」也不记 `N/A`(`N/A` 只留给**条件维度未触发**)。采集量是**全量**扫描数,与语义核对的 Δ 分母是两回事,分母写进「依据」列。
 
 ---
 
@@ -892,7 +894,8 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py \
 - 「REQ 归属对照表」缺失「所属 EPIC」列
 - 任务汇总表使用旧版 6 列(无设计锚点 / 原型锚点 / AI 执行指令 列)
 - 任务汇总表行内未同时命中 设计 + REQ/PRD + 原型 三类锚点正则
-- `check_task_granularity.py` 退出码 = 1 **且** `--json` 中存在 `severity == 2` 的 finding(确证粗粒度 / 9 列违规)。⚠️ 只看退出码分不出「警告」与「必修」,必须读 `--json` 的 `findings[]`(顶层对象,另含 `scanned_tasks`/`skipped`;`skipped:true` = 未识别到任何 Task 段、并未实质核验)
+- `check_task_granularity.py` 退出码 = 1 **且** `--json` 中存在 `severity == 2` 的 finding(确证粗粒度 / 9 列违规)。⚠️ 只看退出码分不出「警告」与「必修」,必须读 `--json` 的 `findings[]`(顶层对象,另含 `scanned_tasks`/`skipped`)
+- `check_task_granularity.py` 返回 `skipped:true`(一个 Task 段都没识别到,如标题不是 `### Task N.M` 形态)—— 维度 3/14 **未核验**,按不通过处理并转人工核对
 
 ---
 

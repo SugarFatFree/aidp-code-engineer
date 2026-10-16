@@ -57,9 +57,10 @@ check_doc_split.py — 通用多文件拆分一致性检查（AIDP 索引态现�
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # 主文档锚识别:
 #  - 现行规范(索引态):唯一主锚 `00_索引.md`(专职索引,00_ 槽位恒给它)
@@ -128,23 +129,77 @@ def collect_nested_md(doc_dir: Path):
     return nested
 
 
+# >>> SHARED-SEGMENT: doc-split-ref-scope >>>
+# ── 主文档引用的「同目录 / 跨目录」判定 ────────────────────────────────────────
+# ⚠️⚠️ **本段在三个 SKILL 的 `scripts/check_doc_split.py` 里各持一份逐字节相同的副本**
+#      (ux-logic-extractor / dev-logic-architect / dev-execution-planner),
+#      遵 SKILL 独立性(不得跨 SKILL 引用)。改一处必须三处同改,**连空格都要一致** ——
+#      仓库级硬门 `scripts/check_shared_segment_sync.py` 会逐字节比对同名段,漏改即 Critical。
+#      ⚠️ 登记哨兵的理由就是本段的历史:planner 副本曾**整段缺失**(能力回退),
+#      而「两份副本逐字节相同」此前完全靠人记得 —— 漏改时没有任何东西出声,
+#      方向是**两份判据静默分叉、其中一份带着旧缺陷继续全绿**。
 def extract_referenced_files(main_doc: Path):
+    """抽出主文档引用的 `.md`,并把**同目录**与**跨目录**两类分开返回。
+
+    返回 `(local_names, cross_dir_refs)`:
+      · `local_names`     —— 解析后仍落在主文档所在目录的引用(文件名集合),
+                             它才是「本目录子文档完整性」该比的那一份;
+      · `cross_dir_refs`  —— 解析后落在别的目录的引用(原始路径,去重后按序),
+                             **不参与**缺失判定,由调用方写进 `--json` 与人读输出,让忽略**可见**。
+
+    ⚠️⚠️ **判据是「解析后的父目录是否等于主文档所在目录」,⛔ 不是「路径里有没有 `/`」。**
+       两种写法都含 `/`,性质却完全相反:
+         · `[02_x](./02_x.md)`     —— 同目录,`./` 是合法写法,**必须**参与比对;
+         · `[99_x](../up/99_x.md)` —— 跨目录,指向别的文档族,**不得**参与比对。
+       按「含 `/` 就忽略」一刀切,会让**同目录子文档漏产**从 error 变成零信号 ——
+       方向是**假绿**,比原缺陷更坏(`tests/test_doc_split_cross_dir.py` 的
+       `test_dot_slash_*` 两条就是守这一侧的反向护栏,改本函数时它们必须一起绿)。
+
+    ⚠️⚠️ **路径归一必须是【词法】的(`os.path.normpath`),⛔ 不可用 `Path.resolve()`。**
+       `resolve()` **跟随符号链接**:同目录里一个指向别处的软链子文档会被解析到链接目标所在目录、
+       落进 `cross`,于是 ① 断链软链从 FAIL 变 **PASS**(假绿),② 一条字面写着 `./` 的引用
+       被报成「跨目录引用」—— 与上一段 ⚠️⚠️ 的原话**直接相反**。
+       词法归一只看路径字符串,与磁盘上有没有软链无关,这也是本仓库既有先例
+       (`check_result.py` 明写「结果文件按**词法路径**逐轮校验」)。
+
+    ⚠️ 原缺陷(2026-10-09 下游实测):此处只取 `Path(...).name`**把目录段丢掉**,于是
+       研发自测目录的索引链到研发需求目录的 `99_待澄清问题清单.md`,被判
+       「主文档引用了 99_待澄清问题清单.md 但目录下不存在」→ error/exit 1;
+       下游只能把链接改写成纯文字指向来绕开,而那恰好损失了本 SKILL 自己要求的
+       「可点击跳转」—— 即硬门在逼人违反另一条规范。
+
+    ⚠️ 跨目录引用**刻意不做断链判定**:本脚本作用域是「本目录子文档」,而调用方常只传文档族里的
+       一个目录(外部目标本就不在扫描范围内),判它存不存在必假红;故只计数、只列出,不判。
+    """
     text = main_doc.read_text(encoding='utf-8', errors='replace')
-    files = set()
-    # markdown 链接形态 [文本](02_x.md) —— 缺了它则「主文档引用断链」对可点击链接 100% 漏检，
-    # 且合规索引（SKILL 自己的拆分规范要求「可点击跳转」）会被反过来误报「子文档未列出」。
-    # ⚠️ 变量名是 files 不是 refs —— 此处曾误写 refs.add()，而 refs 从未定义，
-    #    于是**索引里只要出现一个 markdown 链接就 NameError 崩溃**、exit 1 被读成"检出违规"，
-    #    越是按规范写「可点击跳转」的索引越必崩，维度 9/Task 编号唯一两道闸门一次都没真跑过。
+    base = main_doc.parent
+    base_norm = os.path.normpath(str(base))
+    raw_refs = []
+    # markdown 链接形态 [文本](02_x.md) —— 缺了它则「主文档引用断链」对可点击链接 100% 漏检,
+    # 且合规索引(SKILL 自己的拆分规范要求「可点击跳转」)会被反过来误报「子文档未列出」。
+    # ⚠️ 返回值是 (local, cross) 两件套 —— 此处曾误写 `refs.add()` 而 `refs` 从未定义,
+    #    于是**索引里只要出现一个 markdown 链接就 NameError 崩溃**、exit 1 被读成"检出违规",
+    #    越是按规范写「可点击跳转」的索引越必崩,两道闸门一次都没真跑过。改签名时别再踩。
     for m in re.finditer(r'\[[^\]]*\]\(([^)#\s]+\.md)[^)]*\)', text):
-        name = Path(m.group(1)).name
-        if name and name != main_doc.name:
-            files.add(name)
+        raw_refs.append(m.group(1))
     for m in re.finditer(r'`([^`]+\.md)`', text):
-        name = m.group(1).split('/')[-1].split(' ')[0]
-        if name and name != main_doc.name:
-            files.add(name)
-    return files
+        raw_refs.append(m.group(1).split(' ')[0])
+    local, cross = set(), []
+    for raw in raw_refs:
+        rel = raw.replace('\\', '/')
+        name = PurePosixPath(rel).name
+        if not name or name == main_doc.name:
+            continue
+        try:
+            parent = os.path.dirname(os.path.normpath(os.path.join(str(base), rel)))
+        except (OSError, ValueError):
+            parent = None
+        if parent == base_norm:
+            local.add(name)
+        elif raw not in cross:
+            cross.append(raw)
+    return local, cross
+# <<< SHARED-SEGMENT: doc-split-ref-scope <<<
 
 
 def extract_task_ids(md_file: Path):
@@ -394,11 +449,18 @@ def main():
 
     # 2-3. 主文档引用 vs 实际文件
     if main_doc:
-        referenced = extract_referenced_files(main_doc)
+        referenced, cross_dir_refs = extract_referenced_files(main_doc)
+        summary['cross_dir_refs'] = cross_dir_refs
         actual = {f.name for f in sub_docs}
+        # ⚠️ 缺失判定(error)只看**同目录**引用:跨目录链接解析到别的文档族,本脚本管不到那里。
         missing_in_dir = referenced - actual - {main_doc.name}
+        # 仅保留疑似子文档的引用(有 .md 后缀且看起来像子文档名)
         missing_in_dir = {n for n in missing_in_dir if SUB_DOC_PATTERN.match(n)}
-        unlisted = actual - referenced
+        # ⚠️ 「未列出」(warn)方向刻意**放宽到 basename**:索引把本目录文档写成仓库相对路径
+        #    (`docs/.../02_x.md`)时作者确实列了,按严口径会凭空刷一批 warn;
+        #    两个方向的宽严**刻意不对称** —— error 侧宁可漏报(改法不存在),warn 侧宁可放过。
+        listed = referenced | {PurePosixPath(r.replace('\\', '/')).name for r in cross_dir_refs}
+        unlisted = actual - listed
         for n in sorted(missing_in_dir):
             issues.append({'dim': '主文档引用一致性', 'level': 'error', 'file': n,
                            'msg': f'主文档引用了 {n} 但目录下不存在'})
@@ -452,6 +514,12 @@ def main():
             print(f'  {icon} [{i["dim"]}] {i["msg"]}')
         if not issues:
             print('  无问题')
+        # ⚠️ 忽略必须**可见**:跨目录引用不参与本目录完整性比对,但不能静默 ——
+        #    否则「索引链错了目录」与「索引压根没链」在输出里长得一模一样。
+        cross = summary.get('cross_dir_refs') or []
+        if cross:
+            print(f'  ℹ️ 已忽略 {len(cross)} 条跨目录引用(不参与本目录子文档完整性比对): '
+                  + ', '.join(cross[:5]) + (' …' if len(cross) > 5 else ''))
 
     return 0 if status == 'pass' else 1
 

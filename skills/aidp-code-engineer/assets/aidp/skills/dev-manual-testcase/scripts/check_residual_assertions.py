@@ -26,6 +26,12 @@ r"""「零残留断言登记表」硬核回检 — dev-manual-testcase 维度 18
   Z7 数据行格数不符 —— 最常见根因是**实跑命令里的 `|` 未转义为 `\|`**(GFM 里 `|` 是列分隔符,
                      **反引号代码段保护不了它**)。⚠️ 刻意不并进 Z2:并进去只会报「表头列不齐」、
                      把排查带偏到表头上(与 `check_count_claim_table.py` 的 C5 同一取舍)
+  Z8 原理冲突     —— 断言对象是**注释内容**(断言文本含 注释/TODO/FIXME/XXX/javadoc),
+                     而实跑命令**把注释剥掉了**(`strip_comments` / `块级剥离` / `grep -v` 注释前置)
+                     ⇒ 真有一条也**恒 0 命中**,报告里与「真的没有」完全同形。
+                     ⚠️ 判据两头都要明确才判:⛔ 只凭命令会把「断言页面文案 + 剥注释」这个
+                     **正确做法**判死(那正是「默认排除注释行」整条规矩的来由);⛔ 只凭断言会把
+                     合法的「关闭前置 + 写明理由」判死,而作者没有别的改法。口径见方法论八之七
 
 【Important(仅告警,不影响退出码)】
   Z1 缺登记表 —— 有零残留断言却找不到登记表。⚠️ **刻意判 Important 不判 Critical**:
@@ -125,6 +131,58 @@ HIT_RE = re.compile(r"(\d+)\s*(?:处)?\s*命中|命中\s*(\d+)\s*(?:处|次)?")
 #    行级前置保留为退路,仍认。`--only-comments` 是「断言目标本身就是注释」的合法形态。
 PREFIX_OK_RE = re.compile(
     r"strip_comments|块级剥离|默认前置|默认取材|grep\s+-v|only-comments|关闭注释前置|关闭前置|只扫注释|行级前置|不加前置")
+
+
+# ── Z8 原理冲突:断言对象是注释内容,而实跑命令把注释剥掉了 ─────────────────────
+# ★ **这一类是静态就能看出来的恒 0 假绿**(命令语义 vs 断言对象),不必等执行期。
+#   下游实测:Z-02 要断言「注释里没有遗留 TODO」,而登记命令用 `strip_comments.py`
+#   (**默认剥离注释**)⇒ 真有一条也恒 0 命中,报告里与「真的没有」长得一模一样。
+# ⚠️ 判据刻意**窄到两头都必须明确**:
+#     ① 断言对象是注释 —— 断言文本里出现「注释」或 TODO/FIXME/XXX/javadoc 这类**只存在于注释里**的词;
+#     ② 命令真的剥了注释 —— 出现 `strip_comments` / `块级剥离`,或 `grep -v` 搭配注释符。
+#   ⛔ 不要只凭 ① 或只凭 ② 判:只凭 ② 会把「断言页面文案 + 剥注释」这个**正确做法**判死
+#   (那正是「默认排除注释行」整条规矩的来由——下游一轮 8 条初稿 5 条假红全因命中自家注释);
+#   只凭 ① 会把合法的「关闭前置 + 写明理由」判死,而作者没有别的改法。
+# ⚠️ **写明「关闭注释前置」的一律放行**:既有口径原话是「断言目标本身就是注释内容时必须关掉
+#   前置并就地写明理由」—— 判它就是硬门与规范自相矛盾。
+# ① 断言对象是不是「注释」。⚠️⚠️ **必须先剥掉引号字面量再判**,且触发词**只认注释族**:
+#    零残留断言的 DSL 要求「一律用**页面可见文案**」,于是 `不存在文本"TODO"`(页面残留占位)、
+#    `不存在文本"注释"`(被裁剪的「注释」列)、`不存在文本"XXX公司"`(demo 占位)
+#    都是**合法且常见**的断言 —— 而它们的**正确**取材方式恰恰就是剥注释(见八之二立论)。
+#    首版在**整格**上 `search` 且把 `TODO/FIXME/XXX` 也当触发词,实测这三条全判 Z8 Critical,
+#    而 Z8 的 msg 要求「关闭注释前置」:照办就当场复现八之二那 5/8 假红、改断言则违反 DSL ——
+#    **三条改法全被堵死**,而这是一条 Critical 硬门。⛔ 别把 `TODO/FIXME/XXX` 加回来:
+#    断言对象真是注释时作者一定会写出「注释」二字(`javadoc`/`JSDoc` 本身只存在于注释里,保留)。
+QUOTED_LITERAL_RE = re.compile('"[^"]*"' + "|'[^']*'" + '|“[^”]*”|「[^」]*」')
+COMMENT_TARGET_RE = re.compile(r"注释|javadoc|jsdoc", re.IGNORECASE)
+
+# ② 实跑命令是不是**真的**剥了注释。
+# ⚠️ 剥注释的前置**一定是行首锚定**的(`'^([^:]*:)?[0-9]+:[[:space:]]*(//…)'`),
+#    故判据 = 「同一管道段里**同时**出现行首锚 `^` 与注释符」。带上这个锚:
+#      · `grep -v '*.min.js'`(排除路径,含 `*` 但无 `^`)不再被当成剥注释(**免假红**);
+#      · `sed '/^[[:space:]]*\/\//d'` / `awk '!/^[[:space:]]*#/'` 也能认出来(**免假绿**)。
+# ⚠️⚠️ 注释符集**必须含 `#`**:它是 Python / Shell / YAML 族的注释符,而
+#    `.claude/CLAUDE.md` 的「按守护面涵盖的文件类型选前缀集」固定表里明确有这一族。
+#    首版只认 `//` `/*` `<!--` `\*`,于是守护面是 `**/*.py`、断言「注释里不存在遗留 TODO」、
+#    前置正确地剥 `#` 注释 ⇒ 恒 0 命中而 Z8 不响 —— **Z8 存在的全部理由在最主要的语言族上失效**。
+_COMMENT_MARK = r"(?:\#|//|/\*|<!--|--|\\\*)"
+STRIP_PREFIX_RE = re.compile(r"strip_comments|块级剥离")
+# ⚠️ `grep\s+-v\w*` 那个 `\w*` 不可省:真实写法是 `grep -vE` / `grep -vn`,
+#    写成裸 `grep\s+-v` 后跟 `\s` 会在 `-vE` 上**整条失配**(实测)。
+STRIP_CMD_RE = re.compile(r"(?:grep\s+-v\w*|sed\b|awk\b)\s[^|\n]*\^[^|\n]*" + _COMMENT_MARK)
+PREFIX_DISABLED_RE = re.compile(r"关闭注释前置|关闭前置|只扫注释|only-comments|不加前置")
+
+
+def comment_is_the_target(assertion: str) -> bool:
+    """断言对象是不是「注释内容」—— 判据作用在**引号字面量之外**的文字上。"""
+    return bool(COMMENT_TARGET_RE.search(QUOTED_LITERAL_RE.sub(" ", assertion or "")))
+
+
+def strips_comments(command: str) -> bool:
+    """实跑命令是否**真的**把注释剥掉了。"""
+    if PREFIX_DISABLED_RE.search(command):
+        return False
+    return bool(STRIP_PREFIX_RE.search(command) or STRIP_CMD_RE.search(command))
 
 
 def hit_counts(cell: str) -> List[int]:
@@ -380,6 +438,15 @@ def judge(assertions: Dict[str, dict], rows: List[dict],
                             "line": row["line"],
                             "msg": "`已退役` 后没有任何依据——形态须为 `已退役(轮次 + 依据)`,"
                                    "依据只有「守护对象已消失」「判据已移交常设机制」两条合法路径"})
+        # Z8 原理冲突(2026-10-09 下游反馈落地)
+        if "实跑命令" in row and "断言" in row:
+            if comment_is_the_target(row["断言"]) and strips_comments(row["实跑命令"]):
+                out.append({"level": "Critical", "code": "Z8", "file": row["file"],
+                            "line": row["line"],
+                            "msg": "原理冲突:断言对象是**注释内容**,而实跑命令**把注释剥掉了**"
+                                   "(`strip_comments` / `grep -v` 注释前置)——真有一条也恒 0 命中,"
+                                   "报告里与「真的没有」完全同形。处置:关闭注释前置并就地写明理由"
+                                   "(判据见方法论**八之七**,关闭前置的写法见**八之二**),⛔ 不要改断言去迁就命令"})
         # W2 前置声明
         if "实跑命令" in row and not PREFIX_OK_RE.search(row["实跑命令"]):
             out.append({"level": "Important", "code": "W2", "file": row["file"],

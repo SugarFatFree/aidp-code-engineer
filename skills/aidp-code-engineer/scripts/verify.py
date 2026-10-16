@@ -999,6 +999,21 @@ GUARDS = (
     ("check_release_ask_whitelist", "check_release_ask_whitelist", "发布期问询白名单", ("errors",), "ERROR", None, None),
     ("check_release_debt_landing", "check_release_debt_landing", "发布期欠账落账", ("errors",), "ERROR", None, None),
     ("check_index_staleness", "check_index_staleness", "index ↔ 工作区隐形漂移", ("errors",), "ERROR", None, None),
+    # ★ 跨 SKILL「共享段」逐字节一致性：SKILL 之间不得互相 import（vendored 单个 SKILL 要能独立跑），
+    #   于是同一判据只能在各自 `scripts/` 里各持一份逐字节副本。这类副本的失效形态极隐蔽 ——
+    #   改了一处、另外几处照旧，表现为「同一个编号在需求侧认、在计划侧不认」而**不是任何报错**。
+    #   «仓库级硬门» 只能由仓库提供：各 SKILL 自己都看不到别人那份。
+    ("check_shared_segment_sync", "check_shared_segment_sync", "跨 SKILL 共享段一致性", ("findings",), "ERROR", None, None),
+    # ★ 下发面不得以**指令形态**引用模板维护专属物（`版本变更历史.md` / `设计目标.md` /
+    #   `mirror_to_bundle.py` …）：下游 AI 读到一句祈使句就会照做，而它照做的方式往往是
+    #   **把模板项目的文件在下游建出来** —— 现象看着像「脚手架下发了它」，真实机制是**指令泄漏**。
+    #   ⚠️ 只抓指令性引用，放行检测/判定/测试用途（那些删了反而让模板身份判定失效）。
+    ("check_template_only_leak", "check_template_only_leak", "下发面模板专属物泄漏", ("findings",), "ERROR", None, None),
+    # ★ 未定义名（AST 层「用了但没 import / 没定义」）：这类缺陷**延迟到运行时**，
+    #   且往往落在只有特定分支才走到的行上 —— 脚手架里最毒的那种是「下游已有 scaffold
+    #   基线」分支：模板项目自身永远到不了 ⇒ 本仓全绿、每个下游升级必崩，单测也挡不住
+    #   （没人会为一行分支造一个下游夹具）。⛔ 它不替代类型检查，只看名字能不能解析。
+    ("check_undefined_names", "check_undefined_names", "未定义名", ("findings",), "ERROR", None, None),
     ("check_memory_loss", "check_memory_loss", "memory 整段丢失", ("errors",), "WARN", None, None),
 )
 

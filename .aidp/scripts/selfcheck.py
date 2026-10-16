@@ -172,6 +172,52 @@ def _p_open_sprints(root):
     _write(root, "memory/SELFCHECK/alice/progress.md", "- 阶段检查通过 ✅\n\n- Sprint-001 进行中\n")
 
 
+@probe("check_undefined_names.py", args=("--json",))
+def _p_undefined_names(root):
+    """阳性注入：往扫描面放一个调用未 import 名字的脚本 → 必须报。
+
+    ⚠️ 刻意把它放进**脚本目录本体**而不是临时文件：本门的扫描面是目录白名单，
+    放错地方的注入会 0 命中、而 0 命中与「代码是干净的」同形（假探针）。
+    """
+    _write(root, runtime_text('__AIDP_HOME__/scripts/_probe_undefined.py', __file__),
+           "def f():\n    return _never_imported_symbol(1)\n")
+
+
+@probe("check_template_only_leak.py", args=("--json",))
+def _p_template_only_leak(root):
+    """阳性注入：往下发面植入一句**指令性**引用模板专属物的话 → 必须报。
+
+    ⚠️ 阴性侧由种子树自带（本体下发面已清零泄漏 → 不注入时必须绿）；
+    另在脚本 `--self-check` 里带「反向禁止句必须放行」那一半 —— 两侧都要对，
+    只证明「能红」证明不了「不是恒红」。
+    """
+    _write(root, runtime_text('__AIDP_HOME__/reference/探针.md', __file__),
+           "## 探针\n\n需记录改动往 `版本变更历史.md` 追加（一条通俗摘要）。\n")
+
+
+@probe("check_shared_segment_sync.py", args=("--json",))
+def _p_shared_segment(root):
+    """阳性注入：把某份共享段副本**改一个字节** —— 组内出现 ≥2 种内容即 ERROR。
+
+    ⚠️ 注入的是**纯空白差异**（段内插一行只含空格的注释），刻意如此：
+    该门明写「连空格都要一致、⛔ 不做归一化」，而「只差空格」正是最容易漏同步的那一类。
+    若哪天本探针变绿，说明判据被"优化"成了归一化比较。
+    ⚠️ 阴性侧由种子树自带（9 份副本本就逐字节一致 → 不注入时必须绿）。
+    """
+    import glob
+    hits = sorted(glob.glob(os.path.join(root, RUNTIME_REL, "skills", "*", "scripts", "*.py")))
+    for path in hits:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if ">>> SHARED-SEGMENT" not in text:
+            continue
+        head, mark, tail = text.partition(">>> SHARED-SEGMENT")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(head + mark + tail.replace("\n", "\n#   \n", 1))
+        return
+    raise AssertionError("种子树里找不到任何 SHARED-SEGMENT 副本 —— 探针无法注入（假探针）")
+
+
 @probe("check_sibling_family.py", args=("--json",))
 def _p_sibling_family(root):
     # 声明一个家族，再往 members 里放一个**没登记进注册表**的成员 → F2 必判 Critical。

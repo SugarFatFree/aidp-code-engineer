@@ -3,7 +3,7 @@
   "scaffold_version": "V1.0.0",
   "files": {
     "agents/README.md": "2e722c95bdf34aaaaa4a40a9f29083628daa8453d5d550ec2d2cdca765170c87",
-    "agents/aidp-compliance.md": "27a98a6f09e7f2b8f1520068affda70bbea78c3a07792db980585cbeaff436b8",
+    "agents/aidp-compliance.md": "5fa4ad5606cfd64c3fbd1a44deb9f42eec0f11c09c0cacaee0b8643fb244d596",
     "agents/architect.md": "d0847476c6895aaaf7effe85ba37ed282a5e5d01f6c4656ecb59fd3124d6afad",
     "agents/backend.md": "7f921e8937f45693f5ac6ffc6ab6ccc3bef0d732ea89884e94b411bf07f005a9",
     "agents/frontend.md": "2ad79ba794b50d3b99401a62ded2301e58d0ea27abaccfe2bf70b02dee570e93",
@@ -156,7 +156,7 @@
     "reference/子Agent必读.md": "b0a0c79271a41a15f87b0bcfb4e999bb88c882fd3f6e1622b6f7d5b7df132693",
     "reference/开发期族增量.md": "b95f1bd2af079a1452d62e1ef5e0072e1ff52474f66a35f8e961e7eeda5a4bd4",
     "reference/约定细则-1.md": "e6f026b31ee0c42aa722188398cd9ce88ce586ccf7428a733e4695f7b664f3ed",
-    "reference/约定细则-2.md": "b322f248bf48078cf9755528f86fae8c5ab549b81b4266364d0f3841c69096cd",
+    "reference/约定细则-2.md": "5e0dec5520f6e8c4697098e43cae338b26c208ceaebedd7654664aee4829dd5c",
     "reference/约定细则-3.md": "46f4a104a0b59795d1a0c48bdf5c646991617c80badd4386fe42730f3bfe786d",
     "reference/约定细则-4.md": "c9cfd4a230d99d63385b87cdbfb7e7550306b7cd5b22943765b816e1bba5588b",
     "reference/约定细则-5.md": "06784bab4cea9a30f4f3dc37effc11476c4507bc097b20883babbb3af62f06aa",

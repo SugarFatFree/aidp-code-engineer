@@ -90,6 +90,37 @@ class MarkerAndFinalizeTest(unittest.TestCase):
     def test_marker_self_check(self):
         self.assertEqual(H.run_script("scaffold_marker.py", "--self-check", check=False).returncode, 0)
 
+    def test_scaffold_section_survives_comments_and_blank_lines(self):
+        """★ 零缩进注释 / 空行**不得**截断 `scaffold:` 段。
+
+        失效形态与「配置里本来就没写」完全同形：`version` 与 `pending` 双双读成 `None`
+        ⇒ `is_downstream()` 判 False ⇒ 该下游被当成「非下游」，版本门控
+        （`项目版本 < 脚手架版本` 才覆盖契约）与待交付升级一起**静默失效**，且不报任何错。
+        而零缩进注释在本仓库是常态 —— `_ensure_cfg` 自己写的第一行就是一条。
+
+        ⚠️ 两条**阴性对照**同样是判据：零缩进的**真内容行**仍必须结束段，
+        且别的段里的同名键不许串进来 —— 只测「注释不截断」会让「整个边界判断被删掉」也通过。
+        """
+        cases = [
+            ("无注释", "scaffold:\n  version: V1.0.0\n  pending: null\n", "V1.0.0", None),
+            ("段内零缩进注释", "scaffold:\n# 本段由脚手架维护\n  version: V1.0.0\n"
+                               "  pending: V1.1.0\n", "V1.0.0", "V1.1.0"),
+            ("段内空行", "scaffold:\n\n  version: V1.0.0\n  pending: null\n", "V1.0.0", None),
+            ("文件头注释 + 缩进注释", "# AIDP 项目配置（人维护）\nscaffold:\n  # 说明\n"
+                                     "  version: V2.0.0\n", "V2.0.0", None),
+            ("⛔ 阴性：真内容行结束段", "scaffold:\n  version: V1.0.0\nproject:\n"
+                                       "  pending: V9.9.9\n", "V1.0.0", None),
+            ("⛔ 阴性：别段同名键不串入", "project:\n  version: V7.7.7\n", None, None),
+        ]
+        for label, text, want_v, want_p in cases:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                cfg = root / scaffold_marker.CONFIG_REL
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                cfg.write_text(text, encoding="utf-8")
+                self.assertEqual(scaffold_marker.read_version(root), want_v, label)
+                self.assertEqual(scaffold_marker.read_pending(root), want_p, label)
+
     def test_finalize_verifies_each_entry(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

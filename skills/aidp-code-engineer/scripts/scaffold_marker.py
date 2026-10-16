@@ -45,7 +45,16 @@ def _read_cfg(root):
         return out
     in_sec = False
     for ln in lines:
-        if ln[:1] not in (" ", "\t") and ln.strip():
+        # ★ 注释与空行**不是段边界**：YAML 里只有「零缩进的真内容行」才结束一个块。
+        # ⛔ 别把这两行并回下面的边界判断 —— 零缩进注释在本仓库是**常态**：
+        #   `_ensure_cfg` 自己写的第一行就是 `# AIDP 项目配置（人维护…）`，用户也会很自然地
+        #   在 `scaffold:` 段里加一行说明。把它当段结束的后果是 `version` 与 `pending`
+        #   **双双读成 None** ⇒ `is_downstream` 判 False ⇒ 该下游被当成「非下游」：
+        #   版本门控（`项目版本 < 脚手架版本` 才覆盖契约）与待交付升级一起静默失效，
+        #   且**不报任何错** —— 配置文件看着好好的，字段也在那儿。
+        if not ln.strip() or ln.strip().startswith("#"):
+            continue
+        if ln[:1] not in (" ", "\t"):
             in_sec = bool(_SEC_RE.match(ln.strip()))
             continue
         if not in_sec:

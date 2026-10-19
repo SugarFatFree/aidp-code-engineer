@@ -10,6 +10,8 @@
 
 ## Phase 2：AI 自动化仿真测试主循环
 
+> **★ 状态/stuck 门**：进入 P2 先执行 `python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "$TARGET_VERSION" --phase 2-exec --next-phase 3-audit --build "${BUILD:-standalone}"`；非零停。
+
 > ⛔ **执行内核委派 `auto-test-runner` skill（单一信源，约定 21）**：本 Phase 的**用例执行方法论**——分模块批量调度、模块内一次登录共享会话、感知-执行-校验-决策闭环、执行模式分级（详见 skill）、失败分级不中断、进度断点恢复（tasks.md 状态机）、证据取证——**全部沉淀在 `auto-test-runner` skill，命令端不复述、不手写逐条 chrome 调用**。命令端只做三件事：① **组装 run-context**（被测端/驱动/URL/账号/等待时长/证据目录/用例集，见 2.0.5）→ ② **按模块派「测试执行子 Agent」**（`Agent`/Task 工具；prompt 只给 SKILL.md + 方法论文件路径 + 用例路径 + run-context 路径，子 Agent 自行 `Read`，见 2.0.5）→ ③ **消费其产物**（`results/{TC-ID}.json` + `tasks.md` + 固定结构报告）做 AIDP 特有后处理（运行时错误升级 bug 见 2.4、AI测试报告 HTML 见 Phase 3、里程碑通知）。`phase-2-2.md` 的 2.1/2.2 浏览器操作细节均为 **skill 内部行为示意**（帮助理解 skill 在做什么），**命令端不再自己直驱浏览器**；chrome-devtools-mcp 作为 auto-test-runner 「Web 端驱动适配器」的具体驱动被 skill 调用（本地 `cli`/远程 `mcp` 前缀仍按 Phase 0.1 定）。
 
 > **★ A2 主循环上下文契约（auto-test-runner 是"子 Agent 执行内核"，主循环只读契约摘要、不载全文 SKILL.md）**：`auto-test-runner` SKILL.md 定位就是"给**执行子 Agent** 用的执行内核"（其内明写"子 Agent 必须自己 Read 方法论文件"）——**主循环 `Skill`-invoke 它 = 纯浪费上下文**（把几千行方法论灌进主循环却不在主循环执行）。故：**主循环只按下面 ≤契约摘要 派发子 Agent，完整 SKILL.md 方法论只在被派发的【测试执行子 Agent】自身上下文里加载**：

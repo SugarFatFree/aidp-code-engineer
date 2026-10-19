@@ -133,9 +133,17 @@ fi
 # 只读体检：aidp-config notify 渠道 + .mcp.json chrome 条目 + git 脏树，
 # 输出 JSON 供本节按缺失项分流补做（恒 exit 0，纯信息态）。脚本缺失（旧版 / 未下发）→ 跳过体检、按下列 Step 手工收齐，
 # 并建议重跑 aidp-code-engineer upgrade 补回（已达目标版本也会幂等自愈下发，见 migrate）。
-[ -f {{AIDP_HOME}}/scripts/autopilot-preflight.py ] \
-  && python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py check --json --record-probe \
-  || echo "⚠️ preflight 脚本缺失，按下列 Step 手工收齐；建议重跑 aidp-code-engineer upgrade 补回"
+if [ -f {{AIDP_HOME}}/scripts/autopilot-preflight.py ]; then
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V=$($BE current-version 2>/dev/null || echo unknown)
+  RUN_ID=$($BE get autopilot.tick_started_at --default "$V-manual")
+  python3 {{AIDP_HOME}}/scripts/preflight_cache.py --run-id "$RUN_ID" --check phase-0-preflight \
+    --file memory/aidp-config.yaml --file .mcp.json --extra "version=$V" \
+    --cmd 'python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py check --json --record-probe' --detail "preflight check"
+  [ "$?" -eq 0 ] || exit $?
+
+else
+  echo "⚠️ preflight 脚本缺失，按下列 Step 手工收齐；建议重跑 aidp-code-engineer upgrade 补回"
+fi
 ```
 
 > ★ **`--record-probe` 不可省**：它把通知渠道探测证据落 baseline `notify_probe`（已配置渠道类型 / webhook 环境变量是否存在 / 时间）。**这是收尾门区分「通道没配所以没发」与「通道配好了但没去发」的唯一依据**——两者在产物上完全同形（都是零通知 + `--notify 0`）。缺证据时收尾门只能判 DEGRADE「无从判断」；**证据显示通道当时可用却整组跳过 → 直接判 FAIL 漏发**。实际项目中出现过：通知渠道齐全可用，整轮零通知而流程照常"完成"。

@@ -61,6 +61,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 BE = os.path.join(HERE, "baseline_edit.py")
 CARD = os.path.join(HERE, "notify.py")
+_BASELINE_OVERRIDE = None
 # ⛔ 枚举与标记一律**复用 check_freeze_contract 的常量**，不在本脚本另写一份 ——
 #   两份各自维护必然漂移，而漂移方向是"这里认得、那道门不认得"，静默通过。
 sys.path.insert(0, HERE)
@@ -69,7 +70,8 @@ sys.path.insert(0, HERE)
 def _be(args):
     # ⛔ 必须带 timeout：baseline_edit 是阻塞式 flock(LOCK_EX)，对面持锁挂死时
     #    这里会无限期等下去 —— 而本函数正是熔断自己要走的那一步。
-    return subprocess.run([sys.executable, BE] + args, capture_output=True, text=True,
+    prefix = ["--baseline", _BASELINE_OVERRIDE] if _BASELINE_OVERRIDE else []
+    return subprocess.run([sys.executable, BE] + prefix + args, capture_output=True, text=True,
                           timeout=60)
 
 
@@ -320,7 +322,9 @@ def _preflight(a):
 
 
 def main(argv=None):
+    global _BASELINE_OVERRIDE
     ap = argparse.ArgumentParser(description="autopilot / aiauto-test 失败处置：记账 → 判阈 → 冻结 → 发 #4 + 本地告警")
+    ap.add_argument("--baseline", default=None, help="隔离运行时显式指定 baseline")
     ap.add_argument("--version", default="")
     ap.add_argument("--command", choices=("autopilot", "aiauto-test"), default="autopilot",
                     help="调用方链路：决定唤醒源键与前置熔断计数键（测试链路必须传 aiauto-test）")
@@ -346,6 +350,7 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true")
     a = ap.parse_args(argv)
+    _BASELINE_OVERRIDE = a.baseline
     if a.self_check:
         return _self_check()
     for k in ("reason", "why"):

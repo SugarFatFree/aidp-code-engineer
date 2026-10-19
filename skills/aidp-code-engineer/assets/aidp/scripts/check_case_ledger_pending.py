@@ -31,7 +31,10 @@ from aidp_runtime import runtime_relpath
 import argparse
 import json
 import os
+import re
 import sys
+from pathlib import Path
+from datetime import datetime
 
 
 def run(root, version):
@@ -48,11 +51,66 @@ def run(root, version):
     fams = vinfo.get("families") or {}
     case = fams.get("case") or {}
     total = int(case.get("total") or 0)
+    # 延后生成的 Sprint 记录是第二份防丢证据：台账被误删也不能把未生成读成已生成。
+    deferred = []
+    path = Path(root) / "memory/.sprint-autopilot-baseline.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        sprints = ((data.get("versions") or {}).get(version) or {}).get("sprints") or {}
+        deferred = [n for n, s in sprints.items()
+                    if isinstance(s, dict) and s.get("case_generation", {}).get("status") == "deferred"]
+    except (OSError, ValueError, AttributeError) as exc:
+        return {"ok": False, "passed": False, "pending": None, "detail": str(exc)}
+    total = max(total, len(deferred))
     return {
         "ok": True, "version": version, "pending": total,
-        "case_ledger": case.get("file"), "case_pending": total,
+        "case_ledger": case.get("file"), "case_pending": total, "deferred_sprints": deferred,
         "passed": total == 0,
     }
+
+
+def record_generation(root, version, sprint, reason, complete=False):
+    """暂缓时原子登记 baseline + 用例族条目，生成完成须先证明台账已收口且存在用例。"""
+    from baseline_edit import LockedBaseline
+    from commit_gate import cascade_ledger_paths
+    if not re.fullmatch(r"\d{3}", sprint) or not reason.strip():
+        raise ValueError("需要三位 Sprint 编号和非空原因")
+    ledger = next(Path(p) for fam, p in cascade_ledger_paths(root, version) if fam == "case")
+    baseline = Path(root) / "memory/.sprint-autopilot-baseline.json"
+    with LockedBaseline(str(baseline), write=True) as b:
+        node = b.data.setdefault("versions", {}).setdefault(version, {})
+        item = node.setdefault("sprints", {}).setdefault(sprint, {})
+        previous = item.get("case_generation") or {}
+        if complete:
+            pc = __import__("commit_gate").pending_cascade(root)
+            case = ((pc.get("versions", {}).get(version) or {}).get("families") or {}).get("case") or {}
+            directory = Path(root) / "docs/testing" / version / "研发自测"
+            sources = [p for p in directory.glob("*.md") if not p.name.startswith(("_", "00_", "99_"))]
+            if case.get("total") or any("TC-" in p.read_text(encoding="utf-8") for p in sources) is False:
+                raise ValueError("用例台账尚有待办或正式用例未生成，不得清除欠账")
+        elif previous.get("status") == "deferred":
+            return previous
+        else:
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            texts = [Path(p).read_text(encoding="utf-8") for _, p in cascade_ledger_paths(root, version) if Path(p).exists()]
+            numbers = [int(n) for text in texts for n in re.findall(r"C-(\d+)", text)]
+            cid = "C-%03d" % (max(numbers, default=0) + 1)
+            body = ledger.read_text(encoding="utf-8") if ledger.exists() else "# 开发期用例增量\n\n## 待级联\n"
+            clean_reason = " ".join(reason.splitlines())
+            body += "\n- %s · %s · 延后生成 Sprint-%s 用例：%s · sprint-%s\n" % (
+                cid, datetime.now().strftime("%m-%d %H:%M"), sprint, clean_reason, sprint)
+            tmp = ledger.with_suffix(".md.tmp")
+            tmp.write_text(body, encoding="utf-8")
+            os.replace(tmp, ledger)
+        item["case_generation"] = {"status": "generated" if complete else "deferred", "reason": reason,
+                                   "at": datetime.now().astimezone().isoformat()}
+        item["aiauto_test_required"] = bool(complete)
+        # 版本级汇总给测试入口消费：任一 Sprint 显式要求实测即要求本版测试；
+        # 只有所有已登记 Sprint 都明确 deferred 才能安全跳过。
+        sprint_values = [s.get("aiauto_test_required") for s in (node.get("sprints") or {}).values()
+                         if isinstance(s, dict) and "aiauto_test_required" in s]
+        node["aiauto_test_required"] = any(sprint_values) if sprint_values else bool(complete)
+        return item["case_generation"]
 
 
 def main():
@@ -60,6 +118,10 @@ def main():
         description="实测前门：本版是否还有未级联的用例增量（有 = 测的是老用例集）")
     ap.add_argument("--root", default=".")
     ap.add_argument("--version")   # --self-check 时不需要（见下方分流）
+    ap.add_argument("--defer", action="store_true", help="登记暂缓生成和用例族欠账")
+    ap.add_argument("--complete", action="store_true", help="正式用例生成且台账收口后清除暂缓标记")
+    ap.add_argument("--sprint", default="")
+    ap.add_argument("--reason", default="")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true",
                     help="阳性对照自检：注入必然命中的探针，验证本检查确实生效")
@@ -76,6 +138,16 @@ def main():
     if not args.version:
         print("[ERROR] 必须传 --version", file=sys.stderr)
         return 2
+    if args.defer and args.complete:
+        ap.error("--defer 与 --complete 互斥")
+    if args.defer or args.complete:
+        try:
+            result = record_generation(root, args.version, args.sprint, args.reason, args.complete)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
     res = run(root, args.version)
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))

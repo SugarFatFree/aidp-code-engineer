@@ -152,6 +152,18 @@ def test_clear_and_manual():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_aiauto_stuck_phase_contract():
+    print("\n[R5] 测试链路 stuck-phase：次数 + 时长双判据")
+    import check_stuck_phase as S
+    now = 1_000_000_000
+    iso = lambda off: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - off))
+    check("两条件同时满足 → 判 stuck", S.evaluate(8, iso(7300), now)["stuck"] is True)
+    check("只够次数 → 不误冻", S.evaluate(20, iso(600), now)["stuck"] is False)
+    check("只够时长 → 不误冻", S.evaluate(2, iso(99999), now)["stuck"] is False)
+    check("首次时间缺失 → 不误冻", S.evaluate(99, "", now)["stuck"] is False)
+    check("测试链路使用独立 aiauto_run_state", "aiauto_run_state" in (Path(S.__file__).read_text(encoding="utf-8")))
+
+
 def test_vcs_disabled_unattended_flow_contract():
     print("\n[R4] 无 Git 时跳过远端节点、继续本地开发")
     base = REPO / ".aidp/flows/sprint-autopilot"
@@ -167,6 +179,7 @@ if __name__ == "__main__":
     test_fail_handle()
     test_env_reprobe()
     test_clear_and_manual()
+    test_aiauto_stuck_phase_contract()
     test_vcs_disabled_unattended_flow_contract()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

@@ -360,6 +360,9 @@ def main() -> int:
     ap.add_argument("--raw", action="store_true", help="get 字符串值不带引号输出（默认即 raw）")
     ap.add_argument("--summary", default="", help="run-state: 本 Phase ≤20 行结论摘要")
     ap.add_argument("--pending", default="", help="run-state: 未完成动作，逗号分隔")
+    ap.add_argument("--enter", action="store_true", help="run-state: 记录阶段进入，不宣告完成")
+    ap.add_argument("--phase-token", default="", help="run-state: build/round 身份，变化即重新计数")
+    ap.add_argument("--state-key", choices=("run_state", "aiauto_run_state"), default="run_state", help="run-state 写入的状态节点，默认 run_state；测试链路使用 aiauto_run_state")
     ap.add_argument(
         "op",
         choices=["get", "set", "del", "bump", "touch", "now", "current-version", "run-state"],
@@ -464,6 +467,11 @@ def main() -> int:
             "next_sprint": a.args[2] if len(a.args) > 2 else "",
             "phase_completed_at": now_iso(),
         }
+        if a.enter:
+            rs.pop("phase_completed_at")
+            rs["phase_started_at"] = now_iso()
+            rs["phase_status"] = "running"
+            rs["next_phase"] = a.args[0]
         if a.summary:
             # ⛔⛔ 「阶段完成 = 该阶段的产物与结论都已落盘可校验」，**不是"活已经派出去了"**。
             #    实测事故：21:31:34 派发规划子 Agent → 21:31:41（7 秒后）就写 phase_completed_at
@@ -478,7 +486,7 @@ def main() -> int:
             #       这类**易被否定句翻转**的词——"无未完成动作"「pending_actions 已清空」都是
             #       完全正常的完成摘要，收进来就会把合法推进拦死（假阳性会卡停流水线，比漏判更贵）。
             _hit = _UNFINISHED_RE.findall(a.summary)
-            if _hit:
+            if _hit and not a.enter:
                 print(f"[baseline_edit] ✗ 拒写：phase_summary 自述未完成（命中 {'/'.join(_hit)}），"
                       f"不得同时写 phase_completed_at 并推进 next_phase\n"
                       f"    摘要：{a.summary[:120]}\n"
@@ -497,7 +505,8 @@ def main() -> int:
         with LockedBaseline(a.baseline, write=True) as b:
             warn_if_archived(b.data, a.version, a.baseline)
             node = b.data.setdefault("versions", {}).setdefault(a.version, {})
-            old = node.get("run_state") if isinstance(node.get("run_state"), dict) else {}
+            state_key = a.state_key or "run_state"
+            old = node.get(state_key) if isinstance(node.get(state_key), dict) else {}
             # ★ 通用 stuck 检测字段由本脚本**自动维护**（调用方不用管）：
             #   同一 current_phase 连续进入则计数累加、首次进入时刻保持不变；换 Phase 即重置。
             #   命令端据此判「同一 Phase 连续进入 ≥8 次且首次进入距今 >2 小时」= 卡死，
@@ -508,15 +517,27 @@ def main() -> int:
             #   ★ 本脚本是 phase_enter_count 的**唯一**维护者：命令端 tick 开头不得再 `bump` 同一字段，
             #     否则每 tick 加两次、阈值提前一半到达。
             same_phase = old.get("current_phase") == rs["current_phase"]
+            if a.phase_token:
+                same_phase = same_phase and old.get("phase_token") == a.phase_token
+                rs["phase_token"] = a.phase_token
+            if a.state_key == "aiauto_run_state" and old.get("phase_status") == "complete":
+                same_phase = False
+            rs_time = rs.get("phase_completed_at") or rs.get("phase_started_at")
             sprint_advanced = (old.get("next_sprint") or "") != (rs.get("next_sprint") or "")
             if same_phase and not sprint_advanced:
                 rs["phase_enter_count"] = int(old.get("phase_enter_count") or 1) + 1
-                rs["phase_first_entered_at"] = old.get("phase_first_entered_at") or rs["phase_completed_at"]
+                rs["phase_first_entered_at"] = old.get("phase_first_entered_at") or rs_time
             else:
                 rs["phase_enter_count"] = 1
-                rs["phase_first_entered_at"] = rs["phase_completed_at"]
+                rs["phase_first_entered_at"] = rs_time
             # 保留历史 phase_summary 之外的自定义字段，只覆盖本次写的键
-            node["run_state"] = {**old, **rs}
+            if a.state_key == "aiauto_run_state" and not a.enter:
+                rs["phase_status"] = "complete"
+                if same_phase:
+                    rs["phase_enter_count"] = old.get("phase_enter_count", 1)
+            node[state_key] = {**old, **rs}
+            if a.enter:
+                node[state_key].pop("phase_completed_at", None)
         print(
             f"[baseline_edit] ✅ run_state → {a.args[0]} ▸ next={a.args[1]} "
             f"sprint={rs['next_sprint'] or '-'} enter#{rs['phase_enter_count']}"

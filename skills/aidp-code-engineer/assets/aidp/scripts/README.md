@@ -318,6 +318,12 @@ Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 
 **铁律：flow / 命令端一律经本脚本写 baseline，不写裸 `jq … > tmp && mv`**（只读 `jq -r` 查询不受限）。路径用点号分段、**含点的键必须加双引号**（`versions."V0.1.0".needs_human`），`--version V0.1.0` 会给后续相对路径自动加 `versions."V0.1.0".` 前缀。
 子命令：`get` / `set`（可多组 path/value）/ `del` / `bump [--by N]` / `touch`（写当前 ISO8601）/ `now` / `current-version`（解析「当前开发版本」，两条 loop 共用的单一信源）/ `run-state`（Phase 游标：`current_phase` / `next_phase` / `next_sprint` / `phase_summary` / `pending_actions` / `phase_enter_count` / `phase_first_entered_at` 的**唯一**维护者，⛔ 别在别处 bump `phase_enter_count`）。
 
+## check_stuck_phase.py — 测试链路 stuck 熔断（次数 + 时长双判据）
+
+服务 `/sprint-aiauto-test`，使用独立 baseline 节点 `versions.{V}.aiauto_run_state`，退出码 `0`=未卡住、`3`=判定卡住并按 `--freeze` 走 `autopilot_fail_handle.py --command aiauto-test --reason stuck-phase`。只有 `phase_enter_count >= 8` 且 `phase_first_entered_at` 滞留超过 7200 秒才冻结；缺失时间或只满足一项都不冻结。开发链路继续使用 `autopilot_stuck_check.py`，两者不能共用状态键。调用方 = `sprint-aiauto-test` Phase 1 / Phase 2 / Phase 3 入口状态块。
+
+用法：`python3 {{AIDP_HOME}}/scripts/check_stuck_phase.py --command aiauto-test --version <V> --phase 2-exec [--state-key aiauto_run_state] [--freeze] [--json]`。
+
 ## autopilot_stuck_check.py — 通用 stuck 熔断（"既不失败也不推进"的兜底）
 
 autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_missing_streak` / `report_gate_fail_streak`）**全要求先有一次明确失败**才计数，堵不住真实卡死里最常见的一类——**没有失败**：子 Agent 每 tick 回传 partial、某 Sprint 永远 close 不掉、`pending_actions` 每 tick 都补不完。表现是 `/loop` 岁月静好地空转、零告警、build 永不收口。
@@ -417,12 +423,30 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 用法：`python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version <V> [--root .] [--json]`；`--self-check`（阳性 + 跨用户 + 同行两类阴性对照）。退出码：`0`=无未关闭（含「无研发执行计划 → 适用范围外」，⛔ 不等于「已全部关闭」）/ `1`=有未关闭、**调用方须停下** / `2`=用法错。⚠️ 退出码 1 的语义是「本命令不得继续」，⛔ 不是「记一笔告警然后往下走」—— 那等于这道门不存在。
 
+## check_scale_budget.py — 规划产物规模 ↔ 档位软预算对账
+
+读取四族实际产出，按 `S` / `M-` / `M` / `L` 档比较用例数、设计册数、Task 数和总行数；`M-` 由零新增接口/页面/DDL 的口径调整事实派生。超限只报 Important，不硬截断覆盖。调用方 = `/sprint-dev` 口述增量步骤 4 完成后的规模回检。
+
+用法：`python3 {{AIDP_HOME}}/scripts/check_scale_budget.py --version <V> --tier <S|M|M-> [--new-endpoints N] [--new-pages N] [--has-ddl] [--json]`；`--self-check`。
+
+## aiauto_phase_entry.py — 测试链路 Phase 状态入口
+
+统一写 `versions.{V}.aiauto_run_state` 的阶段进入计数（`phase_enter_count` / `phase_first_entered_at`），并调用 `check_stuck_phase.py` 判定“次数达到阈值且滞留超过 2 小时”的无进展状态；冻结交给 `autopilot_fail_handle.py --command aiauto-test`。调用方 = `sprint-aiauto-test` Phase 1 / Phase 2 / Phase 3 入口。
+
 ## assert_gate_ran.py — 外部机器门真实执行断言
 
 包装一个必须输出 JSON 的外部机器门，先执行它，再从 `aidp_collect.from_external_gate()` 读取 `collected` / `skipped` 等事实。**采集量为 0、外部门自报 skipped 或无法解析 JSON 时不判通过**：默认退出 `3`（`not-run`），只有显式 `--allow-empty "理由"` 才把本轮标记为适用范围外并留痕；外部门自身非零退出则透传为 `ran-and-failed`。这堵的是「目标目录/编号正则偏了 → 门扫到 0 个对象 → `passed:true` + exit 0」与真实通过同形的假绿。
 
 用法：`python3 {{AIDP_HOME}}/scripts/assert_gate_ran.py --label "上游溯源" -- python3 {{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py <目录> --json`。
 调用方 = `{{AIDP_HOME}}/flows/sprint-requirements/execution-steps.md` 的上游溯源回检；适用范围外必须显式写 `--allow-empty` 理由，⛔ 不得把它当默认逃生阀。
+
+## batch_probe.py — 批量阳性对照与快照还原
+
+从 JSON 声明一组“锚点 + 注入文本 + 期望命中”，一次完成阴性运行、全量快照、全量注入、阳性运行、快照还原；阴性侧必须绿、阳性侧必须红，且任何异常都在 `finally` 里还原。退出码 `0`=全部探针变红，`1`=探针漏检/阴性侧本就红，`2`=入参错。调用方 = `.aidp/scripts/tests/test_batch_probe.py` 以及需要批量阳性对照的回归流程。
+
+## preflight_cache.py — 同 tick 前置检查成功结论缓存
+
+缓存键包含 `run_id`、git HEAD、依赖文件 `mtime_ns+size` 和调用方补充指纹；只缓存成功结论，失败/阻塞不入缓存，跨 tick 不复用。命中时打印复用来源；未命中可用 `--cmd` 执行检查，成功后自动写入。调用方 = `/sprint-autopilot` Phase 0 preflight；回归 = `.aidp/scripts/tests/test_preflight_cache.py`。
 
 ## aidp_collect.py — 采集量自证（机器门的「我到底看了多少东西」）
 

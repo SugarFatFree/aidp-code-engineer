@@ -285,6 +285,23 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 
    **跳过条件**：步骤 2 的研发需求补充内容仅包含纯技术内部调整（如 SQL 索引优化、性能调优）且未触达任何用户可见功能 → 终端 WARN 并跳过；否则**不可跳过**。
 
+**★ 规划产物规模软预算回检（Important，只告警不截断）**：步骤 2.5 的档位判定只决定目标承载，完成步骤 4 后再按实际四族产物回读一次，防止档位判 M 但产出异常膨胀、或 M⁻ 仍生成完整大册。
+
+```bash
+BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
+V="{version}"; N="{NN}"
+TIER=$($BE --version "$V" get "sprints.$N.sup_scale.tier" --default "M")
+REQ=$($BE --version "$V" get "sprints.$N.sup_scale.req_count" --default 0)
+PAGES=$($BE --version "$V" get "sprints.$N.sup_scale.page_count" --default 0)
+API=$($BE --version "$V" get "sprints.$N.sup_scale.has_api" --default 0)
+DDL=$($BE --version "$V" get "sprints.$N.sup_scale.has_ddl" --default 0)
+DDL_FLAG=""; [ "$DDL" = "1" ] && DDL_FLAG="--has-ddl"
+python3 {{AIDP_HOME}}/scripts/check_scale_budget.py --version "$V" --tier "$TIER" \
+  --new-endpoints "$API" --new-pages "$PAGES" $DDL_FLAG --json || true
+```
+
+`check_scale_budget.py` 的超限是 Important 提醒，不得把真实覆盖需求硬截断；输出必须进入本轮报告/终端摘要。
+
 5. **更新各目录导航锚**：本轮新增的 6 类增量文档在对应目录导航锚各追加一行（类型=补充 + 生成时间）——研发需求 / 详细设计 / 接口设计 / 数据库设计 / 研发执行计划 / **研发自测用例**均 → `00_索引.md`（研发自测已对齐通用范式，另在 `01_研发自测方案.md` §8 用例索引段同步登记业务导航）
 
 6. **完成报告**：终端打印「口述补充已转化为研发需求补充（`NN_<业务主题>.md`）+ 设计补充 + 计划补充 + **研发自测用例补充**；本 Sprint-{新NNN} 即将基于此增量基线开发」

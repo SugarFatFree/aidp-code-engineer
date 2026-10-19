@@ -5,6 +5,9 @@
 
 ## Phase 1：部署完成探测
 
+> **★ Phase 状态/stuck 门**：进入 Phase 1 先执行 `python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "$TARGET_VERSION" --phase 1-probe --next-phase 2-exec --build "${BUILD:-standalone}"`；非零阻断探测。
+
+
 ### 1.1 探测策略（按 deployment.mode 分流）
 
 | mode | 探测方式 |

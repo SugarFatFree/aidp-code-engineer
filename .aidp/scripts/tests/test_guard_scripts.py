@@ -531,6 +531,13 @@ def test_baseline_run_state_and_version_pick():
     run(bl, "--version", "V0.1.0", "run-state", "3.3-audit", "3.4-finish", "done", "--summary", "s")
     check("换 Phase → 重置为 1",
           run(bl, "--version", "V0.1.0", "get", "run_state.phase_enter_count") == "1")
+    for _ in range(2):
+        run(bl, "--version", "V0.1.0", "--state-key", "aiauto_run_state", "--enter",
+            "run-state", "2-exec", "2-exec", "done", "--summary", "执行中")
+    check("测试链路使用独立 aiauto_run_state 且同 Phase 计数累加",
+          run(bl, "--version", "V0.1.0", "get", "aiauto_run_state.phase_enter_count") == "2")
+    check("测试链路状态不污染开发 run_state",
+          run(bl, "--version", "V0.1.0", "get", "run_state.current_phase") == "3.3-audit")
 
     # ── current-version：优先待测的最老一个，防「下版把上版饿死」 ──
     d2 = tempfile.mkdtemp(); bl2 = os.path.join(d2, "c.json")
@@ -3230,7 +3237,7 @@ def test_ledger_closed_gate():
           "_开发期需求增量.md," in plan8 and "_开发期用例增量.md" in plan8)
     check("★ 收口点 3 传转出目的地=发布欠账",
           "--transfer-to docs/audit/{version}/发布欠账.md" in rel5)
-    check("收口点 4（批次收尾）用默认档", "--ledger-closed --version {version}" in batch)
+    check("批次链路不再重复派发通用级联", "--cascade-now" in batch and "不再单独触发" in batch)
     check("规划期写明未决条目迁移进当前版本对应族", "承接自 {上一版本}" in plan8
           and "【对应族】" in plan8)
     check("发布期写明未决条目转记发布欠账", "转记 `docs/audit/{version}/发布欠账.md`" in rel5)

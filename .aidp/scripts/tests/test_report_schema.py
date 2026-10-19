@@ -135,6 +135,36 @@ else:
     check(not er.validate_payload("test", json.loads(json.dumps(base))),
           "未改动的合规示例 → 三门均不误报")
 
+print("⑥ 新增回归：计数缺键 / statusKind / na 语义必须出声")
+base = load_js(".aidp/templates/reports/AI测试报告/data/示例_build1001.js")
+if base is not None:
+    missing = json.loads(json.dumps(base))
+    missing["summary"].pop("skip", None)
+    errs = er.validate_payload("test", missing)
+    check(any("summary 缺必填计数子键 `skip`" in e for e in errs),
+          "summary 缺 skip → 不得静默关闭计数对账门")
+
+    exec_payload = load_js(".aidp/templates/reports/AI执行报告/data/示例_build1001.js")
+    if exec_payload is not None:
+        exec_payload["overview"]["statusKind"] = "success"
+        errs = er.validate_payload("exec", exec_payload)
+        check(any("overview.statusKind" in e for e in errs),
+              "overview.statusKind=success → 取值域校验报错")
+
+    na_payload = json.loads(json.dumps(base))
+    na_payload["summary"] = {"total": 2, "pass": 1, "fail": 0, "block": 0, "skip": 0, "na": 1, "passRate": 1.0}
+    na_payload["cases"] = [
+        {"id": "NA-1", "title": "通过", "suite": "SUITE-001", "result": "pass", "note": "", "screenshot": ""},
+        {"id": "NA-2", "title": "不适用", "suite": "SUITE-001", "result": "na", "note": "本版不存在该功能", "screenshot": ""},
+    ]
+    errs = er.validate_payload("test", na_payload)
+    check(not any("result=na 但 note" in e for e in errs),
+          "带理由的 na → schema 接受")
+    na_payload["cases"][1]["note"] = ""
+    errs = er.validate_payload("test", na_payload)
+    check(any("result=na 但 note 为空" in e for e in errs),
+          "无理由的 na → schema 拒绝")
+
 print()
 if _fails:
     print(f"❌ {len(_fails)} 项失败")

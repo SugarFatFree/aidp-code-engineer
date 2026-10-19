@@ -68,6 +68,28 @@ check(r.html.indexOf("undefined") < 0, "test cases 用 name/status/detail → �
 check(r.html.indexOf("#undefined") < 0, "test 无 buildNo → 派生后无 #undefined");
 check(r.html.indexOf("别名标题") >= 0, "test cases name → 别名容错渲染出标题");
 
+console.log("③ 新增回归：na 分布与待实测状态可见");
+r = render(TEST, "__BUILDS__", { build: "V0.1.0_build-na", version: "V0.1.0", buildNo: 3,
+  summary: { total: 3, pass: 1, fail: 0, block: 0, skip: 0, na: 2, passRate: 1 },
+  suites: [], defects: [], runtimeErrors: [],
+  cases: [
+    { id: "NA-1", title: "不适用一", suite: "S", result: "na", note: "本版无此功能", screenshot: "" },
+    { id: "NA-2", title: "不适用二", suite: "S", result: "na", note: "本端不支持", screenshot: "" },
+    { id: "P-1", title: "已通过", suite: "S", result: "pass", note: "", screenshot: "" }
+  ]
+}, "V0.1.0_build-na");
+check(!r.threw && r.html.indexOf("不适用") >= 0, "na 用例 → 渲染出不适用语义");
+check(r.html.indexOf("100%") >= 0, "na=2/pass=1 → 可执行分母为 1，显示 100%");
+
+r = render(EXEC, "__AIRUNS__", { build: "V0.1.0_build-pending", version: "V0.1.0",
+  overview: { statusKind: "pend", featureRate: 0, testPassRate: null, coverage: null, pendingCount: 2 },
+  steps: [{ name: "浏览器实测", actualStatus: "plan", plannedStatus: "plan" }], features: [],
+  testSummary: { total: null, pass: 0, fail: 0, block: 0, skip: 0, pendingBrowserTest: true },
+  defects: [], risks: [], todos: []
+}, "V0.1.0_build-pending");
+check(!r.threw && r.html.length > 500, "待实测 exec → 页面非空");
+check(r.html.indexOf("待实测") >= 0 || r.html.indexOf("计划") >= 0, "待实测 exec → 不伪装成已测完成");
+
 console.log();
 if (fails.length) { console.log("❌ " + fails.length + " 项失败"); process.exit(1); }
 console.log("✅ 全部通过"); process.exit(0);

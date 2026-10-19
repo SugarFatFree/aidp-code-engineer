@@ -283,7 +283,18 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 
    输出 `docs/testing/{version}/研发自测/<NN>_<业务主题>.md`（按 AGENTS.md 约定 15 统一数字前缀规则：NN = 目录现存最大序号 + 1、用例从 `02_` 起，文件名不带"补充"字眼；★ **一律在 `研发自测/` 同目录平铺续编、严禁再拆二级子目录**——SKILL「文件命名总则」要求同目录 `NN_` 前缀平铺，其硬门 `check_testcase_format.py` 只 `glob("*.md")` 非递归，落进子目录的用例会整体逃检），并在**研发自测专职索引** `00_索引.md`（及 `01_研发自测方案.md` 的「用例索引」段 / `02_自测用例-总览.md`）追加登记该增量（研发自测目录已对齐通用范式、导航锚 = `00_索引.md`，见约定 15）。新增用例 ID 全局唯一（继承原主文档编号空间，往后递增）。
 
-   **跳过条件**：步骤 2 的研发需求补充内容仅包含纯技术内部调整（如 SQL 索引优化、性能调优）且未触达任何用户可见功能 → 终端 WARN 并跳过；否则**不可跳过**。
+   **跳过条件**：步骤 2 的研发需求补充内容仅包含纯技术内部调整（如 SQL 索引优化、性能调优）且未触达任何用户可见功能 → 终端 WARN，并执行下面的 `--defer` 登记；否则**不可跳过**。
+
+   ```bash
+   # 纯技术内部调整：只登记“暂未生成正式用例”与用例族欠账，不伪造已经生成。
+   python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}" \
+     --sprint "{新NNN}" --defer --reason "本轮纯技术内部调整，未触达用户可见功能，暂不生成正式实测用例" || exit 1
+   # 正式用例已生成且用例增量册已收口后改走此调用（与 --defer 二选一）：
+   # python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}" \
+   #   --sprint "{新NNN}" --complete --reason "本轮正式用例已生成且增量已级联" || exit 1
+   ```
+
+   `--defer` 同时写 baseline 与用例族增量册，后续测试入口可检出；`--complete` 会先核验台账无未决且正式用例存在，不能拿一句散文声明清掉欠账。
 
 **★ 规划产物规模软预算回检（Important，只告警不截断）**：步骤 2.5 的档位判定只决定目标承载，完成步骤 4 后再按实际四族产物回读一次，防止档位判 M 但产出异常膨胀、或 M⁻ 仍生成完整大册。
 
@@ -301,6 +312,13 @@ python3 {{AIDP_HOME}}/scripts/check_scale_budget.py --version "$V" --tier "$TIER
 ```
 
 `check_scale_budget.py` 的超限是 Important 提醒，不得把真实覆盖需求硬截断；输出必须进入本轮报告/终端摘要。
+
+**步骤 4 完成后硬收口**：若本轮 `aiauto_test_required=true`，正式用例文件已经生成且用例族增量已由 `--ledger-cascade` 收口，必须执行：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}" \
+  --sprint "{新NNN}" --complete --reason "正式研发自测用例已生成并通过用例族级联前置门" || exit 1
+```
 
 5. **更新各目录导航锚**：本轮新增的 6 类增量文档在对应目录导航锚各追加一行（类型=补充 + 生成时间）——研发需求 / 详细设计 / 接口设计 / 数据库设计 / 研发执行计划 / **研发自测用例**均 → `00_索引.md`（研发自测已对齐通用范式，另在 `01_研发自测方案.md` §8 用例索引段同步登记业务导航）
 

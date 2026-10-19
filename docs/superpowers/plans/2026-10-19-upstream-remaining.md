@@ -132,8 +132,8 @@ python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py --check
 
 ```bash
 python3 .aidp/scripts/check_scale_budget.py --self-check
-python3 .aidp/scripts/preflight_cache.py --self-check
-python3 .aidp/scripts/batch_probe.py --self-check
+python3 .aidp/scripts/tests/test_preflight_cache.py
+python3 .aidp/scripts/tests/test_batch_probe.py
 python3 .aidp/scripts/check_script_callers.py
 ```
 

@@ -16,8 +16,21 @@
   var STATUS_TEXT = { done: "✅ 完成", doing: "🔵 进行中", fail: "❌ 失败", pend: "⚠️ 待处理", skip: "⏭️ 跳过", plan: "⏳ 计划" };
   // 功能完成状态文案
   var FEATURE_TEXT = { done: "✅ 完成", doing: "🔵 进行中", fail: "❌ 失败", pend: "⏸ 待决策", skip: "⏭️ 跳过" };
+  // ★ 步骤状态键集合 = 环形图 / 图例 / 分布聚合的【单一信源】。
+  //   此前 svgDonut 与 donutLegend 各自硬编码一份五键列表、两份副本都漏了 plan ⇒
+  //   未回填 actualStatus 的步骤（骨架期大部分 step 填 plan，由事后回填）不进分母，
+  //   于是「4 步完成 / 6 步未回填」渲染成「步骤完成 100%」，而同屏右侧表格列着 6 行 ⏳ 计划。
+  //   ⛔ 不得再就地写第二份键列表。
+  var STEP_KEYS = ["done", "doing", "fail", "pend", "skip", "plan"];
+  // unknown = actualStatus 填了契约外的值（"finish"/"完成" 等）。单列一键而不混进 plan：
+  // 混进去等于把"数据有问题"渲染成"还没开始"，二者在页面上完全同形。
+  var STEP_DONUT_KEYS = STEP_KEYS.concat(["unknown"]);
   // 状态 → 主题 CSS 变量（供 SVG 内联着色，切主题自动变色）
-  var STEP_VAR = { done: "--done", doing: "--half", fail: "--fail", pend: "--stuck", skip: "--skip" };
+  var STEP_VAR = { done: "--done", doing: "--half", fail: "--fail", pend: "--stuck", skip: "--skip",
+                   plan: "--plan", unknown: "--stuck" };
+  // 图例文案（去掉状态 emoji 的纯文本版，与 STEP_DONUT_KEYS 同序消费）
+  var STEP_LEGEND_TEXT = { done: "完成", doing: "进行中", fail: "失败", pend: "待处理", skip: "跳过",
+                           plan: "计划未回填", unknown: "未知状态" };
   // 功能状态 → act 卡片样式类
   var FEAT_ACT = { done: "up", doing: "dec", pend: "dec", fail: "bad", skip: "skip" };
   // 缺陷严重级 → 任务卡样式类 / 图标
@@ -160,9 +173,12 @@
   /** 步骤进度环形图 — done/doing/fail/pend/skip 分布 */
   function svgDonut(dist, size) {
     size = size || 220;
-    var KEYS = ["done", "doing", "fail", "pend", "skip"];
+    var KEYS = STEP_DONUT_KEYS;
     var cx = size / 2, cy = size / 2, r = size * 0.38, stroke = size * 0.14;
-    var total = KEYS.reduce(function (s, k) { return s + (dist[k] || 0); }, 0);
+    // 分母优先取 steps 实际条数（stepDist 落的 dist.total），键之和仅为兜底：
+    // 这样任何新状态值都不会把自己从分母里漏掉。
+    var keySum = KEYS.reduce(function (s, k) { return s + (dist[k] || 0); }, 0);
+    var total = dist.total != null ? dist.total : keySum;
     var circ = 2 * Math.PI * r, offset = 0, arcs = "";
     if (total === 0) {
       arcs = '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" class="chart-grid" stroke-width="' + stroke + '"/>';
@@ -176,16 +192,20 @@
         offset += len;
       });
     }
-    var doneRate = total ? Math.round((dist.done || 0) / total * 100) : 0;
+    // ★ 中心大字写「N/M 步已完成」而不是百分比：百分比在分母漏项时会直接读成 100%，
+    //   而「4/10」里的 10 与右侧「计划 vs 实际」表格行数对得上，读者一眼能发现对不上账。
+    var doneN = dist.done || 0;
+    var fsNum = total >= 100 ? size * 0.15 : size * 0.18;
     return '<svg viewBox="0 0 ' + size + ' ' + size + '" width="' + size + '" height="' + size + '" role="img">' + arcs
-      + '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="' + (size * 0.2) + '" font-weight="700" class="chart-center-num">' + doneRate + '%</text>'
-      + '<text x="' + cx + '" y="' + (cy + size * 0.13) + '" text-anchor="middle" font-size="' + (size * 0.065) + '" class="chart-center-sub">步骤完成</text></svg>';
+      + '<text x="' + cx + '" y="' + (cy + 2) + '" text-anchor="middle" font-size="' + fsNum + '" font-weight="700" class="chart-center-num">' + doneN + '/' + total + '</text>'
+      + '<text x="' + cx + '" y="' + (cy + size * 0.17) + '" text-anchor="middle" font-size="' + (size * 0.065) + '" class="chart-center-sub">步已完成</text></svg>';
   }
   function donutLegend(dist) {
-    var KEYS = ["done", "doing", "fail", "pend", "skip"];
-    var T = { done: "完成", doing: "进行中", fail: "失败", pend: "待处理", skip: "跳过" };
-    return '<div class="legend">' + KEYS.map(function (k) {
-      return '<span class="legend-item"><span class="legend-swatch" style="background:var(' + STEP_VAR[k] + ')"></span>' + T[k] + ' ' + (dist[k] || 0) + '</span>';
+    // unknown 恒为 0 时不进图例（避免长期挂一条无意义的「未知状态 0」）；>0 时必须露出来
+    return '<div class="legend">' + STEP_DONUT_KEYS.filter(function (k) {
+      return k !== "unknown" || (dist.unknown || 0) > 0;
+    }).map(function (k) {
+      return '<span class="legend-item"><span class="legend-swatch" style="background:var(' + STEP_VAR[k] + ')"></span>' + STEP_LEGEND_TEXT[k] + ' ' + (dist[k] || 0) + '</span>';
     }).join("") + '</div>';
   }
   function trendLegend() {
@@ -204,9 +224,20 @@
 
   // 把 steps 聚合成环形分布
   function stepDist(b) {
-    var d = { done: 0, doing: 0, fail: 0, pend: 0, skip: 0 };
-    (b.steps || []).forEach(function (s) { var k = s.actualStatus || "plan"; if (d[k] != null) d[k]++; });
+    var d = { done: 0, doing: 0, fail: 0, pend: 0, skip: 0, plan: 0, unknown: 0, total: 0 };
+    (b.steps || []).forEach(function (s) {
+      d.total++;
+      var k = s.actualStatus || "plan";
+      // 白名单判定：契约外的值进 unknown，⛔ 不静默丢弃（丢弃会让环形分母少于步骤数）
+      if (STEP_KEYS.indexOf(k) >= 0) d[k]++; else d.unknown++;
+    });
     return d;
+  }
+  /** 步骤状态 → {cls, text}：未知值显式标出原值，而不是静默当「⏳ 计划」+ 把原值当 class（样式会丢） */
+  function stepStatusCell(v) {
+    if (v == null || v === "") return { cls: "plan", text: STATUS_TEXT.plan };
+    if (STEP_KEYS.indexOf(v) >= 0) return { cls: v, text: STATUS_TEXT[v] };
+    return { cls: "unknown", text: "⚠️ 未知状态(" + v + ")" };
   }
   function resultKind(r) { return r === "success" ? "done" : r === "failed" ? "fail" : "pend"; }
   function resultText(r) { return r === "success" ? "✅ 成功" : r === "failed" ? "❌ 失败" : "⚠️ 部分成功"; }
@@ -374,16 +405,36 @@
     // 仅当显式给了绝对 URL（跨域/跨主机覆盖）才用 links.testReport，否则按当前页目录运行时推导兄弟报告路径
     var testLink = (b.links && b.links.testReport && /^https?:/i.test(b.links.testReport)) ? b.links.testReport : (testReportBase() + "index.html#/build/" + encodeURIComponent(b.build));
     var funnelInner;
-    if (ts.total != null) {
+    // ★ 判据是 pendingBrowserTest，⛔ 不是 `ts.total != null`：骨架态契约落的是
+    //   `{total:0, pass:0, fail:0, passRate:null, pendingBrowserTest:true}` —— `0 != null` 恒真，
+    //   于是漏斗渲染「用例总数 0 / 通过 0 / 通过率 —」，读者读到「测过了，0 条」，
+    //   事实是「还没测」；而专为此设的 pendingBrowserTest 一字未用。
+    if (ts.pendingBrowserTest) {
+      funnelInner = '<div class="empty-tip">⏳ <b>待浏览器实测</b>：本 build 的测试摘要尚未 finalize（当前为执行计划骨架，用例计数无意义）。'
+        + (ts.note ? '<br>' + esc(ts.note) : '')
+        + '<br>完整用例 / 截图见 → <a href="' + esc(testLink) + '">AI 测试报告（该 build 子页）</a></div>';
+    } else if (ts.total != null) {
+      // ★ unit=dimension：total 是「已核维度数」而不是用例数（静态验收无用例计数）。
+      //   丢掉这个单位标注就会把 15 个维度读成 15 条用例 —— 执行体接着只能编用例数字。
+      var byDim = ts.unit === "dimension";
+      var L = byDim ? { total: "已核维度数", pass: "通过维度", fail: "失败维度", rate: "维度通过率" }
+                    : { total: "用例总数", pass: "通过", fail: "失败", rate: "通过率" };
+      var scopeSub = byDim ? "静态验收：按维度计，非用例数" : "本次执行覆盖范围";
+      var notTested = ts.browserTested === false
+        ? '<span class="status-pill stuck">本 build 未经浏览器实测</span> '
+        : '';
       funnelInner = '<div class="funnel">'
-        + fstep("neutral", ts.total, "用例总数", "本次执行覆盖范围")
-        + fstep("good", ts.pass != null ? ts.pass : "—", "通过", (ts.passRate != null ? pct(ts.passRate) : "") + " 通过率")
-        + fstep("bad", ts.fail != null ? ts.fail : "—", "失败", "需关注 / 已记录")
-        + fstep("good", ts.passRate != null ? pct(ts.passRate) : "—", "通过率", ts.coverage != null ? ("覆盖率 " + pct(ts.coverage)) : "")
+        + fstep("neutral", ts.total, L.total, scopeSub)
+        + fstep("good", ts.pass != null ? ts.pass : "—", L.pass, (ts.passRate != null ? pct(ts.passRate) : "") + " " + L.rate)
+        + fstep("bad", ts.fail != null ? ts.fail : "—", L.fail, "需关注 / 已记录")
+        + fstep("good", ts.passRate != null ? pct(ts.passRate) : "—", L.rate, ts.coverage != null ? ("覆盖率 " + pct(ts.coverage)) : "")
         + '</div>'
+        + (notTested || ts.note ? '<div class="funnel-link">' + notTested + (ts.note ? esc(ts.note) : '') + '</div>' : '')
         + '<div class="funnel-link">完整用例 / 截图见 → <a href="' + esc(testLink) + '">AI 测试报告（该 build 子页）</a></div>';
     } else {
-      funnelInner = '<div class="empty-tip">本 build 暂无测试摘要（待浏览器实测 finalize）。<br>完整用例 / 截图见 → <a href="' + esc(testLink) + '">AI 测试报告（该 build 子页）</a></div>';
+      funnelInner = '<div class="empty-tip">本 build 暂无测试摘要（待浏览器实测 finalize）。'
+        + (ts.note ? '<br>' + esc(ts.note) : '')
+        + '<br>完整用例 / 截图见 → <a href="' + esc(testLink) + '">AI 测试报告（该 build 子页）</a></div>';
     }
 
     // —— 4 步骤执行（环形 + 计划 vs 实际）——
@@ -391,8 +442,8 @@
     var stepRows = (b.steps || []).map(function (s) {
       return '<tr><td class="wrap"><strong>' + esc(s.name) + '</strong></td>'
         + '<td><span class="step-type">' + esc(s.type || "—") + '</span></td>'
-        + '<td><span class="badge ' + (s.plannedStatus || "plan") + '">' + esc(STATUS_TEXT[s.plannedStatus] || "⏳ 计划") + '</span></td>'
-        + '<td><span class="badge ' + (s.actualStatus || "plan") + '">' + esc(STATUS_TEXT[s.actualStatus] || "⏳ 计划") + '</span></td>'
+        + '<td><span class="badge ' + stepStatusCell(s.plannedStatus).cls + '">' + esc(stepStatusCell(s.plannedStatus).text) + '</span></td>'
+        + '<td><span class="badge ' + stepStatusCell(s.actualStatus).cls + '">' + esc(stepStatusCell(s.actualStatus).text) + '</span></td>'
         + '<td class="muted">' + esc(s.duration || "—") + '</td>'
         + '<td class="wrap muted">' + esc(s.output || "") + '</td></tr>';
     }).join("") || '<tr><td colspan="6" class="empty-tip">无步骤数据</td></tr>';
@@ -469,8 +520,15 @@
     var n = 0, html = head;
     html += chap(++n, "执行概览", "整体" + (SK_WORD[sk] || "完成") + " · 待跟进 " + (o.pendingCount != null ? o.pendingCount : 0) + " 项", cockpit);
     html += chap(++n, "需求功能清单", featCount + " 项", featInner);
-    html += chap(++n, "测试详情", ts.total != null ? ("通过率 " + (ts.passRate != null ? pct(ts.passRate) : "—")) : "待实测", funnelInner);
-    html += chap(++n, "步骤执行", (b.steps || []).length + " 步", stepsInner);
+    html += chap(++n, "测试详情",
+      ts.pendingBrowserTest ? "待实测"
+        : (ts.total != null
+            ? ((ts.unit === "dimension" ? "维度通过率 " : "通过率 ") + (ts.passRate != null ? pct(ts.passRate) : "—"))
+            : "待实测"),
+      funnelInner);
+    html += chap(++n, "步骤执行", (b.steps || []).length + " 步"
+      + (dist.plan ? " · " + dist.plan + " 步未回填实际状态" : "")
+      + (dist.unknown ? " · ⚠️ " + dist.unknown + " 步状态值非法" : ""), stepsInner);
     html += chap(++n, "缺陷清单", defectCount + " 项", defectsInner);
     html += chap(++n, "风险与建议", riskCount ? (riskCount + " 项 · " + riskSub) : "无", risksInner);
     if (incRows) html += chap(++n, "异常处置", (b.incidents || []).length + " 项", incidentsInner);

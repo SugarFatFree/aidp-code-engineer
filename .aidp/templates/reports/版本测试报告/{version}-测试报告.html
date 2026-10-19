@@ -28,6 +28,8 @@
     /* ========== 内联样式（卡片式 / 柔和阴影 / 响应式 / 状态色 / 打印友好） ========== */
     :root {
       --c-pass:#16a34a; --c-fail:#dc2626; --c-block:#f59e0b; --c-skip:#9ca3af;
+      /* 不适用（na）：与 AI测试报告 的同名状态同色；skip=以后要测、na=永远不测，二者须视觉可区分 */
+      --c-na:#64748b;
       --c-brand:#2563eb; --c-brand-soft:#eff6ff;
       --c-text:#1f2937; --c-text-2:#6b7280; --c-border:#e5e7eb; --c-bg:#f3f4f6; --c-card:#fff;
       --radius:12px; --radius-sm:8px;
@@ -74,6 +76,7 @@
     .kpi.accent-fail  .kpi-value { color:var(--c-fail); }
     .kpi.accent-block .kpi-value { color:var(--c-block); }
     .kpi.accent-skip  .kpi-value { color:var(--c-skip); }
+    .kpi.accent-na    .kpi-value { color:var(--c-na); }
     .kpi.accent-brand .kpi-value { color:var(--c-brand); }
 
     /* 图表区 */
@@ -99,9 +102,11 @@
     .badge.fail { background:#fee2e2; color:var(--c-fail); }
     .badge.block { background:#fef3c7; color:#b45309; }
     .badge.skip { background:#f3f4f6; color:var(--c-skip); }
+    .badge.na { background:#f1f5f9; color:var(--c-na); }
     .sev { font-weight:700; } .sev.P0,.sev.P1 { color:var(--c-fail); } .sev.P2 { color:var(--c-block); } .sev.P3 { color:var(--c-text-2); }
     .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; }
     .dot.pass{background:var(--c-pass)} .dot.fail{background:var(--c-fail)} .dot.block{background:var(--c-block)} .dot.skip{background:var(--c-skip)}
+    .dot.na{background:var(--c-na)}
 
     .rate-bar { display:flex; align-items:center; gap:8px; min-width:120px; }
     .rate-bar .track { flex:1; height:6px; border-radius:999px; background:#e5e7eb; overflow:hidden; }
@@ -186,9 +191,18 @@
 
   <!--
     ========== 内联数据（替换为真实数据）==========
-    数据契约 schema 与 AI测试报告 完全一致（见 ../README.md）。
+    字段 schema 与 AI测试报告 同源（见 ../README.md「字段 schema」），但本报告按定位做两处**刻意裁剪**：
+      · 不内联 screenshots（本报告不含任何应用截图，发布链「剥离后内联」亦要求删除截图字段）；
+      · build / buildNo / version 等 build 标识字段在真实产出时同样删除（源码里也不出现 build 号）。
     保留多 build 数组（schema 不变），但版本级报告**只渲染 buildNo 最大的那个 build**。
-    以下两份示例：最后一个 build 通过率更高，体现缺陷收敛后的最终验收态。
+    ★ 以下示例**逐项自洽**，改数据时须保持：
+      · summary.total == cases[] 条数（契约硬要求：cases[] 是完整清单，⛔ 不得只列摘录——
+        摘录会把未列出的用例静默计入已测，分母也就无从溯源）；
+      · summary 五态之和 == summary.total；suites[] 各态之和 == summary 对应各态；
+      · summary.passRate == pass / (total - na)，na 不进分母；
+      · 有 renderMode 就必须有 renderModeSource（环境事实类字段成对，四选一）。
+    两份示例：后一个 build 通过率更高，体现缺陷收敛后的最终验收态；后者含 1 条 na 用例，
+    演示「不适用」在 KPI / 分布 / 套件表 / 结论口径里的完整走向。
   -->
   <script>
     window.__BUILDS__ = [
@@ -197,19 +211,31 @@
         startedAt: "2026-06-14 10:00", finishedAt: "2026-06-14 11:30",
         trigger: "PRD 更新", branch: "feature/autopilot-V0.1.0",
         deployMode: "local", testUrl: "http://localhost:5173", renderMode: "headless", driver: "cli",
-        summary: { total: 50, pass: 42, fail: 5, block: 2, skip: 1, passRate: 0.84 },
+        // renderMode 有值 ⇒ renderModeSource 必填（四选一：显式指定 / 复用已有实例(含来源) /
+        // 无头不可用降级(含原因) / 运行取证(方法)）；⛔ 只写值不写来源即示范「示例值被原样留下」反模式
+        renderModeSource: "显式指定",
+        // na 缺省即 0（存量报告兼容）：本轮无「本场景不存在」的用例，故不写该键
+        summary: { total: 13, pass: 7, fail: 4, block: 1, skip: 1, passRate: 0.5385 },
         suites: [
-          { id: "SUITE-001", name: "用户管理", total: 12, pass: 11, fail: 1, block: 0, skip: 0 },
-          { id: "SUITE-002", name: "订单中心", total: 16, pass: 12, fail: 3, block: 1, skip: 0 },
-          { id: "SUITE-003", name: "数据看板", total: 12, pass: 10, fail: 1, block: 1, skip: 0 },
-          { id: "SUITE-004", name: "系统设置", total: 10, pass: 9, fail: 0, block: 0, skip: 1 }
+          { id: "SUITE-001", name: "用户管理", total: 4, pass: 3, fail: 1, block: 0, skip: 0 },
+          { id: "SUITE-002", name: "订单中心", total: 4, pass: 1, fail: 2, block: 1, skip: 0 },
+          { id: "SUITE-003", name: "数据看板", total: 3, pass: 2, fail: 1, block: 0, skip: 0 },
+          { id: "SUITE-004", name: "系统设置", total: 2, pass: 1, fail: 0, block: 0, skip: 1 }
         ],
         cases: [
-          { id: "T-001-01", title: "账号密码登录成功", suite: "SUITE-001", result: "pass", note: "", screenshot: "screenshots/t-001-01.png" },
-          { id: "T-001-03", title: "新增用户必填校验", suite: "SUITE-001", result: "fail", note: "手机号未做格式校验", screenshot: "screenshots/t-001-03.png" },
-          { id: "T-002-03", title: "退订接口返回 500", suite: "SUITE-002", result: "fail", note: "后端 NPE，见缺陷 C-001", screenshot: "screenshots/t-002-03.png" },
-          { id: "T-002-05", title: "批量发货阻塞", suite: "SUITE-002", result: "block", note: "依赖物流接口未交付", screenshot: "screenshots/t-002-05.png" },
-          { id: "T-004-02", title: "短信网关配置（暂缓）", suite: "SUITE-004", result: "skip", note: "本期不交付，忽略", screenshot: "" }
+          { id: "T-001-01", title: "账号密码登录成功", suite: "SUITE-001", result: "pass", note: "" },
+          { id: "T-001-02", title: "登录失败错误提示", suite: "SUITE-001", result: "pass", note: "" },
+          { id: "T-001-03", title: "新增用户必填校验", suite: "SUITE-001", result: "fail", note: "手机号未做格式校验" },
+          { id: "T-001-04", title: "用户列表分页", suite: "SUITE-001", result: "pass", note: "" },
+          { id: "T-002-01", title: "订单列表条件筛选", suite: "SUITE-002", result: "pass", note: "" },
+          { id: "T-002-03", title: "退订接口返回 500", suite: "SUITE-002", result: "fail", note: "后端 NPE，见缺陷 C-001" },
+          { id: "T-002-04", title: "导出订单 Excel 文件名乱码", suite: "SUITE-002", result: "fail", note: "见缺陷 C-002" },
+          { id: "T-002-05", title: "批量发货阻塞", suite: "SUITE-002", result: "block", note: "依赖物流接口未交付" },
+          { id: "T-003-01", title: "看板概览卡片加载", suite: "SUITE-003", result: "pass", note: "" },
+          { id: "T-003-02", title: "看板趋势图切换近 7 天", suite: "SUITE-003", result: "fail", note: "切换后不刷新，见缺陷 C-003" },
+          { id: "T-003-03", title: "看板明细下钻", suite: "SUITE-003", result: "pass", note: "" },
+          { id: "T-004-01", title: "系统参数保存生效", suite: "SUITE-004", result: "pass", note: "" },
+          { id: "T-004-02", title: "短信网关配置（暂缓）", suite: "SUITE-004", result: "skip", note: "本期不交付，下一版再测" }
         ],
         defects: [
           { id: "C-001", title: "退订接口返回 500（后端 NPE）", severity: "P1", caseId: "T-002-03", status: "待修复" },
@@ -229,27 +255,34 @@
         startedAt: "2026-06-15 09:30", finishedAt: "2026-06-15 10:40",
         trigger: "缺陷修复回归", branch: "feature/autopilot-V0.1.0",
         deployMode: "cloud", testUrl: "https://uat.example.com", renderMode: "headed", driver: "mcp",
-        summary: { total: 52, pass: 50, fail: 1, block: 1, skip: 0, passRate: 0.962 },
+        renderModeSource: "复用已有实例(用户已开的 Chrome 9222 调试端口)",
+        // passRate = pass / (total - na) = 9 / (11 - 1) = 0.9 —— ⛔ 不是 9/11：
+        // na 为「本场景不存在该功能、永远不测」，计进分母等于拿一个永远达不到的标准衡量本轮
+        summary: { total: 11, pass: 9, fail: 1, block: 0, skip: 0, na: 1, passRate: 0.9 },
         suites: [
-          { id: "SUITE-001", name: "用户管理", total: 12, pass: 12, fail: 0, block: 0, skip: 0 },
-          { id: "SUITE-002", name: "订单中心", total: 18, pass: 17, fail: 0, block: 1, skip: 0 },
-          { id: "SUITE-003", name: "数据看板", total: 12, pass: 11, fail: 1, block: 0, skip: 0 },
-          { id: "SUITE-004", name: "系统设置", total: 10, pass: 10, fail: 0, block: 0, skip: 0 }
+          { id: "SUITE-001", name: "用户管理", total: 4, pass: 4, fail: 0, block: 0, skip: 0, na: 0 },
+          { id: "SUITE-002", name: "订单中心", total: 3, pass: 3, fail: 0, block: 0, skip: 0, na: 0 },
+          { id: "SUITE-003", name: "数据看板", total: 2, pass: 1, fail: 1, block: 0, skip: 0, na: 0 },
+          { id: "SUITE-004", name: "系统设置", total: 2, pass: 1, fail: 0, block: 0, skip: 0, na: 1 }
         ],
         cases: [
-          { id: "T-001-03", title: "新增用户必填校验", suite: "SUITE-001", result: "pass", note: "已补手机号校验，回归通过", screenshot: "screenshots/t-001-03.png" },
-          { id: "T-002-03", title: "退订接口返回正常", suite: "SUITE-002", result: "pass", note: "C-001 已修复", screenshot: "screenshots/t-002-03.png" },
-          { id: "T-002-05", title: "批量发货阻塞", suite: "SUITE-002", result: "block", note: "物流接口仍未交付", screenshot: "screenshots/t-002-05.png" },
-          { id: "T-003-04", title: "看板导出 PDF", suite: "SUITE-003", result: "fail", note: "PDF 中文字体缺失", screenshot: "screenshots/t-003-04.png" }
+          { id: "T-001-01", title: "账号密码登录成功", suite: "SUITE-001", result: "pass", note: "" },
+          { id: "T-001-02", title: "登录失败错误提示", suite: "SUITE-001", result: "pass", note: "" },
+          { id: "T-001-03", title: "新增用户必填校验", suite: "SUITE-001", result: "pass", note: "已补手机号格式校验，回归通过" },
+          { id: "T-001-04", title: "用户列表分页", suite: "SUITE-001", result: "pass", note: "" },
+          { id: "T-002-01", title: "订单列表条件筛选", suite: "SUITE-002", result: "pass", note: "" },
+          { id: "T-002-03", title: "退订接口返回正常", suite: "SUITE-002", result: "pass", note: "C-001 已修复" },
+          { id: "T-002-04", title: "导出订单 Excel 文件名正常", suite: "SUITE-002", result: "pass", note: "C-002 已修复" },
+          { id: "T-003-01", title: "看板概览卡片加载", suite: "SUITE-003", result: "pass", note: "" },
+          { id: "T-003-04", title: "看板导出 PDF", suite: "SUITE-003", result: "fail", note: "PDF 中文字体缺失，见缺陷 C-005" },
+          { id: "T-004-01", title: "系统参数保存生效", suite: "SUITE-004", result: "pass", note: "" },
+          { id: "T-004-02", title: "短信网关配置", suite: "SUITE-004", result: "na", note: "本项目不含短信通道，该功能在本场景不存在、永远不测（na 必须写明理由）" }
         ],
         defects: [
           { id: "C-005", title: "看板导出 PDF 中文字体缺失", severity: "P3", caseId: "T-003-04", status: "待修复" }
         ],
         runtimeErrors: [
-          { id: "R-004", desc: "批量发货依赖物流接口未交付（阻塞）", url: "/order", status: "待第三方交付" }
-        ],
-        screenshots: [
-          { step: "退订成功", path: "screenshots/t-002-03.png", caseId: "T-002-03" }
+          { id: "R-004", desc: "GET /api/order/logistics/track 偶发 504（重试后成功）", url: "/order", status: "待第三方优化" }
         ]
       }
     ];
@@ -259,16 +292,33 @@
   <script>
   (function () {
     "use strict";
-    var COLORS = { pass:"#16a34a", fail:"#dc2626", block:"#f59e0b", skip:"#9ca3af", brand:"#2563eb" };
-    var RESULT_TEXT = { pass:"通过", fail:"失败", block:"阻塞", skip:"忽略" };
-    var RESULT_KEYS = ["pass","fail","block","skip"];
+    var COLORS = { pass:"#16a34a", fail:"#dc2626", block:"#f59e0b", skip:"#9ca3af", na:"#64748b", brand:"#2563eb" };
+    var RESULT_TEXT = { pass:"通过", fail:"失败", block:"阻塞", skip:"忽略", na:"不适用" };
+    // 契约五态（单一信源见 ../README.md）：na = 本场景不存在该功能、永远不测
+    // （≠ block 的"以后能测"、≠ skip 的"以后要测"）。**不进通过率分母，但必须单列展示**——
+    // 少了它，本版有 na 用例时「总用例数」与分布四行之和不等，差额在页面任何位置都不出现。
+    var RESULT_KEYS = ["pass","fail","block","skip","na"];
 
     /** HTML 转义，防止数据中的特殊字符破坏结构 */
     function esc(s){ if(s==null) return ""; return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+    // ★ 比率单位守卫（与 AI测试报告 / AI执行报告 两份 SPA 同口径，单一信源见 ../README.md
+    //   「比率类字段单位口径」）：契约恒 0~1 小数（1.0=100%）。收到 >1（误填 0~100 口径，
+    //   如 100.0）或字符串 → 归一 + 一次性告警（只兜底、不静默，不再渲染出 8400%）。
+    //   这是**对外单文件交付报告**，误填时没有第二处可发现，故必须就地兜底。
+    var _rateWarned = false;
+    function rate01(v){
+      if(typeof v === "string"){ var p = parseFloat(v); v = isNaN(p) ? 0 : p; }
+      if(typeof v !== "number" || isNaN(v)) return 0;
+      if(v > 1.001){
+        if(!_rateWarned){ console.warn("[report] 比率字段口径异常：收到 "+v+"（契约为 0~1 小数，100% 应写 1.0），已按 0~100 兜底归一，请修生成端数据"); _rateWarned = true; }
+        return v/100;
+      }
+      return v;
+    }
     /** 比率（0~1）转百分比文本 */
-    function pct(v){ return Math.round((v||0)*100)+"%"; }
+    function pct(v){ return Math.round(rate01(v)*100)+"%"; }
     /** 比率（0~1）转整数百分比数值 */
-    function pctNum(v){ return Math.round((v||0)*100); }
+    function pctNum(v){ return Math.round(rate01(v)*100); }
 
     /* ---- SVG：通过率环形图（中心大字通过率%） ---- */
     function svgDonut(dist, size){
@@ -285,9 +335,12 @@
           offset+=len;
         });
       }
-      var passRate = total? Math.round((dist.pass||0)/total*100):0;
+      // 分母 = total - na（契约口径）：na 不进通过率分母，否则本环形中心、头部 KPI、
+      // 套件合计行会给出三个互不相同的通过率。
+      var _denom = total - (dist.na||0);
+      var passRate = _denom > 0 ? Math.round((dist.pass||0)/_denom*100) + "%" : "—";
       return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" role="img" aria-label="通过率环形图">'+arcs
-        +'<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-size="'+(size*0.22)+'" font-weight="700" fill="#1f2937">'+passRate+'%</text>'
+        +'<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-size="'+(size*0.22)+'" font-weight="700" fill="#1f2937">'+passRate+'</text>'
         +'<text x="'+cx+'" y="'+(cy+size*0.14)+'" text-anchor="middle" font-size="'+(size*0.06)+'" fill="#6b7280">通过率</text></svg>';
     }
     /** 图例（与环形图共享分布） */
@@ -357,10 +410,15 @@
 
     // 最终验收态 = 最后收敛的一轮（buildNo 最大）；版本级报告只用这一份聚合
     var FINAL = BUILDS[BUILDS.length-1];
-    var summary = FINAL.summary || { total:0, pass:0, fail:0, block:0, skip:0, passRate:0 };
-    var dist = { pass:summary.pass||0, fail:summary.fail||0, block:summary.block||0, skip:summary.skip||0 };
+    var summary = FINAL.summary || { total:0, pass:0, fail:0, block:0, skip:0, na:0, passRate:0 };
+    // 五态分布按 RESULT_KEYS 取，⛔ 不再手写四键字面量（漏 na 时「总用例数」与分布之和不等）
+    var dist = {};
+    RESULT_KEYS.forEach(function(k){ dist[k] = summary[k] || 0; });
     var total = summary.total != null ? summary.total : RESULT_KEYS.reduce(function(s,k){return s+dist[k];},0);
-    var passRate = (summary.passRate != null) ? summary.passRate : (total? dist.pass/total : 0);
+    // ★ 通过率分母 = total - na（契约单一信源见 ../README.md）：na 为「本场景不存在该功能、
+    //   永远不测」，计进分母等于拿一个永远达不到的标准去衡量本轮。
+    var passDenom = Math.max(0, total - (summary.na || 0));
+    var passRate = (summary.passRate != null) ? summary.passRate : (passDenom? dist.pass/passDenom : 0);
 
     // 版本号优先取元信息，其次从 build 推断
     var version = META.version || FINAL.version || "";
@@ -436,7 +494,8 @@
       + '<div class="kpi accent-fail"><div class="kpi-label">失败</div><div class="kpi-value">'+dist.fail+'</div></div>'
       + '<div class="kpi accent-block"><div class="kpi-label">阻塞</div><div class="kpi-value">'+dist.block+'</div></div>'
       + '<div class="kpi accent-skip"><div class="kpi-label">忽略</div><div class="kpi-value">'+dist.skip+'</div></div>'
-      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">'+pct(passRate)+'</div></div>'
+      + '<div class="kpi accent-na"><div class="kpi-label">不适用</div><div class="kpi-value">'+dist.na+'</div><div class="kpi-sub">本场景不存在该功能，不计通过率分母</div></div>'
+      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">'+pct(passRate)+'</div><div class="kpi-sub">'+dist.pass+' / '+passDenom+' 通过'+(dist.na? '（已剔除 '+dist.na+' 条不适用）':'')+'</div></div>'
       + '</div></section>';
 
     /* ---- ③ 图表：通过率环形图 + 用例分布 ---- */
@@ -451,18 +510,41 @@
 
     /* ---- ④ 套件结果表 ---- */
     var suites = FINAL.suites || [];
-    var suiteTotals = { total:0, pass:0, fail:0, block:0, skip:0 };
+    var suiteTotals = { total:0, pass:0, fail:0, block:0, skip:0, na:0 };
     var suiteRows = suites.map(function(s){
-      var st = s.total != null ? s.total : ((s.pass||0)+(s.fail||0)+(s.block||0)+(s.skip||0));
-      var rate = st ? (s.pass||0)/st : 0;
+      var st = s.total != null ? s.total : RESULT_KEYS.reduce(function(a,k){return a+(s[k]||0);},0);
+      // 套件通过率与头部 KPI 同口径：分母剔除 na，⛔ 不得用 st 直接做分母（那会得出第二个通过率）
+      var sDenom = Math.max(0, st - (s.na||0));
+      var rate = sDenom ? (s.pass||0)/sDenom : 0;
       suiteTotals.total += st; suiteTotals.pass += s.pass||0; suiteTotals.fail += s.fail||0;
-      suiteTotals.block += s.block||0; suiteTotals.skip += s.skip||0;
-      return '<tr><td class="wrap">'+esc(s.name)+'</td><td>'+st+'</td><td style="color:'+COLORS.pass+'">'+(s.pass||0)+'</td><td style="color:'+(s.fail?COLORS.fail:"")+'">'+(s.fail||0)+'</td><td style="color:'+(s.block?COLORS.block:"")+'">'+(s.block||0)+'</td><td>'+(s.skip||0)+'</td>'
+      suiteTotals.block += s.block||0; suiteTotals.skip += s.skip||0; suiteTotals.na += s.na||0;
+      return '<tr><td class="wrap">'+esc(s.name)+'</td><td>'+st+'</td><td style="color:'+COLORS.pass+'">'+(s.pass||0)+'</td><td style="color:'+(s.fail?COLORS.fail:"")+'">'+(s.fail||0)+'</td><td style="color:'+(s.block?COLORS.block:"")+'">'+(s.block||0)+'</td><td>'+(s.skip||0)+'</td><td style="color:'+((s.na||0)?COLORS.na:"")+'">'+(s.na||0)+'</td>'
         + '<td><div class="rate-bar"><div class="track"><div class="fill" style="width:'+pct(rate)+';background:'+(rate>=0.9?COLORS.pass:rate>=0.6?COLORS.block:COLORS.fail)+'"></div></div><span class="rate-num">'+pct(rate)+'</span></div></td></tr>';
-    }).join("") || '<tr><td colspan="7" class="empty-tip">无套件数据</td></tr>';
-    var totalRate = suiteTotals.total ? suiteTotals.pass/suiteTotals.total : 0;
-    var suiteFoot = suites.length ? ('<tfoot><tr><td>合计</td><td>'+suiteTotals.total+'</td><td>'+suiteTotals.pass+'</td><td>'+suiteTotals.fail+'</td><td>'+suiteTotals.block+'</td><td>'+suiteTotals.skip+'</td><td>'+pct(totalRate)+'</td></tr></tfoot>') : '';
-    var suiteSec = '<section class="section"><div class="section-title">测试套件结果</div><div class="card"><div class="table-wrap"><table class="report-table"><thead><tr><th>测试套件</th><th>总数</th><th>通过</th><th>失败</th><th>阻塞</th><th>忽略</th><th>通过率</th></tr></thead><tbody>'+suiteRows+'</tbody>'+suiteFoot+'</table></div></div></section>';
+    }).join("") || '<tr><td colspan="8" class="empty-tip">无套件数据</td></tr>';
+    var footDenom = Math.max(0, suiteTotals.total - suiteTotals.na);
+    var totalRate = footDenom ? suiteTotals.pass/footDenom : 0;
+    var suiteFoot = suites.length ? ('<tfoot><tr><td>合计</td><td>'+suiteTotals.total+'</td><td>'+suiteTotals.pass+'</td><td>'+suiteTotals.fail+'</td><td>'+suiteTotals.block+'</td><td>'+suiteTotals.skip+'</td><td>'+suiteTotals.na+'</td><td>'+pct(totalRate)+'</td></tr></tfoot>') : '';
+    var suiteSec = '<section class="section"><div class="section-title">测试套件结果</div><div class="card"><div class="table-wrap"><table class="report-table"><thead><tr><th>测试套件</th><th>总数</th><th>通过</th><th>失败</th><th>阻塞</th><th>忽略</th><th>不适用</th><th>通过率</th></tr></thead><tbody>'+suiteRows+'</tbody>'+suiteFoot+'</table></div></div></section>';
+
+    /* ---- ④bis 用例明细表（逐条明细 = 分母的溯源依据） ----
+       发布流程要求把该 build 的 cases 内联进本模板（见 /version 发布链「剥离后内联」），
+       契约又要求 cases[] 是**完整**用例清单、不得只列摘录 —— 若此处无渲染方，那份被强制
+       内联的完整清单就只是死负载：报告上「总用例 50 / 通过 40」谁也无法回溯到哪 50 条。
+       列集合刻意不含截图列与 build 列（本报告定位：不出现任何 build 号 / 任何截图路径）。 */
+    var caseList = FINAL.cases || [];
+    var caseRows = caseList.map(function(c){
+      var r = c.result || "";
+      return '<tr><td>'+esc(c.id)+'</td><td class="wrap">'+esc(c.title)+'</td><td class="muted">'+esc(c.suite)+'</td>'
+        + '<td><span class="badge '+esc(r)+'">'+esc(RESULT_TEXT[r] || r || "—")+'</span></td>'
+        + '<td class="wrap muted">'+esc(c.note)+'</td></tr>';
+    }).join("") || '<tr><td colspan="5" class="empty-tip">无用例明细</td></tr>';
+    // 自洽守卫：内联 cases 条数与 summary.total 不等 = 分母无法溯源（摘录会把未列出的用例静默计入已测）。
+    // ⛔ 不静默：就地标出差额，否则页面上「总用例 50」与 5 行明细并存而无任何提示。
+    var caseGap = (total && caseList.length && caseList.length !== total)
+      ? '<div class="empty-tip" style="text-align:left">⚠️ 内联用例明细 '+caseList.length+' 条，与总用例数 '+total+' 不符：契约要求 cases[] 为完整清单（见 ../README.md），请修生成端数据。</div>'
+      : '';
+    var caseSec = '<section class="section"><div class="section-title">用例明细（'+caseList.length+' 条）</div><div class="card">'+caseGap
+      + '<div class="table-wrap"><table class="report-table"><thead><tr><th>用例 ID</th><th>标题</th><th>套件</th><th>结果</th><th>备注</th></tr></thead><tbody>'+caseRows+'</tbody></table></div></div></section>';
 
     /* ---- ⑤ 缺陷汇总表（缺陷 + 运行时错误合并去重；无 build 列、无截图列） ---- */
     var defRows = defectList.map(function(d){
@@ -474,19 +556,21 @@
 
     /* ---- ⑥ 测试结论 ---- */
     var conclText = "", conclList = "";
+    // 有 na 时必须写明分母口径，否则「共执行 11 条、通过 9 条、通过率 90%」三个数对不上账
+    var naNote = dist.na ? '（其中 '+dist.na+' 条不适用、不计入通过率分母）' : '';
     if(verdict==="ok"){
-      conclText = '本版本共执行 '+total+' 条测试用例，全部通过，通过率 '+pct(passRate)+'，无未关闭缺陷。测试结论：<strong>全部通过，达到发布标准</strong>。';
+      conclText = '本版本共执行 '+total+' 条测试用例'+naNote+'，全部通过，通过率 '+pct(passRate)+'，无未关闭缺陷。测试结论：<strong>全部通过，达到发布标准</strong>。';
     } else if(verdict==="warn"){
-      conclText = '本版本共执行 '+total+' 条测试用例，通过 '+dist.pass+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷（均为非阻断级）。测试结论：<strong>核心功能通过，存在可接受的遗留缺陷</strong>，建议发布并跟踪以下遗留项：';
+      conclText = '本版本共执行 '+total+' 条测试用例'+naNote+'，通过 '+dist.pass+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷（均为非阻断级）。测试结论：<strong>核心功能通过，存在可接受的遗留缺陷</strong>，建议发布并跟踪以下遗留项：';
       conclList = '<ul>'+openDefects.map(function(d){ return '<li><span class="sev '+esc(d.severity)+'">'+esc(d.severity)+'</span> '+esc(d.id)+' '+esc(d.title)+'（'+esc(d.status)+'）</li>'; }).join("")+'</ul>';
     } else {
-      conclText = '本版本共执行 '+total+' 条测试用例，通过 '+dist.pass+' 条，失败 '+dist.fail+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷。测试结论：<strong>未通过验收，需修复后重测</strong>。待处理缺陷：';
+      conclText = '本版本共执行 '+total+' 条测试用例'+naNote+'，通过 '+dist.pass+' 条，失败 '+dist.fail+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷。测试结论：<strong>未通过验收，需修复后重测</strong>。待处理缺陷：';
       conclList = '<ul>'+openDefects.map(function(d){ return '<li><span class="sev '+esc(d.severity)+'">'+esc(d.severity)+'</span> '+esc(d.id)+' '+esc(d.title)+'（'+esc(d.status)+'）</li>'; }).join("")+'</ul>';
     }
     var conclSec = '<section class="section"><div class="section-title">测试结论</div><div class="conclusion '+verdict+'"><div class="c-title">'+vm.icon+' '+esc(vm.label.replace(/^[^\s]+\s/,''))+'</div><div>'+conclText+'</div>'+conclList+'</div></section>';
 
-    /* ---- 装配输出（顺序：信息表 → KPI → 图表 → 套件 → 缺陷 → 结论）---- */
-    app.innerHTML = infoSec + kpiSec + chartSec + suiteSec + defSec + conclSec;
+    /* ---- 装配输出（顺序：信息表 → KPI → 图表 → 套件 → 用例明细 → 缺陷 → 结论）---- */
+    app.innerHTML = infoSec + kpiSec + chartSec + suiteSec + caseSec + defSec + conclSec;
 
     /* ---- 页脚：生成说明 + 日期占位 ---- */
     var genBy = META.generatedBy || "/version 发布时自动生成";

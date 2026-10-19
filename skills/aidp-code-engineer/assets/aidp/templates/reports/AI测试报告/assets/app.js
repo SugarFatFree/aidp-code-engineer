@@ -115,6 +115,16 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
    * SVG 图表函数（全部返回 SVG 字符串，无外部依赖）
    * =================================================================== */
 
+  function resultDist(summary) {
+    var out = {};
+    RESULT_KEYS.forEach(function (k) { out[k] = Number((summary || {})[k] || 0); });
+    return out;
+  }
+
+  function passDenom(summary) {
+    return Math.max(0, Number(summary.total || 0) - Number(summary.na || 0));
+  }
+
   /**
    * 环形图（甜甜圈）— 展示 pass/fail/block/skip/na 分布
    * @param {object} dist {pass,fail,block,skip,na}
@@ -145,10 +155,11 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
         offset += len;
       });
     }
-    var passRate = total ? Math.round((dist.pass || 0) / total * 100) : 0;
+    var denominator = total - (dist.na || 0);
+    var passRate = denominator > 0 ? Math.round((dist.pass || 0) / denominator * 100) + "%" : "—";
     return '<svg viewBox="0 0 ' + size + ' ' + size + '" width="' + size + '" height="' + size + '" role="img">'
       + arcs
-      + '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="' + (size * 0.2) + '" font-weight="700" fill="#1f2937">' + passRate + '%</text>'
+      + '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="' + (size * 0.2) + '" font-weight="700" fill="#1f2937">' + passRate + '</text>'
       + '<text x="' + cx + '" y="' + (cy + size * 0.13) + '" text-anchor="middle" font-size="' + (size * 0.065) + '" fill="#6b7280">通过率</text>'
       + '</svg>';
   }
@@ -286,7 +297,7 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
       + '<div class="card chart-box">' + svgTrend(BUILDS) + '<div class="chart-caption">横轴：build 序号 ｜ 纵轴：通过率</div></div></div>';
 
     // ③ 最新 build 用例分布环形图 + ④ build 列表
-    var dist = { pass: latest.summary.pass, fail: latest.summary.fail, block: latest.summary.block, skip: latest.summary.skip };
+    var dist = resultDist(latest.summary);
     var rows = BUILDS.slice().reverse().map(function (b) {
       var s = b.summary;
       return '<tr class="clickable" data-build="' + esc(b.build) + '">'
@@ -297,13 +308,14 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
         + '<td><span class="dot fail"></span>' + s.fail + '</td>'
         + '<td><span class="dot block"></span>' + s.block + '</td>'
         + '<td><span class="dot skip"></span>' + s.skip + '</td>'
+        + '<td><span class="dot na"></span>' + (s.na || 0) + '</td>'
         + '<td>' + (b.defects ? b.defects.length : 0) + '</td></tr>';
     }).join("");
 
     var grid = '<div class="grid-2 section">'
       + '<div class="card chart-box"><div class="section-title">最新 build 用例分布</div>' + svgDonut(dist, 220) + legendHtml(dist) + '</div>'
       + '<div class="card"><div class="section-title">Build 列表（点击行查看详情）</div><div class="table-wrap"><table class="report-table">'
-      + '<thead><tr><th>Build</th><th>完成时间</th><th>通过率</th><th>通过</th><th>失败</th><th>阻塞</th><th>忽略</th><th>缺陷</th></tr></thead>'
+      + '<thead><tr><th>Build</th><th>完成时间</th><th>通过率</th><th>通过</th><th>失败</th><th>阻塞</th><th>忽略</th><th>不适用</th><th>缺陷</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div></div>';
 
     root.innerHTML = '<div class="section">' + kpi + '</div>' + trend + grid;
@@ -318,6 +330,56 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
   /* =====================================================================
    * 渲染：单个 build 子页
    * =================================================================== */
+  function fmtElapsed(c) {
+    // ⛔ 取不到写「未采集」，**绝不**回落成 0 或估算值：「0ms」会被读成「很快」，
+    //   而事实是「没测量」——这正是把假值当真值展示的那类错误。
+    if (c.elapsedMs == null || isNaN(c.elapsedMs)) return '<span title="本条未采集耗时">未采集</span>';
+    var sec = c.elapsedMs / 1000;
+    var txt = sec >= 60 ? (Math.floor(sec / 60) + 'm' + Math.round(sec % 60) + 's')
+                        : (Math.round(sec * 10) / 10 + 's');
+    // ★ batchId 必须渲染出来：它被引入的用途就是「回溯哪几条属同一批次窗口」——
+    //   均摊值只有知道批次归属才可解释（同一 batchId 的若干条共享一个窗口总耗时）。
+    //   此前只做归一化、无任何渲染方 ⇒ 执行体如实填了也无从回溯。
+    var batch = c.batchId != null && String(c.batchId) !== "" ? String(c.batchId) : "";
+    return c.elapsedIsAmortized
+      ? '<span title="批次窗口均摊值，不可用于单条性能判断'
+        + (batch ? '；所属批次 ' + esc(batch) : '；未标注所属批次') + '">~' + txt
+        + (batch ? ' <span class="muted">· ' + esc(batch) + '</span>' : '') + '</span>'
+      : (batch ? '<span title="所属批次 ' + esc(batch) + '">' + txt + '</span>' : txt);
+  }
+
+  function elapsedNote(cases) {
+    var arr = cases || [];
+    var got = arr.filter(function (c) { return c.elapsedMs != null && !isNaN(c.elapsedMs); });
+    if (!arr.length) return '';
+    if (!got.length) {
+      // 维度 7 要求「无耗时数据时也不得省略，须写明本轮 N 条全部未采集」——
+      // 空表/缺节会被读成「都很快」，而事实是「没测量」。
+      return '<div class="muted" style="padding:8px 12px">⏱ 本轮 ' + arr.length
+        + ' 条全部未采集耗时（非「都很快」，是未测量）</div>';
+    }
+    var amort = got.filter(function (c) { return c.elapsedIsAmortized; }).length;
+    // 均摊值的批次数：均摊来自几个批次窗口，决定了这批均摊值的可信粒度
+    // （来自 1 个窗口 = 全批同一个均值；来自 N 个窗口 = 至少按批区分过）。
+    var batchSet = {}, batchN = 0, amortNoBatch = 0;
+    got.forEach(function (c) {
+      if (!c.elapsedIsAmortized) return;
+      var bid = c.batchId != null && String(c.batchId) !== "" ? String(c.batchId) : "";
+      if (!bid) { amortNoBatch++; return; }
+      if (!batchSet[bid]) { batchSet[bid] = 1; batchN++; }
+    });
+    var total = got.reduce(function (a, c) { return a + c.elapsedMs; }, 0);
+    var sorted = got.map(function (c) { return c.elapsedMs; }).sort(function (a, b2) { return a - b2; });
+    var mid = sorted[Math.floor(sorted.length / 2)];
+    return '<div class="muted" style="padding:8px 12px">⏱ 耗时：已采集 ' + got.length + '/' + arr.length
+      + ' 条 · 合计 ' + Math.round(total / 60000) + ' 分钟 · 中位 ' + Math.round(mid / 1000) + 's'
+      + (amort ? ' · ⚠️ 其中 ' + amort + ' 条为**批次窗口均摊值**，不可用于单条性能判断'
+          + (batchN ? '（均摊来自 ' + batchN + ' 个批次窗口'
+              + (amortNoBatch ? '，另有 ' + amortNoBatch + ' 条未标注批次' : '') + '）'
+            : '（未标注所属批次，无法回溯窗口）') : '')
+      + '</div>';
+  }
+
   function renderBuild(build) {
     var root = $("#view-build");
     var b = BUILDS.filter(function (x) { return x.build === build; })[0];
@@ -331,17 +393,21 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
       var aliased = (c.title == null && c.name != null) || (c.result == null && c.status != null) || (c.note == null && c.detail != null);
       if (aliased && !_caseAliasWarned) { console.warn("[report] cases[] 使用了非契约字段名（name/status/detail）→ 已按 title/result/note 兼容；请修生成端字段名"); _caseAliasWarned = true; }
       return { id: c.id, title: (c.title != null ? c.title : c.name), suite: (c.suite != null ? c.suite : c.suiteId),
-               result: (c.result != null ? c.result : c.status) || "", note: (c.note != null ? c.note : c.detail), screenshot: c.screenshot };
+               result: (c.result != null ? c.result : c.status) || "", note: (c.note != null ? c.note : c.detail), screenshot: c.screenshot,
+               elapsedMs: c.elapsedMs != null ? c.elapsedMs : c.elapsed_ms,
+               elapsedIsAmortized: !!(c.elapsedIsAmortized || c.elapsed_is_amortized),
+               batchId: c.batchId != null ? c.batchId : c.batch_id };
     });
     b.defects = toArray(b.defects, "defects");
     b.runtimeErrors = toArray(b.runtimeErrors, "runtimeErrors");
     b.suites = toArray(b.suites, "suites");
-    var dist = { pass: s.pass, fail: s.fail, block: s.block, skip: s.skip };
+    var dist = resultDist(s);
 
     // 概览 KPI
     var kpi = '<div class="kpi-grid">'
-      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">' + pct(s.passRate) + rateWarnBadge(s.passRate) + '</div><div class="kpi-sub">' + s.pass + ' / ' + s.total + ' 通过</div></div>'
+      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">' + pct(s.passRate) + rateWarnBadge(s.passRate) + '</div><div class="kpi-sub">' + s.pass + ' / ' + passDenom(s) + ' 通过（分母扣除不适用）</div></div>'
       + '<div class="kpi"><div class="kpi-label">用例总数</div><div class="kpi-value">' + s.total + '</div></div>'
+      + '<div class="kpi"><div class="kpi-label">不适用</div><div class="kpi-value">' + (s.na || 0) + '</div></div>'
       + '<div class="kpi accent-fail"><div class="kpi-label">失败 / 阻塞</div><div class="kpi-value">' + s.fail + ' / ' + s.block + '</div></div>'
       + '<div class="kpi"><div class="kpi-label">缺陷 / 运行时错误</div><div class="kpi-value">' + (b.defects ? b.defects.length : 0) + ' / ' + (b.runtimeErrors ? b.runtimeErrors.length : 0) + '</div></div>'
       + '</div>';
@@ -360,10 +426,10 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
         : '<span class="muted">—</span>';
       return '<tr><td>' + esc(c.id) + '</td><td class="wrap">' + esc(c.title) + '</td><td class="muted">' + esc(c.suite) + '</td>'
         + '<td><span class="badge ' + c.result + '">' + (RESULT_TEXT[c.result] || c.result) + '</span></td>'
-        + '<td class="wrap muted">' + esc(c.note) + '</td><td>' + shot + '</td></tr>';
-    }).join("") || '<tr><td colspan="6" class="empty-tip">无用例</td></tr>';
+        + '<td class="wrap muted">' + esc(c.note) + '</td><td>' + fmtElapsed(c) + '</td><td>' + shot + '</td></tr>';
+    }).join("") || '<tr><td colspan="7" class="empty-tip">无用例</td></tr>';
     var caseTable = '<div class="section"><div class="card"><div class="section-title">用例明细</div><div class="table-wrap"><table class="report-table">'
-      + '<thead><tr><th>用例 ID</th><th>标题</th><th>套件</th><th>结果</th><th>备注</th><th>截图</th></tr></thead><tbody>' + caseRows + '</tbody></table></div></div></div>';
+      + '<thead><tr><th>用例 ID</th><th>标题</th><th>套件</th><th>结果</th><th>备注</th><th>耗时</th><th>截图</th></tr></thead><tbody>' + caseRows + '</tbody></table></div>' + elapsedNote(b.cases) + '</div></div>';
 
     // 缺陷表
     var defRows = (b.defects || []).map(function (d) {

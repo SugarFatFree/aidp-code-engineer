@@ -25,10 +25,10 @@
     driver: "mcp",
     // 通过率较 build1001（0.4615）提升至 0.6667，体现修复成效（趋势图演示两个 build 的爬升）
     // ⛔ 同 build1001：统计字段由 gen_report.py 聚合、须与下方 cases[] 自洽，不得手填
-    summary: { total: 9, pass: 6, fail: 2, block: 1, skip: 0, passRate: 0.6667 },
+    summary: { total: 9, pass: 6, fail: 2, block: 0, skip: 0, na: 1, passRate: 0.75 },
     suites: [
       { id: "SUITE-001", name: "用户管理", total: 2, pass: 2, fail: 0, block: 0, skip: 0 },
-      { id: "SUITE-002", name: "订单中心", total: 4, pass: 2, fail: 1, block: 1, skip: 0 },
+      { id: "SUITE-002", name: "订单中心", total: 4, pass: 2, fail: 1, block: 0, skip: 0, na: 1 },
       { id: "SUITE-003", name: "数据看板", total: 2, pass: 1, fail: 1, block: 0, skip: 0 },
       { id: "SUITE-004", name: "系统设置", total: 1, pass: 1, fail: 0, block: 0, skip: 0 }
     ],
@@ -37,7 +37,7 @@
       { id: "T-001-03", title: "新增用户必填校验",     suite: "SUITE-001", result: "pass", note: "C-? 已补手机号校验，回归通过", screenshot: "screenshots/t-001-03.png" },
       { id: "T-002-03", title: "退订接口返回正常",     suite: "SUITE-002", result: "pass", note: "C-001 已修复",            screenshot: "screenshots/t-002-03.png" },
       { id: "T-002-04", title: "导出订单为 Excel",     suite: "SUITE-002", result: "pass", note: "C-002 已修复，文件名正常", screenshot: "screenshots/t-002-04.png" },
-      { id: "T-002-05", title: "批量发货阻塞",         suite: "SUITE-002", result: "block", note: "物流接口仍未交付",       screenshot: "screenshots/t-002-05.png" },
+      { id: "T-002-05", title: "批量发货阻塞",         suite: "SUITE-002", result: "na", note: "本版不提供物流功能，不适用",       screenshot: "screenshots/t-002-05.png" },
       { id: "T-002-06", title: "订单详情金额合计",     suite: "SUITE-002", result: "fail", note: "合计金额四舍五入偏差 1 分", screenshot: "screenshots/t-002-06.png" },
       { id: "T-003-02", title: "趋势图时间切换",       suite: "SUITE-003", result: "pass", note: "C-003 已修复",            screenshot: "screenshots/t-003-02.png" },
       { id: "T-003-04", title: "看板导出 PDF",         suite: "SUITE-003", result: "fail", note: "PDF 中文字体缺失",        screenshot: "screenshots/t-003-04.png" },

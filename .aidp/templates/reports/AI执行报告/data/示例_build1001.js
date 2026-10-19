@@ -71,6 +71,20 @@
     //   运行时推导（本地中文目录 / 部署英文 slug 两端都通），写死中文目录会在部署后 404）
     testSummary: { total: 13, pass: 6, fail: 4, block: 2, skip: 1, passRate: 0.4615 },
 
+    // ★ 用例明细（finalize 时从同 build 的 AI测试报告继承；骨架期为空数组）。
+    //   ⛔ 收尾门有**两项**判据直接读它，示例里没有下游就不知道要填：
+    //     · 3n「测试结果挂靠用例基线」—— `id` 必须是用例库里真实的 `TC-*`，自造编号判 FAIL（约定 33）；
+    //     · 3q「上轮 block 复评」—— 复测轮里上一 build 每条 block 的 `TC-*` 都必须在此出现，
+    //       仍判 block 的 `note` 不得为空、也不得与上轮逐字相同。
+    //   `result` 取 pass|fail|block|na；`na` 不计入通过率分母（分母 = 总数 − na）。
+    cases: [
+      { id: "TC-ORDER-001", name: "下单成功", suite: "SUITE-ORDER", result: "pass", elapsedMs: 8200 },
+      { id: "TC-ORDER-007", name: "退订订单", suite: "SUITE-ORDER", result: "fail",
+        note: "后端 500（见 C-001）" },
+      { id: "TC-ORDER-012", name: "跨企业数据隔离", suite: "SUITE-ORDER", result: "block",
+        note: "仍 block（原因变更）：对照企业账号已拿到，但该企业下无存量订单，需先造 2 条" }
+    ],
+
     // 缺陷汇总。severity 用 P0~P3
     defects: [
       { id: "C-001", title: "退订接口返回 500（后端 NPE）", severity: "P1", status: "待修复", impact: "订单退订流程中断" },

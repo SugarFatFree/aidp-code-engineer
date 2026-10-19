@@ -29,6 +29,9 @@
   --fail: #F87171; --fail-bg: rgba(248, 113, 113, .16); --fail-bd: rgba(248, 113, 113, .42);
   --ask: #38BDF8; --ask-bg: rgba(56, 189, 248, .16); --ask-bd: rgba(56, 189, 248, .40);
   --skip: #94A3B8;
+  /* plan = 仅有计划、实际状态未回填。单列一个紫系令牌：复用 --ask 会与 --half(进行中) 同属蓝系、
+     环形图相邻两段分不开；复用 --skip 则与「跳过」完全同色，而二者数值同时出现在图例里。 */
+  --plan: #A78BFA; --plan-bg: rgba(167, 139, 250, .16); --plan-bd: rgba(167, 139, 250, .40);
 }
 /* —— 亮色蓝（靛蓝）· 显式选择以提高特异性，覆盖 :root —— */
 :root[data-theme="light-blue"] {
@@ -49,6 +52,7 @@
   --fail: #BE123C; --fail-bg: rgba(244, 63, 94, .11); --fail-bd: rgba(244, 63, 94, .40);
   --ask: #4F46E5; --ask-bg: rgba(79, 70, 229, .10); --ask-bd: rgba(79, 70, 229, .34);
   --skip: #64748B;
+  --plan: #6D28D9; --plan-bg: rgba(109, 40, 217, .11); --plan-bd: rgba(109, 40, 217, .36);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -319,7 +323,10 @@ table.report-table tr.clickable { cursor: pointer; }
 .badge.fail { background: var(--fail-bg); color: var(--fail); border-color: var(--fail-bd); }
 .badge.pend { background: var(--stuck-bg); color: var(--stuck); border-color: var(--stuck-bd); }
 .badge.skip { background: var(--tile); color: var(--muted-2); border-color: var(--line); }
-.badge.plan { background: var(--ask-bg); color: var(--ink); border-color: var(--ask-bd); }
+.badge.plan { background: var(--plan-bg); color: var(--plan); border-color: var(--plan-bd); }
+/* unknown = actualStatus 填了契约外的值。此前这类值被原样当成 class（.badge.finish 之类），
+   命中不到任何规则 ⇒ 样式静默丢失、也看不出数据有问题。 */
+.badge.unknown { background: var(--stuck-bg); color: var(--stuck); border-color: var(--stuck-bd); }
 .step-type { display: inline-block; padding: 1px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; background: var(--bg-eyebrow); color: var(--ink); }
 
 /* 完成率进度条（表格内）*/

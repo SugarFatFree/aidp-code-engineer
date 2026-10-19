@@ -285,7 +285,7 @@ def validate_payload(kind, payload):
     if kind == "test":
         cases = payload.get("cases")
         summary = payload.get("summary")
-        if isinstance(cases, list) and cases and isinstance(summary, dict):
+        if isinstance(cases, list) and isinstance(summary, dict):
             rate = summary.get("passRate")
             valid = [c for c in cases if isinstance(c, dict) and c.get("result") in RESULT_STATES]
             # ★ n/a 不进通过率分母：它是"本场景不存在这个东西、永远不测"，
@@ -329,7 +329,7 @@ def validate_payload(kind, payload):
                         f"summary 五态之和={s} 与 summary.total={nums['total']} 不符"
                         f"（{'/'.join(counters)} = "
                         f"{'/'.join(str(nums[k]) for k in counters)}）")
-                elif valid and nums["total"] != len(valid):
+                elif nums["total"] != len(valid):
                     errs.append(
                         f"summary.total={nums['total']} 与 cases[] 明细条数={len(valid)} 不符。"
                         f"⛔ 分母必须可溯源到逐条明细：cases[] 须是完整用例清单，"

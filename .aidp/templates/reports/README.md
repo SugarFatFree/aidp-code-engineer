@@ -83,22 +83,28 @@ python3 {{AIDP_HOME}}/scripts/emit-report.py --kind exec|test --version V0.1.0 -
 
 | 字段 | 类型 | 必填 | 取值域 / 说明 |
 |------|------|:--:|------|
-| `summary` | obj | ✓ | `{total,pass,fail,block,skip,na, passRate:0~1}`；**`passRate` 分母 = `total - na`**（`na` 可缺省=0，存量报告兼容）|
+| `summary` | obj | ✓ | `{total,pass,fail,block,skip,na, passRate:0~1}`；**`passRate` 分母 = `total - na`**（`na` 可缺省=0；`total/pass/fail/block/skip/passRate` 必填，缺键不能跳过对账）|
 | `cases[]` | list | ✓ | 每项 `{id, title, suite, result, note, screenshot}`；`result ∈ pass\|fail\|block\|skip\|na`。**★ 不是 `name`/`status`/`detail`**；**`na` = 本场景不存在该功能、永远不测**（⛔ 不是 pass、不是 skip），`note` 必须写明不适用理由（空理由 emit-report 报错） |
 | `renderMode` | str\|null | | 环境事实字段：`headless`\|`headed`\|`null`(未取到)。★ **执行期运行取证填充**（见上「环境事实类字段」），**禁止**填示例值 / 按启动 flag 推断；取不到写 `null`（展示「未取到」，不许兜底成有头）|
 | `renderModeSource` | str | | `renderMode` 来源标注：`显式指定`\|`复用已有实例(含来源)`\|`无头不可用降级(含原因)`\|`运行取证(方法)`\|`未取到(原因)` |
-| `suites[]` `defects[]` `runtimeErrors[]` | list | | 数组，缺省 `[]` |
+| `suites[]` `defects[]` `runtimeErrors[]` | list | | 数组，缺省 `[]`；`suites[]` 每项 `total/pass/fail/block/skip` 为整数必填，`na` 缺省=0 |
 
 **exec（AI执行报告）**：
 
 | 字段 | 类型 | 必填 | 取值域 / 说明 |
 |------|------|:--:|------|
-| `overview` | obj | ✓ | `{statusKind, featureRate:0~1, testPassRate:0~1, coverage:0~1\|null, pendingCount}` |
+| `overview` | obj | ✓ | `{statusKind:done\|pend\|fail, statusText, featureRate:0~1, testPassRate:0~1, coverage:0~1\|null, pendingCount, newDefects, runtimeErrors, riskLevel:低\|中\|高}`；`statusKind` 必填，风险等级有值时必须在枚举内 |
 | `steps[]` `features[]` | list | ✓ | `features[].status ∈ done\|doing\|fail\|pend\|skip` |
 | `risks[]` | list | | 每项 `{id, level:"高\|中\|低", title, what, risk, advice}`。**★ 数组，等级在每项 `level`；严禁 `{high,medium,low}` 分组对象**（否则执行报告整页白屏）|
 | `todos[]` | list | | 每项 `{title[, detail]}` **对象**，非裸字符串 |
 | `defects[]` `incidents[]` | list | | 数组，缺省 `[]` |
-| `testSummary` | obj | | `{total,pass,fail,...,passRate:0~1,coverage:0~1\|null}`；骨架期 `pendingBrowserTest:true` |
+| `testSummary` | obj | | `{total,pass,fail,...,passRate:0~1,coverage:0~1\|null}`；骨架期 `pendingBrowserTest:true` 显示「待实测」，即使 `total=0` 也不能记已测 |
 | `cases[]` | list | | 与 test 的 `cases[]` **同结构**（`{id,title,suite,result,note,screenshot}`）。**收尾门 3n（约定 33 用例基线挂靠）读的就是这里**——⛔ 它必须在 exec 契约里有名有姓，否则就是一处「有读无写」：门报「报告 cases[] 一个 id 都没有」，而执行体翻遍 exec 契约找不到该填哪。**finalize 时不必手填**：`emit-report.py --kind exec` 会从同 build 的 AI测试报告自动继承 `cases[]` 与 `testSummary`（只补缺失，显式传入优先），继承结果记在输出的 `inherited_from_test_report` |
 
 > 逃生阀 `--allow-schema-warn`：把 fail-fast 降级为 WARN 照常写盘（仅临时救火），并在 data 的 `schemaWarnings[]` 留痕。契约示例文件本身必须通过校验器（示例即契约、永不分叉）。
+
+**耗时承载**：`cases[].elapsedMs`（兼容 `elapsed_ms`）为非负数；`elapsedIsAmortized`（兼容 `elapsed_is_amortized`）须为布尔。均摊时带 `batchId`（兼容 `batch_id`），展示 `~` 与批次身份；缺耗时显示「未采集」，不补 0。
+
+**步骤统计**：`steps[].actualStatus` 的 `plan` 与未知状态也进入总步骤数，未知值显式标出；计划状态不计已完成。
+
+**渲染回检**：`report_render_smoke.js` 自动枚举结果页与计划页；收尾门逐页消费 `pages[]`，新增页异常、脚本缺失、容器白屏均不得静默通过。

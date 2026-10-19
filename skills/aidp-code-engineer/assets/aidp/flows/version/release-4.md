@@ -133,11 +133,11 @@ fi
 4. 模板 JS 渲染版本级视图：版本信息 + 测试总览 KPI + 通过率环形图 + 用例分布图 + 套件结果表 + 缺陷汇总表（编号/标题/严重度/状态，无 build 列、无截图列）+ 测试结论。
 5. 标题取 `{version} 版本测试报告`，测试结论依最终通过率（✅通过 / ⚠️有遗留 / ❌不通过）。
 
-> 模板自带的示例数据保留完整 schema（含 screenshot 字段）仅作演示、渲染时不读取；但 `/version` **实际生成时按 step 2 剥离**，保证交付件彻底无 build/截图痕迹。与 AI测试报告（per-build 明细 + 截图）定位区分开。
+> 模板示例不包含截图字段；实际生成仍按 step 2 剥离输入的 build 标识和截图关系，避免派生报告泄漏内部明细。
 
 #### Step 3.3.8.3：失败处置（不阻塞发布）
 
-- build 数据解析失败 → WARN，生成"仅列各 build 概览"的简化单文件（不内联图表）
+- build 数据解析失败 → **跳过生成 + WARN**（同 3.3.8.1 的 SKIP 处置）；Step 3.6 发布报告加一行提示
 - 写盘失败 → WARN；Step 3.6 发布报告加一行 "⚠️ 版本测试报告生成失败，请手工检查 `docs/reports/{version}/AI测试报告/`"
 - **唯一阻塞情形**：`版本测试报告/` 目录无写权限 → 中断提示用户
 
@@ -146,7 +146,7 @@ fi
 ```
 📊 版本测试报告已生成（{version}）：
    docs/reports/{version}/版本测试报告/{version}-测试报告.html（单文件，双击即看）
-   共 {DATA_COUNT} 个 build，取 buildNo 最大的一轮 / 最终通过率 {该 build 的 passRate}%
+   共 {DATA_COUNT} 个 build，取 buildNo 最大的一轮 / 最终通过率 {该 build 的 passRate × 100}%
    per-build 历史：docs/reports/{version}/AI测试报告/index.html
 ```
 

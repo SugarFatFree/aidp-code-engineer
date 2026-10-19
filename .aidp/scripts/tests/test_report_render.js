@@ -53,7 +53,7 @@ check(r.warns.some((w) => w.indexOf("口径异常") >= 0), "passRate 100.0 → �
 console.log("② 坏数据健壮性（非空 + 无字面量 undefined）");
 // risks 分组对象（白屏根因）
 r = render(EXEC, "__AIRUNS__", { build: "V0.1.0_build1", version: "V0.1.0",
-  overview: { statusKind: "pass", featureRate: 1, testPassRate: 1, pendingCount: 0 },
+  overview: { statusKind: "done", featureRate: 1, testPassRate: 1, pendingCount: 0 },
   steps: [{ name: "x" }], features: [{ num: 1, name: "f", status: "done" }], defects: [],
   risks: { high: [], medium: ["R1"], low: ["R2"] }, todos: ["t1"] }, "V0.1.0_build1");
 check(!r.threw, "exec risks 分组对象 → 不抛异常(不白屏)");
@@ -80,15 +80,57 @@ r = render(TEST, "__BUILDS__", { build: "V0.1.0_build-na", version: "V0.1.0", bu
 }, "V0.1.0_build-na");
 check(!r.threw && r.html.indexOf("不适用") >= 0, "na 用例 → 渲染出不适用语义");
 check(r.html.indexOf("100%") >= 0, "na=2/pass=1 → 可执行分母为 1，显示 100%");
+check(r.html.indexOf("不适用 2</span>") >= 0 && r.html.indexOf("不适用 0</span>") < 0,
+      "环图和套件图例必须包含真实 na 数量");
 
 r = render(EXEC, "__AIRUNS__", { build: "V0.1.0_build-pending", version: "V0.1.0",
   overview: { statusKind: "pend", featureRate: 0, testPassRate: null, coverage: null, pendingCount: 2 },
   steps: [{ name: "浏览器实测", actualStatus: "plan", plannedStatus: "plan" }], features: [],
-  testSummary: { total: null, pass: 0, fail: 0, block: 0, skip: 0, pendingBrowserTest: true },
+  testSummary: { total: 0, pass: 0, fail: 0, block: 0, skip: 0, pendingBrowserTest: true },
   defects: [], risks: [], todos: []
 }, "V0.1.0_build-pending");
 check(!r.threw && r.html.length > 500, "待实测 exec → 页面非空");
-check(r.html.indexOf("待实测") >= 0 || r.html.indexOf("计划") >= 0, "待实测 exec → 不伪装成已测完成");
+check(r.html.indexOf("待实测") >= 0, "待实测 exec（total=0）→ 明确显示待实测");
+check(r.html.indexOf(">0/1</text>") >= 0, "步骤计划态仍在分母：0/1 步已完成");
+
+console.log("④ 版本报告与多页冒烟");
+const versionTemplate = fs.readFileSync(path.join(ROOT, ".aidp/templates/reports/版本测试报告/{version}-测试报告.html"), "utf8");
+const inline = [...versionTemplate.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+function renderVersion(naOnly) {
+  const cache = {};
+  const doc = { getElementById(id) { return cache[id] || (cache[id] = makeEl()); } };
+  const win = {};
+  new Function("window", inline[0])(win);
+  new Function("window", inline[1])(win);
+  win.__BUILDS__ = [{ buildNo: 9, version: "V0.1.0",
+    summary: { total: 3, pass: naOnly ? 0 : 1, fail: 0, block: 0, skip: 0, na: naOnly ? 3 : 2, passRate: naOnly ? null : 1 },
+    cases: [], suites: [], defects: [], runtimeErrors: [] }];
+  new Function("window", "document", inline[2])(win, doc);
+  return cache.app._html;
+}
+const versionHtml = renderVersion(false);
+check(versionHtml.includes("不适用 2") && versionHtml.includes("100%"), "版本报告包含真实 na 分布与扣除 na 的通过率");
+check(!renderVersion(true).includes("NaN"), "全 na 的版本报告不出现 NaN");
+
+const os = require("os"), cp = require("child_process");
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aidp-report-pages-"));
+try {
+  const dir = path.join(temp, "exec");
+  fs.cpSync(path.join(ROOT, ".aidp/templates/reports/AI执行报告"), dir, { recursive: true });
+  const build = "V0.1.0_build1001";
+  fs.copyFileSync(path.join(dir, "data/示例_build1001.js"), path.join(dir, "data", build + ".js"));
+  const smoke = () => cp.spawnSync(process.execPath, [path.join(ROOT, ".aidp/scripts/report_render_smoke.js"), dir, build], { encoding: "utf8" });
+  let s = smoke();
+  check(s.status === 0 && JSON.parse(s.stdout).pages.some((p) => p.html === "plan.html"), "自动覆盖结果页与计划页");
+  fs.writeFileSync(path.join(dir, "extra.html"), '<section id="view-extra"></section><script src="assets/extra.js"></script>');
+  fs.writeFileSync(path.join(dir, "assets/extra.js"), 'throw new Error("injected-page-error")');
+  s = smoke();
+  check(s.status === 1 && JSON.parse(s.stdout).pages.some((p) => p.html === "extra.html" && !p.ok), "新增页面异常 → 冒烟报红并点名");
+  fs.writeFileSync(path.join(dir, "assets/extra.js"), 'document.getElementById("view-extra").innerHTML = "<p>页面正常</p>".repeat(100)');
+  check(smoke().status === 0, "新增页面还原 → 冒烟恢复绿灯");
+  fs.unlinkSync(path.join(dir, "assets/extra.js"));
+  check(smoke().status === 1, "新增页面脚本缺失 → 不得静默跳过");
+} finally { fs.rmSync(temp, { recursive: true, force: true }); }
 
 console.log();
 if (fails.length) { console.log("❌ " + fails.length + " 项失败"); process.exit(1); }

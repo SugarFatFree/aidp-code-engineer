@@ -30,7 +30,7 @@
     // 汇总：total=pass+fail+block+skip；passRate=pass/total（0~1 小数）
     // ⛔ 统计字段必须由 gen_report.py 从 results/*.json 聚合得来、与下方 cases[] 逐条自洽，不得手填：
     //    emit-report.py 的溯源校验会重算 cases[] 的 pass 占比比对（容差 ±0.005），对不上即报错。
-    summary: { total: 13, pass: 6, fail: 4, block: 2, skip: 1, passRate: 0.4615 },
+    summary: { total: 13, pass: 6, fail: 4, block: 2, skip: 1, na: 0, passRate: 0.4615 },
     // 套件分解：每个套件的用例分布（各计数之和须等于 summary，且与 cases[] 的 suite 归属一致）
     suites: [
       { id: "SUITE-001", name: "用户管理", total: 3, pass: 2, fail: 1, block: 0, skip: 0 },
@@ -40,7 +40,7 @@
     ],
     // 用例明细：result 取值 pass|fail|block|skip
     cases: [
-      { id: "T-001-01", title: "账号密码登录成功",        suite: "SUITE-001", result: "pass",  note: "",                       screenshot: "screenshots/t-001-01.png" },
+      { id: "T-001-01", title: "账号密码登录成功",        suite: "SUITE-001", result: "pass",  note: "", elapsedMs: 9500, elapsedIsAmortized: true, batchId: "SUITE-001#1", screenshot: "screenshots/t-001-01.png" },
       { id: "T-001-02", title: "错误密码登录提示",        suite: "SUITE-001", result: "pass",  note: "",                       screenshot: "screenshots/t-001-02.png" },
       { id: "T-001-03", title: "新增用户必填校验",        suite: "SUITE-001", result: "fail",  note: "手机号未做格式校验",     screenshot: "screenshots/t-001-03.png" },
       { id: "T-002-01", title: "订单列表分页加载",        suite: "SUITE-002", result: "pass",  note: "",                       screenshot: "screenshots/t-002-01.png" },

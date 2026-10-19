@@ -926,7 +926,15 @@ def cmd_check(args):
                         _out = json.loads(_lines[-1])
                     except ValueError:
                         _out = {}
-                if _r.returncode == 0:
+                _pages = _out.get("pages")
+                if isinstance(_pages, list) and _pages:
+                    for _page in _pages:
+                        rec(f"报告渲染冒烟({_kind} · {_page.get('html', '?')})",
+                            bool(_page.get("ok")), "；".join(_page.get("reasons") or []))
+                    if _kind == "exec":
+                        rec("报告计划页覆盖面", any(p.get("html") == "plan.html" for p in _pages),
+                            "必须覆盖 plan.html，缺脚本或容器不能作为跳过理由")
+                elif _r.returncode == 0:
                     rec(f"报告渲染冒烟({_kind})", True, "")
                 else:
                     _d = []

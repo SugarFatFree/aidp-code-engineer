@@ -1,4 +1,4 @@
-# sprint-autopilot · Phase 3 详情分片 [6b/13]（3.2.1 Step C 监控执行 + 失败重试 + 出口游标）
+# sprint-autopilot · Phase 3 详情分片 [6b/14]（3.2.1 Step C 监控执行 + 失败重试 + 出口游标）
 
 > 本文件是 `phase-3-6.md` 的**二次切分**（前片达 20KB 上限）。前片覆盖 Step A0 / A / B；
 > 本片覆盖 **Step C（监控执行 + 失败重试）** 与 **出口 run-state 写盘**。

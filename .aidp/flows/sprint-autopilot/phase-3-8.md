@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [8/13]（3.3 终审 + 3.4 收尾 Step 1–3 关闭方判定与发报告）
+# sprint-autopilot · Phase 3 详情分片 [8/14]（3.3 终审 + 3.4 收尾 Step 1–3 关闭方判定与发报告）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 8/13 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 8/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：3.3（终审 version-auditor）+ 3.4 收尾 Step 1–3（finalize 结果态 / emit-report 产报告 / #3 通知）
 > - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
 >

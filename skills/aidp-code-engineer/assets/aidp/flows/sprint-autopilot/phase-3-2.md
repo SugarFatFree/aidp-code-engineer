@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [2/13]（3.0 入口路由 + P0-0 裁剪唯一授权 + test-only 骨架）
+# sprint-autopilot · Phase 3 详情分片 [2/14]（3.0 入口路由 + P0-0 裁剪唯一授权 + test-only 骨架）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 2/13 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 2/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：3.0（入口路由 + AI执行报告前置硬门；P0-0 流程裁剪唯一授权；test-only 6 步骨架；incremental 路由）
 > - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
 >

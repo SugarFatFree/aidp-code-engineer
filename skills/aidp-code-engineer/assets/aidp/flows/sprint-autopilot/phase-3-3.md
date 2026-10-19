@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [3/13]（3.1 版本规划 + 启动通知）
+# sprint-autopilot · Phase 3 详情分片 [3/14]（3.1 版本规划 + 启动通知）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 3/13 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 3/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：3.1（版本规划 + 启动通知 + 里程碑通知 #1/#1b）；3.1.0 跳过规划门独立在 `phase-3-3b.md`
 > - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
 >

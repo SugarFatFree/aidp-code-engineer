@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [6/13]（3.2.1 CICD Step A0/A/B/C 触发与监听重试）
+# sprint-autopilot · Phase 3 详情分片 [6/14]（3.2.1 CICD Step A0/A/B/C 触发与监听重试）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 6/13 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 6/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：3.2.1（CICD 编排 Step A0/A/B/C：流水线解析 / 防重复触发 / 主动触发 / 监控+失败重试；平台 = `cicd.provider`，默认 GitHub Actions）
 > - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
 >

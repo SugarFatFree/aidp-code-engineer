@@ -20,7 +20,6 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
     "today": "YYYY-MM-DD",
     "pending_cascade": dict,         # ★ 约定 22：台账摘要 `{files, total, stale, ...}`（**dict 不是 list**）。
                                      #   ⚠️ 计入退出码 3 的是 `stale > 0`（**只含昨天及更早**的条目），不是 `total > 0`。
-    "should_dispatch_cascade": bool, # ★ 约定 22：本轮是否该派台账收口子 Agent（= stale > 0）
     "cascaded_not_cleaned": int,     # 已标记级联完成却仍未删除的条目数（同 pending_cascade.cascaded_not_cleaned）
     "suspected_cascade_bypass": dict,  # ★ 约定 22 反向判据：疑似绕过攒批（见 suspected_cascade_bypass()）
     "pending_cicd": dict,            # ★ 约定 31.5：已推送正式代码却未经推送分类器，或分类后部署终态长时间未记录
@@ -740,7 +739,6 @@ def gather(root: str, context: str = "bare-conversation", cascade_now: bool = Fa
         "pending_cascade": cascade,
         # ★ 判据 = 台账有【昨天及更早】的待级联条目。同日重复收口由台账内容自然收敛
         #   （收口后条目即删、stale 归零）；多 git 用户防重靠 push 后重判。
-        "should_dispatch_cascade": bool(cascade["stale"]),
         # 已标记级联完成却未删除的条目数（= pending_cascade.cascaded_not_cleaned，顶层便于命令端直读）
         "cascaded_not_cleaned": int(cascade.get("cascaded_not_cleaned") or 0),
         "suspected_cascade_bypass": bypass,
@@ -754,8 +752,6 @@ def debt_items(info: dict) -> list:
     """未落地义务清单（与退出码 3 的判据逐项对齐）。"""
     casc = info.get("pending_cascade") or {}
     items = []
-    if int(casc.get("stale") or 0) > 0:
-        items.append("cascade-stale")
     if int(casc.get("cascaded_not_cleaned") or 0) > 0:
         items.append("cascade-not-cleaned")
     if casc.get("unparsed"):
@@ -774,15 +770,6 @@ def debt_items(info: dict) -> list:
 def _print_obligations(info: dict) -> None:
     """未落地义务告警区 —— 【恒打印，`--quiet` 也不压制】。"""
     casc = info.get("pending_cascade") or {}
-    stale = int(casc.get("stale") or 0)
-    if stale > 0:
-        sys.stderr.write(
-            runtime_text(f"📒 开发期变更台账有 {stale} 条昨天及更早的条目未级联"
-            f"（共 {casc.get('total') or 0} 条，涉及版本 "
-            f"{'/'.join((casc.get('versions') or {}).keys()) or '-'}）→ 约定 22 收口点 1："
-            "本次 commit+push 完成后派后台子 Agent 批量级联并清账；"
-            "详规 `__AIDP_HOME__/reference/开发期族增量.md`\n", __file__))
-
     byp = info.get("suspected_cascade_bypass") or {}
     if byp.get("suspected"):
         if byp.get("shape") == "结构性新增零台账":

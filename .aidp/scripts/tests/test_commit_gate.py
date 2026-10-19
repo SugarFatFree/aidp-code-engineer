@@ -147,7 +147,7 @@ def test_gate_cli_cascade():
         check("干净仓库 → 退出码 0 且 debts 为空", cp.returncode == 0 and info.get("debts") == [])
         expect = {"commit_gate_enabled", "is_template_project", "working_tree_dirty",
                   "has_business_code_change", "is_scaffold_only_change", "today",
-                  "pending_cascade", "should_dispatch_cascade", "cascaded_not_cleaned",
+                  "pending_cascade", "cascaded_not_cleaned",
                   "suspected_cascade_bypass", "pending_cicd", "offchain", "context", "debts"}
         check("JSON 字段集合与契约一致", set(info) == expect)
         check("today 为 YYYY-MM-DD", len(info.get("today") or "") == 10)
@@ -182,11 +182,8 @@ def test_gate_cli_cascade():
         pc = info.get("pending_cascade") or {}
         check("★ 一行式条目被正确计数（失准点行不重复计入）", pc.get("total") == 2 and pc.get("stale") == 2)
         check("★ 按版本归集台账", (pc.get("versions", {}).get("V0.2.0") or {}).get("total") == 2)
-        check("★ 有 stale → should_dispatch_cascade=True", info.get("should_dispatch_cascade") is True)
-        check("★★ 有欠账 → 退出码 3 + debts 含 cascade-stale",
-              cp.returncode == 3 and "cascade-stale" in info.get("debts", []))
-        check("★★ --quiet 下欠账告警仍打印到 stderr", "开发期变更台账" in cp.stderr)
-        check("告警要求把义务清单写进用户可见回复", "未落地义务" in cp.stderr)
+        check("★ stale 仍保留在 pending_cascade 供阶段收口消费，提交门不再派单",
+              cp.returncode == 0 and "cascade-stale" not in info.get("debts", []) and not cp.stderr.strip())
 
         cp2, _ = _run_gate(d, "--quiet", "--no-fail-on-debt")
         check("逃生阀 --no-fail-on-debt → 强制返 0", cp2.returncode == 0)
@@ -200,8 +197,7 @@ def test_gate_cli_cascade():
         mkfile(led, f"# 台账\n\n## 待级联\n\n- C-010 · {td} 09:10 · 今天刚记 · sprint-013\n")
         cp, info = _run_gate(d, "--quiet")
         check("★ 全是今天的条目 → 不派收口单、退出码 0",
-              info["pending_cascade"].get("stale") == 0
-              and info.get("should_dispatch_cascade") is False and cp.returncode == 0)
+              info["pending_cascade"].get("stale") == 0 and cp.returncode == 0)
 
         # 已级联未删 / 归档标记未删
         mkfile(led, f"# 台账\n\n## 待级联\n\n- C-010 · {td} 09:10 · 今天刚记 ✅ 已级联 · sprint-013\n")
@@ -221,8 +217,7 @@ def test_gate_cli_cascade():
         os.remove(led)
         cp, info = _run_gate(d, "--quiet")
         check("★ 台账删除后 total=0 且不再派收口单",
-              info["pending_cascade"].get("total") == 0
-              and info.get("should_dispatch_cascade") is False and cp.returncode == 0)
+              info["pending_cascade"].get("total") == 0 and cp.returncode == 0)
 
         # 总开关关闭 → 恒 0 且 debts 为空
         mkfile(led, f"# 台账\n\n## 待级联\n\n- C-001 · {yd} 10:00 · 旧条目 · sprint-1\n")

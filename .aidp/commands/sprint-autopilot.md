@@ -204,7 +204,7 @@ Git 模式跑 `/version <PRE_RELEASE_VERSION> --no-tag` 准发布归档；无 Gi
 
 > ⛔ **Phase 3 三条顶层铁律（详情见 flow，此处只留一句提醒）**：① **强制仪式不可精简**——铸 build/AI执行报告/发通知/终审在任何 `ENTRY_MODE` 下均强制，唯一合法跳过 = 技术性不可用（由 `autopilot-ceremony-gate.py check` `exit 1` 校验）；② **非法跳过借口**（交互式/省时/避免打扰/单次不必全套…）一律判违规；③ **报告不可变**——finalize 后冻结、结论变化一律铸新 build，禁回写旧 build。
 >
-> ⛔⛔ **详细步骤已外置、二次切分为 13 片、进入 Phase 3 的【第一动作】= 按需加载**：Phase 3 的完整 3.0–3.4 步骤已切成 **`{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-1.md` … `phase-3-9.md` / `phase-3-9b.md`**（含二次切分的 `phase-3-3b` / `phase-3-5b` / `phase-3-6b` / `phase-3-9b`）（每片 ≤20KB）。**进入 Phase 3 后按子步进度依次 `Read` 对应分片**（从 `phase-3-1.md`〔顶层铁律 + 入口硬门〕起，哪些子步在哪片见下表「所在分片」列）——下方骨架仅供定位，**权威判定一律以对应 `phase-3-N.md` 为准，绝不凭骨架或记忆略过任一子步骤/硬门**。
+> ⛔⛔ **详细步骤已外置、二次切分为 14 片、进入 Phase 3 的【第一动作】= 按需加载**：Phase 3 的完整 3.0–3.4 步骤已切成 **`{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-1.md` … `phase-3-9.md` / `phase-3-9b.md`**（含二次切分的 `phase-3-3b` / `phase-3-5b` / `phase-3-6b` / `phase-3-9b`）（每片 ≤20KB）。**进入 Phase 3 后按子步进度依次 `Read` 对应分片**（从 `phase-3-1.md`〔顶层铁律 + 入口硬门〕起，哪些子步在哪片见下表「所在分片」列）——下方骨架仅供定位，**权威判定一律以对应 `phase-3-N.md` 为准，绝不凭骨架或记忆略过任一子步骤/硬门**。
 
 **Phase 3 子步骤骨架（详见各分片 `phase-3-N.md`）**：
 
@@ -216,6 +216,7 @@ Git 模式跑 `/version <PRE_RELEASE_VERSION> --no-tag` 准发布归档；无 Gi
 | **3.1** | 版本规划（已规划则跳过片内 `/version`）+ 启动通知 + 里程碑通知 #1/#1b | `phase-3-3.md` | `ENTRY_MODE!=test-only`（⛔ **不得再加 `PLANNING_DONE=0`**：该值由 3.1.0 计算，拿它当读片前置是循环依赖 —— 整片跳过会连 step 3「解析 Sprint 总数 N + 发 #1b 规划完成通知」一并丢失。**已规划时跳过的是片内 step 2 的 `/version`，不是整片**）|
 | **3.1bis** | ★ 用例前置资源对账【补账】（`/version` 刚产出用例册 → 补跑 0.6bis 那道门；**full 模式下这是唯一有效落点**）| `phase-3-3.md` | 本轮跑过 `/version` |
 | **3.1.5** | 铸 build 号 + 写本 build 执行数据（计划态）| `phase-3-4.md` | 总是（含 test-only：铸 build 是强制仪式）|
+| **3.1.6** | ★ 约定 22 阶段级联收口（开发阶段收需求/设计/计划；测试阶段收用例；build 级幂等）| `phase-3-4b.md` | `ENTRY_MODE!=test-only` 或 `SKIP_AIAUTO_TEST!=1`（两族均空时跳过）|
 | **3.2** | 批量 Sprint 执行（里程碑通知 #1c 开发开始 / #2 循环内 / #1d 部署完成；`incremental` 改走增量路径）| `phase-3-5.md`（步骤 0–1 + 出口）+ `phase-3-5b.md`（步骤 2–4：执行·推送·部署动作·#2）| `ENTRY_MODE!=test-only`（test-only 跳开发循环）|
 | **3.2.1** | CICD 编排（平台 = `cicd.provider`，默认 GitHub Actions；`cicd_watch.py` 监听 + `--mode trigger` / `--mode retry` 触发重试；运行绑定不变式；**CICD 失败第一动作恒为重试、非自查代码**）+ 部署就绪探针 | `phase-3-6.md`（Step A0/A/B）+ `phase-3-6b.md`（Step C + 出口）（Step A0/A/B/C 解析·防重复·触发·监控重试）+ `phase-3-7.md`（Step D 就绪探针 + 超时熔断）| `deployment.mode=cloud` 且已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配；`mode=local/none` / 未接入则跳本片、走 Phase 3.2 轻量分支）|
 | **3.3** | 终审（version-auditor，无单独通知、并入 3.4）| `phase-3-8.md` | 总是（强制仪式，任何入口不豁免）|

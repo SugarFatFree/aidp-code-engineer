@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [1/13]（Phase 3 顶层铁律 + 进入 Phase 3 第一动作硬门）
+# sprint-autopilot · Phase 3 详情分片 [1/14]（Phase 3 顶层铁律 + 进入 Phase 3 第一动作硬门）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 1/13 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 1/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：Phase 3 顶层铁律（强制仪式不可精简 / 非法跳过借口 / 报告不可变）+ 进入 Phase 3 的第一动作硬门
 > - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
 >

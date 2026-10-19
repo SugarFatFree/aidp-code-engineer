@@ -1,4 +1,4 @@
-# sprint-autopilot · Phase 3 详情分片 [5/13]（3.2 批量 Sprint 执行 + 推送 + 出口游标）
+# sprint-autopilot · Phase 3 详情分片 [5/14]（3.2 批量 Sprint 执行 + 推送 + 出口游标）
 <!-- flowvar-check: allow VKEY -->
 
 > 本片覆盖 Phase 3.2：批量 Sprint、推送、部署与出口游标；进入本阶段后按本文逐项执行。

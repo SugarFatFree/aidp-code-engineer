@@ -1,6 +1,8 @@
-# sprint-autopilot · Phase 3 详情分片 [4/13]（3.1.5 铸 Build 号 + 写执行数据计划态）
+# sprint-autopilot
+> ★ **3.1.6 阶段级联收口**已独立到 `{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-4b.md`：进入该阶段时先 Read；按 `ENTRY_MODE` / `SKIP_AIAUTO_TEST` 裁剪族，并用 build 级标志保证逐 tick 幂等。
+ · Phase 3 详情分片 [4/14]（3.1.5 铸 Build 号 + 写执行数据计划态）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 4/13 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 4/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：3.1.5（铸造 Build 号 + 写本 build 执行数据·计划态）
 > - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
 >

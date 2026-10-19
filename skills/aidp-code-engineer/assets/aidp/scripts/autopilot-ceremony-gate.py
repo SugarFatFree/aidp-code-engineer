@@ -396,49 +396,18 @@ def _resolve_entry_mode(args, vnode, build=""):
 
 
 def _derive_expect_cards(args, vnode, build=""):
-    """命令端未传 `--expect-cards` 时，脚本自算「本轮至少应发」的通知集（漏跑兜底，非上限）。
+    """从 `ceremony_cards.py` 读取唯一的入口模式 × 应产卡矩阵。
 
-    ## 为什么必须由脚本自算
-
-    逐项核验此前**只在命令端传入期望集时才发生**，而期望集的推导写在 `phase-3-9.md` ——
-    "检查有没有漏做"这件事，本身写在"可能被漏做"的那个分片里。执行体一旦没有逐片 Read
-    就自行推进（实测即如此），推导代码根本没跑 → 落进退化分支 → 而退化判据又恒真（P0-1）
-    → **一整轮开发期 + 测试期零通知，收尾门全程 PASS**。
-
-    ## 判据来源与刻意的保守
-
-    通知集矩阵单一信源 = `phase-0-5.md` 0.1bis；本函数只复刻其中**能由入参/baseline 确定**的部分：
-
-      · `#0` / `#1b` / `#1c`  —— 恒发，无条件期望
-      · `#1d`  —— 仅"本轮真的部署了"才发；判据取 baseline `deployment_mode != none`
-      · `#2`   —— 增量路径无 Sprint，故仅 `entry_mode != incremental` 才期望
-      · `#3`   —— 静态-only（无浏览器测试）时由 autopilot 自己发；有浏览器测试则归测试链路
-      · `#1`   —— **刻意不自算**：它只有"本轮真跑了规划"才该期望，而 gate 事后无法可靠区分
-                   "产物是本轮产的"还是"上轮就在"。宁可少期望，也不制造假 FAIL。
-
-    `test-only` 入口下 autopilot 不发任何里程碑卡（全归测试链路）→ 返回空集。
-
-    ⛔ **entry_mode 一律经 `_resolve_entry_mode()` 取**（显式参数 > baseline > full）：
-    曾因本函数就地写 `args.entry_mode or "full"`、而 hook 又不传该参数，导致 test-only
-    轮次恒索要 `#1c/#1d/#2` 三张不该发的卡，且无法通过任何配置纠正（详见该 helper 的 docstring）。
+    本函数只负责把本仓库已有的运行期事实（entry_mode / will_browser_test）转换成
+    矩阵函数的两个入参；卡片集合本身不在闸门里重复实现。
     """
-    _em = _resolve_entry_mode(args, vnode, build)   # ★ 单一口径：build 级优先 > 版本级回退 > full
-    if _em == "test-only":
-        return []
-    cards = ["#0", "#1b", "#1c"]
-    # ★ 与 will_browser_test 同一口径（显式落盘值优先）：`deployment_mode` 只是配置形态，
-    #   不含 `--skip-deploy` / `--skip-aiauto-test` 的本轮裁剪；两处若各推各的，
-    #   期望通知集会与命令端**方向相反**（一边要 #1d、一边要 #3），把合规执行逼成"漏发通知"。
-    _wbt = vnode.get("will_browser_test")
-    deployed = (bool(_wbt) if _wbt is not None
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from ceremony_cards import expected_cards
+    entry_mode = _resolve_entry_mode(args, vnode, build)
+    will_browser_test = vnode.get("will_browser_test")
+    deployed = (bool(will_browser_test) if will_browser_test is not None
                 else (vnode.get("deployment_mode") or "none") != "none")
-    if deployed:
-        cards.append("#1d")
-    if _em != "incremental":
-        cards.append("#2")
-    if not deployed:
-        cards.append("#3")          # 静态-only：autopilot 自己是 build 关闭方
-    return cards
+    return expected_cards(entry_mode, deployed=deployed)
 
 
 # ── 中途交还控制权检测（HANDBACK）─────────────────────────────────────────────

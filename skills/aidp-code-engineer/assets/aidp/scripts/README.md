@@ -119,6 +119,12 @@ python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py gate --require notify --int
 `python3 {{AIDP_HOME}}/scripts/emit-report.py verify-reports [--repo-root .] [--json]` 批量契约校验 + 摘要防篡改巡检全部历史 build 报告（`--help` 的 epilog 同列）。
 执行体只产结果 JSON、绝不手写 data / 手工 sed 注册（那正是"只落 markdown"退化的根因）。
 
+## ceremony_cards.py — 里程碑卡片矩阵单一信源
+
+机器可读的 `ENTRY_MODE × 应产卡集` 矩阵。`autopilot-ceremony-gate.py` 只消费 `expected_cards(entry_mode, deployed)`，不再在闸门里复制卡片推导；`CONDITIONAL` / `NEVER` 只用于文档和测试对账，条件卡不进入收尾门的必发集合。适用模式：`full` / `incremental` / `test-only`。调用方 = `autopilot-ceremony-gate.py::_derive_expect_cards`。
+
+用法：作为 Python 模块导入 `from ceremony_cards import expected_cards`；本脚本不提供独立退出码。
+
 ## autopilot-ceremony-gate.py — 无人值守强制仪式硬门 + 里程碑通知台账
 
 `/sprint-autopilot` / `/sprint-aiauto-test` 的**关键产出不许偷省**确定性硬门：`check` 子命令核验本 build 的

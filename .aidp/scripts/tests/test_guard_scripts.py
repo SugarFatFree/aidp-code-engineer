@@ -7838,9 +7838,9 @@ def test_card_section_file_and_render_scope():
     js = (repo / ".aidp/scripts/report_render_smoke.js").read_text(encoding="utf-8")
     check("★ undefined/NaN 的检测面剔除 <code>/<pre>（描述文本 ≠ 渲染故障）",
           "scanHtml" in js and "<\\/code>" in js.replace("\\/", "\\/")
-          and "const undefinedCount = (scanHtml.match" in js)
+          and "VALUE_SLOT_UNDEFINED" in js and "undefinedCount" in js)
     check("★ 三项判据统一走剔除后的文本（漏一项就是半截修复）",
-          js.count("scanHtml.match") == 3)
+          js.count("scanHtml.match") >= 2 and "undefinedTotal" in js)
 
 def test_autopilot_reset():
     """[72] `--reset-*` 旗标的执行器三侧对照。

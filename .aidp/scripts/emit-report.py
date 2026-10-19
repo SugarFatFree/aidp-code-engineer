@@ -249,6 +249,18 @@ def validate_payload(kind, payload):
         for i, f in enumerate(payload["features"]):
             if isinstance(f, dict) and f.get("status") not in (None, "done", "doing", "fail", "pend", "skip"):
                 errs.append(f"features[{i}].status=`{f.get('status')}` 应 ∈ done|doing|fail|pend|skip")
+    # ★ overview.statusKind / riskLevel 取值域：未知值会被渲染端静默回落，
+    #   让失败 build 的章节标题看起来像「整体完成」、风险缺失看起来像「中等风险」。
+    if kind == "exec" and isinstance(payload.get("overview"), dict):
+        overview = payload["overview"]
+        status_kind = overview.get("statusKind")
+        if status_kind is None:
+            errs.append("overview 缺必填 `statusKind`（∈ done|pend|fail）：缺失会让执行概览静默渲染成完成")
+        elif status_kind not in ("done", "pend", "fail"):
+            errs.append(f"overview.statusKind=`{status_kind}` 应 ∈ done|pend|fail")
+        risk_level = overview.get("riskLevel")
+        if risk_level is not None and risk_level not in ("低", "中", "高"):
+            errs.append(f"overview.riskLevel=`{risk_level}` 应 ∈ 低|中|高")
     # 单位口径：0~1 小数，收到 >1 或字符串一律报错并给换算
     for path in _RATE_PATHS.get(kind, []):
         obj_key, _, field = path.partition(".")
@@ -301,7 +313,16 @@ def validate_payload(kind, payload):
             counters = RESULT_STATES
             nums = {k: summary.get(k, 0) if k == "na" else summary.get(k) for k in counters}
             nums["total"] = summary.get("total")
-            if all(isinstance(v, int) and not isinstance(v, bool) for v in nums.values()):
+            # ★ 子键必填先行出声：缺键/非 int 不得让下面的对账门静默关闭。
+            for _k, _v in nums.items():
+                if _v is None:
+                    errs.append(f"summary 缺必填计数子键 `{_k}`：缺键会让计数对账门整段静默跳过")
+                elif not isinstance(_v, int) or isinstance(_v, bool):
+                    errs.append(f"summary.{_k}=`{_v}` 必须是整数，实际 {type(_v).__name__}")
+            if summary.get("passRate") is None:
+                errs.append("summary 缺必填子键 `passRate`（0~1 小数，分母 = total - na）")
+            counts_ok = all(isinstance(v, int) and not isinstance(v, bool) for v in nums.values())
+            if counts_ok:
                 s = sum(nums[k] for k in counters)
                 if s != nums["total"]:
                     errs.append(
@@ -322,27 +343,26 @@ def validate_payload(kind, payload):
                         errs.append("summary 各态计数与 cases[] 不自洽：" + "；".join(bad))
 
             suites = payload.get("suites")
-            if (isinstance(suites, list) and suites
-                    and all(isinstance(v, int) and not isinstance(v, bool)
-                            for v in nums.values())):
+            if isinstance(suites, list) and suites:
                 agg = {k: 0 for k in counters + ("total",)}
                 ok = True
-                for st in suites:
+                for _i, st in enumerate(suites):
                     if not isinstance(st, dict):
+                        errs.append(f"suites[{_i}] 应为对象，实际 {type(st).__name__}")
                         ok = False
-                        break
+                        continue
+                    _who = st.get("name") or st.get("id") or "未命名"
                     for k in agg:
-                        # `na` 与 summary 同规则可缺省=0（存量套件没有这个键）。
-                        # ⛔ 缺这条兼容会让整段 `ok=False`、**本门被静默跳过** ——
-                        #    一道门无声关掉，比它报错更危险。
                         v = st.get(k, 0) if k == "na" else st.get(k)
-                        if not isinstance(v, int) or isinstance(v, bool):
+                        if v is None:
+                            errs.append(f"suites[{_i}]（{_who}）缺必填计数子键 `{k}`：缺键会让 suites[] 与 summary 的对账门静默跳过")
                             ok = False
-                            break
-                        agg[k] += v
-                    if not ok:
-                        break
-                if ok:
+                        elif not isinstance(v, int) or isinstance(v, bool):
+                            errs.append(f"suites[{_i}]（{_who}）.{k}=`{v}` 必须是整数，实际 {type(v).__name__}")
+                            ok = False
+                        else:
+                            agg[k] += v
+                if ok and counts_ok:
                     bad = [f"{k}: suites[]合计={agg[k]} vs summary={nums[k]}"
                            for k in counters + ("total",) if agg[k] != nums[k]]
                     if bad:

@@ -417,6 +417,13 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 用法：`python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version <V> [--root .] [--json]`；`--self-check`（阳性 + 跨用户 + 同行两类阴性对照）。退出码：`0`=无未关闭（含「无研发执行计划 → 适用范围外」，⛔ 不等于「已全部关闭」）/ `1`=有未关闭、**调用方须停下** / `2`=用法错。⚠️ 退出码 1 的语义是「本命令不得继续」，⛔ 不是「记一笔告警然后往下走」—— 那等于这道门不存在。
 
+## assert_gate_ran.py — 外部机器门真实执行断言
+
+包装一个必须输出 JSON 的外部机器门，先执行它，再从 `aidp_collect.from_external_gate()` 读取 `collected` / `skipped` 等事实。**采集量为 0、外部门自报 skipped 或无法解析 JSON 时不判通过**：默认退出 `3`（`not-run`），只有显式 `--allow-empty "理由"` 才把本轮标记为适用范围外并留痕；外部门自身非零退出则透传为 `ran-and-failed`。这堵的是「目标目录/编号正则偏了 → 门扫到 0 个对象 → `passed:true` + exit 0」与真实通过同形的假绿。
+
+用法：`python3 {{AIDP_HOME}}/scripts/assert_gate_ran.py --label "上游溯源" -- python3 {{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py <目录> --json`。
+调用方 = `{{AIDP_HOME}}/flows/sprint-requirements/execution-steps.md` 的上游溯源回检；适用范围外必须显式写 `--allow-empty` 理由，⛔ 不得把它当默认逃生阀。
+
 ## aidp_collect.py — 采集量自证（机器门的「我到底看了多少东西」）
 
 **库，不是门**（无 CLI、无退出码）：给确定性检查提供 `Collected` / `from_result`，让每个门的 `--json` 恒带

@@ -73,7 +73,22 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行数/阈值）：REQ 段头部上游溯源 + 引用密度覆盖率，均由 SKILL 内置硬核回检 + 脚本 `{{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py` 把关（具体头部行数 / 覆盖率阈值详见 SKILL.md）。
 ```
 
-命令端把上述 prompt 作为「调用约束」原样追加到 SKILL 调用的 system prompt 末尾。SKILL QR 通过后，命令端在 Step 1.5 末尾再用 bash grep 兜底核验（详见 Step 1.5e 兜底回检）。
+命令端把上述 prompt 作为「调用约束」原样追加到 SKILL 调用的 system prompt 末尾。SKILL QR 通过后，命令端在 Step 1.5 末尾再用机器门包装器兜底核验：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/assert_gate_ran.py \
+  --label "REQ 上游溯源(check_req_upstream)" --json -- \
+  python3 {{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py \
+  "docs/requirements/{version}/研发需求" --json
+ASSERT_RC=$?
+# 0 = 外部门实际跑过且自身通过；1 = 外部门实际跑过但判不通过；
+# 3 = 外部门输出 skipped / 采集量 0（⛔ 不是通过）；2 = 输出不可判定或命令起不来。
+# ASSERT_RC=3 时只有在本轮确实没有可检查对象时才允许改为：
+#   ... --allow-empty "本轮无研发需求段，适用范围外"
+# 否则先修目录 / 标题 / 编号使被调门真的扫到内容，再重跑。
+```
+
+⛔ 包装器只负责确认「门真的跑过」，不重述 SKILL 的字段、阈值或质量结论；原始门的 JSON 仍是判级单一信源。
 
 ### Step 1.5：命令级后处理（AIDP 编排责任）
 

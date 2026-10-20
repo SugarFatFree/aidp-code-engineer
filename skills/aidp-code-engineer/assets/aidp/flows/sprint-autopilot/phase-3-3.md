@@ -15,7 +15,7 @@
 
 > ★ 本步判据独立成片：见同目录 **`phase-3-3b.md`**——`PLANNING_DONE`（**六类**规划产物齐全）、P0-1 incremental 硬判据②（规划齐）③（无未关闭 Sprint）、P0-0 跳过规划的两个合法来源、以及裁定结果回写 baseline。**必须先读它并跑完裁定**，再继续本片 step 1；跳过它 = 用增量名义免除规划 / 丢下未跑完的 Sprint。
 
-1. **里程碑通知 #1 规划开始（见 0.1bis；仅当真正要跑规划才发）**——**仅当 `PLANNING_DONE=0` 或带 `--force-replan`** 时经 `notify.py --auto` 发送（公共字段 项目名/工作目录/时间 + 下列内容）；`PLANNING_DONE=1`（规划已提前完成）→ **跳过本通知**，直接进 step 2/3（规划完成通知仍会发）：
+1. **里程碑通知 #1 规划开始（见 0.1bis；仅当真正要跑规划才发）**——**仅当 `PLANNING_DONE=0` 或带 `--force-replan`，且本轮未显式 `--no-planning`（`NO_PLANNING!=1`）** 时经 `notify.py --auto` 发送（公共字段 项目名/工作目录/时间 + 下列内容）；`PLANNING_DONE=1`（规划已提前完成）或用户显式 `--no-planning` → **跳过本通知**，直接进 step 2/3（规划完成通知仍会发）：
    （**首行 = 通知标题 `--title`，按 0.1bis「通知标题固定前缀」必带项目中文名称**；其余为正文）
    ```
    📋 {项目名称} {TARGET_VERSION} · 规划开始      ← 标题（未铸 build，不带 _Build{N}）
@@ -28,7 +28,7 @@
    失败/决策卡点会主动 @你，无消息即一切顺利
    ```
 
-2. **跑 `/version {TARGET_VERSION} [--unattended]`**（⛔ 无人值守下必带——`/version` 有多个交互门）（**仅当 `PLANNING_DONE=0` 或带 `--force-replan`**；否则整步跳过）（含里程碑参数，从 Phase 0.6 收集到的 `autopilot_decisions` 推断）：
+2. **跑 `/version {TARGET_VERSION} [--unattended]`**（⛔ 无人值守下必带——`/version` 有多个交互门）（**仅当 `PLANNING_DONE=0` 或带 `--force-replan`，且 `NO_PLANNING!=1`**；否则整步跳过）（含里程碑参数，从 Phase 0.6 收集到的 `autopilot_decisions` 推断）：
    - **★★ 上下文隔离（#2 子 Agent 委派，仅 `LOOP_UNATTENDED=1`）**：`/version` 是全链路最重的一段，**优先委派【独立子 Agent】执行**（隔离上下文）——子 Agent 在其自身上下文里读 `{{AIDP_HOME}}/commands/version.md` 跑完整规划链 + 终审，只回传 **compact JSON**：`{version, planning_done:bool, artifacts:[主产物路径], sprint_count:N, auditor_verdict:"pass"|"block", key_counts:{req,design,api,db,cases}, fail_reason?}`。主流程据此发 #1b / 写 `run_state` / 进 3.1.5。**⛔ 交互式（`LOOP_UNATTENDED=0`）不委派**：`/version` 的决策类 `AskUserQuestion` 需用户在场应答，子 Agent 无法与用户交互 → 内联执行（见下条）。**回退**：子 Agent 工具不可用 → 内联执行，行为与产物完全不变。理据（为何这是规划 tick 破 1M 的最大来源）见 rationale.md。
      > ⛔⛔ **委派 × flag 一致性铁律（二选一，不许骑墙）**：`LOOP_UNATTENDED=0` 时**要么严格内联不委派**，
      > **要么**委派时**绝不给子 Agent 传 `--unattended`**（改走「子 Agent 回传 `needs_interaction` →

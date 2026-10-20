@@ -641,3 +641,24 @@ autopilot 每 tick 累加 `test_loop_missing_streak`，3 tick 后按 `config-mis
 - **默认取版**：「当前开发版本」= `phase_beta_done_at` 非空且 `internal_released_at` 为空（autopilot 跑完部署、尚未准发布），判据单一信源 `baseline_edit.py current-version`。
 - **冻结契约**：四件一次写齐、只经 `baseline_edit.py`；解冻路径见 `autopilot_unfreeze.py::aiauto_probe`；冻结前先收口本 build 的 AI执行报告（本命令是其关闭方 R-4）。
 
+
+## test-only 复用部署的归属判据
+
+部署归属门的原判据是「本 build 未过就绪探针 **且** `last_deployed_at` 早于本 build 的
+`started_at` → 跳过」。它对「铸新 build 后重新部署」这条主线完全正确。
+
+但 `--skip-dev`（test-only）铸出的新 build，`started_at` 天然晚于上一次部署 —— 而版本其实
+早已部署、代码一行没变时，这条门就**永远**不放行。表现为「测试链路每 tick 什么都不做」，
+且在日志上与「还没部署」完全同形。
+
+两条路都可以修，选了后者：
+
+- ❌ 让 test-only 完全豁免归属门 —— 那真正的「新代码还没部署」也会被放行，测的是旧代码，
+  正是这道门存在的理由。
+- ✅ 让**开发侧在铸 build 时显式登记**复用的是哪一次部署（`builds[].deploy_reuse_of`），
+  测试链路只在该值**仍等于**当前 `last_deployed_at` 时豁免 —— 之后只要又部署过，旧登记
+  自动失效，退回常规判据。
+
+判据刻意要求「精确相等」而不是「不早于」：后者在部署被回滚或时间戳重写时会错误放行。
+⛔ 不接受「沉默地复用」：没有登记就只能老实重新部署 —— 显式登记本身就是要人确认
+「这个版本确实不需要重部署」。

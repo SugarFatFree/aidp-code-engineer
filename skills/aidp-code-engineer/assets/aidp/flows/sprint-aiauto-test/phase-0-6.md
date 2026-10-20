@@ -93,15 +93,23 @@ if [ -z "$TARGET_FLAG_VALUE" ] && [ "${HAS_ONCE_FLAG:-0}" != "1" ]; then
   fi
 fi
 
-# ★ 部署归属门（--target / --once 同样适用）：复测轮先铸新 build 后部署，部署未落到本 build 前
-#   测的是旧代码。判据：本 build 未过就绪探针（probe_passed 非真）且 last_deployed_at 为空或早于本 build 的 started_at → 跳过。
+# ★ 部署归属门：本 build 未过就绪探针且 last_deployed_at 早于 build 开始 → 跳过（测的是旧代码）。
+# ★ test-only 复用须由开发侧铸 build 时登记 `builds[].deploy_reuse_of`；本门仅在它**等于**当前
+#   last_deployed_at 时豁免（部署变了即失效）。⛔ 不接受沉默复用，理据见 `rationale.md`。
 CUR_BUILD=$(jq -r ".versions.\"$TARGET_VERSION\".current_build // empty" $BASELINE_FILE 2>/dev/null)
 if [ -n "$CUR_BUILD" ]; then
   _PP=$(jq -r ".versions.\"$TARGET_VERSION\".builds[]? | select(.build==\"$CUR_BUILD\") | .probe_passed // empty" $BASELINE_FILE 2>/dev/null | head -1)
   _BST=$(jq -r ".versions.\"$TARGET_VERSION\".builds[]? | select(.build==\"$CUR_BUILD\") | .started_at // empty" $BASELINE_FILE 2>/dev/null | head -1)
   _LDP=$(jq -r ".versions.\"$TARGET_VERSION\".last_deployed_at // empty" $BASELINE_FILE 2>/dev/null)
+  _REUSE=$(jq -r ".versions.\"$TARGET_VERSION\".builds[]? | select(.build==\"$CUR_BUILD\") | .deploy_reuse_of // empty" $BASELINE_FILE 2>/dev/null | head -1)
   _ts() { date -d "$1" +%s 2>/dev/null || echo 0; }
-  if [ "$_PP" != "true" ] && [ -n "$_BST" ] && { [ -z "$_LDP" ] || [ "$(_ts "$_LDP")" -lt "$(_ts "$_BST")" ]; }; then
+  _REUSE_OK=0
+  if [ -n "$_REUSE" ] && [ -n "$_LDP" ] && [ "$(_ts "$_REUSE")" = "$(_ts "$_LDP")" ]; then
+    _REUSE_OK=1; echo "♻️ $CUR_BUILD 登记复用本次部署（deploy_reuse_of=$_REUSE）→ 放行"
+  elif [ -n "$_REUSE" ]; then
+    echo "⚠️ $CUR_BUILD deploy_reuse_of=$_REUSE ≠ last_deployed_at=${_LDP:-空} → 登记失效，按常规判据"
+  fi
+  if [ "$_PP" != "true" ] && [ "$_REUSE_OK" != "1" ] && [ -n "$_BST" ] && { [ -z "$_LDP" ] || [ "$(_ts "$_LDP")" -lt "$(_ts "$_BST")" ]; }; then
     echo "⏭️ $CUR_BUILD 尚未部署（last_deployed_at=${_LDP:-空} 早于 build 开始 $_BST，且未过就绪探针）→ 跳过本 tick，等本 build 部署完成"
     exit 0
   fi

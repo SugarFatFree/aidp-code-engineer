@@ -48,7 +48,7 @@
        && $BE --version "$BV" --build "$BUILD" set entry_mode "$ENTRY_MODE" >/dev/null || true
      echo "♻️ 复用现有 build：$BUILD（执行数据在 + 未 finalize/未收尾 → 不自增，入口=$ENTRY_MODE）"
    else
-     # 复测轮判定：CUR 已 finalize/收尾 → 本次是「第 N 轮复测」，记 retest_of + round + 上轮通过率（供 #0/#D 通知 + SPA 复测关系）
+     # 复测轮：CUR 已 finalize/收尾 → 记 retest_of + round + 上轮通过率
      RETEST_OF=""; RETEST_ROUND=0; RETEST_LABEL=""
      if [ -n "$CUR" ] && { [ "$CUR_FINAL" = "true" ] || [ "$CUR_STATUS" = "closed" ] || [ "$CUR_STATUS" = "tested" ]; }; then
        RETEST_OF="$CUR"
@@ -62,12 +62,8 @@
      LAST=$(jq -r ".versions.\"$BV\".build_seq // 1000" "$BASELINE_FILE" 2>/dev/null)
      BUILD_SEQ=$((LAST + 1)); [ "$BUILD_SEQ" -lt 1001 ] && BUILD_SEQ=1001
      BUILD="${BV}_build${BUILD_SEQ}"   # 如 V0.1.0_build1001
-     # ★ 必须真正回写 baseline（不回写则 build_seq 不落盘，每次重跑都停在 1001）：
-     #   持久化 build_seq（自增）+ current_build（供 aiauto-test 归属测试报告）+ 追加 builds[] 条目（复测轮带 retest_of/retest_round）
-     #   ⛔ 一律走 baseline_edit.py 那把 flock（+ 锁内重读），不要裸 `jq … > tmp && mv`
-     #      （见 invariants「baseline 单一写入口不变式」）。
-     #   标量字段用 CLI；builds[] 是**数组追加**（点号路径只走 dict、表达不了 append），故按 invariants 的既定做法
-     #   `from baseline_edit import LockedBaseline` 在同一把锁内改（绝不另起一套写盘范式）。
+     # ★ 回写 build_seq + current_build；builds[] 是数组追加，故走 LockedBaseline 同一把锁。
+     #   ⛔ 不裸 `jq … > tmp && mv`（见 invariants「baseline 单一写入口不变式」）。
      $BE --version "$BV" set build_seq "$BUILD_SEQ" current_build "$BUILD"
      # ★ 新 build = 新一轮，旧轮次的未收敛计数不该继续计入（见 rationale「未收敛计数为何要跨 build 清零」）
      $BE --version "$BV" del aiauto_test_unconverged_streak 2>/dev/null || true
@@ -90,6 +86,13 @@ if os.environ.get("RETEST_OF"):
     entry["retest_round"] = int(os.environ.get("RETEST_ROUND") or 0)
 with LockedBaseline("memory/.sprint-autopilot-baseline.json", write=True) as bl:
     ver = bl.data.setdefault("versions", {}).setdefault(bv, {})
+    # ★ test-only 复用部署：登记此刻 last_deployed_at；测试链路仅在它仍等于当前值时豁免归属门。
+    #   为空 = 从没部署过，不登记。理据见同目录 rationale.md。
+    if os.environ.get("ENTRY_MODE") == "test-only":
+        _ld = ver.get("last_deployed_at") or ""
+        if _ld:
+            entry["deploy_reuse_of"] = _ld
+            entry["deploy_reuse_reason"] = "test-only：本轮无新代码变更，复用最近一次部署"
     ver.setdefault("builds", []).append(entry)
 PY
      echo "🔢 铸造 build 号：$BUILD（已落盘 build_seq=$BUILD_SEQ；下次重跑自增，不停在 1001；不打 git 分支/tag）${RETEST_LABEL:+ · $RETEST_LABEL}"

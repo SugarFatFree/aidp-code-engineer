@@ -232,7 +232,7 @@ PY
    ```
    > `internal_released_at` 仅是内部选版游标；无 Git 时项目记忆仍记「本地已归档（未发布）」及 `unsupported:vcs-disabled`。
 
-4. **里程碑通知 #pre-done（见 0.1bis）**：重新读本 tick 四信号，且 `internal_released_at` 已写入后才发送；不满足则不发、不宣称成功。通知失败按步骤 2 的失败处置登记 `PRERELEASE_HOLD=1`，步骤 5 不得写 done。
+4. **里程碑通知 #pre-done（见 0.1bis）**：重新读本 tick 四信号，且 `internal_released_at` 已写入后才发送；不满足则不发、不宣称成功。**通知失败不得阻塞归档**：`rc=3`（未配置渠道）静默跳过、`rc=1`（全部失败）只补 WARN 且 `notify.py` 已写 `undelivered` 台账；⛔ **不得**置 `PRERELEASE_HOLD=1`（理据见 `rationale.md`「#pre-done 失败不得阻塞归档」）。
    ```
    ✅ {项目名称} {PRE_RELEASE_VERSION} · 准发布完成
    commit：{hash} | 分支：{branch}
@@ -252,9 +252,9 @@ PY
       [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" get internal_released_at --default '')" ]; then
      VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
      if [ "$VCS_MODE" = "none" ]; then
-       ARCHIVE_SUMMARY="本地归档完成（未发布；Git 发布 unsupported:vcs-disabled），已写 internal_released_at，#pre-done 已发"
+       ARCHIVE_SUMMARY="本地归档完成（未发布；Git 发布 unsupported:vcs-disabled），已写 internal_released_at，#pre-done 按通知台账如实记录"
      else
-       ARCHIVE_SUMMARY="准发布归档完成（--no-tag），已写 internal_released_at，#pre-done 已发"
+       ARCHIVE_SUMMARY="准发布归档完成（--no-tag），已写 internal_released_at，#pre-done 按通知台账如实记录"
      fi
      python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" \
        run-state "2-prerelease" "done" "" --summary "$ARCHIVE_SUMMARY" --pending ""

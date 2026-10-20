@@ -408,6 +408,33 @@ def test_local_file_change_evidence():
         check("新增修改删除均入清单", {x["kind"] for x in changes} == {"added", "modified", "deleted"})
 
 
+def test_deploy_reuse_registration_contract():
+    """test-only 复用部署：开发侧登记、测试侧按「精确相等」放行。
+
+    两侧必须成对，单看一侧都发现不了问题：只登记不识别 → 测试链路每 tick 跳过；
+    只识别不登记 → 永远没有可识别的值。判据刻意是**精确相等**（不是「不早于」）：
+    部署被回滚或时间戳重写时，后者会错误放行、测到旧代码。
+    """
+    print("\n[test-only 复用部署的两侧契约]")
+    mint = (REPO / ".aidp/flows/sprint-autopilot/phase-3-4.md").read_text(encoding="utf-8")
+    gate = (REPO / ".aidp/flows/sprint-aiauto-test/phase-0-6.md").read_text(encoding="utf-8")
+    check("开发侧：铸 build 时登记 deploy_reuse_of",
+          'entry["deploy_reuse_of"]' in mint and 'ENTRY_MODE"' in mint and "test-only" in mint)
+    check("开发侧：登记值取自该版本 last_deployed_at",
+          'ver.get("last_deployed_at")' in mint)
+    check("测试侧：读取 deploy_reuse_of", ".deploy_reuse_of" in gate)
+    check("测试侧：精确相等才放行（⛔ 不是「不早于」）",
+          '[ "$(_ts "$_REUSE")" = "$(_ts "$_LDP")" ]' in gate)
+    check("测试侧：登记失效时退回常规判据（有兜底分支）",
+          "_REUSE_OK" in gate and '!= "1"' in gate)
+    # 语义对照：相等放行、不等失效
+    def pass_gate(reuse, ldp):
+        return bool(reuse) and bool(ldp) and reuse == ldp
+    check("语义：登记值与当前部署一致 → 放行", pass_gate("T1", "T1") is True)
+    check("语义：之后又部署过 → 登记失效", pass_gate("T1", "T2") is False)
+    check("语义：从未部署 → 不放行", pass_gate("", "") is False)
+
+
 def test_sql_isolation_two_track():
     print("\n[SQL 版本隔离门识别两轨布局]")
     sc = REPO / ".aidp/skills/dev-logic-architect/scripts/check_sql_version_isolation.py"
@@ -463,6 +490,7 @@ def main():
     test_vcs_mode_command_contracts()
     test_vcs_disabled_downstream_contracts()
     test_local_file_change_evidence()
+    test_deploy_reuse_registration_contract()
     test_sql_isolation_two_track()
     test_skill_ref_freshness_delegation()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")

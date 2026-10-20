@@ -323,6 +323,31 @@ def test_config_consolidation():
     check("脚本自带双侧对照可独立跑通（--self-check）",
           subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aidp_config.py"),
                           "--self-check"], capture_output=True).returncode == 0)
+    # ★ 配置骨架必须与仓库那份同集：`aidp_config.TEMPLATE` 是 `ensure()` 的兜底落点，
+    #   少一个键 = 兜底建出来的配置缺该键 → 读方拿缺省值，而真正那份里用户明明配过。
+    #   这类漂移在两个文件上都「看起来正常」，只有并集比对才看得见。
+    def _leaves(obj, prefix=""):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield from _leaves(v, f"{prefix}.{k}" if prefix else str(k))
+        else:
+            yield prefix
+    import yaml as _yaml
+    repo_cfg = _yaml.safe_load((REPO / "memory/aidp-config.yaml").read_text(encoding="utf-8")) or {}
+    repo_keys = set(_leaves(repo_cfg))
+    tpl_keys = set(_leaves(_yaml.safe_load(cfg.TEMPLATE) or {}))
+    check("★ 配置骨架键集与仓库 memory/aidp-config.yaml 一致（缺失键 = ensure 建出残缺配置）",
+          repo_keys == tpl_keys)
+    check(f"   差集 → 仅在仓库那份：{sorted(repo_keys - tpl_keys)}；仅在骨架：{sorted(tpl_keys - repo_keys)}",
+          repo_keys == tpl_keys)
+    # ★ 读方拿得到键才算配置项存在：scheduler_config 不返回 tick_max_seconds 时，
+    #   挂死判据恒取 0 → max(threshold, 0, 3600) 恒等于 3600，用户配的 7200 静默失效。
+    for _k in ("tick_max_seconds",):
+        check(f"★ scheduler_config 暴露 `{_k}`（读方取不到 = 配置项形同不存在）",
+              _k in cfg.scheduler_config(str(REPO)))
+    check("★ tick_max_seconds 按配置值读回（读方取的就是用户配的那个数）",
+          cfg.scheduler_config(str(REPO)).get("tick_max_seconds")
+          == (repo_cfg.get("scheduler") or {}).get("tick_max_seconds"))
     _sm = REPO / "skills/aidp-code-engineer/scripts/scaffold_marker.py"
     if _sm.is_file():
         check("版本戳访问器自带双侧对照可独立跑通",

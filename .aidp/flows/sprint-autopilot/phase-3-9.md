@@ -54,6 +54,10 @@
    if [ "$_TLA_RC" != "0" ]; then
      echo "⚠️ ceremony-gate test-loop-alive 自身异常（rc=$_TLA_RC）→ 本 tick 不判测试链路存活、"
      echo "   ⛔ 不计入 test_loop_missing_streak（那会把脚本故障误诊成运维少挂了一条 loop），让位本 tick"
+     # ★ 让位 ≠ 什么都不留：无唤醒源（--once / 单次调用）时「让位」就是本轮收场，
+     #   而脚本故障恰恰是「既没在跑、也没在报」的那种停摆。至少把事实写进本地告警台账。
+     python3 -c "import sys; sys.path.insert(0, '{{AIDP_HOME}}/scripts'); import aidp_paths; aidp_paths.append_alert('.', kind='ceremony-gate-broken', version='${V}', title='ceremony-gate test-loop-alive 自身异常', detail='rc=${_TLA_RC}；本 tick 不判测试链路存活')" \
+       2>/dev/null || echo "⚠️ 告警台账写入失败（不阻断让位）"
      exit 0
    fi
    # ★ 测试链路活跃 = 缺失计数的恢复信号：就地清零（跨复测 build 不累加）

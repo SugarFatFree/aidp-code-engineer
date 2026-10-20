@@ -107,7 +107,7 @@ fi
 | **S3 已准发布（无 tag）** | baseline 该版本字典 `versions.<V>.internal_released_at` 有值 + 无 `git tag v{<V>去V}` | 已归档，等待正式发布 |
 | **S4 已正式发布** | `git tag` 含 `v{<V>去V}` 或 `V<V>` | 完成 |
 
-> 📌 **`<user>` 归属（多开发者/跨机 7×24 消歧）**：上表 `memory/<V>/<user>/` 中的 `<user>` **默认取本机 `git config user.name`**；但 baseline 已扁平化为项目级（不按用户分桶），Sprint 记录可能落在任一协作者目录下——故 S1/S2 判定应**跨用户扫描 `memory/<V>/*/sprints/` 与 `memory/<V>/*/progress.md`**（任一开发者存在未关闭 Sprint 即 S1；需所有用户目录的 Sprint 全 ✅ 才 S2），避免只看本机用户目录而误判。单开发者项目两者等价。
+> 📌 **`<user>` 归属（多开发者/跨机 7×24 消歧）**：上表 `memory/<V>/<user>/` 中的 `<user>` 取 `python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现）；但 baseline 已扁平化为项目级（不按用户分桶），Sprint 记录可能落在任一协作者目录下——故 S1/S2 判定应**跨用户扫描 `memory/<V>/*/sprints/` 与 `memory/<V>/*/progress.md`**（任一开发者存在未关闭 Sprint 即 S1；需所有用户目录的 Sprint 全 ✅ 才 S2），避免只看本机用户目录而误判。单开发者项目两者等价。
 
 #### 0.3.4 识别「最近的一对」+ 熔断冻结跳过 / 解冻
 

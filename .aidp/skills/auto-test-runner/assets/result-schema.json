@@ -76,7 +76,7 @@
         "invocation"
       ],
       "client_type枚举": "web | miniprogram | mobile | desktop",
-      "implementation_kind": "Web = webmcp；非 Web = app-service 或 bridge",
+      "implementation_kind": "Web = webmcp；非 Web = app-native 或 bridge（与 check_client_mcp.py 声明侧同枚举，⛔ 不用 app-service）",
       "四态": "declared / entry / registration / invocation，每态各带 status(verified|failed|unavailable) + source + observed_at",
       "约束": "⛔ 后一态不得由前一态推断（声明了≠有入口，有入口≠注册了，注册了≠真调用过），取不到一律记 unavailable；⛔ source 不得指向**测试驱动**（chrome-devtools / Appium / 小程序驱动 …）—— 驱动可用与「应用提供了业务工具」是两条轴，混了会把整个功能点判成假绿；工具调用须已在当前实例 registration.tools 内，且每次调用带 evidence_artifact 指向 evidence[].artifact 的真实日志（一句 called 不算证据）。★「客户端 MCP 能力」是**跨端**功能点，WebMCP 只是其 Web 端实现；旧 Web 写法 webmcp 字段继续兼容读取。"
     }

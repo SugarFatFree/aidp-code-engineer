@@ -9,7 +9,7 @@
 
 与 `/sprint-init` 一致：
 1. **{version}**：询问用户项目起始版本号（建议 `V0.0.1` 或 `V0.1.0`）。
-2. **{user}**：`git config user.name`。
+2. **{user}**：`python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现，无 Git 项目也能确定）。
 3. 本阶段不生成迭代级 memory 的**内容**（L3）——⛔ 注意措辞：**目录**由 Phase 0 的脚手架统一建出（清单单一信源 `scaffold_lib.py::skeleton_dirs`）（含 `memory/{version}/{user}/sprints`），本阶段只是不往里写内容，仅保留 {version}/{user} 供 `/sprint-init-complete` 使用；建议写入 `AGENTS.md` 草稿的「当前状态」以便下一步复用。
 
 ## 前置检查

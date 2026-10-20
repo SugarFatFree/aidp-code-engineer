@@ -50,6 +50,7 @@
 
 退出码：0 = 成功；1 = 落盘失败；2 = 用法错误。
 """
+from __future__ import annotations
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
 _aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__).resolve().parent.name == "scripts" else _AidpPath(__file__).resolve().parents[1] / "scripts"))

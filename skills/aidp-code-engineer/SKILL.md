@@ -37,7 +37,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 
 1. 目标目录可以不是 Git 仓库；探测输出 `vcs_mode=git|none`，`none` 不自动执行 `git init`，Git 提交、推送、tag、CICD 与正式发布能力不可用。
 2. 能取得开发者标识：有 Git 配置时取 `git config user.name`（仅字母、数字、`_ . -`），否则向用户要一个传给 `--user`。
-3. Python 3.8+（脚本只用标准库）。
+3. Python 3.9+（脚本只用标准库）。
 4. 目标项目不是 AIDP 模板仓库本身（脚本会拒绝）。
 
 ## 资源位置

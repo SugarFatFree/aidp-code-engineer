@@ -53,18 +53,39 @@
         BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
         DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
         : "${TARGET_VERSION:?}"; : "${BUILD:?}"; : "${DEV_BRANCH:?取不到分支名，拒绝 push}"
-        git push origin "$DEV_BRANCH" || exit 1
+        # ★★ `--skip-deploy` / `deployment.mode=none` 时**只 commit 不 push**（不变式 ②细则的
+        #    唯一免推送口）。漏判的后果是「用户明确说不部署」却照样 push 到部署分支，
+        #    而推送触发型 CICD 会因此真部署 —— 且 Phase 3.2.1 已被跳过、没有人在监听终态。
+        #    `SKIP_DEPLOY` 是**本 tick 变量**（`autopilot_tick_flags.py --shell` 供给），无 baseline 真源。
+        #    ⚠️ `DEPLOY_MODE` 的兜底**不能用 `${DEPLOY_MODE:-none}`**：那是"取值兜底"，
+        #    读空时会被当成 none 从而把正常的 cloud 推送也一并跳过。此处判的是"是否等于 none"。
+        if [ "${SKIP_DEPLOY:-0}" = "1" ] || [ "${DEPLOY_MODE:-}" = "none" ]; then
+          $BE --version "$TARGET_VERSION" --build "$BUILD" set deployment_status "skipped:no-push" || exit 1
+          echo "⏭️ --skip-deploy / mode=none → 只 commit 不 push（开发成果留在本地分支 $DEV_BRANCH）"
+        else
+        # ★ 推送失败**不得裸 `exit 1`**：那是"什么都没记账、什么都没通知"的退出，
+        #   `/loop` 每 tick 重撞同一个失败直到偶然被别的门冻住，而人全程不知情。
+        #   统一走失败处置（记账 → 判阈 → 冻结四件套 → #4 + 本地告警）。
+        _push_fail() {
+          python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" \
+            --phase 3.2-push --reason deploy-unreachable --streak-key dev_fail_streak \
+            --threshold "${DEV_FAIL_FREEZE_THRESHOLD:-3}" \
+            --why "推送失败：$1（无 remote / 认证失效 / 非快进被拒）；阻断部署，需人工介入"
+        }
+        git push origin "$DEV_BRANCH" || { _push_fail "git push $DEV_BRANCH"; exit 0; }
         PENDING_MERGE_TO="${PENDING_MERGE_TO:-}"
         if [ -n "$PENDING_MERGE_TO" ] && [ "$PENDING_MERGE_TO" != "$DEV_BRANCH" ]; then
           git fetch origin "$PENDING_MERGE_TO"
           git switch "$PENDING_MERGE_TO" && git pull --rebase origin "$PENDING_MERGE_TO"
           MERGE_BASE_REF=$(git rev-parse HEAD)
           git merge --no-edit "$DEV_BRANCH"
-          python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$MERGE_BASE_REF" || exit 1
-          git push origin "$PENDING_MERGE_TO" || exit 1
+          python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$MERGE_BASE_REF" \
+            || { _push_fail "合并后重新分类失败"; exit 0; }
+          git push origin "$PENDING_MERGE_TO" || { _push_fail "git push $PENDING_MERGE_TO"; exit 0; }
         fi
         GIT_PUSH_AT=$(date -Iseconds); GIT_PUSH_COMMIT=$(git rev-parse HEAD)
         $BE --version "$TARGET_VERSION" --build "$BUILD" set push_at "$GIT_PUSH_AT" push_commit "$GIT_PUSH_COMMIT"
+        fi
         ```
      5. **失败兜底（不静默继续）**：push 失败（无 remote / 认证失效 / 非快进被拒）→ 绝不带着"未推送"继续进部署动作，走「失败处置」#4 通知 @用户介入，暂停本轮。
    - **★ 部署前安全网（在「部署动作」之前跑，⛔ 不可省）**：按 `{{AIDP_HOME}}/flows/sprint-batch/step-6.md` 的 **Step 6.0.5「SQL 已应用校验」+ 6.0.6「部署流程文档校验」**就地执行同款校验（判据以该文件为单一信源）。根因见 rationale.md「部署前安全网为何要在 autopilot 侧再跑一次」。

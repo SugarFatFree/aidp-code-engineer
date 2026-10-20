@@ -9,7 +9,7 @@
 **{{project}}** 基于 AIDP（AI-Driven Iterative Development Paradigm）范式建设：从版本规划、Sprint 执行、AI 自动化测试到发布归档，全程由 AI 编码 Agent 的子 Agent + Skills 驱动；支持 Claude Code / Codex / DeepSeek Harness。项目记忆文件为 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`），项目背景详见 `memory/projectBrief.md`。
 
 > ⚠️ 每次会话开始，按序解析上下文再工作：
-> 1. 读本文件「当前状态」的 `{version}` 与 `{user}`；缺失则 `git config user.name` 取 `{user}`、向用户询问 `{version}`
+> 1. 读本文件「当前状态」的 `{version}` 与 `{user}`；缺失则 `python3 {{AIDP_HOME}}/scripts/vcs.py user` 取 `{user}`（唯一解析实现，无 Git 项目同样可用）、向用户询问 `{version}`
 > 2. 读 `memory/{version}/{user}/activeContext.md`（当前 Sprint 状态）+ `progress.md`（进度）
 > 3. 按需读项目级 memory（projectBrief / productContext / systemPatterns / techContext / databaseBaseline）
 
@@ -265,7 +265,7 @@
 
 34. **★ 需求作废清算（跨版本 + ★ 同版本 / 同 Sprint 内口径反转；补约定 22「级联只版本内单向向下」的反向盲区）**：新结论推翻已写入文档的旧结论时（跨版本，或同一版本 / 同一 Sprint 内第二次口述反转第一次），必须清算所有引用旧结论的落点（需求条目 / ADR / 衍生论证 / 用例与断言 / 铁律 / 代码注释，关键语义词全库检索并留痕），被推翻条目加**显式作废标记指向新结论**、不静默改写，并**强制回答「旧口径下判定为安全的设计，在新口径下是否仍然安全」**。**★ 执行时机 = 两段式**：开发期当场只落作废标记（≤10 行）并把扩散面记进需求族增量册「已知失准点」，收口点才做全文订正。决策门落点 = `/sprint-dev` Phase 0B.1.3；**详规见 `{{AIDP_HOME}}/reference/约定细则-4.md`**。
 
-35. **★ 运行时验证纪律（开发期默认只静态验证；不擅自启动前后端服务、不完整构建——两类独立禁止项）**：开发/验证代码时**默认只做静态验证**（类型检查 / 语法 / lint / 确定性检查脚本）。**除非用户显式要求，禁止** ① **启动任何前后端服务**（dev server 或后端常驻进程）② **执行完整打包构建**。**★ 静态验证工具被当作「零新增」判据前，必须先做一次阳性对照**（工具失效的形态恰是输出「0 错误」；`{{AIDP_HOME}}/scripts/check_*.py` 均支持 `--self-check`，全量跑 `python3 {{AIDP_HOME}}/scripts/selfcheck.py`）。**★ 格式化类 autofix 只允许作用于【本次新建】的文件**，既有文件只手工消除自己引入的告警。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载）+ 细则片4（`{{AIDP_HOME}}/reference/约定细则-4.md`）**；回检 = `verify.py::check_project_claude_aidp_conflict` + `agents/frontend.md`·`agents/backend.md` 验证步骤。
+35. **★ 运行时验证纪律（开发期默认只静态验证；不擅自启动前后端服务、不完整构建——两类独立禁止项）**：开发/验证代码时**默认只做静态验证**（类型检查 / 语法 / lint / 确定性检查脚本）。**除非用户显式要求，禁止** ① **启动任何前后端服务**（dev server 或后端常驻进程）② **执行完整打包构建**。**★ 静态验证工具被当作「零新增」判据前，必须先做一次阳性对照**（工具失效的形态恰是输出「0 错误」；`{{AIDP_HOME}}/scripts/check_*.py` 除少数需专用夹具的外均支持 `--self-check`，全量跑 `{{AIDP_HOME}}/scripts/selfcheck.py`（逐脚本报 pass/unsupported 并写明原因））。**★ 格式化类 autofix 只允许作用于【本次新建】的文件**，既有文件只手工消除自己引入的告警。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载；`约定细则-4.md` 只做回检与指针，不复述详规）**；回检 = `verify.py::check_project_claude_aidp_conflict` + `agents/frontend.md`·`agents/backend.md` 验证步骤。
 
 36. **★ 子 Agent 派发授权（本文件顶部「站位授权」= 项目级常驻显式授权，默认自动用【后台】子 Agent；派不出后台 → 先试后降、转前台/内联，绝不静默跳过）**：授权来源有二且**并列生效**——① **本文件顶部的「★ 站位授权」段**（项目所有者写在记忆文件里的显式指令，**不依赖任何命令入口**，裸对话开发同样覆盖）；② 用户执行**任一 AIDP 自动化命令**（`/sprint-*`、`/version` 等）本身。二者都指向同一结论：命令 / 约定文档写明"派子 Agent"处，那些子 Agent 是**既定职责的一部分、非命令职责外的主动行为**，**不得**因"非用户请求不主动调 Agent 工具"类默认 / 宿主 / 会话级保守指令而停下向用户征询、或静默跳过对应质量门。**★ 判定方式 = 先试后降**：⛔ 不许"读一句宿主约束就自行判定派不出后台"——**直接发起后台派发**，只有**实际被拒 / 失败**才落降级阶梯（判据是客观结果，不是对一句话的解读）；**降级到前台必须在完成摘要里交代代价**（主上下文纳入了什么、多少量）。
 

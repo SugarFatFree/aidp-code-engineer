@@ -1,6 +1,6 @@
 # {{AIDP_HOME}}/agents/ — AIDP 角色指令文件（**不是** Claude Code 原生 subagent 注册目录）
 
-> ⚠️ **先读这一条，能省掉一整轮误解**：本目录下的 9 份 `.md` 是**角色指令文件**，
+> ⚠️ **先读这一条，能省掉一整轮误解**：本目录下的 9 份角色指令 `.md`（另本 README）是**角色指令文件**，
 > 由执行体用 **`Read` 工具**加载后自己扮演该角色，或写进派发给子 Agent 的 prompt 里。
 > 它们**没有 YAML frontmatter**，因此**不会**出现在 `/agents` 列表、也**不能**用
 > `Agent({subagent_type: "backend"})` 这种注册式类型名调起。

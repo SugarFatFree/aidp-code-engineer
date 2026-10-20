@@ -1,16 +1,17 @@
 ---
-
-## 客户端 MCP 业务能力的 Task 边界（条件启用）
-
-`client_mcp.enabled` 默认关闭,旧 `webmcp_enabled: true` 或 `webmcp.enabled: true` 只兼容 Web+WebMCP,两旧别名冲突也报错。此处的能力是**应用主动向 AI 提供业务工具**,与 AI 借 Chrome DevTools/Appium/小程序**测试驱动**操控界面两条轴独立;项目 `{{AIDP_HOME}}/mcp.json`/全局 MCP 配置只说明开发工具可用,不能证明产品实现。新旧显式声明在客户端/启停/实现形态上冲突时就地报错并登记待澄清,不静默覆盖。
-
-上游已证实应用自有工具时,按工具/权限/写操作确认/生命周期/错误/审计/调用证据拆必要 Task,每项仍带步骤、验收、AI 指令、依赖与 PRD/原型/设计锚点;Web 端按已有 WebMCP 设计任务落地,非 Web 仅按已证实的应用服务或桥接做 Task,**不生成空 Phase**、不自造统一入口或 Chrome 参数。声明未提供时无 MCP Task;声明启用但实现未取到时标待澄清,不能拿测试驱动配置替代设计。判据见 [`references/flow-task-model.md`](./references/flow-task-model.md),QR 折入既有检查项 1/6/14,14 维计数不变。
 name: dev-execution-planner
 description: >
   从 PRD、HTML 原型和详细设计方案生成研发执行计划。每个任务包含清晰的执行步骤和验收标准,但不包含代码级细节。
   生成后强制执行 14 维度独立 Agent 检查(始终必查 12 项 + 多用户/多文件模式各 +1),并遵循 12 条核心原则(item 0~11,下游可按"核心原则 N"权威引用)。
   当用户提到生成执行计划、研发计划、开发执行方案、任务拆解、从设计文档生成开发任务、Sprint 任务分解时触发。
 ---
+
+
+## 客户端 MCP 业务能力的 Task 边界（条件启用）
+
+`client_mcp.enabled` 默认关闭,旧 `webmcp_enabled: true` 或 `webmcp.enabled: true` 只兼容 Web+WebMCP,两旧别名冲突也报错。此处的能力是**应用主动向 AI 提供业务工具**,与 AI 借 Chrome DevTools/Appium/小程序**测试驱动**操控界面两条轴独立;项目 `{{AIDP_HOME}}/mcp.json`/全局 MCP 配置只说明开发工具可用,不能证明产品实现。新旧显式声明在客户端/启停/实现形态上冲突时就地报错并登记待澄清,不静默覆盖。
+
+上游已证实应用自有工具时,按工具/权限/写操作确认/生命周期/错误/审计/调用证据拆必要 Task,每项仍带步骤、验收、AI 指令、依赖与 PRD/原型/设计锚点;Web 端按已有 WebMCP 设计任务落地,非 Web 仅按已证实的应用服务或桥接做 Task,**不生成空 Phase**、不自造统一入口或 Chrome 参数。声明未提供时无 MCP Task;声明启用但实现未取到时标待澄清,不能拿测试驱动配置替代设计。判据见 [`references/flow-task-model.md`](./references/flow-task-model.md),QR 折入既有检查项 1/6/14,14 维计数不变。
 
 # 研发执行计划生成器 (Dev Execution Planner)
 

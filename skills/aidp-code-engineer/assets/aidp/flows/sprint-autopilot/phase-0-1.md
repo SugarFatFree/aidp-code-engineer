@@ -114,7 +114,7 @@ fi
 > ```
 > 判定不需要执行体理解上轮发生了什么——`handback-check --record` 已把结论写进 `autopilot.last_handback`。续跑动作本就是 IRON-3「每轮开始先读 `run_state`」的既有行为，本自检只是给它一个**显式信号**，不再依赖执行体自己想起来。
 
-> ★ **0.0.0ter 收尾护栏 fail-open 台账自检（紧接 0.0.0bis，同为开局只读一眼）**：Stop hook `autopilot-stop-guard.py` 是"收尾门没过不许结束"的结构级兜底，但它有 4 层 fail-open。**放行不等于收口，只等于护栏判不出来**——所以每一次"本可介入却放行"都会记进台账，本轮开局读一眼：
+> ★ **0.0.0ter 收尾护栏 fail-open 台账自检（紧接 0.0.0bis，同为开局只读一眼）**：Stop hook `autopilot-stop-guard.py` 是"收尾门没过不许结束"的结构级兜底，但它有 5 层 fail-open（逃生舱 / 配置开关 / 无待收口流水线 / 判不出 / 熔断上限）。**放行不等于收口，只等于护栏判不出来**——所以每一次"本可介入却放行"都会记进台账，本轮开局读一眼：
 > ```bash
 > SKIPS=memory/.aidp/stop-guard-skips.jsonl
 > [ -f "$SKIPS" ] && tail -3 "$SKIPS" | while IFS= read -r l; do echo "⚠️ 上轮收尾护栏未介入：$l"; done

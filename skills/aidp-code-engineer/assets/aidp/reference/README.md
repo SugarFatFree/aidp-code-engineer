@@ -15,7 +15,7 @@
 | `命令速查.md` | 各命令的完整实操示例、flag 组合、7×24 前置 | 项目记忆文件「常用命令速查」 |
 | `skills.md` | 各 SKILL 的详细用途 | 项目记忆文件「本项目使用的 Skills」 |
 | `初始化与文档索引.md` | 初始化输入清单 + AIDP 范式文档索引 | 项目记忆文件两处 |
-| `开发期族增量.md` | 约定 22「攒批级联」的**四族增量册**详规与收口点清单（**该条的单一信源**）| 约定 22 主行；`{{AIDP_HOME}}/commands/sprint-batch.md`（明写「单一信源 = 本文件」）|
+| `开发期族增量.md` | 约定 22「攒批级联」的**四族增量册**详规与收口点清单（**该条的单一信源**）| 约定 22 主行；`{{AIDP_HOME}}/commands/`{sprint-requirements,sprint-design,sprint-plan,sprint-selftest}.md（各写明「单一信源 = 本文件」）+ `sprint-dev.md`·`sprint-close.md` 引用 |
 | `子Agent必读.md` | 项目级踩坑清单（**用户填充型**，见下）| `agents/frontend.md`·`agents/backend.md`、`/sprint-close` Step 5.1 |
 | `上游调用日志参考实现.md` | 约定 40 的拦截器骨架（traceId 配对 / 截断 / 脱敏 / 二进制降级）| `rules/code.md`·`rules/backend.md` 约定 40 |
 | `agent-tools.md` | Claude Code / Codex / DeepSeek Harness 的判定依据、记忆文件、SKILL / 命令 / 插件目录、工具名与定时循环对照 | 项目记忆文件「多 Agent 兼容」段、`agent_sync.py` 适配入口 |

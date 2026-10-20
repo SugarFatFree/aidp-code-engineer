@@ -447,11 +447,13 @@ def check_multi_file_split(target: Path):
     def _is_case_file(name):
         if re.match(r"^00_", name):            # 00_索引.md(专职索引,AIDP 范式)
             return False
-        if re.match(r"^9[89]_", name):         # 98_跨系统验证清单 / 99_待澄清问题清单
+        if re.match(r"^9[789]_", name):        # 97_环境探针档案 / 98_跨系统验证清单 / 99_待澄清问题清单
             return False
         if "研发自测方案" in name:              # 01_研发自测方案.md(方案,非用例分册)
             return False
         if "测试环境与账号" in name:            # aiauto-test 环境/账号配置
+            return False
+        if "环境探针档案" in name:              # aiauto-test 环境事实沉淀(非用例分册)
             return False
         return True
 

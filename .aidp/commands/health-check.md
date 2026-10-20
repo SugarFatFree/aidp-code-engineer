@@ -4,7 +4,7 @@
 
 ## 前置流程
 
-1. **{user}** ← `git config user.name`
+1. **{user}** ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现；⛔ 别自己拼 `git config user.name`，无 Git 项目上会解析出另一个身份）
 2. **{version}** ← 项目记忆文件（`python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取路径）「当前状态.当前版本」；读不到则取 `memory/` 下按版本序最大的 `V*` 目录；仍无（尚未规划任何版本）则标记 `{version}` 缺省、检查项 9 标 N/A（`verify.py` 下游模式缺版本参数直接 exit 2，不跑）。**★ 不得写死任何具体版本号**（写死会让下游项目对着不存在的 `memory/V0.0.1/{user}/` 报假缺失）。
 3. 扫描 `memory/` 下**所有版本**（`V*` 目录）和**所有用户**的子目录，汇总健康度。
 4. 项目级 memory 文件检查一次即可。

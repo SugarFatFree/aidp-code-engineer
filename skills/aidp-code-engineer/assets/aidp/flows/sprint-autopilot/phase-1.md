@@ -100,19 +100,29 @@ PRD_ROOT="${1:-docs/requirements/}"
 #   → autopilot-prd-watch 返回 should_run=0 → **fail-open 成「PRD 无变化 → 退出」**；
 #   而 `--heartbeat` 还会把这个占位串写成 baseline 里的垃圾版本节点。语法合法、零报错。
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-: "${TARGET_VERSION:?Phase 0.3.4 尚未落盘 target_version，拒绝按占位符继续}"
-PRD_DIR="$PRD_ROOT/$TARGET_VERSION/产品提供/"
-BASELINE_FILE="memory/.sprint-autopilot-baseline.json"
+# ⛔ **空 ≠ 落盘失败**：「本版等准发布、产品还没提新 PRD」是 7×24 最常见的稳态
+#   （Phase 0.3.4 决策矩阵的合法行 `| 有 | null | 仅跑 Phase 2 |`，且 target 会被落成空串）。
+#   这里若写 `: "${TARGET_VERSION:?…}"`，该稳态会被整 tick 中止：Phase 2 结构上不可达、
+#   `internal_released_at` 永远写不上、每 10 分钟重撞一次，而终端打的是与真因相反的话。
+#   正确处置 = **跳过 PRD 变化检测**（没有待开发版本就没有可检测的 PRD），让 tick 继续走到 Phase 2。
+if [ -z "$TARGET_VERSION" ]; then
+  echo "📭 无待开发版本（TARGET_VERSION 为空）→ 跳过 1.2 PRD 变化检测；本 tick 仅可能跑 Phase 2"
+  SHOULD_RUN=0; SKIP_PRD_WATCH=1
+else
+  : "${TARGET_VERSION:?Phase 0.3.4 尚未落盘 target_version，拒绝按占位符继续}"
+  PRD_DIR="$PRD_ROOT/$TARGET_VERSION/产品提供/"
+  BASELINE_FILE="memory/.sprint-autopilot-baseline.json"
 
-# ★ 变化检测内核 = {{AIDP_HOME}}/scripts/autopilot-prd-watch.py（单一信源，命令端不自行拼哈希比对）
-#   判定顺序：无 PRD 文件 → skip(no-prd-files)｜无 baseline 记录 → run(no-baseline)｜
-#             last_commit_hash 变了 → run(new-commit)｜tracked_files 归一后不等 → run(uncommitted-change)｜否则 skip(no-change)。
-#   ⚠️ 判据两侧必须**同构**后比对（都归一到 [{"path","sha256"}] 排序列表）——脚本已保证；
-#      绝不要用"`sha256sum` 文本行的哈希 vs `jq … | tostring` JSON 串的哈希"这种不可比写法（理据见 rationale.md）。
-#   --heartbeat：无论是否命中都写顶层 autopilot_loop_heartbeat_at，供运维区分「loop 存活无变化」与「loop 掉了」
-#                （与测试链路的 aiauto_test_heartbeat_at 对称）。
-eval "$(python3 {{AIDP_HOME}}/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION" --heartbeat --shell)"
-# → 导出 SHOULD_RUN / TRIGGER_REASON / PRD_DIR / PRD_REASON_CODE
+  # ★ 变化检测内核 = {{AIDP_HOME}}/scripts/autopilot-prd-watch.py（单一信源，命令端不自行拼哈希比对）
+  #   判定顺序：无 PRD 文件 → skip(no-prd-files)｜无 baseline 记录 → run(no-baseline)｜
+  #             last_commit_hash 变了 → run(new-commit)｜tracked_files 归一后不等 → run(uncommitted-change)｜否则 skip(no-change)。
+  #   ⚠️ 判据两侧必须**同构**后比对（都归一到 [{"path","sha256"}] 排序列表）——脚本已保证；
+  #      绝不要用"`sha256sum` 文本行的哈希 vs `jq … | tostring` JSON 串的哈希"这种不可比写法（理据见 rationale.md）。
+  #   --heartbeat：无论是否命中都写顶层 autopilot_loop_heartbeat_at，供运维区分「loop 存活无变化」与「loop 掉了」
+  #                （与测试链路的 aiauto_test_heartbeat_at 对称）。
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot-prd-watch.py --version "$TARGET_VERSION" --heartbeat --shell)"
+  # → 导出 SHOULD_RUN / TRIGGER_REASON / PRD_DIR / PRD_REASON_CODE
+fi
 
 # ★ PRE_RELEASE_VERSION 不通过 PRD 变化触发，而是通过 Phase 0.3.3 的"S2 状态"识别
 # 因此 SHOULD_RUN 仅控制 Phase 3；Phase 2 独立判定（PRE_RELEASE_VERSION 非 null 即跑）

@@ -31,7 +31,7 @@
 **VCS 能力门（先于补跑短路和 Step 1）**：调用 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 取得 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 取得 `{user}`。`git` 保持原规划/发布流程；`none` 仍允许本地版本规划；`--finalize-docs` 只有能从可信本地发布台账核实未发布状态才允许本地整理，否则在任何文档改写前 fail-closed 并报告「无法核实已发布状态」，不得拿缺 tag 当未发布。其中 Git-only tag 核验、commit/push 均记 `unsupported:vcs-disabled`（非 passed），不得据此认定已发布。任何正式发布路径（含 `--release`、普通情况 B-3、`--no-tag` 准发布）的 tag/分支/push 在 `vcs_mode=none` 下一律 fail-closed：发布操作开始前退出，明确报告 `unsupported:vcs-disabled`，不写 `internal_released_at` 或发布完成标记、不得宣布已发布。`--rebuild-baseline` 在无 Git 时只可处理不依赖 tag 的未发布本地基线；无法确认是否已发布则停止，不改写可能已发布的产物。此门不改变 Git 模式的发布语义。
 
 1. **{version}** ← 命令参数（显式提供，不从项目记忆文件读取）
-2. **{user}** ← `git config user.name`
+2. **{user}** ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现：显式 → 本地 Git 身份 → `AIDP_USER` → OS 用户；⛔ 别自己拼 `git config user.name`，无 Git 项目上会解析出另一个身份）
 3. 校验 {version} 格式；不合法时按 `docs/init/06_版本与用户目录约定.md` 第 6 节话术重问。
 
 ## `--rebuild-baseline` 补跑短路（双轨部署基线，约定 37）

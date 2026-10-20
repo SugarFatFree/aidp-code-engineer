@@ -228,7 +228,7 @@ python3 {{AIDP_HOME}}/scripts/cicd_watch.py --selftest                          
 
 - ⛔ 令牌、密码只经环境变量引用，**不要明文写入仓库**。
 - `provider: none`、未配置流水线、或提供方 CLI / 凭据不可用时，只推送、不监听（退出码 3），不阻断链路。
-- 流水线定义模板见 `.aidp/templates/cicd/`（`github-actions/deploy.yml`、`gitlab-ci/.gitlab-ci.yml`、`jenkins/Jenkinsfile`）。
+- 流水线定义模板：模板仓库内为 `.aidp/templates/cicd/`，下游安装后为 `{{AIDP_HOME}}/templates/cicd/`（`github-actions/deploy.yml`、`gitlab-ci/.gitlab-ci.yml`、`jenkins/Jenkinsfile`）。
 
 ## 🧪 AI 自动化测试前置
 

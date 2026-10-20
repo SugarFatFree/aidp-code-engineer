@@ -5,7 +5,7 @@
 
 | 子目录 / 文件 | 用途 | 谁来消费 |
 |---|---|---|
-| `reports/` | AI 报告 HTML SPA 骨架（AI执行报告 / AI测试报告 / 版本测试报告 / AI数据清理）+ README | `emit-report.py` 渲染时取用 |
+| `reports/` | AI 报告 HTML SPA 骨架（AI执行报告 / AI测试报告 / 版本测试报告 三个目录，均为 `index.html` + `assets/` 骨架）+ 单文件模板 `AI数据清理.md`（产出到 `AI数据清理/` 子目录）+ README | `emit-report.py` 渲染时取用 |
 | `deployment/` | 部署骨架（`部署流程.md` / `SQL执行台账.md`） | `/sprint-dev` Step X.8 检测到需要时复制填充 |
 | `cicd/` | CICD 流水线定义起步模板：`github-actions/deploy.yml`（默认）、`gitlab-ci/.gitlab-ci.yml`、`jenkins/Jenkinsfile`；三者遵守同一组约定（随提交触发、按 commit 可查、部署完成即结束） | 下游按 `memory/aidp-config.yaml` 的 `cicd.provider` 复制对应模板到平台约定位置，并登记 `cicd.pipelines`（约定 31.5） |
 | `optional-rules/` | **按需安装规则的权威模板位** | 由各自的 `--install-rule` 装到 `{{AIDP_HOME}}/rules/` |

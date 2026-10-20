@@ -25,6 +25,7 @@ managed-copy；兼容参数 `--mode link` 只报告归一化，不再创建符�
 stdout 恒为一行 JSON（`--human` 另输出人读摘要到 stderr）。
 退出码：0 = 已一致 / 已写入；1 = `--check` 发现漂移；2 = 参数或环境错误。
 """
+from __future__ import annotations
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
 _aidp_scripts = str(_AidpPath(__file__).resolve().parent)

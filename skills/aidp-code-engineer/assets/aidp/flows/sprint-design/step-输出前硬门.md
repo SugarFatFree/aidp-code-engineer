@@ -114,7 +114,8 @@ DESIGN_DIR="docs/design/detail/$VERSION"
 # SQL 扫描扩展到多个来源（防止增量 DDL 落在非标准目录被漏检）
 SQL_PATHS=(
   "docs/deployment/$VERSION/sql/增量"          # ★ 最终 SQL 落位（Step 3.2 搬迁后）
-  "code/sql/v$VERSION"                    # SKILL 暂存位（带 v 前缀，实际输出）
+  "code/sql/v${VERSION#V}"                # SKILL 原生暂存位（小写 v + 无前导 V，如 code/sql/v0.6）
+  "code/sql/v$VERSION"                    # 防御：SKILL 若保留大写版本号（code/sql/vV0.6）
   "code/sql/$VERSION"                     # 兼容：无 v 暂存位残留 / legacy 存量（grandfather）
   "docs/design/detail/$VERSION"          # 设计文档内嵌的 ```sql 块也算
 )

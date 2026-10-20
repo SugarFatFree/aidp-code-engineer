@@ -372,8 +372,9 @@ def collect_files(root):
         #   + aiauto-test 的 测试环境与账号 配置(均无 TC- 用例块)。
         # 口径与 check_suite_upstream.py / check_testcase_format.py 一致,避免统计口径漂移。
         def _non_case(name):
-            return (re.match(r'^00_', name) or re.match(r'^9[89]_', name)
-                    or '研发自测方案' in name or '测试环境与账号' in name)
+            return (re.match(r'^00_', name) or re.match(r'^9[789]_', name)
+                    or '研发自测方案' in name or '测试环境与账号' in name
+                    or '环境探针档案' in name)
         return sorted(f for f in p.rglob('*.md') if not _non_case(f.name))
     return []
 

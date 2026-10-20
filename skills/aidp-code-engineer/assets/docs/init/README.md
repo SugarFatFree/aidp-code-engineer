@@ -121,13 +121,17 @@ project/
 | 命令 | 说明 |
 |------|------|
 | `/sprint-init` | 项目初始化 |
+| `/sprint-init-design` | 初始化后的首版设计（骨架设计，非版本级详细设计） |
+| `/sprint-init-complete` | 初始化收尾（补齐输入、核对骨架、出具可开工结论） |
+| `/sprint-requirements` | PRD → 研发需求基线 |
+| `/sprint-design` | 详细设计（代码怎么写） |
 | `/sprint-plan` | 生成研发执行计划 |
+| `/sprint-selftest` | 规划期研发自测用例 |
 | `/sprint-batch` | 批量执行所有 Sprint |
 | `/sprint-full {NNN}` | 执行单个 Sprint（完整流程） |
+| `/sprint-start` · `/sprint-dev` · `/sprint-test` · `/sprint-close` | 单 Sprint 分步执行 |
 | `/sprint-dev "{desc}"` | 开发新功能（自动累进） |
 | `/sprint-bugfix` | 修复 bug |
-| `/sprint-test` | 执行测试 |
-| `/sprint-close {NNN}` | 关闭 Sprint |
 | `/sprint-autopilot` | ★ 7×24 全自动开发编排器（操作系统调度 `aidp_scheduler.py` 守护） |
 | `/sprint-aiauto-test` | ★ chrome 浏览器仿真测试（操作系统调度 `aidp_scheduler.py` 守护） |
 

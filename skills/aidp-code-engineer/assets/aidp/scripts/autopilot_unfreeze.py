@@ -379,18 +379,27 @@ def _load_baseline(root):
 
 
 def _clear_version(root, version, extra_fields=()):
-    """清版本级冻结字段 + 以 `@<version>` 结尾的顶层 aiauto_blocked_reason。返回失败说明列表。"""
+    """清版本级冻结字段 + 以 `@<version>` 结尾的顶层 aiauto_blocked_reason。返回失败说明列表。
+
+    `stuck-phase` 另需重置**正在生效的停滞窗口**：它的判据分布在 `run_state`（开发链路）与
+    `aiauto_run_state`（测试链路）两处，只清冻结字段不清计数，下个 tick 判据原封不动成立 →
+    立刻重冻。而恢复指引给的正是本入口（`--manual`），照做就成了「解冻→重冻」死循环。
+    两类窗口都重置，因为冻结 reason 不区分是哪条链路先撞的。
+    """
     failed = []
     before = (_load_baseline(root) or {}).get("versions", {}).get(version) or {}
     r = _be_cmd(root, ["--version", version, "del", *FREEZE_FIELDS, *extra_fields])
     if r.returncode != 0:
         failed.append("del versions.%s 冻结字段 rc=%s %s" % (version, r.returncode, (r.stderr or "").strip()[:120]))
-    if before.get("freeze_reason") == "stuck-phase" and isinstance(before.get("aiauto_run_state"), dict):
-        reset = _be_cmd(root, ["--version", version, "set", "aiauto_run_state.phase_enter_count", "1",
-                               "aiauto_run_state.phase_first_entered_at", "@now",
-                               "aiauto_run_state.phase_tick_id", '""'])
-        if reset.returncode:
-            failed.append("测试阶段停滞窗口重置失败")
+    if before.get("freeze_reason") == "stuck-phase":
+        for key, label in (("run_state", "开发阶段"), ("aiauto_run_state", "测试阶段")):
+            if not isinstance(before.get(key), dict):
+                continue
+            reset = _be_cmd(root, ["--version", version, "set", f"{key}.phase_enter_count", "1",
+                                   f"{key}.phase_first_entered_at", "@now",
+                                   f"{key}.phase_tick_id", '""'])
+            if reset.returncode:
+                failed.append(f"{label}停滞窗口重置失败")
     d = _load_baseline(root) or {}
     if str(d.get("aiauto_blocked_reason") or "").endswith("@" + version):
         r = _be_cmd(root, ["del", "aiauto_blocked_reason"])

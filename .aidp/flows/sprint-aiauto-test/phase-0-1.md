@@ -97,7 +97,7 @@ python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now
 
 ### 0.0.5 读取测试方案文档（主配置入口）
 
-> ★ **同步必读「环境探针档案」`docs/testing/{version}/研发自测/02_环境探针档案.md`**（存在才读）：
+> ★ **同步必读「环境探针档案」`docs/testing/{version}/研发自测/97_环境探针档案.md`**（存在才读）：
 > 它是上一轮实测沉淀的**环境行为事实**（驱动通道限制 / 鉴权头形态 / **未登录的真实响应形态** /
 > 三类取证各自可用性 / 关键元素定位 / 已知需重试项），由 Phase 3.2.8 追加维护。
 > **读到就必须注入 Phase 2 执行子 Agent 的 prompt**（与 run-context 一并给），

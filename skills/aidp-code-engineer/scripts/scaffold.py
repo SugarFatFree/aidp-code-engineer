@@ -105,6 +105,13 @@ class Report:
     def __init__(self, journal=None):
         self.actions, self.warnings, self.notes = [], [], []
         self.journal = journal
+        # ★ 升级期「本地改过、又被新版覆盖」的契约（相对项目根的 posix 路径）。
+        #   由 `note_overwrite()` 在覆盖点登记，最终进输出 `local_overwritten` —— 用户要知道
+        #   自己改过的东西被谁替换了、从哪个备份取回。⛔ 恒空列表会让「没有本地改动」与
+        #   「有改动但没统计」在输出上同形。
+        self.local_overwritten = []
+        # 孤儿契约（项目里有、当前脚手架已不提供）：只报告不删除。
+        self.orphans = []
 
     def act(self, op, path, why=""):
         self.actions.append({"op": op, "path": path, "why": why})
@@ -116,6 +123,12 @@ class Report:
 
     def note(self, msg):
         self.notes.append(msg)
+
+    def note_overwrite(self, rel):
+        """登记一份**本地改过、即将被新版覆盖**的契约（去重、保持首次出现顺序）。"""
+        rel = str(rel).replace(os.sep, "/")
+        if rel not in self.local_overwritten:
+            self.local_overwritten.append(rel)
 
 
 # ── 通用写入 ────────────────────────────────────────────────────────────────
@@ -1659,7 +1672,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
                 "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
                 "contract_decision": decision, "pending": False, "rewrite_queue": [],
-                "orphans": [], "local_overwritten": [], "backup": None,
+                "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": None,
                 "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     if migrate_legacy and a.no_agent_sync:
         rep.warn("旧运行目录迁移需要先校验 Agent 原生命令入口，不能使用 --no-agent-sync")
@@ -1669,7 +1682,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
                 "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
                 "contract_decision": decision, "pending": False, "rewrite_queue": [],
-                "orphans": [], "local_overwritten": [], "backup": None,
+                "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": None,
                 "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     bk = Backup(root, rep)
     legacy_backup_files = []
@@ -1694,7 +1707,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                     "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
                     "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
                     "contract_decision": decision, "pending": False, "rewrite_queue": [],
-                    "orphans": [], "local_overwritten": [], "backup": bk.dir.name if bk.dir else None,
+                    "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": bk.dir.name if bk.dir else None,
                     "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     specs = []
     if "claude" in agents:
@@ -1743,9 +1756,39 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 rep.warn(f"受管运行包有本地修改，完整备份：{saved.relative_to(root).as_posix()}")
             return saved
 
+        # ★ 在**整包替换之前**算出「本地改过、且新版也改了 → 即将被覆盖」的契约清单。
+        #   判据 = 上一版安装时记下的指纹（`installed_manifest`）对手工改过的文件不再成立，
+        #   且该文件在本次新包里确实有对应物（否则它是 orphans，不是被覆盖）。
+        #   ⛔ 不在这时算就永远算不出来：替换之后旧字节已被备份目录接管，而输出里一个空
+        #   `local_overwritten` 与「用户确实没改过」在 JSON 上完全同形。
+        _prev_manifest = installed_manifest(root)
+        if isinstance(_prev_manifest, dict):
+            for _rel, _sha in sorted(_prev_manifest.items()):
+                _live = dest / _rel
+                if not _live.is_file() or _live.is_symlink():
+                    continue
+                if not (Path(source) / _rel).is_file():
+                    continue          # 新版已无此契约 → 属 orphans 范畴
+                try:
+                    _now = L.sha256(_live.read_bytes())
+                except OSError:
+                    continue
+                if _now != _sha:
+                    rep.note_overwrite(_rel)
+
         runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind,
                                       backup_callback=backup_runtime)
         rep.act("install", home + "/", "Agent 原生运行包")
+        # ★ 孤儿契约：上一版受管清单里有、当前脚手架已不提供 —— 只报告不删除。
+        #   漏报的后果是项目里留着一份「看着生效、实际早已无调用方」的契约，
+        #   而它与「本项目特化了这一条」在磁盘上完全同形，只有对照旧 manifest 才分得清。
+        if isinstance(_prev_manifest, dict):
+            _new_rels = {rel for rel, _p in runtime_layout._runtime_files(Path(source))}
+            for _rel in sorted(set(_prev_manifest) - _new_rels):
+                if not (dest / _rel).exists():
+                    continue          # 已被用户删掉，不算孤儿
+                if _rel not in rep.orphans:
+                    rep.orphans.append(_rel)
     # 可选规则的安装位不在下发面里（真源没有它、运行包当用户文件原样带走），
     # 不专门刷新就永久停在安装那天的版本。失败只告警，绝不影响已完成的安装事务。
     try:
@@ -1874,7 +1917,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
             "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
             "contract_decision": decision, "pending": bool(queue), "rewrite_queue": queue,
-            "orphans": [], "local_overwritten": [], "backup": bk.dir.name if bk.dir else None,
+            "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": bk.dir.name if bk.dir else None,
             "legacy_backup_files": legacy_backup_files,
             "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
 
@@ -1917,6 +1960,20 @@ def print_human(res: dict):
         print(f"  {MARKS['warn']} {w}")
     for n in res["notes"]:
         print(f"  {MARKS['info']} {n}")
+    # ★ 本地改过、又被新版覆盖：必须逐项说出来。⚠️ 静默覆盖用户的改动是升级路径上
+    #   最难挽回的失信 —— 而「没列」与「没改过」在输出上完全同形。
+    overwritten = res.get("local_overwritten") or []
+    if overwritten:
+        print(f"[scaffold] {MARKS['warn']} 本地改过、已被新版覆盖 {len(overwritten)} 份"
+              f"（原文件在备份 {res.get('backup') or '见 .aidp-backup-*'} 内可取回）：")
+        for rel in overwritten:
+            print(f"    · {rel}")
+    # 孤儿契约：项目里有、当前脚手架已没有 —— 只报告不删除。
+    orphans = res.get("orphans") or []
+    if orphans:
+        print(f"[scaffold] {MARKS['warn']} 孤儿契约 {len(orphans)} 份（脚手架已不提供，未删除；确认后再手动删）：")
+        for rel in orphans:
+            print(f"    · {rel}")
     if res["pending"]:
         print(f"[scaffold] {MARKS['pending']} 语义改写待办 {len(res['rewrite_queue'])} 条（{L.REWRITE_QUEUE_FILE}）："
               "逐条语义改写后跑 finalize_upgrade.py（核验每条已改写、删除队列并收口；无需改动的条目用 --accept 标记）")

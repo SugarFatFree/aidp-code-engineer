@@ -17,7 +17,7 @@
 
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
-2. **{user}** ← `git config user.name`
+2. **{user}** ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现：显式 → 本地 Git 身份 → `AIDP_USER` → OS 用户；⛔ 别自己拼 `git config user.name`，无 Git 项目上会解析出另一个身份）
 3. **{NNN}** ← 从参数或 activeContext 读取
 
 ## 前置检查
@@ -271,16 +271,16 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 
 ### Step 4：前端浏览器仿真功能测试 → 走 `/sprint-aiauto-test`（不在本命令内）
 
-> ⚠️ **前端「浏览器仿真功能测试」由独立命令 `/sprint-aiauto-test`**（当前工具 `chrome-devtools-mcp`，**默认无头 `--headless=new`**）在**部署完成后**承担；`/sprint-test` 本阶段的验收结论只由**静态扫描**（`code-verification-loop`）与静态编译/类型检查决定；可选 `api-tester` 仅提供独立在线观察。
+> ⚠️ **前端「浏览器仿真功能测试」由独立命令 `/sprint-aiauto-test`**（chrome-devtools 套件，**默认走本地 CLI 无头 `--headless=new`**，远程 MCP 须显式声明）在**部署完成后**承担；`/sprint-test` 本阶段的验收结论只由**静态扫描**（`code-verification-loop`）与静态编译/类型检查决定；可选 `api-tester` 仅提供独立在线观察。
 
 - 本 Sprint 若需浏览器实测：部署完成后按下列**入口判据**选命令（账号/环境/渲染模式等连接信息见 `docs/testing/{version}/研发自测/01_测试环境与账号.md`）：
   1. 查 baseline `memory/.sprint-autopilot-baseline.json` 里本 `{version}` 是否属 **autopilot 体系**——判据 = `current_build` 存在，**或** `versions.{version}` 存在**且** `versions.{version}.source != "sprint-batch"`（`source="sprint-batch"` 是 `/sprint-batch` Step 6.4 自己的预写痕迹，不算 autopilot 体系，否则每次重跑都被弹回）；
   2. 查本 build 的 **AI执行报告**是否已存在；
   3. **属 autopilot 体系 且 本 build AI执行报告缺失** → **改走 `/sprint-autopilot --skip-dev`**（test-only 入口，走子流程 R 产出 AI执行报告后由它委派浏览器实测）；**严禁**在 AI执行报告缺失下直达 `/sprint-aiauto-test` 手驱浏览器；
   4. **不属 autopilot 体系**（真正 standalone / `source="sprint-batch"`）**或 AI执行报告已在** → 直接 `/sprint-aiauto-test --once`。
-  > 口径单一信源 = 项目记忆文件（AGENTS.md / CLAUDE.md）「AI 测试入口前置规则」：**实测前必有 AI执行报告**；其中"属不属 autopilot 体系"的判据细则单一信源 = `{{AIDP_HOME}}/flows/sprint-batch/step-6b.md` Step 6.4 入口判据（⛔ 不是 `step-6.md`，那里只剩一句转发指针）。⛔ 本命令**自身不驱动浏览器、也不调 `/sprint-aiauto-test`**（全文无该调用），故不存在「链内豁免」一说——⛔ 不得据此误以为 `/sprint-test` 可以自行开浏览器实测。
+  > 口径单一信源 = 项目记忆文件（AGENTS.md / CLAUDE.md）「AI 测试入口前置规则」：**实测前必有 AI执行报告**；其中"属不属 autopilot 体系"的判据细则单一信源 = `{{AIDP_HOME}}/flows/sprint-batch/step-6b.md` Step 6.4 入口判据（⛔ 不是 `step-6.md`，那里只剩一句转发指针）。⛔ 本命令**不在自身执行链内内联驱动浏览器**（浏览器实测一律交给上列入口所指向的命令），故不存在「链内豁免」一说——⛔ 不得据此误以为 `/sprint-test` 可以自行开浏览器实测。
 - 浏览器仿真测试报告（HTML）由 `/sprint-aiauto-test` 落 `docs/reports/{version}/AI测试报告/`（路径以 `/sprint-aiauto-test` 为单一信源），本命令不生成 e2e 报告。
-- 浏览器测试统一走 `chrome-devtools-mcp` / `/sprint-aiauto-test`。
+- 浏览器测试统一走 `/sprint-aiauto-test`（默认本地 `chrome-devtools-cli`，远程 MCP 须显式声明；⛔ 不要按工具名假定必须走 MCP）。
 
 ### Step 5：生成测试报告
 

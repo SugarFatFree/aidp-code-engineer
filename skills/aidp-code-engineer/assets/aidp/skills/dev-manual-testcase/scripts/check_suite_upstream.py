@@ -307,8 +307,9 @@ def main() -> int:
     # (显式排除与 check_case_stats.py / check_testcase_format.py 口径一致,避免误扫索引/方案/配置文件。
     #  单文件模式显式传入则不受此过滤影响。)
     def _non_suite(name):
-        return (re.match(r"^00_", name) or re.match(r"^9[89]_", name)
-                or "研发自测方案" in name or "测试环境与账号" in name)
+        return (re.match(r"^00_", name) or re.match(r"^9[789]_", name)
+                or "研发自测方案" in name or "测试环境与账号" in name
+                or "环境探针档案" in name)
     if not target.is_file():
         md_files = [f for f in md_files if not _non_suite(f.name)]
     if not md_files:

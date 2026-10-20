@@ -38,8 +38,21 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilo
 VERSION="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号（TARGET_VERSION 与 current-version 均空）→ 中止本步，不静默跳过"; exit 1; }
 V="$VERSION"; SQL_DIR="docs/deployment/$V/sql/增量"                  # SQL 最终落位（约定 6/§2.5.4）
-[ -d "$SQL_DIR" ] || SQL_DIR="code/sql/$V"                      # 兼容 legacy 存量（grandfather）
-APPLIED="memory/$V/$(git config user.name)/.applied-sql.json"   # /sprint-dev Step 1 维护的已应用清单
+# ★ 兜底必须**两种形态都扫**：`dev-logic-architect` 的原生暂存位是 `code/sql/v{版本}/`（小写 v，如
+#   `code/sql/v0.2.0/`），无 v 的 `code/sql/V0.2.0/` 只是历史 grandfather 形态。只写后者会让
+#   「SKILL 已生成、尚未搬迁」的存量项目**既不报通过也不报失败，整段静默跳过** —— 本步存在的
+#   全部理由就是堵「部署后表缺失」，静默跳过等于这个安全网不存在。
+if [ ! -d "$SQL_DIR" ]; then
+  for _c in "code/sql/v${V#V}" "code/sql/v$V" "code/sql/$V"; do
+    [ -d "$_c" ] && { SQL_DIR="$_c"; break; }
+  done
+fi
+# ★ 已应用清单的目录必须与**写入方**同源：`/sprint-dev` 写 `memory/{version}/{user}/`，
+#   而 `{user}` 的唯一解析实现是 `vcs.py user`。这里若另行自拼 Git 身份，无 Git /
+#   设了 AIDP_USER 的项目会读到另一个目录 → 恒判「SQL 未确认应用」，安全网失真。
+_WHO=$(python3 {{AIDP_HOME}}/scripts/vcs.py user 2>/dev/null) || _WHO=""
+[ -n "$_WHO" ] || { echo "⛔ 取不到 {user}（vcs.py user 输出为空）→ 中止本步，不拿空路径当已应用"; exit 1; }
+APPLIED="memory/$V/$_WHO/.applied-sql.json"   # /sprint-dev Step 1 维护的已应用清单
 if ls "$SQL_DIR"/[0-9][0-9]_*.sql >/dev/null 2>&1; then
   UNAPPLIED=""
   for f in "$SQL_DIR"/[0-9][0-9]_*.sql; do

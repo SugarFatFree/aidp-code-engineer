@@ -23,10 +23,16 @@
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 V="${TARGET_VERSION:?}"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 RID=$($BE --version "$V" get cicd_run.run_id --default "")
-[ -n "$RID" ] || { echo "⛔ 取不到 RESOLVED_RUN_ID（Step A0/A/B 应已落 cicd_run.run_id）"; exit 1; }
+[ -n "$RID" ] || { echo "⛔ 取不到 RESOLVED_RUN_ID（Step A0/A/B 应已落 cicd_run.run_id）→ 走失败处置，⛔ 不裸退";
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --phase 3.2.1-cicd \
+    --reason cicd-run-vanished --streak-key dev_fail_streak --threshold "${DEV_FAIL_FREEZE_THRESHOLD:-3}" \
+    --why "CICD run id 缺失：A0/A/B 未落 cicd_run.run_id，无法监听终态"; exit 0; }
 B=$($BE --version "$V" get current_build --default "")
 GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_commit --default "" || echo "")
-[ -n "$GIT_PUSH_COMMIT" ] || { echo "⛔ 取不到本 build 的 push_commit，禁止轮询或放行部署"; exit 1; }
+[ -n "$GIT_PUSH_COMMIT" ] || { echo "⛔ 取不到本 build 的 push_commit，禁止轮询或放行部署";
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --phase 3.2.1-cicd \
+    --reason cicd-run-vanished --streak-key dev_fail_streak --threshold "${DEV_FAIL_FREEZE_THRESHOLD:-3}" \
+    --why "本 build 缺 push_commit：无法把 CICD 终态绑到这次推送，禁止盲目放行"; exit 0; }
 PL=$($BE --version "$V" get cicd_run.pipeline --default "")
 CENV=$($BE --version "$V" get cicd_run.env --default "test")
 if [ -n "$PL" ]; then TARGET=(--pipeline "$PL"); else TARGET=(--env "$CENV"); fi

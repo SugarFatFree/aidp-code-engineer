@@ -188,7 +188,7 @@ def cmd_init(args):
     # ⚠️ 排除口径对齐上游 5 个脚本的同名契约;CASE_RE 放宽后(「用例」二字与冒号均可省)
     # 容错余量变小,口径分歧更易变成实害。仅作用于**目录**模式,直接传单文件永远解析。
     def _is_case_src(name):
-        if name.startswith(('00_', '98_', '99_')):
+        if name.startswith(('00_', '97_', '98_', '99_')):
             return False
         if '研发自测方案' in name or '测试环境与账号' in name or '总览' in name:
             return False

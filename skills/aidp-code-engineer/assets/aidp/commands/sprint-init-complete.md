@@ -8,7 +8,7 @@
 ## 前置流程
 
 1. **{version}**：优先读取 `AGENTS.md` 草稿中的版本；否则询问用户（应与 `/sprint-init-design` 阶段保持一致）。
-2. **{user}**：`git config user.name`。
+2. **{user}**：`python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现，无 Git 项目也能确定）。
 3. 本阶段创建迭代级 memory 目录 `memory/{version}/{user}/` 与 docs 版本/用户目录骨架。
 
 ## 前置检查

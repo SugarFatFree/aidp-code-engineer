@@ -28,7 +28,7 @@
 
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← `AGENTS.md`「当前状态.当前版本」，读不到则询问。
-2. **{user}** ← `git config user.name`
+2. **{user}** ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现：显式 → 本地 Git 身份 → `AIDP_USER` → OS 用户；⛔ 别自己拼 `git config user.name`，无 Git 项目上会解析出另一个身份）
 
 ## 前置检查
 
@@ -441,7 +441,7 @@ UI Agent 从原型代码 + `docs/prototype/{version}/mockup/`（如有）中提�
 - docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql（中文命名 + 两位数字序号前缀；DDL/DML 同一序号空间按执行顺序混排；`99_回滚脚本.sql` 序号保留；详细规则见 `dev-logic-architect` SKILL.md Module D 章节）
 - docs/prototype/{version}/mockup/（★ 如自动生成高保真原型）
 
-★ 拆分规则（约定 15）：上述各份默认为单文件；当内容超出建议阈值（详细设计 >10 模块 / 接口设计 >50 接口 / 数据库设计 >30 表）时，按业务模块或服务拆分为
+★ 拆分规则（约定 15）：上述各份默认为单文件；当内容超出建议阈值（拆分阈值**以 `dev-logic-architect` SKILL 为单一信源**（业务模块 / 数据表 / 接口的拆分线由它定义，本命令不复述数字））时，按业务模块或服务拆分为
   `01_xxx.md` / `02_xxx.md` / ...，并生成 `00_索引.md` 列出所有分册。详见
   `docs/init/02_迭代输入指导.md §10.4`。下游命令（sprint-dev / sprint-test）
   通过 glob `docs/.../{version}/0?_*.md` 读取全部分册。

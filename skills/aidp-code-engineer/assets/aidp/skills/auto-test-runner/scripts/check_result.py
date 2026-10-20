@@ -92,6 +92,18 @@ ENTRY_KIND_ENUM = {'case', 'free-scan'}
 # 本条用例的主要执行机制。⚠️ `webmcp` 只允许用于**状态准备/数据构造/非视觉断言**类用例;
 #    视觉还原度类严禁(C14),见 references/execution-methodology.md「WebMCP 分层铁律」。
 MECHANISM_ENUM = {'dom', 'webmcp', 'app-mcp', 'mixed'}
+# 各客户端类型**允许登记的实现形态**（`implementation_kind`）。
+# ⛔ 取值必须与**声明侧**同一套（`check_client_mcp.py::IMPLEMENTATIONS`、
+#    `templates/optional-rules/client-mcp.md`、`agents/frontend.md` 都写 `app-native`）。
+#    此前这里写 `app-service`，非 Web 项目如实登记 `app-native` 会被判 Critical 假红；
+#    为过门改写成 `app-service` 又与 PRD/设计声明不一致 —— 两边都是错的。
+#    跨层一致性由 `tests/test_execution_contract_lite.py::TestImplementationKindEnum` 守。
+VALID_IMPLEMENTATION_KIND = {
+    'web': ('webmcp',),
+    'miniprogram': ('app-native', 'bridge'),
+    'mobile': ('app-native', 'bridge'),
+    'desktop': ('app-native', 'bridge'),
+}
 # ★「客户端 MCP 能力」是**跨端**功能点(Web / 小程序 / 移动 / 桌面),WebMCP 只是它的 **Web 端实现**。
 #   `app-mcp` = 被测应用自己向 AI 暴露业务工具;`webmcp` 保留为 Web 端的历史写法(等价于
 #   client_type=web + implementation_kind=webmcp)。
@@ -279,8 +291,7 @@ def _check_application_mcp(data, name, issues):
                    f'{name}: 项目声明未提供应用 MCP,不能报业务工具调用通过')
         return
 
-    valid_kind = {'web': ('webmcp',), 'miniprogram': ('app-service', 'bridge'),
-                  'mobile': ('app-service', 'bridge'), 'desktop': ('app-service', 'bridge')}
+    valid_kind = VALID_IMPLEMENTATION_KIND
     implementation_evidence = app.get('implementation_evidence')
     evidence_present = (isinstance(implementation_evidence, str)
                         and bool(implementation_evidence.strip()))

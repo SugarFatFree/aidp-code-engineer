@@ -20,7 +20,7 @@
 
 ## 用法
 
-    python3 .claude/scripts/assert_gate_ran.py \\
+    python3 {{AIDP_HOME}}/scripts/assert_gate_ran.py \\
         --label "上游溯源(check_req_upstream)" \\
         -- python3 {{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py \\
              docs/requirements/V0.1.0 --json

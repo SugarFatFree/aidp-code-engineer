@@ -110,8 +110,28 @@ def _alert(kind, **fields):
         sys.stderr.write("🚨 [AIDP-ALERT] %s %s\n" % (kind, fields))
 
 
+def _proj_root():
+    """目标项目根：由 `--baseline` 反推（`<root>/memory/x.json` 或 `<root>/memory/.aidp/x`）。
+
+    ⛔ 不传 `--repo-root` 给 `notify.py` 就会退到**进程 cwd**：那在 7×24 调度里是仓库根没错，
+    但在隔离运行 / 测试夹具 / 从别处调起时会写到另一个项目的 `memory/.aidp/alerts.jsonl` ——
+    「告警写成功」与「写到了别的项目」在退出码上完全同形，而故障时最需要的那条告警正好失踪。
+    """
+    if not _BASELINE_OVERRIDE:
+        return "."
+    p = os.path.abspath(_BASELINE_OVERRIDE)
+    d = os.path.dirname(p)
+    if os.path.basename(d) == ".aidp":
+        d = os.path.dirname(d)
+    if os.path.basename(d) == "memory":
+        return os.path.dirname(d)
+    return "."
+
+
 def _send_card(cmd):
     """发 #4；返回 (sent, skipped_reason, err)。notify 自身负责写本地告警台账。"""
+    if "--repo-root" not in cmd:
+        cmd = cmd + ["--repo-root", _proj_root()]
     cr = subprocess.run(cmd, capture_output=True, text=True)
     if cr.returncode == 0:
         return True, None, None
@@ -281,7 +301,13 @@ def _preflight(a):
     except ValueError:
         streak = 0
     _be(["set", k_reason, a.reason])
-    freeze = streak >= a.threshold
+    # ★ 与主路径同一语义：无唤醒源（`--once` / 无 /loop）时**没有下一 tick 来叠 streak**，
+    #   阈值恒不可达 ⇒ 首次失败要当场熔断。漏这一条的形态正是「静默停摆」：
+    #   `/sprint-autopilot --once --unattended` 撞上 detached HEAD / pull 冲突，
+    #   只记 streak=1、不冻结、不发 #4、没有下一 tick，整轮就此结束而终端一切正常。
+    wake = (_be(["get", WAKE_KEY[a.command], "--default", "0"]).stdout or "0").strip()
+    out["has_wake_source"] = wake
+    freeze = streak >= a.threshold or wake == "0"
     if freeze:
         w = _be(["set", k_frozen, "@now"])
         if w.returncode != 0:

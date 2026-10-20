@@ -16,9 +16,13 @@
 ```bash
 V={version}
 DEPLOY_CHANGE=0
-# ① SQL：docs/deployment/{V}/sql/增量/ 下有 NN_*.sql（跳过 99_回滚脚本.sql；兼容 legacy code/sql/{V}/）
+# ① SQL：docs/deployment/{V}/sql/增量/ 下有 NN_*.sql（跳过 99_回滚脚本.sql）
+#    暂存位兜底须含 SKILL 原生形态 `code/sql/v{版本}/`（小写 v）——只扫无 v 路径会漏掉它，
+#    而漏扫与本轮确实没有 SQL 在结果上同形。
 ls docs/deployment/$V/sql/增量/[0-9][0-9]_*.sql 2>/dev/null | grep -qv '99_' && DEPLOY_CHANGE=1
-[ -d code/sql/$V ] && ls code/sql/$V/[0-9][0-9]_*.sql 2>/dev/null | grep -qv '99_' && DEPLOY_CHANGE=1
+for _c in "code/sql/v${V#V}" "code/sql/v$V" "code/sql/$V"; do
+  [ -d "$_c" ] && ls "$_c"/[0-9][0-9]_*.sql 2>/dev/null | grep -qv '99_' && DEPLOY_CHANGE=1
+done
 # ② 配置项清单本版有实质内容（Step X.7 已产出）——锚点用 3 段标题，不用「本版本变更」表名
 grep -ql "新增配置\|删除配置\|运行时配置文件变更" docs/deployment/$V/配置文件/增量/配置项清单*.md 2>/dev/null && DEPLOY_CHANGE=1
 # ③ 本 Sprint 代码 diff 含"部署后必须执行"信号：数据初始化/回填接口、数据迁移脚本、定时任务、context-path/启动参数变更、新增中间件/第三方依赖、判定需重启/重新构建

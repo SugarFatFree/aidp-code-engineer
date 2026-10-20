@@ -16,7 +16,7 @@
 
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← `AGENTS.md`「当前状态.当前版本」，读不到则询问。
-2. **{user}** ← `git config user.name`
+2. **{user}** ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`（唯一解析实现：显式 → 本地 Git 身份 → `AIDP_USER` → OS 用户；⛔ 别自己拼 `git config user.name`，无 Git 项目上会解析出另一个身份）
 
 ## 目录约定
 

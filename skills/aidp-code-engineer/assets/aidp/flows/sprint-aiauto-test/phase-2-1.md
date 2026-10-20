@@ -68,7 +68,7 @@ TEST_TEAM_CASES=$(find "$V/正式用例" "$V/测试验收" "$V/测试执行" -ma
   -not -name "README.md" 2>/dev/null | sort)
 
 # B. 研发自测用例：研发自测/ 下排除管家文件（索引态：00_索引 / 01_研发自测方案 / 01_测试环境与账号 / 99_待澄清 / 旧锚 00_研发自测方案），用例从 02_ 起
-#    （口径对齐 `sprint-test.md` 用例文件筛选那段的 `-not -name "99_*"`；98_跨系统验证清单是 auto-test-runner 的用例源，不排除；旧锚 grandfather 布局的 01_ 用例仍纳入——旧锚下 00_ 才是方案、01_ 是用例，不误排）
+#    （口径对齐 `sprint-test.md` 用例文件筛选那段的 `-not -name "99_*"`；98_跨系统验证清单**不是可执行用例源**（它是核对清单，`tasks_state.py` 与各统计脚本一律整类跳过 `98_`）；跨系统场景须按用例格式写进 `02_`/`03_` 等用例分册；旧锚 grandfather 布局的 01_ 用例仍纳入——旧锚下 00_ 才是方案、01_ 是用例，不误排）
 DEV_CASES=$(find "$V/研发自测" -maxdepth 2 -name "*.md" \
   -not -name "_*" \
   -not -name "00_索引.md" \

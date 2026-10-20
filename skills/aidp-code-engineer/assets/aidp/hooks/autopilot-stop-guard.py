@@ -14,9 +14,10 @@
 
 安全第一（本 hook 全局每轮触发，绝不能误 wedge 正常对话）——多重 fail-open：
   1. 关闭开关：存在 memory/.autopilot-stop-guard-off → 立即 exit 0（用户临时禁用逃生舱）。
-  2. 非 autopilot tick 轮次 / baseline 缺失 / run_state 无活跃 phase → exit 0（不干预）。
-  3. 判不出 version/build / 收尾门脚本缺失 / 任何异常 → exit 0（永不因自身故障 wedge）。
-  4. 熔断上限：连续阻止达 STOP_GUARD_MAX_BLOCKS 次仍未过 → fail-open exit 0 + 告警（防无限 wedge）。
+  2. 配置开关：`memory/aidp-config.yaml` 的 `stop_guard.enabled: false` → exit 0。
+  3. 非 autopilot tick 轮次 / baseline 缺失 / run_state 无活跃 phase → exit 0（不干预）。
+  4. 判不出 version/build / 收尾门脚本缺失 / 任何异常 → exit 0（永不因自身故障 wedge）。
+  5. 熔断上限：连续阻止达 STOP_GUARD_MAX_BLOCKS 次仍未过 → fail-open exit 0 + 告警（防无限 wedge）。
 只有【全部确定信号齐备 + 收尾门确定 exit 1 + 未达熔断上限】才 exit 2 阻止结束。
 """
 import json

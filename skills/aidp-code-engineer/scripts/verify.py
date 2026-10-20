@@ -1014,6 +1014,19 @@ GUARDS = (
     #   基线」分支：模板项目自身永远到不了 ⇒ 本仓全绿、每个下游升级必崩，单测也挡不住
     #   （没人会为一行分支造一个下游夹具）。⛔ 它不替代类型检查，只看名字能不能解析。
     ("check_undefined_names", "check_undefined_names", "未定义名", ("findings",), "ERROR", None, None),
+    # ★ SKILL frontmatter 合法性：`---` 元数据块被正文打断时整个块不再是 YAML，而文件本身
+    #   读起来完全正常（标题在、段落通顺）。失败方向是最坏的那种 —— `Skill` 调用找不到它、
+    #   Codex / DSH 的发现根直接跳过，「有这一节」与「这一节从未生效」在产物上同形。
+    ("check_skill_frontmatter", "check_skill_frontmatter", "SKILL frontmatter", ("findings",), "ERROR", None, None),
+    # ★ `{user}` 解析单一信源：命令端各自写 `git config user.name`，在无 Git / 设了 AIDP_USER
+    #   的项目上会解析出**另一个**身份，于是同一项目出现两套 `memory/{version}/{user}/`。
+    #   两边各自看都正常，只有读回 `.applied-sql.json` / `progress.md` 时才发现落空。
+    ("check_identity_source", "check_identity_source", "{user} 解析单一信源",
+     ("findings",), "ERROR", None, None),
+    # ★ 最低 Python 版本的**运行期**契约：`X | None` 在 3.9 于函数定义求值时即 TypeError，
+    #   而 CI 只跑一个版本时结构上不可见。失败点全在「维护者本机复现不了」的位置：
+    #   新用户第一次 init（agent_sync 由脚手架末尾调用）、7×24 每个 tick（tick_flags）。
+    ("check_python_floor", "check_python_floor", "最低 Python 版本", ("findings",), "ERROR", None, None),
     ("check_memory_loss", "check_memory_loss", "memory 整段丢失", ("errors",), "WARN", None, None),
 )
 

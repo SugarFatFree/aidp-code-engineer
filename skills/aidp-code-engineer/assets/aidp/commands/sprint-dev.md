@@ -137,7 +137,7 @@ RELEASED=$(printf '%s\n' "$TAGS" | head -1)
 [ -z "$RELEASED" ] && [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" get internal_released_at --default "" 2>/dev/null)" ] && RELEASED="internal_released_at"
 [ -z "$RELEASED" ] && [ -d "docs/deployment/$V/配置文件/全量" ] && RELEASED="deployment-baseline"
 # ② progress.md「版本历史」/ 版本更新日志 标本版「✅ 已发布」
-[ -z "$RELEASED" ] && grep -qsE "$V.*✅ ?已发布|已发布.*$V" "memory/$V/$(git config user.name)/progress.md" 版本更新日志.md 2>/dev/null && RELEASED="$V(状态已发布)"
+[ -z "$RELEASED" ] && grep -qsE "$V.*✅ ?已发布|已发布.*$V" "memory/$V/$(python3 {{AIDP_HOME}}/scripts/vcs.py user)/progress.md" 版本更新日志.md 2>/dev/null && RELEASED="$V(状态已发布)"
 # ⛔ fail-closed：tag 判定本身失败且其余信号均未命中 → 落点未知，按「已发布」进下方决策门，⛔ 不并入"未发布"
 [ "$TAG_OK" = 0 ] && [ -z "$RELEASED" ] && RELEASED="unknown(tag-query-failed)"
 elif [ "$VCS_MODE" = "none" ]; then

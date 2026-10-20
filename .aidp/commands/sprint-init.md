@@ -12,7 +12,7 @@
 ## 前置流程
 
 1. **{version}**：询问用户起始版本号（建议 `V0.0.1` 或 `V0.1.0`）
-2. **{user}**：执行 `git config user.name`；非法/为空则询问用户短标识
+2. **{user}**：执行 `python3 {{AIDP_HOME}}/scripts/vcs.py user`；输出不满足目录命名（只允许字母数字 `_` `-`，脚本会给 WARN）则询问用户短标识
 3. 路径展开：项目级 memory 在 `memory/` 根；迭代级 memory 在 `memory/{version}/{user}/`
 
 ## 前置检查

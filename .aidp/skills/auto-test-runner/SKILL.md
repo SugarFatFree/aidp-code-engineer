@@ -68,7 +68,6 @@ description: >
 | 环境探针档案 | 可选 | 上一轮环境观测事实(驱动通道限制 / 鉴权头形态 / 未登录真实响应 / 三类取证可用性 / 元素定位方式 / 已知需重试项);仅作启动前提示与预热,非权威契约,与本轮观测冲突时以本轮为准 |
 | `client_mcp` | 可选(默认关闭) | **被测应用主动暴露业务工具**的显式声明,含客户端类型/实现形态/来源/工具清单及 Schema;未传不探测、不产专项用例或报告行。与 Chrome/Appium/小程序**测试驱动 MCP** 分轴,仅已证实应用自有服务/桥接可触发非 Web 能力。细则见 [`references/driver-client-mcp.md`](./references/driver-client-mcp.md) |
 | `webmcp_enabled` / `webmcp.enabled` | 可选(旧 Web 兼容) | 任一 `true` 只表示 Web+WebMCP;两旧别名冲突须报错,仍由调用方提供 `webmcp_entry_symbols`/`webmcp_launch_command` 且只在 Web 分支消费;与 `client_mcp` 客户端/启停/形态冲突须明确报错,不静默覆盖。不传/false 且新声明未启用时整段不留痕;⛔ 本 skill 不自行探测。Web 叶子见 [`references/driver-web-webmcp.md`](./references/driver-web-webmcp.md) |
-| `webmcp_enabled` | 可选(默认 `false`) | **条件启用能力的唯一开关**,由编排层显式传入。为 `false` 或未传 → WebMCP 工具调用整段不适用(run-context 不写相关字段、报告不留位置、不产生告警)。传 `true` 时另需 `webmcp_entry_symbols`(能力入口标识符,**写死必过期**)与 `webmcp_launch_command`(带参浏览器完整启动命令,**自拟无法复现**)。⛔ **本 skill 不自行探测是否启用**;细则见 [`references/driver-web-webmcp.md`](./references/driver-web-webmcp.md)。⚠️ 本行是**输入契约**、不是「报告留位置」,与「未启用不留痕」铁律不冲突——否则调用方无处可传、执行 Agent 无处可读,而细则又只在启用后才加载,闭环断在入口 |
 | DB datasource | 可选 | `[双源对账]` 用例数据真值对账 / SQL 造删数所需的 DB 连接(会话已连 DB MCP 或 run-context `datasource`),**须带 `environment` 环境标识**;缺省时该类用例走 UI 断言或标 block(precondition-unmet),不影响其余用例。**执行期必须先过「数据源归属校验」**(方法论第十一节),不通过则该驱动整体停用 |
 
 **用例格式对接(硬契约):** 严格对接 dev-manual-testcase 的输出约定——按 `### 套件 SUITE-*` 分模块(**兼容形态** `测试套件` 前置词与 `TS-` 编号前缀,四种组合均须识别),`#### / ##### 用例 TC-*` 为最小执行单元(**「用例」二字可省略**),`> **优先级**: P0 | **类型**: 正向 | **反向**: 否 | **覆盖**: F4` 字段行,四要素步骤表(操作动作/操作对象/操作数据/预期现象)。执行时按 TC-ID 现查用例详情,tasks.md 只存 ID + 名称。**完整解析契约**(目录结构/单多文件/SUITE·TC 命名/字段→模式判定/四要素→四原子能力映射)见 [`references/usecase-format.md`](./references/usecase-format.md)。
@@ -369,7 +368,7 @@ dev-manual-testcase(生成标准自测用例 + 自测方案)
 
 ## 约束
 
-> **本节 11 条约束是可被机器校验的编号契约**：形态固定为 `### 约束 N：<标题>`，与
+> **本节 12 条约束是可被机器校验的编号契约**：形态固定为 `### 约束 N：<标题>`，与
 > `references/quality-review-checklist.md` 的 `#### 维度 N:` 同构。下游按「约束 N」引用本节时，
 > **引用处必须同时带上该约束的标题关键词**——只写编号无法校验新鲜度：编号在增删条目时会整体位移，
 > 而位移后的错误引用两侧都仍"在范围内"，任何越界检查都发现不了（实测下游确实出现过

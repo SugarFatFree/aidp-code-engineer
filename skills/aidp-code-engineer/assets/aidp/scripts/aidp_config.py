@@ -40,7 +40,7 @@ CONFIG_REL = os.path.join("memory", "aidp-config.yaml")
 # Stop 护栏的盲打逃生舱（`touch` 即关，优先级高于 yaml 键）
 STOP_GUARD_OFF_REL = os.path.join("memory", ".autopilot-stop-guard-off")
 
-TEMPLATE = runtime_text('# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n\nproject:\n  # 应用编码（英文，用于目录 / 服务名等）。\n  name: null\n  # 项目中文名称（里程碑通知标题前缀优先使用）。\n  name_cn: null\n\ncommit_gate:\n  # 提交前门禁 commit_gate.py 总开关（约定 24）。\n  # 关掉之后：commit 前不再检查约定 22 台账积压 / 约定 31.5 推送欠账，退出码恒 0。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32）。关闭时 notify.py --auto 返回 3（合规静默跳过）。\n  enabled: false\n  # 一个渠道失败时是否继续尝试下一个。\n  fallback: true\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只写环境变量名，不写明文。\n  # 例：- {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #     - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #     - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #     - {type: lark-cli, chat_id: "<chat id>"}\n  #     - {type: command, command: "<读 stdin JSON 的发送命令>"}\n  channels: []\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 无人值守下是否允许自动触发 / 重试流水线。\n  auto_trigger: true\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: "...", view: "...", trigger: "...", retry: "...", check: "..."}\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（__AIDP_HOME__/scripts/aidp_scheduler.py install）。开发链路与测试链路各一个定时任务。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警 + 通知\n  stale_cycles: 3\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认，\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: "codex exec --sandbox workspace-write {prompt}", dsh: "<dsh 非交互命令> {prompt}"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  # 模板项目自身没有这一段（它就是脚手架的出处）。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n', __file__)
+TEMPLATE = runtime_text('# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n\nproject:\n  # 应用编码（英文，用于目录 / 服务名等）。\n  name: null\n  # 项目中文名称（里程碑通知标题前缀优先使用）。\n  name_cn: null\n\ncommit_gate:\n  # 提交前门禁 commit_gate.py 总开关（约定 24）。\n  # 关掉之后：commit 前不再检查约定 22 台账积压 / 约定 31.5 推送欠账，退出码恒 0。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32）。关闭时 notify.py --auto 返回 3（合规静默跳过）。\n  enabled: false\n  # 一个渠道失败时是否继续尝试下一个。\n  fallback: true\n  # autopilot 启动时是否发「渠道已连通」通知（默认不发，避免噪音）。\n  channel_ready_card: false\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只写环境变量名，不写明文。\n  # 例：- {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #     - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #     - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #     - {type: lark-cli, chat_id: "<chat id>"}\n  #     - {type: command, command: "<读 stdin JSON 的发送命令>"}\n  channels: []\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 无人值守下是否允许自动触发 / 重试流水线。\n  auto_trigger: true\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。\n  # 只记事实、不改 CICD 配置。由 `__AIDP_HOME__/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。\n  push_auto_deploy: false\n  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4\n  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻\n  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。\n  push_deploy_min_wait_seconds: 300\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: "...", view: "...", trigger: "...", retry: "...", check: "..."}\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（__AIDP_HOME__/scripts/aidp_scheduler.py install）。开发链路与测试链路各一个定时任务。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警 + 通知\n  stale_cycles: 3\n  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久\n  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。\n  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先）；\n  # watchdog 用 max(stale 阈值, 本值, 1h) 作「持锁超期 = 挂死」的判据。0 = 不设上限（不推荐）。\n  tick_max_seconds: 7200\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认，\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: "codex exec --sandbox workspace-write {prompt}", dsh: "<dsh 非交互命令> {prompt}"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  # 模板项目自身没有这一段（它就是脚手架的出处）。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n', __file__)
 
 
 # ───────────────────────── 读 ─────────────────────────
@@ -211,9 +211,13 @@ def commit_gate_enabled(root="."):
 
 
 def notify_config(root="."):
-    """里程碑通知配置（约定 32）→ {enabled, fallback, channels}。
+    """里程碑通知配置（约定 32）→ {enabled, fallback, channel_ready_card, channels}。
 
     缺省 `enabled=False` / `channels=[]`：未配置渠道的项目不发任何通知。
+
+    ⚠️ `channel_ready_card` 必须在返回集里：流程正文写「仅当它为 true 才发 #0a」，
+    读方取不到该键就只能按缺省的 false 走 —— 用户打开了开关却没有任何确定性效果，
+    与「没打开」完全同形（正是「只说不做」的配置项）。
     """
     data, _ = load(root)
     sec = _dig(data, "notify")
@@ -223,6 +227,7 @@ def notify_config(root="."):
     return {
         "enabled": get_bool(root, "notify.enabled", False),
         "fallback": get_bool(root, "notify.fallback", True),
+        "channel_ready_card": get_bool(root, "notify.channel_ready_card", False),
         "channels": chans,
     }
 
@@ -294,11 +299,16 @@ def stop_guard_enabled(root="."):
 
 
 SCHEDULER_DEFAULTS = {"dev_interval": "10m", "test_interval": "5m", "agent": "auto",
-                      "stale_cycles": 3, "exec": {}}
+                      "stale_cycles": 3, "tick_max_seconds": 7200, "exec": {}}
 
 
 def scheduler_config(root="."):
-    """7×24 操作系统调度配置（`scheduler` 段）→ {dev_interval, test_interval, agent, stale_cycles, exec}。"""
+    """7×24 操作系统调度配置（`scheduler` 段）→
+    {dev_interval, test_interval, agent, stale_cycles, tick_max_seconds, exec}。
+
+    ⚠️ `tick_max_seconds` 必须在返回集里：挂死判据按它取 `max(stale 阈值, 本值, 1h)`，
+    读方取不到就恒取 0，用户配的 `7200` 静默失效 —— 而「配了但读不到」与「没配」同形。
+    """
     data, _ = load(root)
     sec = _dig(data, "scheduler")
     sec = sec if isinstance(sec, dict) else {}
@@ -311,6 +321,12 @@ def scheduler_config(root="."):
         out["stale_cycles"] = max(1, int(sec.get("stale_cycles", 3)))
     except (TypeError, ValueError):
         out["stale_cycles"] = 3
+    try:
+        tick_max = int(sec.get("tick_max_seconds", 7200))
+    except (TypeError, ValueError):
+        tick_max = 7200
+    # 0 = 显式关闭上限（合法），负数按非法落回缺省
+    out["tick_max_seconds"] = tick_max if tick_max >= 0 else 7200
     ex = sec.get("exec")
     out["exec"] = {str(k): str(v) for k, v in ex.items() if v} if isinstance(ex, dict) else {}
     return out

@@ -10,9 +10,7 @@
 
 ## Phase 2：AI 自动化仿真测试主循环
 
-> **★ 状态/stuck 门**：进入 P2 先执行 `python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "$TARGET_VERSION" --phase 2-exec --next-phase 3-audit --build "${BUILD:-standalone}"`；非零停。
-
-> ⛔ **执行内核委派 `auto-test-runner` skill（单一信源，约定 21）**：本 Phase 的**用例执行方法论**——分模块批量调度、模块内一次登录共享会话、感知-执行-校验-决策闭环、执行模式分级（详见 skill）、失败分级不中断、进度断点恢复（tasks.md 状态机）、证据取证——**全部沉淀在 `auto-test-runner` skill，命令端不复述、不手写逐条 chrome 调用**。命令端只做三件事：① **组装 run-context**（被测端/驱动/URL/账号/等待时长/证据目录/用例集，见 2.0.5）→ ② **按模块派「测试执行子 Agent」**（`Agent`/Task 工具；prompt 只给 SKILL.md + 方法论文件路径 + 用例路径 + run-context 路径，子 Agent 自行 `Read`，见 2.0.5）→ ③ **消费其产物**（`results/{TC-ID}.json` + `tasks.md` + 固定结构报告）做 AIDP 特有后处理（运行时错误升级 bug 见 2.4、AI测试报告 HTML 见 Phase 3、里程碑通知）。`phase-2-2.md` 的 2.1/2.2 浏览器操作细节均为 **skill 内部行为示意**（帮助理解 skill 在做什么），**命令端不再自己直驱浏览器**；chrome-devtools-mcp 作为 auto-test-runner 「Web 端驱动适配器」的具体驱动被 skill 调用（本地 `cli`/远程 `mcp` 前缀仍按 Phase 0.1 定）。
+> **执行内核 = `auto-test-runner`（约定 21）**：命令只组装 run-context、按模块派执行子 Agent、消费结果；执行方先 Read `references/execution-contract-lite.md`，判不准按索引补读端驱动/方法论。不在命令中复刻逐条驱动调用。
 
 > **★ A2 主循环上下文契约（auto-test-runner 是"子 Agent 执行内核"，主循环只读契约摘要、不载全文 SKILL.md）**：`auto-test-runner` SKILL.md 定位就是"给**执行子 Agent** 用的执行内核"（其内明写"子 Agent 必须自己 Read 方法论文件"）——**主循环 `Skill`-invoke 它 = 纯浪费上下文**（把几千行方法论灌进主循环却不在主循环执行）。故：**主循环只按下面 ≤契约摘要 派发子 Agent，完整 SKILL.md 方法论只在被派发的【测试执行子 Agent】自身上下文里加载**：
 > - **输入**：run-context（被测端/驱动/URL/账号/等待时长/证据目录/用例集路径）
@@ -37,16 +35,10 @@
 > **刻意排除 `_*`**，而排除的前提是级联真的跑过了。理据见 `rationale.md`。
 >
 > - **exit 0** → 正式用例册即完整用例集，照常进 2.0。
-> - **exit 1（有 N 条未级联）** → ⛔ **此刻测的是【老用例集】，全绿也不代表新功能被测过**。按序处置：
->   1. **先补级联**：派子 Agent 跑 `/sprint-selftest --ledger-cascade --scale=S [--unattended]`，
->      成功 → 复跑本门 → 进 2.0；
->   2. 跑不动 → **不静默继续**：落 `versions.{V}.case_ledger_pending=N`，报告「测试概况」
->      **必须**标注 `⚠️ 覆盖不完整：N 条用例增量未级联`，且**⛔ 不得据此判版本通过**。
-> - **exit 2（读数不可用）** → fail-closed，同 exit 1 处置 2，不假装无未级联。
+> - **exit 1** → 先跑 `/sprint-selftest --ledger-cascade [--unattended]`。生成成功、对应条目清理后按该命令的延期收口步骤清除 `deferred_sprints[]`，复跑本门；未通过不得进入用例执行。
+> - **exit 2** → 台账/状态不可判读，先修复再重跑，不能当作无欠账。
+> - 补不齐时记录 `case_ledger_pending` 和覆盖不完整结论，停止本轮开测；⛔ 不要把增量册塞进用例发现；不得据此判版本通过，也不能让老用例全绿掩盖新增用例未生成。
 >
-> ⛔ **不要把增量册塞进用例发现来"解决"这个问题**：它解析不出任何 `SUITE-*`/`TC-*`，
-> 收进来只静静贡献 0 条用例——把"没测"伪装成"测了"，比现在更糟。
-
 > ★ **2.0.0bis 算本轮增量用例集**（前置门过后立刻跑；**只给报告用，不改执行范围**）
 >
 > ```bash

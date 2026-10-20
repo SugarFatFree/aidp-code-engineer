@@ -146,7 +146,7 @@ def changed_files(root, base_ref, worktree):
     return rows, None
 
 
-def run(root=".", base_ref=None, version=None, worktree=False):
+def run(root=".", base_ref=None, version=None, worktree=False, families=None):
     root = os.path.abspath(root)
     if not worktree and not base_ref:
         return {"ok": False, "error": "base-ref-required",
@@ -166,7 +166,8 @@ def run(root=".", base_ref=None, version=None, worktree=False):
         return {"ok": False, "error": "git-read-failed", "detail": err}
 
     # 本门作用域 = 四族的版本目录（其余路径一概不管）
-    scoped_dirs = [tpl.format(v=v) for _fam, tpl in FAMILIES for v in versions]
+    scoped_dirs = [tpl.format(v=v) for _fam, tpl in FAMILIES
+                   if not families or _fam in families for v in versions]
     scoped = set(scoped_dirs)
 
     violations, landed = [], []
@@ -412,7 +413,7 @@ def _check_one_ledger(root, v, fam, rel, must_delete, transfer_to, pc, unparsed)
              "detail": f"{label}增量册保留合法：仍有 {remaining} 条未决条目（失败/未级联）"}, None)
 
 
-def run_ledger_closed(root=".", version=None, must_delete=False, transfer_to=None):
+def run_ledger_closed(root=".", version=None, must_delete=False, transfer_to=None, families=None):
     """模式 B：收口后【族增量册】终态门（四族各一份，逐份独立判定）。
 
     must_delete=True（版本收口点 2/3）：目标版本的**每一份**增量册都必须不存在，无保留场景；
@@ -445,6 +446,8 @@ def run_ledger_closed(root=".", version=None, must_delete=False, transfer_to=Non
     checked, violations = [], []
     for v in versions:
         for fam, abspath in ledger_paths(root, v):
+            if families and FAMILY_LABEL.get(fam, fam) not in families:
+                continue
             rel = os.path.relpath(abspath, root).replace("\\", "/")
             # 存量单册在必删档同样要清；默认档下它不存在是常态，不额外报。
             ok_item, bad = _check_one_ledger(root, v, fam, rel, must_delete,
@@ -476,6 +479,7 @@ def main():
                          "任一找到痕迹即算转出到位；发布期=docs/audit/{version}/发布欠账.md）。"
                          "删前仍有未决条目时必传")
     ap.add_argument("--version", default=None, help="只查该版本目录（默认全部）")
+    ap.add_argument("--family", action="append", choices=[f for f, _ in FAMILIES], help="阶段级联只检查白名单族；版本必删档不能裁剪")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true",
                     help="阳性对照自检：注入必然命中的探针，验证本检查确实生效"
@@ -487,8 +491,10 @@ def main():
         sys.exit(run_self_check(os.path.basename(__file__),
                                 json_out=getattr(args, "json", False)))
 
+    if args.must_delete and args.family:
+        ap.error("版本必删档不能用 --family 裁剪范围")
     if args.ledger_closed or args.must_delete:
-        res = run_ledger_closed(args.root, args.version, args.must_delete, args.transfer_to)
+        res = run_ledger_closed(args.root, args.version, args.must_delete, args.transfer_to, args.family)
         if args.json:
             print(json.dumps(res, ensure_ascii=False, indent=2))
         elif res.get("error"):
@@ -519,7 +525,7 @@ def main():
             sys.stderr.write(runtime_text('   详规 `__AIDP_HOME__/reference/开发期族增量.md`「清理规则」\n', __file__))
         return 0 if res.get("ok") else 1
 
-    res = run(args.root, args.base_ref, args.version, args.worktree)
+    res = run(args.root, args.base_ref, args.version, args.worktree, args.family)
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif res.get("error"):

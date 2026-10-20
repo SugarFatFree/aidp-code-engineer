@@ -35,14 +35,16 @@ import json
 import os
 import subprocess
 import sys
-import shlex
 import time
+from pathlib import Path
 
-CACHE_REL = os.path.join("memory", ".aidp", "preflight-cache.json")
-
+_script_dir = str(Path(__file__).resolve().parent)
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+from aidp_paths import preflight_cache as cache_path
 
 def _path(root):
-    return os.path.join(root, CACHE_REL)
+    return cache_path(root)
 
 
 def _load(root):
@@ -95,30 +97,37 @@ def fingerprint(root, files=(), extra=()):
 
 def get(root, run_id, check, fp):
     """命中返回缓存条目，未命中返回 None。"""
+    if not str(run_id or "").strip():
+        return None
     data = _load(root)
     if str(data.get("run_id") or "") != str(run_id):
         return None                     # 跨 tick 不复用
-    entry = (data.get("checks") or {}).get(check)
-    if not isinstance(entry, dict):
+    checks = data.get("checks")
+    entry = checks.get(check) if isinstance(checks, dict) else None
+    if not isinstance(entry, dict) or str(entry.get("verdict")).lower() not in ("ok", "pass", "true", "verified"):
         return None
     if entry.get("fingerprint") != fp:
         return None                     # 判据输入变了 → 照常重跑
     return entry
 
 
-def put(root, run_id, check, fp, verdict, detail=""):
+def put(root, run_id, check, fp, verdict, detail="", stdout=None):
     """只写成功结论。返回是否写入。"""
-    if str(verdict).lower() not in ("ok", "pass", "true", "verified"):
+    if not str(run_id or "").strip() or str(verdict).lower() not in ("ok", "pass", "true", "verified"):
         return False                    # ⛔ 失败/阻塞不进缓存
     data = _load(root)
     if str(data.get("run_id") or "") != str(run_id):
         data = {"run_id": str(run_id), "checks": {}}
-    data.setdefault("checks", {})[check] = {
+    if not isinstance(data.get("checks"), dict):
+        data["checks"] = {}
+    data["checks"][check] = {
         "fingerprint": fp, "verdict": str(verdict),
         "detail": str(detail)[:400],
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "by": os.environ.get("AIDP_CHAIN") or "unknown",
     }
+    if stdout is not None:
+        data["checks"][check]["stdout"] = stdout
     return _save(root, data)
 
 
@@ -139,7 +148,8 @@ def main():
     a = ap.parse_args()
 
     root = os.path.abspath(a.root)
-    fp = fingerprint(root, a.file, a.extra)
+    extra = a.extra + (["cmd=" + a.cmd] if a.cmd else [])
+    fp = fingerprint(root, a.file, extra)
     if a.put:
         wrote = put(root, a.run_id, a.check, fp, a.put, a.detail)
         out = {"action": "put", "check": a.check, "fingerprint": fp, "written": wrote,
@@ -150,9 +160,10 @@ def main():
         return 0
 
     hit = get(root, a.run_id, a.check, fp)
-    if a.cmd and hit:
-        print(json.dumps({"action": "reuse", "check": a.check, "run_id": a.run_id, "entry": hit}, ensure_ascii=False) if a.json
-              else "♻️ 复用同 tick 结论：%s（run_id=%s，指纹 %s）" % (a.check, a.run_id, fp))
+    if a.cmd and hit and "stdout" in hit:
+        print("♻️ 复用同 tick 结论：%s（run_id=%s，由 %s 于 %s 验证，指纹 %s）" % (
+            a.check, a.run_id, hit.get("by"), hit.get("at"), fp), file=sys.stderr)
+        print(hit["stdout"], end="")
         return 0
     if a.cmd:
         try:
@@ -161,8 +172,17 @@ def main():
             print(str(exc), file=sys.stderr); return 2
         if proc.stdout: print(proc.stdout, end="")
         if proc.stderr: print(proc.stderr, end="", file=sys.stderr)
-        if proc.returncode == 0:
-            put(root, a.run_id, a.check, fp, "ok", a.detail or a.cmd)
+        success = proc.returncode == 0
+        try:
+            payload = json.loads(proc.stdout)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            # JSON 信息快照、skipped 或 passed:false 不能凭 exit 0 冒充成功探针。
+            success = success and (payload.get("passed") is True or payload.get("ok") is True)
+            success = success and not payload.get("skipped")
+        if success:
+            put(root, a.run_id, a.check, fp, "ok", a.detail or a.cmd, stdout=proc.stdout)
         return proc.returncode
     out = {"action": "get", "check": a.check, "fingerprint": fp,
            "hit": bool(hit), "entry": hit or {}}

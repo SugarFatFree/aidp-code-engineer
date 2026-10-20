@@ -27,6 +27,16 @@ python3 {{AIDP_HOME}}/scripts/version_preflight.py --input <检查结果清单.j
 - 发现一处旧术语 / 旧口径时，**先在本轮受影响文档与代码注释里穷举同义残留**再按原入口修，
   ⛔ 避免每轮只修一处、同一问题跨版本复发。
 
+**整版规模软预算（随预检输出，非阻断）**：四族落齐后，用本版 `req_scale` 对账整版产出；不把某个 Sprint 的小档位套到历史全量文档。
+
+```bash
+python3 {{AIDP_HOME}}/scripts/check_scale_budget.py --version "{version}" --from-baseline --json
+SCALE_RC=$?
+# 0=预算内/不适用，1=Important 需解释覆盖依据，2=事实不可读须注明未核验。
+```
+
+超预算写明实际计数和必要性，不能为压缩行数删除真实覆盖；未知结构事实不按0处理。
+
 #### Step 2.4.7：★ 版本规划产物全量审计（独立子 Agent；强制执行铁律）
 
 > **定位**：4 子文档生成 + Step 2.4.5/2.4.6 命令端校验之后、Step 2.5+ 落盘 `memory/` + `CLAUDE.md` 之前的最后一道**独立审计关**。由独立子 Agent 执行，与 4 个 SKILL 完全解耦，按约定 21 不复述 SKILL 维度，只做"产物外部审计"。

@@ -158,6 +158,8 @@ PY
    - **打印**：`📥 已记入开发期变更台账 C-0NN（共 N 条待级联）；将于下次收口点批量级联`。
    - **同时在原影响清单末尾追加** `📥 已入台账 C-0NN..C-0MM（攒批，待收口点级联）`，作为合法终态标记；否则下轮会重复级联。
 
+**L4 的生成时机**：档位不免除用例覆盖义务；本轮已安排实测或父链传 `--aiauto-test-required` 才生成正式用例，否则按步骤 3.8 先记用例族条目和延期状态。显式实测入口负责补齐后再跑，不得沿用延期状态跳过本次测试。
+
 4. **级联触发规则**（★ **仅在收口点或 `--cascade-now` 时执行本步**；默认走上一步 3.8 攒批。
    收口时按台账**合并后**的总改动量重判档位，再按下表调用）：
 
@@ -170,7 +172,7 @@ PY
    | L1 研发需求 | 经 `/sprint-requirements --ledger-cascade [--unattended]` 编排（内部 `ux-logic-extractor` 增量 prompt 驱动）→ **就地改** `01_研发需求.md`。该命令无 `--scale` 入参 → **在调用 prompt 里以自然语言传达档位与目标篇幅**（S 档：只写本次改动涉及的功能点增量，不重述既有需求）|
    | L2 详细设计 | `dev-logic-architect`（增量 prompt 驱动）→ **就地改** `01_详细设计.md`·`02_数据库设计.md`·`03_接口设计.md`（按实际范围；通过 `/sprint-design --ledger-cascade --scale={dev_scale} [--unattended]` 编排）|
    | L3 研发执行计划 | `dev-execution-planner`（增量 prompt 驱动；通过 `/sprint-plan --ledger-cascade --scale={dev_scale} [--unattended]` 编排）→ **就地改** `01_研发执行计划.md` |
-   | L4 自测用例 | 经 `/sprint-selftest --ledger-cascade --scale={dev_scale} [--unattended]` 编排（内部 `dev-manual-testcase` 增量 prompt 驱动）→ **就地改**既有用例册。★ **用例数基线机检须同样显式传档**：`check_case_stats.py <路径> --scale {dev_scale}`（不传按 L 档只判 20 条硬下限）|
+   | L4 自测用例 | 仅本轮已安排实测或父链明确要求生成时，经 `/sprint-selftest --ledger-cascade --scale={dev_scale} [--unattended]` 编排（内部 `dev-manual-testcase` 增量 prompt 驱动）→ **就地改**既有用例册。★ **用例数基线机检须同样显式传档**：`check_case_stats.py <路径> --scale {dev_scale}`（不传按 L 档只判 20 条硬下限）|
 
    级联铁律见约定 22；触发条件矩阵（"仅设计层变更"何时触发何级等）以约定 22 表为权威，本步骤不复述。
 

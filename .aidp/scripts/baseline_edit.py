@@ -362,6 +362,7 @@ def main() -> int:
     ap.add_argument("--pending", default="", help="run-state: 未完成动作，逗号分隔")
     ap.add_argument("--enter", action="store_true", help="run-state: 记录阶段进入，不宣告完成")
     ap.add_argument("--phase-token", default="", help="run-state: build/round 身份，变化即重新计数")
+    ap.add_argument("--tick-id", default="", help="run-state: 同一次测试 tick 的重复入口不重复计数")
     ap.add_argument("--state-key", choices=("run_state", "aiauto_run_state"), default="run_state", help="run-state 写入的状态节点，默认 run_state；测试链路使用 aiauto_run_state")
     ap.add_argument(
         "op",
@@ -524,8 +525,15 @@ def main() -> int:
                 same_phase = False
             rs_time = rs.get("phase_completed_at") or rs.get("phase_started_at")
             sprint_advanced = (old.get("next_sprint") or "") != (rs.get("next_sprint") or "")
+            if a.tick_id:
+                rs["phase_tick_id"] = a.tick_id
             if same_phase and not sprint_advanced:
-                rs["phase_enter_count"] = int(old.get("phase_enter_count") or 1) + 1
+                counted = a.enter and a.tick_id and old.get("phase_tick_id") == a.tick_id
+                rs["phase_enter_count"] = int(old.get("phase_enter_count") or 1) + (0 if counted else 1)
+                if a.enter:
+                    rs["phase_started_at"] = old.get("phase_started_at") or rs_time
+                    if not a.pending:
+                        rs["pending_actions"] = old.get("pending_actions") or []
                 rs["phase_first_entered_at"] = old.get("phase_first_entered_at") or rs_time
             else:
                 rs["phase_enter_count"] = 1

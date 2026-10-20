@@ -45,8 +45,8 @@ BUDGET = {
     "L":  {"cases": None,      "design_docs": None, "tasks": None, "lines": None},
 }
 
-_CASE_RE = re.compile(r"^\s*#{3,6}\s*用例\s+(TC-[A-Za-z0-9_\-]+)", re.M)
-_TASK_RE = re.compile(r"^\s*\|?\s*(?:Task|任务)\s*[-#]?\s*\d+", re.M | re.I)
+_CASE_RE = re.compile(r"^\s*#{3,6}\s*(?:用例\s+)?(TC-[A-Za-z0-9_\-]+)", re.M)
+_TASK_RE = re.compile(r"^\s*(?:#{1,6}\s+|\|\s*)?(?:Task|任务)\s*[-#]?\s*\d+(?:\.\d+)*", re.M | re.I)
 
 
 def effective_tier(tier, new_endpoints, new_pages, has_ddl):
@@ -57,7 +57,7 @@ def effective_tier(tier, new_endpoints, new_pages, has_ddl):
     """
     if tier != "M":
         return tier, ""
-    if not new_endpoints and not new_pages and not has_ddl:
+    if new_endpoints == 0 and new_pages == 0 and has_ddl is False:
         return "M-", ("零新增接口 + 零新增页面 + 无 DDL ⇒ 口径调整型，"
                       "产出目标按 S 档（REQ 条数反映「说了几件事」，"
                       "变更面才反映「要做几件事」）")
@@ -89,7 +89,7 @@ def measure(root, version):
         out["dirs_present"].append(fam)
         for dp, _dn, fns in os.walk(d):
             for fn in sorted(fns):
-                if not fn.endswith(".md") or fn == "README.md":
+                if not fn.endswith(".md") or fn == "README.md" or fn.startswith(("_", "00_", "99_")):
                     continue
                 text = _read(os.path.join(dp, fn))
                 if text is None:
@@ -119,7 +119,13 @@ def run(root, version, tier, new_endpoints, new_pages, has_ddl):
         res.update(from_result(res).as_json())
         return res
 
+    if got["files_failed"]:
+        findings.append({"item": "采集失败", "got": got["files_failed"], "budget": "0",
+                         "detail": "有文件未读到，本轮产出规模未完整核验"})
     rng = budget["cases"]
+    if rng and "cases" in got["dirs_present"] and not got["cases"]:
+        findings.append({"item": "用例数", "got": 0, "budget": "%d~%d" % rng,
+                         "detail": "未识别出任何用例，本项未核验；检查用例生成和标题形态"})
     if rng and got["cases"] and not (rng[0] <= got["cases"] <= rng[1]):
         findings.append({
             "item": "用例数", "got": got["cases"], "budget": "%d~%d" % rng,
@@ -176,10 +182,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".")
     ap.add_argument("--version")
-    ap.add_argument("--tier", default="M", choices=sorted(BUDGET) + ["M"])
-    ap.add_argument("--new-endpoints", type=int, default=0)
-    ap.add_argument("--new-pages", type=int, default=0)
-    ap.add_argument("--has-ddl", action="store_true")
+    ap.add_argument("--tier", default=None, choices=sorted(BUDGET))
+    ap.add_argument("--from-baseline", action="store_true", help="读取本版本 req_scale 的整版档位与结构事实")
+    ap.add_argument("--new-endpoints", type=int, default=None)
+    ap.add_argument("--new-pages", type=int, default=None)
+    ddl = ap.add_mutually_exclusive_group()
+    ddl.add_argument("--has-ddl", action="store_true", dest="has_ddl", default=None)
+    ddl.add_argument("--no-ddl", action="store_false", dest="has_ddl")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true")
     a = ap.parse_args()
@@ -189,7 +198,23 @@ def main():
         print("[check_scale_budget] 必须传 --version", file=sys.stderr)
         return 2
 
-    res = run(os.path.abspath(a.root), a.version, a.tier,
+    tier = a.tier or "M"
+    if a.from_baseline:
+        from aidp_paths import baseline
+        try:
+            with open(baseline(a.root), encoding="utf-8") as fh:
+                facts = json.load(fh)["versions"][a.version]["req_scale"]
+            tier = a.tier or facts["tier"]
+            if tier not in BUDGET:
+                raise ValueError("未知档位：%s" % tier)
+            # 只使用明确的新增数量，不把受影响页面数当作新增页面数。
+            a.new_endpoints = facts.get("new_endpoints", a.new_endpoints)
+            a.new_pages = facts.get("new_pages", a.new_pages)
+            a.has_ddl = facts.get("has_ddl", a.has_ddl)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print("规模事实不可用：%s" % exc, file=sys.stderr)
+            return 2
+    res = run(os.path.abspath(a.root), a.version, tier,
               a.new_endpoints, a.new_pages, a.has_ddl)
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))

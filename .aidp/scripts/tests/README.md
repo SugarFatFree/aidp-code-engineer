@@ -27,6 +27,7 @@
 | `test_runtime_and_vcs.py` | `.aidp` / `.claude` / `.agents` 平铺运行根 + 降层前嵌套旧形态（`.claude/aidp` / `.agents/aidp`）的运行根与项目根解析、环境覆盖路径 containment、`git|none` 能力检测、开发者身份四级回落、`unsupported: vcs-disabled` 结构 | `python3 .aidp/scripts/tests/test_runtime_and_vcs.py` | Python 标准库；Git 阳性用例用临时仓库（不可用则仅该用例跳过） |
 | `test_runtime_paths.py` | 下发运行契约中的 `{{AIDP_HOME}}`、根 `.aidp/` 硬编码和渲染态未解析 token 守卫 | `python3 .aidp/scripts/tests/test_runtime_paths.py` | Python 标准库 |
 | `test_command_skill_contracts.py` | 命令 ↔ SKILL 调用契约：脚手架调用形态、SQL 隔离门两轨布局、`code-verification-loop` 仅验收模式、`bugfix` 输入面、质量门委派接线、发布欠账唯一写入口、写前快照 | `python3 .aidp/scripts/tests/test_command_skill_contracts.py` | Python 标准库 + `git` |
+| `test_remaining_tools.py` | 探针红绿还原、缓存输出/身份、整版预算、用例延期收口、Phase 生命周期、阶段族过滤与解冻 | `python3 .aidp/scripts/tests/test_remaining_tools.py` | Python 标准库；bash |
 | `test_batch_probe.py` | 批量阳性对照：阴性侧必须绿、阳性侧变红、失败后按快照还原目标文件 | `python3 .aidp/scripts/tests/test_batch_probe.py` | Python 标准库 |
 | `test_preflight_cache.py` | 前置检查成功结论按 run_id + 输入指纹缓存，失败不缓存、跨 tick 不复用 | `python3 .aidp/scripts/tests/test_preflight_cache.py` | Python 标准库 |
 | `test_ceremony_cards.py` | full / incremental / test-only 的部署与静态分支期望通知集 | `python3 .aidp/scripts/tests/test_ceremony_cards.py` | Python 标准库 |

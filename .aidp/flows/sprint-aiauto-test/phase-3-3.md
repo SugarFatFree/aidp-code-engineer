@@ -5,8 +5,6 @@
 > ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-3-3.md`。理据见同目录 `rationale.md`。
 
 ### 3.2.7 ★ AI执行报告完成核验门（入口无关，下沉到测试链路）
-> **★ Phase 状态/stuck 门**：进入 Phase 3 先执行 `python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "$TARGET_VERSION" --phase 3-audit --next-phase done --build "${BUILD:-standalone}"`；非零阻断收尾。
-
 
 
 > 本门把 AI执行报告完成核验下沉到测试链路：`REPORT_ENABLED=1`（autopilot 驱动）时，AI测试报告落盘后、写 baseline 前，硬校验本 build 的 AI执行报告齐全；缺失则走与 2.5.1 同一自愈交接、绝不静默收尾。`REPORT_ENABLED=0`（standalone，无 `current_build`）→ 本门整段跳过（不期望 AI执行报告）。

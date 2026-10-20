@@ -8,6 +8,9 @@
 
 ### 3.2 批量 Sprint 执行（里程碑通知 #1c 开发开始 + #2 在循环内 + #1d 部署完成）
 
+**实测意图下传**：本轮 `SKIP_AIAUTO_TEST!=1` 时，调用 `/sprint-batch`、逐 tick 的 `/sprint-full` 或增量 `/sprint-dev` 均附 `--aiauto-test-required`；本轮显式跳过实测则不附该 flag。批次局部 `--skip-aiauto-test` 只避免重复启动测试链路，不取消该生成义务。
+
+
 > `ENTRY_MODE=incremental` 不跑全量 `/sprint-batch`，改经 `/sprint-bugfix` 或 `/sprint-dev` 落地增量改动；#1c/#1d、部署、子流程 R 与回写 build 仍照常执行。`full` 模式跑全量 Sprint。
 
 0. **里程碑通知 #1c 开发开始（见 0.1bis；总是发）**——`/sprint-batch` 执行**前**经 `notify.py --auto` 发送（公共字段 + 下列内容）：

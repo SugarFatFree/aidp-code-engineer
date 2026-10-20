@@ -19,13 +19,13 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
                                      #   根项目记忆文件 / 版本变更历史.md — 约定 16 同步范围）
     "today": "YYYY-MM-DD",
     "pending_cascade": dict,         # ★ 约定 22：台账摘要 `{files, total, stale, ...}`（**dict 不是 list**）。
-                                     #   ⚠️ 计入退出码 3 的是 `stale > 0`（**只含昨天及更早**的条目），不是 `total > 0`。
+                                     #   stale 仅供诊断；日期积压不触发提交后自动派单。
     "cascaded_not_cleaned": int,     # 已标记级联完成却仍未删除的条目数（同 pending_cascade.cascaded_not_cleaned）
     "suspected_cascade_bypass": dict,  # ★ 约定 22 反向判据：疑似绕过攒批（见 suspected_cascade_bypass()）
     "pending_cicd": dict,            # ★ 约定 31.5：已推送正式代码却未经推送分类器，或分类后部署终态长时间未记录
     "offchain": dict,                # ★ 约定 41：链外任务动作预算 + 规模档位
     "context": str,                  # --context 原样回显（留痕）
-    "debts": [str]                   # 未落地义务代号清单（非空 ⇔ 退出码 3）：cascade-stale / cascade-not-cleaned /
+    "debts": [str]                   # 未落地义务代号清单（非空 ⇔ 退出码 3）：cascade-not-cleaned /
                                      #   cascade-unparsed / cascade-archived-not-deleted / cascade-destructive-unregistered /
                                      #   cascade-bypass / cicd-push-pending
   }
@@ -36,7 +36,7 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
 
 退出码：
   - **0** 无欠账（或 commit_gate.enabled=false，或 `--no-fail-on-debt`）；
-  - **3** 有未落地义务（任一）：约定 22 台账积压〔`stale > 0`〕· 已级联未清理〔`cascaded_not_cleaned > 0`〕·
+  - **3** 有未落地义务（任一）：约定 22 已级联未清理〔`cascaded_not_cleaned > 0`〕·
     台账格式漂移〔`unparsed` 非空〕· 打了归档标记却未删〔`archived_not_deleted`〕·
     🔴 破坏性变更未在「已知失准点」段登记〔`destructive_unregistered`〕· 疑似绕过攒批 ·
     CICD 推送欠账〔`pending_cicd.pending`〕；
@@ -737,8 +737,6 @@ def gather(root: str, context: str = "bare-conversation", cascade_now: bool = Fa
         "today": today,
         # ★ 约定 22 攒批级联台账（AIDP_HOME/reference/开发期族增量.md）
         "pending_cascade": cascade,
-        # ★ 判据 = 台账有【昨天及更早】的待级联条目。同日重复收口由台账内容自然收敛
-        #   （收口后条目即删、stale 归零）；多 git 用户防重靠 push 后重判。
         # 已标记级联完成却未删除的条目数（= pending_cascade.cascaded_not_cleaned，顶层便于命令端直读）
         "cascaded_not_cleaned": int(cascade.get("cascaded_not_cleaned") or 0),
         "suspected_cascade_bypass": bypass,

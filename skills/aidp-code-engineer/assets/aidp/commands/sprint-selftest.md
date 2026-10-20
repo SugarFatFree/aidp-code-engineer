@@ -125,6 +125,8 @@ CROSS_99=$(ls "$TEST_DIR"/99_跨系统验证清单.md 2>/dev/null | wc -l)      
 2. 逐项填"🔍 研发自测用例输出前回检"块
 3. **任一 Fail → 立即停下**，要求 skill 重跑或人工补齐；不得用"基本通过"等模糊措辞绕过
 
+**延期用例收口**：本命令被显式调用即应生成用例，不能因 baseline 中的 `aiauto_test_required=false` 跳过。完成生成、格式/QR 回检并清掉用例增量条目后，读取 `check_case_ledger_pending.py --version {version} --json` 的 `deferred_sprints[]`，对每个编号执行 `python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version {version} --sprint {NNN} --complete --reason "正式用例已生成并通过QR"`；最后复跑读数门。不能清掉未生成的 Sprint 义务，不能直接编辑状态冒充收口。
+
 ## 输出
 
 ```

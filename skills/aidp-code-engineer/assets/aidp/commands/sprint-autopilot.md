@@ -25,6 +25,9 @@
 
 参数：$ARGUMENTS
 
+**内部透传参数**：`--preflight-run-id <ID>` 用于同次同步委派的探针复用；派测试子链路时带上当前 `PREFLIGHT_RUN_ID`，独立调度唤起不沿用。缓存判据与输出约定见 `preflight_cache.py`。
+
+
 > ⛔ **上面这行不可删**：`$ARGUMENTS` 是斜杠命令正文的 **runtime 文本替换**，只在 `{{AIDP_HOME}}/commands/*.md` 里生效。
 > flow 分片是被 `Read` 进来的普通文本，`${ARGUMENTS:-}` 在那里只是一个未设置的 shell 变量。
 > 缺了它 → Phase 0.1 的 `autopilot_tick_flags.py parse --arguments "${ARGUMENTS:-}"` 恒收空串 →
@@ -118,6 +121,8 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 +
 # 第一部分：准备与检测（Phase 0 前置检查 + Phase 1 变化检测）
 
 > 本部分全部属「执行前准备」——前置检查（Phase 0）与 PRD 变化检测（Phase 1）都只做配置就绪 + 监听判定；**只有 Phase 1 检测命中后才进入第二部分「执行主流程（Phase 2/3）」**。
+
+**分片定位辅助（可选）**：可执行 `python3 {{AIDP_HOME}}/scripts/shard_gate_digest.py --json` 查看各片的硬门标题/脚本入口索引，再按骨架表定位正文。摘要缺项不代表没有义务；它不取代「适用条件」列，也不能据此略过必读分片。
 
 ## Phase 0：前置条件检查（缺一不可启动）
 

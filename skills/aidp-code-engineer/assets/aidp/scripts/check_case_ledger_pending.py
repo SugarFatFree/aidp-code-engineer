@@ -28,6 +28,7 @@ _aidp_scripts = str((_AidpPath(__file__).resolve().parent if _AidpPath(__file__)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_relpath
+from aidp_paths import baseline as baseline_path
 import argparse
 import json
 import os
@@ -51,9 +52,15 @@ def run(root, version):
     fams = vinfo.get("families") or {}
     case = fams.get("case") or {}
     total = int(case.get("total") or 0)
+    ledger_prefix = "docs/testing/%s/" % version
+    invalid = [p for key in ("unparsed", "archived_not_deleted") for p in pc.get(key, [])
+               if str(p).replace(os.sep, "/").startswith(ledger_prefix)]
+    if invalid:
+        return {"ok": False, "passed": False, "pending": None,
+                "detail": "用例台账不可判读或尚未清理：" + ", ".join(invalid)}
     # 延后生成的 Sprint 记录是第二份防丢证据：台账被误删也不能把未生成读成已生成。
     deferred = []
-    path = Path(root) / "memory/.sprint-autopilot-baseline.json"
+    path = Path(baseline_path(root))
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         sprints = ((data.get("versions") or {}).get(version) or {}).get("sprints") or {}
@@ -76,7 +83,7 @@ def record_generation(root, version, sprint, reason, complete=False):
     if not re.fullmatch(r"\d{3}", sprint) or not reason.strip():
         raise ValueError("需要三位 Sprint 编号和非空原因")
     ledger = next(Path(p) for fam, p in cascade_ledger_paths(root, version) if fam == "case")
-    baseline = Path(root) / "memory/.sprint-autopilot-baseline.json"
+    baseline = Path(baseline_path(root))
     with LockedBaseline(str(baseline), write=True) as b:
         node = b.data.setdefault("versions", {}).setdefault(version, {})
         item = node.setdefault("sprints", {}).setdefault(sprint, {})
@@ -85,8 +92,17 @@ def record_generation(root, version, sprint, reason, complete=False):
             pc = __import__("commit_gate").pending_cascade(root)
             case = ((pc.get("versions", {}).get(version) or {}).get("families") or {}).get("case") or {}
             directory = Path(root) / "docs/testing" / version / "研发自测"
-            sources = [p for p in directory.glob("*.md") if not p.name.startswith(("_", "00_", "99_"))]
-            if case.get("total") or any("TC-" in p.read_text(encoding="utf-8") for p in sources) is False:
+            sources = [p for p in directory.glob("*.md") if p.name != "README.md"
+                       and not p.name.startswith(("_", "00_", "99_"))]
+            from importlib.util import spec_from_file_location, module_from_spec
+            parser_path = Path(__file__).resolve().parents[1] / "skills/dev-manual-testcase/scripts/check_testcase_format.py"
+            spec = spec_from_file_location("_aidp_case_format", parser_path)
+            parser = module_from_spec(spec)
+            spec.loader.exec_module(parser)
+            has_cases = any(parser.TESTCASE_HEADER.search(p.read_text(encoding="utf-8")) for p in sources)
+            invalid = [p for key in ("unparsed", "archived_not_deleted") for p in pc.get(key, [])
+                       if str(p).replace(os.sep, "/").startswith("docs/testing/%s/" % version)]
+            if case.get("total") or invalid or not has_cases:
                 raise ValueError("用例台账尚有待办或正式用例未生成，不得清除欠账")
         elif previous.get("status") == "deferred":
             return previous
@@ -107,10 +123,30 @@ def record_generation(root, version, sprint, reason, complete=False):
         item["aiauto_test_required"] = bool(complete)
         # 版本级汇总给测试入口消费：任一 Sprint 显式要求实测即要求本版测试；
         # 只有所有已登记 Sprint 都明确 deferred 才能安全跳过。
-        sprint_values = [s.get("aiauto_test_required") for s in (node.get("sprints") or {}).values()
-                         if isinstance(s, dict) and "aiauto_test_required" in s]
-        node["aiauto_test_required"] = any(sprint_values) if sprint_values else bool(complete)
+        node["aiauto_test_required"] = any(
+            s.get("aiauto_test_required", True) is not False
+            for s in (node.get("sprints") or {}).values() if isinstance(s, dict))
         return item["case_generation"]
+
+
+def generation_required(context="direct", skip=False, explicit=False):
+    """是否生成正式实测用例：显式要求优先，其次看外层编排是否计划实测。"""
+    return bool(explicit or context == "testing" or (context in ("autopilot", "batch") and not skip))
+
+
+def prepare_generation(root, version, sprint, reason, context="direct", skip=False, explicit=False):
+    if not generation_required(context, skip, explicit):
+        result = record_generation(root, version, sprint, reason)
+        return dict(result, required=False)
+    from baseline_edit import LockedBaseline
+    if not re.fullmatch(r"\d{3}", sprint) or not reason.strip():
+        raise ValueError("需要三位 Sprint 编号和非空原因")
+    with LockedBaseline(baseline_path(root), write=True) as b:
+        node = b.data.setdefault("versions", {}).setdefault(version, {})
+        item = node.setdefault("sprints", {}).setdefault(sprint, {})
+        item["aiauto_test_required"] = True
+        node["aiauto_test_required"] = True
+    return {"required": True, "context": context, "sprint": sprint}
 
 
 def main():
@@ -118,6 +154,10 @@ def main():
         description="实测前门：本版是否还有未级联的用例增量（有 = 测的是老用例集）")
     ap.add_argument("--root", default=".")
     ap.add_argument("--version")   # --self-check 时不需要（见下方分流）
+    ap.add_argument("--prepare", action="store_true", help="按外层实测意图判定生成或延期")
+    ap.add_argument("--context", choices=("direct", "batch", "autopilot", "testing"), default="direct")
+    ap.add_argument("--skip-aiauto-test", action="store_true")
+    ap.add_argument("--require", action="store_true", help="外层明确要求实测，用例必须现在生成")
     ap.add_argument("--defer", action="store_true", help="登记暂缓生成和用例族欠账")
     ap.add_argument("--complete", action="store_true", help="正式用例生成且台账收口后清除暂缓标记")
     ap.add_argument("--sprint", default="")
@@ -138,11 +178,14 @@ def main():
     if not args.version:
         print("[ERROR] 必须传 --version", file=sys.stderr)
         return 2
-    if args.defer and args.complete:
-        ap.error("--defer 与 --complete 互斥")
-    if args.defer or args.complete:
+    if sum((args.defer, args.complete, args.prepare)) > 1:
+        ap.error("--prepare / --defer / --complete 互斥")
+    if args.defer or args.complete or args.prepare:
         try:
-            result = record_generation(root, args.version, args.sprint, args.reason, args.complete)
+            result = (prepare_generation(root, args.version, args.sprint, args.reason,
+                                         args.context, args.skip_aiauto_test, args.require)
+                      if args.prepare else record_generation(root, args.version, args.sprint,
+                                                           args.reason, args.complete))
         except (OSError, ValueError) as exc:
             print(str(exc), file=sys.stderr)
             return 2

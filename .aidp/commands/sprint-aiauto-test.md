@@ -4,6 +4,9 @@
 
 参数：$ARGUMENTS
 
+**内部缓存身份**：`--preflight-run-id <ID>` 只由上层编排透传，同一次同步委派使用同一身份；独立唤起不传，由 `autopilot_tick_flags.py parse` 自动生成新值。传给测试链路时附 `--preflight-run-id "$PREFLIGHT_RUN_ID"`；异步调度新 tick 不沿用。
+
+
 > ⛔ **上面这行不可删**：`$ARGUMENTS` 是斜杠命令正文的 **runtime 文本替换**，只在 `{{AIDP_HOME}}/commands/*.md` 里生效；
 > flow 分片是被 `Read` 进来的普通文本，`${ARGUMENTS:-}` 在那里只是未设置的 shell 变量。缺了它 →
 > Phase 0.1 的 `autopilot_tick_flags.py parse --arguments` 恒收空串 → `--unattended` / `--once` / `--target`
@@ -126,6 +129,40 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 > 收口：Phase 0 全部跑完 → 进入 Phase 1。**执行前务必已按上表逐分片 Read（`phase-0-1.md` … `phase-0-6.md` / `phase-0-6b.md` / `phase-0-7.md`；`phase-0-8.md` 仅当客户端应用 MCP 已声明时才需 Read）并逐项完成，不能只看本表。**
 
 ---
+
+## 测试阶段状态协议（Phase 1 / 2 / 3 统一执行）
+
+Phase 0 的配置和部署归属仍须每 tick 检查。随后各阶段按下表执行同一个入口/出口协议，状态节点是独立 `aiauto_run_state`；不与开发链路共用计数。
+
+| 当前阶段 | 下一阶段 | 允许写完成态的证据 |
+|---|---|---|
+| `1-probe` | `2-exec` | 部署和鉴权就绪已验证 |
+| `2-exec` | `3-audit` | skill 执行、任务终态及结果契约已核验 |
+| `3-audit` | `done` | 本轮报告/结论、baseline、通知已按适用范围收尾 |
+
+每次进入阶段前：
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)" || exit 1
+PHASE_ENTRY=$(python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:?}" \
+  --phase "{当前阶段}" --next-phase "{下一阶段}" --build "${BUILD:-standalone}")
+PHASE_RC=$?; [ "$PHASE_RC" -eq 0 ] || exit "$PHASE_RC"
+printf '%s\n' "$PHASE_ENTRY"
+```
+
+消费 JSON：`skip_phase=true` 时跳过当前阶段正文，直接续跑 `resume_phase`；不得把已停滞的后续阶段覆盖回 P1。`skip_phase=false` 才执行本阶段。工具按 tick 身份只计一次，最新轮次的真实终态任务增加才重置停滞窗口，日志/心跳刷新不算推进。
+
+仅在上表证据全部落盘后执行出口；中断、失败、交接让位均不写完成态：
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)" || exit 1
+python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:?}" \
+  --phase "{当前阶段}" --next-phase "{下一阶段}" --build "${BUILD:-standalone}" --complete || exit 1
+```
+
+`--enter` 不宣告完成；`--complete` 才推进到下一阶段。状态缺失/不合法、写盘失败或阶段越权返回非零；不能把“状态读不到”当成“阶段健康”。同阶段无进度达到次数与时长双阈值时统一冻结，通知送达情况由处置记录说明。
+
+**显式实测与延期用例**：本命令实际进入 Phase 1/2/3 即为实测意图；旧的 `aiauto_test_required=false` 只描述开发期延期，不能取消本次请求。Phase 2.0.0 先补 `/sprint-selftest --ledger-cascade [--unattended]`，清掉 `deferred_sprints[]` 后复跑用例门；补不齐即停止开测并标明覆盖不完整，绝不能继续跑老用例宣告通过。
 
 ## Phase 1：部署完成探测
 

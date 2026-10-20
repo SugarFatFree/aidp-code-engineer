@@ -31,8 +31,11 @@
 - `--skip-context-check`：跳过 Step 0.0 上下文压缩建议（明确不需要 /compact 时使用）
 - `--stop-on-blocker`：遇阻即停模式（bugfix 循环超限就暂停；默认非阻塞模式继续）
 - `--skip-aiauto-test`：跳过 Step 6 浏览器仿真测试整合（纯开发模式）
+- `--aiauto-test-required`：父 autopilot 已安排独立测试链路；即使本批次 `--skip-aiauto-test`，仍须生成用例，并逐层透传。
 - `--auto-aiauto-test`：Step 6 跳过"是否要跑 AI 自动化测试"询问门，直接走部署确认 + 执行（仍会问 deployment 字段缺失项）
 - `--unattended`：★ autopilot `/loop` 无人值守标记（等价环境变量 `LOOP_UNATTENDED=1`）。① **隐含跳过 Step 0.0**（上下文压缩询问门——其唯一出口是等人应答、超时即终止整条命令）② **透传给 Step 3 每个 `/sprint-full → /sprint-dev`**，令其 Sprint 内部决策门（UI C/D、约定22 级联）改为消费 PRD `autopilot_decisions` 预声明、不弹窗（见「零询问连跑铁律」`--unattended` 例外）
+
+**逐 Sprint 用例意图**：若 Step 6 将执行，或父链传 `--aiauto-test-required`，每次 `/sprint-full` 都带 `--aiauto-test-required`；仅父链和本批次均未安排实测时透传 `--skip-aiauto-test`。子批次 skip 只管不在此处启动浏览器，不取消父链已安排的实测。
 
 ## 前置准备（Step 0.0~0.3）
 
@@ -240,6 +243,20 @@ for NNN in 执行列表:
 ### Step 5.5：级联职责说明（不再单独触发）
 
 本命令链内由 `/sprint-full` → `/sprint-dev --cascade-now` 按 Sprint 即时处理约定 22；版本级台账收口由 `/version` 阶段门处理。这里不再根据提交时间或批次结束再次派发通用级联，避免同一批台账重复消费。保留 Step 5.6 的落点/终态检查职责。
+
+### Step 5.6：级联落点门（进入 Step 6 前必跑，中断轮也核验）
+
+```bash
+MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
+if [ "$MODE" = git ]; then
+  python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --worktree --version {version} || exit 1
+else
+  echo "unsupported:vcs-disabled：按本地变更证据核对落点"
+fi
+python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --ledger-closed --version {version} || exit 1
+```
+
+Git 下核验未提交级联改动只落既有主文档/索引，台账的条目删除属于合法清理；不在这里再次派收口。`vcs_mode=none` 不运行 Git 落点门，记录 `unsupported:vcs-disabled` 并按本地变更证据核对；台账终态门仍执行。若用例义务未生成，Step 6 的测试前置门负责补齐并阻断假通过。
 
 ### Step 6：浏览器仿真测试链路（★ 编排 `/sprint-aiauto-test`）
 

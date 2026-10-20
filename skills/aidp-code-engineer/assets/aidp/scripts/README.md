@@ -281,7 +281,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 输出字段：`commit_gate_enabled` / `is_template_project`（脚手架 skill 的任一落点——模板仓库根级 `skills/`、下游 `.claude/skills/` 或 `.agents/skills/`、历史的 `各 Agent 的运行根/skills/`——下 `SKILL.md` 与 `scripts/sync_memory_md.py` 都在、且 `scaffold_marker.py` 判为非下游）/ `working_tree_dirty` / `has_business_code_change` / `is_scaffold_only_change` / `today` /<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 `pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送欠账：`cicd.provider != none` 时按 HEAD commit 查分类记录；正式代码推送超 1 小时无部署终态〔`deploy_terminal` / `last_deployed_at` / `probe_passed`〕计欠账，`unknown:<原因>` 终态不计欠账但可见）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单（不含日常 stale 派单））。
 可 import：`pending_cascade()` / `cascade_ledger_paths()` / `CASCADE_FAMILIES` / `suspected_cascade_bypass()` / `has_business_code_change()` / `is_scaffold_only_change()` / `pending_cicd()` / `offchain_budget()` / `gather()`。
-**★ 欠账告警恒打印 + 退出码说话**：未落地义务告警**不受 `--quiet` 压制**；退出码 `0`=无欠账 / `3`=有未落地义务（台账积压 · 已级联未清理 · 格式漂移 · 归档标记未删 · 🔴 破坏性变更未登记失准点 · 疑似绕过攒批 · CICD 推送欠账）/ `4`=阻塞级（保留档位：当前判据集不产生该值，消费方仍须按阻塞处理）。**Why**：约定 24 强制的写法就是 `--quiet`，提醒若住在 `if not args.quiet:` 里就等于在唯一被强制执行的路径上从不打印。⚠️ 3/4 的语义是"本轮结束前有一项义务未落地"，**不是"禁止 commit"**；逃生阀 `--no-fail-on-debt`：压退出码但**不消音**——用掉它会往告警台账 `memory/.aidp/alerts.jsonl` 落一条 `commit-gate-debt-waived`（否则「豁免过的欠账」与「真的没欠账」在任何地方都分不开）。其余参数：`--context bare-conversation|aidp-command`（留痕 + 约定 41 适用性）。
+**★ 欠账告警恒打印 + 退出码说话**：未落地义务告警**不受 `--quiet` 压制**；退出码 `0`=无欠账 / `3`=有未落地义务（台账结构/清理异常 · 已级联未清理 · 格式漂移 · 归档标记未删 · 🔴 破坏性变更未登记失准点 · 疑似绕过攒批 · CICD 推送欠账）/ `4`=阻塞级（保留档位：当前判据集不产生该值，消费方仍须按阻塞处理）。**Why**：约定 24 强制的写法就是 `--quiet`，提醒若住在 `if not args.quiet:` 里就等于在唯一被强制执行的路径上从不打印。⚠️ 3/4 的语义是"本轮结束前有一项义务未落地"，**不是"禁止 commit"**；逃生阀 `--no-fail-on-debt`：压退出码但**不消音**——用掉它会往告警台账 `memory/.aidp/alerts.jsonl` 落一条 `commit-gate-debt-waived`（否则「豁免过的欠账」与「真的没欠账」在任何地方都分不开）。其余参数：`--context bare-conversation|aidp-command`（留痕 + 约定 41 适用性）。
 
 ## agent_env.py — 启用的 AI Agent 与项目记忆文件落点
 
@@ -318,11 +318,11 @@ Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 
 **铁律：flow / 命令端一律经本脚本写 baseline，不写裸 `jq … > tmp && mv`**（只读 `jq -r` 查询不受限）。路径用点号分段、**含点的键必须加双引号**（`versions."V0.1.0".needs_human`），`--version V0.1.0` 会给后续相对路径自动加 `versions."V0.1.0".` 前缀。
 子命令：`get` / `set`（可多组 path/value）/ `del` / `bump [--by N]` / `touch`（写当前 ISO8601）/ `now` / `current-version`（解析「当前开发版本」，两条 loop 共用的单一信源）/ `run-state`（Phase 游标：`current_phase` / `next_phase` / `next_sprint` / `phase_summary` / `pending_actions` / `phase_enter_count` / `phase_first_entered_at` 的**唯一**维护者，⛔ 别在别处 bump `phase_enter_count`）。
 
-## check_stuck_phase.py — 测试链路 stuck 熔断（次数 + 时长双判据）
+## check_stuck_phase.py — 测试链路停滞判定
 
-服务 `/sprint-aiauto-test`，使用独立 baseline 节点 `versions.{V}.aiauto_run_state`，退出码 `0`=未卡住、`3`=判定卡住并按 `--freeze` 走 `autopilot_fail_handle.py --command aiauto-test --reason stuck-phase`。只有 `phase_enter_count >= 8` 且 `phase_first_entered_at` 滞留超过 7200 秒才冻结；缺失时间或只满足一项都不冻结。开发链路继续使用 `autopilot_stuck_check.py`，两者不能共用状态键。调用方 = `sprint-aiauto-test` Phase 1 / Phase 2 / Phase 3 入口状态块。
+读取 `aiauto_run_state` 的次数与首次进入时刻；两者同时达阈值才判 stuck。CLI `0`=有状态且未卡住，`3`=已判 stuck（带 `--freeze` 时须确认冻结结果），`2`=状态/阈值/冻结写盘不可判定，不能当作健康。判据纯函数不对缺失时刻误冻，CLI 会把该缺口报出来。冻结统一委派 `autopilot_fail_handle.py --command aiauto-test`，人工解冻重置测试停滞窗口。
 
-用法：`python3 {{AIDP_HOME}}/scripts/check_stuck_phase.py --command aiauto-test --version <V> --phase 2-exec [--state-key aiauto_run_state] [--freeze] [--json]`。
+用法：`python3 {{AIDP_HOME}}/scripts/check_stuck_phase.py --command aiauto-test --version <V> --phase 2-exec [--state-key aiauto_run_state] [--freeze] [--json]`；`--self-check`。调用方 = `aiauto_phase_entry.py`；隔离回归见 `tests/test_remaining_tools.py` 和 `tests/test_unattended_recovery.py`。
 
 ## autopilot_stuck_check.py — 通用 stuck 熔断（"既不失败也不推进"的兜底）
 
@@ -423,15 +423,29 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 用法：`python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version <V> [--root .] [--json]`；`--self-check`（阳性 + 跨用户 + 同行两类阴性对照）。退出码：`0`=无未关闭（含「无研发执行计划 → 适用范围外」，⛔ 不等于「已全部关闭」）/ `1`=有未关闭、**调用方须停下** / `2`=用法错。⚠️ 退出码 1 的语义是「本命令不得继续」，⛔ 不是「记一笔告警然后往下走」—— 那等于这道门不存在。
 
-## check_scale_budget.py — 规划产物规模 ↔ 档位软预算对账
+## shard_gate_digest.py — 分片硬门定位索引
 
-读取四族实际产出，按 `S` / `M-` / `M` / `L` 档比较用例数、设计册数、Task 数和总行数；`M-` 由零新增接口/页面/DDL 的口径调整事实派生。超限只报 Important，不硬截断覆盖。调用方 = `/sprint-dev` 口述增量步骤 4 完成后的规模回检。
+按文件提取硬门标题和脚本入口，识别模板 token 与渲染后的运行路径。仅列出匹配项，不证明未列出的义务不存在；不能根据摘要缺项跳过硬门。目录不存在、无文件或读取失败返回2。
 
-用法：`python3 {{AIDP_HOME}}/scripts/check_scale_budget.py --version <V> --tier <S|M|M-> [--new-endpoints N] [--new-pages N] [--has-ddl] [--json]`；`--self-check`。
+用法：`python3 {{AIDP_HOME}}/scripts/shard_gate_digest.py [--dir <分片目录>] [--json]`。调用方 = `/sprint-autopilot` 按需 Read 前的可选定位入口；适用性仍以骨架表与正文为准。
 
-## aiauto_phase_entry.py — 测试链路 Phase 状态入口
+## check_scale_budget.py — 整版规划产物规模软预算
 
-统一写 `versions.{V}.aiauto_run_state` 的阶段进入计数（`phase_enter_count` / `phase_first_entered_at`），并调用 `check_stuck_phase.py` 判定“次数达到阈值且滞留超过 2 小时”的无进展状态；冻结交给 `autopilot_fail_handle.py --command aiauto-test`。调用方 = `sprint-aiauto-test` Phase 1 / Phase 2 / Phase 3 入口。
+以整版 `req_scale` 对账四族产出（用例、设计册、Task、行数），不能把单 Sprint 档位套到历史全部文档。只有明确知道新增接口=0、新增页面=0、无 DDL 时才细化 `M-`；未知不按0处理。`_` 增量册不参与用例源采集，合法 Task 标题需计数，用例采集量0或文件读取失败必须提示未核验。Important 只告警，不通过删覆盖来压缩数量。
+
+用法：`python3 {{AIDP_HOME}}/scripts/check_scale_budget.py --version <V> --from-baseline --json`；也可显式 `--tier`、`--new-endpoints`、`--new-pages`、`--has-ddl|--no-ddl`；`--self-check`。调用方 = `/version` `planning-7.md` 机械预检，退出 `0`=预算内/不适用，`1`=需说明的 Important，`2`=事实不可用。
+
+## check_case_ledger_pending.py — 用例延期与实测前完整性门
+
+`--prepare --context direct|batch|autopilot|testing` 按外层实测安排判生成；父链明确要求时附 `--require`，局部跳过实测时附 `--skip-aiauto-test`。延期同时记 baseline 与用例族增量册，误删册子仍能从 `deferred_sprints[]` 检出。显式调用 `/sprint-selftest` 或 `/sprint-aiauto-test` 不能沿用开发期 false 取消本次生成/测试。
+
+生成且 QR 通过、用例台账已收口后逐 Sprint `--complete --sprint <NNN> --reason <说明>`；完成登记复用 SKILL 的合法用例标题解析，不能凭 `TC-` 占位清账。读取/格式异常返回2，有未决返回1；原始 `--version <V> --json` 继续作为实测前置门。调用方 = `/sprint-dev` 步骤4、`/sprint-selftest` 延期收口、测试 Phase 2.0.0。
+
+## aiauto_phase_entry.py — 测试阶段入口与出口
+
+按命令主体「测试阶段状态协议」统一进入/完成 Phase 1、2、3。使用独立 `aiauto_run_state`；先检查尚未完成的旧阶段，再写新状态，同 tick 只记一次。已完成阶段可跳过；未完成阶段不能被后续阶段覆盖。入口不写完成时间，只有证据落盘后的 `--complete` 才推进。最新测试轮次和终态任务集是进度信号，日志/心跳变化不算推进。
+
+用法：`python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version <V> --phase 2-exec --next-phase 3-audit --build <B> [--complete]`。JSON 的 `skip_phase=true` 指示跳过当前正文、续跑 `resume_phase`；非零阻断。调用方 = `commands/sprint-aiauto-test.md` 的统一协议，内部调用 `baseline_edit.py` 与 `check_stuck_phase.py`。
 
 ## assert_gate_ran.py — 外部机器门真实执行断言
 
@@ -440,13 +454,17 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 用法：`python3 {{AIDP_HOME}}/scripts/assert_gate_ran.py --label "上游溯源" -- python3 {{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py <目录> --json`。
 调用方 = `{{AIDP_HOME}}/flows/sprint-requirements/execution-steps.md` 的上游溯源回检；适用范围外必须显式写 `--allow-empty` 理由，⛔ 不得把它当默认逃生阀。
 
-## batch_probe.py — 批量阳性对照与快照还原
+## batch_probe.py — 批量阳性对照与字节还原
 
-从 JSON 声明一组“锚点 + 注入文本 + 期望命中”，一次完成阴性运行、全量快照、全量注入、阳性运行、快照还原；阴性侧必须绿、阳性侧必须红，且任何异常都在 `finally` 里还原。退出码 `0`=全部探针变红，`1`=探针漏检/阴性侧本就红，`2`=入参错。调用方 = `.aidp/scripts/tests/test_batch_probe.py` 以及需要批量阳性对照的回归流程。
+先快照全部声明目标，再注入。只有基线命令成功、注入命中且命令真正失败、按原始字节还原后复跑成功，才算对照有效。超时、命令缺失、只有输出文字却退出0均不能充当探针命中。`finally` 负责移除探针并保留原始 CRLF/末尾换行；目标必须是项目内现有文件。
 
-## preflight_cache.py — 同 tick 前置检查成功结论缓存
+用法：`python3 {{AIDP_HOME}}/scripts/batch_probe.py --probes <探针.json> --cmd "<静态检查命令>" --json`。调用方 = `rules/code.md`「静态验证工具的阳性对照」；回归见 `tests/test_batch_probe.py` 和 `tests/test_remaining_tools.py`。
 
-缓存键包含 `run_id`、git HEAD、依赖文件 `mtime_ns+size` 和调用方补充指纹；只缓存成功结论，失败/阻塞不入缓存，跨 tick 不复用。命中时打印复用来源；未命中可用 `--cmd` 执行检查，成功后自动写入。调用方 = `/sprint-autopilot` Phase 0 preflight；回归 = `.aidp/scripts/tests/test_preflight_cache.py`。
+## preflight_cache.py — 同 tick 成功探针缓存
+
+只复用同次调用的成功探针；键包含 `run_id`、输入文件指纹、补充身份，`--cmd` 模式另含命令身份。JSON 必须明确 `passed:true` 或 `ok:true`，`passed:false`/`skipped`/普通信息快照不凭退出0入缓存。命中 `--cmd` 时 stdout 原样回放，来源说明写 stderr；失败不缓存。缓存路径在 `aidp_paths.REGISTRY` 登记。
+
+用法：`python3 {{AIDP_HOME}}/scripts/preflight_cache.py --run-id <ID> --check login-smoke --file <账号源> --extra <完整身份> --json`，成功后用同参数 `--put verified`。`autopilot_tick_flags.py parse` 自动生成 `PREFLIGHT_RUN_ID`，同步委派可透传 `--preflight-run-id`，独立 tick 不沿用。调用方 = 测试链路 `phase-0-7.md` 账号冒烟与 Phase 1 登录就绪；配置不明/身份缺失时重新探测。动态的通知/脏树总检仍实时执行，不缓存。
 
 ## aidp_collect.py — 采集量自证（机器门的「我到底看了多少东西」）
 

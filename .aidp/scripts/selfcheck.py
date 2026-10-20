@@ -163,6 +163,15 @@ def _p_sql_ledger_comment(root):
            "ALTER TABLE T_X ADD COLUMN STATUS INT;\n")
 
 
+@probe("check_scale_budget.py", args=("--json", "--version", "SELFCHECK", "--tier", "S"))
+def _p_scale_budget(root):
+    cases = "\n".join("#### 用例 TC-PROBE-%03d\n内容\n" % i for i in range(60))
+    _write(root, "docs/testing/SELFCHECK/研发自测/02_用例.md", cases)
+
+
+unsupported("check_stuck_phase.py", "需独立 baseline 和真实冻结读写；由 tests/test_remaining_tools.py 的 Phase 生命周期与冻结失败夹具、tests/test_unattended_recovery.py 及脚本 --self-check 覆盖。")
+
+
 @probe("check_open_sprints.py", args=("--json", "--version", "SELFCHECK"))
 def _p_open_sprints(root):
     # 计划里登记 Sprint-001，而 progress.md 不给同行 ✅ → 必判「有未关闭 Sprint」。

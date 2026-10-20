@@ -31,7 +31,7 @@
 （`/sprint-aiauto-test` Phase 1），退出码 0/3；**开发链路**（`/sprint-autopilot`
 Phase 1.3ter）调的是 `autopilot_stuck_check.py`，退出码 0/1/3（多一档"写盘失败"）。
 两份的判据（`phase_enter_count >= 8` 且滞留 > 2h）各有一份 —— 这是**已知的双写面**，
-动判据必须同步改两边；两份都已登记进 `check_freeze_contract.GATE_SCRIPT_REASONS`。
+动判据必须同步改两边；冻结实际写入均委派 `autopilot_fail_handle.py`，枚举与解冻路径由 `check_freeze_contract.py` 检查。
 
 ## 用法
 
@@ -56,19 +56,14 @@ ENTER_THRESHOLD_DEFAULT = 8
 AGE_SECONDS_DEFAULT = 7200
 
 
-def _be_get(version, dotted, default="", baseline=None):
-    cmd = [sys.executable, BE]
-    if baseline:
-        cmd += ["--baseline", baseline]
-    if version:
-        cmd += ["--version", version]
-    cmd += ["get", dotted, "--default", str(default)]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True)
-    except OSError:
-        return default
-    out = (r.stdout or "").strip()
-    return out if out else default
+def baseline_file(explicit=None):
+    from pathlib import Path
+    from aidp_paths import baseline
+    if explicit:
+        return Path(explicit).resolve()
+    cwd = Path.cwd()
+    root = next((p for p in (cwd, *cwd.parents) if (p / "memory").is_dir()), cwd)
+    return Path(baseline(str(root))).resolve()
 
 
 def _to_epoch(s):
@@ -106,7 +101,7 @@ def evaluate(enter_count, first_entered_at, now_epoch=None,
                     % (cnt, (age or 0) // 60)) if stuck else ""}
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--command", choices=("autopilot", "aiauto-test"), required=True)
@@ -122,32 +117,33 @@ def main():
     ap.add_argument("--state-key", default=None,
                     help="状态键名；缺省按 --command 推导（autopilot→run_state，"
                          "aiauto-test→aiauto_run_state）")
+    ap.add_argument("--no-card", action="store_true", help="隔离演练不发送通知，仍写本地告警")
     ap.add_argument("--json", action="store_true")
-    a = ap.parse_args()
-
-    et = a.enter_threshold or int(os.environ.get(
-        "STUCK_PHASE_ENTER_THRESHOLD", ENTER_THRESHOLD_DEFAULT))
-    ag = a.age_seconds or int(os.environ.get(
-        "STUCK_PHASE_AGE_SECONDS", AGE_SECONDS_DEFAULT))
+    a = ap.parse_args(argv)
 
     sk = a.state_key or ("aiauto_run_state" if a.command == "aiauto-test" else "run_state")
-    cnt = _be_get(a.version, "%s.phase_enter_count" % sk, 1, a.baseline)
-    first = _be_get(a.version, "%s.phase_first_entered_at" % sk, "", a.baseline)
-    recorded = _be_get(a.version, "%s.current_phase" % sk, "", a.baseline)
-    cur = a.phase or recorded
-    # ★ 调用方声明的 phase 与状态里记着的不一致 ⇒ 这份计数**不是本 Phase 的**，判它等于乱判。
-    #   ⛔ 此时必须出声而不是沉默放行：沉默会让「判了对面链路的 phase」与「真的没卡住」同形。
-    if a.phase and recorded and a.phase != recorded:
-        msg = ("⚠️ %s.current_phase 记的是 `%s`，而本次 --phase 是 `%s` —— 计数不属本 Phase，"
-               "判定按【不卡住】返回但**不可据此断言健康**；先查 run-state 写入点是否串键"
-               % (sk, recorded, a.phase))
-        if a.json:
-            print(json.dumps({"stuck": False, "applicable": False, "reason": msg,
-                              "state_key": sk, "recorded_phase": recorded,
-                              "asked_phase": a.phase}, ensure_ascii=False, indent=2))
-        else:
-            print(msg)
-        return 0
+    bp = baseline_file(a.baseline)
+    try:
+        et = a.enter_threshold if a.enter_threshold is not None else int(os.environ.get(
+            "STUCK_PHASE_ENTER_THRESHOLD", ENTER_THRESHOLD_DEFAULT))
+        ag = a.age_seconds if a.age_seconds is not None else int(os.environ.get(
+            "STUCK_PHASE_AGE_SECONDS", AGE_SECONDS_DEFAULT))
+        if et <= 0 or ag <= 0:
+            raise ValueError("阈值必须大于0")
+        data = json.loads(bp.read_text(encoding="utf-8"))
+        state = data["versions"][a.version][sk]
+        cnt = state["phase_enter_count"]
+        first = state["phase_first_entered_at"]
+        recorded = state["current_phase"]
+        if isinstance(cnt, bool) or int(cnt) < 1 or _to_epoch(first) is None or not recorded:
+            raise ValueError("阶段状态计数或首次进入时刻无效")
+        if a.phase and a.phase != recorded:
+            raise ValueError("状态属于 %s，本次要求 %s" % (recorded, a.phase))
+        cur = a.phase or recorded
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        out = {"stuck": None, "applicable": False, "state_key": sk, "error": str(exc)}
+        print(json.dumps(out, ensure_ascii=False) if a.json else "⛔ 无法判定阶段健康：%s" % exc)
+        return 2
     res = evaluate(cnt, first, enter_threshold=et, age_seconds=ag)
     res.update(command=a.command, version=a.version, phase=cur, state_key=sk,
                first_entered_at=first, froze=False)
@@ -158,16 +154,23 @@ def main():
         #   运维巡检会看到一串永不清零的假计数、而真判据根本不在那里。
         try:
             cmd = [sys.executable, FAIL_HANDLE]
-            if a.baseline:
-                cmd += ["--baseline", a.baseline]
+            cmd += ["--baseline", str(bp)]
             cmd += ["--version", a.version, "--freeze-now",
                     "--command", a.command, "--phase", cur or "unknown",
                     "--reason", "stuck-phase", "--why", res["why"]]
-            r = subprocess.run(cmd, capture_output=True, text=True)
-            res["froze"] = r.returncode in (0, 3)
+            cmd += ["--json"]
+            if a.no_card:
+                cmd += ["--no-card"]
+            root = bp.parent.parent if bp.parent.name == "memory" else bp.parent
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(root), timeout=90)
+            if r.stderr:
+                print(r.stderr, end="", file=sys.stderr)
+            freeze_result = json.loads(r.stdout or "{}")
+            res["froze"] = r.returncode == 3 and freeze_result.get("frozen") is True
+            res["freeze_result"] = freeze_result
             if not res["froze"]:
                 res["freeze_error"] = (r.stderr or "").strip()[:200]
-        except OSError as exc:
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             res["freeze_error"] = str(exc)
 
     if a.json:
@@ -175,11 +178,14 @@ def main():
     elif res["stuck"]:
         print("⛔ 通用 stuck 熔断：Phase %s 连续 %d tick 原地打转（首次进入 %s）%s"
               % (cur or "?", res["count"], first or "未记录",
-                 "→ 已冻结并发 #4" if res["froze"] else "（未带 --freeze，仅判定）"))
+                 "→ 已冻结（通知结果见冻结处置记录）" if res["froze"] else "（未带 --freeze，仅判定）"))
     else:
         print("✅ 未卡住（进入 %d 次 / 阈值 %d；滞留 %s 秒 / 阈值 %d）"
               % (res["count"], et,
                  "未记录" if res["age_seconds"] is None else res["age_seconds"], ag))
+    if res["stuck"] and a.freeze and not res["froze"]:
+        print("⛔ 冻结写入未完成：%s" % res.get("freeze_error", "见冻结处置结果"), file=sys.stderr)
+        return 2
     return 3 if res["stuck"] else 0
 
 

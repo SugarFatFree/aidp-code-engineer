@@ -6698,8 +6698,8 @@ def test_cascade_bypass_and_commit_gate():
     c3 = (repo / ".aidp/reference/约定细则-3.md").read_text(encoding="utf-8")
     check("★ 31.5 作用域补齐「与命令入口无关 / 裸对话同样适用」",
           "代码推送这一事实" in c3 and "裸对话路径" in c3)
-    check("★ 约定 24 退出码 3 的补做指引按成因分流",
-          "按成因补做" in aidp and "派台账收口子 Agent" in aidp)
+    check("★ 约定 24 按成因补做，实际级联归阶段入口而非日常提交",
+          "按成因补做" in aidp and "修正并复核" in aidp and "实际级联仅由阶段入口" in aidp)
 
     check("★ 约定 22 主行补「作用域=变更事实、与命令入口无关」",
           "作用域 = 变更事实、与命令入口无关" in aidp)

@@ -50,6 +50,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 def _run(cmd, cwd, timeout):
@@ -75,8 +76,10 @@ def snapshot(root, probes):
         rel = p["file"]
         if rel in snaps:
             continue
-        with open(os.path.join(root, rel), encoding="utf-8") as f:
-            snaps[rel] = f.read()
+        path = Path(root, rel)
+        if not path.resolve().is_relative_to(Path(root).resolve()) or not path.is_file():
+            raise ValueError("探针目标必须是项目内现有文件：%s" % rel)
+        snaps[rel] = path.read_bytes()
     return snaps
 
 
@@ -85,8 +88,7 @@ def _inject(root, probes, snapshots):
     for p in probes:
         rel = p["file"]
         path = os.path.join(root, rel)
-        with open(path, encoding="utf-8") as f:
-            cur = f.read()
+        cur = Path(path).read_bytes().decode("utf-8")
         anchor = p.get("anchor") or ""
         inject = p["inject"]
         if anchor:
@@ -96,8 +98,7 @@ def _inject(root, probes, snapshots):
             cur = cur.replace(anchor, anchor + "\n" + inject, 1)
         else:
             cur = cur.rstrip("\n") + "\n" + inject + "\n"
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(cur)
+        Path(path).write_bytes(cur.encode("utf-8"))
 
 
 def _restore(root, snapshots):
@@ -105,8 +106,7 @@ def _restore(root, snapshots):
     errs = []
     for rel, text in snapshots.items():
         try:
-            with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
-                f.write(text)
+            Path(root, rel).write_bytes(text)
         except OSError as exc:
             errs.append("%s: %s" % (rel, exc))
     return errs
@@ -114,6 +114,9 @@ def _restore(root, snapshots):
 
 def run(root, probes, cmd, timeout):
     # ① 阴性侧（未注入）：必须绿 —— 否则无从分辨「探针被抓到」与「它本来就红」
+    if not probes:
+        return {"ok": False, "probe_count": 0, "probe_hits": 0, "rows": [],
+                "verdict": "没有探针，不能证明检查有效"}
     neg_rc, neg_out = _run(cmd, root, timeout)
 
     snapshots, pos_rc, pos_out, inject_err = {}, None, "", ""
@@ -128,29 +131,35 @@ def run(root, probes, cmd, timeout):
         # ⛔ 失败也必须还原：探针留在工作区比不做阳性对照更危险
         restore_errs = _restore(root, snapshots)
 
+    restored_rc, _ = _run(cmd, root, timeout) if not restore_errs else (None, "")
+    positive_failed = pos_rc is not None and pos_rc not in (0, 124, 125, 126, 127) and pos_rc > 0
     rows = []
     for p in probes:
         want = p.get("expect") or ""
+        # 多探针必须能逐条区分，不能凭一条共享诊断或一个全局失败码把全组算命中。
+        unambiguous = len(probes) == 1 or (bool(want) and sum(q.get("expect") == want for q in probes) == 1)
         got = (want in pos_out) if want else (pos_rc not in (0, None))
         base = (want in neg_out) if want else (neg_rc != 0)
         rows.append({
             "id": p.get("id") or p["file"],
             "file": p["file"],
             "expect": want,
+            "unambiguous": bool(unambiguous),
             "hit_with_probe": bool(got),
             "hit_without_probe": bool(base),
             # ★ 判据是「对照变红」：阳性侧命中且阴性侧未命中，两侧都对才算有效
-            "reddened": bool(got and not base),
+            "reddened": bool(unambiguous and positive_failed and got and not base),
         })
 
     ok = (not inject_err and not restore_errs and neg_rc == 0
-          and all(r["reddened"] for r in rows))
+          and restored_rc == 0 and all(r["reddened"] for r in rows))
     return {
         "ok": ok,
         "probe_count": len(probes),
         "probe_hits": sum(1 for r in rows if r["reddened"]),
         "negative_exit_code": neg_rc,
         "positive_exit_code": pos_rc,
+        "restored_exit_code": restored_rc,
         "rows": rows,
         "inject_error": inject_err,
         "restore_errors": restore_errs,
@@ -170,7 +179,9 @@ def _verdict(ok, neg_rc, rows, inject_err, restore_errs):
     miss = [r["id"] for r in rows if not r["reddened"]]
     if miss:
         return ("⛔ %d 个探针**没被抓到**：%s —— 该检查当前抓不到本该抓到的东西，"
-                "⛔ 不得据其输出宣称「零新增」" % (len(miss), "、".join(miss)))
+                "⛔ 不得据其输出宣称「零新增」；多探针需逐条独有的诊断文本，不能共用全局退出码" % (len(miss), "、".join(miss)))
+    if not ok:
+        return "⛔ 移除探针后检查未恢复通过，阳性对照不成立"
     return ("✅ %d/%d 个探针全部被抓到、且阴性侧为绿 —— 该检查此刻有效，"
             "其「零新增」结论可采信（结论里须一并出示本命中数）"
             % (len(rows), len(rows)))

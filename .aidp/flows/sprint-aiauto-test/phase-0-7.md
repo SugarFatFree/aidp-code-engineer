@@ -109,6 +109,20 @@ fi
 
 ### 0.4bis 账号登录冒烟预检（G1 — 跑用例【前】就断言账号真能登进去，而非等 Phase 2 白跑一轮才发现）
 
+**同 tick 探针复用**：先从 tick flags 取 `PREFLIGHT_RUN_ID`。缓存只保存“该账号完成登录且自身鉴权接口连续两次取数成功”的事实，不保存 token/cookie/口令。键的补充项必须包含目标 origin、账号/角色标识、当前驱动实例身份与部署身份；取不到这些身份时照常重探，不使用缓存。
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+python3 {{AIDP_HOME}}/scripts/preflight_cache.py --run-id "${PREFLIGHT_RUN_ID:?}" --check login-smoke \
+  --file "{Phase0.0.5实际加载的账号源文件}" --extra "{origin+账号角色+驱动实例+部署身份}" --json
+# hit=false：执行本节完整冒烟；失败/阻塞不缓存。成功且连续取数两次后才执行：
+# python3 {{AIDP_HOME}}/scripts/preflight_cache.py --run-id "$PREFLIGHT_RUN_ID" --check login-smoke \
+#   --file "{同一账号源文件}" --extra "{同一完整身份}" --put verified --detail "登录和连续两次鉴权取数成功"
+```
+
+命中时打印验证来源，本节和 Phase 1.1 可在同一身份下复用该成功探针；驱动重启、部署变化、源文件变化或下一 tick 均重新检查。缓存不代替 Phase 2 逐用例真实观测。
+
+
 > 实测反馈：Phase 0.4 只校"账号是否已配置"，不验证能否**真正登录进应用**。两个企业管理员账号（主测 + 备用）都已失效（登录后被拦"您尚未关联任何企业"），却直到 Phase 2 跑用例才发现，首轮 32/42 阻塞、白跑一轮。故账号加载后、进 Phase 1 **之前**，用**主测账号实际走一次登录冒烟**——判据与 Phase 1.1 部署就绪同源（不只看登录页 200，要看**登录成功 + 自身鉴权接口能取到数据**）：
 
 ```bash

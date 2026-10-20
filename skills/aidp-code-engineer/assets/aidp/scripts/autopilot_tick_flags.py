@@ -64,8 +64,9 @@ import shlex
 import subprocess
 import sys
 import time
+import uuid
 
-BASELINE_EDIT = os.path.join(runtime_relpath("", __file__), "scripts", "baseline_edit.py")
+BASELINE_EDIT = str(_AidpPath(__file__).resolve().with_name("baseline_edit.py"))
 # ⚠️ **按命令分命名空间**（曾是同一个常量 `"autopilot.tick"`）：
 #    两条 7×24 链路（`/loop 10m /sprint-autopilot` 与 `/loop 5m /sprint-aiauto-test`）**都**在
 #    tick 起点调 `parse`，而 `parse` 会先 `del NS` 再整段重写。共用一个键 ⇒ 任一方开 tick
@@ -122,9 +123,10 @@ BOOL_FLAGS = {
 #    USER_INTENT：若 `--watch-interval` 漏登，`/sprint-autopilot --watch-interval 5m` → USER_INTENT="5m"，
 #    phase-3-2 的意图分流于是拿一个参数值去 grep 关键词。
 VALUE_FLAGS = {
-    "autopilot": {"--target": "TARGET_FLAG_VALUE", "--watch-interval": "WATCH_INTERVAL"},
+    "autopilot": {"--target": "TARGET_FLAG_VALUE", "--watch-interval": "WATCH_INTERVAL",
+                  "--preflight-run-id": "PREFLIGHT_RUN_ID"},
     "aiauto-test": {"--target": "TARGET_FLAG_VALUE", "--select": "SELECT_FLAG_VALUE",
-                    "--role": "ROLE_FLAG_VALUE"},
+                    "--role": "ROLE_FLAG_VALUE", "--preflight-run-id": "PREFLIGHT_RUN_ID"},
 }
 
 # ★ 由分片在运行中派生、需要被**后续分片**读到的变量（非 flag）。
@@ -324,6 +326,9 @@ def cmd_parse(a) -> int:
                 if t.startswith(flag + "="):
                     out[var] = t.split("=", 1)[1]
 
+    # 调用方未透传时每次 parse 生成新身份，不能靠秒级时间戳跨 tick 猜命中。
+    out["PREFLIGHT_RUN_ID"] = out.get("PREFLIGHT_RUN_ID") or uuid.uuid4().hex
+
     # ★ USER_INTENT = `$ARGUMENTS` 里【非 flag、非 flag 值】的自由文本（用户口述意图）。
     #   此前它登记在 DERIVED_VARS 却全仓无人写 → `--shell` 读回恒空 →
     #   `echo "$USER_INTENT" | grep -qE …`（phase-3-2.md）恒不命中、意图分流整条失效。
@@ -364,7 +369,11 @@ def cmd_parse(a) -> int:
     #   调度巡检（aidp_scheduler.py watchdog）据心跳判链路是否掉线——tick 早退也照样刷新。
     _root_key = "autopilot" if a.command == "autopilot" else "aiauto"
     _hb_key = "autopilot_loop_heartbeat_at" if a.command == "autopilot" else "aiauto_test_heartbeat_at"
-    _be(["set", _root_key + ".tick_started_at", "@now", _hb_key, "@now"])
+    r_tick = _be(["set", _root_key + ".tick_started_at", "@now", _hb_key, "@now",
+                  _root_key + ".tick_id", out["PREFLIGHT_RUN_ID"]])
+    if r_tick.returncode:
+        print("⛔ tick 身份/心跳写入失败", file=sys.stderr)
+        return 1
 
     # ★ 整段重写：先删再写，杜绝上一 tick 的裁剪 flag 残留把本轮流程悄悄砍掉。
     _be(["del", _ns(a.command)])

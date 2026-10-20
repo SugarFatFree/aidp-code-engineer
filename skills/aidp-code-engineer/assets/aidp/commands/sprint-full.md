@@ -18,7 +18,11 @@
 - `/sprint-full "xxx" skip-bugfix`          — 模式 B + 跳过 bugfix 循环
 - `--from-batch`                             — 批量子任务标志（由 `/sprint-batch` 或 `/sprint-autopilot` 逐 tick 单 Sprint 路径隐式注入）：① 输出切紧凑模式，抑制规则详见下方「`--from-batch` 输出抑制规则」段；② **必须原样透传给 Phase 2/3/4/5 的子命令**——子命令据此**不弹 `AskUserQuestion`**：带 `--unattended` 时按预声明 / 保守默认；否则把需要用户裁决的内容决策门作为「⏸ 待裁决：<门名> / <选项> / <推荐>」返回，⛔ 不自行拍板（交互式由 `/sprint-batch` 主循环代问后续派，见其 Step 3）
 - `--unattended`                             — 无人值守：内部决策门改为消费 PRD 预声明、**绝不弹 `AskUserQuestion`**；由 `/sprint-batch`·`/sprint-autopilot` 必传下来（本文件下方多处消费它，必须登记在本参数表内）
+- `--aiauto-test-required` — 透传外层后续实测意图给 `/sprint-dev`，仅要求生成用例。
+- `--skip-aiauto-test` — 透传外层未安排实测；若同时带 required，required 优先。
 - `--stop-on-blocker`                        — 遇阻塞项即停并回传，不继续后续阶段（`/sprint-batch` 的合法停顿来源之一）
+
+**用例意图透传**：调用 `/sprint-dev` 时必须原样传递 `--aiauto-test-required` / `--skip-aiauto-test`。`--from-batch` 只表达被编排，不表达是否实测；不得据此把已取消的实测恢复，也不得吞掉已安排的实测用例。
 
 ## `--from-batch` 输出抑制规则
 

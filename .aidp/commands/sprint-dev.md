@@ -17,6 +17,8 @@
 - `/sprint-dev "<描述>" backend` — 自动累进 + 仅后端
 - `/sprint-dev 001 skip-test` — 跳过后续 test/bugfix/close 自动串联
 - `--cascade-now` — ★ **跳过攒批、当场跑完约定 22 四级级联**（默认行为是把变更按族记入 `_开发期{族}增量.md`、留到收口点批量级联，见 `flows/sprint-dev/postdev-writeback-1.md` 步骤 3.8 + `{{AIDP_HOME}}/reference/开发期族增量.md`）。用于**当轮就要拿到自测用例**的场景——收口点不含 `/sprint-close`，当天开发当天关闭的 Sprint 靠它兜底
+- `--aiauto-test-required` — 内部编排/用户明确要实测时传递：本轮必须生成正式用例；不启动浏览器，也不代表测试已完成。
+- `--skip-aiauto-test` — 外层未安排实测时透传；没有 `--aiauto-test-required` 则将用例生成义务登记到增量册，测试入口再补齐。
 - `--dev-scale=S|M|L` — ★ **显式覆盖 Step X.0.0 的改动量档位判定**（S=小改动：L2 就地在既有册追加小节、不另起分册；M=现行全量级联；L=全量 + 部署基线联动）。不带则据本 Sprint 实际改动文件数 + 是否有接口/表/语义变更**自动判档**。⛔ 档位**只伸缩承载形态**，L1 需求留痕 / L4 自测用例 / 约定 22 检测项与触发级别 / 各类硬门**任何档位都不省**（详见 `flows/sprint-dev/postdev-writeback-1.md` 步骤 3.5）
 - `--unattended` — ★ autopilot `/loop` 无人值守标记：Step 0 UI 门（C/D）、**Phase 0A.5 死代码决策门情形 C**、Step X.0.0 约定22 级联门、**约定28 引新库同意门**均**不弹 `AskUserQuestion`**，改**消费 PRD `autopilot_decisions` 预声明**（visual_baseline → A/B/C/D；约定22 默认自动级联；死代码情形 C 默认「① 并存切流量」；需引新库无栈支持 → 转失败处置熔断而非弹窗），避免 7×24 挂死（由 `/sprint-autopilot` → `/sprint-batch` → 本命令透传）
 - `--from-batch` — 批量子任务标志（由 `/sprint-full` 透传）：本命令不弹 `AskUserQuestion`，内容决策门按「⏸ 待裁决」返回上层（语义单一信源 = `/sprint-full` 参数表）
@@ -196,7 +198,7 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 **触发条件**：分支 B 必跑（除非参数含 `skip-doc-sync`）。
 
 **★ 单一权威路径（Phase 0B.1.1 ↔ Step X.0.0 的关系与衔接，消除"两头落空"）**：
-- **分支 B（口述累进）下，Phase 0B.1.1 是文档同步的唯一主路径**——"先补文档、后写代码"，本步 6 类补充（研发需求 / 详细设计 / 接口设计 / 数据库设计 / 研发执行计划 / 研发自测用例）**在进入 Phase 1 开发前必须已生成并登记**，不得延后、不得指望末段 Step X.0.0 兜。
+- **分支 B（口述累进）下，Phase 0B.1.1 是文档同步的唯一主路径**——"先补文档、后写代码"，本步研发需求 / 设计 / 计划补充在开发前必须生成；研发自测用例按步骤 4 的 `required` 读数生成或登记延期。应生成的产物**在进入 Phase 1 开发前必须已生成并登记**，不得延后、不得指望末段 Step X.0.0 兜。
 - **末段 Step X.0.0 在分支 B 下只是"兜底增量"**：仅捕捉 Phase 0B.1.1 完成**之后、开发过程中又新冒出**的额外漂移（临时加的接口/字段/规则）。它**不是**分支 B 补文档的主战场（分支 A 才是），**更不允许**把 Phase 0B.1.1 应做的 6 类补充推迟到 X.0.0——那会造成"0B.1.1 觉得 X.0.0 会补、X.0.0 觉得 0B.1.1 已补"的两头落空。
 - **铁律**：分支 B 必须先跑完 Phase 0B.1.1（含下方硬门）再开发；X.0.0 只增量、不接管。二者共用同一套 `NN_<业务主题>.md` 补充文档体系（约定 15）与约定 22 级联链，**绝不重复生成同一批增量、也绝不互相甩锅**。
 
@@ -272,7 +274,22 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
    > ⛔ **`/sprint-design` 不产研发执行计划**——它全文不涉及 `dev-execution-planner`，其补充模式产物只有 详细设计 / 接口设计 / 对外开放接口 / 数据库设计 / DDL SQL 五类。⛔ 因此**不得把"计划增量"并进步骤 3**——那会让下方硬门第 6 项（**不可 N/A 的必 Pass 项**）无人生产、恒 Fail。成因见 `{{AIDP_HOME}}/flows/sprint-dev/rationale.md`「计划增量为何必须独立一步」。
    > 即便临场改为直调 `dev-execution-planner` 兜住，也会绕过 `/sprint-plan` 的 Step 1.5 三脚本回检、Step 1.6 SQL 路径回写、Step 2 关联文档注入——故必须走命令编排、不得直调 SKILL。
 
-4. **★ 同步更新研发自测用例**：经 `/sprint-selftest {version} --supplement={NN} --scale={档位} [--unattended]` 编排（研发自测唯一入口，内部调 `dev-manual-testcase` skill 增量补充，prompt 驱动），输入：
+4. **★ 研发自测用例适用性（先判后生成）**：用 `check_case_ledger_pending.py --prepare` 读取真实外层意图；`required=true` 才生成正式用例，`false` 则只记欠账后跳到步骤 5。纯技术内部调整也必须留痕，不能只打印 WARN。
+
+   | 外层意图 | prepare 参数 | 行为 |
+   |---|---|---|
+   | autopilot 安排后续实测 | `--context autopilot` | 本轮生成 |
+   | sprint-batch 未跳过 Step 6 | `--context batch` | 本轮生成 |
+   | direct 只开发，或 batch 已跳过实测 | `--context direct`；或 `--context batch --skip-aiauto-test` | 双重登记延期 |
+   | 用户显式要求实测，或父链传 `--aiauto-test-required` | 对应 context 加 `--require` | 必须生成（优先于子批次局部 skip） |
+
+   ```bash
+   python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}" --sprint "{新NNN}" \
+     --prepare --context "{direct|batch|autopilot}" --reason "{本轮实际实测安排}" --json
+   # 按上表附加 --require 或 --skip-aiauto-test；非零退出先修状态，不继续。
+   ```
+
+   下列生成动作仅在 `required=true` 时执行：经 `/sprint-selftest {version} --supplement={NN} --scale={档位} [--unattended]` 编排（研发自测唯一入口，内部调 `dev-manual-testcase` skill 增量补充，prompt 驱动），输入：
    - `NN_<业务主题>.md`（研发需求增量，步骤 2 产出，本次新增 / 修订的功能点）
    - `NN_<业务主题>.md`（详细设计 / 接口设计 / 研发执行计划增量，步骤 3 产出，与功能点关联的接口/页面/任务）
    - 原研发自测用例（`研发自测/02_自测用例-总览.md`（多文件）或 `研发自测/02_全量自测用例.md`（单文件）；研发自测方案 `研发自测/01_研发自测方案.md`；旧锚布局兜底 `研发自测/01_自测用例-总览.md`·`研发自测/00_研发自测方案.md`·`研发自测/00_研发自测.md`；基线，只读）
@@ -283,35 +300,7 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 
    输出 `docs/testing/{version}/研发自测/<NN>_<业务主题>.md`（按 AGENTS.md 约定 15 统一数字前缀规则：NN = 目录现存最大序号 + 1、用例从 `02_` 起，文件名不带"补充"字眼；★ **一律在 `研发自测/` 同目录平铺续编、严禁再拆二级子目录**——SKILL「文件命名总则」要求同目录 `NN_` 前缀平铺，其硬门 `check_testcase_format.py` 只 `glob("*.md")` 非递归，落进子目录的用例会整体逃检），并在**研发自测专职索引** `00_索引.md`（及 `01_研发自测方案.md` 的「用例索引」段 / `02_自测用例-总览.md`）追加登记该增量（研发自测目录已对齐通用范式、导航锚 = `00_索引.md`，见约定 15）。新增用例 ID 全局唯一（继承原主文档编号空间，往后递增）。
 
-   **跳过条件**：步骤 2 的研发需求补充内容仅包含纯技术内部调整（如 SQL 索引优化、性能调优）且未触达任何用户可见功能 → 终端 WARN，并执行下面的 `--defer` 登记；否则**不可跳过**。
-
-   ```bash
-   # 纯技术内部调整：只登记“暂未生成正式用例”与用例族欠账，不伪造已经生成。
-   python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}" \
-     --sprint "{新NNN}" --defer --reason "本轮纯技术内部调整，未触达用户可见功能，暂不生成正式实测用例" || exit 1
-   # 正式用例已生成且用例增量册已收口后改走此调用（与 --defer 二选一）：
-   # python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}" \
-   #   --sprint "{新NNN}" --complete --reason "本轮正式用例已生成且增量已级联" || exit 1
-   ```
-
-   `--defer` 同时写 baseline 与用例族增量册，后续测试入口可检出；`--complete` 会先核验台账无未决且正式用例存在，不能拿一句散文声明清掉欠账。
-
-**★ 规划产物规模软预算回检（Important，只告警不截断）**：步骤 2.5 的档位判定只决定目标承载，完成步骤 4 后再按实际四族产物回读一次，防止档位判 M 但产出异常膨胀、或 M⁻ 仍生成完整大册。
-
-```bash
-BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
-V="{version}"; N="{NN}"
-TIER=$($BE --version "$V" get "sprints.$N.sup_scale.tier" --default "M")
-REQ=$($BE --version "$V" get "sprints.$N.sup_scale.req_count" --default 0)
-PAGES=$($BE --version "$V" get "sprints.$N.sup_scale.page_count" --default 0)
-API=$($BE --version "$V" get "sprints.$N.sup_scale.has_api" --default 0)
-DDL=$($BE --version "$V" get "sprints.$N.sup_scale.has_ddl" --default 0)
-DDL_FLAG=""; [ "$DDL" = "1" ] && DDL_FLAG="--has-ddl"
-python3 {{AIDP_HOME}}/scripts/check_scale_budget.py --version "$V" --tier "$TIER" \
-  --new-endpoints "$API" --new-pages "$PAGES" $DDL_FLAG --json || true
-```
-
-`check_scale_budget.py` 的超限是 Important 提醒，不得把真实覆盖需求硬截断；输出必须进入本轮报告/终端摘要。
+   **延期终态**：`--prepare` 返回 `required=false` 即已把状态写入 baseline 和用例族增量册；不用额外重复 `--defer`。后续 `/sprint-aiauto-test` 必须先生成这些用例，不允许沿用该 false 跳过显式测试请求。
 
 **步骤 4 完成后硬收口**：若本轮 `aiauto_test_required=true`，正式用例文件已经生成且用例族增量已由 `--ledger-cascade` 收口，必须执行：
 
@@ -322,7 +311,7 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 
 5. **更新各目录导航锚**：本轮新增的 6 类增量文档在对应目录导航锚各追加一行（类型=补充 + 生成时间）——研发需求 / 详细设计 / 接口设计 / 数据库设计 / 研发执行计划 / **研发自测用例**均 → `00_索引.md`（研发自测已对齐通用范式，另在 `01_研发自测方案.md` §8 用例索引段同步登记业务导航）
 
-6. **完成报告**：终端打印「口述补充已转化为研发需求补充（`NN_<业务主题>.md`）+ 设计补充 + 计划补充 + **研发自测用例补充**；本 Sprint-{新NNN} 即将基于此增量基线开发」
+6. **完成报告**：列明已生成的需求/设计/计划；用例按真实状态二选一写「正式用例已生成并通过回检」或「延期并已双重登记，待实测前补齐」，不得在延期状态下宣称已生成用例。然后进入 Sprint-{新NNN} 开发。
 
 **★ Phase 0B.1.1 完成硬门（Pass/Fail — 任一 Fail 不得进入 Phase 1 开发、不得输出"开发完成"）**：
 
@@ -336,10 +325,10 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 | 4 | 接口设计补充 | 本轮涉及接口 → 接口设计增量已生成；不涉接口 → 标 N/A | 涉接口却缺 → 回步骤 3 |
 | 5 | 数据库设计补充 | 本轮涉及表/字段 → 数据库设计增量已生成；不涉库 → 标 N/A | 涉库却缺 → 回步骤 3 |
 | 6 | 研发执行计划补充 | `docs/plans/{version}/NN_*.md`（研发执行计划增量）已生成 | 回**步骤 3bis** 重跑 `/sprint-plan --supplement [--unattended]`（⛔ 不是步骤 3，`/sprint-design` 不产计划） |
-| 7 | 研发自测用例补充 | `docs/testing/{version}/研发自测/NN_*.md` 已生成（纯技术内部调整走步骤 4 跳过条件 → 标 N/A + 记录原因） | 涉用户可见功能却缺 → 回步骤 4 |
+| 7 | 研发自测用例补充 | `docs/testing/{version}/研发自测/NN_*.md` 已生成；或 `--prepare` 明确延期、baseline 与用例增量册双重留痕（含纯技术内部调整） | required=true 却缺用例，或延期未留痕 → 回步骤 4 |
 | 8 | 各目录 `00_索引.md` 登记 | 上述已生成的增量在对应目录 `00_索引.md` 均有"类型=补充 + 生成时间"登记行 | 缺登记 → 回步骤 5 补登记 |
 
-- **N/A 合法**：项 4/5/7 在本轮确无对应变更时标 N/A（附一句判据，如"本轮无接口变更"）即算 Pass；项 1/2/3/6/8 为**必 Pass 项**，不可 N/A。
+- **N/A 合法**：项 4/5 在本轮确无对应变更时、项 7 在步骤 4 明确延期且双重留痕时标 N/A（附一句判据，如"本轮无接口变更"）即算 Pass；项 1/2/3/6/8 为**必 Pass 项**，不可 N/A。
 - **★ S 档「就地追加」同样算 Pass（配合步骤 2.5）**：步骤 2.5 判为 **S 档**时，项 2/3/6 的 Pass 判据放宽为
   「**新建 `NN_*.md`** 或 **既有册中本轮新增小节 + 该目录 `00_索引.md` 生成时间已刷新**」二者取一——
   ⛔ 但**"两者都没有"永远是 Fail**：S 档降的是**承载形态**，不是"可以不留痕"。
@@ -347,7 +336,7 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 - **`skip-doc-sync` 例外**：显式带该参数时本硬门整体跳过（见下方「跳过」），但须在完成报告显式 WARN 漂移风险。
 - **无人值守（`--unattended`）同样受硬门约束**：Fail 项按上表"Fail 处置"自动重跑对应 SKILL；重跑仍 Fail → 转失败处置（熔断冻结 + #4 里程碑通知 WARN），**不挂起、也不放行带病开发**。
 
-**跳过**：参数含 `skip-doc-sync` → 仅做步骤 1（记口述）；步骤 2~6 与上述完成硬门跳过。⛔ **但必须同轮把本轮口述变更按条目行格式写进【受影响各族】的增量册**（四族落点见 `{{AIDP_HOME}}/reference/开发期族增量.md`；终端 WARN 不落盘 = 欠账不可发现：`commit_gate::pending_cascade`、`check_cascade_landing.py`、四个收口点**全部只扫这四份册子**；不写则用户直接走 `/version` 发布时，收口点 3 的必删门会因「册子不存在」判为合法终态放行，即带着待级联条目走到版本发布）。此外终端 WARN「已跳过文档增量流，本 Sprint 完成后请人工跑 `/version` 补充模式校对；不跑会让设计/代码持续漂移」
+**跳过**：参数含 `skip-doc-sync` → 仅做步骤 1（记口述）；步骤 2~6 与上述完成硬门跳过。⛔ **但必须同轮把本轮口述变更按条目行格式写进【受影响各族】的增量册**（四族落点见 `{{AIDP_HOME}}/reference/开发期族增量.md`；终端 WARN 不落盘 = 欠账不可发现：`commit_gate::pending_cascade`、`check_cascade_landing.py`、阶段收口入口**统一扫描这四份册子**；不写则用户直接走 `/version` 发布时，收口点 3 的必删门会因「册子不存在」判为合法终态放行，即带着待级联条目走到版本发布）。此外终端 WARN「已跳过文档增量流，本 Sprint 完成后请人工跑 `/version` 补充模式校对；不跑会让设计/代码持续漂移」
 
 ### Phase 0B.1.3：★ 开发期口述追加 / 口径反转的处理（约定 34 ⑥ 决策门）
 

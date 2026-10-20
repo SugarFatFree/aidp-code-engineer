@@ -381,9 +381,16 @@ def _load_baseline(root):
 def _clear_version(root, version, extra_fields=()):
     """清版本级冻结字段 + 以 `@<version>` 结尾的顶层 aiauto_blocked_reason。返回失败说明列表。"""
     failed = []
+    before = (_load_baseline(root) or {}).get("versions", {}).get(version) or {}
     r = _be_cmd(root, ["--version", version, "del", *FREEZE_FIELDS, *extra_fields])
     if r.returncode != 0:
         failed.append("del versions.%s 冻结字段 rc=%s %s" % (version, r.returncode, (r.stderr or "").strip()[:120]))
+    if before.get("freeze_reason") == "stuck-phase" and isinstance(before.get("aiauto_run_state"), dict):
+        reset = _be_cmd(root, ["--version", version, "set", "aiauto_run_state.phase_enter_count", "1",
+                               "aiauto_run_state.phase_first_entered_at", "@now",
+                               "aiauto_run_state.phase_tick_id", '""'])
+        if reset.returncode:
+            failed.append("测试阶段停滞窗口重置失败")
     d = _load_baseline(root) or {}
     if str(d.get("aiauto_blocked_reason") or "").endswith("@" + version):
         r = _be_cmd(root, ["del", "aiauto_blocked_reason"])

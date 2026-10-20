@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+REPO = SCRIPTS.parent.parent
 
 
 def _load(name: str):
@@ -307,6 +308,37 @@ class VcsCapabilityTest(unittest.TestCase):
                 mock.patch.object(self.vcs, "_git_user_name", return_value="---"), \
                 mock.patch.object(getpass, "getuser", return_value="fallback-user"):
             self.assertEqual(self.vcs.developer_identity(root, "  ,  "), "fallback-user")
+
+    def test_user_cli_is_the_single_identity_entry(self):
+        """`{user}` 必须有可调用的 CLI 入口 —— 否则命令端只能自己拼 `git config user.name`。
+
+        两个解析器在无 Git 项目上**给出不同身份**，而各自建出的 `memory/{version}/{user}/`
+        在产物上与「正常工作」完全同形：只有要读回 `.applied-sql.json` 时才发现落空。
+        """
+        import subprocess as sp
+        import sys as _sys
+        cli = str(SCRIPTS / "vcs.py")
+        r = sp.run([_sys.executable, cli, "user", "--root", ".", "--explicit", "alice"],
+                   capture_output=True, text=True, cwd=str(REPO))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "alice")
+        self.assertNotIn("⚠️", r.stderr)
+
+    def test_non_dir_safe_identity_is_reported_not_silently_mangled(self):
+        """含中文/空格的身份不能静默替换成 `--`：那会让两个人落进同一目录。"""
+        import subprocess as sp
+        import sys as _sys
+        cli = str(SCRIPTS / "vcs.py")
+        r = sp.run([_sys.executable, cli, "user", "--root", ".", "--explicit", "张三"],
+                   capture_output=True, text=True, cwd=str(REPO))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "张三")   # 原样输出，不篡改
+        self.assertIn("不能直接作目录名", r.stderr)
+        self.assertTrue(self.vcs.is_dir_safe("alice"))
+        self.assertTrue(self.vcs.is_dir_safe("a_b-c1"))
+        self.assertFalse(self.vcs.is_dir_safe("张三"))
+        self.assertFalse(self.vcs.is_dir_safe("a b"))
+
 
 
 class DesignFactRenameTest(unittest.TestCase):

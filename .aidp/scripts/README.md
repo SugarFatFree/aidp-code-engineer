@@ -1040,6 +1040,44 @@ python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --command 
 退出码：**0 = 已记账让位本 tick / 3 = 已冻结（达阈或无唤醒源）/ 2 = 入参错，此时什么都没写**
 ——⛔ 别把 2 当成"处置过了"。
 
+## check_skill_frontmatter.py — 下发 SKILL 的 frontmatter 合法性（ERROR 级）
+
+每个 `SKILL.md` 开头的 `---` 块是**元数据**（`name` / `description`），加载器按 YAML 解析。正文一旦被插进去
+（编辑时把一整节 Markdown 粘在 `---` 与 `name:` 之间），整个块就不是合法 YAML 了 —— 而**文件本身读起来完全正常**：
+标题在、段落通顺、目录能点。失败方向是最坏的那种：`Skill` 调用找不到它、Codex / DSH 的发现根直接跳过，
+于是「有这一节」与「这一节从未生效」在产物上同形。
+
+判据：① 文件以完整 `---` 块开头且块内无 Markdown 标题；② 该块能 YAML 解析成 mapping；③ `name` 存在且**等于目录名**
+（名字对不上时加载器按 name 注册，装好就找不到）；④ `description` 非空。同时扫本体与 bundle 副本。
+用法：`python3 {{AIDP_HOME}}/scripts/check_skill_frontmatter.py [--root .] [--json]`；`--self-check`。
+退出码：`0`=合法 / `1`=有不合法项。调用方 = 脚手架 `verify.py` 的 `GUARDS` 表（名称「SKILL frontmatter」）+ `selfcheck.py` 探针。
+
+## check_identity_source.py — `{user}` 解析单一信源（ERROR 级）
+
+`{user}` 决定 `memory/{version}/{user}/` 这个路径槽，合法来源只有 `vcs.py::developer_identity`
+（CLI = `vcs.py user`；优先级：显式 → 本地 Git 身份 → `AIDP_USER` → OS 用户）。
+命令端若自己写 `$(git config user.name)`，在**无 Git 项目**或**设了 `AIDP_USER`** 的项目上会解析出另一个身份：
+写方按一个身份建目录、读方按另一个身份找，于是「SQL 已应用清单」永远读不到（部署前安全网恒判未应用）、
+`progress.md` 扫错目录（Sprint 关闭状态误判）。⛔ 这类缺陷**不报错**，两侧单独看都正常。
+
+判据：`{{AIDP_HOME}}/{commands,flows,rules,reference}` 与 `AIDP-AGENTS.md` 里出现 `git config user.name` 即 ERROR。
+放行：`chrome-<git_user>` 的 MCP 服务名（要的就是**本机 Git 身份本身**，换机器本就该换实例）、
+**反向教导句**（「⛔ 别自己拼 …」正是在劝人别这么写）、行内 `identity-ignore: <原因>`。
+用法：`python3 {{AIDP_HOME}}/scripts/check_identity_source.py [--root .] [--json]`；`--self-check`。
+退出码：`0`=干净 / `1`=有分叉解析。调用方 = 脚手架 `verify.py` 的 `GUARDS` 表（名称「{user} 解析单一信源」）+ `selfcheck.py` 探针。
+
+## check_python_floor.py — 声明的最低 Python 版本上必须真能导入（ERROR 级）
+
+`README.md` / 脚手架 `SKILL.md` 声明 Python ≥ 3.9，而 `X | None` 这类 PEP 604 联合类型在 3.9 上会在
+**函数定义求值那一刻**抛 `TypeError` —— 不是使用时，是 import 时。失败面全在维护者本机复现不了的位置：
+`agent_sync.py` 由脚手架在 init / migrate / upgrade **末尾**以子进程调用（新用户第一次初始化就崩）、
+`autopilot_tick_flags.py` 在 7×24 每个 tick 上调用（无人值守整条起不来）。CI 只跑一个版本时**结构上不可见**。
+
+判据：`{{AIDP_HOME}}/scripts/**` 与 `skills/aidp-code-engineer/scripts/**` 中，**不含** `from __future__ import annotations`
+的文件禁止在注解里出现 `X | Y`；`match` 语句（3.10+）一律禁止。含 future 导入的文件不受限（注解变成字符串、不求值）。
+用法：`python3 {{AIDP_HOME}}/scripts/check_python_floor.py [--root .] [--json]`；`--self-check`。
+退出码：`0`=合规 / `1`=有越版语法。调用方 = 脚手架 `verify.py` 的 `GUARDS` 表（名称「最低 Python 版本」）+ `selfcheck.py` 探针。
+
 ## check_memory_loss.py — memory 整段被吞（与写前快照比，缺省与 git HEAD 比）
 
 `memory/` 下的项目级长期记忆（`projectBrief` / `productContext` / `systemPatterns` /

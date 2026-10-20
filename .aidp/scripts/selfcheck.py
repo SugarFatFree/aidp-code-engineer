@@ -227,6 +227,51 @@ def _p_shared_segment(root):
     raise AssertionError("种子树里找不到任何 SHARED-SEGMENT 副本 —— 探针无法注入（假探针）")
 
 
+@probe("check_skill_frontmatter.py", args=("--json",))
+def _p_skill_frontmatter(root):
+    """阳性注入：往某个 SKILL 的 frontmatter 里插一整节正文 → YAML 必须报错。
+
+    ⚠️ 注入的是**真实遇到过的形态**（一节 Markdown 粘在 `---` 与 `name:` 之间），
+    不是"随便写点非法 YAML"：后者连一个普通打字错误都会红，证明不了这道门守的是真缺陷。
+    阴性侧由种子树自带 —— 7 份 SKILL 的 frontmatter 本就合法，不注入时必须绿。
+    """
+    import glob
+    hits = sorted(glob.glob(os.path.join(root, RUNTIME_REL, "skills", "*", "SKILL.md")))
+    if not hits:
+        raise AssertionError("种子树里找不到任何 SKILL.md —— 探针无法注入（假探针）")
+    path = hits[0]
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    # ⚠️ 必须插在**开头 `---` 之后、`name:` 之前**。用 partition("\n---\n") 会落到闭合分隔符
+    #    之后（那是正文区），注入变成"在正文里加一节"——门当然不报，探针就成了假探针。
+    head, sep, tail = text.partition("\n")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(head + sep + "\n## 插进元数据块里的一节\n\n正文误入。\n" + tail)
+
+
+@probe("check_identity_source.py", args=("--json",))
+def _p_identity_source(root):
+    """阳性注入：让一条命令正文自己解析 `{user}` → 必须报。
+
+    阴性侧由脚本 `--self-check` 覆盖（MCP 服务名与反向教导行都必须放行）——
+    只证明"能红"证明不了"不是恒红"，而本门的假红形态最典型：把 `chrome-<git_user>`
+    这种**正确用法**也判掉，于是只能靠豁免把门关掉。
+    """
+    _write(root, runtime_text('__AIDP_HOME__/commands/_probe_identity.md', __file__),
+           "# 探针\n\n2. **{user}** ← `git config user.name`\n")
+
+
+@probe("check_python_floor.py", args=("--json",))
+def _p_python_floor(root):
+    """阳性注入：脚本用 PEP 604 注解但没有 future 导入 → 3.9 上 import 即崩，必须报。
+
+    ⚠️ 注入点必须在**扫描面内**（运行根的 `scripts/` 本体），放临时文件会 0 命中，
+    而 0 命中与"全部合规"同形。
+    """
+    _write(root, runtime_text('__AIDP_HOME__/scripts/_probe_pyfloor.py', __file__),
+           "def f(x: dict | None = None) -> str:\n    return ''\n")
+
+
 @probe("check_sibling_family.py", args=("--json",))
 def _p_sibling_family(root):
     # 声明一个家族，再往 members 里放一个**没登记进注册表**的成员 → F2 必判 Critical。

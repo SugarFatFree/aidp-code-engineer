@@ -166,5 +166,51 @@ class TestExecutionContractLite(unittest.TestCase):
                          f"精简契约要求的必填字段不在 result-schema.json 顶层：{unknown}")
 
 
+class TestImplementationKindEnum(unittest.TestCase):
+    """`implementation_kind` 的**声明侧**与**结果侧**必须同一套枚举。
+
+    ## 为什么单独一组
+
+    其余枚举的三方对账都在 SKILL 内部（精简契约 / schema / 校验器）。这一组不同：
+    「应用自有 MCP 的实现形态」是**跨层**契约 —— 项目在 PRD / 设计里声明 `app-native`，
+    执行方照抄进结果 JSON；校验器若不认这个值就判 Critical。
+
+    实测踩过：声明侧四处（`check_client_mcp.py::IMPLEMENTATIONS`、可选规则模板、
+    设计 Agent 指令）都写 `app-native`，而结果侧 `check_result.py` 只认 `app-service`。
+    于是非 Web 项目**两条路都是错的**：如实写 `app-native` 被假红；为过门改写成
+    `app-service` 又与自己的声明不一致 —— 而"改成能过门的值"在结果文件里看不出来。
+    """
+
+    #: 声明侧 —— 这几个文件共同定义「项目可以声明什么」
+    #: ⚠️ `AIDP` 已是 `.aidp/scripts`，声明侧在 `.aidp/{templates,agents}` 下。
+    AIDP_HOME = os.path.dirname(AIDP)
+    DECLARATION_SOURCES = (
+        os.path.join(AIDP, "check_client_mcp.py"),
+        os.path.join(AIDP_HOME, "templates", "optional-rules", "client-mcp.md"),
+        os.path.join(AIDP_HOME, "agents", "frontend.md"),
+    )
+
+    def test_declared_and_result_enum_agree(self):
+        checker = _load_checker()
+        # 结果侧：非 Web 端允许的取值（`web` 走 webmcp，不在此列）
+        result_kinds = set()
+        for client in ("miniprogram", "mobile", "desktop"):
+            result_kinds |= set(checker.VALID_IMPLEMENTATION_KIND[client])
+        self.assertTrue(result_kinds, "采集量为 0：check_result 没给出非 Web 端的实现形态集合")
+
+        declared = set()
+        for path in self.DECLARATION_SOURCES:
+            self.assertTrue(os.path.isfile(path), f"声明侧文件不存在：{path}")
+            with open(path, encoding="utf-8") as fh:
+                declared |= set(re.findall(r"`(app-[a-z]+|bridge|webmcp|none)`", fh.read()))
+        declared &= {"app-native", "app-service", "bridge"}
+        self.assertTrue(declared, "采集量为 0：声明侧没解析到任何实现形态取值")
+
+        self.assertEqual(result_kinds, declared,
+                         "声明侧与结果侧的实现形态枚举不一致："
+                         f"结果侧={sorted(result_kinds)} 声明侧={sorted(declared)}。"
+                         "非 Web 项目如实登记声明值会被判 Critical 假红")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -161,6 +161,8 @@ fi
 
 #### Step 2.4.3：调用 /sprint-plan
 
+> ★ **fresh 模式下本步与 Step 2.4.3.5 并行**（同一条消息派两个子 Agent），编排与回填见 Step 2.4.3.5「并行编排」；补充模式照旧串行。
+
 **fresh 模式**：
 
 ```
@@ -197,7 +199,7 @@ python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version}
 
 - 档位 = L → 再加 `--module-case-cap=30 --matrix-scope=p0`；S/M 档是整轮合计基线，不加。
 - `/version` 带了 `--fast` → 任何档位都加 `--matrix-scope=p0`（L 档已含则不重复）。
-- `/version` 带了 `--module-kind=…` → 原样加上（⛔ 不自行判断模块是否「非交互」）。
+- 一律加 `--module-kind={module_kind}`：`/version` 的 `--module-kind` 值，**未传为 `auto`**——由 SKILL 逐模块读详细设计的「模块类型」字段，缺字段即按页面模板（⛔ 编排层不自行判断模块是否「非交互」）。
 
 **fresh 模式**：
 
@@ -216,5 +218,25 @@ python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version}
 落盘：docs/testing/{version}/研发自测/NN_<业务主题>.md（研发自测用例增量，仅本次变更涉及的功能点；文件名不带“补充”字眼、补充身份记入 00_索引.md）
 ```
 
-等待 `/sprint-selftest` 完成后再继续 Step 2.4.4。
+**★ 并行编排（仅 fresh 模式）**：自测用例只锚定 REQ，不再等执行计划——
+
+1. **同一条消息**派两个子 Agent，各自读对应命令文件完整执行，只回传紧凑 JSON
+   `{command, status, artifacts, handoff_exit}`（⛔ 不回传产物正文）：
+   - 子 Agent ①：`/sprint-plan` 一行同 Step 2.4.3 fresh；
+   - 子 Agent ②：`/sprint-selftest` 一行同上方 fresh，`{selftest_args}` **另加 `--plan-ref-mode=deferred`**。
+   `--unattended` 两边都要透传。平台不支持并行子 Agent → 先 2.4.3 后 2.4.3.5 串行，且**不加** `--plan-ref-mode`。
+2. **两边都返回后回填**（全有或全无；计划缺锚点 / Sprint、某条 REQ 没有任何 Task 承接都会拒绝——后者是计划漏任务，正该暴露）：
+
+   ```bash
+   T_DIR="docs/testing/{version}/研发自测"; MAP="memory/{version}/.plan-refs.json"
+   python3 {{AIDP_HOME}}/skills/dev-execution-planner/scripts/export_plan_refs.py "docs/plans/{version}" --cases-dir "$T_DIR" --out "$MAP"; RC1=$?
+   [ "$RC1" = 0 ] && python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/resolve_plan_refs.py "$T_DIR" --map "$MAP"; RC2=$?
+   [ "$RC1" = 0 ] && [ "$RC2" = 0 ] && python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/check_suite_upstream.py "$T_DIR"; RC3=$?
+   echo "plan-refs: export=$RC1 resolve=$RC2 upstream=$RC3"
+   ```
+
+   三者全 0 才继续。`export≠0` → 回调 `/sprint-plan` 修计划；`resolve≠0` → 先看是否计划漏了 REQ 的 Task（回调 `/sprint-plan`），
+   否则回调 `/sprint-selftest`；交互式报出后停下，无人值守按 Step 2.4.7 的 block 处置交熔断。⛔ 不得手工改占位符过门。
+
+等待 `/sprint-selftest`（并行时两个子 Agent 都）完成后再继续 Step 2.4.4。
 

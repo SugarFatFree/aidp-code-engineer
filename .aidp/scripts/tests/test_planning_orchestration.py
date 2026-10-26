@@ -7,6 +7,7 @@
 · `check_version_audit_landed.py`：移交清单未结清即不通过（与 SKILL 真实写入格式对账）；
 · `prd_presence_table.py`：表 D → PRD 行对账表，产物必须被 dev-manual-testcase 自己的硬门正确解析；
 · `--fast`：移交审计延后、清单即痕迹，发布 Step 3.1 机器判未结清并补跑；
+· 计划 ‖ 自测并行：执行 planning-3 的回填 bash（planner 导出映射 → dmt 回填占位符），全有或全无；
 · Critical 不出「有人审」的集合：独立解析 checklist 等级列 ↔ SKILL 推导、篡改清单必被拒、--fast 不豁免八项审计。
   （⚠️ 语义检出能力是大模型判断、无法确定性回归；这里守的是更底层的保证：没有 Critical 维度被裁掉。）
 """
@@ -325,8 +326,51 @@ def test_critical_never_deferred():
           and auditor.count("Critical 硬门") >= 4)
 
 
+def test_parallel_plan_selftest_backfill():
+    print("\n[R1] 计划 ‖ 自测并行：回填 bash 实跑（planner 导出 → dmt 回填）")
+    p3 = (REPO / ".aidp/flows/version/planning-3.md").read_text(encoding="utf-8")
+    check("fresh 模式同一条消息派两个子 Agent，自测侧另加 --plan-ref-mode=deferred",
+          "**同一条消息**派两个子 Agent" in p3 and "另加 `--plan-ref-mode=deferred`" in p3)
+    check("不支持并行子 Agent 时串行且不加 --plan-ref-mode", "串行，且**不加** `--plan-ref-mode`" in p3)
+    selftest = (REPO / ".aidp/commands/sprint-selftest.md").read_text(encoding="utf-8")
+    check("/sprint-selftest：deferred 时跳过「执行计划必须存在」、回检传 --plan-ref-mode deferred",
+          "带 `--plan-ref-mode=deferred` 时**本项跳过**" in selftest
+          and "`check_suite_upstream.py` 传 `--plan-ref-mode deferred`" in selftest)
+    fence = re.search(r"   ```bash\n(   T_DIR=.*?)\n   ```", p3, re.S)
+    check("planning-3 有回填 bash 围栏", fence is not None)
+    if not fence:
+        return
+    script = "\n".join(l[3:] for l in fence.group(1).splitlines())
+    script = script.replace("{{AIDP_HOME}}", str(REPO / ".aidp")).replace("{version}", "V1.0.0")
+
+    def run_case(reqs):
+        root = Path(tempfile.mkdtemp(prefix="aidp-plan-refs-"))
+        plans = root / "docs/plans/V1.0.0"
+        plans.mkdir(parents=True)
+        shutil.copy(REPO / ".aidp/skills/dev-execution-planner/references/iteration-plan-sample.md",
+                    plans / "01_研发执行计划.md")
+        (root / "memory/V1.0.0").mkdir(parents=True)
+        cases = root / "docs/testing/V1.0.0/研发自测"
+        cases.mkdir(parents=True)
+        body = "# 用例\n\n## 套件 SUITE-001: 下单\n> **研发执行计划来源**: " + "、".join(f"⟨PLAN-REF:{r}⟩" for r in reqs) + "\n"
+        (cases / "02_全量自测用例.md").write_text(body, encoding="utf-8")
+        out = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+        text = (cases / "02_全量自测用例.md").read_text(encoding="utf-8")
+        shutil.rmtree(root, ignore_errors=True)
+        return out.stdout, text
+    out, text = run_case(["REQ-101", "REQ-104"])
+    check("真实计划样例 → export=0 且 resolve=0", "export=0 resolve=0" in out)
+    check("占位符回填为 Sprint + Task 锚点链接（Sprint 号最小、其次 Task 号最小）",
+          "⟨PLAN-REF" not in text and "[Sprint-001 Task 4.1](../../../plans/V1.0.0/01_研发执行计划.md#task-4-1)" in text
+          and "[Sprint-001 Task 2.2](" in text)
+    out, text = run_case(["REQ-101", "REQ-999"])
+    check("计划里没有 Task 承接的 REQ → resolve 拒绝（≠0）", "export=0" in out and "resolve=0" not in out)
+    check("全有或全无：拒绝时一个占位符都不改", text.count("⟨PLAN-REF:") == 2)
+
+
 if __name__ == "__main__":
     test_run_metrics_stage_and_render()
+    test_parallel_plan_selftest_backfill()
     test_critical_never_deferred()
     test_fast_mode_release_gate()
     test_prd_presence_table_roundtrip()

@@ -14,7 +14,8 @@
 | `/sprint-selftest --prd-presence-table=<路径>` | `prd_presence_mode=table` + `prd_presence_table` | `/version` Step 2.4.3.5：`prd_presence_table.py` 生成了对账表时 |
 | `/sprint-selftest --module-case-cap=N` | `module_case_cap` | `/version` Step 2.4.3.5：L 档传 30 |
 | `/sprint-selftest --matrix-scope=p0` | `matrix_scope` | `/version` Step 2.4.3.5：L 档传 |
-| `/sprint-selftest --module-kind=…` | `module_kind` | 仅 `/version` 显式带了同名 flag 时透传（详细设计目前不产「模块类型」字段，⛔ 不传 `auto`）|
+| `/sprint-selftest --module-kind=…` | `module_kind` | `/version` Step 2.4.3.5：恒传，缺省 `auto`（SKILL 读详细设计「模块类型」，缺字段按页面模板）|
+| `/sprint-selftest --plan-ref-mode=deferred` | `plan_ref_mode` | `/version` Step 2.4.3.5：仅 fresh 模式与 `/sprint-plan` 并行时 |
 
 - ⛔ 子命令**不得自行推断或补默认值**：没收到 flag 就不传入参，SKILL 按缺省（= 现状全量 QR）执行。
   这正是 SKILL 协议的总约束「非缺省值只由编排层传入」——命令端替它「顺手补上 critical」，

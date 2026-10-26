@@ -33,7 +33,7 @@
 | 11 | 多文档拆分一致性〔条件〕 | 兼有 | `check_doc_split.py --check-tasks` | ✅ | — | Important | 部分 |
 | 12 | 上游引用完整性·四源追溯 | 语义 | — | — | **基线缩放** | Critical | 否 |
 | 13 | 待澄清问题清单完整性 | 语义 | — | — | **全量** | Critical | 否 |
-| 14 | EPIC 完整性 + AI 锚点透传 | 兼有 | `check_task_granularity.py` | ✅ | **全量** | Critical | 部分 |
+| 14 | EPIC 完整性 + AI 锚点透传 | 兼有 | `check_task_granularity.py` · `export_plan_refs.py`(Task 锚点 + Sprint 归属) | ✅ | **全量** | Critical | 部分 |
 
 > **「等级」「脚本可判」两列(编排层 `qr_level` 分级派发的唯一依据):**
 > - `等级` ∈ Critical / Important / Minor。`qr_level=critical|scripts` 档**只认这一列**,⛔ 不在正文里另写一份 Critical 清单;
@@ -886,6 +886,15 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 | ❌ 反例(纯文本) | `docs/design/detail/V1.0/01.md > §B-2.1` |
 | ❌ 反例(模糊) | `参考详细设计` / `参考 code/ 目录` |
 
+**E. Task 锚点 + Sprint 归属(维度 14e,折入·计数不变):**
+
+> 下游自测用例在「计划与自测并行」时先写 `⟨PLAN-REF:REQ-xxx⟩` 占位符,计划落盘后按本计划回填;回填所需信息只能来自计划本身。规则单一信源:`output-format.md`「Task 锚点与 REQ 承接映射」。
+
+- [ ] 每个 Task 标题**上一行**有 `<a id="task-<phase>-<seq>"></a>`,编号与标题一致
+- [ ] 每个 Task 抬头元信息行有且只有一个 `**Sprint**: Sprint-NNN`
+- [ ] 9 列任务总表引用的每个 Task 都有对应小节
+- [ ] `export_plan_refs.py --json` 退出码 0 且 `skipped:false`
+
 **自动化核验(必跑):**
 
 > **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(项目内 = `{{AIDP_HOME}}/skills/dev-execution-planner`,全局 = `~/{{AIDP_HOME}}/skills/dev-execution-planner`,以实际安装位置为准)
@@ -905,6 +914,7 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py \
 - 任务汇总表行内未同时命中 设计 + REQ/PRD + 原型 三类锚点正则
 - `check_task_granularity.py` 退出码 = 1 **且** `--json` 中存在 `severity == 2` 的 finding(确证粗粒度 / 9 列违规)。⚠️ 只看退出码分不出「警告」与「必修」,必须读 `--json` 的 `findings[]`(顶层对象,另含 `scanned_tasks`/`skipped`)
 - `check_task_granularity.py` 返回 `skipped:true`(一个 Task 段都没识别到,如标题不是 `### Task N.M` 形态)—— 维度 3/14 **未核验**,按不通过处理并转人工核对
+- `export_plan_refs.py --json` 退出码 = 1(`issues[]` 非空:缺锚点 / 锚点编号不符 / 缺或多 Sprint / 总表引用了不存在的 Task / 缺任务总表)
 
 ---
 

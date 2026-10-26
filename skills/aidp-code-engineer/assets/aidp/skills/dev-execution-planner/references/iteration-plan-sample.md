@@ -119,18 +119,18 @@
 
 | Task | 描述 | REQ 关联 | 设计锚点 | 原型锚点 | 责任人 | 估时 | AI 执行指令 | 验收标准 |
 | :- | :- | :- | :- | :- | :- | :- | :- | :- |
-| Task 1.1 | 创建 biz_market_order 订单主表 | [REQ-102](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-102) | [§A-3.2 订单表](../docs/design/detail/V1.0/02_数据库设计.md#A-3-2) | [#submit-order-btn 触发页](../docs/prototype/V1.0/code/model-detail.html#submit-order-btn) | 张三 | 6h | `/dev-logic-architect`(四件套见 [Task 1.1](#task-11)) | [§C-1.1 订单表核验](../docs/design/detail/V1.0/19_测试方案.md#C-1-1) |
-| Task 2.1 | OrderService 下单金额计算规则 | [REQ-102](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-102) | [§B-1 FR-012](../docs/design/detail/V1.0/03_业务规则与状态机.md#B-1-FR-012) | [#submit-order-btn 触发页](../docs/prototype/V1.0/code/model-detail.html#submit-order-btn) | 张三 | 6h | `/dev-logic-architect`(四件套见 [Task 2.1](#task-21)) | [§C-2.2 金额计算用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-2) |
-| Task 3.1 | POST /market/order 创建订单接口 | [REQ-102](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-102) | [§B-2.3 创建订单接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-3) | [#submit-order-btn](../docs/prototype/V1.0/code/model-detail.html#submit-order-btn) | 张三 | 6h | `/dev-logic-architect`(四件套见 [Task 3.1](#task-31)) | [§C-3.1 创建订单用例](../docs/design/detail/V1.0/19_测试方案.md#C-3-1) |
-| Task 4.1 | 购买下单弹窗 | [REQ-101](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-101) | [§B-2.3 创建订单接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-3) | [#pay-dialog](../docs/prototype/V1.0/code/model-detail.html#pay-dialog) | 李四 | 8h | `/dev-logic-architect`(四件套见 [Task 4.1](#task-41)) | [§C-4.1 下单弹窗用例](../docs/design/detail/V1.0/19_测试方案.md#C-4-1) |
-| Task 5.1 | 购买下单链路 E2E 联调 | [REQ-101](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-101) | [§C-5.1 E2E 场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-1) | [#pay-dialog](../docs/prototype/V1.0/code/model-detail.html#pay-dialog) | 李四 | 4h | `/code-verification-loop`(四件套见 [Task 5.1](#task-51)) | [§C-5.1 E2E 场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-1) |
-| Task 2.2 | 支付网关 Mock 开关配置 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.1 支付网关集成](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 2h | `/dev-logic-architect`(四件套见 [Task 2.2](#task-22)) | [§C-2.5 Mock 开关用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-5) |
-| Task 2.3 | 支付网关 Mock 实现(运行时分支) | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.1 支付网关集成](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 4h | `/dev-logic-architect`(四件套见 [Task 2.3](#task-23)) | [§C-2.6 Mock 分支用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-6) |
-| Task 2.4 | 支付网关 Mock 数据 Fixture | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.2 支付单报文](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-2) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 2h | `/dev-logic-architect`(四件套见 [Task 2.4](#task-24)) | [§C-2.6 Mock 分支用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-6) |
-| Task 2.5 | 支付网关真实接口对接 — 创建支付单 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.2 支付单报文](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-2) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 6h | `/dev-logic-architect`(四件套见 [Task 2.5](#task-25)) | [§C-2.7 真实对接用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-7) |
-| Task 2.6 | 支付网关 Mock 清理验证 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.1 支付网关集成](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 2h | `scan_mock_data.py`(四件套见 [Task 2.6](#task-26)) | [§C-2.8 Mock 清理用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-8) |
-| Task 4.2 | 订单列表页 | [REQ-103](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-103) | [§B-2.5 订单列表接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-5) | [#order-table](../docs/prototype/V1.0/code/order-list.html#order-table) | 李四 | 8h | `/dev-logic-architect`(四件套见 [Task 4.2](#task-42)) | [§C-4.3 订单列表用例](../docs/design/detail/V1.0/19_测试方案.md#C-4-3) |
-| Task 5.2 | 支付网关联调验证 — 创建支付单 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§C-5.3 支付联调场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-3) | [#pay-confirm-btn](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 4h | `/code-verification-loop`(四件套见 [Task 5.2](#task-52)) | [§C-5.3 支付联调场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-3) |
+| Task 1.1 | 创建 biz_market_order 订单主表 | [REQ-102](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-102) | [§A-3.2 订单表](../docs/design/detail/V1.0/02_数据库设计.md#A-3-2) | [#submit-order-btn 触发页](../docs/prototype/V1.0/code/model-detail.html#submit-order-btn) | 张三 | 6h | `/dev-logic-architect`(四件套见 [Task 1.1](#task-1-1)) | [§C-1.1 订单表核验](../docs/design/detail/V1.0/19_测试方案.md#C-1-1) |
+| Task 2.1 | OrderService 下单金额计算规则 | [REQ-102](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-102) | [§B-1 FR-012](../docs/design/detail/V1.0/03_业务规则与状态机.md#B-1-FR-012) | [#submit-order-btn 触发页](../docs/prototype/V1.0/code/model-detail.html#submit-order-btn) | 张三 | 6h | `/dev-logic-architect`(四件套见 [Task 2.1](#task-2-1)) | [§C-2.2 金额计算用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-2) |
+| Task 3.1 | POST /market/order 创建订单接口 | [REQ-102](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-102) | [§B-2.3 创建订单接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-3) | [#submit-order-btn](../docs/prototype/V1.0/code/model-detail.html#submit-order-btn) | 张三 | 6h | `/dev-logic-architect`(四件套见 [Task 3.1](#task-3-1)) | [§C-3.1 创建订单用例](../docs/design/detail/V1.0/19_测试方案.md#C-3-1) |
+| Task 4.1 | 购买下单弹窗 | [REQ-101](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-101) | [§B-2.3 创建订单接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-3) | [#pay-dialog](../docs/prototype/V1.0/code/model-detail.html#pay-dialog) | 李四 | 8h | `/dev-logic-architect`(四件套见 [Task 4.1](#task-4-1)) | [§C-4.1 下单弹窗用例](../docs/design/detail/V1.0/19_测试方案.md#C-4-1) |
+| Task 5.1 | 购买下单链路 E2E 联调 | [REQ-101](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-101) | [§C-5.1 E2E 场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-1) | [#pay-dialog](../docs/prototype/V1.0/code/model-detail.html#pay-dialog) | 李四 | 4h | `/code-verification-loop`(四件套见 [Task 5.1](#task-5-1)) | [§C-5.1 E2E 场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-1) |
+| Task 2.2 | 支付网关 Mock 开关配置 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.1 支付网关集成](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 2h | `/dev-logic-architect`(四件套见 [Task 2.2](#task-2-2)) | [§C-2.5 Mock 开关用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-5) |
+| Task 2.3 | 支付网关 Mock 实现(运行时分支) | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.1 支付网关集成](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 4h | `/dev-logic-architect`(四件套见 [Task 2.3](#task-2-3)) | [§C-2.6 Mock 分支用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-6) |
+| Task 2.4 | 支付网关 Mock 数据 Fixture | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.2 支付单报文](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-2) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 2h | `/dev-logic-architect`(四件套见 [Task 2.4](#task-2-4)) | [§C-2.6 Mock 分支用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-6) |
+| Task 2.5 | 支付网关真实接口对接 — 创建支付单 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.2 支付单报文](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-2) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 6h | `/dev-logic-architect`(四件套见 [Task 2.5](#task-2-5)) | [§C-2.7 真实对接用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-7) |
+| Task 2.6 | 支付网关 Mock 清理验证 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§B-7.1 支付网关集成](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1) | [#pay-confirm-btn 触发页](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 2h | `scan_mock_data.py`(四件套见 [Task 2.6](#task-2-6)) | [§C-2.8 Mock 清理用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-8) |
+| Task 4.2 | 订单列表页 | [REQ-103](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-103) | [§B-2.5 订单列表接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-5) | [#order-table](../docs/prototype/V1.0/code/order-list.html#order-table) | 李四 | 8h | `/dev-logic-architect`(四件套见 [Task 4.2](#task-4-2)) | [§C-4.3 订单列表用例](../docs/design/detail/V1.0/19_测试方案.md#C-4-3) |
+| Task 5.2 | 支付网关联调验证 — 创建支付单 | [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | [§C-5.3 支付联调场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-3) | [#pay-confirm-btn](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn) | 王五 | 4h | `/code-verification-loop`(四件套见 [Task 5.2](#task-5-2)) | [§C-5.3 支付联调场景](../docs/design/detail/V1.0/19_测试方案.md#C-5-3) |
 
 ---
 
@@ -155,9 +155,10 @@
 
 ### 后端任务
 
+<a id="task-1-1"></a>
 ### Task 1.1: 创建 biz_market_order 订单主表
 
-> **优先级**: P0 | **依赖**: 无 | **Phase**: 1-数据层 | **所属 EPIC**: EPIC-01
+> **优先级**: P0 | **依赖**: 无 | **Phase**: 1-数据层 | **所属 EPIC**: EPIC-01 | **Sprint**: Sprint-001
 > **设计来源:** [§A-3.2 biz_market_order 表(L120-L178)](../docs/design/detail/V1.0/02_数据库设计.md#A-3-2)
 > **PRD 来源:** [§六-2 订单字段规格(L300-L340)](../docs/requirements/V1.0/研发需求/模型市场.md#六-2-订单字段规格)
 > **原型来源:** 无(纯后端;关联触发页见任务总表)
@@ -208,9 +209,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 六-2 订单�
 - [ ] 执行 `python3 <SKILL_DIR>/scripts/check_ddl_consistency.py sql/v1.0.0/01_模型市场订单表DDL.sql docs/design/detail/V1.0/02_数据库设计.md --table biz_market_order` 通过
 - [ ] `mvn -q compiler:compile` 通过(Phase 1 末尾验证)
 
+<a id="task-2-1"></a>
 ### Task 2.1: OrderService 下单金额计算规则
 
-> **优先级**: P0 | **依赖**: Task 1.1 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-01
+> **优先级**: P0 | **依赖**: Task 1.1 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-01 | **Sprint**: Sprint-001
 > **设计来源:** [§B-1 FR-012 下单金额计算(L80-L132)](../docs/design/detail/V1.0/03_业务规则与状态机.md#B-1-FR-012)
 > **PRD 来源:** [§五-2 购买规则(L180-L228)](../docs/requirements/V1.0/研发需求/模型市场.md#五-2-购买规则)
 > **原型来源:** 无(纯后端;关联触发页见任务总表)
@@ -257,9 +259,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-2 购买�
 - [ ] 执行 `mvn test -Dtest=MarketOrderServiceTest` 通过
 - [ ] D-103 暂行口径已按 附录 D 落地并在代码注释标注
 
+<a id="task-3-1"></a>
 ### Task 3.1: POST /market/order 创建订单接口
 
-> **优先级**: P0 | **依赖**: Task 2.1 | **Phase**: 3-接口层 | **所属 EPIC**: EPIC-01
+> **优先级**: P0 | **依赖**: Task 2.1 | **Phase**: 3-接口层 | **所属 EPIC**: EPIC-01 | **Sprint**: Sprint-001
 > **设计来源:** [§B-2.3 POST /market/order(L210-L268)](../docs/design/detail/V1.0/01_接口设计.md#B-2-3)
 > **PRD 来源:** [§五-2 购买规则(L180-L228)](../docs/requirements/V1.0/研发需求/模型市场.md#五-2-购买规则)
 > **原型来源:** [#submit-order-btn](../docs/prototype/V1.0/code/model-detail.html#submit-order-btn)(模型详情页"立即购买"按钮)
@@ -308,9 +311,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-2 购买�
 
 ### 前端任务
 
+<a id="task-4-1"></a>
 ### Task 4.1: 购买下单弹窗
 
-> **优先级**: P0 | **依赖**: Task 3.1 | **Phase**: 4-前端层 | **所属 EPIC**: EPIC-01
+> **优先级**: P0 | **依赖**: Task 3.1 | **Phase**: 4-前端层 | **所属 EPIC**: EPIC-01 | **Sprint**: Sprint-001
 > **设计来源:** [§B-2.3 POST /market/order(L210-L268)](../docs/design/detail/V1.0/01_接口设计.md#B-2-3)
 > **PRD 来源:** [§五-2 购买规则(L180-L228)](../docs/requirements/V1.0/研发需求/模型市场.md#五-2-购买规则)
 > **原型来源:** [#pay-dialog](../docs/prototype/V1.0/code/model-detail.html#pay-dialog)(路由 /market/model/:id)
@@ -362,9 +366,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-2 购买�
 
 ### 测试任务
 
+<a id="task-5-1"></a>
 ### Task 5.1: 购买下单链路 E2E 联调
 
-> **优先级**: P0 | **依赖**: Task 4.1 | **Phase**: 5-测试 | **所属 EPIC**: EPIC-01
+> **优先级**: P0 | **依赖**: Task 4.1 | **Phase**: 5-测试 | **所属 EPIC**: EPIC-01 | **Sprint**: Sprint-001
 > **设计来源:** [§C-5.1 购买下单 E2E 场景(L60-L108)](../docs/design/detail/V1.0/19_测试方案.md#C-5-1)
 > **PRD 来源:** [§九-1 验收测试点(L520-L560)](../docs/requirements/V1.0/研发需求/模型市场.md#九-1-验收测试点)
 > **原型来源:** [#pay-dialog](../docs/prototype/V1.0/code/model-detail.html#pay-dialog)
@@ -418,9 +423,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 九-1 验收�
 
 ### 后端任务(第三方对接五件套 Task X.1~X.5)
 
+<a id="task-2-2"></a>
 ### Task 2.2: 支付网关 Mock 开关配置
 
-> **优先级**: P0 | **依赖**: 无 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.1
+> **优先级**: P0 | **依赖**: 无 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.1 | **Sprint**: Sprint-001
 > **设计来源:** [§B-7.1 支付网关集成方案(L40-L78)](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1)
 > **PRD 来源:** [§五-4 支付交互(L420-L460)](../docs/requirements/V1.0/研发需求/模型市场.md#五-4-支付交互)
 > **原型来源:** 无(纯后端;关联触发页见任务总表)
@@ -464,9 +470,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-4 支付�
 - [ ] 开关为运行时环境变量注入(非构建期守卫);占位符与 附录 D P-001 双向对应
 - [ ] 执行 `python3 <SKILL_DIR>/scripts/check_env_config.py .` 通过
 
+<a id="task-2-3"></a>
 ### Task 2.3: 支付网关 Mock 实现(运行时分支)
 
-> **优先级**: P0 | **依赖**: Task 2.2 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.2
+> **优先级**: P0 | **依赖**: Task 2.2 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.2 | **Sprint**: Sprint-001
 > **设计来源:** [§B-7.1 支付网关集成方案(L40-L78)](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1)
 > **PRD 来源:** [§五-4 支付交互(L420-L460)](../docs/requirements/V1.0/研发需求/模型市场.md#五-4-支付交互)
 > **原型来源:** 无(纯后端;关联触发页见任务总表)
@@ -511,9 +518,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-4 支付�
 - [ ] `THIRD_PARTY_MOCK` 标注块 7 行齐全(协议字段缺一即 Critical)
 - [ ] 超时/重试/降级与设计 §B-7.1(L40-L78)一致;执行 `mvn test -Dtest=PayGatewayClientTest` 通过
 
+<a id="task-2-4"></a>
 ### Task 2.4: 支付网关 Mock 数据 Fixture
 
-> **优先级**: P0 | **依赖**: Task 2.3 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.3
+> **优先级**: P0 | **依赖**: Task 2.3 | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.3 | **Sprint**: Sprint-001
 > **设计来源:** [§B-7.2 创建支付单报文定义(L80-L126)](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-2)
 > **PRD 来源:** [§五-4 支付交互(L420-L460)](../docs/requirements/V1.0/研发需求/模型市场.md#五-4-支付交互)
 > **原型来源:** 无(纯后端;关联触发页见任务总表)
@@ -555,9 +563,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-4 支付�
 - [ ] 类头 `THIRD_PARTY_MOCK` 标注块 7 行齐全
 - [ ] 执行 `python3 <SKILL_DIR>/scripts/scan_mock_data.py src/main/java --third-party-mode` 协议核验通过(允许受控豁免存在)
 
+<a id="task-2-5"></a>
 ### Task 2.5: 支付网关真实接口对接 — 创建支付单
 
-> **优先级**: P0 | **依赖**: Task 2.4 + 第三方接口交付(外部依赖,不阻塞其他任务) | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.4
+> **优先级**: P0 | **依赖**: Task 2.4 + 第三方接口交付(外部依赖,不阻塞其他任务) | **Phase**: 2-业务层 | **所属 EPIC**: EPIC-02 | **五件套**: X.4 | **Sprint**: Sprint-002
 > **设计来源:** [§B-7.2 创建支付单报文定义(L80-L126)](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-2)
 > **PRD 来源:** [§五-4 支付交互(L420-L460)](../docs/requirements/V1.0/研发需求/模型市场.md#五-4-支付交互)
 > **原型来源:** 无(纯后端;关联触发页见任务总表)
@@ -601,9 +610,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-4 支付�
 - [ ] 对接清单 API-T01 开发状态已更新
 - [ ] 代码中无 mock 与真实凭证/base URL 并存(违者 Critical)
 
+<a id="task-2-6"></a>
 ### Task 2.6: 支付网关 Mock 清理验证
 
-> **优先级**: P0 | **依赖**: Task 2.5 | **Phase**: 2-业务层(执行时点在最终验收前) | **所属 EPIC**: EPIC-02 | **五件套**: X.5
+> **优先级**: P0 | **依赖**: Task 2.5 | **Phase**: 2-业务层(执行时点在最终验收前) | **所属 EPIC**: EPIC-02 | **五件套**: X.5 | **Sprint**: Sprint-002
 > **设计来源:** [§B-7.1 支付网关集成方案(L40-L78)](../docs/design/detail/V1.0/04_外部依赖与集成.md#B-7-1)
 > **PRD 来源:** [§五-4 支付交互(L420-L460)](../docs/requirements/V1.0/研发需求/模型市场.md#五-4-支付交互)
 > **原型来源:** 无(纯后端;关联触发页见任务总表)
@@ -648,9 +658,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-4 支付�
 
 ### 前端任务
 
+<a id="task-4-2"></a>
 ### Task 4.2: 订单列表页
 
-> **优先级**: P0 | **依赖**: 无(对接「✅ 沿用已有」接口,核验结论见 三、接口可用性核验报告) | **Phase**: 4-前端层 | **所属 EPIC**: EPIC-02
+> **优先级**: P0 | **依赖**: 无(对接「✅ 沿用已有」接口,核验结论见 三、接口可用性核验报告) | **Phase**: 4-前端层 | **所属 EPIC**: EPIC-02 | **Sprint**: Sprint-001
 > **设计来源:** [§B-2.5 GET /market/order/list(L320-L372)](../docs/design/detail/V1.0/01_接口设计.md#B-2-5)
 > **PRD 来源:** [§五-3 订单列表页(L260-L318)](../docs/requirements/V1.0/研发需求/模型市场.md#五-3-订单列表页)
 > **原型来源:** [#order-table](../docs/prototype/V1.0/code/order-list.html#order-table)(路由 /market/order/list)
@@ -703,9 +714,10 @@ PRD 来源: docs/requirements/V1.0/研发需求/模型市场.md > 五-3 订单�
 
 ### 测试任务
 
+<a id="task-5-2"></a>
 ### Task 5.2: 支付网关联调验证 — 创建支付单
 
-> **优先级**: P0 | **依赖**: Task 2.5(本接口封装 + 第三方已就绪)、Task 4.2 | **Phase**: 5-测试 | **所属 EPIC**: EPIC-02
+> **优先级**: P0 | **依赖**: Task 2.5(本接口封装 + 第三方已就绪)、Task 4.2 | **Phase**: 5-测试 | **所属 EPIC**: EPIC-02 | **Sprint**: Sprint-002
 > **设计来源:** [§C-5.3 支付联调场景(L150-L196)](../docs/design/detail/V1.0/19_测试方案.md#C-5-3)
 > **PRD 来源:** [§九-2 支付验收测试点(L562-L598)](../docs/requirements/V1.0/研发需求/模型市场.md#九-2-支付验收测试点)
 > **原型来源:** [#pay-confirm-btn](../docs/prototype/V1.0/code/order-list.html#pay-confirm-btn)

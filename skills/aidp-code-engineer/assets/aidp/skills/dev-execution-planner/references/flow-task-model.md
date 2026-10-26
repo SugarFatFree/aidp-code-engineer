@@ -8,9 +8,10 @@
 ## 任务模板
 
 ```markdown
+<a id="task-{phase}-{seq}"></a>
 ### Task {phase}.{seq}: {任务标题}
 
-> **优先级**: P0/P1/P2 | **依赖**: Task X.Y 或 无
+> **优先级**: P0/P1/P2 | **依赖**: Task X.Y 或 无 | **所属 EPIC**: EPIC-NN | **Sprint**: Sprint-NNN
 > **设计来源：** [§X.Y 章节名(L行号-L行号)](../docs/design/detail/{version}/xx.md#章节锚点)（**必填**,用于代码生成时严格对齐设计要求）
 > **PRD 来源：** [§X.Y 章节名(L行号)](../requirements/{version}/研发需求/xxx.md#章节锚点)（如适用）
 > **原型来源：** [<Component> 或 #锚点](../prototype/{version}/code/xxx.jsx#锚点)（如适用）
@@ -230,9 +231,10 @@ python3 <SKILL_DIR>/scripts/check_sql_path_handoff.py <研发执行计划路径>
 **Task 模板的引用部分(强制格式,必须 markdown 链接 + 相对路径 + 精细锚点):**
 
 ```markdown
+<a id="task-{phase}-{seq}"></a>
 ### Task {phase}.{seq}: {任务标题}
 
-> **优先级**: P0/P1/P2 | **依赖**: Task X.Y 或 无
+> **优先级**: P0/P1/P2 | **依赖**: Task X.Y 或 无 | **所属 EPIC**: EPIC-NN | **Sprint**: Sprint-NNN
 > **设计来源:** [§X.Y 章节名(L行号)](../docs/design/detail/{version}/xx.md#章节锚点) ← **必填**
 > **PRD 来源:** [§X.Y 章节名(L行号)](../requirements/{version}/研发需求/xxx.md#章节锚点) 或 标"无"(纯技术任务)
 > **原型来源:** [<Component> 或 #锚点](../prototype/{version}/code/xxx.jsx#锚点) 或 标"无"(纯后端任务)

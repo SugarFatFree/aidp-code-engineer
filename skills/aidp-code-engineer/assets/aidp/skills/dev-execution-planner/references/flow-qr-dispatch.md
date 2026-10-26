@@ -38,6 +38,9 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 
 # 3. SQL 路径交接一致性(详细设计 → 执行计划 SQL 落地路径对齐)
 python3 <SKILL_DIR>/scripts/check_sql_path_handoff.py <研发执行计划路径>
+
+# 4. Task 锚点 + Sprint 归属 + REQ 承接映射可导出(下游 ⟨PLAN-REF⟩ 回填依赖它)
+python3 <SKILL_DIR>/scripts/export_plan_refs.py <研发执行计划路径或目录> --json
 ```
 
 **脚本搬进子 Agent 后仍然必跑(护栏不变)**,只是改由子 Agent 在其上下文内确定性执行、回传退出码,主上下文不被脚本输出占用。**严禁**子 Agent 只做语义维度审查而跳过本 bash 步骤。
@@ -63,6 +66,7 @@ Agent({
      - `check_task_granularity.py`:0=通过;1=判错(含两档:警告=疑似粗粒度 / EPIC 缺端 / AI 锚点不足;**必修**=确证粗粒度 / 旧版 6 列任务表 / 9 列任务表行三锚点不全);2=输入路径错误(修正参数后重跑,**非维度违规、不计失败**)。⚠️ **两档靠退出码分不出**——必须读 `--json` 的 `findings[]`(**顶层是对象**,含 `scanned_tasks`/`skipped`/`findings`)每条的 `severity`;⚠️ **先看 `skipped`**——`true` 表示一个 Task 段都没识别到、本次并未实质核验,不等于通过:`2`=必修(维度 3/14 不通过)/ `1`=警告(需复核修订)。严重度不占退出码是统一退出码约定,见 CLAUDE.md。注:旧版 6 列任务表命中即 `severity=2`(硬拦),勿当作可放行的软警告
      - `check_doc_split.py --check-tasks`(**多文件模式专用**,传执行计划**目录**):0=通过(含仅历史 grandfather 告警 warn:裸单文件 / 历史 `00_*-总览.md` 主锚 / `NN_补充-` 中缀均放行不硬失败);1=不通过(维度 11 多文档拆分:缺主锚 / 序号缺失 / 碎片 / 裸「补充-」开头等 error);2=**路径不存在或既非文件也非目录**(入参错);⚠️ **传入单个 .md 属合法单文件模式,返回 0 + `skipped:true`,不是 2**——二者曾共用 exit 2,而本条口径把 2 当「不计失败」,于是路径打错即整档闸门静默消失。新范式主锚为 `00_索引.md`(内容主文档从 `01_研发执行计划.md` 起);单份内容目录仍需 `00_索引.md` + `01_*` 两文件
      - `check_sql_path_handoff.py`:0=通过;1=不通过(维度 9 详细设计 SQL 路径交接);2=输入路径错误(修正后重跑)
+     - `export_plan_refs.py --json`:0=映射可导出(`skipped:true` 表示一个 Task 都没识别到,**不是通过**,与 `check_task_granularity.py` 的 skipped 同读);1=不通过(维度 14:`issues[]` 列出缺锚点 / 锚点编号不符 / 缺或多 Sprint / 总表引用了不存在的 Task / 缺任务总表);2=入参错
      除上述「N/A 跳过」与「输入路径错误」外,任一脚本判不通过即对应维度直接判不通过,无需再做语义判断;
      ⚠️ **哪个维度由哪个脚本判、哪些脚本刻意没接进来** → 见 checklist 顶部「维度成本与裁剪索引表」;
      ⛔ 别把 `check_service_impl_stub.py` / `check_third_party_dep_reverse.py` / `scan_aidp.py` /

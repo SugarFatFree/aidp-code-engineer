@@ -30,7 +30,7 @@
 | 6 | 状态机模型准确性 | 语义 | — | — | Δ ⚠️ 见安全网 ① | Important | 否 |
 | 7 | 存量数据与兼容性检查 | 语义 | — | — | **全量** | Important | 否 |
 | 8 | 外部依赖与集成说明 | 兼有 | `check_http_client_config.py` · `check_third_party_mock_runtime.py` | ✅ / ✅ | Δ | Critical | 部分 |
-| 9 | PRD 功能点完整覆盖 | 兼有 | `validate_coverage.py` | ❌ 需额外入参 | **基线缩放** | Critical | 部分 |
+| 9 | PRD 功能点完整覆盖 | 兼有 | `validate_coverage.py` · `check_module_kind.py`(B.1 模块类型,Important) | ❌ 需额外入参 / ✅ | **基线缩放** | Critical | 部分 |
 | 10 | 字典与枚举完整性与一致性 | 语义 | — | — | **全量** | Important | 否 |
 | 11 | 字典/枚举强制生成枚举类 | 兼有 | `check_enum_contract.py` | ✅ 本轮接入 | **全量** | Critical | 部分 |
 | 12 | 多文件拆分引用准确性与去重〔仅多文件〕 | 兼有 | `check_doc_split.py` | ✅ | — | Important | 部分 |
@@ -488,6 +488,7 @@ python3 <SKILL_DIR>/scripts/check_third_party_mock_runtime.py <设计文档目�
 **必须检查的维度:**
 - **功能点数量对齐**:PRD 有 N 个功能点,设计 B.1 必须有 N 个对应实现描述
 - **功能点编号对齐**:设计 B.1 中的功能点编号必须与 PRD 完全一致(如 PRD 是 FR-010,设计不能改为 F-10)
+- **🟡 B.1 模块分组 + 模块类型(Important 子条)**:B.1 按业务模块分组,每组 `模块: <模块名>` 标题下写 `> **模块类型**: <取值>`,取值逐字取自 `页面 / 接口服务 / 迁移工具 / 数据迁移 / 数据脚本 / 批处理 / 定时任务 / CLI / 命令行工具`(规则见 `output-module-examples.md`「B.1 功规点实现映射」)。下游自测用例的 `module_kind=auto` 逐模块读它;缺了批处理/迁移类模块会被按页面模板写成假用例。机检 `check_module_kind.py`(K1 无分组标题 / K2 缺字段 / K3 取值非法,均 Important、不占退出码,读 `--json` 的 `findings[]`);⚠️ 还须人工核**取值对不对**——一个只有命令行入口的模块标成 `页面`,脚本查不出来
 - **业务规则对齐**:PRD 中的业务规则(如"审批通过后自动发送通知"、"超过 3 次失败锁定账号")在设计中必须有对应实现逻辑
 - **交互细节对齐**:PRD 中的交互要求(如"点击保存后弹窗提示"、"列表支持多选批量删除")在设计中必须有对应前端实现方案
 - **数据字段对齐**:PRD 中提到的数据字段(如"用户姓名"、"订单金额"、"审批状态")在设计的 A.3 数据定义或 B.2 API 契约中必须存在

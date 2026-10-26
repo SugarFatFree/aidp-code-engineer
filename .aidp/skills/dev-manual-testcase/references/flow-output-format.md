@@ -19,7 +19,7 @@
 > **PRD 来源**: [§章节范围](../requirements/{version}/研发需求/xxx.md#章节锚点)
 > **原型来源**: [<Component> 或 #anchor](../prototype/{version}/code/xxx.jsx#锚点)（如有）
 > **详细设计来源**: [§X.Y 章节名](../docs/design/detail/{version}/xx.md#X-Y)
-> **研发执行计划来源**: [Sprint-NNN T-NNN-NN](../docs/plans/{version}/研发执行计划.md#T-NNN-NN)(增量模式必填,全量模式标 N/A)
+> **研发执行计划来源**: [Sprint-NNN Task N.N](../docs/plans/{version}/01_研发执行计划.md#task-N-N)(增量模式必填,全量模式标 N/A;编号与锚点用执行计划原生形态,⛔ 不自拟)
 > **承上启下**: 前一套件 [SUITE-NNN](#SUITE-NNN) 完成的页面状态;本套件接着做什么
 > **高保真设计**: [画板名](../prototype/{version}/mockup/xxx.fig#画板名)（如有）
 
@@ -371,7 +371,7 @@
 > **用例数**: 5 条
 > **PRD 来源**: [§五-3 用户管理](../requirements/{version}/研发需求/用户管理.md#五-3)
 > **详细设计来源**: [§B.2 批量导入接口](../docs/design/detail/{version}/03_接口设计.md#B-2)
-> **研发执行计划来源**: [Task 1.1 用户批量导入](../docs/plans/{version}/研发执行计划.md#Task-1-1)
+> **研发执行计划来源**: [Task 1.1 用户批量导入](../docs/plans/{version}/研发执行计划.md#task-1-1)
 
 #### 套件级前置条件
 {...同全量模式...}
@@ -383,7 +383,7 @@
 
 ##### 用例 TC-USER-010: 批量导入用户(正向) — **本次新增**
 > **优先级**: P0 | **类型**: 正向
-> **研发执行计划来源**: [Task 1.1 用户批量导入](../docs/plans/{version}/研发执行计划.md#Task-1-1)
+> **研发执行计划来源**: [Task 1.1 用户批量导入](../docs/plans/{version}/研发执行计划.md#task-1-1)
 > **承接前置**: 从工作台开始
 
 **测试步骤**: {...}
@@ -406,7 +406,7 @@
 > **覆盖内容**: Task 1.2 登录密码校验规则变更
 > **PRD 来源**: [§五-1 登录页](../requirements/{version}/研发需求/登录.md#五-1)
 > **详细设计来源**: [§A.4 密码校验规则](../docs/design/detail/{version}/02_数据设计.md#A-4)
-> **研发执行计划来源**: [Task 1.2 密码校验规则](../docs/plans/{version}/研发执行计划.md#Task-1-2)
+> **研发执行计划来源**: [Task 1.2 密码校验规则](../docs/plans/{version}/研发执行计划.md#task-1-2)
 
 #### 入口流程 (Suite Setup)
 

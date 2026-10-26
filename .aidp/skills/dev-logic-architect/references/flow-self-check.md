@@ -121,7 +121,8 @@
 - `scripts/check_ddl_column_comment.py` — DDL 新增列注释配对核验:每个 `ADD COLUMN` 是否有配对列注释,**MySQL 内联 `COMMENT '...'` 与达梦/Oracle 独立 `COMMENT ON COLUMN t.c IS '...'` 两种方言形态都认**(只认前者会在国产库项目上静默失效)。**须传目录**(对应维度 39 Critical / 核心原则 32)
 - `scripts/check_permission_constraint.py` — 权限与可见范围约束落点表结构核验(对应检查项 40,**Critical**;Author 27 项无对应自检编号)
 - `scripts/check_sibling_family_spec.py` — 同族增量项声明表结构核验(对应检查项 41,**Important 档**;Author 27 项无对应自检编号;支持 `--self-check`)
-- `scripts/run_qr_checks.py` — **试验性 QR 机器结果采集器**,只调用现有 25 条脚本并保留原始输出,不增加 Author 自检项或 QR 维度,未接入正式 QR 步骤 0;`skipped`/`collector`/`unavailable` 不等于通过。
+- `scripts/check_module_kind.py` — B.1 模块分组 + 「模块类型」字段核验(对应检查项 9 的 Important 子条;Author 27 项无对应自检编号;下游自测用例 `module_kind=auto` 的跨产物契约)
+- `scripts/run_qr_checks.py` — **试验性 QR 机器结果采集器**,只调用现有 28 条脚本并保留原始输出,不增加 Author 自检项或 QR 维度,未接入正式 QR 步骤 0;`skipped`/`collector`/`unavailable` 不等于通过。
 
 > 上述检查项 40/41 两个脚本均由 [`flow-qr-dispatch.md`](./flow-qr-dispatch.md) 的 **QR 步骤 0** 调用。命令端只负责把该步骤派给独立 QR Agent,**命令端无需重复实现判据**;否则同一判据两份实现必然漂移。
 

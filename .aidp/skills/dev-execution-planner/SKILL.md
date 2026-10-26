@@ -208,7 +208,7 @@ description: >
 **执行计划生成后,必须派一个独立子 Agent 执行 14 维度质量检查**(始终必查 12 项 + 多用户/多文件模式各 +1),核验三方一致性、完备性、可执行性、上游溯源完备性。
 
 - **执行主体与上下文隔离(Critical):** bash 硬核回检脚本 **+** 14 维度语义审查一律在**独立子 Agent**内完成;主流程**禁止**在当前上下文内联跑脚本或内联逐维度自查,只接收精简结构化报告并决定是否重改,循环至全部通过或达 3 轮上限。
-- **落盘后 bash 硬核回检必跑**(子 Agent prompt 步骤 0):`check_task_granularity.py` / `check_doc_split.py --check-tasks` / `check_sql_path_handoff.py`,任一命中即拒绝标记完成。
+- **落盘后 bash 硬核回检必跑**(子 Agent prompt 步骤 0):`check_task_granularity.py` / `check_doc_split.py --check-tasks` / `check_sql_path_handoff.py` / `export_plan_refs.py`,任一命中即拒绝标记完成。
 - **查什么** → [`references/quality-review-checklist.md`](./references/quality-review-checklist.md)(14 维度清单本身)。
 - **谁来查、怎么派、跑哪些脚本、退出码怎么读** → [`references/flow-qr-dispatch.md`](./references/flow-qr-dispatch.md)(派发流程全文)。
 - **哪些维度由脚本判 / 能否按变更范围裁剪** → checklist 顶部**「维度成本与裁剪索引表」**(调度信息单一信源)与**「QR 变更范围裁剪协议」**。可选入参 **`qr_delta_scope`**,**不传 = 全量**;**机器门一律全量跑**,维度 6(依赖链条)/14(EPIC 完整性)等**全量档不接受裁剪**——环由新旧 Task 共同构成、缺端只有端到端才看得出。

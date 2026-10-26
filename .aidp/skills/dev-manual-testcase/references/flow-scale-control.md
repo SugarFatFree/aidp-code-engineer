@@ -27,12 +27,23 @@
 **替换规则**（编排层在计划生成后执行，全有或全无）：
 
 ```bash
+# ① 由执行计划确定性导出映射(dev-execution-planner 自带脚本;href 相对用例目录根计算)
+python3 <planner 安装目录>/scripts/export_plan_refs.py <执行计划目录> --cases-dir <用例目录> --out plan_refs.json
+# ② 回填占位符
 python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.json
-# plan_refs.json: {"REQ-004": {"label": "Sprint-012 T-012-03", "href": "../plans/V1/01_研发执行计划.md#T-012-03"}}
+# plan_refs.json: {"REQ-004": {"label": "Sprint-012 Task 2.3", "href": "../plans/V1/01_研发执行计划.md#task-2-3"}}
 ```
 
-每个 `⟨PLAN-REF:REQ-004⟩` → `[Sprint-012 T-012-03](../plans/V1/01_研发执行计划.md#T-012-03)`；
-`label` 必须形如 `Sprint-NNN T-NNN-NN`，`href` 必须是指向 `.md` 的相对路径；任一占位符找不到映射 → 一个文件都不写、exit 1。
+每个 `⟨PLAN-REF:REQ-004⟩` → `[Sprint-012 Task 2.3](../plans/V1/01_研发执行计划.md#task-2-3)`；
+`label` 必须形如 `Sprint-NNN Task N.N`（执行计划原生编号），`href` 必须是 `<相对路径>.md#task-N-N`（执行计划原生锚点）；
+任一占位符找不到映射 → 一个文件都不写、exit 1。
+
+- **编号与锚点只认执行计划原生形态**：Task 编号 `Task <Phase>.<序号>`、归属 Sprint 取 Task 抬头的 `**Sprint**` 字段、
+  锚点是 Task 标题上一行的 `<a id="task-<phase>-<seq>"></a>`（规则在 dev-execution-planner 的 `output-format.md`）。
+  ⛔ 编排层不得为了过格式门自拟 `T-NNN-NN` 之类编号——那是伪造溯源，`resolve_plan_refs.py` 按入参错拒收（exit 2）。
+- **一条 REQ 被多个 Task 承接**时取 Sprint 号最小、其次 Task 号最小（导出脚本已按此取，⛔ 编排层不另挑）。
+- **用例分在子目录时**：`href` 按 `--cases-dir` 计算，子目录里的用例须按子目录分别导出、分别替换。
+- 没被任何 Task 承接的 REQ 不进映射，对应占位符替换失败——这是真问题（计划漏了这条需求），⛔ 不得手工补一条映射绕过。
 
 **两种形态都要过硬门**：
 
@@ -91,9 +102,19 @@ python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.
 **识别规则**：
 - `interactive`（缺省）：全部按页面模板（现状）。⚠️ 此时 `[非交互]` 标记**不生效**：三个硬门照页面模板判，并报 Important `noninteractive_unauthorized`。
 - `non_interactive`：本次调用的全部模块按非交互模板。
-- `auto`：逐模块读详细设计里该模块的 **`模块类型`** 字段（形如 `> **模块类型**: 批处理`）；值为
-  `迁移工具 / 数据迁移 / 数据脚本 / 批处理 / 定时任务 / CLI / 命令行工具` 之一 → 非交互，其余或字段缺失 → 页面模板。
-  ⛔ 不根据模块名、不根据「页面少」自行推断。
+- `auto`：逐模块读详细设计里该模块的 **`模块类型`** 字段。详细设计 B.1 按业务模块分组，每组一个 `模块: <模块名>` 标题，
+  标题下方写 `> **模块类型**: 批处理`（dev-logic-architect 的 B.1 模板与 `check_module_kind.py` 产出侧保证）。值**逐字**为
+  `迁移工具 / 数据迁移 / 数据脚本 / 批处理 / 定时任务 / CLI / 命令行工具` 之一 → 非交互；`页面` / `接口服务`、取值不在枚举内
+  （含带括注的 `批处理(每日 2 点)`）或字段缺失 → 页面模板。⛔ 不根据模块名、不根据「页面少」自行推断。
+  确定性读取用本 SKILL 自带脚本，⛔ 不凭阅读印象判：
+
+  ```bash
+  python3 <SKILL_DIR>/scripts/read_module_kinds.py <详细设计目录> --json
+  # → modules[{name, kind, interactive, file, line}] / non_interactive[] / missing[] / invalid[] / skipped
+  ```
+
+  `missing` / `invalid` 非空时照页面模板写，并在报告里列出（上游设计缺字段，回流给详细设计补）；
+  `skipped: true`（设计里一个模块分组标题都没有，多见于存量设计）= 全部按页面模板，⚠️ 不等于识别成功。
 
 **模板**（套件与用例都带 `[非交互]` 标记；不写页面步骤表、不生成通用还原度套件）：
 
@@ -116,7 +137,7 @@ python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.
 ```
 
 > **硬门授权**：`check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 须带 `--module-kind non_interactive`（或 `auto`）才认 `[非交互]`；缺省 `interactive` 不认。
-> `auto` 时脚本认标记，「标记是否与设计的 `模块类型` 字段一致」由 QR 子 Agent 逐模块核（维度 7）。
+> `auto` 时脚本认标记，「标记是否与设计的 `模块类型` 字段一致」由 QR 子 Agent 逐模块核（维度 7）：以 `read_module_kinds.py --json` 的 `non_interactive[]` 为准——贴了 `[非交互]` 的套件对应模块不在其中、或其中的模块没贴 `[非交互]`，都判不一致。
 
 | 硬门 | 对 `[非交互]` 的处理（已授权时） |
 | :- | :- |

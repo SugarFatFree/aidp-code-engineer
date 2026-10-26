@@ -24,7 +24,7 @@
 > 步骤 0 的命令随入参追加参数——`plan_ref_mode=deferred` → `check_suite_upstream.py ... --plan-ref-mode deferred`;
 > `module_case_cap=N` → `check_case_stats.py ... --scale L --module-case-cap N`;
 > `prd_presence_mode=table` → `check_case_stats.py ... --prd-presence-table <表路径>`;
-> `module_kind=non_interactive|auto` → `check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 三条都追加 `--module-kind <值>`(不带则 `[非交互]` 标记不生效)。
+> `module_kind=non_interactive|auto` → `check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 三条都追加 `--module-kind <值>`(不带则 `[非交互]` 标记不生效);`auto` 时另跑 `read_module_kinds.py <详细设计目录> --json`,以其 `non_interactive[]` 核 `[非交互]` 标记与设计是否一致(维度 7)。
 > 维度 1 / 13 / 18 / 19 / 7 / 8 / 21 的读法调整见该文件第六节;⛔ 未传对应入参时不得自行带这些参数。
 
 ### 🛡️ 落盘后 bash 硬核回检(子 Agent 强制第一步,先于语义维度审查)

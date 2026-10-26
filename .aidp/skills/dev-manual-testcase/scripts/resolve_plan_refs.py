@@ -7,16 +7,19 @@ SKILL 自身在 deferred 模式下只写占位符、不调用它。
 
   python resolve_plan_refs.py <用例文件或目录> --map <映射.json> [--json]
 
-映射 JSON:{"REQ-004": {"label": "Sprint-012 T-012-03",
-                        "href": "../plans/V1/01_研发执行计划.md#T-012-03"}, ...}
-替换结果:`⟨PLAN-REF:REQ-004⟩` → `[Sprint-012 T-012-03](../plans/V1/01_研发执行计划.md#T-012-03)`,
+映射 JSON:{"REQ-004": {"label": "Sprint-012 Task 2.3",
+                        "href": "../plans/V1/01_研发执行计划.md#task-2-3"}, ...}
+替换结果:`⟨PLAN-REF:REQ-004⟩` → `[Sprint-012 Task 2.3](../plans/V1/01_研发执行计划.md#task-2-3)`,
 同一行里的其它文字(含分隔用的「、」)原样保留。替换后的形态与 S4 的既有写法相同,
 `check_suite_upstream.py`(缺省 required 模式)与 `check_testcase_format.py` 照常校验。
+
+映射由 dev-execution-planner 的 `export_plan_refs.py` 从执行计划**确定性导出**(label 与锚点都是计划原生的
+`Sprint-NNN Task <Phase>.<序号>` / `#task-<phase>-<seq>`);⛔ 编排层不得自拟编号凑格式。
 
 **全有或全无**:先扫全部文件,任何占位符在映射里找不到 → 一个文件都不写、exit 1(⛔ 不留半替换状态)。
 
 退出码:0 = 已替换(或本来就没有占位符,`replaced: 0`) / 1 = 有占位符找不到映射 / 2 = 入参错
-(路径不存在、映射不是合法 JSON、label 不是 `Sprint-NNN T-NNN-NN`、href 是绝对路径或不指向 .md)。
+(路径不存在、映射不是合法 JSON、label 不是 `Sprint-NNN Task N.N`、href 是绝对路径或不是 `<相对路径>.md#task-N-N`)。
 """
 import argparse
 import json
@@ -25,7 +28,8 @@ import sys
 from pathlib import Path
 
 PLAN_REF_RE = re.compile(r"⟨PLAN-REF:([^⟩]*)⟩")
-LABEL_RE = re.compile(r"^Sprint-\d+ T-\d+-\d+$")
+LABEL_RE = re.compile(r"^Sprint-\d+ Task \d+\.\d+$")
+HREF_RE = re.compile(r"^[^#\s]+\.md#task-\d+-\d+$")
 ABS_RE = re.compile(r"^(?:https?://|/|[A-Za-z]:[/\\]|~/)")
 
 
@@ -41,9 +45,9 @@ def load_map(path: Path):
                 or not isinstance(v.get("href"), str):
             raise ValueError(f"{req}: 必须含字符串 label 与 href")
         if not LABEL_RE.match(v["label"]):
-            raise ValueError(f"{req}: label 必须形如 `Sprint-NNN T-NNN-NN`,实际 {v['label']!r}")
-        if ABS_RE.match(v["href"]) or ".md" not in v["href"]:
-            raise ValueError(f"{req}: href 必须是指向 .md 的相对路径,实际 {v['href']!r}")
+            raise ValueError(f"{req}: label 必须形如 `Sprint-NNN Task N.N`,实际 {v['label']!r}")
+        if ABS_RE.match(v["href"]) or not HREF_RE.match(v["href"]):
+            raise ValueError(f"{req}: href 必须是 `<相对路径>.md#task-N-N`,实际 {v['href']!r}")
     return data
 
 

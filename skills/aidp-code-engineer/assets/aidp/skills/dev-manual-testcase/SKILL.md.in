@@ -318,6 +318,6 @@ ux-logic-extractor → dev-logic-architect → dev-execution-planner → (开发
     | `matrix_scope` | `all` / `p0` | `all` | `p0`:覆盖矩阵只对 P0 需求逐维展开 21 维,P1/P2 只列适用维度 + 不适用理由汇总 | 同上 三 |
     | `prd_presence_mode` | `cases` / `table` | `cases` | `table`:不再逐行写 `[PRD存在性]`,只对编排层「PRD 行 → 研发需求对账表」里的「未承接」行补用例 | 同上 四 |
     | `prd_presence_table` | 文件路径 | — | `prd_presence_mode=table` 时必传,否则按 `cases` 处理并在报告注明 | 同上 四 |
-    | `module_kind` | `interactive` / `non_interactive` / `auto` | `interactive` | 非交互模块(迁移工具 / 数据脚本 / 批处理 / CLI)用简化模板 `[非交互]`;`auto` 读设计里的模块类型字段 | 同上 五 |
+    | `module_kind` | `interactive` / `non_interactive` / `auto` | `interactive` | 非交互模块(迁移工具 / 数据脚本 / 批处理 / CLI)用简化模板 `[非交互]`;`auto` 读设计里的模块类型字段(`read_module_kinds.py`) | 同上 五 |
 14. **非交互模块例外** — 标 `[非交互]` 的用例/套件(仅由 `module_kind` 判定,硬门须带 `--module-kind` 才认该标记;⛔ 不得自行把页面模块改判为非交互)不适用约束 4 / 5 / 6 的 UI 措辞:用例写「命令 + 前置数据 + 预期退出码 + 输出断言」四段,Setup 写运行环境准备;命令必须是被测模块自己的入口命令,⛔ 不得用 curl/HTTP 绕道调接口。四段缺任一段即 Critical,标记本身不豁免任何检查
 

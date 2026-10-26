@@ -12,6 +12,9 @@
 >    与维度 14a Critical）。Phase 1~5 是**正交的技术分层维度**，EPIC / Sprint 层与 9 列任务表
 >    仍须按 SKILL.md 与 [`flow-task-model.md`](./flow-task-model.md) 产出——
 >    **只照本文件的 Phase 骨架写会缺 EPIC 层**。
+> 3. **每个 Task 必带稳定锚点 + Sprint 归属**（规则见下文「Task 锚点与 REQ 承接映射」）：标题**上一行**写
+>    `<a id="task-<phase>-<seq>"></a>`，抬头元信息行写 `**Sprint**: Sprint-NNN`。缺任一项，
+>    `export_plan_refs.py` 导不出映射、exit 1——下游自测用例的 `⟨PLAN-REF⟩` 回填链路整条断开。
 
 ## 输出格式
 
@@ -385,6 +388,32 @@ docs/dev-plan/{项目名}/
 ### Task 1.2: 第三方中间件配置
 ...
 ```
+
+### Task 锚点与 REQ 承接映射（下游回填用，单一信源）
+
+下游自测用例在「计划与自测并行生成」时先写占位符 `⟨PLAN-REF:REQ-xxx⟩`，计划落盘后由编排层回填成指向本计划 Task 的链接。
+回填所需的三样信息**全部由本计划直接给出、⛔ 不靠推断**：
+
+| 信息 | 写在哪 | 形态 |
+| :- | :- | :- |
+| Task 编号 | Task 标题 | `### Task <Phase>.<序号>: 标题`（不另起 `T-NNN-NN` 之类第二套编号） |
+| 稳定锚点 | Task 标题**上一行**（中间可空行） | `<a id="task-<phase>-<seq>"></a>`，如 Task 2.3 → `task-2-3`；编号必须与标题一致 |
+| 所属 Sprint | Task 抬头元信息行 | `… \| **所属 EPIC**: EPIC-02 \| **Sprint**: Sprint-001`，**每个 Task 恰好一个** |
+| 承接哪些 REQ | 9 列任务总表 | 「Task」列 + 「REQ 关联」列（一行可承接多条） |
+
+- **href 写法**：`<计划文件相对用例目录的路径>#task-<phase>-<seq>`，如 `../plans/V1/01_研发执行计划.md#task-2-3`；
+  **label 写法**：`<Sprint> Task <Phase>.<序号>`，如 `Sprint-001 Task 2.3`。
+  ⚠️ 不用标题自动生成的 slug——它随标题文字变化、各渲染器规则不同，同一 Task 改个标题链接就断。
+- **一条 REQ 被多个 Task 承接时取哪一个**：**Sprint 号最小**，同 Sprint 内 **Task 号最小**（Phase、序号都按数值比：`Task 2.10` 排在 `Task 2.9` 之后）。
+- **导出命令**（确定性、全有或全无，问题清单见 `--json` 的 `issues[]`）：
+
+  ```bash
+  python3 <SKILL_DIR>/scripts/export_plan_refs.py <执行计划文件或目录> --cases-dir <自测用例目录> --out plan_refs.json
+  ```
+
+  缺锚点 / 锚点编号不符 / 缺 Sprint / 一个 Task 写多个 Sprint / 总表引用了不存在的 Task / 缺任务总表 → exit 1、不写文件。
+  没被任何 Task 承接的 REQ 不进映射（⛔ 不替它挑一个），下游回填会因此失败——那说明计划漏了这条需求。
+- 同文档内跳转同样用这个锚点：`[Task 2.3](#task-2-3)`。
 
 **跨子文档引用的硬性要求**:
 

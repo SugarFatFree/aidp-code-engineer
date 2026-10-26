@@ -45,6 +45,7 @@ CHECKS = (
     ("check_ddl_column_comment.py", (), False),
     ("check_permission_constraint.py", (), False),
     ("check_sibling_family_spec.py", (), False),
+    ("check_module_kind.py", (), False),
     ("check_enum_contract.py", (), False),
     ("check_money_field.py", (), False),
     ("check_er_and_fk.py", (), False),

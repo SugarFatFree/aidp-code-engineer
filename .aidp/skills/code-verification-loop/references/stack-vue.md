@@ -146,7 +146,7 @@ python3 <SKILL_DIR>/scripts/check_vue_style_preprocessor.py <前端目录>
 
 零依赖纯标准库。
 
-> 📌 **脚本接口事实（JSON 字段清单、`passed`/`gate_passed`/`skipped` 语义、退出码、实测数字）一律以 `dimension-6-9-stack-gated.md` 维度 7 为单一信源，本文件不复制。**
+> 📌 **脚本接口事实（JSON 字段清单、`passed`/`gate_passed`/`skipped` 语义、退出码、实测数字）一律以 `flow-dims-static-gates.md` 维度 7 为单一信源，本文件不复制。**
 > 与维度 8 同一条规则：这些会随脚本改动，抄在各栈文件里必然漂移。
 
 **本节只写 Vue SFC 专有的误报控制**（🔴 是阻塞级，误报直接卡发布，故按精度优先处理）：只认 **SFC 顶层块**——HTML 注释里的 `<!-- <style lang="scss"> -->`、`<script>` 字符串里的 `'<style lang="scss">'`、`<template>` 体内（含嵌套 `<template #slot>` 之后）的 `<style>` 标签一律不参与判定；属性按 token 切分而非整串正则，故 `<style data-x="lang=scss">`、`<style data-lang="scss" lang="less">` 不会误读 lang。
@@ -155,7 +155,7 @@ python3 <SKILL_DIR>/scripts/check_vue_style_preprocessor.py <前端目录>
 
 ## 五、维度 8：请求通道 URL 拼装单一信源
 
-> ⚠️ **本维度不是 Vue 专属**——判据对 React / 原生 TS 前端完全一致（见 `stack-react.md` §四）。此处写 Vue 侧落地形态，判据本体见 `dimension-6-9-stack-gated.md` 维度 8。
+> ⚠️ **本维度不是 Vue 专属**——判据对 React / 原生 TS 前端完全一致（见 `stack-react.md` §四）。此处写 Vue 侧落地形态，判据本体见 `../SKILL.md` 维度 8。
 
 ### 5.1 与 §三 的关系（同一道缝的两半，别搞混）
 
@@ -208,8 +208,8 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --change
 python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --allow 'src/utils/apiUrl.ts'
 ```
 
-> 📌 **脚本接口事实（JSON 字段语义、退出码、两条安全失败、`--allow`/`--changed` 优先级、实测数字）一律以 `dimension-6-9-stack-gated.md` 维度 8 为单一信源，本文件不复制。**
-> 这些会随脚本改动，抄在各栈文件里必然漂移（例如 `single_source` 语义），故只在维度 8 细则一处维护。
+> 📌 **脚本接口事实（JSON 字段语义、退出码、两条安全失败、`--allow`/`--changed` 优先级、实测数字）一律以 `flow-dims-static-gates.md` 维度 8 为单一信源，本文件不复制。**
+> 这些会随脚本改动，抄在各栈文件里必然漂移——本节此前抄过一份 `single_source` 语义，就已经和 SKILL.md 漂开过一次。
 
 **本栈唯一需要额外记住的一点**：`.vue` **只扫 `<script>` 块**（理由与 `<template>` 的 `:href` 例子见 5.3）。
 

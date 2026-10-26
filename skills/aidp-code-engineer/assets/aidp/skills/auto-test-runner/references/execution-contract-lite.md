@@ -1,14 +1,14 @@
 # 执行契约(精简版) — 执行子 Agent 默认只读这一份
 
-> **为什么有这一份:** 执行子 Agent 拿不到 Skill 工具,只能靠 `Read`。派
-> SKILL.md + execution-methodology.md + driver-*.md + report-format.md 四份全文 ⇒ 一轮 5 个
+> **为什么有这一份(实际项目反馈落地):** 执行子 Agent 拿不到 Skill 工具,此前派发要求它
+> `Read` SKILL.md + execution-methodology.md + driver-*.md + report-format.md 四份;一轮 5 个
 > Agent = **4× 重复加载**(实测 **2.11M tokens / 479 次工具调用**),而多数用例只用到其中一小部分。
 >
 > ⚠️ **收的是加载量,不是强制度** —— 本文件每一条都是硬要求;判不准就按第五节索引去读,⛔ 不自行发挥。
 > ⚠️ **本文件不是判据信源**:枚举以 `scripts/check_result.py` 常量为准,字段语义以
 > `references/report-format.md` + `assets/result-schema.json` 为准,冲突时以它们为准。
-> `{{AIDP_HOME}}/scripts/tests/test_execution_contract_lite.py` 逐枚举比对,漏同步即红 ——
-> 这是它敢存在的前提(否则就是本仓库最高频的「同一判据两份实现」)。
+> `tests/test_execution_contract_lite.py` 逐枚举比对,漏同步即红 —— 这是它敢存在的前提
+> (否则就是最高频的漂移源「同一判据两份实现」)。
 
 ---
 
@@ -18,7 +18,7 @@
    `self-heal` 只恢复会话/登录/前置数据的**运行态**。
 2. **取不到的事实写「未取到 + 原因」,⛔ 不写一个像样的默认值。**
 3. **前置不满足记 `block`,⛔ 不得换个变体路径凑一个 `pass`** —— 变体路径的正确返回若恰好等于
-   原用例的正确返回,缺陷会被断言「接住」(下游实测,直到终审才暴露)。
+   原用例的正确返回,缺陷会被断言「接住」(实测,直到终审才暴露)。
    **未执行的步骤不得随套件计入通过数。**
 
 ## 二、进度状态机(`tasks.md` 是唯一真相)
@@ -65,9 +65,11 @@
   ⛔ 不得按 TC-ID 猜扩展名。
 - `mechanism` ∈ `dom`/`webmcp`/`app-mcp`/`mixed`。⚠️ **未填 ≠ 已确认是 dom**(报告单列「未声明」)。
   ⛔ **`[还原度]` 及一切视觉/布局/样式断言禁填 `webmcp`** —— 它读的是声明的能力,不是渲染结果。
+- `application_mcp.implementation_kind`:Web=`webmcp`;非 Web=`app-native`/`bridge`。四态 `source`
+  写应用自有来源,⛔ 写测试驱动(Appium/CDP/chrome-devtools 等)即 Critical —— 驱动可用不是应用能力证据。
 - **耗时来源**:`elapsed_ms` 若是批次窗口均摊值(「窗口 ÷ N」,批量执行下这是常态),必须把
   `elapsed_is_amortized` 填 `true` 并给出 `batch_id`(可选 `batch_elapsed_ms`,填了会被 I15 核)。⚠️ 写进 `note` **不算** —— 聚合器不读 `note`,
-  会把它当逐条真值排名,产出「某条用例耗时 28 分钟」这种**假事实**(下游实测)。
+  会把它当逐条真值排名,产出「某条用例耗时 28 分钟」这种**假事实**(实测)。
 
 **落盘后必跑:** `python3 <SKILL_DIR>/scripts/check_result.py <round_dir>/results --json`
 

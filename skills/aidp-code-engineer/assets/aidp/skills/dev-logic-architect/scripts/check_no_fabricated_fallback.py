@@ -8,7 +8,7 @@
   0  无疑似兜底,或全部已显式标 🔧 暂行方案
   1  存在疑似兜底但未标 🔧 暂行方案(需人工溯源)
      **或** 存在 Mock 兜底(强制不通过,无论是否标暂行方案)
-     ⚠️ Mock 兜底曾单用退出码 2,与全仓统一约定「2 = 入参错」撞码——调用方若按约定
+     ⚠️ Mock 兜底曾单用退出码 2,与统一退出码约定「2 = 入参错」撞码——调用方若按约定
         把 2 当入参错处理,会把「Mock 兜底零容忍」这一最严重违规静默放过。已并入 1;
         是否 Mock 兜底改从 --json 的 is_mock_fallback 字段读。
   2  输入错误(路径不存在 / 无 .md 文件)——非维度违规,修正参数后重跑
@@ -88,13 +88,13 @@ def find_md_files(path: Path) -> List[Path]:
     return []
 
 
-# ⚠️ **禁令语境护栏**（与 check_lock_strategy.py 同源）：设计文档必然要写出反模式本身才能禁止它。
+# ⚠️ **禁令语境护栏**（与同 SKILL check_lock_strategy.py 同源）：设计文档必然要写出反模式本身才能禁止它。
 #    没有这道护栏时，「不降级」「严禁降级」「接口失败时禁止 fallback 到 mock 数据」这类**合规禁令句**
 #    全部被判违规——而 assets/api-template.md 的错误契约行**强制**要求写「不降级：整单失败上抛，禁返空列表」，
 #    即照本 SKILL 模板产出的设计必挂在本硬门上（假红灯）。
 # ⚠️ 沿用 check_lock_strategy.py 的取舍：护栏**不含「避免」**——它常作动机出现在违规句里
 #    （「下游超时仍返回 200，避免前端报错弹窗」），加了就漏真违规。
-# ⚠️ **词表刻意收窄，勿改回宽表**：上一版把 check_lock_strategy.py 的词表整段照抄
+# ⚠️ **词表已收窄，勿改回宽表**：上一版把 check_lock_strategy.py 的词表整段照抄
 #    过来，但两处护栏作用对象不同 —— 那边作用于**锁技术名**所在行，「不使用/未使用/无需」确实
 #    表示"没用这个锁"；本脚本作用于**兜底行为句**，而这些词在中文设计文档里是**普通描述词、
 #    routinely 出现在违规句内部**。实测宽表导致：
@@ -109,11 +109,52 @@ NEGATION_GUARD_RE = re.compile(
     r"严禁|禁止|不得|不许|不可以|勿|杜绝|反模式|错误示范|❌|反例|不降级|不回退")
 
 
-def scan_file(path: Path, root: Path) -> List[Dict]:
+# Module E / 待澄清清单的数据行(首格是 Q-/D-/P-/T- 编号)就是本 SKILL 规定的**合规处置落点**
+# (脚本自己的修复建议即「移到 Module E 待澄清清单」):在那里写「PRD 未指定,暂按 X」是登记,不是臆造。
+# 实测:本 SKILL canonical 示例 output-module-examples.md 唯一一条命中正是 D-001 这种登记行(无此放行即假红)。
+# ⚠️ 只放行**非 Mock** 类:Mock 兜底写进待澄清表也照样强制不通过(下游零 Mock 容忍)。
+# ⚠️⚠️ 放行**必须同时满足两条**,⛔ 勿退化成「首格是 X-NNN 编号就放行」:
+#   ① 该行位于标题含「待澄清」或「Module E」的章节内(按标题层级判边界:子标题不复位,
+#      遇到同级或更高级标题即离开;代码围栏内的 `#` 行不算标题);
+#   ② 该行或相邻 2 行出现暂行标记(PROVISIONAL_MARKER_RE)或「未指定/未明确/未说明/暂按/暂行」。
+#   缺 ① 时任何一张以 T-001 / P-002 编号的普通表格(异常处理表、权限矩阵……)都会让
+#   「降级为缓存快照」「无权限时降级为只读视图」这种真兜底整行隐形(假绿);缺 ② 时登记区里
+#   一句没写「PRD 未指定」的兜底同样被放过 —— 登记的意义是「承认这是推断」,不写等于没登记。
+REGISTRY_ROW_RE = re.compile(r"^\s*\|\s*\**[QDPT]-\d{3,}\**\s*\|")
+REGISTRY_SECTION_RE = re.compile(r"待澄清|module\s*e\b", re.IGNORECASE)
+REGISTRY_TENTATIVE_RE = re.compile(r"未指定|未明确|未说明|暂按|暂行")
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def registry_section_flags(lines: List[str]) -> List[bool]:
+    """逐行标记「是否位于待澄清 / Module E 章节内」(按标题层级判边界,跳代码围栏)。"""
+    flags: List[bool] = []
+    stack: List[Tuple[int, bool]] = []  # (标题级别, 该标题是否为登记区)
+    in_fence = False
+    for line in lines:
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+        elif not in_fence:
+            m = HEADING_RE.match(line)
+            if m:
+                level = len(m.group(1))
+                while stack and stack[-1][0] >= level:
+                    stack.pop()
+                stack.append((level, bool(REGISTRY_SECTION_RE.search(m.group(2)))))
+        flags.append(any(is_reg for _, is_reg in stack))
+    return flags
+
+
+def scan_file(path: Path, root: Path, read_errors: Optional[List[Dict]] = None) -> List[Dict]:
     findings: List[Dict] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        # ⚠️ 读不出来 ≠ 没有违规:此前这里直接 `return findings`,一份读不出的设计等价于「零违规」→ exit 0 假绿
+        #    (ux 同名脚本早已修过,本份漏了)。登记给 main() 判环境错。
+        if read_errors is not None:
+            read_errors.append({"file": str(path), "read_error": str(exc)})
         return findings
     try:  # Python 3.8 兼容:不用 3.9+ 的 is_relative_to
         rel = str(path.relative_to(root))
@@ -121,6 +162,7 @@ def scan_file(path: Path, root: Path) -> List[Dict]:
         rel = str(path)
 
     lines = text.splitlines()
+    in_registry = registry_section_flags(lines)
     for category, patterns in FALLBACK_PATTERNS.items():
         for pat in patterns:
             cre = re.compile(pat, re.IGNORECASE)
@@ -132,7 +174,9 @@ def scan_file(path: Path, root: Path) -> List[Dict]:
                     continue
                 # 跳过已标"暂行方案"的语句(同行或相邻 2 行内)
                 window = "\n".join(lines[max(0, i - 2): min(len(lines), i + 3)])
-                has_provisional = bool(PROVISIONAL_MARKER_RE.search(window))
+                is_registered = (in_registry[i] and bool(REGISTRY_ROW_RE.match(line))
+                                 and bool(PROVISIONAL_MARKER_RE.search(window) or REGISTRY_TENTATIVE_RE.search(window)))
+                has_provisional = bool(PROVISIONAL_MARKER_RE.search(window)) or is_registered
                 has_legit_error = bool(LEGIT_ERROR_HANDLING_RE.search(line))
                 has_ui_empty_state = bool(UI_EMPTY_STATE_RE.search(line))
                 has_real_data_substitute = bool(re.search(
@@ -200,8 +244,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     all_findings: List[Dict] = []
+    read_errors: List[Dict] = []
     for f in md_files:
-        all_findings.extend(scan_file(f, root))
+        all_findings.extend(scan_file(f, root, read_errors))
+    # 部分读不出:其余照扫,结论是残缺样本 → 按环境错 exit 2(有 Mock / 未溯源仍先报 1);全部读不出同样 exit 2
+    for r in read_errors:
+        print(f"错误: 无法读取 {r['file']}: {r['read_error']}", file=sys.stderr)
 
     if args.json:
         print(json.dumps(all_findings, ensure_ascii=False, indent=2))
@@ -217,6 +265,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
     if args.strict and all_findings:
         return 1
+    if read_errors:
+        return 2
     return 0
 
 

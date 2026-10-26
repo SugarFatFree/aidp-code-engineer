@@ -17,7 +17,6 @@
 | **DB 断言驱动**（`[双源对账]` 用例，可插拔） | `driver-db-assertion.md` | 与被测端正交，需要时**额外**加载 |
 | **应用 MCP 业务工具**（独立于测试驱动的条件能力） | `driver-client-mcp.md` | 调用方显式 `client_mcp.enabled: true` 或旧 Web 显式启用才加载;**不是第五个 UI 原子能力**,驱动用 MCP 协议不构成应用能力证据 |
 | **WebMCP 工具调用**（仅 Web 适配叶子） | `driver-web-webmcp.md` | **不是第五个端**;只在 Web+WebMCP 声明时额外加载,secure context/Chrome 前提不扩散到非 Web |
-| **WebMCP 工具调用**（Web 适配器的可选补充能力 `invoke`，**条件启用**） | `driver-web-webmcp.md` | **不是第五个端**——仍在浏览器里、仍经同一个 Web 驱动；**仅**调用方传入 `webmcp_enabled: true` 时**额外**加载，否则整份不适用 |
 
 > ⚠️ **维度 1-2 Critical「方法论层零端专有 API」的落点**：端专有 API（`mcp__chrome-devtools__*`、`miniprogram-automator`、Appium `driver.*`、SQL/DB MCP 调用等）**只允许出现在 `driver-*.md` 适配层文件内**；`SKILL.md`、`execution-methodology.md` 与本文件的端无关部分**一律不得出现**。拆分后这条约束的检查边界更清晰：`check_layer_isolation.py` 扫方法论层文件即可。
 
@@ -96,8 +95,9 @@
 | `driver-miniprogram.md` | 小程序驱动矩阵、四能力映射、**env 通道声明（渲染模式本端不适用）** |
 | `driver-mobile.md` | 移动端驱动矩阵、四能力映射、Appium 风格适配器样例、**env 通道声明（渲染模式本端不适用）** |
 | `driver-desktop.md` | 桌面客户端驱动矩阵、四能力映射、**env 通道声明（GUI 应用恒有头）** |
-| `driver-db-assertion.md` | DB 断言驱动能力契约、四能力映射（项目自行配置的数据库 MCP `<db-mcp>` 为例）、对账示例、成熟度与降级。**它不是被测端**，不适用 env 通道声明要求 |
-| `driver-web-webmcp.md` | **条件启用**：WebMCP 工具调用（Web 适配器可选能力 `invoke`）——驱动版本要求（≥1.8.0）、两个作用域不同的浏览器开关与 origin 三段精确匹配、连接后两行自检、调用约定（异步列出 / 两个参数形态 / 原型上没有 unregister）、与 CDP 的分工、报告纪律。**它不是被测端**，不适用 env 通道声明要求；未启用时整份不加载 |
+| `driver-db-assertion.md` | DB 断言驱动能力契约、四能力映射（数据库 MCP(如达梦/MySQL)为例）、对账示例、成熟度与降级。**它不是被测端**，不适用 env 通道声明要求 |
+| `driver-client-mcp.md` | **条件启用**：应用自有 MCP 业务工具四态取证与测试驱动严格分轴,各端只依据已证实实现适配;无实现明确未提供 |
+| `driver-web-webmcp.md` | **仅 Web 条件启用**：WebMCP 工具调用（Web 适配器可选能力 `invoke`）——驱动版本要求（≥1.8.0）、两个作用域不同的浏览器开关与 origin 三段精确匹配、连接后两行自检、调用约定（异步列出 / 两个参数形态 / 原型上没有 unregister）、与 CDP 的分工、报告纪律。**它不是被测端**，不适用 env 通道声明要求；未启用时整份不加载 |
 
 ---
 
@@ -129,5 +129,3 @@
 3. **方法论层零改动**——只要新适配器实现了 locate/act/observe/capture 四能力,批量调度/模式分级/闭环/失败分级/断点/报告全部自动复用。
 4. **端专有 API 只写进新建的 `driver-<端>.md`**;`SKILL.md`/`execution-methodology.md`/`report-format.md`/`usecase-format.md` 一律零改动,改完跑 `python3 <SKILL_DIR>/scripts/check_layer_isolation.py <SKILL_DIR>` 自检。
 
-| `driver-client-mcp.md` | **条件启用**：应用自有 MCP 业务工具四态取证与测试驱动严格分轴,各端只依据已证实实现适配;无实现明确未提供 |
-| `driver-web-webmcp.md` | **仅 Web 条件启用**：WebMCP 工具调用（Web 适配器可选能力 `invoke`）——驱动版本要求（≥1.8.0）、两个作用域不同的浏览器开关与 origin 三段精确匹配、连接后两行自检、调用约定（异步列出 / 两个参数形态 / 原型上没有 unregister）、与 CDP 的分工、报告纪律。**它不是被测端**，不适用 env 通道声明要求；未启用时整份不加载 |

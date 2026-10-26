@@ -42,8 +42,8 @@ severity 口径（**精度优先，避免噪音误阻断**）
       接口或抽象类无带注解实现；多 bean 无 @Qualifier（Spring 会先按字段名匹配
       beanName 兜底，不能判死）；全仓无来源但可能来自未扫描模块
 
-增量快筛 `--changed-only`
---------------------------
+增量快筛 `--changed-only`（实际项目反馈吸收）
+--------------------------------------------------
 默认全量扫描，服务**验收期**的维度 6 主检测点。加 `--changed-only` 后只报告落在
 git 变更文件里的注入点，服务**开发期前置门** —— 写码当场拦下，而不是等到验收阶段。
 
@@ -56,8 +56,9 @@ git 变更文件里的注入点，服务**开发期前置门** —— 写码当�
 漏掉它增量模式就白做了。非 git 仓库 / git 不可用时**退回全量并在 stderr 告警**
 （全量是更严的一侧，安全失败）。
 
-> **刻意不提供 `--gate`。** 本脚本默认就是「有 Critical → exit 1」；「默认恒 `exit 0`、
-> 须显式 `--gate` 才让 Critical 返回 1」的查询模式与全仓退出码约定（`1` = 检出违规）
+> **刻意不吸收上游的 `--gate`。** 项目侧那份默认恒 `exit 0`（查询模式）、须显式
+> `--gate` 才让 Critical 返回 1；本脚本默认就是「有 Critical → exit 1」，`--gate`
+> 在这里是多余的。更要紧的是它与退出码约定（`1` = 检出违规）
 > 直接冲突，等于给调用方留一个「忘了加参数就静默放行」的假绿开关。确需「只看不闸」
 > 请用 `--json` 读 `stats.critical` 自行决定，别让退出码撒谎。
 
@@ -242,6 +243,9 @@ CLASS_RE = re.compile(
     r"\b(class|interface|enum|record)\s+(\w+)"
 )
 ANNO_RE = re.compile(r"^\s*@(\w+)")
+LEADING_ANNOS_RE = re.compile(r"^\s*(?:@\w+(?:\s*\([^)]*\))?\s+)+")
+# 类型声明行上「`{` 之后还有内容」= 单行类体（`@Service public class A { @Autowired private RestTemplate rt; }`）
+INLINE_BODY_RE = re.compile(r"\b(?:class|interface|enum|record)\s+\w+[^{;]*\{")
 FIELD_RE = re.compile(
     r"^\s*(?:public|protected|private|final|static|transient|volatile|\s)*"
     r"([A-Za-z_][\w.]*(?:\s*<[^;=]*>)?(?:\[\])?)\s+(\w+)\s*(?:[;=]|$)"
@@ -272,8 +276,12 @@ class JavaFile(object):
 
 
 def _collect_type_decl(lines, idx, annos):
-    """解析类型声明行，返回 dict 或 None。"""
-    m = CLASS_RE.match(lines[idx])
+    """解析类型声明行，返回 dict 或 None。
+
+    ⚠️ 行首可能带同行注解（`@Service public class A {`）—— 先剥掉再匹配 CLASS_RE，
+       否则整个类型声明认不出来，其组件注解随之丢失。
+    """
+    m = CLASS_RE.match(LEADING_ANNOS_RE.sub("", lines[idx]))
     if not m:
         return None
     kind, name = m.group(1), m.group(2)
@@ -306,6 +314,28 @@ def parse_java(path, rel):
     lines = text.split("\n")
     # @Value 的键写在字符串字面量里，须用「保留字符串」的那份扫（行号与 lines 对齐）
     lines_with_str = strip_comments_and_strings(raw, keep_strings=True).split("\n")
+    # ⚠️ **单行类体拆成两条逻辑行**（审计实测：`@Service public class A { @Autowired private
+    #    RestTemplate rt; }` 一条注入都采不到 → 本该 Critical 的 RestTemplate 静默放行，假绿）。
+    #    在类型声明的 `{` 后切开，两份 lines 按同一列位切（两者逐字符等长，见 strip_comments_and_strings），
+    #    `orig_ln` 记每条逻辑行对应的原始行号，报告行号不位移。
+    orig_ln = []
+    split_lines, split_with_str = [], []
+    for n0, (ln, lws) in enumerate(zip(lines, lines_with_str)):
+        m = INLINE_BODY_RE.search(ln)
+        if m and ln[m.end():].strip() and ln[m.end():].strip() != "}":
+            # 尾部收口的 `}` 剥掉:否则 `@Autowired private Foo f; }` 不以 `;` 结尾,被当成「纯注解行」吞掉
+            tail, tail_s = ln[m.end():], lws[m.end():]
+            if tail.rstrip().endswith("}"):
+                cut = len(tail.rstrip()) - 1
+                tail, tail_s = tail[:cut], tail_s[:cut]
+            split_lines += [ln[:m.end()], tail]
+            split_with_str += [lws[:m.end()], tail_s]
+            orig_ln += [n0 + 1, n0 + 1]
+        else:
+            split_lines.append(ln)
+            split_with_str.append(lws)
+            orig_ln.append(n0 + 1)
+    lines, lines_with_str = split_lines, split_with_str
 
     if "@MapperScan" in text:
         jf.has_mapper_scan = True
@@ -328,7 +358,7 @@ def parse_java(path, rel):
             expr = vm.group(1)
             jf.values.append({
                 "key": expr.split(":", 1)[0].strip(), "has_default": ":" in expr,
-                "file": rel, "line": i + 1,
+                "file": rel, "line": orig_ln[i],
             })
 
         # ---- 注解行（可能与声明同行，如 `@Autowired private Foo foo;`）----
@@ -344,6 +374,7 @@ def parse_java(path, rel):
         # ---- 类型声明 ----
         decl = _collect_type_decl(lines, i, effective_annos)
         if decl:
+            decl["line"] = orig_ln[i]
             decl["file"], jf_types = rel, jf.types
             jf_types.append(decl)
             cur_type = decl
@@ -356,7 +387,7 @@ def parse_java(path, rel):
             if mm and simple_name(mm.group(1)) not in ("return", "new"):
                 jf.beans.append({
                     "type": simple_name(mm.group(1)), "method": mm.group(2),
-                    "file": rel, "line": i + 1,
+                    "file": rel, "line": orig_ln[i],
                 })
                 annos = []
                 continue
@@ -372,7 +403,7 @@ def parse_java(path, rel):
             if "(" not in line.split(fm.group(2))[0]:   # 排除方法声明
                 jf.injections.append({
                     "type_raw": fm.group(1), "name": fm.group(2), "owner": owner,
-                    "style": "field", "file": rel, "line": i + 1,
+                    "style": "field", "file": rel, "line": orig_ln[i],
                     "qualified": bool(QUALIFIER_RE.search(line)) or "Resource" in effective_annos,
                 })
                 annos = []
@@ -387,7 +418,7 @@ def parse_java(path, rel):
                 if len(parts) >= 2:
                     jf.injections.append({
                         "type_raw": parts[-2], "name": parts[-1], "owner": owner,
-                        "style": "setter", "file": rel, "line": i + 1,
+                        "style": "setter", "file": rel, "line": orig_ln[i],
                         "qualified": bool(QUALIFIER_RE.search(line)),
                     })
                 annos = []
@@ -402,7 +433,7 @@ def parse_java(path, rel):
                     ctor_injected_types[cur_type["name"]].append({
                         "type_raw": fm2.group(1), "name": fm2.group(2),
                         "owner": cur_type["name"], "style": "lombok-ctor",
-                        "file": rel, "line": i + 1,
+                        "file": rel, "line": orig_ln[i],
                         "qualified": bool(QUALIFIER_RE.search(line)),
                     })
 
@@ -419,7 +450,7 @@ def parse_java(path, rel):
                     if len(parts) >= 2:
                         jf.injections.append({
                             "type_raw": parts[-2], "name": parts[-1], "owner": cur_type["name"],
-                            "style": "ctor", "file": rel, "line": i + 1,
+                            "style": "ctor", "file": rel, "line": orig_ln[i],
                             "qualified": bool(QUALIFIER_RE.search(p)),
                         })
         annos = []

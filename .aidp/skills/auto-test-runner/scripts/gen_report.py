@@ -13,10 +13,14 @@
 输出 --json(供子 Agent 组织报告),或 --md 打印报告「二、测试结果汇总」章
 (2.1 汇总数据 / 2.2 各模块 / 2.3 缺陷列表 / 2.4 执行明细 /(有 self-heal 时)2.5 追溯 /(有 free-scan 项时)2.6 自由巡检);
 一、概况与三、结论(上线条件/遗留风险/改进建议)属判断性内容,由子 Agent 据本章数据人工撰写,脚本不产出。
-仅标准库。退出码:0 = 聚合成功且无「无证据 verified pass」, 1 = 存在无证据 verified pass, 2 = 输入错误。
+仅标准库。退出码:0 = 聚合成功且无「无证据 verified pass」且无坏文件, 1 = 存在无证据 verified pass,
+2 = 输入错误 —— 目录不存在 / 无结果 JSON / **任一结果 JSON 不可读、解析失败或顶层不是对象**
+(登记进 `--json` 的 `read_errors[]` 与 `--md` 告警,其余文件照常聚合;统计不完整 ⛔ 不得 exit 0)。
+1 与 2 同时成立时返回 1(确定违规不降格成「不计维度失败」)。
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -28,7 +32,15 @@ FAIL_LEVEL = {'P0': 'P1', 'P1': 'P2', 'P2': 'P3'}
 #    套件)十条模板项里既有「导出只导当前页」这种确定的 Critical、也有「截断没 tooltip」这种
 #    Important,**整族锁 Critical 会把后者拔高成阻断项**。执行结果按每条用例自身 severity 判。
 #    (本注释是副本:上游 dev-manual-testcase 各自持一份,按 SKILL 独立性原则不跨 skill 引用。)
-CRITICAL_FAMILY_MARKERS = ('[PRD存在性]', 'PRD存在性', '[回归]', '[文案一致性]', '文案一致性')
+# ⚠️⚠️ **只认带方括号的完整标记,⛔ 不得加回裸词 `PRD存在性` / `文案一致性`。** 首版含裸词且对
+#    test_name 子串匹配,于是 `[还原度] 长文本截断与 tooltip 文案一致性` 这类**普通标题里恰好出现该词**
+#    的用例被锁 Critical(假红,恰好把上面那条 `[还原度]` 不锁的取舍当场抵消)。
+#    test_name / type / suite 是自由文本 → 只按方括号标记子串匹配;
+#    case_family / tags 是结构化取值 → 按**完整值相等**比较(见 is_critical_family)。
+CRITICAL_FAMILY_MARKERS = ('[PRD存在性]', '[回归]', '[文案一致性]')
+# 结构化字段(case_family / tags)允许写不带方括号的完整族名,但必须**整值相等**
+CRITICAL_FAMILY_VALUES = frozenset(CRITICAL_FAMILY_MARKERS) | frozenset(
+    m.strip('[]') for m in CRITICAL_FAMILY_MARKERS)
 
 
 def _fmt_ms(ms):
@@ -44,11 +56,12 @@ def _fmt_ms(ms):
     return f'{sec / 3600:.2f}h'
 
 
+# >>> SHARED-SEGMENT: atr-has-lightweight-evidence >>>
 def has_lightweight_evidence(value):
-    """direct pass 的轻量事实门:摘要或产物路径即可,不要求完整截图。
+    """direct pass 的轻量事实门:有摘要/产物路径即可,不要求完整截图或截图类型。
 
-    ⚠️ 与 check_result.has_lightweight_evidence 逻辑必须保持一致(落盘校验 vs 聚合复用同一判据),
-    改一处必须同步改另一处——两脚本各自独立、不跨文件 import,故只能靠这行注释提醒。
+    ⚠️ check_result.py(落盘校验)与 gen_report.py(聚合)各持一份,两脚本各自独立、
+    不跨文件 import;一致性由仓库根 `scripts/check_shared_segment_sync.py`(仅源仓库维护时使用) 逐字节比对守住。
     """
     if not isinstance(value, list) or not value:
         return False
@@ -62,6 +75,7 @@ def has_lightweight_evidence(value):
                     or (isinstance(artifact, str) and artifact.strip())):
                 return True
     return False
+# <<< SHARED-SEGMENT: atr-has-lightweight-evidence <<<
 
 
 def evidence_artifact(ev):
@@ -69,8 +83,7 @@ def evidence_artifact(ev):
 
     截图可在同一轮混合 WebP/PNG/JPEG;本聚合器只透传 `artifact`,实际文件存在性与
     单截图单格式契约由 check_result.py 前置校验。**对形状不合契约的元素降级而非崩溃**。
-
-    实测中出现过:执行方把 evidence 写成字符串数组
+    实测反馈:执行方把 evidence 写成字符串数组
     `["round-1/evidence/x.png"]`,而本脚本两处直接 `ev[0].get('artifact')` →
     `AttributeError: 'str' object has no attribute 'get'`,**整份报告聚合中断**。
     结果 JSON 由执行子 Agent 手写、形状本就会漂,聚合器必须容错:
@@ -130,14 +143,41 @@ def is_critical_family(r):
         return True
     if str(r.get('type', '')).strip() == '回归':
         return True
-    hay = ' '.join(str(r.get(k, '')) for k in
-                   ('test_name', 'type', 'suite', 'case_family', 'tags'))
-    return any(m in hay for m in CRITICAL_FAMILY_MARKERS)
+    hay = ' '.join(str(r.get(k, '')) for k in ('test_name', 'type', 'suite'))
+    if any(m in hay for m in CRITICAL_FAMILY_MARKERS):
+        return True
+    for k in ('case_family', 'tags'):
+        for v in _structured_values(r.get(k)):
+            if v in CRITICAL_FAMILY_VALUES:
+                return True
+            # 空白分隔的多标记串(`[回归] [PRD存在性]`):逐 token 只认**带方括号**的完整标记,
+            # 裸族名必须是整个值 —— 否则 `长文本 文案一致性` 这种描述串又会被切出裸词假红
+            if any(t in CRITICAL_FAMILY_MARKERS for t in v.split()):
+                return True
+    return False
+
+
+def _structured_values(value):
+    """case_family / tags 的取值展开为逐个完整值(数组逐元素;字符串按逗号/分号切)。
+    ⛔ 不做子串匹配 —— 结构化字段的语义是「属于哪个族」,值必须整值相等。"""
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+    out = []
+    for it in items:
+        if not isinstance(it, str):
+            continue
+        for part in re.split(r'[,，;；]+', it):
+            if part.strip():
+                out.append(part.strip())
+    return out
 
 
 # ★环境类 block_reason 单一信源(命中即判「环境问题」、不计产品缺陷、不锁 Critical)。
-# 前置环境未就绪导致的整批 block 若被计成产品缺陷,会污染下游「缺陷→升级 bug→回写问题汇总清单」链路。
-# 此集合供 level_defect 与环境问题统计共用,新增环境类枚举只改这一处。
+# 实测反馈:32 条用例因前置环境未就绪全部 block(precondition-unmet),
+# 报告汇总栏却显示「产品缺陷 32 条」并编号成 BUG-xxx——纯环境阻塞被误报成 32 个产品 bug,
+# 还会污染下游「缺陷→升级 bug→回写问题汇总清单」链路。根因是此前只有 driver-missing 一类
+# 被判环境问题。此集合供 level_defect 与环境问题统计共用,新增环境类枚举只改这一处。
 # ⚠️ retry-exhausted 刻意不在集合内——「单操作重试到顶」既可能是环境抖动、也可能是真缺陷
 # (元素永远定位不到 = 页面没渲染出来),保守留在「待验证/产品缺陷」侧由人复核,宁可多看一眼。
 ENV_BLOCK_REASONS = frozenset({
@@ -195,12 +235,23 @@ def level_defect(status, priority, block_reason, critical_family=False, env_issu
 
 
 # round 目录根下的非用例产物。回退分支(无 results/ 子目录时直接 glob round 根)必须排除它们,
-# 否则 env-facts.json 会被当成一条用例统计——实测「1 条用例 + env-facts.json」曾聚合出
+# 否则 env-facts.json 会被当成一条用例统计—— 实测「1 条用例 + env-facts.json」曾聚合出
 # total=2 / block=2 / 多出一个「未分组」模块。用文件名黑名单 + 「无 case_id 即非用例」双保险。
 NON_RESULT_FILES = {'env-facts.json', 'token-usage.json', 'run-context.json'}
 
 
-def load_results(round_dir):
+def load_results(round_dir, read_errors=None):
+    """读 round 下的结果 JSON。
+
+    ⚠️ **读不出来 / 解析失败 / 顶层不是对象的文件绝不可静默丢弃**:此前一律 `continue`,
+    一份损坏的 fail 结果会从分母里**消失**,通过率虚高且 exit 0(假绿);顶层是数组时
+    又在 aggregate 里 `r.get` 裸 traceback、exit 1,与「1 = 存在无证据 verified pass」撞码。
+    现收进 `read_errors`(调用方传入的 list),由 main() 进 `--json` / `--md` 并决定退出码。
+    回退分支(无 `results/` 子目录)下,round 根本就可能混入别的元数据 JSON,故**可解析但非用例**
+    (非对象或无 case_id)的照旧跳过;但**解析失败**的一律登记——那是坏文件,不是「非用例」。
+    """
+    if read_errors is None:
+        read_errors = []
     rd = Path(round_dir)
     fallback = not (rd / 'results').is_dir()
     results_dir = rd if fallback else rd / 'results'
@@ -211,10 +262,15 @@ def load_results(round_dir):
             continue
         try:
             data = json.loads(f.read_text(encoding='utf-8'))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            read_errors.append({'file': str(f), 'error': f'{type(e).__name__}: {e}'})
             continue
         # 回退分支下 round 根可能混入其它元数据 JSON:没有 case_id 的一律不算用例
         if fallback and not (isinstance(data, dict) and data.get('case_id')):
+            continue
+        if not isinstance(data, dict):
+            read_errors.append({'file': str(f),
+                                'error': f'顶层不是 JSON 对象(实为 {type(data).__name__}),无法作为一条用例结果'})
             continue
         out.append(data)
     return out
@@ -268,13 +324,13 @@ def aggregate(all_entries):
             no_evidence.append(r.get('case_id', '?'))
         elif st == 'pass' and mode == 'direct' and not has_lightweight_evidence(r.get('evidence')):
             direct_pass_without_evidence.append(r.get('case_id', '?'))
-        # ── 单条耗时(2026-09-10 下游实证:没有它,任何优化都无法验证是否生效) ──
+        # ── 单条耗时(实测:没有它,任何优化都无法验证是否生效) ──
         # ⚠️ `elapsed_ms` 优先、`duration_ms` 兼容回落:旧结果只有后者,不回落等于整轮没有耗时。
         el = r.get('elapsed_ms')
         if not isinstance(el, (int, float)) or isinstance(el, bool):
             el = r.get('duration_ms')
         if isinstance(el, (int, float)) and not isinstance(el, bool) and el >= 0:
-            # ★ `amortized` 必须跟着值一起走(2026-10-09 下游反馈):方法论要求**按套件批量执行**,
+            # ★ `amortized` 必须跟着值一起走(实际项目反馈):方法论要求**按套件批量执行**,
             #   于是 `elapsed_ms` 常常是**批次窗口的均摊值**。丢掉这个标记,下面 §2.7 就会把
             #   「窗口 / N」当逐条真值排名,产出「某条用例耗时 28 分钟」这种假事实。
             timings.append({'case_id': r.get('case_id', '?'), 'suite': suite,
@@ -325,7 +381,7 @@ def aggregate(all_entries):
             # 历史 Web 结果没有逐态来源,不能把旧布尔值伪装成已核验四态。
             legacy_mcp_unverified += 1
 
-        # self-heal 失败反思追溯(可选字段;缺省则不收集)
+        # self-heal 失败反思追溯(可选字段;缺省则不收集,行为与旧版本一致)
         sht = r.get('self_heal_trace')
         if isinstance(sht, dict) and sht:
             self_heal_traces.append({
@@ -391,7 +447,7 @@ def aggregate(all_entries):
     for m in modules.values():
         module_eligible = m['total'] - m.get('na', 0)
         m['pass_rate'] = round(m['pass'] / module_eligible, 4) if module_eligible else 0
-    # 自由巡检聚合(free_scan 开启时才有;缺省为空,整节不输出)
+    # 自由巡检聚合(free_scan 开启时才有;缺省为空,整节不输出、行为与旧版本一致)
     scan_findings = []
     for sc in scans:
         sc_rt = sc.get('runtimeErrors') or []
@@ -525,6 +581,17 @@ def to_md(agg, results):
                  f"{icon} | {md_cell(err)} | {md_cell(case_defect.get(cid, '—'))} | "
                  f"{md_cell(ev_path)} |")
 
+    # 不可读 / 不合契约的结果文件(统计不完整,必须进「三、结论 → 遗留风险」)
+    read_errors = agg.get('read_errors') or []
+    if read_errors:
+        L.append('')
+        L.append(f'> ❌ **结果 JSON 不可读/不合契约 {len(read_errors)} 个,未计入上方统计**——'
+                 f'通过率等指标不完整、本轮结论不成立,请写入「三、结论 → 遗留风险」并修复后重跑:')
+        for e in read_errors[:20]:
+            L.append(f"> - `{md_cell(e.get('file', ''))}`: {md_cell(e.get('error', ''))}")
+        if len(read_errors) > 20:
+            L.append(f'> - …另有 {len(read_errors) - 20} 个,见 `--json` 的 `read_errors`')
+
     # 结果 JSON 形状告警(仅在有不合契约形状时输出;供报告「三、结论 → 遗留风险」引用)
     shape_warns = agg.get('shape_warnings') or []
     if shape_warns:
@@ -536,7 +603,7 @@ def to_md(agg, results):
         if len(shape_warns) > 20:
             L.append(f'> - …另有 {len(shape_warns) - 20} 条,见 `--json` 的 `shape_warnings`')
 
-    # self-heal 失败反思追溯(仅在有 self_heal_trace 时输出;缺省则整段不出)
+    # self-heal 失败反思追溯(仅在有 self_heal_trace 时输出;缺省则整段不出,与旧版本一致)
     traces = agg.get('self_heal_traces') or []
     if traces:
         L.append('')
@@ -581,8 +648,8 @@ def to_md(agg, results):
                 summary = (f.get('error') or '')[:80].replace('\n', ' ') or '—'
             L.append(f"| {md_cell(f['page'])} | {icon} | {f['error_count']} | "
                      f"{md_cell(top)} | {md_cell(summary)} |")
-    # ── 2.7 耗时分布(2026-09-10 新增) ──
-    # ⚠️ **本节存在的全部理由**:下游实证两轮 116 条里,`TC-PXY-F01` **一条占总时长 25%**,
+    # ── 2.7 耗时分布 ──
+    # ⚠️ **本节存在的全部理由**:实测两轮 116 条里,`TC-PXY-F01` **一条占总时长 25%**,
     #    而这个结论是靠三个 evidence 文件的 mtime 跨度**手工反推**才发现的 —— 只要那条用例少产
     #    一个证据文件,它就整条漏掉。有了 elapsed_ms 就能直接排序,「哪条慢」不再靠运气。
     # ⚠️ 无耗时数据时**不输出空表**,而是打一行「未采集」——空表会被读成「都很快」。
@@ -599,7 +666,7 @@ def to_md(agg, results):
             L.append(f'> 已采集 {len(timings)} 条,合计 {_fmt_ms(tot)}'
                      + (f';**另有 {len(tmiss)} 条未采集耗时**(其真实耗时不在下表内,'
                         f'⛔ 不要把本表合计当作全轮执行时长)' if tmiss else '') + '。\n')
-            # ★ 均摊值必须**长得不一样**,否则等于没标(下游实测:报告把均摊值当逐条真值排名,
+            # ★ 均摊值必须**长得不一样**,否则等于没标(实测:报告把均摊值当逐条真值排名,
             #   出现「TC-LIST-G09 耗时 28 分钟」这种假事实)。渲染为 `~8.5s` + 本节显式写边界。
             amort = [t for t in timings if t.get('amortized')]
             if amort:
@@ -625,7 +692,7 @@ def to_md(agg, results):
             L.append(f"\n> **execution_mode 分布**:{dist};**实际触发自愈 "
                      f"{agg.get('self_heal_actual', 0)} 次**。\n"
                      f"> ⚠️ `execution_mode=self-heal` 表示「**具备**自愈能力」,**不表示「实际自愈了」** —— "
-                     f"下游实证曾把「43 条 self-heal」读成「43 条在重跑」,而实际只重试过 1 次,"
+                     f"实测曾把「43 条 self-heal」读成「43 条在重跑」,而实际只重试过 1 次,"
                      f"调优方向当场被带偏。两个数必须并排看。")
         mech = agg.get('mech_counts') or {}
         if mech and set(mech) - {'dom'}:
@@ -673,13 +740,21 @@ def main():
         print(json.dumps({'error': msg}, ensure_ascii=False) if args.json else msg)
         return 2
 
-    results = load_results(args.round_dir)
+    read_errors = []
+    results = load_results(args.round_dir, read_errors)
     if not results:
-        msg = f'未找到结果 JSON:{args.round_dir}'
-        print(json.dumps({'error': msg}, ensure_ascii=False) if args.json else msg)
+        msg = f'未找到结果 JSON:{args.round_dir}' if not read_errors else \
+            f'结果 JSON 全部不可读/不合契约({len(read_errors)} 个):{args.round_dir}'
+        if args.json:
+            print(json.dumps({'error': msg, 'read_errors': read_errors}, ensure_ascii=False))
+        else:
+            print(msg)
+            for e in read_errors:
+                print(f"  - {e['file']}: {e['error']}", file=sys.stderr)
         return 2
 
     agg = aggregate(results)
+    agg['read_errors'] = read_errors
     if args.json:
         print(json.dumps(agg, ensure_ascii=False, indent=2))
     elif args.md:
@@ -698,7 +773,16 @@ def main():
             print(f"❌ 无证据的 verified/self-heal pass:"
                   f"{agg['verified_pass_without_evidence']}")
 
-    return 1 if agg['verified_pass_without_evidence'] else 0
+        if read_errors:
+            print(f"❌ 结果 JSON 不可读/不合契约 {len(read_errors)} 个,统计不完整(本轮结论不成立):")
+            for e in read_errors:
+                print(f"  - {e['file']}: {e['error']}")
+
+    if agg['verified_pass_without_evidence']:
+        return 1
+    # 有坏文件 → 统计不完整,⛔ 不得 exit 0;按「入参/环境错」返回 2(修好文件后重跑)。
+    # 1 优先于 2:已检出的确定违规不得被降格成「不计维度失败」。
+    return 2 if read_errors else 0
 
 
 if __name__ == '__main__':

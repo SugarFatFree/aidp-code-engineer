@@ -30,7 +30,9 @@ check_vue_style_preprocessor.py — Vue SFC `<style lang>` 与预处理器依赖
   - 只认**行首（列 0）**的顶层块起始标签，这是 Vue SFC 的既定写法；若某文件因缩进
     导致一个顶层块都没认出、而宽松扫描能扫到，则给 WARN 提示人工确认（不静默漏过）
 
-退出码：0 = 无 ERROR（`--strict` 时还须无 WARN）；1 = 未通过；2 = 输入错误
+退出码：0 = 无 ERROR（`--strict` 时还须无 WARN）且无读失败；1 = 未通过；
+        2 = 入参或环境错（路径不存在 / **有文件读取失败**——其余照扫，明细进 `--json` 的
+        `read_errors[]`，此时 `gate_passed` 恒 false；与 1 同时成立时返回 1）
 """
 
 import argparse
@@ -81,7 +83,8 @@ def find_git_root(start: Path) -> Path:
     return origin
 
 
-def collect_declared_deps(vue_file: Path, stop_at: Path) -> Tuple[Set[str], List[str]]:
+def collect_declared_deps(vue_file: Path, stop_at: Path,
+                          read_errors: Optional[Dict[str, str]] = None) -> Tuple[Set[str], List[str]]:
     """就近向上收集 package.json 里声明的依赖名。
 
     monorepo 常把 sass/less 提到根 package.json（依赖提升），只看最近那份会误报，
@@ -100,7 +103,13 @@ def collect_declared_deps(vue_file: Path, stop_at: Path) -> Tuple[Set[str], List
         if pkg.is_file():
             try:
                 data = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
-            except (ValueError, OSError):
+            except OSError as e:
+                # 读不出的 package.json 当成「什么都没声明」会把已声明的依赖判成未声明(假红),
+                # 当成「读到了」又不知内容 —— 登记 read_errors、由 main() 按环境错处理
+                if read_errors is not None:
+                    read_errors.setdefault(str(pkg), f"{type(e).__name__}: {e}")
+                data = {}
+            except ValueError:
                 data = {}
             if isinstance(data, dict):
                 for field in DEP_FIELDS:
@@ -238,7 +247,8 @@ def iter_vue_files(targets: List[str]) -> List[Path]:
     return uniq
 
 
-def compute_majority_lang(root: Path) -> Tuple[Optional[str], Counter]:
+def compute_majority_lang(root: Path,
+                          read_errors: Optional[Dict[str, str]] = None) -> Tuple[Optional[str], Counter]:
     """全库众数 lang —— 判「孤例」用的基线。
 
     只统计**需要预处理器**的 lang：原生 CSS 与众数之争无关，混进来会稀释口径。
@@ -249,7 +259,9 @@ def compute_majority_lang(root: Path) -> Tuple[Optional[str], Counter]:
             continue
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError as e:
+            if read_errors is not None:
+                read_errors.setdefault(str(f), f"{type(e).__name__}: {e}")
             continue
         for lang, _ in extract_style_langs(text)[0]:
             if lang and lang not in NATIVE_LANGS:
@@ -264,7 +276,12 @@ def analyze(targets: List[str], baseline_root: Optional[Path]) -> Dict:
     first = Path(targets[0]) if targets else Path(".")
     git_root = find_git_root(first if first.exists() else Path("."))
     root = baseline_root or git_root
-    majority, dist = compute_majority_lang(root)
+    # ⚠️ 读失败**不得只发 WARN**:此前不可读的 .vue 记一条 WARN 后 `gate_passed: true` / exit 0,
+    #    而它恰恰可能就是那个 `lang` 未声明的文件(审计实测 chmod 000 后照样过闸,假绿)。
+    #    与同 SKILL `check_di_resolvability.py` 同口径:其余照扫 + `read_errors[]` 进 JSON,
+    #    有读失败且无 ERROR → exit 2(环境错),且 `gate_passed` 恒为 false。
+    read_errors: Dict[str, str] = {}
+    majority, dist = compute_majority_lang(root, read_errors)
 
     errors: List[Dict] = []
     warns: List[Dict] = []
@@ -274,8 +291,7 @@ def analyze(targets: List[str], baseline_root: Optional[Path]) -> Dict:
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
-            warns.append({"file": str(f), "line": 0, "lang": "",
-                          "msg": f"读取失败，跳过：{e}"})
+            read_errors.setdefault(str(f), f"{type(e).__name__}: {e}")
             continue
         langs, suspicious = extract_style_langs(text)
         if suspicious:
@@ -286,7 +302,7 @@ def analyze(targets: List[str], baseline_root: Optional[Path]) -> Dict:
             })
         if not langs:
             continue
-        deps, pkgs = collect_declared_deps(f, git_root)
+        deps, pkgs = collect_declared_deps(f, git_root, read_errors)
         for lang, line in langs:
             if lang in NATIVE_LANGS:
                 continue
@@ -333,6 +349,16 @@ def analyze(targets: List[str], baseline_root: Optional[Path]) -> Dict:
                            f"孤例，疑似写错，请确认是否有意为之",
                 })
 
+    # 非 git 目录提示:`find_git_root()` 找不到 `.git` 时依赖合并只到起点目录为止,monorepo 根部
+    # 提升的 sass/less 看不到 —— 此时「未声明」ERROR 可能是判错了环境。只在真有 ERROR 时提示
+    # (没有 ERROR 时这条提示与结论无关,加了只会让 --strict 在非 git 目录恒红)。
+    if errors and not (git_root / ".git").exists():
+        warns.append({
+            "file": str(git_root), "line": 0, "lang": "",
+            "msg": "未找到 .git:package.json 只合并到起点目录为止,monorepo 根部提升的预处理器依赖看不到 ——"
+                   "上面的「未声明」ERROR 请在仓库根(含 .git)或用能看到根 package.json 的目标重跑确认",
+        })
+
     return {
         "passed": not errors,
         # 扫不到 .vue = 非 Vue 项目 → 整维度跳过（不计入通过/不通过）
@@ -344,6 +370,7 @@ def analyze(targets: List[str], baseline_root: Optional[Path]) -> Dict:
         "baseline_root": str(root),
         "errors": errors,
         "warns": warns,
+        "read_errors": [{"file": k, "error": v} for k, v in sorted(read_errors.items())],
     }
 
 
@@ -371,7 +398,12 @@ def print_report(r: Dict) -> None:
         print(f"  🟡 {w['file']}:{w['line']}")
         print(f"       {w['msg']}")
 
-    if r["passed"]:
+    for e in r.get("read_errors") or []:
+        print(f"  ⛔ 读取失败：{e['file']}  {e['error']}")
+
+    if r.get("read_errors") and r["passed"]:
+        print(f"\n⛔ {len(r['read_errors'])} 个文件读取失败，本维度结论不可信（exit 2，不是通过）")
+    elif r["passed"]:
         print("\n✅ 无阻塞级问题" + ("（另有 WARN 需确认）" if r["warns"] else ""))
     else:
         print(f"\n❌ {len(r['errors'])} 处预处理器未声明 —— CI 构建会失败，回 /sprint-bugfix")
@@ -402,13 +434,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     # （--strict 下 WARN 也算不通过）。二者分开，免得 JSON 消费方读 passed 得出
     # 与退出码相反的结论。
     result["strict"] = bool(args.strict)
-    result["gate_passed"] = not result["errors"] and not (args.strict and result["warns"])
+    result["gate_passed"] = (not result["errors"] and not (args.strict and result["warns"])
+                             and not result["read_errors"])
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print_report(result)
 
-    return 0 if result["gate_passed"] else 1
+    if result["errors"] or (args.strict and result["warns"]):
+        return 1
+    # 读失败属环境错(2),⛔ 不得落到 0;已检出的确定违规优先返回 1
+    return 2 if result["read_errors"] else 0
 
 
 if __name__ == "__main__":

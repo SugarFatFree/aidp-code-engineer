@@ -45,13 +45,13 @@ import re
 import sys
 from pathlib import Path, PurePosixPath
 
-# 现行规范主锚:专职索引
+# 新范式主锚:专职索引
 INDEX_DOC_PATTERN = re.compile(r'^00_索引\.md$')
 # 历史主锚(grandfather 识别,不报错):00_*-总览.md / 00_*-主文档.md
 LEGACY_MAIN_DOC_PATTERNS = [
     re.compile(r'^00_.*(总览|主文档)\.md$'),
 ]
-# ⚠️ 裸 `00_<语义名>.md` 也是 grandfather 形态（补，对齐 ux 副本的
+# ⚠️ 裸 `00_<语义名>.md` 也是 grandfather 形态（2026-08-23 补，对齐 ux 副本的
 # MAIN_DOC_FALLBACK_PATTERN）：缺这条兜底时，历史存量 `00_研发执行计划.md` 会被判
 # 「未找到主锚」exit 1 —— 与本文件 docstring「历史存量 grandfather 识别放行、
 # **绝不 exit 非 0**」及 flow-qr-dispatch.md「0=通过(含仅历史 grandfather 告警)」
@@ -78,7 +78,7 @@ OVERVIEW_INDEX_PATTERN = re.compile(r'^00_|^98_|^99_|总览|索引|index|待澄�
 
 
 def find_index_doc(doc_dir: Path) -> Path | None:
-    """现行规范主锚:专职索引 00_索引.md"""
+    """新范式主锚:专职索引 00_索引.md"""
     for f in doc_dir.iterdir():
         if f.is_file() and INDEX_DOC_PATTERN.match(f.name):
             return f
@@ -138,10 +138,10 @@ def extract_referenced_files(main_doc: Path):
        `resolve()` **跟随符号链接**:同目录里一个指向别处的软链子文档会被解析到链接目标所在目录、
        落进 `cross`,于是 ① 断链软链从 FAIL 变 **PASS**(假绿),② 一条字面写着 `./` 的引用
        被报成「跨目录引用」—— 与上一段 ⚠️⚠️ 的原话**直接相反**。
-       词法归一只看路径字符串,与磁盘上有没有软链无关,这也是本仓库既有先例
+       词法归一只看路径字符串,与磁盘上有没有软链无关,这也是既有先例
        (`check_result.py` 明写「结果文件按**词法路径**逐轮校验」)。
 
-    ⚠️ 原缺陷(2026-10-09 下游实测):此处只取 `Path(...).name`**把目录段丢掉**,于是
+    ⚠️ 原缺陷(实测):此处只取 `Path(...).name`**把目录段丢掉**,于是
        研发自测目录的索引链到研发需求目录的 `99_待澄清问题清单.md`,被判
        「主文档引用了 99_待澄清问题清单.md 但目录下不存在」→ error/exit 1;
        下游只能把链接改写成纯文字指向来绕开,而那恰好损失了本 SKILL 自己要求的
@@ -210,7 +210,7 @@ def check_semantic_prefix(sub_docs: list[Path], issues: list[dict]) -> None:
         if SEMANTIC_MIDFIX_PATTERN.match(f.name):
             issues.append({'dim': '禁语义前缀', 'level': 'warn', 'file': f.name,
                            'msg': f'文件名 {f.name} 含语义中缀(补充-/追加-/附加-/扩展-),'
-                                  f'现行规范应直接 `NN_<业务名>.md`;历史存量 grandfather 放行(不硬失败)'})
+                                  f'新范式应直接 `NN_<业务名>.md`;历史存量 grandfather 放行(不硬失败)'})
         elif SEMANTIC_BARE_PATTERN.match(f.name):
             issues.append({'dim': '禁语义前缀', 'level': 'error', 'file': f.name,
                            'msg': f'文件名 {f.name} 以语义词(补充-/追加-/附加-/扩展-)开头且无两位序号前缀,'
@@ -226,7 +226,7 @@ def main() -> int:
     args = parser.parse_args()
 
     doc_dir = Path(args.doc_dir)
-    # ⚠️ exists() 与 is_dir() 必须分开判（CLAUDE.md 退出码约定②，不可回退）。
+    # ⚠️ exists() 与 is_dir() 必须分开判（退出码约定②,见 references/rationale.md，不可回退）。
     #    合并成一个 is_dir() 会把「路径根本不存在」和「传入单文件＝合法 N/A」压成同一个 exit 2，
     #    而下游 QR 口径把 exit 2 一律当「入参错、非维度违规、不计失败」略过
     #    —— 于是路径打错一个字，整档硬门静默消失且无任何告警。
@@ -292,18 +292,18 @@ def main() -> int:
         return 1
 
     # ── 单/裸文件模式判定 ──────────────────────────────────────────
-    # 现行规范要求 `00_索引.md` + `01_<语义名>.md`(≥2 文件)。
+    # 新范式要求 `00_索引.md` + `01_<语义名>.md`(≥2 文件)。
     # 历史裸单文件(仅 1 个 .md 且非 00_索引.md)grandfather 放行、warn、不 exit 非 0。
     if len(md_files) <= 1:
         summary['mode'] = 'single'
         if index_doc:
             # 只有 00_索引.md 而无内容文档:范式要求 + 01_ 内容文档,提示但不硬失败
-            issues.append({'dim': '现行规范', 'level': 'warn',
-                           'msg': '仅有 00_索引.md 而无内容文档(01_+);现行规范应产出 00_索引.md + 01_<语义名>.md'})
+            issues.append({'dim': '新范式', 'level': 'warn',
+                           'msg': '仅有 00_索引.md 而无内容文档(01_+);新范式应产出 00_索引.md + 01_<语义名>.md'})
             result = {'status': 'pass', 'mode': 'single', 'summary': summary, 'issues': issues}
         else:
-            issues.append({'dim': '现行规范', 'level': 'warn',
-                           'msg': '历史裸单文件模式:现行规范要求 00_索引.md + 01_<语义名>.md(≥2 文件);'
+            issues.append({'dim': '新范式', 'level': 'warn',
+                           'msg': '历史裸单文件模式:新范式要求 00_索引.md + 01_<语义名>.md(≥2 文件);'
                                   '历史存量 grandfather 放行(不硬失败)'})
             result = {'status': 'pass', 'mode': 'single', 'summary': summary, 'issues': issues}
         if args.json:
@@ -326,11 +326,11 @@ def main() -> int:
         summary['main_doc'] = legacy_main.name
         issues.append({'dim': '主文档', 'level': 'warn', 'file': legacy_main.name,
                        'msg': f'使用历史主锚 {legacy_main.name}(总览/主文档);'
-                              f'现行规范应产出专职索引 00_索引.md(grandfather 放行,不硬失败)'})
+                              f'新范式应产出专职索引 00_索引.md(grandfather 放行,不硬失败)'})
     else:
         main_doc = None
         issues.append({'dim': '主文档', 'level': 'error',
-                       'msg': f'未找到主锚:现行规范要求 00_索引.md(历史 00_*-总览.md/00_*-主文档.md 亦可识别)。目录: {doc_dir}'})
+                       'msg': f'未找到主锚:新范式要求 00_索引.md(历史 00_*-总览.md/00_*-主文档.md 亦可识别)。目录: {doc_dir}'})
 
     sub_docs = collect_sub_docs(doc_dir, exclude=main_doc)
     summary['sub_docs'] = len(sub_docs)
@@ -358,13 +358,13 @@ def main() -> int:
     summary['fragment_sub_docs'] = fragment_files
 
     # 8. 序号连续性检测(提取所有序号,检查是否连续)
-    # ⚠️ 补：本 SKILL 的 SKILL.md 明文要求「后续序号接上一文档自动累进、
+    # ⚠️ 2026-08-23 补：本 SKILL 的 SKILL.md 明文要求「后续序号接上一文档自动累进、
     # **不跳号**、不嵌套二级序号」，而这条判据此前只有 ux/architect 两份副本实现，
     # planner 副本整段缺失 —— 属能力回退（同一 fixture：ux exit 1、planner exit 0）。
     # SKILL 独立性允许三份副本各自演进，但不允许自家规范写了、自家硬门不查。
     seq_nums = []
     # ⚠️ 本副本的变量名是 `sub_docs`（不是 ux 副本里的 `all_docs`）—— 从姊妹脚本搬判据时
-    # 必须核对变量名，否则就是又一次「新增分支引用未定义变量」（本仓库已连续踩 4 次）。
+    # 必须核对变量名，否则就是又一次「新增分支引用未定义变量」（既有教训:已连续踩 4 次）。
     for f in sub_docs:
         m = SUB_DOC_PATTERN.match(f.name)
         if m:

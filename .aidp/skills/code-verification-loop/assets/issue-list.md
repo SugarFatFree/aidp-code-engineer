@@ -2,7 +2,8 @@
 
 > 验收时间：{日期}
 > 验收范围：{功能/模块名称}
-> 验收轮次：第 {N} 轮
+> 验收轮次：第 {N} 轮（`mode=verify-only` 恒为单轮）
+> 运行模式：{`loop` / `verify-only`}
 > 验收结果：❌ 不通过
 > 输入文档：{列出使用的 PRD、设计文档、接口文档}
 
@@ -14,7 +15,7 @@
 - 🟡 Important（应该修复）：{Y} 项
 - 🔵 Suggestion（建议优化）：{Z} 项
 
-**本轮验收不通过原因：** 存在 {X} 项 Critical 问题未修复。
+**本轮验收不通过原因：** {存在 X 项 Critical / Y 项 Important 问题；或有维度「未执行（原因）」/「基线无效，本项未核验」}。
 
 ---
 
@@ -22,9 +23,13 @@
 
 ### 问题 {N}: {问题标题}
 
+**维度：** {维度编号}
+
 **位置：** `{文件路径}:{行号}`
 
 **问题描述：** {详细描述问题}
+
+**证据：** {命中的命令与退出码 / `--json` 字段 / grep 命中行 / 对照的设计条目——能让调用方复核的原始依据}
 
 **代码片段：**
 ```{语言}
@@ -46,9 +51,13 @@
 
 ### 问题 {N}: {问题标题}
 
+**维度：** {维度编号}
+
 **位置：** `{文件路径}:{行号}`
 
 **问题描述：** {详细描述问题}
+
+**证据：** {命中的命令与退出码 / grep 命中行 / 对照的设计条目}
 
 **修复建议：** {具体的修复步骤}
 
@@ -58,7 +67,11 @@
 
 ### 建议 {N}: {建议标题}
 
+**维度：** {维度编号}
+
 **位置：** `{文件路径}:{行号}`
+
+**证据：** {依据}
 
 **优化建议：** {具体的优化建议}
 
@@ -66,7 +79,7 @@
 
 ---
 
-## 修复指引
+## 修复指引（仅 `mode=loop`；`mode=verify-only` 时整节删除，改用下方「修复优先级」）
 
 请 Agent1 按以下优先级修复问题：
 
@@ -75,6 +88,10 @@
 3. **最后考虑 🔵 Suggestion**（可选，由用户决定是否修复）
 
 修复完成后，请重新提交验收。
+
+## 修复优先级（仅 `mode=verify-only`；`mode=loop` 时整节删除）
+
+问题已按 🔴 Critical → 🟡 Important → 🔵 Suggestion 排序。本 SKILL 不修复、不创建 Agent1，修复由调用方归口处理。
 
 ---
 
@@ -144,7 +161,7 @@
 
 ### UI 还原度违规（维度 10·约定39-R2/R3/R10）
 
-> 判据脚本由 AIDP 脚手架下发到**被测项目侧** `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`；
+> 判据脚本由 AIDP 脚手架下发到**被测项目侧** `{{AIDP_HOME}}/scripts/check_ui_fidelity.py`（`{{AIDP_HOME}}` 由安装方渲染、相对被测项目根，见 [`../SKILL.md`](../SKILL.md)「运行路径约定」）；
 > ⛔ 本 SKILL 不写第二份同判据实现。脚本未下发时标「不适用」跳过、**报告仍留行**，
 > 但仍须对 R10 做一次人工 grep 兜底（它零豁免、判据纯词法）。
 
@@ -154,19 +171,19 @@
 | 约定39-R3（🟡） | 文本截断（`ellipsis`/`line-clamp`/`truncate`）而同节点或父节点无 `title`/tooltip | 补 `title` 或 tooltip；确属装饰性文案时就近声明 `fidelity-ignore: R3 <原因>`（**只写规则号不写原因须报 Important**） |
 | 约定39-R2（🟡） | 状态标签内容随数据变化，但 `type`/`color` 是字面量常量 —— 状态变了颜色不变 | 颜色随状态映射（枚举 → type/color 表），不写死 |
 
-### 失效实体与边界（维度 11·约定39-R5~R9 + R12）
+### 失效实体与边界（维度 11·约定39-R5~R9 + 约定39-R12）
 
 > 六条**机器检不了**，须验收 Agent **静态读代码**核对；某条本轮确无对应场景时标
 > 「⏭️ 不适用 + 一句话理由」，**不得直接省略**（省略与「查过且通过」在报告里长得一样）。
 
-| 规则 | 典型问题（下游真实缺陷） | 修复方向 |
+| 规则 | 典型问题（实际项目中出现过的缺陷） | 修复方向 |
 | :- | :- | :- |
-| R5 失效实体入口拦截 | 已下架产品仍可点详情并跳转成功 | 渲染处按 `status`/`isDeleted`/`expireTime` `v-if` 隐藏或 `disabled`；⛔ 不接受「按钮还在、点了报错」 |
-| R6 被删引用降级展示 | 已删除商品展示商品**编码**而非名称 | 存快照名字段或显式展示「已删除的 XX」；⛔ 不裸露 code/ID/空值 |
-| R7 加载态不渲染脏数据 | 套餐选择页加载中展示 14 个选项、加载完只剩 3 个 | 初始值置空 + `v-if="!loading"` 守卫 / 骨架屏。口诀：**未取到配置先隐藏** |
-| R8 编辑后视图自动同步 | 部门名称编辑后页面不同步 | 成功回调里刷新列表 / 回写 store；注意**跨组件**（详情改了列表没刷） |
-| R9 存量数据兼容 | 对「旧数据」点编辑直接报错 | 新必填给 `DEFAULT` + 迁移脚本 + 读取侧兜底；收窄枚举时老值走到哪个分支要写清 |
-| R12 同一指标跨页面同源 | 总览页 / 订单管理页 / 销售报表页的订单量三者不一致 | 收敛到详细设计「统计指标口径表」第 8 列声明的**权威取数口径**。口诀：**判据全站唯一化** |
+| 约定39-R5 失效实体入口拦截 | 已下架产品仍可点详情并跳转成功 | 渲染处按 `status`/`isDeleted`/`expireTime` `v-if` 隐藏或 `disabled`；⛔ 不接受「按钮还在、点了报错」 |
+| 约定39-R6 被删引用降级展示 | 已删除课程展示课程**编码**而非名称 | 存快照名字段或显式展示「已删除的 XX」；⛔ 不裸露 code/ID/空值 |
+| 约定39-R7 加载态不渲染脏数据 | 开通页加载中展示 14 个模型、加载完只剩 3 个 | 初始值置空 + `v-if="!loading"` 守卫 / 骨架屏。口诀：**未取到配置先隐藏** |
+| 约定39-R8 编辑后视图自动同步 | 部门名称编辑后页面不同步 | 成功回调里刷新列表 / 回写 store；注意**跨组件**（详情改了列表没刷） |
+| 约定39-R9 存量数据兼容 | 智能体点「旧数据」开通直接报错 | 新必填给 `DEFAULT` + 迁移脚本 + 读取侧兜底；收窄枚举时老值走到哪个分支要写清 |
+| 约定39-R12 同一指标跨页面同源 | 总览页 / 模型管理页 / 用量监控页的 token 调用量三者不一致 | 收敛到详细设计「统计指标口径表」第 8 列声明的**权威取数口径**。口诀：**判据全站唯一化** |
 
 ### 第三方临时 mock 反模式（维度 2B）
 
@@ -183,44 +200,8 @@
 
 ## 附录：扫描命令
 
-以下脚本可用于自查（均跨平台 Python，支持 Linux/macOS/Windows）。其中 **6 个为硬门禁脚本**（Critical 命中即返回非零退出码）：`scan_mock_data.py`、`scan_third_party_mock_antipatterns.py`、`check_file_complexity.py`（单文件超 2 倍阈值 / 单方法 > 50 行直接判 Critical）、`check_di_resolvability.py`（DI 不可解析 Critical 即返回 1；非 Java 项目跳过返 0）、`check_vue_style_preprocessor.py`（`<style lang>` 所需预处理器未声明即返回 1；非 Vue 项目跳过返 0）、`check_request_channel_url.py`（base 拼装判据平行实现即返回 1；扫不到前端源码跳过返 0）；**其余 5 个为采集脚本**（`scan_cache_usage.py` / `scan_code_conventions.py` / `scan_field_columns.py` / `scan_design_field_inventory.py` / `scan_stale_copy.py`）只采集命中点、不判错、退出码恒 0（`scan_stale_copy.py` 加 `--strict` 时有命中返 1），违规由验收 Agent 比对设计/基线后判定：
+⛔ **本模板不维护第二份脚本清单** —— **同一份清单两处维护必然漂移**。
 
-```bash
-# 维度 2A 普通 mock 零容忍 + 维度 2B THIRD_PARTY_MOCK 标注核验
-python3 <SKILL_DIR>/scripts/scan_mock_data.py src/ [--json] [--strict] [--third-party-mode]
-# 维度 2B 第三方临时 mock 全生命周期 / 反模式（构建期守卫 / 真实对接后残留）
-python3 <SKILL_DIR>/scripts/scan_third_party_mock_antipatterns.py src/ [--json] [--strict]
-# 维度 4 缓存使用点采集（与设计 A.2「缓存方案」双向比对）
-python3 <SKILL_DIR>/scripts/scan_cache_usage.py src/ [--json]
-# 维度 4 文件复杂度 + 单方法行数
-python3 <SKILL_DIR>/scripts/check_file_complexity.py src/ [--json] [--strict]
-# 维度 4 源码静态约定合集（http-hardcode / refresh-scope / dead-ref / dep-baseline / audit-fill）
-python3 <SKILL_DIR>/scripts/scan_code_conventions.py src/ [--checks http-hardcode,refresh-scope,dead-ref,dep-baseline,audit-fill] [--base <ref>] [--json]
-# 维度 4 字段/列对账采集（视觉还原支柱① 字段一致性；采表格列/表单字段集合，以展示语义名再与「需求字段→处置」对照表逐项比对）
-python3 <SKILL_DIR>/scripts/scan_field_columns.py src/ [--json]
-# 维度 4 字段集与设计双向比对·设计侧采集（采详细设计「字段实现清单」表，与 scan_field_columns 实现侧集合双向比对）
-python3 <SKILL_DIR>/scripts/scan_design_field_inventory.py <详细设计目录> [--json]
-# 维度 4 文案与数据口径一致性（旧口径残留 + 作废 REQ 编号注释未标失效；清单取自 ux 表 E/表 F）
-python3 <SKILL_DIR>/scripts/scan_stale_copy.py src/ --stale-phrases-file <旧口径字样> --stale-reqs-file <作废REQ编号> [--json] [--strict]
-# 维度 6 DI 依赖可解析性（Java/Spring 专用硬门；不编译不起容器，扫不到 .java 则整维度跳过）
-python3 <SKILL_DIR>/scripts/check_di_resolvability.py <代码目录> [--json] [--strict] [--config-keys-file <配置项清单>]
-
-# 维度 7 CSS 预处理器一致性（Vue 专用硬门；纯静态零构建，扫不到 .vue 则整维度跳过）
-python3 <SKILL_DIR>/scripts/check_vue_style_preprocessor.py <改动的 .vue 或前端目录> [--json] [--strict] [--baseline-root <众数基线根>]
-
-# 维度 8 请求通道 URL 拼装单一信源（前端专属硬门；纯静态零执行，扫不到前端源码则整维度跳过）
-python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --changed <本次改动的文件...> [--allow <单一信源glob>] [--json] [--strict]
-
-# 维度 10 — UI 还原度确定性检查（脚本在**被测项目侧**，不在本 SKILL）
-python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py --json
-# 维度 12 — 上游调用日志可见性与脱敏（脚本在**被测项目侧**；只扫 .java/.kt，非 JVM 栈 outbound_files=0 即标不适用）
-python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py --json
-# 维度 13 — 实现偏离设计（脚本在**被测项目侧**；⚠️ --version 必填带值，漏传落 exit 2 = 这一档静默没跑）
-python3 <被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --json
-
-# 备用 Shell 命令（仅 Linux/macOS）
-grep -rn "mockData\|fakeData\|mockList\|fakeList" src/ --include="*.vue" --include="*.ts" --include="*.js"
-find src/ -type d \( -name "mock" -o -name "mocks" -o -name "__mocks__" \)
-grep -rn "Mock.mock\|setupWorker\|json-server" src/
-grep -rn "TODO.*接口\|FIXME.*mock" src/
-```
+自查命令、参数、退出码与 `--json` 字段**一律以 [`../SKILL.md`](../SKILL.md) 各维度小节的机器门命令 + `references/flow-dims-*.md` 各维度命令块为单一信源**
+（维度 0 静态基线门起逐维度列出；被测项目侧委派脚本见各「外部脚本门控」维度）。
+填本清单时只需在每个问题的「检测方式」里写明**用的是哪个维度的哪条命令**及其退出码。

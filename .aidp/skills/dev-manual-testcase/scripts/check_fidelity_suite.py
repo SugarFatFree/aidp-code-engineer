@@ -7,7 +7,7 @@ r"""「通用还原度覆盖表」硬核回检 — dev-manual-testcase 维度 21
    REVERSE_DIMS,`R12` = 依赖/数据源故障注入)。通用规则一律写全称 `约定39-RNN`,
    本脚本的输出与文档也照此,勿写裸 `RNN`。
 
-背景(下游实测):71 条已关闭缺陷里 96%(68/71)属「正常发现」——走一遍正常流程就会碰到,
+背景(实测):71 条已关闭缺陷里 96%(68/71)属「正常发现」——走一遍正常流程就会碰到,
 却全部漏到 QA 侧。**问题不是测得不够狠,是测得太晚。** 这批缺陷与业务领域无关,
 可由**固定模板用例**覆盖,生成时只需知道页面类型(列表页/详情页/表单页/含数字的页),
 不需要理解业务。本脚本核验那批模板用例有没有真的生成出来。
@@ -47,6 +47,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 FIDELITY_TAG = "[还原度]"
+NONINTERACTIVE_TAG = "[非交互]"
+# [非交互] 标记只有在编排层显式传 module_kind=non_interactive|auto 时才生效(SKILL.md 约束 14:仅由 module_kind 判定)。
+# ⛔ 缺省 interactive 下贴标记不得绕开任何页面判据——否则页面模块贴个标记就能关掉维度 7/8/21。
+HONOR_NONINT = False
 
 # 覆盖表 4 列固定契约(与 references/flow-fidelity-suite.md 第四节严格一致)
 REQUIRED_COLUMNS = ["页面", "页面类型", "还原度用例数", "用例编号"]
@@ -56,7 +60,7 @@ PAGE_TYPE_BASELINE = {
     "列表页": (10, True),      # ★上游给出的明确验收基线,唯一 Critical 档
     "详情页": (4, False),
     "表单页": (2, False),
-    "含数字的页": (6, False),   # ⚠️ 由 5 条增至 6 条(新增「两位点数值自洽」)
+    "含数字的页": (6, False),   # ⚠️ 2026-09-07 由 5 条增至 6 条(新增「两位点数值自洽」)
 }
 
 # 用例存在信号:有用例才要求有覆盖表(纯方案文档 / 索引文档 / 规范文档不判)。
@@ -257,7 +261,11 @@ def scan_docs(files: List[Path], root: Path) -> Tuple[Dict, List[Dict]]:
         for i, ln in enumerate(lines):
             if in_code[i]:
                 continue
-            if not facts["has_case_signal"] and CASE_SIGNAL_RE.match(ln):
+            # [非交互] 用例/套件不套通用还原度套件(flow-scale-control.md 第五节),不算 UI 用例信号;
+            # ⚠️ 只按**行内标记**排除,⛔ 不用「本轮无 UI 页面用例」声明——那条声明会关掉**整个目录**的检查,
+            #    混着 UI 模块时等于假绿
+            if (not facts["has_case_signal"] and CASE_SIGNAL_RE.match(ln)
+                    and not (HONOR_NONINT and NONINTERACTIVE_TAG in ln)):
                 facts["has_case_signal"] = True
             m = CASE_HEADING_RE.match(ln)
             if m:
@@ -412,7 +420,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="通用还原度覆盖表结构性核验(维度 21)")
     ap.add_argument("target", help="用例目录或文件")
     ap.add_argument("--json", action="store_true", help="输出 JSON 供 Agent 解析")
+    ap.add_argument("--module-kind", choices=("interactive", "non_interactive", "auto"),
+                    default="interactive",
+                    help="编排层入参 module_kind:缺省 interactive 时 [非交互] 标记**不生效**(照页面模板判 + Important 提示);"
+                         "non_interactive / auto 才认 [非交互] 简化模板")
     args = ap.parse_args(argv)
+    global HONOR_NONINT
+    HONOR_NONINT = args.module_kind != "interactive"
 
     target = Path(args.target)
     # ⚠️ exists() 与 is_dir() 分开判:合并写会把"路径写错"混成"合法的 N/A 跳过",等于静默放行

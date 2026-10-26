@@ -6,13 +6,6 @@ description: >
   当用户提到生成执行计划、研发计划、开发执行方案、任务拆解、从设计文档生成开发任务、Sprint 任务分解时触发。
 ---
 
-
-## 客户端 MCP 业务能力的 Task 边界（条件启用）
-
-`client_mcp.enabled` 默认关闭,旧 `webmcp_enabled: true` 或 `webmcp.enabled: true` 只兼容 Web+WebMCP,两旧别名冲突也报错。此处的能力是**应用主动向 AI 提供业务工具**,与 AI 借 Chrome DevTools/Appium/小程序**测试驱动**操控界面两条轴独立;项目 `{{AIDP_HOME}}/mcp.json`/全局 MCP 配置只说明开发工具可用,不能证明产品实现。新旧显式声明在客户端/启停/实现形态上冲突时就地报错并登记待澄清,不静默覆盖。
-
-上游已证实应用自有工具时,按工具/权限/写操作确认/生命周期/错误/审计/调用证据拆必要 Task,每项仍带步骤、验收、AI 指令、依赖与 PRD/原型/设计锚点;Web 端按已有 WebMCP 设计任务落地,非 Web 仅按已证实的应用服务或桥接做 Task,**不生成空 Phase**、不自造统一入口或 Chrome 参数。声明未提供时无 MCP Task;声明启用但实现未取到时标待澄清,不能拿测试驱动配置替代设计。判据见 [`references/flow-task-model.md`](./references/flow-task-model.md),QR 折入既有检查项 1/6/14,14 维计数不变。
-
 # 研发执行计划生成器 (Dev Execution Planner)
 
 ## ⚠️ 技术栈命令按需加载（重要）
@@ -26,6 +19,20 @@ description: >
 | Node.js / Go / Python | `references/stack-nodejs.md` / `stack-go.md` / `stack-python.md` |
 
 探测方式与「开发期验证 ≠ 发布期构建」铁律详见 `references/stack-index.md`。
+
+> **运行路径约定 `{{AIDP_HOME}}`**:本 SKILL 随 AIDP 安装时,安装方把 `{{AIDP_HOME}}` **渲染**为实际运行根——
+> 仅 Claude Code 时为 `.claude`,共享运行根(Codex / DSH,含与 Claude 并存)时为 `.agents`;路径一律相对被测项目根。
+> SKILL 自身**不探测**运行根,看到 `{{AIDP_HOME}}/scripts/x.py` 就是安装后的 `<被测项目根>/<运行根>/scripts/x.py`。
+>
+> | 工具链 | 运行根 | <!-- runtime-path-ignore: 对照表须逐字写出两个运行根 -->
+> | :- | :- |
+> | 仅 Claude Code | `.claude/` |
+> | Codex / DSH(含与 Claude 并存) | `.agents/` |
+>
+> 下文凡写作 `{{AIDP_HOME}}/...` 处即指 `<被测项目根>/<运行根>/...`;`~/` 开头的是**用户级**目录,与项目运行根无关。
+> 例外:`scripts/scan_aidp.py` 是**扫描被测项目资源**的工具,需要自己定位运行根——
+> 识别顺序 `--aidp-home <dir>` → 环境变量 `AIDP_HOME` → 脚本自身安装位置 → 候选中第一个含 AIDP 特征(`commands/`/`skills/`/`AIDP*.md`)者 → 第一个存在者,
+> `--json` 的 `aidp_home` / `aidp_home_source` 给出取值与来源;识别不准时用 `--aidp-home <dir>` 显式指定。
 
 ## 角色定义
 
@@ -59,7 +66,7 @@ description: >
 
 ## ⚠️ 需求规模档位(scale=S/M/L,可选入参 · 缺省 = L 现状全套)
 
-**要解决的问题:** 不分档时**无论需求大小都走满全套**,实测可达「代码:文档 ≈ 9.4:1」——一个只改两个页面的小需求也产出与大版本同规格的文档族,收益递减而成本线性。
+**要解决的问题:** 档位决定产出范围——小需求不产出与大版本同规格的文档族,避免收益递减而成本线性增长(根因与实测数据见 [references/rationale.md](./references/rationale.md))。
 
 **怎么接收:** 编排层(如 `/version`)据 REQ 数 / 页面数 / 是否建表自动判档,把档位随调用传入——**任一形式均可识别**:
 - 显式入参 `scale=S` / `scale=M` / `scale=L`(推荐);
@@ -83,6 +90,12 @@ description: >
 - 有疑义时**就高不就低**:拿不准 S 还是 M,按 M 产出。**收敛产出是优化,漏掉内容是缺陷。**
 
 ---
+
+## 客户端 MCP 业务能力的 Task 边界（条件启用）
+
+`client_mcp.enabled` 默认关闭,旧 `webmcp_enabled: true` 或 `webmcp.enabled: true` 只兼容 Web+WebMCP,两旧别名冲突也报错。此处的能力是**应用主动向 AI 提供业务工具**,与 AI 借 Chrome DevTools/Appium/小程序**测试驱动**操控界面两条轴独立;项目 `{{AIDP_HOME}}/mcp.json`/全局 MCP 配置只说明开发工具可用,不能证明产品实现。新旧显式声明在客户端/启停/实现形态上冲突时就地报错并登记待澄清,不静默覆盖。
+
+上游已证实应用自有工具时,按工具/权限/写操作确认/生命周期/错误/审计/调用证据拆必要 Task,每项仍带步骤、验收、AI 指令、依赖与 PRD/原型/设计锚点;Web 端按已有 WebMCP 设计任务落地,非 Web 仅按已证实的应用服务或桥接做 Task,**不生成空 Phase**、不自造统一入口或 Chrome 参数。声明未提供时无 MCP Task;声明启用但实现未取到时标待澄清,不能拿测试驱动配置替代设计。判据见 [`references/flow-task-model.md`](./references/flow-task-model.md),QR 折入既有检查项 1/6/14,14 维计数不变。
 
 ## ⚠️ 不中断原则(Critical)
 
@@ -134,10 +147,10 @@ description: >
 | **1** | **设计来源必须精确到章节 + 行号范围** | 不接受"参考详细设计"这类模糊引用,必须标注到"`<设计文档路径>` > `A.3 biz_user 表定义` > `L120-L180`"级别,方便执行代码的 Agent 快速定位 |
 | **2** | **必须有"AI 执行指令"代码块** | 每个 Task 必须包含一个 `**AI 执行指令**` 小标题及其下的 markdown 代码块 |
 | **3** | **AI 执行指令的首行必须是具体命令,不是描述** | 代码块第一行是可直接输入的指令,如 `/dev-logic-architect`、`/项目-api-gen`、`aidp gen:mapper --table biz_user` |
-| **4** | **命令选择必须遵循 5 级指令优先级** | L1 AIDP 命令 > L2 项目 `{{AIDP_HOME}}/` 资源 > L3 系统 Claude Code 资源 > L4 通用工具 > L5 Shell 脚本 |  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+| **4** | **命令选择必须遵循 5 级指令优先级** | L1 AIDP 命令 > L2 项目 `{{AIDP_HOME}}/` 资源 > L3 系统 Claude Code 资源 > L4 通用工具 > L5 Shell 脚本 |
 | **5** | **提示词必须引用前序产出与设计章节** | 提示词必须:(a) 显式引用依赖 Task 的产出;(b) 显式标注设计来源章节和行号;(c) **不复述**设计中已定义的字段/接口/枚举,仅以章节引用代替 |
 | **6** | **验收标准必须包含"设计一致性"检查** | 必须有一项验收检查代码与详细设计的一致性(如"字段名/类型/约束与 A.3 章节定义完全一致"),不得全部为功能性检查 |
-| **7** | **验收标准必须可自动化** | 至少一项验收标准是可通过命令执行验证的(如静态检查命令、研发自测用例 ID、`/code-verification-loop`;⛔ 不写需要启动服务的 `curl localhost` 类,见约定 35),不得全部为主观判断项 |
+| **7** | **验收标准必须可自动化** | 至少一项验收标准是可通过命令执行验证的(如 `curl`、`mvn test`、`/code-verification-loop`),不得全部为主观判断项 |
 | **8** | **产出物路径必须具体** | 不接受"生成用户管理代码"这类模糊产出物,必须精确到文件路径 |
 | **9** | **严禁偏离设计** | 若详细设计不明确或有冲突,Task 必须标注"⚠️ 设计待澄清",暂停实施,不允许 Agent 自行推断 |
 | **10** 🔴 | **缓存确认 → 独立 Task(Critical)** | **仅当**详细设计 A.2 存在「缓存方案」子章节(用户已确认)才允许拆缓存 Task;**严禁**设计未声明缓存却自作主张拆「加 Redis 缓存」。已确认时须按 **4 类拆独立 Task**,**严禁把缓存逻辑混进业务接口 Task**(拆分清单见分片) |
@@ -208,6 +221,7 @@ description: >
 
 | 分片 | 内容 | 什么时候读 |
 | :- | :- | :- |
+| [`flow-orchestration.md`](./references/flow-orchestration.md) | 编排层调用协议:`qr_level` 三档派发 / QR 移交清单 / 紧凑回传 JSON / `[AIDP-STAGE]` 打点 / 分片输入裁剪 | 编排层传了 `qr_level` 或分片派生成子 Agent 时 |
 | [`flow-task-model.md`](./references/flow-task-model.md) | **12 条核心原则全文**(Why/判据/拆分清单)+ 任务模板(AI 执行指令四件套)+ 5 级可用指令清单 + L2 Phase 级引用示例 | 落地任一条核心原则、第二步写 Task 时 |
 | [`flow-granularity.md`](./references/flow-granularity.md) | 任务粒度判据、正反例、Task 长示例 | 拿不准 Task 粒度时 |
 | [`flow-phase-split.md`](./references/flow-phase-split.md) | Phase 划分规则、第三方接口对接清单模板 | 编排 Phase / 处理第三方对接时 |
@@ -235,6 +249,7 @@ description: >
 5. **接口全覆盖**，若详细设计包含后端接口定义或存在接口文档，Phase 3 必须覆盖所有接口，不允许遗漏
 6. **强制清除 mock 数据**，若详细设计包含后端接口定义或存在接口文档，Phase 4 前端任务的**第一步必须是**扫描并删除该页面/模块的所有 mock 数据和静态假数据（包括硬编码数组、mock 文件、假数据函数、Mock.js 配置等），然后对接后端真实接口。验收标准必须包含"已删除所有 mock/静态假数据"。**例外:** 第三方平台接口未交付场景允许带 `THIRD_PARTY_MOCK` 标注的临时 mock(协议与清理任务详见 [`references/flow-edge-cases.md`](./references/flow-edge-cases.md) >「情况 0」)
 7. **金额字段类型守恒**：若详细设计 A.3 数据表中金额字段为 `BIGINT`(按最小货币单位存储,见 dev-logic-architect「💰 货币金额字段设计规则」），生成对应 Entity/Mapper/DTO/前端类型时**必须**保持整数类型:Java `Long`、Go `int64`、Kotlin `Long`、TypeScript 用 `string` 类型(避免 JS Number 2^53 上限溢出,通过 `@JsonSerialize(ToStringSerializer.class)` 或 `BigInt` 处理)。**严禁**改为 `BigDecimal`/`number`/`float`/`double`。前端展示时由 UI 层除以 10^小数位还原为人类可读金额,不在 Entity/DTO 层做换算
+8. **编排层调用入参**:`qr_level = scripts | critical | full`,**不传 = `full`、QR 报告保持现状格式**;显式传入即进入编排层模式(QR 子 Agent 只回传紧凑 JSON,非 `full` 时在 `00_索引.md` 写「QR 移交清单」)。⛔ **`qr_level` 的非缺省值只由编排层传入,独立调用时不要自行切换**。任何档位机器门全量跑、Critical 维度永不移交,派发范围用 `scripts/qr_orchestration.py plan` 推导;生成 / 每轮 QR / 每轮修复的边界输出 `[AIDP-STAGE]` 标记;分片生成按「切片规则 + 片外回读」裁剪输入。协议全文见 [`references/flow-orchestration.md`](./references/flow-orchestration.md)
 
 ## 输出格式
 
@@ -269,3 +284,4 @@ description: >
    ⚠️ **「不必重扫」有明确例外,别当成整份产物都不用看**:裁剪的**可执行判据**以 [`references/quality-review-checklist.md`](./references/quality-review-checklist.md) 的**「QR 变更范围裁剪协议」**为准(调用方传 `qr_delta_scope`,不传 = 全量)——**机器门一律全量跑**,标「全量」档的维度(6 依赖链条 / 7 框架中间件 / 10 / 11 / 13 / 14 EPIC 完整性)**不接受裁剪**,因为**它们的失效形态正是「新增这一处与旧的那些不一致」,只看增量内部一个都发现不了**,而增量迭代恰是它们的高发期。本条与该协议冲突时**以协议为准**。
 
 ---
+

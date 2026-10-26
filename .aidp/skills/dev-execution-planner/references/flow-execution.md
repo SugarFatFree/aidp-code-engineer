@@ -1,5 +1,7 @@
 # 执行流程细则(第零步 ~ 第三步)
 
+> **`{{AIDP_HOME}}` 约定:** 安装方渲染的运行根(仅 Claude Code 为 `.claude`,共享运行根为 `.agents`),`{{AIDP_HOME}}/...` 一律相对被测项目根;SKILL 不探测,详见 SKILL.md「运行路径约定」。
+
 > 本文件是 `SKILL.md`「执行流程」的细则分片,按需 Read。**SKILL.md 骨架里已保留每一步的强制结论**(判定规则、Critical 判据、硬门),本文件展开的是**怎么做、判据全文、正反例、表格列定义**。
 
 ### 第零步：多用户分配判定
@@ -62,7 +64,7 @@
 
 **核验规则**: 详细设计中标注为「✅ 沿用已有」的每个接口,在生成执行计划前**必须**穿透到 Service 实现层验证可用性:
 
-> **`<SKILL_DIR>` 占位符(全文统一):** 本 SKILL 的实际安装目录(本项目 = `{{AIDP_HOME}}/skills/dev-execution-planner`)。
+> **`<SKILL_DIR>` 占位符(全文统一):** 本 SKILL 的实际安装目录(项目内 = `{{AIDP_HOME}}/skills/dev-execution-planner`,全局 = `~/{{AIDP_HOME}}/skills/dev-execution-planner`,以实际安装位置为准)。
 
 ```bash
 # 强制运行接口可用性扫描(对应详细设计核心原则 18)

@@ -21,7 +21,7 @@ thirdParty:
     readTimeout: 10s
 ```
 
-**严禁**：`http.Get("http://192.0.2.100:8080/api")` 这类硬编码 base URL / IP / 端口 / 凭证。D.3 依赖列表须列出所选客户端（如 `github.com/go-resty/resty/v2`）。
+**严禁**：`http.Get("http://192.0.2.10:8080/api")` 这类硬编码 base URL / IP / 端口 / 凭证。D.3 依赖列表须列出所选客户端（如 `github.com/go-resty/resty/v2`）。
 
 ### 失败返回契约（Critical）
 

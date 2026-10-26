@@ -8,7 +8,8 @@ tasks.md 按 `## {模块名}` 分组,条目形如 `- [ ] TC-001 - 用例名称`�
 子命令:
   init   从用例文档解析 SUITE/TC 生成 tasks.md(全 [ ])
   update 改某用例状态(--id TC-001 --state done|running|block|todo)
-  scan   统计各状态数量;存在 [ ]/[>] 残留 → 退出码 1(供质量维度 3)
+  scan   统计各状态数量;存在 [ ]/[>] 残留、一条都没解析到、或有形似条目却不合形态的行
+         (unparsed,如缺 ` - ` 分隔 / `[X]` / `*` 列表符)→ 退出码 1(供质量维度 3)
   resume 列出所有待续跑项([ ] 与 [>]),供断点续跑
 
 build/round 作用域(重要):
@@ -56,6 +57,11 @@ SELECT_MODES = {
 # tasks.md 条目:- [ ] TC-001 - 名称
 ITEM_RE = re.compile(r'^\s*-\s*\[([ >√x!])\]\s*(TC-[\w\-]+)\s*-\s*(.*)$')
 GROUP_RE = re.compile(r'^##\s+(.*)$')
+# 「长得像条目、却不合 ITEM_RE」的行:列表符(-/*/+)+ 任意单字符状态框 + 行内含 TC-。
+# ⚠️ scan 若只认 ITEM_RE,`- [ ] TC-002 无分隔符` / `- [X] TC-003 - b` / `* [>] TC-004 - c`
+#    这类**残留行**会被整行忽略 → 判「无残留」(假绿)。它们计入 unparsed 并判 scan 失败,
+#    ⛔ 不在这里「顺手放宽 ITEM_RE」—— update 也用 ITEM_RE 改写,放宽会让两侧口径分叉。
+LOOSE_ITEM_RE = re.compile(r'^\s*[-*+]\s*\[[^\]]?\]')
 
 
 # 写锁由**内核**持有,不靠 mtime 猜「持有者是不是死了」。
@@ -162,7 +168,7 @@ def _atomic_write(path, content):
 def _resolve_input(args, name, usage):
     """取「位置参数 or 同名 --具名参数」。
 
-    ⚠️ 这不是可有可无的糖:下游实测反馈,执行子 Agent 按语义直觉写成
+    ⚠️ 这不是可有可无的糖:实测反馈,执行子 Agent 按语义直觉写成
     `init --usecase X --round-dir Y` 触发 `unrecognized arguments` 而空转一轮——
     位置参数写法只出现在 argparse 的 epilog(只有主动 `--help` 才看得到)。
     故 **每个子命令的主入参都同时接受位置与具名两种写法**,并在缺参时打印用法而非裸报错。
@@ -188,7 +194,7 @@ def cmd_init(args):
     # ⚠️ 排除口径对齐上游 5 个脚本的同名契约;CASE_RE 放宽后(「用例」二字与冒号均可省)
     # 容错余量变小,口径分歧更易变成实害。仅作用于**目录**模式,直接传单文件永远解析。
     def _is_case_src(name):
-        if name.startswith(('00_', '97_', '98_', '99_')):
+        if name.startswith(('00_', '98_', '99_')):
             return False
         if '研发自测方案' in name or '测试环境与账号' in name or '总览' in name:
             return False
@@ -294,7 +300,7 @@ def cmd_init(args):
     return 0
 
 
-def _parse_items(path):
+def _parse_items(path, unparsed=None):
     items = []  # (group, mark, tc_id, name, lineno)
     group = None
     for i, line in enumerate(path.read_text(encoding='utf-8', errors='replace').splitlines()):
@@ -307,6 +313,8 @@ def _parse_items(path):
             items.append({'group': group, 'mark': im.group(1),
                           'state': MARK_STATE.get(im.group(1), 'todo'),
                           'id': im.group(2), 'name': im.group(3).strip(), 'line': i})
+        elif unparsed is not None and 'TC-' in line and LOOSE_ITEM_RE.match(line):
+            unparsed.append({'line': i + 1, 'text': line.strip()})
     return items
 
 
@@ -346,20 +354,39 @@ def cmd_scan(args):
     path = Path(tasks)
     if not path.is_file():
         return _err(args, f'tasks.md 不存在:{path}')
-    items = _parse_items(path)
+    unparsed = []
+    try:
+        items = _parse_items(path, unparsed)
+    except OSError as exc:
+        return _err(args, f'tasks.md 不可读:{exc}')
     counts = {'todo': 0, 'running': 0, 'done': 0, 'block': 0}
     for it in items:
         counts[it['state']] += 1
     residual = counts['todo'] + counts['running']
-    passed = residual == 0
+    # ⚠️ 三条同时成立才算通过:无 [ ]/[>] 残留 + 至少解析到 1 条(空文件/全不合形态 ≠ 全部落定)
+    #    + 无「像条目却解析不了」的行(它们的真实状态未知,当成不存在就是假绿)
+    reasons = []
+    if residual:
+        reasons.append(f'存在 {residual} 条未落定([ ]/[>])')
+    if not items:
+        reasons.append('未解析到任何条目(空 tasks.md 或全部不合 `- [x] TC-xxx - 名称` 形态),无从判定无残留')
+    if unparsed:
+        reasons.append(f'{len(unparsed)} 行形似条目但不合 `- [x] TC-xxx - 名称` 形态,状态未知')
+    passed = not reasons
     result = {'total': len(items), 'counts': counts, 'residual': residual,
-              'passed': passed}
+              'unparsed': unparsed, 'passed': passed, 'reasons': reasons}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(f"用例 {len(items)} | 待执行 {counts['todo']} / 执行中 {counts['running']} "
               f"/ 已完成 {counts['done']} / 阻塞 {counts['block']}")
-        print('✅ 无残留' if passed else f'❌ 存在 {residual} 条未落定([ ]/[>])')
+        if passed:
+            print('✅ 无残留')
+        else:
+            for r in reasons:
+                print(f'❌ {r}')
+            for u in unparsed[:20]:
+                print(f"  - 第 {u['line']} 行:{u['text']}")
     return 0 if passed else 1
 
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 r"""DDL 新增列注释配对硬核回检 — dev-logic-architect 检查项 39-C(Critical,对应核心原则 32)
 
-实际项目中实测:一次给既有表加了 10 列,
+实测(实际项目中曾出现):一次给既有表加了 10 列,
 **10 列全部无注释**(数据字典实查 10/10 无)。半年后没有任何人能从库里看出这些列是干什么的,
 而「与既有近似列的区别」这类**只可能写在注释里**的结论就此永久丢失。
 
@@ -12,7 +12,7 @@ r"""DDL 新增列注释配对硬核回检 — dev-logic-architect 检查项 39-C
     达梦/Oracle : ALTER TABLE t ADD (C VARCHAR2(64));
                   COMMENT ON COLUMN t.C IS '业务含义...';       ← 配对语句可以在别处
 
-⚠️ **只认 `ADD COLUMN` 会在国产库项目上静默失效**(达梦等国产库即此形态:它的批量形态是 `ADD (COL TYPE)`,
+⚠️ **只认 `ADD COLUMN` 会在国产库项目上静默失效**(下游正是达梦:它的批量形态是 `ADD (COL TYPE)`,
    且**根本不支持**在 ALTER 里内联 COMMENT,必须另起 `COMMENT ON COLUMN`)。
    故本脚本:① 两种 ADD 形态都解析;② 配对既认**内联 COMMENT**,也认**同一批文档里任意位置**的
    `COMMENT ON COLUMN`(⚠️ 因此**须传目录**——DDL 与注释语句常分册)。
@@ -24,12 +24,12 @@ r"""DDL 新增列注释配对硬核回检 — dev-logic-architect 检查项 39-C
 
 ⚠️ **本脚本刻意只管 `ADD COLUMN`,不管 `CREATE TABLE` 的列**,与检查项 39 正文口径一致
    (「本项只管 `ADD COLUMN`,不重复覆盖建表列」)。
-   ⚠️ **别把这句读成「建表列的注释已被别人覆盖」** —— 独立审计实测:`CREATE TABLE` 里
+   ⚠️ **别把这句读成「建表列的注释已被别人覆盖」** —— 2026-09-08 独立审计实测:`CREATE TABLE` 里
    一个**完全没有 COMMENT** 的普通列,八个姊妹脚本合计 Critical 0(检查项 13 只管**自由文本列**的
    长度冗余标注、21 只管**索引列**的哨兵说明、`check_unit_field.py` 只管**数值列**的单位),
-   即**建表普通列的 COMMENT 存在性全仓无门**,这是一个**已知且刻意保留**的缺口。
+   即**建表普通列的 COMMENT 存在性无门**,这是一个**已知且刻意保留**的缺口。
    ⛔ **不要为此在本脚本里加一道建表列注释门** —— 那会与上面三个脚本在同一批列上重叠开火,
-   正好变成本仓库最高频的「同判据两份实现」。要补应当单开一道、并先在全仓量假红率。
+   正好变成最高频的「同判据两份实现」。要补应当单开一道、并先在真实语料上量假红率。
 
 ⚠️ **本门只是必要条件、不充分**:下游那次事故里**脚本是对的、执行漏了**
    (只跑了 `ALTER TABLE ADD` 那段循环,注释语句整段没跑)。
@@ -48,7 +48,7 @@ r"""DDL 新增列注释配对硬核回检 — dev-logic-architect 检查项 39-C
 ⚠️ 本 SKILL 内脚本**互不 import**(SKILL 独立性原则)。本文件的 `parse_alter_add_segments` 与
    `check_column_consumer_evidence.py` 的 `parse_alter_add_columns` **同口径不同签名**
    (本文件多返回一个列定义片段用于找内联 COMMENT),解析口径须两处同改。
-   ⚠️ 审计订正:此处原写「`parse_alter_add_columns` 的解析口径……」,而
+   ⚠️ 2026-09-08 审计订正:此处原写「`parse_alter_add_columns` 的解析口径……」,而
    **本文件里根本没有叫这个名字的函数** —— 从本文件 grep 该名字零命中,定位不到东西。
 ⚠️ **与对面须两处同改、且函数体逐字节相同的**:`IDENT_PART` / `ALTER_HEAD_RE` / `ADD_KEYWORD_RE` /
    `SQL_FENCE_LANGS` / `NON_COLUMN_KEYWORDS` / `IDENT_RE` / `sql_fence_blocks` / `_clean_ident` /
@@ -324,7 +324,7 @@ def check_file(path: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        # ⚠️ 读失败绝不可静默计为通过(全仓退出码约定第 3 条)。
+        # ⚠️ 读失败绝不可静默计为通过(统一退出码约定第 3 条)。
         issues.append({"level": "Important", "code": "read_error", "file": str(path),
                        "line": 0, "msg": "文件读不出来(%s),已跳过——⛔ 不得据此判该文件无违规" % e})
         return {"issues": issues, "adds": [], "comments": {}, "lines": [], "file": str(path)}
@@ -347,7 +347,7 @@ def main() -> int:
     args = ap.parse_args()
 
     target = Path(args.path)
-    # ⚠️ exists() 与 is_dir() 必须分开判(全仓退出码约定第 2 条)。
+    # ⚠️ exists() 与 is_dir() 必须分开判(统一退出码约定第 2 条)。
     if not target.exists():
         print("路径不存在: %s" % target, file=sys.stderr)
         return 2

@@ -13,7 +13,7 @@
 
 ```typescript
 // ❌ 硬编码
-const res = await axios.get('http://192.0.2.100:8080/api/x');
+const res = await axios.get('http://192.0.2.10:8080/api/x');
 // ✅ 配置驱动
 const baseURL = this.config.get<string>('thirdParty.alipay.baseUrl');
 ```

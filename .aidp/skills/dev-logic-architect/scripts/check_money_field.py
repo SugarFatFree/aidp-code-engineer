@@ -185,7 +185,7 @@ def has_downgrade_reason(file_text, table_name, field_name):
         if tm:
             nxt = re.search(r"CREATE\s+TABLE\s+", file_text[tm.end():], re.IGNORECASE)
             end = tm.end() + (nxt.start() if nxt else len(file_text) - tm.end())
-            # ⚠️ 窗口起点回退到 DDL **上方最近的 markdown 标题行**，而不是固定字数。
+            # ⚠️ 窗口起点回退到 DDL **上方最近的 markdown 标题行**，而不是固定字数（2026-08-22 复审修正）。
             #    · 「不向前扩展」会误伤合规写法：checklist 检查项 17 明写降级理由可写在
             #      「该表所在**章节**」，而设计文档的常规排布正是「### rpt_daily_snapshot 表 /
             #      本表为统计快照，金额降级为 DECIMAL / ```sql CREATE TABLE …」——理由在 DDL 之上。

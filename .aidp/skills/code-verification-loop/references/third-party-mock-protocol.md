@@ -2,7 +2,7 @@
 
 > 本规范隶属于 `code-verification-loop` SKILL，供维度 2B 第三方临时 mock 协议核验使用。
 > 上级:`../SKILL.md`
->
+> 
 > **协议内容说明:** 本协议定义的标注规范与 `dev-logic-architect` SKILL.md 核心原则 14 保持一致。其他 SKILL 通过引用核心原则 14 间接获得协议规范。
 >
 > **目的:** 在第三方平台接口尚未交付时,允许前端/后端使用临时 mock 数据保持开发联调;一旦真实接口可用,mock 必须立即删除,严禁与真实调用并存或保留为兜底。
@@ -66,7 +66,7 @@ if (import.meta.env.VITE_THIRD_PARTY_MOCK_ENABLED === 'true') {
       // api: POST /alipay/trade/refund
       // since: 2026-05-26
       // expected_ready: 2026-12-15
-      // owner: FE-张三
+      // owner: FE-alice
       // REMOVE_WHEN: 真实接口可调通后立即删除本拦截块
       return Promise.reject({
         __mock__: true,
@@ -82,7 +82,7 @@ if (import.meta.env.VITE_THIRD_PARTY_MOCK_ENABLED === 'true') {
 
 > **核心原则「对外提需求 = 业务诉求;对内做设计 = 可定契约」。** 第三方未交付时,我方一边用临时 mock 解阻塞,一边要向第三方"提需求"催交付。**提给第三方的需求只描述业务诉求,绝不规定/推荐对方的契约形态**——接口地址、字段命名、Method、响应结构(`{code,data,message}` 之类)、鉴权、协议都是**对方系统的设计权**,我方规定即越界(不专业、污染对方契约、引发后续不一致)。
 
-- **提给第三方的需求只写 7 项(业务诉求导向)**:① 业务场景/目的;② **对应第三方功能位置**(这些数据对应对方系统自己的哪个菜单/功能页,如"对应订单中心 结算管理→账单明细",让对方一眼对上是开放哪个**现有功能**——指向对方已有功能,**不规定其 URL/字段**);③ 需要的业务数据项(用**业务含义**表述,如"账期/应付金额/结算状态",**不写字段名**);④ 查询/筛选维度(**业务维度**);⑤ 数据范围与隔离(如"按企业隔离,仅返回本企业数据");⑥ 非功能诉求(分页、可外部调用、时效/SLA、调用量);⑦ **明确声明**:接口地址、字段命名、鉴权、协议等技术细节由对方按其规范自定,交付后提供联调环境 + 接口说明。
+- **提给第三方的需求只写 7 项(业务诉求导向)**:① 业务场景/目的;② **对应第三方功能位置**(这些数据对应对方系统自己的哪个菜单/功能页,如"对应对方系统 计量计费中心→账单明细",让对方一眼对上是开放哪个**现有功能**——指向对方已有功能,**不规定其 URL/字段**);③ 需要的业务数据项(用**业务含义**表述,如"账期/应付金额/结算状态",**不写字段名**);④ 查询/筛选维度(**业务维度**);⑤ 数据范围与隔离(如"按企业隔离,仅返回本企业数据");⑥ 非功能诉求(分页、可外部调用、时效/SLA、调用量);⑦ **明确声明**:接口地址、字段命名、鉴权、协议等技术细节由对方按其规范自定,交付后提供联调环境 + 接口说明。
 - **允许引用对方"已存在"能力作上下文**(基于读对方源码的事实,如"据了解你们已有 XX 内部能力"),但**不得据此替对方拟新接口的路径/字段**。
 - **边界**:本约束只针对"提给第三方系统的需求";**我方系统内部**新建的接口(Controller/Service/前端 API)照常在详细设计里规定路径与字段——那是对内设计权,不受此约束。
 - **mock 占位 ≠ 对方契约**:我方临时 mock 内部用什么字段/结构是我方实现细节,**不得**把这套 mock 字段/路径当作"第三方应实现的契约"反向塞给第三方;一旦对方按其规范交付真实接口,以**对方契约**为准改造我方调用与 mock 删除。
@@ -109,7 +109,7 @@ if (import.meta.env.VITE_THIRD_PARTY_MOCK_ENABLED === 'true') {
 {注释符} api: {对接的接口路径或方法,如:POST /alipay/trade/refund 或 AlipayClient.tradeRefund}
 {注释符} since: {开始使用 mock 的日期,YYYY-MM-DD}
 {注释符} expected_ready: {第三方预计交付的日期,YYYY-MM-DD;未知填 UNKNOWN}
-{注释符} owner: {负责人,如:PM-张三 / FE-李四 / BE-王五}
+{注释符} owner: {负责人,如:PM-alice / FE-bob / BE-carol}
 {注释符} REMOVE_WHEN: 真实接口可调通后立即删除本{函数/常量/文件},禁止保留为兜底
 ```
 
@@ -121,7 +121,7 @@ if (import.meta.env.VITE_THIRD_PARTY_MOCK_ENABLED === 'true') {
 // api: POST /alipay/trade/refund
 // since: 2026-01-15
 // expected_ready: 2026-09-01
-// owner: PM-张三
+// owner: PM-alice
 // REMOVE_WHEN: 真实接口可调通后立即删除本函数,禁止保留为兜底
 export async function mockAlipayRefund(orderId: string) {
   return { success: true, refundId: 'MOCK_RF_' + orderId, amount: 0 };
@@ -137,18 +137,18 @@ export async function mockAlipayRefund(orderId: string) {
  * api: POST /singlewindow/customs/query
  * since: 2026-01-15
  * expected_ready: UNKNOWN
- * owner: BE-王五
+ * owner: BE-carol
  * REMOVE_WHEN: 真实接口可调通后立即删除本类,禁止保留为兜底
  */
 @Component
 public class CustomsQueryClient {
-
+    
     @Value("${third-party.mock.enabled:false}")
     private boolean mockEnabled;
-
+    
     @Autowired
     private CustomsApiClient realClient;
-
+    
     public CustomsQueryResp query(CustomsQueryReq req) {
         if (mockEnabled) {
             // THIRD_PARTY_MOCK 占位逻辑
@@ -178,17 +178,17 @@ import os
 def idp_token_exchange(code: str) -> dict:
     """OAuth IDP token exchange"""
     mock_enabled = os.getenv("THIRD_PARTY_MOCK_ENABLED", "false").lower() == "true"
-
+    
     if mock_enabled:
         # THIRD_PARTY_MOCK: OAuth IDP 用户授权接口未交付,占位以解阻塞登录联调
         # vendor: 集团统一身份认证 IDP
         # api: POST /idp/oauth2/token
         # since: 2026-06-15
         # expected_ready: 2026-12-15
-        # owner: BE-王五
+        # owner: BE-carol
         # REMOVE_WHEN: 真实接口可调通后立即删除本分支,禁止保留为兜底
         return {"access_token": "MOCK_AT_" + code, "expires_in": 3600}
-
+    
     # 真实接口调用
     response = httpx.post(
         f"{settings.IDP_BASE_URL}/oauth2/token",

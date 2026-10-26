@@ -35,6 +35,14 @@ LEAK_PATTERNS = [
     #    references/driver-miniprogram.md(适配层豁免面),0 假红。
     r'\bminiProgram\.\w+', r'\bpage\.data\b',
     r'driver\.find_element', r'find_element\b', r'get_screenshot_as_file',
+    # ⚠️ 移动 / 桌面 / 小程序端此前只收了 find_element 一族,`driver.page_source` /
+    #    `driver.swipe` / `driver.back()` / `driver.execute_script` / `automator.launch` /
+    #    `adb shell` / `electron.launch` 写进方法论层照样 ✅(审计实测)。改为**整族前缀匹配**:
+    #    `driver.<任意>`(Appium/Selenium/WinAppDriver 会话对象)、`automator.<任意>`
+    #    (miniprogram-automator)、`electron.<任意>`(Playwright-Electron)、`adb` 命令、
+    #    `execute_script`。全 SKILL 预扫:仅命中 references/driver-*.md(适配层豁免面),0 假红。
+    r'\bdriver\.\w+', r'\bautomator\.\w+', r'\belectron\.\w+', r'\badb\s+\w',
+    r'\bexecute_script\b',
     r'By\.(id|xpath|name|accessibility_id)', r'send_keys\b',
     r'setInputFiles\b', r'getByRole\b', r'getByText\b', r'\.locator\(',
     # chrome-devtools 家族「裸名」工具(不带 browser_ 前缀),端专有,仅允许出现在

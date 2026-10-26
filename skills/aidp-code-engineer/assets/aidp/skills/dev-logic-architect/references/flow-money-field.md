@@ -24,7 +24,7 @@
 ```sql
 CREATE TABLE biz_order (
   id BIGINT PRIMARY KEY COMMENT '主键',
-  order_no VARCHAR(32) NOT NULL COMMENT '订单号',
+  order_no VARCHAR(32) NOT NULL COMMENT '订单号(系统生成)',
   total_amount BIGINT NOT NULL DEFAULT 0 COMMENT '订单总金额,单位:分(CNY)',
   paid_amount BIGINT NOT NULL DEFAULT 0 COMMENT '已支付金额,单位:分(CNY)',
   refund_amount BIGINT NOT NULL DEFAULT 0 COMMENT '退款金额,单位:分(CNY)',
@@ -39,7 +39,7 @@ CREATE TABLE biz_order (
 ```sql
 CREATE TABLE biz_order (
   id BIGINT PRIMARY KEY COMMENT '主键',
-  order_no VARCHAR(32) NOT NULL COMMENT '订单号',
+  order_no VARCHAR(32) NOT NULL COMMENT '订单号(系统生成)',
   currency_code CHAR(3) NOT NULL COMMENT '币种(ISO 4217 三字母码,参考 A.4 > CurrencyCode)',
   total_amount BIGINT NOT NULL DEFAULT 0 COMMENT '订单总金额,单位:对应币种的最小单位(CNY=分/USD=cent/JPY=日元/KWD=fils)',
   exchange_rate BIGINT NOT NULL DEFAULT 1000000 COMMENT '兑换至本位币的汇率,×10^6 倍整数(如 7.123456 存为 7123456)',

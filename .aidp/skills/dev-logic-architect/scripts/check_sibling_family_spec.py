@@ -4,7 +4,7 @@
 
 **★ 判据是「有没有兄弟」,不是「我写了几遍」。**
 
-立论(下游实测):一个页面承载「每版各加一个同构成员」的家族(隐藏运维页的历史数据处理入口,
+立论(实测):一个页面承载「每版各加一个同构成员」的家族(隐藏运维页的历史数据处理入口,
 六个版本各一个,外观相同、只有标题与说明不同)。**同一形态连续复发 3 个版本**,每次都是同样两条:
   ① 新成员**没有公共外壳** —— 家族没抽公共单元,父页样式是 `scoped` 传不进子组件,
      于是每个成员各自复制一份样式,**漏抄即失效**;
@@ -37,7 +37,7 @@
 
 ⚠️⚠️ **本脚本刻意不做「缺表」判定,`skipped: true` 不等于通过。**
    触发信号(「每个版本新增一个 X」「每次迭代追加一项 Y」)天生是**正文散文**、不会是个标题,
-   而本仓库既有两条相反的教训把两条路都堵死了:
+   而既有两条相反的教训把两条路都堵死了:
      · 扫正文散文 —— `check_metric_spec.py` / `check_permission_constraint.py` 实测的结论是
        「合规文档满屏假红」,且**本 SKILL 自己的检查项 41 正文必然逐字写出这些触发词**
        (要讲清规则就得把它举出来),等于每轮固定一条打在自家文档上的假红;
@@ -47,17 +47,17 @@
    「**这份设计该不该有这张表**」由**检查项 41 核验步骤 1 的人工逐条枚举**判,
    ⛔ 不得因为脚本 `skipped`/`exit 0` 就跳过那一步。
 
-⚠️ **缺表判 Important、表一旦产出则缺列/空格判 Critical** 是本仓库既有先例(U1/E1/Z1/W1);
+⚠️ **缺表判 Important、表一旦产出则缺列/空格判 Critical** 是既有先例(U1/E1/Z1/W1);
    本脚本因不做缺表判定,Critical 全部落在「已产出的表自身的缺陷」上,与该先例同向。
    **检查项 41 的维度结论按 Important 判** —— 严重度分档是给**退出码**用的、
    不是给**维度结论**用的(同维度 35 的 U2/U3 与「Important 档」并存)。
 
 ★ **去重边界**:本脚本只管**设计期这张声明表**。
   「开发期成员有没有真的用上那个公共单元 / 有没有进排序数据源」由**被测项目侧**的
-  `AIDP_HOME/scripts/check_sibling_family.py`(F0~F4)承担、并由 `code-verification-loop` 维度 15 派发,
+  `{{AIDP_HOME}}/scripts/check_sibling_family.py`(F0~F4)承担、并由 `code-verification-loop` 维度 15 派发,
   ⛔ 本 SKILL 严禁重写那五条(与核心原则 27 对 `check_upstream_call_log.py` 是同一条纪律)。
   ⚠️ **两个脚本名字只差一个 `_spec` 后缀,别看串**:本脚本在本仓 architect 的 `scripts/` 下、
-  吃**设计文档**;那个在**被测项目**的运行契约 `scripts/` 下、吃**源码**。
+  吃**设计文档**;那个在**被测项目**的 `{{AIDP_HOME}}/scripts/` 下、吃**源码**。
 
 退出码:0 = 无 Critical(含 N/A 跳过);1 = 检出 Critical;2 = 入参或环境错。
 严重度分档走 --json,不占用退出码。
@@ -186,9 +186,9 @@ def is_family_table_header(cells: List[str]) -> bool:
         return False
     hit = [c for c in REQUIRED_COLUMNS if col_index(cells, c) is not None]
     named = any(c in hit for c in ("公共单元位置", "成员glob", "排序规则"))
-    # ⚠️ 单元格长度上限,**预防性护栏,已实测确认它不是挡住 CLAUDE.md 的那一道**:
-    #    `AIDP_HOME/../AIDP-AGENTS.md` 的 SKILL 清单表单格是几千字散文、本表的列名也确实出现在里面,
-    #    但实测把本闸门改成恒 False 后,CLAUDE.md 仍是 **0 张表** —— 真正挡住它的是
+    # ⚠️ 单元格长度上限,**预防性护栏,已实测确认它不是挡住超长散文表格的那一道**:
+    #    某份项目规则文档的 SKILL 清单表单格是几千字散文、本表的列名也确实出现在里面,
+    #    但实测把本闸门改成恒 False 后,超长散文表格样本仍是 **0 张表** —— 真正挡住它的是
     #    scan_family_tables 里「表头必须紧跟 GFM 分隔行」那道闸门(它是**数据行**、后面不跟分隔行)。
     #    ⛔ 别照搬姊妹脚本那句「无长度闸门时整行被认成表头」——那是**没实测就抄过来的断言**,
     #    正是核心原则 30 要消灭的形态(check_permission_constraint.py 就地订正过同一句)。
@@ -467,7 +467,7 @@ def run_self_check() -> int:
         print(f"SELF-CHECK 环境错误: {exc}", file=sys.stderr)
         return 2
     except subprocess.TimeoutExpired as exc:
-        # 子进程超时是**环境问题**(机器负载/被挂起),不是产物违规。按全仓退出码约定
+        # 子进程超时是**环境问题**(机器负载/被挂起),不是产物违规。按统一退出码约定
         # 归 2(与同段 OSError 一致);返 1 会让调用方把它读成「自检检出缺陷」。
         print(f"SELF-CHECK 超时失败: {exc}", file=sys.stderr)
         return 2
@@ -513,7 +513,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     results = [scan_file(f, root) for f in files]
 
     read_errors = [r for r in results if r.get("read_error")]
-    # 全仓登记口径:**部分**不可读 → 继续 + read_errors[] 进 --json;**全部**不可读才 exit 2。
+    # 统一登记口径:**部分**不可读 → 继续 + read_errors[] 进 --json;**全部**不可读才 exit 2。
     # ⚠️ 单个文件读不出就 exit 2 会让 --json stdout 为空、调用方 json.load 崩,
     #    其余文件已检出的 Critical 被整体丢弃,而 exit 2 按约定是「不计维度失败」
     #    → 一个断链符号链接就能让整档静默不跑(check_list_page_scale.py 修过同一条)。

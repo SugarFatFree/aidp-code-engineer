@@ -15,9 +15,9 @@
 
 检测项：
 1. 构建期守卫反模式（前端 DEV guard / 后端 @Profile）—— **仅对含 THIRD_PARTY_MOCK 标注块的文件判违规**
-   （不以「文件含 mock 字样」为门控：DEV_MOCK 文件必然含 "mock" 字样，
-    那样会把它要求的合规守卫判 Critical，且修复建议会把 dev mock 打进生产包）
-   **两类标注块并存于同一文件时按「行距最近的标注块（双向）」逐处归属**，
+   （2026-09-11 收紧：原口径是「仅在 mock 相关文件中」，而 DEV_MOCK 文件必然含 "mock" 字样，
+    于是它要求的合规守卫被判 Critical，且修复建议会把 dev mock 打进生产包）
+   **两类标注块并存于同一文件时按「行距最近的标注块（双向）」逐处归属**（2026-09-14 审计补），
    归 DEV_MOCK 的守卫跳过；前面没有任何块时回退文件级判违规。判据详见 scan_file() 内注释。
 2. 真实对接后残留（全仓任一真实 SDK/client 信号、后端配置真实 base URL（.yml/.properties，保守认厂商生产域名 / base-url 真实 https）、或 .env baseURL 已切真实地址但 mock 开关仍为 true，与 **THIRD_PARTY_MOCK** 标注块并存）
 3. Mock 兜底调用（catch / || / default 分支）
@@ -39,8 +39,10 @@
 退出码（遵全仓统一约定；⚠️ 严重度分档一律走 --json，不占退出码）：
   0  无 Critical（--strict 下还需无 Important：合规待 follow-up + dev_mock_stale + dev_mock_runtime_switch）
   1  存在 Critical（构建期守卫 / 真实对接后残留 / 兜底 / 字段缺失 / 过期），或 --strict 且有 Important
-  2  入参错（路径不存在 / 传入的是文件而非目录）
-     ⚠️ 本小节须与实现（`sys.exit(2)`）保持一致，调用方据此区分「入参错」与「检出违规」。
+  2  入参或环境错（路径不存在 / 传入的是文件而非目录 / **有文件读取失败**——其余文件照扫，
+     明细进 --json 的 read_errors[]；与 1 同时成立时返回 1）
+     ⚠️ 此处原写「1 路径不存在」与实现（`sys.exit(2)`）相反，2026-09-14 审计据实改正；
+        `check_exit_code_convention.py` 的撞码检测读的正是本小节，写错会让它据假信息判定。
 
 依赖：Python 3.8+ 标准库（跨平台 Linux / macOS / Windows）
 """
@@ -94,8 +96,9 @@ BACKEND_RUNTIME_PATTERNS = [
 #    故本脚本的「构建期守卫 = Critical」**只对 THIRD_PARTY_MOCK 成立**。
 #    对 DEV_MOCK,`import.meta.env.DEV` 这类构建期守卫正是**要求的合规形态**;
 #    ⛔ 判它违规会让开发者去掉 tree-shake 守卫、把 dev mock 打进生产包 ——
-#    恰好制造出本脚本本意要防的那类事故(planner `flow-edge-cases.md` 情况 1 的推荐写法
-#    若被判 Critical + exit 1,修复建议正是「去掉那个守卫」)。
+#    恰好制造出本脚本本意要防的那类事故(实测:planner
+#    `flow-edge-cases.md:299-311` 的推荐写法原样喂进来被判 Critical + exit 1,
+#    而修复建议正是「去掉那个守卫」)。
 REQUIRED_FIELDS = ['vendor', 'api', 'since', 'expected_ready', 'owner', 'REMOVE_WHEN']
 # 按标记类型取不同必填字段集。DEV_MOCK 是同项目内的临时拦截,没有"厂商 / 对方接口 /
 # 对方交付日"这三个概念,故只要三字段。
@@ -165,15 +168,15 @@ _MARKER_LINE_TPM = re.compile(r'(?://|#|\*|/\*\*?)?\s*THIRD_PARTY_MOCK\s*[:：]'
 _MARKER_LINE_DEV = re.compile(r'(?://|#|\*|/\*\*?)?\s*DEV_MOCK\s*[:：]')
 _MARKER_LINE = re.compile(r'(?://|#|\*|/\*\*?)?\s*(?:THIRD_PARTY_MOCK|DEV_MOCK)\s*[:：]')
 
-# ⚠️ **标注行前缀护栏(⛔ 勿删)**:只有 token 之前**仅有空白与注释符号**
+# ⚠️ **标注行前缀护栏(2026-09-14 审计补,⛔ 勿删)**:只有 token 之前**仅有空白与注释符号**
 #    才算真正的标注行。没有它,`DEV_MOCK` 作为**普通标识符**出现就会被当成标注块:
 #      TS   `const DEV_MOCK: boolean = import.meta.env.DEV`
 #      Py   `DEV_MOCK: bool = True`
 #      Go   `case DEV_MOCK:`  (switch 分支)
 #    三种形态都命中 `DEV_MOCK\s*[:：]` → 凭空造出一个缺三字段的块 → **missing_fields/Critical
 #    + exit 1,而那是一行完全正常的业务代码**,作者无从修(除非改变量名)。
-#    `THIRD_PARTY_MOCK` 因 token 长、几乎不会被用作标识符,风险低;`DEV_MOCK` token 短
-#    且是极自然的常量名,风险量级完全不同。
+#    `THIRD_PARTY_MOCK` 因 token 长、几乎不会被用作标识符,此前侥幸没爆;`DEV_MOCK` 是 2026-09-11
+#    才引入的第二种 marker,token 短且是极自然的常量名,风险量级完全不同。
 #    ⚠️ 判据与 `dev-logic-architect/scripts/check_third_party_mock_runtime.py` 的
 #    `MOCK_TAG_PREFIX_OK_RE` **同款**(两个 SKILL 各持一份副本,遵独立性原则)。
 #    代价(已知且接受):行尾注释形态 `const x = 1; // DEV_MOCK: ...` 不再被识别为标注块 ——
@@ -195,7 +198,7 @@ _MARKER_LINE = re.compile(r'(?://|#|\*|/\*\*?)?\s*(?:THIRD_PARTY_MOCK|DEV_MOCK)\
 #
 # 判据:`标注行` == 前缀只由空白与注释符构成 **且**(前缀里真有注释符 **或** 本行处于块注释内)。
 #
-# ⚠️ **为什么不能只看前缀字符**:`^[\s/*#\-<!;%]*$` 允许**纯空白**前缀,
+# ⚠️ **为什么不能只看前缀字符**(2026-09-14 反馈):`^[\s/*#\-<!;%]*$` 允许**纯空白**前缀,
 #    于是任何缩进层级的 Python 类型标注都通过 ——
 #      `<marker>: bool = True`(顶格 / 函数内缩进 / 类内)三种全部被当成标注块,
 #      判 `missing_fields`/**Critical**/exit 1 **打在一行完全正常的业务代码上**,
@@ -221,7 +224,7 @@ def block_comment_flags(lines):
     ★ 判据刻意**窄**:块注释只在「开标记前面全是空白」时才算开启,且**必须在文件内闭合**。
       两条闸门各自堵掉一类实测假阳,⛔ 放宽任一条都会让它们回来。
 
-    ⚠️ **闸门一:开标记前必须全是空白**。否则任何**行中**出现的
+    ⚠️ **闸门一:开标记前必须全是空白**(2026-09-14 审计复现)。否则任何**行中**出现的
        `/*` 都会开一个永不闭合的"块注释",其后所有零前缀行都变成"在块注释内" ——
        而 `/*` 在真实代码与文档里**极常见**,它就是 glob 路径 `src/*` / `dist/*` /
        `plugins/*/skills` 的一部分:
@@ -350,8 +353,8 @@ def scan_file(file_path: Path, max_overdue_days: int = 14) -> Dict:
     """扫描单个文件"""
     try:
         content = file_path.read_text(encoding='utf-8', errors='ignore')
-    except Exception as e:
-        return {'error': str(e)}
+    except OSError as e:
+        return {'error': f'{type(e).__name__}: {e}'}
 
     issues = []
     seen = set()  # (type, line) 去重,避免多个 pattern 命中同一行重复上报
@@ -362,27 +365,28 @@ def scan_file(file_path: Path, max_overdue_days: int = 14) -> Dict:
 
     # 1. 扫描构建期守卫反模式 —— **只对含 THIRD_PARTY_MOCK 标注块的文件判违规**。
     #
-    # ⚠️⚠️ 这一层的门控是「有没有 THIRD_PARTY_MOCK 标注块」,⛔ 不得放宽为「文件里有没有 mock 字样」
-    #      (`_MOCK_HINT` 宽匹配)。两个理由:
-    #      ① **宽匹配会把 DEV_MOCK 判死**:DEV_MOCK 文件里必然出现 "mock" 字样,
+    # ⚠️⚠️ 这一层的门控 2026-09-11 从「文件里有没有 mock 字样」(`_MOCK_HINT` 宽匹配)
+    #      收紧为「有没有 THIRD_PARTY_MOCK 标注块」,⛔ 勿改回。两个理由:
+    #      ① **原口径会把 DEV_MOCK 判死**:DEV_MOCK 文件里必然出现 "mock" 字样,
     #         于是 `import.meta.env.DEV` —— 它**要求的合规形态** —— 被判 Critical,
     #         而修复建议是「改用运行时开关」,照做就把 dev mock 打进了生产包。
     #      ② **未标记的 mock 不归本脚本管**:那由维度 2A 的 `scan_mock_data.py`
     #         (普通 mock 零容忍)承担。本脚本管的是「**已声明**的临时 mock 合不合协议」,
     #         靠 "mock" 这个词去撞未声明的 mock 本就是副作用而非判据。
-    #      代价是:一个**忘了写 THIRD_PARTY_MOCK 标记**的第三方 mock + 构建期守卫,
-    #      本脚本不报 —— 但那种情况「缺标记」才是主缺陷,由 2A 兜。
+    #      收紧的代价是:一个**忘了写 THIRD_PARTY_MOCK 标记**的第三方 mock + 构建期守卫,
+    #      本脚本不再报 —— 但那种情况「缺标记」才是主缺陷,由 2A 兜。
     #
-    # ⚠️⚠️ **归属判定(⛔ 勿退回纯文件级)**:门控是文件级的,但**同一个文件里
+    # ⚠️⚠️ **归属判定(2026-09-14 审计补,⛔ 勿退回纯文件级)**:门控是文件级的,但**同一个文件里
     #      两类标注块并存是完全正常的形态**(一个 api 模块里既有第三方 mock、又有本地 dev mock)。
     #      纯文件级判定下,只要该文件有 TPM 块,**DEV_MOCK 自己那段合规的 `import.meta.env.DEV`
     #      也会被判 build_time_guard/Critical**,而 suggestion 写着「改用运行时环境变量判断」——
-    #      照做就去掉了 tree-shake 守卫、把 dev mock 打进生产包,**正是标注块门控要消灭的那类事故,
+    #      照做就去掉了 tree-shake 守卫、把 dev mock 打进生产包,**正是本次收紧要消灭的那类事故,
     #      只是换了个触发条件**。故每处守卫按「**行距最近的标注块(双向)**」归属:
     #        · 前一个块是 DEV_MOCK → 跳过(那是它要求的合规形态)
     #        · 前一个块是 THIRD_PARTY_MOCK → 判违规
     #        · 前面没有任何块 → 回退文件级(即照旧判违规),⛔ 不放宽,避免开假绿口子
-    #      ⚠️ 只在**两类并存**时启用逐处归属(`has_dev_block` 为真),纯 TPM 文件按文件级判定。
+    #      ⚠️ 只在**两类并存**时启用逐处归属(`has_dev_block` 为真),纯 TPM 文件行为**逐字节不变**,
+    #         零回归面。
     #      ⚠️ 对应的 architect 门 `check_third_party_mock_runtime.py` 是**代码块粒度**、
     #         本门是**标注块粒度**,两者是同一条判据在各自载体上的落法(设计文档有围栏、源码没有)。
     _block_marks = sorted((b['line'], b['kind']) for b in mock_blocks)
@@ -390,7 +394,7 @@ def scan_file(file_path: Path, max_overdue_days: int = 14) -> Dict:
     def _owner_kind(ln: int):
         """该行守卫归属于哪个标注块 —— 按**行距取最近的 marker,双向**;没有块则 None。
 
-        ⚠️⚠️ **必须双向,⛔ 不能只往前看**:两类 mock 的
+        ⚠️⚠️ **必须双向,⛔ 不能只往前看**(2026-09-14 复审修正):两类 mock 的
         **canonical 形态都是「守卫包着标注块」**,即 marker 在守卫的**下一行**——
 
             if (import.meta.env.DEV) {        // ← 守卫在这一行
@@ -582,9 +586,11 @@ def scan_file(file_path: Path, max_overdue_days: int = 14) -> Dict:
     }
 
 
-def scan_residue_in_env_files(src_dir: Path) -> List[Dict]:
+def scan_residue_in_env_files(src_dir: Path, read_errors: List[Dict] = None) -> List[Dict]:
     """扫描环境变量配置文件中的 mock 残留"""
     issues = []
+    if read_errors is None:
+        read_errors = []
 
     # 查找 .env.* 文件(按绝对路径去重,glob 与 **/glob 会重复命中顶层文件)
     env_files = sorted({p.resolve() for p in
@@ -622,6 +628,9 @@ def scan_residue_in_env_files(src_dir: Path) -> List[Dict]:
                                 'message': f'baseURL 已切换到真实地址（{base_url}），但 Mock 开关仍为 true',
                                 'suggestion': f'修改 {mock_enabled_match.group(1)}=false 或删除该变量'
                             })
+            except OSError as e:
+                # 读不出来 ≠ 没有残留:登记进 read_errors(编码异常仍按旧口径忽略,保持可读输入输出不变)
+                read_errors.append({'file': str(env_file), 'error': f'{type(e).__name__}: {e}'})
             except Exception:
                 pass
 
@@ -635,7 +644,7 @@ EXCLUDED_DIRS = {'node_modules', '.git', 'dist', 'build', 'target', 'out',
 CONFIG_EXTENSIONS = {'.yml', '.yaml', '.properties'}
 
 
-def scan_config_backend_signal(src_dir: Path) -> bool:
+def scan_config_backend_signal(src_dir: Path, read_errors: List[Dict] = None) -> bool:
     """单独扫描 application.yml / *.properties 等后端配置的真实对接信号(对接信号 2),命中即视为已对接"""
     for cfg in src_dir.rglob('*'):
         if not cfg.is_file() or cfg.suffix not in CONFIG_EXTENSIONS:
@@ -645,6 +654,9 @@ def scan_config_backend_signal(src_dir: Path) -> bool:
         try:
             if find_real_backend_signal(cfg.read_text(encoding='utf-8')):
                 return True
+        except OSError as e:
+            if read_errors is not None:
+                read_errors.append({'file': str(cfg), 'error': f'{type(e).__name__}: {e}'})
         except Exception:
             pass
     return False
@@ -652,9 +664,15 @@ def scan_config_backend_signal(src_dir: Path) -> bool:
 
 def scan_directory(src_dir: Path, extensions: Set[str],
                    max_overdue_days: int = 14) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-    """扫描目录,返回 (问题文件列表, env 残留, 合规待 follow-up 列表)"""
+    """扫描目录,返回 (问题文件列表, env 残留, 合规待 follow-up 列表, 扫描文件数, 读失败列表)。
+
+    ⚠️ 读失败**绝不可静默丢弃**:此前 `scan_file` 的 error 结果被 `if 'error' not in result` 直接
+    滤掉,`chmod 000` 一个违规文件后 rc=0(审计实测,假绿)。现收进 read_errors 由 main() 决定退出码。
+    """
     file_results = []
-    env_residue = scan_residue_in_env_files(src_dir.parent if src_dir.name == 'src' else src_dir)
+    read_errors: List[Dict] = []
+    env_residue = scan_residue_in_env_files(src_dir.parent if src_dir.name == 'src' else src_dir,
+                                            read_errors)
 
     scanned = 0
     for file_path in src_dir.rglob('*'):
@@ -665,7 +683,9 @@ def scan_directory(src_dir: Path, extensions: Set[str],
             continue
         scanned += 1
         result = scan_file(file_path, max_overdue_days)
-        if 'error' not in result:
+        if 'error' in result:
+            read_errors.append({'file': str(file_path), 'error': result['error']})
+        else:
             file_results.append(result)
 
     # 全仓聚合:任一源码文件出现真实 vendor SDK/base URL 信号,或后端配置文件出现真实 base URL,
@@ -674,7 +694,7 @@ def scan_directory(src_dir: Path, extensions: Set[str],
     # 配置文件扫描与 env 残留扫描对齐:扫 src/ 时回退到项目根,覆盖 src 外的 application.yml
     cfg_root = src_dir.parent if src_dir.name == 'src' else src_dir
     repo_real_onboarding = (any(r['has_vendor_sdk'] for r in file_results)
-                            or scan_config_backend_signal(cfg_root)
+                            or scan_config_backend_signal(cfg_root, read_errors)
                             or bool(env_residue))
     if repo_real_onboarding:
         for r in file_results:
@@ -694,11 +714,11 @@ def scan_directory(src_dir: Path, extensions: Set[str],
         {**blk, 'file': r['file']}
         for r in file_results for blk in r.get('compliant_pending', [])
     ]
-    return results, env_residue, compliant_pending, scanned
+    return results, env_residue, compliant_pending, scanned, read_errors
 
 
 def format_text_output(results: List[Dict], env_residue: List[Dict],
-                       compliant_pending: List[Dict]) -> str:
+                       compliant_pending: List[Dict], read_errors: List[Dict] = None) -> str:
     """格式化文本输出"""
     lines = []
     lines.append('【第三方临时 Mock 反模式扫描】\n')
@@ -729,8 +749,9 @@ def format_text_output(results: List[Dict], env_residue: List[Dict],
                     lines.append(f'      {issue["message"]}')
                     lines.append(f'      建议: {issue["suggestion"]}\n')
 
-    # ⚠️ **Important 明细必须打出来**:`dev_mock_stale` / `dev_mock_runtime_switch` 等 Important
-    #    若不逐条输出,人读输出只剩一行「发现问题: N 处 / Critical: 0 处」,
+    # ⚠️ **Important 明细必须打出来(2026-09-14 审计补)**:2026-09-11 引入 `dev_mock_stale` /
+    #    `dev_mock_runtime_switch` 两类 Important 后,人读输出只有一行「发现问题: N 处 / Critical: 0 处」,
+    #    **正文一个字都没有、连收尾的 ✅ 也不打**(那行被 `total_issues == 0` 挡掉),
     #    读者拿到的是一份「说有问题但不说是什么」的报告,无从下手。
     important_issues = [(r, i) for r in results for i in r['issues']
                         if i['severity'] != 'Critical']
@@ -753,7 +774,7 @@ def format_text_output(results: List[Dict], env_residue: List[Dict],
             lines.append(f'      vendor={blk.get("vendor")} api={blk.get("api")} '
                          f'expected_ready={blk.get("expected_ready")}')
 
-    if total_issues == 0 and not compliant_pending:
+    if total_issues == 0 and not compliant_pending and not read_errors:
         lines.append('\n  ✅ 无第三方接口 Mock 反模式')
 
     return '\n'.join(lines)
@@ -804,7 +825,7 @@ def main():
         sys.exit(2)
 
     extensions = set(args.extensions.split(','))
-    results, env_residue, compliant_pending, scanned_files = scan_directory(
+    results, env_residue, compliant_pending, scanned_files, read_errors = scan_directory(
         args.path, extensions, args.max_overdue_days)
 
     if args.json:
@@ -817,11 +838,16 @@ def main():
             'issue_file_count': len(results),
             'env_residue': env_residue,
             'compliant_pending': compliant_pending,
-            'results': results
+            'results': results,
+            'read_errors': read_errors,
         }
         print(json.dumps(output, indent=2, ensure_ascii=False))
     else:
-        print(format_text_output(results, env_residue, compliant_pending))
+        print(format_text_output(results, env_residue, compliant_pending, read_errors))
+        if read_errors:
+            print(f'\n  ⛔ {len(read_errors)} 个文件读取失败(权限/断链符号链接),本维度结论不可信:')
+            for e in read_errors[:10]:
+                print(f"    - {e['file']}: {e['error']}")
 
     # 判断退出码:Critical → 1;--strict 时 Important(合规待 follow-up)也 → 1
     has_critical = any(
@@ -832,15 +858,17 @@ def main():
 
     if has_critical:
         sys.exit(1)
-    # ⚠️ **`--strict` 必须含全部 Important**:`--help` 写的是「Important 级别问题也返回非零退出码」,
-    #    `dev_mock_stale` / `dev_mock_runtime_switch` 也是 Important —— 只看 `compliant_pending`
-    #    会让「DEV_MOCK 既超龄又用了运行时开关」在 `--strict` 下仍 `exit 0`,**方向是假绿**。
+    # ⚠️ **`--strict` 必须含全部 Important(2026-09-14 审计补)**:`--help` 写的是
+    #    「Important 级别问题也返回非零退出码」,而原实现只看 `compliant_pending`。
+    #    2026-09-11 引入的 `dev_mock_stale` / `dev_mock_runtime_switch` 也是 Important,
+    #    却完全不进退出码 —— 实测「DEV_MOCK 既超龄又用了运行时开关」(2 处 Important)
+    #    在 `--strict` 下仍 `exit 0`,**方向是假绿,且恰好绕过 `--strict` 唯一的存在理由**。
     has_important = any(i['severity'] != 'Critical'
                         for r in results for i in r['issues'])
     if args.strict and (compliant_pending or has_important):
         sys.exit(1)
-
-    sys.exit(0)
+    # 读失败属环境错(2),⛔ 不得落到 0 —— 「读不出来」永远不等于「没有违规」
+    sys.exit(2 if read_errors else 0)
 
 
 if __name__ == '__main__':

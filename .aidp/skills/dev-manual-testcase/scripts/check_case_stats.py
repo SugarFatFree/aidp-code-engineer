@@ -21,7 +21,9 @@
 输出 M/N + 未覆盖澄清点清单(对应第五步之五 / 方法论八之四)。不给该参数则输出与现状完全一致
 (向后兼容)。
 
-⚠️ **调用方契约:`issue_coverage` 是三态,禁止只读 `uncovered_nums` 判绿**。三态如下,`--json` 与人读输出**都会**给出:
+⚠️ **调用方契约:`issue_coverage` 是三态,禁止只读 `uncovered_nums` 判绿**
+(实际项目反馈落地 —— 此前 docstring 承诺「解析 0 条即 exit 2」而实现从未兑现,
+按文档写判据的接入方直接中招)。三态如下,`--json` 与人读输出**都会**给出:
 
   · 正常  {'covered':M, 'total':N, 'uncovered_nums':[...], 'tagged_extra_nums':[...]}
   · 跳过  {'skipped': True, 'reason': '...'}         ← 清单显式标注「无待澄清项」,合法形态
@@ -71,9 +73,9 @@ INT_RE = re.compile(r'-?\d+')
 # 见 dev-execution-planner「沿用上游 PRD 的 Q-NNN 和详细设计的 D-NNN」),
 # 纯数字会让 Q-001 与 D-001 撞成同一条。
 #
-# ⚠️ 三种形态都要认:
+# ⚠️ 三种形态都要认(实际项目反馈落地):
 #   ① **表格首列**——ux 的「十、待澄清问题清单」/ Module E 就是表格,`| Q-001 | 主题 | …`,
-#      这是**实际最主要的形态**;漏认会解析 0 条 → issue_coverage 0/0
+#      这是**实际最主要的形态**,而此前只认段头,传进来解析 0 条 → issue_coverage 0/0
 #      → 报告呈现为「看起来全覆盖」的绿灯,一条澄清点都没对账。**比不接更危险**。
 #   ② 段头 `### Q-001 …` / `### 问题 #N`
 #   ③ 行内 `问题#N`
@@ -111,7 +113,7 @@ REVERSE_DIMS = [f'R{i}' for i in range(1, 13)]
 ALL_DIMS = FORWARD_DIMS + REVERSE_DIMS
 
 # 反向类型关键词(命中即判反向)
-# ⚠️ 「反向」必须在表内：本表只是**缺显式「反向: 是/否」字段时的类型推断兜底**
+# ⚠️ 「反向」必须在表内(2026-08-22 补)：本表只是**缺显式「反向: 是/否」字段时的类型推断兜底**
 # (模板规范形态是显式字段，见 references/flow-steps.md「不再靠类型推断」)。但 FORWARD_KW
 # 收了「正向」、这里却漏了对仗的「反向」——省略显式字段、照模板的「类型: 正向」对仗写
 # 「类型: 反向」的文档会被算进 other，压低反向占比，在「反向占比 ≥40%」这条 Critical 判据上
@@ -167,6 +169,28 @@ MIN_TOTAL_FULL = 20
 # ⚠️ L 档刻意为 None——它按**每模块**基线(简单 30-60 / 中等 80-150,见维度 19),
 #    与 S/M 的整轮合计口径不是一回事,无法用单一区间机检,故仍只跑 MIN_TOTAL_FULL 硬下限。
 SCALE_BASELINE = {'S': (25, 40), 'M': (60, 100), 'L': None}
+
+# ── 编排层入参(references/flow-scale-control.md);两项都**只在显式传参时**生效,缺省输出与改动前一致 ──
+# module_case_cap:L 档每模块用例上限。超出判 Important(warning,不占退出码);上限只裁 P2,
+#   反向占比 ≥40% 与 P0/P1 覆盖不受上限约束——P2 已为 0 仍超限时记 over_p0p1_only(上限让位)。
+P2_TRIMMED_RE = re.compile(r'被合并/删减的\s*P2\s*\**\s*[:：]\s*\**\s*\d+\s*条\s*[—\-–]*\s*理由\s*[:：]\s*\S')
+# prd_presence_mode=table:编排层产出的「PRD 行 → 研发需求对账表」。四列契约;
+#   ⚠️ 识别条件 ⛔ 不写成「必须命中某个专名列」(表格类硬门通用纪律):命中任意 ≥2 个契约列即认作该表,
+#   缺列一律报错(fail-closed)——删掉「状态」列不能让整张表隐形、换来 exit 0。
+PRD_TABLE_COLS = ('PRD行号', 'PRD原文', '承接REQ', '状态')
+PRD_TABLE_STATUS = ('已承接', '未承接')
+PRD_PRESENCE_TAG = '[PRD存在性]'
+# 补充用例的引用键只认「PRD 行号」字段(⛔ 不认块内任意位置的 L30——正文提到「原型 L30 附近」不算承接)
+PRD_LINE_FIELD_RE = re.compile(r'\*\*PRD\s*行号\*\*\s*[:：]\s*([^\n]+)')
+_UNESCAPED_PIPE = re.compile(r'(?<!\\)\|')
+
+
+def _split_row(line):
+    # 转义感知切列(PRD 原文按 GFM 规矩写成 `\|` 时不得多切一格)
+    s = line.strip()
+    s = s[1:] if s.startswith('|') else s
+    s = s[:-1] if s.endswith('|') and not s.endswith('\\|') else s
+    return [c.strip() for c in _UNESCAPED_PIPE.split(s)]
 
 
 def classify_type(type_str):
@@ -290,7 +314,7 @@ def target_hint(prio_count, total):
     return hints
 
 
-def check_file(path, is_full=None, scale=None):
+def check_file(path, is_full=None, scale=None, case_cap=None):
     text = path.read_text(encoding='utf-8', errors='replace')
     stat = analyze_text(text)
     total = stat['cases']
@@ -353,7 +377,28 @@ def check_file(path, is_full=None, scale=None):
     if stat['priority']['unknown']:
         warnings.append(f"{stat['priority']['unknown']} 条用例未解析到 P0/P1/P2 优先级")
 
-    return {
+    # 5. L 档每模块上限(仅显式传 --module-case-cap 时;Important,不进 problems)
+    cap_check = None
+    if case_cap is not None:
+        declared = bool(P2_TRIMMED_RE.search(text))
+        if total <= case_cap:
+            status = 'within'
+        elif total - stat['priority']['P2'] > case_cap:
+            # P2 全删也压不到上限:上限让位于 P0/P1 与反向占比(⛔ 不删 P0/P1)
+            status = 'over_p0p1_only'
+            warnings.append(f'用例数 {total} 超过 L 档每模块上限 {case_cap},P2 全删仍超限:'
+                            f'上限让位于 P0/P1 覆盖与反向占比(须在统计摘要说明)')
+        else:
+            status = 'over'
+            warnings.append(f'用例数 {total} 超过 L 档每模块上限 {case_cap}(Important):'
+                            f'超出部分应合并/删减 P2(现有 P2 {stat["priority"]["P2"]} 条),⛔ 不删 P0/P1 与反向用例')
+        if not declared:
+            warnings.append('统计摘要缺「被合并/删减的 P2: N 条 —— 理由: …」声明'
+                            '(传了 module_case_cap 时必写,未删减写 0 条)')
+        cap_check = {'cap': case_cap, 'total': total, 'p2': stat['priority']['P2'],
+                     'status': status, 'p2_trimmed_declared': declared}
+
+    out = {
         'file': str(path),
         'stat': stat,
         'reverse_ratio': round(rev_ratio, 4),
@@ -361,6 +406,69 @@ def check_file(path, is_full=None, scale=None):
         'warnings': warnings,
         'passed': not problems,
     }
+    if cap_check is not None:
+        out['cap_check'] = cap_check
+    return out
+
+
+def _norm_col(c):
+    return re.sub(r'[\s*`]', '', c)
+
+
+def parse_prd_presence_table(path):
+    """返回 (rows, error)。rows = [{'id','status','line'}];解析不出一律 error(⛔ 不当成 0 行通过)。"""
+    try:
+        lines = Path(path).read_text(encoding='utf-8').splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, f'读不出 PRD 对账表: {exc}'
+    for i, ln in enumerate(lines[:-1]):
+        if not ln.lstrip().startswith('|'):
+            continue
+        head = [_norm_col(c) for c in _split_row(ln)]
+        hits = [c for c in PRD_TABLE_COLS if c in head]
+        sep = _split_row(lines[i + 1])
+        if len(hits) < 2 or not all(re.fullmatch(r'\s*:?-+:?\s*', c) for c in sep):
+            continue
+        missing = [c for c in PRD_TABLE_COLS if c not in head]
+        if missing:
+            return None, f'PRD 对账表(第 {i + 1} 行)缺列: {"、".join(missing)}'
+        ci, si = head.index('PRD行号'), head.index('状态')
+        rows = []
+        for j in range(i + 2, len(lines)):
+            if not lines[j].lstrip().startswith('|'):
+                break
+            cells = _split_row(lines[j])
+            if len(cells) != len(head):
+                return None, f'PRD 对账表第 {j + 1} 行格数 {len(cells)} ≠ 表头 {len(head)}'
+            rid, st = _norm_col(cells[ci]), _norm_col(cells[si])
+            if not rid or st not in PRD_TABLE_STATUS:
+                return None, f'PRD 对账表第 {j + 1} 行行号为空或状态不是 已承接/未承接: {st!r}'
+            rows.append({'id': rid, 'status': st, 'line': j + 1})
+        if not rows:
+            return None, f'PRD 对账表(第 {i + 1} 行)没有数据行'
+        return rows, None
+    return None, f'未在 {path} 里识别到「PRD 行 → 研发需求对账表」(列: PRD 行号 | PRD 原文 | 承接 REQ | 状态)'
+
+
+def compute_prd_presence(case_files, rows):
+    blocks = []
+    for f in case_files:
+        text = f.read_text(encoding='utf-8', errors='replace')
+        ms = list(CASE_RE.finditer(text))
+        for k, m in enumerate(ms):
+            end = ms[k + 1].start() if k + 1 < len(ms) else len(text)
+            block = text[m.start():end]
+            title = block.split('\n', 1)[0]
+            if PRD_PRESENCE_TAG in title:
+                blocks.append(' '.join(PRD_LINE_FIELD_RE.findall(block)))
+    unaccepted = [r['id'] for r in rows if r['status'] == '未承接']
+    uncovered = []
+    for rid in unaccepted:
+        pat = re.compile(r'(?<![0-9A-Za-z])' + re.escape(rid) + r'(?![0-9A-Za-z])')
+        if not any(pat.search(b) for b in blocks):
+            uncovered.append(rid)
+    return {'rows': len(rows), 'unaccepted': len(unaccepted),
+            'covered': len(unaccepted) - len(uncovered), 'uncovered_rows': uncovered}
 
 
 def collect_files(root):
@@ -372,9 +480,8 @@ def collect_files(root):
         #   + aiauto-test 的 测试环境与账号 配置(均无 TC- 用例块)。
         # 口径与 check_suite_upstream.py / check_testcase_format.py 一致,避免统计口径漂移。
         def _non_case(name):
-            return (re.match(r'^00_', name) or re.match(r'^9[789]_', name)
-                    or '研发自测方案' in name or '测试环境与账号' in name
-                    or '环境探针档案' in name)
+            return (re.match(r'^00_', name) or re.match(r'^9[89]_', name)
+                    or '研发自测方案' in name or '测试环境与账号' in name)
         return sorted(f for f in p.rglob('*.md') if not _non_case(f.name))
     return []
 
@@ -507,7 +614,21 @@ def main():
                          'error(解析不出编号,exit 1 且走 stderr)——'
                          '禁止只读 uncovered_nums 判绿,后两态该键不存在;'
                          '不给则输出与现状完全一致(向后兼容)')
+    ap.add_argument('--module-case-cap', type=int, metavar='N',
+                    help='编排层入参 module_case_cap:L 档每模块用例上限,超出判 Important(不占退出码);'
+                         '仅 L 档(不传 --scale 也按 L)。不传 = 不校验,输出与现状一致')
+    ap.add_argument('--prd-presence-table', metavar='PATH',
+                    help='编排层入参 prd_presence_mode=table 时的「PRD 行 → 研发需求对账表」;'
+                         '每条「未承接」行必须有一条 [PRD存在性] 补充用例引用其行号,否则 exit 1')
     args = ap.parse_args()
+
+    if args.module_case_cap is not None:
+        if args.module_case_cap <= 0:
+            print('--module-case-cap 必须是正整数', file=sys.stderr)
+            return 2
+        if str(args.scale or 'L').upper() != 'L':
+            print('--module-case-cap 只用于 L 档(S/M 档按整轮合计基线核对)', file=sys.stderr)
+            return 2
 
     files = collect_files(args.path)
     if not files:
@@ -515,7 +636,8 @@ def main():
         print(json.dumps({'error': msg}, ensure_ascii=False) if args.json else msg)
         return 2
 
-    results = [r for r in (check_file(f, scale=args.scale) for f in files) if r is not None]
+    results = [r for r in (check_file(f, scale=args.scale, case_cap=args.module_case_cap)
+                           for f in files) if r is not None]
     if not results:
         msg = '未在输入中找到含用例(TC-)的文档'
         print(json.dumps({'error': msg}, ensure_ascii=False) if args.json else msg)
@@ -537,15 +659,20 @@ def main():
             return 2
         rec_text = rec_path.read_text(encoding='utf-8', errors='replace')
         issue_nums = parse_issue_record(rec_path)
-        # 三态。「解析 0 条」不整脚本 return 2：本 SKILL 规定的合法输入里有
+        # 三态（2026-08-22 复审修正）。上一版把「解析 0 条」一律判 exit 2 并 return，
+        # 误伤了两类**本 SKILL 自己规定的合法输入**，且代价远超预期：
         #   · 「无待澄清项」的空清单 —— 模板明写「即使无项也保留标题并标注」；
-        #   · 纯 T-NNN 清单。
-        # 整脚本 return 会让维度 19 的核心判据（统计摘要 / 反向占比 / 优先级分布）一条都不跑，
-        # QR 又按「exit 2 = 入参错、不计维度失败」略过 —— 附加统计绝不该顶掉主体判据。
+        #   · 纯 T-NNN 清单 —— T 当时不在编号前缀里。
+        # 而 exit 2 是**整脚本 return**，维度 19 的核心判据（统计摘要 / 反向占比 / 优先级分布）
+        # 一条都没跑，QR 又按「exit 2 = 入参错、不计维度失败」略过 —— 传一份合法空清单
+        # 就能让 Critical 维度 19 整档静默跳过。附加统计绝不该顶掉主体判据。
         #
-        # ⚠️ 「不 return 2」不等于「不报错」：错误只塞进 issue_cov dict 时，只读退出码、或读
-        # uncovered_nums 求长度的接入方（error/skipped 两态该键都不存在 → len([])==0）会得到
-        # 「✅ 全覆盖」的假绿。口径：**主体判据照跑完，错误另走 stderr + 退出码 1**。
+        # ⚠️ 但「不 return 2」不等于「不报错」（实际项目反馈续修）：上一版只把
+        # 错误塞进 issue_cov dict 就完事，issue_parse_error 成了死变量，没有 stderr、
+        # 没有退出码影响 —— 只读退出码、或按常规写法读 uncovered_nums 求长度的接入方
+        # （error/skipped 两态该键都不存在 → len([])==0）照样得到「✅ 全覆盖」。
+        # 想堵的假绿灯原样存在，只是从 0/0 换成了藏在 JSON 里的 {"error": ...}。
+        # 现在的口径：**主体判据照跑完，错误另走 stderr + 退出码 1**（理由见文件头 docstring）。
         if not issue_nums:
             if EMPTY_ISSUE_RECORD_RE.search(rec_text):
                 issue_cov = {'skipped': True, 'reason': '清单显式标注「无待澄清项」，无需对账'}
@@ -564,6 +691,24 @@ def main():
         else:
             issue_cov = compute_issue_coverage(files, issue_nums)
 
+    prd_cov, prd_fail = None, False
+    if args.prd_presence_table:
+        if not Path(args.prd_presence_table).is_file():
+            msg = f'--prd-presence-table 路径不存在或非文件:{args.prd_presence_table}'
+            print(json.dumps({'error': msg}, ensure_ascii=False) if args.json else msg)
+            return 2
+        try:
+            Path(args.prd_presence_table).read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f'--prd-presence-table 读不出(环境错,exit 2):{exc}'
+            print(json.dumps({'error': msg}, ensure_ascii=False) if args.json else msg)
+            return 2
+        rows, err = parse_prd_presence_table(args.prd_presence_table)
+        prd_cov = {'error': err} if err else compute_prd_presence(files, rows)
+        prd_fail = bool(err) or bool(prd_cov.get('uncovered_rows'))
+        if prd_cov.get('uncovered_rows'):
+            all_passed = False
+
     if args.json:
         out = {
             'passed': all_passed,
@@ -575,6 +720,8 @@ def main():
             out['uncovered_dims'] = cov_uncovered
         if issue_cov is not None:
             out['issue_coverage'] = issue_cov
+        if prd_cov is not None:
+            out['prd_presence'] = prd_cov
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
         for r in results:
@@ -598,8 +745,10 @@ def main():
             print_coverage_matrix(cov_matrix, cov_uncovered, False)
         if issue_cov is not None:
             print('\n=== 需求问题覆盖(消费《需求问题记录》,对应第五步之五 / 方法论八之四)===')
-            # ⚠️ 必须先判三态再取键：skipped/error 两态的 dict 里没有 covered/total/uncovered_nums，
-            # 无条件取键会在「无待澄清项」这一合法形态上 KeyError。
+            # ⚠️ 必须先判三态再取键（实际项目反馈落地）：skipped/error 两态的 dict 里
+            # 没有 covered/total/uncovered_nums，上一版无条件取键 → KeyError 裸 traceback。
+            # 而且崩在**最正常的路径**上：一个规规矩矩标了「无待澄清项」（本 SKILL 模板明写的
+            # 合法形态）的项目，只要不带 --json 跑一次就崩。
             if issue_cov.get('skipped'):
                 print(f"   ⏭️  跳过对账:{issue_cov.get('reason', '')}")
             elif issue_cov.get('error'):
@@ -608,7 +757,8 @@ def main():
                 print(f"   需求问题覆盖:{issue_cov['covered']}/{issue_cov['total']} 个澄清点已有专项用例"
                       " (用例名 (需求问题#N)/(澄清#N)/(Q-001) 标记)")
                 # ⚠️ 这里**不能**再加 `#` 前缀：uncovered_nums 装的是已归一化的字符串 ID ——
-                # `#N` 形态经 _norm_num_id() 已是 '#1'、编号形态本就是 'Q-001'。
+                # 旧形态经 _norm_num_id() 已是 '#1'、新形态本就是 'Q-001'，
+                # 上一版的 f"#{n}" 把两者分别打成 '##1' 和 '#Q-001'，两种形态都错。
                 if issue_cov['uncovered_nums']:
                     print("   ⚠️ 未覆盖澄清点:" + ", ".join(issue_cov['uncovered_nums'])
                           + " —— 须补 (需求问题#N) 专项用例或就地标不适用")
@@ -617,12 +767,22 @@ def main():
                 if issue_cov['tagged_extra_nums']:
                     print("   ℹ️  用例标注了记录外的编号:" + ", ".join(
                         issue_cov['tagged_extra_nums']))
-        # ⚠️ 结论行必须与退出码同源：退出码要算上 issue_parse_error，只看 all_passed 会出现
-        # 「末行打印『总体:✅ 通过』、EXIT=1」的自相矛盾（QR 子 Agent 会把那句 ✅ 原样贴进报告）。
-        if all_passed and not issue_parse_error:
+        if prd_cov is not None:
+            print('\n=== PRD 行对账表(prd_presence_mode=table)===')
+            if prd_cov.get('error'):
+                print(f"   ❌ {prd_cov['error']}")
+            else:
+                print(f"   未承接 {prd_cov['unaccepted']} 行,已有 [PRD存在性] 补充用例 {prd_cov['covered']} 行")
+                if prd_cov['uncovered_rows']:
+                    print('   ❌ 缺补充用例:' + ', '.join(prd_cov['uncovered_rows']))
+        # ⚠️ 结论行必须与退出码同源(2026-08-23)：此前只看 all_passed，而退出码还要算上
+        # issue_parse_error —— 于是出现「末行打印『总体:✅ 通过』、EXIT=1」的自相矛盾，
+        # 而 QR 派发要求子 Agent「把报告正文原样贴进报告」，贴进去的正是那句 ✅。
+        if all_passed and not issue_parse_error and not prd_fail:
             print('\n总体:✅ 通过')
         elif all_passed:
-            print('\n总体:❌ 不通过(用例文档本身合格,但 --issue-record 清单解析失败,见上)')
+            why = '--issue-record 清单解析失败' if issue_parse_error else '--prd-presence-table 对账表解析失败'
+            print(f'\n总体:❌ 不通过(用例文档本身合格,但 {why},见上)')
         else:
             print('\n总体:❌ 不通过')
 
@@ -632,7 +792,7 @@ def main():
 
     # `passed`(JSON 字段)只反映用例文档本身;退出码额外把清单解析失败也算上,
     # 这样只读退出码的接入方同样看得见。两者刻意不合并,见文件头 docstring。
-    return 0 if (all_passed and not issue_parse_error) else 1
+    return 0 if (all_passed and not issue_parse_error and not prd_fail) else 1
 
 
 if __name__ == '__main__':

@@ -70,7 +70,7 @@ DOM_SELECTOR_PATTERNS = [
 #   它验的是确认门/脱敏/不扩权对**任意调用方**都成立,故步骤会写「以外部调用方身份调用工具」。
 #   ⚠️ **两道检查要分开看,别只核一道**(此前只核了前者、结论不完整):
 #     ① FORBIDDEN_PATTERNS:`调用接口|发送请求|发起请求` 带词边界,「调用工具『X』」不命中 → 放行 ✅
-#     ② ALLOWED_ACTIONS:**动作动词白名单会命中**——实测把动作写成「调用」/「发起」
+#     ② ALLOWED_ACTIONS:**动作动词白名单会命中**—— 实测把动作写成「调用」/「发起」
 #        均报 Important `invalid_action_verb`(而 flow-qr-dispatch 明确要求子 Agent 读
 #        `by_level.Important` 并入维度判定 → 合规用例必被判不通过)。
 #   **处置:不动脚本,改为在 SKILL/分片里规定动作动词用既有的「执行」**(实测放行),对象列写
@@ -81,7 +81,6 @@ KNOWN_CASE_TYPE_TAGS = (
     "[外部调用方]", "[应用MCP]",
     # [应用MCP] 只标被测应用自身暴露的工具;Chrome/Appium 测试驱动即使用 MCP 协议也不算。
     # 不新增动作动词豁免:外部调用方仍用已有「执行」,代码级动作照常拦。
-    "[外部调用方]",
     # 第三方临时 mock 流程的两个既有族标记(见 references/flow-third-party.md 示例)
     "[真实接口已交付-清理验证]", "[待第三方交付-切换测试]",
     # [还原度] = 通用还原度套件(维度 21,判据见 references/flow-fidelity-suite.md)。
@@ -97,7 +96,26 @@ KNOWN_CASE_TYPE_TAGS = (
     #   ——与 [外部调用方] 同一处置思路:**不动脚本、改用既有动词**(往白名单加「grep」「执行命令」
     #   会削弱核心原则 1 对代码级动作的拦截面,代价大于收益)。
     "[日志可追溯]",
+    # [非交互] = 非交互模块(迁移工具 / 数据脚本 / 批处理 / CLI)的简化模板(references/flow-scale-control.md 第五节):
+    #   「命令 + 前置数据 + 预期退出码 + 输出断言」四段,不套页面步骤表与通用还原度套件。
+    #   ⚠️ 标记本身**不豁免任何东西**:贴了标记却缺四段任一段即 Critical,不会因此逃过「缺测试步骤」。
+    "[非交互]",
 )
+NONINTERACTIVE_TAG = "[非交互]"
+# [非交互] 标记只有在编排层显式传 module_kind=non_interactive|auto 时才生效(SKILL.md 约束 14:仅由 module_kind 判定)。
+# ⛔ 缺省 interactive 下贴标记不得绕开任何页面判据——否则页面模块贴个标记就能关掉维度 7/8/21。
+HONOR_NONINT = False
+NONINT_FIELDS = ("命令", "前置数据", "预期退出码", "输出断言")
+_NONINT_FIELD_RE = re.compile(r"^\s*\*\*(命令|前置数据|预期退出码|输出断言)\*\*\s*[:：]\s*(.*)$", re.MULTILINE)
+_NONINT_STOP_RE = re.compile(r"^\s*(?:\*\*[^*\n]{1,20}\*\*\s*[:：]|#{2,6}\s|---\s*$)")
+EXIT_CODE_RE = re.compile(r"^`?-?\d+`?(?:\s*(?:/|、|,|，|或)\s*`?-?\d+`?)*$")
+# 非交互用例的「命令」是被测模块自己的入口命令;绕开它去调接口属于核心原则 1 拦的代码级动作
+# ⚠️ HTTP 动词那一支**只认大写**:`kv get /cache/a`、`migrate.py put /data/x` 是 CLI 子命令不是接口调用;
+#    ⛔ 不拦裸 URL:`--source-url https://…` 是迁移工具的正常参数
+NONINT_HTTP_RE = re.compile(
+    r"(?i:\b(?:curl|wget|httpie|Invoke-WebRequest|Invoke-RestMethod)\b|\brequests\.(?:get|post|put|delete|patch)\b"
+    r"|\bfetch\(|\baxios\b|\burllib\.request\b)|\b(?:POST|GET|PUT|DELETE|PATCH)\s+/\w")
+
 
 # ── 双源对账用例:窄口径 SQL 豁免识别 ──
 # 仅「统计/汇总/计数/金额」字段的 [双源对账] 用例,允许在其「双源对账」专段内出现等价 SQL
@@ -142,7 +160,7 @@ SUITE_HEADER = re.compile(
 
 # 步骤表行(以 | 开头 + 数字 + | 开头)
 # ⚠️⚠️ **步骤号后允许一个可选的方括号标注**(如 `| 1 [加速可选] |`,见 flow-principles.md
-#    「步骤级 `[加速可选]` 标注」)。**这一段不能省** —— 实测:不认它时,带标注的行
+#    「步骤级 `[加速可选]` 标注」)。**这一段不能省** —— 2026-09-10 实测:不认它时,带标注的行
 #    **整行匹配不上**,于是该行不被当成步骤行 → 四要素完备性 / 动作动词白名单 / 禁 SQL 与选择器
 #    **一整套检查对这些行全部失效**,而输出里只表现为「缺少 **测试步骤**: 章节」这类看似无关的报错,
 #    甚至在别的文档形态下**一条都不报** = **假绿**。
@@ -398,6 +416,51 @@ def check_dom_selectors(case: dict):
     return issues
 
 
+def _nonint_fields(body: str):
+    """取非交互用例四段的值:同行内容 + 续行(到下一个加粗小节 / 标题 / 分隔线为止)。"""
+    lines = body.splitlines()
+    out = {}
+    for i, ln in enumerate(lines):
+        m = _NONINT_FIELD_RE.match(ln)
+        if not m or m.group(1) in out:
+            continue
+        val = [m.group(2).strip()]
+        for nxt in lines[i + 1:]:
+            if _NONINT_STOP_RE.match(nxt):
+                break
+            val.append(nxt.strip())
+        out[m.group(1)] = "\n".join(v for v in val if v)
+    return out
+
+
+def check_noninteractive(case: dict):
+    """[非交互] 用例:四段齐全、退出码是整数、输出断言非空、命令里不绕道调接口。"""
+    issues = []
+    fields = _nonint_fields(case["content"])
+    for name in NONINT_FIELDS:
+        if not fields.get(name, "").strip() or fields[name].strip() in {"—", "-"}:
+            issues.append({
+                "level": "Critical",
+                "rule": "noninteractive_missing_field",
+                "msg": f"{case['tc_id']} 标了 [非交互] 却缺「**{name}**:」或其内容为空(四段:命令/前置数据/预期退出码/输出断言)",
+            })
+    code = fields.get("预期退出码", "").strip()
+    if code and not EXIT_CODE_RE.match(code):
+        issues.append({
+            "level": "Critical",
+            "rule": "noninteractive_exit_code",
+            "msg": f"{case['tc_id']} 预期退出码必须是整数(多个用 / 分隔),实际 {code[:30]!r}",
+        })
+    cmd = fields.get("命令", "")
+    if cmd and NONINT_HTTP_RE.search(cmd):
+        issues.append({
+            "level": "Critical",
+            "rule": "noninteractive_http_call",
+            "msg": f"{case['tc_id']} 「命令」里出现接口调用(curl/HTTP);非交互用例的命令必须是被测模块自己的入口命令",
+        })
+    return issues
+
+
 def check_file(file_path: Path):
     """检查单个用例文档"""
     if not file_path.exists():
@@ -424,6 +487,20 @@ def check_file(file_path: Path):
     if not suite_organized:
         checkers = (check_entry,) + checkers
     for case in cases:
+        if NONINTERACTIVE_TAG in case["title"] and not HONOR_NONINT:
+            file_result["issues"].append({
+                "level": "Important",
+                "rule": "noninteractive_unauthorized",
+                "msg": f"{case['tc_id']} 标了 [非交互] 但未传 --module-kind non_interactive|auto:标记不生效,按页面模板判",
+            })
+        if NONINTERACTIVE_TAG in case["title"] and HONOR_NONINT:
+            # 非交互模板:四段校验替代步骤表与入口检查;若同时写了 **测试步骤** 表,步骤表照常校验
+            file_result["issues"].extend(check_noninteractive(case))
+            file_result["issues"].extend(check_case_type_tag(case))
+            if extract_step_table(case["content"])[0]:
+                for checker in (check_steps_four_elements, check_forbidden_keywords, check_dom_selectors):
+                    file_result["issues"].extend(checker(case))
+            continue
         for checker in checkers:
             file_result["issues"].extend(checker(case))
     return file_result
@@ -447,13 +524,11 @@ def check_multi_file_split(target: Path):
     def _is_case_file(name):
         if re.match(r"^00_", name):            # 00_索引.md(专职索引,AIDP 范式)
             return False
-        if re.match(r"^9[789]_", name):        # 97_环境探针档案 / 98_跨系统验证清单 / 99_待澄清问题清单
+        if re.match(r"^9[89]_", name):         # 98_跨系统验证清单 / 99_待澄清问题清单
             return False
         if "研发自测方案" in name:              # 01_研发自测方案.md(方案,非用例分册)
             return False
         if "测试环境与账号" in name:            # aiauto-test 环境/账号配置
-            return False
-        if "环境探针档案" in name:              # aiauto-test 环境事实沉淀(非用例分册)
             return False
         return True
 
@@ -569,7 +644,13 @@ def main():
     parser = argparse.ArgumentParser(description="自测用例格式校验")
     parser.add_argument("path", help="用例文档路径或目录")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
+    parser.add_argument("--module-kind", choices=("interactive", "non_interactive", "auto"),
+                    default="interactive",
+                    help="编排层入参 module_kind:缺省 interactive 时 [非交互] 标记**不生效**(照页面模板判 + Important 提示);"
+                         "non_interactive / auto 才认 [非交互] 简化模板")
     args = parser.parse_args()
+    global HONOR_NONINT
+    HONOR_NONINT = args.module_kind != "interactive"
 
     target = Path(args.path)
     if not target.exists():

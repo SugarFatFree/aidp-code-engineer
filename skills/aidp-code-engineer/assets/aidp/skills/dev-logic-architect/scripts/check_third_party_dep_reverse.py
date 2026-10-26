@@ -3,9 +3,10 @@
 """
 第三方依赖反向兜底识别脚本
 
-对应 dev-logic-architect 核心原则 19「第三方依赖反向兜底识别」+ QR 检查项 26。
+对应「第三方依赖反向兜底识别」判据:dev-logic-architect 核心原则 19 / QR 检查项 26,
+dev-execution-planner 检查项 9.8「反向兜底」(两个 SKILL 各持一份、逐字节相同)。
 
-实测发现: 设计期靠关键词扫 PRD("对接/调用第三方/外部平台")判定第三方依赖,
+实测发现: 设计期靠关键词扫 PRD("对接/调用第三方/外部平台名")判定第三方依赖,
 PRD 漏写时直接默判"无第三方依赖" → 编码计划"第三方对接:无" → 联调阶段才暴雷。
 
 本脚本从代码 / 配置 / 依赖清单三向反推第三方依赖,与 PRD 正向识别求并集。
@@ -105,7 +106,7 @@ CONFIG_URL_KEYS = [
 LOCALHOST_PATTERNS = [
     r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)",
     r"^https?://.*\.local\b",
-    r"^https?://.*\.internal\b",
+    r"^https?://.*\.(?:internal)\b",  # 私有内网 TLD 后缀(RFC 6762 附录 G 列举)
     r"^https?://.*\.svc\.cluster\.local",
 ]
 
@@ -212,12 +213,10 @@ def scan_dependencies_for_vendors(root: Path) -> List[Dict]:
     """扫描依赖清单中的 vendor SDK"""
     findings: List[Dict] = []
 
+    # 从 DEPENDENCY_FILES 常量派生扫描清单(写死列表会与常量不一致、漏扫 Cargo.toml)
     dep_files: List[Path] = []
-    for fname in ["pom.xml", "build.gradle", "build.gradle.kts", "package.json",
-                  "requirements.txt", "Pipfile", "go.mod"]:
-        dep_files.extend(root.rglob(fname))
-    # *.csproj
-    dep_files.extend(root.rglob("*.csproj"))
+    for fname in sorted(DEPENDENCY_FILES):
+        dep_files.extend(root.rglob(fname))  # 含字面名与 *.csproj 通配
 
     for path in dep_files:
         if any(skip in path.parts for skip in SKIP_DIRS):
@@ -296,7 +295,7 @@ def aggregate_by_endpoint(code_findings: List[Dict]) -> List[Dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="第三方依赖反向兜底识别(对应核心原则 19 + QR 检查项 26 + 27)",
+        description="第三方依赖反向兜底识别(architect 核心原则 19 / 检查项 26 + 27;planner 检查项 9.8)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("root", type=Path, help="代码根目录")

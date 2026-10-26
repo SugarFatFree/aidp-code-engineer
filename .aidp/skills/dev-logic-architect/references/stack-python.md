@@ -15,7 +15,7 @@ A.2 须给出 client 初始化示例 + `.env` 配置块：
 
 ```python
 # ❌ 严禁硬编码
-client = httpx.AsyncClient(base_url="http://192.0.2.100:8080")
+client = httpx.AsyncClient(base_url="http://192.0.2.10:8080")
 # ✅ 配置驱动
 client = httpx.AsyncClient(base_url=settings.ALIPAY_BASE_URL, timeout=settings.ALIPAY_TIMEOUT)
 ```

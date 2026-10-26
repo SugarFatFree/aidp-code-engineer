@@ -148,7 +148,7 @@ def parse_design_doc(md_text: str, target_table: str | None) -> dict[str, dict]:
     # 字段表。若只认 markdown 表格,对这类(最常见的)设计文档会恒判「未找到可对比的表」
     # 而静默失效。故此处对未从 markdown 表格取到的表,回退用同一套 DDL 解析器从设计
     # 文档的 SQL 围栏中提取。
-    # ⚠️ info-string 必填（`sql`/`ddl`），**不可写成 `(?:sql|ddl)?` 可选**：
+    # ⚠️ info-string 必填（`sql`/`ddl`），**不可写成 `(?:sql|ddl)?` 可选**（2026-08-23 复审修）：
     # 可选形态会让空 info-string 也能开围栏，于是遇到文档里任何一个非 sql 围栏
     # （architect 的 A.2 ER 图是 Critical 强制产出的 ```mermaid，必然存在）时，
     # 正则改从它的**闭**围栏起配对，此后全文错位 —— A.3 的 CREATE TABLE 永远抓不到，

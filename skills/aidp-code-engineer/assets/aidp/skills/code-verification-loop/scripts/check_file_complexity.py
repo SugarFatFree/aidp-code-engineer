@@ -261,7 +261,7 @@ def scan(root: Path, method_limit: int) -> Dict:
             method_violations.append({"file": rel, **m})
 
     return {
-        # ⚠️ `scanned_files` / `skipped` 必须有（CLAUDE.md「三条不可回退的约定」第 3 条）：
+        # ⚠️ `scanned_files` / `skipped` 必须有（退出码约定:有 N/A 跳过分支的脚本 `--json` 须输出可区分标记）：
         # 没有它时，「纯 .md 目录 / 空目录 / 路径写成上层 / 整目录被 EXCLUDED_DIRS 吃掉」
         # 四种「整档没跑」与「真通过」的 JSON 输出逐字相同，调用方无从区分。
         "scanned_files": scanned_files,
@@ -303,7 +303,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--method-limit", type=int, default=DEFAULT_METHOD_LIMIT, help=f"单方法/函数行数硬阈值(默认 {DEFAULT_METHOD_LIMIT})")
     args = parser.parse_args(argv)
 
-    # ⚠️ `exists()` 与 `is_dir()` 必须分开判（CLAUDE.md「三条不可回退的约定」第 2 条）。
+    # ⚠️ `exists()` 与 `is_dir()` 必须分开判（退出码约定:否则「路径写错」会被当成合法 N/A 静默放行）。
     # 合并写成 `if not X.exists(): return 2` 时，传**存在的单个文件**会一路跑到
     # `rglob("*")` 拿到空集 → 0 命中 → exit 0「✅ 通过」。手滑把目录写成文件路径，
     # 等于整个检查静默放行。实测同一份含 63 行超长方法的代码：传目录 exit 1、

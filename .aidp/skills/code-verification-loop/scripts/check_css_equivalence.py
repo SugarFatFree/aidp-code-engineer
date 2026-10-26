@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 r"""样式重构编译等价性对照 — code-verification-loop 维度 14
 
-**要解决的事**:样式**重构**(抽公共 / 参数化 / 移动位置)的正确性若无本门则**零覆盖**。
+**要解决的事**:样式**重构**(抽公共 / 参数化 / 移动位置)的正确性此前**零覆盖**。
 `vue-tsc` 与 `eslint` **都不编译 `<style>` 块**(维度 7 的 🎯 已点明),而
 「类型检查过了」对样式**毫无意义**——这是使用者最容易误采信的一句话。
 
@@ -17,7 +17,7 @@ r"""样式重构编译等价性对照 — code-verification-loop 维度 14
 不起任何服务——与本 SKILL「全程静态」的最高约束一致。
 
 ⚠️ **基线有效性判定(本脚本的第二个职责,别当附属功能)**:
-   下游真实失效——用 `git stash` 取基线时把验证依赖的**未跟踪配置文件**一起带走了,
+   实际项目中的真实失效——用 `git stash` 取基线时把验证依赖的**未跟踪配置文件**一起带走了,
    **基线那次实际没跑起来**,却产出了一个看似正常的基线文件,差点把假的「错误变少了」
    当成好消息接受。故本脚本对**空 / 疑似未执行**的基线**拒绝比较、按 exit 2 返回**,
    ⛔ 绝不给出一个差值——与本 SKILL 反复强调的「失效形态是 0 命中假绿」同源。
@@ -26,7 +26,11 @@ r"""样式重构编译等价性对照 — code-verification-loop 维度 14
 归一规则(**保守**:只做能保证语义等价的变换,拿不准就不动):
   - 去掉 CSS 注释 `/* ... */`(它们不影响渲染,但**会被编译进产物**——维度 14 的配套判据正是
     「公共样式文件的文档注释必须用 `//`」,块注释进产物是缺陷本身,故比较时先剥掉、
-    由**另一条判据**去管它,不要让它把整份 diff 淹掉)
+    不让它把整份 diff 淹掉;但**剥之前先分别数两侧的注释块**,改动后比改动前多 =
+    **新增注释被编译进产物**(维度 14 立论的缺陷①),报 Important、占退出码 1 —— 首版只剥不数,
+    这条缺陷恰恰被归一化本身吃掉了、对照全绿)。
+    ⚠️ 剥注释必须**引号感知**:`content:"/* x */"` 是字符串字面量、属于产物内容,
+    裸正则会把它当注释剥掉 → 两侧 content 不同也判等价(假绿)
   - 压缩空白(连续空白 → 单空格;`{`/`}`/`;`/`:`/`,` 周边空白去掉)
   - 数值单位等价形式:`0px`/`0em`/`0rem`/`0pt`/`0vh`/`0vw` → `0`;`.5` → `0.5`;十六进制颜色统一小写
     ⚠️ **`0%` 刻意不归一**(它在 `@keyframes` 里是**选择器**、在 `flex-basis` 上与 `0` 有已知行为差异,
@@ -42,8 +46,8 @@ r"""样式重构编译等价性对照 — code-verification-loop 维度 14
     python3 check_css_equivalence.py <old.css> <new.css> [--json]
 
 退出码:
-    0 = 等价(原序即等价)
-    1 = 有差异(含「仅顺序变化」——它只是 Important,但仍然占退出码 1,因为需要人确认)
+    0 = 等价(原序即等价)且未新增注释块
+    1 = 有差异(含「仅顺序变化」「新增注释块」——二者只是 Important,但仍然占退出码 1,因为需要人确认)
     2 = 入参或环境错:路径不存在 / 不可读 / **基线无效**(空文件、只有空白、
         不含任何 `{` 因而不像 CSS 产物、或首行是编译/命令报错)
     ⚠️ **本脚本没有 N/A 跳过分支**:两侧都空 = 两次编译都没跑起来,恰恰是本脚本要拦的形态,
@@ -61,13 +65,52 @@ from collections import Counter
 from pathlib import Path
 from typing import List
 
-COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+
+def strip_comments(css: str):
+    """引号感知地剥掉 `/* ... */`,返回 (剥后文本, 注释块数)。
+
+    ⛔ 不可退回裸正则(非贪婪匹配 slash-star 到 star-slash):字符串字面量里的 `/* x */`(`content:"/* x */"`)
+    会被当注释剥掉,于是两侧 content 不一样也判等价。未闭合的 `/*` 剥到文件尾(CSS 语义如此)。
+    """
+    out, i, n, count = [], 0, len(css), 0
+    quote = None
+    while i < n:
+        ch = css[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(css[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and css[i + 1] == "*":
+            end = css.find("*/", i + 2)
+            count += 1
+            i = n if end < 0 else end + 2
+            out.append(" ")
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), count
+
+
+def count_comments(css: str) -> int:
+    return strip_comments(css)[1]
 # 「基线其实没跑起来」的信号。⚠️⚠️ **判据必须行首锚定、且只看头几行非空行**,
-#    ⛔ 绝不能拿这些词去全文子串匹配 —— 裸子串匹配会把
+#    ⛔ 绝不能拿这些词去全文子串匹配 —— 实测(2026-09-07)裸子串版把
 #    `.error:hover{color:red}` 这种**再普通不过的 CSS 选择器**判成「无效基线」并 exit 2,
 #    而 exit 2 的语义是「修好再来」、调用方无从修 → 整个维度 14 静默消失(假红比假绿更隐蔽:
 #    它看起来像脚本在尽责)。`content:"数据不存在"` 同理被 `不存在` 命中。
-#    口径:编译器/shell 的报错**总是打在产物开头**,故只查前几行的行首。
+#    现在的口径:编译器/shell 的报错**总是打在产物开头**,故只查前几行的行首。
 INVALID_BASELINE_RE = re.compile(
     r"^\s*(?:Error|error|SyntaxError|Traceback|npm ERR!|Exception)\b"
     r"|^[^\n]{0,80}?(?:command not found|No such file or directory|"
@@ -78,7 +121,7 @@ BRACE_RE = re.compile(r"\{")
 
 
 def normalize(css: str) -> str:
-    s = COMMENT_RE.sub("", css)
+    s = strip_comments(css)[0]
     s = re.sub(r"\s+", " ", s)
     s = re.sub(r"\s*([{};:,>])\s*", r"\1", s)
     # 0 值单位归一(只处理紧跟在 `:` 或空格后的独立 0)。
@@ -158,7 +201,7 @@ def main() -> int:
     reason = baseline_invalid_reason(p_old, raw_old)
     if reason:
         msg = ("⛔ 基线无效,拒绝比较:%s(%s)\n"
-               "   下游真实失效:`git stash` 取基线时把未跟踪的配置文件一起带走了,基线那次没跑起来,\n"
+               "   实际项目中的真实失效:`git stash` 取基线时把未跟踪的配置文件一起带走了,基线那次没跑起来,\n"
                "   却产出一个看着正常的基线 —— 差点把假的「错误变少了」当成好消息接受。\n"
                "   ⚠️ 本次返回 exit 2 = 入参/环境错,**不是通过**;先把基线跑对再来。" % (reason, p_old))
         print(msg, file=sys.stderr)
@@ -185,6 +228,9 @@ def main() -> int:
     c_old, c_new = Counter(r_old), Counter(r_new)
     only_old = list((c_old - c_new).elements())
     only_new = list((c_new - c_old).elements())
+    cm_old, cm_new = count_comments(raw_old), count_comments(raw_new)
+    comments_added = cm_new > cm_old
+    rc = 0 if (same_order and not comments_added) else 1
 
     if args.json:
         print(json.dumps({
@@ -193,14 +239,20 @@ def main() -> int:
             "order_only_change": (not same_order) and same_sorted,
             "rules_old": len(r_old), "rules_new": len(r_new),
             "only_in_old": only_old[:50], "only_in_new": only_new[:50],
+            "comments_old": cm_old, "comments_new": cm_new,
+            "comments_added": comments_added,
             "old": str(p_old), "new": str(p_new),
         }, ensure_ascii=False, indent=2))
-        return 0 if same_order else 1
+        return rc
 
     print("规则块:改动前 %d 条 / 改动后 %d 条" % (len(r_old), len(r_new)))
+    if comments_added:
+        print("🟡 [Important] 产物里的注释块由 %d 增至 %d:新增的块注释被编译进了 CSS。" % (cm_old, cm_new))
+        print("   公共样式文件的文档注释须用 `//`(预处理器编译时丢弃),`/* */` 会原样进产物。")
     if same_order:
-        print("✅ 编译产物等价(归一后逐字一致)—— 本次样式重构未改变产物")
-        return 0
+        print("✅ 编译产物等价(归一后逐字一致)" + ("" if not comments_added else
+              ",但见上方新增注释告警(需确认)"))
+        return rc
     if same_sorted:
         print("🟡 [Important] **仅顺序变化**:排序后等价、原序不等价。")
         print("   ⚠️ CSS 有**层叠**语义——同选择器同属性时后写的胜出,顺序变化可能是真差异;")

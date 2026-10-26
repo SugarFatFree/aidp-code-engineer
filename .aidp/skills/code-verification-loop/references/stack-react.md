@@ -72,7 +72,7 @@ python3 <SKILL_DIR>/scripts/scan_field_columns.py <前端目录>
 
 采集 `columns` 数组配置项的 `title`（Antd Table）、`Form.Item` 的 `label`。**对账主键是展示语义名（`title`/`label`），不是 `dataIndex`**——`dataIndex` 仅作辅助参考。
 
-> ⚠️ **与维度 3.7 的强关联**：Antd Table 的 `render(text, record, index)` 与 ECharts `tooltip.formatter` 里按 `params.dataIndex` 回原数组取值的**旁路消费点**，是出参字段结构变更后最容易漏改的地方——见 `dimension-3-interface.md` 维度 3.7「出参字段变更消费点穷举」。
+> ⚠️ **与维度 3.7 的强关联**：Antd Table 的 `render(text, record, index)` 与 ECharts `tooltip.formatter` 里按 `params.dataIndex` 回原数组取值的**旁路消费点**，是出参字段结构变更后最容易漏改的地方——见 `../SKILL.md` 维度 3.7「出参字段变更消费点穷举」（详细说明在 `flow-dims-core.md` 维度 3）。
 
 ### 2.4 单文件行数阈值（React 组件）
 
@@ -97,7 +97,7 @@ const baseURL = 'http://localhost:8080/api'
 
 ## 四、维度 8：请求通道 URL 拼装单一信源（**React 同样适用**）
 
-> ⚠️ 与维度 6/7 不同，**本维度不被 Vue 独占**——它查的是「把 base 拼到 URL 前面」这条判据有几份实现，与 SFC、`<style lang>`、DI 容器都无关，React 项目**照常生效、不跳过**。判据本体见 `dimension-6-9-stack-gated.md` 维度 8。
+> ⚠️ 与维度 6/7 不同，**本维度不被 Vue 独占**——它查的是「把 base 拼到 URL 前面」这条判据有几份实现，与 SFC、`<style lang>`、DI 容器都无关，React 项目**照常生效、不跳过**。判据本体见 `../SKILL.md` 维度 8。
 
 ### 4.1 与 §三 的关系
 
@@ -135,7 +135,7 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --change
 
 与 Vue 侧**同一个脚本、同一套判据**（`.tsx`/`.jsx` 与 `.ts`/`.js` 一并扫，本维度不依赖 SFC 机制）。
 
-> 📌 **脚本接口事实（JSON 字段语义、退出码、安全失败、`--allow`/`--changed` 优先级、实测数字）一律以 `dimension-6-9-stack-gated.md` 维度 8 为单一信源，本文件不复制**——抄在各栈文件里必然漂移。
+> 📌 **脚本接口事实（JSON 字段语义、退出码、安全失败、`--allow`/`--changed` 优先级、实测数字）一律以 `flow-dims-static-gates.md` 维度 8 为单一信源，本文件不复制**——抄在各栈文件里必然漂移。
 
 ---
 

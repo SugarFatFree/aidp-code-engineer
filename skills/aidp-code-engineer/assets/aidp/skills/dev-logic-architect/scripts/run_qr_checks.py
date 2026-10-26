@@ -36,6 +36,8 @@ CHECKS = (
     ("check_lock_strategy.py", (), False),
     ("check_metric_spec.py", (), False),
     ("check_list_page_scale.py", (), False),
+    ("check_text_field_length.py", (), False),
+    ("check_no_fabricated_fallback.py", (), False),
     ("check_upstream_call_log_spec.py", (), False),
     ("check_count_claim_table.py", (), False),
     ("check_render_merge_table.py", (), False),
@@ -158,7 +160,7 @@ def _collect_sequential(script_dir, target, checks, sql_root=None, version=None,
                             # 核对),也不能与「根本没跑」同标 unavailable —— 那正是本采集器
                             # 要消除的歧义。
                             # ⚠️ 只认「范围未知」(None)。**扫描数为 0 不在此列** —— 那是
-                            #    明确的零扫描,按全仓铁律必须留在 unavailable,⛔ 别合并两者。
+                            #    明确的零扫描,按统一退出码约定必须留在 unavailable,⛔ 别合并两者。
                             entry["status"] = "inconclusive"
                             entry["incomplete"] = True
             if result.returncode == 1:
@@ -216,7 +218,7 @@ ATTENTION = ("findings", "unavailable", "inconclusive")
 
 
 def exit_code(entries):
-    """1 = 有待关注项;0 = 没有。⛔ 不返回 2 —— 全仓约定里 2 专指入参/环境错。"""
+    """1 = 有待关注项;0 = 没有。⛔ 不返回 2 —— 统一退出码约定里 2 专指入参/环境错。"""
     return 1 if any(e["status"] in ATTENTION for e in entries) else 0
 
 
@@ -230,7 +232,7 @@ def main():
     parser.add_argument("--workers", type=int, choices=range(1, 5), default=1,
                         metavar="1..4", help="只读脚本的并发数，默认串行")
     args = parser.parse_args()
-    # ⚠️ 两件事必须分开:exit 2 按全仓约定会被调用方读成「入参错、不计维度失败」,
+    # ⚠️ 两件事必须分开:exit 2 按统一退出码约定会被调用方读成「入参错、不计维度失败」,
     #    把「目录存在但一个 .md 都没有」也归进去,等于让**空的设计目录**被静默放过。
     if not args.target.exists() or not args.target.is_dir():
         parser.error("详细设计目录不存在或不是目录")

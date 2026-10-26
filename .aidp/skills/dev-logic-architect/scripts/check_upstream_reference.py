@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 # 三类元素识别正则
-# ⚠️ 标题层级一律 #{2,6}，**不要锚死 ^##**：
+# ⚠️ 标题层级一律 #{2,6}，**不要锚死 ^##**（2026-08-22 审计实测）：
 #    本 SKILL 自家 B.2 接口模板是 `### [接口编号] 接口名称` + `- **Method:**`，A.3 数据表小节在
 #    `#### A.3 数据定义` 之下自然落 `#####`。锚死 H2 时三类元素全部「未发现，跳过」，脚本随即
 #    打印「✅ 通过」exit 0 —— 维度 15（Critical）对照模板产出的设计**恒判通过**。
@@ -79,7 +79,7 @@ FEATURE_HEADER_RE = re.compile(
 #   · `REQ-V0.17.0-004`  —— 带版本段,通用规则 约定34「跨版本需求作废清算」要求的形态,
 #                           目的是让「被本版推翻的历史需求」能被**跨版本检索**并打上作废标记
 #
-# ⚠️ **只认 `REQ-\d+` 的失效方向是假绿、不是假红**(2026-10-09 下游实测):带版本段的段头
+# ⚠️ **只认 `REQ-\d+` 的失效方向是假绿、不是假红**(实测):带版本段的段头
 #    一条都匹配不上 → 整份 PRD 被判「零功规点」→ 打印「未发现功规点段,跳过核验」并
 #    **exit 0**,而维度 5 / 检查项 15 这一档是 Critical、不可豁免 —— 覆盖率统计整档失真。
 # ⚠️ 版本段必须**原样保留、⛔ 不许归一化掉**:约定34 的跨版本检索要的就是它。
@@ -172,7 +172,7 @@ def find_elements(text: str) -> List[Dict]:
     """识别三类元素的所有段"""
     elements: List[Dict] = []
     lines = text.splitlines()
-    # ⚠️ **DDL / Method 行只作"无标题时的兜底"，绝不与标题并列计数**。
+    # ⚠️ **DDL / Method 行只作"无标题时的兜底"，绝不与标题并列计数**（2026-08-22 复审修正）。
     #    放宽标题层级时同时加了 TABLE_DDL_RE 与 API_METHOD_LINE_RE 三个信号源却没去重，于是
     #    一张表被计 2 次（`## biz_user 表` + `CREATE TABLE biz_user (`）、
     #    一个接口被计 3 次（`### GET /x` + `- **Method:**` + `- **Path:**`），
@@ -261,7 +261,7 @@ def check_element_head(text: str, element: Dict) -> Dict:
         #    那一列的全部作用就是**列举历史 REQ 编号**,它**不是来源标注行** ——
         #    判它「缺 markdown 链接」后,作者只有两条路:给编号套个链接(表 F 不是干这个的),
         #    或退回旧编号格式(正是本轮刚放宽支持的那个格式)—— **即硬门在逼人违反另一条规范**
-        #    (与 `check_doc_split.py` 跨目录那条是同一形态,独立审计在本仓库语料上实测复现)。
+        #    (与 `check_doc_split.py` 跨目录那条是同一形态,独立审计实测复现)。
         #    判据刻意窄:**必须是表格行**(以 `|` 开头)**且**行内没有任何「来源」类关键词 ——
         #    真正的来源标注行即使写在表格里也照查。
         if LINK_EXEMPT_TABLE_ROW_RE.match(stripped) and not SOURCE_KEYWORD_RE.search(line):
@@ -420,7 +420,7 @@ def main() -> int:
         aggregated["passed"] = False
 
     # ⚠️ 三类元素一个都没识别到 ≠ 通过：那是「没扫到东西」，不是「扫过且干净」。
-    #    按全仓约定第 3 条输出可区分标记，避免调用方把空转读成通过。
+    #    按统一退出码约定第 3 条输出可区分标记，避免调用方把空转读成通过。
     all_skipped = all(c.get("skipped") for c in coverage_summary.values()) if coverage_summary else True
     aggregated["skipped"] = all_skipped
 

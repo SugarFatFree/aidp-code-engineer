@@ -31,6 +31,12 @@ Mock 数据残留扫描脚本
   --third-party-mode  启用第三方临时 mock 协议核验
   --max-overdue-days  第三方 mock expected_ready 过期天数阈值(默认 14;超过判 Critical 长期挂账)
 
+退出码:
+  0 = 无 Critical(--strict 时无任何发现)且全部文件可读
+  1 = 有 Critical(--strict 时有任何发现)
+  2 = 入参或环境错:目录不存在 / **有文件读取失败**(其余文件照扫,明细进 --json 的 read_errors[];
+      与 1 同时成立时返回 1)
+
 跨平台支持: Linux / macOS / Windows (Python 3.8+)
 """
 
@@ -41,6 +47,21 @@ import os
 import re
 import sys
 from pathlib import Path
+
+# ⚠️ 读不出来的文件**绝不可静默当成「无 mock」**:此前四处读取都是 `except: return/continue`,
+#    `chmod 000` 一个含 mock 的文件后整轮 rc=0 / passed=true(审计实测,假绿)。与同 SKILL
+#    `check_di_resolvability.py` 同口径:部分不可读 → 其余照扫 + `read_errors[]` 进 `--json`;
+#    有不可读文件且无其它违规时 exit 2(环境错,「读不出来」永远不等于「没有违规」)。
+_READ_ERRORS = {}
+
+
+def _record_read_error(path, exc):
+    _READ_ERRORS.setdefault(str(path), f'{type(exc).__name__}: {exc}')
+
+
+def read_errors_list():
+    return [{'file': f, 'error': e} for f, e in sorted(_READ_ERRORS.items())]
+
 
 # 前端文件扩展名
 FRONTEND_EXTENSIONS = {'.vue', '.ts', '.js', '.tsx', '.jsx', '.svelte'}
@@ -132,7 +153,8 @@ def scan_file_content(filepath: Path, patterns: list) -> list:
     hits = []
     try:
         text = filepath.read_text(encoding='utf-8', errors='ignore')
-    except (OSError, PermissionError):
+    except (OSError, PermissionError) as _e:
+        _record_read_error(filepath, _e)
         return hits
     for i, line in enumerate(text.splitlines(), 1):
         for pattern, desc in patterns:
@@ -279,11 +301,12 @@ DATE_PATTERN = re.compile(r'(\d{4})-(\d{2})-(\d{2})')
 
 # ── DEV_MOCK(同项目后端未部署)的**最小识别器**:只为产出 2A 豁免,不做任何协议判定 ──
 #
-# ⚠️ **为什么必须有这一段**:`DEV_MOCK` 是维度 2B 管理的合规形态
+# ⚠️ **为什么必须有这一段**(2026-09-14 审计补):`DEV_MOCK` 是维度 2B 管理的合规形态
 #    (dev-execution-planner/references/flow-edge-cases.md 情况 1 的两种 ✅ 推荐写法),
-#    若它在 2A 这边没有豁免,那两种推荐写法喂进 `scan_mock_data.py --third-party-mode`
-#    会被判 🔴 Critical + exit 1 ——「照着示例写反被扫描器判 Critical」,
-#    正是 SKILL 在 `--third-party-mode` 那段写明要防的后果:
+#    但它在 2A 这边没有任何豁免 —— 实测把那两种推荐写法原样喂进
+#    `scan_mock_data.py --third-party-mode`,照样判 🔴 Critical + exit 1。
+#    即「照着自己的示例写会被自己的扫描器判 Critical」**仍然成立**,只是从 2B 换到了 2A,
+#    而本 SKILL 自己在 `--third-party-mode` 那段早就写明这个后果:
 #      「漏加会把**完全合规的 2B mock** 判成 2A Critical + exit 1,验收循环把合规代码
 #        打回"修复" —— 等于 2B 整档被 2A 顶掉」。
 #
@@ -299,7 +322,7 @@ DEV_MOCK_MARKER = re.compile(r'DEV_MOCK\s*[:：]')
 # ⚠️ 与 `scan_third_party_mock_antipatterns.py` / `check_third_party_mock_runtime.py` 同款前缀护栏:
 #    token 之前只能有空白与注释符号。`DEV_MOCK` 是个**极自然的常量名**
 #    (`const DEV_MOCK: boolean = ...` / Go 的 `case DEV_MOCK:`),不加护栏会把普通业务代码
-#    当成标注块。
+#    当成标注块 —— 那正是 2026-09-14 审计在姊妹脚本里抓到的缺陷。
 DEV_MOCK_PREFIX_OK = re.compile(r'^[\s/*#\-<!;%]*$')
 # ⚠️ **这是同款正则的第三份副本,但它刻意停在"纯前缀判定"、不配块注释状态机** ——
 #    权威的那一对在 `scan_third_party_mock_antipatterns.py` 与
@@ -320,7 +343,8 @@ def find_dev_mock_files(root: Path) -> set:
     for fp in walk_files(root):
         try:
             lines = fp.read_text(encoding='utf-8', errors='ignore').splitlines()
-        except (OSError, PermissionError):
+        except (OSError, PermissionError) as _e:
+            _record_read_error(fp, _e)
             continue
         for i, line in enumerate(lines):
             m = DEV_MOCK_MARKER.search(line)
@@ -348,7 +372,8 @@ def find_third_party_mock_blocks(filepath: Path, max_overdue_days: int = DEFAULT
     """
     try:
         text = filepath.read_text(encoding='utf-8', errors='ignore')
-    except (OSError, PermissionError):
+    except (OSError, PermissionError) as _e:
+        _record_read_error(filepath, _e)
         return []
     lines = text.splitlines()
     blocks = []
@@ -429,7 +454,8 @@ def detect_mock_in_fallback_path(filepath: Path, mock_block_line: int) -> bool:
     """
     try:
         text = filepath.read_text(encoding='utf-8', errors='ignore')
-    except (OSError, PermissionError):
+    except (OSError, PermissionError) as _e:
+        _record_read_error(filepath, _e)
         return False
     lines = text.splitlines()
     # 提取 mock 函数/常量名:扫标注块下方紧邻的声明行
@@ -591,7 +617,8 @@ def run_scan(scan_dir: Path, output_json=False, strict=False, third_party_mode=F
             "scanned_files": len(list(walk_files(scan_dir))),
             "skipped": len(list(walk_files(scan_dir))) == 0,
             "total_issues": total_issues,
-            "passed": total_issues == 0,
+            "passed": total_issues == 0 and not _READ_ERRORS,
+            "read_errors": read_errors_list(),
             "checks": results
         }
         if third_party_mode and third_party_result:
@@ -651,8 +678,14 @@ def run_scan(scan_dir: Path, output_json=False, strict=False, third_party_mode=F
             print()
 
         print("=" * 72)
-        if total_issues == 0:
+        if _READ_ERRORS:
+            print(f"⛔ {len(_READ_ERRORS)} 个文件读取失败(权限/断链符号链接),本维度结论不可信:")
+            for e in read_errors_list()[:10]:
+                print(f"    - {e['file']}: {e['error']}")
+        if total_issues == 0 and not _READ_ERRORS:
             print("✅ 未发现 mock 数据残留")
+        elif total_issues == 0:
+            print("⚠️ 可读文件未发现 mock 数据残留,但存在不可读文件(见上),不得判通过")
         else:
             critical = sum(r["count"] for r in results if r["severity"] == "Critical" and not r["passed"])
             if third_party_mode and third_party_result:
@@ -664,12 +697,16 @@ def run_scan(scan_dir: Path, output_json=False, strict=False, third_party_mode=F
         print("=" * 72)
 
     if strict:
-        sys.exit(1 if total_issues > 0 else 0)
+        violated = total_issues > 0
     else:
         critical_count = sum(r["count"] for r in results if r["severity"] == "Critical")
         if third_party_mode and third_party_result:
             critical_count += len(third_party_result["violations"])
-        sys.exit(1 if critical_count > 0 else 0)
+        violated = critical_count > 0
+    if violated:
+        sys.exit(1)
+    # 读失败属环境错(2),不能落到 0;已检出的确定违规优先返回 1(不降格成「不计维度失败」)
+    sys.exit(2 if _READ_ERRORS else 0)
 
 
 def main():

@@ -11,14 +11,14 @@ r"""「上游调用日志与脱敏声明表」硬核回检 — dev-logic-archite
    支付鉴权中心);**不含本地 DB 与本地缓存**。它与**检查项 15「上游溯源完备性」**里的
    「上游」(= PRD / 原型等**上游文档**)完全是两回事,两处都在本 SKILL 里、极易看串。
 
-背景(下游实测):同一项目里 **4 个上游客户端写出 4 种日志规格、另有 2 个直接漏掉**。
+背景(实测):同一项目里 **4 个上游客户端写出 4 种日志规格、另有 2 个直接漏掉**。
 根因不在编码期——**详细设计从来没写过**"这个上游调用要打哪些日志、哪些字段要脱敏",
 于是"打不打、打什么"退化成个人习惯。对策与检查项 31(错误契约)、34(统计口径)同构:
 **把运行期才暴露的约定前移到设计期,做成每个上游调用的强制产出小表。**
 
 ★ 与被测项目侧脚本的**去重边界(重要)**:运行时五条判据(C1 出站调用类零日志 / C2 成功路径
    不可见 / I1 无一条日志提到 URL / I2 成功路径只有 debug / I3 疑似凭据明文入日志)由
-   **被测项目侧**的 `<项目根>/AIDP_HOME/scripts/check_upstream_call_log.py` 承担(经脚手架下发,
+   **被测项目侧**的 `{{AIDP_HOME}}/scripts/check_upstream_call_log.py` 承担(经脚手架下发,
    不在任何 SKILL 内)。**本脚本只判设计期声明这一段,绝不重写那 5 条**——同一判据两份实现
    是最高频漂移源。两者扫描对象也不同:那份扫 `.java`/`.kt` 源码,本份扫设计文档 `.md`。
 
@@ -33,10 +33,10 @@ r"""「上游调用日志与脱敏声明表」硬核回检 — dev-logic-archite
 【Important(仅告警,不占退出码)】
   U1 缺表   —— 有上游调用信号却找不到「上游调用日志与脱敏声明表」。
                ⚠️ **刻意判 Important 不判 Critical**:存量设计文档会大面积命中,一上来就判死会让
-               整个硬门被无视(本仓库既有教训:假红常驻 = 硬门被绕过)。表**一旦产出**,列不齐 /
+               整个硬门被无视(既有教训:假红常驻 = 硬门被绕过)。表**一旦产出**,列不齐 /
                格子空就是新产物自身的缺陷,那两条才判 Critical。
   U5 空表   —— 表头齐全但**一行数据都没有**(空表 ≡ 没写,与 U1 同档)。
-  U4 中文名 —— 「上游中文名」列不含任何中文(疑似直接写了 `ops-service` 这类内部代号)。
+  U4 中文名 —— 「上游中文名」列不含任何中文(疑似直接写了 `demo-ops-service` 这类内部代号)。
                面向用户的错误文案要求用中文服务名(检查项 31 C5 管的是**接口错误契约表**里的提示,
                本条管的是**本表**的服务名列,两处对象不同、各自登记,不重复计)。
 
@@ -84,7 +84,7 @@ EMPTY_MARKERS = {
 
 # ⚠️ 必须**全串锚定**:只有"整格就是一个占位符"才算未填。未锚定的写法会把
 #    `https://${SMS_HOST}/v2/send` 这种**已填实、只留环境变量槽位**的合规 URL 判成空格
-#    (本仓库 check_error_contract.py / check_metric_spec.py 都在这处翻过车,勿改回)。
+#    (同 SKILL 的 check_error_contract.py / check_metric_spec.py 都在这处翻过车,勿改回)。
 PLACEHOLDER_RE = re.compile(r"^\{[^{}]*\}$|^<[^<>]+>$")
 
 # ── 上游调用信号:只认**标题行**,不扫正文散文 ──
@@ -277,7 +277,7 @@ def exempt_line_flags(lines: List[str], in_code: List[bool]) -> List[bool]:
 def scan_spec_tables(lines: List[str], in_code: List[bool], exempt: List[bool]) -> List[Dict]:
     """扫出全部上游调用日志声明表。**表头下一行必须是 GFM 分隔行**——否则散文里
     「固定小表:上游中文名 | 完整 URL | … | 脱敏字段清单 | …」这类**说明文字**会被当成表
-    (本仓库 check_error_contract.py 就因此把自家模板判死过)。"""
+    (同 SKILL 的 check_error_contract.py 就因此把自家模板判死过)。"""
     tables, i, n = [], 0, len(lines)
     while i < n:
         if in_code[i] or exempt[i] or "|" not in lines[i]:
@@ -382,8 +382,9 @@ def scan_file(path: Path, root: Path) -> Dict:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         # ⚠️ 读不出来 ≠ 没有违规:记为 read_error。**全部文件都不可读时** main() 判入参/环境错
-        #    (exit 2);**部分不可读**时进 `read_errors` 并在人读输出里告警,与同族
-        #    `check_metric_spec.py` 行为一致。
+        #    (exit 2);**部分不可读**时进 `read_errors` 并在人读输出里告警——这一条是统一登记
+        #    在案的既有缺口(`check_exit_code_convention.py --probe-unreadable`),本脚本与同族
+        #    `check_metric_spec.py` 行为一致,**不在此单独改口径**。
         return {"file": rel, "read_error": str(exc), "tables": 0, "signals": [],
                 "criticals": [], "importants": [], "declared_none": False, "external": False}
 
@@ -443,7 +444,7 @@ def scan_file(path: Path, root: Path) -> Dict:
 def render_text(results: List[Dict], criticals: List[Dict], importants: List[Dict],
                 skipped: bool, target: Path) -> None:
     # ⚠️ criticals / importants 由 main() 传入(已含跨文件聚合的 U1)。**勿改回在本函数里
-    #    从 results 重算**——那样人读输出会与退出码打架(本仓库实测踩过)。
+    #    从 results 重算**——那样人读输出会与退出码打架(实测踩过)。
     n_tables = sum(r["tables"] for r in results)
     print("上游调用日志与脱敏声明表核验(检查项 35 / 约定40) — %s" % target)
     print("  扫描文件: %d   识别到声明表: %d 张" % (len(results), n_tables))
@@ -475,7 +476,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     target = Path(args.target)
-    # ⚠️ exists() 与 is_dir() 必须分开判(全仓约定):合并写会把"路径不存在"和"传单个文件=合法"
+    # ⚠️ exists() 与 is_dir() 必须分开判(统一退出码约定):合并写会把"路径不存在"和"传单个文件=合法"
     #    混为一谈,手滑写错路径等于整档静默放行。
     if not target.exists():
         print("[错误] 路径不存在: %s" % target, file=sys.stderr)

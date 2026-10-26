@@ -55,6 +55,14 @@ LOGIN_SUITE_KEYWORDS = re.compile(r"登录|登出|未登录|登录态|单点登�
 STEP_OPEN_BROWSER_RE = re.compile(r"^\s*\|\s*\d+\s*\|\s*打开\s*\|[^|]*浏览器", re.MULTILINE)
 STEP_LOGIN_RE = re.compile(r"^\s*\|\s*\d+\s*\|[^|]*\|[^|]*[\"“']?登录[\"”']?\s*按钮", re.MULTILINE)
 
+# 非交互套件标记与其 Setup 的「运行环境准备」信号
+NONINTERACTIVE_TAG = "[非交互]"
+# [非交互] 标记只有在编排层显式传 module_kind=non_interactive|auto 时才生效(SKILL.md 约束 14:仅由 module_kind 判定)。
+# ⛔ 缺省 interactive 下贴标记不得绕开任何页面判据——否则页面模块贴个标记就能关掉维度 7/8/21。
+HONOR_NONINT = False
+# ⛔ 不收「准备 / 配置 / 依赖」这类泛词:「准备: 打开浏览器登录」也能满足它
+NONINT_SETUP_RE = re.compile(r"运行环境|工作目录|环境变量")
+
 # 列表/表格类套件信号(用于「列表列完整性」结构用例 report-only 提示,维度 17 子项 e)
 LIST_TABLE_SIGNAL_RE = re.compile(r"表头列|表格表头|列展示名|列表页|表格各列|逐列核对")
 # 「列表列完整性」结构用例关键词(命中即认为已配结构用例)
@@ -212,6 +220,18 @@ def check_suite_setup(suite, issues):
     setup_end = setup_start + next_heading.start() if next_heading else len(suite["content"])
     setup_content = suite["content"][setup_start:setup_end]
 
+    # [非交互] 套件(迁移工具 / 数据脚本 / 批处理 / CLI):Setup 仍必须有且只有一个,
+    # 但内容是「运行环境准备」而不是打开浏览器 + 登录(references/flow-scale-control.md 第五节)
+    if NONINTERACTIVE_TAG in suite["title"] and HONOR_NONINT:
+        if not NONINT_SETUP_RE.search(setup_content):
+            issues.append({
+                "level": "Critical",
+                "rule": "setup_missing_env_prep",
+                "msg": "{}: [非交互] 套件的 Suite Setup 须写明运行环境准备(工作目录/环境变量/依赖/配置)".format(
+                    suite["id"]),
+            })
+        return
+
     if not re.search(r"打开|启动\s*APP|访问", setup_content):
         issues.append({
             "level": "Critical",
@@ -260,6 +280,12 @@ def check_file(path):
     suites = extract_suites(content)
     issues = []
     for suite in suites:
+        if NONINTERACTIVE_TAG in suite["title"] and not HONOR_NONINT:
+            issues.append({
+                "level": "Important",
+                "rule": "noninteractive_unauthorized",
+                "msg": "{}: 标了 [非交互] 但未传 --module-kind non_interactive|auto:标记不生效,按页面套件判".format(suite["id"]),
+            })
         check_prefix_form(suite, issues)
         check_affects_tag(suite, issues)
         check_suite_setup(suite, issues)
@@ -272,7 +298,13 @@ def main():
     parser = argparse.ArgumentParser(description="测试套件结构检查(维度 7)")
     parser.add_argument("path", help="用例文档路径或目录")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
+    parser.add_argument("--module-kind", choices=("interactive", "non_interactive", "auto"),
+                    default="interactive",
+                    help="编排层入参 module_kind:缺省 interactive 时 [非交互] 标记**不生效**(照页面模板判 + Important 提示);"
+                         "non_interactive / auto 才认 [非交互] 简化模板")
     args = parser.parse_args()
+    global HONOR_NONINT
+    HONOR_NONINT = args.module_kind != "interactive"
 
     target = Path(args.path)
     if not target.exists():

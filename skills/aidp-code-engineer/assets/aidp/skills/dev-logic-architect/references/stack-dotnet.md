@@ -13,7 +13,7 @@
 
 ```csharp
 // ❌ 严禁：既硬编码又每次 new HttpClient（socket 耗尽）
-client.BaseAddress = new Uri("http://192.0.2.100:8080");
+client.BaseAddress = new Uri("http://192.0.2.10:8080");
 // ✅ 工厂 + 配置驱动
 services.AddHttpClient<IAlipayClient, AlipayClient>(c =>
     c.BaseAddress = new Uri(config["ThirdParty:Alipay:BaseUrl"]));

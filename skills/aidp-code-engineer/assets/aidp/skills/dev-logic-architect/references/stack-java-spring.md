@@ -33,7 +33,7 @@ third-party:
 
 ```java
 // ❌ 硬编码 base URL / IP / 端口
-@FeignClient(name = "x", url = "http://192.0.2.100:8080")
+@FeignClient(name = "x", url = "http://192.0.2.10:8080")
 // ❌ 凭证明文
 private static final String APP_ID = "2021004100000000";
 ```

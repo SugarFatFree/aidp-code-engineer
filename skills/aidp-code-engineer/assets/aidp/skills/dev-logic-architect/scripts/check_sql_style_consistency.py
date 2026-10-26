@@ -7,6 +7,7 @@
 退出码:
   0  无历史 SQL(无需检查) 或 全部沿用一致
   1  存在风格违规(Critical) **或** 设计文档缺"📜 历史 SQL 风格沿用说明"章节
+     ⚠️ 后者曾单用 2 一档,与统一退出码约定「2 = 入参错」撞码,已并入 1。
         两者区分改从 --json 的 verification.has_history_note 读。
   2  输入错误(代码仓/设计文档路径不存在)——非维度违规,修正参数后重跑
 
@@ -418,7 +419,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(render_text(history, result))
 
     if not result["has_history_note"]:
-        # 曾用 2 表示本档,与「2 = 入参错」的全仓统一约定撞码 → 已并入 1(判错)。
+        # 曾用 2 表示本档,与「2 = 入参错」的统一退出码约定撞码 → 已并入 1(判错)。
         # 严重度分档改从 --json 的 verification.has_history_note 读,不再靠退出码区分。
         return 1
     if result["violations"]:

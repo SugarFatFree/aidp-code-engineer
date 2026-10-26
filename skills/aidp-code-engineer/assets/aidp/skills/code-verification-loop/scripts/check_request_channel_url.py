@@ -7,7 +7,7 @@
 **「把 base 拼到 URL 前面」这条判据，在项目里是不是只有一处实现？**
 
 判据类逻辑一旦有平行实现，写第 N 份的人不会被任何机制提醒「这里有坑、且已有答案」。
-典型翻车（实际项目中曾出现）：新写的 SSE 封装无条件拼
+典型翻车（实测）：新写的 SSE 封装无条件拼
 `import.meta.env.VITE_API_BASE_URL`，而接口常量 `/demo-app/ai/...`
 本就含 context-path，再拼一次 base →
 `/demo-app/demo-app/ai/...` → 404。
@@ -23,7 +23,7 @@
 * 计入的「自拼点」= 同时满足两条 —— ① 出现 base 拼装形态（`${base}${url}` / `base + url`）
   ② **所在文件里存在请求发起点**（`fetch(` / `new EventSource(` / `axios.*(` / `.getReader()` …）。
   只算 ② 是为了把「页面跳转 `location.href = ${base}/logout`」「`new HttpClient(config.baseUrl)`
-  传参」这类非请求通道的用法挡在门外（实测 aidp-code-engineer 里正是这两种形态）。
+  传参」这类非请求通道的用法挡在门外（实测示例项目里正是这两种形态）。
 * 计入自拼点散落在 **≥2 个不同文件 = 平行实现** → 🔴 Critical（应收敛到单一信源）。
 * 只有 **1 个文件** → 放行，并把该文件报为「认定的 URL 拼装单一信源」。
 * `--changed` 给了本次改动文件时：≥2 个文件的前提下，**只有落在改动文件里的自拼点判

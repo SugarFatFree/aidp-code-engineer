@@ -32,6 +32,11 @@ B. 套件内每个用例步骤的"预期现象"行必须额外标注对应详细
   python check_suite_upstream.py <用例路径或目录> --json
   python check_suite_upstream.py <用例路径或目录> --check-step-acceptance
     # 启用用例步骤验收锚点核验(B 项)
+  python check_suite_upstream.py <用例路径或目录> --plan-ref-mode deferred
+    # 编排层「计划/自测并行生成」模式(references/flow-scale-control.md 第一节):
+    # S4 只认占位符 `⟨PLAN-REF:REQ-xxx⟩`——每套件头部 S1 里的每条 REQ 恰好一个、编号合法、
+    # 不得已填 Sprint 链接;占位符行不参与链接合规检查。缺省 required = 行为与改动前完全一致
+    # (占位符不是链接,沿用既有链接合规口径直接判不通过)。
 """
 
 from __future__ import annotations
@@ -71,7 +76,7 @@ S0_TEST_PLAN = re.compile(r"自测方案章节|自测方案来源|自测方案\s
 #   · `REQ-V0.17.0-004`  —— 带版本段,通用规则 约定34「跨版本需求作废清算」要求的形态,
 #                           目的是让「被本版推翻的历史需求」能被**跨版本检索**并打上作废标记
 #
-# ⚠️ **只认 `REQ-\d+` 的失效方向是假绿、不是假红**(2026-10-09 下游实测):带版本段的段头
+# ⚠️ **只认 `REQ-\d+` 的失效方向是假绿、不是假红**(实测):带版本段的段头
 #    一条都匹配不上 → 整份 PRD 被判「零功规点」→ 打印「未发现功规点段,跳过核验」并
 #    **exit 0**,而维度 5 / 检查项 15 这一档是 Critical、不可豁免 —— 覆盖率统计整档失真。
 # ⚠️ 版本段必须**原样保留、⛔ 不许归一化掉**:约定34 的跨版本检索要的就是它。
@@ -96,6 +101,12 @@ S2_PROTOTYPE = re.compile(r"原型来源|原型文件|N/A.*纯后端|无\s*UI\s*
 S3_DESIGN = re.compile(r"详细设计来源|设计来源")
 S4_PLAN = re.compile(r"研发执行计划来源|Sprint-\d+")
 S5_CONTINUITY = re.compile(r"承上启下|承接前置|前一套件|续接")
+# plan_ref_mode=deferred 的占位符与 S1 的「来源标签」(只从带标签的行取 REQ,不认裸编号行,
+# 否则占位符行自己的 `REQ-004` 会被当成 S1、自证闭环)
+PLAN_LABEL_RE = re.compile(r"研发执行计划来源")
+PLAN_REF_RE = re.compile(r"⟨PLAN-REF:([^⟩]*)⟩")
+S1_LABEL_RE = re.compile(r"PRD\s*来源|研发需求来源|需求来源|关联\s*REQ")
+_LINK_TARGET_RE = re.compile(r"\]\([^)]*\)")
 
 # 链接合规度校验:套件头部来源行必须 markdown 链接 + 相对路径 + 文件后缀
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -156,7 +167,7 @@ def find_suites(text: str) -> List[Dict]:
     return suites
 
 
-def check_suite_head(text: str, suite: Dict) -> Dict:
+def check_suite_head(text: str, suite: Dict, plan_ref_mode: str = "required") -> Dict:
     """检查套件头部 N 行内是否含 6 行来源标注 + 链接合规度"""
     lines = text.splitlines()
     start_line = suite["line"]  # 1-indexed line of header
@@ -195,6 +206,9 @@ def check_suite_head(text: str, suite: Dict) -> Dict:
         # 跳过 N/A / 无 / 纯后端 标记行
         if re.search(r"N/A|无\s*$|无\s*[)）]|纯后端", line):
             continue
+        # deferred:S4 行是占位符、不是链接,由下方 check_plan_refs 专门判
+        if plan_ref_mode == "deferred" and PLAN_LABEL_RE.search(line):
+            continue
         link_q = check_link_quality(line)
         if not link_q["has_markdown_link"]:
             link_violations.append({"line": body_start + i + 1, "snippet": line.strip()[:120],
@@ -206,7 +220,7 @@ def check_suite_head(text: str, suite: Dict) -> Dict:
             link_violations.append({"line": body_start + i + 1, "snippet": line.strip()[:120],
                                     "issue": "链接未指向具体文件"})
 
-    return {
+    out = {
         "s0_test_plan": bool(S0_TEST_PLAN.search(head_text)),
         "s1_prd": bool(S1_PRD.search(head_text)),
         "s2_prototype": bool(S2_PROTOTYPE.search(head_text)),
@@ -215,6 +229,54 @@ def check_suite_head(text: str, suite: Dict) -> Dict:
         "s5_continuity": bool(S5_CONTINUITY.search(head_text)),
         "link_violations": link_violations,
     }
+    # 缺省 required 模式不出这个键:--json 输出与改动前逐字节一致
+    if plan_ref_mode == "deferred":
+        out["plan_ref_violations"] = check_plan_refs(head_lines, body_start)
+    return out
+
+
+def check_plan_refs(head_lines: List[str], body_start: int) -> List[Dict]:
+    """deferred 模式的 S4:占位符存在、编号合法、与 S1 的 REQ 一一对应、不得已填 Sprint。"""
+    issues: List[Dict] = []
+    req_ids: List[str] = []
+    plan_lines = []
+    for i, line in enumerate(head_lines):
+        if PLAN_LABEL_RE.search(line):
+            plan_lines.append((body_start + i + 1, line))
+        elif S1_LABEL_RE.search(line):
+            for rid in re.findall(REQ_ID_CORE, _LINK_TARGET_RE.sub("]", line)):
+                if rid not in req_ids:
+                    req_ids.append(rid)
+    if not plan_lines:
+        return [{"line": body_start, "issue": "deferred 模式缺「研发执行计划来源」行(须写占位符)"}]
+    for ln, line in plan_lines:
+        refs = PLAN_REF_RE.findall(line)
+        if not refs:
+            issues.append({"line": ln, "issue": "deferred 模式下「研发执行计划来源」须写 ⟨PLAN-REF:REQ-xxx⟩ 占位符",
+                           "snippet": line.strip()[:120]})
+            continue
+        if MARKDOWN_LINK_RE.search(line) or re.search(r"Sprint-\d+", line):
+            issues.append({"line": ln, "issue": "deferred 模式只放占位符,不得已填 Sprint/链接(说明生成时读了计划)",
+                           "snippet": line.strip()[:120]})
+        seen: List[str] = []
+        for ref in refs:
+            ref = ref.strip()
+            if not re.fullmatch(REQ_ID_CORE, ref):
+                issues.append({"line": ln, "issue": f"占位符里的需求编号不合法: {ref!r}"})
+            elif ref in seen:
+                issues.append({"line": ln, "issue": f"占位符重复: {ref}"})
+            else:
+                seen.append(ref)
+        if not req_ids:
+            issues.append({"line": ln, "issue": "deferred 模式下套件 S1 必须锚定 REQ 编号(占位符按 REQ 替换)"})
+            continue
+        missing = [r for r in req_ids if r not in seen]
+        extra = [r for r in seen if r not in req_ids]
+        if missing:
+            issues.append({"line": ln, "issue": "S1 里的 REQ 缺占位符(每条 REQ 一个): " + "、".join(missing)})
+        if extra:
+            issues.append({"line": ln, "issue": "占位符里的 REQ 不在本套件 S1 中: " + "、".join(extra)})
+    return issues
 
 
 def check_step_acceptance(text: str, suite: Dict, next_start: int) -> Dict:
@@ -265,7 +327,7 @@ def check_step_acceptance(text: str, suite: Dict, next_start: int) -> Dict:
     return {"steps_total": steps_total, "steps_with_accept": steps_with_accept}
 
 
-def analyze_file(path: Path, check_steps: bool) -> Dict:
+def analyze_file(path: Path, check_steps: bool, plan_ref_mode: str = "required") -> Dict:
     text = path.read_text(encoding="utf-8", errors="replace")
     suites = find_suites(text)
     if not suites:
@@ -273,7 +335,7 @@ def analyze_file(path: Path, check_steps: bool) -> Dict:
 
     results: List[Dict] = []
     for i, suite in enumerate(suites):
-        head_check = check_suite_head(text, suite)
+        head_check = check_suite_head(text, suite, plan_ref_mode)
         next_start = suites[i + 1]["start"] if i + 1 < len(suites) else len(text)
         step_check = (check_step_acceptance(text, suite, next_start)
                       if check_steps else None)
@@ -284,7 +346,23 @@ def analyze_file(path: Path, check_steps: bool) -> Dict:
             **head_check,
             "step_check": step_check,
         })
-    return {"file": str(path), "suites": len(suites), "results": results}
+    out = {"file": str(path), "suites": len(suites), "results": results}
+    # required(缺省)模式:全文任意位置残留 ⟨PLAN-REF:…⟩ = 编排层漏跑替换,一律判不通过。
+    # ⚠️ 必须扫全文、且在 N/A 跳过之前:只靠 S4 链接合规会漏掉「同一行已替换一半」与「⟨PLAN-REF⟩ (N/A 待回填)」两种形态。
+    #    没有占位符的文档不出这个键,输出与改动前一致。
+    if plan_ref_mode == "required" and "⟨PLAN-REF:" in text:
+        left, fence = [], False
+        for n, ln in enumerate(text.splitlines(), 1):
+            if ln.lstrip().startswith(("```", "~~~")):
+                fence = not fence
+                continue
+            # 行内代码里的占位符是文档示例,不是残留
+            if not fence and PLAN_REF_RE.search(re.sub(r"`[^`]*`", "", ln)):
+                left.append({"line": n, "snippet": ln.strip()[:120],
+                             "issue": "残留未替换的 ⟨PLAN-REF⟩ 占位符(required 模式;编排层须先跑 resolve_plan_refs.py)"})
+        if left:
+            out["plan_ref_leftovers"] = left
+    return out
 
 
 def main() -> int:
@@ -294,6 +372,8 @@ def main() -> int:
     ap.add_argument("--check-step-acceptance", action="store_true",
                     help="启用用例步骤'预期现象'验收锚点核验(B 项)")
     ap.add_argument("--threshold", type=float, default=0.95)
+    ap.add_argument("--plan-ref-mode", choices=("required", "deferred"), default="required",
+                    help="deferred = 计划/自测并行生成:S4 只校验 ⟨PLAN-REF:REQ-xxx⟩ 占位符(缺省 required,行为不变)")
     args = ap.parse_args()
 
     target = Path(args.target)
@@ -307,9 +387,8 @@ def main() -> int:
     # (显式排除与 check_case_stats.py / check_testcase_format.py 口径一致,避免误扫索引/方案/配置文件。
     #  单文件模式显式传入则不受此过滤影响。)
     def _non_suite(name):
-        return (re.match(r"^00_", name) or re.match(r"^9[789]_", name)
-                or "研发自测方案" in name or "测试环境与账号" in name
-                or "环境探针档案" in name)
+        return (re.match(r"^00_", name) or re.match(r"^9[89]_", name)
+                or "研发自测方案" in name or "测试环境与账号" in name)
     if not target.is_file():
         md_files = [f for f in md_files if not _non_suite(f.name)]
     if not md_files:
@@ -328,8 +407,11 @@ def main() -> int:
     }
 
     for f in md_files:
-        result = analyze_file(f, args.check_step_acceptance)
+        result = analyze_file(f, args.check_step_acceptance, args.plan_ref_mode)
         aggregated["files"].append(result)
+        for lv in result.get("plan_ref_leftovers", []):
+            aggregated["link_violations"].append({"file": result["file"], "suite": "-", **lv})
+            aggregated["total_link_violations"] += 1
         for r in result["results"]:
             aggregated["total_suites"] += 1
             for k, agg_key in [("s0_test_plan", "s0_hits"),
@@ -346,6 +428,9 @@ def main() -> int:
                     **lv,
                 })
                 aggregated["total_link_violations"] += 1
+            for pv in r.get("plan_ref_violations", []):
+                aggregated.setdefault("plan_ref_violations", []).append(
+                    {"file": result["file"], "suite": r["id"], **pv})
             # S0+S1+S3 必填,缺即记
             miss = []
             if not r["s0_test_plan"]:
@@ -407,6 +492,12 @@ def main() -> int:
     # 链接违规即不通过
     if aggregated["total_link_violations"] > 0:
         aggregated["passed"] = False
+    # deferred 模式:占位符违规即不通过;缺省模式下 JSON 不出现这两个键(输出与改动前一致)
+    if args.plan_ref_mode == "deferred":
+        aggregated["plan_ref_mode"] = "deferred"
+        aggregated.setdefault("plan_ref_violations", [])
+        if aggregated["plan_ref_violations"]:
+            aggregated["passed"] = False
 
     if args.json:
         print(json.dumps(aggregated, ensure_ascii=False, indent=2))
@@ -455,6 +546,10 @@ def main() -> int:
         print("  - 缺 S0_自测方案 → 套件标题下方追加: > **自测方案章节:** [§X.Y 范围与通过准则](../<测试文档目录>/01_研发自测方案.md#X-Y)")
         print("  - 缺 S1_PRD     → 套件标题下方追加: > **PRD 来源:** [REQ-NNN 标题](../requirements/<version>/研发需求/xxx.md#REQ-NNN)")
         print("  - 缺 S3_详细设计 → 套件标题下方追加: > **详细设计来源:** [§X.Y 章节名](../docs/design/detail/<version>/xx.md#X-Y)")
+    if aggregated.get("plan_ref_violations"):
+        print(f"\n❌ 不通过: 研发执行计划占位符违规 {len(aggregated['plan_ref_violations'])} 处(--plan-ref-mode deferred)")
+        for pv in aggregated["plan_ref_violations"][:10]:
+            print(f"  {pv['file']}:L{pv['line']}  [{pv['suite']}]  {pv['issue']}")
     if aggregated["total_link_violations"] > 0:
         print(f"\n❌ 不通过: 链接违规 {aggregated['total_link_violations']} 处")
         for lv in aggregated["link_violations"][:10]:

@@ -3,8 +3,8 @@
 """需求字段去向登记 结构性存在性检查 — ux-logic-extractor 维度 13
 
 对研发 PRD 文档(.md)做「需求字段清单(六·4)」的**结构性存在性采集**,供 QR Agent 据此
-+ 原型/产品需求逐项比对判定维度 13。主体为「采集不判错 / report-only」:表 B/C 疑点只列出交 Agent 判定;
-唯一判错项是表 A「字段语义名称」混入代码级标识(Critical,可确定性机检,退出码 1)。
++ 原型/产品需求逐项比对判定维度 13。本脚本遵循「采集不判错 / report-only」风格:**退出码恒为 0**,
+不替 Agent 下结论;只把"发现/疑点"列出来交 Agent 看。
 
 采集项:
   1. 是否存在「表 A 需求字段清单」——以表头特征列识别(主键列「字段语义名称」+ 辅助列
@@ -29,8 +29,7 @@
   python check_requirement_field_inventory.py <PRD 文件或目录> --json
 
 退出码:
-  0  未发现表 A 代码级标识(其余采集项 report-only,不影响退出码)
-  1  表 A「字段语义名称」混入代码级标识(Critical)
+  0  恒为 0(report-only,采集不判错);仅当输入路径错误(不存在 / 无 .md)返回 2。
   2  输入错误(路径不存在 / 无 .md 文件)——非维度违规,修正参数后重跑
 """
 from __future__ import annotations
@@ -362,7 +361,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     results = [scan_file(f, root) for f in md_files]
 
     # ⚠️ 读不出来 ≠ 没有违规:全部文件都读失败时判**环境错(2)**,绝不静默计为通过。
-    #    (同 skill 的 check_technical_content.py 已做对,此处对齐;全仓退出码约定同款。)
+    #    (同 skill 的 check_technical_content.py 已做对,此处对齐;统一退出码约定同款。)
     _read_errs = [r for r in results if isinstance(r, dict) and r.get("read_error")]
     if _read_errs and len(_read_errs) == len(results):
         for _r in _read_errs:
@@ -374,10 +373,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         print(render_text(results))
 
-    # 主体 report-only（表 B/C 疑点交 Agent 判定），但表 A「字段语义名称混入代码级标识」
-    # 是 SKILL 的 Critical 铁律且**可确定性机检**，故单独判错。
-    # check_technical_content 的 R2 需「camelCase + 同行类型词」，而表 A 的「展示形态」列是中文形态词、
-    # 命中不了，这条铁律只能由本脚本兜住。
+    # 主体仍 report-only（表 B/C 疑点交 Agent 判定），但表 A「字段语义名称混入代码级标识」
+    # 是 SKILL.md:1286/:1307 的 Critical 铁律且**可确定性机检**，故单独判错。
+    # 此前这条铁律零机检：check_technical_content 的 R2 需「camelCase + 同行类型词」而表 A
+    # 的「展示形态」列是中文形态词，永不命中；本脚本又恒返 0 —— 全代码级命名的表 A 一路全绿。
     code_hits = sum(len(r.get("table_a_code_names", [])) for r in results)
     if code_hits:
         print(f"\n❌ 不通过: 表 A「字段语义名称」混入代码级标识 {code_hits} 处(Critical)",

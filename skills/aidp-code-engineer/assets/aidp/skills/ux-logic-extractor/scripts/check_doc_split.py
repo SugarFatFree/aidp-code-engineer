@@ -4,7 +4,7 @@ check_doc_split.py — 通用多文件拆分一致性检查
 
 检查项:
   1. 子文档文件名是否带两位数字序号前缀 (00_、01_、...)
-  2. 主锚识别:现行规范要求专职索引 `00_索引.md`(内容主文档从 01_ 起);
+  2. 主锚识别:新范式要求专职索引 `00_索引.md`(内容主文档从 01_ 起);
      历史锚 `00_*-总览.md` / `00_*-主文档.md` / 裸 `00_<语义名>.md` 仍 grandfather 识别、不报错
   3. 主文档"文档结构与拆分说明"表中列出的子文档是否都存在
   4. 目录下是否有主文档未列出的子文档(反向检查)
@@ -17,7 +17,7 @@ check_doc_split.py — 通用多文件拆分一致性检查
   9. 碎片子文档检测:子文档(排除 00_ 主文档/总览/索引)行数 < 100 行**且** < 4KB 视为碎片,不通过(密集短文档按字节豁免)
      (对应 ux-logic-extractor 维度 9「子文档 ≥ 100 行,碎片即不通过」)
 
-AIDP 文档命名范式(现行规范):
+AIDP 文档命名范式(新范式):
   - `00_` 槽位恒给专职索引 `00_索引.md`;内容主文档一律从 `01_` 起。
   - 即便只有一份内容文档,也应产出 `00_索引.md` + `01_<语义名>.md`(≥2 文件)。
   - 历史存量(裸 `00_<语义名>.md` / `00_*-总览.md` / `NN_补充-…`)grandfather 识别放行、给 warn 提示可升级、**绝不 exit 非 0**。
@@ -43,10 +43,10 @@ import sys
 from pathlib import Path, PurePosixPath
 
 # 主锚识别:
-#   现行规范主锚 = 专职索引 `00_索引.md`(优先/推荐);
+#   新范式主锚 = 专职索引 `00_索引.md`(优先/推荐);
 #   历史锚 grandfather:`00_*总览/主文档.md`、裸 `00_<语义名>.md`(如 00_PRD-{项目名}.md)。
 # 只要目录里能识别出任一「00_ 主锚」即视为找到主文档,不误报缺主文档。
-MAIN_DOC_INDEX_PATTERN = re.compile(r'^00_索引\.md$')          # 现行规范专职索引(首选)
+MAIN_DOC_INDEX_PATTERN = re.compile(r'^00_索引\.md$')          # 新范式专职索引(首选)
 MAIN_DOC_LEGACY_PATTERNS = [
     re.compile(r'^00_.*(总览|主文档|索引)\.md$'),               # 历史「总览/主文档」锚
 ]
@@ -68,12 +68,12 @@ OVERVIEW_INDEX_PATTERN = re.compile(r'^00_|^98_|^99_|总览|索引|index|待澄�
 
 def find_main_doc(doc_dir: Path) -> tuple[Path | None, str]:
     """返回 (主锚文件, 主锚类型)。
-    类型: 'index'  = 现行规范专职索引 00_索引.md(首选)
+    类型: 'index'  = 新范式专职索引 00_索引.md(首选)
           'legacy' = 历史 00_*总览/主文档/裸 00_<语义名>.md(grandfather,允许但可 warn)
           'none'   = 未找到任何 00_ 主锚
     """
     files = [f for f in doc_dir.iterdir() if f.is_file() and f.suffix == '.md']
-    # 首选:现行规范专职索引 00_索引.md
+    # 首选:新范式专职索引 00_索引.md
     for f in files:
         if MAIN_DOC_INDEX_PATTERN.match(f.name):
             return f, 'index'
@@ -102,6 +102,7 @@ def collect_sub_docs(doc_dir: Path, exclude: Path | None) -> list[Path]:
     return subs
 
 
+# (注:下方共享段里提到的 `scripts/check_shared_segment_sync.py` 仅源仓库维护时使用,安装后的副本无需关心。)
 # >>> SHARED-SEGMENT: doc-split-ref-scope >>>
 # ── 主文档引用的「同目录 / 跨目录」判定 ────────────────────────────────────────
 # ⚠️⚠️ **本段在三个 SKILL 的 `scripts/check_doc_split.py` 里各持一份逐字节相同的副本**
@@ -132,10 +133,10 @@ def extract_referenced_files(main_doc: Path):
        `resolve()` **跟随符号链接**:同目录里一个指向别处的软链子文档会被解析到链接目标所在目录、
        落进 `cross`,于是 ① 断链软链从 FAIL 变 **PASS**(假绿),② 一条字面写着 `./` 的引用
        被报成「跨目录引用」—— 与上一段 ⚠️⚠️ 的原话**直接相反**。
-       词法归一只看路径字符串,与磁盘上有没有软链无关,这也是本仓库既有先例
+       词法归一只看路径字符串,与磁盘上有没有软链无关,这也是既有先例
        (`check_result.py` 明写「结果文件按**词法路径**逐轮校验」)。
 
-    ⚠️ 原缺陷(2026-10-09 下游实测):此处只取 `Path(...).name`**把目录段丢掉**,于是
+    ⚠️ 原缺陷(实测):此处只取 `Path(...).name`**把目录段丢掉**,于是
        研发自测目录的索引链到研发需求目录的 `99_待澄清问题清单.md`,被判
        「主文档引用了 99_待澄清问题清单.md 但目录下不存在」→ error/exit 1;
        下游只能把链接改写成纯文字指向来绕开,而那恰好损失了本 SKILL 自己要求的
@@ -207,7 +208,7 @@ def main() -> int:
     args = parser.parse_args()
 
     doc_dir = Path(args.doc_dir)
-    # ⚠️ exists() 与 is_dir() 必须分开判（CLAUDE.md 退出码约定②，不可回退）。
+    # ⚠️ exists() 与 is_dir() 必须分开判（退出码约定②，不可回退）。
     #    合并成一个 is_dir() 会把「路径根本不存在」和「传入单文件＝合法 N/A」压成同一个 exit 2，
     #    而下游 QR 口径把 exit 2 一律当「入参错、非维度违规、不计失败」略过
     #    —— 于是路径打错一个字，整档硬门静默消失且无任何告警。
@@ -234,7 +235,7 @@ def main() -> int:
 
     if len(md_files) <= 1:
         # 历史裸单文件(无前缀单文件 / 裸 00_<语义名>.md / 00_*-总览.md 单独一目录):
-        # 现行规范要求 00_索引.md + 01_<语义名>.md(≥2 文件),但历史裸单文件 grandfather 放行、
+        # 新范式要求 00_索引.md + 01_<语义名>.md(≥2 文件),但历史裸单文件 grandfather 放行、
         # 给 warn 提示可升级,绝不 exit 非 0。
         lone = md_files[0].name if md_files else '(空目录)'
         warn_issues = [{
@@ -258,7 +259,7 @@ def main() -> int:
     summary['main_anchor_kind'] = main_kind
     if not main_doc:
         issues.append({'dim': '主文档', 'level': 'error',
-                       'msg': f'未找到 00_ 前缀主锚(现行规范应为专职索引 00_索引.md,目录: {doc_dir})'})
+                       'msg': f'未找到 00_ 前缀主锚(新范式应为专职索引 00_索引.md,目录: {doc_dir})'})
     else:
         summary['main_doc'] = main_doc.name
         if main_kind == 'legacy':
@@ -304,7 +305,7 @@ def main() -> int:
                            'msg': f'文件名 {f.name} 无序号且用了语义前缀(补充/追加/附加/扩展等),必须改为「两位序号+业务名」(如 07_订单域字典枚举.md)'})
         elif SEMANTIC_INFIX_PATTERN.match(f.name):
             issues.append({'dim': '语义中缀(可升级)', 'level': 'warn', 'file': f.name,
-                           'msg': f'文件名 {f.name} 带序号但含语义中缀(补充/追加/附加/扩展),现行规范应直接用「序号+业务名」(如 03_订单域.md),补充身份靠 00_索引.md 登记;历史存量 grandfather,不判不通过。'})
+                           'msg': f'文件名 {f.name} 带序号但含语义中缀(补充/追加/附加/扩展),新范式应直接用「序号+业务名」(如 03_订单域.md),补充身份靠 00_索引.md 登记;历史存量 grandfather,不判不通过。'})
 
     # 8. 序号连续性检测(提取所有序号,检查是否连续)
     seq_nums = []

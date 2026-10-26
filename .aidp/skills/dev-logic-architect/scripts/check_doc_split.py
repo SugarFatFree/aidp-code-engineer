@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-check_doc_split.py — 通用多文件拆分一致性检查（AIDP 索引态现行规范）
+check_doc_split.py — 通用多文件拆分一致性检查（AIDP 索引态新范式）
 
 【AIDP 文档命名范式（本 SKILL 已收敛为「索引态」为唯一新生成形态）】
   - `00_` 槽位恒给专职索引 `00_索引.md`;内容主文档一律从 `01_` 起。
@@ -20,10 +20,10 @@ check_doc_split.py — 通用多文件拆分一致性检查（AIDP 索引态现�
   - 并列态(约定15,⚠️ 历史存量兼容):无任何 NN_ 序号文件 + ≥2 份裸名中文主文档共目录
       → 合法使用裸中文名,不强制 00_ 索引、不报"缺前缀"、grandfather 放行
 
-  ⚠️ 00_ 槽位唯一:任一时刻目录内 00_ 文件唯一(现行规范恒为 00_索引.md)
+  ⚠️ 00_ 槽位唯一:任一时刻目录内 00_ 文件唯一(新范式恒为 00_索引.md)
 
   ⚠️ 总原则:历史存量(单份态 / 总览锚 / 并列态 / 补充中缀)绝不 exit 非 0(warn 放行);
-     现行规范产出(00_索引.md + 01_*)必须 PASS。
+     新范式产出(00_索引.md + 01_*)必须 PASS。
 
 检查项:
   1. 子文档文件名是否带两位数字序号前缀 (00_、01_、...)(并列态豁免)
@@ -50,7 +50,7 @@ check_doc_split.py — 通用多文件拆分一致性检查（AIDP 索引态现�
 
 退出码:
   0 = 全部通过 / 单文件模式(无须拆分检查)/ 历史 grandfather 存量放行
-  1 = 存在不通过项(仅现行规范违规:如新生成拆分态裸名、活跃语义前缀、序号跳号等)
+  1 = 存在不通过项(仅新范式违规:如新生成拆分态裸名、活跃语义前缀、序号跳号等)
   2 = 用法错误或目录不存在
 """
 
@@ -63,13 +63,13 @@ import sys
 from pathlib import Path, PurePosixPath
 
 # 主文档锚识别:
-#  - 现行规范(索引态):唯一主锚 `00_索引.md`(专职索引,00_ 槽位恒给它)
+#  - 新范式(索引态):唯一主锚 `00_索引.md`(专职索引,00_ 槽位恒给它)
 #  - 历史 grandfather:`00_*_总览.md` / `00_*-主文档.md` / 单份 `00_<专题>.md`(总览态/单份态旧锚)
-# 中文名合法性由**本脚本内部检查项 9/10**(见上方 docstring「检查项」列表,非 QR 维度 9/10)统一校验;此处只负责"认出 00_ 主文档"并区分现行规范锚 vs 历史锚
+# 中文名合法性由**本脚本内部检查项 9/10**(见上方 docstring「检查项」列表,非 QR 维度 9/10)统一校验;此处只负责"认出 00_ 主文档"并区分新范式锚 vs 历史锚
 MAIN_DOC_PATTERNS = [
     re.compile(r'^00_.+\.md$'),
 ]
-# 现行规范主锚:专职索引 00_索引.md
+# 新范式主锚:专职索引 00_索引.md
 INDEX_ANCHOR_PATTERN = re.compile(r'^00_索引\.md$')
 # 历史总览锚:00_*_总览.md / 00_*-主文档.md
 LEGACY_OVERVIEW_ANCHOR_PATTERN = re.compile(r'^00_.*(总览|主文档)\.md$')
@@ -95,7 +95,7 @@ SEMANTIC_INFIX_PATTERN = re.compile(r'^\d{2}_(补充|追加|附加|扩展)[-_]')
 
 
 def find_main_doc(doc_dir: Path):
-    """优先返回现行规范索引锚 00_索引.md;否则回退到任意 00_ 主文档(历史锚)。"""
+    """优先返回新范式索引锚 00_索引.md;否则回退到任意 00_ 主文档(历史锚)。"""
     zero = [f for f in doc_dir.iterdir()
             if f.is_file() and any(p.match(f.name) for p in MAIN_DOC_PATTERNS)]
     if not zero:
@@ -159,10 +159,10 @@ def extract_referenced_files(main_doc: Path):
        `resolve()` **跟随符号链接**:同目录里一个指向别处的软链子文档会被解析到链接目标所在目录、
        落进 `cross`,于是 ① 断链软链从 FAIL 变 **PASS**(假绿),② 一条字面写着 `./` 的引用
        被报成「跨目录引用」—— 与上一段 ⚠️⚠️ 的原话**直接相反**。
-       词法归一只看路径字符串,与磁盘上有没有软链无关,这也是本仓库既有先例
+       词法归一只看路径字符串,与磁盘上有没有软链无关,这也是既有先例
        (`check_result.py` 明写「结果文件按**词法路径**逐轮校验」)。
 
-    ⚠️ 原缺陷(2026-10-09 下游实测):此处只取 `Path(...).name`**把目录段丢掉**,于是
+    ⚠️ 原缺陷(实测):此处只取 `Path(...).name`**把目录段丢掉**,于是
        研发自测目录的索引链到研发需求目录的 `99_待澄清问题清单.md`,被判
        「主文档引用了 99_待澄清问题清单.md 但目录下不存在」→ error/exit 1;
        下游只能把链接改写成纯文字指向来绕开,而那恰好损失了本 SKILL 自己要求的
@@ -212,7 +212,7 @@ def extract_enum_names(md_file: Path):
     return [m.group(1) for m in ENUM_NAME_PATTERN.finditer(text)]
 
 
-# ── 碎片子文档检测(--check-fragment,补;此前本阈值**零机器门**)────────
+# ── 碎片子文档检测(--check-fragment,2026-09-17 补;此前本阈值**零机器门**)────────
 # 判据(单一信源见 references/flow-output-format.md「避免过度拆分(碎片化)」口径块):
 #   合规 = 行数 ≥150 **或** 体积 ≥6KB(二选一满足即可);违规 = 行数 <150 **且** 体积 <6KB。
 #   ⚠️ 是「且」不是「或」——一份 120 行但 8KB 的密集文档(表格多、行长)**不是碎片**。
@@ -270,7 +270,7 @@ def main():
     args = parser.parse_args()
 
     doc_dir = Path(args.doc_dir)
-    # ⚠️ exists() 与 is_dir() 必须分开判（CLAUDE.md 退出码约定②，不可回退）。
+    # ⚠️ exists() 与 is_dir() 必须分开判（统一退出码约定②，不可回退）。
     #    合并成一个 is_dir() 会把「路径根本不存在」和「传入单文件＝合法 N/A」压成同一个 exit 2，
     #    而下游 QR 口径把 exit 2 一律当「入参错、非维度违规、不计失败」略过
     #    —— 于是路径打错一个字，整档硬门静默消失且无任何告警。
@@ -299,17 +299,17 @@ def main():
 
     if len(md_files) <= 1:
         # 单份/空目录:
-        #   · 现行规范要求索引态(00_索引.md + 01_<专题>.md,≥2 文件),故单份非现行规范默认。
+        #   · 新范式要求索引态(00_索引.md + 01_<专题>.md,≥2 文件),故单份非新范式默认。
         #   · 历史单份 `00_<专题>.md` 或裸名 → grandfather 放行、warn、exit 0(绝不 fail)。
         if len(md_files) == 1:
             only = md_files[0]
             if only.name.startswith('00_'):
                 msg = (f'历史单份主文档 {only.name}(单份态 grandfather 放行);'
-                       f'现行规范即便只产一份内容也应走 00_索引.md + 01_<专题>.md,'
+                       f'新范式即便只产一份内容也应走 00_索引.md + 01_<专题>.md,'
                        f'请勿再新生成单份 00_<专题>.md 锚')
             else:
                 msg = (f'历史裸名单份文档 {only.name}(grandfather 放行);'
-                       f'现行规范应走 00_索引.md + 01_<专题>.md')
+                       f'新范式应走 00_索引.md + 01_<专题>.md')
             issue = {'dim': '单份态 grandfather', 'level': 'warn', 'file': only.name, 'msg': msg}
             result = {'status': 'pass', 'mode': 'single', 'summary': summary, 'issues': [issue]}
             if args.json:
@@ -344,28 +344,28 @@ def main():
                               f'00_索引.md + 01_详细设计.md/02_接口设计.md/…,不得产裸名多文件。'})
     elif not main_doc:
         issues.append({'dim': '主文档', 'level': 'error',
-                       'msg': f'未找到 00_ 主文档;现行规范要求 00_索引.md 作专职索引锚(目录: {doc_dir})'})
+                       'msg': f'未找到 00_ 主文档;新范式要求 00_索引.md 作专职索引锚(目录: {doc_dir})'})
     else:
         summary['main_doc'] = main_doc.name
         summary['mode'] = 'index' if INDEX_ANCHOR_PATTERN.match(main_doc.name) else 'multi'
-        # 主锚新旧口径:00_索引.md = 现行规范;00_*_总览.md/00_*-主文档.md = 历史锚(warn,不 error)
+        # 主锚新旧口径:00_索引.md = 新范式;00_*_总览.md/00_*-主文档.md = 历史锚(warn,不 error)
         if not INDEX_ANCHOR_PATTERN.match(main_doc.name):
             if LEGACY_OVERVIEW_ANCHOR_PATTERN.match(main_doc.name):
                 issues.append({'dim': '主锚旧口径', 'level': 'warn', 'file': main_doc.name,
                                'msg': f'主锚 {main_doc.name} 为历史总览/主文档锚(grandfather 放行);'
-                                      f'现行规范应改用专职索引 00_索引.md'})
+                                      f'新范式应改用专职索引 00_索引.md'})
             else:
                 issues.append({'dim': '主锚旧口径', 'level': 'warn', 'file': main_doc.name,
-                               'msg': f'主锚 {main_doc.name} 非现行规范索引锚(grandfather 放行);'
-                                      f'现行规范应改用专职索引 00_索引.md,内容主文档从 01_ 起'})
+                               'msg': f'主锚 {main_doc.name} 非新范式索引锚(grandfather 放行);'
+                                      f'新范式应改用专职索引 00_索引.md,内容主文档从 01_ 起'})
 
-    # 2b. 00_ 槽位唯一:目录内 00_ 文件至多一个(现行规范恒为 00_索引.md)
+    # 2b. 00_ 槽位唯一:目录内 00_ 文件至多一个(新范式恒为 00_索引.md)
     zero_prefixed = [f for f in md_files if f.name.startswith('00_')]
     if len(zero_prefixed) > 1:
         issues.append({'dim': '00_ 槽位唯一', 'level': 'error',
                        'file': ', '.join(sorted(f.name for f in zero_prefixed)),
                        'msg': f'目录内出现多个 00_ 文件({sorted(f.name for f in zero_prefixed)});'
-                              f'00_ 槽位唯一,现行规范仅允许 00_索引.md,内容主文档应改用 01_ 起的序号'})
+                              f'00_ 槽位唯一,新范式仅允许 00_索引.md,内容主文档应改用 01_ 起的序号'})
 
     sub_docs = collect_sub_docs(doc_dir, exclude=main_doc)
     summary['sub_docs'] = len(sub_docs)
@@ -411,7 +411,7 @@ def main():
         if SEMANTIC_INFIX_PATTERN.match(f.name):
             issues.append({'dim': '语义中缀(历史)', 'level': 'warn', 'file': f.name,
                            'msg': f'文件名 {f.name} 含历史语义中缀(NN_补充-/追加-/附加-/扩展-);'
-                                  f'grandfather 放行,现行规范补充文档应直接用序号+业务名(如 07_订单域字典枚举.md),'
+                                  f'grandfather 放行,新范式补充文档应直接用序号+业务名(如 07_订单域字典枚举.md),'
                                   f'并只在 00_索引.md 标类型=补充'})
         elif SEMANTIC_PREFIX_PATTERN.search(f.name):
             issues.append({'dim': '语义前缀违规', 'level': 'error', 'file': f.name,

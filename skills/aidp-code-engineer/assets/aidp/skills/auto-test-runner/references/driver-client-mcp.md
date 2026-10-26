@@ -13,7 +13,7 @@
 | 当前实例 `registration` | 本页/本 App 实例真实注册工具清单(须与设计逐名对账) | 写 `unavailable`;不能拿浏览器全量工具或驱动 tools 替代 |
 | 本用例 `invocation` | 实际工具名 + 返回摘要 + 本轮 `evidence[].artifact` 真实日志/JSON | 写 `not-called`/`unavailable`;不得因入口可连就报调用通过 |
 
-每态含 `source` 与 `observed_at`,工具证据由 `scripts/check_result.py` 单一校验;`driver` 只记 UI 测试驱动,`mechanism=app-mcp` 才表示应用业务工具调用且仍须 artifact。普通业务动作可如实走 DOM/CDP/Appium;专项用例缺入口或工具 → `block(precondition-unmet)` + 证据,其余 UI 用例继续。Web 路径 A 的驱动本页清单与路径 B 页内 JS 的浏览器全量清单作用域不同,后者不证明当前应用实例注册。
+每态含 `source` 与 `observed_at`,工具证据由 `scripts/check_result.py` 单一校验。⛔ **`source` 写应用侧来源**(页面注册表 / 应用自有服务 / 配套桥接),**不得写测试驱动**(chrome-devtools〔含 Chrome DevTools / chrome_devtools 写法〕/ Appium / UIAutomator2 / XCUITest / CDP / Playwright / Puppeteer / Selenium / WebDriver / WinAppDriver / mcp-remote / minium / 小程序驱动等,判 Critical `application_mcp_driver_as_evidence`;`implementation_evidence` 同一判据,以「未取到」开头的如实未交付说明除外)——经哪个驱动读到的写进 `driver` 与 `evidence`;非 Web 的 `implementation_kind` 取 `app-native` 或 `bridge`。`driver` 只记 UI 测试驱动,`mechanism=app-mcp` 才表示应用业务工具调用且仍须 artifact。普通业务动作可如实走 DOM/CDP/Appium;专项用例缺入口或工具 → `block(precondition-unmet)` + 证据,其余 UI 用例继续。Web 路径 A 的驱动本页清单与路径 B 页内 JS 的浏览器全量清单作用域不同,后者不证明当前应用实例注册。
 
 | 合成场景 | 合规 | 不合规 |
 | :- | :- | :- |

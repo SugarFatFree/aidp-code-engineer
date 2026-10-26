@@ -35,7 +35,7 @@
 | `self_heal_attempts` | int | — | ★**实际触发自愈的次数**(缺省 0)。⚠️ 与 `execution_mode` **不是一回事**:`execution_mode=self-heal` 只表示「**具备**」自愈能力,不表示「**实际自愈了**」(实证:43 条 self-heal vs 实际重试 1 次)。报告出现 `execution_mode` 分布时**必须并排给出本字段合计**;`check_result.py` I11 在 `self-heal` 且 `retries=0` 且本字段为 0 时提醒 |
 | `started_at` | string | ✅ | ★**单条耗时三件套之一**,ISO-8601 带时区。**没有单条耗时,任何耗时优化都无法验证是否生效**(实证:一条用例占整轮 25%,此前只能靠 evidence 文件 mtime 反推、少产一个证据文件就整条漏掉)。缺失由 `check_result.py` **I8 判 Important**(不判 Critical 是因为存量一条都没有,判死会让整个校验被绕过) |
 | `finished_at` | string | ✅ | ★同上,ISO-8601 带时区 |
-| `elapsed_ms` | int | ✅ | ★同上,整数毫秒。与 `finished_at−started_at` 相差 > 2s 由 **I9** 告警(两者不是同一次计时);与旧字段 `duration_ms` 并存且不等由 **I10** 告警。`gen_report.py` 据本字段产出 **§2.7 耗时分布**。⚠️⚠️ **若它是批次窗口的均摊值(「窗口 ÷ N」)而非逐条打点,必须同时填 `elapsed_is_amortized: true` + `batch_id`** —— 本 SKILL 的执行形态**本就是按套件批量**(一次登录、会话复用),逐条打点不是常态;不标的后果是报告 §2.7 把「窗口 ÷ N」当逐条真值排名,产出「某条用例耗时 28 分钟」这种**假事实**(下游实测)。同一轮里 ≥2 条**共享同一个执行窗口**(`started_at`/`finished_at` 相同)且 `elapsed_ms` **近似相同**(相差 ≤ 批内条数 ms,即整除余数)而未标注,由 **I14** 告警 —— 那是均摊的签名,纯算术判定、**不读 `note` 自述**。⚠️ 判据**两条同时成立**才报:只看「值相同」会让 `1680000/1680001/1679999` 这种整除不尽的 ±1ms 抖动**全部逃脱**(假绿),也会把两条独立用例恰好都填成整秒的情形判红(假红) |
+| `elapsed_ms` | int | ✅ | ★同上,整数毫秒。与 `finished_at−started_at` 相差 > 2s 由 **I9** 告警(两者不是同一次计时);与旧字段 `duration_ms` 并存且不等由 **I10** 告警。`gen_report.py` 据本字段产出 **§2.7 耗时分布**。⚠️⚠️ **若它是批次窗口的均摊值(「窗口 ÷ N」)而非逐条打点,必须同时填 `elapsed_is_amortized: true` + `batch_id`** —— 本 SKILL 的执行形态**本就是按套件批量**(一次登录、会话复用),逐条打点不是常态;不标的后果是报告 §2.7 把「窗口 ÷ N」当逐条真值排名,产出「某条用例耗时 28 分钟」这种**假事实**(实测)。同一轮里 ≥2 条**共享同一个执行窗口**(`started_at`/`finished_at` 相同)且 `elapsed_ms` **近似相同**(相差 ≤ 批内条数 ms,即整除余数)而未标注,由 **I14** 告警 —— 那是均摊的签名,纯算术判定、**不读 `note` 自述**。⚠️ 判据**两条同时成立**才报:只看「值相同」会让 `1680000/1680001/1679999` 这种整除不尽的 ±1ms 抖动**全部逃脱**(假绿),也会把两条独立用例恰好都填成整秒的情形判红(假红) |
 | `elapsed_is_amortized` | bool | — | ★**耗时来源标注**(缺省 `false` = 逐条打点)。为 `true` 时:① 必须同时给 `batch_id`(否则 **I15** 告警 —— 说不清是哪个窗口均摊的,等于来源标注只写了一半);② **I9 对该条豁免**(均摊值与 `finished_at−started_at` 本就不等,那是**定义**;不豁免就成了「如实标注反而换来一条告警」,即硬门在**奖励撒谎**);③ 报告 §2.7 把它渲染成 `~8.5s` 并写明**不可用于单条性能判断**。⚠️ 与 `XSource` 来源标注同一条纪律:**事实必须带来源,均摊就如实标均摊**,⛔ 不许把均摊说明只写在 `note` 里(`gen_report.py` 不读 `note`,照样当真值排名) |
 | `batch_id` | string | — | ★所属批次标识(`elapsed_is_amortized: true` 时**必填**)。同一次批量执行窗口内的用例填同一个值,报告「耗时来源」列据此显示 `均摊(batch-xxx)`。⚠️ 只作标识、不参与任何统计 |
 | `batch_elapsed_ms` | int | — | ★该批次窗口的**实测**总耗时(可选)。填了它,「均摊值 = 本字段 ÷ 批内用例数」这句话才**真的**可核对——`check_result.py` **I15** 会比对「批内 `elapsed_ms` 合计 ⟷ 本字段」,相差 > 5% 或同批各条声明值互不一致即 Important。⚠️ 不填不影响任何判据;⛔ 但别把它当装饰:填了就会被核 |
@@ -96,7 +96,7 @@
 
   > **★环境类 block 一律不计产品缺陷(优先级最高,先于用例族锁定):** 环境类 `block_reason` 集合 = **`driver-missing` / `driver-hung` / `precondition-unmet` / `network-error` / `env-unavailable` / `account-invalid`**(单一信源 `gen_report.ENV_BLOCK_REASONS`),命中即判「环境问题」、编号 `ENV-NNN`、**不计产品缺陷、不锁 Critical**——即便是回归/PRD存在性/文案一致性用例族,**环境没起来也不是产品缺陷**(锁 Critical 只对"真跑起来了但结果不对"有意义)。执行方可用**显式布尔 `is_environment_issue`** 覆盖枚举推断(枚举归不了类的环境阻塞用它)。
   > ⚠️ **`retry-exhausted` 刻意不在环境类集合内**:"单操作重试到顶"既可能是环境抖动,也可能是页面根本没渲染出来这种真缺陷,保守留在「待验证」侧由人复核。
-  > ⚠️ **本条来自实测**:一轮 32 条用例全部 `block(precondition-unmet)`(前置环境未就绪),旧口径下 `is_product_defect=True` → 报告显示「**产品缺陷 32 条**」并编号成 `BUG-xxx`,把纯环境阻塞误报成 32 个产品 bug,还会污染下游「缺陷→升级 bug→回写问题汇总清单」链路。**勿改回「只有 driver-missing 算环境问题」。**
+  > ⚠️ **本条是实测反馈的直接落地**:一轮 32 条用例全部 `block(precondition-unmet)`(前置环境未就绪),旧口径下 `is_product_defect=True` → 报告显示「**产品缺陷 32 条**」并编号成 `BUG-xxx`,把纯环境阻塞误报成 32 个产品 bug,还会污染下游「缺陷→升级 bug→回写问题汇总清单」链路。**勿改回「只有 driver-missing 算环境问题」。**
   > **★用例族锁定 Critical(次高,先于优先级映射):** `is_regression=true`(`[回归]`)、`[PRD存在性]` 或 `[文案一致性]` 用例族一旦失败(fail / **非环境类**的 block),缺陷等级**一律锁 Critical**,**覆盖**"按用例优先级 P0→P1/P1→P2/P2→P3"的常规映射——即便用例本身是 P2,这三类用例族失败也判 Critical、不许降级。`[文案一致性]` 锁 Critical 的理由:语义/口径变更后旧文案残留(反向断言"不存在文本X"命中)或新语义未落地,直接误导对账,是确定性产品缺陷。`driver-missing` 是环境问题(非真失败),不在锁定范围。`gen_report.py` 在 `FAIL_LEVEL` 映射前先判用例族标记(`is_regression` / `[PRD存在性]` / `[文案一致性]`),命中即锁 Critical。
   > **分级依据 `block_reason` 枚举,不再 grep error 文本**;**缺陷数 ≠ fail+block 数**:环境类 block 不计产品缺陷、同用例 error+runtimeErrors 去重,pass 用例的运行时错误另列 RT-NNN,故缺陷列表口径与原始 fail/block 数不同——报告须据此口径。
 - **2.4 用例执行明细**:表格,`用例编号 | 名称 | 优先级 | 模式 | 结果(✅Pass/❌Fail/⚠️Block) | 失败原因 | 关联缺陷 | 证据`。
@@ -136,7 +136,7 @@
 
 ## 五、与 AI 执行报告(autopilot)对账的数据模型映射
 
-下游 autopilot 链路维护一份 `data/{BUILD}.js` 的 `testSummary`,供回填对账。本 skill 的 `results/*.json` 聚合(`gen_report.py --json`)与之字段映射如下,**保证执行结果可被 autopilot 回填、不重算**:
+调用方 autopilot 链路维护一份 `data/{BUILD}.js` 的 `testSummary`,供回填对账。本 skill 的 `results/*.json` 聚合(`gen_report.py --json`)与之字段映射如下,**保证执行结果可被 autopilot 回填、不重算**:
 
 | 本 skill(gen_report 聚合 / results 字段) | → autopilot `data/{BUILD}.js` `testSummary` | 说明 |
 | :- | :- | :- |
@@ -159,7 +159,7 @@
 - **对账口径一致性**:`testSummary.passed + failed + blocked == total`;缺陷数走 §2.3 分级映射口径(≠ fail+block 原始数)。
 - **单向数据流**:本 skill 产出 `results/*.json` → `gen_report.py` 聚合 → 编排层回填 autopilot `data/{BUILD}.js`;本 skill 不直接写 autopilot 文件(职责隔离)。
 
-### 2.7 耗时分布(2026-09-10 新增,由 `gen_report.py` 产出)
+### 2.7 耗时分布(由 `gen_report.py` 产出)
 
 **数据源:** 每条结果 JSON 的 `started_at` / `finished_at` / `elapsed_ms` 三件套
 (旧字段 `duration_ms` 兼容回落)。**列:** `# | 用例 | 套件 | 结果 | 耗时 | 占已采集合计 | 耗时来源`,只列最长 10 条。
@@ -174,10 +174,10 @@
 (一次登录、会话复用),因此 `elapsed_ms` 常常是「批次窗口 ÷ N」。标了
 `elapsed_is_amortized: true` 的条目渲染为 **`~8.5s`**、「耗时来源」列写 `均摊(batch-xxx)`,
 并在表上方写明**不可用于单条性能判断** —— 按均摊值排名只说明「这条属于哪个慢批次」,
-**不说明「这条本身慢」**。下游实测过不标注的后果:报告出现「`TC-LIST-G09` 耗时 28 分钟」这种
+**不说明「这条本身慢」**。实测过不标注的后果:报告出现「`TC-LIST-G09` 耗时 28 分钟」这种
 **假事实**,而执行方其实已经在 `note` 里写了「均摊值」—— `gen_report.py` 不读 `note`。
 
-⚠️ **本节存在的全部理由(实测依据):** 两轮 116 条里 **`TC-PXY-F01` 一条占整轮总时长 25%(36.8 min)**,
+⚠️ **本节存在的全部理由(实测):** 两轮 116 条里 **`TC-PXY-F01` 一条占整轮总时长 25%(36.8 min)**,
 而这个结论此前只能靠**三个 evidence 文件的 mtime 跨度手工反推** —— 只要那条用例少产一个证据文件,
 它就**整条漏掉**。**没有单条耗时,任何优化都无法验证是否生效。**
 
@@ -187,7 +187,7 @@
 **同节附两行语义纠偏(必读):**
 
 - **`execution_mode` 分布必须与「实际触发自愈次数」并排给出。** `execution_mode=self-heal` 表示
-  「**具备**自愈能力」,**不表示「实际自愈了」**——实测中曾把「43 条 self-heal」读成「43 条在重跑」,
+  「**具备**自愈能力」,**不表示「实际自愈了」**—— 实测曾把「43 条 self-heal」读成「43 条在重跑」,
   而实际只重试过 **1** 次,调优方向当场被带偏。
 - **执行机制分布(`dom` / `webmcp` / `app-mcp` / `mixed` / `未声明`)**:仅当出现非 `dom` 值时输出。
   ⚠️ **`未声明` 是独立的一档、⛔ 不并进 `dom`** —— 结果 JSON 没填 `mechanism` 时报告写 `dom=N`

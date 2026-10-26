@@ -4,7 +4,8 @@
 check_text_field_length.py — 文本字段长度冗余合规扫描
 
 对照 dev-logic-architect SKILL 核心原则 13「文本字段长度冗余原则」。
-扫描详细设计文档(.md)中的 SQL DDL,识别 VARCHAR/CHAR 文本字段并核验:
+扫描详细设计文档(.md)中的 SQL DDL(`CREATE TABLE` 的列 **与** `ALTER TABLE … ADD [COLUMN]` /
+达梦·Oracle 式 `ADD (…)` 批量新增的列),识别 VARCHAR/CHAR 文本字段并核验:
   1. 自由输入字段 DB 长度 ≥ 前端限制 × 3(从 COMMENT 解析"前端限制 N 字符"等)
   2. COMMENT 显式标注"DB 冗余 3×"
   3. 豁免字段需在 COMMENT 标注豁免理由,豁免类型:
@@ -17,6 +18,8 @@ check_text_field_length.py — 文本字段长度冗余合规扫描
      - 枚举 code(_code/_type/_status/_state 后缀)
      - 历史沿用(配合检查项 18)
      - TEXT/MEDIUMTEXT/LONGTEXT(非 VARCHAR)
+     - 冗余 / 快照字段(COMMENT 写「冗余自 X」「快照」「系统写入」「自动复制」:值来自另一张表或系统,
+       不是用户在本处输入的,无前端限制可言)
   4. VARCHAR 长度不超出 utf8mb4 单字段上限(16383)
   5. COMMENT 已显式标豁免关键词(强格式/系统生成/算法决定/JSON 字符串/Base64/BCrypt 等)
      时尊重作者声明,即使字段名命中自由输入关键词也不再要求"前端限制 N + 3× 冗余"
@@ -30,9 +33,9 @@ check_text_field_length.py — 文本字段长度冗余合规扫描
   0 = 全部通过
   1 = 发现警告(豁免字段未标注理由等非阻断问题)
       **或** 发现违规(自由输入字段长度不足 3× 等阻断问题)
-     ⚠️ 该档曾单用退出码 2,与全仓统一约定「2 = 入参错」撞码——调用方按约定把 2 当
+     ⚠️ 该档曾单用退出码 2,与统一退出码约定「2 = 入参错」撞码——调用方按约定把 2 当
         入参错「修正参数后重跑、不计维度失败」,就会把这条**强制不通过**静默放行(假绿)。
-        已并入 1;分档改从 --json 读(见下)。严重度不占退出码,见 CLAUDE.md 全仓约定。
+        已并入 1;分档改从 --json 读(见下)。严重度不占退出码(统一退出码约定)。
         分档:--json 的 `issues[].severity` 为 `Critical` 即阻断档、`Important` 为警告。
   2 = 输入错误(路径不存在 / 无 .md 文件)——非维度违规,修正参数后重跑
 """
@@ -148,6 +151,8 @@ EXEMPT_KEYWORDS = [
     "算法决定", "非自由输入", "JSON 字符串", "JSON字符串", "扩展属性",
     "Base64", "BCrypt", "BCRYPT", "SHA", "MD5", "RSA", "AES",
     "fixed length", "strict format", "legacy",
+    # 冗余 / 快照字段:值从别处复制或由系统写入,不是本处的自由输入
+    "冗余自", "快照", "系统写入", "自动复制",
 ]
 
 SQL_BLOCK_PATTERN = re.compile(r"```sql\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
@@ -185,6 +190,141 @@ def iter_create_tables(sql_text):
                 if depth == 0:
                     yield name, sql_text[open_idx + 1:j], m.start()
                     break
+# ---------------------------------------------------------------------------
+# ALTER TABLE … ADD 解析
+# ⚠️ 只扫 CREATE TABLE 时,**增量迭代最常见的形态**(给既有表 `ADD COLUMN remark VARCHAR(50)`)
+#    对本门完全隐形 —— 新增的自由输入字段缺前端限制 / 长度不足 3× 一条都报不出来(假绿)。
+# ⚠️ 下列切分函数与同 SKILL `check_ddl_column_comment.py` 是**刻意的重复实现**
+#    (SKILL 独立性原则:同一 SKILL 内脚本也互不 import),改那边的切分口径时须同改这里。
+#    ⛔ 不可退回 `sql.split(";")` / `split(",")`:注释里的 `;` `,` 会把语句/列定义从中间切断。
+# ---------------------------------------------------------------------------
+IDENT_PART = r"[`\"\[]?[A-Za-z_][A-Za-z0-9_$]*[`\"\]]?"
+ALTER_HEAD_RE = re.compile(r"\bALTER\s+TABLE\s+(%s(?:\.%s)?)" % (IDENT_PART, IDENT_PART), re.I)
+ADD_KEYWORD_RE = re.compile(r"\bADD\s+(?:COLUMN\b\s*)?(?:IF\s+NOT\s+EXISTS\s+)?", re.I)
+NON_COLUMN_KEYWORDS = {"constraint", "index", "key", "primary", "unique", "foreign",
+                       "check", "fulltext", "spatial", "partition"}
+IDENT_RE = re.compile(r"[`\"\[]?([A-Za-z_][A-Za-z0-9_$]*)[`\"\]]?")
+POSITION_CLAUSE_RE = re.compile(r"\s+(?:AFTER\s+[`\"\[]?\w+[`\"\]]?|FIRST)\s*$", re.I)
+COMMENT_ON_RE = re.compile(
+    r"\bCOMMENT\s+ON\s+COLUMN\s+([`\"\[\]\w\.]+)\s+IS\s+('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")", re.I)
+
+
+def _split_top_level(s):
+    """按顶层逗号切分(跳过括号与字符串字面量);遇到未配对的 `)` 即止。"""
+    parts, cur = [], []
+    depth, quote = 0, ""
+    for ch in s:
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            cur.append(ch)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return parts
+
+
+def split_sql_statements(sql):
+    """按**顶层** `;` 切语句,同时在引号外剥掉 `--` / `/* */` 注释(被注释掉的 ALTER 不算新增列)。"""
+    stmts, cur = [], []
+    quote = ""
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            cur.append(ch)
+            i += 1
+            continue
+        if ch == "-" and sql.startswith("--", i):
+            j = sql.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if ch == "/" and sql.startswith("/*", i):
+            j = sql.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            cur.append(" ")
+            continue
+        if ch == ";":
+            stmts.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    if cur:
+        stmts.append("".join(cur))
+    return stmts
+
+
+def _clean_ident(tok):
+    m = IDENT_RE.match(tok.strip())
+    return m.group(1) if m else ""
+
+
+def _table_name(raw):
+    return raw.strip().strip('`"[]').split(".")[-1]
+
+
+def iter_alter_add_columns(sql_text):
+    """逐列产出 (表名, 单行化的列定义片段)。同时认 `ADD [COLUMN] [IF NOT EXISTS] c …` 与 `ADD (c1 …, c2 …)`。"""
+    for stmt in split_sql_statements(sql_text):
+        head = ALTER_HEAD_RE.search(stmt)
+        if not head:
+            continue
+        table = _table_name(head.group(1))
+        rest = stmt[head.end():]
+        for m in ADD_KEYWORD_RE.finditer(rest):
+            tail = rest[m.end():].lstrip()
+            if not tail:
+                continue
+            if tail.startswith("("):
+                segs = _split_top_level(tail[1:])
+            else:
+                segs = _split_top_level(tail)[:1]
+            for seg in segs:
+                col = _clean_ident(seg)
+                if col and col.lower() not in NON_COLUMN_KEYWORDS:
+                    # ⚠️ 剥掉 MySQL 的列位置子句:`… COMMENT '含,逗号' AFTER id` 不剥时
+                    #    FIELD_LINE_PATTERN 整行匹配不上 → 该列静默跳过(假绿)
+                    seg = POSITION_CLAUSE_RE.sub("", " ".join(seg.split()))
+                    yield table, seg
+
+
+def parse_comment_on(sql_text):
+    """解析达梦/Oracle 另起的 `COMMENT ON COLUMN t.c IS '...'`,返回 {(表名小写, 列名小写): 文本}。"""
+    out = {}
+    sql = "\n".join(split_sql_statements(sql_text))
+    for m in COMMENT_ON_RE.finditer(sql):
+        parts = [x.strip('`"[]') for x in m.group(1).split(".") if x.strip('`"[]')]
+        if len(parts) < 2:
+            continue
+        lit = m.group(2)
+        out[(parts[-2].lower(), parts[-1].lower())] = lit[1:-1].replace("''", "'").strip()
+    return out
+
+
 FIELD_LINE_PATTERN = re.compile(
     r"^\s*[`\"]?(\w+)[`\"]?\s+"
     r"((?:VAR)?CHAR\s*\(\s*\d+\s*\)|TEXT|MEDIUMTEXT|LONGTEXT|TINYTEXT)"
@@ -398,6 +538,19 @@ def scan_file(path):
                 )
                 fields.append(entry)
                 issues.extend(field_issues)
+        comment_on = parse_comment_on(sql)
+        for table_name, seg in iter_alter_add_columns(sql):
+            m = FIELD_LINE_PATTERN.match(seg)
+            if not m:
+                continue
+            field_name, raw_type, _modifiers, comment = m.groups()
+            comment = comment or comment_on.get((table_name.lower(), field_name.lower()), "")
+            entry, field_issues = check_field(field_name, raw_type, comment, table_name, path)
+            entry["ddl"] = "ALTER ADD"
+            for it in field_issues:
+                it["ddl"] = "ALTER ADD"
+            fields.append(entry)
+            issues.extend(field_issues)
     return fields, issues
 
 

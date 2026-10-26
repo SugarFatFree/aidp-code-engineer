@@ -17,7 +17,7 @@ mvn mybatis-plus:generate               # 生成 Entity/Mapper/Service CRUD 模�
 > `generate-resources`，于是 `mvn compile` 会真的去跑 `npm install` + `npm run build`。
 > 即一条写着"只编译不打包"的命令**可以直接触发本 SKILL 明文严禁的完整前端构建**，
 > 与「开发期验证 ≠ 发布期构建」铁律（`stack-index.md`）直接冲突。
-> ⚠️ ⛔ 不要写 `mvn compile  # ✅ 只编译，不打包`——**那句话是错的**。
+> ⚠️ ⛔ 不要把 `mvn compile` 标注成「只编译，不打包」(由来见 `rationale.md`「`mvn compile` 不是只编译」)。
 > `mvn clean compile` 更糟：`clean` 先删 `target/`，前端产物必然重建一遍。
 
 **默认命令是 `mvn -q compiler:compile`**（直调插件 goal、**不走 lifecycle**，是本节唯一有确定性保证的写法）。
@@ -38,7 +38,7 @@ find . -name pom.xml -not -path '*/target/*' -print0 \
 | **无命中** | 两条都可以，**默认仍推荐 `mvn -q compiler:compile`**；确需走 lifecycle（例如项目靠 `generate-sources` 产码、见下一行）才写 `mvn -q compile`。⚠️ **无命中 ≠ 证明干净**，见下方第 ① 条 |
 | **有命中，且项目真的依赖 generate-sources 产码**（protobuf / jOOQ / OpenAPI codegen / MapStruct 走 `<execution>` 级 `annotationProcessorPaths`） | 开发期**不做**编译验证，**交 CI**。此时 `compiler:compile` 会漏掉生成源码而**假红**、`mvn compile` 又会触发全量构建，两条都不成立，与 `code-verification-loop` 维度 0「Java 侧刻意不做、编译期错误交 CI」同口径 |
 
-**三条实测事实（Maven 3.8.7 / JDK 17，别照直觉改）：**
+**三条实测事实（2026-09-06 · Maven 3.8.7 / JDK 17，别照直觉改）：**
 
 ① ⚠️ **grep 无命中不等于「没有插件绑在 compile 之前」——插件可以用自己的默认相绑定，pom 里根本不写 `<phase>`。**
    实测：`build-helper-maven-plugin:add-source` 的默认相就是 `generate-sources`，一个只写 `<goals>` 不写 `<phase>`

@@ -20,7 +20,7 @@ SQL 路径透传核验 — dev-execution-planner 维度 9 子项
 
 退出码: 0 = 通过(或无 SQL 引用) / 1 = 不通过 / 2 = 环境错(路径不存在 / 无 markdown 文件 /
         **有 .md 读取失败**——读不出来的文件记进 `--json` 的 `read_errors[]` 并按 2 返回,
-        ⛔ 绝不静默计为「该文件无违规」(修:此前是裸 read_text,断链符号链接会抛
+        ⛔ 绝不静默计为「该文件无违规」(2026-09-10 修:此前是裸 read_text,断链符号链接会抛
         FileNotFoundError 裸 traceback 且 exit 1,与「检出违规」撞码)
 """
 from __future__ import annotations
@@ -160,7 +160,7 @@ def main() -> int:
         # ⚠️ 读不出来的文件(断链符号链接 / 无读权限)必须记成 read_error 并按 exit 2
         # 返回,⛔ 绝不可静默计为「该文件无违规」。
         # 此前这里是裸 `f.read_text(...)`:一个断链的 `01_研发执行计划.md` 会让脚本抛
-        # FileNotFoundError 裸 traceback 且 **exit 1** —— 而 exit 1 按全仓退出码约定是
+        # FileNotFoundError 裸 traceback 且 **exit 1** —— 而 exit 1 按统一退出码约定是
         # 「检出违规」,QR 子 Agent 会读成「维度 9 详细设计一致性不通过」,产物方怎么改
         # 都修不好(实测复现:ln -s /nonexistent/x.md 01_研发执行计划.md → exit 1 + traceback)。
         try:

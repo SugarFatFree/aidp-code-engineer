@@ -5,7 +5,7 @@ r"""「错误契约」硬核回检 — dev-logic-architect 维度 31(Critical,�
 背景:下游反复出现同一类缺陷——**失败没有被正确表达**:
   · 失败被伪装成成功(HTTP 200 + "操作成功" + 空 data / `{success:true, data:[]}`),
     前端把它当"没有数据"渲染成空态,故障对用户与监控双双静默;
-  · 上游不可达时用内部代号报错("order-svc 连接失败"),用户看不懂、也泄漏内部拓扑;
+  · 上游不可达时用内部代号报错("demo-ops-service 连接失败"),用户看不懂、也泄漏内部拓扑;
   · 鉴权/权限/归属/签名判据 fail-open——"取不到租户 ID"被当成"无限制"放行。
 根因不在编码期,而在**详细设计/接口设计根本没规定错误行为**,于是编码期各写各的、
 测试期才当 bug 抓。对策:把失败正确性前移到设计期,每个接口强制产出「错误契约」小节。
@@ -18,7 +18,7 @@ r"""「错误契约」硬核回检 — dev-logic-architect 维度 31(Critical,�
                                   面向用户的中文提示 | 失败/降级行为
   C3 用户提示列空/占位/无中文  —— 面向最终用户的文案必须逐行填实且是中文
   C4 失败/降级行为列空/占位
-  C5 用户提示列泄漏内部代号    —— kebab/snake 服务名(ops-service)、IP[:port]、URL
+  C5 用户提示列泄漏内部代号    —— kebab/snake 服务名(demo-ops-service)、IP[:port]、URL
   C8 错误码未登记进全局枚举    —— 接口错误契约表用了全局错误码枚举里没有的码(各接口自编码)
 
 【文档级 · Critical(退出码 1)】
@@ -77,7 +77,7 @@ INTERNAL_CODENAME_RE = re.compile(
     r"(?<![A-Za-z0-9])(?:"
     r"https?://\S+"                                   # URL
     r"|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?"              # IP[:port]
-    r"|[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+"              # kebab/snake 服务名 ops-service / ops_svc
+    r"|[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+"              # kebab/snake 服务名 demo-ops-service / ops_svc
     r")"
 )
 
@@ -469,7 +469,7 @@ def scan_file(path: Path, root: Path) -> Dict:
                             criticals.append({"type": "C5 用户提示泄漏内部代号", "file": rel,
                                               "line": row["line"],
                                               "detail": f"用户提示含内部代号/拓扑「{hit.group(0)}」,"
-                                                        f"须改为业务中文名(如「订单中心服务无法连接,"
+                                                        f"须改为业务中文名(如「管理后台服务无法连接,"
                                                         f"请稍后再试」)"})
                 if act_idx is not None and _is_empty(act):
                     ok = False

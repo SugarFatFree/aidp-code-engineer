@@ -1,5 +1,7 @@
 # 研发执行计划:模型市场购买与订单管理(V1.0)
 
+> **`{{AIDP_HOME}}` 约定:** 安装方渲染的运行根(仅 Claude Code 为 `.claude`,共享运行根为 `.agents`),`{{AIDP_HOME}}/...` 一律相对被测项目根;SKILL 不探测,详见 SKILL.md「运行路径约定」。
+
 > ✅ **[标准样本 — 结构可直接参照]**
 >
 > 本文件是 `dev-execution-planner` 当前规范的**标准格式样本**,完整演示:「**EPIC × Sprint × Task**」三层模型、AI 执行指令四件套(① 主命令 + ② 设计/PRD/原型锚点 + ③ 依赖 + ④ 验收锚点)、9 列任务总表、第三方对接「情况 0」Task X.1~X.5 五件套(THIRD_PARTY_MOCK 受控豁免)、SQL 路径透传(Module D)、金额字段类型守恒、待澄清问题清单、REQ ↔ EPIC 双向索引。
@@ -21,17 +23,17 @@
 
 ## 一、可用指令清单(按优先级)
 
-> 生成本计划前已按 5 层优先级扫描项目资源(`各 Agent 的运行根/`、`AIDP*.md`、`~/.claude/`、`package.json scripts`、`Makefile`、`pom.xml`、README)。**若项目存在 L1/L2 资源,Task 必须优先采用**;本虚构项目扫描结果如下。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+> 生成本计划前已按 5 层优先级扫描项目资源(`AIDP*.md`、`{{AIDP_HOME}}/`、`~/.claude/`、`package.json scripts`、`Makefile`、`pom.xml`、README)。**若项目存在 L1/L2 资源,Task 必须优先采用**;本虚构项目扫描结果如下。
 
 ### L1 — AIDP 命令与范式(项目专属,最高优先级)
-- 无(`{{AIDP_HOME}}/`、`AIDP*.md` 均未发现)
+- 无(`{{AIDP_HOME}}/commands/`、`AIDP*.md` 均未发现)
 
-### L2 — 项目 .claude/ 资源(项目团队约定)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
-- 无(项目 `.claude/` 下无 commands/skills/agents)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+### L2 — 项目 {{AIDP_HOME}}/ 资源(项目团队约定)
+- 无(项目 `{{AIDP_HOME}}/` 下无 commands/skills/agents)
 
 ### L3 — 系统 Claude Code 资源(全局)
-- `/dev-logic-architect` — 来源:`~/{{AIDP_HOME}}/skills/dev-logic-architect/`
-- `/code-verification-loop` — 来源:`~/{{AIDP_HOME}}/skills/code-verification-loop/`
+- `/dev-logic-architect` — 来源:`~/.claude/skills/dev-logic-architect/`
+- `/code-verification-loop` — 来源:`~/.claude/skills/code-verification-loop/`
 
 ### L4 — 通用工具命令
 - `mvn -q compiler:compile`(本样例按 `stack-java-spring.md` 二节的**默认写法**取值——直调 goal、不走 lifecycle;⛔ **不要照抄成 `mvn compile`**,更**永远不要写 `mvn clean compile`**——`clean` 会删 `target/` 触发全量重建;换项目前先读那一节的三条实测事实,尤其「execution 级 `<configuration>` 不生效」那条) / `mvn test` / `mvn mybatis-plus:generate` / `vue-tsc --noEmit`(前端开发期类型检查) / `pnpm test:e2e`

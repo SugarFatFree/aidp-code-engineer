@@ -4,7 +4,7 @@
 
 **为什么需要它:** `assets/result-schema.json` 本质是一份**示例 JSON**(`$comment` 标注「示例」),
 `evidence` 只给了一个对象数组样例,**没有任何 JSON Schema 意义上的 items/required 约束**——
-执行方无从被机器提示「evidence 元素必须是对象、必须含 artifact」。2026-08-18 上游实测:
+执行方无从被机器提示「evidence 元素必须是对象、必须含 artifact」。实测:
 执行方把 evidence 写成字符串数组,`gen_report.py` 直接 `AttributeError` 崩掉整份报告聚合。
 `gen_report.py` 侧已改为**兼容解析 + 形状告警**(不再崩),本脚本则把同一套契约前移到**落盘时**,
 让形状错误在写结果那一刻就被拦住,而不是攒到聚合期才发现。
@@ -25,7 +25,23 @@
   C13 precondition_probe.status=probe-error 但 block_reason=precondition-unmet(探测失败伪装成数据缺位)
   C14 [还原度]/视觉类用例把 mechanism 标成 webmcp(WebMCP 读的是页面**声明的能力**、不是**渲染结果**,
       用它验还原度会让渲染层缺陷 100% 漏测**且全绿**——本条是唯一会「静默变绿」的机制误用)
-  C15 mechanism 不在枚举内(dom | webmcp | mixed)
+  C15 mechanism 不在枚举内(dom | webmcp | app-mcp | mixed)
+  C16 evidence/runtimeErrors 中登记了 artifact,但实际文件不存在
+  C17 同一截图主干同时登记 WebP/PNG/JPEG 多格式副本
+  C18 截图使用不在 .webp/.png/.jpg/.jpeg 白名单内的图片扩展名
+  C19 artifact 文件为 0 字节(截图失败残留的空壳不能算证据)
+  C20 已登记截图旁存在未登记的同主干其它格式文件(回退残留半成品)
+  C21 artifact 使用绝对路径(结果契约要求本轮相对路径)
+  C22 artifact 含 `..` 路径穿越段
+  C23 artifact 实际落点不在当前 round/evidence 目录(引用旧轮次或外部文件)
+  C24 artifact 路径畸形/符号链接循环/无法稳定解析
+  C25 截图扩展名合法但容器结构/文件头不是对应图片格式(文本或截断空壳伪装截图)
+  C26 当前 round/evidence 或 round 根目录本身是符号链接(可把旧轮次/外部目录冒充本轮根)
+  C27 截图文件名中的 TC-ID 与当前 case_id 不一致
+  C28 evidence.step 与截图文件名 `{TC-ID}-step{N}` 不一致
+  C29 results 目录或结果 JSON 是符号链接(旧轮次状态可冒充新轮次)
+  C30 不同 case_id 通过符号链接复用同一个实际截图
+  C31 application_mcp 四态任一 source 或 implementation_evidence 含测试驱动标记(`application_mcp_driver_as_evidence`)
   I1 evidence 元素是字符串(按 artifact 兼容解析,但非规范形状)
   I2 evidence 元素是对象却缺 artifact(证据路径将显示 —)
   I3 runtimeErrors 元素形状不合契约(缺 type/message/severity)
@@ -39,17 +55,18 @@
   I9 elapsed_ms 与 finished_at−started_at 相差 > 2s(两者不是同一次计时,数据不可信)
   I10 elapsed_ms 与旧字段 duration_ms 并存且不等
   I11 execution_mode=self-heal 但 retries=0 且 self_heal_attempts=0(= **具备**自愈能力而**未曾**自愈,
-      本身完全正常;报出来是为了让「43 条 self-heal」不被读成「43 条在重跑」——下游实证的误导点)
+      本身完全正常;报出来是为了让「43 条 self-heal」不被读成「43 条在重跑」—— 实测的误导点)
   I12 同一个实际 artifact 在 evidence/runtimeErrors 中重复登记
   I13 截图仍使用历史 `{TC-ID}-{N}` / `{TC-ID}_步骤{N}` 主干(兼容但提示迁移)
   I14 批次窗口均摊值未如实标注(同一轮内 ≥2 条共享同一执行窗口且 elapsed_ms 近似相同,
       却未标 `elapsed_is_amortized` + `batch_id`)
   I15 `batch_elapsed_ms` 与批内 elapsed_ms 合计相差 > 5%,或同批各条声明值互不一致
   I16 `elapsed_is_amortized` 不是布尔值(已按 truthy 当作均摊处理,fail-closed)
+  I17 application_mcp.implementation_kind 使用旧值 `app-service`(按 `app-native` 兼容解析)
   ⚠️⚠️ **新增 Important 判据一律从本清单的最大编号往后编,⛔ 不得复用已占用的号。**
-      实测踩过:三条均摊判据最初被写成 I12/I13,而这两个号**早已**属于
+      2026-10-09 实测踩过:三条均摊判据最初被写成 I12/I13,而这两个号**早已**属于
       「artifact 重复登记」与「历史截图主干」,于是 `report-format.md` / `result-schema.json` /
-      项目记忆文件 三处文档的「I12 告警」指向了完全无关的规则 ——
+      仓库约定文档三处的「I12 告警」指向了完全无关的规则 ——
       顺着编号去查会**查错对象**,正是本仓库「编号消歧铁律」要消灭的形态
       (那条铁律原话:失效方向是「看着像懂了、实际查错了对象」)。
 
@@ -62,9 +79,7 @@
 """
 import argparse
 import json
-import os
 import re
-import struct
 import sys
 import zlib
 from collections import Counter
@@ -92,24 +107,44 @@ ENTRY_KIND_ENUM = {'case', 'free-scan'}
 # 本条用例的主要执行机制。⚠️ `webmcp` 只允许用于**状态准备/数据构造/非视觉断言**类用例;
 #    视觉还原度类严禁(C14),见 references/execution-methodology.md「WebMCP 分层铁律」。
 MECHANISM_ENUM = {'dom', 'webmcp', 'app-mcp', 'mixed'}
-# 各客户端类型**允许登记的实现形态**（`implementation_kind`）。
-# ⛔ 取值必须与**声明侧**同一套（`check_client_mcp.py::IMPLEMENTATIONS`、
-#    `templates/optional-rules/client-mcp.md`、`agents/frontend.md` 都写 `app-native`）。
-#    此前这里写 `app-service`，非 Web 项目如实登记 `app-native` 会被判 Critical 假红；
-#    为过门改写成 `app-service` 又与 PRD/设计声明不一致 —— 两边都是错的。
-#    跨层一致性由 `tests/test_execution_contract_lite.py::TestImplementationKindEnum` 守。
+# application_mcp.implementation_kind 按客户端端类型的合法值。单一信源:
+#   result-schema.json / execution-contract-lite.md 的同名说明由 tests/ 逐值比对。
+#   非 Web 端的形态是「应用原生实现(app-native)」或「配套桥接(bridge)」。
 VALID_IMPLEMENTATION_KIND = {
     'web': ('webmcp',),
     'miniprogram': ('app-native', 'bridge'),
     'mobile': ('app-native', 'bridge'),
     'desktop': ('app-native', 'bridge'),
 }
-# ★「客户端 MCP 能力」是**跨端**功能点(Web / 小程序 / 移动 / 桌面),WebMCP 只是它的 **Web 端实现**。
-#   `app-mcp` = 被测应用自己向 AI 暴露业务工具;`webmcp` 保留为 Web 端的历史写法(等价于
-#   client_type=web + implementation_kind=webmcp)。
-# ⛔⛔ 两条轴绝不可混:**测试驱动**(chrome-devtools / Appium / 小程序驱动去操控客户端)用的也是
-#   MCP 协议,但那是「AI 操控客户端」,不是「应用提供了 MCP 能力」。把 driver 可用当成应用能力的证据
-#   是本检查要拦的头号形态 —— 判定唯一实现见命令端 `AIDP_HOME/scripts/check_client_mcp.py`。
+# 旧合法值 → 现行值。旧结果里如实写了 `app-service` 的不判 Critical(那会把按旧文档如实登记
+#   的结果判死),只报 Important 提示迁移;语义上它就是现行的 app-native。
+LEGACY_IMPLEMENTATION_KIND = {'app-service': 'app-native'}
+# application_mcp 四态 source 中的**测试驱动**标记:驱动可用 ≠ 应用提供了 MCP 业务能力。
+#   ASCII 标记是**正则片段**(不是字面量),两侧要求「非字母数字」边界(`cdp` 不误伤
+#   `cdpath`/`ecdp` 这类无关单词;`-`/`_`/空格/中文均算边界),中文标记按子串匹配;不区分大小写。
+#   ⚠️ `chrome[\s_-]?devtools` 必须同时认「Chrome DevTools」(空格)/「chromedevtools」(连写)/
+#   「chrome_devtools」(下划线)——只认连字符时,报告里最自然的写法「Chrome DevTools MCP 列出」
+#   恰好漏判,方向是假绿。各端驱动名逐一列出(UIAutomator2/XCUITest/WinAppDriver/Puppeteer/
+#   WebDriver/minium),⛔ 别为「更通用」改成裸 `driver`/`automator` 这类会误伤业务词的子串。
+DRIVER_SOURCE_MARKERS = (r'chrome[\s_-]?devtools', 'appium', 'cdp', 'playwright', 'selenium',
+                         'mcp-remote', 'miniprogram-automator', 'uiautomator2', 'xcuitest',
+                         'winappdriver', 'puppeteer', 'webdriver', 'minium')
+DRIVER_SOURCE_CN_MARKERS = ('小程序驱动', '测试驱动')
+DRIVER_SOURCE_RE = re.compile(
+    r'(?<![a-z0-9])(?:' + '|'.join(DRIVER_SOURCE_MARKERS) + r')(?![a-z0-9])', re.I)
+
+
+def _driver_marker_in(source):
+    """返回 source 中命中的测试驱动标记(无命中返回 None)。"""
+    if not isinstance(source, str):
+        return None
+    m = DRIVER_SOURCE_RE.search(source)
+    if m:
+        return m.group(0)
+    for word in DRIVER_SOURCE_CN_MARKERS:
+        if word in source:
+            return word
+    return None
 # 判「这条是不是视觉还原度类」的信号:上游 dev-manual-testcase 的用例族标记会透传到
 # type / test_name / case_id。⚠️ 刻意用**多字段任一命中**:标记透传到哪个字段各端不一致,
 #    只认一个字段会在别的端静默失配 —— 而失配方向正是 C14 要防的假绿。
@@ -122,23 +157,7 @@ FIDELITY_MARKERS = ('还原度', '视觉', '布局', '样式')
 #    `mechanism` 填 `webmcp`,C14 一条都不报(**假绿**,正是本条注释上一段要防的那个方向)。
 #    ⛔ 改这里时不要再收窄成「只认标题」。
 FIDELITY_SIGNAL_FIELDS = ('type', 'test_name', 'case_id', 'suite', 'case_family', 'tags')
-TIMING_FIELDS = ('started_at', 'finished_at', 'elapsed_ms')
-# 上游约定的巡检项 case_id 形态(`运行时-<页面>`),用于反查漏标 entry_kind
-FREE_SCAN_ID_PREFIX = '运行时-'
-# 非用例产物(与 gen_report.NON_RESULT_FILES 同口径),整目录校验时跳过
-NON_RESULT_FILES = {'env-facts.json', 'token-usage.json', 'run-context.json'}
 
-
-def _issue(issues, level, rule, msg):
-    issues.append({'level': level, 'rule': rule, 'msg': msg})
-
-
-# ── 应用 MCP 能力（跨端）──────────────────────────────────────────────────────
-# ★「客户端 MCP 能力」是**跨端**功能点(Web / 小程序 / 移动 / 桌面),WebMCP 只是 Web 端实现。
-# ⛔⛔ 与**测试驱动**严格分轴：chrome-devtools / Appium / 小程序驱动用的也是 MCP 协议，
-#     但那是「AI 操控客户端」，不是「应用提供了业务工具」。把驱动可用当成应用能力的证据，
-#     整个功能点就是假绿 —— 这簇检查的头号防守对象。
-# ⛔ 后一态不得由前一态推断：声明了≠有入口，有入口≠注册了，注册了≠真调用过。
 
 def _valid_tool_calls(calls, registered, evidence, require_fact=False):
     """筛出「确有其事」的工具调用记录。
@@ -202,184 +221,15 @@ KNOWN_IMAGE_EXTENSIONS = SCREENSHOT_EXTENSIONS | UNSUPPORTED_IMAGE_EXTENSIONS
 PATH_EXCEPTIONS = (OSError, RuntimeError, ValueError)
 
 
-# ⛔ 这些是**测试驱动**的事实，不是应用能力的证据。出现在四态的 source 里即判 Critical。
-# ★ 本条是本仓库在上游实现之上**额外加的**：上游只校形状与四态一致性，没有拦
-#   「拿驱动可用冒充应用能力」——而那正是本功能点立论的核心形态（见 check_client_mcp.py 开篇）。
-#   少了它，一份把 source 写成「appium 已连接」的结果能全绿通过。
-DRIVER_SOURCE_MARKERS = ('chrome-devtools', 'appium', 'cdp', 'playwright', 'selenium',
-                         'mcp-remote', '小程序驱动', '测试驱动')
-
-
-def _driver_source_issues(app, name, issues):
-    for state in ('declared', 'entry', 'registration', 'invocation'):
-        fact = app.get(state)
-        if not isinstance(fact, dict):
-            continue
-        source = str(fact.get('source') or '').lower()
-        if any(marker in source for marker in DRIVER_SOURCE_MARKERS):
-            _issue(issues, 'Critical', 'application_mcp_driver_as_evidence',
-                   f'{name}: application_mcp.{state}.source 指向**测试驱动**'
-                   f'({fact.get("source")!r}) —— ⛔ 驱动可用不是「应用提供了 MCP 能力」的证据，'
-                   f'两条轴不可混')
-
-
-def _mcp_fact(value):
-    if not isinstance(value, dict) or not all(
-            isinstance(value.get(key), str) and value[key].strip()
-            for key in ('source', 'observed_at')):
-        return False
-    if value['source'].strip().startswith('未取到') and (
-            value.get('value') is True or
-            value.get('status') in ('connected', 'registered', 'called')):
-        return False
-    return True
-
-
-def _check_application_mcp(data, name, issues):
-    """只核实应用业务工具的四态证据；测试驱动不参与能力判定。"""
-    status = data.get('status')
-    mechanism = data.get('mechanism')
-    client = data.get('client')
-    label = _signal_label(data)
-    app = data.get('application_mcp')
-    legacy = data.get('webmcp')
-    negative = any(word in label for word in ('未启用', '关闭态', '禁用态'))
-    marked = '[应用MCP]' in label and not negative
-    web_marked = app is not None and client == 'web' and '[WebMCP]' in label and not negative
-    legacy_required = app is not None and data.get('webmcp_required') is True
-    requires_registration = data.get('mcp_required') is True or legacy_required or marked or web_marked
-    requires_call = (data.get('mcp_required') is True or legacy_required
-                     or ((marked or web_marked) and '工具调用' in label))
-    if app is None:
-        if status == 'block' and requires_registration and legacy is None:
-            _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
-                   f'{name}: 专项用例 block 也须分别记录声明/入口/注册/调用未取到的来源')
-        if status == 'pass' and requires_registration:
-            _issue(issues, 'Critical', 'application_mcp_required_without_entry',
-                   f'{name}: 应用 MCP 专项用例缺应用能力入口事实,不得以 UI 驱动结果充 pass')
-        if status == 'pass' and mechanism == 'app-mcp':
-            _issue(issues, 'Critical', 'application_mcp_claim_without_call',
-                   f'{name}: driver 可用不等于应用实际调用了业务工具')
-        return
-    if not isinstance(app, dict):
-        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
-               f'{name}: application_mcp 须为逐态对象')
-        return
-
-    declared = app.get('declared')
-    if not _mcp_fact(declared) or not isinstance(declared.get('value'), bool):
-        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
-               f'{name}: 应用能力声明缺布尔值/来源/观测时间')
-        return
-    _driver_source_issues(app, name, issues)
-    if app.get('client_type') != client:
-        _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
-               f'{name}: 声明客户端与结果 client 不一致')
-    if legacy is not None:
-        if (client != 'web' or not isinstance(legacy, dict)
-                or legacy.get('declared_enabled') != declared['value']):
-            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
-                   f'{name}: 新旧应用 MCP 声明冲突,不得静默覆盖')
-    if not declared['value']:
-        if any(isinstance(app.get(key), dict) and app[key].get('status') == state
-               for key, state in (('entry', 'connected'), ('registration', 'registered'),
-                                  ('invocation', 'called'))):
-            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
-                   f'{name}: 项目声明未提供应用 MCP,结果却称入口/注册/调用已发生')
-        if status == 'pass' and (requires_registration or mechanism in ('app-mcp', 'mixed')):
-            _issue(issues, 'Critical', 'application_mcp_claim_without_call',
-                   f'{name}: 项目声明未提供应用 MCP,不能报业务工具调用通过')
-        return
-
-    valid_kind = VALID_IMPLEMENTATION_KIND
-    implementation_evidence = app.get('implementation_evidence')
-    evidence_present = (isinstance(implementation_evidence, str)
-                        and bool(implementation_evidence.strip()))
-    unresolved = evidence_present and implementation_evidence.strip().startswith('未取到')
-    unresolved_block = status == 'block' and unresolved
-    if (not evidence_present or (unresolved and status != 'block') or
-            (app.get('implementation_kind') not in valid_kind.get(client, ())
-             and not unresolved_block)):
-        _issue(issues, 'Critical', 'application_mcp_implementation_unverified',
-               f'{name}: 未给出该端已证实的应用自有实现形态/证据;'
-               '未交付仅可注明未取到并 block 专项用例')
-
-    entry, registry, invocation = (app.get(key) for key in
-                                   ('entry', 'registration', 'invocation'))
-    if any(not _mcp_fact(fact) for fact in (entry, registry, invocation)):
-        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
-               f'{name}: 入口/当前实例注册/本用例调用各须独立来源和观测时间')
-        return
-    tools = registry.get('tools')
-    calls = invocation.get('calls')
-    if (entry.get('status') not in ('connected', 'disconnected', 'unavailable')
-            or registry.get('status') not in ('registered', 'none', 'unavailable')
-            or invocation.get('status') not in ('called', 'not-called', 'unavailable')
-            or not isinstance(tools, list) or not all(isinstance(t, str) for t in tools)
-            or not isinstance(calls, list)):
-        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
-               f'{name}: 四态取值或工具/调用清单形状不合契约')
-        return
-    if ((registry['status'] == 'registered') != bool(tools)
-            or (invocation['status'] == 'called') != bool(calls)
-            or (registry['status'] == 'unavailable' and tools)
-            or (invocation['status'] == 'unavailable' and calls)):
-        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
-               f'{name}: 注册/调用状态与实际工具清单或调用记录矛盾')
-    # ★ Web 页面注册特有的作用域事实。⚠️ 这条**必须在新通道里也有**:旧 `webmcp` 字段
-    #   靠 `scope` 守「浏览器全量工具清单不能冒充本页注册」,而结果一旦只写
-    #   `application_mcp`,旧通道整段被短路,该判据会**整条消失**——方向是假绿,
-    #   且消失的正是整份跨端契约最核心的那一条。
-    # ⛔ 只对 client_type=web + implementation_kind=webmcp 生效:scope 是页面注册的概念,
-    #   向 App/小程序/桌面强加它就是「照搬 Web 前提」,那是本轮明令禁止的。
-    if app.get('client_type') == 'web' and app.get('implementation_kind') == 'webmcp':
-        scope = registry.get('scope')
-        if scope not in ('page', 'browser'):
-            _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
-                   f'{name}: Web+WebMCP 的当前实例注册须写 scope(page|browser)')
-        elif scope != 'page' and (mechanism in ('webmcp', 'app-mcp', 'mixed')
-                                  or registry['status'] == 'registered'):
-            _issue(issues, 'Critical', 'application_mcp_scope_not_page',
-                   f'{name}: 浏览器全量工具清单不能证明本页实际注册')
-    if legacy is not None and isinstance(legacy, dict) and client == 'web':
-        old_calls = legacy.get('invocations')
-        new_keys = [(call.get('tool_name'), call.get('evidence_artifact'))
-                    for call in calls if isinstance(call, dict)]
-        old_keys = ([(call.get('tool_name'), call.get('evidence_artifact'))
-                     for call in old_calls if isinstance(call, dict)]
-                    if isinstance(old_calls, list) else None)
-        if (app.get('implementation_kind') != 'webmcp'
-                or legacy.get('entry_detected') != (entry['status'] == 'connected')
-                or legacy.get('scope') != 'page'
-                or legacy.get('registered_tools') != tools
-                or old_keys != new_keys):
-            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
-                   f'{name}: 新旧 Web 形态/入口/本页注册/调用证据冲突')
-    if (status == 'pass' and (requires_registration or invocation['status'] == 'called'
-                              or mechanism in ('app-mcp', 'webmcp', 'mixed'))
-            and entry['status'] != 'connected'):
-        _issue(issues, 'Critical', 'application_mcp_required_without_entry',
-               f'{name}: 应用 MCP 入口未连接,专项用例须 block')
-    if status == 'pass' and requires_registration and (registry['status'] != 'registered' or not tools):
-        _issue(issues, 'Critical', 'application_mcp_required_without_registration',
-               f'{name}: 当前应用实例未注册工具,专项用例须 block')
-    evidence = data.get('evidence')
-    evidence = evidence if isinstance(evidence, list) else []
-    valid_calls = _valid_tool_calls(calls, tools, evidence, require_fact=True)
-    if (status == 'pass' and (mechanism in ('app-mcp', 'webmcp', 'mixed') or requires_call)
-            or invocation['status'] == 'called') and not valid_calls:
-        _issue(issues, 'Critical', 'application_mcp_claim_without_call',
-               f'{name}: 无已注册工具的真实调用 artifact,不得报应用 MCP 调用通过')
-    if status == 'pass' and valid_calls and mechanism == 'dom':
-        _issue(issues, 'Critical', 'application_mcp_mechanism_mismatch',
-               f'{name}: 结果记录了应用业务工具调用却声明纯 UI 驱动机制')
+def _issue(issues, level, rule, msg):
+    issues.append({'level': level, 'rule': rule, 'msg': msg})
 
 
 def _iso_span_ms(start, end):
     """两个 ISO-8601 时间串相差多少毫秒;任一不可解析返回 None。
 
     ⚠️ 只用标准库 `datetime.fromisoformat`。Python 3.8~3.10 不认结尾的 `Z`,
-       先换成 `+00:00`(下游 run 的 Python 版本不受本 SKILL 控制,这一行不能省)。
+       先换成 `+00:00`(调用方运行环境的 Python 版本不受本 SKILL 控制,这一行不能省)。
     """
     from datetime import datetime
     def _p(v):
@@ -398,46 +248,26 @@ def _iso_span_ms(start, end):
     return (b - a).total_seconds() * 1000.0
 
 
+# >>> SHARED-SEGMENT: atr-has-lightweight-evidence >>>
 def has_lightweight_evidence(value):
-    """direct pass 的轻量事实门:有摘要/产物路径即可,不要求截图类型。
+    """direct pass 的轻量事实门:有摘要/产物路径即可,不要求完整截图或截图类型。
 
-    ⚠️ 与 gen_report.has_lightweight_evidence 逻辑必须保持一致(落盘校验 vs 聚合复用同一判据),
-    改一处必须同步改另一处——两脚本各自独立、不跨文件 import,故只能靠这行注释提醒。
+    ⚠️ check_result.py(落盘校验)与 gen_report.py(聚合)各持一份,两脚本各自独立、
+    不跨文件 import;一致性由仓库根 `scripts/check_shared_segment_sync.py`(仅源仓库维护时使用) 逐字节比对守住。
     """
     if not isinstance(value, list) or not value:
         return False
     for item in value:
         if isinstance(item, str) and item.strip():
             return True
-        if isinstance(item, dict) and (str(item.get('summary') or '').strip()
-                                       or str(item.get('artifact') or '').strip()):
-            return True
+        if isinstance(item, dict):
+            summary = item.get('summary')
+            artifact = item.get('artifact')
+            if ((isinstance(summary, str) and summary.strip())
+                    or (isinstance(artifact, str) and artifact.strip())):
+                return True
     return False
-
-
-# ── 产物契约（证据文件必须真实存在且是合法图片）────────────────────────────────
-# ★ 这簇检查防的是**伪造证据**：结果 JSON 里写一个 artifact 路径谁都会写，而
-#   「路径指向的文件到底在不在、是不是 0 字节、是不是真图片、有没有跨用例复用同一张」
-#   在报告上**完全看不出来** —— 报告照样绿、截图位照样有个链接，点开才是 404。
-# ⛔ 同时拦路径逃逸：绝对路径 / `..` 穿越 / 软链指到轮次目录外，都会让「证据」指向
-#   本轮根本没产出的东西。
-
-SCREENSHOT_EXTENSIONS = {'.webp', '.png', '.jpg', '.jpeg'}
-# 仅拦「明确是图片、但不在截图兼容白名单」的扩展名。`.json`/`.log`/`.txt` 等是合法的
-# 非截图证据,不能因为 artifact 字段同时承载它们就一刀切成四种图片后缀。
-
-
-UNSUPPORTED_IMAGE_EXTENSIONS = {
-    '.gif', '.bmp', '.tif', '.tiff', '.svg', '.avif', '.heic', '.heif',
-    '.jfif', '.ico', '.jxl', '.jp2', '.j2k', '.apng', '.psd', '.raw', '.dng',
-    '.qoi', '.exr', '.tga', '.dds', '.ppm', '.pgm', '.pbm', '.pnm', '.hdr',
-}
-
-
-KNOWN_IMAGE_EXTENSIONS = SCREENSHOT_EXTENSIONS | UNSUPPORTED_IMAGE_EXTENSIONS
-
-
-PATH_EXCEPTIONS = (OSError, RuntimeError, ValueError)
+# <<< SHARED-SEGMENT: atr-has-lightweight-evidence <<<
 
 
 def _artifact_candidates(artifact, result_path):
@@ -952,6 +782,181 @@ def _check_artifact_contract(data, name, result_path, issues, artifact_index=Non
                    f'每次 capture 只能保留一种实际截图格式,回退前须清理失败半成品')
 
 
+def _check_application_mcp(data, name, issues):
+    """只核实应用业务工具的四态证据；测试驱动不参与能力判定。"""
+    status = data.get('status')
+    mechanism = data.get('mechanism')
+    client = data.get('client')
+    label = _signal_label(data)
+    app = data.get('application_mcp')
+    legacy = data.get('webmcp')
+    negative = any(word in label for word in ('未启用', '关闭态', '禁用态'))
+    marked = '[应用MCP]' in label and not negative
+    web_marked = app is not None and client == 'web' and '[WebMCP]' in label and not negative
+    legacy_required = app is not None and data.get('webmcp_required') is True
+    requires_registration = data.get('mcp_required') is True or legacy_required or marked or web_marked
+    requires_call = (data.get('mcp_required') is True or legacy_required
+                     or ((marked or web_marked) and '工具调用' in label))
+    if app is None:
+        if status == 'block' and requires_registration and legacy is None:
+            _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+                   f'{name}: 专项用例 block 也须分别记录声明/入口/注册/调用未取到的来源')
+        if status == 'pass' and requires_registration:
+            _issue(issues, 'Critical', 'application_mcp_required_without_entry',
+                   f'{name}: 应用 MCP 专项用例缺应用能力入口事实,不得以 UI 驱动结果充 pass')
+        if status == 'pass' and mechanism == 'app-mcp':
+            _issue(issues, 'Critical', 'application_mcp_claim_without_call',
+                   f'{name}: driver 可用不等于应用实际调用了业务工具')
+        return
+    if not isinstance(app, dict):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: application_mcp 须为逐态对象')
+        return
+
+    for key in ('declared', 'entry', 'registration', 'invocation'):
+        fact = app.get(key)
+        hit = _driver_marker_in(fact.get('source')) if isinstance(fact, dict) else None
+        if hit:
+            _issue(issues, 'Critical', 'application_mcp_driver_as_evidence',
+                   f'{name}: application_mcp.{key}.source 含测试驱动标记 `{hit}`;'
+                   '驱动可用不是应用提供 MCP 业务能力的证据,须写应用自有来源')
+    # implementation_evidence 与四态 source 同一判据:「已证实的应用自有实现」写成驱动名
+    #   同样是拿驱动可用冒充应用能力。⚠️ 以「未取到」开头的如实未交付说明**不判**——
+    #   那是在声明「没有证据」而非拿驱动充证据,判它等于让如实标注换来告警。
+    impl_ev = app.get('implementation_evidence')
+    if isinstance(impl_ev, str) and not impl_ev.strip().startswith('未取到'):
+        hit = _driver_marker_in(impl_ev)
+        if hit:
+            _issue(issues, 'Critical', 'application_mcp_driver_as_evidence',
+                   f'{name}: application_mcp.implementation_evidence 含测试驱动标记 `{hit}`;'
+                   '驱动可用不是应用自有实现的证据,须写应用实现文件或服务声明')
+
+    declared = app.get('declared')
+    if not _mcp_fact(declared) or not isinstance(declared.get('value'), bool):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 应用能力声明缺布尔值/来源/观测时间')
+        return
+    if app.get('client_type') != client:
+        _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+               f'{name}: 声明客户端与结果 client 不一致')
+    if legacy is not None:
+        if (client != 'web' or not isinstance(legacy, dict)
+                or legacy.get('declared_enabled') != declared['value']):
+            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+                   f'{name}: 新旧应用 MCP 声明冲突,不得静默覆盖')
+    if not declared['value']:
+        if any(isinstance(app.get(key), dict) and app[key].get('status') == state
+               for key, state in (('entry', 'connected'), ('registration', 'registered'),
+                                  ('invocation', 'called'))):
+            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+                   f'{name}: 项目声明未提供应用 MCP,结果却称入口/注册/调用已发生')
+        if status == 'pass' and (requires_registration or mechanism in ('app-mcp', 'mixed')):
+            _issue(issues, 'Critical', 'application_mcp_claim_without_call',
+                   f'{name}: 项目声明未提供应用 MCP,不能报业务工具调用通过')
+        return
+
+    kind = app.get('implementation_kind')
+    if (kind in LEGACY_IMPLEMENTATION_KIND
+            and LEGACY_IMPLEMENTATION_KIND[kind] in VALID_IMPLEMENTATION_KIND.get(client, ())):
+        _issue(issues, 'Important', 'application_mcp_implementation_kind_legacy',
+               f'{name}: implementation_kind=`{kind}` 是旧值,按 '
+               f'`{LEGACY_IMPLEMENTATION_KIND[kind]}` 兼容解析,请迁移')
+        kind = LEGACY_IMPLEMENTATION_KIND[kind]
+    implementation_evidence = app.get('implementation_evidence')
+    evidence_present = (isinstance(implementation_evidence, str)
+                        and bool(implementation_evidence.strip()))
+    unresolved = evidence_present and implementation_evidence.strip().startswith('未取到')
+    unresolved_block = status == 'block' and unresolved
+    if (not evidence_present or (unresolved and status != 'block') or
+            (kind not in VALID_IMPLEMENTATION_KIND.get(client, ())
+             and not unresolved_block)):
+        _issue(issues, 'Critical', 'application_mcp_implementation_unverified',
+               f'{name}: 未给出该端已证实的应用自有实现形态/证据;'
+               '未交付仅可注明未取到并 block 专项用例')
+
+    entry, registry, invocation = (app.get(key) for key in
+                                   ('entry', 'registration', 'invocation'))
+    if any(not _mcp_fact(fact) for fact in (entry, registry, invocation)):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 入口/当前实例注册/本用例调用各须独立来源和观测时间')
+        return
+    tools = registry.get('tools')
+    calls = invocation.get('calls')
+    if (entry.get('status') not in ('connected', 'disconnected', 'unavailable')
+            or registry.get('status') not in ('registered', 'none', 'unavailable')
+            or invocation.get('status') not in ('called', 'not-called', 'unavailable')
+            or not isinstance(tools, list) or not all(isinstance(t, str) for t in tools)
+            or not isinstance(calls, list)):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 四态取值或工具/调用清单形状不合契约')
+        return
+    if ((registry['status'] == 'registered') != bool(tools)
+            or (invocation['status'] == 'called') != bool(calls)
+            or (registry['status'] == 'unavailable' and tools)
+            or (invocation['status'] == 'unavailable' and calls)):
+        _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+               f'{name}: 注册/调用状态与实际工具清单或调用记录矛盾')
+    # ★ Web 页面注册特有的作用域事实。⚠️ 这条**必须在新通道里也有**:旧 `webmcp` 字段
+    #   靠 `scope` 守「浏览器全量工具清单不能冒充本页注册」,而结果一旦只写
+    #   `application_mcp`,旧通道整段被短路,该判据会**整条消失**——方向是假绿,
+    #   且消失的正是整份跨端契约最核心的那一条。
+    # ⛔ 只对 client_type=web + implementation_kind=webmcp 生效:scope 是页面注册的概念,
+    #   向 App/小程序/桌面强加它就是「照搬 Web 前提」,那是本轮明令禁止的。
+    if app.get('client_type') == 'web' and app.get('implementation_kind') == 'webmcp':
+        scope = registry.get('scope')
+        if scope not in ('page', 'browser'):
+            _issue(issues, 'Critical', 'application_mcp_fact_incomplete',
+                   f'{name}: Web+WebMCP 的当前实例注册须写 scope(page|browser)')
+        elif scope != 'page' and (mechanism in ('webmcp', 'app-mcp', 'mixed')
+                                  or registry['status'] == 'registered'):
+            _issue(issues, 'Critical', 'application_mcp_scope_not_page',
+                   f'{name}: 浏览器全量工具清单不能证明本页实际注册')
+    if legacy is not None and isinstance(legacy, dict) and client == 'web':
+        old_calls = legacy.get('invocations')
+        new_keys = [(call.get('tool_name'), call.get('evidence_artifact'))
+                    for call in calls if isinstance(call, dict)]
+        old_keys = ([(call.get('tool_name'), call.get('evidence_artifact'))
+                     for call in old_calls if isinstance(call, dict)]
+                    if isinstance(old_calls, list) else None)
+        if (app.get('implementation_kind') != 'webmcp'
+                or legacy.get('entry_detected') != (entry['status'] == 'connected')
+                or legacy.get('scope') != 'page'
+                or legacy.get('registered_tools') != tools
+                or old_keys != new_keys):
+            _issue(issues, 'Critical', 'application_mcp_declaration_conflict',
+                   f'{name}: 新旧 Web 形态/入口/本页注册/调用证据冲突')
+    if (status == 'pass' and (requires_registration or invocation['status'] == 'called'
+                              or mechanism in ('app-mcp', 'webmcp', 'mixed'))
+            and entry['status'] != 'connected'):
+        _issue(issues, 'Critical', 'application_mcp_required_without_entry',
+               f'{name}: 应用 MCP 入口未连接,专项用例须 block')
+    if status == 'pass' and requires_registration and (registry['status'] != 'registered' or not tools):
+        _issue(issues, 'Critical', 'application_mcp_required_without_registration',
+               f'{name}: 当前应用实例未注册工具,专项用例须 block')
+    evidence = data.get('evidence')
+    evidence = evidence if isinstance(evidence, list) else []
+    valid_calls = _valid_tool_calls(calls, tools, evidence, require_fact=True)
+    if (status == 'pass' and (mechanism in ('app-mcp', 'webmcp', 'mixed') or requires_call)
+            or invocation['status'] == 'called') and not valid_calls:
+        _issue(issues, 'Critical', 'application_mcp_claim_without_call',
+               f'{name}: 无已注册工具的真实调用 artifact,不得报应用 MCP 调用通过')
+    if status == 'pass' and valid_calls and mechanism == 'dom':
+        _issue(issues, 'Critical', 'application_mcp_mechanism_mismatch',
+               f'{name}: 结果记录了应用业务工具调用却声明纯 UI 驱动机制')
+
+
+def _mcp_fact(value):
+    if not isinstance(value, dict) or not all(
+            isinstance(value.get(key), str) and value[key].strip()
+            for key in ('source', 'observed_at')):
+        return False
+    if value['source'].strip().startswith('未取到') and (
+            value.get('value') is True or
+            value.get('status') in ('connected', 'registered', 'called')):
+        return False
+    return True
+
+
 def check_one(data, name, result_path=None, artifact_index=None, artifact_owners=None,
               require_preflight=False, webmcp_enabled=False):
     """校验单条结果对象,返回 issues 列表。"""
@@ -1003,9 +1008,12 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
                        f'(聚合器会按 artifact 兼容解析,但规范形状是 '
                        f'{{step, summary, artifact}},见 assets/result-schema.json)')
             elif isinstance(item, dict):
-                if field == 'evidence' and not item.get('artifact'):
-                    _issue(issues, 'Important', 'evidence_missing_artifact',
-                           f'{name}: `evidence[{i}]` 缺 artifact(报告证据路径将显示 —)')
+                if field == 'evidence':
+                    artifact = item.get('artifact')
+                    if not isinstance(artifact, str) or not artifact.strip():
+                        _issue(issues, 'Important', 'evidence_missing_artifact',
+                               f'{name}: `evidence[{i}]` 缺非空字符串 artifact'
+                               f'(summary 文本/计数仍可作证据,但报告路径显示 —)')
                 if field == 'runtimeErrors':
                     missing = [k for k in ('type', 'message', 'severity') if not item.get(k)]
                     if missing:
@@ -1014,6 +1022,8 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
             else:
                 _issue(issues, 'Critical', 'bad_array_item',
                        f'{name}: `{field}[{i}]` 形状不合契约({type(item).__name__})')
+
+    _check_artifact_contract(data, name, result_path, issues, artifact_index, artifact_owners)
 
     # na 是永久不适用,必须有理由;缺省 na=0 由聚合器兼容,不影响旧结果。
     if status == 'na':
@@ -1026,9 +1036,10 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
     # verified / self-heal 的 pass 必须有证据(「没有证据的 pass 等同未验证」)
     mode = str(data.get('execution_mode') or 'direct')
     ev = data.get('evidence')
-    if status == 'pass' and mode in EVIDENCE_REQUIRED_MODES and not ev:
+    if status == 'pass' and mode in EVIDENCE_REQUIRED_MODES and not has_lightweight_evidence(ev):
         _issue(issues, 'Critical', 'verified_pass_without_evidence',
-               f'{name}: execution_mode={mode} 的 pass 无 evidence(= 未验证,质量维度 5)')
+               f'{name}: execution_mode={mode} 的 pass 无可用 evidence'
+               f'(至少须有非空 summary 文本/计数或字符串 artifact,否则等同未验证)')
     elif status == 'pass' and mode == 'direct' and not has_lightweight_evidence(ev):
         _issue(issues, 'Important', 'direct_pass_without_light_evidence',
                f'{name}: direct 模式的 pass 缺少轻量事实 evidence(需记录实际值/元素文案/列表计数或产物路径;不阻断,报告单列)')
@@ -1039,9 +1050,8 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
         if not isinstance(mech, str) or mech not in MECHANISM_ENUM:
             _issue(issues, 'Critical', 'bad_mechanism',
                    f'{name}: mechanism={mech!r} 不在枚举内({" | ".join(sorted(MECHANISM_ENUM))})')
-        elif mech == 'webmcp':
-            # ⚠️ 只判 `webmcp`,**不判 `mixed`**:mixed 的正当用法就是「状态准备走 WebMCP、
-            #    断言走 DOM」,那正是分层铁律鼓励的形态;把它一起判死会让唯一正确的加速姿势用不了。
+        elif mech in ('webmcp', 'app-mcp'):
+            # 只判单独工具调用,不判 mixed:后者可用应用工具准备状态、UI 驱动做视觉断言。
             # `tags` 常是数组;str(list) 也能命中,但显式摊平可读性更好、也不依赖 repr 形态。
             parts = []
             for k in FIDELITY_SIGNAL_FIELDS:
@@ -1053,10 +1063,115 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
             blob = ' '.join(parts)
             hit = [m for m in FIDELITY_MARKERS if m in blob]
             if hit:
-                _issue(issues, 'Critical', 'fidelity_via_webmcp',
-                       f'{name}: 视觉还原度类用例(命中「{"/".join(hit)}」)把 mechanism 标成 webmcp —— '
-                       f'WebMCP 读的是页面**声明的能力**、不是**渲染结果**,用它验还原度会让渲染层缺陷'
-                       f'100% 漏测**且全绿**。断言必须走 DOM + 截图;若只是状态准备用了 WebMCP,请填 mixed')
+                rule = ('fidelity_via_webmcp' if mech == 'webmcp'
+                        else 'fidelity_via_application_mcp')
+                _issue(issues, 'Critical', rule,
+                       f'{name}: 视觉还原度类用例(命中「{"/".join(hit)}」)把 mechanism 标成 {mech} —— '
+                       '应用工具只返回声明的能力结果,不是渲染结果;断言必须走 UI 驱动+截图。'
+                       '若只是状态准备调用了工具,请填 mixed')
+
+    # 新轮次事实按用例消费；历史结果未携带本字段时保持原判据。
+    preflight = data.get('runtime_preflight')
+    # ⚠️ 必须按 status 门控,与下方紧邻的 `runtime_preflight_required_missing` 同口径:
+    #    block / na / 巡检项按定义没有「本轮认证实例、受保护接口、部署指纹」可取,
+    #    对它们判 Critical 时作者**除了编造前置事实没有别的改法** —— 而「取不到不许编」
+    #    正是本开关自己要守的纪律,那样就成了硬门在逼人造假。
+    if (require_preflight and preflight is None and status == 'pass'
+            and data.get('entry_kind') != 'free-scan'):
+        _issue(issues, 'Critical', 'missing_runtime_preflight',
+               f'{name}: 本轮要求运行真实性前置事实,但结果未登记 runtime_preflight')
+    if preflight is not None:
+        if not isinstance(preflight, dict) or not isinstance(preflight.get('required'), list):
+            _issue(issues, 'Critical', 'bad_runtime_preflight',
+                   f'{name}: runtime_preflight 须含 required 数组及逐项探测事实')
+        else:
+            allowed = {'identity', 'protected_api', 'frontend_build', 'fault_injection'}
+            required = preflight['required']
+            if require_preflight and status == 'pass' and not all(
+                    key in required for key in
+                    ('identity', 'protected_api', 'frontend_build')):
+                _issue(issues, 'Critical', 'runtime_preflight_required_missing',
+                       f'{name}: 本轮 pass 须核实认证实例、项目受保护接口和前端部署指纹')
+            if any(not isinstance(key, str) or key not in allowed for key in required):
+                _issue(issues, 'Critical', 'bad_runtime_preflight',
+                       f'{name}: runtime_preflight.required 含未知探针')
+            for key in allowed:
+                fact = preflight.get(key)
+                if fact is None and key not in required:
+                    continue
+                if not isinstance(fact, dict) or fact.get('status') not in (
+                        'verified', 'failed', 'unavailable') or any(
+                        not isinstance(fact.get(field), str) or not fact[field].strip()
+                        for field in ('source', 'observed_at', 'evidence')):
+                    _issue(issues, 'Critical', 'bad_runtime_preflight',
+                           f'{name}: {key} 缺状态/来源/时间/证据')
+                elif key in required and status == 'pass' and fact['status'] != 'verified':
+                    _issue(issues, 'Critical', 'unverified_runtime_preflight_pass',
+                           f'{name}: 必需探针 {key}={fact["status"]},不得将相关用例记为 pass')
+
+    webmcp = data.get('webmcp')
+    webmcp_active = webmcp_enabled and data.get('client') in (None, 'web')
+    if webmcp_active and status == 'pass' and webmcp is None and data.get('application_mcp') is None:
+        _issue(issues, 'Critical', 'missing_webmcp_facts',
+               f'{name}: 本轮启用 WebMCP,须分别记录声明/入口/本页注册/实际调用或回退')
+    label = _signal_label(data)
+    suite_label = str(data.get('suite') or '')
+    negative_webmcp_case = any(marker in label + suite_label for marker in (
+        '未启用态', '未启用', '禁用态', '关闭态'))
+    enabled_suite = ('已启用态' in suite_label and 'webmcp' in suite_label.casefold())
+    positive_webmcp_case = (webmcp_active and not negative_webmcp_case
+                            and ('[WebMCP]' in label or enabled_suite))
+    requires_registration = data.get('webmcp_required') is True or positive_webmcp_case
+    required_webmcp = (data.get('webmcp_required') is True or
+                       (positive_webmcp_case and '工具调用' in label))
+    if data.get('application_mcp') is not None:
+        # 新字段已由通用四态门核实;旧字段只做一致性对账,不重复出 Web 违规。
+        pass
+    elif webmcp is not None and not isinstance(webmcp, dict):
+        _issue(issues, 'Critical', 'bad_webmcp_evidence',
+               f'{name}: webmcp 须为对象')
+    elif isinstance(webmcp, dict):
+        registered = webmcp.get('registered_tools')
+        calls = webmcp.get('invocations')
+        if (not isinstance(webmcp.get('declared_enabled'), bool)
+                or not isinstance(webmcp.get('entry_detected'), bool)
+                or webmcp.get('scope') not in ('page', 'browser')
+                or not isinstance(registered, list)
+                or not isinstance(calls, list)):
+            _issue(issues, 'Critical', 'bad_webmcp_evidence',
+                   f'{name}: WebMCP 声明/入口/作用域/注册清单/调用清单形状不完整')
+        else:
+            if webmcp_active and status == 'pass' and not webmcp['declared_enabled']:
+                _issue(issues, 'Critical', 'webmcp_declaration_mismatch',
+                       f'{name}: 调用方声明启用 WebMCP,结果却写 declared_enabled=false')
+            if status == 'pass' and requires_registration and (
+                    webmcp['scope'] != 'page' or not registered):
+                _issue(issues, 'Critical', 'webmcp_required_without_registration',
+                       f'{name}: WebMCP 专项用例本页无已注册工具,须 block 并留证据')
+            if status == 'pass' and required_webmcp and mech not in ('webmcp', 'mixed'):
+                _issue(issues, 'Critical', 'webmcp_required_without_call',
+                       f'{name}: WebMCP 专项用例只走 DOM/CDP,不得记为 pass')
+            if status == 'pass' and mech in ('webmcp', 'mixed'):
+                if webmcp['scope'] != 'page':
+                    _issue(issues, 'Critical', 'webmcp_scope_not_page',
+                           f'{name}: 浏览器全量工具清单不能证明本页实际注册')
+                evidence_items = data.get('evidence')
+                evidence_items = evidence_items if isinstance(evidence_items, list) else []
+                valid_calls = _valid_tool_calls(calls, registered, evidence_items)
+                if (not webmcp['declared_enabled'] or not webmcp['entry_detected']
+                        or not registered or not valid_calls):
+                    _issue(issues, 'Critical', 'webmcp_claim_without_call',
+                           f'{name}: mechanism={mech} 缺本页注册且实际调用的工具证据')
+            if (status == 'pass' and mech == 'dom' and webmcp['declared_enabled']
+                    and not registered and not webmcp.get('fallback_reason')):
+                _issue(issues, 'Important', 'webmcp_fallback_without_reason',
+                       f'{name}: 本页零注册时 DOM/CDP 回退须说明原因')
+    elif status == 'pass' and data.get('application_mcp') is None and (
+            requires_registration or mech in ('webmcp', 'mixed')):
+        _issue(issues, 'Critical', 'webmcp_claim_without_call',
+               f'{name}: WebMCP 用例缺声明/本页注册/真实调用证据')
+
+    _check_application_mcp(data, name, issues)
 
     # ── 单条耗时(I8~I10):没有它,任何优化都无法验证是否生效 ──
     present = [f for f in TIMING_FIELDS if data.get(f) not in (None, '')]
@@ -1071,10 +1186,10 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
             _issue(issues, 'Important', 'bad_elapsed_ms',
                    f'{name}: elapsed_ms={el!r} 不是非负数值')
         else:
-            # ── 均摊值的来源标注(I14~I16)─────────────
+            # ── 均摊值的来源标注(I14~I16,实际项目反馈落地)─────────────
             # 契约要求逐条 `elapsed_ms`,而方法论要求**按套件批量执行**(一次登录、会话复用)。
             # 两者冲突 ⇒ 执行方只能填**批次窗口的均摊值**,而报告把它当真值排名,
-            # 于是出现「某条用例耗时 28 分钟」这种**假事实**(下游实测)。
+            # 于是出现「某条用例耗时 28 分钟」这种**假事实**(实测)。
             # 处置:承载面保留,但必须**如实标注来源** —— 与本 SKILL 的 `XSource` 纪律同构。
             amortized_raw = data.get('elapsed_is_amortized')
             amortized = bool(amortized_raw)   # ⚠️ truthy:理由见 main() 采集处
@@ -1090,7 +1205,7 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
             # ⚠️⚠️ **已标均摊时必须豁免 I9**:均摊值 = 窗口 / N,与 `finished_at−started_at`
             #    本就不等 —— 那是**定义**,不是「两者不是同一次计时」。不豁免的后果是
             #    「如实标注反而换来一条告警」,即硬门在**奖励撒谎**(本仓库反复记录的形态)。
-            #    ⛔ 别顺手把这个 `not amortized` 删掉。
+            #    ⛔ 别顺手把这个 `amortized is not True` 删掉。
             if not amortized and span is not None and abs(span - el) > 2000:
                 _issue(issues, 'Important', 'timing_inconsistent',
                        f'{name}: elapsed_ms={int(el)} 与 finished_at−started_at={int(span)} 相差 '
@@ -1164,58 +1279,6 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
         _issue(issues, 'Important', 'bad_env_flag',
                f'{name}: is_environment_issue 应为布尔(实为 {type(data["is_environment_issue"]).__name__})')
 
-    # ── 运行真实性前置（--require-runtime-preflight 开启时才判）──────────────
-    # ★ 它回答的是「这一轮到底跑在真环境上没有」：实际认证实例/角色、登录后的**项目自身
-    #   受保护接口**、前端部署指纹，故障注入类用例再加注入能力。
-    # ⛔ 首页 200 / 单测通过 / 相似浏览器场景**都不是** pass 证据 —— 那些在环境根本没起来时
-    #   也全绿，正是这道门要拆穿的形态。
-    preflight = data.get('runtime_preflight')
-    # ⚠️ 必须按 status 门控,与下方紧邻的 `runtime_preflight_required_missing` 同口径:
-    #    block / na / 巡检项按定义没有「本轮认证实例、受保护接口、部署指纹」可取,
-    #    对它们判 Critical 时作者**除了编造前置事实没有别的改法** —— 而「取不到不许编」
-    #    正是本开关自己要守的纪律,那样就成了硬门在逼人造假。
-    if (require_preflight and preflight is None and status == 'pass'
-            and data.get('entry_kind') != 'free-scan'):
-        _issue(issues, 'Critical', 'missing_runtime_preflight',
-               f'{name}: 本轮要求运行真实性前置事实,但结果未登记 runtime_preflight')
-    if preflight is not None:
-        if not isinstance(preflight, dict) or not isinstance(preflight.get('required'), list):
-            _issue(issues, 'Critical', 'bad_runtime_preflight',
-                   f'{name}: runtime_preflight 须含 required 数组及逐项探测事实')
-        else:
-            allowed = {'identity', 'protected_api', 'frontend_build', 'fault_injection'}
-            required = preflight['required']
-            if require_preflight and status == 'pass' and not all(
-                    key in required for key in
-                    ('identity', 'protected_api', 'frontend_build')):
-                _issue(issues, 'Critical', 'runtime_preflight_required_missing',
-                       f'{name}: 本轮 pass 须核实认证实例、项目受保护接口和前端部署指纹')
-            if any(not isinstance(key, str) or key not in allowed for key in required):
-                _issue(issues, 'Critical', 'bad_runtime_preflight',
-                       f'{name}: runtime_preflight.required 含未知探针')
-            for key in allowed:
-                fact = preflight.get(key)
-                if fact is None and key not in required:
-                    continue
-                if not isinstance(fact, dict) or fact.get('status') not in (
-                        'verified', 'failed', 'unavailable') or any(
-                        not isinstance(fact.get(field), str) or not fact[field].strip()
-                        for field in ('source', 'observed_at', 'evidence')):
-                    _issue(issues, 'Critical', 'bad_runtime_preflight',
-                           f'{name}: {key} 缺状态/来源/时间/证据')
-                elif key in required and status == 'pass' and fact['status'] != 'verified':
-                    _issue(issues, 'Critical', 'unverified_runtime_preflight_pass',
-                           f'{name}: 必需探针 {key}={fact["status"]},不得将相关用例记为 pass')
-
-    webmcp = data.get('webmcp')
-
-    _check_application_mcp(data, name, issues)
-    # 产物契约只在调用方给出结果文件路径时才可判（要靠它解析相对路径）；
-    # ⛔ 取不到就跳过，不臆造 basedir —— 那会把「路径对的」判成 not_found。
-    if result_path is not None:
-        _check_artifact_contract(data, name, result_path, issues,
-                                 artifact_index=artifact_index, artifact_owners=artifact_owners)
-
     return issues
 
 
@@ -1235,8 +1298,8 @@ def collect_all(targets):
     整体就不会 `return 2`,于是文档主推的 `build-3/round-*/results/` 用法里
     **glob 少匹配一轮、或路径写错**,结果是「少校验一整轮却显示通过」—— 假绿灯。
 
-    去重按 `Path.resolve()`:同一文件用相对路径与绝对路径分别传入时,
-    `dict.fromkeys(Path)` 认为是两个不同的 key、会把同一批问题重复计数两次。
+    去重按词法绝对路径:`./round-1/results/x.json` 与同一绝对路径只算一次;但不同 round
+    下的符号链接路径必须各自保留,因为 artifact 归属边界取决于结果文件所在轮次。
     """
     files, empty = [], []
     seen = set()
@@ -1246,8 +1309,8 @@ def collect_all(targets):
             empty.append(t)
         for f in got:
             try:
-                key = f.resolve()
-            except OSError:          # 断链软链等极端情况:退回原路径,不因去重把整轮校验搞崩
+                key = f.absolute()
+            except PATH_EXCEPTIONS:  # 极端畸形路径:退回原路径,后续读取阶段会产出结构化问题
                 key = f
             if key not in seen:
                 seen.add(key)
@@ -1355,13 +1418,11 @@ def main():
                     help='结果 JSON 文件或 results/ 目录(**可多个**;支持 shell glob 展开的跨轮次路径,\n'
                          '如 build-3/round-*/results/)')
     ap.add_argument('--json', action='store_true', help='JSON 输出(供 Agent 解析)')
-    ap.add_argument('--require-runtime-preflight', action='store_true',
-                    help='要求每条结果登记 runtime_preflight（本轮新结果用；历史结果复核不带）')
-    ap.add_argument('--webmcp-enabled', action='store_true',
-                    help='本轮为 Web + WebMCP（旧 webmcp_enabled 或新 client_mcp 且端=web、形态=webmcp）：'
-                         '对 client=web 的结果追加 WebMCP 专项判据。⛔ 只约束 client=web，'
-                         '混合目录里的移动/小程序/桌面结果不因此假红')
     ap.add_argument('--strict', action='store_true', help='Important 也计入失败')
+    ap.add_argument('--require-runtime-preflight', action='store_true',
+                    help='本轮新结果须带认证/受保护接口/部署指纹前置事实')
+    ap.add_argument('--webmcp-enabled', action='store_true',
+                    help='仅调用方明确启用 WebMCP 时传入,校验四层事实')
     args = ap.parse_args()
 
     files, empty_targets = collect_all(args.target)
@@ -1372,10 +1433,10 @@ def main():
 
     dup_names = {n for n, c in Counter(f.name for f in files).items() if c > 1}
     all_issues = []
-    # I14/I15 是**跨结果 JSON 的聚合判定**,按轮次分组(跨轮次比对会假红:
-    # 不同轮的均摊窗口本来就可能相同)。分组键取该结果所在的 `results/` 目录 ——
-    # 一轮的全部结果同住一个目录,⛔ 别换成文件名或 case_id(那不是轮次身份)。
+    # I12 是**跨结果 JSON 的聚合判定**,按 round 分组(跨轮次比对会假红)
     elapsed_by_round = {}
+    artifact_indexes = {}
+    artifact_owners = {}
     # 部分 target 收不到文件 → 出声,别让「少校验一整轮」冒充通过
     for t in empty_targets:
         _issue(all_issues, 'Important', 'empty_target',
@@ -1384,18 +1445,46 @@ def main():
     for f in files:
         name = label_for(f, dup_names)
         try:
+            parent_is_symlink = f.parent.is_symlink()
+            file_is_symlink = f.is_symlink()
+        except PATH_EXCEPTIONS as exc:
+            _issue(all_issues, 'Critical', 'unreadable', f'{name}: 无法读取结果路径状态({exc})')
+            continue
+        if parent_is_symlink:
+            _issue(all_issues, 'Critical', 'result_directory_symlink',
+                   f'{name}: results 目录 `{f.parent}` 是符号链接;不得复用旧轮次结果目录')
+            continue
+        if file_is_symlink:
+            _issue(all_issues, 'Critical', 'result_file_symlink',
+                   f'{name}: 结果 JSON `{f}` 是符号链接;每个 round 必须持有自己的结果文件')
+            continue
+        try:
             data = json.loads(f.read_text(encoding='utf-8'))
         except (json.JSONDecodeError, OSError) as e:
             _issue(all_issues, 'Critical', 'unreadable', f'{name}: 无法解析 JSON({e})')
             continue
-        all_issues.extend(check_one(data, name, result_path=f,
-                                    require_preflight=args.require_runtime_preflight,
-                                    webmcp_enabled=args.webmcp_enabled))
+        round_dir = f.parent.parent
+        evidence_dir = (round_dir / 'evidence').absolute()
+        if evidence_dir not in artifact_indexes:
+            try:
+                unsafe_root = round_dir.is_symlink() or evidence_dir.is_symlink()
+            except PATH_EXCEPTIONS as exc:
+                unsafe_root = True
+                artifact_indexes[evidence_dir] = ({}, exc)
+            if unsafe_root and evidence_dir not in artifact_indexes:
+                # check_one 会产出精确的 round/evidence symlink finding;这里先禁止递归进入目标。
+                artifact_indexes[evidence_dir] = ({}, None)
+            elif evidence_dir not in artifact_indexes:
+                artifact_indexes[evidence_dir] = _scan_evidence_directory(evidence_dir)
+        all_issues.extend(check_one(
+            data, name, f, artifact_indexes[evidence_dir], artifact_owners,
+            require_preflight=args.require_runtime_preflight,
+            webmcp_enabled=args.webmcp_enabled))
         el = data.get('elapsed_ms')
         if isinstance(el, (int, float)) and not isinstance(el, bool):
-            elapsed_by_round.setdefault(f.parent, []).append({
+            elapsed_by_round.setdefault(round_dir, []).append({
                 'name': name, 'el': float(el),
-                # ⚠️ **truthy 而非 `is True`**:`elapsed_is_amortized: "true"`(字符串)会被
+                # ⚠️ **truthy 而非 `is True`**:`elapsed_is_amortized: "true"`(字符串)曾被
                 #    `is True` 判否 → 当成逐条真值,而执行体**明确表达过**这是均摊值(假绿)。
                 #    fail-closed 朝「标上均摊」那一侧,与「事实必须带来源」同向;
                 #    类型不规范另有 `bad_elapsed_is_amortized` 出声。

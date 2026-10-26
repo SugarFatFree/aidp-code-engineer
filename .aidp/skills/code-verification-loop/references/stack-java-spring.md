@@ -34,7 +34,7 @@
 | 🔴 **Critical**（近乎确定不可解析） | ① **框架不自动装配的常见误注入类型**（`RestTemplate`/`WebClient`/`OkHttpClient`/`HttpClient`/`RestClient`——Boot 只装配它们的 `Builder`，不装配本体）；② 仓内**已定义为【具体类】**却无组件注解/`@Bean`/`@ConfigurationProperties`；③ `@Value` 键确缺且无默认值 |
 | 🟡 **Warn**（静态无法确证，容忍跨模块/外部 starter） | 接口或抽象类无带注解实现；**多 bean 无 `@Qualifier`**（Spring 会先按**字段名匹配 beanName** 兜底，不能判死）；全仓无来源但可能来自未扫描模块 |
 
-> ⚠️ **不得把「多 bean / 接口无实现」判 Critical**——会误报一片、噪音淹没真问题。经验数据：真实已部署 Spring 代码库用本口径实测 **236 文件的项目 = 0 Critical / 4 Warn；1334 文件的项目 = 0 Critical / 33 Warn**（零误阻断）。
+> ⚠️ **不得把「多 bean / 接口无实现」判 Critical**——会误报一片、噪音淹没真问题。经验数据：真实已部署 Spring 代码库用本口径实测 **示例项目 A 236 文件 = 0 Critical / 4 Warn；示例项目 B 1334 文件 = 0 Critical / 33 Warn**（零误阻断）。
 
 ### 1.5 ★ 提示语要求（最有用的一行）
 
@@ -59,8 +59,8 @@ python3 <SKILL_DIR>/scripts/check_di_resolvability.py <代码目录> --changed-o
 - 与维度 4 的采集型脚本不同，**本脚本是机器可判的硬门**：有 Critical 即退出码 **1**（`--strict` 时 Warn 也返回 1）；无 Critical / 非 Java 项目返回 **0**；目录不存在返回 **2**。
 - `--config-keys-file` 可选：把「配置项清单文档」里的 key 逐行喂进来，避免配置在文档而未落 yml 的 `@Value` 被误判缺失。
 - **Warn 项不阻断验收**，但须由验收 Agent 结合跨模块上下文人工确认后在报告中登记。
-- **`--changed-only` 增量快筛**：只收窄「报告范围」，**bean 索引照旧全仓解析**。这条不可省 —— 否则新写的 `@Autowired Foo foo` 会因为 `FooImpl` 这次没改动而被误判「无来源」，增量模式就成了误报机器。实测 fixture（新建 `Bar.java` 注入 `RestTemplate` + `Foo`，`FooImpl` 已提交未改动）：`--changed-only` 正确只报 `RestTemplate`、`Foo` 不误报。未跟踪的新文件一律纳入（新建 Java 类正是 DI 问题最高发来源）。边界行为：`--base` 写错的 ref、或传成路径（会被 git 当 pathspec 静默接受）判入参错 **2**；`--base` 不配 `--changed-only` 单独使用同样判 **2**；**零提交的新仓**（默认 `HEAD` 不存在）降级为「仅扫未跟踪新文件」而非顶回 2；非 git 仓库 stderr 告警后退回全量（更严的一侧）；子模块内的变更显式告警（顶层 `--name-only` 只给 gitlink 目录名，不告警就等于静默漏扫）。
-- **刻意不提供 `--gate`**：本脚本默认就是「有 Critical → exit 1」，无须开关；「默认恒 exit 0、须显式 `--gate` 才闸」的设计与全仓退出码约定冲突，等于留一个「忘加参数就静默放行」的假绿开关。确需「只看不闸」用 `--json` 读 `stats.critical` 自行决定。
+- **`--changed-only` 增量快筛**（吸收 AIDP 前置门实现）：只收窄「报告范围」，**bean 索引照旧全仓解析**。这条不可省 —— 否则新写的 `@Autowired Foo foo` 会因为 `FooImpl` 这次没改动而被误判「无来源」，增量模式就成了误报机器。实测 fixture（新建 `Bar.java` 注入 `RestTemplate` + `Foo`，`FooImpl` 已提交未改动）：`--changed-only` 正确只报 `RestTemplate`、`Foo` 不误报。未跟踪的新文件一律纳入（新建 Java 类正是 DI 问题最高发来源）。边界行为：`--base` 写错的 ref、或传成路径（会被 git 当 pathspec 静默接受）判入参错 **2**；`--base` 不配 `--changed-only` 单独使用同样判 **2**；**零提交的新仓**（默认 `HEAD` 不存在）降级为「仅扫未跟踪新文件」而非顶回 2；非 git 仓库 stderr 告警后退回全量（更严的一侧）；子模块内的变更显式告警（顶层 `--name-only` 只给 gitlink 目录名，不告警就等于静默漏扫）。
+- **刻意不提供 `--gate`**：本脚本默认就是「有 Critical → exit 1」，无须开关；另一种「默认恒 exit 0、须显式 `--gate` 才闸」的设计与全仓退出码约定冲突，等于留一个「忘加参数就静默放行」的假绿开关。确需「只看不闸」用 `--json` 读 `stats.critical` 自行决定。
 
 ### 1.7 常见问题模式与修复
 
@@ -203,4 +203,4 @@ public class AlipayServiceImpl implements AlipayService {
 
 - **前端专有项**（叶子组件替换白名单、Vite/webpack 构建期守卫、表格列/表单项采集）→ 见 `stack-vue.md` / `stack-react.md`，本栈不适用。
 - **维度 7「CSS 预处理器一致性」（Vue 专属）与维度 8「请求通道 URL 拼装」（前端专属）** → 纯 Java/Spring 后端两者均**整维度跳过**；前后端同仓时，两者对前端那部分目录仍生效，由前端栈文件承接（维度 8 见 `stack-vue.md` §五 / `stack-react.md` §四）。
-- **单文件行数阈值**：Java/Kotlin ≤ 500 行（不含 import + 注释），单方法 ≤ 50 行为硬阈值——判据本身跨栈通用，见 `dimension-4-5-quality-debt.md` 维度 4「文件复杂度 + 复用封装」行，此处只记本栈阈值取值。
+- **单文件行数阈值**：Java/Kotlin ≤ 500 行（不含 import + 注释），单方法 ≤ 50 行为硬阈值——判据本身跨栈通用，见 `../SKILL.md` 维度 4「文件复杂度 + 复用封装」行（全文在 `flow-dims-quality.md`），此处只记本栈阈值取值。

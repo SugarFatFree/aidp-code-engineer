@@ -1,5 +1,7 @@
 # 质量检查派发流程(QR Dispatch)
 
+> **`{{AIDP_HOME}}` 约定:** 安装方渲染的运行根(仅 Claude Code 为 `.claude`,共享运行根为 `.agents`),`{{AIDP_HOME}}/...` 一律相对被测项目根;SKILL 不探测,详见 SKILL.md「运行路径约定」。
+
 > 本文件是 `SKILL.md` 的 QR **派发流程**分片(bash 硬核回检命令 + 子 Agent prompt + 循环终止),按需 Read。
 > **14 维度清单本身不在这里**,在 [`quality-review-checklist.md`](./quality-review-checklist.md) —— 两者互补:清单是「查什么」,本文件是「谁来查、怎么派、跑哪些脚本」。
 
@@ -9,11 +11,22 @@
 
 > 🧹 **执行主体与上下文隔离(Critical):** 本节全部检查——`🛡️ 落盘后 bash 硬核回检` 的脚本 **+** 14 维度语义审查——一律在**独立子 Agent**内完成。主流程**禁止**在当前对话上下文内联跑脚本或内联逐维度自查(脚本输出与逐项核对会挤占/污染主上下文)。主流程只负责:① 派发子 Agent(传入执行计划/PRD/详细设计/原型路径);② 接收子 Agent 回传的**精简结构化报告**(含每个脚本退出码 + 各维度通过/不通过 + 修订建议);③ 据报告决定修订并重新派发,循环至全部通过或达 3 轮上限。
 
+### 编排层模式(显式传入 `qr_level` 时;不传则本节不适用、一切照现状)
+
+> 协议全文见 [`flow-orchestration.md`](./flow-orchestration.md),这里只列派发时要多做的四件事:
+>
+> 1. **派发前**:QR 子 Agent 在步骤 0 之前先跑 `python3 <SKILL_DIR>/scripts/qr_orchestration.py plan --qr-level <档位>`,
+>    语义审只做 `semantic_dims` 里的维度;**机器门(下方 bash 硬核回检)照旧全量跑**,一条不裁。
+> 2. **回传**:只回传紧凑 JSON(`skill / qr_level / round / dims / blocking / deferred_dims`),⛔ 不贴脚本原始输出与长段落;
+>    `dims[]` 一行不少,移交的维度 `verdict = deferred`;主流程用 `qr_orchestration.py validate-result -` 校验,不合格按未完成重派。
+> 3. **收敛后**:`qr_level ≠ full` 时主流程执行 `qr_orchestration.py handoff --qr-level <档位> --write <产物目录>/00_索引.md` 写「QR 移交清单」。
+> 4. **打点**:每轮 QR / 每轮修复的开始与结束各输出一行 `[AIDP-STAGE]`(`qr_orchestration.py stage ...` 生成)。
+
 ### 🛡️ 落盘后 bash 硬核回检(子 Agent 强制第一步,先于语义维度审查)
 
 **执行计划落盘后,以下 bash 脚本由下方派发的**质量检查子 Agent**作为强制第一步执行(见子 Agent prompt 步骤 0),任一命中即拒绝标记完成、强制重写违规段落。主流程**禁止**在当前上下文内联运行这些脚本:**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-execution-planner`),由子 Agent 在执行前替换。
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(项目内 = `{{AIDP_HOME}}/skills/dev-execution-planner`,全局 = `~/{{AIDP_HOME}}/skills/dev-execution-planner`,以实际安装位置为准),由子 Agent 在执行前替换。
 
 ```bash
 # 1. 任务粒度 + AI 锚点 + 9 列任务表 + 链接合规(退出码 1 = 判错,分档看 --json severity;2 = 入参错)
@@ -42,12 +55,13 @@ python3 <SKILL_DIR>/scripts/check_sql_path_handoff.py <研发执行计划路径>
 Agent({
   description: "执行计划质量检查",
   subagent_type: "general-purpose",
-  prompt: "你是一位资深 Tech Lead + 项目经理。请对 {执行计划路径} 执行 14 维度质量检查(始终必查 12 项 + 多用户/多文件模式各 +1),对照 PRD {PRD路径}、详细设计 {设计路径}、原型 {原型路径}。
+  prompt: "  【编排层模式】本轮 qr_level = {未传则写「未传」}。未传 → 下文一切照旧。已传 → ① 步骤 0 之前先跑 python3 {SKILL_DIR}/scripts/qr_orchestration.py plan --qr-level <档位>,语义审只做输出 semantic_dims 里的维度,机器门照旧全量跑一条不裁;② 最终只回传紧凑 JSON(skill/qr_level/round/dims/blocking/deferred_dims,schema 见 references/flow-orchestration.md 第四节),dims 一行不少、移交维度 verdict=deferred,⛔ 不回传报告正文与脚本原始输出(下文要求的报告格式在此模式下不适用);③ 回传前自跑 qr_orchestration.py validate-result - --expect-level <档位>,exit 0 才回传。
+  你是一位资深 Tech Lead + 项目经理。请对 {执行计划路径} 执行 14 维度质量检查(始终必查 12 项 + 多用户/多文件模式各 +1),对照 PRD {PRD路径}、详细设计 {设计路径}、原型 {原型路径}。
 
   执行步骤(必须按顺序):
-  0. **(先于一切,强制)** 逐个运行本 SKILL『🛡️ 落盘后 bash 硬核回检』列出的全部脚本(将 <SKILL_DIR> 替换为本 SKILL 实际安装目录),把**每个脚本的退出码 + 报告正文原样贴进报告**作为证据。**退出码判定按全仓统一约定(见 CLAUDE.md):0=通过或 N/A 跳过 / 1=检出违规 / 2=入参或环境错(非维度违规、不计失败);严重度分档一律读 `--json`,不占退出码**:
-     - `check_task_granularity.py`:0=通过;1=判错(含两档:警告=疑似粗粒度 / EPIC 缺端 / AI 锚点不足;**必修**=确证粗粒度 / 旧版 6 列任务表 / 9 列任务表行三锚点不全);2=输入路径错误(修正参数后重跑,**非维度违规、不计失败**)。⚠️ **两档靠退出码分不出**——必须读 `--json` 的 `findings[]`(**顶层是对象**,含 `scanned_tasks`/`skipped`/`findings`)每条的 `severity`;⚠️ **先看 `skipped`**——`true` 表示一个 Task 段都没识别到、本次并未实质核验,不等于通过:`2`=必修(维度 3/14 不通过)/ `1`=警告(需复核修订)。严重度不占退出码是全仓统一约定,见 CLAUDE.md。注:旧版 6 列任务表命中即 `severity=2`(硬拦),勿当作可放行的软警告
-     - `check_doc_split.py --check-tasks`(**多文件模式专用**,传执行计划**目录**):0=通过(含仅历史 grandfather 告警 warn:裸单文件 / 历史 `00_*-总览.md` 主锚 / `NN_补充-` 中缀均放行不硬失败);1=不通过(维度 11 多文档拆分:缺主锚 / 序号缺失 / 碎片 / 裸「补充-」开头等 error);2=**路径不存在或既非文件也非目录**(入参错);⚠️ **传入单个 .md 属合法单文件模式,返回 0 + `skipped:true`,不是 2**——二者曾共用 exit 2,而本条口径把 2 当「不计失败」,于是路径打错即整档闸门静默消失。现行规范主锚为 `00_索引.md`(内容主文档从 `01_研发执行计划.md` 起);单份内容目录仍需 `00_索引.md` + `01_*` 两文件
+  0. **(先于一切,强制)** 逐个运行本 SKILL『🛡️ 落盘后 bash 硬核回检』列出的全部脚本(将 <SKILL_DIR> 替换为本 SKILL 实际安装目录),把**每个脚本的退出码 + 报告正文原样贴进报告**作为证据。**退出码判定按统一约定(见 `references/rationale.md`「脚本退出码约定」):0=通过或 N/A 跳过 / 1=检出违规 / 2=入参或环境错(非维度违规、不计失败);严重度分档一律读 `--json`,不占退出码**:
+     - `check_task_granularity.py`:0=通过;1=判错(含两档:警告=疑似粗粒度 / EPIC 缺端 / AI 锚点不足;**必修**=确证粗粒度 / 旧版 6 列任务表 / 9 列任务表行三锚点不全);2=输入路径错误(修正参数后重跑,**非维度违规、不计失败**)。⚠️ **两档靠退出码分不出**——必须读 `--json` 的 `findings[]`(**顶层是对象**,含 `scanned_tasks`/`skipped`/`findings`)每条的 `severity`;⚠️ **先看 `skipped`**——`true` 表示一个 Task 段都没识别到、本次并未实质核验,不等于通过:`2`=必修(维度 3/14 不通过)/ `1`=警告(需复核修订)。严重度不占退出码是统一退出码约定,见 CLAUDE.md。注:旧版 6 列任务表命中即 `severity=2`(硬拦),勿当作可放行的软警告
+     - `check_doc_split.py --check-tasks`(**多文件模式专用**,传执行计划**目录**):0=通过(含仅历史 grandfather 告警 warn:裸单文件 / 历史 `00_*-总览.md` 主锚 / `NN_补充-` 中缀均放行不硬失败);1=不通过(维度 11 多文档拆分:缺主锚 / 序号缺失 / 碎片 / 裸「补充-」开头等 error);2=**路径不存在或既非文件也非目录**(入参错);⚠️ **传入单个 .md 属合法单文件模式,返回 0 + `skipped:true`,不是 2**——二者曾共用 exit 2,而本条口径把 2 当「不计失败」,于是路径打错即整档闸门静默消失。新范式主锚为 `00_索引.md`(内容主文档从 `01_研发执行计划.md` 起);单份内容目录仍需 `00_索引.md` + `01_*` 两文件
      - `check_sql_path_handoff.py`:0=通过;1=不通过(维度 9 详细设计 SQL 路径交接);2=输入路径错误(修正后重跑)
      除上述「N/A 跳过」与「输入路径错误」外,任一脚本判不通过即对应维度直接判不通过,无需再做语义判断;
      ⚠️ **哪个维度由哪个脚本判、哪些脚本刻意没接进来** → 见 checklist 顶部「维度成本与裁剪索引表」;
@@ -66,7 +80,7 @@ Agent({
      - 维度 1:三方一致性深度核验(PRD → 详细设计 → 执行计划覆盖度,冲突项识别)
      - 维度 2:详细设计完备性评估(数据库 Schema、接口定义、算法逻辑、外部依赖)
      - 维度 3:迭代粒度与 AIDP 范式对齐(阶段划分、任务命名、目录结构、产出物类型)
-     - 维度 4:指令化(Command-Driven)检查(5 级优先级:AIDP 命令 > 项目 .claude/ > 系统 Claude Code > 通用工具 > Shell)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+     - 维度 4:指令化(Command-Driven)检查(5 级优先级:AIDP 命令 > 项目 {{AIDP_HOME}}/ > 系统 Claude Code > 通用工具 > Shell)
      - 维度 5:提示词(Prompt)的上下文关联性(每个 Task 的 AI 执行指令是否包含必要上下文)
      - 维度 6:依赖链条与前置条件核对(无循环依赖、依赖链合理、前置条件明确)
      - 维度 7:代码框架与中间件配置检查(框架初始化、中间件配置、依赖安装指令完整)

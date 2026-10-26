@@ -1,13 +1,7 @@
-# WebMCP 前端能力的设计期产出（条件启用 · 维度 33 **Web 专项**）
+# WebMCP 前端能力的设计期产出（条件启用 · 维度 33 Web 专项）
 
-> ★ **本文件仅 Web 客户端适用**；跨端的「应用业务能力声明」总纲见 [`flow-client-mcp.md`](./flow-client-mcp.md)。
-> WebMCP 是**页面登记函数的 Web 端实现**，⛔ 不是小程序 / 移动 App / 桌面端的统一 MCP 服务，
-> 更不是**测试驱动**的 MCP（那是「AI 操控客户端」，两条轴不可混）。
->
-> **本文件只在 `webmcp_enabled: true`（或归一后 `client_mcp.enabled: true` 且客户端 = Web、实现形态 = WebMCP）时适用。**
-> ⚠️ Web 叶子未启用**只跳过本文件**——非 Web 若已显式声明 `client_mcp.enabled: true`，
-> 维度 33 的**通用半场仍照跑**。⛔ 两类应用能力**都**未启用时才整维度不留行：
-> 不产出、不留空章节、不写「本项目不适用 WebMCP」之类的占位段、不在 QR 报告里占一行。
+> **本文件仅 Web 客户端适用**,通用应用业务能力声明见 `flow-client-mcp.md`。WebMCP 是页面登记函数的端侧实现,不是小程序/移动 App/桌面端的统一 MCP 服务,也不是测试驱动 MCP。
+> **本文件只在调用方传入 `webmcp_enabled: true`（或兼容归一后 `client_mcp.enabled: true` 且客户端为 Web、实现形态为 WebMCP）时适用。** 仅当 Web 分支未启用时,本文件的六项产出、两条风险和三条禁令不适用;非 Web 若已显式声明 `client_mcp.enabled: true`,检查项 33 的通用半场仍照跑。两类应用能力都未启用时才整维度不留行。
 
 ---
 
@@ -31,7 +25,7 @@ AI Agent（浏览器内置 AI / 外部 Agent 经调试协议 / 浏览器扩展 /
 
 | 入参 | 形态 | 说明 |
 | :- | :- | :- |
-| `webmcp_enabled` | `true` / `false` | Web 旧版兼容开关；新 `client_mcp.enabled: true` 且客户端 = Web / 形态 = WebMCP 时同样启用本叶子。⛔ 非 Web 的通用检查**不依赖它** |
+| `webmcp_enabled` | `true` / `false` | Web 旧版兼容开关;或新 `client_mcp.enabled: true` 且客户端=Web/形态=WebMCP 时执行本叶子,非 Web 通用检查不依赖它 |
 | `webmcp_entry_symbols` | 数组 | 该项目**实测**的能力入口标识符。⚠️ 挂载位置已经迁移过一次、规范仍在演进，**写死任何一个名字都会过期** |
 | `webmcp_launch_command` | 字符串 | 带参浏览器的完整启动命令（供下游用例与执行器复现同一环境） |
 
@@ -43,7 +37,7 @@ AI Agent（浏览器内置 AI / 外部 Agent 经调试协议 / 浏览器扩展 /
 
 ## 三、六项强制产出
 
-`webmcp_enabled: true` 时，详细设计须**额外**产出以下六项。产出位置随规模档位落在主设计文档的
+旧 Web `webmcp_enabled: true` 或新 Web+WebMCP 显式声明时，详细设计须**额外**产出以下六项。产出位置随规模档位落在主设计文档的
 对应章节或独立小节，但**六项一项不能少**。
 
 ### 产出 1：分层落点表
@@ -145,5 +139,4 @@ AI Agent（浏览器内置 AI / 外部 Agent 经调试协议 / 浏览器扩展 /
 | 7 | ADR 含替代方案 + 回归路径 | Important |
 | 8 | 运行前提表写明两个开关的**作用域差异** | Important |
 
-**门控:** `webmcp_enabled` 非 `true` → **整维度跳过**，不计入通过/不通过，不影响其它维度结论，
-不在报告里留行。
+**门控:** 本 Web 叶子只在旧 `webmcp_enabled: true` 或新 Web+WebMCP 声明时执行;非 Web `client_mcp.enabled: true` 仍核检查项 33 通用半场。两份声明均未启用才整维度不留行。

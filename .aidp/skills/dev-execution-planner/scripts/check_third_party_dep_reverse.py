@@ -3,10 +3,10 @@
 """
 第三方依赖反向兜底识别脚本
 
-对应本 SKILL 检查项 9.8「反向兜底」/ SKILL.md「第一步半之二 反向兜底」
-(概念源自 dev-logic-architect 核心原则 19「第三方依赖反向兜底识别」)。
+对应「第三方依赖反向兜底识别」判据:dev-logic-architect 核心原则 19 / QR 检查项 26,
+dev-execution-planner 检查项 9.8「反向兜底」(两个 SKILL 各持一份、逐字节相同)。
 
-实测发现: 设计期靠关键词扫 PRD("对接/调用第三方/外部平台")判定第三方依赖,
+实测发现: 设计期靠关键词扫 PRD("对接/调用第三方/外部平台名")判定第三方依赖,
 PRD 漏写时直接默判"无第三方依赖" → 编码计划"第三方对接:无" → 联调阶段才暴雷。
 
 本脚本从代码 / 配置 / 依赖清单三向反推第三方依赖,与 PRD 正向识别求并集。
@@ -34,7 +34,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 # HTTP 客户端调用模式(代码层)
 HTTP_CLIENT_PATTERNS = {
@@ -106,7 +106,7 @@ CONFIG_URL_KEYS = [
 LOCALHOST_PATTERNS = [
     r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)",
     r"^https?://.*\.local\b",
-    r"^https?://.*\.internal\b",
+    r"^https?://.*\.(?:internal)\b",  # 私有内网 TLD 后缀(RFC 6762 附录 G 列举)
     r"^https?://.*\.svc\.cluster\.local",
 ]
 
@@ -145,8 +145,17 @@ def scan_code_for_http_clients(root: Path) -> List[Dict]:
                 for m in re.finditer(pat, content):
                     line_no = content[:m.start()].count("\n") + 1
                     snippet = m.group(0)[:100]
-                    # 提取 URL(若 pattern 含 URL 捕获组)
-                    url = m.group(2) if m.lastindex and m.lastindex >= 2 else None
+                    # 提取 URL(若 pattern 含 URL 捕获组,取第一个匹配 https?:// 的组)
+                    url = None
+                    if m.lastindex:
+                        for gi in range(1, m.lastindex + 1):
+                            try:
+                                g = m.group(gi)
+                            except IndexError:
+                                continue
+                            if g and re.match(r"https?://", g):
+                                url = g
+                                break
                     is_external = (url and not is_localhost_url(url)) or url is None
                     findings.append({
                         "type": "http_client",
@@ -204,7 +213,7 @@ def scan_dependencies_for_vendors(root: Path) -> List[Dict]:
     """扫描依赖清单中的 vendor SDK"""
     findings: List[Dict] = []
 
-    # 从 DEPENDENCY_FILES 常量派生扫描清单(此前该常量未被使用、且与硬编码列表不一致漏扫 Cargo.toml)
+    # 从 DEPENDENCY_FILES 常量派生扫描清单(写死列表会与常量不一致、漏扫 Cargo.toml)
     dep_files: List[Path] = []
     for fname in sorted(DEPENDENCY_FILES):
         dep_files.extend(root.rglob(fname))  # 含字面名与 *.csproj 通配
@@ -237,13 +246,65 @@ def scan_dependencies_for_vendors(root: Path) -> List[Dict]:
     return findings
 
 
+def aggregate_by_endpoint(code_findings: List[Dict]) -> List[Dict]:
+    """
+    同源聚合: 按 (vendor/client_type, endpoint_path) 聚合 HTTP 调用,
+    输出"同一接口被多处调用"的清单(供设计期 B.7 复用清单核验)。
+
+    输入: scan_code_for_http_clients() 的输出
+    输出: [{client, endpoint, call_count, callers: [{file, line, snippet}, ...]}, ...]
+            按 call_count 降序排列,call_count >= 2 的为复用信号
+    注意: 仅对带 URL 的调用做聚合,无 URL 的"客户端构造器"调用(如 `new RestTemplate()`)忽略,
+          避免被多次记同一文件多次构造而误报。
+    """
+    buckets: Dict[Tuple[str, str], List[Dict]] = {}
+    for f in code_findings:
+        if not f.get("is_external"):
+            continue
+        url = f.get("url") or ""
+        if not url:
+            # 跳过无 URL 的纯客户端构造调用(如 `new RestTemplate()`),避免误报
+            continue
+        # 提取 endpoint path
+        endpoint = ""
+        m = re.search(r"https?://[^/]+(/[^\s\"',]*)", url)
+        if m:
+            endpoint = m.group(1)
+        else:
+            endpoint = url
+        key = (f.get("client", "unknown"), endpoint)
+        buckets.setdefault(key, []).append({
+            "file": f.get("file"),
+            "line": f.get("line"),
+            "snippet": f.get("snippet", "")[:80],
+            "url": url,
+        })
+
+    aggregated = []
+    for (client, endpoint), callers in buckets.items():
+        aggregated.append({
+            "client": client,
+            "endpoint": endpoint,
+            "call_count": len(callers),
+            "callers": callers,
+            "is_reuse_signal": len(callers) >= 2,
+        })
+    aggregated.sort(key=lambda x: (-x["call_count"], x["client"], x["endpoint"]))
+    return aggregated
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="第三方依赖反向兜底识别(对应本 SKILL 检查项 9.8;概念源自 dev-logic-architect 核心原则 19)",
+        description="第三方依赖反向兜底识别(architect 核心原则 19 / 检查项 26 + 27;planner 检查项 9.8)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("root", type=Path, help="代码根目录")
     ap.add_argument("--json", action="store_true", help="JSON 输出")
+    ap.add_argument(
+        "--aggregate",
+        action="store_true",
+        help="同源聚合输出(对应核心原则 20 复用优先 + QR 检查项 27)",
+    )
     args = ap.parse_args()
 
     if not args.root.exists():
@@ -256,6 +317,7 @@ def main() -> int:
 
     external_code = [f for f in code_findings if f.get("is_external")]
     external_config = [f for f in config_findings if f.get("is_external")]
+    reuse_signals = aggregate_by_endpoint(external_code) if args.aggregate else []
 
     aggregated = {
         "scan_root": str(args.root),
@@ -268,6 +330,11 @@ def main() -> int:
         "dependencies": dep_findings,
         "passed": True,  # 此脚本不直接判通过/不通过,只输出清单供设计期参考
     }
+    if args.aggregate:
+        aggregated["reuse_signals"] = reuse_signals
+        aggregated["reuse_endpoint_count"] = sum(
+            1 for r in reuse_signals if r.get("is_reuse_signal")
+        )
 
     if args.json:
         print(json.dumps(aggregated, ensure_ascii=False, indent=2))
@@ -302,6 +369,20 @@ def main() -> int:
             seen_sdks.add(key)
             print(f"    [{f['category']}] {f['sdk']}  ({f['file']}:L{f['line']})")
     print()
+
+    if args.aggregate:
+        reuse_count = sum(1 for r in reuse_signals if r.get("is_reuse_signal"))
+        print(f"🔁 同源聚合(复用信号 = 调用次数 ≥ 2): {reuse_count} 个 endpoint")
+        if reuse_count > 0:
+            print(f"  示例(前 5 个):")
+            for r in [x for x in reuse_signals if x["is_reuse_signal"]][:5]:
+                print(f"    [{r['client']}] {r['endpoint']}  调用 {r['call_count']} 次")
+                for c in r["callers"][:3]:
+                    print(f"      ↳ {c['file']}:L{c['line']}")
+            print()
+            print("⚠️  这些 endpoint 已被多处调用,设计期 B.7「第三方接口复用清单」必须登记,")
+            print("    严禁为同一 endpoint 新建第二个 Client / 第二套配置。详见核心原则 20。")
+        print()
 
     if external_code or external_config or dep_findings:
         print("⚠️  反向识别到外部依赖信号,设计期 B.7 章节必须逐一登记并标注交付状态。")

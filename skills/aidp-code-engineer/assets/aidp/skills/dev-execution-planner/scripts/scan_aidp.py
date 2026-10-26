@@ -3,9 +3,30 @@
 AIDP 命令与范式文档扫描脚本
 
 用法:
-  python scan_aidp.py [项目根目录] [--json]
+  python scan_aidp.py [项目根目录] [--json] [--aidp-home <目录>]
+
+参数:
+  --aidp-home <目录>  显式指定 AIDP 运行根(AIDP_HOME)。相对路径按「项目根目录」解析;
+                     指定了但不存在 / 不是目录 → exit 2(入参错),⛔ 不回落自动识别。
 
 扫描项目中的 AIDP 配置、命令和范式文档，输出可用命令清单。
+
+AIDP_HOME(AIDP 运行根)识别顺序(--json 的 aidp_home_source 给出命中的是哪一级):
+  1. --aidp-home 显式入参                                         → "explicit"
+  2. 环境变量 AIDP_HOME(非空;相对路径按项目根解析)                  → "env"
+     设了却不是目录 → exit 2,⛔ 同样不回落(否则写错的环境变量会静默扫到别处)
+  3. 脚本自身安装位置:本脚本位于 <项目根>/<运行根>/skills/dev-execution-planner/scripts/
+     时取该 <运行根>                                               → "install"
+  4. 候选 .aidp(旧兼容名)/.claude/.agents/.codex/.dsh 中第一个**含 AIDP 特征**的目录
+     (特征 = 有 commands/ 或 skills/ 子目录,或直接含 AIDP*.md)    → "auto-feature"
+  5. 以上都没有 → 候选中第一个实际存在的目录                         → "auto-exists"
+  都不存在 → 不产出 AIDP 目录条目、也不扫该目录下的 AIDP*.md,其余扫描照常,exit 0
+  (aidp_home=null、aidp_home_source="none")。
+  ⚠️ 第 4 级不可省:只按「存在」取第一个时,一个只放了 settings.json 的 .claude 会抢在
+     真正装了命令的 .agents 前面,扫到的是空壳、看着却正常。
+
+AIDP 目录条目只列 <运行根>/commands/ 下的 *.md(相对 commands/ 的路径,含子目录),
+⛔ 不列 settings*.json / CLAUDE.md 这类运行根里的配置文件(它们不是命令)。
 
 扫描位置:
   1. AIDP_HOME/ 目录或 .aidp.yml、aidp.json 配置文件
@@ -19,45 +40,107 @@ AIDP 命令与范式文档扫描脚本
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-
-def _runtime_api():
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        scripts = parent / "scripts"
-        if (scripts / "aidp_runtime.py").is_file():
-            if str(scripts) not in sys.path:
-                sys.path.insert(0, str(scripts))
-            import aidp_runtime
-            anchor = scripts / "aidp_runtime.py"
-            return aidp_runtime, anchor
-    raise RuntimeError(f"找不到 AIDP 运行包: {here}")
+# AIDP_HOME 自动识别候选(第 4/5 级按此顺序)。
+# ⚠️ ".aidp"(旧兼容名)必须排第一:旧版只扫这一个目录名,排到后面会让同时有它与 .claude
+#    的项目改扫 .claude,缺省输出随之改变。其后才是各 Agent 的运行根。
+AIDP_HOME_CANDIDATES = ('.aidp', '.claude', '.agents', '.codex', '.dsh')
+NON_COMMAND_NAMES = ('CLAUDE.md',)
 
 
-def _runtime_root() -> Path:
-    api, anchor = _runtime_api()
-    return api.runtime_root(anchor)
+def _abs(p) -> str:
+    """词法绝对路径(⛔ 不用 resolve():软链安装时会把运行根解析到别处)。"""
+    return os.path.normcase(os.path.abspath(str(p)))
 
 
-def scan_aidp_config(root: Path) -> list:
+def has_aidp_feature(home: Path) -> bool:
+    """运行根是否含 AIDP 特征:commands/ 或 skills/ 子目录,或直接含 AIDP*.md。"""
+    if not home.is_dir():
+        return False
+    if (home / 'commands').is_dir() or (home / 'skills').is_dir():
+        return True
+    try:
+        return any(f.is_file() and f.name.upper().startswith('AIDP') and f.suffix.lower() == '.md'
+                   for f in home.iterdir())
+    except OSError:
+        return False
+
+
+def install_home(root: Path, script_path=None):
+    """脚本位于 <root>/<运行根>/skills/<skill>/scripts/scan_aidp.py 时返回 <root>/<运行根>。"""
+    sp = Path(os.path.abspath(str(script_path or __file__)))
+    parts = sp.parents
+    if len(parts) < 5:
+        return None
+    skills_dir, home, proj = parts[2], parts[3], parts[4]
+    if skills_dir.name != 'skills' or not home.name:
+        return None
+    if _abs(proj) != _abs(root):
+        return None
+    return root / home.name
+
+
+def resolve_aidp_home(root: Path, override=None, env=None, script_path=None):
+    """返回 (AIDP_HOME 路径或 None, 来源)。来源 ∈ explicit/env/install/auto-feature/auto-exists/none。
+
+    explicit/env 指定了却不存在属入参错,由 main() 判 exit 2,
+    ⛔ 不得静默改用自动识别结果(那会让「手滑写错路径」扫到另一个目录而看着正常)。
+    """
+    def _abs_under_root(v):
+        h = Path(v)
+        return h if h.is_absolute() else root / h
+
+    if override is not None:
+        return _abs_under_root(override), "explicit"
+    if env is None:
+        env = os.environ.get('AIDP_HOME', '')
+    if env:
+        return _abs_under_root(env), "env"
+    ih = install_home(root, script_path)
+    if ih is not None and ih.is_dir():
+        return ih, "install"
+    for name in AIDP_HOME_CANDIDATES:
+        cand = root / name
+        if has_aidp_feature(cand):
+            return cand, "auto-feature"
+    for name in AIDP_HOME_CANDIDATES:
+        cand = root / name
+        if cand.is_dir():
+            return cand, "auto-exists"
+    return None, "none"
+
+
+def list_commands(home: Path) -> list:
+    """列 <home>/commands/ 下的 *.md(相对 commands/,含子目录),排除配置文件。"""
+    cmd_dir = home / 'commands'
+    if not cmd_dir.is_dir():
+        return []
+    out = []
+    for f in sorted(cmd_dir.rglob('*.md')):
+        if not f.is_file() or f.name in NON_COMMAND_NAMES:
+            continue
+        out.append(f.relative_to(cmd_dir).as_posix())
+    return out
+
+
+def scan_aidp_config(root: Path, aidp_home=None) -> list:
     """扫描 AIDP_HOME/ 目录和配置文件"""
     results = []
 
-    # 当前脚本所属的 Agent 原生运行包
-    aidp_dir = _runtime_root()
-    if aidp_dir.is_dir():
+    # AIDP_HOME/ 目录(由 resolve_aidp_home 识别;None = 都不存在)
+    aidp_dir = aidp_home
+    if aidp_dir is not None and aidp_dir.is_dir():
         results.append({
             "source": str(aidp_dir),
             "type": "aidp_directory",
             "commands": [],
-            "description": "AIDP 运行包存在"
+            "description": f"{aidp_dir.name}/ 目录存在"
         })
-        for f in aidp_dir.iterdir():
-            if f.is_file():
-                results[-1]["commands"].append(str(f.name))
+        results[-1]["commands"].extend(list_commands(aidp_dir))
 
     # .aidp.yml
     for cfg_name in ['.aidp.yml', '.aidp.yaml', 'aidp.json']:
@@ -78,10 +161,12 @@ def scan_aidp_config(root: Path) -> list:
     return results
 
 
-def scan_aidp_docs(root: Path) -> list:
+def scan_aidp_docs(root: Path, aidp_home=None) -> list:
     """扫描 AIDP*.md 文档"""
     results = []
-    search_dirs = [root, root / 'docs', root / 'doc', _runtime_root()]
+    search_dirs = [root, root / 'docs', root / 'doc']
+    if aidp_home is not None:
+        search_dirs.append(aidp_home)
 
     for search_dir in search_dirs:
         if not search_dir.is_dir():
@@ -245,13 +330,13 @@ def scan_readme(root: Path) -> list:
     return results
 
 
-def run_scan(root: Path, output_json=False):
+def run_scan(root: Path, output_json=False, aidp_home=None, aidp_home_source="none"):
     """执行全部扫描"""
     all_results = []
 
     scanners = [
-        ("AIDP 配置", scan_aidp_config),
-        ("AIDP 范式文档", scan_aidp_docs),
+        ("AIDP 配置", lambda r: scan_aidp_config(r, aidp_home)),
+        ("AIDP 范式文档", lambda r: scan_aidp_docs(r, aidp_home)),
         ("package.json scripts", scan_package_json),
         ("Makefile/justfile/taskfile", scan_makefile),
         ("Maven plugins", scan_pom_xml),
@@ -270,6 +355,8 @@ def run_scan(root: Path, output_json=False):
     if output_json:
         output = {
             "project_root": str(root),
+            "aidp_home": str(aidp_home) if aidp_home is not None else None,
+            "aidp_home_source": aidp_home_source,
             "total_sources": len(all_results),
             "total_commands": len(all_commands),
             "sources": all_results,
@@ -281,6 +368,7 @@ def run_scan(root: Path, output_json=False):
         print("AIDP 命令与范式文档扫描报告")
         print("=" * 60)
         print(f"项目根目录: {root}")
+        print(f"AIDP 运行根: {aidp_home if aidp_home is not None else '(未识别)'}  (来源: {aidp_home_source})")
         print()
 
         if not all_results:
@@ -322,13 +410,35 @@ def main():
         print(__doc__)
         sys.exit(0)
 
-    args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    flags = [a for a in sys.argv[1:] if a.startswith('--')]
+    argv = sys.argv[1:]
+    output_json = '--json' in argv
+    aidp_home_arg = None
+    args = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '--aidp-home':
+            # ⚠️ 必须吃掉后面那个值,否则它会被当成「项目根目录」位置参数
+            if i + 1 >= len(argv) or argv[i + 1].startswith('--'):
+                msg = "错误: --aidp-home 需要一个目录值"
+                print(json.dumps({"error": msg}, ensure_ascii=False) if output_json else msg)
+                sys.exit(2)
+            aidp_home_arg = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith('--aidp-home='):
+            aidp_home_arg = a.split('=', 1)[1]
+            if not aidp_home_arg:
+                msg = "错误: --aidp-home 需要一个目录值"
+                print(json.dumps({"error": msg}, ensure_ascii=False) if output_json else msg)
+                sys.exit(2)
+        elif not a.startswith('--'):
+            args.append(a)
+        i += 1
 
-    output_json = '--json' in flags
     root = Path(args[0]) if args else Path('.')
 
-    # ⚠️ exists() 与 is_dir() 必须分开判(全仓退出码约定②):合并写会把「路径根本不存在」
+    # ⚠️ exists() 与 is_dir() 必须分开判(统一退出码约定②):合并写会把「路径根本不存在」
     #    与「传的是个文件」混成同一句「目录不存在」,报错文案与事实相反、排错方向被带偏。
     if not root.exists():
         msg = f"错误: 路径不存在 - {root}"
@@ -343,7 +453,14 @@ def main():
             print(msg)
         sys.exit(2)  # 入参错(路径不存在),非产物违规
 
-    run_scan(root, output_json=output_json)
+    aidp_home, source = resolve_aidp_home(root, aidp_home_arg)
+    if source in ("explicit", "env") and not aidp_home.is_dir():
+        who = "--aidp-home" if source == "explicit" else "环境变量 AIDP_HOME"
+        msg = f"错误: {who} 指定的目录不存在或不是目录 - {aidp_home}"
+        print(json.dumps({"error": msg}, ensure_ascii=False) if output_json else msg)
+        sys.exit(2)  # 显式入参错,⛔ 不回落自动识别
+
+    run_scan(root, output_json=output_json, aidp_home=aidp_home, aidp_home_source=source)
 
 
 if __name__ == "__main__":

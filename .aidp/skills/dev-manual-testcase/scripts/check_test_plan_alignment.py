@@ -17,7 +17,7 @@
      - 反向: 用例中出现的 SUITE-NN 在方案 §8.2 都有对应行;§8.2 列出的套件在用例中可定位
   E. 环境前提就绪度(report-only,永不影响退出码)
      - §3.2 账号表须有「账号最近验证时间」列;逐账号核 `未验证` / 超期(默认 N=7 天)
-     - §3.1 数据库行改填了库连接时,须带 `environment` 环境标识(dev/test/uat/staging/demo/prod)
+     - §3.1 数据库行改填了库连接时,须带 `environment` 环境标识(dev/test/uat/研究/演示/prod)
      - 两项都只提示、不判失败:它们是「该做登录冒烟预检 / 该核对 DB 归属」的提醒,
        方案作者可能有正当理由(如本轮不跑对账),硬拦会制造噪声
   D. 默认手动执行合规
@@ -75,7 +75,7 @@ CASE_FILE_PATTERNS = [
 EXCLUDE_FILE_PATTERNS = [
     re.compile(r"^00_索引"),               # 00_索引.md(专职索引,AIDP 范式)
     re.compile(r"^(?:00|01)_研发自测方案"),  # 01_研发自测方案.md(新)/ 00_(历史旧锚)
-    re.compile(r"^9[789]_"),  # 97_环境探针档案 / 98_跨系统 / 99_待澄清
+    re.compile(r"^9[89]_"),  # 99_待澄清 / 98_跨系统
 ]
 
 # ============================================================
@@ -312,10 +312,10 @@ def parse_plan_index(plan_text: str) -> Dict:
 # ============================================================
 # E 项: 环境前提就绪度(report-only,不影响退出码)
 # ============================================================
-# 两个「默认被无条件信任、一旦错就确定性作废整轮」的前提——
+# 实测反馈落地:两个「默认被无条件信任、一旦错就确定性作废整轮」的前提——
 #   G2 账号有效性:主测+备用两个管理员账号都已失效(登录被拦「您尚未关联任何企业」),
 #      方案照常声明「已就绪」,直到执行期登录失败才发现,前置准备与套件编排全部作废;
-#   H2 数据源环境归属:配的是非被测环境的库却拿去给被测环境做双源对账真值判断,
+#   H2 数据源环境归属:配的是「研究库」却拿去给被测环境做双源对账真值判断,
 #      被测环境成功下单后该库始终 0 行——用错库的对账比不做对账更危险。
 # 判 report-only 而非 Critical 的理由:方案作者可能有正当理由(本轮压根不跑对账 / 账号刚线下验过),
 # 硬拦会制造常驻噪声,而常驻噪声会让整个硬门被无视。
@@ -327,7 +327,7 @@ DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 DB_CONFIGURED_RE = re.compile(
     r"host|port|jdbc:|连接串|库名|数据源|environment|达梦|mysql|postgres|oracle", re.I)
 # environment 环境标识枚举(与 auto-test-runner run-context datasource.environment 同口径)
-DB_ENV_RE = re.compile(r"environment|环境标识|\b(?:dev|test|uat|prod)\b|staging|demo|预发|演示", re.I)
+DB_ENV_RE = re.compile(r"environment|环境标识|\b(?:dev|test|uat|prod)\b|研究库?|演示库?", re.I)
 
 
 def _section_body(plan_text: str, pattern: str) -> str:
@@ -395,7 +395,7 @@ def check_env_readiness(plan_text: str, fresh_days: int = ACCOUNT_FRESH_DAYS_DEF
             if DB_CONFIGURED_RE.search(ln) and not DB_ENV_RE.search(ln):
                 notices.append(
                     "§3.1 数据库行已改填库连接但未见 `environment` 环境标识"
-                    "(dev/test/uat/staging/demo/prod)——下游拿它做双源对账真值判断前无从确认"
+                    "(dev/test/uat/研究/演示/prod)——下游拿它做双源对账真值判断前无从确认"
                     "「这是不是被测环境的库」;用错库的对账比不做对账更危险")
     return {"passed": True, "notices": notices, "fresh_days": fresh_days}
 

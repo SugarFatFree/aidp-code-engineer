@@ -113,7 +113,7 @@ def main() -> int:
     args = ap.parse_args()
 
     target = Path(args.target)
-    # ⚠️ **exists 与 is_dir 必须分开判,不可合并**。
+    # ⚠️ **exists 与 is_dir 必须分开判,不可合并**(实测反馈修复)。
     #    原先只有 `if not target.is_dir(): return 0`,把「路径根本不存在」与「传入的是单个文件
     #    (合法的单文件模式,本检查不适用)」混为一谈,于是**一个手滑写错的路径 = 退出码 0 = 假绿**,
     #    整个白名单检查被静默放行、调用方还以为过了。这是四种退出码里最危险的一种。

@@ -1,5 +1,7 @@
 # Quality Review Checklist（质量检查清单）
 
+> **`{{AIDP_HOME}}` 约定:** 安装方渲染的运行根(仅 Claude Code 为 `.claude`,共享运行根为 `.agents`),`{{AIDP_HOME}}/...` 一律相对被测项目根;SKILL 不探测,详见 SKILL.md「运行路径约定」。
+
 > 本文件隶属于 `dev-execution-planner` SKILL，供 Quality Review Agent 执行检查时使用。
 > 上级文档：`../SKILL.md`
 >
@@ -9,29 +11,36 @@
 
 ## 维度成本与裁剪索引表（QR 调度用·单一信源）
 
-> **为什么有这张表：** 维度里哪些有硬门脚本、哪些只能语义判，这个信息若只能靠翻
+> **为什么有这张表：** 实测反馈——维度里哪些有硬门脚本、哪些只能语义判，这个信息此前只能靠翻
 > `flow-qr-dispatch.md` 拼，调用方只好保守全跑。本表集中三件事：**由谁判 / 脚本接没接进 QR / 语义部分能否按变更范围裁剪**。
 > ⚠️ 本表是**调度信息**单一信源，不重复判据；判据永远以下方各检查项正文为准。
 >
 > **★ 机器门一律全量跑，Δ 只裁剪「语义核对」的范围。** 脚本秒级、零上下文、确定性，
 > 按范围裁它没有收益、只制造盲区。故「Δ 裁剪档」一列**只描述语义部分**。
 
-| # | 维度 | 成本类别 | 机器门脚本 | 已接入 QR 步骤 0 | 语义部分 Δ 裁剪档 |
-| :-: | :- | :-: | :- | :-: | :-: |
-| 1 | 三方一致性深度核验 | 语义 | — | — | **基线缩放** |
-| 2 | 详细设计完备性评估 | 语义 | — | — | Δ |
-| 3 | 迭代粒度与 AIDP 范式对齐 | 兼有 | `check_task_granularity.py` | ✅ | Δ |
-| 4 | 指令化(Command-Driven)检查 | 语义 | — | — | Δ |
-| 5 | 提示词的上下文关联性 | 语义 | — | — | Δ |
-| 6 | 依赖链条与前置条件核对 | 语义 | — | — | **全量** |
-| 7 | 代码框架与中间件配置检查 | 语义 | `check_env_config.py`（**项目根脚本**） | ❌ 扫代码根、非文档 | **全量** |
-| 8 | 增量开发与回归验证指令 | 语义 | — | — | Δ |
-| 9 | 详细设计一致性深度核验 | 兼有 | `check_sql_path_handoff.py`(✅ 已接入) · `check_ddl_consistency.py`(❌ 需额外入参) | 部分 | Δ |
-| 10 | 多用户分配一致性〔条件〕 | 语义 | — | — | **全量** |
-| 11 | 多文档拆分一致性〔条件〕 | 机器门 | `check_doc_split.py --check-tasks` | ✅ | — |
-| 12 | 上游引用完整性·四源追溯 | 语义 | — | — | **基线缩放** |
-| 13 | 待澄清问题清单完整性 | 语义 | — | — | **全量** |
-| 14 | EPIC 完整性 + AI 锚点透传 | 兼有 | `check_task_granularity.py` | ✅ | **全量** |
+| # | 维度 | 成本类别 | 机器门脚本 | 已接入 QR 步骤 0 | 语义部分 Δ 裁剪档 | 等级 | 脚本可判 |
+| :-: | :- | :-: | :- | :-: | :-: | :-: | :-: |
+| 1 | 三方一致性深度核验 | 语义 | — | — | **基线缩放** | Critical | 否 |
+| 2 | 详细设计完备性评估 | 语义 | — | — | Δ | Important | 否 |
+| 3 | 迭代粒度与 AIDP 范式对齐 | 兼有 | `check_task_granularity.py` | ✅ | Δ | Important | 部分 |
+| 4 | 指令化(Command-Driven)检查 | 语义 | — | — | Δ | Important | 否 |
+| 5 | 提示词的上下文关联性 | 语义 | — | — | Δ | Important | 否 |
+| 6 | 依赖链条与前置条件核对 | 语义 | — | — | **全量** | Important | 否 |
+| 7 | 代码框架与中间件配置检查 | 语义 | `check_env_config.py`（**项目根脚本**） | ❌ 扫代码根、非文档 | **全量** | Critical | 否 |
+| 8 | 增量开发与回归验证指令 | 语义 | — | — | Δ | Important | 否 |
+| 9 | 详细设计一致性深度核验 | 兼有 | `check_sql_path_handoff.py`(✅ 已接入) · `check_ddl_consistency.py`(❌ 需额外入参) | 部分 | Δ | Critical | 部分 |
+| 10 | 多用户分配一致性〔条件〕 | 语义 | — | — | **全量** | Important | 否 |
+| 11 | 多文档拆分一致性〔条件〕 | 兼有 | `check_doc_split.py --check-tasks` | ✅ | — | Important | 部分 |
+| 12 | 上游引用完整性·四源追溯 | 语义 | — | — | **基线缩放** | Critical | 否 |
+| 13 | 待澄清问题清单完整性 | 语义 | — | — | **全量** | Critical | 否 |
+| 14 | EPIC 完整性 + AI 锚点透传 | 兼有 | `check_task_granularity.py` | ✅ | **全量** | Critical | 部分 |
+
+> **「等级」「脚本可判」两列(编排层 `qr_level` 分级派发的唯一依据):**
+> - `等级` ∈ Critical / Important / Minor。`qr_level=critical|scripts` 档**只认这一列**,⛔ 不在正文里另写一份 Critical 清单;
+>   正文标题里标了 Critical 的维度这里必为 Critical(由 `tests/test_qr_orchestration.py` 守),这里可以比标题更严、不能更松。
+> - `脚本可判` ∈ 是 / 部分 / 否,与「成本类别」一一对应(机器门 = 是、兼有 = 部分、语义 = 否):
+>   「是」= 判据完全由机器门承担、没有语义部分;「部分」= 机器门之外还有语义核对。
+> - 派发怎么用这两列、移交清单怎么写,见 `flow-orchestration.md`;推导由 `scripts/qr_orchestration.py plan` 完成,⛔ 不手算。
 
 **「已接入」为 ❌ 的三类含义不同，别当成漏配：**
 
@@ -42,7 +51,7 @@
 | 扫代码根、非文档 | `check_service_impl_stub.py` · `check_third_party_dep_reverse.py` · `scan_aidp.py` · `scan_mock_data.py` | 入参是**被测项目源码根**，传文档目录只会「没扫到文件 → exit 0」，那是 N/A 跳过、**不是通过**。⛔ 把它们塞进步骤 0 等于凭空多四个恒绿灯 |
 
 > ⚠️ `analyze_third_party_progress.py` 在样例上抛裸 traceback 且 `exit 1`（崩溃伪装成「检出违规」）——
-> 属 CLAUDE.md 已登记的全仓缺口，**它不是检查门**（是分析工具），不纳入 QR 派发。
+> 属已登记的已知缺口(见 `rationale.md`「已登记的已知缺口」)，**它不是检查门**（是分析工具），不纳入 QR 派发。
 
 ---
 
@@ -89,7 +98,7 @@
 
 **四条硬要求：**
 - **14 行一行不少**——**条件维度 10 / 11 未触发时照样留行**，写明 `N/A + 触发条件为何不满足`。
-  这正是下游反馈的痛点：现在只拿得到结论，分不清「过了」还是「压根没跑」。
+  这正是实际使用中的痛点：现在只拿得到结论，分不清「过了」还是「压根没跑」。
 - 条件维度的 `skipped:true` 属**跳过不是通过**，台账里必须写成 `N/A`，⛔ 不得记为「通过」；**必查维度**的 `skipped:true` 见下条，记「未核验」。
 - 标 `前滚` 的行**必须**写明依据的上一轮报告；写不出来一律按**未跑**处理、退回该维度全量核对。
 - 机器门那一列**照抄退出码**，不写「通过」二字——退出码是证据，「通过」是结论。
@@ -193,12 +202,12 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py <研发执行计划路径>
 
 #### 检查项 4:指令化(Command-Driven)检查
 
-**检查目标:** 每一步研发执行计划是否都挂载了具体的、可直接运行的指令,且**必须按 5 级优先级**选择:`AIDP 命令/范式 > 项目 .claude/ 资源 > 系统 Claude Code 资源 > 通用工具 > Shell`。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+**检查目标:** 每一步研发执行计划是否都挂载了具体的、可直接运行的指令,且**必须按 5 级优先级**选择:`AIDP 命令/范式 > 项目 {{AIDP_HOME}}/ 资源 > 系统 Claude Code 资源 > 通用工具 > Shell`。
 
 **指令来源优先级(检查时必须核验):**
 
 1. **项目 AIDP 命令/范式文档**(L1,最高优先级) — 如 `aidp gen:mapper`、`aidp scaffold:controller`
-2. **项目 `{{AIDP_HOME}}/` 下的 commands/skills/plugins/agents/mcp**(L2) — 如项目级 `/项目slash`、项目级 skill、项目级 agent、项目级 MCP server  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+2. **项目 `{{AIDP_HOME}}/` 下的 commands/skills/plugins/agents/mcp**(L2) — 如项目级 `/项目slash`、项目级 skill、项目级 agent、项目级 MCP server
 3. **系统 Claude Code 的 commands/skills/plugins/agents/mcp**(L3) — 如 `/dev-logic-architect`、`/code-verification-loop`、`/api-tester`、全局 plugin、全局 agent、全局 MCP server
 4. **通用构建/代码生成工具**(L4) — 如 `mvn archetype:generate`、`mybatis-plus-generator`、`pnpm create vite`、`go mod init`
 5. **Shell / 脚本**(L5,兜底) — 如 `bash scripts/init-db.sh`、`git commit -m "..."`、`curl xxx`
@@ -207,18 +216,20 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py <研发执行计划路径>
 ```bash
 python3 <SKILL_DIR>/scripts/scan_aidp.py [项目根目录]
 python3 <SKILL_DIR>/scripts/scan_aidp.py [项目根目录] --json
-# 扫描 {{AIDP_HOME}}/ / .aidp.yml / aidp.json / AIDP*.md / package.json scripts / Makefile / pom.xml plugin,
+python3 <SKILL_DIR>/scripts/scan_aidp.py [项目根目录] --aidp-home {{AIDP_HOME}} --json   # 运行根识别不准时显式指定
+# --json 的 aidp_home / aidp_home_source 须与「可用指令清单」声明的运行根一致;
+# 扫描 {{AIDP_HOME}}/commands/*.md / .aidp.yml / aidp.json / AIDP*.md / package.json scripts / Makefile / pom.xml plugin,
 # 产出 L1 层可用命令清单;据此核对执行计划开头"可用指令清单"是否漏列项目 AIDP 命令。
 ```
 
 **指令检查清单:**
 
-- [ ] 生成计划前,Agent 已按 5 层优先级扫描项目可用资源(扫描位置:`各 Agent 的运行根/`、`.aidp.yml`、`aidp.json`、**项目根目录及 `docs/`、`doc/` 下的 `AIDP*.md`**、`各 Agent 的运行根/commands/`、`各 Agent 的运行根/skills/`、`{{AIDP_HOME}}/plugins/`、`各 Agent 的运行根/agents/`、`{{AIDP_HOME}}/mcp.json`、`~/各 Agent 的运行根/skills/`、`~/各 Agent 的运行根/commands/`、`~/.claude/plugins/`、`~/各 Agent 的运行根/agents/`、`package.json scripts`、`Makefile`、`pom.xml plugin`、项目 README)<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
+- [ ] 生成计划前,Agent 已按 5 层优先级扫描项目可用资源(扫描位置:`{{AIDP_HOME}}/commands/`、`.aidp.yml`、`aidp.json`、**项目根目录及 `docs/`、`doc/` 下的 `AIDP*.md`**、`{{AIDP_HOME}}/commands/`、`{{AIDP_HOME}}/skills/`、`{{AIDP_HOME}}/plugins/`、`{{AIDP_HOME}}/agents/`、`{{AIDP_HOME}}/mcp.json`、`~/.claude/skills/`、`~/.claude/commands/`、`~/.claude/plugins/`、`~/.claude/agents/`、`package.json scripts`、`Makefile`、`pom.xml plugin`、项目 README)
 - [ ] 若项目有 AIDP 命令(L1),Task 的 AI 执行指令优先使用 AIDP 命令而非 L2-L5
-- [ ] 若项目 `{{AIDP_HOME}}/` 有对应 skill/command(L2),优先于系统全局(L3)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+- [ ] 若项目 `{{AIDP_HOME}}/` 有对应 skill/command(L2),优先于系统全局(L3)
 - [ ] 每个 Task 必须有 `**AI 执行指令**` 小标题及其下的 markdown 代码块,代码块第一行是可直接复制执行的命令(不是描述)
 - [ ] 每个 Task 有"指令来源"字段标明所选层级(L1/L2/L3/L4/L5),以及"降级方案"字段给出下一层级替代
-- [ ] 命令选择示例:`aidp gen:mapper --table biz_user`(L1 项目 AIDP)、`/项目-api-gen`(L2 项目 .claude/ Skill)、`/dev-logic-architect`(L3 系统 Skill)、`mvn mybatis-plus:generate`(L4 通用工具)  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+- [ ] 命令选择示例:`aidp gen:mapper --table biz_user`(L1 项目 AIDP)、`/项目-api-gen`(L2 项目 {{AIDP_HOME}}/ Skill)、`/dev-logic-architect`(L3 系统 Skill)、`mvn mybatis-plus:generate`(L4 通用工具)
 
 **任务模板补充要求:**
 
@@ -237,7 +248,7 @@ aidp gen:mapper --table biz_user --design <设计文档路径>#A.3
 > **指令来源**: L1 项目 AIDP `aidp gen:mapper`
 > **降级方案**: L3 `/dev-logic-architect` / L4 `mvn mybatis-plus:generate`
 
-**L2 项目 .claude/ skill 示例:**  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+**L2 项目 {{AIDP_HOME}}/ skill 示例:**
 
 ~~~
 /project-entity-gen --table biz_user
@@ -267,7 +278,7 @@ aidp gen:mapper --table biz_user --design <设计文档路径>#A.3
 - Task 仅用"执行步骤 1/2/3"序号列表描述,无 `**AI 执行指令**` 代码块
 - AI 执行指令代码块第一行不是可执行命令(如写"请使用 Claude Code 生成...")
 - 项目存在 AIDP 命令(L1),但 Task 使用 L3/L4 命令,未优先使用项目已有工具链
-- 项目 `{{AIDP_HOME}}/` 有对应 skill/command(L2),但 Task 使用系统全局(L3),未优先使用项目级资源  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
+- 项目 `{{AIDP_HOME}}/` 有对应 skill/command(L2),但 Task 使用系统全局(L3),未优先使用项目级资源
 - 缺失"指令来源"或"降级方案"字段
 - 执行计划开头缺失"可用指令清单"(按 5 层分组展示)
 
@@ -396,16 +407,14 @@ python3 <SKILL_DIR>/scripts/check_env_config.py [项目根目录] --json
 
 **针对当前功能的特定验证提示词:**
 
-每个 Task 的验收标准必须包含至少一项**无需启动服务即可判定**的检查点(静态检查命令 / 指向研发自测用例 ID / 可静态核对的代码事实):
+每个 Task 的验收标准必须包含至少一项可**自动化验证**的检查点:
 
 ```markdown
 **验收标准:**
-- [ ] `UserController#login` 对错误密码返回业务码 `USER_PWD_INVALID`,文案与详细设计 B.3 错误码表一致(静态核对)
-- [ ] 研发自测用例 `TC-USER-003`「错误密码登录」覆盖本 Task,预期结果与详细设计一致
+- [ ] 执行 `curl -X POST http://localhost:8080/api/user/login -d '{"username":"admin","password":"123456"}'` 返回 200 和 token
+- [ ] 执行 `mvn test -Dtest=UserServiceTest#testLoginWithWrongPassword` 通过
 - [ ] 执行 `/code-verification-loop src/views/user` 验收通过
 ```
-
-⛔ **不可判定措辞黑名单**(验收标准命中即判不合格,违反约定 35「开发/测试期默认只做静态验证、不启动服务」):`curl http://localhost…` / `启动服务后访问…` / `页面能打开` / `接口返回 200`(未指明静态核对对象)/ `功能正常` / `运行无报错`。需要运行时验证的检查点一律写成**研发自测用例 ID**,由人工自测或 `/sprint-aiauto-test` 执行。
 
 **Phase 5 必须包含的最终验证任务:**
 1. 对照 PRD 所有功规点执行 E2E 验证
@@ -414,7 +423,7 @@ python3 <SKILL_DIR>/scripts/check_env_config.py [项目根目录] --json
 4. 运行安全扫描(`pnpm audit` / `mvn dependency-check`)
 5. Git 打 tag 和生成发版说明
 
-**★涉及调用第三方接口的 Task,验收标准须含「第三方业务错误透传」一项:** 承接设计检查项 4 的透传契约——第三方返回**业务错误**(业务码 + 面向用户、有指导意义的 message,如 `40001 个人积分余额不足`)时须**透传前端**、不得替换成通用文案;仅第三方**系统/基础设施错误**(超时/连接失败/5xx)才兜底。验收点示例:`- [ ] 构造第三方返回业务错误(如余额不足)场景,前端展示的是第三方业务文案而非"操作失败请稍后重试"`。
+**★涉及调用第三方接口的 Task,验收标准须含「第三方业务错误透传」一项:** 承接设计检查项 4 的透传契约——第三方返回**业务错误**(业务码 + 面向用户、有指导意义的 message,如 `40001 账户余额不足`)时须**透传前端**、不得替换成通用文案;仅第三方**系统/基础设施错误**(超时/连接失败/5xx)才兜底。验收点示例:`- [ ] 构造第三方返回业务错误(如余额不足)场景,前端展示的是第三方业务文案而非"操作失败请稍后重试"`。
 
 **★涉及用户管理(删除 / 启停 / 角色权限)的 Task,验收标准须含「用户自我保护」一项:** 承接设计核心原则 22 同源身份约束——**登录用户不得对自身**执行破坏性 / 自我降权操作,后端接口强校验(前端置灰不可替代)。验收点示例:`- [ ] 以当前登录用户身份调用删除 / 禁用 / 撤销管理员接口指向自己,后端返回明确业务错误(如"不能删除当前登录用户自己"),而非成功删除 / 禁用自己`;覆盖三类:删自己 / 禁用锁定自己 / 撤销自己最后的管理员角色。
 
@@ -618,7 +627,7 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 # 退出码: 0=通过(含仅历史 grandfather 告警 warn:裸单文件 / 历史 00_*-总览.md 主锚 / NN_补充- 中缀均放行不硬失败);
 #         1=不通过(缺 00_索引.md 主锚 / 序号缺失或重复 / <150 行碎片 / 裸「补充-」开头 / Task 编号跨文档重复 等 error);
 #         2=路径不存在或非目录(修正参数后重跑)。
-# 现行规范主锚为 00_索引.md(内容主文档从 01_研发执行计划.md 起);单份内容目录仍需 00_索引.md + 01_* 两文件。
+# 新范式主锚为 00_索引.md(内容主文档从 01_研发执行计划.md 起);单份内容目录仍需 00_索引.md + 01_* 两文件。
 ```
 
 **11.1 文件名与目录结构(AIDP 命名范式)**
@@ -676,7 +685,7 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 - 存在 <150 行的碎片内容文档(`00_索引.md` 除外)
 
 **仅告警不硬失败(warn,机检 exit 0,historical grandfather):**
-- 使用历史主锚 `00_*-总览.md`/`00_*-主文档.md`(现行规范应产出 `00_索引.md`)
+- 使用历史主锚 `00_*-总览.md`/`00_*-主文档.md`(新范式应产出 `00_索引.md`)
 - 历史裸单文件(仅 1 个内容 .md,未拆成 `00_索引.md`+`01_*`)
 - 文件名含语义中缀 `NN_补充-`/`NN_追加-` 等(带两位序号)
 
@@ -879,7 +888,7 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 
 **自动化核验(必跑):**
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-execution-planner`)
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(项目内 = `{{AIDP_HOME}}/skills/dev-execution-planner`,全局 = `~/{{AIDP_HOME}}/skills/dev-execution-planner`,以实际安装位置为准)
 
 ```bash
 python3 <SKILL_DIR>/scripts/check_task_granularity.py \

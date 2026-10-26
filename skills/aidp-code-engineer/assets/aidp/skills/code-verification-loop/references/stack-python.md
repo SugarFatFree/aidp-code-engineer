@@ -52,17 +52,17 @@ python3 <SKILL_DIR>/scripts/check_file_complexity.py <代码目录>
 
 ### 2.4 注释完备性（本栈形态）
 
-类/函数声明下方须有 **docstring**（非声明上方，与 Java/TS 相反），含用途 + 参数 + 返回值 + 异常语义；字段注释写业务含义而非字段名直译。判据同 `dimension-4-5-quality-debt.md` 维度 4「注释完备性」行。
+类/函数声明下方须有 **docstring**（非声明上方，与 Java/TS 相反），含用途 + 参数 + 返回值 + 异常语义；字段注释写业务含义而非字段名直译。判据同 `../SKILL.md` 维度 4「注释完备性」行（全文在 `flow-dims-quality.md`）。
 
 ---
 
 ## 三、本栈不适用的检查项
 
 - 维度 7「CSS 预处理器一致性」为 Vue 专属，**Python 项目整维度跳过**。
-- 维度 8「请求通道 URL 拼装」扫的是前端源码（`.ts`/`.js`/`.vue`/`.tsx` 等，完整清单见 `dimension-6-9-stack-gated.md` 维度 8「扫描范围」），**纯 Python 后端整维度跳过**；若同仓含前端目录，该维度对那部分仍生效。
+- 维度 8「请求通道 URL 拼装」扫的是前端源码（`.ts`/`.js`/`.vue`/`.tsx` 等，完整清单见 `../SKILL.md` 维度 8「扫描范围」），**纯 Python 后端整维度跳过**；若同仓含前端目录，该维度对那部分仍生效。
 - 维度 6「DI 依赖可解析性」为 Java/Spring 专属，**Python 项目整维度跳过**。
 
   > 📌 **注**：FastAPI 的 `Depends()` 依赖注入若指向未定义/未导入的 provider，会在**请求期**（非启动期）报错；Django 的 `INSTALLED_APPS` 漏注册 app 则在**启动期**报 `ModuleNotFoundError`。二者与维度 6 拦的是同类问题，但本 SKILL 当前只落地了 Java/Spring 的静态检查脚本（`check_di_resolvability.py` 仅扫 `.java`），Python 侧**暂无脚本覆盖**，建议验收 Agent 人工扫一眼。**这是非阻断提醒、不是该维度的通过条件**——维度 6 对 Python 项目在门控上已整维度跳过，不计入通过/不通过。此处显式记录该缺口，只为避免被误读为「Python 项目不存在这类问题」。
 
-- `@RefreshScope` 热刷新、DB 约束校验注解为 Spring 生态概念；Python 侧对应检查是「配置热加载是否生效」与「Pydantic/Django Form 校验是否覆盖设计 A.3 约束」，判据同 `dimension-4-5-quality-debt.md` 维度 4 对应行。
+- `@RefreshScope` 热刷新、DB 约束校验注解为 Spring 生态概念；Python 侧对应检查是「配置热加载是否生效」与「Pydantic/Django Form 校验是否覆盖设计 A.3 约束」，判据同 `../SKILL.md` 维度 4 对应行（逐行全文在 `flow-dims-quality.md`）。
 - 前端专有项见 `stack-vue.md` / `stack-react.md`。

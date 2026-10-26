@@ -42,7 +42,7 @@
 
   "$datasourceOwnershipEnum": [
     "verified —— 归属探针通过,确属被测环境的库,可做双源对账与 SQL 造删数",
-    "mismatched —— 探针证否(如 DB=staging / 被测=test):datasource 整体标不适用,相关用例降级并留痕",
+    "mismatched —— 探针证否(如 DB=研究 / 被测=test):datasource 整体标不适用,相关用例降级并留痕",
     "unverified —— 未做探针或探针无结论:按 mismatched 同样处置(保守侧)",
     "not-applicable —— 本轮无 [双源对账] 用例、也无 SQL 造删数"
   ],

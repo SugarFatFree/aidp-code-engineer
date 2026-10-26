@@ -25,27 +25,46 @@
   ③ 文档提到「遗留问题 / 迭代建议 / 待办」但表 D 无对应来源条目(未逐条进表 D)。
   另附提示:处置 = 本版不做 的条目须经产品确认门登记「十、待澄清问题清单」(Q-ITEM-NNN),严禁静默丢弃。
 
-产品原始 PRD 源(模式 B 判定):`--prd-source <目录>` 显式指定;缺省自动探测输入路径所在目录
-及其父目录下的 `产品提供/`(AIDP 布局 `docs/requirements/{version}/产品提供/*.md`)。扫描研发 PRD 时
-自动排除 `产品提供/` 子树。
+以产品原文为基准(可选 `--prd-source <产品原始 PRD 文件或目录>`,`.md`/`.txt`):
+  不传时行为与无此参数完全一致(只核表 D 自身的分类完整性)。传了即声明「本次是模式 B、有产品原文」:
+  S0  有产品原文却无表 D                 → 不通过(模式 B 漏表 D)
+  S1  产品原文里的原子条目未进表 D        → 不通过,逐条列出原文位置 + 条目
+      原子条目只取**高精度**两类,⛔ 不扫散文段落(散文抽条目必满屏假红):
+        ① 按钮/操作名:`点击「X」` / `"X"按钮` 等引号包裹的操作名;
+        ② 字段/列/按钮/操作类表格:表头**任一列**含 字段/列名/按钮/操作/功能点/条目 即取**该列**取值
+           (表头同时含 步骤/预期/序号/说明/描述/备注 的列不取——那是步骤、预期、序号或散文描述;
+           取值恰为表头词本身〔如「操作」〕不算条目;同格以 、，,;； 分隔的多值逐个成条)。
+      判定「已进表 D」(⚠️ **单向**):条目名归一后与某表 D 行「条目内容」**精确相等**,或该表 D 条目
+        **包含**原文条目且原文条目归一后长度 ≥ MIN_CONTAIN_LEN。⛔ 不认反方向——表 D 写个「订单」
+        不得覆盖原文「导出订单」「订单编号」(反向包含会让一个泛词吞掉整类条目 = 假绿)。
+      抽到 0 条时 `--json` 出 `prd_source.zero_items: true` 并人读警示:**0 条 ≠ 原文全覆盖**,
+        只说明原文没有这两类高精度写法,全部条目都要靠 QR Agent 人工比对。
+  `--prd-source` 传单个文件时同样只认 .md/.txt 后缀,其它后缀判入参错(exit 2)。
+  `--prd-source` 落在 <PRD 文件或目录> 之内时,其子树不计入研发 PRD 扫描面。
+  脚本只抽得到这两类;散文/列表里的功能条目仍须由 QR Agent 逐条比对,⛔ 不得因脚本绿了就跳过。
 
 用法:
   python check_prd_item_coverage.py <PRD 文件或目录>
-  python check_prd_item_coverage.py <PRD 文件或目录> --prd-source docs/requirements/V1.0.0/产品提供
   python check_prd_item_coverage.py <PRD 文件或目录> --json
-  python check_prd_item_coverage.py --self-check      # 阳性对照
+  python check_prd_item_coverage.py <PRD 文件或目录> --prd-source <产品原始 PRD 文件或目录> [--json]
+  python check_prd_item_coverage.py --self-check   # 阳性/阴性对照,不可与 path/--json/--prd-source 组合
 
 退出码:
-  0  通过(表 D 全部条目已分类,覆盖率 100%)  或  无表 D 且**无产品原始 PRD 源**(模式 A 纯原型逆向)
-  1  表 D 存在未分类 / 未落点条目(覆盖率 < 100%);或**存在产品原始 PRD 源却无表 D**(模式 B 漏表 D)
-  2  输入错误(路径不存在 / 无 .md 文件)——非维度违规,修正参数后重跑
+  0  通过(表 D 全部条目已分类,覆盖率 100%)  或  无表 D(模式 A 纯原型逆向 / 标 N/A / 历史存量无表 D
+     的 grandfather 放行,跳过并提示迁移)
+  1  表 D 存在未分类 / 未落点条目(处置为空或不在枚举内),覆盖率 < 100%,强制不通过;
+     或(仅传 --prd-source 时)S0 有产品原文却无表 D / S1 产品原文条目未进表 D
+  2  输入错误(路径不存在 / 无 .md 文件 / --prd-source 不存在、无可读文件或单文件后缀不是 .md/.txt)——非维度违规,修正参数后重跑
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -74,29 +93,12 @@ LEGACY_KEYWORDS = ["遗留问题", "迭代建议", "待办", "后续需求", "�
 Q_ITEM_RE = re.compile(r"Q-ITEM-\d+")
 
 
-PRD_SOURCE_DIRNAME = "产品提供"
-
-
 def find_md_files(path: Path) -> List[Path]:
     if path.is_file():
         return [path]
     if path.is_dir():
-        return sorted(p for p in path.rglob("*.md") if PRD_SOURCE_DIRNAME not in p.relative_to(path).parts)
+        return sorted(path.rglob("*.md"))
     return []
-
-
-def find_prd_sources(path: Path, explicit: Optional[Path]) -> List[Path]:
-    """产品原始 PRD 源文件(模式 B 的判据):显式目录优先,否则探测输入所在目录与父目录下的 产品提供/。"""
-    if explicit is not None:
-        cands = [explicit]
-    else:
-        base = path if path.is_dir() else path.parent
-        cands = [base / PRD_SOURCE_DIRNAME, base.parent / PRD_SOURCE_DIRNAME]
-    out: List[Path] = []
-    for c in cands:
-        if c.is_dir():
-            out.extend(sorted(c.rglob("*.md")))
-    return out
 
 
 def split_row(line: str) -> List[str]:
@@ -132,6 +134,123 @@ def clean_cell(v: str) -> str:
     return re.sub(r"[*`>\s]", "", v)
 
 
+# ── --prd-source:产品原文原子条目抽取(只取高精度两类,不扫散文) ──
+PRD_SOURCE_SUFFIXES = (".md", ".txt")
+_Q = r"[「“\"『]"
+_QE = r"[」”\"』]"
+SRC_BUTTON_RES = [
+    re.compile(r"点击" + _Q + r"([^」”\"』\n]{1,20})" + _QE),
+    re.compile(_Q + r"([^」”\"』\n]{1,20})" + _QE + r"\s*(?:按钮|操作|链接|入口)"),
+]
+SRC_TABLE_HEAD_KEYS = ("字段", "列名", "按钮", "操作", "功能点", "条目")
+# 表头含这些词的列不取值:步骤/预期/序号 是测试或流程列,说明/描述/备注 是散文列(抽散文必满屏假红)
+SRC_TABLE_COL_EXCLUDE = ("步骤", "预期", "序号", "说明", "描述", "备注")
+_SRC_MULTI_SPLIT = re.compile(r"[、，,;；]")
+# 单向包含匹配时原文条目(归一后)的最短长度;短于它只认精确相等
+MIN_CONTAIN_LEN = 2
+_NORM_STRIP = re.compile(r"[\s*`>「」“”\"『』()（）\[\]【】:：,，、。;；!！?？/\\-]")
+
+
+def norm_item(v: str) -> str:
+    return _NORM_STRIP.sub("", v)
+
+
+def find_source_files(path: Path) -> List[Path]:
+    if path.is_file():
+        # 单文件同样走后缀白名单:否则传错一个 .docx/.pdf 会被当乱码文本扫、抽到 0 条后静默放行
+        return [path] if path.suffix.lower() in PRD_SOURCE_SUFFIXES else []
+    if path.is_dir():
+        return sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in PRD_SOURCE_SUFFIXES)
+    return []
+
+
+def extract_source_items(path: Path, root: Path) -> Dict:
+    """从一份产品原文里抽高精度原子条目;返回 {file, items:[{line, item, kind}]} 或 read_error。"""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {"file": str(path), "read_error": str(exc)}
+    try:
+        rel = str(path.relative_to(root))
+    except ValueError:
+        rel = str(path)
+    items: List[Dict] = []
+    seen = set()
+
+    def add(line_no: int, item: str, kind: str) -> None:
+        key = norm_item(item)
+        if len(key) < 2 or key in seen:
+            return
+        seen.add(key)
+        items.append({"line": line_no, "item": item.strip(), "kind": kind})
+
+    lines = text.splitlines()
+    n = len(lines)
+    in_fence = False
+    i = 0
+    while i < n:
+        line = lines[i]
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            i += 1
+            continue
+        if in_fence:
+            i += 1
+            continue
+        for rx in SRC_BUTTON_RES:
+            for m in rx.finditer(line):
+                add(i + 1, m.group(1), "按钮/操作")
+        cells = split_row(line) if "|" in line else []
+        hit_cols = [k for k, c in enumerate(cells)
+                    if any(h in clean_cell(c) for h in SRC_TABLE_HEAD_KEYS)
+                    and not any(x in clean_cell(c) for x in SRC_TABLE_COL_EXCLUDE)]
+        if (hit_cols and i + 1 < n and "|" in lines[i + 1]
+                and is_separator_row(split_row(lines[i + 1]))
+                and not is_table_d_header(cells)):
+            header_words = {norm_item(c) for c in cells} | set(SRC_TABLE_HEAD_KEYS)
+            j = i + 2
+            while j < n and "|" in lines[j]:
+                rc = split_row(lines[j])
+                if not is_separator_row(rc):
+                    for k in hit_cols:
+                        if k >= len(rc):
+                            continue
+                        for part in _SRC_MULTI_SPLIT.split(rc[k]):
+                            val = part.strip().strip("*`").strip()
+                            key = clean_cell(val)
+                            if key and len(key) <= 30 and norm_item(val) not in header_words:
+                                add(j + 1, val, "表格条目")
+                for rx in SRC_BUTTON_RES:
+                    for m in rx.finditer(lines[j]):
+                        add(j + 1, m.group(1), "按钮/操作")
+                j += 1
+            i = j
+            continue
+        i += 1
+    return {"file": rel, "items": items}
+
+
+def _covered(key: str, d: str) -> bool:
+    """原文条目 key 是否被表 D 条目 d 覆盖:精确相等,或 d 单向包含 key 且 key 够长。⛔ 不认 key 包含 d。"""
+    return key == d or (len(key) >= MIN_CONTAIN_LEN and key in d)
+
+
+def source_coverage(source_files: List[Path], source_root: Path, results: List[Dict]) -> Dict:
+    d_items = [norm_item(r["item"]) for res in results for r in res.get("rows", [])]
+    d_items = [x for x in d_items if len(x) >= 2]
+    per_file: List[Dict] = [extract_source_items(f, source_root) for f in source_files]
+    uncovered: List[Dict] = []
+    total = 0
+    for pf in per_file:
+        for it in pf.get("items", []):
+            total += 1
+            key = norm_item(it["item"])
+            if not any(_covered(key, d) for d in d_items):
+                uncovered.append({"file": pf["file"], **it})
+    return {"files": per_file, "items_total": total, "uncovered": uncovered,
+            "read_errors": [pf for pf in per_file if pf.get("read_error")]}
+
+
 def scan_file(path: Path, root: Path) -> Dict:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -153,7 +272,7 @@ def scan_file(path: Path, root: Path) -> Dict:
         if "|" not in line:
             i += 1
             continue
-        # ⚠️ GFM 表头必须**紧跟分隔行**。不校验这一条时，任何**散文行**
+        # ⚠️ GFM 表头必须**紧跟分隔行**（2026-08-23 补）。不校验这一条时，任何**散文行**
         # 或**别的表的数据行**只要凑齐了那几个列名词就会被当成表头 —— 实测本 SKILL 自己的
         # SKILL.md「参考资源」表里描述本脚本用途的一行（正文恰好含「处置」「PRD 位置」
         # 「条目内容」）被判成表 D 表头，随后其下两行被当作「未分类条目」，
@@ -206,7 +325,7 @@ def scan_file(path: Path, root: Path) -> Dict:
     # ── 覆盖率判据 ──
     total = len(rows)
     unclassified = [r for r in rows if not r["classified"]]
-    # ⚠️ 「表 D 存在但零条目」绝不能算 100%：`cov = … if total else 100.0`
+    # ⚠️ 「表 D 存在但零条目」绝不能算 100%（2026-08-23 补）：`cov = … if total else 100.0`
     # 让一张只有表头+分隔行的空壳表拿到「覆盖率 100.0% ✅ 通过」——表 D 是模式 B 的
     # Critical 强制产物，贴个空表头就能过反向覆盖率闸门，是标准的统计口径空转。
     # 与「压根没有表 D」判然不同：那是模式 A 的合法形态，由 has_table_d=False 分支返回 0。
@@ -245,6 +364,7 @@ def scan_file(path: Path, root: Path) -> Dict:
         "legacy_row_count": len(legacy_rows),
         "deferred_count": len(deferred_rows),
         "q_item_count": q_item_count,
+        "rows": rows,
     }
 
 
@@ -255,8 +375,9 @@ def render_text(results: List[Dict], failed: bool) -> str:
     any_table_d = any(r.get("has_table_d") for r in results)
     if not any_table_d:
         out.append("ℹ️ 未在任何 .md 中发现「表 D：PRD 条目映射表」表头。")
-        out.append("   → 无产品原始 PRD 源(模式 A 纯原型逆向):退出码 0 跳过,不判错。")
-        out.append("   → 探测到产品原始 PRD 源(`产品提供/` 或 --prd-source)却无表 D:模式 B 漏表 D,退出码 1。")
+        out.append("   → 模式 A(纯原型逆向,无产品需求文档)或表 D 标 N/A:退出码 0 跳过,不判错。")
+        out.append("   → 历史存量无表 D:grandfather 放行(退出码 0),建议后续新生成补齐表 D 走反向覆盖校验。")
+        out.append("   → 若本次为模式 B(有产品需求文档)新生成却无表 D,QR Agent 应判维度 13 不通过(缺表 D 条目化)。")
         return "\n".join(out)
 
     for r in results:
@@ -302,27 +423,68 @@ def render_text(results: List[Dict], failed: bool) -> str:
     return "\n".join(out)
 
 
+def render_source(src: Dict, any_table_d: bool) -> str:
+    out: List[str] = ["", "=== 以产品原文为基准的条目反向覆盖(--prd-source) ==="]
+    out.append(f"   产品原文 {len(src['files'])} 份,抽到高精度原子条目 {src['items_total']} 条"
+               "(只取按钮/操作名 + 字段/列/按钮/操作类表格列;散文条目须 Agent 逐条比对)")
+    if src["items_total"] == 0:
+        out.append("   ⚠️[zero_items] 产品原文一条高精度条目都没抽到 —— 这 ≠ 原文已全覆盖:"
+                   "原文没有引号按钮名/字段类表格,全部条目须由 QR Agent 逐条人工比对表 D")
+    for pf in src["read_errors"]:
+        out.append(f"   [读取失败] {pf['file']}: {pf['read_error']}")
+    if not any_table_d:
+        out.append("   ❌[S0] 传了产品原文,研发 PRD 却无「表 D：PRD 条目映射表」—— 模式 B 漏表 D")
+    if src["uncovered"]:
+        out.append(f"   ❌[S1] 产品原文条目未进表 D {len(src['uncovered'])} 条:")
+        for u in src["uncovered"]:
+            out.append(f"      - {u['file']}:L{u['line']} [{u['kind']}] {u['item']}")
+    elif any_table_d:
+        out.append("   ✅ 抽到的产品原文条目均已进表 D")
+    return "\n".join(out)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("path", type=Path, nargs="?", help="PRD 文件或目录")
-    parser.add_argument("--prd-source", type=Path, default=None,
-                        help="产品原始 PRD 目录(缺省自动探测同级/父级 产品提供/)")
+    parser.add_argument("path", type=Path, nargs="?", help="研发 PRD 文件或目录")
     parser.add_argument("--json", action="store_true", help="JSON 格式输出")
-    parser.add_argument("--self-check", action="store_true", help="阳性对照自检")
+    parser.add_argument("--prd-source", type=Path, default=None,
+                        help="产品原始 PRD 文件或目录(.md/.txt);传了即以产品原文为基准做条目反向覆盖")
+    parser.add_argument("--self-check", action="store_true", help="运行内建阳性/阴性对照(独立模式)")
     args = parser.parse_args(argv)
+
     if args.self_check:
-        return self_check()
+        if args.path is not None or args.json or args.prd_source is not None:
+            print("错误: --self-check 不能与 path / --json / --prd-source 同时使用", file=sys.stderr)
+            return 2
+        return run_self_check()
     if args.path is None:
-        parser.error("需要 <PRD 文件或目录>(或使用 --self-check)")
+        print("错误: 缺少研发 PRD 文件或目录(或使用 --self-check)", file=sys.stderr)
+        return 2
 
     if not args.path.exists():
         print(f"错误: 路径不存在 {args.path}", file=sys.stderr)
         return 2
 
+    source_files: List[Path] = []
+    if args.prd_source is not None:
+        if not args.prd_source.exists():
+            print(f"错误: --prd-source 路径不存在 {args.prd_source}", file=sys.stderr)
+            return 2
+        source_files = find_source_files(args.prd_source)
+        if not source_files:
+            print(f"错误: --prd-source 下未发现任何 .md/.txt 文件(单文件须为 .md/.txt 后缀) {args.prd_source}",
+                  file=sys.stderr)
+            return 2
+
     root = args.path if args.path.is_dir() else args.path.parent
     md_files = find_md_files(args.path)
+    if args.prd_source is not None:
+        src_resolved = {f.resolve() for f in source_files}
+        src_dir = args.prd_source.resolve() if args.prd_source.is_dir() else None
+        md_files = [f for f in md_files if f.resolve() not in src_resolved
+                    and not (src_dir is not None and src_dir in f.resolve().parents)]
     if not md_files:
         print("⚠️ 未发现任何 .md 文件", file=sys.stderr)
         return 2
@@ -330,75 +492,150 @@ def main(argv: Optional[List[str]] = None) -> int:
     results = [scan_file(f, root) for f in md_files]
 
     # ⚠️ 读不出来 ≠ 没有违规:全部文件都读失败时判**环境错(2)**,绝不静默计为通过。
-    #    (同 skill 的 check_technical_content.py 已做对,此处对齐;全仓退出码约定同款。)
+    #    (同 skill 的 check_technical_content.py 已做对,此处对齐;统一退出码约定同款。)
     _read_errs = [r for r in results if isinstance(r, dict) and r.get("read_error")]
     if _read_errs and len(_read_errs) == len(results):
         for _r in _read_errs:
             print(f"错误: 无法读取 {_r['file']}: {_r['read_error']}", file=sys.stderr)
         return 2
 
+    src: Optional[Dict] = None
+    if args.prd_source is not None:
+        src_root = args.prd_source if args.prd_source.is_dir() else args.prd_source.parent
+        src = source_coverage(source_files, src_root, results)
+        if len(src["read_errors"]) == len(source_files):
+            for pf in src["read_errors"]:
+                print(f"错误: 无法读取产品原文 {pf['file']}: {pf['read_error']}", file=sys.stderr)
+            return 2
+    # rows 只供 --prd-source 比对用,不进输出(缺省调用的输出保持不变)
+    for r in results:
+        r.pop("rows", None)
+
     any_table_d = any(r.get("has_table_d") for r in results)
     total_unclassified = sum(len(r.get("unclassified", [])) for r in results)
-    prd_sources = find_prd_sources(args.path, args.prd_source)
-    # 判错:存在表 D 且有未分类条目;或有产品原始 PRD 源却无表 D(模式 B 漏表 D)
-    missing_table_d = (not any_table_d) and bool(prd_sources)
-    failed = (any_table_d and total_unclassified > 0) or missing_table_d
+    # 判错:仅当存在表 D 且有未分类条目
+    failed = any_table_d and total_unclassified > 0
+    if src is not None:
+        failed = failed or not any_table_d or bool(src["uncovered"])
     exit_code = 1 if failed else 0
 
     if args.json:
-        print(json.dumps({
+        payload = {
             "command": "check_prd_item_coverage",
             "has_table_d": any_table_d,
-            "prd_source_files": [str(p) for p in prd_sources],
-            "missing_table_d": missing_table_d,
             "total_unclassified": total_unclassified,
             "failed": failed,
             "exit_code": exit_code,
             "files": results,
-        }, ensure_ascii=False, indent=2))
+        }
+        if src is not None:
+            payload["prd_source"] = {
+                "path": str(args.prd_source),
+                "files": [pf["file"] for pf in src["files"]],
+                "items_total": src["items_total"],
+                "zero_items": src["items_total"] == 0,
+                "missing_table_d": not any_table_d,
+                "uncovered": src["uncovered"],
+                "read_errors": src["read_errors"],
+            }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(render_text(results, failed))
-        if missing_table_d:
-            print(f"❌ 判定:发现 {len(prd_sources)} 份产品原始 PRD(如 {prd_sources[0]}),研发 PRD 却无「表 D：PRD 条目映射表」"
-                  "——模式 B 必须产出表 D,维度 13 不通过(退出码 1)。")
+        if src is None:
+            print(render_text(results, failed))
+        else:
+            print(render_text(results, any_table_d and total_unclassified > 0))
+            print(render_source(src, any_table_d))
+            if failed:
+                print("\n❌ 判定(含产品原文基准):不通过(退出码 1)。")
+            else:
+                print("\n✅ 判定(含产品原文基准):通过(退出码 0)。")
 
     return exit_code
 
 
-def self_check() -> int:
-    """阳性对照:有产品 PRD 无表 D → 1;表 D 含未分类 → 1;无产品 PRD 无表 D → 0;表 D 全分类 → 0。"""
-    import tempfile, io, contextlib
-    good = "| PRD 位置 | 条目内容 | 研发需求落点 | 处置 |\n|---|---|---|---|\n| §1 | 导出订单 | REQ-001 | 已承接 |\n"
-    bad = good.replace("已承接", "")
-    ok = True
-    with tempfile.TemporaryDirectory() as t:
-        v = Path(t) / "V1.0.0"
-        (v / "研发需求").mkdir(parents=True)
-        cases = []
-        (v / "研发需求" / "01_x.md").write_text("# 无表D\n", encoding="utf-8")
-        cases.append(("无产品PRD无表D", 0))
-        def run():
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                return main([str(v / "研发需求")])
-        got = run()
-        if got != 0:
-            print(f"[self-check] FAIL 无产品PRD无表D 期望 0 实得 {got}"); ok = False
-        (v / "产品提供").mkdir()
-        (v / "产品提供" / "PRD.md").write_text("# 产品需求\n导出订单\n", encoding="utf-8")
-        got = run()
-        if got != 1:
-            print(f"[self-check] FAIL 有产品PRD无表D 期望 1 实得 {got}"); ok = False
-        (v / "研发需求" / "01_x.md").write_text(bad, encoding="utf-8")
-        got = run()
-        if got != 1:
-            print(f"[self-check] FAIL 表D未分类 期望 1 实得 {got}"); ok = False
-        (v / "研发需求" / "01_x.md").write_text(good, encoding="utf-8")
-        got = run()
-        if got != 0:
-            print(f"[self-check] FAIL 表D全分类 期望 0 实得 {got}"); ok = False
-    print("[self-check] OK" if ok else "[self-check] FAILED")
-    return 0 if ok else 1
+_SC_TABLE_D = ("| PRD 位置 | 条目内容 | 研发需求落点 | 处置 |\n| :- | :- | :- | :- |\n"
+               "| §2 操作表 | 导出订单 | REQ-001 | 已承接 |\n"
+               "| §3 字段表 | 订单编号 | REQ-002 | 已承接 |\n")
+_SC_SOURCE = ("# 订单管理(示例)\n\n点击「导出」按钮,导出当前筛选结果。\n\n"
+              "| 字段 | 说明 |\n| :- | :- |\n| 订单编号 | 唯一 |\n")
+
+
+def run_self_check() -> int:
+    """阳性/阴性对照:(名称, 研发 PRD 内容, 产品原文内容或 None, 期望退出码, 期望命中)。"""
+    cases = [
+        ("表D全分类-无原文", _SC_TABLE_D, None, 0, None),
+        ("表D未分类-无原文", _SC_TABLE_D.replace("| REQ-001 | 已承接 |", "| REQ-001 |  |"), None, 1, "unclassified"),
+        ("无表D-无原文-放行", "# 研发 PRD\n\n无表 D。\n", None, 0, None),
+        ("原文条目全覆盖", _SC_TABLE_D, _SC_SOURCE, 0, None),
+        ("原文条目漏进表D", _SC_TABLE_D.replace("| §3 字段表 | 订单编号 | REQ-002 | 已承接 |\n", ""),
+         _SC_SOURCE, 1, "uncovered:订单编号"),
+        ("原文按钮漏进表D", _SC_TABLE_D.replace("导出订单", "查询订单"), _SC_SOURCE, 1, "uncovered:导出"),
+        ("有原文无表D", "# 研发 PRD\n\n无表 D。\n", _SC_SOURCE, 1, "missing_table_d"),
+        ("散文不抽条目", _SC_TABLE_D, "# 背景\n\n本系统用于管理订单,支持多种业务场景与统计报表。\n", 0, "zero_items"),
+        # 单向匹配:表 D 泛词「订单」不得反向覆盖原文「导出订单」「订单编号」
+        ("泛词不反向覆盖", _SC_TABLE_D.replace("导出订单", "订单").replace("| 订单编号 |", "| 订单 |"),
+         "# 原文\n\n点击「导出订单」。\n\n| 字段 | 说明 |\n| :- | :- |\n| 订单编号 | 唯一 |\n",
+         1, "uncovered:导出订单,订单编号"),
+        # 任一列命中:字段列不在首列也要取;序号/说明列不取
+        ("非首列字段列", _SC_TABLE_D, "# 原文\n\n| 序号 | 字段 | 说明 |\n| :- | :- | :- |\n| 1 | 下单时间 | 精确到秒 |\n",
+         1, "uncovered:下单时间"),
+        # 步骤/预期列不取;取值恰为表头词本身不算条目
+        ("步骤预期列不取", _SC_TABLE_D,
+         "# 原文\n\n| 序号 | 操作步骤 | 预期结果 |\n| :- | :- | :- |\n| 1 | 打开列表页 | 展示全部订单 |\n\n"
+         "| 操作 | 备注 |\n| :- | :- |\n| 操作 | 表头复写行 |\n", 0, "zero_items"),
+        # 同格多值逐个成条
+        ("同格多值拆分", _SC_TABLE_D, "# 原文\n\n| 列名 | 操作 |\n| :- | :- |\n| 订单编号 | 导出订单、作废订单 |\n",
+         1, "uncovered:作废订单"),
+    ]
+    failures: List[str] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="prd-item-selfcheck-") as td:
+            for idx, (name, dev, source, rc, hit) in enumerate(cases):
+                base = Path(td) / f"case{idx:02d}"
+                (base / "研发需求").mkdir(parents=True)
+                (base / "研发需求" / "01_PRD.md").write_text(dev, encoding="utf-8")
+                argv = [str(base / "研发需求"), "--json"]
+                if source is not None:
+                    (base / "产品原文").mkdir()
+                    (base / "产品原文" / "产品PRD.md").write_text(source, encoding="utf-8")
+                    argv += ["--prd-source", str(base / "产品原文")]
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    got = main(argv)
+                payload = json.loads(buf.getvalue())
+                ok = got == rc
+                if hit == "unclassified":
+                    ok = ok and payload["total_unclassified"] > 0
+                elif hit == "missing_table_d":
+                    ok = ok and payload["prd_source"]["missing_table_d"] is True
+                elif hit == "zero_items":
+                    ok = ok and payload["prd_source"]["zero_items"] is True
+                elif hit and hit.startswith("uncovered:"):
+                    got_items = sorted(u["item"] for u in payload["prd_source"]["uncovered"])
+                    ok = ok and got_items == sorted(hit.split(":", 1)[1].split(","))
+                if source is not None and hit != "zero_items":
+                    ok = ok and payload["prd_source"]["zero_items"] is False
+                print(f"SELF-CHECK {name}: {'PASS' if ok else 'FAIL'}")
+                if not ok:
+                    failures.append(f"{name}: rc={got}, payload={payload}")
+            # --prd-source 单文件后缀白名单:非 .md/.txt 判入参错
+            bad = Path(td) / "产品PRD.docx"
+            bad.write_text(_SC_SOURCE, encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                got = main([str(Path(td) / "case00" / "研发需求"), "--prd-source", str(bad)])
+            ok = got == 2
+            print(f"SELF-CHECK 单文件后缀白名单: {'PASS' if ok else 'FAIL'}")
+            if not ok:
+                failures.append(f"单文件后缀白名单: rc={got}")
+    except OSError as exc:
+        print(f"SELF-CHECK 环境错误: {exc}", file=sys.stderr)
+        return 2
+    if failures:
+        for f in failures:
+            print(f"  {f}", file=sys.stderr)
+        return 1
+    print(f"SELF-CHECK 通过: {len(cases) + 1}/{len(cases) + 1}")
+    return 0
 
 
 if __name__ == "__main__":

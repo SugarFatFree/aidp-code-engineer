@@ -1,18 +1,35 @@
 # 质量检查派发流程(QR Dispatch)+ 检查报告模板
 
-> ⚠️ **派发时必须显式转发 `client_mcp` 与旧 Web `webmcp_enabled`(取 `true`/`false`,由调用方给;Web+WebMCP 启用时另传
 > 本文件是 `SKILL.md` 的 QR **派发流程**分片(bash 硬核回检命令 + 子 Agent prompt + 报告模板 + 循环终止),按需 Read。
 > **21 维度清单本身不在这里**,在 [`quality-review-checklist.md`](./quality-review-checklist.md) —— 清单是「查什么」,本文件是「谁来查、怎么派、跑哪些脚本、报告长什么样」。
 
 ## Post-Generation Quality Review (用例生成后独立检查)
 
-**强制要求:**用例生成后必须调用独立 Agent 执行 **21 维度检查**(覆盖率核验 6 项 + 用例质量 7 项 + 结构 1 项 + 流程 2 项 + 需求字段对账 1 项 + 完备性度量 2 项 + **条件启用 1 项**〔维度 20 仅调用方显式声明 `client_mcp.enabled` 或旧 Web `webmcp_enabled` 时存在,否则连行都不留〕+ **通用还原度 1 项**〔维度 21〕),发现问题修订后重试,最多 3 轮。**其中"PRD 功规点 100% 覆盖"是最高优先级,任何遗漏都判定为 Critical 不通过;"自测方案对齐与引用闭环"为前置门槛,缺方案 / 缺引用直接整体不通过。**
+**强制要求:**用例生成后必须调用独立 Agent 执行 **21 维度检查**(覆盖率核验 6 项 + 用例质量 7 项 + 结构 1 项 + 流程 2 项 + 需求字段对账 1 项 + 完备性度量 2 项 + **条件启用 1 项**〔维度 20 仅 `webmcp_enabled: true` 时存在,否则连行都不留〕+ **通用还原度 1 项**〔维度 21〕),发现问题修订后重试,最多 3 轮。**其中"PRD 功规点 100% 覆盖"是最高优先级,任何遗漏都判定为 Critical 不通过;"自测方案对齐与引用闭环"为前置门槛,缺方案 / 缺引用直接整体不通过。**
 
 > 🧹 **执行主体与上下文隔离(Critical):** 本节全部检查——`🛡️ 落盘后 bash 硬核回检` 的 7 条脚本 **+** 21 维度语义审查——一律在**独立子 Agent**内完成。主流程**禁止**在当前对话上下文内联跑脚本或内联逐维度自查(脚本输出与逐项核对会挤占/污染主上下文)。主流程只负责:① 派发子 Agent(传入用例/PRD/详细设计/执行计划/自测方案路径);② 接收子 Agent 回传的**精简结构化报告**(含每个脚本退出码 + 各维度通过/不通过 + 修订建议);③ 据报告决定修订并重新派发,循环至全部通过或达 3 轮上限。
 
+### 编排层模式(显式传入 `qr_level` 时;不传则本节不适用、一切照现状)
+
+> 协议全文见 [`flow-orchestration.md`](./flow-orchestration.md),这里只列派发时要多做的四件事:
+>
+> 1. **派发前**:QR 子 Agent 在步骤 0 之前先跑 `python3 <SKILL_DIR>/scripts/qr_orchestration.py plan --qr-level <档位>`,
+>    语义审只做 `semantic_dims` 里的维度;**机器门(下方 bash 硬核回检)照旧全量跑**,一条不裁。
+> 2. **回传**:只回传紧凑 JSON(`skill / qr_level / round / dims / blocking / deferred_dims`),⛔ 不贴脚本原始输出与长段落;
+>    `dims[]` 一行不少,移交的维度 `verdict = deferred`;主流程用 `qr_orchestration.py validate-result -` 校验,不合格按未完成重派。
+> 3. **收敛后**:`qr_level ≠ full` 时主流程执行 `qr_orchestration.py handoff --qr-level <档位> --write <产物目录>/00_索引.md` 写「QR 移交清单」。
+> 4. **打点**:每轮 QR / 每轮修复的开始与结束各输出一行 `[AIDP-STAGE]`(`qr_orchestration.py stage ...` 生成)。
+
+> **本 SKILL 的规模控制入参**(细则 [`flow-scale-control.md`](./flow-scale-control.md),只在编排层传了非缺省值时生效):
+> 步骤 0 的命令随入参追加参数——`plan_ref_mode=deferred` → `check_suite_upstream.py ... --plan-ref-mode deferred`;
+> `module_case_cap=N` → `check_case_stats.py ... --scale L --module-case-cap N`;
+> `prd_presence_mode=table` → `check_case_stats.py ... --prd-presence-table <表路径>`;
+> `module_kind=non_interactive|auto` → `check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 三条都追加 `--module-kind <值>`(不带则 `[非交互]` 标记不生效)。
+> 维度 1 / 13 / 18 / 19 / 7 / 8 / 21 的读法调整见该文件第六节;⛔ 未传对应入参时不得自行带这些参数。
+
 ### 🛡️ 落盘后 bash 硬核回检(子 Agent 强制第一步,先于语义维度审查)
 
-> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(本项目 = `{{AIDP_HOME}}/skills/dev-manual-testcase`),由子 Agent 在执行前替换。
+> **`<SKILL_DIR>` 占位符:** SKILL 实际安装位置(安装后 = `{{AIDP_HOME}}/skills/dev-manual-testcase`;`{{AIDP_HOME}}` 由安装方渲染、相对被测项目根,约定见 SKILL.md「运行路径约定」),由子 Agent 在执行前替换。
 
 **用例文档落盘后,以下 bash 一次性回检脚本由下方派发的**质量检查子 Agent**作为强制第一步执行(见子 Agent prompt 步骤 0),任一命中即拒绝标记完成、强制重写违规段落。主流程**禁止**在当前上下文内联运行这些脚本:**
 
@@ -97,14 +114,15 @@ python3 <SKILL_DIR>/scripts/check_residual_assertions.py <用例路径或目录>
 Agent({
   description: "自测用例质量检查",
   subagent_type: "general-purpose",
-  prompt: "你是一位资深 QA Lead。**开始前先 Read `{SKILL_DIR}/references/quality-review-checklist.md`——21 维度的判据全文以该文件为唯一信源**(本派发文件只列索引、不含判据)。然后对 {用例文档路径} 执行 21 维度检查,严格对照 PRD {PRD路径}、详细设计 {设计路径}、研发执行计划 {计划路径}(增量模式)、研发自测方案 {自测方案路径}、测试设计方法论 {SKILL_DIR}/references/test-design-methodology.md、**原型内容基线 {原型内容基线路径/DESIGN-MANIFEST 路径}(AIDP,若上游已产出则强制消费为维度 18『原型内容基线覆盖度』的对照基准,无则回退对照原型 code/ 现场;路径自适应项目结构、不臆造)**。
+  prompt: "  【编排层模式】本轮 qr_level = {未传则写「未传」}。未传 → 下文一切照旧。已传 → ① 步骤 0 之前先跑 python3 {SKILL_DIR}/scripts/qr_orchestration.py plan --qr-level <档位>,语义审只做输出 semantic_dims 里的维度,机器门照旧全量跑一条不裁;② 最终只回传紧凑 JSON(skill/qr_level/round/dims/blocking/deferred_dims,schema 见 references/flow-orchestration.md 第四节),dims 一行不少、移交维度 verdict=deferred,⛔ 不回传报告正文与脚本原始输出(下文要求的报告格式在此模式下不适用);③ 回传前自跑 qr_orchestration.py validate-result - --expect-level <档位>,exit 0 才回传。
+  你是一位资深 QA Lead。**开始前先 Read `{SKILL_DIR}/references/quality-review-checklist.md`——21 维度的判据全文以该文件为唯一信源**(本派发文件只列索引、不含判据)。然后对 {用例文档路径} 执行 21 维度检查,严格对照 PRD {PRD路径}、详细设计 {设计路径}、研发执行计划 {计划路径}(增量模式)、研发自测方案 {自测方案路径}、测试设计方法论 {SKILL_DIR}/references/test-design-methodology.md、**原型内容基线 {原型内容基线路径/DESIGN-MANIFEST 路径}(AIDP,若上游已产出则强制消费为维度 18『原型内容基线覆盖度』的对照基准,无则回退对照原型 code/ 现场;路径自适应项目结构、不臆造)**。
 
   **应用业务工具门控:** `client_mcp` 或旧 Web `webmcp_enabled` 只消费调用方显式声明,均未启用时维度 20 不留行;新旧客户端/启停/形态冲突明确报错。启用时读 `{SKILL_DIR}/references/flow-client-mcp.md` 先核应用自有工具,仅 Web+WebMCP 再读 `flow-webmcp.md` 核原 Web 双窗口九项;非 Web 只验已证实应用服务/桥接,测试驱动 MCP 不构成应用提供业务工具的证据。
 
   **关键认知:用例采用'测试套件 (Test Suite)'组织方式** — 一次登录后连续测试多个功能,只在套件开始时走入口流程,套件内用例通过菜单切换连续执行。检查时需验证套件结构而非每条用例的独立入口。
 
   执行步骤(必须按顺序):
-  0. **(先于一切,强制)** 逐个运行本 SKILL『🛡️ 落盘后 bash 硬核回检』列出的全部脚本(将 <SKILL_DIR> 替换为本 SKILL 实际安装目录):check_testcase_suite.py、check_suite_upstream.py --check-step-acceptance、check_test_plan_alignment.py、check_testcase_format.py、check_case_stats.py、**check_fidelity_suite.py --json(→维度 21 通用还原度套件,Critical;⛔ bash 块里的脚本漏进本枚举就等于没跑 —— 硬门不跑 = 假绿)**、**check_residual_assertions.py --json(→维度 18「零残留断言登记表」子条;⚠️ **必须传目录**,Z1/Z6 是跨文件聚合判定)**。把**每个脚本的退出码 + 报告正文原样贴进报告**作为证据;**除退出码 2（入参/环境错——修正参数后重跑、**不计维度失败**）外,任一退出码非 0 即对应维度(7 套件结构 / 13 数据一致性与溯源 / 16 自测方案对齐 / 8 步骤四要素 / 9 元素定位 / 14 拆分一致性 / 19 完备性度量)直接判不通过**,无需再做语义判断。**五点例外**:① `check_testcase_format.py` 退出码 1 **仅由 Critical**(四要素缺失 / 代码级动作 / 缺总览主文档 / 重复 TC-ID)触发,而**维度 9 DOM 选择器、维度 14 命名/语义前缀属 Important、退出码可能为 0**——子 Agent **必须再读该脚本 `--json` 的 `by_level.Important` 明细**并入维度 9/14 判定,不可只看退出码;② `check_suite_upstream.py --check-step-acceptance` 的**用例步骤验收锚点覆盖率(维度 13.0.1 B 项)是 warning-only**,覆盖率 < 95% **不触发退出码 1**——子 Agent **必须再读该脚本 `--json` 的 `step_acceptance_coverage` 字段**(< 0.95 即维度 13 B 项不通过),不可只看退出码;③ `check_case_stats.py` 的**优先级分布偏离目标区间是 warning-only、不触发退出码 1**——子 Agent **必须再读该脚本 `--json` 的 `priority_distribution` 字段**并入维度 19 判定;④ `check_testcase_suite.py` 的 **Info 级 `legacy_suite_prefix` / `legacy_case_prefix`**(历史兼容的套件/用例标题形态)是 **report-only**、不进「发现 N 个问题」计数、不影响退出码——**不得据此判维度 7 不通过**(存量文档 grandfather 放行);该脚本仅 Info 时照常打印 `✅ 通过`,提示另起一段列出,子 Agent 贴报告正文时两段都要贴;⑤ 七个脚本的退出码 **2 = 输入路径错误**(修正参数后重跑,非维度违规);⑥ `check_residual_assertions.py` 的 **Z1(有零残留断言却缺登记表)是 Important、不触发退出码 1**——须读 `--json` 的 `findings` 里 level=Important 的条目并入维度 18 判定,不能只看退出码;其 `skipped=true` 表示整档没跑、**不等于通过**;
+  0. **(先于一切,强制)** 逐个运行本 SKILL『🛡️ 落盘后 bash 硬核回检』列出的全部脚本(将 <SKILL_DIR> 替换为本 SKILL 实际安装目录):check_testcase_suite.py、check_suite_upstream.py --check-step-acceptance、check_test_plan_alignment.py、check_testcase_format.py、check_case_stats.py、**check_fidelity_suite.py --json(→维度 21 通用还原度套件,Critical;此前只写在上方 bash 块里、没进本枚举,等于没跑 —— 硬门不跑 = 假绿)**、**check_residual_assertions.py --json(→维度 18「零残留断言登记表」子条;⚠️ **必须传目录**,Z1/Z6 是跨文件聚合判定)**。把**每个脚本的退出码 + 报告正文原样贴进报告**作为证据;**除退出码 2（入参/环境错——修正参数后重跑、**不计维度失败**）外,任一退出码非 0 即对应维度(7 套件结构 / 13 数据一致性与溯源 / 16 自测方案对齐 / 8 步骤四要素 / 9 元素定位 / 14 拆分一致性 / 19 完备性度量)直接判不通过**,无需再做语义判断。**五点例外**:① `check_testcase_format.py` 退出码 1 **仅由 Critical**(四要素缺失 / 代码级动作 / 缺总览主文档 / 重复 TC-ID)触发,而**维度 9 DOM 选择器、维度 14 命名/语义前缀属 Important、退出码可能为 0**——子 Agent **必须再读该脚本 `--json` 的 `by_level.Important` 明细**并入维度 9/14 判定,不可只看退出码;② `check_suite_upstream.py --check-step-acceptance` 的**用例步骤验收锚点覆盖率(维度 13.0.1 B 项)是 warning-only**,覆盖率 < 95% **不触发退出码 1**——子 Agent **必须再读该脚本 `--json` 的 `step_acceptance_coverage` 字段**(< 0.95 即维度 13 B 项不通过),不可只看退出码;③ `check_case_stats.py` 的**优先级分布偏离目标区间是 warning-only、不触发退出码 1**——子 Agent **必须再读该脚本 `--json` 的 `priority_distribution` 字段**并入维度 19 判定;④ `check_testcase_suite.py` 的 **Info 级 `legacy_suite_prefix` / `legacy_case_prefix`**(历史兼容的套件/用例标题形态)是 **report-only**、不进「发现 N 个问题」计数、不影响退出码——**不得据此判维度 7 不通过**(存量文档 grandfather 放行);该脚本仅 Info 时照常打印 `✅ 通过`,提示另起一段列出,子 Agent 贴报告正文时两段都要贴;⑤ 七个脚本的退出码 **2 = 输入路径错误**(修正参数后重跑,非维度违规);⑥ `check_residual_assertions.py` 的 **Z1(有零残留断言却缺登记表)是 Important、不触发退出码 1**——须读 `--json` 的 `findings` 里 level=Important 的条目并入维度 18 判定,不能只看退出码;其 `skipped=true` 表示整档没跑、**不等于通过**;
   1. 读取 PRD,提取所有功规点(章节、小节、字段、状态、角色、异常路径);
   2. 读取详细设计,提取所有字段规格(校验规则、长度、必填)、字典枚举、状态机;
   3. 读取用例文档,识别套件结构(套件 ID、入口流程 Suite Setup、用例列表、承接前置关系);
@@ -151,11 +169,11 @@ Agent({
 
 ### 21 维度检查清单
 
-> 分为八组:**覆盖率核验类(维度 1-6,对照外部文档)** + **用例质量类(维度 7-13,用例本身规范)** + **结构类(维度 14,仅多文件)** + **流程类(维度 15-16,不中断原则 + 自测方案对齐)** + **需求字段对账类(维度 17,对照需求字段清单(语义) /『需求字段→处置』对照表)** + **完备性度量类(维度 18-19,对照测试设计方法论:覆盖矩阵逐维 + 原型内容基线覆盖度(AIDP 元素/交互态/操作逻辑) + 数量基线/优先级/统计摘要)** + **条件启用类(维度 20,仅调用方显式声明 `client_mcp.enabled` 或旧 Web `webmcp_enabled` 时存在;未启用连行都不留)** + **通用还原度类(维度 21,四类页面固定模板用例,不看业务语义)**。
+> 分为八组:**覆盖率核验类(维度 1-6,对照外部文档)** + **用例质量类(维度 7-13,用例本身规范)** + **结构类(维度 14,仅多文件)** + **流程类(维度 15-16,不中断原则 + 自测方案对齐)** + **需求字段对账类(维度 17,对照需求字段清单(语义) /『需求字段→处置』对照表)** + **完备性度量类(维度 18-19,对照测试设计方法论:覆盖矩阵逐维 + 原型内容基线覆盖度(AIDP 元素/交互态/操作逻辑) + 数量基线/优先级/统计摘要)** + **条件启用类(维度 20,仅调用方传 `webmcp_enabled: true` 时存在;未启用连行都不留)** + **通用还原度类(维度 21,四类页面固定模板用例,不看业务语义)**。
 
 ---
 
-> ⚠️ **派发时必须显式转发 `webmcp_enabled`(取 `true`/`false`,由调用方给;`true` 时另传
+> ⚠️ **派发时必须显式转发 `client_mcp` 与旧 Web `webmcp_enabled`(取 `true`/`false`,由调用方给;Web+WebMCP 启用时另传
 > `webmcp_entry_symbols` / `webmcp_launch_command`)。** checklist 写死了「⛔ 严禁子 Agent 自行
 > 探测是否启用」+「未传 → 整维度跳过」,不转发则子 Agent **永远拿不到 `true`**,维度 20 只会走
 > 跳过分支、成为死代码,而对外仍声称 21 维度。**转发的是入参、不是产物位**,与「未启用不留痕」
@@ -163,7 +181,10 @@ Agent({
 
 ### 🎯 21 维度清单（**判据全文见 `quality-review-checklist.md`，此处只列索引**）
 
-> ⚠️ **本文件不内嵌维度正文**——逐字副本必然与权威清单漂移，QR 子 Agent 读到漂移副本就会漏判。
+> ⚠️ **本文件不再内嵌维度正文。** 此处曾有一份 164 行的逐字副本，且已与权威清单漂移——
+> 维度 18 的不通过标志副本只有 7 条（权威 9 条，缺「裁剪/延期项缺 `[反向-残留]` 反向断言」、
+> 「语义变更展示位缺 `[文案一致性]` 用例或只有正向断言」等），维度 18 的「⭐ 子条：语义/口径
+> 变更类文案一致性」整段缺失，维度 19 无任何 scale 档位口径。QR 子 Agent 读到的正是这份漂移副本。
 > 按仓库约定「QR 双文件分工（勿合并）」：本文件只管**派发流程**，清单本身归 `quality-review-checklist.md`。
 
 - 维度 1:PRD 功规点 100% 覆盖(**最高优先级**) → 详见 `quality-review-checklist.md` > 维度 1

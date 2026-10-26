@@ -12,11 +12,11 @@
   4. application.yml 是否使用环境变量引用(而非硬编码)
   5. 配置完整性检查(中间件连接信息是否齐全)
 
-⚠️ N/A 跳过(全仓退出码约定③):项目若**根本没有** .env / .env.example、且配置文件里也没有
+⚠️ N/A 跳过(统一退出码约定③):项目若**根本没有** .env / .env.example、且配置文件里也没有
    ${} 环境变量引用,说明它压根不采用这套形态 —— 整脚本 N/A 跳过(exit 0),
    --json 输出 "skipped": true 供调用方把「没跑」与「真通过」区分开。
    ⛔ 此前 .env.example 不存在恒判 Critical + exit 1,等于给所有不采用该形态的项目一个**恒红门**;
-   而恒红门的真实后果是整个检查被调用方无视(本仓库既有教训:假红常驻 = 硬门被绕过)。
+   而恒红门的真实后果是整个检查被调用方无视(既有教训:假红常驻 = 硬门被绕过)。
 
 ⚠️ .env.example 是**可选产出物**:维护"示例副本"必然带来「改了 .env 忘改 .env.example」的双写漂移,
    且企业内网直填开发口令会把它写进 git 历史且不可撤销。故本脚本默认不强制其存在;
@@ -308,7 +308,7 @@ def run_check(root: Path, output_json=False, strict=False, require_env_example=F
     """执行全部检查(项目未采用 .env 形态时整体 N/A 跳过)"""
     in_use, why = scheme_in_use(root)
     if not in_use and not require_env_example:
-        # ⚠️ 全仓退出码约定③:有 N/A 跳过分支的脚本,--json 必须输出可区分标记,
+        # ⚠️ 统一退出码约定③:有 N/A 跳过分支的脚本,--json 必须输出可区分标记,
         #    否则调用方无法把「真通过」与「整档没跑」分开 —— 那正是假绿的来源。
         if output_json:
             print(json.dumps({
@@ -399,7 +399,7 @@ def main():
 
     root = Path(args[0]) if args else Path('.')
 
-    # ⚠️ exists() 与 is_dir() 必须分开判(全仓退出码约定②):合并写会把「路径根本不存在」
+    # ⚠️ exists() 与 is_dir() 必须分开判(统一退出码约定②):合并写会把「路径根本不存在」
     #    与「传的是个文件」混成同一句「目录不存在」,报错文案与事实相反、排错方向被带偏。
     if not root.exists():
         msg = f"错误: 路径不存在 - {root}"

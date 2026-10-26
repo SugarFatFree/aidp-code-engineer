@@ -62,8 +62,8 @@ python3 <SKILL_DIR>/scripts/check_file_complexity.py <代码目录>
 
 维度 6「DI 依赖可解析性」为 Java/Spring 专属、维度 7「CSS 预处理器一致性」为 Vue 专属，**Node.js 服务端此二维度均整维度跳过**（若同仓含 Vue 前端，维度 7 对那部分 `.vue` 仍生效）。
 
-> ⚠️ **维度 8「请求通道 URL 拼装」不在跳过之列**：它扫的是 `.ts`/`.js`/`.mjs`/`.cjs` 等任意前端源码（完整清单见 `dimension-6-9-stack-gated.md` 维度 8「扫描范围」），判据（base 拼装判据是否只有一处实现）与运行在浏览器还是 Node 无关。Node 服务端调下游服务时同样会出现「多处各自拼 base」——**该维度照常执行**，见 `dimension-6-9-stack-gated.md` 维度 8。
+> ⚠️ **维度 8「请求通道 URL 拼装」不在跳过之列**：它扫的是 `.ts`/`.js`/`.mjs`/`.cjs` 等任意前端源码（完整清单见 `../SKILL.md` 维度 8「扫描范围」），判据（base 拼装判据是否只有一处实现）与运行在浏览器还是 Node 无关。Node 服务端调下游服务时同样会出现「多处各自拼 base」——**该维度照常执行**，见 `../SKILL.md` 维度 8。
 
 > 📌 **注**：NestJS 有自己的 DI 容器，「provider 未在 `@Module.providers` 注册却被 `constructor` 注入」会在启动期报 `Nest can't resolve dependencies of the XxxService`——**与维度 6 拦的是同一类错误**。但本 SKILL 当前只落地了 Java/Spring 的静态检查脚本（`check_di_resolvability.py` 仅扫 `.java`），NestJS 侧**暂无脚本覆盖**，建议验收 Agent 人工扫一眼 `@Module` 的 `providers`/`imports` 与各 `constructor` 注入项是否对得上。**这是非阻断提醒、不是该维度的通过条件**——维度 6 对 Node 项目在门控上已整维度跳过，不计入通过/不通过。此处显式记录该缺口，只为避免被误读为「Node 项目不存在这类问题」。
 
-金额字段类型守恒：JS `number` 超过 2^53 会丢精度，**金额建议用 `string` 或 `BigInt` 传输**，与设计 A.3 的 `BIGINT` 对齐；具体阈值判据见 `dimension-4-5-quality-debt.md` 维度 4。
+金额字段类型守恒：JS `number` 超过 2^53 会丢精度，**金额建议用 `string` 或 `BigInt` 传输**，与设计 A.3 的 `BIGINT` 对齐；具体阈值判据见 `../SKILL.md` 维度 4（全文在 `flow-dims-quality.md`）。

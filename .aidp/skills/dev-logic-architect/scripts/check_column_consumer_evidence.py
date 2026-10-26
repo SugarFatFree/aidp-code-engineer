@@ -4,10 +4,10 @@ r"""「新增列举证表」硬核回检 — dev-logic-architect 检查项 39(Cr
 
 **建表的判据是「谁会读它」,不是「上游有什么」。**
 
-实际项目中实测:需求写「某上游列表改为查本应用自己的
+实测(实际项目中曾出现):需求写「某列表改为查本应用自己的
 库表,缺字段可以加上」,执行体照着上游用户中心那个 21 字段的 VO 形状一次性加了 10 列;
 复核后逐条验证——本应用源码的映射函数只映射 13 个字段,新加的 10 列里 **8 列零消费**,
-其中一列是证件号码(留存一份用不上的敏感个人信息 = 凭空增加的合规负担),另有一列与既有列
+其中一列是身份证号(留存一份用不上的敏感个人信息 = 凭空增加的合规负担),另有一列与既有列
 是同一个事实的两份副本,且 10 列**全部无注释**。最终收敛为 2 列,**80% 的列是纯粹的浪费**。
 
 ⚠️ 根因不是判断失误,是**缺门**:上游 VO 就摆在眼前,而「谁会读它」要主动去下游仓库翻源码
@@ -37,7 +37,7 @@ r"""「新增列举证表」硬核回检 — dev-logic-architect 检查项 39(Cr
      本项从正面兜一道:一句真举证总会指到某个能去核对的东西
 
 ⚠️ **E1 缺表刻意判 Important 不判 Critical**:存量设计会大面积命中,一上来判死会让整个硬门
-   被无视(本仓库既有教训:假红常驻 = 硬门被绕过,同 check_upstream_call_log_spec.py 的 U1)。
+   被无视(既有教训:假红常驻 = 硬门被绕过,同 check_upstream_call_log_spec.py 的 U1)。
    表**一旦产出**,缺列 / 格子空 / 举不出消费者 / DDL 加了列却没登记就是新产物自身的缺陷,
    那几条才判 Critical。⚠️ 与之配套:**一张表都没有时只报 E1、不报 E7** —— 否则每份存量设计
    仍被 E7 逐列判死,E1 降 Important 的取舍会被自己当场抵消(姊妹 SKILL 的
@@ -59,7 +59,7 @@ r"""「新增列举证表」硬核回检 — dev-logic-architect 检查项 39(Cr
 仅依赖 Python 3.8+ 标准库。
 ⚠️ 本 SKILL 内脚本**互不 import**(SKILL 独立性原则)。`split_row` / `is_separator_row` / `_norm` /
    `strip_code_fences` 与 `check_render_merge_table.py` 同款。
-⚠️ **与 `check_ddl_column_comment.py` 须两处同改的,精确地说只有这几个**(审计订正:
+⚠️ **与 `check_ddl_column_comment.py` 须两处同改的,精确地说只有这几个**(2026-09-08 审计订正:
    原文把 `parse_create_table_columns` 也列了进来,而**对面根本没有这个函数**——照那句去「两处同改」
    会找不到对象,或反过来以为对面已有一份而不去补):
      `IDENT_PART` / `ALTER_HEAD_RE` / `ADD_KEYWORD_RE` / `SQL_FENCE_LANGS` / `NON_COLUMN_KEYWORDS` /
@@ -123,7 +123,7 @@ NO_SIMILAR_RE = re.compile(r"^(?:无|无近似列|没有|没有近似列|不适�
 
 # ── SQL 解析 ──
 # ⚠️ 只在**代码围栏内**找 DDL:设计正文里「避免 ALTER TABLE 风险」这类散文不带 ADD,
-#    但把判据限在围栏内可以彻底断掉散文误判(与本仓库「新判据宁可窄」一致)。
+#    但把判据限在围栏内可以彻底断掉散文误判(与「新判据宁可窄」一致)。
 # ⚠️ 表名**必须以标识符起头**,⛔ 不可写成 `[`"\[\]\w.]+`:那样 `.` 也在字符类里,
 #    于是散文里的占位写法 `ALTER TABLE ... ADD` 会被当成一条真语句(表名解析成空串),
 #    再把后文任意一个 `ADD` 后的词认成列名——实测在本 SKILL 自家 `flow-qr-dispatch.md`
@@ -176,7 +176,7 @@ def _norm(s: str) -> str:
     return s.replace("（", "(").replace("）", ")")
 
 
-# 表头单元格长度上限。⚠️ **实测必须有**:本仓库 `AGENTS.md` 的 SKILL 清单表里,
+# 表头单元格长度上限。⚠️ **实测必须有**:某份项目规则文档的 SKILL 清单表里,
 #    单个格子是几千字的散文,里面同时出现「类型」「含义」「消费者」等词,
 #    没有长度闸门时整行被认成本表表头 → 缺列 + 格数不符,一次假红 5 条。
 #    列名是短词,24 字符足够宽松。
@@ -388,7 +388,7 @@ def parse_alter_add_columns(sql: str) -> List[Tuple[str, str]]:
     """从 SQL 文本里解析出全部 `ALTER TABLE ... ADD` 的列,返回 [(表名, 列名)](均小写)。
 
     ⚠️ **方言必须同时认两种形态**,只认 `ADD COLUMN` 会在国产库项目上静默失效
-       (达梦等国产库即此形态):
+       (下游正是达梦):
          MySQL      : ALTER TABLE t ADD COLUMN `c` VARCHAR(64) COMMENT '...';
          达梦/Oracle: ALTER TABLE t ADD (C1 VARCHAR2(64), C2 NUMBER);
                       ALTER TABLE t ADD C1 VARCHAR2(64);
@@ -483,7 +483,7 @@ def check_file(path: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        # ⚠️ 读失败绝不可静默计为通过(全仓退出码约定第 3 条)。
+        # ⚠️ 读失败绝不可静默计为通过(统一退出码约定第 3 条)。
         issues.append({"level": "Important", "code": "read_error", "file": str(path),
                        "line": 0, "msg": "文件读不出来(%s),已跳过——⛔ 不得据此判该文件无违规" % e})
         return {"issues": issues, "rows": [], "tables": 0, "ddl_add": [], "ddl_cols": {}}
@@ -595,7 +595,7 @@ def main() -> int:
     args = ap.parse_args()
 
     target = Path(args.path)
-    # ⚠️ exists() 与 is_dir() 必须分开判(全仓退出码约定第 2 条):合并写会把「路径根本不存在」
+    # ⚠️ exists() 与 is_dir() 必须分开判(统一退出码约定第 2 条):合并写会把「路径根本不存在」
     #    和「传入单个文件=合法」混为一谈,手滑写错路径等于整个检查静默放行。
     if not target.exists():
         print("路径不存在: %s" % target, file=sys.stderr)
@@ -634,7 +634,7 @@ def main() -> int:
     added_by_table: Dict[str, Set[str]] = {}
     for t, c in ddl_add:
         added_by_table.setdefault(t, set()).add(c)
-    # ⚠️ **本门按裸列名匹配、不区分表**:6 列契约里
+    # ⚠️ **本门按裸列名匹配、不区分表**(2026-09-08 审计登记的已知边界):6 列契约里
     #    **没有「表名」列**,`registered` 只能按列名建 key,于是「A 表的 status 已举证」
     #    会连带把「B 表未举证的 status」一起放行 —— 方向是**假绿**。
     #    ⚠️ 顺带修掉一个会掩盖它的显示问题:人读那行原先打 `len(added_all)`(**去重后的列名集合**),
@@ -710,7 +710,7 @@ def main() -> int:
         return 0
 
     # ⚠️ 这里数的是 (表, 列) 对、⛔ 不是 `len(added_all)`:后者去重列名,同名跨表的两列会被数成一个,
-    #    读者连「有两列」都看不出来(审计实测:两张表各加一个 `status`,原先打「DDL 新增列 1 个」)。
+    #    读者连「有两列」都看不出来(2026-09-08 审计实测:两张表各加一个 `status`,原先打「DDL 新增列 1 个」)。
     print("扫描 %d 个文件 · 新增列举证表 %d 张 · DDL 新增列 %d 个(按表.列计)"
           % (read_ok, tables, len(added_pairs)))
     if not issues:

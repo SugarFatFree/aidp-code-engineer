@@ -73,9 +73,15 @@ $M start --phase requirements
 # …调用 /sprint-requirements…
 $M end --phase requirements --status pass --artifact docs/requirements/{version}/01_研发需求.md
 $M summary --json          # 末尾汇总，终端展示
+$M render                  # Step 2.8 前：写 docs/audit/{version}/规划耗时.md（定位瓶颈用）
 ```
 
 - 子 Agent 的 `--agent`、返工的 `--retry-round` **必须随事件传递**，重复轮次⛔ 不得共用同一键。
+- **SKILL 内部打点**：SKILL 每输出一行 `[AIDP-STAGE] {...}`（分片生成 / 每轮 QR / 每轮修复的起止，协议见
+  SKILL 的 `references/flow-orchestration.md`），**当下**执行 `$M stage --line '<该行原文>'` 落盘。
+  标记本身不带时间，⛔ 不能事后批量导入；落盘失败只告警，不影响 SKILL 继续执行。
+- **子 Agent 用量**：派子 Agent 的阶段收口时，用工具结果里的真实值传 `--source agent-result --total-tokens N --tool-calls N`，
+  ⛔ 不拆分、不估算入/出 token；取不到就不传。
 - 失败也要用 `end --status fail|block` 收口；中途退出保留 `incomplete`。
 - ⛔ **用量只记真实可取的值**（token / cache / tool / read_bytes），拿不到一律留 `null`，
   **绝不按篇幅推算** —— 推算出来的数字看起来像计量，实则是凭空捏造的证据。

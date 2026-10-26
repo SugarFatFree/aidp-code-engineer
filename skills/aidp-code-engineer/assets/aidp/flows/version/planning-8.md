@@ -167,6 +167,8 @@ VID_EXIT=$?
 - 未改 {M} 处（代码常量 / application.yml / Dockerfile 裸 VERSION，需人复核）：{file}:{line} {name} = {值} —— 交发布期 Step 3.3.13 复核
 - 项目无自报版本落点时改为一行：`本项目无代码内自报版本落点，跳过`
 
+⏱️ 规划耗时（Step 2.3.9 计量）：docs/audit/{version}/规划耗时.md —— 附「最慢的 5 个 SKILL 内部阶段」前 3 行
+
 📊 审计报告（Step 2.4.7 产出）：
 - docs/audit/{version}/version-output-audit-YYYY-MM-DD.md
 - 结论：✅ 通过 / ⚠️ 警告 / ❌ 阻塞（如阻塞应已在 Step 2.4.7 自动循环修复或用户手工干预后通过；强制忽略时此处标"⚠️ 强制忽略未通过项"）
@@ -205,6 +207,8 @@ VID_EXIT=$?
 - 上述各目录 `00_索引.md` 追加本轮增量行（类型=补充 + 生成时间 + 关联输入变更）
 - memory/{version}/.aidp-inputs-snapshot.json → snapshot_run: "supplement-{NN}"
 - 代码内本应用版本号（Step 2.7.3）：补充模式版本号未变，通常为 0 处改动；**有改动时逐处列出**（说明该处版本号与本版不一致、本轮已补齐）
+
+⏱️ 规划耗时（Step 2.3.9 计量）：docs/audit/{version}/规划耗时.md —— 附「最慢的 5 个 SKILL 内部阶段」前 3 行
 
 📊 审计报告（Step 2.4.7 产出）：
 - docs/audit/{version}/version-output-audit-补丁-{NN}.md

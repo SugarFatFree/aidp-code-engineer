@@ -411,7 +411,7 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 ## 规划计量与预检（`/version` Step 2.3.9 / 2.4.6.5 配套，⛔ 都不参与质量判定）
 
-- **`aidp_run_metrics.py`** — `--root <仓库根> --version V --run-id ID start|end|wait|summary`。阶段计时与等待区间独立存 `docs/audit/{V}/metrics-{ID}.json`。`unclassified_seconds` 只是**墙钟扣除已记录等待的余额**，⛔ 不等于模型工作时间；`model_work_seconds` 只有拿到可靠独立计时才显式传入，否则为 `null`；用量取不到记 `null`，⛔ **不用文件篇幅推算 token**（推算值看起来像计量、实则是捏造的证据）。指标记录失败只告警，⛔ 不改变任何质量门结论。
+- **`aidp_run_metrics.py`** — `--root <仓库根> --version V --run-id ID start|end|wait|stage|summary|render`。`stage --line '<[AIDP-STAGE] 行>'` 把 SKILL 打点**当下**落盘（标记不带时间，不能事后导入）；`render` 写 `docs/audit/{V}/规划耗时.md`（顶层阶段 + 最慢的 SKILL 内部阶段）；子 Agent 用量按工具结果记 `--total-tokens`，⛔ 不拆分估算入/出。阶段计时与等待区间独立存 `docs/audit/{V}/metrics-{ID}.json`。`unclassified_seconds` 只是**墙钟扣除已记录等待的余额**，⛔ 不等于模型工作时间；`model_work_seconds` 只有拿到可靠独立计时才显式传入，否则为 `null`；用量取不到记 `null`，⛔ **不用文件篇幅推算 token**（推算值看起来像计量、实则是捏造的证据）。指标记录失败只告警，⛔ 不改变任何质量门结论。
 - **`version_fact_snapshot.py`** — `--root <仓库根> --version V create --file <来源相对路径>` 生成来源 SHA 清单（来源含 `code-inventory.json` 时逐个核对其列出的源码 SHA）；`verify` 检出源文件变化。⛔ 过期即重读刷新，**不得把「缺失或过期的快照」当成「无变化」**；清单只是来源哈希引用，不代替源码 / PRD 正文。条目形状不符或缺 `sha` 时 fail closed 并给出明确原因（⛔ 不放行、也不抛 traceback）。
 - **`version_preflight.py`** — `--input <已运行检查器结果清单.json> --json` 合并来源、最高严重度与定位。输入为数组，每项 `{source, executed, exit_code, output_present, scanned_files?, skipped?, findings:[{check_id,file,anchor?,severity}]}`。⛔ `executed=false`、空输出、`scanned_files=0`、`skipped=true` 或异常退出码**一律不得判 pass**；⛔ 不重写任何检查器的判据，也**不替代** `version-auditor` 的八项独立审计。
 

@@ -7,6 +7,8 @@
 · `check_version_audit_landed.py`：移交清单未结清即不通过（与 SKILL 真实写入格式对账）；
 · `prd_presence_table.py`：表 D → PRD 行对账表，产物必须被 dev-manual-testcase 自己的硬门正确解析；
 · `--fast`：移交审计延后、清单即痕迹，发布 Step 3.1 机器判未结清并补跑；
+· Critical 不出「有人审」的集合：独立解析 checklist 等级列 ↔ SKILL 推导、篡改清单必被拒、--fast 不豁免八项审计。
+  （⚠️ 语义检出能力是大模型判断、无法确定性回归；这里守的是更底层的保证：没有 Critical 维度被裁掉。）
 """
 import json
 import subprocess
@@ -252,8 +254,80 @@ def test_fast_mode_release_gate():
     shutil.rmtree(root, ignore_errors=True)
 
 
+PLANNING_SKILLS = ("ux-logic-extractor", "dev-logic-architect", "dev-execution-planner", "dev-manual-testcase")
+
+
+def _checklist_levels(skill):
+    """独立解析 checklist「维度成本与裁剪索引表」的等级列（⛔ 不复用 SKILL 脚本——要的就是交叉验证）。"""
+    text = (REPO / f".aidp/skills/{skill}/references/quality-review-checklist.md").read_text(encoding="utf-8")
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        head = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.startswith("| #") and "等级" in head:
+            levels = {}
+            for row in lines[i + 2:]:
+                if not row.startswith("|"):
+                    break
+                cells = [c.strip() for c in row.strip().strip("|").split("|")]
+                num = re.match(r"\d+", cells[0])
+                if num and len(cells) == len(head):
+                    levels[f"QR-{int(num.group()):02d}"] = cells[head.index("等级")]
+            return levels
+    return {}
+
+
+def test_critical_never_deferred():
+    print("\n[C1] Critical 不出「有人审」的集合")
+    for skill in PLANNING_SKILLS:
+        levels = _checklist_levels(skill)
+        critical = {k for k, v in levels.items() if v == "Critical"}
+        qo = str(REPO / f".aidp/skills/{skill}/scripts/qr_orchestration.py")
+        for tier in ("critical", "scripts"):
+            plan = json.loads(_run(qo, "plan", "--qr-level", tier).stdout or "{}")
+            deferred = {d["id"] if isinstance(d, dict) else d for d in plan.get("deferred_dims", [])}
+            kept = {d["id"] if isinstance(d, dict) else d for d in plan.get("semantic_dims", []) + plan.get("escalated_dims", [])}
+            check(f"{skill} · {tier}：{len(critical)} 个 Critical 全部仍在 SKILL 内审、无一移交",
+                  bool(critical) and not (critical & deferred) and critical <= kept)
+    root = Path(tempfile.mkdtemp(prefix="aidp-critical-"))
+    idx = root / "00_索引.md"
+    qo = str(REPO / ".aidp/skills/dev-manual-testcase/scripts/qr_orchestration.py")
+    critical = sorted(k for k, v in _checklist_levels("dev-manual-testcase").items() if v == "Critical")
+
+    def tamper(fn):
+        idx.write_text("# 索引\n", encoding="utf-8")
+        _run(qo, "handoff", "--qr-level", "critical", "--write", str(idx))
+        text = idx.read_text(encoding="utf-8")
+        line = next(l for l in text.splitlines() if l.startswith("<!-- AIDP-QR-HANDOFF: "))
+        block = json.loads(line[len("<!-- AIDP-QR-HANDOFF: "):-len(" -->")])
+        fn(block)
+        idx.write_text(text.replace(line, "<!-- AIDP-QR-HANDOFF: " + json.dumps(block, ensure_ascii=False) + " -->"),
+                       encoding="utf-8")
+        return _run(qo, "parse-handoff", str(idx), "--expect-level", "critical").returncode
+    check("篡改：把 Critical 维度塞进移交清单 → parse-handoff 拒绝（rc=1）",
+          tamper(lambda b: b["deferred_dims"].append({"id": critical[0], "name": "x", "level": "Critical",
+                                                      "script_coverage": "否", "delta_tier": "Δ"})) == 1)
+    check("篡改：少登记一个移交维度 → 拒绝（rc=1）", tamper(lambda b: b["deferred_dims"].pop()) == 1)
+    check("篡改：把移交维度的等级改成 Minor → 拒绝（rc=1）",
+          tamper(lambda b: b["deferred_dims"][0].update(level="Minor")) == 1)
+    check("阴性对照：原样不动 → 通过（rc=0）", tamper(lambda b: None) == 0)
+    shutil.rmtree(root, ignore_errors=True)
+    gate = _load_gate()
+    root = Path(tempfile.mkdtemp(prefix="aidp-fast-noreport-"))
+    (root / "docs/requirements/V1.0.0").mkdir(parents=True)
+    (root / "docs/requirements/V1.0.0/01_研发需求.md").write_text("# 需求\n", encoding="utf-8")
+    fast = gate.scan(root, "V1.0.0", fast=True)
+    check("--fast 不豁免八项审计：没有 version-auditor 报告照样不通过",
+          not fast["ok"] and [f["kind"] for f in fast["findings"]] == ["audit-report-missing"])
+    shutil.rmtree(root, ignore_errors=True)
+    auditor = (REPO / ".aidp/agents/version-auditor.md").read_text(encoding="utf-8")
+    check("version-auditor 的 Critical 硬门 C-4 / C-5 / F / G 声明仍在",
+          all(k in auditor for k in ("Step C-4：", "Step C-5：", "### F. 原型覆盖度审计", "### G. 语义变更派生完整性审计"))
+          and auditor.count("Critical 硬门") >= 4)
+
+
 if __name__ == "__main__":
     test_run_metrics_stage_and_render()
+    test_critical_never_deferred()
     test_fast_mode_release_gate()
     test_prd_presence_table_roundtrip()
     test_qr_level_dispatch_contract()

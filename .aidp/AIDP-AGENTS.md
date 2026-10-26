@@ -152,6 +152,7 @@
 | 代码审查 | Reviewer Agent | `{{AIDP_HOME}}/agents/reviewer.md` |
 | ★ 范式合规检查 | AIDP-Compliance Agent | `{{AIDP_HOME}}/agents/aidp-compliance.md`（脚手架 init/migrate/upgrade 末尾自动激活；包住 `verify.py` 全部检查 + 4 个语义维度（维度 4「目标↔实现背离」仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过））|
 | ★ 版本规划产物审计 | Version-Auditor Agent | `{{AIDP_HOME}}/agents/version-auditor.md`（`/version` Step 2.4.7 强制激活；独立子 Agent 隔离上下文；8 项审计 A 存在性/B 边界/C 覆盖完整性（含 C-4 PRD 行级原子条目→研发需求、C-5 研发需求字段→详细设计 反向覆盖，Critical 硬门）/D 增量一致性/E 引用链/F 原型覆盖度（Critical 硬门）/G 语义变更派生完整性（约定 22 第三类触发，Critical 硬门）/H 跨版本需求作废完整性（约定 34）；产出 `docs/audit/{version}/`；唯一跳过 = `--skip-audit`，**且仅当 `trigger=version`**；autopilot Phase 3.3 的 build 终审无跳过路径）|
+| ★ SKILL 移交维度审计 | QR-Handoff-Auditor Agent | `{{AIDP_HOME}}/agents/qr-handoff-auditor.md`（`/version --qr-level` 非 full 时，Step 2.4.7 与 Version-Auditor 同轮并行；每份移交清单一个实例） |
 
 > ⚠️ **派 Agent 前先读 `{{AIDP_HOME}}/agents/README.md`**：上表这几份是**角色指令文件**，不是 Claude Code 原生的注册式 `subagent_type` —— `Agent({subagent_type: "backend"})` 调不起它们，而误用的失败形态是**静默的**（派出去一个没读过角色文件的通用子 Agent，它照样会交出一份看着像模像样的结果）。
 

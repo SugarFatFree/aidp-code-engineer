@@ -103,6 +103,17 @@ PREV=$(git tag --sort=-version:refname | grep -iE '^(release-)?[Vv][0-9]+\.[0-9]
 - ✅ 该版本包含的所有 Sprint 已关闭（`memory/{version}/{user}/sprints/` 下有对应文件，`progress.md` 中所有 Sprint 状态为 ✅ 完成）
 - ✅ 所有 P0 功能已验收通过（验收结论见各 Sprint 的 AI执行报告「需求功能」段 + `memory/{version}/{user}/progress.md`）
 - ✅ 无阻塞性 Bug（查看 `docs/bugfix/{version}/` 下未修复的 P0 问题）
+- ✅ **规划期 QR 移交已结清**（`/version --fast` 规划过的版本会留下未审的移交维度；机器判，⛔ 不凭记忆）：
+
+  ```bash
+  UNSETTLED=$(python3 {{AIDP_HOME}}/scripts/check_version_audit_landed.py --version {version} --json \
+    | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("unsettled_handoffs", [])))')
+  echo "规划期 QR 移交未结清：${UNSETTLED:-?} 份"
+  ```
+
+  `UNSETTLED` 非 0 或取不到 → **先补跑**规划 Step 2.4.7 的移交维度并行审计（`planning-7.md`，`qr_level` 取清单里登记的档位），
+  pass 后清块再继续本步；**交互式与无人值守同样自动补跑、不询问**（这是发布的前置，不是可选项）。
+  补跑 block → 按 Step 2.4.7 的 block 处置回调 SKILL 修复，⛔ 不得带着未审维度发布。
 
 **★ 未关闭 Sprint 自动关闭流程**：
 

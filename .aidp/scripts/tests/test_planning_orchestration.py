@@ -6,6 +6,7 @@
 · `--qr-level` 分级派发：只由 `/version` 传、四个子命令原样转给 SKILL 并校验移交清单；
 · `check_version_audit_landed.py`：移交清单未结清即不通过（与 SKILL 真实写入格式对账）；
 · `prd_presence_table.py`：表 D → PRD 行对账表，产物必须被 dev-manual-testcase 自己的硬门正确解析；
+· `--fast`：移交审计延后、清单即痕迹，发布 Step 3.1 机器判未结清并补跑；
 """
 import json
 import subprocess
@@ -217,8 +218,43 @@ def test_prd_presence_table_roundtrip():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_fast_mode_release_gate():
+    print("\n[F1] --fast：移交审计延后，发布前机器判未结清")
+    version = (REPO / ".aidp/commands/version.md").read_text(encoding="utf-8")
+    row = next((l for l in version.splitlines() if l.startswith("| `--fast` |")), "")
+    check("/version 登记 --fast：取 critical、不派移交审计、发布前须结清",
+          "`critical`" in row and "不派" in row and "发布" in row)
+    p3 = (REPO / ".aidp/flows/version/planning-3.md").read_text(encoding="utf-8")
+    p7 = (REPO / ".aidp/flows/version/planning-7.md").read_text(encoding="utf-8")
+    p8 = (REPO / ".aidp/flows/version/planning-8.md").read_text(encoding="utf-8")
+    check("规划链：--fast 取 critical、任何档位加 --matrix-scope=p0",
+          "`--fast` 同样取 `critical`" in p3 and "带了 `--fast` → 任何档位都加 `--matrix-scope=p0`" in p3)
+    check("Step 2.4.7：--fast 不派移交审计；Step 2.5.0 带 --fast 且认 deferred 留痕",
+          "`--fast` 不派、清单保留" in p7 and "--fast" in p8 and "qr-handoff-deferred-by-fast" in p8)
+    rel = (REPO / ".aidp/flows/version/release-1.md").read_text(encoding="utf-8")
+    fence = re.search(r"  ```bash\n(  UNSETTLED=\$\(python3 \{\{AIDP_HOME\}\}/scripts/check_version_audit_landed\.py.*?)\n  ```", rel, re.S)
+    check("发布 Step 3.1 有机器判的结清检查", fence is not None)
+    if not fence:
+        return
+    script = "\n".join(l[2:] if l.startswith("  ") else l for l in fence.group(1).splitlines())
+    script = script.replace("{{AIDP_HOME}}", str(REPO / ".aidp")).replace("{version}", "V1.0.0")
+    root = Path(tempfile.mkdtemp(prefix="aidp-fast-release-"))
+    idx = root / "docs/plans/V1.0.0/00_索引.md"
+    idx.parent.mkdir(parents=True)
+    idx.write_text("# 索引\n", encoding="utf-8")
+    qo = str(REPO / ".aidp/skills/dev-execution-planner/scripts/qr_orchestration.py")
+    _run(qo, "handoff", "--qr-level", "critical", "--write", str(idx))
+    left = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+    check("清单在 → 数出 1 份未结清", "未结清：1 份" in left.stdout)
+    _run(qo, "handoff", "--qr-level", "full", "--write", str(idx))
+    done = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+    check("结清后 → 0 份", "未结清：0 份" in done.stdout)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_run_metrics_stage_and_render()
+    test_fast_mode_release_gate()
     test_prd_presence_table_roundtrip()
     test_qr_level_dispatch_contract()
     test_selftest_scale_control_wiring()

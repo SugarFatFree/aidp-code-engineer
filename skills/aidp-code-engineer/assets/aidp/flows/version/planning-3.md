@@ -6,7 +6,7 @@
 <!-- BODY-BELOW -->
 #### Step 2.4.1：调用 /sprint-requirements
 
-> ★ **`{qr_level}`** = `/version` 的 `--qr-level` 值，**未传为 `critical`**，本 Step 起四个子命令一律原样透传（⛔ 不得因「需求少」自行降档或升档）。
+> ★ **`{qr_level}`** = `/version` 的 `--qr-level` 值，**未传为 `critical`**（`--fast` 同样取 `critical`），本 Step 起四个子命令一律原样透传（⛔ 不得因「需求少」自行降档或升档）。
 > 各子命令返回后已自行校验移交清单（`SKILL编排层接入.md` 第三节）；被移交的维度由 Step 2.4.7 统一审计接手。
 
 **fresh 模式**：
@@ -196,6 +196,7 @@ python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version}
 ```
 
 - 档位 = L → 再加 `--module-case-cap=30 --matrix-scope=p0`；S/M 档是整轮合计基线，不加。
+- `/version` 带了 `--fast` → 任何档位都加 `--matrix-scope=p0`（L 档已含则不重复）。
 - `/version` 带了 `--module-kind=…` → 原样加上（⛔ 不自行判断模块是否「非交互」）。
 
 **fresh 模式**：

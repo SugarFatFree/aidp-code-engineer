@@ -27,6 +27,7 @@
 | `--scale=S\|M\|L` | **显式指定需求规模档位**，覆盖 Step 2.4.1.5 自动判定（S 小/M 中/L 全套；控设计册数·用例数·task 是否分册，小需求不走大流程）。不带则据 REQ 数/页面数/是否建表自动判档 | Step 2.4.1.5（`planning-3.md` 需求规模档位判定门） |
 | `--qr-level=scripts\|critical\|full` | **规划链 SKILL 内语义 QR 的分级**，原样透传给四个子命令（缺省 `critical`）：Critical 维度仍由 SKILL 自审，其余维度登记进各目录 `00_索引.md` 的移交清单、由 Step 2.4.7 统一审计并行接手；`full` = 全部维度留在 SKILL 内审（接入前的行为）。⛔ 任何档位机器门都全量跑、Critical 永不移交 | [Step 2.4.1–2.4.3.5](../flows/version/planning-3.md) + [`SKILL编排层接入.md`](../reference/SKILL编排层接入.md) |
 | `--module-kind=interactive\|non_interactive\|auto` | 研发自测的模块类型，原样透传给 `/sprint-selftest`：`non_interactive` = 本版全部是迁移工具 / 数据脚本 / 批处理 / CLI 等非交互模块，用例改用「命令 + 前置数据 + 预期退出码 + 输出断言」简化模板。不传 = 页面模板（缺省）。⛔ 规划链不自行判断 | [Step 2.4.3.5](../flows/version/planning-3.md) |
+| `--fast` | **快速规划模式**（个人项目 / 迁移类项目）：`--qr-level` 未显式给出时取 `critical`、覆盖矩阵对任何档位都只对 P0 逐维展开；Step 2.4.7 **只跑** version-auditor 八项（Critical 硬门照旧），**不派**移交维度审计——移交清单留在各 `00_索引.md` 里即是快速模式的痕迹。⛔ 版本发布（情况 B-3）前必须结清（Step 3.1 会拦并补跑） | [Step 2.4.7](../flows/version/planning-7.md) + [Step 3.1](../flows/version/release-1.md) |
 
 ## 前置流程
 

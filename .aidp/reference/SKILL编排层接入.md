@@ -11,10 +11,18 @@
 | 命令 flag | 传给 SKILL 的入参 | 谁传 |
 | :- | :- | :- |
 | `--qr-level=scripts\|critical\|full` | `qr_level` | 只由 `/version` 规划链传（缺省 `critical`，见 `/version` 参数表）|
+| `/sprint-selftest --prd-presence-table=<路径>` | `prd_presence_mode=table` + `prd_presence_table` | `/version` Step 2.4.3.5：`prd_presence_table.py` 生成了对账表时 |
+| `/sprint-selftest --module-case-cap=N` | `module_case_cap` | `/version` Step 2.4.3.5：L 档传 30 |
+| `/sprint-selftest --matrix-scope=p0` | `matrix_scope` | `/version` Step 2.4.3.5：L 档传 |
+| `/sprint-selftest --module-kind=…` | `module_kind` | 仅 `/version` 显式带了同名 flag 时透传（详细设计目前不产「模块类型」字段，⛔ 不传 `auto`）|
 
 - ⛔ 子命令**不得自行推断或补默认值**：没收到 flag 就不传入参，SKILL 按缺省（= 现状全量 QR）执行。
   这正是 SKILL 协议的总约束「非缺省值只由编排层传入」——命令端替它「顺手补上 critical」，
   等于让单独调用也悄悄裁掉语义审。
+
+- `dev-manual-testcase` 的这四个入参**只改产物写法与体量**，不放松 PRD 功规点 100% 覆盖、上游溯源、字段核对、
+  反向占比 ≥40%、P0/P1 覆盖（见该 SKILL `flow-scale-control.md` 开头）。命令端回检 `check_case_stats.py` 时
+  **带同样的参数**（`--scale L --module-case-cap N`、`--prd-presence-table <路径>`），否则 SKILL 内外两次判定口径不一。
 
 ## 二、四个命令对应的 SKILL 与产物索引
 

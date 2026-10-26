@@ -15,6 +15,11 @@
   - **★ 本命令是四者中最关键的一个**：它调的 `dev-manual-testcase` 第零步是 **SKILL 级强制询问**（测试方案 8 项 + chrome 连接 5 组信息），无人值守下无人可答即挂死。故命令端**必须在调用 prompt 里显式声明非交互语境 + 给出每项取值来源**：① 方案 8 项 → 走 SKILL 自身的非交互默认分支；② chrome 5 组连接信息 → 依次取 `01_测试环境与账号.md`（约定 38 机器消费权威）→ 上一版本同名文件继承 → PRD `autopilot_decisions` → 仍缺则**按 SKILL 占位规则写 `{待用户填写: <字段中文名>}` 并登记 T-NNN**，产出头部列明缺哪几项（`check_testdata_prereq.py` 只认该格式），⛔ 绝不静默 bake 占位值当成已配置。
   - Step 2 硬门 ❌ 与 Step 3 `--capture` 冲突门 → 无人值守下不弹窗：前者返回失败信号交上游，后者按"追加新行 + 备注来源时间、不动旧行"处置（同约定 38 细则 38.4 无人值守分支）。
 - `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `dev-manual-testcase` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/testing/{version}/研发自测/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+- `--prd-presence-table=<路径>`（可选，**只由 `/version` 传**）：传给 SKILL `prd_presence_mode=table` + `prd_presence_table=<路径>`——`[PRD存在性]` 只对表中「未承接」行补用例（表由 `prd_presence_table.py` 从研发需求表 D 生成）。
+- `--module-case-cap=N`（可选，**只由 `/version` 传**，L 档 30）：原样传 `module_case_cap`。
+- `--matrix-scope=p0`（可选，**只由 `/version` 传**，L 档）：原样传 `matrix_scope`。
+- `--module-kind=interactive|non_interactive|auto`（可选，**只在 `/version` 带了同名 flag 时透传**）：原样传 `module_kind`。
+  以上入参的命令端契约同见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`；回检 `check_case_stats.py` 时带同样的参数。
 
 ## 前置流程
 
@@ -66,7 +71,7 @@
 > ⚙️ **定位（按约定 21）**：用例的结构 / 格式 / 溯源 / 方案闭环 / 数量基线 / 还原度 / 零残留断言判定**一律以 `dev-manual-testcase` Quality Review 为单一信源**；本门只做两件事——① 派子 Agent 原样跑 SKILL 脚本复核、② 查 SKILL 不管的项目级落盘约定。
 
 **① SKILL 脚本复核（派独立子 Agent）**：按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参只有三个：
-- `check_case_stats.py` 显式传 `--scale {档位}`（本命令 `--scale=` 入参 / `/version` Step 2.4.1.5 判档；均无则 L）；
+- `check_case_stats.py` 显式传 `--scale {档位}`（本命令 `--scale=` 入参 / `/version` Step 2.4.1.5 判档；均无则 L）；收到 `--module-case-cap=N` / `--prd-presence-table=<路径>` 时**同时**传 `--module-case-cap N` / `--prd-presence-table <路径>`（与 SKILL 内判定同口径；对账表有未覆盖行 = exit 1）；
 - `--issue-record` 按序取**上游研发需求** `docs/requirements/{version}/研发需求/01_研发需求.md` → `00_研发需求.md` → 本目录 `99_待澄清问题清单.md`，均无则不传（⛔ 首选不得是本目录自产清单：那是自己查自己）；
 - 其余脚本无额外入参。
 退出码与「退出码之外必须读 `--json`」的判据（SKILL 的「五点例外」、13.8 三态、`skipped` / `scope` / `read_errors` 不等于通过）**以该文件为准，命令端不复述**。子 Agent 只回传：每个脚本退出码 + 按 SKILL 口径判定的维度结论 + 未通过项明细（Important 逐条列名）。

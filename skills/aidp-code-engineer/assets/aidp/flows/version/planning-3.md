@@ -187,10 +187,21 @@ fi
 
 > 研发自测已从 `/sprint-plan` 抽出为独立命令（与 requirements/design/plan **对称**）。本步在执行计划生成后**显式调用**，是研发自测的**唯一生产步骤**——绝不省略、绝不“主动收尾”跳过（漏产会被 Step 2.4「三步落盘自检」硬门〔见 `planning-5.md`〕拦截）。研发自测的落盘核验 / 输出前硬门 / 目录归一均在 `/sprint-selftest` 内完成，命令端只编排。
 
+**★ 调用前：拼规模控制入参 `{selftest_args}`**（只改用例写法与体量，⛔ 不放松任何 Critical 判据）：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version} --json
+# 生成了 docs/audit/{version}/PRD行对账表.md → 加 --prd-presence-table=docs/audit/{version}/PRD行对账表.md
+# 输出 skipped（无表 D）→ 不加，SKILL 按逐行写 [PRD存在性] 的缺省方式
+```
+
+- 档位 = L → 再加 `--module-case-cap=30 --matrix-scope=p0`；S/M 档是整轮合计基线，不加。
+- `/version` 带了 `--module-kind=…` → 原样加上（⛔ 不自行判断模块是否「非交互」）。
+
 **fresh 模式**：
 
 ```
-执行：/sprint-selftest {version} --scale={档位} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
+执行：/sprint-selftest {version} --scale={档位} {selftest_args} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
 
 输出：docs/testing/{version}/研发自测/00_索引.md + 01_研发自测方案.md + 02_ 用例…（多用例拆 03_<模块>）+ 01_测试环境与账号.md
 （命令端 Step 2.4.4 对研发自测目录同样 dedup_prefix + gen_index 归一）
@@ -199,7 +210,7 @@ fi
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-selftest {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
+执行：/sprint-selftest {version} --supplement={NN} --scale={档位} {selftest_args} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
 
 落盘：docs/testing/{version}/研发自测/NN_<业务主题>.md（研发自测用例增量，仅本次变更涉及的功能点；文件名不带“补充”字眼、补充身份记入 00_索引.md）
 ```

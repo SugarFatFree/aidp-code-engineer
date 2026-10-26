@@ -5,6 +5,7 @@
 · `aidp_run_metrics.py`：`[AIDP-STAGE]` 打点即时落盘、子 Agent 总 token、`规划耗时.md` 渲染；
 · `--qr-level` 分级派发：只由 `/version` 传、四个子命令原样转给 SKILL 并校验移交清单；
 · `check_version_audit_landed.py`：移交清单未结清即不通过（与 SKILL 真实写入格式对账）；
+· `prd_presence_table.py`：表 D → PRD 行对账表，产物必须被 dev-manual-testcase 自己的硬门正确解析；
 """
 import json
 import subprocess
@@ -111,6 +112,22 @@ def test_qr_level_dispatch_contract():
               and "不带本 flag = 不传入参" in item)
 
 
+def test_selftest_scale_control_wiring():
+    print("\n[Q3] 研发自测规模控制：/version 拼入参、/sprint-selftest 原样转给 SKILL")
+    planning3 = (REPO / ".aidp/flows/version/planning-3.md").read_text(encoding="utf-8")
+    step = planning3[planning3.index("#### Step 2.4.3.5"):]
+    calls = re.findall(r"执行：/sprint-selftest \{version\}[^\n]*", step)
+    check("2.4.3.5 两处调用（fresh + 补充）都带 {selftest_args}",
+          len(calls) == 2 and all("{selftest_args}" in c for c in calls))
+    check("调用前先跑 prd_presence_table.py 生成对账表", "scripts/prd_presence_table.py --root . --version {version}" in step)
+    check("L 档才加 --module-case-cap=30 --matrix-scope=p0", "档位 = L → 再加 `--module-case-cap=30 --matrix-scope=p0`" in step)
+    selftest = (REPO / ".aidp/commands/sprint-selftest.md").read_text(encoding="utf-8")
+    for flag in ("--prd-presence-table=", "--module-case-cap=", "--matrix-scope=", "--module-kind="):
+        check(f"/sprint-selftest 登记 {flag}（只由 /version 传）",
+              any(l.startswith(f"- `{flag}") and "/version" in l for l in selftest.splitlines()))
+    check("命令端回检 check_case_stats 带同样参数", "--module-case-cap N` / `--prd-presence-table <路径>`" in selftest)
+
+
 def _load_gate():
     spec = importlib.util.spec_from_file_location("audit_landed", SCRIPTS / "check_version_audit_landed.py")
     mod = importlib.util.module_from_spec(spec)
@@ -160,9 +177,51 @@ def test_handoff_settlement_gate():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_prd_presence_table_roundtrip():
+    print("\n[P1] PRD 行对账表：表 D 转换 → dev-manual-testcase 硬门读得懂")
+    root = Path(tempfile.mkdtemp(prefix="aidp-prd-table-"))
+    req = root / "docs/requirements/V1.0.0/研发需求"
+    req.mkdir(parents=True)
+    (req / "01_研发需求.md").write_text(
+        "# 研发需求\n\n## 表 D：PRD 条目映射表\n\n| PRD 位置 | 条目内容 | 研发需求落点 | 处置 |\n| :- | :- | :- | :- |\n"
+        "| `产品需求.md:12` 字段说明表 | 详情页展示「创建人」 | — |  |\n"
+        "| `产品需求.md:120` 操作描述表 | 列表「导出」 | REQ-005 | 已承接 |\n"
+        "| `产品需求.md:210` 迭代建议表 | 批量导出 | — | 本版不做 |\n", encoding="utf-8")
+    cp = _run(str(SCRIPTS / "prd_presence_table.py"), "--root", str(root), "--version", "V1.0.0", "--json")
+    result = json.loads(cp.stdout) if cp.returncode == 0 else {}
+    table = Path(result.get("table_path", "/nonexistent"))
+    check("生成对账表（rc=0，落在 docs/audit/{V}/，不进自测目录）",
+          table.is_file() and table.parent == root / "docs/audit/V1.0.0")
+    check("本版不做的条目不入表（否则下游会补「应该存在」的反向用例）",
+          [r["id"] for r in result.get("excluded_not_this_version", [])] == ["产品需求.md:L210"]
+          and "产品需求.md:L210 |" not in table.read_text(encoding="utf-8"))
+    cases = root / "docs/testing/V1.0.0/研发自测"
+    cases.mkdir(parents=True)
+    stats = str(REPO / ".aidp/skills/dev-manual-testcase/scripts/check_case_stats.py")
+
+    def presence(body):
+        (cases / "02_全量自测用例.md").write_text(body, encoding="utf-8")
+        out = _run(stats, str(cases), "--prd-presence-table", str(table), "--json")
+        try:
+            return json.loads(out.stdout).get("prd_presence", {})
+        except ValueError:
+            return {"error": out.stdout[:200] + out.stderr[:200]}
+    miss = presence("# 用例\n\n### TC-001: 列表导出\n> **优先级**: P0 | **类型**: 正向\n")
+    check("dmt 硬门解析出表：1 行未承接、且未被补用例覆盖",
+          miss.get("unaccepted") == 1 and miss.get("uncovered_rows") == ["产品需求.md:L12"])
+    hit = presence("# 用例\n\n### TC-002: [PRD存在性] 详情页展示创建人\n> **优先级**: P1 | **类型**: 正向\n"
+                   "> **PRD 行号**: 产品需求.md:L12\n")
+    check("补充用例按「PRD 行号」引用带文件名的键 → dmt 判已覆盖", hit.get("uncovered_rows") == [] and hit.get("covered") == 1)
+    near = presence("# 用例\n\n### TC-003: [PRD存在性] 其它\n> **PRD 行号**: 产品需求.md:L120\n")
+    check("L120 不会被当成 L12（行号独立成词）", near.get("uncovered_rows") == ["产品需求.md:L12"])
+    shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_run_metrics_stage_and_render()
+    test_prd_presence_table_roundtrip()
     test_qr_level_dispatch_contract()
+    test_selftest_scale_control_wiring()
     test_handoff_settlement_gate()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

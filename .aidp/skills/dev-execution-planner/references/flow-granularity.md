@@ -68,9 +68,10 @@
 
 **刚好 ✅**（只指路,不抄内容;用 AI 执行指令代替序号步骤）：
 ```
+<a id="task-1-3"></a>
 ### Task 1.3: 创建工单数据库表
 
-> **优先级**: P0 | **依赖**: Task 1.1
+> **优先级**: P0 | **依赖**: Task 1.1 | **Sprint**: Sprint-001
 > **设计来源：** `<设计文档路径>` > `A.3 数据定义` > `biz_work_order 表(L150-L230)`
 
 **目标**：创建工单上下文的数据库表。
@@ -114,9 +115,10 @@
 
 **前端任务示例（存在接口文档时）✅**（零冗余 + AI 执行指令版）：
 ```
+<a id="task-4-2"></a>
 ### Task 4.2: 工单列表页面
 
-> **优先级**: P0 | **依赖**: Task 3.1, Task 3.2
+> **优先级**: P0 | **依赖**: Task 3.1, Task 3.2 | **Sprint**: Sprint-001
 > **原型来源：** [<WorkOrderListPage>(/work-order/list)](../docs/ui/code/work-order/work-order-list.html#work-order-list)
 > **PRD 来源：** [§五-1 工单列表页(L220-L280)](../prd/工单管理.md#五-1-工单列表页)
 > **设计来源：** [§B.1 FR-010(L420-L470)](../docs/design/总览.md#B-1-FR-010) + [§B.2 GET /work-order/list(L580-L620)](../docs/design/总览.md#B-2-GET-work-order-list)

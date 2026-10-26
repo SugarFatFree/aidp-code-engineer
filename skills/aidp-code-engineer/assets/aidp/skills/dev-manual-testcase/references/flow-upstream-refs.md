@@ -81,7 +81,7 @@
 > **PRD 来源:** [§五-1 用户列表 > 操作 4 新增用户(L150-L165)](../requirements/V1.0/研发需求/用户管理.md#五-1-用户列表)
 > **原型来源:** [#add-user-btn 新增按钮 → 弹窗 #add-user-dialog](../prototype/V1.0/code/user-list.html#add-user-btn)
 > **设计来源:** [§B.2 POST /user(L470-L490)](../docs/design/detail/V1.0/03_接口设计.md#B-2)(若有详细设计)
-> **研发执行计划来源:** [Task 2.3 实现新增用户](../docs/plans/V1.0/研发执行计划.md#task-2-3)(增量模式必填)
+> **研发执行计划来源:** [Task 2.3 实现新增用户](../docs/plans/V1.0/01_研发执行计划.md#task-2-3)(增量模式必填)
 > **代码来源:** [UserList.vue L120-L180](../src/views/user/UserList.vue#L120-L180) / [createUser](../src/api/user.ts#createUser)(已有代码时,用于核对实际文案/URL/校验)
 > **优先级:** P0 | **承接前置:** 上一用例结束于"用户列表"页
 
@@ -124,7 +124,7 @@
 | 研发 PRD(.md) | `[显示文本](相对路径#章节锚点)` | `[§五-1 用户列表(L120-L150)](../requirements/V1.0/研发需求/用户.md#五-1-用户列表)` |
 | 详细设计(.md) | `[显示文本](相对路径#章节锚点)` | `[§B.2 POST /user(L470)](../docs/design/detail/V1.0/03_接口设计.md#B-2)` |
 | 原型文件 | `[显示文本](相对路径#组件名/锚点)` | `[#add-btn 新增按钮](../prototype/V1.0/code/user-list.html#add-btn)` 或 `[<UserListPage>](../prototype/V1.0/code/user-list.jsx#L20-L120)` |
-| 研发执行计划 | `[显示文本](相对路径#task-X-Y)` | `[Task 2.3 新增用户](../docs/plans/V1.0/研发执行计划.md#task-2-3)` |
+| 研发执行计划 | `[显示文本](相对路径#task-X-Y)` | `[Task 2.3 新增用户](../docs/plans/V1.0/01_研发执行计划.md#task-2-3)` |
 | 代码引用 | `[显示文本](相对路径#L行号 或 #符号)` | `[UserList.vue L120-L180](../src/views/user/UserList.vue#L120-L180)` 或 `[createUser](../src/api/user.ts#createUser)` |
 | 国际化文件 | `[显示文本](相对路径#key路径)` | `[user.create.success](../src/locales/zh-CN.json#user.create.success)` |
 

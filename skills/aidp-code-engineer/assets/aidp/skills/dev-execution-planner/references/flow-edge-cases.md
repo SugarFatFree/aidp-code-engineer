@@ -39,7 +39,10 @@
 
 **Task 拆分示例（前端 mock）:**
 ```markdown
+<a id="task-4-1"></a>
 #### Task 4.1: 支付宝退款接口前端 Mock 占位（待第三方交付）
+
+> **优先级**: P0 | **依赖**: 无 | **所属 EPIC**: EPIC-NN | **Sprint**: Sprint-NNN
 
 **背景:** 支付宝退款接口预计 2026-06-15 交付，前端需独立联调退款流程。
 
@@ -119,7 +122,10 @@ export default request;
 
 **Task 拆分示例（后端 mock）:**
 ```markdown
+<a id="task-2-3"></a>
 #### Task 2.3: 海关报关推送接口后端 Mock 占位（待第三方交付）
+
+> **优先级**: P0 | **依赖**: 无 | **所属 EPIC**: EPIC-NN | **Sprint**: Sprint-NNN
 
 **背景:** 海关总署报关推送接口预计 2026-06-30 交付，后端服务需独立测试报关流程。
 

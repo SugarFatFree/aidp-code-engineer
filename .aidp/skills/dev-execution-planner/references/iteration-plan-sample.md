@@ -818,7 +818,7 @@ graph TD
 | [REQ-101](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-101) | EPIC-01 | Sprint-001 | 已排期 |
 | [REQ-102](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-102) | EPIC-01 | Sprint-001 | 已排期 |
 | [REQ-103](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-103) | EPIC-02 | Sprint-001 | 已排期 |
-| [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | EPIC-02 | Sprint-002 | 已排期 |
+| [REQ-104](../docs/requirements/V1.0/研发需求/模型市场.md#REQ-104) | EPIC-02 | Sprint-001 ~ Sprint-002(Mock 链路在 001、真实对接在 002) | 已排期 |
 
 ## 附录 F:样本自检(冒烟脚本)
 
@@ -830,6 +830,9 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py <SKILL_DIR>/references/ite
 
 # SQL 路径透传(Module D,QR 维度 9 子项) → 预期退出码 0
 python3 <SKILL_DIR>/scripts/check_sql_path_handoff.py <SKILL_DIR>/references/iteration-plan-sample.md
+
+# Task 锚点 + Sprint 归属 + REQ 承接映射(QR 维度 14e) → 预期退出码 0,导出 4 条映射
+python3 <SKILL_DIR>/scripts/export_plan_refs.py <SKILL_DIR>/references/iteration-plan-sample.md --json
 
 # 第三方对接进度分析 → 输出进度报告(1 个接口,⏳ 待开始)
 python3 <SKILL_DIR>/scripts/analyze_third_party_progress.py <SKILL_DIR>/references/iteration-plan-sample.md

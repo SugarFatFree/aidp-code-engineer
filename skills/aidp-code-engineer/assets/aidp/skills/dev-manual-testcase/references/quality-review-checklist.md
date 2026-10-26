@@ -29,7 +29,7 @@
 | 4 | 角色权限矩阵覆盖 | 语义 | — | **基线缩放** | Critical | 否 |
 | 5 | 异常路径覆盖 | 语义 | — | **基线缩放** | Critical | 否 |
 | 6 | 研发执行计划覆盖〔仅增量〕 | 语义 | — | Δ（本维度本就是 B 模式专属） | Critical | 否 |
-| 7 | 套件级入口检查 | 兼有 | `check_testcase_suite.py` | — | Important | 部分 |
+| 7 | 套件级入口检查 | 兼有 | `check_testcase_suite.py` · `read_module_kinds.py`(仅 `module_kind=auto`) | — | Important | 部分 |
 | 8 | 步骤四要素完备性 + UI 可操作性 | 兼有 | `check_testcase_format.py` | Δ | Critical | 部分 |
 | 9 | 元素定位方式 + 预期现象可观察性 | 兼有 | `check_testcase_format.py`（Important，读 `--json`） | Δ | Important | 部分 |
 | 10 | 跨系统交互显式化与第三方对接 | 语义 | — | Δ | Important | 否 |
@@ -542,7 +542,7 @@ design=$(awk '/^#{2,4}[[:space:]]+(测试)?套件[[:space:]]+/{f=NR} f && NR<=f+
 | ✅ 正例(REQ 链接) | `[REQ-005 用户管理需求](../requirements/V1.0/研发需求/用户.md#REQ-005)` |
 | ✅ 正例(设计章节) | `[§B-2.1 用户列表接口](../docs/design/detail/V1.0/03_接口设计.md#B-2-1)` |
 | ✅ 正例(原型组件) | `[<UserListPage>](../docs/prototype/V1.0/code/user-list.jsx#L20-L120)` |
-| ✅ 正例(迭代任务) | `[Sprint-007 T-007-01](../docs/plans/V1.0/研发执行计划.md#T-007-01)` |
+| ✅ 正例(迭代任务) | `[Sprint-007 Task 2.3](../docs/plans/V1.0/01_研发执行计划.md#task-2-3)`(执行计划原生编号与锚点,⛔ 不自拟 `T-NNN-NN`) |
 | ❌ 反例(纯文本) | `docs/requirements/V1.0/研发需求/xxx.md > REQ-NNN` |
 | ❌ 反例(无锚点) | `[xxx](../requirements/V1.0/研发需求/xxx.md)` |
 | ❌ 反例(模糊) | `参考 PRD` / `见原型` |

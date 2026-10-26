@@ -175,14 +175,14 @@ python3 <SKILL_DIR>/scripts/check_service_impl_stub.py <代码根目录>
 ```markdown
 | Task | 描述 | REQ 关联 | 设计锚点 | 原型锚点 | 责任人 | 估时 | AI 执行指令 | 验收标准 |
 | :- | :- | :- | :- | :- | :- | :- | :- | :- |
-| Task-001 | 用户列表查询 | [REQ-001](../requirements/V1.0/研发需求/用户.md#REQ-001) | [§B-2.1 用户列表接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-1) | [<UserListPage>](../docs/prototype/V1.0/code/user-list.jsx#L20-L120) | 张三 | 8h | `/dev-frontend ...` | [§C-2.3 列表查询用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-3) |
+| Task 1.1 | 用户列表查询 | [REQ-001](../requirements/V1.0/研发需求/用户.md#REQ-001) | [§B-2.1 用户列表接口](../docs/design/detail/V1.0/01_接口设计.md#B-2-1) | [<UserListPage>](../docs/prototype/V1.0/code/user-list.jsx#L20-L120) | 张三 | 8h | `/dev-frontend ...` | [§C-2.3 列表查询用例](../docs/design/detail/V1.0/19_测试方案.md#C-2-3) |
 ```
 
 **列定义:**
 
 | 列 | 必填 | 格式 |
 | :- | :-: | :- |
-| Task | ✅ | Task-NNN 唯一编号 |
+| Task | ✅ | `Task <Phase>.<序号>`,与 Task 标题同号(⛔ 不另起 `Task-NNN` 之类第二套编号;`export_plan_refs.py` 只认这一形态) |
 | 描述 | ✅ | 一句话子功能描述 |
 | REQ 关联 | ✅ | `[REQ-NNN](path#锚点)`(markdown 链接,单个或多个) |
 | **设计锚点** | ✅ | `[§X.Y 章节名](../docs/design/detail/{version}/xx.md#章节锚点)`(markdown 链接 + 相对路径 + 章节锚点) |

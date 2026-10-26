@@ -113,7 +113,9 @@ python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.
   # → modules[{name, kind, interactive, file, line}] / non_interactive[] / missing[] / invalid[] / skipped
   ```
 
-  `missing` / `invalid` 非空时照页面模板写，并在报告里列出（上游设计缺字段，回流给详细设计补）；
+  只认详细设计 B.1 章节内的模块标题（多文件模式下文件名含「功规点实现映射」的分册整份都算），标题可带编号前缀，
+  模块类型须在标题下方紧邻的 `>` 元信息块里（可与其它字段同行）。
+  `missing` / `invalid` 非空时照页面模板写，并在报告里列出（上游设计缺字段，回流给详细设计补）；`read_errors` 非空时 exit 1、结果是残缺样本；
   `skipped: true`（设计里一个模块分组标题都没有，多见于存量设计）= 全部按页面模板，⚠️ 不等于识别成功。
 
 **模板**（套件与用例都带 `[非交互]` 标记；不写页面步骤表、不生成通用还原度套件）：
@@ -138,6 +140,7 @@ python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.
 
 > **硬门授权**：`check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 须带 `--module-kind non_interactive`（或 `auto`）才认 `[非交互]`；缺省 `interactive` 不认。
 > `auto` 时脚本认标记，「标记是否与设计的 `模块类型` 字段一致」由 QR 子 Agent 逐模块核（维度 7）：以 `read_module_kinds.py --json` 的 `non_interactive[]` 为准——贴了 `[非交互]` 的套件对应模块不在其中、或其中的模块没贴 `[非交互]`，都判不一致。
+> **套件 ↔ 模块对应规则**：套件标题冒号后的名称与设计里 `模块: <模块名>` 的模块名**逐字一致**（如 `## 套件 SUITE-MIG-001 [非交互]: 历史订单迁移`）；对不上的套件按页面模板判，并在报告里列出。
 
 | 硬门 | 对 `[非交互]` 的处理（已授权时） |
 | :- | :- |

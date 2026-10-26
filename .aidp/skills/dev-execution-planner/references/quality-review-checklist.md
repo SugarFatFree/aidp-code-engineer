@@ -893,7 +893,7 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 - [ ] 每个 Task 标题**上一行**有 `<a id="task-<phase>-<seq>"></a>`,编号与标题一致
 - [ ] 每个 Task 抬头元信息行有且只有一个 `**Sprint**: Sprint-NNN`
 - [ ] 9 列任务总表引用的每个 Task 都有对应小节
-- [ ] `export_plan_refs.py --json` 退出码 0 且 `skipped:false`
+- [ ] `export_plan_refs.py --json`(多文件模式**传目录**)退出码 0 且 `skipped:false`;退出码 1 时按 `issues[].severity` 分档(见下方「不通过标志」)
 
 **自动化核验(必跑):**
 
@@ -903,6 +903,9 @@ python3 <SKILL_DIR>/scripts/check_doc_split.py <执行计划目录> --check-task
 python3 <SKILL_DIR>/scripts/check_task_granularity.py \
   <研发执行计划路径>
 # 退出码: 0 通过, 1 判错(警告与必修两档并入,分档读 --json 每条 finding 的 severity:1=警告 / 2=必修), 2 入参路径错(非维度违规)
+
+python3 <SKILL_DIR>/scripts/export_plan_refs.py <研发执行计划目录> --json
+# 退出码: 0 通过 / skipped, 1 有 issue(分档读 issues[].severity:Critical=维度 14e 不通过 / Important=整份无锚点的存量计划,提示补齐), 2 入参错
 ```
 
 **不通过标志:**
@@ -914,7 +917,7 @@ python3 <SKILL_DIR>/scripts/check_task_granularity.py \
 - 任务汇总表行内未同时命中 设计 + REQ/PRD + 原型 三类锚点正则
 - `check_task_granularity.py` 退出码 = 1 **且** `--json` 中存在 `severity == 2` 的 finding(确证粗粒度 / 9 列违规)。⚠️ 只看退出码分不出「警告」与「必修」,必须读 `--json` 的 `findings[]`(顶层对象,另含 `scanned_tasks`/`skipped`)
 - `check_task_granularity.py` 返回 `skipped:true`(一个 Task 段都没识别到,如标题不是 `### Task N.M` 形态)—— 维度 3/14 **未核验**,按不通过处理并转人工核对
-- `export_plan_refs.py --json` 退出码 = 1(`issues[]` 非空:缺锚点 / 锚点编号不符 / 缺或多 Sprint / 总表引用了不存在的 Task / 缺任务总表)
+- `export_plan_refs.py --json` 退出码 = 1 **且** `issues[]` 里有 `severity == "Critical"`(部分 Task 缺锚点或 Sprint / 锚点编号不符 / 多 Sprint / 总表引用了不存在的 Task / Task 格解析不出 / 缺任务总表 / 文件读不出)。只有 Important(整份文件无任何锚点的存量计划)不判不通过,但须在报告里提示补齐
 
 ---
 

@@ -53,7 +53,7 @@
 
 **原型引用必须精确到组件级**:不允许"参考 `code/` 目录"这种模糊引用,要写 `[<PolicyCard>](../prototype/V1.0/code/policy-card.jsx)` (具体组件名)或 `[user-list.html (路由 /user/list) #search-btn](../prototype/V1.0/code/user-list.html#search-btn)`(锚点)。
 
-**B.1 功规点实现映射表**(每行必须标注):
+**B.1 功规点实现映射表**(每行必须标注;B.1 先按业务模块分组,每组 `模块: <模块名>` 标题 + `> **模块类型**: <取值>`,本表放在各模块分组下,规则见 `output-module-examples.md`「B.1 功规点实现映射」):
 
 | 功规点编号 | 功规点名称 | PRD 来源 | 原型来源 | 高保真(如有) |
 | :-: | :- | :- | :- | :- |

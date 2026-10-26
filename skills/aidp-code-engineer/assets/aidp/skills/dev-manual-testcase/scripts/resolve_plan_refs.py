@@ -10,7 +10,9 @@ SKILL 自身在 deferred 模式下只写占位符、不调用它。
 映射 JSON:{"REQ-004": {"label": "Sprint-012 Task 2.3",
                         "href": "../plans/V1/01_研发执行计划.md#task-2-3"}, ...}
 替换结果:`⟨PLAN-REF:REQ-004⟩` → `[Sprint-012 Task 2.3](../plans/V1/01_研发执行计划.md#task-2-3)`,
-同一行里的其它文字(含分隔用的「、」)原样保留。替换后的形态与 S4 的既有写法相同,
+同一行里的其它文字(含分隔用的「、」)原样保留。
+`href` 按**用例目录根**(传目录即该目录,传文件即其所在目录)计算;子目录里的用例由本脚本按各自位置
+**词法重算**相对路径(不跟随软链),编排层不必按子目录拆分映射。替换后的形态与 S4 的既有写法相同,
 `check_suite_upstream.py`(缺省 required 模式)与 `check_testcase_format.py` 照常校验。
 
 映射由 dev-execution-planner 的 `export_plan_refs.py` 从执行计划**确定性导出**(label 与锚点都是计划原生的
@@ -23,6 +25,7 @@ SKILL 自身在 deferred 模式下只写占位符、不调用它。
 """
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -69,6 +72,7 @@ def main() -> int:
         return 2
 
     files = [target] if target.is_file() else sorted(target.rglob("*.md"))
+    root = os.path.abspath(target.parent if target.is_file() else target)
     pending, unmapped, replaced = {}, [], 0
     for f in files:
         try:
@@ -83,9 +87,15 @@ def main() -> int:
                 if req.strip() not in mapping:
                     unmapped.append({"file": str(f), "line": n, "req": req.strip()})
 
-        def sub(m):
+        fdir = os.path.dirname(os.path.abspath(f))
+
+        def sub(m, fdir=fdir):
             v = mapping.get(m.group(1).strip())
-            return f"[{v['label']}]({v['href']})" if v else m.group(0)
+            if not v:
+                return m.group(0)
+            path, frag = v["href"].split("#", 1)
+            rel = os.path.relpath(os.path.normpath(os.path.join(root, path)), fdir).replace(os.sep, "/")
+            return f"[{v['label']}]({rel}#{frag})"
         new, k = PLAN_REF_RE.subn(sub, text)
         replaced += k
         pending[f] = new

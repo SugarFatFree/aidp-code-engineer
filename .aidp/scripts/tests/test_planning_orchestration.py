@@ -3,6 +3,8 @@
 """版本规划编排层回归：接入 SKILL「编排层调用协议」后的命令侧机器门。
 
 · `aidp_run_metrics.py`：`[AIDP-STAGE]` 打点即时落盘、子 Agent 总 token、`规划耗时.md` 渲染；
+· `--qr-level` 分级派发：只由 `/version` 传、四个子命令原样转给 SKILL 并校验移交清单；
+· `check_version_audit_landed.py`：移交清单未结清即不通过（与 SKILL 真实写入格式对账）；
 """
 import json
 import subprocess
@@ -10,6 +12,9 @@ import sys
 import tempfile
 import shutil
 from pathlib import Path
+
+import re
+import importlib.util
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / ".aidp" / "scripts"
@@ -84,7 +89,80 @@ def test_run_metrics_stage_and_render():
     shutil.rmtree(root, ignore_errors=True)
 
 
+SUBCMDS = {"sprint-requirements": "ux-logic-extractor", "sprint-design": "dev-logic-architect",
+           "sprint-plan": "dev-execution-planner", "sprint-selftest": "dev-manual-testcase"}
+
+
+def test_qr_level_dispatch_contract():
+    print("\n[Q1] 分级派发：/version 传、子命令转给 SKILL 并校验移交清单")
+    version = (REPO / ".aidp/commands/version.md").read_text(encoding="utf-8")
+    planning3 = (REPO / ".aidp/flows/version/planning-3.md").read_text(encoding="utf-8")
+    check("/version 参数表登记 --qr-level 且写明缺省 critical",
+          re.search(r"^\| `--qr-level=scripts\\\|critical\\\|full` \|.*缺省 `critical`", version, re.M) is not None)
+    calls = re.findall(r"执行：/sprint-(?:requirements|design|plan|selftest) \{version\}[^\n]*", planning3)
+    check("规划链 8 处子命令调用（fresh + 补充）全部透传 --qr-level={qr_level}",
+          len(calls) == 8 and all("--qr-level={qr_level}" in c for c in calls))
+    check("planning-3 写明 {qr_level} 的取值（未传 = critical）", "**未传为 `critical`**" in planning3)
+    for cmd, skill in SUBCMDS.items():
+        body = (REPO / f".aidp/commands/{cmd}.md").read_text(encoding="utf-8")
+        item = next((l for l in body.splitlines() if l.startswith("- `--qr-level=")), "")
+        check(f"/{cmd} 登记 --qr-level：转给 {skill}、返回后 parse-handoff --expect-level",
+              f"`{skill}`" in item and "parse-handoff" in item and "--expect-level" in item
+              and "不带本 flag = 不传入参" in item)
+
+
+def _load_gate():
+    spec = importlib.util.spec_from_file_location("audit_landed", SCRIPTS / "check_version_audit_landed.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_handoff_settlement_gate():
+    print("\n[Q2] 审计落地门：移交清单未结清即不通过（与 SKILL 真实写入对账）")
+    gate = _load_gate()
+    ref = (REPO / ".aidp/reference/SKILL编排层接入.md").read_text(encoding="utf-8")
+    ref_paths = re.findall(r"^\| `/sprint-[a-z]+` \| `[a-z-]+` \| `([^`]+)` \|", ref, re.M)
+    check("落地门扫描的四个索引 == 参考文档第二节那张表",
+          sorted(ref_paths) == sorted(p.replace("{v}", "{version}") for p in gate.HANDOFF_INDEXES))
+    root = Path(tempfile.mkdtemp(prefix="aidp-handoff-gate-"))
+    audit = root / "docs/audit/V1.0.0"
+    audit.mkdir(parents=True)
+    body = "".join(f"## {c} 项\nok\n" for c in "ABCDEFGH") + "overall: pass\n" + "说明。\n" * 80
+    (audit / "version-output-audit-2026-10-26.md").write_text(body, encoding="utf-8")
+    results = {}
+    for cmd, skill in SUBCMDS.items():
+        rel = next(p for p in gate.HANDOFF_INDEXES if p.startswith(
+            {"sprint-requirements": "docs/requirements", "sprint-design": "docs/design",
+             "sprint-plan": "docs/plans", "sprint-selftest": "docs/testing"}[cmd])).format(v="V1.0.0")
+        idx = root / rel
+        idx.parent.mkdir(parents=True, exist_ok=True)
+        idx.write_text("# 索引\n\n正文\n", encoding="utf-8")
+        qo = str(REPO / f".aidp/skills/{skill}/scripts/qr_orchestration.py")
+        results[skill] = (qo, idx, _run(qo, "handoff", "--qr-level", "critical", "--write", str(idx)).returncode)
+    check("四个 SKILL 用自己的协议工具写出移交清单（rc=0）", all(r[2] == 0 for r in results.values()))
+    landed = gate.scan(root, "V1.0.0")
+    check("四份清单全在 → 落地门不通过，逐份列出", not landed["ok"]
+          and [f["kind"] for f in landed["findings"]] == ["qr-handoff-unsettled"]
+          and len(landed["unsettled_handoffs"]) == 4)
+    fast = gate.scan(root, "V1.0.0", fast=True)
+    check("--fast → 放行但留痕「已延后」", fast["ok"]
+          and [f["kind"] for f in fast["findings"]] == ["qr-handoff-deferred-by-fast"])
+    for skill, (qo, idx, _) in list(results.items())[:3]:
+        _run(qo, "handoff", "--qr-level", "full", "--write", str(idx))
+    partial = gate.scan(root, "V1.0.0")
+    check("清掉三份、还剩一份 → 仍不通过，且只报剩下那份", not partial["ok"]
+          and [h["skill"] for h in partial["unsettled_handoffs"]] == ["dev-manual-testcase"])
+    qo, idx, _ = results["dev-manual-testcase"]
+    _run(qo, "handoff", "--qr-level", "full", "--write", str(idx))
+    done = gate.scan(root, "V1.0.0")
+    check("全部结清 → 通过且无 finding", done["ok"] and done["findings"] == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_run_metrics_stage_and_render()
+    test_qr_level_dispatch_contract()
+    test_handoff_settlement_gate()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

@@ -14,6 +14,7 @@
 - `--unattended`（可选）：★ **无人值守上下文标记**（由 `/version`·`/sprint-autopilot`·`/sprint-test` 等上游透传）——本命令内**一切 `AskUserQuestion` 与"暂停待用户裁决"一律不弹**，改按下方各门的确定性默认自动推进并留痕；**绝不静默跳过质量门**，只是把"问人"换成"按保守默认走 + 记录"。⛔ 上游传了而本命令不认，flag 会被静默丢弃、在无人值守链里挂死。
   - **★ 本命令是四者中最关键的一个**：它调的 `dev-manual-testcase` 第零步是 **SKILL 级强制询问**（测试方案 8 项 + chrome 连接 5 组信息），无人值守下无人可答即挂死。故命令端**必须在调用 prompt 里显式声明非交互语境 + 给出每项取值来源**：① 方案 8 项 → 走 SKILL 自身的非交互默认分支；② chrome 5 组连接信息 → 依次取 `01_测试环境与账号.md`（约定 38 机器消费权威）→ 上一版本同名文件继承 → PRD `autopilot_decisions` → 仍缺则**按 SKILL 占位规则写 `{待用户填写: <字段中文名>}` 并登记 T-NNN**，产出头部列明缺哪几项（`check_testdata_prereq.py` 只认该格式），⛔ 绝不静默 bake 占位值当成已配置。
   - Step 2 硬门 ❌ 与 Step 3 `--capture` 冲突门 → 无人值守下不弹窗：前者返回失败信号交上游，后者按"追加新行 + 备注来源时间、不动旧行"处置（同约定 38 细则 38.4 无人值守分支）。
+- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `dev-manual-testcase` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/testing/{version}/研发自测/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 
 ## 前置流程
 

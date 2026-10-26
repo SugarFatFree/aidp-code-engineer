@@ -38,6 +38,8 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 
 > 详细规则查 `{{AIDP_HOME}}/skills/ux-logic-extractor/SKILL.md`；命令端只负责传参 + 接收输出 + 下方 Step 1.5 的 AIDP 编排后处理。
 
+> ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
+
 **调用参数**（按 skill 当前接口）：
 - **产品需求文档**：Step 0.1 扫描到的全部 PRD 路径
 - **HTML 原型**：`docs/prototype/{version}/code/`（如存在）

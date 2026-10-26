@@ -11,6 +11,7 @@
 <!-- dup-check: ignore 四个规划子命令各需在自己参数表里声明，刻意的四份、非漂移 -->
 - `--unattended`（可选）：★ **无人值守上下文标记**（由 `/version`·`/sprint-autopilot`·`/sprint-test` 等上游透传）——本命令内**一切 `AskUserQuestion` 与"暂停待用户裁决"一律不弹**，改按下方各门的确定性默认自动推进并留痕；**绝不静默跳过质量门**，只是把"问人"换成"按保守默认走 + 记录"。⛔ 上游传了而本命令不认，flag 会被静默丢弃、在无人值守链里挂死。
   - 本命令的门：系统边界 `unsure`（边界不清需列候选让用户选）→ 无人值守下**按 PRD 显式声明的系统归属**判定，仍不确定则归入"未分类"并在产出头部留痕，不阻塞。
+- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `ux-logic-extractor` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/requirements/{version}/研发需求/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 
 ## 前置流程
 

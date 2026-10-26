@@ -12,6 +12,7 @@
 <!-- dup-check: ignore 四个规划子命令各需在自己参数表里声明，刻意的四份、非漂移 -->
 - `--unattended`（可选）：★ **无人值守上下文标记**（由 `/version`·`/sprint-autopilot`·`/sprint-test` 等上游透传）——本命令内**一切 `AskUserQuestion` 与"暂停待用户裁决"一律不弹**，改按下方各门的确定性默认自动推进并留痕；**绝不静默跳过质量门**，只是把"问人"换成"按保守默认走 + 记录"。⛔ 上游传了而本命令不认，flag 会被静默丢弃、在无人值守链里挂死。
   - 本命令的门：Step 1.5 回检 ❌ 时"列 Fail 询问用户"→ 无人值守下**按退出码分流自动处置**（`1`=判违规、暂停并返回失败信号交上游熔断；`2`=入参错，修正路径后重跑一次，仍失败才返回失败信号），⛔ 不得无限重试、也不得当作通过继续。
+- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `dev-execution-planner` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/plans/{version}/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 
 ## 前置流程
 
@@ -40,6 +41,8 @@
 
 > 详细规则查 `{{AIDP_HOME}}/skills/dev-execution-planner/SKILL.md`；命令端只负责传入路径上下文 + Step 1.5 grep 回检（项目级补充）。
 > **项目级补充**（喂给 SKILL prompt 的本项目上游路径）：PRD=`docs/requirements/{version}/研发需求/`、原型=`docs/prototype/{version}/`、详设=`docs/design/detail/{version}/`。
+
+> ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 详细设计三类路径）：
 - **PRD 路径**：`docs/requirements/{version}/研发需求/`（含 `01_研发需求.md`（历史裸 `00_研发需求.md` 兼容）或拆分的 `0?_*.md`）

@@ -52,6 +52,7 @@ Reviewer Agent   代码审查
 | **Reviewer** | 代码质量审查、安全性、规范性、UI 一致性 | 代码、设计文档、约束文档 | 审查报告、合并决策 | [`reviewer.md`](../../{{AIDP_HOME}}/agents/reviewer.md) |
 | **AIDP-Compliance** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留、事实清单 ↔ 代码、引用三角、目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py stdout、memory/、项目记忆文件（AGENTS.md / CLAUDE.md）、code/ 配置、事实清单 | 统一合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | [`aidp-compliance.md`](../../{{AIDP_HOME}}/agents/aidp-compliance.md) |
 | **Version-Auditor** ★ | 版本规划产物全量审计（8 项：A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34）） | 版本规划产物（requirements / design / plans / testing 等） | 审计报告 `docs/audit/{version}/version-output-audit-*.md` | [`version-auditor.md`](../../{{AIDP_HOME}}/agents/version-auditor.md) |
+| **QR-Handoff-Auditor** ★ | SKILL 移交维度统一审计（`--qr-level` 非 full 时，按各 SKILL checklist 审被移交到编排层的维度；每个 SKILL 一个实例，与 Version-Auditor 并行） | 规划产物 + 该 SKILL 的 `00_索引.md` 移交清单 | `docs/audit/{version}/qr-handoff-{skill}-*.md` | — |
 
 ## 3. Agent 激活规则
 
@@ -154,6 +155,7 @@ PM（记录验收结论 + 归档）
 | [`{{AIDP_HOME}}/agents/reviewer.md`](../../{{AIDP_HOME}}/agents/reviewer.md) | 同上 + 审查维度矩阵 |
 | [`{{AIDP_HOME}}/agents/aidp-compliance.md`](../../{{AIDP_HOME}}/agents/aidp-compliance.md) | 同上 + 包住 verify.py + 4 个语义维度（第 4 维「目标 ↔ 实现背离」仅当仓库根有 `设计目标.md` 时启用）+ 红线：禁止修改任何项目文件 |
 | [`{{AIDP_HOME}}/agents/version-auditor.md`](../../{{AIDP_HOME}}/agents/version-auditor.md) | 同上 + 版本规划产物 8 项审计（A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34））+ 红线：只读审计、只写 `docs/audit/{version}/` 报告 |
+| [`{{AIDP_HOME}}/agents/qr-handoff-auditor.md`](../../{{AIDP_HOME}}/agents/qr-handoff-auditor.md) | 同上 + 移交清单逐维度审计（判据取各 SKILL checklist，`全量` 档不按 Δ 裁剪） |
 
 **维护原则**：
 - 本文档只维护全局视图（职责、协作、激活规则）

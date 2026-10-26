@@ -6,10 +6,13 @@
 <!-- BODY-BELOW -->
 #### Step 2.4.1：调用 /sprint-requirements
 
+> ★ **`{qr_level}`** = `/version` 的 `--qr-level` 值，**未传为 `critical`**，本 Step 起四个子命令一律原样透传（⛔ 不得因「需求少」自行降档或升档）。
+> 各子命令返回后已自行校验移交清单（`SKILL编排层接入.md` 第三节）；被移交的维度由 Step 2.4.7 统一审计接手。
+
 **fresh 模式**：
 
 ```
-执行：/sprint-requirements {version} [--unattended]
+执行：/sprint-requirements {version} --qr-level={qr_level} [--unattended]
 
 该命令会调用 ux-logic-extractor skill 生成需求文档
 输出：docs/requirements/{version}/研发需求/00_索引.md + 01_研发需求.md（命令端 Step 2.4.4 归一 + 生成 00_索引）
@@ -18,7 +21,7 @@
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-requirements {version} --supplement={NN} [--unattended]
+执行：/sprint-requirements {version} --supplement={NN} --qr-level={qr_level} [--unattended]
 
 额外 prompt 输入（命令端写入 skill 调用上下文）：
 - 输入变更摘要：docs/requirements/{version}/研发需求/输入变更-{NN}.md（必传，含 PRD 与原型两类变更）
@@ -121,7 +124,7 @@ fi
 **fresh 模式**：
 
 ```
-执行：/sprint-design {version} --scale={档位} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
+执行：/sprint-design {version} --scale={档位} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
 
 该命令会调用 dev-logic-architect skill 生成详细设计
 输出（命令端 Step 2.4.4 归一为 00_索引 + 01_/02_/03_）：
@@ -135,7 +138,7 @@ fi
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-design {version} --supplement={NN} --scale={档位} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
+执行：/sprint-design {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
 
 额外 prompt 输入：
 - 输入变更摘要（含 PRD + 原型变更）+ 研发需求补充
@@ -161,7 +164,7 @@ fi
 **fresh 模式**：
 
 ```
-执行：/sprint-plan {version} --scale={档位} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
+执行：/sprint-plan {version} --scale={档位} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
 
 该命令会调用 dev-execution-planner skill 生成研发执行计划
 输出：docs/plans/{version}/00_索引.md + 01_研发执行计划.md（命令端 Step 2.4.4 归一 + 生成 00_索引）
@@ -170,7 +173,7 @@ fi
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-plan {version} --supplement={NN} --scale={档位} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
+执行：/sprint-plan {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
 
 额外 prompt 输入：
 - 输入变更摘要（含 PRD + 原型变更）+ 研发需求补充 + 设计补充（如有）
@@ -187,7 +190,7 @@ fi
 **fresh 模式**：
 
 ```
-执行：/sprint-selftest {version} --scale={档位} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
+执行：/sprint-selftest {version} --scale={档位} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
 
 输出：docs/testing/{version}/研发自测/00_索引.md + 01_研发自测方案.md + 02_ 用例…（多用例拆 03_<模块>）+ 01_测试环境与账号.md
 （命令端 Step 2.4.4 对研发自测目录同样 dedup_prefix + gen_index 归一）
@@ -196,7 +199,7 @@ fi
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-selftest {version} --supplement={NN} --scale={档位} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
+执行：/sprint-selftest {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
 
 落盘：docs/testing/{version}/研发自测/NN_<业务主题>.md（研发自测用例增量，仅本次变更涉及的功能点；文件名不带“补充”字眼、补充身份记入 00_索引.md）
 ```

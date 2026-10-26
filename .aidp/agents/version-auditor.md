@@ -38,6 +38,9 @@
 
 ---
 
+> 📌 **与 `qr-handoff-auditor` 的分工**：规划链以 `--qr-level` 非 `full` 调用时，各 SKILL 移交到编排层的**SKILL 内部维度**由
+> `qr-handoff-auditor` 并行审，⛔ 本 Agent 不接手、不复述（约定 21）；本 Agent 只做跨产物的八项外部审计。
+
 ## 二、会话启动检查清单
 
 > **前置说明**：`{version}` 从 `AGENTS.md`「当前状态」或调用方显式传参获取；`{user}` 来自 `git config user.name`。

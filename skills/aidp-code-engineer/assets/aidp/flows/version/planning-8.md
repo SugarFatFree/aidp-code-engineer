@@ -13,12 +13,15 @@ Step 2.4.7 的独立审计是规划产物「经审计才算数」的**唯一**�
 ```bash
 python3 {{AIDP_HOME}}/scripts/check_version_audit_landed.py --version {version} --json
 # 用户显式传了 --skip-audit 时改为：… --version {version} --skip-audit --json
+# 用户显式传了 --fast 时追加 --fast（移交维度审计按设计延后，放行但留痕）
 AUDIT_LANDED_EXIT=$?
 ```
 
 - 退出码 `0` 且无 findings → 审计已落地，继续 Step 2.5。
 - 退出码 `0` 且 findings 为 `audit-skipped-by-flag` → 合规豁免，但 **Step 2.8 报告必须如实写
   「本次规划产物未经独立审计（`--skip-audit`）」**，⛔ 不得写成「审计通过」。
+- 退出码 `0` 且 findings 为 `qr-handoff-deferred-by-fast` → 仅 `--fast` 合规：Step 2.8 报告如实写「移交维度未经统一审计（`--fast`），发布前须结清」。
+- 退出码 `1` 且 finding 为 `qr-handoff-unsettled` → 只回跑 Step 2.4.7 的**移交维度并行审计**（八项审计已落地的不必重跑）。
 - 退出码 `1` → **回跑 Step 2.4.7**（`planning-7.md`）。**交互式**：报出 findings 后停下；
   **无人值守**：按 `planning-7.md` 的 `audit-block` 同款处置交 autopilot 熔断，
   ⛔ 不得因为"看起来一切正常"就往下走。

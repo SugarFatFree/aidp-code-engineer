@@ -25,6 +25,7 @@
 | `--full-rebuild` | **强制全量重建 Step 3.3.11 全量详细设计**：跳过「变更范围增量」、对全部专题从零重算（等价旧覆盖式重算）。默认发布走**变更范围增量**（只重算本次动过的专题、其余前滚，见 `release-6.md`）；本 flag 用于**手动清增量漂移**或**首次建立全量基线**。可与正常发布 / `--finalize-docs` 叠加 | Step 3.3.11（`release-6.md` 变更范围增量重算） |
 | `--rebuild-baseline` | **双轨部署基线补跑模式（短路，约定 37）**：只跑 Step 3.3.7.9（产出 `sql/全量/` + `配置文件/全量/` 全量轨 + 增量轨发布期校准 + `release_baseline_check.py` 机器门），**跳过发布主流程 / 不打 tag**。用于本步因**真实库或配置中心不可达**被跳过后事后补齐——全量基线依赖线上环境可达，发布当时未必满足；读 `docs/audit/{version}/发布欠账.md` 定位欠账，补齐即勾销 | Step 3.3.7.9（`release-4.md` D 部分双轨部署基线） |
 | `--scale=S\|M\|L` | **显式指定需求规模档位**，覆盖 Step 2.4.1.5 自动判定（S 小/M 中/L 全套；控设计册数·用例数·task 是否分册，小需求不走大流程）。不带则据 REQ 数/页面数/是否建表自动判档 | Step 2.4.1.5（`planning-3.md` 需求规模档位判定门） |
+| `--qr-level=scripts\|critical\|full` | **规划链 SKILL 内语义 QR 的分级**，原样透传给四个子命令（缺省 `critical`）：Critical 维度仍由 SKILL 自审，其余维度登记进各目录 `00_索引.md` 的移交清单、由 Step 2.4.7 统一审计并行接手；`full` = 全部维度留在 SKILL 内审（接入前的行为）。⛔ 任何档位机器门都全量跑、Critical 永不移交 | [Step 2.4.1–2.4.3.5](../flows/version/planning-3.md) + [`SKILL编排层接入.md`](../reference/SKILL编排层接入.md) |
 
 ## 前置流程
 

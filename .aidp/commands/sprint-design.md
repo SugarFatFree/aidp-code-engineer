@@ -22,6 +22,7 @@
     ⚠️ greenfield 首版必命中：Step 0.6 让事实清单 base 落 `<待确认>`，而任何真实 base 都 ≠ `<待确认>`。
   - **★ Step 1.6.5 联动修改** → 无人值守**自动补齐联动改动并留痕**，不询问。
   - **★ 缓存 / 锁策略两道确认门**（`check_cache_user_confirmed` / `check_lock_strategy`）→ 无人值守**取保守默认**（不启用缓存 / 锁按 SKILL 核心原则 24 落 **P0 进程内锁**）+ **登记进 `99_待澄清问题清单.md`**，不阻塞、不静默采用激进值。⛔ 「保守」不等于「最严格」：P2 数据库级锁是核心原则 24 里**唯一必须人为确认**的一档，无人值守自动选它 = `check_lock_strategy.py` L1 每轮必判 Critical。
+- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `dev-logic-architect` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/design/detail/{version}/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 - `--has-open-api`（可选）：强制开启对外开放接口设计（PRD 写法隐晦、机械信号未命中时手动指定）；详见 Step 1.6 前的信号识别段
 
 ## 前置流程
@@ -203,6 +204,8 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 使用 `Skill` 工具调用 `dev-logic-architect`，由 skill 自主完成详细设计生成 + 内置多维度独立 Agent 检查 + 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**，命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
 > 详细规则查 `{{AIDP_HOME}}/skills/dev-logic-architect/SKILL.md`；命令端只负责：① 传参（PRD/原型/前版基线/变更清单/`HAS_OPEN_API`+`HAS_THIRD_PARTY_DEP` 信号）② Step 1.5 落盘文件名 override（项目级中文文件名约定）③ Step 1.6~1.7.5 + SKILL 脚本复核 + 1.8 落盘后回检（统一派子 Agent 执行，脚本清单以 SKILL Quality Review 为单一信源）。
+
+> ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 设计上下文路径）：
 > ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`dev-logic-architect` 的**检查项 33**（标题以 SKILL 为准；上游称「检查项 N」，本文档余处简称维度 N）是**入参门控**、

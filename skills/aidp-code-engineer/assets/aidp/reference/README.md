@@ -19,6 +19,7 @@
 | `子Agent必读.md` | 项目级踩坑清单（**用户填充型**，见下）| `agents/frontend.md`·`agents/backend.md`、`/sprint-close` Step 5.1 |
 | `上游调用日志参考实现.md` | 约定 40 的拦截器骨架（traceId 配对 / 截断 / 脱敏 / 二进制降级）| `rules/code.md`·`rules/backend.md` 约定 40 |
 | `agent-tools.md` | Claude Code / Codex / DeepSeek Harness 的判定依据、记忆文件、SKILL / 命令 / 插件目录、工具名与定时循环对照 | 项目记忆文件「多 Agent 兼容」段、`agent_sync.py` 适配入口 |
+| `SKILL编排层接入.md` | 版本规划四个子命令接入 SKILL「编排层调用协议」的命令端契约（入参来源 / 移交清单校验 / 打点落盘）| `/version`、`/sprint-requirements`、`/sprint-design`、`/sprint-plan`、`/sprint-selftest` |
 
 ## ⛔ 维护边界（约定 16）
 

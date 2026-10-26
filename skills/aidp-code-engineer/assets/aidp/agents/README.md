@@ -31,6 +31,7 @@
 | `reviewer.md` | 代码审查 | `/sprint-close` Step 2.5 |
 | `aidp-compliance.md` | 范式合规 | 脚手架 init / migrate / upgrade 末尾 |
 | `version-auditor.md` | 版本规划产物审计 | `/version` Step 2.4.7、autopilot Phase 3.3 build 终审 |
+| `qr-handoff-auditor.md` | SKILL 移交维度统一审计（每个写了移交清单的 SKILL 一个实例）| `/version` Step 2.4.7（与 version-auditor 同轮并行） |
 
 ## 写权限边界
 

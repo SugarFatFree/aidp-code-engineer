@@ -19,6 +19,11 @@
 
 `--skip-audit` 是**唯一**豁免，对应用户显式给 `/version` 传的同名旗标；豁免时退出 0
 但把事实打出来，便于 Step 2.8 报告如实登记「本次未经审计」。
+
+★ 第二条断言：**SKILL 的 QR 移交清单已结清**。`--qr-level=critical|scripts` 时，各规划 SKILL 把非 Critical
+维度登记进产物目录 `00_索引.md` 的 `<!-- AIDP-QR-HANDOFF: … -->` 块，由 Step 2.4.7 的 qr-handoff-auditor
+接手、审完由主流程清块。块还在 = 这些维度**既没被 SKILL 审、也没被统一审计接手**，而产物看起来一切正常。
+`--fast` 时移交审计按设计延后：放行但如实打出「已延后」，发布前由发布流程强制结清。
 """
 from __future__ import annotations
 
@@ -39,6 +44,35 @@ MIN_BYTES = 512
 # 规划产物落点：任一存在即说明「这个版本确实跑过规划」，本门才有判定对象。
 PLANNING_DIRS = ("docs/requirements/{v}", "docs/design/detail/{v}", "docs/plans/{v}",
                  "docs/testing/{v}")
+# 四个规划 SKILL 写 QR 移交清单的位置（与 reference/SKILL编排层接入.md 第二节同一张表）。
+HANDOFF_INDEXES = ("docs/requirements/{v}/研发需求/00_索引.md", "docs/design/detail/{v}/00_索引.md",
+                   "docs/plans/{v}/00_索引.md", "docs/testing/{v}/研发自测/00_索引.md")
+HANDOFF_RE = re.compile(r"^<!-- AIDP-QR-HANDOFF: (\{.*\}) -->\s*$")
+
+
+def unsettled_handoffs(root: Path, version: str) -> list:
+    """返回仍留在 00_索引.md 里的移交清单（代码围栏里的示例不算）。"""
+    found = []
+    for rel in HANDOFF_INDEXES:
+        path = root / rel.format(v=version)
+        if not path.is_file():
+            continue
+        fenced = False
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.lstrip().startswith(("```", "~~~")):
+                fenced = not fenced
+                continue
+            match = None if fenced else HANDOFF_RE.match(line)
+            if not match:
+                continue
+            try:
+                block = json.loads(match.group(1))
+            except ValueError:
+                block = {}
+            dims = [d.get("id") for d in block.get("deferred_dims", []) if isinstance(d, dict)]
+            found.append({"file": path.relative_to(root).as_posix(),
+                          "skill": block.get("skill", "?"), "deferred_dims": dims})
+    return found
 
 
 def _audit_dir(root: Path, version: str) -> Path:
@@ -59,7 +93,18 @@ def _has_planning_artifacts(root: Path, version: str) -> bool:
     return False
 
 
-def scan(root: Path, version: str, skip_audit: bool = False) -> dict:
+def _handoff_finding(items: list, fast: bool) -> dict:
+    listing = "；".join(f"{h['file']}（{h['skill']}：{', '.join(h['deferred_dims']) or '—'}）" for h in items)
+    if fast:
+        return {"kind": "qr-handoff-deferred-by-fast",
+                "detail": f"--fast：移交维度未经统一审计、按设计延后 —— {listing}。"
+                          "版本发布前必须补跑 Step 2.4.7 结清（发布流程会拦）。"}
+    return {"kind": "qr-handoff-unsettled",
+            "detail": f"QR 移交清单未结清 —— {listing}：这些维度没被 SKILL 审，也没被统一审计接手。"
+                      "回跑 Step 2.4.7 的移交维度并行审计，pass 后由主流程清块。"}
+
+
+def scan(root: Path, version: str, skip_audit: bool = False, fast: bool = False) -> dict:
     directory = _audit_dir(root, version)
     reports = sorted(p for p in directory.glob(REPORT_GLOB) if p.is_file()) \
         if directory.is_dir() else []
@@ -72,6 +117,8 @@ def scan(root: Path, version: str, skip_audit: bool = False) -> dict:
         "ok": False,
         "findings": [],
     }
+    handoffs = unsettled_handoffs(root, version)
+    result["unsettled_handoffs"] = handoffs
     if skip_audit:
         result["ok"] = True
         result["findings"].append({
@@ -79,6 +126,8 @@ def scan(root: Path, version: str, skip_audit: bool = False) -> dict:
             "detail": "用户显式传了 --skip-audit：本次规划产物未经独立审计，"
                       "须在版本规划报告里如实登记（⛔ 不得写成「审计通过」）。",
         })
+        if handoffs:   # 豁免审计 ≠ 移交维度审过了：事实照样打出来
+            result["findings"].append(_handoff_finding(handoffs, fast=True))
         return result
     if not _has_planning_artifacts(root, version):
         result["ok"] = True
@@ -114,6 +163,10 @@ def scan(root: Path, version: str, skip_audit: bool = False) -> dict:
             })
     result["substantive"] = substantive
     result["ok"] = bool(substantive)
+    if handoffs:
+        result["findings"].append(_handoff_finding(handoffs, fast))
+        if not fast:
+            result["ok"] = False
     return result
 
 
@@ -146,6 +199,17 @@ def self_check() -> bool:
         landed = scan(root, "V0.1.0")
         # 豁免：--skip-audit 通过，但必须留下「未经审计」的事实。
         waived = scan(root, "V0.9.9", skip_audit=True)   # --skip-audit 先于适用范围判据
+        # 移交清单：块在 → 不通过；--fast → 放行但留痕；代码围栏里的示例块不算。
+        idx = root / "docs/requirements/V0.1.0/研发需求/00_索引.md"
+        idx.parent.mkdir(parents=True, exist_ok=True)
+        block = ('<!-- AIDP-QR-HANDOFF: {"skill":"ux-logic-extractor","qr_level":"critical",'
+                 '"deferred_dims":[{"id":"QR-02"}],"handoff_to":"编排层统一审计"} -->')
+        idx.write_text("# 索引\n\n```text\n" + block + "\n```\n", encoding="utf-8")
+        fenced_only = scan(root, "V0.1.0")
+        idx.write_text("# 索引\n> QR 级别: critical；未审维度: [QR-02 示例]；移交: 编排层统一审计\n" + block + "\n",
+                       encoding="utf-8")
+        unsettled = scan(root, "V0.1.0")
+        deferred = scan(root, "V0.1.0", fast=True)
         return (na["ok"] and na.get("skipped") == "no-planning-artifacts"
                 and not missing["ok"]
                 and [f["kind"] for f in missing["findings"]] == ["audit-report-missing"]
@@ -153,7 +217,12 @@ def self_check() -> bool:
                 and [f["kind"] for f in stub["findings"]] == ["audit-report-stub"]
                 and landed["ok"] and landed["findings"] == []
                 and waived["ok"]
-                and [f["kind"] for f in waived["findings"]] == ["audit-skipped-by-flag"])
+                and [f["kind"] for f in waived["findings"]] == ["audit-skipped-by-flag"]
+                and fenced_only["ok"] and fenced_only["findings"] == []
+                and not unsettled["ok"]
+                and [f["kind"] for f in unsettled["findings"]] == ["qr-handoff-unsettled"]
+                and deferred["ok"]
+                and [f["kind"] for f in deferred["findings"]] == ["qr-handoff-deferred-by-fast"])
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -164,6 +233,8 @@ def main(argv=None) -> int:
     ap.add_argument("--version", help="版本号，如 V0.1.0")
     ap.add_argument("--skip-audit", action="store_true",
                     help="对应 /version 的同名旗标：用户显式声明本次不做独立审计")
+    ap.add_argument("--fast", action="store_true",
+                    help="对应 /version --fast：移交维度审计按设计延后，放行但留痕（发布前须结清）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true")
     args = ap.parse_args(argv)
@@ -176,7 +247,7 @@ def main(argv=None) -> int:
     root = Path(args.root).resolve()
     if not root.is_dir():
         ap.error("--root 必须是目录")
-    result = scan(root, args.version, args.skip_audit)
+    result = scan(root, args.version, args.skip_audit, args.fast)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif result["ok"] and not result["findings"]:

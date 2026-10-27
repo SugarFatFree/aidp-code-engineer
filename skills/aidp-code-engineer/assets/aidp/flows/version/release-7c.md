@@ -24,28 +24,8 @@
 
 - `git push` 因远端有新提交而拒绝 → 自动 `git pull --rebase origin <branch>` 一次再 push；rebase 冲突 → 中断并提示用户手动处理
 - 网络/权限失败 → 报错并提示用户后续手动 `git push origin $TAG_NAME` **和 `git push origin $BRANCH_NAME`**，**不撤销本地 tag 与版本分支**（都已就位）
-- 远端**已有同名 tag / 版本分支**（3.4.2 预检后被并发推入）→ **仅在 `release_force_authorized=1` 时**按重新发布语义强推覆盖同名 ref（`git push -f origin $TAG_NAME` / `$BRANCH_NAME`），不改名、不加时间后缀，报告注明「重新发布：已移动到本次提交」；未授权则登记欠账、不推
-- **★ `git push -f` 被 tag 保护策略拒绝（`pre-receive hook declined` / `Access denied` / `remote rejected`）→ 降级「删除远端 tag 后重新推送」，该降级同受强推授权门约束**（理据见 `rationale.md`），未获授权一律不做：
-  ```bash
-  set -e
-  # ★ 自取版本号（⛔ 别写 `${VERSION:?}` 自引用，见 rationale）
-VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version);; esac
-[ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
-BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
-  TAG_NAME=$($BE --version "$VERSION" get release_tag_name --default "")
-  # ★ 跨围栏取授权位（Step 3.4.2 已落盘），⛔ 别读 shell 变量：取不到即空
-  FORCE_AUTHORIZED=$($BE --version "$VERSION" get release_force_authorized --default 0)
-  if [ "$FORCE_AUTHORIZED" != "1" ]; then
-    python3 {{AIDP_HOME}}/scripts/release_debt.py add --version "$VERSION" --step 3.4.4 \
-      --title "远端 tag 受保护、降级删除未获授权" \
-      --locate "tag $TAG_NAME（远端已存在且拒绝强推）；未执行删远端 tag（破坏性动作须显式授权）" \
-      --redo "交互式重跑 /version $VERSION 在授权门选①，或改用新补丁号"
-    echo "⚠️ 远端 tag 受保护且未获强推授权 → 不删远端 tag，已登记发布欠账"
-  else
-    git push origin ":refs/tags/$TAG_NAME" && git push origin "$TAG_NAME"
-  fi
-  ```
-  删除同样被拒（tag 完全不可变）→ 提示用户改用新 tag 名或联系仓库管理员，并在 Step 3.6 报告显式标注「远端 tag 受保护、推送失败，需人工处置」，**绝不静默留下"本地 tag 与远端不一致"**。（余下见 `rationale.md`）
+- 远端**已有同名 tag / 版本分支**（3.4.2 预检后被并发推入）→ 本次已授权的强推及 tag 保护降级已由 `release-7.md` 在同一执行块内完成；授权在首次 push 前经 `baseline_edit.py take release_force_authorized` 原子消费。本片**不得读历史授权位重新强推或删除 ref**。剩余失败登记发布欠账，重新发布需重新经过现有授权门。
+- **★ tag 保护策略仍拒绝（含删除失败）** → 在 Step 3.6 报告显式标注「远端 tag 受保护、推送失败，需人工处置」，保留失败证据并登记欠账；**绝不静默留下“本地 tag 与远端不一致”**。网络或权限失败不等于可以无授权删除远端 tag。
 - **★ tag 成功但版本分支创建/推送失败**（或反之）→ 不回滚已成功的一方，终端 WARN 提示手动补齐缺失的一方（`git branch $BRANCH_NAME && git push origin $BRANCH_NAME`），并在报告里标注
 
 输出提示：

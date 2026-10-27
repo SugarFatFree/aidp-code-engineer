@@ -18,7 +18,7 @@
 - `--prd-presence-table=<路径>`（可选，**只由 `/version` 传**）：传给 SKILL `prd_presence_mode=table` + `prd_presence_table=<路径>`——`[PRD存在性]` 只对表中「未承接」行补用例（表由 `prd_presence_table.py` 从研发需求表 D 生成）。
 - `--module-case-cap=N`（可选，**只由 `/version` 传**，L 档 30）：原样传 `module_case_cap`。
 - `--matrix-scope=p0`（可选，**只由 `/version` 传**，L 档）：原样传 `matrix_scope`。
-- `--module-kind=interactive|non_interactive|auto`（可选，**只由 `/version` 传**，缺省 `auto`）：原样传 `module_kind`。
+- `--module-kind=interactive|non_interactive|auto`（可选，**只由 `/version` 传**——`/version` 恒传、缺省传 `auto`）：原样传 `module_kind`。本命令单独调用没收到就不传（SKILL 缺省 `interactive`），⛔ 不自己补 `auto`。
 - `--plan-ref-mode=deferred`（可选，**只由 `/version` fresh 模式传**，与 `/sprint-plan` 并行生成时）：传 `plan_ref_mode=deferred`——SKILL 不读执行计划、S4 写 `⟨PLAN-REF:REQ-xxx⟩` 占位符，由 `/version` 在计划生成后回填。补充模式恒不传（增量范围来自计划）。
   以上入参的命令端契约同见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`；回检 `check_case_stats.py` 时带同样的参数。
 
@@ -72,12 +72,13 @@
 >
 > ⚙️ **定位（按约定 21）**：用例的结构 / 格式 / 溯源 / 方案闭环 / 数量基线 / 还原度 / 零残留断言判定**一律以 `dev-manual-testcase` Quality Review 为单一信源**；本门只做两件事——① 派子 Agent 原样跑 SKILL 脚本复核、② 查 SKILL 不管的项目级落盘约定。
 
-**① SKILL 脚本复核（派独立子 Agent）**：按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参只有三个：
+**① SKILL 脚本复核（派独立子 Agent）**：按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参如下：
 - `check_case_stats.py` 显式传 `--scale {档位}`（本命令 `--scale=` 入参 / `/version` Step 2.4.1.5 判档；均无则 L）；收到 `--module-case-cap=N` / `--prd-presence-table=<路径>` 时**同时**传 `--module-case-cap N` / `--prd-presence-table <路径>`（与 SKILL 内判定同口径；对账表有未覆盖行 = exit 1）；
 - `--issue-record` 按序取**上游研发需求** `docs/requirements/{version}/研发需求/01_研发需求.md` → `00_研发需求.md` → 本目录 `99_待澄清问题清单.md`，均无则不传（⛔ 首选不得是本目录自产清单：那是自己查自己）；
 - 收到 `--module-kind=<值>` 时 `check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 传 `--module-kind <值>`（不传则 `[非交互]` 标记不被认可）；
+  值为 `auto` 时另跑 `read_module_kinds.py docs/design/detail/{version} --json`（⛔ 传**详细设计目录**，不是用例目录：传错只会得到 `skipped`），以其 `non_interactive[]` 核 `[非交互]` 标记与设计一致；`read_errors` 非空 = 残缺样本，不得读成一致；
 - 收到 `--plan-ref-mode=deferred` 时 `check_suite_upstream.py` 传 `--plan-ref-mode deferred`（此时占位符尚未回填；回填后由 `/version` 以缺省 required 再复核一次）；
-- 其余脚本无额外入参。
+- 上面没列到的脚本无额外入参。
 退出码与「退出码之外必须读 `--json`」的判据（SKILL 的「五点例外」、13.8 三态、`skipped` / `scope` / `read_errors` 不等于通过）**以该文件为准，命令端不复述**。子 Agent 只回传：每个脚本退出码 + 按 SKILL 口径判定的维度结论 + 未通过项明细（Important 逐条列名）。
 
 **② 项目级落盘约定（SKILL 不管，命令端自查）**：

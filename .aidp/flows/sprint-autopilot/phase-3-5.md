@@ -44,6 +44,10 @@
    # ⛔ 本 exit 0 **只结束本围栏、不让位本 tick**（全仓唯一例外，见 rationale「全部关闭分支的 exit 0」）
    [ "$REMAIN_COUNT" -eq 0 ] && { echo "✅ 全部 Sprint 已关闭 → 跳过 Sprint 循环 → Read phase-3-5b.md，从步骤 2.5『部署触发前置』（commit → 分类 → push）执行（不退本 tick）"; exit 0; }
    SPRINT_NO="$NEXT_SPRINT"; echo "SPRINT_NO=$SPRINT_NO"
+   # ★ 派发前先记「进入」：tick 在 ② 里被硬超时杀掉时 ③ 一行都不会跑，不先写 run-state 则
+   #   phase_enter_count 不涨、stuck 熔断永不触发 → 同一 Sprint 每个 tick_max 静默重跑一遍。
+   $BE --version "$V" run-state "3.2-dev" "3.2-dev" "$SPRINT_NO" --enter \
+     --summary "Sprint-$SPRINT_NO 已派发子 Agent 执行" || exit 1
    ```
 
    **② 委派子 Agent 执行该 Sprint（IRON-8）**：用 `Agent({run_in_background:false})` 派子 Agent 跑
@@ -75,29 +79,18 @@
    fi
    # ⛔ 失败不能裸 exit 1（记账范式同 phase-3-9，根因见 rationale.md「裸退让熔断永不达阈」）
    if ! printf '%s\n' "${CLOSED_AFTER[@]}" | grep -qx "$SPRINT_NO"; then
-     S=$($BE --version "$V" bump dev_fail_streak)
-     $BE --version "$V" set dev_fail_phase "3.2-dev"
+     # ★★ 记账 → 判阈 → 冻结四件套 → #4 一次做完（含「无唤醒源即当场冻结」；根因见 rationale.md「3.2 的达阈冻结」）。
+     #   ⛔ 不在这里内联 `$BE set` 冻结：三次写盘不查返回码 = 「通知说冻了、盘上没冻」。
+     FH=0; python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" \
+       --phase 3.2-dev --reason handoff-exhausted \
+       --streak-key dev_fail_streak --threshold "${DEV_FAIL_FREEZE_THRESHOLD:-3}" \
+       --title "开发受阻：Sprint 未取得 close 归档" \
+       --why "Sprint-$SPRINT_NO 未取得 close 归档（3.2-dev），结构性不可自愈，请人工介入" || FH=$?
+     [ "$FH" = 2 ] && { echo "⛔ 失败处置入参/环境错（什么都没写）→ 修好后重跑本块"; exit 1; }
+     S=$($BE --version "$V" get dev_fail_streak --default 0)
      $BE --version "$V" run-state "3.2-dev" "3.2-dev" "$SPRINT_NO" \
        --summary "Sprint-$SPRINT_NO 未取得 close 归档（第 $S 次）" --pending "sprint-close-failed"
-     # ★★ 只 bump 不判阈 = 熔断永不触发（根因见 rationale.md「3.2 的达阈冻结」）
-     if [ "$S" -ge "${DEV_FAIL_FREEZE_THRESHOLD:-3}" ]; then
-       $BE --version "$V" set needs_human true aiauto_frozen_at @now freeze_reason handoff-exhausted \
-         needs_human_reason "Sprint-$SPRINT_NO 连续 $S tick 未取得 close 归档（3.2-dev），结构性不可自愈，请人工介入"
-       $BE set aiauto_blocked_reason "frozen:handoff-exhausted@$V"
-       # ⛔ 冻结必须同时发 #4（口径见 phase-0-4.md）：不发 = 「停了，但没人知道」。
-       python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
-         --title "开发受阻：Sprint 未取得 close 归档" --version "$V" \
-         --section "Sprint-$SPRINT_NO 连续 $S tick 无 close 归档（3.2-dev），已冻结本版待人工。" || true   # 退出码 3 = 未配置通知渠道，静默跳过
-       echo "⛔ Sprint-$SPRINT_NO 连续 $S tick 无 close 归档（≥ 阈值 ${DEV_FAIL_FREEZE_THRESHOLD:-3}）→ needs_human 冻结本版止损"; exit 0
-     fi
-     # ★ 未达阈也要断言唤醒源：无唤醒源时「让位」= 就此收场，必须当场冻结止损而不是静默退出。
-     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-     if [ "${HAS_WAKE_SOURCE:-0}" != "1" ]; then
-       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" \
-         --phase 3.2-dev --reason handoff-exhausted --freeze-now \
-         --why "Sprint-$SPRINT_NO 无 close 归档且本轮无唤醒源（HAS_WAKE_SOURCE=0），没有下一 tick 可重试"
-       echo "⛔ Sprint-$SPRINT_NO 无 close 归档且无唤醒源 → 当场冻结本版止损"; exit 0
-     fi
+     [ "$FH" = 3 ] && { echo "⛔ Sprint-$SPRINT_NO 无 close 归档（dev_fail_streak=$S）→ 已冻结本版止损"; exit 0; }
      echo "UNATTENDED_YIELD ⛔ Sprint-$SPRINT_NO 无 close 归档产物（dev_fail_streak=$S）→ 让位本 tick"; exit 0
    fi
    $BE --version "$V" del dev_fail_streak dev_fail_phase || true

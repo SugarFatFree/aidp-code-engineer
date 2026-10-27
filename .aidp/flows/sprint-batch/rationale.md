@@ -40,7 +40,7 @@
 
 `baseline_edit.py current-version` 的定义是「有 `phase_beta_done_at` **且**无
 `internal_released_at`」的版本。而本轮版本的 `phase_beta_done_at` **要到部署成功才写**
-（`phase-3-5b.md` / `phase-3-7.md`）。
+（`sprint-autopilot/phase-3-5b.md` / `sprint-autopilot/phase-3-7.md`）。
 
 于是在 6.0.5 运行的那一刻，本轮版本**必然不在候选集里**：
 - 仓库里若有一个尚未归档的上一版（Phase 2 hold 的常态）→ 返回**上一版**，校验对着错版本跑；

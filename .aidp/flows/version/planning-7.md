@@ -147,7 +147,8 @@ PROMPT
 详细审计项 + 评级阈值 + 结构化输出格式见 `{{AIDP_HOME}}/agents/version-auditor.md`，命令端不复述。
 
 **★ 移交维度并行审计**（`qr_level ≠ full` 时；`--fast` 不派、清单保留，Step 2.5.0 带 `--fast`）：与上面的 version-auditor **同一条消息**并行派发——
-四个 `00_索引.md` 里**每有一份 QR 移交清单**，就派一个 `{{AIDP_HOME}}/agents/qr-handoff-auditor.md` 子 Agent（入参与报告路径见该文件）。
+四个 `00_索引.md` 里**每有一份 QR 移交清单**，就派一个 `{{AIDP_HOME}}/agents/qr-handoff-auditor.md` 子 Agent（入参与报告路径见该文件；
+`skill_params` 与 `upstream_dirs` 读 Step 2.4.3.5 保存的 `memory/{version}/.planning-skill-params.json`，dev-manual-testcase 的规模入参对应 `{selftest_args}`，计划引用按回填后的 `required` 审；其余 SKILL 转发各自实际收到的规模档位与上游目录——这些入参改变移交维度的读法）。
 两类审计**合并处置**：任一方 `block` 即整体 `block`（`fix_actions` 合并后按下方分支回调 SKILL）。
 某 SKILL 的移交审计 `pass`/`warn` 后，**主流程**清掉其清单：`qr_orchestration.py handoff --qr-level full --write <该 00_索引.md>`
 （⛔ 审计员自己不清；清单仍在 = 移交未结清，Step 2.5.0 落地门判不通过）。

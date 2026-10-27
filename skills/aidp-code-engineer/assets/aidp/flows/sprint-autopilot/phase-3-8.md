@@ -101,7 +101,7 @@
       && [ -n "$DEPLOYED_AT" ] && [ -n "$HANDOFF_AT" ]; then
      if [ "${ENTRY_MODE:-}" = test-only ]; then
        DEPLOY_READY=1
-     elif [ -n "$BUILD_STARTED" ] && [ "$(date -d "$DEPLOYED_AT" +%s 2>/dev/null || echo 0)" -ge "$(date -d "$BUILD_STARTED" +%s 2>/dev/null || echo 1)" ]; then
+     elif [ -n "$BUILD_STARTED" ] && [ "$($BE epoch "$DEPLOYED_AT" || echo 0)" -ge "$($BE epoch "$BUILD_STARTED" || echo 1)" ]; then
        DEPLOY_READY=1
      fi
    fi

@@ -141,8 +141,10 @@ fi
 > `DEV_MOCK` 三字段 `since`·`owner`·`REMOVE_WHEN`）；缺字段由 2B 判 Critical，⛔ 不存在
 > "写个裸标记就能关掉 2A"这条后门。判据与字段集以 `code-verification-loop` SKILL 为单一信源，本处不复制。
 
-> `check_client_mcp.py` 的 `declared: true` → 随 prompt 传整个 **`client_mcp`** 对象
-> （`client_type` / `implementation` / `capability_state` / 工具清单出处，脚本返回什么就传什么）；
+> `check_client_mcp.py` 的 `declared: true` → 随 prompt 传 **`client_mcp`** 对象：
+> **显式补 `enabled: true`**（SKILL 门控读此键，检测器返回的 `declared` 不是它的别名），再保留
+> `client_type` / `implementation` / `capability_state` / `source` 等检测事实；
+> `declared-unimplemented` → 报告列前置缺失，不伪造 `enabled: true`；检测退出 2（声明冲突/非法值）须先修正声明，⛔ 不冒充未启用；
 > **另**当 `client_type=web` 且 `implementation=webmcp` 时**再加**传 `webmcp_enabled: true`
 > + `webmcp_entry_symbols: <check_webmcp.py 返回的数组原样>`（⚠️ 后者**不可省略也不可写死**：挂载位置已迁移过一次、
 > 规范仍在演进，上游缺该入参会直接报错而非猜默认值）。
@@ -155,7 +157,7 @@ fi
 
 > ⛔ **`--unattended` / `--from-batch` 时 prompt 显式带上非交互上下文**（「任何需要用户裁决的节点一律不询问：记录结论 + 标注待人工确认后返回」）——子 Agent 里无人可答，主流程只会看到「子 Agent 未返回」。
 
-派发的子 Agent 内部以 `Skill` 工具调用 `code-verification-loop`。**skill 内置多维度独立 Agent 检查 + 分级处理（级别以 SKILL 为单一信源）+ 每轮留痕**；命令端按约定 21 不复述维度内容与级别名，只负责传入参数 + 接收验收报告。维度索引见 `{{AIDP_HOME}}/skills/code-verification-loop/SKILL.md`，各维度细则见其 `references/dimension-*.md`，第三方 mock 协议见 `references/third-party-mock-protocol.md`（SKILL 单一信源）。
+派发的子 Agent 内部以 `Skill` 工具调用 `code-verification-loop`。**skill 内置多维度独立 Agent 检查 + 分级处理（级别以 SKILL 为单一信源）+ 每轮留痕**；命令端按约定 21 不复述维度内容与级别名，只负责传入参数 + 接收验收报告。维度索引见 `{{AIDP_HOME}}/skills/code-verification-loop/SKILL.md`，各维度细则见其 `references/flow-dims-*.md`（`flow-dims-core` / `flow-dims-static-gates` / `flow-dims-quality` / `flow-dims-delegated`），第三方 mock 协议见 `references/third-party-mock-protocol.md`（SKILL 单一信源）。
 
 > 开发期更早的"复杂度+复用"自检由 Frontend Agent Step 4.5 / Backend Agent Step 7.5 承担（作为更早的自检关口，不取代 SKILL 兜底）。
 
@@ -164,13 +166,18 @@ fi
 - **代码路径**：`code/`（按本项目实际单/多前后端组织取根目录或子项目目录）
 - **设计文档路径**：`docs/design/detail/{version}/`（含本目录下全部分册）
 - **接口文档路径**：`docs/design/detail/{version}/03_接口设计.md`（历史裸名 `接口设计.md` 兼容）；如做了拆分则传 `docs/design/detail/{version}/` 让 skill 按 glob 加载
-- **被测项目根**：仓库根（`.`）——供 SKILL 的**三个外部脚本门控维度**定位被测项目侧脚本：
+- **被测项目根**：仓库根（`.`）——供 SKILL 的**四个外部脚本门控维度**定位被测项目侧脚本：
   - **维度 10「UI 还原度确定性检查」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`
   - **维度 12「上游调用日志可见性与脱敏」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py`
   - **维度 13「实现偏离设计」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py`
   - **维度 15「同族增量项一致性」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_sibling_family.py`
   四个脚本都由 AIDP 脚手架经 `ensure_root_scripts` 下发到**被测项目侧**（不在 SKILL 内、不受版本门控），本仓均已下发；⛔ **不传或传错 → 对应维度落到「不适用（未下发）」档**——维度 10 里**约定39-R10「导出只导当前页」是零豁免的 Critical**、维度 12 里 **C1 零日志 / C2 成功路径不可见也是 Critical**，等于静默放过硬门；维度 15 里 **F2「成员未登记」也是 Critical**，漏传只关掉它的机器半场（15.1~15.3 语义核对仍照跑）。（同一个根路径四维共用，传一次即可。）
 - **被验收版本号**：`{version}`（如 `V0.14.0`）——**维度 13 专用且必填**。它比维度 10/12 多这一个参数，SKILL 侧明令「值由调用方传入，⛔ 不得自拟或省略；取不到就按『不适用（未取到 `--version` 值）』留行」。⚠️ **漏传不会报错、只会让维度 13 恒落「不适用」**：脚本缺 `--version` 值时 argparse 直接 `exit 2`（用法错），而 SKILL 对 exit 2 的处置是「修正参数后重跑」——既不计过也不计不过，报告里两侧都不留痕。故本行与上一行是**两个独立参数**，不要合并、不要省略。
+
+- **改动前基线 ref**（SKILL `verify-only` 输出契约明令：维度 0 类型检查的存量基线及维度 4 / 7 / 8 / 14 的一切基线对照**一律取改动前**；未给时 SKILL 回落 `git merge-base HEAD <主干分支>`——**主干开发时 merge-base 就是 `HEAD`**，本次改动被整批吞成「存量」，方向是假绿。故本参数**必须显式传**，⛔ 不得省略交给 SKILL 回落）：
+  - `vcs_mode=git`：传**本 Sprint 起点 commit**（`/sprint-dev` 动手前的 HEAD，与 `flows/sprint-dev/postdev-writeback-1.md` X.0.0 变更检测用的 `{sprint-start-sha}` 同一值）。⚠️ 仓库内**没有持久化字段**记录它，按序解析、取到即停：① 上游编排（`/sprint-full` 等）显式透传的起点 commit；② 本 Sprint 改动全部仍在工作区未提交（本 Sprint 无已提交 commit）→ `HEAD`；③ 当前在特性分支 → `git merge-base HEAD <主干分支>`，**仅当结果 ≠ `HEAD` 才有效**；④ 以上皆不成立 → 按下方「取不到」处置。⛔ 不得用 `HEAD~1` 顶替（多 commit 的 Sprint 会漏掉前面的改动）、⛔ 不得凭感觉挑一个 commit。
+  - `vcs_mode=none`：无可检出的改动前代码（`sprint-{NNN}-local-before.json` 只有 sha256、不含旧内容，跑不了改动前的类型检查）→ 一律按「取不到」处置。
+  - **取不到时**：prompt 里显式写「改动前基线 ref：无（取不到；⛔ 不得回落 merge-base / 本轮首跑错误数）」，由 SKILL 按其契约把依赖基线的项落「**基线无效，本项未核验**」（`未执行（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`）。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**无人值守 / 编排调用必须向上游返回「不通过 / 未核验」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
 
 **额外提示**（命令端补充给 skill 的上下文）：
 - 任务描述：本次验收的 Sprint 编号 + 功能范围（来自 `01_研发执行计划.md` 中 Sprint-{NNN} 行）
@@ -212,8 +219,9 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 - 仅验收模式单轮返回：结论（通过 / 不通过）+ 各维度 Pass / Fail / 不适用 + 按严重度排序的问题清单（严重度 / 维度 / 文件:行 / 证据 / 修复建议）
 
 **与 AIDP 的衔接**：
-- skill 报告的 Critical 问题（及 SKILL 标注须回修的 Important）→ 命令端逐条转写为 bug 记录追加到 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`（「来源」列写 `code-verification-loop 维度 N`），后续由 `/sprint-bugfix` 处理；⛔ 本命令不修代码
-- skill 验收通过 → 命令端把通过结论写入 `docs/testing/{version}/sprint-{NNN}/`，进入 `/sprint-close`
+- **验收结论以 SKILL 返回的结论字段（`通过` / `不通过`）为准**，⛔ 命令端不按严重度自行重判、也不改判。⚠️ **SKILL 内部判据冲突须显式留痕**：`SKILL.md` 的 verify-only 总判据与 `references/flow-dims-quality.md` 对 L2「Important 不阻塞」的表述不一致；遇到此类条目保留原级别、具体判据出处及返回结论，在报告标「上游判据冲突，待澄清」，⛔ 不自行把明确非阻断项升级为 Critical 或追加关闭 Sprint 的硬门。**登记 bug 与是否阻断是两件事**，以下完整转写要求不改变 SKILL 返回结论
+- skill 问题清单中的 **Critical 与 Important 一律**逐条转写为 bug 记录追加到 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`（「来源」列写 `code-verification-loop 维度 N`），后续由 `/sprint-bugfix` 处理；⛔ 本命令不修代码。仅转 Critical 会漏掉 SKILL 返回的 Important 修复项；按上条保留结论与非阻断标记，不在命令端补「存在 Important 即阻断」的判据。唯一例外：`问题=本项未核验` 且原因为基线无效或工具环境不可用的条目，按上方「改动前基线 ref · 取不到时」的失败交接处置，不转 bug。Suggestion 不转 bug，写入测试报告改进建议
+- skill 结论 `通过` → 命令端把通过结论写入 `docs/testing/{version}/sprint-{NNN}/`，进入 `/sprint-close`
 
 ### Step 2.5：★ 研发自测用例预判断
 
@@ -307,7 +315,7 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 - 确认待人工执行的用例清单已列入测试报告（⛔ 本命令不执行用例）
 - 确认测试报告已生成
 - 确认 bug 记录完整
-- ★ **确认本 Sprint 改动侧编译/前端校验通过（Step 6 bugfix 之后的【复验收敛点】）**：⚠️ **前端**部分不再是「唯一收敛点」——`code-verification-loop` 已把 `npx --no-install vue-tsc/tsc --noEmit` + `npx --no-install eslint <改动文件>`（**error 阻断、warning 不阻断**）立为**维度 0 静态基线门**（前置、不计入 15 维度；⛔ **判级与豁免以 SKILL 的 `references/flow-dims-core.md` 为准、命令端不复述**——那里明写「首轮记录存量错误数作基线、只对增量判 Critical」与「工具未安装标跳过、不得升级为全量 build」，抄成「非零即 Critical」会让接手存量项目的第一轮 100% 阻塞），Step 2 的验收子 Agent 里已跑过一遍。⛔ **但后端编译不在维度 0 内**（该 SKILL 明确不做 `mvn compile`）：它会跑到 `generate-resources` 相，而 `frontend-maven-plugin` 官方默认就绑在那，于是一条写着「只编译不打包」的命令可以真的触发 `npm run build`（直接违反约定 35 ②）。故**后端编译在本步是唯一收敛点**；前端部分本步是 **Step 6 bugfix 之后的复验点**——修完的改动需要再过一次回检，删了就没人管。**仅处理本 Sprint 实际改动的一侧**——改了前端才校验前端（**lint + 类型检查，不打包**）、改了后端才编后端，**未改动的一侧不处理**；执行走**资源受限方式**（`nice` + 限并发 worker/线程，可选 `taskset/cpulimit` 硬顶核数，避免 CPU 打满），配方见 `agents/backend.md`「Step 7: 编译验证」/ `agents/frontend.md`「Step 4: 前端验收校验」。**前端验收期不跑完整打包**（打包 = bundle+压缩，CPU 杀手且验收不需要产物），部署打包由使用者按需自行执行。编译/前端校验失败 → 按硬失败回 `/sprint-bugfix`
+- ★ **确认本 Sprint 改动侧编译/前端校验通过（Step 6 bugfix 之后的【复验收敛点】）**：⚠️ **前端**部分不再是「唯一收敛点」——`code-verification-loop` 已把 `npx --no-install vue-tsc/tsc --noEmit` + `npx --no-install eslint <改动文件>`（**error 阻断、warning 不阻断**）立为**维度 0 静态基线门**（前置、不计入 15 维度；⛔ **判级与豁免以 SKILL 的 `references/flow-dims-core.md` 为准、命令端不复述**——那里明写「以**改动前**代码的错误数作存量基线、只对增量判 Critical」（`verify-only` 取 Step 2 传入的改动前基线 ref；⛔ 不得以本轮首跑错误数作基线，那会把本次引入的错误吞成存量）与「工具未安装标跳过、不得升级为全量 build」，抄成「非零即 Critical」会让接手存量项目的第一轮 100% 阻塞），Step 2 的验收子 Agent 里已跑过一遍。⛔ **但后端编译不在维度 0 内**（该 SKILL 明确不做 `mvn compile`）：它会跑到 `generate-resources` 相，而 `frontend-maven-plugin` 官方默认就绑在那，于是一条写着「只编译不打包」的命令可以真的触发 `npm run build`（直接违反约定 35 ②）。故**后端编译在本步是唯一收敛点**；前端部分本步是 **Step 6 bugfix 之后的复验点**——修完的改动需要再过一次回检，删了就没人管。**仅处理本 Sprint 实际改动的一侧**——改了前端才校验前端（**lint + 类型检查，不打包**）、改了后端才编后端，**未改动的一侧不处理**；执行走**资源受限方式**（`nice` + 限并发 worker/线程，可选 `taskset/cpulimit` 硬顶核数，避免 CPU 打满），配方见 `agents/backend.md`「Step 7: 编译验证」/ `agents/frontend.md`「Step 4: 前端验收校验」。**前端验收期不跑完整打包**（打包 = bundle+压缩，CPU 杀手且验收不需要产物），部署打包由使用者按需自行执行。编译/前端校验失败 → 按硬失败回 `/sprint-bugfix`
 
 ### Step 8：更新状态
 

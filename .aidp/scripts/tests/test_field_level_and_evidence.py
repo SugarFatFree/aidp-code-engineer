@@ -12,6 +12,7 @@
 import json
 import os
 import subprocess
+import re
 import sys
 import tempfile
 import shutil
@@ -340,6 +341,14 @@ def test_config_consolidation():
           repo_keys == tpl_keys)
     check(f"   差集 → 仅在仓库那份：{sorted(repo_keys - tpl_keys)}；仅在骨架：{sorted(tpl_keys - repo_keys)}",
           repo_keys == tpl_keys)
+    # ★ 键集相等还不够：注释是写给下游人看的配置说明，两份各自演进后 ensure() 建出来的那份
+    #   讲的是旧口径（曾漏掉 cicd 专属参数位置、把模板仓库说成「没有 scaffold 段」、写死 `.aidp/`）。
+    #   口径：除 project 段的两个值外逐字相等（运行根占位按本机渲染）。
+    from aidp_runtime import runtime_text as _rt
+    _want = (REPO / "memory/aidp-config.yaml").read_text(encoding="utf-8")
+    _want = re.sub(r"(?m)^(  name(?:_cn)?): .*$", r"\1: null", _want, count=2)
+    _want = _rt(_want.replace("{{AIDP_HOME}}", "__AIDP_HOME__"), str(REPO / ".aidp/scripts/aidp_config.py"))
+    check("★ 配置骨架正文与 memory/aidp-config.yaml 逐字一致（仅 project 两值置 null）", cfg.TEMPLATE == _want)
     # ★ 读方拿得到键才算配置项存在：scheduler_config 不返回 tick_max_seconds 时，
     #   挂死判据恒取 0 → max(threshold, 0, 3600) 恒等于 3600，用户配的 7200 静默失效。
     for _k in ("tick_max_seconds",):

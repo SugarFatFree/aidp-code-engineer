@@ -112,7 +112,8 @@ PREV=$(git tag --sort=-version:refname | grep -iE '^(release-)?[Vv][0-9]+\.[0-9]
   ```
 
   `UNSETTLED` 非 0 或取不到 → **先补跑**规划 Step 2.4.7 的移交维度并行审计（`planning-7.md`，`qr_level` 取清单里登记的档位），
-  pass 后清块再继续本步；**交互式与无人值守同样自动补跑、不询问**（这是发布的前置，不是可选项）。
+  从 `memory/{version}/.planning-skill-params.json` 读回生成时的规模入参与上游目录，原样传给审计员；旧版本没有该文件时，先从产物的显式调用记录恢复，恢复不了则重跑 `/sprint-selftest`（`--qr-level=full`，无人值守透传），生成可核验的新基线，⛔ 不猜参数后清掉旧清单。
+  pass/warn 后由主流程清块再继续本步；**交互式与无人值守同样自动补跑、不询问**（这是发布的前置，不是可选项）。
   补跑 block → 按 Step 2.4.7 的 block 处置回调 SKILL 修复，⛔ 不得带着未审维度发布。
 
 **★ 未关闭 Sprint 自动关闭流程**：

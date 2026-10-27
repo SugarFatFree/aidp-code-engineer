@@ -40,12 +40,12 @@ mkdir -p memory/.aidp
 # 有唤醒源留给下一 tick；无唤醒源最多轮询 300+120 秒，同 tick 必有明确终态或冻结。
 CICD_POLL_WINDOW=480
 [ "${HAS_WAKE_SOURCE:-0}" = "0" ] && CICD_POLL_WINDOW=300
-python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RID" --commit "$GIT_PUSH_COMMIT" "${TARGET[@]}" --version "$V" \
+python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RID" --commit "$GIT_PUSH_COMMIT" "${TARGET[@]}" --version "$V" --max-retries "${CICD_MAX_RETRIES:-3}" \
   --timeout "$CICD_POLL_WINDOW" > memory/.aidp/cicd-poll.json
 WRC=$?
 VERDICT=$(jq -r '.verdict // ""' memory/.aidp/cicd-poll.json)
 if [ "$VERDICT" = "running" ] && [ "${HAS_WAKE_SOURCE:-0}" = "0" ]; then
-  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RID" --commit "$GIT_PUSH_COMMIT" "${TARGET[@]}" --version "$V" \
+  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RID" --commit "$GIT_PUSH_COMMIT" "${TARGET[@]}" --version "$V" --max-retries "${CICD_MAX_RETRIES:-3}" \
     --timeout 120 > memory/.aidp/cicd-poll.json
   WRC=$?
   VERDICT=$(jq -r '.verdict // ""' memory/.aidp/cicd-poll.json)
@@ -113,7 +113,8 @@ BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
 # ★ CICD_RETRY 必须**从 baseline 读回**：轮询跨多次 Bash 调用，shell 变量不持久。
 #   写成「进入本步前置 CICD_RETRY=0」并逐字执行，等于每次重试都把计数清零 → ≤3 上限永不达到。
 CICD_RETRY=$($BE --version "$V" get cicd_run.cicd_retry_count --default 0)
-CICD_MAX=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get cicd.max_retries 2>/dev/null); CICD_MAX=${CICD_MAX:-3}
+# 上限：PRD deployment.cicd_max_retries > cicd.max_retries > 3（tick flags 动态派生）
+CICD_MAX=${CICD_MAX_RETRIES:-3}
 # ★ 冻结四件套一次写齐（缺任一即解冻判据恒假 / 落 unknown 不进任何解冻分支）
 # ★★ **本函数是全 Phase 的通用冻结助手**：⛔ 任何冻结点都必须调它，不得自己拼
 #   冻结四件套 —— 自己拼的那些恰恰是漏发 #4 的来源（落盘写了、通知没发）。
@@ -150,7 +151,7 @@ freeze() {   # $1=freeze_reason  $2=needs_human_reason
      if [ -n "$PL" ]; then TARGET=(--pipeline "$PL"); else TARGET=(--env "$CENV"); fi
      mkdir -p memory/.aidp
      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode retry --run-id "$RESOLVED_RUN_ID" "${TARGET[@]}" \
-       --version "$V" --timeout 480 > memory/.aidp/cicd-retry.json
+       --version "$V" --max-retries "${CICD_MAX_RETRIES:-3}" --timeout 480 > memory/.aidp/cicd-retry.json
      RRC=$?; cat memory/.aidp/cicd-retry.json
      if [ "$RRC" = "0" ]; then
        $BE --version "$V" bump cicd_run.cicd_retry_count

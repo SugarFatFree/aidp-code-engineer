@@ -70,7 +70,6 @@ autopilot_decisions:
     deploy_ends:
       backend:
         trigger: cicd-provider                        # 该端部署方式（同 cloud_deploy_trigger 取值域）
-        pipeline_env: test                            # cicd-provider 时的候选环境（最终仍由 Step A0 核验）
         ready_api_url: "https://uat.example.com/api/menu/list"   # 该端就绪探针（登录后自身鉴权接口，连续 2 次取数）
       frontend:
         trigger: cicd-provider                        # cicd-provider | manual | none（none=本端本次无部署，不校覆盖度）

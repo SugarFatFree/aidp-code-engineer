@@ -105,8 +105,8 @@ TEST_TEAM_HAS=$(find "$V/正式用例" "$V/测试验收" "$V/测试执行" -maxd
   -not -name "_*" \
   -not -name "00*" -not -name "01_测试环境与账号.md" -not -name "99_*" -not -name "README.md" 2>/dev/null | head -1)
 # ⛔ 必须排除 `00*`（索引）：否则目录只剩 `00_索引.md` 时本步判「✅ 用例存在」放行，
-#    而 aiauto-test 按其单一信源（phase-2-1.md）判零用例 → 累计 env_fail_streak、
-#    3 tick 后按 testplan-incomplete 冻结。排除口径以 phase-2-1.md 为准。
+#    而 aiauto-test 按其单一信源（sprint-aiauto-test/phase-2-1.md）判零用例 → 累计 env_fail_streak、
+#    3 tick 后按 testplan-incomplete 冻结。排除口径以 sprint-aiauto-test/phase-2-1.md 为准。
 
 # 研发自测用例：研发自测/ 子目录或单文件
 DEV_HAS=$(find "$V/研发自测" -maxdepth 2 -name "*.md" -not -name "_*" -not -name "99_*" -not -name "01_测试环境与账号.md" -not -name "01_研发自测方案.md" -not -name "00_研发自测方案.md" -not -name "00_索引.md" -not -name "README.md" 2>/dev/null | head -1)

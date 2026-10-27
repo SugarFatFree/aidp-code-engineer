@@ -225,8 +225,8 @@ Phase 0 检查结果：
 
 🚀 现在请用 /loop 启动 7×24 守护（★ 必须并行挂【两条】，缺一条则流水线断链）：
 
-    /loop 10m /sprint-autopilot --unattended     # 开发链路：PRD → 规划 → 开发 → 部署
-    /loop 5m  /sprint-aiauto-test --unattended   # 测试链路：探测部署 → 浏览器仿真测试 → 报告
+    /loop 10m /sprint-autopilot --unattended --no-loop     # 开发链路：PRD → 规划 → 开发 → 部署
+    /loop 5m  /sprint-aiauto-test --unattended --no-loop   # 测试链路：探测部署 → 浏览器仿真测试 → 报告
     （★ 两条都必须带 --unattended：首个 tick 持久化标志尚未落盘，不带会被判交互式而挂起等人）
 
 （autopilot 每 10 分钟检查 PRD 变化；aiauto-test 每 5 分钟检查是否有新部署）

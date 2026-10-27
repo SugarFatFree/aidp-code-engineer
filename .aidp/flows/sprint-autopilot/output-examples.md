@@ -38,7 +38,7 @@ Phase 3.2 开发（/sprint-batch）
   ✅ Sprint-002 关闭 [里程碑通知 #2 已发]
   ✅ Sprint-003 关闭 [里程碑通知 #2 已发]
   ✅ 部署完成（cloud / https://uat.example.com）→ baseline last_deployed_at 已写
-  [里程碑通知 #1d 已发：部署完成-代码已推送 + 提示并行挂 /loop 5m /sprint-aiauto-test]
+  [里程碑通知 #1d 已发：部署完成-代码已推送 + 提示并行挂 /loop 5m /sprint-aiauto-test --unattended --no-loop]
   ✅ version-auditor: 八项全通过（A–H）
 
 Phase 3.4 完成通知 + 收尾

@@ -173,20 +173,14 @@ fi
 #   - Markdown 字段表格（| 字段名 | 类型 | ... | 备注 | 风格，AIDP 主流形态）
 # 单层调用即可，无需命令侧 grep 兜底
 MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_money_field.py"
-if [ ! -f "$MONEY_CHECK_SCRIPT" ]; then
-  MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/skills/aidp-code-engineer/assets/aidp/skills/dev-logic-architect/scripts/check_money_field.py"
-fi
-if [ -f "$MONEY_CHECK_SCRIPT" ]; then
-  CRITICAL_COUNT=$(python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" --json 2>/dev/null \
-    | python3 -c "import sys, json; d=json.load(sys.stdin); print(sum(1 for i in d.get('issues',[]) if i.get('severity')=='Critical'))" 2>/dev/null || echo "0")
-  if [ "${CRITICAL_COUNT:-0}" -gt 0 ]; then
-    echo "❌ 金额字段「货币金额字段整数化」维度不通过：发现 $CRITICAL_COUNT 个 Critical 问题（DECIMAL/FLOAT 金额字段）"
-    python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" 2>&1 | sed 's/^/   /'
-    echo "   修复步骤：金额字段类型改为 BIGINT + COMMENT 加'单位:分'/'单位:厘'等声明（见 docs 货币单位对照表 references/currency-unit-reference.md）；重跑本脚本"
-    exit 1
-  fi
-else
-  echo "⚠️ 未找到 check_money_field.py（应位于 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/），跳过「货币金额字段整数化」维度校验"
+# ⛔ 判定以退出码为准（SKILL 口径：非 0 即维度 17 不通过，Important 也算）；脚本缺失 = SKILL 安装残缺，按不通过处理，不跳过
+[ -f "$MONEY_CHECK_SCRIPT" ] || { echo "❌ 未找到 $MONEY_CHECK_SCRIPT（SKILL 安装残缺）——「货币金额字段整数化」无从核验，按不通过处理"; exit 1; }
+python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" >/dev/null 2>&1; MONEY_RC=$?
+if [ "$MONEY_RC" -ne 0 ]; then
+  echo "❌ 金额字段「货币金额字段整数化」维度不通过（check_money_field.py exit=$MONEY_RC）："
+  python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" 2>&1 | sed 's/^/   /'
+  echo "   修复步骤：金额字段类型改为 BIGINT + COMMENT 加'单位:分'/'单位:厘'等声明（见 references/currency-unit-reference.md）；重跑本脚本"
+  exit 1
 fi
 
 echo "✅ 基线 + ADR + 金额字段 三合一回写校验通过"

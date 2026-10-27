@@ -26,18 +26,16 @@
 1. ★ **确认无未关闭的 Sprint（约定 9 前置门；确定性判据，⛔ 不靠读 `activeContext.md` 自行裁量）**：
 
    ```bash
-   python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --json
+   python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --scope started --json
    OPEN_RC=$?
    ```
-   - 退出码 `0` → 无未关闭 Sprint（或 `skipped=no-plan` 属适用范围外）→ 继续步骤 2。
+   - 退出码 `0` → 无已启动但未关闭的 Sprint → 继续步骤 2（未来计划不算在途）。
+   - 退出码 `2` → 状态读取失败或参数错误，停止并修复输入；无人值守返回失败信号。
    - 退出码 `1` → **停止执行**，把输出里的 `open[]` 原样列给用户，提醒先 `/sprint-close` 收口。
      ⛔ **不得记一笔告警然后往下走** —— 那等于这道门不存在；也⛔ 不得以"看起来没在跑"为由放行。
 
-   > **判据单一信源 = 该脚本**（计划集合取 `docs/plans/{version}/*.md` 的 `Sprint-NNN`，
-   > 已关闭集合取 `memory/{version}/*/progress.md` 里**同一行**带 ✅ 的条目，**跨用户扫描**）。
-   > ⛔ 别改回「读 `activeContext.md` 判断有没有进行中的 Sprint」：那是单用户视角且格式无约束，
-   > 判不出来时的方向是**放行**，于是 Sprint 号被消耗、六类 `NN_*.md` 增量落盘，
-   > 上一轮产物成为无 Sprint 归属的孤儿。
+   > **判据单一信源 = 该脚本的 `started` 范围**：跨用户读启动记录与存量显式当前状态，扣除同时具备同行 ✅ 与 `sprints/sprint-NNN.md` 归档文件的关闭记录。
+   > 未开始的计划不阻断开工；交付收尾仍按全部计划检查。⛔ 不改回执行体只看自己 activeContext 的临场判断。
 2. **确认需求文档已存在**：`ls docs/requirements/{version}/研发需求/{01_研发需求,00_索引,00_研发需求}.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——multi 模式按系统拆分时 `01_研发需求.md` 本就不存在，硬判会把合规项目误判缺失而**错误停止执行**；口径同 `/sprint-design` 前置门）
    - 若不存在 → **停止执行**，提示"需求文档不存在，请先执行 /version 进行版本规划"
 3. **确认研发执行计划已存在**：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/0[0-9]_M*研发执行计划.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——`/sprint-plan` 对多用户产 `NN_研发执行计划-{开发者}.md`、里程碑 ≥3 产 `0N_M{N}研发执行计划.md`，硬判会把这两类合规产出误判缺失而**错误停止执行**）
@@ -49,7 +47,7 @@
 
 **Step 1.1 从研发执行计划获取本 Sprint 的"何时做"**
 
-读取 `docs/plans/{version}/` 下**全部** `*研发执行计划*.md`（★ 口径同上方前置门第 3 条，**不得**硬编码 `*研发执行计划*.md`——前置门放行的两类合规拆分产物 `NN_研发执行计划-{开发者}.md` / `0N_M{N}研发执行计划.md` 在硬判下都不存在，会让本步指向一个不存在的文件），在其中定位 `Sprint-{NNN}` 行，提取：
+从 `docs/plans/{version}/00_索引.md` 定位执行计划正文（无索引的存量项目扫描该目录内容），包含主文档、人员/里程碑分册与 `NN_Phase*.md` 任务分册。在其中定位 `Sprint-{NNN}` 及其 Task，提取：
 - **Sprint 目标**（一句话）
 - **包含的功能模块列表**
 - **开始 / 结束日期**与时间估算
@@ -68,7 +66,7 @@
 ## Step 2：更新 memory/{version}/{user}/activeContext.md
 
 重置并更新 activeContext：
-- 当前 Sprint 编号
+- 当前 Sprint：Sprint-{NNN}
 - Sprint 目标（**来源：`*研发执行计划*.md`（全部分册）**）
 - 本次迭代范围 = 功能模块列表 + 各模块的验收标准（**来源：`*研发执行计划*.md`（全部分册） + 研发需求/01_研发需求.md 联合**）
 - 开始 / 结束日期（**来源：`*研发执行计划*.md`（全部分册）**）
@@ -80,6 +78,14 @@
 路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取（⛔ 不写死 `AGENTS.md`），定点更新「当前状态」区域：
 - 当前 Sprint：Sprint-{NNN}
 - 当前阶段：执行中
+
+状态置位后登记确定性启动记录（写入失败即本步失败，无人值守交上层处理）：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --record-start {NNN} --user "{user}"
+START_RC=$?
+[ "$START_RC" = 0 ] || { echo "❌ Sprint 启动记录写入失败"; exit "$START_RC"; }
+```
 
 ## 输出
 

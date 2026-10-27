@@ -692,9 +692,13 @@ def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup", agents: lis
             #    写死的运行契约路径在那边一律断链（见 render_home_bytes）。
             data = render_home_bytes(data, home)
         if rel.startswith("architecture/") and rel.count("/") == 1 and not rel.endswith("README.md"):
+            # 约束骨架由项目填写：缺失才建；已有的按指纹台账判——没填过就刷新，填过且骨架变了入语义改写队列
             if not dp.exists():
                 write_if_diff(dp, data)
+                L.uf_record(root, f"docs/{rel}", data)
                 rep.act("create", f"docs/{rel}")
+            elif was_aidp:
+                sync_delivered_file(root, f"docs/{rel}", sp, f"assets/docs/{rel}", bk, rep, home=home)
             continue
         if not dp.exists():
             write_if_diff(dp, data)
@@ -860,10 +864,32 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
     src = L.ASSETS / "memory"
     for tpl, rel in L.MEMORY_TEMPLATES:
         dst = root / rel
+        template = (src / tpl).read_bytes()
+        fresh = L.render(template.decode("utf-8"), ctx)
+        template_label = f"template:{rel}"
+        baseline = L._uf_load(root)
+        previous_template = baseline.get(template_label)
+        if previous_template is None:
+            delivered = _prev_delivered(root, f"assets/memory/{tpl}")
+            previous_template = L.sha256(delivered) if delivered is not None else None
+        template_changed = previous_template != L.sha256(template)
         if not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            L.write_text_lf(dst, L.render((src / tpl).read_text(encoding="utf-8"), ctx))
+            L.write_text_lf(dst, fresh)
+            L.uf_record(root, rel, dst.read_bytes())
+            L.uf_record(root, template_label, template)
             rep.act("create", rel)
+            continue
+        cur_blob = dst.read_bytes()
+        # ★ 骨架改版要能到下游：台账指纹 == 现文件 ⇒ 装上后从没填过 ⇒ 直接换成新骨架。
+        #   ⛔ 不能套 `decide_user_fillable` 的「骨架变了」判据：骨架含 `{{date}}`，按渲染结果比每次升级都「变了」。
+        if was_aidp and baseline.get(rel) == L.sha256(cur_blob):
+            if template_changed and cur_blob != fresh.encode("utf-8"):
+                bk.save(rel)
+                L.write_text_lf(dst, fresh)
+                rep.act("update", rel, "未填写的骨架刷新为新版")
+            L.uf_record(root, rel, dst.read_bytes())
+            L.uf_record(root, template_label, template)
             continue
         cur = L.read_text(dst)
         rendered = L.render(cur, ctx)          # 只替换残留的占位符本身，已填写的段落原样保留
@@ -871,6 +897,10 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
             bk.save(rel)
             L.write_text_lf(dst, rendered)
             rep.act("render", rel, "替换残留占位符")
+        # 已填写：模板本身（未渲染）比上一版变了才入语义改写队列；上一版取不到 ⇒ 只保护、不入队
+        if was_aidp and previous_template is not None and template_changed \
+                and L.enqueue(root, rel, src / tpl):
+            rep.act("queue", rel, "项目已填写的记忆文件，新版骨架待语义合并")
     readme_src, readme = src / "README.md", root / "memory/README.md"
     home = runtime_home_for(agents)
     data = render_home_bytes(readme_src.read_bytes(), home)
@@ -1215,6 +1245,23 @@ def runtime_home_for(agents) -> str:
     """
     key = "shared" if {"codex", "dsh"} & set(agents) else "claude"
     return runtime_layout.RUNTIME_HOME[key]
+
+
+def _ungated_stale(source: Path, dest: Path, home: str) -> list:
+    """不受版本门控目录（`scripts/`）里，bundle 渲染结果与已装字节不同的文件（相对运行根）。"""
+    stale = []
+    for relative, path in runtime_layout._source_contract_files(source):
+        if Path(relative).parts[0] not in L.UNGATED_DIRS:
+            continue
+        data = path.read_bytes()
+        if runtime_layout._is_text(data):
+            data = runtime_layout.render_text(data.decode("utf-8"), home,
+                                              template_root=source).encode("utf-8")
+        have = dest / relative
+        if not have.is_file() or have.read_bytes() != data \
+                or runtime_layout._file_mode(have) != runtime_layout._file_mode(path):
+            stale.append(relative)
+    return sorted(stale)
 
 
 def _runtime_source() -> Path:
@@ -1729,22 +1776,34 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 raise RuntimeError(f"双包用户文件冲突: {relative}")
         if overlays[first] != overlays[second]:
             overlay_updates.update((first, second))
+            for home in (first, second):
+                for relative in overlays[first].keys() | overlays[second].keys():
+                    journal.expect(root / home / relative)
     journal.migration_stage = "render-runtime"
     # ⛔ 快照必须在安装前取：`templates/` 是受管契约，安装后模板位已是新版、再比就分不出
     #    「用户改过」与「版本升级」。
     optional_rules_before = snapshot_optional_rules(root, [home for _kind, home in specs])
     for kind, home in specs:
         dest = root / home
+        preserve_gated = False
+        manifest = None
         if _installed(home):
             current = dest / runtime_layout.RUNTIME_MANIFEST
             manifest = json.loads(current.read_text(encoding="utf-8"))
-            if manifest.get("version") == scaffold_raw and not a.force and home not in overlay_updates:
+            preserve_gated = decision == "fill" and manifest.get("version") == scaffold_raw and not a.force
+            if preserve_gated and home not in overlay_updates:
                 try:
                     runtime_layout.validate_runtime(dest, expected_home=home)
                 except ValueError:
                     pass  # 受管文件漂移由 render_runtime 完整备份后修复。
                 else:
-                    continue
+                    # ★ `scripts/` 不受版本门控（`L.UNGATED_DIRS`）：同版本下 bundle 脚本修了 bug，
+                    #   下游也必须拿到——只看「已装 == 已装 manifest」会整包跳过，修复永远到不了下游。
+                    stale = _ungated_stale(source, dest, home)
+                    if not stale:
+                        continue
+                    rep.note(f"{home}：同版本下 {len(stale)} 个脚本与 bundle 不同，按字节覆盖下发"
+                             f"（{', '.join(stale[:5])}{' …' if len(stale) > 5 else ''}）")
         journal.expect_tree(dest, source, include=lambda path:
                             path.parts[0] in runtime_layout.RUNTIME_DIRS
                             and not runtime_layout._excluded(path.as_posix()))
@@ -1753,7 +1812,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         def backup_runtime(_destination, runtime_home=home):
             saved = bk.save_tree(runtime_home)
             if saved is not None:
-                rep.warn(f"受管运行包有本地修改，完整备份：{saved.relative_to(root).as_posix()}")
+                rep.note(f"运行包替换前完整备份：{saved.relative_to(root).as_posix()}")
             return saved
 
         # ★ 在**整包替换之前**算出「本地改过、且新版也改了 → 即将被覆盖」的契约清单。
@@ -1761,9 +1820,12 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         #   且该文件在本次新包里确实有对应物（否则它是 orphans，不是被覆盖）。
         #   ⛔ 不在这时算就永远算不出来：替换之后旧字节已被备份目录接管，而输出里一个空
         #   `local_overwritten` 与「用户确实没改过」在 JSON 上完全同形。
-        _prev_manifest = installed_manifest(root)
+        _prev_manifest = ({name: meta["sha256"] for name, meta in manifest["files"].items()}
+                          if manifest is not None else installed_manifest(root))
         if isinstance(_prev_manifest, dict):
             for _rel, _sha in sorted(_prev_manifest.items()):
+                if preserve_gated and Path(_rel).parts[0] not in L.UNGATED_DIRS:
+                    continue
                 _live = dest / _rel
                 if not _live.is_file() or _live.is_symlink():
                     continue
@@ -1777,7 +1839,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                     rep.note_overwrite(_rel)
 
         runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind,
-                                      backup_callback=backup_runtime)
+                                      backup_callback=backup_runtime, preserve_gated=preserve_gated)
         rep.act("install", home + "/", "Agent 原生运行包")
         # ★ 孤儿契约：上一版受管清单里有、当前脚手架已不提供 —— 只报告不删除。
         #   漏报的后果是项目里留着一份「看着生效、实际早已无调用方」的契约，

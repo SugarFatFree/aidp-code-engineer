@@ -54,7 +54,12 @@ def promote_ledger(root: Path, states: list):
             continue
         tpl = root / e["template"]
         if e["template"] and tpl.is_file():
-            L.uf_record(root, L.ledger_label(e["target"]), tpl.read_bytes())
+            data = tpl.read_bytes()
+            L.uf_record(root, L.ledger_label(e["target"]), data)
+            if e["target"] in {relative for _name, relative in L.MEMORY_TEMPLATES}:
+                # memory 骨架另记未渲染模板，避免日期变化造成伪更新；语义合并收口也要推进它。
+                # 只更新上面的目标键，会使下一次 sync_memory 仍以旧模板判变更、反复入队。
+                L.uf_record(root, f"template:{e['target']}", data)
 
 
 def main(argv=None) -> int:

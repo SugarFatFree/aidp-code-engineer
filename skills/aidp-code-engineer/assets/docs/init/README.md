@@ -58,7 +58,7 @@ AIDP 项目的标准目录结构：
 ```
 project/
 ├── {{AIDP_HOME}}/              # ★ 运行真源：仅 Claude 为 .claude；有 Codex / DSH 为 .agents（契约平铺其下）
-│   ├── agents/                 # Agent 定义（PM/架构师/前端/后端/QA/审查员/UI/AIDP-Compliance/Version-Auditor，共 9 个）
+│   ├── agents/                 # Agent 定义（PM/架构师/前端/后端/QA/审查员/UI/AIDP-Compliance/Version-Auditor/QR-Handoff-Auditor，共 10 个）
 │   ├── commands/               # 命令定义（/version /sprint-* 等）
 │   ├── skills/                 # 公共技能定义
 │   ├── plugins/                # 项目级插件真源（含 chrome-devtools-mcp）
@@ -287,7 +287,7 @@ AIDP 范式提供了完整的理论层文档（位于 `docs/init/`），包含�
 └── 04-05    → 作为索引指向 .aidp/ 下的实现
 
 实现层（下游 {{AIDP_HOME}}/；模板仓库 .aidp/ 只作维护源）
-├── agents/     → 9 个 Agent 指令（7 业务 + 1 合规 + 1 版本审计，运行时读取）
+├── agents/     → 10 个 Agent 指令（7 业务 + 1 合规 + 2 版本规划审计，运行时读取）
 ├── commands/   → 19 个命令定义（/xxx 触发读取，含 /version /sprint-* /sprint-autopilot /sprint-aiauto-test 等）
 ├── skills/     → 7 个 skill（生成/执行类：研发需求、详细设计、执行计划、自测用例、自动化测试执行、代码验证、缺陷修复，被命令内部调用）
 │                 ⛔ 脚手架 `aidp-code-engineer` 不在此列：它与公共 SKILL 同住本目录，但被排除出运行包受管清单（它是安装器、不是下发契约）

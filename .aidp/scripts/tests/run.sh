@@ -142,7 +142,6 @@ fi
 echo ""
 echo "════════════════════════════════════════"
 echo "套件 ${suites} 个 · 断言 ${total_pass} passed / ${total_fail} failed / ${total_skip} skipped"
-echo "（跳过项含：依赖脚手架 skill 内部实现的分组，设 AIDP_TEST_SKILL_INTERNALS=1 开启）"
 if [ ${#lost_suites[@]} -gt 0 ]; then
   echo "⚠️ 有 ${#lost_suites[@]} 个套件的输出丢失、断言数未计入上面的总数：${lost_suites[*]}"
   echo "   （判定仍以各套件退出码为准；要拿准确计数请单独重跑这些套件）"

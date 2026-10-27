@@ -28,8 +28,8 @@
 **7×24 守护推荐用法**（两条 `/loop` 并行）：
 
 ```bash
-/loop 10m /sprint-autopilot --unattended     # 监听 PRD → 开发 + 里程碑通知（不跑 chrome）
-/loop 5m  /sprint-aiauto-test --unattended   # 监听 baseline 看是否有新部署 → AI 自动化实测 + 报告 + 里程碑通知
+/loop 10m /sprint-autopilot --unattended --no-loop     # 监听 PRD → 开发 + 里程碑通知（不跑 chrome）
+/loop 5m  /sprint-aiauto-test --unattended --no-loop   # 监听 baseline 看是否有新部署 → AI 自动化实测 + 报告 + 里程碑通知
 ```
 
 详见 [`/sprint-aiauto-test` 命令文档](../../commands/sprint-aiauto-test.md)。

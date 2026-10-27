@@ -478,7 +478,168 @@ def test_skill_ref_freshness_delegation():
         check("★ 委派后派单块内脚本视为接线、块外脚本仍报", after == {"check_b.py"})
 
 
+def test_aiauto_screenshot_collection():
+    """实跑 flow 里的归集段：四种格式、数字轮次、格式变更与旧 tick 残图。"""
+    print("\n[aiauto 截图归集实跑]")
+    flow = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-1.md").read_text(encoding="utf-8")
+    script = flow.split("# ① 归集：", 1)[1].split("# ② 硬核验：", 1)[0]
+    script = ("# ① 归集：" + script).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        btr = root / "report with spaces"
+        shot = btr / "screenshots/B1"
+        shot.mkdir(parents=True)
+        (shot / "TC-1-step1.JPG").write_bytes(b"stale")
+        for rnd, files in ((2, {"TC-1-step1.png": b"old", "TC-2-step1.jpeg": b"jpeg"}),
+                           (10, {"TC-1-step1.webp": b"new", "TC-3-step1.jpg": b"jpg",
+                                 "TC-4-step1.PNG": b"png"})):
+            ev = btr / f"build-B1/round-{rnd}/evidence"
+            ev.mkdir(parents=True)
+            for name, data in files.items():
+                (ev / name).write_bytes(data)
+        r = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True,
+                           env={**os.environ, "BTR": str(btr), "BUILD": "B1", "SHOT_DIR": str(shot)})
+        check("归集代码可执行", r.returncode == 0)
+        check("四种截图扩展名均归集", {p.suffix.lower() for p in shot.iterdir()} ==
+              {".webp", ".png", ".jpg", ".jpeg"})
+        check("round-10 覆盖 round-2（不是字符串排序）",
+              (shot / "TC-1-step1.webp").read_bytes() == b"new")
+        check("同主干格式变更不留旧图（含大写扩展名）",
+              len(list(shot.glob("TC-1-step1.*"))) == 1)
+        for p in (btr / "build-B1").glob("round-*/evidence/*"):
+            p.unlink()
+        r = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True,
+                           env={**os.environ, "BTR": str(btr), "BUILD": "B1", "SHOT_DIR": str(shot)})
+        check("本 tick 无新证据时旧目录不能替它过截图门", r.returncode == 0 and not list(shot.iterdir()))
+
+
+def test_aiauto_convergence_aggregation():
+    """从 flow 提取真实判定代码，喂真实 gen_report 结果，避免复刻判据。"""
+    print("\n[aiauto 收敛聚合实跑]")
+    raw = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-3.md").read_text(encoding="utf-8")
+    block = re.search(r'> ```bash\n(.*?)> ```', raw, re.S).group(1)
+    block = "\n".join(line[2:] if line.startswith("> ") else line for line in block.splitlines())
+    block = block.split("# ★★ 以下三类状态", 1)[0]
+    block = "\n".join(line for line in block.splitlines() if not line.startswith('eval "$('))
+    block = block.replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+    base = {"case_id": "TC-1", "status": "pass", "execution_mode": "direct",
+            "evidence": [{"summary": "实际显示成功"}]}
+    cases = (
+        ("正常结果", [base], None, 1),
+        ("无证据 verified pass", [{**base, "execution_mode": "verified", "evidence": []}], None, 0),
+        ("direct pass 缺轻量事实按 SKILL 告警但不阻断", [{**base, "evidence": []}], None, 1),
+        ("坏文件不能让 fail 蒸发", [base], "{broken", 0),
+        ("合法 JSON 非对象也不能蒸发", [base], "[]", 0),
+        ("巡检 block 不抵消真实用例 block", [base, {"case_id": "TC-2", "status": "block",
+          "block_reason": "retry-exhausted"}, {"case_id": "运行时-page", "entry_kind": "free-scan",
+          "status": "block", "block_reason": "driver-missing"}], None, 0),
+        ("环境 block 排除后可收敛", [base, {"case_id": "TC-2", "status": "block",
+          "block_reason": "driver-missing"}], None, 1),
+        ("precondition-unmet 不自动豁免", [base, {"case_id": "TC-2", "status": "block",
+          "block_reason": "precondition-unmet"}], None, 0),
+        ("缺聚合器不沿用上次 shell 的通过数", [base], None, 0),
+    )
+    for label, rows, broken, expected in cases:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rd = root / "docs/reports/V1.0.0/AI测试报告/build-B1/round-1/results"
+            rd.mkdir(parents=True)
+            for i, row in enumerate(rows):
+                (rd / f"{i}.json").write_text(json.dumps(row), encoding="utf-8")
+            if broken is not None:
+                (rd / "bad.json").write_text(broken, encoding="utf-8")
+            script = block
+            if label.startswith("缺聚合器"):
+                script = script.replace("GR=" + str(REPO / ".aidp/skills/auto-test-runner/scripts/gen_report.py"),
+                                        "GR=/missing-gen-report.py")
+            r = subprocess.run(["bash", "-c", 'THIS_ROUND_FAIL_COUNT=0\nTHIS_ROUND_BLOCK=0\n' + script +
+                                '\nprintf "\\nCONVERGED=%s\\n" "$CONVERGED"'],
+                               cwd=root, capture_output=True, text=True,
+                               env={**os.environ, "TARGET_VERSION": "V1.0.0", "BUILD": "B1"})
+            check(label, r.returncode == 0 and f"CONVERGED={expected}" in r.stdout)
+
+
+def test_aiauto_client_mcp_flag():
+    """实跑检测桥接：新声明、旧声明、非 Web 与声明冲突均覆盖。"""
+    print("\n[aiauto client_mcp 检测桥接实跑]")
+    raw = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-1.md").read_text(encoding="utf-8")
+    script = "CR_CLIENT_JSON=" + raw.split("CR_CLIENT_JSON=", 1)[1].split("  CR_JSON=", 1)[0]
+    script = script.replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+    # 检测失败路径仍实跑记账，只关闭测试沙箱里的通知出口。
+    script = script.replace("/scripts/autopilot_fail_handle.py ", "/scripts/autopilot_fail_handle.py --no-card ")
+    fixtures = (
+        ("新 Web 声明", "  client_mcp:\n    enabled: true\n    client_type: web\n    implementation: webmcp\n", "--webmcp-enabled"),
+        ("旧 Web 声明", "  webmcp:\n    enabled: true\n", "--webmcp-enabled"),
+        ("非 Web 已实现", "  client_mcp:\n    enabled: true\n    client_type: mobile\n    implementation: app-native\n", ""),
+        ("未声明", "", ""),
+        ("冲突不可冒充关闭", "  client_mcp:\n    enabled: true\n    client_type: mobile\n    implementation: app-native\n  webmcp:\n    enabled: true\n", None),
+    )
+    for label, declaration, expected in fixtures:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            prd = root / "docs/requirements/V1.0.0/产品提供/PRD.md"
+            prd.parent.mkdir(parents=True)
+            prd.write_text("---\nautopilot_decisions:\n" + declaration + "---\n", encoding="utf-8")
+            r = subprocess.run(["bash", "-c", script + '\nprintf "FLAG=%s\\n" "$CR_WEBMCP"'],
+                               cwd=root, capture_output=True, text=True,
+                               env={**os.environ, "TARGET_VERSION": "V1.0.0", "BUILD": "B1"})
+            check(label, r.returncode == 0 and
+                  (("FLAG=" not in r.stdout and "conflict:" in r.stderr) if expected is None
+                   else f"FLAG={expected}\n" in r.stdout))
+
+
+def test_aiauto_report_summary_mapping():
+    """执行 flow 的字段桥接代码，确认聚合输出可映射为 SPA summary 且坏统计拒写。"""
+    print("\n[aiauto 报告字段映射实跑]")
+    raw = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-2.md").read_text(encoding="utf-8")
+    mapper = raw.split("! printf '%s' \"$GEN_JSON\" | python3 -c '\n", 1)[1].split("\n' \"$BTR/.build-input-$BUILD.json\"", 1)[0]
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        results = root / "round-1/results"
+        results.mkdir(parents=True)
+        for i, status in enumerate(("pass", "fail", "block", "na")):
+            data = {"case_id": f"TC-{i}", "status": status, "execution_mode": "direct",
+                    "evidence": [{"summary": "已取到实际值"}]}
+            (results / f"{i}.json").write_text(json.dumps(data), encoding="utf-8")
+        (results / "scan.json").write_text(json.dumps({"case_id": "运行时-page", "entry_kind": "free-scan", "status": "pass"}), encoding="utf-8")
+        agg = subprocess.run([sys.executable, str(REPO / ".aidp/skills/auto-test-runner/scripts/gen_report.py"),
+                              str(results.parent), "--json"], capture_output=True, text=True)
+        target = root / "input.json"
+        target.write_text('{"summary":{"total":999},"cases":[]}', encoding="utf-8")
+        r = subprocess.run([sys.executable, "-c", mapper, str(target)], input=agg.stdout,
+                           capture_output=True, text=True)
+        summary = json.loads(target.read_text(encoding="utf-8"))["summary"]
+        check("total 来自顶层、四态来自 counts、skip=0、na 排除分母且巡检不混入",
+              agg.returncode == 0 and r.returncode == 0 and summary ==
+              {"total": 4, "pass": 1, "fail": 1, "block": 1, "skip": 0, "na": 1, "passRate": 0.3333})
+        trusted = target.read_bytes()
+        payload = json.loads(agg.stdout)
+        payload["read_errors"] = [{"file": "broken.json", "error": "unreadable"}]
+        r = subprocess.run([sys.executable, "-c", mapper, str(target)], input=json.dumps(payload),
+                           capture_output=True, text=True)
+        check("read_errors 非空不覆盖既有报告输入", r.returncode != 0 and target.read_bytes() == trusted)
+
+
+def test_cvl_callsite_contract_details():
+    print("\n[CVL 调用边界回归]")
+    st = (REPO / ".aidp/commands/sprint-test.md").read_text(encoding="utf-8")
+    check("调用方把 declared 桥接为 enabled:true", "显式补 `enabled: true`" in st)
+    check("全部 Important 登记并保留非阻断边界与上游冲突", "Critical 与 Important 一律" in st
+          and "登记 bug 与是否阻断是两件事" in st and "上游判据冲突，待澄清" in st)
+    check("起点 commit 不回落本轮错误数，无 Git 明记未核验", "本 Sprint 起点 commit" in st
+          and "⛔ 不得回落 merge-base / 本轮首跑错误数" in st and "unsupported:vcs-disabled" in st)
+    check("移除失效 dimension 链接与首轮错误数作基线的旧指令", "references/dimension-" not in st
+          and "首轮记录存量错误数作基线" not in st)
+    front = (REPO / ".aidp/agents/frontend.md").read_text(encoding="utf-8")
+    check("前端明确预处理器检查不覆盖 import/use 路径", "`@import` / `@use` 路径错**不在**该脚本覆盖内" in front)
+
+
 def main():
+    test_aiauto_screenshot_collection()
+    test_aiauto_convergence_aggregation()
+    test_aiauto_client_mcp_flag()
+    test_aiauto_report_summary_mapping()
+    test_cvl_callsite_contract_details()
     test_memory_snapshot()
     test_scaffold_invocations_in_commands()
     test_release_debt_ledger()

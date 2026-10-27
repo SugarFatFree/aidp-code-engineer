@@ -19,10 +19,15 @@
 ```bash
 # ══ 第一步：【全部】参数标志的确定性解析 + 落盘（与 sprint-autopilot 0.0.0 同款、同一脚本）══
 # 全部 flag 统一交给确定性脚本解析 + 落盘到 baseline tick 命名空间（每 tick 整段重写）。
-python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py parse --command aiauto-test --arguments "${ARGUMENTS:-}"
+# 两条链路均先互斥，冲突 / 锁异常不得继续；本轮 token 保留到命令返回前 finish。
+_TF=0; TICK_LOCK_TOKEN=$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py begin --command aiauto-test) || _TF=$?
+[ "$_TF" = 4 ] && exit 0
+[ "$_TF" = 0 ] || exit "$_TF"
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py parse --command aiauto-test --lock-token "$TICK_LOCK_TOKEN" --arguments "${ARGUMENTS:-}" || exit 1
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # ⚠️ `$ARGUMENTS` 取不到（宿主未注入）→ 全部标志恒 0；此时由 Claude 读本轮用户输入原文补判，
-#    把 `--arguments` 换成用户原文重跑上面一行，绝不留空。
+#    把 `--arguments` 换成用户原文重新 parse，沿用本轮 --lock-token 原值，不重跑 begin。
+# 每一条返回路径均执行命令正文「tick 占位收尾」；不在单个 Bash 调用结束时释放。
 # IS_LOOP_CONTEXT（探测法单一信源在 sprint-autopilot 0.0.0，此处同款）：prompt 启动上下文含 `/loop` 字样 → 1，否则 0。
 #   纯 shell 读不到，**由 Claude 判定后就地写死下面这行再执行**：
 IS_LOOP_CONTEXT=0    # ← Claude 按本轮 prompt 是否含 `/loop` 就地改为 0 / 1

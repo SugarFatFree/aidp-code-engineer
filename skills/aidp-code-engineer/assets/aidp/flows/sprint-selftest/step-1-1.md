@@ -47,6 +47,10 @@ fi
 ```
 
 > ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
+>
+> ★ **带编排层规模入参时**（`--prd-presence-table` / `--module-case-cap` / `--matrix-scope` / `--module-kind` / `--plan-ref-mode`，只由 `/version` 传）：收到哪个就把对应 SKILL 入参**原样**写进调用参数（映射见 `SKILL编排层接入.md` 第一节），没收到的 ⛔ 不补。
+> **`--plan-ref-mode=deferred` 时**：执行计划正与本命令并行生成（可能不存在或写到一半）——下方横幅与信号块里的「研发执行计划」行**整行删掉**，
+> 改写 `plan_ref_mode=deferred：不读执行计划，「研发执行计划来源」写 ⟨PLAN-REF:REQ-xxx⟩ 占位符，由 /version 回填`；「调用参数」的执行计划路径同样不传。
 
 **调用参数**（按 SKILL 输入要求传入路径上下文）：
 - **★ 需求规模档位（`--scale=S|M|L`，缺省 L）**：随 prompt **显式**传 `scale=<档位>` 给 SKILL（SKILL「需求规模档位」段接收，按档伸缩用例数基线；档位只伸缩产出规模、不放松任何 Critical 硬门）。档位来源：本命令 `--scale=` 入参 → `/version` Step 2.4.1.5 自动判档 → 均无则 L。**同一档位须在 Step 2 硬门的 `check_case_stats.py --scale <档位>` 里再显式传一次**（不传脚本按 L 档跑、只判 20 条硬下限，S/M 档漏判）。

@@ -18,7 +18,7 @@
    : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"   # ★ 统一变量名 + 兜底默认（未定义时 jq 会读 stdin 静默失败，streak 永不落盘）
    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
    # 时间用 epoch 比较；PRE_RELEASE_VERSION 跨围栏从 tick 状态读回（理据见 rationale.md）。
-   to_ts() { date -d "$1" +%s 2>/dev/null || echo 0; }
+   to_ts() { $BE epoch "$1" 2>/dev/null || echo 0; }   # 跨平台
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
    TF="python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot"
    # 每次进入 Phase 2 先关断成功信号；parse 在每个 tick 起点也会整段清零。

@@ -47,7 +47,7 @@
      fi
    fi
    ```
-3. **截图已在 AI测试报告/screenshots/{BUILD}/**（Phase 2 直接落此，3.2.5 已核验）；data 里截图引用用相对 `index.html` 的相对路径 `screenshots/{BUILD}/xxx.png`。
+3. **截图已在 AI测试报告/screenshots/{BUILD}/**（Phase 2 直接落此，3.2.5 已核验）；data 里截图引用用相对 `index.html` 的相对路径 `screenshots/{BUILD}/{TC-ID}-step{N}.{ext}`（`ext` 照抄 3.2.5 归集到的实际文件，Web 默认 `.webp`，⛔ 不得统一写成 `.png`）。
 3bis. **★ 环境事实字段一律【消费 SKILL 的运行取证对象】，命令端不自行探测、不复刻判定判据（约定 21 + SKILL 单一信源）**：`auto-test-runner`「运行环境取证」原子步骤**每轮产出 `round-{M}/env-facts.json`**（形状见其 `assets/env-facts-schema.json`），是环境事实字段的**唯一数据源**。命令端组装下面结果 JSON 时**直接消费它**——`renderMode`/`renderModeSource`/`testUrl`/`loginRole` 等取自 env-facts.json 对应字段：
    - **⛔ 绝不用 Phase 0.1.2 的 `RENDER_MODE`**（那是测试方案解析的意图/启动决策值、非运行事实，正是"报告恒显有头"的根因）、**⛔ 绝不用模板示例值**。
    - **⛔ 命令端不自行探测、不复刻端专有取证判据**：`navigator.*` / 窗口尺寸等信号的取舍**随被测端版本漂移、其单一信源是 SKILL `references/driver-<端>.md` + `execution-methodology.md §10`**（例：Web 端 `navigator.webdriver` 与窗口外框尺寸对渲染模式判定「不能用/新版无头已失效」，SKILL 只认「运行配置 → UA 含 `HeadlessChrome` → 取不到写 null」）——命令端复刻必判错，**故本处不写任何具体取证配方，只消费结果**。
@@ -61,13 +61,37 @@
    #    冻成 handoff-exhausted（交接类、仅人工解冻），#F/#3 永不发。
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
    BUILD=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get current_build --default "")
+   # 聚合门与字段映射：只有可信统计才能覆盖输入 summary、生成完成报告。
+   BTR="docs/reports/${TARGET_VERSION}/AI测试报告"
+   RD=$(ls -d "${BTR}/build-${BUILD}"/round-* 2>/dev/null | sort -V | tail -1)
+   GEN_JSON=$(python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/gen_report.py "$RD" --json); GEN_EXIT=$?
+   if [ "$GEN_EXIT" -ne 0 ] || ! printf '%s' "$GEN_JSON" | python3 -c '
+import json, sys
+from pathlib import Path
+agg = json.load(sys.stdin)
+if agg.get("error") or agg.get("read_errors"):
+    sys.exit(1)
+c = agg["counts"]
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+data["summary"] = {"total": agg["total"], "pass": c["pass"], "fail": c["fail"],
+                   "block": c["block"], "skip": c.get("skip", 0), "na": c["na"],
+                   "passRate": agg["pass_rate"]}
+path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+' "$BTR/.build-input-$BUILD.json"; then
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+       --phase 3.2.6-aggregate --reason audit-critical --streak-key aggregate_gate_fail_streak --threshold 3 \
+       --why "gen_report 退出 ${GEN_EXIT}、read_errors 非空或报告输入不可读，统计不可采信"
+     exit 0   # 已记账让位；不生成完成报告、不写 tested、不发 #F
+   fi
+   python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del aggregate_gate_fail_streak
    python3 {{AIDP_HOME}}/scripts/emit-report.py --kind test --version "$TARGET_VERSION" --build "$BUILD" \
      --data "docs/reports/$TARGET_VERSION/AI测试报告/.build-input-$BUILD.json" --json
    # 脚本自动：① 缺骨架则 cp 模板 → ② 写 data/{BUILD}.js（window.__BUILDS__.push）→ ③ 注册 index.html
    #          → ④ 报告落本地 docs/reports/（不上传）→ ⑤ 回写 baseline report_deliveries
    # 返回 JSON 的 access_url（仓库相对路径，带 #/build/{BUILD}）供 #F 里程碑通知使用；同一 build 多轮收敛 → 覆盖 data、不重复注册（幂等）
    ```
-   截图引用用相对 `index.html` 的 `screenshots/{BUILD}/xxx.png`。**⛔ 严禁自己写 markdown 测试报告 / 手工 cp+拼 `<script>`**——一律经 `emit-report.py`（HTML SPA 是唯一形态，见 `phase-3-1.md` 顶部 RED FLAG）。
+   截图引用用相对 `index.html` 的 `screenshots/{BUILD}/{TC-ID}-step{N}.{ext}`（扩展名同上取实际文件）。**⛔ 严禁自己写 markdown 测试报告 / 手工 cp+拼 `<script>`**——一律经 `emit-report.py`（HTML SPA 是唯一形态，见 `phase-3-1.md` 顶部 RED FLAG）。
 5. **★ finalize 后确定性校验（残留占位符 / 环境事实未取证 = 报告不合格，不静默产出 —— 缺陷反馈第四·命令层要求）**：`emit-report.py` 成功后，扫本 build data `docs/reports/{V}/AI测试报告/data/{BUILD}.js`：
    ```bash
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"

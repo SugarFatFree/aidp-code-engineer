@@ -111,7 +111,7 @@
 >     CUR_PHASE=$($BE --version "$TARGET_VERSION" get run_state.next_phase --default "?")   # 仅用于告警文案
 >     CNT=$($BE --version "$TARGET_VERSION" get run_state.phase_enter_count --default 1)
 >     FIRST=$($BE --version "$TARGET_VERSION" get run_state.phase_first_entered_at)
->     to_ts() { date -d "$1" +%s 2>/dev/null || echo 0; }   # epoch 比较，别用字符串（+08:00 与 Z 混排会误判）
+>     to_ts() { $BE epoch "$1" 2>/dev/null || echo 0; }   # epoch 比较，别用字符串（+08:00 与 Z 混排会误判）；⛔ 别用 GNU 专有的 date -d
 >     AGE=$(( $(date +%s) - $(to_ts "${FIRST:-}") ))
 >     if [ "$CNT" -ge "${STUCK_PHASE_ENTER_THRESHOLD:-8}" ] && [ "$AGE" -gt "${STUCK_PHASE_AGE_SECONDS:-7200}" ]; then
 >       # 熔断条件（次数 + 滞留时长双判据）已在上面成立 → `--freeze-now`：冻结四件套 + #4 一次做完。
@@ -246,7 +246,7 @@
       BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
       # ① 派发前先看闸门：未到点 → 本 tick 不重试、直接让位（不算失败、不记 streak）
       RETRY_AT=$($BE --version "$TARGET_VERSION" get subagent_retry_at)
-      to_ts() { date -d "$1" +%s 2>/dev/null || echo 0; }
+      to_ts() { $BE epoch "$1" 2>/dev/null || echo 0; }   # 跨平台：BSD/macOS date 无 -d
       if [ -n "$RETRY_AT" ] && [ "$(date +%s)" -lt "$(to_ts "$RETRY_AT")" ]; then
         echo "⏳ 子 Agent 退避中（下次可重试 $RETRY_AT）→ 让位本 tick，下次 /loop 唤起再派"
         exit 0
@@ -254,7 +254,7 @@
       # ② 派发命中瞬时错误 → 按退避轮次算下次可重试时刻，写盘后让位本 tick
       R=$($BE --version "$TARGET_VERSION" bump subagent_retry_round)     # 1→2→3
       case "$R" in 1) D=30;; 2) D=60;; *) D=120;; esac
-      $BE --version "$TARGET_VERSION" set subagent_retry_at "$(date -d "+${D} seconds" -Iseconds)"
+      $BE --version "$TARGET_VERSION" set subagent_retry_at "$(python3 -c 'import datetime as d,sys; print((d.datetime.now().astimezone()+d.timedelta(seconds=int(sys.argv[1]))).isoformat(timespec="seconds"))' "$D")"
       echo "⏳ 子 Agent 瞬时错误（第 $R 次）→ 退避 ${D}s，本 tick 让位（不记 dev_fail_streak、不发 #4）"
       exit 0
       # ③ 派发成功 → 清闸门：$BE --version "$TARGET_VERSION" del subagent_retry_at subagent_retry_round

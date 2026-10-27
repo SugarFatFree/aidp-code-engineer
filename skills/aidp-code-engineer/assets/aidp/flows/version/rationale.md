@@ -198,7 +198,7 @@ Step 3.4.2 原先只有一个 `REPUBLISH`：撞名即置 1，随后 `git tag -f`
 `:?` 在 VERSION 未设时让**整个围栏在第一行就中止**（rc≠0，后面一行都不执行）。
 
 失败形态是"失败伪装成成功"而非报错：Step 3.4.1 中止 ⇒ 发布提交没打；Step 3.4.3 中止 ⇒ 没 push、
-没跑推送分类、没进 CICD 监听；而回到 `phase-2.md` 后 `set internal_released_at @now` **照常执行**，
+没跑推送分类、没进 CICD 监听；而回到 `sprint-autopilot/phase-2.md` 后 `set internal_released_at @now` **照常执行**，
 版本翻 S3 退出候选、照发「✅ 准发布完成」里程碑通知。**净效果：产物全留在工作区未提交未推送，
 链路与里程碑通知都报告成功，且该版本再不会被重试。**
 
@@ -263,7 +263,7 @@ Step 3.4.2 原先只有一个 `REPUBLISH`：撞名即置 1，随后 `git tag -f`
 
 - **`baseline_edit.py get`**：已加归档回落（`load_archived_node`，`--build` 形态一并覆盖），
   主文件取不到就去 `memory/.aidp-baseline-archive/baseline-<V>.json` 读，取不到才回默认值。
-- **`jq -r '.versions."<V>".…'` 直读**（`phase-2.md` / `phase-3-4.md` / `phase-0-6.md` 等）：
+- **`jq -r '.versions."<V>".…'` 直读**（`sprint-autopilot/phase-2.md` / `sprint-autopilot/phase-3-4.md` / `sprint-autopilot/phase-0-6.md` 等）：
   **拿不到任何回落**。它们的版本入参恒是 `TARGET_VERSION` / `PRE_RELEASE_VERSION`，
   所以归档面必须把**最近两版**整个排除在外 —— 这正是 `--keep 2` 的由来
   （留 1 版不够：Phase 2 的准发布双门读的就是上一版）。

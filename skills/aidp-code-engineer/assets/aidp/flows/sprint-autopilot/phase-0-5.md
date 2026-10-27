@@ -114,7 +114,7 @@
 AI 自动化测试由**独立测试链路** /sprint-aiauto-test 承担（与本命令 /loop 拆分）。
 若你**尚未**挂起测试守护，请立即**并行**执行：
 
-    /loop 5m /sprint-aiauto-test --unattended
+    /loop 5m /sprint-aiauto-test --unattended --no-loop
 
 不挂第二条 loop → 本次部署不会被探测 → 后续 AI 测试 / 测试报告（#D/#R/#F 通知）全部不会自动触发。
 ```

@@ -255,8 +255,11 @@ L1=$(for f in $FILES; do head -20 "$f"; done | grep -cE '(详细设计|研发 PR
 DDL_HIT=$(grep -cE 'CREATE TABLE|^interface .* \{|^表名[:：]' $FILES)
 # Task 三锚点溯源 — 判定以 SKILL 脚本退出码为准；逐份跑、任一非 0 即取该码
 # ⛔ 每份计划单独落 JSON 再合并判定：多份共用一个输出文件会被循环覆盖、只剩最后一份的结论
+# ⛔ 粒度门的文件集 ≠ 头部门的 $FILES：SKILL 拆分态的 Phase 分册（`02_Phase2-业务逻辑层.md` …）只有 Task、
+#    没有文档级头部，不进 L1，但其中的 Task 必须过粒度门——只核主文档 = Phase 2~5 的 Task 全部漏核
+GRAN_FILES="$FILES $(ls docs/plans/{version}/[0-9][0-9]_Phase*.md 2>/dev/null)"
 GRAN_DIR=$(mktemp -d); GRAN_EXIT=0; GRAN_SKIPPED=False; GRAN_MUST=0; n=0
-for f in $FILES; do
+for f in $GRAN_FILES; do
   n=$((n+1))
   python3 {{AIDP_HOME}}/skills/dev-execution-planner/scripts/check_task_granularity.py "$f" --json > "$GRAN_DIR/$n.json"
   _e=$?; [ "$_e" -ne 0 ] && GRAN_EXIT=$_e

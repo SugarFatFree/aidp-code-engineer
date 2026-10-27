@@ -45,9 +45,12 @@ build 记录由 autopilot Phase 3.1.5 铸造；`--build` **只寻址、不代建
                                       `memory/.aidp-baseline-archive/baseline-<V>.json`
     set   <path> <value> [...]      写；可多组 path/value 交替；值按 JSON 解析，失败则当字符串
     del   <path> [<path> ...]       删键（不存在静默跳过）
+    take <path> [--default V]      锁内读取并删除一次性值（如发布授权），仅在成功写盘后输出
     bump  <path> [--by N]           数值自增（缺省视为 0），打印新值
     touch <path> [...]              写当前本地时间 ISO8601（等价 set <path> <now>）
     now                             只打印当前 ISO8601 时间戳（供 shell 复用同一时刻）
+    epoch <ISO8601>                 打印该时间戳的 epoch 秒（整数）；空 / 不可解析 → 无输出、exit 1
+                                    ★ flow 里的 `to_ts` 一律走它：`date -d` 是 GNU 专有，BSD/macOS 下恒失败
     current-version                 解析「当前开发版本」= phase_beta_done_at 非空且 internal_released_at
                                     为空的候选中，**优先取待测的最老一个**（没测过 / 测后又部署过），
                                     全都测过才回到「最新优先」。无候选则打印 --default。
@@ -366,7 +369,7 @@ def main() -> int:
     ap.add_argument("--state-key", choices=("run_state", "aiauto_run_state"), default="run_state", help="run-state 写入的状态节点，默认 run_state；测试链路使用 aiauto_run_state")
     ap.add_argument(
         "op",
-        choices=["get", "set", "del", "bump", "touch", "now", "current-version", "run-state"],
+        choices=["get", "take", "set", "del", "bump", "touch", "now", "epoch", "current-version", "run-state"],
     )
     ap.add_argument("args", nargs="*")
     a = ap.parse_args()
@@ -390,6 +393,15 @@ def main() -> int:
 
     if a.op == "now":
         print(now_iso())
+        return 0
+
+    if a.op == "epoch":
+        # ⛔ 解析失败**不打印 0**：调用方以 `|| echo <兜底>` 自定兜底值 —— 有的比较两侧兜底不同
+        #   （部署时刻兜 0、build 起点兜 1），统一打 0 会让「两侧都解析失败」被判成「已就绪」。
+        ts = _to_epoch(a.args[0]) if len(a.args) == 1 and a.args[0].strip() else 0.0
+        if not ts:
+            return 1
+        print(int(ts))
         return 0
 
     if a.op == "current-version":
@@ -580,6 +592,19 @@ def main() -> int:
                 print(val)
             else:
                 print(json.dumps(val, ensure_ascii=False))
+            return 0
+
+        if a.op == "take":
+            if len(a.args) != 1:
+                print("[baseline_edit] ✗ take 需要且仅需要 1 个路径", file=sys.stderr)
+                return 1
+            with LockedBaseline(a.baseline, write=True) as b:
+                segs = full(a.args[0], b.data)
+                val, found = dig(b.data, segs)
+                prune(b.data, segs)
+            # 锁内写盘成功后才返回值，不能通知调用者「拿到授权」却未能消费。
+            print(a.default if not found or val is None else val if isinstance(val, str)
+                  else json.dumps(val, ensure_ascii=False))
             return 0
 
         if a.op == "set":

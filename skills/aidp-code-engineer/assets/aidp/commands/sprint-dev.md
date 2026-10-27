@@ -100,12 +100,11 @@ fi
 > 判据与话术同 `/sprint-full` Phase 0B.0 前自检（那条已落地，本条照它办）。
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --json
-OPEN_RC=$?        # 0=无未关闭（含适用范围外）→ 继续；1=有 → 立即停下，列出 open[] 要求先 /sprint-close
+python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --scope started --json
+OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停下、先 /sprint-close；2=状态读错→停止并修复输入
 ```
 
-> **判据单一信源 = `check_open_sprints.py`**（计划集合取 `docs/plans/{version}/*.md` 的 `Sprint-NNN`，
-> 已关闭集合取 `memory/{version}/*/progress.md` 里**同一行**带 ✅ 的条目，**跨用户扫描**）。
+> **判据单一信源 = `check_open_sprints.py`**（开工门检查跨用户的已启动记录与显式当前状态，扣除同时具备同行 ✅ 与 `sprints/sprint-NNN.md` 归档文件的关闭记录；**尚未开工的计划不阻断启动**）。
 > ⛔ 不自行裁量、不记告警后继续 —— 本门漏判的方向是**放行**，而放行的代价是上面那段写的孤儿产物。
 
 ### Phase 0B.0：★ 版本落点决策门（单一信源 —— 累进前置，最先跑，先于任何持久副作用）

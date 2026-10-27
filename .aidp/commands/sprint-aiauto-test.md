@@ -4,6 +4,8 @@
 
 参数：$ARGUMENTS
 
+**tick 占位收尾**：Phase 0 begin/parse 的本轮 token 保留在执行上下文。每一次返回前（含无变化、委派返回、配置等待、失败、冻结与 yield），全部工作完成后按 `{{AIDP_HOME}}/reference/agent-tools.md`「tick 占位收尾」执行 `autopilot_tick_flags.py finish --command aiauto-test --lock-token <本轮token>`。token 为 `agent_loop` 或未取得占位时不执行。不得在单个 Bash 结束时提前释放；重新 parse 沿用本轮 token。
+
 **内部缓存身份**：`--preflight-run-id <ID>` 只由上层编排透传，同一次同步委派使用同一身份；独立唤起不传，由 `autopilot_tick_flags.py parse` 自动生成新值。传给测试链路时附 `--preflight-run-id "$PREFLIGHT_RUN_ID"`；异步调度新 tick 不沿用。
 
 
@@ -55,7 +57,7 @@
 # ★ 标准用法（生产 7×24）：操作系统调度（与开发链路一并安装）；版本号自动从 baseline 读
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 开发/测试链路 + 独立 watchdog；测试默认每 5 分钟唤起
 # 交互式短期用法（Claude Code 会话内；会话级、7 天过期、空闲才触发、同会话与开发链路串行）
-/loop 5m /sprint-aiauto-test --unattended                             # 每 5 分钟读 baseline 看有无新部署，自动跑测
+/loop 5m /sprint-aiauto-test --unattended --no-loop                             # 每 5 分钟读 baseline 看有无新部署，自动跑测
 
 # 典型单次/临时用法
 /sprint-aiauto-test --once                                           # 立即跑一次后退出（测当前开发版本）
@@ -271,8 +273,8 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status
 ### #2 会话内 `/loop`（Claude Code 交互式短期用法）
 
 ```bash
-/loop 10m /sprint-autopilot --unattended     # 监听 PRD → 开发 + 里程碑通知（不跑 chrome）
-/loop 5m  /sprint-aiauto-test --unattended   # 监听 baseline 看是否有新部署 → AI 自动化实测 + 报告
+/loop 10m /sprint-autopilot --unattended --no-loop     # 监听 PRD → 开发 + 里程碑通知（不跑 chrome）
+/loop 5m  /sprint-aiauto-test --unattended --no-loop   # 监听 baseline 看是否有新部署 → AI 自动化实测 + 报告
 ```
 
 `/loop` 是会话级定时任务：会话关闭即停、7 天后自动过期、只在会话空闲时触发，同一会话两条实际串行（一次长的浏览器实测会推迟开发链路）。7×24 用 #1。

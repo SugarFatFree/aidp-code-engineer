@@ -596,6 +596,48 @@ def test_classify_push_flow():
 
 
 
+def test_standalone_release_pending_base():
+    """执行发布分片真实基准保存/读回块，覆盖早已提交但尚未推送的正式代码。"""
+    print("【独立发布：远端待推基准跨围栏】")
+    from pathlib import Path
+    flow = (Path(REPO) / ".aidp/flows/version/release-7.md").read_text(encoding="utf-8")
+    capture = flow.split("# push 基准", 1)[1].split("# ★ 终态落账门", 1)[0]
+    classify = flow.split("#### Step 3.4.3", 1)[1].split('if [ -n "$BUILD" ]; then', 1)[1].split('\nfi\n# ⛔', 1)[0]
+    capture = "# push 基准" + capture
+    classify = 'if [ -n "$BUILD" ]; then' + classify + "\nfi\n"
+    for formal in (True, False, None):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, remote = os.path.join(tmp, "work"), os.path.join(tmp, "remote.git")
+            os.makedirs(root)
+            _init_repo(root)
+            _git(remote, "init", "--bare", "-q") if os.path.isdir(remote) else subprocess.run(
+                ["git", "init", "--bare", "-q", remote], check=True, capture_output=True)
+            mkfile(os.path.join(root, "package.json"), '{}\n')
+            mkfile(os.path.join(root, "src/app.ts"), "export const value = 1;\n")
+            _git(root, "add", "."); _git(root, "commit", "-qm", "base")
+            branch = _git(root, "symbolic-ref", "--short", "HEAD").stdout.strip()
+            _git(root, "remote", "add", "origin", remote)
+            _git(root, "push", "-u", "origin", branch)
+            changed = "src/app.ts" if formal else "docs/change.md"
+            mkfile(os.path.join(root, changed), "export const value = 2;\n" if formal else "# docs\n")
+            _git(root, "add", "."); _git(root, "commit", "-qm", "pending change")
+            if formal is None:
+                _git(root, "remote", "remove", "origin")
+            setup = f'VERSION=V1; BUILD=""; BE="{sys.executable} {SCRIPTS}/baseline_edit.py"\n'
+            r = subprocess.run(["bash", "-c", setup + capture], cwd=root, capture_output=True, text=True)
+            check(f"standalone 保存基准（formal={formal}）", r.returncode == 0)
+            mkfile(os.path.join(root, "docs/release.md"), "# release\n")
+            _git(root, "add", "docs/release.md"); _git(root, "commit", "-qm", "release docs")
+            r = subprocess.run(["bash", "-c", setup + classify.replace("{{AIDP_HOME}}", str(Path(SCRIPTS).parent))],
+                               cwd=root, capture_output=True, text=True)
+            baseline = Path(root) / "memory/.sprint-autopilot-baseline.json"
+            data = json.loads(baseline.read_text()) if baseline.exists() else {}
+            rec = data.get("versions", {}).get("V1", {}).get("release_change_classification", {})
+            check(f"standalone 正式代码监听/文档跳过/缺基准保守监听（formal={formal}）",
+                  rec.get("cicd_should_watch") is (formal is not False)
+                  and (formal is not None or rec.get("classification_error") is True))
+
+
 def test_autopilot_flow_contracts():
     """静态回归：逐 tick、空集合 fail-closed、出口 V 围栏与发布监听不可退化。"""
     print("【sprint-autopilot / version release 静态契约】")
@@ -627,8 +669,13 @@ def test_autopilot_flow_contracts():
           "无 close 归档产物" in p and "run-state" in p and "UNATTENDED_YIELD" in p)
     # ★ 失败分支必须记账让位，不得裸 exit 1——裸退时 phase_enter_count 不自增，
     #   stuck 熔断（要求 ≥8）永远达不到阈值，形成零告警零冻结的永久空转。
+    # 记账口径 = autopilot_fail_handle（bump → 判阈 → 冻结四件套 + #4 一次做完、逐个查写盘返回码）
     check("★ close 失败走记账让位而非裸 exit 1",
-          "bump dev_fail_streak" in p and "让位本 tick" in p)
+          "autopilot_fail_handle.py" in p and "--streak-key dev_fail_streak" in p and "让位本 tick" in p)
+    check("★ close 失败的达阈冻结不再内联 `$BE set needs_human`（不查返回码）",
+          "set needs_human true" not in p)
+    check("★ 派发子 Agent 前先写 run-state --enter（被硬超时杀掉也计入 stuck 判据）",
+          p.index("--enter") < p.index("**② 委派子 Agent"))
     # ★ 斜杠命令不是 shell 命令，写进 bash 围栏必 127
     check("★ 单 Sprint 执行走子 Agent 委派、不在 bash 围栏内写斜杠命令",
           "/sprint-full ${SPRINT_NO} --unattended --from-batch" in p
@@ -756,6 +803,7 @@ def main():
     test_ledger_forms()
     test_classify_commit_change()
     test_classify_push_flow()
+    test_standalone_release_pending_base()
     test_autopilot_flow_contracts()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed / {_skipped} skipped ══")
     return 1 if _failed else 0

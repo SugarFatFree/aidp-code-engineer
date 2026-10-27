@@ -13,7 +13,7 @@ r"""check_count_claims.py — 文档里的「自称计数」必须与被数的�
 
 计数**天然是确定性的**——被数的东西就在仓库里、数得出来。这类东西不该靠人记得回头改。
 
-## 判定口径（三类；宁可少做，不可误报）
+## 判定口径（宁可少做，不可误报）
 
 只做"能确定性核出真值"的三类，其余（如「14 维度检查」散落在各 SKILL 正文里、没有可数的结构）不碰：
 
@@ -122,6 +122,14 @@ RELEASE_GATE_CONTEXT = "release_baseline_check"
 GOAL_GROUP_RE = re.compile(r"(\d+)\s*组目标|逐组覆盖：\s*(\d+)\s*/\s*(\d+)")
 GOAL_CONTEXT = "设计目标"
 
+# ⑥ Agent 角色总数（行内须出现 `Agent`）：`共 N 个`（同行有 Agent）/ `N 个 Agent 指令|角色指令` / `= N 个 Agent`
+#    ⇢ 真值 = `AIDP_HOME/agents/*.md`（不含 README）的文件数。加这一类的动因：新增 qr-handoff-auditor 后
+#    范式主文档 / init README / agents 规范四处仍写「共 9 个」，职责矩阵与关系图也都漏了它。
+#    ⛔ 只认「总数」措辞：「派 4 个 Agent 并行」这类局部数量不是自称总数，不碰。
+AGENT_RE = re.compile(r"共\s*\*{0,2}(\d+)\s*个(?!\s*(?:维度|组|项|脚本|命令|skill|SKILL))"
+                      r"|(\d+)\s*个\s*Agent\s*(?:角色)?指令|=\s*(\d+)\s*个\s*Agent")
+AGENT_CONTEXT = "Agent"
+
 # ③ 测试分组数（需与 test_guard_scripts 同行共现）
 GROUP_RE = re.compile(r"共\s*\*{0,2}(\d+)\s*组")
 GROUP_CONTEXT = "test_guard_scripts"
@@ -181,6 +189,15 @@ def truth_semantic_dimensions(root):
     nums = {int(m.group(1))
             for m in re.finditer(r"^#{2,4}\s*.*?语义维度\s*(\d+)", body, re.M)}
     return len(nums) if nums else None
+
+
+def truth_agents(root):
+    """真值：`AIDP_HOME/agents/` 下除 README 外的 `.md` 数；目录不存在返回 None。"""
+    base = os.path.join(root, runtime_text('__AIDP_HOME__/agents', __file__))
+    if not os.path.isdir(base):
+        return None
+    n = sum(1 for f in os.listdir(base) if f.endswith(".md") and f.upper() != "README.MD")
+    return n or None
 
 
 def truth_goal_groups(root):
@@ -284,6 +301,11 @@ def scan_line(line, truths, file_ctx=frozenset()):
             if decl != truths["release_gate"]:
                 bad.append((m.group(0), m.start() + 1, "约定37机器门校验项数",
                             decl, truths["release_gate"]))
+    if truths.get("agent") is not None and AGENT_CONTEXT in line:
+        for m in AGENT_RE.finditer(line):
+            decl = int(next(g for g in m.groups() if g))
+            if decl != truths["agent"]:
+                bad.append((m.group(0), m.start() + 1, "Agent 总数", decl, truths["agent"]))
     return bad
 
 
@@ -383,6 +405,7 @@ def run(root, project_claims_dir=None):
         "group": truth_guard_test_groups(root),
         "goal_group": truth_goal_groups(root),
         "release_gate": truth_release_gate_checks(root),
+        "agent": truth_agents(root),
     }
     violations, scanned, claims = [], 0, 0
     for path in sorted(set(_walk(root))):
@@ -410,6 +433,8 @@ def run(root, project_claims_dir=None):
             claims += len(CONVENTION_RE.findall(line)) + len(DIMENSION_RE.findall(line))
             if GROUP_CONTEXT in line or GROUP_CONTEXT in _file_ctx:
                 claims += len(GROUP_RE.findall(line))
+            if AGENT_CONTEXT in line:
+                claims += len(AGENT_RE.findall(line))
             for snippet, col, kind, decl, actual in scan_line(line, truths, _file_ctx):
                 violations.append({
                     "file": rel, "line": i, "col": col, "snippet": snippet,
@@ -451,7 +476,7 @@ def main():
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:
         base = (f"（巡检 {res['scanned']} 份 .md，命中 {res['count_claims']} 处计数声明；"
-                f"真值：核心约定 {t['convention']} / 语义维度 {t['dimension']} / 测试分组 {t['group']}）")
+                f"真值：核心约定 {t['convention']} / 语义维度 {t['dimension']} / 测试分组 {t['group']} / Agent {t['agent']}）")
         pf = res.get("project_findings") or []
         if pf:
             print(f"\n── 业务计数回扫（{res.get('project_claims', 0)} 条声明 → {len(pf)} 处候选，"

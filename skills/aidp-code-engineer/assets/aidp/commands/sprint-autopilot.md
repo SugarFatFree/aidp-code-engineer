@@ -45,8 +45,8 @@
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 开发（10m）+ 测试（5m）+ 独立 watchdog（5m）三条任务
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 + 两条链路心跳
 # 交互式短期用法（Claude Code 会话内；会话级、7 天过期、空闲才触发、同会话两条串行）：
-/loop 10m /sprint-autopilot --unattended    # 开发链路：扫 docs/requirements/ → /version → /sprint-batch → 触发部署（不跑浏览器）
-/loop 5m  /sprint-aiauto-test --unattended   # 测试链路：监听 baseline 新部署 → chrome 实测 + 报告 + 播报
+/loop 10m /sprint-autopilot --unattended --no-loop    # 开发链路：扫 docs/requirements/ → /version → /sprint-batch → 触发部署（不跑浏览器）
+/loop 5m  /sprint-aiauto-test --unattended --no-loop   # 测试链路：监听 baseline 新部署 → chrome 实测 + 报告 + 播报
 # ⚠️ 硬前置：autopilot 单命令在【无人值守】下只跑开发链路，写完 last_deployed_at 即止；浏览器实测/AI测试报告靠测试链路。
 #    ★ 例外（P0-4）：交互式【单次】调用（LOOP_UNATTENDED=0、无第二条 loop）→ 部署后 autopilot 自己跑一次 /sprint-aiauto-test --once --unattended（除非 --skip-aiauto-test）。
 #    只跑 autopilot 一条 → 测试半环【永久不会自动启动】，命令仅能 WARN、无法自愈（见 Phase 3.4 step4③ 双链路自检）。
@@ -228,6 +228,10 @@ Git 模式跑 `/version <PRE_RELEASE_VERSION> --no-tag` 准发布归档；无 Gi
 | **3.4** | 完成通知 + 收尾（收尾门 + 双链路收口 P0-4）| `phase-3-8.md`（Step 1–3 finalize/emit-report/#3 通知）+ `phase-3-9.md`（Step 4+ 根因分诊 + ceremony 闸）+ `phase-3-9b.md`（内联校验 ①~④ + 收尾动作）| 总是 |
 
 > 收口：3.4 完成 → 命令退出（不自动 merge/tag/推 master，destructive 动作留人工）。**执行前务必已按子步进度 Read 对应 `phase-3-N.md` 并逐项完成。**
+
+## tick 占位收尾（任何返回路径适用）
+
+Phase 0 begin/parse 的本轮 token 必须保留在执行上下文；整轮所有工作结束后、每一次返回前（含无变化、配置等待、失败与 yield），按 `{{AIDP_HOME}}/reference/agent-tools.md`「tick 占位收尾」执行 `autopilot_tick_flags.py finish --command autopilot --lock-token <本轮token>`。token 为 `agent_loop` 或从未取得占位时不执行 finish。不得在单个 Bash 结束时提前释放；重新 parse 沿用本轮 token。
 
 ## 命令收尾硬门（★ 入口级 ceremony 闸 — 无条件、结构级，任何入口 / 任何工作方式都跑）
 

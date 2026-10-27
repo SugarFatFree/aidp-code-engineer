@@ -77,7 +77,7 @@ project-root/
 ├── README.md                             # 项目说明
 │
 ├── {{AIDP_HOME}}/                        # ★ 下游运行真源：仅 Claude 为 .claude；有 Codex / DSH 为 .agents（契约平铺其下）
-│   ├── agents/                           # 9 个 Agent 角色指令（7 业务 + 1 合规 + 1 版本审计）
+│   ├── agents/                           # 10 个 Agent 角色指令（7 业务 + 1 合规 + 2 版本规划审计）
 │   ├── commands/                         # 自定义斜杠命令
 │   │   ├── sprint-init.md                # /sprint-init            项目初始化
 │   │   ├── sprint-init-design.md         # /sprint-init-design     初始化前半段（分步）
@@ -317,8 +317,9 @@ project-root/
 | Reviewer Agent | 代码审查、质量把关 | PR 代码、设计文档 | 审查意见、合并决策 | `{{AIDP_HOME}}/agents/reviewer.md` |
 | **AIDP-Compliance Agent** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留 / 事实清单 ↔ 代码 / 引用三角 / 目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py 输出、memory/、项目记忆文件、code/、事实清单 | 合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | `{{AIDP_HOME}}/agents/aidp-compliance.md` |
 | **Version-Auditor Agent** ★ | 版本规划产物全量审计（A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34） 共 8 项）| 版本规划产物（requirements / design / plans / testing 等）| 审计报告 `docs/audit/{version}/version-output-audit-*.md` | `{{AIDP_HOME}}/agents/version-auditor.md` |
+| **QR-Handoff-Auditor Agent** ★ | 接手规划 SKILL 以 `--qr-level=critical\|scripts` 运行时移交出来的非 Critical QR 维度（判据以该 SKILL checklist 为准；每份移交清单一个实例，与 Version-Auditor 同轮并行）| 各 SKILL 产物目录 `00_索引.md` 的 QR 移交清单 + 产物 | 审计报告 `docs/audit/{version}/qr-handoff-{skill}-*.md` | `{{AIDP_HOME}}/agents/qr-handoff-auditor.md` |
 
-共 **7 业务 Agent + 1 合规 Agent + 1 版本规划产物审计 Agent = 9 个 Agent**。各 Agent 的详细指令内容见 `04_agents详细规范.md`。
+共 **7 业务 Agent + 1 合规 Agent + 2 版本规划审计 Agent = 10 个 Agent**。各 Agent 的详细指令内容见 `04_agents详细规范.md`。
 
 ### 4.2 主入口 `AGENTS.md` 结构
 

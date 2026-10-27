@@ -358,6 +358,83 @@ class ManifestContractTest(RuntimeLayoutTestCase):
 
 
 class AtomicInstallTest(RuntimeLayoutTestCase):
+    def test_same_version_refresh_preserves_gated_baselines_and_new_script_modes(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".claude"
+            old = R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude")
+            command = runtime / "commands/sprint-dev.md"
+            command.write_text("local command\n", encoding="utf-8")
+            old_script = (runtime / "scripts/sample.txt").read_bytes()
+            (source / "commands/sprint-dev.md").write_text("new command\n", encoding="utf-8")
+            (source / "commands/new.md").write_text("new gated file\n", encoding="utf-8")
+            (source / "scripts/sample.txt").write_text("new script\n", encoding="utf-8")
+            new_script = source / "scripts/new.py"
+            new_script.write_text("# new script\n", encoding="utf-8")
+            new_script.chmod(0o755)
+            R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude", preserve_gated=True,
+                             backup_callback=lambda old: shutil.copytree(old, base / "backup"))
+            self.assertEqual(command.read_bytes(), b"local command\n")
+            self.assertFalse((runtime / "commands/new.md").exists())
+            self.assertEqual((runtime / "scripts/sample.txt").read_bytes(), b"new script\n")
+            self.assertEqual(R._file_metadata(runtime / "scripts/new.py"), R._file_metadata(new_script))
+            manifest = R.validate_runtime(runtime, ".claude")
+            self.assertEqual(manifest["files"]["commands/sprint-dev.md"],
+                             old["files"]["commands/sprint-dev.md"])
+            self.assertEqual(manifest["local_modifications"]["commands/sprint-dev.md"],
+                             R._file_metadata(command))
+            self.assertEqual((base / "backup/scripts/sample.txt").read_bytes(), old_script)
+            command.write_text("another edit\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "指纹漂移"):
+                R.validate_runtime(runtime, ".claude")
+
+    def test_same_version_refresh_requires_complete_backup_and_protects_private_collision(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".claude"
+            R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude")
+            (source / "scripts/sample.txt").write_text("new script\n", encoding="utf-8")
+            before = R.tree_digest(runtime)
+            with self.assertRaisesRegex(RuntimeError, "完整备份"):
+                R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude", preserve_gated=True)
+            self.assertEqual(R.tree_digest(runtime), before)
+            (runtime / "scripts/private.py").write_text("# user\n", encoding="utf-8")
+            (source / "scripts/private.py").write_text("# new source\n", encoding="utf-8")
+            before = R.tree_digest(runtime)
+            with self.assertRaisesRegex(RuntimeError, "冲突"):
+                R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude", preserve_gated=True,
+                                 backup_callback=lambda old: shutil.copytree(old, base / "backup"))
+            self.assertEqual(R.tree_digest(runtime), before)
+
+    def test_same_version_refresh_atomic_failure_restores_gated_and_scripts(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".claude"
+            R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude")
+            (source / "scripts/sample.txt").write_text("new script\n", encoding="utf-8")
+            (source / "scripts/new.py").write_text("# new\n", encoding="utf-8")
+            before = R.tree_digest(runtime)
+            failed = False
+
+            def fail_script_once(src, dst):
+                nonlocal failed
+                if not failed and "stage" in Path(src).parts and Path(dst).name == "sample.txt" \
+                        and Path(dst).parent.name == "scripts":
+                    failed = True
+                    raise OSError("script replace failed")
+                os.replace(src, dst)
+
+            with self.assertRaisesRegex(OSError, "script replace failed"):
+                R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude", preserve_gated=True,
+                                 backup_callback=lambda old: shutil.copytree(old, base / "backup"),
+                                 replace_func=fail_script_once)
+            self.assertTrue(failed)
+            self.assertEqual(R.tree_digest(runtime), before)
+            R.validate_runtime(runtime, ".claude")
+
     def test_upgrade_preserves_user_reference_and_private_files_across_both_homes(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

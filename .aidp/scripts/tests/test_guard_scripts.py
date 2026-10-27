@@ -1065,7 +1065,11 @@ def _check_prerelease_cross_shell_gate():
         check("双门通过且归档核验后独立进程写游标", ready.returncode == 0 and
               r3.returncode == 0 and bool(version().get("internal_released_at")))
         check("双门通过且归档核验后独立进程写 done", r5.returncode == 0 and state().get("next_phase") == "done")
-        flags("parse", "--command", "autopilot", "--arguments", "--once")
+        # 结束前一真实 tick 后再开新 tick，不能靠同父进程猜测重入绕过互斥。
+        lock = root / "memory/.aidp/locks/loop-sprint-autopilot.lock"
+        token = json.loads(lock.read_text(encoding="utf-8"))["token"]
+        check("上一 tick finish 成功", flags("finish", "--command", "autopilot", "--lock-token", token).returncode == 0)
+        check("下一 tick parse 成功", flags("parse", "--command", "autopilot", "--arguments", "--once").returncode == 0)
         shell = flags("--command", "autopilot", "--shell")
         check("下一 tick 不沿用上轮准发布成功信号", 'PRERELEASE_ARCHIVE_OK=1' not in shell.stdout and
               'PRERELEASE_GATE_OK=1' not in shell.stdout)
@@ -2087,6 +2091,14 @@ def test_project_count_claims():
     check("★ 同一文件的第二张声明表也被读到（原 search 只取第一张，漏读全绿）",
           "告警类型数" in _names and "角色数" in _names)
     shutil.rmtree(_mt, ignore_errors=True)
+    _t = {"convention": None, "dimension": None, "group": None, "goal_group": None,
+          "release_gate": None, "agent": 10}
+    # 以下是故意过期的反例，仅豁免样例行，不豁免整个测试文件。
+    check("★ Agent 总数：三种总数措辞都能检出过期",
+          all(CC.scan_line(l, _t) for l in ("7 业务 Agent + 2 审计 Agent = 9 个 Agent",  # <!-- countclaim-check: ignore -->
+                                             "# 9 个 Agent 角色指令", "Agent 定义（PM/UI，共 9 个）")))  # <!-- countclaim-check: ignore -->
+    check("Agent 总数：局部数量「派 4 个 Agent 并行」与正确总数不误报",
+          not CC.scan_line("派 4 个 Agent 并行", _t) and not CC.scan_line("共 10 个 Agent", _t))
     repo = Path(__file__).resolve().parents[3]
     sc = str(repo / ".aidp/scripts/check_count_claims.py")
 
@@ -4620,6 +4632,19 @@ def test_suite_has_invoker():
                     and f.suffix in (".py", ".js") and f.name not in body]
     check("★ run.sh 收录全部 test_* 文件（漏收 = 该套件永远绿不了也红不了）%s"
           % (missing or ""), not missing)
+
+    # ①' README 文件表登记：本目录 README 自称「新增套件必须同时登记进 run.sh 与文件表」，只查前一半
+    #    = 文件表无声过期（test_planning_orchestration.py 进了 run.sh、表里一直没有它）。
+    #    脚手架侧套件在 README 用一行汇总列名，同样按文件名出现与否判。
+    readme = (repo / ".aidp/scripts/tests/README.md").read_text(encoding="utf-8")
+    unlisted = []
+    for _sub in (".aidp/scripts/tests", "skills/aidp-code-engineer/scripts/tests"):
+        tdir = repo / _sub
+        if tdir.is_dir():
+            unlisted += [f.name for f in sorted(tdir.iterdir())
+                         if f.is_file() and f.name.startswith("test_")
+                         and f.suffix in (".py", ".js") and f.name not in readme]
+    check("★ tests/README.md 文件表登记全部 test_* 文件%s" % (unlisted or ""), not unlisted)
 
     # ② 调用方：约定 16 的 commit 前动作清单里必须显式有它
     #    ⛔ verify.py 刻意不跑它（那是下游也要跑的合规检查，单测是模板项目自有），

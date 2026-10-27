@@ -119,8 +119,8 @@ def _walk(root):
 
 def run(root):
     dirs = shard_dirs(root)
-    # ★ 附属文件（理据/不变式/用法守卫）不计入"执行分片"，但计入"全部"
-    ATTACH = {"rationale.md", "invariants.md", "usage-guard.md"}
+    # ★ 附属文件（理据/不变式/用法守卫/输出示例）不计入"执行分片"，但计入"全部"
+    ATTACH = {"rationale.md", "invariants.md", "usage-guard.md", "output-examples.md"}
     exec_counts, all_counts, by_prefix, phase_counts = {}, {}, {}, {}
     for cmd, files in dirs.items():
         numbered = [f for f in files if f not in ATTACH]

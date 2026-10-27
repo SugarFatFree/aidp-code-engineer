@@ -330,6 +330,9 @@ class DigestAndTickTests(TemporaryProject):
         first = self.cli("autopilot_tick_flags.py", "parse", "--command", "autopilot", "--arguments=--once")
         self.assertEqual(first.returncode, 0, first.stderr)
         one = self.read()["autopilot"]["tick_id"]
+        token = next(line.split("=", 1)[1] for line in first.stdout.splitlines() if line.startswith("tick-lock-token="))
+        finished = self.cli("autopilot_tick_flags.py", "finish", "--command", "autopilot", "--lock-token", token)
+        self.assertEqual(finished.returncode, 0, finished.stderr)
         second = self.cli("autopilot_tick_flags.py", "parse", "--command", "autopilot", "--arguments=--once")
         self.assertEqual(second.returncode, 0, second.stderr)
         two = self.read()["autopilot"]["tick_id"]

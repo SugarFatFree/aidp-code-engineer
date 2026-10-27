@@ -24,18 +24,22 @@
 ```bash
 # ══ 第一步：【全部】参数标志的确定性解析 + 落盘（★ 不解析 = 全部落 `:-0`，对应 flag 等于不存在）══
 # `$ARGUMENTS` = 本次调用的原始参数串（斜杠命令由 runtime 注入）；未注入时按空串处理。
-# ⛔ 本 case 必须**枚举全部旗标**，漏一个即该旗标恒不生效：`--unattended`/`--once`/`--no-loop` 之外，`--skip-dev`/`--skip-deploy`/
-#    `--no-planning`/`--force-replan`/`--target`/`--batch-one-tick` **全仓没有任何解析落点** ——
-#    命令正文把「流程裁剪的唯一来源是用户显式声明」立为铁律，而那个"显式声明"根本没被读进来：
-#    `[ "$SKIP_DEV" = 1 ]` 恒假 → `--skip-dev` 静默失效、test-only 入口不可达。
-#    现统一交给确定性脚本解析 + 落盘到 baseline `autopilot.tick`（**每 tick 整段重写**，不残留上轮）。
-# ★ 四个 `--reset-*` 必须先于读 baseline（它们改的正是 baseline）。
-#   rc: 0=未命中 / 10=已重置且结束本 tick / 11=已重置继续（根因见 rationale 同名段）。
-python3 {{AIDP_HOME}}/scripts/autopilot_reset.py --arguments="${ARGUMENTS:-}"; _RST=$?
-[ "$_RST" = "10" ] && exit 0
-python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py parse --command autopilot --arguments "${ARGUMENTS:-}"
+# 全部旗标统一交给确定性脚本解析，按命令分键落 baseline `autopilot.tick`，每 tick 整段重写。
+# ★ 先互斥再 reset / 读写 baseline；begin 仅输出本轮 token，必须保留在本轮上下文。
+_TF=0; TICK_LOCK_TOKEN=$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py begin --command autopilot) || _TF=$?
+[ "$_TF" = 4 ] && exit 0   # 另一 tick 在执行，不得继续任何 Phase
+[ "$_TF" = 0 ] || exit "$_TF"
+# reset 在 parse baseline 前执行；rc=10 表示重置完结束，11 表示继续。
+_RST=0; python3 {{AIDP_HOME}}/scripts/autopilot_reset.py --arguments="${ARGUMENTS:-}" || _RST=$?
+if [ "$_RST" = 10 ] || [ "$_RST" = 2 ]; then
+  [ "$TICK_LOCK_TOKEN" = agent_loop ] || python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py finish --command autopilot --lock-token "$TICK_LOCK_TOKEN" || exit 1
+  [ "$_RST" = 10 ] && exit 0
+  exit "$_RST"
+fi
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py parse --command autopilot --lock-token "$TICK_LOCK_TOKEN" --arguments "${ARGUMENTS:-}" || exit 1
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-# ⚠️ `$ARGUMENTS` 未被宿主注入时全部标志恒 0 —— 由 Claude 读用户原文补判后重跑上面两行，⛔ 绝不留空。
+# ⚠️ `$ARGUMENTS` 未注入时按用户原文重新 parse，并显式传入本轮已输出的 --lock-token（用原值，不重跑 begin）。
+# 任一结束路径（含配置等待 / yield / 失败）返回前均按命令正文「tick 占位收尾」finish；不能只在本 shell 装 EXIT trap。
 # IS_LOOP_CONTEXT（探测法单一信源在此；Phase 1.3 复用本处值、不再独立探测）：
 #   判据 = 当前 prompt 是否含 `/loop` 字样。纯 shell 读不到，**须由 Claude 就地改成 0/1**，不得跳过：
 IS_LOOP_CONTEXT=0    # ← Claude 按本轮 prompt 是否含 `/loop` 就地改为 0 / 1

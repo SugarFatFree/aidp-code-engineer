@@ -10,7 +10,7 @@
 
 > 📎 **入口判据（对齐项目记忆文件 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`）「AI 测试入口前置规则」；★ "属不属 autopilot 体系"这一判据以本文件为准，`/sprint-test` 与上述同名段的表述随之）**：调用前先查 ① baseline `memory/.sprint-autopilot-baseline.json` 里本 `{version}` 是否属 **autopilot 体系**——判据 = `current_build` 存在，**或** `versions.{version}` 存在**且** `versions.{version}.source != "sprint-batch"` ② 本 build **AI执行报告**是否存在。
 > - ⛔ **`versions.{version}.source == "sprint-batch"` 一律不算 autopilot 体系**：那条记录正是下方第 1 步本 Step 自己预写的，把它算进判据会让**首跑之后的每一次重跑**（bugfix 后回归 / 首跑失败重跑）都被弹回 autopilot，与预写时 `source` 标记的用意（"本 build 由 sprint-batch 直测、不弹回"）正相反。
-> - **autopilot 编排链恒带 `--skip-aiauto-test`**（`phase-3-5b.md` 列为必传 flag），故链内调起时本 Step 在 **6.0 跳过条件**处即整段跳过、走不到这里；（余下理据见同目录 `rationale.md`）
+> - **autopilot 编排链恒带 `--skip-aiauto-test`**（`sprint-autopilot/phase-3-5b.md` 列为必传 flag），故链内调起时本 Step 在 **6.0 跳过条件**处即整段跳过、走不到这里；（余下理据见同目录 `rationale.md`）
 > - **链外直接跑 `/sprint-batch`**（用户手动执行）且 **属 autopilot 体系（按①判据）+ 本 build AI执行报告缺失** → **改走 `/sprint-autopilot --skip-dev [--unattended]`**（⛔ 按 `/sprint-batch` 自身是否无人值守**条件透传**——不传则 autopilot 派生 `LOOP_UNATTENDED=0`，在交互门无人可答处挂死）产出 AI执行报告，由它委派浏览器实测；本 Step 6 记报告"已交 autopilot test-only 入口"后收口，不直调 `/sprint-aiauto-test`。
 > - **不属 autopilot 体系**（无 baseline 记录的真正 standalone，或记录 `source="sprint-batch"` 的本链路自留痕）**或 AI执行报告已在** → 照常直调 `/sprint-aiauto-test --once`。
 
@@ -49,7 +49,7 @@
      echo "ℹ️ 无 health URL（mode=$DM）→ **不写** last_deployed_at，就绪由 aiauto-test Phase 1 自探"
    fi
    ```
-2. **调用** `/sprint-aiauto-test --once [--unattended] [--role <role>]`：⛔ `[--unattended]` **按 `/sprint-batch` 自身是否无人值守条件透传**——被调侧「显式 `--once` 未带 `--unattended` 恒交互式」（`phase-0-1.md`），漏传会在 `/sprint-batch --unattended`（未带 `--skip-aiauto-test`）这条路径上弹出无人可答的 `AskUserQuestion`。autopilot 编排链恒带 `--skip-aiauto-test`、不到本步，但那不覆盖用户手动跑 `--unattended` 的情形。
+2. **调用** `/sprint-aiauto-test --once [--unattended] [--role <role>]`：⛔ `[--unattended]` **按 `/sprint-batch` 自身是否无人值守条件透传**——被调侧「显式 `--once` 未带 `--unattended` 恒交互式」（`sprint-aiauto-test/phase-0-1.md`），漏传会在 `/sprint-batch --unattended`（未带 `--skip-aiauto-test`）这条路径上弹出无人可答的 `AskUserQuestion`。autopilot 编排链恒带 `--skip-aiauto-test`、不到本步，但那不覆盖用户手动跑 `--unattended` 的情形。
    - 用例集由 aiauto-test Phase 2.0「用例来源优先级解析」自行确定（正式用例主集 + 研发自测补集），sprint-batch 不干预选集（约定 21）
    - 不传 `--target`（让 aiauto-test 自动从 baseline 读，避免参数双写）
 3. **aiauto-test 内部自己处理**（按约定 21，sprint-batch 不重复其内部行为 — chrome 检测 / credentials 收集 / 部署探测 / 仿真测试主循环 / baseline 写 / 里程碑通知等，详见 `/sprint-aiauto-test` 文档）

@@ -91,7 +91,7 @@
    - **★ 部署前安全网（在「部署动作」之前跑，⛔ 不可省）**：按 `{{AIDP_HOME}}/flows/sprint-batch/step-6.md` 的 **Step 6.0.5「SQL 已应用校验」+ 6.0.6「部署流程文档校验」**就地执行同款校验（判据以该文件为单一信源）。根因见 rationale.md「部署前安全网为何要在 autopilot 侧再跑一次」。
    - **部署动作**仍由本命令完成（按 `autopilot_decisions.deployment` 字段）：
      - **`--skip-deploy` 分支（用户主动跳过部署阶段）**：跳过部署、不写 `last_deployed_at`、不发 #1d；等效本轮 `mode=none` 行为，仅开发 + 静态自测
-     - `mode=local`（★ 无人值守铁律：**后台启动 + 幂等复用**，否则 `/loop` 会挂死或刷屏）：**先探端口/进程 → 已在跑即复用、未跑才后台启动**（`nohup … &` + 写 PID、绝不前台常驻；探活与启动细则见 rationale.md「本地 dev server 幂等复用」）。
+     - `mode=local`（★ 无人值守铁律：**后台启动 + 幂等复用**，否则 `/loop` 会挂死或刷屏）：**先探端口/进程 → 已在跑即复用、未跑才后台启动**（启动命令读 PRD `deployment.local_frontend_command`（在 `code/frontend/{子项目}/` 下执行）与 `local_backend_command`（`code/backend/{子项目}/`；留空 = 纯前端不启后端），探活地址读 `local_frontend_url` / `local_backend_url`；`nohup … &` + 写 PID、绝不前台常驻；探活与启动细则见 rationale.md「本地 dev server 幂等复用」）。
      - `mode=cloud`：按 `cloud_deploy_trigger` 触发部署后写 baseline `last_deployed_at`（aiauto-test 读它触发测试）：
        - **`cicd-provider`（PRD 显式声明由 CICD 流水线部署，平台 = `cicd.provider`，默认 GitHub Actions）→ 走下方 Phase 3.2.1 流水线编排 + 部署就绪探针**。
        - **`git-push` / `ci-pipeline`（推送即触发 / 外部 CI 被动触发）——按是否已接入 CICD 流水线二分（★ git-push 触发型的部署失败同样要监控/重试）**：

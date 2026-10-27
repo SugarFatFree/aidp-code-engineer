@@ -19,9 +19,17 @@ VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
 BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 BUILD=$($BE --version "$VERSION" get current_build --default "")
-# push 基准在发布 commit 前保存；首次无 HEAD 保持空值并 fail-closed
-BASE_REF=$(git rev-parse HEAD 2>/dev/null || true)
-[ -n "$BUILD" ] && $BE --version "$VERSION" --build "$BUILD" set push_base_ref "$BASE_REF"
+# push 基准在发布 commit 前保存：取实际推送目标远端 HEAD，覆盖已经提交但尚未推送的代码。
+# 远端不可达 / 对象本地不存在 / 首推时均保持空值，分类器按错误保守监听；不得拿提交后的 HEAD 兜底。
+PUSH_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || true)
+PUSH_REMOTE=origin; PUSH_REF="refs/heads/$PUSH_BRANCH"   # 与 3.4.3 的实际 push 目标相同
+REMOTE_LINE=$(git ls-remote --refs "$PUSH_REMOTE" "$PUSH_REF" 2>/dev/null || true)
+BASE_REF=${REMOTE_LINE%%[[:space:]]*}
+[ -n "$BASE_REF" ] && git cat-file -e "${BASE_REF}^{commit}" 2>/dev/null || BASE_REF=""
+$BE --version "$VERSION" set release_push_base_ref "$BASE_REF" || exit 1
+if [ -n "$BUILD" ]; then
+  $BE --version "$VERSION" --build "$BUILD" set push_base_ref "$BASE_REF" || exit 1
+fi
 # ★ 终态落账门：关键产物缺失且台账无对应条目 = 静默跳过 → 当场补登记（随本提交入库）
 NO_TAG_FLAG=""   # ← 带 --no-tag 时执行体就地改为 --no-tag
 python3 {{AIDP_HOME}}/scripts/release_debt.py gate --version "$VERSION" $NO_TAG_FLAG --register-missing
@@ -140,27 +148,38 @@ if [ -n "$BUILD" ]; then
   BASE_REF=$($BE --version "$VERSION" --build "$BUILD" get push_base_ref --default "")
   python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
 else
-  BASE_REF=$(git rev-parse HEAD 2>/dev/null || true)
+  BASE_REF=$($BE --version "$VERSION" get release_push_base_ref --default "")
   python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
 fi
 # ⛔ 三处 push 逐个捕获 rc，任一失败即落盘 + 阻断：本围栏无 `set -e`，不捕获就会带着
 #   **从未推出去的 commit** 继续跑探针并宣告"发布完成"。见 `rationale.md`「push 失败为何必须显式分流」。
 PUSH_FAILED=""
-git push origin "$(git symbolic-ref --short HEAD)" || PUSH_FAILED="commit"
 # ★ tag/分支推送口径从 baseline 读回（⛔ 不靠跨围栏 shell 变量）；`-f` 唯一通行条件 =
 #   撞名 AND 已获显式授权。理据见 `rationale.md`「推送口径为何从 baseline 读回」。
 TAG_NAME=$($BE --version "$VERSION" get release_tag_name --default "")
 BRANCH_NAME=$($BE --version "$VERSION" get release_branch_name --default "")
 REPUBLISH=$($BE --version "$VERSION" get release_republish --default 0)
-FORCE_AUTHORIZED=$($BE --version "$VERSION" get release_force_authorized --default 0)
+# ★ 网络操作前原子消费授权：成功、失败或中途中断均不会把授权留给下一次发布。
+FORCE_AUTHORIZED=$($BE --version "$VERSION" take release_force_authorized --default 0) || exit 1
 if [ "$REPUBLISH" = "1" ] && [ "$FORCE_AUTHORIZED" = "1" ]; then PUSH_F="-f"; else PUSH_F=""; fi
+git push origin "$(git symbolic-ref --short HEAD)" || PUSH_FAILED="commit"
 # ⛔ 用 if 而非 `[ -n ] && git push`：后者变量为空时整体 rc=1，接 `||` 会把"本轮不推 tag"误判成失败。
 if [ -n "$TAG_NAME" ]; then
-  git push $PUSH_F origin "$TAG_NAME" || PUSH_FAILED="${PUSH_FAILED:+$PUSH_FAILED,}tag"
+  # 保护策略拒绝强推时的降级仍在本围栏内，沿用已消费的本次授权；不跨 tick 持久化。
+  if ! git push $PUSH_F origin "$TAG_NAME" 2>memory/.aidp/release-tag-push.err; then
+    cat memory/.aidp/release-tag-push.err >&2
+    if [ "$PUSH_F" = "-f" ] && grep -Eq 'pre-receive hook declined|Access denied|remote rejected' memory/.aidp/release-tag-push.err; then
+      git push origin ":refs/tags/$TAG_NAME" && git push origin "$TAG_NAME" \
+        || PUSH_FAILED="${PUSH_FAILED:+$PUSH_FAILED,}tag"
+    else
+      PUSH_FAILED="${PUSH_FAILED:+$PUSH_FAILED,}tag"
+    fi
+  fi
 fi
 if [ -n "$BRANCH_NAME" ]; then
   git push $PUSH_F origin "$BRANCH_NAME" || PUSH_FAILED="${PUSH_FAILED:+$PUSH_FAILED,}branch"
 fi
+# 授权已在首次 push 前消费，后续失败处置不得凭历史位继续强推 / 删除远端 ref。
 if [ -n "$PUSH_FAILED" ]; then
   $BE --version "$VERSION" set release_push_failed "$PUSH_FAILED" >/dev/null 2>&1 || true
   echo "⛔ 推送失败（$PUSH_FAILED）→ 转 Step 3.4.4 失败处置（release-7c.md）"

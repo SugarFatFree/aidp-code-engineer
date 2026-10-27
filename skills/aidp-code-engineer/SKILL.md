@@ -60,8 +60,6 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 │   ├── sync_memory_md.py    # 模板维护：.aidp/AIDP-AGENTS.md（下发记忆源）→ assets/AGENTS.md.tpl
 │   ├── bump_version.py      # 模板维护：提升范式版本号
 │   └── tests/               # 模板回归单测（python3 -m unittest；不随安装下发）
-├── references/
-│   └── autopilot/output-examples.md
 ├── sources/                 # 模板维护：下游根文件与项目级 memory 模板的真源（→ assets/root、assets/memory；不随安装下发）
 └── assets/                  # 全部由 mirror_to_bundle.py 派生，不手改
     ├── aidp/                # → 目标项目 {{AIDP_HOME}}/（受版本门控目录见 scaffold_lib.py::GATED_DIRS，另有 scripts）
@@ -178,7 +176,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    | 相等 | `fill`：只补缺失文件，不改已有正文 |
    | 高于脚手架版本 | `protect`：不动契约，提示换用新版脚手架 |
 
-   任何处置下都执行：`{{AIDP_HOME}}/scripts/` 字节不同即覆盖；脚手架自身重新安装；`docs/init` 刷新；`memory/aidp-config.yaml` 只补缺失配置段；项目级 memory 里残留的占位符只替换占位符本身；`.gitignore` 托管区（`# >>> AIDP-GITIGNORE-MANAGED` 标记之间）整块刷新、区外规则不动；`agent_sync.py` 重新装配。覆盖任何已有文件前都先备份到 `.aidp-backup-<时间戳>/`（输出 `backup`）。
+   任何处置下都执行：`{{AIDP_HOME}}/scripts/` 字节不同即覆盖；脚手架自身重新安装；`docs/init` 刷新；`memory/aidp-config.yaml` 只补缺失配置段；项目级 memory 与 `docs/architecture/` 三份约束骨架：装上后从没填过的（指纹台账 `.aidp-user-fillable.json` 与现文件一致）直接刷新为新版骨架，填过的只替换残留占位符、新版骨架变了才进语义改写队列；`.gitignore` 托管区（`# >>> AIDP-GITIGNORE-MANAGED` 标记之间）整块刷新、区外规则不动；`agent_sync.py` 重新装配。覆盖任何已有文件前都先备份到 `.aidp-backup-<时间戳>/`（输出 `backup`）。
 
    保护规则：
    - **本地改过的契约**：`overwrite` 时按上一版安装的 `CONTRACT_MANIFEST.json` 指纹比对，项目改过又被新版覆盖的文件逐个列在输出 `local_overwritten` 与警告里（附备份目录），向用户转述；

@@ -278,8 +278,9 @@ Step 4: 前端验收校验（★ 收敛到验收阶段执行 + 仅改动侧 + �
     ③ ★ CSS 预处理器一致性（确定性静态比对，堵 `<style>` 块盲区，毫秒级、零构建成本）：
        `python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/check_vue_style_preprocessor.py <本 Sprint 改动的 .vue…> --json`
        —— 这是 `code-verification-loop` **维度 7** 的硬门脚本（判据 / severity / monorepo 依赖提升 / 众数孤例判定**单一信源见该维度**，本处不复述）：写码期先跑一遍做预检，验收期由维度 7 正式把关。
-       **为何单列**：`vue-tsc --noEmit` 与 `eslint` **都不编译 `<style>` 块**，"预处理器未装 / lang 写错 / @import 路径错"
-       这一整类问题在 ①② 全绿时 100% 静默通过，只有部署期 `vite build` 才炸 → 必漏到 CI；本步用纯静态比对在写码期就拦，
+       **为何单列**：`vue-tsc --noEmit` 与 `eslint` **都不编译 `<style>` 块**，"预处理器未装 / lang 与全库不一致"
+       这一类问题在 ①② 全绿时 100% 静默通过，只有部署期 `vite build` 才炸 → 必漏到 CI；本步用纯静态比对在写码期就拦
+       （⚠️ `@import` / `@use` 路径错**不在**该脚本覆盖内——维度 7 明写不查，同样会静默到部署期；改动了这类引用时走下方单文件编译），
        **不引入完整打包**（与"开发期只做类型/语法检查、完整构建仅部署期"一致）。改动仅涉及 `.vue` 的 script/template 时可跳过 ③。
        - 需真正验证 style 块**语法**（复杂嵌套/变量——维度 7 只查预处理器有没有装、不查 `@import` 路径与语法）时：提取该块用项目**已装**的预处理器**单文件**编译（`npx --no-install lessc <片段> /dev/null` / `npx --no-install sass <片段>:/dev/null`），秒级、仍不打包；简单样式做完 ③ 即可。
     ④ ★ 请求通道 URL 拼装单一信源（确定性静态比对，堵双前缀 404 盲区，毫秒级、零构建成本；本 Sprint 新增/改动了请求发起点才跑）：

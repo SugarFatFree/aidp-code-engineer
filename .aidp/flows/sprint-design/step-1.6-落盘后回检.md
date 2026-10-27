@@ -18,7 +18,7 @@
 
 #### ★ SKILL 脚本复核（单一信源 = `dev-logic-architect` Quality Review，约定 21）
 
-子 Agent 按 **`{{AIDP_HOME}}/skills/dev-logic-architect/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-logic-architect`，SQL 版本隔离门传 `docs/deployment --version {version}`），各脚本的触发条件、退出码语义、哪些发现等级不占退出码（须读 `--json`）、处置一律以该文件与 `quality-review-checklist.md` 为准，⛔ 命令端不另列清单、不复述判级。只回传各脚本退出码 + `--json` 的 Critical / Important / `skipped` 摘要。
+子 Agent 按 **`{{AIDP_HOME}}/skills/dev-logic-architect/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-logic-architect`，SQL 版本隔离门传 `docs/deployment --version {version}`；`check_permission_constraint.py` 另传 `--requirements docs/requirements/{version}/研发需求`——不传时「PRD 有约束、设计没提」那一半根本没查，`requirements_scanned=false` ⛔ 不能读成通过），各脚本的触发条件、退出码语义、哪些发现等级不占退出码（须读 `--json`）、处置一律以该文件与 `quality-review-checklist.md` 为准，⛔ 命令端不另列清单、不复述判级。只回传各脚本退出码 + `--json` 的 Critical / Important / `skipped` 摘要。
 
 #### ★ 需额外入参的补跑项（**具备入参时必跑**——SKILL 调度表写明「需 PRD / code_root，调用方具备时自行加跑」）
 

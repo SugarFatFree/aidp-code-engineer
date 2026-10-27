@@ -296,8 +296,8 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 ## agent_loop.sh — 非交互唤起 AIDP 命令
 
-`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过）、日志追加到 `memory/.aidp/logs/<命令>.log`。
-**tick 硬超时**：`AIDP_TICK_MAX_SECONDS`（默认 7200，`0` = 关闭）给每轮 tick 套 `timeout`；超时按 rc `124/137` 记日志并打 `🚨 [AIDP-ALERT]`。⛔ 裸 `eval` 没有上限时，挂死的 tick 会永久持锁、让整条链路静默停摆。`timeout` 命令不可用时退回裸 `eval` 并告警。
+`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过；锁文件以追加方式打开，取得锁后才写入本轮起点 `started_at`；无 `flock` 时退回 python3 `fcntl`，两者都不可用则写告警并以 3 退出）、日志追加到 `memory/.aidp/logs/<命令>.log`。执行行一律 `9>&-`，tick 拉起的后台常驻进程不继承锁。
+**tick 硬超时**：`AIDP_TICK_MAX_SECONDS`（默认 7200，`0` = 关闭）给每轮 tick 套 `timeout`（缺失时依次退回 `gtimeout`、python3 实现，同 `124/137` 语义）。每轮结束调 `aidp_scheduler.py tick-result`：超时写 `loop-tick-timeout` 告警台账并累计连续超时次数，连续 3 次（`AIDP_TICK_TIMEOUT_ALERT_AFTER`）起经 `notify.py --alert` 播报；非超时轮清零。⛔ 裸执行没有上限时，挂死的 tick 会永久持锁、让整条链路静默停摆。
 
 Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 取 `agent_env.py detect` 第一个）；执行模板（`{prompt}` 占位）：`AIDP_AGENT_EXEC` > `scheduler.exec.<agent>` > 内置默认（Claude Code `claude -p --permission-mode acceptEdits {prompt}`、Codex `codex exec --sandbox workspace-write {prompt}`；DeepSeek Harness 无内置默认、须配置，写法以所用版本官方文档为准）。
 
@@ -305,6 +305,7 @@ Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 
 
 7×24 的运行载体：为**开发链路**（`sprint-autopilot`）与**测试链路**（`sprint-aiauto-test`）各装一个用户级定时任务，分别调用 `agent_loop.sh --once <命令> --unattended`；第三条独立 watchdog 任务默认每 5 分钟巡检，即使两条链路都从未启动也可在宽限期后告警。平台自动选择：Linux `systemd --user` timer（无 systemd 时 crontab）、macOS launchd、Windows 输出 `schtasks` 命令供手工执行。
 `watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。另判 **`hung`（挂死）**：链路已 stale 但互斥锁仍被持有、且持锁时长超过 `max(stale 阈值, scheduler.tick_max_seconds, 1h)` → 写 `loop-tick-hung` 告警。⛔ 这一档必须有：Agent 进程挂死时锁被永久持有，之后每次调度都被 `agent_loop.sh` 的 `flock -n` 跳过，而 watchdog 只按「持锁 = 正在跑」判 `running` —— 于是永不 stale、零告警、整条链路静默停摆（tick 内部的 stuck 熔断救不了：tick 根本没开始）。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。
+`install` 先做预检：无 `flock` 且无 python3 `fcntl`、或 Agent=dsh 未配 `scheduler.exec.dsh` → ERROR 不装；无 `timeout`/`gtimeout`、Agent=claude 而 `.claude/settings.json` 的 `permissions.allow` 未放行 `Bash`/`Agent` → WARN。
 用法：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install|uninstall|status|watchdog [--agent auto|claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m] [--platform systemd|cron|launchd|schtasks] [--dry-run] [--json]`；`--self-check` 离线自测（临时目录渲染三条任务）。配置段 = `memory/aidp-config.yaml` 的 `scheduler`（`aidp_config.scheduler_config()`）。
 
 ## aidp_state.py — 项目级运行时状态（baseline 的 `project_state` 段）
@@ -418,11 +419,11 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 ## check_open_sprints.py — 约定 9「未归档不得开下一个 Sprint」的确定性判定【单一信源】
 
-约定 9 / `设计目标.md` G-CLOSE-1 的**唯一可执行判据**，由四个命令共用：`/sprint-start` 步骤 1、`/sprint-dev` Phase 0B.00、`/sprint-bugfix` Phase 0C.00、`/sprint-full` 前置检查 2。「有没有未关闭 Sprint」是**完全确定性**的（计划集合 ∖ 已关闭集合），⛔ 不交给执行体按理解判（看 `activeContext.md` 的、看 baseline 的、看最近 commit 的各判一套）—— 本门**漏判的方向是放行**：判不出来就继续，于是 Sprint 号被消耗、六类 `NN_*.md` 增量落盘，上一轮产物成为无 Sprint 归属的孤儿。
+四个开工入口共用此脚本：`/sprint-start`、`/sprint-dev` Phase 0B.00、`/sprint-bugfix` Phase 0C.00、`/sprint-full`。开工传 `--scope started`：跨用户读取 `memory/{V}/*/sprints/sprint-NNN.started.json` 启动记录，兼读存量 progress 的显式执行状态与 activeContext 的「当前 Sprint」字段，扣除同时具备 progress 同行 ✅ 与 `sprints/sprint-NNN.md` 归档文件的关闭集合；未来未开始的计划不阻断首轮开工。
 
-判据（⛔ 与 `autopilot-ceremony-gate.py::_open_sprints` 同源，本脚本是其提取）：计划集合 = `docs/plans/{V}/*.md` 里的 `Sprint-NNN`；已关闭集合 = `memory/{V}/*/progress.md` 里**同一行**同时出现 `Sprint-NNN` 与 ✅ 的条目。两点刻意如此：① **跨用户扫描**（baseline 已扁平化为项目级，只看本机 `git config user.name` 会把别人关闭的 Sprint 误判成未关闭、这道门于是恒红）；② **同一行**（progress.md 里 ✅ 是高频符号，按「同一文件」判会放行一切）。
+`/sprint-start` 在状态置位后执行 `--version <V> --record-start NNN --user <用户>` 登记启动记录，失败即停止。默认 `--scope all` 继续按计划全集减去关闭集合检查，供交付收尾使用，与 `autopilot-ceremony-gate.py::_open_sprints` 同口径，不因开工门裁范围而放过未完成计划。
 
-用法：`python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version <V> [--root .] [--json]`；`--self-check`（阳性 + 跨用户 + 同行两类阴性对照）。退出码：`0`=无未关闭（含「无研发执行计划 → 适用范围外」，⛔ 不等于「已全部关闭」）/ `1`=有未关闭、**调用方须停下** / `2`=用法错。⚠️ 退出码 1 的语义是「本命令不得继续」，⛔ 不是「记一笔告警然后往下走」—— 那等于这道门不存在。
+用法：`python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version <V> --scope started --json`；`--self-check` 可独立验证全计划与跨用户关闭语义。退出码 `0`=本范围无未关闭轮次，`1`=有未关闭轮次，`2`=入参、状态读取或启动记录写入失败；开工入口对非零均停止，无人值守返回失败信号。
 
 ## shard_gate_digest.py — 分片硬门定位索引
 

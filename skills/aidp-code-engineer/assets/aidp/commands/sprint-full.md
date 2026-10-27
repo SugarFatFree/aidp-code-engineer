@@ -52,13 +52,13 @@
 2. ★ **约定 9 前置门（确定性判据，⛔ 不读 `activeContext.md` 自行裁量）**：
 
    ```bash
-   python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --json
-   OPEN_RC=$?        # 0=无未关闭（含适用范围外）→ 继续；1=有 → 停止执行
+   python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --scope started --json
+   OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；非0=有在途轮次或状态读取失败→停止
    ```
    - 退出码 `1` → **停止执行**并把 `open[]` 列给用户，要求先 `/sprint-close`
      （与独立 `/sprint-start` 同档——约定 9 是**硬停**不是提示）。
-   - 判据单一信源 = 该脚本（跨用户扫描 `memory/{version}/*/progress.md` 的同行 ✅）；
-     ⛔ 别改回读 `activeContext.md`：那是单用户视角、格式无约束，判不出来时的方向是**放行**。
+   - 退出码 `2` → 状态读取失败，停止并修复输入；无人值守返回失败信号。
+   - 判据单一信源 = 该脚本的 `started` 范围：跨用户启动记录与显式当前状态扣除同时具备同行 ✅ 与 Sprint 归档文件的关闭记录；尚未开始的计划不阻断本轮启动。
 
 ## 参数解析
 

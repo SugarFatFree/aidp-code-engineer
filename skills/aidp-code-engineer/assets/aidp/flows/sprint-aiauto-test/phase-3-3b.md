@@ -45,7 +45,7 @@
 **★ 连续未收敛护栏 + 冻结级熔断**：每轮末更新 `versions.{V}.aiauto_test_unconverged_streak`——收敛清零、未收敛 +1。
 - **告警级**（`≥ aiauto_unconverged_alert_threshold`，默认 5；由本段散文判定）：#R 之外额外发一条 **#4**（红色 + @用户），列出反复出现的失败用例 / 待修复 bug 清单。不停 loop、每轮仍重测。
 - **冻结级**（`≥ aiauto_unconverged_freeze_threshold`，默认 10；★ 下方围栏**真判**这个阈值，不是散文）：**冻结前必须先做仪式产物收口**，四步顺序不可颠倒——
-  ① 经 `emit-report.py --kind exec`（同 3.7 R-4，仅结论为不通过）把本 build 的 AI执行报告 finalize 为「不通过·未收敛」终态：`testSummary` **从同 build 的 AI测试报告 summary 派生**（`gen_report.py --json` 的 `counts`，⛔ 不手填），口径与 3.7 R-4 相同：`{total,pass,fail,block,skip,na,passRate,coverage,browserTested:true, unconverged:true}`（**`passRate` 分母 = `total-na`**）、`overview.statusKind=fail`、`testPassRate`=实测通过率；
+  ① 经 `emit-report.py --kind exec`（同 3.7 R-4，仅结论为不通过）把本 build 的 AI执行报告 finalize 为「不通过·未收敛」终态：`testSummary` **从同 build 的 AI测试报告 summary 派生**（`gen_report.py --json`，⛔ 不手填），口径与 3.7 R-4 相同：`{total,pass,fail,block,skip,na,passRate,coverage,browserTested:true, unconverged:true}`（**`passRate` 分母 = `total-na`**；字段映射同 `phase-3-5.md` Step 1：`total` ← `.total`、四态 ← `.counts.*`、`skip` ← `.counts.skip // 0`、`passRate` ← `.pass_rate`、`coverage` ← `null`——`counts` 本身无 `total/skip/passRate` 键）、`overview.statusKind=fail`、`testPassRate`=实测通过率；
   ② 发终态 **#F**（红色·不通过，标注「连续 {streak} 轮未收敛，判定不通过、暂停本版自动重测待人工介入」）+ **#3**（携不通过结论 + 报告路径）；
   ③ 校 ①② 是否真落地——**⛔ 必传 `--expect-cards`**（不传即落进退化分支，「一整轮测试期通知零推送」照样 PASS，
      而本步恰恰承诺「绝不冻结仪式产物残缺的 build」）；⛔ 变量用真值、不留 `{V}`/`{BUILD}` 字面占位：
@@ -117,7 +117,7 @@
 
 **★ CONVERGED=0 缺陷分流（item 3 — 自动修复复测闭环的判定源，与报告不可变铁律配套）**：本轮未收敛（有失败/待修 bug）时，把每条失败/缺陷按**可自动化修复程度**二分类，写 baseline 供 autopilot 消费。
 
-> ⛔ **分流第 0 步：先摘出环境阻塞项，它们不进缺陷分流、不计入 CONVERGED 判定**。判据读 `results/{TC-ID}.json` 的 **`is_environment_issue == true`** 或 `block_reason ∈ 环境类枚举`（口径**单一信源** = `auto-test-runner` 的 `gen_report.py` 缺陷分级 + `scripts/check_result.py` 的 `block_reason` 枚举，命令端**不复述、不自建判据**）。
+> ⛔ **分流第 0 步：先摘出环境阻塞项，不计产品缺陷**。直接消费 `auto-test-runner` 的 `gen_report.py::is_env_issue`（显式布尔值优先于枚举推断，不能另写 OR 判据）；合法枚举以 `scripts/check_result.py::BLOCK_REASON_ENUM` 为准。收敛排除严格沿用 3.3：先经 `split_entries` 剔除巡检项，`precondition-unmet` 不自动豁免、须逐条复评。
 > 漏做这步的后果见 `rationale.md`「环境阻塞项不进缺陷分流」。
 > 环境阻塞项的正确去向：在报告「测试概况」段如实标注为环境阻塞（不计入产品缺陷），并按 Phase 0.2「冻结字段写入契约」走对应的环境类冻结/复探路径。
 

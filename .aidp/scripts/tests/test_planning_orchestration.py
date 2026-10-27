@@ -343,13 +343,20 @@ def test_parallel_plan_selftest_backfill():
     script = "\n".join(l[3:] for l in fence.group(1).splitlines())
     script = script.replace("{{AIDP_HOME}}", str(REPO / ".aidp")).replace("{version}", "V1.0.0")
 
-    def run_case(reqs):
+    def run_case(reqs, strip_anchors=False, empty_plan=False):
         root = Path(tempfile.mkdtemp(prefix="aidp-plan-refs-"))
         plans = root / "docs/plans/V1.0.0"
         plans.mkdir(parents=True)
-        shutil.copy(REPO / ".aidp/skills/dev-execution-planner/references/iteration-plan-sample.md",
-                    plans / "01_研发执行计划.md")
+        plan = (REPO / ".aidp/skills/dev-execution-planner/references/iteration-plan-sample.md").read_text(encoding="utf-8")
+        if strip_anchors:   # 整份无锚点 = 脚本判 Important，但仍 exit 1、不写映射
+            plan = re.sub(r'(?m)^<a id="task-\d+-\d+"></a>\n', "", plan)
+        if empty_plan:
+            plan = "# 执行计划\n\n尚无任务。\n"
+        (plans / "01_研发执行计划.md").write_text(plan, encoding="utf-8")
         (root / "memory/V1.0.0").mkdir(parents=True)
+        # 旧映射不能在 export skipped 时被继续消费。
+        (root / "memory/V1.0.0/.plan-refs.json").write_text(
+            '{"REQ-101":{"label":"Sprint-001 Task 1.1","href":"old.md#task-1-1"}}', encoding="utf-8")
         cases = root / "docs/testing/V1.0.0/研发自测"
         cases.mkdir(parents=True)
         body = "# 用例\n\n## 套件 SUITE-001: 下单\n> **研发执行计划来源**: " + "、".join(f"⟨PLAN-REF:{r}⟩" for r in reqs) + "\n"
@@ -366,9 +373,55 @@ def test_parallel_plan_selftest_backfill():
     out, text = run_case(["REQ-101", "REQ-999"])
     check("计划里没有 Task 承接的 REQ → resolve 拒绝（≠0）", "export=0" in out and "resolve=0" not in out)
     check("全有或全无：拒绝时一个占位符都不改", text.count("⟨PLAN-REF:") == 2)
+    out, text = run_case(["REQ-101"], strip_anchors=True)
+    check("计划整份无锚点（仅 Important）→ export≠0，后两步标「-」未跑", "export=1 resolve=- upstream=-" in out
+          and text.count("⟨PLAN-REF:") == 1)
+    check("处置段点明 fresh 模式下 Important 同样必修", "**同样必修**" in p3)
+    out, text = run_case(["REQ-101"], empty_plan=True)
+    check("export skipped → 不消费旧映射、不误派 selftest 修复", "export=skipped resolve=- upstream=-" in out
+          and text.count("⟨PLAN-REF:") == 1)
+
+
+def test_sprint_start_gate_scope():
+    """开工门不拦未来任务；交付门仍检查全部计划，已启动未归档仍阻断。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("open_sprints_test", REPO / ".aidp/scripts/check_open_sprints.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with tempfile.TemporaryDirectory(prefix="aidp-start-gate-") as directory:
+        root = Path(directory)
+        plans = root / "docs/plans/V1.0.0"
+        plans.mkdir(parents=True)
+        (plans / "01_研发执行计划.md").write_text("- Sprint-001 登录\n- Sprint-002 导出\n", encoding="utf-8")
+        check("交付门默认仍拦全部未关闭计划", not module.scan(root, "V1.0.0")["ok"])
+        try:
+            first = module.scan(root, "V1.0.0", scope="started")
+        except TypeError:
+            check("开工门支持 started 范围（fresh 计划可开工）", False)
+            return
+        check("fresh 两个未来 Sprint 不阻止首开", first["ok"] and not first["open"])
+        module.record_start(root, "V1.0.0", "alice", "001")
+        check("显式启动记录使未归档 Sprint 阻断下一轮", module.scan(root, "V1.0.0", scope="started")["open"] == ["Sprint-001"])
+        memory = root / "memory/V1.0.0/alice"
+        (memory / "progress.md").write_text("- Sprint-001 ✅ 已关闭\n- Sprint-002 未开始\n", encoding="utf-8")
+        check("仅有同行✅、没有归档文件时仍阻止开启下一轮", not module.scan(root, "V1.0.0", scope="started")["ok"])
+        (memory / "sprints/sprint-001.md").write_text("# Sprint-001\n\n验收通过，已归档。\n", encoding="utf-8")
+        check("关闭首轮且归档后可启动计划中的下一轮", module.scan(root, "V1.0.0", scope="started")["ok"])
+        check("交付门仍拦尚未完成的第二轮", module.scan(root, "V1.0.0")["open"] == ["Sprint-002"])
+        other = root / "memory/V1.0.0/bob"
+        other.mkdir()
+        (other / "activeContext.md").write_text("- 当前 Sprint：Sprint-002\n", encoding="utf-8")
+        check("存量项目跨用户当前上下文也能识别已开工轮次", module.scan(root, "V1.0.0", scope="started")["open"] == ["Sprint-002"])
+        (other / "activeContext.md").write_text("- 当前 Sprint：Sprint-001 已关闭，等待 Sprint-002\n", encoding="utf-8")
+        check("等待下一轮的文字不算已经启动", module.scan(root, "V1.0.0", scope="started")["ok"])
+        (other / "progress.md").write_text("- Sprint-002 ✅\n", encoding="utf-8")
+        check("旧项目仅有完成勾但缺归档也不能放行", not module.scan(root, "V1.0.0", scope="started")["ok"])
+        (other / "progress.md").write_text("- Sprint-002 未开始（后续等待开发）\n", encoding="utf-8")
+        check("计划中的等待开发说明不当成已启动", module.scan(root, "V1.0.0", scope="started")["ok"])
 
 
 if __name__ == "__main__":
+    test_sprint_start_gate_scope()
     test_run_metrics_stage_and_render()
     test_parallel_plan_selftest_backfill()
     test_critical_never_deferred()

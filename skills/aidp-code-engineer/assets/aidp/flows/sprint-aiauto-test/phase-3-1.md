@@ -47,7 +47,7 @@ python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test 
 docs/reports/{TARGET_VERSION}/AI测试报告/
 ├── index.html                          ← 综合首页 + 各 build 子页（图表）
 ├── data/{BUILD}.js                     ← 本轮 build 测试数据（window.__BUILDS__.push）
-└── screenshots/{BUILD}/{TC-ID}-{step}.png
+└── screenshots/{BUILD}/{TC-ID}-step{N}.{ext}   ← ext 取 capture 实际产物（.webp 默认 / .png 回退 / .jpg·.jpeg 兼容）
 ```
 
 > ⚠️ **测试报告唯一形态 = 上面的 HTML 离线 SPA 项目**：测试结果与截图全部进该项目，不生成任何 markdown 测试报告。同一 build 多轮收敛 → 覆盖 `data/{BUILD}.js` 为最新一轮（历史轮次差异由 git 历史追溯）；`/version` 发布时取最终验收 build（buildNo 最大的一轮）→ 版本测试报告单文件 HTML。
@@ -68,14 +68,14 @@ docs/reports/{TARGET_VERSION}/AI测试报告/
 
 ### 3.2.5 ★ 归集 skill 证据 + 截图落盘硬核验（强制；缺失绝不生成"完成"报告）
 
-> 背景：auto-test-runner 按其契约把证据落在 `build-${BUILD}/round-{M}/evidence/{TC-ID}-{step}.png`（约定 21，命令端不强加落盘路径）。本步先把 skill 证据**归集**到报告渲染路径 `AI测试报告/screenshots/{BUILD}/`，再硬核验非空——缺一道核验时执行链路一旦没出图，命令仍会"完成"并往 baseline 写一个指向缺图报告的 `aiauto_test_report`。本步在 3.2.6 生成 HTML **之前**强制兜底。
-
-> 🪟 **无头模式同样适用本硬核验**：`--headless=new` 无头 Chrome **完整支持 `capture` 截图**，整套仿真操作在无头/有头下行为一致，唯一区别是无头无可见窗口。**无头不是"不截图 / 跳过本核验"的借口**——证据缺失一律按执行缺陷处理。
+> 先把 SKILL 的 `build-${BUILD}/round-{M}/evidence/{TC-ID}-step{N}.{ext}` 归集到 `AI测试报告/screenshots/{BUILD}/`，再核验非空，**通过后才能生成 HTML / 写完成字段**。格式以 `check_result.py` 为准：Web 默认 `.webp`、不支持才回退 `.png`，兼容 `.jpg/.jpeg`；实际文件名来自证据，禁止按 TC-ID 猜扩展名（约定 21）。
+>
+> **无头同样必须截图**：`--headless=new` 支持 capture，缺证据按执行缺陷处理，禁止以无头为由豁免本门。
 
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # ⛔ 每步开头必判 SKIP_REPORT（3.1 已落盘）：standalone 轮次没有 BUILD 归属，
-#    `SHOT_DIR` 会拼出空 BUILD 段 ⇒ 恒无 .png ⇒ 本门恒失败 ⇒ 3 tick 后冻掉一个
+#    `SHOT_DIR` 会拼出空 BUILD 段 ⇒ 恒无截图 ⇒ 本门恒失败 ⇒ 3 tick 后冻掉一个
 #    本就不该产报告的版本。散文写了"跳过"不算数，必须是可执行判据。
 if [ "${SKIP_REPORT:-0}" = "1" ]; then
   echo "⏭️ SKIP_REPORT=1（非 autopilot 驱动，本轮不产 AI测试报告）→ 跳过 3.2.5 截图硬核验"
@@ -84,23 +84,24 @@ BTR="docs/reports/${TARGET_VERSION}/AI测试报告"
 SHOT_DIR="${BTR}/screenshots/${BUILD}"
 mkdir -p "$SHOT_DIR"
 
-# ⓪ 结果形状硬门（归集【之前】跑）：skill 侧 check_result.py 校 results/*.json 是否合契约
-#    （block_reason 枚举 / mechanism 枚举与还原度越界（C14/C15）/ 单条耗时三件套 / runtimeErrors 必填 type·message·severity / is_environment_issue 布尔 / evidence 形状）。
-#    ⚠️ 不校就归集的风险：若 evidence 被写成字符串数组而非对象数组，下面的 artifact 兜底会**静默拷 0 张图**，
-#       而命令仍judged"完成"——报告里一张证据都没有却全绿。判据/枚举单一信源 = 该脚本，命令端不复述。
-#    ★ 脚本已支持多路径（`target` 为 nargs='+'），故直接喂 round-*/results/ 通配即可，一次校完全部轮次。
+# ⓪ 归集前跑结果形状硬门；枚举、证据与运行时字段契约均以 check_result.py 为准。
+#    多路径通配覆盖全部轮次。形状不合契约时禁止 artifact 兜底制造假绿。
 if [ -f {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py ]; then
-  # ⛔ 不用 `--strict`：它把**所有** Important 一律翻成 exit 1，而 SKILL 明写 **I7**
-  #   （direct 模式的 pass 无轻量事实 evidence）是「**不阻断**、报告单列」——I2/I5 同样连坐。
-  #   故改读 `--json` 的 `issues[].rule` **白名单**（理据见 rationale）：
-  #   ⛔ 白名单取脚本 `_issue()` 的 **rule 实名（snake_case）**，⛔ 不用文档里的 `I` 编号
-  #   （编号从不出现在 `issues[].rule` 里，用它做白名单恒不匹配；理据见 rationale）。
-  #   其余 Important 一律单列告警、不阻断（开放式表述，别再腐化成闭集）。
-  # ★ 本轮新结果必带 `--require-runtime-preflight`；不传 = 该门恒不跑、缺取证也过形状校验（假绿）。
-  #   `--webmcp-enabled` 只约束 client=web，故仅 Web+WebMCP 时追加（判定唯一实现 = check_webmcp.py）。
+  # 不用 --strict：I7 direct pass 无轻量事实等 Important 只告警、不阻断。
+  # 过滤 issues[].level 与 rule 实名（snake_case），不能拿文档 I 编号作 rule。
+  # 新结果必带 --require-runtime-preflight；Web+WebMCP 另加 --webmcp-enabled。
+  # 启用判定只走 check_client_mcp.py，兼容旧 webmcp 与新 client_mcp；冲突/检测失败不能当关闭。
   CR_WEBMCP=""
-  if python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json 2>/dev/null \
-       | grep -q '"enabled": true'; then CR_WEBMCP="--webmcp-enabled"; fi
+  CR_CLIENT_JSON=$(python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json); CR_CLIENT_EXIT=$?
+  if [ "$CR_CLIENT_EXIT" -ne 0 ] || ! CR_WEBMCP=$(printf '%s' "$CR_CLIENT_JSON" | python3 -c "import json,sys
+d=json.load(sys.stdin)
+print('--webmcp-enabled' if d.get('declared') is True and d.get('client_type')=='web' and d.get('implementation')=='webmcp' else '')"); then
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
+      --phase 3.2.5-client-mcp --reason audit-critical --streak-key client_mcp_gate_fail_streak --threshold 3 \
+      --why "客户端 MCP 声明检测失败（exit=${CR_CLIENT_EXIT}），不能按未启用放行"
+    exit 0   # 已记账让位，不生成完成报告
+  fi
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del client_mcp_gate_fail_streak
   CR_JSON=$(python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py \
     "${BTR}/build-${BUILD}"/round-*/results/ --require-runtime-preflight ${CR_WEBMCP} --json 2>/dev/null); CR_EXIT=$?
   CR_BLOCKING=$(printf '%s' "$CR_JSON" | python3 -c "import json,sys
@@ -113,20 +114,45 @@ print(len([i for i in (d.get('issues') or []) if i.get('level')=='Critical' or i
   fi
 fi
 
-# ① 归集：把 skill 各轮次 evidence（含关键步骤截图，命名 {TC-ID}-{step}.png，天然唯一）收集/复制到报告路径
+# ① 归集：把 skill 各轮次 evidence 截图（命名 {TC-ID}-step{N}.{ext}）收集/复制到报告路径
 #    （skill 产物目录 = 本 BTR，故其 build-${BUILD}/round-*/evidence/ 就在 BTR 下）
-find "${BTR}/build-${BUILD}" -path '*/round-*/evidence/*.png' 2>/dev/null | while read -r f; do
-  cp -n "$f" "$SHOT_DIR/" 2>/dev/null
-done
-# 兜底：从 results/*.json 的 evidence[].artifact 补齐未落到 evidence/ 的散图（按 artifact 路径拷入）
-# —— 仅在 ⓪ 形状门通过时才做（SHAPE_BAD=1 时跳过：形状不对时这一步只会静默拷 0 张、制造"已兜底"假象）
-[ "${SHAPE_BAD:-0}" = "1" ] && echo "⏭️ 结果形状不合契约 → 跳过 artifact 兜底补图（已在报告标注）"
+#    ★ 扩展名按 SKILL 截图兼容集 .webp/.png/.jpg/.jpeg 收（Web 默认 .webp）。⛔ 只收 *.png
+#      ⇒ 默认 webp 产物全落空 ⇒ ② 恒判空 ⇒ 连续 3 次误冻一个健康 build。
+#    ★ 按 round **数字升序逐轮覆盖** ⇒ 同名证据以**最新一轮**为准；不用 cp -n。
+#      先清本 build 的旧归集图片，防旧 tick 残图冒充本次证据；同主干跨格式只保留最新实际文件。
+#      artifact 路径解析与截图扩展名直接消费 SKILL 校验器，避免命令端另造一套解析规则。
+python3 - "$BTR" "$BUILD" "$SHOT_DIR" "${SHAPE_BAD:-0}" <<'SHOTS'
+import json, re, shutil, sys
+from pathlib import Path
+sys.path.insert(0, "{{AIDP_HOME}}/skills/auto-test-runner/scripts")
+from check_result import SCREENSHOT_EXTENSIONS, _artifact_candidates
+btr, build, dest, shape_bad = sys.argv[1:]
+dest = Path(dest)
+for old in dest.iterdir():
+    if old.is_file() and old.suffix.lower() in SCREENSHOT_EXTENSIONS:
+        old.unlink()
+rounds = [p for p in (Path(btr) / ("build-" + build)).glob("round-*")
+          if p.is_dir() and re.fullmatch(r"round-\d+", p.name)]
+for rd in sorted(rounds, key=lambda p: int(p.name.split("-")[-1])):
+    sources = sorted(p for p in (rd / "evidence").rglob("*") if p.is_file())
+    if shape_bad != "1":
+        for result in sorted((rd / "results").glob("*.json")):
+            data = json.loads(result.read_text(encoding="utf-8"))
+            for item in data.get("evidence") or []:
+                artifact = item.get("artifact") if isinstance(item, dict) else None
+                if isinstance(artifact, str) and artifact.strip():
+                    sources.extend(p for p in _artifact_candidates(artifact, result) if p.is_file())
+    for source in sources:
+        if source.suffix.lower() not in SCREENSHOT_EXTENSIONS:
+            continue
+        for old in dest.iterdir():
+            if old.stem == source.stem and old.suffix.lower() in SCREENSHOT_EXTENSIONS:
+                old.unlink()
+        shutil.copy2(source, dest / source.name)
+SHOTS
 
-# ② 硬核验：归集后截图目录必须存在且非空（skill 的 capture 必须在关键步骤出图）
-#    ⚠️ 这是**硬门**：必须真的中断本步（只 echo 不退出 = 带着空证据继续往下出报告）。
-#       中断方式取 `exit 0` 让位、不是裸 `exit 1`，且**必须先发 #4 卡**——口径同本命令
-#       其余各处门「已记账 + 已告警 → 让位本 tick」。根因见 rationale.md。
-if [ -z "$(find "$SHOT_DIR" -name '*.png' 2>/dev/null | head -1)" ]; then
+# ② 硬核验：截图非空才通过；缺图先记账、发 #4，再 exit 0 让位，不能只 echo 或裸 exit 1。
+if [ -z "$(find "$SHOT_DIR" -type f \( -iname '*.webp' -o -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \) 2>/dev/null | head -1)" ]; then
   echo "❌ Phase 3 核验失败：截图为空 $SHOT_DIR —— auto-test-runner 未按 capture 契约在关键步骤（登录/提交/状态变化/断言/报错）出图"
   # → 用例已跑完无法回补：data/{BUILD}.js 须把对应 case 的 screenshot 标"缺图"并记执行缺陷，不得静默
   # ★ 记账 + 达阈冻结（防 /loop 每 tick 重撞同一失败）：连续 3 次即按 Phase 0.2「冻结字段写入契约」冻结本版
@@ -145,14 +171,10 @@ if [ -z "$(find "$SHOT_DIR" -name '*.png' 2>/dev/null | head -1)" ]; then
   python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" \
     --auto --title "AI 测试受阻：截图为空" --header-color red \
     --version "$TARGET_VERSION" --build "${BUILD:-?}" \
-    --section "截图核验失败第 $N 次（阈值 3）。$SHOT_DIR 下无 .png，auto-test-runner 未按 capture 契约出图。本轮结论未采信、已让位。" || true
+    --section "截图核验失败第 $N 次（阈值 3）。$SHOT_DIR 下无截图（.webp/.png/.jpg/.jpeg），auto-test-runner 未按 capture 契约出图。本轮结论未采信、已让位。" || true
   exit 0   # ⛔ 不用 exit 1：已记账 + 已告警 → 让位本 tick（同本命令其余各处门）
 fi
-# 核验通过 → 清零计数（否则历史失败会一直累积到误冻结）
-# ⛔ 只清**本门自己**的计数：三道门（3.2.5 截图 / 3.2.6 step5 finalize / step5bis 骨架）若共用
-#    一个 `report_gate_fail_streak`，同 tick 内前门通过即 del，后两门的阈值**恒不可达** ——
-#    每 5 分钟跑一整轮全量实测 + 一张 #4，一天 288 轮，`needs_human` 永不置位。
-#    （同一推理已在 `phase-3-5.md` 用过：给最终门单开了 `final_gate_fail_streak`。）
+# 核验通过只清本门计数；截图、finalize、骨架三门各用独立 streak，不能互相清零。
 python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del shot_gate_fail_streak || true
 fi   # ← SKIP_REPORT 守卫结束
 ```
@@ -163,8 +185,8 @@ fi   # ← SKIP_REPORT 守卫结束
 
 ### 3.2.5bis ★ 派 SKILL 的 8 维度独立质量检查子 Agent（Critical 门）
 
-> ⛔ **本步必须真派子 Agent，不得内联跑、更不得跳过**：`auto-test-runner` SKILL 明写「执行与报告产出后，由**独立子 Agent**执行质量检查（维度清单见 `references/quality-review-checklist.md`），**主流程禁止在当前上下文内联跑**」。不派 = 把一道 Critical 门托付给一个没人触发的角色；配套的 `tasks_state.py scan`（SKILL 第三步 checker，"报告必须在本检查点之后生成"）同样必须跑到。
-> ⛔ **不可豁免的范围以 SKILL 的标记为准，⛔ 命令端不另列名单**：`quality-review-checklist.md` 的规则是「**凡标 `Critical` 的一律不可豁免，判据就是标记本身**」——含维度级 Critical 与「折入本维度，Critical」的子核查两类。写死一份固定编号名单必然比它窄，而窄掉的那几档恰恰会静默放过（约定 21）。
+> **必须派独立子 Agent，主流程不得直接内联或跳过**；仅派发失败时按下文降级。`tasks_state.py scan` 必须在报告生成前跑到。
+> **不可豁免范围只认 SKILL `quality-review-checklist.md` 的 Critical 标记**，含维度与折入的子核查，命令端不得另列固定编号名单（约定 21）。
 
 **执行**（约定 36：命令既定职责内的派发，无需征询；派不出后台就转前台/内联，**绝不静默跳过**）：
 
@@ -194,7 +216,7 @@ fi   # ← SKIP_REPORT 守卫结束
 
 **判定**：
 
-- **`quality-review-checklist.md` 里标 `Critical` 的任一项不通过**（维度级与「折入本维度」的子核查同等对待；⛔ 判据取 SKILL 的标记，不照本命令的记忆列名单）→ **可执行地**记账（⛔ 散文的「记」不是写入：全仓只有 `del`、没有递增 ⇒ 阈值永不达、每 tick 从头重跑一整轮全量实测、零通知）：
+- **清单中任一 Critical（含子核查）不通过 → 执行下方记账**，不以命令端固定名单代替 SKILL 标记：
 
   ```bash
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell --command aiauto-test)"

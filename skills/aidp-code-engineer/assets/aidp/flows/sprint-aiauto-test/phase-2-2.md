@@ -8,16 +8,16 @@
 
 Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phase 2.0 已选定用例集（`PRIMARY_CASES` + `SUPPLEMENT_UNIQUE`，已剔除远程延后集）。此处组装 `auto-test-runner` 的 run-context，**按模块（= 套件）各派一个「测试执行子 Agent」**（`Agent`/Task 工具）：
 
-> ⛔ **派子 Agent、不 `Skill`-invoke**：执行子 Agent **拿不到 Skill 工具**（即便 `tools:*` 也没有），主 Agent 必须在 Task prompt 里要求子 Agent 先用 `Read` 读方法论。理据见 `rationale.md`。
+> ⛔ **派子 Agent，不 `Skill`-invoke**：子 Agent 无 Skill 工具，prompt 必须要求先按下列范围用 `Read` 读执行契约。
 >
-> **子 Agent prompt 必含的路径清单（只给路径、不贴正文）**：
-> - `{{AIDP_HOME}}/skills/auto-test-runner/SKILL.md` + `references/execution-methodology.md`（完整执行方法论）
-> - `references/driver-adapters.md` + 被测端对应的 `references/driver-<端>.md`（本命令为 Web 端）+ `references/usecase-format.md`（解析用例）
+> **子 Agent prompt 必含的路径清单（只给路径、不贴正文；读取范围以 SKILL 第二步为单一信源）**：
+> - **默认只读两份**：`{{AIDP_HOME}}/skills/auto-test-runner/references/execution-contract-lite.md`（精简执行契约：红线 / 状态机 / 四态与 `block_reason` 枚举 / 产物契约 / 判不准翻页索引）+ 被测端对应的 `references/driver-<端>.md`（本命令为 Web 端 → `driver-web.md`；**只读命中的那一份**）
+> - **其余全文按需再读**：判不准时按精简契约的索引取 `execution-methodology.md` / `report-format.md` / `driver-adapters.md` / `usecase-format.md`。⛔ 不要求子 Agent 整份预读四份全文——每个模块子 Agent 都全量加载 = 成倍重复加载（SKILL 明令，根因见其 `references/rationale.md`）；⚠️ 收的是加载量、不是强制度，精简契约每条仍是硬要求
 > - 本模块用例文件路径 + run-context 文件路径
 > - 要求：**读完再驱动浏览器执行**；跑完回传 compact `{module,total,pass,fail,block,evidence_dir,defects[]}`
 > - **复测轮（`retest_of` 非空）追加**：prompt 必须附**上一 build 的 block 用例清单（含各自原因）**，
 >   要求逐条给出三选一并写进 `note`：仍 block（原因不变）/ 仍 block（原因变更，须说明）/ 已解锁→实际结果。
->   ⛔ 照抄 = 未复评（收尾门 3q 拦缺席与空 `note`）。理据见 `rationale.md`。
+>   ⛔ 禁止照抄；收尾门 3q 拦未复评与空 `note`。
 > - **执行选集**：`SELECT_MODE != all` 时，prompt 要求子 Agent 建 tasks.md 时带选集参数——
 >   `python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/tasks_state.py init <用例源> -o <tasks.md> --select $SELECT_MODE`。
 >   ⚠️ `select` **不是 run-context 字段**（SKILL 侧仅 `tasks_state.py init` 的 CLI 参数），必须经 prompt 传；
@@ -39,7 +39,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 | 存活心跳 `heartbeat_cmd` | `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now` | ★ 长批次续写测试链路心跳（开发链路据此判「测试链路存活」）；主 Agent 每收回一个执行子 Agent 也执行一次 |
 | 单步等待上限 | 每步 `${OP_TIMEOUT}s` / 首开 `${NAV_TIMEOUT}s` | Phase 0.0.6 用户确认 / 无人值守默认值（见 2.2.1）|
 | 测试产物目录 | `docs/reports/${TARGET_VERSION}/AI测试报告/` | skill 在此下按其契约自建 `build-${BUILD}/round-{M}/`（含 tasks.md / results/ / evidence/）；BUILD 由 Phase 0.2 读 |
-| 证据归档目录 | **不覆盖，由 skill 按契约派生** = `build-${BUILD}/round-{M}/evidence/{TC-ID}-{step}.png` | ★ 尊重 auto-test-runner 落盘契约（约定 21，命令端不强加扁平/role 路径）；命令端 Phase 3.2.5 再从此处**消费/归集** skill 截图到报告 `screenshots/${BUILD}/` 供 SPA 渲染 |
+| 证据归档目录 | **不覆盖，由 skill 按契约派生** = `build-${BUILD}/round-{M}/evidence/{TC-ID}-step{N}.{ext}`（`ext` 由驱动适配器决定：Web 默认 `.webp`、回退 `.png`，兼容 `.jpg/.jpeg`；命令端不猜扩展名）| ★ 尊重 auto-test-runner 落盘契约（约定 21，命令端不强加扁平/role 路径）；命令端 Phase 3.2.5 再从此处**消费/归集** skill 截图到报告 `screenshots/${BUILD}/` 供 SPA 渲染 |
 | 通过准则 | 取研发自测方案；缺则用 auto-test-runner skill 默认通过准则（阈值以 skill `references/report-format.md` 为单一信源，命令端不复述）| Phase 2.0 用例配套方案 |
 
 > ★ **约定 33 配套边界（约定 21）**：命令端只负责把「DB 连接 / 跨系统前置数据」作为 run-context 参数**交给** auto-test-runner；**用起来**（DB 断言、前置段执行）以 auto-test-runner SKILL 为单一信源（`result-schema` 的 `db_assertion` 字段），命令端不复述、不实现。
@@ -56,7 +56,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 skill 在 Web 端的行为概要（详见 auto-test-runner `references/execution-methodology.md` + `driver-adapters.md`）：
 - **每模块开头登录一次**（按各角色账号），模块内用例通过导航切换连续执行、**不重复登录**（会话复用降 token）；登录失败该模块整体标 block，不挂起。
 - **每条用例走感知-执行-校验-决策闭环**：`observe` 读页面态 → `act` 按用例四要素步骤操作（含等待，单步上限取 run-context 的 `OP_TIMEOUT`/`NAV_TIMEOUT`）→ `assert` 比对预期 → 决策 pass/fail/block。
-- **关键步骤 `capture` 取证**（登录/提交/状态变化/断言/报错）：**无头下截图是唯一执行证据**；证据按 skill 契约落 `build-${BUILD}/round-{M}/evidence/{TC-ID}-{step}.png`（命令端 Phase 3.2.5 再归集到报告 `screenshots/${BUILD}/`）。
+- **关键步骤 `capture` 取证**（登录/提交/状态变化/断言/报错）：**无头下截图是唯一执行证据**；证据按 skill 契约落 `build-${BUILD}/round-{M}/evidence/{TC-ID}-step{N}.{ext}`（实际路径以结果 JSON `evidence[].artifact` 为准）（命令端 Phase 3.2.5 再归集到报告 `screenshots/${BUILD}/`）。
 - **每条用例执行后附带拉一次 console/network**，写入 `results/{TC-ID}.json` 的 `runtimeErrors[]`（pass 用例也拉——页面能用但后台有 500/JS 报错供下游升级 bug）；命令端 Phase 2.4 直接消费该字段。
 > ✅ **「自由巡检」已由 auto-test-runner 支持**（run-context `free_scan`，默认关）：全部模块用例跑完后，对「菜单可达但本轮无用例覆盖」的页面逐个导航 + 拉运行时错误。命令端经 `--free-scan` 开启，**不自行实现**（约定 21）。
 > 巡检项在 `results/` 里以 `entry_kind="free-scan"` + `case_id` 前缀 `运行时-` 落盘（`check_result.py` 校验二者一致）；页数超 `free_scan_max_pages`（默认 20）时 SKILL **不静默截断**，单写一条 block 巡检项列明被跳过页面——它同属巡检项，**不自动写入问题汇总清单**，只作为待确认项记入 AI 测试报告 §2.6 并在 #F 通知中列出（见 2.4），否则「巡检过了」名不副实。
@@ -139,10 +139,7 @@ MCP tool 调用（下列工具名以 `mcp__chrome-devtools__*` 占位；**远程
    - **职责边界（★ 按调用方分流，⛔ 不是"C-NNN 一律归 sprint-batch"）**：`R-NNN` 运行时错误恒由本链路写。
      `C-NNN` 失败用例的归属**取决于本轮是否真有 sprint-batch Step 6.5 在跑**：
      - **由 `/sprint-batch` Step 6 调起** → C-NNN 归 Step 6.5 写，本链路不写（两类前缀隔离不双写）。
-     - **★ 其余一切路径（7×24 双 loop 的独立 `/sprint-aiauto-test` / 链外直达 / standalone）→ 本链路
-       自己写 `C-NNN`**。⛔ 这条不能省：autopilot 链内**恒传 `--skip-aiauto-test`**，Step 6 整段跳过、
-       6.5 从不执行；若仍按"C-NNN 归 sprint-batch"，则 **7×24 常态下失败用例永远没有写入方** ——
-       `/sprint-bugfix` 读问题汇总清单读到空 → 自动修复循环空转 3 轮 → 按 retest-cap 冻结，
-       而冻结原因与真因（失败用例根本没被登记）毫无关系。
+     - **其余路径（独立 `/sprint-aiauto-test` / 链外直达 / standalone）→ 本链路写 `C-NNN`**。
+       autopilot 链内恒传 `--skip-aiauto-test`，没有 Step 6.5 写入方，故不能把失败用例交给它。
      - 写法与 `R-NNN` 完全同构：沿用清单既有 6 列、不新增列、同款 grep 幂等（去重键 = 用例 ID）。
 

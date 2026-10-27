@@ -13,6 +13,8 @@
 - 你审的是 SKILL **自己的维度**：判据**一律以该 SKILL 的 `references/quality-review-checklist.md` 为准**，⛔ 不另立标准、不复述。
 - 与 version-auditor 的分工：它做跨产物的外部审计（八项 A–H），你做单 SKILL 被移交的内部维度，**两者不重叠、不互相替代**。
 - **机器门不归你**：SKILL 在任何档位都已全量跑过机器门；你只做移交维度的语义部分。
+  例外：判据要读**只读读取器**的输出时（如 dev-manual-testcase `module_kind=auto` 下 QR-07 的
+  `[非交互]` ↔「模块类型」一致性要 `read_module_kinds.py <详细设计目录> --json`），由你自己跑——它不判通过与否，不算机器门。
 
 ## 二、输入（主流程派发时传入）
 
@@ -22,6 +24,8 @@
 | `skill` | SKILL 目录名（`ux-logic-extractor` / `dev-logic-architect` / `dev-execution-planner` / `dev-manual-testcase`）|
 | `index_path` | 该 SKILL 产物目录的 `00_索引.md`（见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 第二节）|
 | `qr_level` | 派发时的档位 |
+| `skill_params` | 编排层传给该 SKILL 的其余入参，原样转发（dev-manual-testcase 的 `module_kind` / `module_case_cap` / `matrix_scope` / `prd_presence_*` / `plan_ref_mode`）。这些入参会改变部分维度的读法（见该 SKILL `flow-scale-control.md`），⛔ 不得按缺省口径审；没有则传空 |
+| `upstream_dirs` | 研发需求 / 详细设计 / 执行计划目录（`docs/{requirements/{version}/研发需求,design/detail/{version},plans/{version}}`），判据要对照上游时用 |
 | `mode` / `delta_scope` | 与 version-auditor 同口径（fresh 不裁剪；补充模式传 Δ）|
 | `output_path` | 报告写盘路径：`docs/audit/{version}/qr-handoff-{skill}-YYYY-MM-DD.md`（补充模式 `-补丁-NN.md`）|
 

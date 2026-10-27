@@ -21,7 +21,7 @@
   这正是 SKILL 协议的总约束「非缺省值只由编排层传入」——命令端替它「顺手补上 critical」，
   等于让单独调用也悄悄裁掉语义审。
 
-- `dev-manual-testcase` 的这四个入参**只改产物写法与体量**，不放松 PRD 功规点 100% 覆盖、上游溯源、字段核对、
+- `dev-manual-testcase` 的这些入参（`prd_presence_*` / `module_case_cap` / `matrix_scope` / `module_kind` / `plan_ref_mode`）**只改产物写法与体量**，不放松 PRD 功规点 100% 覆盖、上游溯源、字段核对、
   反向占比 ≥40%、P0/P1 覆盖（见该 SKILL `flow-scale-control.md` 开头）。命令端回检 `check_case_stats.py` 时
   **带同样的参数**（`--scale L --module-case-cap N`、`--prd-presence-table <路径>`），否则 SKILL 内外两次判定口径不一。
 
@@ -54,6 +54,6 @@
 
    ⛔ 不得因为「SKILL 自己说 QR 通过了」就跳过本校验：移交清单写不全时，被漏登记的维度既没被
    SKILL 审、也不会被统一审计接手——两头落空，而产物看起来一切正常。
-4. **移交的维度不是「审过了」**：它们由 `/version` Step 2.4.7 的 version-auditor 统一接手，
-   审完才清掉清单块（见该 Agent「移交维度」节）。子命令**单独**带 `--qr-level` 调用时，
+4. **移交的维度不是「审过了」**：它们由 `/version` Step 2.4.7 的 qr-handoff-auditor 接手，与 version-auditor 并行；
+   审计通过后由主流程清掉清单块（见 `{{AIDP_HOME}}/agents/qr-handoff-auditor.md`）。子命令**单独**带 `--qr-level` 调用时，
    清单留在 `00_索引.md` 里即表示「待统一审计」，⛔ 不得手工删除。

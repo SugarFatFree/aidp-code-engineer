@@ -62,11 +62,22 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall
 **Claude Code 会话内 `/loop`（交互式短期用法）**：
 
 ```text
-/loop 10m /sprint-autopilot --unattended
-/loop 5m  /sprint-aiauto-test --unattended
+/loop 10m /sprint-autopilot --unattended --no-loop
+/loop 5m  /sprint-aiauto-test --unattended --no-loop
 ```
 
 `/loop` 是**会话级**定时任务：会话关闭即停；定时任务 **7 天后自动过期**；只在会话空闲的轮次之间触发，同一会话里挂两条时**实际串行**（长 tick 期间另一条被推迟）。适合临时观察、演示；7×24 用上面的操作系统调度。
+
+### tick 占位收尾（两条链路共用）
+
+直接调用与会话内 `/loop` 在 Phase 0 `begin` 取得持久占位，直到**整轮命令返回**才释放；占位跨 Bash 工具调用存在，不依赖短命 Python 的 fd 或进程猜测。OS tick 的整轮 flock 则由 `agent_loop.sh` 持有，Agent/后台服务不继承锁 fd。两种入口共享准入门，同一链路不得并发。
+
+- `begin` / `parse` 输出的本轮 token 必须保留在当前执行上下文。重新解析参数时沿用 `--lock-token` 原值，不能重跑 begin 或从他人的锁记录取 token 接管。
+- **所有返回路径**（正常完成、无变化、配置等待、失败、冻结、yield）在全部动作结束后、回复用户或返回父命令**之前**执行：`python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py finish --command autopilot --lock-token <本轮token>`；测试链路的 `--command` 改为 `aiauto-test`。占位取得失败时不释放；token 为 `agent_loop` 时由 wrapper 自动释放，不调用 finish。
+- 不能在单个 Bash 的 `EXIT` trap 中提前释放，不能把 token 当 shell 跨工具持久变量。finish 失败必须报错，不能假称已释放。
+- 中断遗留占位**不会超时自动释放**（原 tick 可能还在修改文件）；watchdog 对超期占位告警，包括尚无首次心跳的情况。确认原 tick 已停止后才用其原 token finish。**禁止删除锁文件**，否则旧 fd 与新 inode 会形成两把锁。
+- 硬超时的每次退出都持久写 `alerts.jsonl` 和连续计数，连续达阈通知；两条链路的计数锁内更新。前台循环的单轮失败不终止守护。无 flock / timeout 时分别回退 Python fcntl / 超时执行器；没有互斥能力则拒绝执行。
+- 安装预检只检查现有配置，不修改 `permissions`，不注入权限绕过开关。细粒度 allow 不能证明整轮 Bash/Agent/MCP 均被授权，需按项目实际工具核验。
 
 ## 四、Python 解释器（跨平台）
 

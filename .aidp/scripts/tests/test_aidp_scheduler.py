@@ -9,6 +9,11 @@
   · watchdog：陈旧链路与超时从未启动链路写 alerts.jsonl + rc=3；去重、恢复清状态、启动宽限
   · agent_loop.sh --once：自动补 --unattended --no-loop、导出 AIDP_TICK_COMMAND / ARGUMENTS、写日志；
     执行失败透传 rc、锁竞争正常跳过；dsh 无执行模板 → rc=2；scheduler.exec.<agent> 生效
+  · agent_loop 硬超时：超时写 alerts.jsonl + 连续计数（tick-result）；跳过不截断锁文件、取锁后写起点；
+    后台常驻进程不继承锁 fd；无 flock / timeout 时退回 python3（macOS 形态）
+  · watchdog 持锁时长优先读锁内容 started_at；install 预检（dsh 未配 exec → rc=2，claude 权限缺口 WARN）
+  · autopilot_tick_flags：LOOP_EVIDENCE 按 tick 间隔自适应；tick 级互斥（并发 → rc=4 + 告警，agent_loop 内不自锁）
+  · baseline_edit epoch：跨平台 ISO8601 → epoch
 
 直接跑：`python3 .aidp/scripts/tests/test_aidp_scheduler.py`
 """
@@ -319,6 +324,325 @@ def test_agent_loop():
         shutil.rmtree(home, ignore_errors=True)
 
 
+def _alerts(root):
+    p = os.path.join(root, S.ALERTS_REL)
+    return [json.loads(x) for x in open(p, encoding="utf-8").read().splitlines()] if os.path.isfile(p) else []
+
+
+def _lock_free(path):
+    import fcntl
+    with open(path, "a") as fh:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    return True
+
+
+def test_agent_loop_timeout_and_lock():
+    print("【agent_loop 超时记账 / 锁文件口径 / fd 9 不外泄】")
+    home = tempfile.mkdtemp()
+    root = _mkproj()
+    try:
+        env = {"HOME": home, "AIDP_AGENT": "claude", "AIDP_AGENT_EXEC": "sleep 5", "AIDP_TICK_MAX_SECONDS": "1"}
+        r = _loop(root, ["--once", "sprint-autopilot"], env)
+        recs = [x for x in _alerts(root) if x.get("kind") == "loop-tick-timeout"]
+        check("超时 → rc=124", r.returncode == 124)
+        check("★超时必落告警台账 kind=loop-tick-timeout（cron 丢 stderr 也要停得响）",
+              len(recs) == 1 and recs[0]["command"] == "sprint-autopilot" and recs[0]["streak"] == 1)
+        _loop(root, ["--once", "sprint-autopilot"], env)
+        _loop(root, ["--once", "sprint-autopilot"], env)
+        st = json.load(open(os.path.join(root, S.TICK_TIMEOUT_STATE_REL), encoding="utf-8"))
+        check("连续超时计数累加到 3", st.get("sprint-autopilot", {}).get("streak") == 3)
+        r = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="true"))
+        st = json.load(open(os.path.join(root, S.TICK_TIMEOUT_STATE_REL), encoding="utf-8"))
+        check("非超时轮清零连续计数", r.returncode == 0 and "sprint-autopilot" not in st)
+
+        lock = os.path.join(root, "memory", ".aidp", "locks", "loop-sprint-autopilot.lock")
+        body = json.load(open(lock, encoding="utf-8"))
+        check("取得锁后写入本轮起点 started_at", body.get("owner") == "agent_loop"
+              and abs(body.get("started_at", 0) - __import__("time").time()) < 120)
+        import fcntl
+        with open(lock, "a") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            with open(lock, "w") as fh:
+                fh.write('{"owner":"agent_loop","started_at":123}\n')
+            r = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="true"))
+            check("★「跳过」不截断锁文件（起点不被刷新）", r.returncode == 0
+                  and json.load(open(lock, encoding="utf-8")).get("started_at") == 123)
+
+        r = _loop(root, ["--once", "sprint-autopilot"],
+                  dict(env, AIDP_TICK_MAX_SECONDS="60",
+                       AIDP_AGENT_EXEC="sleep 30 >/dev/null 2>&1 & printf '%s' $! > bg.pid"))
+        check("★后台常驻进程不继承 fd 9：tick 结束即释放锁", r.returncode == 0 and _lock_free(lock))
+        with open(os.path.join(root, "bg.pid")) as fh:
+            bg_pid = int(fh.read())
+        try:
+            os.kill(bg_pid, 15)   # 仅清理本用例明确创建的进程，禁止按进程名扫杀。
+        except ProcessLookupError:
+            pass
+
+        # macOS 形态：PATH 里没有 flock / timeout → python3 回退
+        fake = tempfile.mkdtemp()
+        for tool in ("bash", "sh", "python3", "dirname", "basename", "sed", "mkdir", "date", "sleep", "true", "cat", "git"):
+            src = shutil.which(tool)
+            if src:
+                os.symlink(src, os.path.join(fake, tool))
+        envm = dict(env, PATH=fake)
+        r = _loop(root, ["--once", "sprint-autopilot"], envm)
+        log = open(os.path.join(root, "memory", ".aidp", "logs", "sprint-autopilot.log"), encoding="utf-8").read()
+        check("无 flock/timeout：python3 回退仍硬超时（rc=124）", r.returncode == 124 and "上限，已终止" in log)
+        with open(lock, "a") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            r = _loop(root, ["--once", "sprint-autopilot"], dict(envm, AIDP_AGENT_EXEC="exit 9"))
+            check("★无 flock：锁竞争仍判「跳过」而非把 127 当被占", r.returncode == 0
+                  and "上一轮仍在运行，跳过" in open(os.path.join(root, "memory", ".aidp", "logs",
+                                                         "sprint-autopilot.log"), encoding="utf-8").read())
+        r = _loop(root, ["--once", "sprint-autopilot"], dict(envm, AIDP_AGENT_EXEC="exit 9"))
+        check("无 flock：取得锁后照常执行并透传 rc", r.returncode == 9)
+        shutil.rmtree(fake, ignore_errors=True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_tick_result_and_lock_age():
+    print("【tick-result 连续超时 / 持锁时长取锁内容】")
+    root = _mkproj()
+    try:
+        A = lambda rc: type("A", (), {"command": "sprint-aiauto-test", "rc": rc, "tick_max": "60", "log": ""})()
+        rcs = [S.do_tick_result(root, A(124), send_notify=False) for _ in range(3)]
+        check("前两次超时 rc=0、第 3 次达阈 rc=3 且 notified", [x[0] for x in rcs] == [0, 0, 3]
+              and rcs[2][1]["notified"] and not rcs[1][1]["notified"])
+        check("每次超时都写告警台账", len([x for x in _alerts(root) if x["kind"] == "loop-tick-timeout"]) == 3)
+        rc, res = S.do_tick_result(root, A(0), send_notify=False)
+        check("成功轮清零", rc == 0 and res["streak"] == 0
+              and S.do_tick_result(root, A(137), send_notify=False)[1]["streak"] == 1)
+
+        import fcntl
+        import time as _t
+        lockd = os.path.join(root, "memory", ".aidp", "locks")
+        os.makedirs(lockd, exist_ok=True)
+        lp = os.path.join(lockd, "loop-sprint-aiauto-test.lock")
+        with open(lp, "w") as lk:
+            lk.write(json.dumps({"owner": "agent_loop", "started_at": int(_t.time()) - 99999}) + "\n")
+            lk.flush()
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            os.utime(lp, None)                   # mtime 刷到「刚才」—— 旧口径会判持锁很短
+            age = S.lock_hold_age(root, "sprint-aiauto-test")
+            check("★持锁时长优先取锁内容 started_at（不被 mtime 刷新骗过）", age is not None and age >= 99990)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_install_preflight():
+    print("【install 预检】")
+    root = _mkproj()
+    home = tempfile.mkdtemp()
+    try:
+        r = _sched(["install", "--platform", "cron", "--dry-run", "--json", "--agent", "dsh"], root, home)
+        res = json.loads(r.stdout or "{}")
+        check("★dsh 未配 exec → install rc=2（不装注定失败的任务）", r.returncode == 2
+              and "scheduler.exec.dsh" in (res.get("error") or ""))
+        r = _sched(["install", "--platform", "cron", "--dry-run", "--json", "--agent", "claude"], root, home)
+        res = json.loads(r.stdout or "{}")
+        check("claude 未放行 Bash/Agent → WARN 但照装", r.returncode == 0
+              and any("Bash/Agent" in w for w in res.get("warnings") or []))
+        os.makedirs(os.path.join(root, ".claude"))
+        with open(os.path.join(root, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
+            json.dump({"permissions": {"allow": ["Bash", "Agent"]}}, fh)
+        r = _sched(["install", "--platform", "cron", "--dry-run", "--json", "--agent", "claude"], root, home)
+        res = json.loads(r.stdout or "{}")
+        check("permissions.allow 覆盖后不再 WARN", r.returncode == 0
+              and not any("permissions.allow" in w for w in res.get("warnings") or []))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_tick_flags_loop_evidence_and_mutex():
+    print("【tick_flags：LOOP_EVIDENCE 自适应 / tick 级互斥】")
+    import autopilot_tick_flags as TF
+    now = 100000.0
+    check("固定 40 分钟内两次 → 成立", TF.loop_evidence([now - 1200, now - 600], now, 2400))
+    check("★1h 长 tick 节奏（间隔 70 分钟）在 tick_max=7200 下成立",
+          TF.loop_evidence([now - 8400, now - 4200], now, 7200))
+    check("同节奏在旧固定 2400s 口径下不成立（回归对照）",
+          not TF.loop_evidence([now - 8400, now - 4200], now, 2400))
+    check("只有 1 次历史 → 不成立（手工连跑两遍不升级）", not TF.loop_evidence([now - 60], now, 7200))
+    check("链中有一段超限 → 不成立", not TF.loop_evidence([now - 20000, now - 600], now, 7200))
+
+    root = _mkproj()
+    try:
+        with open(os.path.join(root, S.BASELINE_REL), "w", encoding="utf-8") as fh:
+            json.dump({}, fh)
+        script = os.path.join(root, ".aidp", "scripts", "autopilot_tick_flags.py")
+        lock = os.path.join(root, "memory", ".aidp", "locks", "loop-sprint-autopilot.lock")
+        env = dict(os.environ)
+        env.pop("AIDP_TICK_COMMAND", None)
+
+        def parse(extra_env=None, token=""):
+            args = [sys.executable, script, "parse", "--command", "autopilot", "--arguments=--unattended"]
+            if token:
+                args += ["--lock-token", token]
+            return subprocess.run(args, cwd=root, capture_output=True, text=True,
+                                  env=dict(env, **(extra_env or {})), timeout=60)
+
+        def finish(token):
+            return subprocess.run([sys.executable, script, "finish", "--command", "autopilot",
+                                   "--lock-token", token], cwd=root, capture_output=True, text=True)
+
+        r = parse()
+        body = json.load(open(lock, encoding="utf-8"))
+        token = body.get("token", "")
+        check("会话 tick 在 parse 退出后保留持久占位", r.returncode == 0 and body.get("owner") == "session"
+              and token and S.lock_held(root, "sprint-autopilot"))
+        check("另一 parse 不得猜测同会话而接管", parse().returncode == 4)
+        check("本轮显式沿用 token 才允许重新解析", parse(token=token).returncode == 0)
+        check("错误 token 不释放别人占位", finish("wrong").returncode == 1
+              and S.lock_held(root, "sprint-autopilot"))
+        check("本轮 finish 释放占位", finish(token).returncode == 0 and not S.lock_held(root, "sprint-autopilot"))
+        import fcntl
+        with open(lock, "a") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            with open(lock, "w") as fh:
+                fh.write('{"owner":"agent_loop","token":"wrapper-token","started_at":1}\n')
+            r = parse()
+            check("★另一 tick（OS 调度）持锁 → rc=4 退本 tick", r.returncode == 4)
+            check("★并发冲突落告警台账 kind=tick-concurrent",
+                  any(x.get("kind") == "tick-concurrent" for x in _alerts(root)))
+            check("仅设置命令环境变量不构成复用锁证据",
+                  parse({"AIDP_TICK_COMMAND": "sprint-autopilot"}).returncode == 4)
+            r = parse({"AIDP_TICK_COMMAND": "sprint-autopilot", "AIDP_TICK_TOKEN": "wrapper-token"})
+            check("★agent_loop 拉起的 tick 不自锁（整轮 shell 仍持有锁）", r.returncode == 0)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_session_reservation_lifecycle():
+    print("【直接 tick 持久占位生命周期】")
+    root, home = _mkproj(), tempfile.mkdtemp()
+    try:
+        lock = os.path.join(root, "memory", ".aidp", "locks", "loop-sprint-autopilot.lock")
+        os.makedirs(os.path.dirname(lock), exist_ok=True)
+        with open(lock, "w") as fh:
+            json.dump({"owner": "session", "token": "live-tick", "started_at": 1}, fh)
+        # 模拟跨工具调用：没有短命 Python 持有 flock，但占位仍必须挡住 OS tick。
+        r = _loop(root, ["--once", "sprint-autopilot"],
+                  {"HOME": home, "AIDP_AGENT": "claude", "AIDP_AGENT_EXEC": "touch ran"})
+        check("直接 tick 占位持续挡住 OS tick", r.returncode == 0
+              and not os.path.exists(os.path.join(root, "ran")))
+        with open(lock, "w") as fh:
+            json.dump({"owner": "session", "token": "live-tick", "started_at": 1}, fh)
+        ns = type("A", (), {"scheduled": True})()
+        rc, res = S.do_watchdog(root, ns, send_notify=False)
+        check("没有首次心跳的陈旧占位也判 hung", rc == 3 and res["chains"]["dev"]["state"] == "hung")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_fallback_lock_lifetime():
+    print("【无 flock 时的真实并发互斥】")
+    root, home, fake = _mkproj(), tempfile.mkdtemp(), tempfile.mkdtemp()
+    proc = None
+    try:
+        for tool in ("bash", "sh", "python3", "dirname", "basename", "sed", "mkdir", "date", "sleep", "git"):
+            src = shutil.which(tool)
+            if src:
+                os.symlink(src, os.path.join(fake, tool))
+        env = dict(os.environ, HOME=home, PATH=fake, AIDP_AGENT="claude",
+                   AIDP_AGENT_EXEC="touch started; sleep 3", AIDP_TICK_MAX_SECONDS="10")
+        # touch 用 bash 内建替代，避免依赖裁剪后的 PATH。
+        env["AIDP_AGENT_EXEC"] = "printf started > started; sleep 3"
+        proc = subprocess.Popen(["bash", os.path.join(root, ".aidp", "scripts", "agent_loop.sh"),
+                                 "--once", "sprint-autopilot"], cwd=root, env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        import time
+        deadline = time.monotonic() + 10
+        while not os.path.isfile(os.path.join(root, "started")) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        lock = os.path.join(root, "memory", ".aidp", "locks", "loop-sprint-autopilot.lock")
+        check("fallback 加锁子进程退出后，执行中的 shell 仍持锁", os.path.exists(lock) and not _lock_free(lock))
+        second = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="exit 19"))
+        check("fallback 第二个真实 tick 被跳过", second.returncode == 0)
+        proc.communicate(timeout=15)
+        check("fallback 整轮结束即释放锁", proc.returncode == 0 and _lock_free(lock))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            proc.communicate(timeout=15)
+        for p in (root, home, fake):
+            shutil.rmtree(p, ignore_errors=True)
+
+
+def test_cicd_retry_priority_and_poll():
+    print("【PRD 重试上限真实消费】")
+    from pathlib import Path
+    import autopilot_tick_flags as TF
+    root = _mkproj("cicd:\n  max_retries: 8\n")
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(root)
+        prd = Path("docs/requirements/V1.0.0/产品提供/PRD.md")
+        prd.parent.mkdir(parents=True)
+        prd.write_text("autopilot_decisions:\n  deployment:\n    cicd_max_retries: 0\n", encoding="utf-8")
+        check("PRD 的 0 次重试覆盖配置 8", TF._cicd_max_retries({"TARGET_VERSION": "V1.0.0"}) == "0")
+        data = {"autopilot": {"target_version": "V1.0.0"}, "versions": {"V1.0.0": {
+            "current_build": "V1.0.0_build1001", "builds": [{"build": "V1.0.0_build1001", "push_commit": "abc"}],
+            "cicd_run": {"run_id": "123", "pipeline": "deploy"}}}}
+        Path(S.BASELINE_REL).write_text(json.dumps(data), encoding="utf-8")
+        # 用替身拦截 CICD 平台边界；真实执行 flow、tick flags 与 baseline 读取。
+        Path(".aidp/scripts/cicd_watch.py").write_text(
+            'import sys,json\nn=sys.argv[sys.argv.index("--max-retries")+1] if "--max-retries" in sys.argv else "missing"\n'
+            'print(json.dumps({"verdict":"failed","received_max_retries":n}))\nsys.exit(2)\n', encoding="utf-8")
+        flow = Path(SCRIPTS).parent / "flows/sprint-autopilot/phase-3-6b.md"
+        code = flow.read_text(encoding="utf-8").split("```bash\n", 1)[1].split("```", 1)[0]
+        result = subprocess.run(["bash", "-c", code.replace("{{AIDP_HOME}}", ".aidp")],
+                                capture_output=True, text=True, timeout=30)
+        rec = json.loads(Path("memory/.aidp/cicd-poll.json").read_text())
+        check("实际 poll 调用收到 PRD max-retries=0", rec.get("received_max_retries") == "0")
+        prd.write_text("autopilot_decisions:\n  deployment:\n    cicd_max_retries: invalid\n", encoding="utf-8")
+        check("非法 PRD 值回落项目配置", TF._cicd_max_retries({"TARGET_VERSION": "V1.0.0"}) == "8")
+        Path("memory/aidp-config.yaml").unlink()
+        # aidp_config 按路径缓存，清缓存后验证缺省。
+        import aidp_config
+        if hasattr(aidp_config, "load") and hasattr(aidp_config.load, "cache_clear"):
+            aidp_config.load.cache_clear()
+        # 默认路径用独立进程，避免测试配置缓存掩盖真实结果。
+        r = subprocess.run([sys.executable, ".aidp/scripts/autopilot_tick_flags.py", "--command", "autopilot", "--shell"],
+                           capture_output=True, text=True, timeout=30)
+        check("项目配置缺失回落默认3", "CICD_MAX_RETRIES=3" in r.stdout)
+    finally:
+        os.chdir(old_cwd)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_authorization_take():
+    print("【强推授权原子消费】")
+    root = _mkproj()
+    try:
+        be = os.path.join(root, ".aidp", "scripts", "baseline_edit.py")
+        base = [sys.executable, be, "--version", "V1.0.0"]
+        subprocess.run(base + ["set", "release_force_authorized", "1"], cwd=root, capture_output=True, check=True)
+        procs = [subprocess.Popen(base + ["take", "release_force_authorized", "--default", "0"],
+                                  cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
+        vals = [p.communicate(timeout=10)[0].strip() for p in procs]
+        check("并发消费仅一方取到授权，另一方默认拒绝", sorted(vals) == ["0", "1"])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_baseline_epoch():
+    print("【baseline_edit epoch】")
+    be = os.path.join(SCRIPTS, "baseline_edit.py")
+    run = lambda v: subprocess.run([sys.executable, be, "epoch", v], capture_output=True, text=True)
+    a, b, bad = run("2026-10-26T10:00:00+08:00"), run("2026-10-26T02:00:00Z"), run("garbage")
+    check("+08:00 与 Z 同一时刻 → 同一 epoch", a.returncode == 0 and a.stdout.strip() == b.stdout.strip() != "")
+    check("不可解析 → 无输出、rc=1（调用方自定兜底）", bad.returncode == 1 and bad.stdout.strip() == "")
+
+
 def test_self_check():
     print("【--self-check】")
     r = subprocess.run([sys.executable, SCHED, "--self-check"], capture_output=True, text=True)
@@ -347,6 +671,15 @@ if __name__ == "__main__":
     test_watchdog_never_started()
     test_watchdog_manual_without_install()
     test_agent_loop()
+    test_agent_loop_timeout_and_lock()
+    test_tick_result_and_lock_age()
+    test_install_preflight()
+    test_tick_flags_loop_evidence_and_mutex()
+    test_session_reservation_lifecycle()
+    test_fallback_lock_lifetime()
+    test_cicd_retry_priority_and_poll()
+    test_authorization_take()
+    test_baseline_epoch()
     test_self_check()
     test_scheduler_docs()
     print(f"\n{_passed} passed, {_failed} failed")

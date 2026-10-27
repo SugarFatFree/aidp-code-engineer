@@ -26,12 +26,13 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除三
 ### #2 会话内 `/loop`（Claude Code 交互式短期用法）
 
 ```bash
-/loop 10m /sprint-autopilot --unattended    # ① 开发链路
-/loop 5m  /sprint-aiauto-test --unattended  # ② 测试链路
+/loop 10m /sprint-autopilot --unattended --no-loop    # ① 开发链路
+/loop 5m  /sprint-aiauto-test --unattended --no-loop  # ② 测试链路
 ```
 
 - `/loop` 是**会话级**定时任务：关闭 Claude Code 会话即停；定时任务 **7 天后自动过期**；只在会话**空闲**的轮次之间触发，同一会话里的两条 loop **实际串行**（一条长 tick 期间另一条被推迟，心跳会因此变旧）。适合临时观察、演示；需要 7×24 时用 #1。
 - ★ **示例默认带 `--unattended`**：无人值守判据只看**本轮**信号，唤起时 prompt 不含 `/loop` 字样会误判为交互式而挂起等人，且每个 tick 重犯；显式带 `--unattended` 消除该单点。
+- ★ **示例同时带 `--no-loop`**（= 声明「外部有唤醒源，退出后还有下一 tick」，`HAS_WAKE_SOURCE=1`）：否则唤醒源只能靠执行体把 `IS_LOOP_CONTEXT` 字面量改成 1，漏改即 `HAS_WAKE_SOURCE=0` ⇒ 逐 tick 单 Sprint 关闭、任一瞬态失败当场冻结。⛔ 不挂 `/loop` 的单次调用不要带它（没有下一 tick 却让位 = 停在半路）。
 - `/loops` 查看会话内运行中的 loop 与下次执行时间。
 
 ### #3 单次 / 临时模式
@@ -53,7 +54,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除三
 | 用法 | 适用场景 | 会话关闭后 | 推荐度 |
 |------|---------|----------|------|
 | `aidp_scheduler.py install` | 7×24 无人值守（两条链路任务 + 独立 watchdog）| 不受影响 | ★★★ |
-| `/loop 10m /sprint-autopilot --unattended`（+ 测试链路一条）| 会话内临时观察 / 演示 | 停止（且 7 天过期）| ★ |
+| `/loop 10m /sprint-autopilot --unattended --no-loop`（+ 测试链路一条）| 会话内临时观察 / 演示 | 停止（且 7 天过期）| ★ |
 | `/sprint-autopilot`（直接调）| 首次配置补全 + 引导 | 不适用 | 配置 |
 | `/sprint-autopilot --once` | PRD 已就绪，临时跑一次 | 不适用 | 单次 |
 | `/sprint-autopilot --watch` | 临时挂 50 分钟监听 | 停止 | 临时 |
@@ -62,7 +63,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall   # 停用并删除三
 
 ## 输出示例
 
-> 📄 各场景（PRD 无变化 / 有更新触发 / 首次缺 autopilot_decisions / 规划已存在跳过）的**终端输出示例**已外置到 `{{AIDP_HOME}}/skills/aidp-code-engineer/references/autopilot/output-examples.md`（纯说明、执行时无需载入；想看命令打印样子时按需查阅）。
+> 📄 各场景（PRD 无变化 / 有更新触发 / 首次缺 autopilot_decisions / 规划已存在跳过）的**终端输出示例**已外置到同目录 `output-examples.md`（纯说明、执行时无需载入；想看命令打印样子时按需查阅）。
 
 ---
 

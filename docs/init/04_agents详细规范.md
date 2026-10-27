@@ -19,7 +19,7 @@
 
 ## 1. Agent 角色体系
 
-AIDP 定义了 **7 个业务 Agent + 1 个合规 Agent + 1 个版本规划产物审计 Agent（共 9 个）**，每个角色专职一类工作，通过文档交接（不靠对话）协作：
+AIDP 定义了 **7 个业务 Agent + 1 个合规 Agent + 2 个版本规划审计 Agent（共 10 个）**，每个角色专职一类工作，通过文档交接（不靠对话）协作：
 
 ```
 PM Agent         需求管理者
@@ -37,6 +37,7 @@ QA Agent         质量守门人
 Reviewer Agent   代码审查
                                 ←── AIDP-Compliance Agent（脚手架末尾 / 手动激活，跨阶段独立运行）
                                 ←── Version-Auditor Agent（/version Step 2.4.7 强制激活，审计版本规划产物，独立子 Agent 隔离上下文）
+                                ←── QR-Handoff-Auditor Agent（/version Step 2.4.7 与上者同轮并行，每份 SKILL QR 移交清单一个实例）
 ```
 
 ## 2. 各 Agent 职责边界

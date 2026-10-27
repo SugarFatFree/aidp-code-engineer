@@ -15,7 +15,7 @@
 3. AI执行报告骨架存在（`docs/reports/{V}/AI执行报告/data/{BUILD}.js` 在 + 已注册 index.html/plan.html，autopilot R-3 已产）—— 不在则 2.5.1 早已自愈交接补建，正常到此必在。
 
 **Step 1 — finalize 执行数据 = 调 `emit-report.py --kind exec --patch`（**必须经它以写 `report_deliveries.exec_report` 台账，否则本 build 收尾钢门交付检查会误判缺失**）**：只把**变化字段**写入 `docs/reports/{V}/AI执行报告/.build-input-${BUILD}.json`（`.` 前缀隐藏 + gitignore + emit-report 用完自动删），`--patch` 对现有 `data/${BUILD}.js` 顶层浅合并，autopilot 写的 dev/部署 steps、features 原样保留：
-- `testSummary` ← **从同 build 的 AI测试报告 summary 派生（`gen_report.py --json` 的 `counts`，⛔ 不手填）**：`{ total, pass, fail, block, skip, na, passRate:<0~1，分母 = total−na>, coverage:<有则填/无则 null>, browserTested:true }`（去骨架 `pendingBrowserTest`；**不写 `reportLink`**，链接由 `app.js` 运行时推导）。与 3.3b 冻结收口 ① 同一口径（后者另加 `unconverged:true`）。**★ `passRate`/`coverage` 单位 = 0~1 小数：写 `100.0` 或 `"6/6"`/`"100%"` 将被 `emit-report.py` 拒绝写盘（exit 3）**；
+- `testSummary` ← **从同 build 的 AI测试报告 summary 派生（`gen_report.py --json`，⛔ 不手填）**：`{ total, pass, fail, block, skip, na, passRate:<0~1，分母 = total−na>, coverage:<有则填/无则 null>, browserTested:true }`。★ **字段映射**（`counts` 只有 `pass/fail/block/na` 四键，⛔ 没有 `total/skip/passRate`，照键名直取会落空）：`total` ← 顶层 `.total`（已剔除自由巡检项）；`pass/fail/block/na` ← `.counts.pass/.fail/.block/.na`；`skip` ← `.counts.skip // 0`（auto-test-runner 结果四态无 skip，恒为 0）；`passRate` ← 顶层 `.pass_rate`（分母已是 `total−na`，0~1 小数，原样写入）；`coverage` 无对应键 → `null`（⛔ 不拿 `.auto_cover_rate` 顶替，那是自动化覆盖率）（去骨架 `pendingBrowserTest`；**不写 `reportLink`**，链接由 `app.js` 运行时推导）。与 3.3b 冻结收口 ① 同一口径（后者另加 `unconverged:true`）。**★ `passRate`/`coverage` 单位 = 0~1 小数：写 `100.0` 或 `"6/6"`/`"100%"` 将被 `emit-report.py` 拒绝写盘（exit 3）**；
 - `overview.testPassRate` ← 同一 passRate；`result` ← success|partial|failed；`steps` ← 完整 steps 数组中「AI 自动化测试」一步改 `actualStatus:"done"` + 耗时（数组是顶层字段，须整体传入）；`defects`/`incidents` ← 追加本轮缺陷/运行时错误后的完整数组。
 - 再调（R-4 收尾）：
   ```bash
@@ -40,7 +40,7 @@
      # ⛔ **必传 `--expect-cards`（本门自称"本 build 唯一权威仪式门"，就必须真的校通知台账）**：
      #   实测事故：本门不传该 flag → 落进退化分支，而退化判据当时把"规划期无 build 的
      #   #0/#1/#1b"也算进本 build，**只要跑过规划就恒真** → 一整轮测试期通知零推送照样 PASS。
-     #   更糟的是 autopilot 侧 `phase-3-9.md` 明确写着「测试链路通知 #D/#R/#F/#G/#3 本门不期望，
+     #   更糟的是 autopilot 侧 `sprint-autopilot/phase-3-9.md` 明确写着「测试链路通知 #D/#R/#F/#G/#3 本门不期望，
      #   归其 Phase 3.7 final 门校」——**两条链路各自把责任推给对方，而被指定的这一方并没有真校**。
      #   期望集 = 测试链路三条**必发**通知 #D/#R/#F（⛔ 漏 #R 会让它落进校验真空：autopilot 侧
      #   明说不校它、本门又不期望它）。#3 由 build 关闭方发、在本门之后（脚本对 final 阶段已自动豁免）；

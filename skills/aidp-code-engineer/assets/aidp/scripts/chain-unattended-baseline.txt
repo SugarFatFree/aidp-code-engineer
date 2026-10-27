@@ -41,12 +41,16 @@
 {{AIDP_HOME}}/commands/sprint-test.md	/sprint-bugfix sprint-{NNN}	2
 {{AIDP_HOME}}/commands/sprint-test.md	/sprint-close {NNN}	1
 {{AIDP_HOME}}/commands/sprint-test.md	/sprint-selftest {version}	3
+{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-3-3b.md	/sprint-autopilot --once	1
+{{AIDP_HOME}}/flows/sprint-autopilot/output-examples.md	/version V0.1.0 完成	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-0-3.md	/sprint-aiauto-test --reset-chrome-ip	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-0-5.md	/version {TARGET_VERSION} 正式打	1
+{{AIDP_HOME}}/flows/sprint-autopilot/phase-0-9.md	裸委派 /sprint-aiauto-test	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version --no-tag	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version --no-tag 归档	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version {PRE_RELEASE_VERSION}	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version {PRE_RELEASE_VERSION} 补打	1
+{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-2.md	裸委派 /sprint-aiauto-test	2
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-3-3.md	/version {TARGET_VERSION}	1
 {{AIDP_HOME}}/flows/sprint-autopilot/usage-guard.md	/version --no-tag	1
 {{AIDP_HOME}}/flows/sprint-batch/step-6.md	/sprint-aiauto-test --once	2
@@ -56,6 +60,3 @@
 {{AIDP_HOME}}/flows/version/planning-8.md	/sprint-autopilot {version} 版本规划已执行	2
 {{AIDP_HOME}}/flows/version/planning-8.md	/sprint-dev 001 开始第一个	1
 {{AIDP_HOME}}/flows/version/planning-8.md	/sprint-dev {NNN}	1
-{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-3-3b.md	/sprint-autopilot --once	1
-{{AIDP_HOME}}/flows/sprint-autopilot/phase-0-9.md	裸委派 /sprint-aiauto-test	1
-{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-2.md	裸委派 /sprint-aiauto-test	2

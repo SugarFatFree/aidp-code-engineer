@@ -84,8 +84,12 @@ def _ns(command: str) -> str:
 # ── flag → 变量名。布尔 flag 出现即 1、否则 0；带值 flag 取其后一个 token ──────────
 # ⚠️ 新增 flag 时**必须同时**加进这里 —— 参数表里写了、这里没解析，就等于那个 flag 不存在
 #    （`--skip-dev` 就是这么"存在于文档、失效于实现"了很久）。
-# LOOP_EVIDENCE 的回看窗口：取 autopilot 10m 周期的 ~4 倍，容得下一次长 tick + 一次跳拍。
+# LOOP_EVIDENCE 的相邻 tick 间隔基线：取 autopilot 10m 周期的 ~4 倍，容得下一次长 tick + 一次跳拍。
+#   实际判据按 tick 时长自适应放宽到 `scheduler.tick_max_seconds`（见 _loop_gap_limit）。
 LOOP_EVIDENCE_WINDOW_SECONDS = int(os.environ.get("LOOP_EVIDENCE_WINDOW_SECONDS", "2400"))
+# 本命令 tick 级互斥锁（与 agent_loop.sh 同一把：`memory/.aidp/locks/loop-sprint-<command>.lock`）
+#   两条链路均强制：抢不到 → rc=4，调用处结束本 tick，不得继续写 baseline。
+RC_TICK_BUSY = 4
 
 BOOL_FLAGS = {
     "autopilot": {
@@ -141,6 +145,7 @@ DERIVED_VARS = {
         "CLOUD_READY_URL",       # 就绪探针 URL（读 PRD，phase-3-5 出口路由）
         "CLOUD_READY_TIMEOUT",   # 就绪探针总超时秒（PRD deployment.cloud_ready_timeout_seconds，缺省 600）
         "CLOUD_READY_INTERVAL",  # 就绪探针间隔秒（PRD deployment.cloud_ready_interval_seconds，缺省 15）
+        "CICD_MAX_RETRIES",      # 流水线失败重跑上限（PRD deployment.cicd_max_retries > cicd.max_retries > 3）
         "CICD_PIPELINE_BOUND",   # 是否已接入 CICD 流水线 0/1（读 memory/aidp-config.yaml cicd 段，phase-3-5 出口路由）
         "WILL_BROWSER_TEST",     # 本 build 是否由测试链路关闭（phase-3-8）
         "PROBE_PASSED",          # 就绪探针是否通过（phase-3-7 Step D 的出口条件）
@@ -291,11 +296,107 @@ def _normalize_argv(argv):
     return out
 
 
+def _loop_gap_limit() -> int:
+    """LOOP_EVIDENCE 允许的相邻 tick 最大间隔（秒）= max(基线, tick_max_seconds)。
+
+    ⛔ 固定 2400s 窗口内要求 ≥2 次历史 tick：单 Sprint tick 常达 1h，窗口里至多容下 1 次，
+    判据**恒不成立**，第二信源形同虚设。间隔上限随单轮 tick 的硬上限放宽才对得上真实节奏。
+    """
+    tick_max = 0
+    try:
+        import aidp_config
+        tick_max = int(aidp_config.scheduler_config(".").get("tick_max_seconds") or 0)
+    except Exception:  # noqa: BLE001 —— 读不到配置按基线算
+        tick_max = 0
+    return max(LOOP_EVIDENCE_WINDOW_SECONDS, tick_max)
+
+
+def loop_evidence(hist, now_ts, gap_limit):
+    """本次 + 最近 2 次历史 tick 的相邻间隔都不超过 gap_limit → 判「近期反复唤起」。"""
+    seq = sorted(t for t in hist if t <= now_ts)[-2:] + [now_ts]
+    if len(seq) < 3:
+        return False
+    return all(b - a <= gap_limit for a, b in zip(seq, seq[1:]))
+
+
+def _lock_record(fh):
+    fh.seek(0)
+    raw = fh.read().strip()
+    rec = json.loads(raw) if raw else {}
+    if not isinstance(rec, dict):
+        raise ValueError("锁文件必须是 JSON 对象")
+    return rec
+
+
+def tick_lock(command: str, token="", release=False):
+    """OS tick 整轮持 flock；直接 tick 在 flock 内登记持久占位，finish 才释放。
+
+    占位不假装是仍被内核持有的锁，不扫描进程，不按租期自动释放；异常遗留由 watchdog 告警。
+    token 只标识本轮，不授予工具权限。跨工具调用必须沿用 parse 输出的 token，不能读别人的 token 接管。
+    """
+    import errno
+    chain_cmd = "sprint-" + command
+    path = os.path.join("memory", ".aidp", "locks", f"loop-{chain_cmd}.lock")
+    try:
+        import fcntl
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a+", encoding="utf-8") as fh:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+                cur = _lock_record(fh)
+                # 仅真正的 wrapper 子进程可复用 wrapper 整轮持有的锁。
+                if not release and os.environ.get("AIDP_TICK_COMMAND") == chain_cmd \
+                        and os.environ.get("AIDP_TICK_TOKEN") \
+                        and cur.get("owner") == "agent_loop" \
+                        and cur.get("token") == os.environ["AIDP_TICK_TOKEN"]:
+                    return True, "agent_loop"
+                return False, "held"
+            cur = _lock_record(fh)
+            if release:
+                if cur.get("owner") != "session" or not token or cur.get("token") != token:
+                    return False, "token-mismatch"
+                fh.seek(0)
+                fh.truncate()
+                fh.flush()
+                os.fsync(fh.fileno())
+                return True, "released"
+            if cur.get("owner") == "session":
+                return (True, token) if token and cur.get("token") == token else (False, "session-reserved")
+            token = uuid.uuid4().hex
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps({"owner": "session", "token": token, "started_at": int(time.time())}) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+            return True, token
+    except (ImportError, OSError, ValueError) as exc:
+        return False, f"lock-error:{exc}"
+
+
 def cmd_parse(a) -> int:
     """解析本轮参数串 → 整段重写 `autopilot.tick`（不残留上一 tick）。"""
     if a.command not in BOOL_FLAGS:
         print(f"未知 --command：{a.command}（应为 autopilot / aiauto-test）", file=sys.stderr)
         return 2
+    # ★ tick 级互斥先于一切写盘：抢不到锁的 tick 不得清空 / 改写对方正在用的 tick 命名空间。
+    ok, detail = tick_lock(a.command, getattr(a, "lock_token", ""))
+    if not ok:
+        msg = (f"sprint-{a.command} 已有另一 tick 在执行（持锁方：{detail}），本 tick 不并发执行；"
+               "会话内 /loop 与操作系统调度只保留一种")
+        try:
+            import aidp_paths
+            aidp_paths.append_alert(".", kind="tick-concurrent", source="autopilot_tick_flags",
+                                    command=f"sprint-{a.command}", message=msg)
+        except Exception:  # noqa: BLE001 —— 告警台账是旁路
+            print(f"🚨 [AIDP-ALERT] {msg}", file=sys.stderr)
+        rc = 1 if detail.startswith("lock-error:") else RC_TICK_BUSY
+        print(f"⛔ {msg} → 退出本 tick（rc={rc}）", file=sys.stderr)
+        return rc
+    # 先输出身份：后面的 baseline 写盘失败也能用本轮 token 清理占位。
+    print(f"tick-lock-token={detail}", flush=True)
     # ★ 先无条件清空本 tick 命名空间，再写新值——即便后续解析出任何意外，
     #   也绝不让上一 tick 的裁剪 flag 残留生效（残留 = 流程裁剪来源不再是用户显式声明）。
     _be(["del", _ns(a.command)])
@@ -353,8 +454,10 @@ def cmd_parse(a) -> int:
     #   `autopilot_fail_handle` 的 `freeze = streak >= threshold or wake == "0"` 当场生效，
     #   **任何一次瞬态失败（529 / 网络抖动 / CICD 接口超时）直接冻版本，3 次重试配额一次都用不上**。
     #   这里给它一个不依赖模型的旁证：**本命令近期是否被反复唤起**。
-    #   ⛔ 判据刻意要求「窗口内 ≥2 次历史 tick」而不是 1 次 —— 手工连跑两遍不该被误升级为
-    #   loop；而真正的 /loop 在一个窗口里必然留下远多于 2 条记录。
+    #   ⛔ 判据刻意要求「本次 + 最近 2 次历史 tick 连成链」而不是 1 次 —— 手工连跑两遍不该被误升级为
+    #   loop；而真正的 /loop 必然留下一串间隔相近的记录。
+    #   ★ 相邻间隔上限按 tick 时长自适应（max(基线, tick_max_seconds)）：单 tick 常达 1h，
+    #     固定 40 分钟窗口下判据恒不成立。
     #   ⛔ 它只**增补**唤醒源、绝不反向否定：模型已判 1 时本值无作用，避免把真 loop 判死。
     hist, now_ts = [], time.time()
     try:
@@ -362,9 +465,10 @@ def cmd_parse(a) -> int:
         hist = [float(x) for x in _h if isinstance(x, (int, float, str)) and str(x).replace(".", "", 1).isdigit()]
     except (ValueError, TypeError):
         hist = []
-    recent = [t for t in hist if now_ts - t <= LOOP_EVIDENCE_WINDOW_SECONDS]
-    out["LOOP_EVIDENCE"] = "1" if len(recent) >= 2 else "0"
-    _be(["set", _ns(a.command) + "_history", json.dumps((recent + [now_ts])[-12:])])
+    gap_limit = _loop_gap_limit()
+    out["LOOP_EVIDENCE"] = "1" if loop_evidence(hist, now_ts, gap_limit) else "0"
+    keep = [t for t in hist if now_ts - t <= 3 * gap_limit]
+    _be(["set", _ns(a.command) + "_history", json.dumps((keep + [now_ts])[-12:])])
 
     # tick 起点时刻 + 链路心跳：Stop hook / 收尾门据 tick_started_at 判「本 tick 铸的 build」，
     #   调度巡检（aidp_scheduler.py watchdog）据心跳判链路是否掉线——tick 早退也照样刷新。
@@ -690,6 +794,24 @@ def _cloud_ready_interval(cur: dict | None = None) -> str:
     return v if v.isdigit() else "15"
 
 
+def _cicd_max_retries(cur: dict | None = None) -> str:
+    """PRD `deployment.cicd_max_retries`（Phase 0 批 4d 向用户收集）优先，缺省回落 `cicd.max_retries`，再缺省 3。
+
+    ⛔ 只读项目配置 = 用户在 PRD 里声明的重跑上限被静默忽略。
+    """
+    v = _prd_deploy_field("cicd_max_retries", cur)
+    if v.isdigit():
+        return v
+    try:
+        import aidp_config
+        c = aidp_config.get(".", "cicd.max_retries")
+        if str(c).strip().isdigit():
+            return str(c).strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return "3"
+
+
 # ★ 动态兜底（`FALLBACK_DEFAULT` 只能放静态字面量，这里放"要算一下才知道"的）。
 #   在 baseline 回落之后、静态默认之前生效。
 # ⛔ `TARGET_VERSION` **刻意不在本表内**（autopilot 语境下）：`current-version` 的定义是
@@ -709,6 +831,7 @@ DYNAMIC_FALLBACK = {
     "NOTIFY_ENABLED": _notify_enabled,
     "CLOUD_READY_TIMEOUT": _cloud_ready_timeout,
     "CLOUD_READY_INTERVAL": _cloud_ready_interval,
+    "CICD_MAX_RETRIES": _cicd_max_retries,
 }
 
 
@@ -859,6 +982,10 @@ def main(argv) -> int:
     #    后续每个无人值守 tick 静默走 test-only、开发永不发生。
     #    实测：'--unattended' → rc=2；'--skip-dev --unattended'（含空格）→ rc=0，故此前从未被发现。
     p.add_argument("--arguments", default="", help="本次调用的原始参数串（值常以 -- 开头，见 _normalize_argv）")
+    p.add_argument("--lock-token", default="", help="仅重新解析本轮参数时，沿用本轮 parse 已输出的 token")
+    _with_command(sub.add_parser("begin", help="读写 baseline 前取得本轮占位，仅输出 token"))
+    finish = _with_command(sub.add_parser("finish", help="本轮完全结束后释放直接 tick 的持久占位"))
+    finish.add_argument("--lock-token", required=True)
 
     s = _with_command(sub.add_parser("set", help="落盘一个派生变量"))
     s.add_argument("name")
@@ -871,6 +998,24 @@ def main(argv) -> int:
         return cmd_shell(a)
     if a.op == "parse":
         return cmd_parse(a)
+    if a.op == "begin":
+        ok, detail = tick_lock(a.command)
+        if not ok:
+            msg = f"sprint-{a.command} 无法取得本轮占位：{detail}；本 tick 不执行"
+            try:
+                import aidp_paths
+                aidp_paths.append_alert(".", kind="tick-concurrent", source="autopilot_tick_flags",
+                                        command=f"sprint-{a.command}", message=msg)
+            except Exception:
+                pass
+            print(msg, file=sys.stderr)
+            return 1 if detail.startswith("lock-error:") else RC_TICK_BUSY
+        print(detail)
+        return 0
+    if a.op == "finish":
+        ok, detail = tick_lock(a.command, a.lock_token, release=True)
+        print(detail)
+        return 0 if ok else 1
     if a.op == "set":
         if not _NAME_RE.match(a.name):
             print("变量名须为大写下划线形式", file=sys.stderr)

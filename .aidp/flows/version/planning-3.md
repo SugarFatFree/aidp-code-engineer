@@ -200,6 +200,7 @@ python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version}
 - 档位 = L → 再加 `--module-case-cap=30 --matrix-scope=p0`；S/M 档是整轮合计基线，不加。
 - `/version` 带了 `--fast` → 任何档位都加 `--matrix-scope=p0`（L 档已含则不重复）。
 - 一律加 `--module-kind={module_kind}`：`/version` 的 `--module-kind` 值，**未传为 `auto`**——由 SKILL 逐模块读详细设计的「模块类型」字段，缺字段即按页面模板（⛔ 编排层不自行判断模块是否「非交互」）。
+- **保存审计上下文**：派发前用 Write 将实际传入值记录到 `memory/{version}/.planning-skill-params.json` 的 `dev-manual-testcase` 对象（`scale`、`module_kind` 及实际收到的 `module_case_cap` / `matrix_scope` / `prd_presence_mode` / `prd_presence_table`；未传的键不写）。同一对象另存 `upstream_dirs`，明确研发需求、详细设计、计划三条目录路径。补充模式只更新本次调用值；`--fast` 发布补审必须读回此文件，不能依赖已结束的规划会话。并行生成的 `plan_ref_mode=deferred` 只用于回填前，审计时计划来源已回填，按 `required` 核验。
 
 **fresh 模式**：
 
@@ -228,14 +229,19 @@ python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version}
 2. **两边都返回后回填**（全有或全无；计划缺锚点 / Sprint、某条 REQ 没有任何 Task 承接都会拒绝——后者是计划漏任务，正该暴露）：
 
    ```bash
-   T_DIR="docs/testing/{version}/研发自测"; MAP="memory/{version}/.plan-refs.json"
-   python3 {{AIDP_HOME}}/skills/dev-execution-planner/scripts/export_plan_refs.py "docs/plans/{version}" --cases-dir "$T_DIR" --out "$MAP"; RC1=$?
-   [ "$RC1" = 0 ] && python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/resolve_plan_refs.py "$T_DIR" --map "$MAP"; RC2=$?
-   [ "$RC1" = 0 ] && [ "$RC2" = 0 ] && python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/check_suite_upstream.py "$T_DIR"; RC3=$?
-   echo "plan-refs: export=$RC1 resolve=$RC2 upstream=$RC3"
+   T_DIR="docs/testing/{version}/研发自测"; MAP="memory/{version}/.plan-refs.json"; EXP="memory/{version}/.plan-refs-export.json"
+   RC2=-; RC3=-; rm -f "$MAP"
+   python3 {{AIDP_HOME}}/skills/dev-execution-planner/scripts/export_plan_refs.py "docs/plans/{version}" --cases-dir "$T_DIR" --out "$MAP" --json >"$EXP"; RC1=$?
+   [ "$RC1" = 0 ] && [ ! -s "$MAP" ] && RC1=skipped   # 一个 Task 都没识别到：exit 0 但不写映射，⚠️ 不是通过
+   if [ "$RC1" = 0 ]; then python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/resolve_plan_refs.py "$T_DIR" --map "$MAP"; RC2=$?; fi
+   if [ "$RC2" = 0 ]; then python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/check_suite_upstream.py "$T_DIR"; RC3=$?; fi
+   echo "plan-refs: export=$RC1 resolve=$RC2 upstream=$RC3（export 明细 $EXP）"
    ```
 
-   三者全 0 才继续。`export≠0` → 回调 `/sprint-plan` 修计划；`resolve≠0` → 先看是否计划漏了 REQ 的 Task（回调 `/sprint-plan`），
+   三者全 0 才继续（`-` = 前一步没过、本步未跑）。`export≠0`（含 `skipped`）→ 回调 `/sprint-plan` 修计划，
+   把 `$EXP` 的 `issues[]` 原样作为补救要点：fresh 模式的计划是本轮新生成的，不存在「存量计划」，
+   `severity=Important`（整份分册无锚点）**同样必修**——SKILL 自身 QR 对只有 Important 判通过，不点明就会原样再交一次、回调空转。
+   `resolve≠0` → 先看是否计划漏了 REQ 的 Task（回调 `/sprint-plan`），
    否则回调 `/sprint-selftest`；交互式报出后停下，无人值守按 Step 2.4.7 的 block 处置交熔断。⛔ 不得手工改占位符过门。
 
 等待 `/sprint-selftest`（并行时两个子 Agent 都）完成后再继续 Step 2.4.4。

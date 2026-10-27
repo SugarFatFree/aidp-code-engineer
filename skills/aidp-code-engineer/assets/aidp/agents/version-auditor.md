@@ -169,7 +169,7 @@
 
 | PRD ID | 研发需求 → REQ | 详细设计 → 章节 | 研发执行计划 → Task | 自测用例 → SUITE |
 |--------|---------------|----------------|----------------|-----------------|
-| FEAT-001 | REQ-001/002 | §3.1 + TBL_user | T-001-01 / T-001-02 | SUITE-001 |
+| FEAT-001 | REQ-001/002 | §3.1 + TBL_user | Task 1.1 / Task 1.2 | SUITE-001 |
 | FEAT-002 | ❌ 缺失 | ❌ 缺失 | ❌ 缺失 | ❌ 缺失 |
 
 **评级**：
@@ -327,7 +327,7 @@
 1. `**PRD 来源:**` 指向 PRD 文件 + REQ-NNN
 2. `**原型来源:**` 指向 `docs/prototype/{version}/code/<路径> > <组件>`
 3. `**详细设计来源:**` 指向 `docs/design/detail/{version}/<文件> > §<章节>`
-4. `**研发执行计划来源:**` 指向 `docs/plans/{version}/01_研发执行计划.md > Sprint-NNN T-NNN-NN`
+4. `**研发执行计划来源:**` 是指向计划原生 Task 锚点的链接 `[Sprint-NNN Task N.M](…/plans/{version}/01_研发执行计划.md#task-n-m)`（编号与锚点取计划原生形态，⛔ 不认也不引导自拟的 `T-NNN-NN`；口径见 dev-manual-testcase `flow-scale-control.md`）
 5. `**承上启下:**` 前一套件 SUITE-NNN 完成后的页面状态
 
 **E 类评级（每类文件按段引用密度统计）**：

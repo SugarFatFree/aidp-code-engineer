@@ -200,12 +200,13 @@ def _validate_required_dirs(root: Path, label: str, error_type) -> None:
             raise error_type(f"{label}缺少真实目录: {dirname}")
 
 
-def render_tree(source_root: Path, destination: Path, home: str) -> None:
+def render_tree(source_root: Path, destination: Path, home: str,
+                directories=RUNTIME_DIRS) -> None:
     """把模板真源渲染到空目标目录。"""
     source_root, destination = Path(source_root), Path(destination)
     _validate_required_dirs(source_root, "运行包真源", RuntimeError)
     destination.mkdir(parents=True, exist_ok=True)
-    for dirname in RUNTIME_DIRS:
+    for dirname in directories:
         source_dir = source_root / dirname
         if not source_dir.is_dir():
             continue
@@ -417,7 +418,18 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
         raise ValueError("运行包 manifest source 非法")
     _validate_version(manifest.get("version"))
     _manifest_user_files(manifest)
-    expected_files = manifest["files"]
+    expected_files = dict(manifest["files"])
+    # 同版本脚本刷新可以保留门控契约的本地修改；受管原始指纹仍在 files，
+    # 此处只校验被显式保留的实际字节，后续跨版本覆盖仍可识别本地修改。
+    local = manifest.get("local_modifications", {})
+    if not isinstance(local, dict):
+        raise ValueError("运行包 manifest local_modifications 必须是对象")
+    _manifest_user_files({"files": local})
+    if any(name not in expected_files or not _user_owned_path(name)
+           or name.split("/", 1)[0] not in L.GATED_DIRS
+           or name in manifest.get("user_files", []) for name in local):
+        raise ValueError("运行包 manifest local_modifications 只能登记受管门控契约")
+    expected_files.update(local)
     actual = {relative: _file_metadata(path) for relative, path in _runtime_files(runtime)}
     # ⛔ 判据是「清单内的文件缺了或变了」，不是「实际集合与清单完全相等」：
     #    运行根降层之后那批目录是**共享的** —— 脚手架 skill 装在 `skills/aidp-code-engineer/`、
@@ -829,8 +841,9 @@ def _restore_owned(previous: Path, destination: Path, replace_func) -> None:
 
 def render_runtime(source_root: Path, destination: Path, home: str, version: str,
                    source: str, backup_callback: Optional[Callable[[Path], Path]] = None,
-                   replace_func: Callable[[object, object], None] = os.replace) -> dict:
-    """在同父唯一事务目录内渲染并原子替换；失败恢复旧包。"""
+                   replace_func: Callable[[object, object], None] = os.replace,
+                   preserve_gated: bool = False) -> dict:
+    """原子替换；同版本 preserve_gated 仅渲染 scripts，保留门控字节和原始指纹。"""
     _validate_source_home(source, home)
     destination = Path(destination)
     boundary = _default_boundary(destination)
@@ -870,7 +883,7 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                             f"（{'、'.join(squatters[:4])}）")
                 expected_destination_digest = tree_digest(destination)
                 # 首次接管（目录已在、但还没装过）无 manifest 可比，谈不上"被改过"。
-                if (destination / RUNTIME_MANIFEST).is_file() and _runtime_modified(destination):
+                if (destination / RUNTIME_MANIFEST).is_file() and (preserve_gated or _runtime_modified(destination)):
                     if backup_callback is None:
                         raise RuntimeError(f"运行包含用户修改，必须先完整备份: {destination}")
                     backup = backup_callback(destination)
@@ -881,7 +894,15 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                     if tree_digest(destination) != expected_destination_digest:
                         raise RuntimeError("备份期间运行包发生并发修改，拒绝替换")
 
-            contract = {relative for relative, _p in _source_contract_files(Path(source_root))}
+            old_manifest = _read_manifest(destination) if preserve_gated else None
+            contract = {relative for relative, _p in _source_contract_files(Path(source_root))
+                        if not preserve_gated or relative.split("/", 1)[0] in L.UNGATED_DIRS}
+            if old_manifest is not None:
+                if old_manifest.get("version") != version:
+                    raise ValueError("仅同版本运行包可以保留门控契约")
+                contract.update(name for name in old_manifest["files"]
+                                if name.split("/", 1)[0] in L.GATED_DIRS
+                                and name not in old_manifest.get("user_files", []))
             # 用户物叠加要读上一版 manifest —— 只有**装过**才有。运行根降层后目录本身可能
             # 早已存在（Agent 标记目录），按"目录在不在"触发会去读不存在的 manifest。
             overlay = (_user_overlay(destination, home, source, contract)
@@ -904,7 +925,20 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                         overlay[relative] = entry
 
             stage.mkdir(parents=True, exist_ok=False)
-            render_tree(Path(source_root), stage, home)
+            render_tree(Path(source_root), stage, home,
+                        directories=L.UNGATED_DIRS if preserve_gated else RUNTIME_DIRS)
+            if old_manifest is not None:
+                for dirname in RUNTIME_DIRS:
+                    (stage / dirname).mkdir(exist_ok=True)
+                for relative in old_manifest["files"]:
+                    if relative.split("/", 1)[0] not in L.GATED_DIRS:
+                        continue
+                    original = _assert_contained(destination / relative, destination)
+                    if not original.is_file():
+                        raise ValueError(f"门控契约缺失，无法在同版本 scripts 刷新中重建: {relative}")
+                    target = stage / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(original, target)
             for relative, entry in sorted(overlay.items()):
                 target = stage / relative
                 if target.exists() and relative not in L.USER_FILLABLE_CONTRACTS:
@@ -925,6 +959,16 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                 stage, version=version, source=source, home=home)
             if overlay:
                 manifest["user_files"] = sorted(overlay)
+            if old_manifest is not None:
+                local = {}
+                for relative, baseline in old_manifest["files"].items():
+                    if relative.split("/", 1)[0] not in L.GATED_DIRS or relative in overlay:
+                        continue
+                    if manifest["files"][relative] != baseline:
+                        local[relative] = manifest["files"][relative]
+                    manifest["files"][relative] = baseline
+                if local:
+                    manifest["local_modifications"] = local
             _write_manifest(stage, manifest)
             validate_runtime(stage, expected_home=home)
             if counterpart is not None and tree_digest(counterpart) != counterpart_digest:
@@ -936,9 +980,20 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                 #    此时必须让 finally 的回滚接手。置位放在搬完之后 = 中途失败无人兜底。
                 moved_old = True
                 _park_owned(destination, previous, replace_func)
+            installed = []
+
+            def install_entry(src, dst):
+                installed.append(Path(dst))
+                replace_func(src, dst)
+
             try:
-                _install_owned(stage, destination, replace_func)
+                _install_owned(stage, destination, install_entry)
             except Exception:
+                # 新增脚本没有 previous 对应项；恢复旧条目前先删掉本轮已搬入的条目，
+                # 否则失败后会残留新文件，而旧 manifest 完全看不见它。
+                for target in reversed(installed):
+                    if _lexists(target):
+                        remove_tree_safely(target, boundary=destination)
                 if moved_old:
                     _restore_owned(previous, destination, replace_func)
                     moved_old = False

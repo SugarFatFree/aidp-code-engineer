@@ -878,7 +878,7 @@ def check_flow_slice_size(root: Path, r: VerifyResult):
     flows = _contract_root(root) / "flows"
     if not flows.is_dir():
         return
-    exempt = {"invariants.md", "usage-guard.md", "rationale.md", "README.md"}
+    exempt = {"invariants.md", "usage-guard.md", "rationale.md", "output-examples.md", "README.md"}
     limit, warn_at = 20480, 20200
     over, near = [], []
     for p in sorted(flows.rglob("*.md")):

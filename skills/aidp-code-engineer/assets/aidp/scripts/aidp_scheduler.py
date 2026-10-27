@@ -19,6 +19,7 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
     uninstall  [--platform P] [--dry-run] [--json]
     status     [--platform P] [--json]
     watchdog   [--quiet] [--json]          # 心跳巡检：定时唤醒时无心跳从首次巡检起计时，超时告警
+    tick-result --command C --rc N [--tick-max S] [--log P]   # agent_loop 每轮结束调用：超时记账 + 连续超时告警
     --self-check
 
 平台（`--platform` 缺省自动判定）：
@@ -66,6 +67,14 @@ PLATFORMS = ("systemd", "cron", "launchd", "schtasks")
 BASELINE_REL = os.path.join("memory", ".sprint-autopilot-baseline.json")
 ALERTS_REL = os.path.join("memory", ".aidp", "alerts.jsonl")
 WATCHDOG_STATE_REL = os.path.join("memory", ".aidp", "scheduler-watchdog.json")
+# 各链路连续 tick 超时计数（agent_loop 每轮结束经 `tick-result` 维护；非超时轮清零）
+TICK_TIMEOUT_STATE_REL = os.path.join("memory", ".aidp", "tick-timeouts.json")
+# 连续超时多少次升级为告警通知（每满一个周期再发一次，避免每轮刷屏）
+try:
+    TICK_TIMEOUT_ALERT_AFTER = max(1, int(os.environ.get("AIDP_TICK_TIMEOUT_ALERT_AFTER", "3") or 3))
+except ValueError:
+    TICK_TIMEOUT_ALERT_AFTER = 3
+TIMEOUT_RCS = (124, 137)
 CRON_MARK = "# AIDP-SCHEDULER"
 GRACE_SECONDS = 300
 
@@ -336,6 +345,75 @@ def resolve_intervals(root, a):
     return out
 
 
+# Claude Code headless（`claude -p`）下未预授权即被拒的工具：tick 至少要跑脚本、派子 Agent
+CLAUDE_REQUIRED_ALLOW = ("Bash", "Agent")
+
+
+def _claude_allow_gaps(root):
+    """`.claude/settings.json` 的 permissions.allow 未覆盖的必需工具（读不到配置视为全缺）。"""
+    allow, deny = [], []
+    for path in (os.path.expanduser("~/.claude/settings.json"),
+                 os.path.join(root, ".claude", "settings.json"),
+                 os.path.join(root, ".claude", "settings.local.json")):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                permissions = (json.load(fh) or {}).get("permissions") or {}
+            allow.extend(permissions.get("allow") or [])
+            deny.extend(permissions.get("deny") or [])
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+    # 细粒度规则不证明整轮可执行（Bash(python3:*) 不能覆盖 git/curl）；仍提示人工核验。
+    return [t for t in CLAUDE_REQUIRED_ALLOW if t not in allow
+            or any(isinstance(x, str) and (x == t or x.startswith(t + "(")) for x in deny)]
+
+
+def _env_file_has(key):
+    """`~/.config/aidp/env`（agent_loop 每轮加载）里是否给了非空的 KEY。"""
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".config", "aidp", "env"), encoding="utf-8") as fh:
+            return any(ln.strip().startswith(key + "=") and ln.strip()[len(key) + 1:].strip()
+                       for ln in fh)
+    except OSError:
+        return False
+
+
+def install_preflight(root, agent, plat):
+    """装配前预检 → (errors, warnings)。
+
+    ⛔ 装上一个注定跑不起来的定时任务比不装更糟：每轮都失败、而失败只落在没人看的日志里。
+    """
+    errors, warns = [], []
+    if plat in ("systemd", "cron", "launchd"):
+        if not shutil.which("flock"):
+            try:
+                import fcntl  # noqa: F401
+                warns.append("未找到 flock 命令：agent_loop 将退回 python3 fcntl 加锁")
+            except ImportError:
+                errors.append("既无 flock 命令也无 python3 fcntl：agent_loop 无法互斥，定时任务每轮都会拒绝执行")
+        if not (shutil.which("timeout") or shutil.which("gtimeout")):
+            warns.append("未找到 timeout / gtimeout：agent_loop 将用 python3 回退实现 tick 硬超时"
+                         "（macOS 可 `brew install coreutils` 获得 gtimeout）")
+    cfg = scheduler_config(root)
+    eff = (os.environ.get("AIDP_AGENT") or agent).split(",", 1)[0]
+    if eff == "auto":
+        try:
+            import agent_env
+            eff = (agent_env.detect_agents(root) or ["claude"])[0]
+        except Exception:  # noqa: BLE001 —— 判不出就不做按 Agent 的检查
+            eff = ""
+    if eff == "dsh" and not (os.environ.get("AIDP_AGENT_EXEC") or (cfg.get("exec") or {}).get("dsh")
+                             or _env_file_has("AIDP_AGENT_EXEC")):
+        errors.append("Agent=dsh 没有内置的非交互执行命令：请先在 memory/aidp-config.yaml 的 "
+                      "scheduler.exec.dsh 配置（{prompt} 为占位符），否则每轮 agent_loop 都会 exit 2")
+    if eff == "claude":
+        gaps = _claude_allow_gaps(root)
+        if gaps:
+            warns.append(f"permissions.allow 尚不能确认覆盖 {'/'.join(gaps)}（含用户级与项目级配置）："
+                         "请核验所需 Bash/Agent 与 MCP 细粒度规则及 deny；headless 未授权调用会被拒。"
+                         "安装器只读检查，不改权限、不注入权限绕过参数")
+    return errors, warns
+
+
 def do_install(root, a):
     cfg = scheduler_config(root)
     agent = a.agent or cfg.get("agent") or "auto"
@@ -343,6 +421,11 @@ def do_install(root, a):
     plat = a.platform or detect_platform()
     res = {"action": "install", "platform": plat, "root": root, "agent": agent,
            "intervals": intervals, "dry_run": bool(a.dry_run), "files": {}, "commands": [], "notes": []}
+    errs, warns = install_preflight(root, agent, plat)
+    res["warnings"] = warns
+    if errs:
+        res["error"] = "；".join(errs)
+        return 2, res
     if plat == "systemd":
         files = render_systemd(root, agent, intervals)
         res["files"] = files
@@ -448,17 +531,42 @@ def _parse_ts(v):
     return dt
 
 
-def lock_hold_age(root, command):
+def lock_started_at(path):
+    """持锁方写进锁文件的本轮起点（epoch 秒）；读不到返回 None。
+
+    写方：`agent_loop.sh` 取得锁**之后**写 `{"owner":"agent_loop","started_at":…}`，
+    直接 tick 的持久占位（`autopilot_tick_flags.py parse`）写同一格式。
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read().strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        v = json.loads(raw)
+        v = v.get("started_at") if isinstance(v, dict) else v
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def lock_hold_age(root, command, now=None):
     """锁被持有了多久（秒）。未被持有返回 None。
 
-    ★ 判据取锁文件 mtime：`agent_loop.sh` 每轮用 `9>"$lock"` 打开（truncate），
-    于是 mtime ≈ 本轮 tick 的起点。
+    ★ 判据优先取锁文件内容里的 `started_at`（持锁方取得锁后写入）；内容缺失时退回 mtime。
+    ⛔ 不能只看 mtime：旧版 agent_loop 用 `9>"$lock"` 在 flock **之前**截断打开，
+    每次「上一轮仍在运行，跳过」都会刷新 mtime → 持锁时长恒 ≈ 一个调度周期 → 挂死永不判出。
     """
     if not lock_held(root, command):
         return None
     p = os.path.join(root, "memory", ".aidp", "locks", f"loop-{command}.lock")
+    started = lock_started_at(p)
     try:
-        return max(0, int(time.time() - os.path.getmtime(p)))
+        if started is None:
+            started = os.path.getmtime(p)
+        return max(0, int((time.time() if now is None else now.timestamp()) - started))
     except OSError:
         return None
 
@@ -473,12 +581,20 @@ def lock_held(root, command):
     except ImportError:
         return False
     try:
-        with open(p, "a") as fh:
+        with open(p, "a+", encoding="utf-8") as fh:
             try:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 return True
+            # 直接 tick 的持久占位跨工具调用保留，只有 finish 才清除。
+            fh.seek(0)
+            try:
+                rec = json.loads(fh.read() or "{}")
+                reserved = isinstance(rec, dict) and rec.get("owner") == "session"
+            except ValueError:
+                reserved = False
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            return reserved
     except OSError:
         return False
     return False
@@ -508,14 +624,14 @@ def heartbeat_report(root, now=None, intervals=None):
         out[chain] = {"command": meta["command"], "heartbeat_key": meta["heartbeat"],
                       "heartbeat_at": raw, "age_seconds": age, "threshold_seconds": threshold,
                       "state": "unknown" if dt is None else ("stale" if age > threshold else "fresh")}
-        if out[chain]["state"] == "stale" and lock_held(root, meta["command"]):
+        if lock_held(root, meta["command"]):
             # ⛔ 「持锁 = 正在跑」**不能无上限**：Agent 进程挂死（网络悬停 / 模型侧无响应 /
             #    等一个永不回来的工具结果）时锁被永久持有，后续每次调度都被
             #    `agent_loop.sh` 的 `flock -n` 判成「上一轮仍在运行，跳过」，而这里又判
             #    `running` —— 于是**永不 stale、永不告警、告警台账一行不写**。
             #    tick 内部的 stuck 熔断也救不了：那跑在 tick 里，而 tick 根本没开始。
             #    净效果 = 整条链路静默停摆、零信号、无恢复路径（G-AUTOPILOT-6 的非法形态）。
-            hold = lock_hold_age(root, meta["command"])
+            hold = lock_hold_age(root, meta["command"], now=now)
             out[chain]["lock_hold_seconds"] = hold
             out[chain]["lock_hung_threshold_seconds"] = hung_threshold
             if hold is not None and hold > hung_threshold:
@@ -587,7 +703,9 @@ def do_watchdog(root, a, now=None, send_notify=True):
                 f"{label}（{r['command']}）本轮 tick 已持锁 {(r.get('lock_hold_seconds') or 0) // 60} 分钟"
                 f"未结束（上限 {(r.get('lock_hung_threshold_seconds') or 0) // 60} 分钟，{last}）——"
                 "疑似 Agent 进程挂死，后续每轮调度都会被互斥锁跳过、链路已静默停摆。"
-                "处置：杀掉该 tick 进程（或删 memory/.aidp/locks/loop-<命令>.lock 后重启调度），"
+                "处置：确认原 tick 已停止；OS tick 终止后会释放 flock，直接 tick 用其原 token 调 "
+                "autopilot_tick_flags.py finish --command <链路> --lock-token <原token>。"
+                "禁止删除锁文件（会形成两把不同 inode 的锁并放行并发）。"
                 "再跑 python3 __AIDP_HOME__/scripts/aidp_scheduler.py status 复核", __file__))
         else:
             msg = (runtime_text(f"{label}（{r['command']}）已 {r['age_seconds'] // 60} 分钟无心跳"
@@ -619,6 +737,70 @@ def do_watchdog(root, a, now=None, send_notify=True):
     except OSError:
         pass
     return (3 if stale else 0), {"action": "watchdog", "chains": rep, "stale": stale, "alerted": alerted}
+
+
+def do_tick_result(root, a, send_notify=True):
+    # 开发/测试由不同进程并发结束，计数共享一份文件，必须锁内重读并原子替换。
+    from baseline_edit import LockedBaseline
+    state_p = os.path.join(root, TICK_TIMEOUT_STATE_REL)
+    with LockedBaseline(state_p, write=True) as locked:
+        if not isinstance(locked.data, dict):
+            raise ValueError("tick timeout 状态必须是 JSON 对象")
+        return _tick_result(root, a, locked.data, send_notify=send_notify)
+
+
+def _tick_result(root, a, state, send_notify=True):
+    """agent_loop 每轮结束调用：超时（rc 124/137）→ 告警台账 + 连续计数，达阈发告警通知；否则清零。
+
+    ⛔ 超时只写日志 + stderr 等于没告警：cron 丢弃 stderr，而被杀的 tick 往往连 run_state
+    都没来得及写，下一轮原样重跑同一段 —— 每 tick_max 秒静默重来一遍、永不熔断。
+    """
+    cmd = a.command or ""
+    rc = int(a.rc)
+    cur = state.get(cmd) if isinstance(state.get(cmd), dict) else {}
+    res = {"action": "tick-result", "command": cmd, "rc": rc, "timed_out": rc in TIMEOUT_RCS,
+           "streak": 0, "alerted": False, "notified": False}
+    if rc not in TIMEOUT_RCS:
+        if cur.get("streak"):
+            state.pop(cmd, None)
+        return 0, res
+    streak = int(cur.get("streak") or 0) + 1
+    now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    state[cmd] = {"streak": streak, "last_at": now_iso, "last_rc": rc,
+                  "first_at": cur.get("first_at") or now_iso}
+    label = next((m["label"] for m in CHAINS.values() if m["command"] == cmd), cmd)
+    msg = (f"{label}（{cmd}）本轮 tick 超过 {a.tick_max}s 上限被终止（rc={rc}，连续第 {streak} 次）"
+           + (f"，日志 {a.log}" if a.log else "")
+           + "。被杀的 tick 多半没写 run_state，下一轮会重跑同一段；"
+           "请查日志定位卡点（大 Sprint / 挂死的工具调用 / 网络悬停）")
+    _append_alert(root, {"at": now_iso, "source": "agent_loop", "kind": "loop-tick-timeout",
+                         "command": cmd, "rc": rc, "tick_max_seconds": a.tick_max,
+                         "streak": streak, "log": a.log or None, "message": msg})
+    sys.stderr.write(f"🚨 [AIDP-ALERT] {msg}\n")
+    res.update(streak=streak, alerted=True)
+    n = max(1, TICK_TIMEOUT_ALERT_AFTER)
+    if streak >= n and (streak - n) % n == 0:
+        res["notified"] = True
+        if send_notify:
+            notify = os.path.join(root, runtime_relpath("", __file__), "scripts", "notify.py")
+            if os.path.isfile(notify):
+                try:
+                    subprocess.run([sys.executable, notify, "--auto", "--alert", "--header-color", "red",
+                                    "--title", f"{label} tick 连续 {streak} 次超时",
+                                    "--section", msg, "--repo-root", root],
+                                   capture_output=True, text=True, timeout=90, cwd=root)
+                except (OSError, subprocess.SubprocessError):
+                    pass          # 通知失败不阻断：告警台账已落
+    return (3 if streak >= n else 0), res
+
+
+def _write_json(path, data):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+    except OSError:
+        pass
 
 
 def do_status(root, a):
@@ -724,6 +906,8 @@ def _print(res, as_json, quiet=False):
             print("  $ " + (c if isinstance(c, str) else " ".join(c)))
         for n in res.get("notes") or []:
             print("  ℹ️ " + n)
+        for w in res.get("warnings") or []:
+            print("  ⚠️ " + w)
     elif act == "status":
         print(f"platform={res['platform']} slug={res['slug']}")
         for k, v in res["installed"].items():
@@ -737,7 +921,7 @@ def _print(res, as_json, quiet=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="AIDP 7×24 操作系统调度装配（开发链路 + 测试链路）")
-    ap.add_argument("action", nargs="?", choices=("install", "uninstall", "status", "watchdog"))
+    ap.add_argument("action", nargs="?", choices=("install", "uninstall", "status", "watchdog", "tick-result"))
     ap.add_argument("--agent", choices=("auto", "claude", "codex", "dsh"), default=None)
     ap.add_argument("--dev-interval", dest="dev_interval", default=None)
     ap.add_argument("--test-interval", dest="test_interval", default=None)
@@ -746,6 +930,10 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--command", default=None, help="tick-result：链路命令名（如 sprint-autopilot）")
+    ap.add_argument("--rc", type=int, default=None, help="tick-result：本轮 tick 退出码")
+    ap.add_argument("--tick-max", dest="tick_max", default="", help="tick-result：本轮硬超时秒数（仅用于告警文案）")
+    ap.add_argument("--log", default="", help="tick-result：本轮日志路径（仅用于告警文案）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true")
     a = ap.parse_args(argv)
@@ -762,6 +950,11 @@ def main(argv=None):
             rc, res = do_uninstall(root, a)
         elif a.action == "status":
             rc, res = do_status(root, a)
+        elif a.action == "tick-result":
+            if not a.command or a.rc is None:
+                sys.stderr.write("⛔ tick-result 需要 --command 与 --rc\n")
+                return 2
+            rc, res = do_tick_result(root, a)
         else:
             rc, res = do_watchdog(root, a)
     except ValueError as e:

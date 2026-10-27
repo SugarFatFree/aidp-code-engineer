@@ -1381,9 +1381,23 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
             command = root / ".claude/commands/sprint-dev.md"
             command.write_text("团队修改\n", encoding="utf-8")
             result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
-            self.assertNotEqual(command.read_text(), "团队修改\n")
+            self.assertEqual(command.read_text(), "团队修改\n")
             self.assertEqual((root / result["backup"] / ".claude/commands/sprint-dev.md").read_text(),
                              "团队修改\n")
+            manifest = runtime_layout.validate_runtime(root / ".claude", expected_home=".claude")
+            self.assertNotEqual(manifest["files"]["commands/sprint-dev.md"],
+                                runtime_layout._file_metadata(command), "本地改动不得覆盖受管基线")
+            self.assertEqual(manifest["local_modifications"]["commands/sprint-dev.md"],
+                             runtime_layout._file_metadata(command))
+            self.assertNotIn("commands/sprint-dev.md", result["local_overwritten"])
+            second = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertEqual(command.read_text(), "团队修改\n")
+            self.assertFalse(any(a["op"] == "install" and a["path"] == ".claude/"
+                                 for a in second["actions"]))
+            scaffold_marker.write_version(root, "V0.0.1")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertNotEqual(command.read_text(), "团队修改\n")
+            self.assertIn("commands/sprint-dev.md", result["local_overwritten"])
 
     def test_agent_set_change_removes_only_unused_managed_runtime(self):
         with H.TempRepo() as root:
@@ -1415,6 +1429,145 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
             backed_up = root / result["backup"] / ".claude/skills/aidp-code-engineer"
             self.assertEqual((backed_up / "team-notes.txt").read_text(), "团队修改\n")
             self.assertEqual((backed_up / "SKILL.md").read_text(), "旧脚手架正文\n")
+
+    def test_same_version_upgrade_refreshes_ungated_scripts(self):
+        """`scripts/` 不受版本门控：同版本 bundle 修了脚本，upgrade 也必须下发（manifest 自洽也不能跳过）。"""
+        import json as _json
+        import runtime_layout as RL
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            runtime = root / ".claude"
+            target = runtime / "scripts/notify.py"
+            fresh = target.read_bytes()
+            target.write_bytes(fresh + b"# \xe6\x97\xa7\xe7\x89\x88\n")   # 模拟同版本旧 bundle 装进来的脚本
+            manifest_path = runtime / RL.RUNTIME_MANIFEST
+            manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["files"]["scripts/notify.py"] = RL._file_metadata(target)   # 已装与 manifest 自洽
+            RL._write_manifest(runtime, manifest)
+            # 同版本已安装的 command 也落后于 bundle；脚本更新不得越过门控。
+            command = runtime / "commands/sprint-dev.md"
+            old_command = command.read_bytes() + b"\nold installed command\n"
+            command.write_bytes(old_command)
+            manifest["files"]["commands/sprint-dev.md"] = RL._file_metadata(command)
+            RL._write_manifest(runtime, manifest)
+            RL.validate_runtime(runtime, expected_home=".claude")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertEqual(target.read_bytes(), fresh, "同版本 upgrade 未下发 bundle 里的新脚本")
+            self.assertEqual(command.read_bytes(), old_command, "脚本更新越过了 command 版本门控")
+            installed = RL.validate_runtime(runtime, expected_home=".claude")
+            self.assertEqual(installed["files"]["commands/sprint-dev.md"],
+                             manifest["files"]["commands/sprint-dev.md"])
+            self.assertEqual(installed["files"]["scripts/notify.py"], RL._file_metadata(target))
+            self.assertTrue(result["backup"], "同版本覆盖已有脚本前也必须备份")
+            self.assertEqual((root / result["backup"] / ".claude/scripts/notify.py").read_bytes(),
+                             fresh + "# 旧版\n".encode())
+            self.assertNotIn("scripts/notify.py", result["local_overwritten"],
+                             "旧安装版本与本地修改必须区分")
+
+    def test_same_version_scripts_update_keeps_dual_gated_contract_and_user_files(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude,codex", "--user", "alice")
+            originals = {}
+            for home in (".claude", ".agents"):
+                runtime = root / home
+                command = runtime / "commands/sprint-dev.md"
+                command.write_bytes(command.read_bytes() + b"\nold installed contract\n")
+                manifest = runtime_layout._read_manifest(runtime)
+                manifest["files"]["commands/sprint-dev.md"] = runtime_layout._file_metadata(command)
+                runtime_layout._write_manifest(runtime, manifest)
+                originals[home] = command.read_bytes()
+                script = runtime / "scripts/notify.py"
+                script.write_bytes(script.read_bytes() + b"\n# local script edit\n")
+            private = root / ".claude/scripts/team-helper.py"
+            private.write_text("# team helper\n", encoding="utf-8")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude,codex")
+            for home in (".claude", ".agents"):
+                runtime = root / home
+                self.assertEqual((runtime / "commands/sprint-dev.md").read_bytes(), originals[home])
+                self.assertNotIn(b"local script edit", (runtime / "scripts/notify.py").read_bytes())
+                self.assertEqual((runtime / "scripts/team-helper.py").read_bytes(), b"# team helper\n")
+                runtime_layout.validate_runtime(runtime, expected_home=home)
+                self.assertIn(b"local script edit",
+                              (root / result["backup"] / home / "scripts/notify.py").read_bytes())
+            self.assertIn("scripts/notify.py", result["local_overwritten"])
+            for home in (".claude", ".agents"):
+                expected = runtime_layout.rendered_from_source(S._runtime_source(), home)
+                for relative, entry in expected.items():
+                    if relative.startswith("scripts/"):
+                        self.assertEqual((root / home / relative).read_bytes(), entry["content"], relative)
+
+    def test_same_version_script_update_rolls_back_both_packages_on_adapter_failure(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude,codex", "--user", "alice")
+            for home in (".claude", ".agents"):
+                script = root / home / "scripts/notify.py"
+                script.write_bytes(script.read_bytes() + b"\n# local script edit\n")
+            before = {home: S._complete_tree_state(root / home) for home in (".claude", ".agents")}
+            with mock.patch.object(S, "run_agent_sync", side_effect=RuntimeError("adapter failed")):
+                with self.assertRaisesRegex(RuntimeError, "adapter failed"):
+                    S.run(root, self._options("upgrade", "claude,codex"))
+            for home, state in before.items():
+                self.assertEqual(S._complete_tree_state(root / home), state)
+
+    def test_memory_skeleton_refresh_ignores_date_and_preserves_filled_content(self):
+        with H.TempRepo() as root:
+            assets = root / "fixture-assets"
+            shutil.copytree(L.ASSETS / "memory", assets / "memory")
+            ctx = dict(project="demo", project_cn="demo", user="alice", version="V0.1.0", date="2026-01-01")
+            with mock.patch.object(L, "ASSETS", assets):
+                rep = S.Report()
+                S.sync_memory(root, ctx, False, rep, S.Backup(root, rep))
+                untouched = root / "memory/techContext.md"
+                original = untouched.read_bytes()
+                filled = root / "memory/projectBrief.md"
+                filled.write_bytes(filled.read_bytes() + "\n团队填写的背景\n".encode())
+                filled_original = filled.read_bytes()
+                ctx["date"] = "2026-01-02"
+                rep = S.Report()
+                S.sync_memory(root, ctx, True, rep, S.Backup(root, rep))
+                self.assertEqual(untouched.read_bytes(), original, "日期变化不应刷新骨架")
+                self.assertEqual(filled.read_bytes(), filled_original)
+                self.assertEqual(rep.actions, [], "日期变化不应制造更新或改写待办")
+                for tpl, _rel in L.MEMORY_TEMPLATES:
+                    source = assets / "memory" / tpl
+                    source.write_bytes(source.read_bytes() + b"\nnew skeleton section\n")
+                rep = S.Report()
+                bk = S.Backup(root, rep)
+                S.sync_memory(root, ctx, True, rep, bk)
+                self.assertIn(b"new skeleton section", untouched.read_bytes())
+                self.assertEqual((bk.dir / "memory/techContext.md").read_bytes(), original)
+                self.assertEqual(filled.read_bytes(), filled_original)
+                self.assertIn("memory/projectBrief.md", {e.split("\t")[0] for e in L.queue_entries(root)})
+                refreshed = untouched.read_bytes()
+                ctx["date"] = "2026-01-03"
+                rep = S.Report()
+                S.sync_memory(root, ctx, True, rep, S.Backup(root, rep))
+                self.assertEqual(untouched.read_bytes(), refreshed)
+                # 完成语义合并后，收口器须推进原始模板指纹；再次升级不能重复入队。
+                filled.write_bytes(filled.read_bytes() + b"\nmerged skeleton section\n")
+                final = H.run_script("finalize_upgrade.py", "--root", root, "--json", check=False)
+                self.assertEqual(final.returncode, 0, final.stdout + final.stderr)
+                self.assertFalse(L.queue_entries(root))
+                rep = S.Report()
+                S.sync_memory(root, ctx, True, rep, S.Backup(root, rep))
+                self.assertFalse(L.queue_entries(root), "已完成语义合并却在下一次升级重复入队")
+
+    def test_upgrade_refreshes_unfilled_skeletons_and_keeps_filled(self):
+        """项目级 memory / 架构约束骨架：装上后没填过 ⇒ 升级刷新为新骨架；填过 ⇒ 原样保留。"""
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            stale = "# 旧版骨架\n\n（待填写）\n"
+            for rel in ("memory/techContext.md", "docs/architecture/技术选型.md"):
+                (root / rel).write_text(stale, encoding="utf-8")
+                L.uf_record(root, rel, (root / rel).read_bytes())   # 模拟上一版写入、项目从未改过
+                if rel.startswith("memory/"):
+                    L.uf_record(root, f"template:{rel}", stale.encode())
+            filled = root / "memory/projectBrief.md"
+            filled.write_text(filled.read_text(encoding="utf-8") + "\n团队填写的项目背景\n", encoding="utf-8")
+            scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            for rel in ("memory/techContext.md", "docs/architecture/技术选型.md"):
+                self.assertNotEqual((root / rel).read_text(encoding="utf-8"), stale, f"{rel} 未刷新")
+            self.assertIn("团队填写的项目背景", filled.read_text(encoding="utf-8"))
 
     @staticmethod
     def _options(mode, agents):

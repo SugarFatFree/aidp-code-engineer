@@ -51,7 +51,7 @@ import os
 import re
 import sys
 
-ATTACH = {"rationale.md", "invariants.md", "usage-guard.md", "README.md"}
+ATTACH = {"rationale.md", "invariants.md", "usage-guard.md", "output-examples.md", "README.md"}
 IGNORE_LINE = re.compile(r"<!--\s*stepindex-check:\s*ignore\s*-->")
 IGNORE_FILE = re.compile(r"<!--\s*stepindex-check:\s*ignore-file\s*-->")
 

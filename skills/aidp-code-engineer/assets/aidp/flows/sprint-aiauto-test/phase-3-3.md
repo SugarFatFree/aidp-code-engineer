@@ -112,22 +112,29 @@ for f in bad[:5]: print('   ⛔', '[%s] %s' % (f.get('level') or '?', str(f.get(
 >   "docs/testing/${TARGET_VERSION}/正式用例" "docs/testing/${TARGET_VERSION}/测试验收" "docs/testing/${TARGET_VERSION}/测试执行" "docs/testing/${TARGET_VERSION}/研发自测" 2>/dev/null | wc -l)
 > # ★ 统计必须走 SKILL 的 gen_report.py 聚合，⛔ 不得手工累加（rationale.md「统计为何必须走 gen_report.py」）
 > GR={{AIDP_HOME}}/skills/auto-test-runner/scripts/gen_report.py
+> # 每轮先重置：缺脚本/缺 round/解析失败均不沿用上次 shell 的通过数。
+> GR_UNTRUSTED=1; THIS_ROUND_FAIL_COUNT=""; THIS_ROUND_BLOCK=0; J=""
 > RD=$(ls -d "docs/reports/${TARGET_VERSION}/AI测试报告/build-${BUILD}"/round-* 2>/dev/null | sort -V | tail -1)
-> [ -f "$GR" ] && [ -n "$RD" ] && { J=$(python3 "$GR" "$RD" --json 2>/dev/null)
+> [ -f "$GR" ] && [ -n "$RD" ] && { J=$(python3 "$GR" "$RD" --json 2>/dev/null); GR_EXIT=$?
+>   # ★ 退出码与 read_errors 必须消费（口径以 gen_report.py 文件头为准）：1 = 存在无证据的 verified/self-heal pass，
+>   #   2 = 输入错误 / 任一结果 JSON 不可读（其余文件照常聚合 ⇒ counts 看着完整、实则缺条目）。
+>   #   ⛔ 只取 counts 不看退出码 = 坏文件里的 fail/block 静默蒸发、无证据 pass 照样判收敛。
+>   GR_READ_ERR=$(echo "$J"|jq -r '(.read_errors // []) | length' 2>/dev/null); GR_READ_ERR=${GR_READ_ERR:--1}
+>   if [ "$GR_EXIT" -ne 0 ] || [ "$GR_READ_ERR" != "0" ]; then GR_UNTRUSTED=1
+>     echo "⛔ gen_report.py exit=${GR_EXIT} / read_errors=${GR_READ_ERR}（统计不完整或存在无证据 pass）→ 本轮结论不成立，按未收敛处置"
+>   else GR_UNTRUSTED=0; fi
 >   THIS_ROUND_FAIL_COUNT=$(echo "$J"|jq -r '.counts.fail // empty'); THIS_ROUND_NA=$(echo "$J"|jq -r '.counts.na // 0')
 >   # ★ 上游 I7：direct 模式的 pass 缺轻量事实（实际值/元素文案/列表计数/产物路径）→ Important、不阻断，
 >   #   但**必须让人看见**——否则"跑过且通过"与"跳过后填了 pass"在报告上无从区分。
 >   THIS_ROUND_DIRECT_NOEV=$(echo "$J"|jq -r '(.direct_pass_without_evidence // []) | length')
->   # ★ 判据 3「覆盖率 100%」的**可执行落点**：没有它，40 条 block / 0 条 fail 会判「✅ 通过」
->   #   并一路发绿色通知、写 tested、归档 —— 一个只真正跑通两条用例的版本就这样发布出去。
->   # ⛔ 有豁免依据的用例应标 `na`（豁免清单，不进分母），**不是** `block`：block = 该跑而没跑到。
+>   # 覆盖率门必须计 block：该跑而没跑到；有豁免依据应标 na，不进分母。
 >   THIS_ROUND_BLOCK=$(echo "$J"|jq -r '.counts.block // 0'); }
 > # ★ 不计入收敛判据的 block：环境类（走环境冻结/复探路径）与待人工确认项（pending_clarifications 影响用例）。
 > #   ⛔ precondition-unmet 仍计入：「有权限造数据却没造」与「真造不出」在枚举上同形，只能逐条复评。
 > EXCLUDED_BLOCK=$(python3 - "$RD" "$TARGET_VERSION" <<'PY' 2>/dev/null || echo 0
 > import json, sys, glob, os
 > sys.path.insert(0, "{{AIDP_HOME}}/skills/auto-test-runner/scripts")
-> from gen_report import load_results, is_env_issue
+> from gen_report import load_results, is_env_issue, split_entries
 > rd, v = sys.argv[1], sys.argv[2]
 > try:
 >     bl = json.load(open("memory/.sprint-autopilot-baseline.json", encoding="utf-8"))
@@ -135,13 +142,17 @@ for f in bad[:5]: print('   ⛔', '[%s] %s' % (f.get('level') or '?', str(f.get(
 >     bl = {}
 > pend = {c for it in ((bl.get("versions") or {}).get(v) or {}).get("pending_clarifications") or []
 >         for c in (it.get("affected_cases") or [])}
-> n = sum(1 for r in load_results(rd) if r.get("status") == "block" and (
+> # ★ 先经 split_entries 剔除自由巡检项：THIS_ROUND_BLOCK 取自 counts.block（已不含巡检项），
+> #   此处若把巡检 block 也算进来，相减会**抵消真实用例的 block** ⇒ 覆盖率门被巡检页数量"刷"开。
+> cases, _scans = split_entries(load_results(rd))
+> n = sum(1 for r in cases if r.get("status") == "block" and (
 >     (is_env_issue(r) and r.get("block_reason") != "precondition-unmet") or r.get("case_id") in pend))
 > print(n)
 > PY
 > )
 > CASE_LEDGER_PENDING=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get case_ledger_pending --default 0)
 > if [ -z "${THIS_ROUND_FAIL_COUNT+x}" ] || [ -z "${THIS_ROUND_FAIL_COUNT}" ]; then echo "⛔ 未从 gen_report.py 聚合到 fail 数 → fail-closed 判未收敛"; CONVERGED=0
+> elif [ "${GR_UNTRUSTED:-0}" = "1" ]; then echo "⛔ gen_report.py 非 0 退出或 read_errors 非空 → 统计不可信，不收敛"; CONVERGED=0
 > elif [ "${CASE_LEDGER_PENDING:-0}" -gt 0 ]; then echo "⛔ 用例台账仍有 ${CASE_LEDGER_PENDING} 条待执行（case_ledger_pending）→ 不收敛"; CONVERGED=0
 > elif [ "$(( ${THIS_ROUND_BLOCK:-1} - ${EXCLUDED_BLOCK:-0} ))" -gt 0 ]; then echo "⛔ 本轮仍有 $(( THIS_ROUND_BLOCK - EXCLUDED_BLOCK )) 条 block（该跑而没跑到；已排除环境类/待确认 ${EXCLUDED_BLOCK:-0} 条）→ 判据 3 覆盖率未达 100%，不收敛"; CONVERGED=0
 > elif [ "$THIS_ROUND_FAIL_COUNT" -eq 0 ] && [ "$OPEN_BUGS" -eq 0 ]; then CONVERGED=1; else CONVERGED=0; fi   # 三条同时满足才收敛>
@@ -169,37 +180,31 @@ for f in bad[:5]: print('   ⛔', '[%s] %s' % (f.get('level') or '?', str(f.get(
 > fi
 > $BEV bump aiauto_test_round >/dev/null
 > # ⛔ 分属两层：status=build 级，aiauto_tested_at=**版本级**（三个读侧全读版本层，见 rationale.md「tested 写错层」）
-> [ -n "$BUILD" ] && $BEV --build "$BUILD" set status tested
+> [ "$GR_UNTRUSTED" = "0" ] && [ -n "$BUILD" ] && $BEV --build "$BUILD" set status tested
 > # ★ 子集轮不得写 `aiauto_tested_at`：它是「整版已验收」的判据（autopilot Phase 2 准发布收敛门 +
 > #   `current-version` 选版都读它）。⛔ 无守卫地无条件写 ⇒「跑了 5 条 P0 全绿」会顶替一次全量验收，
 > #   而 `aiauto_subset_tested_at` 全仓零写入者。判据 SELECT_MODE 在本片开头已 eval 回读，只缺这个 if。
-> if [ "${SELECT_MODE:-all}" = "all" ]; then
+> if [ "$GR_UNTRUSTED" != "0" ]; then
+>   echo "⛔ 统计不可信 → 不写 tested 状态、验收时间与结果摘要"
+> elif [ "${SELECT_MODE:-all}" = "all" ]; then
 >   $BEV set aiauto_tested_at @now
 > else
 >   $BEV set aiauto_subset_tested_at @now aiauto_select_mode "$SELECT_MODE"
 > fi
-> # ★ 三个交接字段必须**在此可执行地落盘** —— 它们有真实消费者（`/sprint-batch` Step 6.5 读
-> #   `aiauto_test_result.failed` 回写「问题汇总清单」、读 `aiauto_test_report` 解析失败汇总），
-> #   ⛔ 散文与 JSON 示例块不算落盘。后果不是少个字段：失败用例恒取空 → 清单为空 →
-> #   `/sprint-bugfix` 扫不到东西 → 自动修复闭环空转 3 轮 → 按 retest-cap 冻结，
-> #   而冻结原因与真因（失败用例根本没被登记）毫无关系。
+> # 交接字段必须在此落盘：sprint-batch Step 6.5 消费 result.failed / report，不能只写示例。
 > V="$TARGET_VERSION"
 > RPT="docs/reports/${V}/AI测试报告/index.html"; BDJS="docs/reports/${V}/AI测试报告/data/${BUILD}.js"
-> BTR="docs/reports/${V}/AI测试报告"     # ⛔ 本分片内自取：shell 变量不跨围栏/分片持久
-> ROUND_DIR=$(ls -d "${BTR}/build-${BUILD}"/round-* 2>/dev/null | sort -V | tail -1)
-> RES=$(python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/gen_report.py "$ROUND_DIR" --json 2>/dev/null \
->       | python3 -c "import json,sys;d=json.load(sys.stdin);c=d.get('counts') or {};\
-print(json.dumps({'total':d.get('total'),'pass':c.get('pass'),'failed':c.get('fail'),\
-'block':c.get('block'),'na':c.get('na'),'elapsed_total_ms':d.get('elapsed_total_ms'),\
+> # 复用上方已检查退出码/read_errors 的同一份聚合，不再用管道二次调用吞掉 gen_report 退出码。
+> if [ "$GR_UNTRUSTED" = "0" ]; then
+> RES=$(printf '%s' "$J" | python3 -c "import json,sys;d=json.load(sys.stdin);c=d['counts'];\
+print(json.dumps({'total':d['total'],'pass':c['pass'],'failed':c['fail'],\
+'block':c['block'],'na':c['na'],'elapsed_total_ms':d.get('elapsed_total_ms'),\
 'self_heal_actual':d.get('self_heal_actual'),\
 'runtime_errors':d.get('runtime_finding_count')},ensure_ascii=False))" 2>/dev/null)
 > [ -n "$RES" ] && $BEV set aiauto_test_result "$RES"
-> # ★ `runtime_errors` **必须在列**：`/sprint-batch` step-6b 的判据是
-> #   `failed > 0 || runtime_errors > 0`，并明写「用例全通过但 runtime_errors > 0
-> #   同样不是绿灯、不可直接发布」。它不写 ⇒ 读侧恒取不到 ⇒ 该判据退化成 `failed > 0`
-> #   ⇒「全绿但有 N 个运行时错误」恒判绿灯并进入发布判断，且全程零告警。
-> #   源字段 = `gen_report.py` 的 `runtime_finding_count`（⛔ 不是 `runtime_errors`，
-> #   那是 baseline 侧的键名；两端键名不同是刻意的，别把其中一个改成另一个）。
+> fi
+> # runtime_errors 必写：由 gen_report.runtime_finding_count 映射，供 sprint-batch step-6b 判断
+> # failed > 0 || runtime_errors > 0；用例全通过但有运行时错误仍非绿灯。
 > if [ "${REPORT_ENABLED:-0}" = "1" ]; then
 >   $BEV set aiauto_test_report "$RPT" aiauto_test_build_data "$BDJS"
 > else

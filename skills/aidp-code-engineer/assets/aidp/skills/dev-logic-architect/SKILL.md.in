@@ -121,7 +121,7 @@ description: >
 
 1. **作者侧自检 27 项** —— 自己先过一遍,清单见 [`references/flow-self-check.md`](./references/flow-self-check.md)。
 2. **独立子 Agent 执行 41 维度 QR** —— **主流程禁止在当前上下文内联跑脚本或内联逐维度自查**;主流程只派发、只接收精简结构化报告、只决定是否重改,循环至全部通过或达 3 轮上限。
-   - **查什么** → [`references/quality-review-checklist.md`](./references/quality-review-checklist.md)(41 维度清单本身,含 **24 个标题就标 Critical 的维度** + 检查项 38(A/B 档 Critical、C 档 Important)+ 检查项 35 / 41(均 Important 档)。⚠️ 这个数**只能由 checklist 里的 `Critical` 标记现数**、⛔ 不要凭印象改)。
+   - **查什么** → [`references/quality-review-checklist.md`](./references/quality-review-checklist.md)(41 维度清单本身,含 **24 个标题就标 Critical 的维度** + 检查项 38(A/B 档 Critical、C 档 Important)+ 检查项 35 / 41(均 Important 档)。⚠️ 这个数**只能由 checklist 里的 `Critical` 标记现数**、⛔ 不要凭印象改;⚠️ 它是**标题口径**,编排层 `qr_level` 分级派发**只认**索引表的「等级」列——那一列按「正文含 Critical 子项即 Critical」只许比标题更严,故等级列的 Critical 维度多于这个数,⛔ 别拿标题口径去推派发范围)。
    - **谁来查、怎么派、跑哪些硬门脚本、退出码怎么读** → [`references/flow-qr-dispatch.md`](./references/flow-qr-dispatch.md)。
    - **哪些维度由脚本判 / 能否按变更范围裁剪** → checklist 顶部的**「维度成本与裁剪索引表」**(调度信息单一信源,新增脚本必须同步它)与**「QR 变更范围裁剪协议」**。
      调用方可传可选入参 **`qr_delta_scope`**(本轮变更专题清单),**不传 = 全量**。三条不可退让:

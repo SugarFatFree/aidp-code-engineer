@@ -12,15 +12,15 @@
 
 | 项目类型 | 命令 | 判定 |
 | :- | :- | :- |
-| TypeScript / Vue | `npx --no-install vue-tsc --noEmit`（Vue）或 `npx --no-install tsc --noEmit` | 非零退出 = 🔴 Critical |
-| 有 eslint 配置 | `npx --no-install eslint <本次改动文件>` | **error** = 🔴 Critical；warning = 🟡 记录不阻断 |
+| TypeScript / Vue | `npx --no-install vue-tsc --noEmit`（Vue）或 `npx --no-install tsc --noEmit` | 相对改动前基线**新增**的类型错误 = 🔴 Critical |
+| 有 eslint 配置 | `npx --no-install eslint <本次改动文件>` | 改动文件的 **error** = 🔴 Critical；warning = 🟡 记录不阻断 |
 | Java / Spring | **本档不做**（理由见下） | — |
 
-- **`mode=loop`：非零退出即直接回 Agent1 修复，不必往下走 15 维度**——省 token 也省循环轮次。
+- **`mode=loop`：有确认的增量代码错误即直接回 Agent1 修复，不必往下走 15 维度**——省 token 也省循环轮次。
   **`mode=verify-only`：记 🔴 Critical 后仍跑完其余维度**——它只有一轮、修复归调用方，短路会让调用方拿到一份残缺清单、修完再验又冒出一批。
 - ⚠️ **`npx` 必须带 `--no-install`**（npm 7+ 亦可写 `npx --no`）：裸 `npx` 的语义是
   "Run a command from a local or **remote** npm package"——包不在本地时它会**去 registry 下载**，
-  且非 TTY 环境（Agent 的 bash 正是）不弹确认、直接装。那样下面「工具缺失则跳过」这条分支
+  且非 TTY 环境（Agent 的 bash 正是）不弹确认、直接装。那样下面「工具不可用记未执行」这条分支
   **永远走不到**，而"联网装包"正是本 SKILL 最高约束要排除的外部副作用。
   也可直接用 `./node_modules/.bin/tsc`，效果相同。
 - ⚠️ **Java 侧刻意不做，别"顺手补上" `mvn compile`**：它看起来只是编译，实际会跑完
@@ -41,8 +41,18 @@
   `git worktree` 检出该 ref、复用被测项目已有的 `node_modules`（⛔ 不联网装）。⛔ **不得以「本轮首次跑出的错误数」作基线**：
   那会把本次引入的类型错误整批吞成「存量」，方向是假绿。取不到改动前基线（无 git / 无基线 ref / 基线那次没跑起来）
   → 本项写「**基线无效，本项未核验**」（判定见下「基线对照的有效性判定」），⛔ 不得给出增量结论。
-- 工具未安装时（`--no-install` 下会直接失败）标「⏭️ 跳过（工具缺失：<原因>）」并在报告写明，
-  **不得**因此升级为全量 build、也不得改用会联网安装的裸 `npx`。
+- **非零退出的三类结论**（⛔ 不得仅凭退出码一律判 Critical）：
+
+  | 情形 | 结论 |
+  | :- | :- |
+  | 诊断能定位到本次改动引入的错误（类型错误相对改动前基线新增 / 改动文件的 eslint error） | 按上表登记 🔴 Critical |
+  | 错误在改动前基线中已存在 | 存量，不计本轮 |
+  | 工具不可用（含 `--no-install` 下未安装、配置加载失败、命令崩溃而无可定位诊断）或基线无效 | 未执行（原因）+ Important「本项未核验」 |
+
+  工具不可用（含 `--no-install` 下未安装）或基线无效时记「未执行（原因）」，并在问题清单登记一条 Important「本项未核验」，结论因此为不通过；
+  它不是代码缺陷，`loop` 不回 Agent1 改代码，**也不短路——照常跑完其余维度**（没有可派给 Agent1 的修复，
+  短路只会让这一轮什么都没验），恢复工具/基线后重跑本项。⛔ 不得写成「跳过」或「不适用」——
+  `不适用` 只用于项目本无 TS/Vue 或无 eslint 配置；也**不得**因此升级为全量 build、改用会联网安装的裸 `npx`。
 
 
 ---

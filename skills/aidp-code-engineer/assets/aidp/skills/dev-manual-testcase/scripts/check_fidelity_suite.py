@@ -18,11 +18,13 @@ r"""「通用还原度覆盖表」硬核回检 — dev-manual-testcase 维度 21
   F2 覆盖表缺列    —— 4 列固定契约:页面 | 页面类型 | 还原度用例数 | 用例编号
   F3 列表页不足    —— 任一「列表页」行的还原度用例 < 10(上游给出的明确验收基线;标 na 的条目照常计数)
   F4 编号是空头支票 —— 表里声明的用例编号在文档里找不到同编号且标 `[还原度]` 的用例
+  F5 编号列解析不出 —— 「用例编号」列为空或只有散文,一个编号都解析不出(无法回查,视同空头支票)
 
 【Important(仅告警,不影响退出码)】
   W1 详情页 < 4 / 表单页 < 2 / 含数字的页 < 6(按模板条目数派生的基线,不当硬门)
   W2 页面类型不在四类枚举内(列表页/详情页/表单页/含数字的页)
   W3 「还原度用例数」与「用例编号」解析出的条数不一致
+  W4 覆盖表行仍是模板占位(`TC-{模块}-F01~F10` / `{页面名}`),该行不参与 F3/F4/F5
   W5 标记「不适用」但标题缺少非空理由,或理由缺少需求/设计/裁剪决策追溯线索
 
 ⚠️ 本脚本只做**结构性核验**。「那 10 条模板项是不是都真写了」属语义层,由 QR 子 Agent
@@ -76,6 +78,8 @@ CASE_ID_RE = re.compile(r"\bTC-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\b")
 RANGE_RE = re.compile(r"\b(TC-[A-Za-z0-9-]*?)([A-Za-z]*)(\d+)\s*[~～—–-]\s*(?:TC-[A-Za-z0-9-]*?)?([A-Za-z]*)(\d+)\b")
 # 用例标题行(与 check_testcase_format.py 的 TESTCASE_HEADER 同宽),用于把 `[还原度]` 归属到用例块
 CASE_HEADING_RE = re.compile(r"^#{3,6}\s*(?:用例\s*)?(TC-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)")
+# 任意 ATX 标题行(用于判定用例块边界)
+ANY_HEADING_RE = re.compile(r"^(#{1,6})\s")
 # 模板占位单元格(`{模块}` / `{页面名}` / `<页面名>`)
 PLACEHOLDER_CELL_RE = re.compile(r"\{[^{}]*\}|<[^<>]+>")
 # 不适用用例标题必须是统一后缀「（不适用：理由）」,理由还要带需求/设计/处置追溯线索。
@@ -240,6 +244,7 @@ def scan_docs(files: List[Path], root: Path) -> Tuple[Dict, List[Dict]]:
         current_case: Optional[str] = None
         current_case_line = 0
         current_case_title = ""
+        current_case_level = 6
         current_case_lines: List[str] = []
 
         def finish_case() -> None:
@@ -268,12 +273,22 @@ def scan_docs(files: List[Path], root: Path) -> Tuple[Dict, List[Dict]]:
                     and not (HONOR_NONINT and NONINTERACTIVE_TAG in ln)):
                 facts["has_case_signal"] = True
             m = CASE_HEADING_RE.match(ln)
+            hm = ANY_HEADING_RE.match(ln)
             if m:
                 finish_case()
                 current_case = m.group(1)
                 current_case_line = i + 1
                 current_case_title = ln
+                current_case_level = len(hm.group(1)) if hm else 6
                 current_case_lines = [ln]
+            elif current_case and hm and len(hm.group(1)) <= current_case_level:
+                # ⚠️ 用例块必须在「同级或更高级的非用例标题」处结束,⛔ 不能只等下一个用例标题:
+                #    否则最后一条用例会吞掉其后的覆盖表/统计摘要等章节——那里的说明文字写着
+                #    `[还原度]`(无 TC-ID → 记到当前用例名下 = F4 假绿)与「不适用」(→ W5 假红),
+                #    两份自家模板实测都中招。更深层的子标题仍属本用例。
+                finish_case()
+                current_case = None
+                current_case_lines = []
             elif current_case:
                 current_case_lines.append(ln)
             if FIDELITY_TAG in ln:

@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 
 # 注:「后端文件路径」是 output-module-examples.md A.4.3 代码契约表的列名,
-# 「后端枚举类文件路径」是 quality-review-checklist.md 检查项 11（= SKILL.md 自检 12，
+# 「后端枚举类文件路径」是 quality-review-checklist.md 检查项 11（= references/flow-self-check.md 自检 12，
 # 两套编号是不同清单、不可换算）/
 # stack-java-spring.md 的写法 —— 两种表述在本 SKILL 文档族中并存,均须识别,
 # 否则按 checklist 措辞写的设计会被误判为"缺字段"。前端侧同理。
@@ -151,7 +151,7 @@ def check_a3_enum_comment_refs(text: str) -> List[Dict]:
         lname = field_name.lower()
         if lname in {"id", "version", "deleted"}:
             continue
-        # SKILL.md 自检 12(j)（= checklist 检查项 11）步骤 4 举的正是 `status`/`type`/`category`
+        # flow-self-check.md 自检 12(j)（= checklist 检查项 11）步骤 4 举的正是 `status`/`type`/`category`
         # 这几个**裸名**;原实现只匹配 `_status`/`Status` 等带前缀形态,导致最常见的裸名字段
         # 被整体漏检(反向引用率恒为 N/A)。此处同时覆盖裸名与带前缀两种形态。
         is_enum_field = (

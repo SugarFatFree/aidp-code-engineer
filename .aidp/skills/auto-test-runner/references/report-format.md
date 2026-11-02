@@ -28,7 +28,7 @@
 | `is_environment_issue` | bool\|null | 可选 | 执行方显式标注本次阻塞是否属环境问题,**优先级高于 `block_reason` 枚举推断**;缺省 null → 回落枚举判定(向后兼容)。仅 status=block 生效 |
 | `error` | string\|null | ✅ | pass 时 null;fail/block 记详细原因 |
 | `evidence` | array | ✅ | 证据条目 `[{step, summary, artifact}]`;`artifact` 必须是 capture 实际生成的当前 `round/evidence` 相对路径（evidence 根不得是符号链接）,文件存在且非 0 字节;截图允许 `.webp/.png/.jpg/.jpeg` 且最小容器结构须匹配,新截图文件名须匹配 `{case_id}-step{step}`（历史 `{case_id}-{step}` / `{case_id}_步骤{step}` 兼容告警）,同一截图只登记一种格式,调用方不得按 TC-ID 猜扩展名;verified/self-heal 的 pass 必须有完整证据,direct 的 pass 至少有一条轻量事实(实际值/命中文案/列表计数/产物路径),不要求截图类型 |
-| `runtimeErrors` | array | ✅ | ★运行时错误全程捕获(**P3 告警类受 run-context `capture_warnings` 控制、默认关;P1/P2 恒记录** —— 故 P3 缺失不等于采集不全,勿据此判「采集不完整」),`[{type, message, detail, severity, artifact}]`;`type`=console\|network\|pageError,`detail`=`METHOD PATH 状态码` 或 console 首行,`severity`=P1\|P2\|P3。**每条用例执行后附带拉一次 console/network 写入**;pass 用例也可能非空 |
+| `runtimeErrors` | array | ✅ | ★运行时错误全程捕获(**P3 告警类受 run-context `capture_warnings` 控制、默认关;P1/P2 恒记录** —— 故 P3 缺失不等于采集不全,勿据此判「采集不完整」),`[{type, message, detail, severity, artifact}]`;`type`=console\|network\|pageError,`detail`=`METHOD PATH 状态码` 或 console 首行,`severity`=P1\|P2\|P3;`artifact` 若是截图,主干只能是 `{case_id}-step{N}` 或 `{case_id}-{type}`(标签 ∈ console/network/pageError/error 或该条 `type`),否则 `check_result.py` 判 Critical。**每条用例执行后附带拉一次 console/network 写入**;pass 用例也可能非空 |
 | `retries` | int | ✅ | 实际重试次数 |
 | `self_heal_applied` | bool | — | self-heal 模式是否触发过状态恢复重试 |
 | `self_heal_trace` | object\|null | — | ★可选,失败复测追溯。仅 `self_heal_applied=true` 时非空,含 `cause`(失败根因)/ `recovery`(恢复动作 + observe 恢复检验结果)/ `outcome`(枚举 `recovered-pass` / `still-fail-block`)。缺省或 null 时报告行为与旧版本一致 |
@@ -77,9 +77,9 @@
 
 - **2.1 汇总数据**:用例总数 / 可计算总数(总数−N/A) / 执行数 / Pass / Fail / Block / **N/A** / **通过率(Pass/可计算总数)** / 自动化用例数(Pass+Fail)/ **自动化率 auto_rate=(Pass+Fail)/可计算总数** / **自动化覆盖率 autoCoverRate** / **自动化成功率 autoSuccessRate** / 总耗时 /(可选)Token 统计(总 token、总工具调用、平均每条 token)。`na` 不计入通过率和自动化比例分母,报告单列「不适用 N 条」；direct pass 缺轻量事实时另单列「无依据的 direct pass N 条」,不改变通过率。
   > **★自动化率按 block_reason 细分(新增两派生指标,旧 `auto_rate` 口径不变):** `driver-missing` 是环境问题(端未装驱动),不该与真跑失败的 block 一样拉低指标,故新增两个据**已有 `block_reason` 枚举**派生的指标:
-  > - **自动化覆盖率 `autoCoverRate` = (总数 − block(driver-missing)) / 总数** —— 实际"能尝试"的比例(排除环境未装驱动而整体跳过的用例)。
-  > - **自动化成功率 `autoSuccessRate` = (Pass+Fail) / (总数 − block(driver-missing))** —— 能尝试的用例里跑到真实结论(pass/fail)的比例。
-  > - 保留旧 **`auto_rate` = (Pass+Fail)/总数** 兼容。**向后兼容性质:当 `driver-missing=0` 时,分母 `总数 − 0 = 总数`,`autoCoverRate=1`、`autoSuccessRate` 数值与旧 `auto_rate` 完全一致**——新指标只在存在 driver-missing 时才与旧口径分化,不改变既有报告数值。两个新指标由 `gen_report.py` 从 `results/*.json` 的 `block_reason` 枚举派生,无需新数据。
+  > - **自动化覆盖率 `autoCoverRate` = (可计算总数 − block(driver-missing)) / 可计算总数** —— 实际"能尝试"的比例(排除环境未装驱动而整体跳过的用例)。
+  > - **自动化成功率 `autoSuccessRate` = (Pass+Fail) / (可计算总数 − block(driver-missing))** —— 能尝试的用例里跑到真实结论(pass/fail)的比例。
+  > - 保留旧 **`auto_rate` = (Pass+Fail)/可计算总数** 兼容(可计算总数 = 总数 − N/A,下同)。**向后兼容性质:当 `driver-missing=0` 时,分母 `可计算总数 − 0 = 可计算总数`,`autoCoverRate=1`、`autoSuccessRate` 数值与旧 `auto_rate` 完全一致**——新指标只在存在 driver-missing 时才与旧口径分化,不改变既有报告数值。两个新指标由 `gen_report.py` 从 `results/*.json` 的 `block_reason` 枚举派生,无需新数据。
 - **2.2 各模块通过情况**:表格,每模块 用例数 / Pass / Fail / Block / 通过率。
 - **2.3 缺陷列表**:表格,`缺陷编号 | 等级 | 类别 | 所属模块 | 问题详情 | 证据路径 | 关联用例`。缺陷等级由**用例结果 + 优先级按下表映射**,而非直接等同 fail/block 数:
 
@@ -105,61 +105,7 @@
 - **2.6 自由巡检(可选节)**:表格,`页面 | 导航结果 | 运行时错误数 | 最高级别 | 摘要`。**仅在 `free_scan: true` 且产生了 `entry_kind:"free-scan"` 结果项时输出**,缺省整节不出。
   > **★巡检项不计入用例统计、不进缺陷列表。** 它是对「菜单可达但本轮用例未覆盖」页面的探索性导航,**没有断言** —— 混进 `total` 会让"巡检页越多通过率越好看",方向恰好是反的。`gen_report.split_entries` 按 `entry_kind` 分流;漏标时 `check_result.py` 报 Important(`free_scan_unmarked`)。巡检发现是**线索**,需人工确认后转 bug 或补成正式用例进下一轮。细则见 [`execution-methodology.md`](./execution-methodology.md) 第十二节。
 
-### 三、结论
-
-- **3.1 是否具备上线条件**:据通过准则(默认 P0=100% / P1≥95% / P2≥80%)给出明确结论(具备 / 不具备 + 阻断项)。**若存在 `block(driver-missing)`,据其占比提示"N 条因环境未装驱动未测,非产品问题",并参考 `autoCoverRate`/`autoSuccessRate` 区分"没跑到"与"跑了没过",避免把环境问题误判为产品阻断。**
-- **3.2 遗留风险**:表格,`风险描述 | 等级(高/中/低) | 建议`。所有 block/未自愈项归入此处。**self-heal 用例 `outcome=still-fail-block` 的,风险描述附其 `self_heal_trace` 的 `cause`(根因)与恢复检验未通过点**,便于人事后定位(为何恢复无效)。
-- **3.3 改进建议**:用例、环境、驱动、自愈策略等改进项。
-
----
-
-## 三、统计口径
-
-- **通过率** = Pass / 用例总数。
-- **自动化率 auto_rate** = (Pass + Fail) / 用例总数(block 一视同仁视为未自动化完成)。**口径保留不变(向后兼容)**。
-- **自动化覆盖率 autoCoverRate** = (用例总数 − block(driver-missing)) / 用例总数 —— 剔除"环境未装驱动整体跳过"的用例,反映实际"能尝试"比例。
-- **自动化成功率 autoSuccessRate** = (Pass + Fail) / (用例总数 − block(driver-missing)) —— 能尝试的用例里跑到真实结论(pass/fail)的比例。
-  > **向后兼容:`driver-missing=0` 时,`autoCoverRate=1`、`autoSuccessRate` 与旧 `auto_rate` 数值完全一致**;仅当存在 driver-missing 才与旧口径分化。两派生指标据**已有 `block_reason` 枚举**计算(无需新数据),旧 `auto_rate` 继续输出。
-- **各模块通过情况**按 suite 分组统计。
-- **自由巡检项一律不参与上述任何统计**:`entry_kind:"free-scan"` 的结果项在聚合入口即被 `split_entries` 分流,不进 `total`、通过率、自动化率、各模块通过情况与缺陷列表,单列 §2.6。通过准则(P0=100% / P1≥95% / P2≥80%)同样只对用例生效。
-- 统计由 `gen_report.py` 从 `results/*.json` 聚合,人不手工计数。
-
-> **★事实字段来源通则(环境事实类 + 统计类同一口径):** 报告里凡「事实类」字段都要能回答**这个值是怎么来的**——**统计类**来自 `results/*.json` 经 `gen_report.py` 聚合(不手工计数、不照抄模板示例数字),**环境事实类**来自 `env-facts.json` 的运行取证(逐字段带来源标注)。**共同红线:没有实测支撑的值一律写「未取到 + 原因」,不写一个像样的默认值。** 细则见 [`execution-methodology.md`](./execution-methodology.md) 第十节 10.5。
-
----
-
-## 四、TestNotes(执行记录,可选副产)
-
-除正式报告外可产 `TestNotes.md`(执行记录:用例执行记录表 + 执行汇总 + 失败详情 + Token 消耗表),作为执行流水留痕,供复核与追溯;正式结论仍以「测试报告」三章为准。
-
----
-
-## 五、与 AI 执行报告(autopilot)对账的数据模型映射
-
-调用方 autopilot 链路维护一份 `data/{BUILD}.js` 的 `testSummary`,供回填对账。本 skill 的 `results/*.json` 聚合(`gen_report.py --json`)与之字段映射如下,**保证执行结果可被 autopilot 回填、不重算**:
-
-| 本 skill(gen_report 聚合 / results 字段) | → autopilot `data/{BUILD}.js` `testSummary` | 说明 |
-| :- | :- | :- |
-| `total`(用例总数) | `testSummary.total` | 直接映射 |
-| `counts.pass` | `testSummary.passed` | Pass 数 |
-| `counts.fail` | `testSummary.failed` | Fail 数 |
-| `counts.block` | `testSummary.blocked` | Block 数(含 driver-missing) |
-| `pass_rate`(Pass/总数) | `testSummary.passRate` | 通过率,小数或百分比按 autopilot 口径 |
-| `auto_rate`((Pass+Fail)/总数) | `testSummary.autoRate` | 自动化率(可选) |
-| `auto_cover_rate`((总数−driver-missing)/总数) | `testSummary.autoCoverRate` | 自动化覆盖率(**可选,缺省不破坏 autopilot 对账**;driver-missing=0 时=1) |
-| `auto_success_rate`((Pass+Fail)/(总数−driver-missing)) | `testSummary.autoSuccessRate` | 自动化成功率(**可选,缺省不破坏对账**;driver-missing=0 时=auto_rate) |
-| 执行结束时间(run-context / build 元信息) | `testSummary.timestamp` | 时间戳;本 skill 脚本不产生时间(禁 Date.now),由编排层在回填时打戳 |
-| `modules[*]`(各模块统计) | `testSummary.byModule[*]` | 各模块 total/pass/fail/block/通过率 |
-| `defects[*]`(缺陷列表,已按 §2.3 分级去重) | `testSummary.defects[*]` | driver-missing 不计产品缺陷、同用例 error+fail 去重后的口径 |
-| `runtime_findings[*]`(pass 用例携带的运行时错误) | `testSummary.runtimeErrors[*]` | 供「运行时错误→升级 bug→回写问题汇总清单」直接消费 |
-| `timings[*].elapsed_ms` | `elapsedMs` | 单条耗时(毫秒);取不到写 `null` 展示「未采集」,⛔ 不写 0 |
-| `timings[*].amortized` | `elapsedIsAmortized` | 是否批次窗口均摊值;SPA 据此渲染 `~8.5s` 并挂「不可用于单条性能判断」title |
-| `timings[*].batch_id` | `batchId` | 所属批次标识;均摊值靠它才能回溯到窗口 |
-
-- **对账口径一致性**:`testSummary.passed + failed + blocked == total`;缺陷数走 §2.3 分级映射口径(≠ fail+block 原始数)。
-- **单向数据流**:本 skill 产出 `results/*.json` → `gen_report.py` 聚合 → 编排层回填 autopilot `data/{BUILD}.js`;本 skill 不直接写 autopilot 文件(职责隔离)。
-
-### 2.7 耗时分布(由 `gen_report.py` 产出)
+#### 2.7 耗时分布(必备节,由 `gen_report.py` 产出)
 
 **数据源:** 每条结果 JSON 的 `started_at` / `finished_at` / `elapsed_ms` 三件套
 (旧字段 `duration_ms` 兼容回落)。**列:** `# | 用例 | 套件 | 结果 | 耗时 | 占已采集合计 | 耗时来源`,只列最长 10 条。
@@ -199,3 +145,60 @@
 
 > ⚠️ **「非执行开销」这类差值不能直接当作可优化的开销**:`总耗时 − evidence 首尾跨度` 把报告生成、
 > 终审、文档级联这些**交付物本身**也算了进去。**先做计时,再谈开销。**
+
+### 三、结论
+
+- **3.1 是否具备上线条件**:据通过准则(默认 P0=100% / P1≥95% / P2≥80%)给出明确结论(具备 / 不具备 + 阻断项)。**若存在 `block(driver-missing)`,据其占比提示"N 条因环境未装驱动未测,非产品问题",并参考 `autoCoverRate`/`autoSuccessRate` 区分"没跑到"与"跑了没过",避免把环境问题误判为产品阻断。**
+- **3.2 遗留风险**:表格,`风险描述 | 等级(高/中/低) | 建议`。所有 block/未自愈项归入此处。**self-heal 用例 `outcome=still-fail-block` 的,风险描述附其 `self_heal_trace` 的 `cause`(根因)与恢复检验未通过点**,便于人事后定位(为何恢复无效)。
+- **3.3 改进建议**:用例、环境、驱动、自愈策略等改进项。
+
+---
+
+## 三、统计口径
+
+> **分母一律是「可计算总数」= 用例总数 − N/A**(与 `gen_report.py` 的 `eligible_total` 一致);`na` 不进任何比例的分子与分母,报告单列「不适用 N 条」。
+
+- **通过率** = Pass / 可计算总数。
+- **自动化率 auto_rate** = (Pass + Fail) / 可计算总数(block 一视同仁视为未自动化完成)。**口径保留不变(向后兼容)**。
+- **自动化覆盖率 autoCoverRate** = (可计算总数 − block(driver-missing)) / 可计算总数 —— 剔除"环境未装驱动整体跳过"的用例,反映实际"能尝试"比例。
+- **自动化成功率 autoSuccessRate** = (Pass + Fail) / (可计算总数 − block(driver-missing)) —— 能尝试的用例里跑到真实结论(pass/fail)的比例。
+  > **向后兼容:`driver-missing=0` 时,`autoCoverRate=1`、`autoSuccessRate` 与旧 `auto_rate` 数值完全一致**;仅当存在 driver-missing 才与旧口径分化。两派生指标据**已有 `block_reason` 枚举**计算(无需新数据),旧 `auto_rate` 继续输出。
+- **各模块通过情况**按 suite 分组统计。
+- **自由巡检项一律不参与上述任何统计**:`entry_kind:"free-scan"` 的结果项在聚合入口即被 `split_entries` 分流,不进 `total`、通过率、自动化率、各模块通过情况与缺陷列表,单列 §2.6。通过准则(P0=100% / P1≥95% / P2≥80%)同样只对用例生效。
+- 统计由 `gen_report.py` 从 `results/*.json` 聚合,人不手工计数。
+
+> **★事实字段来源通则(环境事实类 + 统计类同一口径):** 报告里凡「事实类」字段都要能回答**这个值是怎么来的**——**统计类**来自 `results/*.json` 经 `gen_report.py` 聚合(不手工计数、不照抄模板示例数字),**环境事实类**来自 `env-facts.json` 的运行取证(逐字段带来源标注)。**共同红线:没有实测支撑的值一律写「未取到 + 原因」,不写一个像样的默认值。** 细则见 [`execution-methodology.md`](./execution-methodology.md) 第十节 10.5。
+
+---
+
+## 四、TestNotes(执行记录,可选副产)
+
+除正式报告外可产 `TestNotes.md`(执行记录:用例执行记录表 + 执行汇总 + 失败详情 + Token 消耗表),作为执行流水留痕,供复核与追溯;正式结论仍以「测试报告」三章为准。
+
+---
+
+## 五、与 AI 执行报告(autopilot)对账的数据模型映射
+
+调用方 autopilot 链路维护一份 `data/{BUILD}.js` 的 `testSummary`,供回填对账。本 skill 的 `results/*.json` 聚合(`gen_report.py --json`)与之字段映射如下,**保证执行结果可被 autopilot 回填、不重算**:
+
+| 本 skill(gen_report 聚合 / results 字段) | → autopilot `data/{BUILD}.js` `testSummary` | 说明 |
+| :- | :- | :- |
+| `total`(用例总数) | `testSummary.total` | 直接映射 |
+| `counts.pass` | `testSummary.passed` | Pass 数 |
+| `counts.fail` | `testSummary.failed` | Fail 数 |
+| `counts.block` | `testSummary.blocked` | Block 数(含 driver-missing) |
+| `counts.na` | (autopilot 无对应字段时由编排层单独回填或备注) | N/A 数;⛔ 不得并入 `blocked` 或丢弃 |
+| `pass_rate`(Pass/可计算总数) | `testSummary.passRate` | 通过率,小数或百分比按 autopilot 口径 |
+| `auto_rate`((Pass+Fail)/可计算总数) | `testSummary.autoRate` | 自动化率(可选) |
+| `auto_cover_rate`((可计算总数−driver-missing)/可计算总数) | `testSummary.autoCoverRate` | 自动化覆盖率(**可选,缺省不破坏 autopilot 对账**;driver-missing=0 时=1) |
+| `auto_success_rate`((Pass+Fail)/(可计算总数−driver-missing)) | `testSummary.autoSuccessRate` | 自动化成功率(**可选,缺省不破坏对账**;driver-missing=0 时=auto_rate) |
+| 执行结束时间(run-context / build 元信息) | `testSummary.timestamp` | 时间戳;本 skill 脚本不产生时间(禁 Date.now),由编排层在回填时打戳 |
+| `modules[*]`(各模块统计) | `testSummary.byModule[*]` | 各模块 total/pass/fail/block/通过率 |
+| `defects[*]`(缺陷列表,已按 §2.3 分级去重) | `testSummary.defects[*]` | driver-missing 不计产品缺陷、同用例 error+fail 去重后的口径 |
+| `runtime_findings[*]`(pass 用例携带的运行时错误) | `testSummary.runtimeErrors[*]` | 供「运行时错误→升级 bug→回写问题汇总清单」直接消费 |
+| `timings[*].elapsed_ms` | `elapsedMs` | 单条耗时(毫秒);取不到写 `null` 展示「未采集」,⛔ 不写 0 |
+| `timings[*].amortized` | `elapsedIsAmortized` | 是否批次窗口均摊值;SPA 据此渲染 `~8.5s` 并挂「不可用于单条性能判断」title |
+| `timings[*].batch_id` | `batchId` | 所属批次标识;均摊值靠它才能回溯到窗口 |
+
+- **对账口径一致性**:`counts.pass + fail + block + na == total`(无 N/A 时即 `testSummary.passed + failed + blocked == total`);缺陷数走 §2.3 分级映射口径(≠ fail+block 原始数)。
+- **单向数据流**:本 skill 产出 `results/*.json` → `gen_report.py` 聚合 → 编排层回填 autopilot `data/{BUILD}.js`;本 skill 不直接写 autopilot 文件(职责隔离)。

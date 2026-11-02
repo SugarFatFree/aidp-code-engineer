@@ -376,7 +376,7 @@ python3 <SKILL_DIR>/scripts/check_env_config.py [项目根目录] --json
 
 | 文件 | 内容 | 是否提交 | 用途 |
 |------|------|---------|------|
-| `.env.example` | 仅含 `{待用户填写: 变量名}` 等非敏感占位符 | 由调用方规范决定；未规定时不产出 | 展示所需配置键，不承载任何真实凭据 |
+| `.env.example` | 仅含 `{待用户填写: 变量名}` 等非敏感占位符 | 由调用方规范决定；调用方没规定时默认选占位形态(只列键名 + 占位值,见 `task-templates.md`「`.env.example` 是可选形态」) | 展示所需配置键，不承载任何真实凭据 |
 | `.env` | 开发者本机个性化配置，可能含敏感值 | ❌ 不提交（`.gitignore` 排除） | 本机覆盖配置 |
 
 - `.env.example` **严禁**包含任何真实凭据、令牌、密钥或密码（开发环境也不例外）
@@ -942,7 +942,7 @@ python3 <SKILL_DIR>/scripts/export_plan_refs.py <研发执行计划目录> --jso
 | 4. 指令化 | ❌ | Task 4.3 无可执行指令,仅有"实现前端页面"描述;项目 `{{AIDP_HOME}}/skills/` 有 `project-entity-gen` 但 Task 2.1 使用系统全局 `/dev-logic-architect` | 补充指令;Task 2.1 改用 L2 项目 skill |
 | 5. 提示词上下文 | ❌ | Task 2.4 提示词为"实现订单服务",无上下文引用 | 修订为"基于 Task 1.5 的 biz_order 表,实现 OrderService.create(),参考设计 B.1 FR-020" |
 | 6. 依赖链条 | ❌ | Task 3.1 依赖 Task 2.1,但 Task 2.1 未完成就列出 Task 3.1 | 调整顺序或增加 blockedBy 标注 |
-| 7. 框架与中间件配置 | ❌ | 详细设计使用 Redis 和 MinIO,但 Phase 1 缺失 Task 1.2 中间件配置 | 新增 Task 1.2,包含 .env.example、RedisConfig、MinioConfig |
+| 7. 框架与中间件配置 | ❌ | 详细设计使用 Redis 和 MinIO,但 Phase 1 缺失 Task 1.2 中间件配置 | 新增 Task 1.2,包含配置键闭环(`.env.example` 按调用方规范可选)、RedisConfig、MinioConfig |
 | 8. 增量验证 | ❌ | Phase 3 末尾无接口测试任务 | 新增 Task 3.99 调用 `/code-verification-loop` |
 | 9. 设计一致性 | ❌ | Task 1.3 建表 SQL 缺失设计 `A.3` 定义的 `idx_user_status_time` 联合索引;Task 3.5 接口路径是 `/api/v1/user/list` 但设计 `B.2` 定义为 `/api/user/list` | 补充缺失索引;接口路径去除 `/v1` 与设计对齐 |
 | 10. 多用户分配一致性 | N/A | 单用户模式,跳过此检查 | — |

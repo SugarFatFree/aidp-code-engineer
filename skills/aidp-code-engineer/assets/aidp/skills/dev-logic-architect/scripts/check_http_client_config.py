@@ -13,7 +13,7 @@ HTTP 客户端配置驱动一致性检查器
 6. 代码示例是否硬编码 IP/URL
 
 不覆盖(以语义判定为主):
-- 「失败返回契约 ⟷ 调用方失败判定对齐」(核心原则 16 第 4 子项 / checklist 检查项 8 失败返回契约、检查项 4 系统故障吞成空数据)
+- 「失败返回契约 ⟷ 调用方失败判定对齐」(核心原则 16 第 ⑤ 条铁律(失败返回契约) / checklist 检查项 8 失败返回契约、检查项 4 系统故障吞成空数据)
   属**语义层**判定——"吞异常返裸空"与"带 `_error` 标记"是否在同一调用链混用、系统故障是否被静默降级为空数据,
   需理解链路上下文,grep 难以可靠区分"真空数据"与"故障吞空",极易误报,故不在本脚本硬核覆盖,
   交由 Quality Review Agent 按 checklist 语义审查。本脚本只管配置完备性/无硬编码,不判失败返回语义。
@@ -224,12 +224,12 @@ def main():
         content = path.read_text(encoding='utf-8', errors='replace')
     a2_content, b7_content = extract_sections(content)
 
-    # SKILL.md 自检 23(a)(= quality-review-checklist.md 检查项/维度 8「外部依赖与集成说明」
+    # references/flow-self-check.md 自检 23(a)(= quality-review-checklist.md 检查项/维度 8「外部依赖与集成说明」
     # 的 HTTP 客户端 Critical 子项;⚠️ 此处的 23 是**作者侧自检编号**,不是 QR 维度 23
-    # 「缓存机制用户确认」——两套编号不可换算,见 SKILL.md「多套编号并存」节)
+    # 「缓存机制用户确认」——两套编号不可换算,见 references/flow-self-check.md「多套编号并存」节)
     # 是条件性的:仅"若 Phase 1 Step 3 选定 HTTP 客户端 / 存在外部集成"时才要求 A.2 落地。
     # 纯 CRUD / 仅前端设计无外部依赖时(SKILL 核心原则:B.7 标注"无外部依赖,本期不涉及"),本检查 N/A——
-    # 不得把"无 HTTP 客户端章节"误判为不通过(对齐 SKILL.md「若 PRD 未涉及任何外部集成(纯 CRUD 系统)」)。
+    # 不得把"无 HTTP 客户端章节"误判为不通过(对齐 references/flow-execution.md「若 PRD 未涉及任何外部集成(纯 CRUD 系统)」)。
     has_http_section = check_http_client_section(a2_content)[0]
     NO_INTEGRATION_RE = re.compile(
         r"无外部\s*(?:依赖|集成)|无第三方\s*(?:依赖|集成|接口|服务|调用)|"

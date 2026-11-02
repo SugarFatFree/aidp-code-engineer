@@ -44,7 +44,7 @@
 `retry-exhausted` / `webmcp-driver-too-old` / `webmcp-driver-version-unknown`。
 
 - ⚠️ `precondition-unmet` **只有**前置探测 `precondition_probe.status=unmet` 才能用;探测本身
-  出错须按网络/环境错误归因,**不得伪装成数据缺位**。
+  出错须按网络/环境错误归因,**不得伪装成数据缺位**(`precondition_probe` 取值见第四节)。
 - 失败分级**不中断**:重试 ≤3 → 仍失败则 `block` + 证据 → **继续下一条**。
 
 ## 四、产物契约 `results/{TC-ID}.json`
@@ -53,7 +53,7 @@
 `status` / `is_reverse` / `error` / `evidence` / `runtimeErrors` / `retries` / `started_at` /
 `finished_at` / `elapsed_ms`。
 
-- `entry_kind`:缺省 `case`;自由巡检项必须填 `free-scan`(**不计入用例统计** —— 混进 `total`
+- `entry_kind`:缺省 `case`;自由巡检项(`case_id` 形如 `运行时-<页面>`)必须填 `free-scan`(**不计入用例统计** —— 混进 `total`
   会让「巡检页越多通过率越好看」)。
   ⚠️ **`free-scan` 豁免 `suite` / `priority` / `execution_mode` 三个必填**(它不属任何套件、
   没有优先级、也没有执行模式分级);⛔ **尤其不要给它填 `execution_mode: verified`** ——
@@ -61,7 +61,8 @@
 - `execution_mode` ∈ `direct`/`verified`/`self-heal`。后两者的 `pass` **必须有完整证据**;
   `direct` 的 `pass` 至少一条**轻量事实**(实际值/命中文案/列表计数/产物路径)。
 - `evidence[]` = `{step, summary, artifact}`;`artifact` 必须是 capture **实际返回**的当前轮次
-  `round-{M}/evidence` **相对路径**,文件存在且非 0 字节,截图名 `{case_id}-step{step}`。
+  `round-{M}/evidence` **相对路径**,文件存在且非 0 字节,截图名 `{case_id}-step{step}`;
+  `runtimeErrors[].artifact` 截图另可用 `{case_id}-{type}`(console/network/pageError/error)。
   ⛔ 不得按 TC-ID 猜扩展名。
 - `mechanism` ∈ `dom`/`webmcp`/`app-mcp`/`mixed`。⚠️ **未填 ≠ 已确认是 dom**(报告单列「未声明」)。
   ⛔ **`[还原度]` 及一切视觉/布局/样式断言禁填 `webmcp`** —— 它读的是声明的能力,不是渲染结果。
@@ -70,6 +71,9 @@
 - **耗时来源**:`elapsed_ms` 若是批次窗口均摊值(「窗口 ÷ N」,批量执行下这是常态),必须把
   `elapsed_is_amortized` 填 `true` 并给出 `batch_id`(可选 `batch_elapsed_ms`,填了会被 I15 核)。⚠️ 写进 `note` **不算** —— 聚合器不读 `note`,
   会把它当逐条真值排名,产出「某条用例耗时 28 分钟」这种**假事实**(实测)。
+
+- `precondition_probe.status` ∈ `satisfied`/`unmet`/`probe-error`:探测本身出错填 `probe-error`,
+  对应用例按网络/环境错误归因,⛔ 不得填 `unmet` 换成 `precondition-unmet`。
 
 **落盘后必跑:** `python3 <SKILL_DIR>/scripts/check_result.py <round_dir>/results --json`
 

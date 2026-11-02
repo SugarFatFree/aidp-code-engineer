@@ -1589,7 +1589,7 @@ CREATE TABLE sys_dict_data (
 - **安全判据 fail-closed**:鉴权/权限/归属/签名,取不到/解析失败/查询异常 → 拒绝或报错,严禁 fail-open。
 - **上游契约权威**:引用上游契约处标注「以上游契约为准,上游变更即需跟进」+ 来源与采集时间。
 - **完整模板与填表铁律**见 `../assets/api-template.md`;机检 `python3 <SKILL_DIR>/scripts/check_error_contract.py <设计文档路径>`;核验清单见 `quality-review-checklist.md` 检查项 31。
-- **边界**:本小节管"我方接口**怎么表达**失败"(服务端侧);核心原则 16 第 4 子项管"我方**怎么判**下游失败"(客户端侧),见 B.7。二者方向相反、都要有。
+- **边界**:本小节管"我方接口**怎么表达**失败"(服务端侧);核心原则 16 第 ⑤ 条铁律(失败返回契约)管"我方**怎么判**下游失败"(客户端侧),见 B.7。二者方向相反、都要有。
 
 **🛡️ B.2.x「需求字段(语义) ⟷ 我方接口字段」比对门(对内接口强制,Critical)**
 
@@ -2711,7 +2711,7 @@ echo "stopped"
 | 序号 | 主题 | 影响范围(关联章节/接口/字段/状态机) | 待澄清问题描述 | 🔧 Agent 暂行方案 | 优先级 | 来源 | 用户确认状态 |
 | :-: | :- | :- | :- | :- | :-: | :-: | :-: |
 | Q-002 | 已停用用户能否被重新启用 | A.4 > UserStatus / B.5 用户状态机 | PRD > 十、Q-002:状态机迁移可逆性未明确 | 状态机允许"停用→启用"双向迁移;停用期间不允许登录(中间件层拦截) | P0 | PRD 沿用 | ⏳ 待确认 |
-| D-001 | biz_order.amount 字段单位与币种 | A.3 biz_order 表 / B.2 GET /order/list | PRD 仅说"金额",未指定币种与单位 | 按 SKILL.md「💰 货币金额字段设计规则」: 类型 `BIGINT NOT NULL DEFAULT 0`,**单位:分(CNY)**;若后续确认需多币种,补 `currency_code CHAR(3)` 字段并参考 ISO 4217 小数位指数 | P1 | 设计新增 | ⏳ 待确认 |
+| D-001 | biz_order.amount 字段单位与币种 | A.3 biz_order 表 / B.2 GET /order/list | PRD 仅说"金额",未指定币种与单位 | 按 flow-money-field.md「💰 货币金额字段设计规则」: 类型 `BIGINT NOT NULL DEFAULT 0`,**单位:分(CNY)**;若后续确认需多币种,补 `currency_code CHAR(3)` 字段并参考 ISO 4217 小数位指数 | P1 | 设计新增 | ⏳ 待确认 |
 | D-002 | 支付接口幂等键来源 | B.2 POST /payment / B.3 异常处理 | PRD 仅说"保证幂等",未指定 token 生成方式 | 由前端在创建订单时生成 UUID v4 作为 idempotent_key,有效期 30 分钟 | P0 | 设计新增 | ⏳ 待确认 |
 | D-003 | 软删除 vs 硬删除 | A.3 全部业务表 | PRD 用"删除"模糊术语,未明确语义 | 默认软删除(deleted=0/1 字段),保留历史数据;管理后台提供硬删除入口(P2) | P1 | 设计新增 | ⏳ 待确认 |
 | D-004 | 支付宝退款接口未交付 | B.7 外部依赖 / B.2 POST /alipay/trade/refund | 商户资质审核中,沙箱环境凭证未下发 | 开发阶段使用 `THIRD_PARTY_MOCK` 临时占位(vendor=支付宝 / api=POST /alipay/trade/refund / expected_ready=2026-09-01 / owner=PM-张三),真实接口可用后立即删除 mock 并对接;协议详见 SKILL.md 核心原则 15 | P0 | 设计新增 | ⏳ 待第三方交付 |

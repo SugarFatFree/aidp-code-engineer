@@ -14,7 +14,8 @@
       "type": "array",
       "items": {"type": "object", "required": ["type", "message", "severity"], "optional": ["detail", "artifact"]},
       "type枚举": "console | network | pageError",
-      "severity枚举": "P1 | P2 | P3"
+      "severity枚举": "P1 | P2 | P3",
+      "artifact": "若为截图,主干只能是 `{case_id}-step{N}` 或 `{case_id}-{type}`(标签 ∈ console/network/pageError/error 或该条 type),否则 check_result.py 判 Critical artifact_case_mismatch"
     },
     "db_assertion": {
       "type": "object | null",

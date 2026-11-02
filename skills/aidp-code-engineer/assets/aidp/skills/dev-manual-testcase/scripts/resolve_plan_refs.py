@@ -76,7 +76,10 @@ def main() -> int:
     pending, unmapped, replaced = {}, [], 0
     for f in files:
         try:
-            text = f.read_text(encoding="utf-8")
+            # newline="" 保留原换行风格(CRLF 仍是 CRLF),⛔ 别改回 read_text/write_text——
+            # 那会把整份用例的换行全部改写,回填只该动占位符
+            with open(f, encoding="utf-8", newline="") as fh:
+                text = fh.read()
         except (OSError, UnicodeDecodeError) as exc:
             print(f"读不出: {f} ({exc})", file=sys.stderr)
             return 2
@@ -104,7 +107,8 @@ def main() -> int:
            "files_changed": 0 if unmapped else len(pending), "unmapped": unmapped}
     if not unmapped:
         for f, new in pending.items():
-            f.write_text(new, encoding="utf-8")
+            with open(f, "w", encoding="utf-8", newline="") as fh:
+                fh.write(new)
     if args.json:
         print(json.dumps(out, ensure_ascii=False))
     elif unmapped:

@@ -47,8 +47,8 @@ description: >
    - **第三方临时 mock 受控豁免**:对接第三方平台接口(支付宝/微信/银联/海关/OAuth IDP 等本项目以外的外部系统)时,若接口尚未交付,允许使用带 `THIRD_PARTY_MOCK` 标注的临时 mock 占位(对照 `references/third-party-mock-protocol.md`);**一旦真实接口可用或开始对接(出现真实 vendor SDK/凭证/base URL),mock 必须立即删除**,严禁与真实调用并存或保留为兜底。
    - **🎯 Mock 实现位置选型(优先级)**:必须使用 mock 时,**优先选择前端 mock 方案**(axios/fetch 拦截器 + 运行时环境变量控制、MSW、本地 JSON 文件),无需后端介入,前端独立联调,效率最高;仅当第三方接口供后端服务端调用(如服务端鉴权、银行代扣、报关推送)时才使用后端 mock(运行时环境变量 + if 分支判断)。**判断口诀:"前端能拦截就前端拦截,前端拦截不了再让后端 mock"**。维度 2B 核验时,前端 mock 与后端 mock 均需符合 7 行标注块(THIRD_PARTY_MOCK + 6 个字段) + 运行时可控原则(严禁构建期守卫)。
 2. **接口 100% 一致** — 前端调用的每个接口,其 URL、请求方法、请求参数(字段名/类型/必填)、返回字段(结构/类型/嵌套)、状态码、错误码必须与后端定义完全一致。
-3. **问题必须闭环** — 发现的每个问题都必须被修复并验证,不允许"已知问题暂不处理"(除非用户明确豁免)。
-4. **分级处理** — 问题按严重程度分为 Critical(必须修复)、Important(应该修复)、Suggestion(建议优化),Critical 问题不修复则验收不通过。
+3. **问题必须闭环** — 阻断项必须修复并验证；判据明确的非阻断项完整登记并交代后续处置，`verify-only` 的修复由调用方归口（见「严重度与 loop 推进」）。
+4. **分级处理** — 严重度为 Critical / Important / Suggestion；另列 `loop 推进` 标记。无 Critical 且无 Important 才验收通过，非阻断标记只控制 loop 推进、不改变严重度与验收结论。
 5. **每轮留痕** — 每轮验收都生成结构化报告,记录检查结果、问题清单、修复状态。
 6. **三方冲突裁决规则** — 验收时对照 PRD、原型、详细设计三类文档判断代码是否合格。三者冲突按以下规则裁决,**不得以"代码与原型一致"作为通过理由**:
    - **样式/文案/UI/业务规则冲突(以 PRD 为准)**:字段标签、按钮文案、错误提示、颜色/字号/间距、校验规则、权限分级、状态枚举值、业务流程步骤等。若代码按原型实现但与 PRD 不一致 → **Critical 问题**,要求按 PRD 修改。
@@ -90,18 +90,26 @@ description: >
 
 | 模式 | 适用 | 执行的步骤 | 修复职责 |
 | :- | :- | :- | :- |
-| `loop`（缺省） | **独立调用**：用户直接要求「开发 + 验收 + 迭代修复」 | Step 0 → 1 → 2 → 3 → 4 →（不通过）5 → 3 … | 本 SKILL 内 Agent1 修复，最多 5 轮 |
+| `loop`（缺省） | **独立调用**：用户直接要求「开发 + 验收 + 迭代修复」 | Step 0 → 1 → 2 → 3 → 4 →（仍有阻断项）5 → 3 … | 本 SKILL 内 Agent1 修复，最多 5 轮 |
 | `verify-only` | **编排调用**：代码已由上游开发命令完成，修复另有归口（如 AIDP 的 `/sprint-test` → 问题交 `/sprint-bugfix`） | Step 0 → 3 → 4，**跳过 Step 1 / Step 2 / Step 5** | **本 SKILL 不修复、不创建或唤醒 Agent1、不改任何源码**；只交付验收结论 + 结构化问题清单 |
 
 - **未知 `mode` 值**：取值不是 `loop` / `verify-only` → 立即报错停止（`mode 取值非法：<值>`），⛔ 不回落缺省值、不按「最像的那个」执行。
 
 `verify-only` 的输出契约（供调用方转写 bug 记录）：
-- 结论：`通过` / `不通过`。**判据：问题清单里无 Critical 且无 Important 才判 `通过`**（与 `loop` 的循环终止条件同口径；Suggestion 不影响结论）。维度 0 未过即 `不通过`，**但 verify-only 下仍跑完其余维度**（单轮交付完整清单，不像 `loop` 那样短路回 Agent1）；
+- 结论：`通过` / `不通过`。**判据：问题清单里无 Critical 且无 Important 才判 `通过`**（含非阻断 Important；Suggestion 不影响结论；loop 的推进/收尾另按下方规则）。维度 0 未过即 `不通过`，**但 verify-only 下仍跑完其余维度**（单轮交付完整清单，不像 `loop` 那样短路回 Agent1）；
 - 各维度 `Pass` / `Fail` / `不适用` / `未执行（原因）` 汇总表：`不适用` = 门控跳过（写原因，不影响结论；留行口径同 Step 4——门控跳过的维度仍留行，入参门控的维度 9 未启用不留行）；`未执行（原因）` = 本应执行却确实执行不了（工具链报错、基线无效等，基线无效一律写「基线无效，本项未核验」）——**不计 Fail、但绝不计入通过**：每个此类行同时在问题清单列一条 `严重度=Important`、`问题=本项未核验`、`证据`=原因的条目，因而结论必为 `不通过`；
 - **基线一律取改动前**：维度 0 类型检查的存量基线（及维度 4 / 7 / 8 / 14 的一切基线对照）取调用方给出的**改动前基线 ref**（未给时取 `git merge-base HEAD <主干分支>`）；⛔ 不得以本轮自身的错误数作基线——verify-only 时代码已改完，「首轮即基线」会把本次引入的错误吞成存量。取不到改动前基线 → 该项「基线无效，本项未核验」；
-- 问题清单：每条含 **`严重度`（Critical / Important / Suggestion）· `维度编号` · 位置（`文件:行`）· `问题` · `证据` · `修复建议`**，按严重度排序（Critical → Important → Suggestion）；
+- 问题清单：每条含 **`严重度`（Critical / Important / Suggestion）· `维度编号` · 位置（`文件:行`）· `问题` · `证据` · `修复建议` · `loop 推进`（阻断 / 非阻断）**，按严重度排序（Critical → Important → Suggestion）；
 - 不输出「请 Agent1 修复」类指令，跳过 Step 1/2，**不进入修复循环**，单轮即结束。
 - 其余规则（全程静态、维度判据、门控与留行口径、默认不落盘）与 `loop` 完全一致。
+
+### 严重度与 loop 推进
+
+- **严重度与推进分列**：非阻断仅表示 loop 模式可推进或收尾、不触发自动修复；不是删除问题、降低严重度或验收通过的依据。Critical 一律填阻断；Important 默认填阻断，只有判据明确声明非阻断才可填非阻断；Suggestion 填非阻断。L2 内部细节偏差填 Important + 非阻断，主题 token/布局/行为不符仍按 L1 Critical，不能套 L2。
+- **完整登记**：所有 Important（含非阻断项）必须进入问题清单并计入 Important 总数；不得将非阻断 Important 降为 Suggestion，也不得只放在优化建议里。各分片与模板中“不阻断/不阻塞/非阻断”的说法统一指 `loop 推进=非阻断`。脚本 Warn/Info 保留原始证据，由验收 Agent 按对应维度判据定严重度，不能直接按脚本 exit 0 或 Warn 推断验收通过。
+- **原始提示与有效豁免**：最终问题清单使用 Critical / Important / Suggestion 三档；仅详设列顺序不一致的 Info 归为 Suggestion + 非阻断，保留原始 Info 依据；若同时违反需求列序，仍按对应需求判据处理。其它脚本 Warn/Info 须经对应维度判据复核，不自动抬高或忽略。经对应判据允许且有依据的有效豁免，记录规则、原因与证据，不计入未解决问题数；缺理由、不满足豁免条件或规则明令不可豁免的，仍登记相应问题。
+- **同源对账**：按唯一问题编号汇总，详情、建议或技术债对同一问题的引用不重复计数；Important 总数必须等于阻断与非阻断两组之和。已执行维度只要存在 Critical 或 Important 就记 Fail，与是否触发修复无关；只有 Suggestion 可记 Pass 并列明问题编号。未执行/不适用仍按上一节规则，不能用非阻断掩盖未核验。
+- **总体结论**：两种模式均按完整清单判定；verify-only 即使只有 L2 非阻断 Important，结论仍为不通过。loop 可以在无阻断项时结束自动修复并交付剩余非阻断项，但仍有 Important 就写“不通过（仅非阻断项，loop 可收尾）”，不得写“全部通过”。混合发现与仅 L2 边界示例唯一维护在 [`assets/issue-list.md`](./assets/issue-list.md)；两份 assets 的发现汇总必须与维度结论、最终结论一致。
 
 ---
 
@@ -170,7 +178,8 @@ digraph verification_loop {
     decide -> report_pass [label="是"];
     decide -> report_fail [label="否"];
     report_fail -> done [label="mode=verify-only\n(单轮结束，问题清单交调用方)"];
-    report_fail -> feedback [label="mode=loop"];
+    report_fail -> feedback [label="mode=loop\n仍有阻断项"];
+    report_fail -> done [label="mode=loop\n仅非阻断项，收尾但验收不通过"];
     feedback -> fix;
     fix -> check [label="重新验收"];
     report_pass -> done;
@@ -189,11 +198,11 @@ digraph verification_loop {
 | 第三方平台接口对接 | PRD/详细设计 Module E 登记"等待第三方接口交付"或代码中出现 `THIRD_PARTY_MOCK` 标注 |
 
 **检测结果决定后续检查范围:**
-- **存在接口定义** → 启用全部 15 维度检查(含维度 2A Mock 清除 + 维度 3 接口对接)
+- **存在接口定义** → 启用依赖接口定义的维度 2A Mock 清除 + 维度 3 接口对接；其余维度照各自门控执行(门控型维度跳过时按下方留行口径处理,⛔ 不因「存在接口定义」而强行全跑)
 - **存在第三方平台接口对接** → 额外启用维度 2B 第三方临时 mock 协议核验，**且维度 2A 的 `scan_mock_data.py` 必须加 `--third-party-mode`**（否则合规的 2B mock 会被 2A 误判为 Critical）
-- **不存在接口定义** → 仅执行维度 1(功能完整性)+ 维度 4(代码质量)+ 维度 5(技术债)+ 维度 6(DI 依赖可解析性)+ 维度 7(CSS 预处理器一致性)+ 维度 8(请求通道 URL 拼装)。**维度 9 由显式 `client_mcp`/旧 Web `webmcp_enabled` 独立门控,与本行不互斥**——即便本次没有自研接口定义,已声明应用业务工具仍须核实现有服务/桥接或 Web 页内实现(与下句维度 2B 同款)。**维度 2B 是否启用由上一行独立判定，与本行不互斥**——没有自研接口定义但对接了第三方平台时，2B 照常要跑。**维度 10 / 维度 11 / 维度 12 / 维度 13 与接口定义存在与否无关，与本行同样不互斥**——维度 10 由**被测项目是否下发 `check_ui_fidelity.py`** 独立门控、维度 12 由**是否下发 `check_upstream_call_log.py` + 是否 JVM 栈**双重门控、维度 13 由**是否下发 `check_design_anchor.py` + 调用方是否传了 `--version` 值**双重门控（三者未下发时均标「不适用」跳过但**报告仍留行**），维度 11 是纯静态语义核对（失效实体入口拦截 / 被删引用降级 / 加载态脏数据 / 编辑后视图同步 / 存量数据兼容 / 指标跨页面同源，六条都与有没有接口文档无关），**四者照常执行**
+- **不存在接口定义** → 仅执行维度 1(功能完整性)+ 维度 4(代码质量)+ 维度 5(技术债)+ 维度 6(DI 依赖可解析性)+ 维度 7(CSS 预处理器一致性)+ 维度 8(请求通道 URL 拼装)。**维度 9 由显式 `client_mcp`/旧 Web `webmcp_enabled` 独立门控,与本行不互斥**——即便本次没有自研接口定义,已声明应用业务工具仍须核实现有服务/桥接或 Web 页内实现(与下句维度 2B 同款)。**维度 2B 是否启用由上一行独立判定，与本行不互斥**——没有自研接口定义但对接了第三方平台时，2B 照常要跑。**维度 10 / 维度 11 / 维度 12 / 维度 13 / 维度 14 / 维度 15 与接口定义存在与否无关，与本行同样不互斥**——维度 10 由**被测项目是否下发 `check_ui_fidelity.py`** 独立门控、维度 12 由**是否下发 `check_upstream_call_log.py` + 是否 JVM 栈**双重门控、维度 13 由**是否下发 `check_design_anchor.py` + 调用方是否传了 `--version` 值**双重门控、维度 15 由**是否下发 `check_sibling_family.py`** 门控其机器半场（四者未下发时均标「不适用」跳过但**报告仍留行**；维度 15 的语义半场照跑），维度 14 由技术栈 + 改动面双重门控，维度 11 是纯静态语义核对（失效实体入口拦截 / 被删引用降级 / 加载态脏数据 / 编辑后视图同步 / 存量数据兼容 / 指标跨页面同源，六条都与有没有接口文档无关），**六者照常按各自门控执行**
 - **技术栈门控(维度 6 / 维度 7 / 维度 8)** → 三者各自独立门控:维度 6 仅对 Java/Spring 生效(扫不到后端 `.java` 即**整维度跳过**)、维度 7 仅对 Vue 生效(扫不到 `.vue` 即**整维度跳过**)、维度 8 对**任意前端**生效(扫不到**任何前端源码**即**整维度跳过**;扩展名完整清单以维度 8「扫描范围」行为准,别照记忆写半截);跳过均不计入通过/不通过,不影响其它技术栈的验收结论
-- **外部脚本门控(维度 10 / 维度 12 / 维度 13)** → 被测项目未随脚手架下发 `{{AIDP_HOME}}/scripts/check_ui_fidelity.py`(维度 10)/ `check_upstream_call_log.py`(维度 12)/ `check_design_anchor.py`(维度 13) 时标「不适用(未下发)」跳过、**不硬失败,但报告里仍留行**(⚠️ 与维度 9 的「连行都不留」刻意不同——留行才能让阅读者知道「这一档没跑过」);**退出码 2 是入参/环境错、不是维度违规**。维度 12 另叠一层**技术栈门控**:脚本只扫 `.java`/`.kt`,非 JVM 项目 `outbound_files: 0` → 同样标「不适用」跳过、仍留行;维度 13 另叠一层**入参门控**:调用方未传「验收版本号」时同样标「不适用(未取到 `--version` 值)」跳过、仍留行,⛔ 不得自拟版本号。⚠️ **这三个维度都以「被测项目根」为脚本查找基准,不是「代码仓库/目录」**——AIDP 项目里两者常不是同一个目录,传错即三档一起静默落 N/A(见「输入要求」表)
+- **外部脚本门控(维度 10 / 维度 12 / 维度 13 / 维度 15)** → 被测项目未随脚手架下发 `{{AIDP_HOME}}/scripts/check_ui_fidelity.py`(维度 10)/ `check_upstream_call_log.py`(维度 12)/ `check_design_anchor.py`(维度 13)/ `check_sibling_family.py`(维度 15) 时标「不适用(未下发)」跳过、**不硬失败,但报告里仍留行**(⚠️ 与维度 9 的「连行都不留」刻意不同——留行才能让阅读者知道「这一档没跑过」);维度 15 未下发只关掉机器半场、15.1~15.3 照跑。⚠️ **判「未下发」前须记录解析后的绝对路径与 `ls` 结果作证据**——一次相对路径调用失败(cwd 不在被测项目根)不得判未下发,否则整档含 Critical 的维度以「不适用」消失。**退出码 2 是入参/环境错、不是维度违规,也不是「不适用」**:修正参数后重跑;仍无法执行 → 记「未执行（原因）」并登记 Important「本项未核验」(同「运行模式」输出契约),⛔ 不得记为不适用或通过。维度 12 另叠一层**技术栈门控**:脚本只扫 `.java`/`.kt`,非 JVM 项目 `outbound_files: 0` → 同样标「不适用」跳过、仍留行;维度 13 另叠一层**入参门控**:调用方未传「验收版本号」时同样标「不适用(未取到 `--version` 值)」跳过、仍留行,⛔ 不得自拟版本号。⚠️ **这四个维度都以「被测项目根」为脚本查找基准,不是「代码仓库/目录」**——AIDP 项目里两者常不是同一个目录,传错即四档一起静默落 N/A(见「输入要求」表)
 
 ---
 
@@ -223,8 +232,9 @@ digraph verification_loop {
 
 #### 维度 0: 静态基线门（**前置，不计入 15 维度**）
 
-- **必须做、且前置**：TypeScript/Vue 跑 `npx --no-install vue-tsc --noEmit`（或 `tsc --noEmit`）、有 eslint 配置跑 `npx --no-install eslint <本次改动文件>`；类型检查非零退出 / eslint **error** = 🔴 Critical，warning 记录不阻断。**`mode=loop` 非零即直接回 Agent1 修复，不往下走 15 维度；`mode=verify-only` 记 Critical 后仍跑完其余维度。**
-- ⚠️ `npx` **必须带 `--no-install`**（裸 `npx` 会联网装包，违反最高约束）；工具缺失标「⏭️ 跳过（工具缺失：<原因>）」，⛔ 不得升级为全量 build、不得改用裸 `npx`。
+- **必须做、且前置**：TypeScript/Vue 跑 `npx --no-install vue-tsc --noEmit`（或 `tsc --noEmit`）、有 eslint 配置跑 `npx --no-install eslint <本次改动文件>`；相对改动前基线新增的类型错误 / 改动文件的 eslint **error** = 🔴 Critical，warning 记录不阻断。**`mode=loop` 有确认的增量代码错误即回 Agent1 修复，不往下走 15 维度；`mode=verify-only` 记 Critical 后仍跑完其余维度。**
+- ⚠️ `npx` **必须带 `--no-install`**（裸 `npx` 会联网装包，违反最高约束）；⛔ 不得升级为全量 build、不得改用裸 `npx`。
+- **非零退出先分三类**，⛔ 不得仅凭退出码一律判 Critical：① 能定位到本次改动的增量代码错误 → 按上条登记；② 改动前基线已有的存量错误 → 不计本轮；③ 工具不可用或基线无效记「未执行（原因）」+ Important「本项未核验」——它不是代码缺陷，`loop` 不回 Agent1 改代码、**也不短路：照常跑完其余维度**（没有可派的修复，短路只会让这一轮什么都没验），恢复工具/基线后重跑本项。⛔ 不得写成「跳过」或「不适用」；`不适用` 只用于项目本无 TS/Vue 或无 eslint 配置。
 - ⚠️ **Java 侧刻意不做**，⛔ 别"顺手补上" `mvn compile`（lifecycle 会触发 `frontend-maven-plugin` 等插件、联网、落产物）；Java 装配类问题归维度 6。
 - **存量不卡本轮**：eslint 只跑改动文件；`tsc --noEmit` 的存量错误数**一律取改动前代码**作基线（`loop` 在 Agent1 动手前取；`verify-only` 按改动前基线 ref 取），只对增量判 Critical；取不到改动前基线写「基线无效，本项未核验」，⛔ 不得退回「以本轮错误数作基线」。
 - 判据全文 → [`references/flow-dims-core.md`](./references/flow-dims-core.md)「维度 0」。
@@ -276,7 +286,7 @@ digraph verification_loop {
 | 🔴 Critical | 安全隐患 / 金额字段类型守恒 / 缓存代码与设计一致性（设计未授权严禁加缓存）/ 字段/列对账（未登记差异）/ 字段集与设计双向比对（设计有实现无）/ 产品 PRD 原文 ⟷ 实现 条目对账 / 视觉还原度 L1 / 内容 + 操作逻辑完整性 / 文案与数据口径一致性 / 死代码/死引用残留 / HTTP 客户端配置硬编码 / 审计字段填充溯源 / 用户自我保护校验 / **错误契约与失败可见性**（①成功响应表达失败 ②前端吞错渲染空态 ③fail-open；只判「失败分支内」，合法业务空集合不在覆盖面） |
 | 🟡 Important（可按条件升 Critical） | 命名规范 / 错误处理（本地异常提示）/ 类型安全 / 性能问题 / 金额 JSON 序列化 / 注释完备性（A 档裸代码升 Critical）/ 文件复杂度 + 复用封装（单文件软阈值 Java·Go ≤500、Vue·React 组件 ≤300、TS/JS ≤400、Python ≤600，超 2 倍或单方法 >50 行或 3+ 次裸重复未抽升 Critical）/ DB 约束前置校验（NOT NULL·UNIQUE·外键缺校验升 Critical）/ 配置中心热刷新漏标 / 新增依赖越界基线（未评估第三方依赖升 Critical）/ 错误契约第④类（上游改字段静默取默认值）/ 视觉还原度 L2 / 四条「UI 公共化」子行（重复样式声明块 / 公共单元被就地覆盖 / 「抄自」类注释 / `SYNC-WITH:` 标记进技术债） |
 
-- 机器门：`check_file_complexity.py <代码目录>`（**硬门**，超 2 倍阈值/单方法 >50 行 exit 1）；`scan_cache_usage.py` / `scan_code_conventions.py`（`http-hardcode`/`refresh-scope`/`dead-ref`/`dep-baseline`/`audit-fill`）/ `scan_field_columns.py` / `scan_design_field_inventory.py` / `scan_stale_copy.py` 为**采集脚本、退出码恒 0**，结论由验收 Agent 比对设计/基线给出。「错误契约与失败可见性」**刻意不配脚本**。
+- 机器门：`check_file_complexity.py <代码目录>`（**硬门**，超 2 倍阈值/单方法 >50 行 exit 1）；`scan_cache_usage.py` / `scan_code_conventions.py`（`http-hardcode`/`refresh-scope`/`dead-ref`/`dep-baseline`/`audit-fill`）/ `scan_field_columns.py` / `scan_design_field_inventory.py` / `scan_stale_copy.py` 为**采集脚本**：命中与否默认都 exit 0（入参/环境错 exit 2；部分脚本 `--strict` 下有命中 exit 1），⛔ exit 0 不等于该行通过，结论由验收 Agent 比对设计/基线给出。「错误契约与失败可见性」**刻意不配脚本**。
 - 白名单判定要点、逐行判据全文、脚本参数、UI 公共化来由、与维度 3.6/5 的职责边界 → [`references/flow-dims-quality.md`](./references/flow-dims-quality.md)「维度 4」。
 
 #### 维度 5: 技术债与风险识别
@@ -312,7 +322,7 @@ digraph verification_loop {
 
 #### 维度 10: UI 还原度确定性检查（委派外部脚本·约定39-R2/R3/R10）
 
-- **外部脚本门控**：`python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json`；未下发标「不适用」**报告仍留行**；`exit 2` 是入参/环境错、不是维度违规。⛔ **本 SKILL 不得再写一份同判据实现，也不许把脚本拷进来。**
+- **外部脚本门控**：`python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json`；未下发（须有绝对路径 + `ls` 证据）标「不适用」**报告仍留行**，**并须对约定39-R10 人工 grep 兜底**（导出方法体内 `pageNo`/`pageSize`/`PageHelper`/`Pageable`/`limit`；人工静态阅读不算第二份实现）；`exit 2` 是入参/环境错、不是维度违规，重跑仍失败记「未执行（原因）」。⛔ **本 SKILL 不得再写一份同判据实现，也不许把脚本拷进来。**
 - 约定39-R10 导出方法体内透传分页参数（导出只导当前页）= 🔴 Critical **零豁免**；约定39-R3 截断无 tooltip / 约定39-R2 状态标签颜色字面量常量 = 🟡 Important，可就近 `fidelity-ignore: <规则号> <原因>`，只写规则号不写原因报 Important。编号一律写全称 `约定39-RNN`。
 - 详情 → [`references/flow-dims-delegated.md`](./references/flow-dims-delegated.md)「维度 10」+ [`references/flow-ui-fidelity.md`](./references/flow-ui-fidelity.md)。
 
@@ -354,7 +364,7 @@ digraph verification_loop {
 
 ### Step 4: 生成验收结果
 
-根据 维度 0（静态基线门）+ 15 维度检查结果，生成以下之一（**维度 0 未过时结论即「不通过」**；`mode=loop` 可不填后 15 维度，`mode=verify-only` 仍须填完）：
+根据 维度 0（静态基线门）+ 15 维度检查结果，生成以下之一（**维度 0 未过时结论即「不通过」**；`mode=loop` 因确认的增量代码错误短路回 Agent1 时可不填后 15 维度——维度 0 为「未执行」时不短路、须填完；`mode=verify-only` 一律须填完）：
 
 **4a. 验收通过** → 在响应中以表格形式呈现验收结果，包含：
 - 各维度检查结果汇总（表格）
@@ -382,19 +392,19 @@ digraph verification_loop {
   **条件启用的维度 9 排在最后一节**，未启用时整节删除、不留编号空洞。
 - **门控维度的留行口径不同**：技术栈 / 外部脚本 / 改动面门控的维度跳过时**仍留行**写「不适用 + 原因」；
   只有入参门控的维度 9 **连行都不留**。
-- **维度 0 未过即「不通过」**：`mode=loop` 不必填后续维度；`mode=verify-only` 仍须跑完并填完其余维度。
-- **不通过时**每个问题写清：维度号、位置（文件:行）、代码片段、修复建议、严重级别（Critical / Important / Suggestion），
-  并按 Critical → Important → Suggestion 给出修复优先级。
+- **维度 0 未过即「不通过」**：`mode=loop` 仅在确认的增量代码错误短路回 Agent1 时不必填后续维度（维度 0「未执行」不短路）；`mode=verify-only` 仍须跑完并填完其余维度。
+- **每条发现**写清：唯一问题编号、维度号、位置（文件:行）、证据/代码片段、修复建议、严重级别（Critical / Important / Suggestion）与 `loop 推进`（阻断 / 非阻断），
+  并按 Critical → Important → Suggestion 排序；非阻断 Important 同样进入问题清单、分组统计与维度 Fail。无阻断项时 loop 可收尾，是否验收通过仍按完整清单判定。
 
 ### Step 5: 反馈与修复循环
 
 > `mode=verify-only` 时**不执行本步**：Step 4 输出问题清单后即结束，修复由调用方归口处理。
 
-`mode=loop` 验收不通过时：
-1. 将问题清单发送给 Agent1
-2. Agent1 按优先级修复（先 Critical → 再 Important → 最后 Suggestion）
-3. Agent1 修复完成后，返回 Step 3 重新验收
-4. **循环终止条件**：所有 Critical 和 Important 问题已修复（Suggestion 可由用户决定是否修复）
+`mode=loop` 验收不通过时先区分推进标记：仅有非阻断项直接按第 4 条收尾；仍有阻断项才执行修复。
+1. 将完整问题清单发送给 Agent1，区分本轮修复项与非阻断后续处置项
+2. Agent1 按优先级修复阻断项（先 Critical → 再阻断 Important；Suggestion 可选）
+3. Agent1 修复完成后，返回 Step 3 重新验收；判据明确的非阻断 Important 不进入自动修复任务
+4. **循环终止条件**：阻断项清零即可结束自动修复；仍有非阻断 Important 时，总体结论仍为不通过（仅非阻断项，loop 可收尾），清单保留并交代后续处置；无 Critical 且无 Important 才验收通过（Suggestion 可由用户决定是否修复）
 5. **最大循环次数**：默认 5 轮。超过 5 轮仍未通过，暂停并向用户报告，由用户决定是否继续
 
 ---

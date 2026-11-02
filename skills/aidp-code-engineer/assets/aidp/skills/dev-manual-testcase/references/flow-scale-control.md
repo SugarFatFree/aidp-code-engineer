@@ -28,9 +28,9 @@
 
 ```bash
 # ① 由执行计划确定性导出映射(dev-execution-planner 自带脚本;href 相对用例目录根计算)
-python3 <planner 安装目录>/scripts/export_plan_refs.py <执行计划目录> --cases-dir <用例目录> --out plan_refs.json
-# ② 回填占位符
-python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.json
+python3 <planner 安装目录>/scripts/export_plan_refs.py <执行计划目录> --cases-dir <用例目录根> --out plan_refs.json
+# ② 对同一个用例目录根递归回填（含全部嵌套子目录）
+python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录根> --map plan_refs.json
 # plan_refs.json: {"REQ-004": {"label": "Sprint-012 Task 2.3", "href": "../plans/V1/01_研发执行计划.md#task-2-3"}}
 ```
 
@@ -42,7 +42,11 @@ python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.
   锚点是 Task 标题上一行的 `<a id="task-<phase>-<seq>"></a>`（规则在 dev-execution-planner 的 `output-format.md`）。
   ⛔ 编排层不得为了过格式门自拟 `T-NNN-NN` 之类编号——那是伪造溯源，`resolve_plan_refs.py` 按入参错拒收（exit 2）。
 - **一条 REQ 被多个 Task 承接**时取 Sprint 号最小、其次 Task 号最小（导出脚本已按此取，⛔ 编排层不另挑）。
-- **用例分在子目录时**：`href` 按 `--cases-dir` 计算，子目录里的用例须按子目录分别导出、分别替换。
+- **用例分在子目录时**：导出与回填使用同一个**用例目录根**，只需导出一次映射、递归回填一次。
+  映射中的 `href` 相对 `--cases-dir` 指定的用例目录根计算；`resolve_plan_refs.py` 按每个用例文件的位置词法重算相对路径，保留锚点、不跟随软链。
+  例如同一映射的 `../plans/01_研发执行计划.md#task-2-3`，写入根目录用例时保持原样，写入 `模块/子模块/` 下的用例时变为
+  `../../../plans/01_研发执行计划.md#task-2-3`。不要把基于根目录导出的映射改传给子目录单独回填，否则计算基准会变。
+  **传单个文件时**，回填基准是该文件所在目录，导出时的 `--cases-dir` 也必须指向该目录。任一层用例缺少 REQ 映射时仍全有或全无，所有文件保持原样。
 - 没被任何 Task 承接的 REQ 不进映射，对应占位符替换失败——这是真问题（计划漏了这条需求），⛔ 不得手工补一条映射绕过。
 
 **两种形态都要过硬门**：
@@ -80,7 +84,7 @@ python3 <SKILL_DIR>/scripts/resolve_plan_refs.py <用例目录> --map plan_refs.
 
 ## 四、`prd_presence_mode = cases | table`（`[PRD存在性]` 用例族）
 
-- `cases`（缺省，现状）：产品 PRD 每个可测存在性条目一条 `[PRD存在性]` 用例（`flow-step5-coverage.md` 第五步之一）。
+- `cases`（缺省，现状）：产品 PRD 每个可测存在性条目一条 `[PRD存在性]` 用例（`flow-step5-coverage.md` 第五步之六）。
 - `table`：编排层用确定性脚本产出「PRD 行 → 研发需求对账表」，路径由 `prd_presence_table` 传入；本 SKILL **只对表中「未承接」行**
   生成补充用例，「已承接」行不再逐条写用例（它们已由研发需求 → 用例的正常链路覆盖，编排层的 PRD 行级反向覆盖审计查的是同一件事）。
 - **对账表契约**（四列，列名固定，编排层脚本产出）：

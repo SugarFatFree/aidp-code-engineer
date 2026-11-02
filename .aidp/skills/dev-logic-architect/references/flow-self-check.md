@@ -5,7 +5,7 @@
 
 ## 质量自检清单(Author 自检,27 项)
 
-> **本节与 Quality Review Agent 41 维度的关系:** 本清单是作者侧的工程性自检(关注脚本辅助、文件结构、命名规范);下文 "Post-Generation Quality Review" 章节调用的独立 Agent 执行**业务/契约/溯源层面的深度审查**(完整 41 维度详见 `references/quality-review-checklist.md`)。两套清单**编号不一一对应**,但目标互补、共同保障详细设计质量。下表给出**简明映射**便于交叉查阅:
+> **本节与 Quality Review Agent 41 维度的关系:** 本清单是作者侧的工程性自检(关注脚本辅助、文件结构、命名规范);[`flow-qr-dispatch.md`](./flow-qr-dispatch.md) 的 "Post-Generation Quality Review" 章节调用的独立 Agent 执行**业务/契约/溯源层面的深度审查**(完整 41 维度详见 [`quality-review-checklist.md`](./quality-review-checklist.md))。两套清单**编号不一一对应**,但目标互补、共同保障详细设计质量。下表给出**简明映射**便于交叉查阅:
 >
 > ### ⚠️ 多套编号并存，且**映射是任意的——严禁靠算**
 >
@@ -13,7 +13,7 @@
 >
 > | | 编号叫法 | 项数 | 归属文档 | 谁执行 |
 > | :- | :- | :-: | :- | :- |
-> | ① | **自检 N** / 自查序号 N | **27** | 本文件（SKILL.md）本节 | 作者侧，生成设计时自查 |
+> | ① | **自检 N** / 自查序号 N | **27** | 本文件(`references/flow-self-check.md`;分片前在 SKILL.md) | 作者侧，生成设计时自查 |
 > | ② | **检查项 N** / **维度 N** | **41** | `references/quality-review-checklist.md` | 独立 QR Agent，生成后复核 |
 > | ③ | **`<脚本名>` 内部检查项 N** | 各脚本自定 | 各 `scripts/check_*.py` 的 docstring「检查项」列表（典型：`check_doc_split.py` 12 项） | 脚本自身 |
 >
@@ -122,6 +122,12 @@
 - `scripts/check_permission_constraint.py` — 权限与可见范围约束落点表结构核验(对应检查项 40,**Critical**;Author 27 项无对应自检编号)
 - `scripts/check_sibling_family_spec.py` — 同族增量项声明表结构核验(对应检查项 41,**Important 档**;Author 27 项无对应自检编号;支持 `--self-check`)
 - `scripts/check_module_kind.py` — B.1 模块分组 + 「模块类型」字段核验(对应检查项 9 的 Important 子条;Author 27 项无对应自检编号;下游自测用例 `module_kind=auto` 的跨产物契约)
+- `scripts/check_list_page_scale.py` — 列表页数据量级与分页策略子表结构核验(对应核心原则 26 / 检查项 5 子项;S1 缺表判 Important、读 `--json`)
+- `scripts/check_metric_spec.py` — 统计指标口径表 8 列结构核验 + 同名指标权威口径跨文件一致(对应核心原则 25 / 检查项 34;**须传目录**)
+- `scripts/check_upstream_call_log_spec.py` — 上游调用日志与脱敏声明表 6 列结构核验(对应核心原则 27 / 检查项 35;U1 缺表判 Important,⛔ 别只看退出码)
+- `scripts/check_count_claim_table.py` — 业务计数声明表 5 列结构核验 + 同名声明 C6/C7 跨表一致(对应核心原则 28 / 检查项 36;**须传目录**)
+- `scripts/check_render_merge_table.py` — 渲染层归并声明表 5 列结构核验(对应核心原则 29 / 检查项 37;刻意不判缺表,`skipped` ≠ 通过)
+- `scripts/qr_orchestration.py` — 编排层 `qr_level` 分级派发 / 移交清单 / 紧凑回传校验工具(不承载判据,协议见 [`flow-orchestration.md`](./flow-orchestration.md))
 - `scripts/run_qr_checks.py` — **试验性 QR 机器结果采集器**,只调用现有 28 条脚本并保留原始输出,不增加 Author 自检项或 QR 维度,未接入正式 QR 步骤 0;`skipped`/`collector`/`unavailable` 不等于通过。
 
 > 上述检查项 40/41 两个脚本均由 [`flow-qr-dispatch.md`](./flow-qr-dispatch.md) 的 **QR 步骤 0** 调用。命令端只负责把该步骤派给独立 QR Agent,**命令端无需重复实现判据**;否则同一判据两份实现必然漂移。
@@ -168,8 +174,10 @@ ls code/sql/v{current}/*.sql 2>/dev/null | grep -E '/(init|schema|migration|base
 # 命中即不合规
 
 # V4 中文命名核验
-ls code/sql/v{current}/*.sql 2>/dev/null | grep -vE '^code/sql/v[^/]+/\d{2}_[一-龥].*\.sql$'
+ls code/sql/v{current}/*.sql 2>/dev/null | grep -vP '^code/sql/v[^/]+/\d{2}_\p{Han}.*\.sql$'
 # 命中即不合规
+# ⚠️ 必须用 `-P`:GNU grep 的 `-E` 不认 `\d`(当成字面 d → 合规文件全被判违规,假红),
+#    `[一-龥]` 区间在 C/C.UTF-8 locale 下直接报 Invalid collation character、exit 2(命令没跑成却无输出,假绿)。
 ```
 
 **自动化脚本(必跑):**
@@ -183,7 +191,7 @@ python3 <SKILL_DIR>/scripts/check_sql_version_isolation.py \
 #   flat      {SQL根目录}/{version}/*.sql —— 传 SQL 根目录
 #   versioned {部署根目录}/{version}/sql/增量|全量/**/*.sql —— 传部署根目录;V2 只比增量轨(two-track 为兼容别名)
 # --self-check 跑内建阳性/阴性对照;SQL 根目录不存在 → exit 0 + skipped:true(不等于通过)
-# 退出码 0 = 通过, 1 = 不通过
+# 退出码 0 = 通过或 N/A 跳过, 1 = 不通过, 2 = 入参错(不计维度失败)
 ```
 
 **Why:** 单文件不需要"完整可还原" — 部署侧按版本顺序逐个 apply。基线泄漏导致部署侧无法判定哪些是本版本新增、哪些会与上一版本冲突;多版本 DDL 重复也增加了对账成本。设计阶段直接拦截。

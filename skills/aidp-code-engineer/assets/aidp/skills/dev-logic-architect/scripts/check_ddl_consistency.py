@@ -146,7 +146,7 @@ def parse_design_doc(md_text: str, target_table: str | None) -> dict[str, dict]:
 
     # ── 兜底:设计文档以 CREATE TABLE DDL(```sql 围栏)描述 A.3 数据表 ──────────────
     # dev-logic-architect 的 A.3 canonical 输出形态就是 SQL 围栏里的 CREATE TABLE
-    # (见 references/output-module-examples.md A.3 与 SKILL.md「生成 A.3 数据表时内联校验」),
+    # (见 references/output-module-examples.md A.3 与 references/flow-execution.md「生成 A.3 数据表时内联校验」),
     # 并非 markdown 字段表。若只认 markdown 表格,针对本 SKILL 自身模板产出的设计文档
     # 会恒判「未找到可对比的表」而失效。故此处对未从 markdown 表格取到的表,
     # 回退用同一套 DDL 解析器从设计文档的 SQL 围栏中提取。

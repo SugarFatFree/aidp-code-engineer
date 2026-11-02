@@ -86,6 +86,18 @@ INVALIDATION_MARKER = re.compile(
 DEFAULT_NEIGHBOR_LINES = 2
 
 
+def req_pattern(req: str) -> "re.Pattern[str]":
+    """作废 REQ 编号的整词匹配式:按字符串处理(⛔ 不 int()),**两侧词边界不可省**。
+
+    ⚠️ 不能用子串 `req in line`:`REQ-3` 会命中第三方能力命名空间 `REQ-3P-001`、`REQ-004` 会命中
+    `REQ-0041`,方向两头都错——把别的需求报成「未标注失效」(假红),或让它在窗口里冒充
+    「另一条作废 REQ」、把本条真正带了标注的命中挤进 unmarked。两种编号形态
+    (`REQ-004` / `REQ-V0.17.0-004`)都按同一规则:前面不能紧贴字母数字或 `-`,
+    后面不能紧跟字母数字,也不能紧跟 `-`/`.` 再接字母数字(编号续段)。
+    """
+    return re.compile(r"(?<![A-Za-z0-9_-])" + re.escape(req) + r"(?![A-Za-z0-9_])(?![-.][A-Za-z0-9])")
+
+
 def is_excluded(path: Path, root: Path) -> bool:
     """仅基于 root 以内的相对路径判断排除,避免项目位于含排除名祖先目录时被整体跳过。"""
     try:
@@ -139,6 +151,7 @@ def scan_file(
         return
     rel = _rel(path, root)
 
+    req_res = {r: req_pattern(r) for r in reqs}
     for idx, line in enumerate(lines):
         # ① 旧口径残留:子串匹配(文案是自然语言,literal 子串最稳)
         for ph in phrases:
@@ -149,20 +162,21 @@ def scan_file(
                     "line": idx + 1,
                     "snippet": line.strip()[:200],
                 })
-        # ② 作废 REQ 编号:子串匹配后,邻近窗口找失效标注
+        # ② 作废 REQ 编号:整词匹配(见 req_pattern)后,邻近窗口找失效标注
         for req in reqs:
-            if req in line:
+            if req_res[req].search(line):
                 # ⚠️ 窗口判定必须**排除串味**：作废 REQ 引用在代码里天然扎堆（同一段注释罗列多条
                 #    历史需求），若只看「邻近 N 行内有没有失效标注」，相邻另一条 REQ 的标注会把
                 #    本条也一并"洗白"进 🟢 合规桶 —— Agent 不再复查，维度 4 那条 Critical 就此漏掉。
                 #    实测：两行各引一条作废 REQ、只有第二条带标注时，两条都被判合规。
                 #    规则：① 同行命中标注 → 合规；② 仅窗口命中、且窗口里**没有其它清单内 REQ**
-                #    → 合规；③ 窗口命中但混着别的 REQ → 归第三档 ambiguous，交人工确认。
+                #    → 合规；③ 窗口命中但混着别的 REQ → 标注归属不明，按 fail-closed 归入 unmarked，交人工确认
+                #    （没有单独的 ambiguous 桶——宁可让 Agent 多复查一条，也不把它洗进合规桶）。
                 same_line = INVALIDATION_MARKER.search(line)
                 lo = max(0, idx - neighbor)
                 hi = min(len(lines), idx + neighbor + 1)
                 window = "\n".join(lines[lo:hi])
-                other_reqs = [r for r in reqs if r != req and r in window]
+                other_reqs = [r for r in reqs if r != req and req_res[r].search(window)]
                 m = same_line or INVALIDATION_MARKER.search(window)
                 if m and not same_line and other_reqs:
                     m = None  # 串味：窗口里还有别的作废 REQ，标注归属不明

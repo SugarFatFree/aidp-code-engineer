@@ -112,7 +112,7 @@ Agent({
   你是一位资深产品经理。请对 {PRD 文档路径} 执行 15 维度质量检查，参考原型 {原型路径}、产品需求文档 {产品文档路径}（模式 B 时）。
 
   执行步骤（必须按顺序）：
-  0. **(先于一切,强制)** 逐个运行本 SKILL『🛡️ 落盘后硬核回检』列出的全部 bash 脚本(将 <SKILL_DIR> 替换为本 SKILL 实际安装目录,即 ./quality-review-checklist.md 的上一级):check_technical_content.py、check_split_blacklist.py(多文件模式)、模式 B 净化记录 grep、check_req_upstream.py、check_no_fabricated_fallback.py(维度 12,始终跑)、check_3p_capability.py(维度 8,仅 PRD 含七·4 第三方对接章节时跑)、check_doc_split.py(维度 9,仅多文件模式跑;单文件 N/A 跳过)、check_requirement_field_inventory.py(维度 13,仅 PRD 含「需求字段清单」/表 C 章节时跑;主体 report-only 据采集结果做语义判定,**但表 A「字段语义名称」混入代码级标识为 Critical、退出码 1**)、check_prd_item_coverage.py(维度 13 子项·命令 9·判错型,仅 PRD 含「表 D：PRD 条目映射表」时跑;未分类条目 > 0 即退出码 1;无表 D 时退出码 0 跳过/grandfather 放行)、check_semantic_change.py(维度 14·命令 10·判错型,仅命中语义变更信号词或笼统豁免表述时生效;缺表 E 即退出码 1;既无信号又无豁免时退出码 0 grandfather 放行)。把**每个脚本的退出码原样贴进报告**作为证据;**任一判错型脚本退出码非 0 即对应维度(维度 5 上游溯源 / 维度 8 第三方对接 / 维度 9 拆分一致性 / 维度 10 职责边界 / 维度 12 不臆造兜底;维度 13 命令 9 表 D 反向覆盖率 < 100%;维度 14 命令 10 缺表 E)直接判不通过**,无需再做语义判断;维度 13 据 check_requirement_field_inventory.py 采集结果(表 A/B/C 存在性 + 处置枚举)+ check_prd_item_coverage.py 表 D 反向覆盖判定(命令 9,模式 B 必产表 D、未分类条目 = 静默丢失)+ 原型 code/(或上游`原型内容基线.md`/`DESIGN-MANIFEST.json`)逐列·逐元素·逐操作逻辑比对 + 产品需求文档逐表逐行比对做语义判定;维度 14 据 check_semantic_change.py 命中(表 E 齐备性)+ 表 F 历史作废清单(实际读历史版本`docs/requirements/{历史版本}/研发需求/*.md`,命中本版语义词的历史需求条目须逐条判定沿用/作废/修订)做语义判定;
+  0. **(先于一切,强制)** 逐个运行本 SKILL『🛡️ 落盘后硬核回检』列出的全部 bash 脚本(将 <SKILL_DIR> 替换为本 SKILL 实际安装目录,即 ./quality-review-checklist.md 的上一级):check_technical_content.py、check_split_blacklist.py(多文件模式)、模式 B 净化记录 grep、check_req_upstream.py、check_no_fabricated_fallback.py(维度 12,始终跑)、check_3p_capability.py(维度 8,仅 PRD 含七·4 第三方对接章节时跑)、check_doc_split.py(维度 9,仅多文件模式跑;单文件 N/A 跳过)、check_requirement_field_inventory.py(维度 13,仅 PRD 含「需求字段清单」/表 C 章节时跑;主体 report-only 据采集结果做语义判定,**但表 A「字段语义名称」混入代码级标识为 Critical、退出码 1**)、check_prd_item_coverage.py(维度 13 子项·命令 9·判错型;**模式 B 有产品原始 PRD 原文时必须带 `--prd-source <产品原始 PRD 文件或目录>`**——不带则 S0「有原文无表 D」/ S1「原文条目未进表 D」两条以原文为基准的判据不会触发,`prd_source.zero_items: true` 须转人工、⛔ 不读成通过;不带 `--prd-source` 时仅 PRD 含「表 D：PRD 条目映射表」才实质核验;未分类条目 > 0 即退出码 1;无表 D 时退出码 0 跳过/grandfather 放行)、check_semantic_change.py(维度 14·命令 10·判错型,仅命中语义变更信号词或笼统豁免表述时生效;缺表 E 即退出码 1;既无信号又无豁免时退出码 0 grandfather 放行)。把**每个脚本的退出码原样贴进报告**作为证据;**任一判错型脚本退出码非 0 即对应维度(维度 5 上游溯源 / 维度 8 第三方对接 / 维度 9 拆分一致性 / 维度 10 职责边界 / 维度 12 不臆造兜底;维度 13 命令 9 表 D 反向覆盖率 < 100%;维度 14 命令 10 缺表 E)直接判不通过**,无需再做语义判断;维度 13 据 check_requirement_field_inventory.py 采集结果(表 A/B/C 存在性 + 处置枚举)+ check_prd_item_coverage.py 表 D 反向覆盖判定(命令 9,模式 B 必产表 D、未分类条目 = 静默丢失)+ 原型 code/(或上游`原型内容基线.md`/`DESIGN-MANIFEST.json`)逐列·逐元素·逐操作逻辑比对 + 产品需求文档逐表逐行比对做语义判定;维度 14 据 check_semantic_change.py 命中(表 E 齐备性)+ 表 F 历史作废清单(实际读历史版本`docs/requirements/{历史版本}/研发需求/*.md`,命中本版语义词的历史需求条目须逐条判定沿用/作废/修订)做语义判定;
   1. 读取原型 HTML，提取所有页面、表单字段、按钮、状态标签、交互流程；
   2. 读取 PRD 文档，提取所有章节（异常路径、字段规格、状态机、权限矩阵、隐藏逻辑、第三方对接）；
   3. 读取产品需求文档（模式 B 时），提取功能清单、业务规则、角色权限、第三方对接要求；
@@ -328,7 +328,7 @@ grep -n "已剥离技术细节" <PRD主文档路径>                          # 
 
 #### 检查项 12：不臆造兜底(Critical 强制项)
 
-**目标：** 产品文档未明确要求的兜底/默认值/降级不得以事实需求混入正文;三类分流核验(A 异常处理允许 / B 数据源·字段·业务规则·状态兜底需溯源 / C 空状态·加载态·错误态 UI 推断允许),B 类无来源必须移入十章节标 `🔧 Agent 暂行方案`(完整判定规则见本 SKILL「⚠️ 不臆造兜底原则」章节)。
+**目标：** 产品文档未明确要求的兜底/默认值/降级不得以事实需求混入正文;三类分流核验(A 异常处理允许 / B 数据源·字段·业务规则·状态兜底需溯源 / C 空状态·加载态·错误态 UI 推断允许),B 类无来源必须移入十章节标 `🔧 Agent 暂行方案`(完整判定规则见 [`flow-principles.md`](./flow-principles.md)「不臆造兜底原则」一节)。
 
 **不通过标志：**
 - B 类兜底语句无上游来源,且未移到十章节标 `🔧 Agent 暂行方案`

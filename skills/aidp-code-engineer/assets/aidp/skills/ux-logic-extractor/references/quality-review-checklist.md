@@ -41,7 +41,7 @@
 > - 派发怎么用这两列、移交清单怎么写,见 `flow-orchestration.md`;推导由 `scripts/qr_orchestration.py plan` 完成,⛔ 不手算。
 
 > ⚠️ 本 SKILL 文档（分片后主要在 `flow-principles.md` / `flow-upstream-refs.md`）中出现的 `check_cache_user_confirmed.py` / `check_case_stats.py` / `check_unit_field.py`
-> **不是本 SKILL 的脚本**（本 SKILL 的 `scripts/` 只有上表这 9 个），是**协作说明**里点名的下游 SKILL 脚本。
+> **不是本 SKILL 的脚本**（本 SKILL 的机器门脚本以上表「机器门脚本」列为准;`scripts/` 里另有的 `qr_orchestration.py` 是编排层派发工具、不是机器门），是**协作说明**里点名的下游 SKILL 脚本。
 > ⛔ 别把它们写进本 SKILL 的 QR 派发命令——跨 SKILL 调脚本违反 SKILL 独立性原则。
 
 ---

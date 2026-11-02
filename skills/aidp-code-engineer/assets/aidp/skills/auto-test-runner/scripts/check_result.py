@@ -210,6 +210,9 @@ FREE_SCAN_ID_PREFIX = '运行时-'
 # 非用例产物(与 gen_report.NON_RESULT_FILES 同口径),整目录校验时跳过
 NON_RESULT_FILES = {'env-facts.json', 'token-usage.json', 'run-context.json'}
 SCREENSHOT_EXTENSIONS = {'.webp', '.png', '.jpg', '.jpeg'}
+# runtimeErrors 截图主干除 `{case_id}-step{N}` 外只认 `{case_id}-{标签}`;标签 = 本集合 ∪ 该条 type。
+# ⚠️ 文档(report-format / result-schema / execution-contract-lite)逐值比对本常量,改这里须同步改文档。
+RUNTIME_ARTIFACT_LABELS = ('console', 'network', 'pageError', 'error')
 # 仅拦「明确是图片、但不在截图兼容白名单」的扩展名。`.json`/`.log`/`.txt` 等是合法的
 # 非截图证据,不能因为 artifact 字段同时承载它们就一刀切成四种图片后缀。
 UNSUPPORTED_IMAGE_EXTENSIONS = {
@@ -687,7 +690,7 @@ def _check_artifact_contract(data, name, result_path, issues, artifact_index=Non
                                    f'{name}: `runtimeErrors[{i}]` 截图主干 `{file_stem}` 的 case 为 '
                                    f'`{stem_case}`(应为 `{case_id}`)')
                     else:
-                        labels = {'console', 'network', 'pageError', 'error'}
+                        labels = set(RUNTIME_ARTIFACT_LABELS)
                         if isinstance(item, dict) and item.get('type'):
                             labels.add(str(item.get('type')))
                         allowed = {f'{case_id}-{label}' for label in labels}

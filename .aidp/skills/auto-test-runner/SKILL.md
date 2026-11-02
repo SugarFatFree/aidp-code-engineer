@@ -414,7 +414,7 @@ tasks.md 4 态状态机持久化;续跑跳过 `[√]`,不从头重来。
 ### 约束 11：单条耗时必须采集，WebMCP 必须分层
 
 **耗时**：每条用例结果 JSON 必须带 `started_at` / `finished_at` / `elapsed_ms` 三件套，
-`gen_report.py` 据此产出「§2.7 耗时分布」。⚠️ **没有单条耗时，任何优化都无法验证是否生效** ——
+`gen_report.py` 据此产出「§2.7 耗时分布」。批量执行下 `elapsed_ms` 是窗口均摊值时必须标 `elapsed_is_amortized: true` + `batch_id`(写进 `note` 不算,聚合器不读 `note`)。⚠️ **没有单条耗时，任何优化都无法验证是否生效** ——
 靠 evidence 文件 mtime 手工反推只对产出了多个 evidence 的用例有效，非常容易整条漏掉（实例见 [`references/rationale.md`](./references/rationale.md)）。
 ⚠️ 报告出现 `execution_mode` 分布时**必须同时给出实际触发自愈次数** ——
 `execution_mode=self-heal` 是「**具备**自愈能力」，不是「实际自愈了」（实证：43 条 self-heal vs 实际重试 1 次，

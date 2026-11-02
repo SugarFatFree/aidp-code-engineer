@@ -55,6 +55,22 @@ from pathlib import Path
 # 否则「测试套件 TS-NNN」组织的文档会被漏计套件数(仅影响统计展示,不影响判定)。
 SUITE_RE = re.compile(r'^#{2,4}\s*(?:测试)?套件\s+((?:SUITE|TS)-[\w\-]+)', re.MULTILINE)
 CASE_RE = re.compile(r'^#{3,6}\s*(?:用例\s+)?(TC-[\w\-]+)', re.MULTILINE)
+# 任意 ATX 标题行:用例块在「同级或更高级的非用例标题」处结束(见 _case_block_end)
+ANY_HEADING_RE = re.compile(r'^(#{1,6})\s', re.MULTILINE)
+
+
+def _case_block_end(text, m, next_start):
+    """用例块终点 = 下一个用例标题,或更早出现的同级/更高级非用例标题。
+
+    ⚠️ 只等下一个用例标题会让**最后一条用例**吞掉其后全部章节(附录/统计摘要/示例),
+    那里的「PRD 行号」等字段会被记到它名下(与 check_fidelity_suite.py 同一缺陷,已同改)。
+    更深层的子标题仍属本用例。
+    """
+    level = len(m.group(0)) - len(m.group(0).lstrip('#'))
+    for h in ANY_HEADING_RE.finditer(text, m.end(), next_start):
+        if len(h.group(1)) <= level:
+            return h.start()
+    return next_start
 # 优先级/类型字段行:> **优先级**: P0 | **类型**: 正向
 PRIO_RE = re.compile(r'优先级\**\s*[:：]\s*\**\s*(P[012])')
 TYPE_RE = re.compile(r'类型\**\s*[:：]\s*\**\s*([^\n|]+)')
@@ -222,7 +238,8 @@ def analyze_text(text):
     cases = []
     for i, m in enumerate(case_iters):
         start = m.end()
-        end = case_iters[i + 1].start() if i + 1 < len(case_iters) else len(text)
+        end = _case_block_end(
+            text, m, case_iters[i + 1].start() if i + 1 < len(case_iters) else len(text))
         block = text[start:end]
         prio_m = PRIO_RE.search(block)
         type_m = TYPE_RE.search(block)
@@ -456,7 +473,7 @@ def compute_prd_presence(case_files, rows):
         text = f.read_text(encoding='utf-8', errors='replace')
         ms = list(CASE_RE.finditer(text))
         for k, m in enumerate(ms):
-            end = ms[k + 1].start() if k + 1 < len(ms) else len(text)
+            end = _case_block_end(text, m, ms[k + 1].start() if k + 1 < len(ms) else len(text))
             block = text[m.start():end]
             title = block.split('\n', 1)[0]
             if PRD_PRESENCE_TAG in title:

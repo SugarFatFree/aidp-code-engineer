@@ -31,7 +31,9 @@ GROUP_RE = re.compile(r"^【(.*)】|^\[(\d+)\] (.*)$", re.M)
 
 def live_groups():
     """跑一遍测试套件，按**实跑顺序**取分组标题（两种打印形态都认）。"""
-    cp = subprocess.run([sys.executable, SUITE], capture_output=True, text=True)
+    # 套件按仓库根解析相对路径：从其它目录调用时不固定 cwd 会中途崩溃、只数到前半截分组
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    cp = subprocess.run([sys.executable, SUITE], capture_output=True, text=True, cwd=repo)
     return [a if a else b for a, _num, b in GROUP_RE.findall(cp.stdout)]
 
 

@@ -2164,6 +2164,17 @@ def test_conv30_baseline_key():
     check("夹具存量已冻进 baseline", len(rows) >= 1)
     check("★ 键里不含行号（`文件:标签:指纹` 三段、中间段不是纯数字）",
           all(not r.split(":")[1].strip().isdigit() for r in rows if r.count(":") >= 2))
+    check("★ 键不写死运行根（下发后 .claude/.agents 均可复用同一水位）",
+          rows and all(not r.startswith(".aidp/") for r in rows)
+          and any(r.startswith("AIDP_HOME/reference/") for r in rows))
+    legacy = d / ".aidp/scripts/convention30-prose-baseline.txt"
+    legacy.write_text("\n".join(r.replace("AIDP_HOME/", ".aidp/", 1) for r in rows) + "\n",
+                      encoding="utf-8")
+    out = subprocess.run([sys.executable, sc, "--root", str(d), "--json"],
+                         capture_output=True, text=True)
+    check("旧版写死运行根的键仍被识别为存量",
+          not (json.loads(out.stdout).get("new") or []) and not json.loads(out.stdout).get("stale"))
+    legacy.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
     ls = f.read_text(encoding="utf-8").splitlines()
     ls.insert(4, "\n> 插入一段无关内容以制造行号漂移。")
@@ -5059,6 +5070,15 @@ $TF PRERELEASE_YIELD "$PRERELEASE_YIELD" || exit 1
                         encoding="utf-8")
         result = VS.run(str(project))
         check("无别名写入时仍报告供给缺失", not result["passed"])
+        flow.write_text('''```bash
+export X="python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set"  # 落盘
+"$X" PRERELEASE_GATE_OK 1 || exit 1
+${X} PRERELEASE_YIELD 0 || exit 1
+[ "$PRERELEASE_GATE_OK" = "1" ] && [ "$PRERELEASE_YIELD" = "0" ]
+```
+''', encoding="utf-8")
+        result = VS.run(str(project))
+        check("tick set 别名带 export/行尾注释、按 \"$X\"/${X} 调用仍属真实供给", result["passed"])
 
 
 # ────────────────────────────────────────────────────────────
@@ -5406,6 +5426,20 @@ def test_ui_fidelity():
                   '    PageHelper.startPage(q.getPageNo(), q.getPageSize());\n'
                   '    return PageResult.of(mapper.list(q));\n}\n'})
     check("R10 零误报：普通分页列表接口不是导出", "R10" not in rules_hit(res))
+
+    for name, body in (
+        ("对象字面量哨兵", "const exportList = async (q) => {\n  return api.list({ ...q, pageSize: -1 })\n}\n"),
+        ("具名全量常量", "const exportList = async (q) => {\n  return api.list({ ...q, pageSize: EXPORT_MAX })\n}\n"),
+        ("PDF 页面尺寸成员访问",
+         "function exportPdf(doc) {\n  const w = doc.internal.pageSize.getWidth()\n  doc.save('a.pdf')\n}\n"),
+        ("类型声明", "async function exportRows(q: { keyword: string; pageSize: number }) {\n"
+                   "  return api.all(q.keyword)\n}\n"),
+    ):
+        res, _ = run({"code/frontend/a/export.ts": body})
+        check(f"R10 零误报：{name}不是透传当前分页", "R10" not in rules_hit(res))
+    res, _ = run({"code/frontend/a/export.ts":
+                  "const exportList = async (q) => {\n  return api.list({ ...q, pageSize: q.pageSize })\n}\n"})
+    check("R10 对象字面量透传当前 pageSize 仍命中", "R10" in rules_hit(res))
 
     # ── 豁免机制 ─────────────────────────────────────────────
     res, _ = run({"code/frontend/a/W.vue":

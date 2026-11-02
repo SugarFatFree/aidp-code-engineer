@@ -40,7 +40,9 @@ def inventory_sources(root):
         if actual_sha_missing(meta):
             raise ValueError("代码清单条目缺 sha，不能冻结为可信事实: " + name)
         actual = source(root, name)
-        if actual["sha256"] != meta.get("sha"):
+        # code_inventory.py 存的是 sha256 前 16 位；按清单自身的长度比前缀，过短视为不可信
+        expected = meta["sha"].strip().lower()
+        if len(expected) < 16 or not actual["sha256"].startswith(expected):
             raise ValueError("代码清单已过期: " + name)
         yield actual
 

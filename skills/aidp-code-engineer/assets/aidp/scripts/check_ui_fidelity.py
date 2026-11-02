@@ -261,7 +261,7 @@ def check_r2(fp: Path, lines):
 
 EXPORT_SIG_RE = re.compile(
     r"(?:def|function|public|private|protected|const|let|var|async)\b[^\n;{]*"
-    r"\b(\w*(?:[eE]xport|[dD]ownload|导出)\w*)\s*\(",
+    r"\b(\w*(?:[eE]xport|[dD]ownload|导出)\w*)\s*(?:\(|=\s*(?:async\s*)?(?:\([^)\n]*\)|\w+)\s*=>)",
 )
 EXPORT_MAPPING_RE = re.compile(r"[\"'][^\"']*(?:export|download|导出)[^\"']*[\"']", re.IGNORECASE)
 PAGING_RE = re.compile(
@@ -272,9 +272,18 @@ PAGING_RE = re.compile(
 # 「导出全部页」的正当写法：拿分页参数去循环捞全量
 FULL_FETCH_HINT_RE = re.compile(
     r"while\s*\(|for\s*\(|hasNext|totalPages|Integer\.MAX_VALUE|"
-    r"pageSize\s*=\s*(?:-1|0|99999|100000|Integer\.MAX_VALUE)",
+    r"pageSize\s*[=:]\s*(?:-1|0|99999|100000|Integer\.MAX_VALUE|(?-i:[A-Z][A-Z0-9_]*(?:MAX|ALL|FULL)[A-Z0-9_]*\b))",
     re.IGNORECASE,
 )
+# 不属于分页传参的同名写法：PDF 等页面尺寸成员、TypeScript 类型声明
+NON_PAGING_RE = re.compile(
+    r"\.pageSize\s*\.\s*(?:getWidth|getHeight|width|height)\b|"
+    r"\bpageSize\s*\??\s*:\s*(?:number|string|bigint)\b",
+)
+
+
+def _paging_hit(text: str) -> bool:
+    return bool(PAGING_RE.search(NON_PAGING_RE.sub("", text)))
 
 
 def check_r10(fp: Path, lines):
@@ -301,7 +310,7 @@ def check_r10(fp: Path, lines):
             body.append(nxt)
         body_text = "\n".join(body)
 
-        if not PAGING_RE.search(body_text):
+        if not _paging_hit(body_text):
             continue
         if FULL_FETCH_HINT_RE.search(body_text):
             continue
@@ -309,7 +318,7 @@ def check_r10(fp: Path, lines):
         # 定位第一处分页参数所在行，报在那里比报在签名行更有用
         hit_line, hit_text = idx + 1, ln
         for j, b in enumerate(body):
-            if PAGING_RE.search(b):
+            if _paging_hit(b):
                 hit_line, hit_text = idx + 2 + j, b
                 break
 

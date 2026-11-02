@@ -204,6 +204,7 @@ CROSS_99=$(ls "$TEST_DIR"/99_跨系统验证清单.md 2>/dev/null | wc -l)      
 5. **冲突不静默覆盖**（细则 38.4）：同系统同角色已有不同值 → `AskUserQuestion` 三选一（更新 / 新增一行 / 保持）；
    无人值守追加新行 + 备注来源时间，不动旧行。值一致则 no-op。
 6. **告知**：当轮回复明确说明写到了哪个文件的哪一段；改动随本轮其余产出一并提交，不单独 commit。
+7. **反向对账**：`python3 {{AIDP_HOME}}/scripts/check_env_archive.py --version {version}`——exit 1 = 正文里还有环境 / 账号未归档，逐条按第 2~5 步补录后复跑（细则 38.9）。
 
 **输出**：
 

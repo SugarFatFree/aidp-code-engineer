@@ -78,14 +78,25 @@ def _key(rel, i, tag, line=""):
     内容指纹只取归一化后的前 120 字符，容忍排版微调、认得出实质改写。
     """
     h = hashlib.sha1(re.sub(r"\s+", "", line)[:120].encode("utf-8")).hexdigest()[:12]
-    return f"{rel}:{tag}:{h}"
+    return f"{_portable(rel)}:{tag}:{h}"
+
+
+# 运行根写成中性前缀：同一份水位在任一运行真源下都能命中，
+# 也不会因写死运行根而被下发渲染校验拒绝
+HOME_REL = BASELINE.split("/scripts/", 1)[0]
+
+
+def _portable(rel):
+    if rel.startswith(HOME_REL + "/"):
+        return "AIDP_HOME/" + rel[len(HOME_REL) + 1:]
+    return rel
 
 
 def _load_baseline(root):
     p = os.path.join(root, BASELINE)
     if not os.path.isfile(p):
         return set()
-    return {ln.strip() for ln in open(p, encoding="utf-8")
+    return {_portable(ln.strip()) for ln in open(p, encoding="utf-8")
             if ln.strip() and not ln.startswith("#")}
 
 

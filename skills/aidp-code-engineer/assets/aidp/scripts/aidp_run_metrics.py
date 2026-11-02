@@ -14,6 +14,9 @@ from baseline_edit import lock_path
 VALID_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 # total_tokens：子 Agent 工具结果只给总量（不分输入/输出），如实记总量，⛔ 不拆分估算
 USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "total_tokens", "tool_calls", "read_bytes")
+USAGE_FLAGS = ("--input-tokens", "--output-tokens", "--cache-read-tokens", "--total-tokens",
+               "--tool-calls", "--read-bytes")
+assert USAGE_FLAGS == tuple("--" + f.replace("_", "-") for f in USAGE_FIELDS)
 WAIT_CATEGORIES = ("cicd", "auth", "browser", "overnight-idle", "other")
 # SKILL 编排层协议的阶段打点行（SKILL 侧 qr_orchestration.py 生成）。
 # 标记本身**不带时间**：必须在它出现的当下用 `stage --line` 落盘，事后批量导入拿不到真实时刻。
@@ -156,8 +159,9 @@ def main():
             sub.add_argument("--source", default="provided")
             sub.add_argument("--artifact", action="append", default=[])
             sub.add_argument("--model-work-seconds", type=float)
-            for field in USAGE_FIELDS:
-                sub.add_argument("--" + field.replace("_", "-"), type=int)
+            # flag 写成字面量：下游不带 tests/，check_ghost_flags 只能从这里认出它们
+            for flag in USAGE_FLAGS:
+                sub.add_argument(flag, type=int)
         if name == "wait":
             sub.add_argument("--category", choices=WAIT_CATEGORIES, required=True)
             sub.add_argument("--from", dest="from_at", required=True)

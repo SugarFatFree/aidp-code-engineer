@@ -624,12 +624,24 @@ def test_cvl_callsite_contract_details():
     print("\n[CVL 调用边界回归]")
     st = (REPO / ".aidp/commands/sprint-test.md").read_text(encoding="utf-8")
     check("调用方把 declared 桥接为 enabled:true", "显式补 `enabled: true`" in st)
-    check("全部 Important 登记并保留非阻断边界与上游冲突", "Critical 与 Important 一律" in st
-          and "登记 bug 与是否阻断是两件事" in st and "上游判据冲突，待澄清" in st)
+    check("全部 Important 登记并保留 loop 推进标记，不沿用已解决的上游冲突说明",
+          "Critical 与 Important 一律" in st and "登记 bug 与是否阻断是两件事" in st
+          and "`loop 推进`" in st and "上游判据冲突，待澄清" not in st)
+    check("精简回传保留完整发现与四态，不过滤非阻断 Important",
+          "唯一问题编号" in st and "不得只回传阻塞项" in st
+          and "各维度 Pass / Fail / 不适用 / 未执行（原因）" in st
+          and "仅非阻断 Important 仍按 SKILL 返回的 `不通过` 交接" in st)
+    check("终端模板不把未核验一律导向代码修复",
+          "未执行（原因）" in st[st.index("code-verification-loop 验收结果："):]
+          and "总体结论：{通过 / 不通过" in st and "❌ 需修复" not in st)
     check("起点 commit 不回落本轮错误数，无 Git 明记未核验", "本 Sprint 起点 commit" in st
           and "⛔ 不得回落 merge-base / 本轮首跑错误数" in st and "unsupported:vcs-disabled" in st)
     check("移除失效 dimension 链接与首轮错误数作基线的旧指令", "references/dimension-" not in st
           and "首轮记录存量错误数作基线" not in st)
+    recheck = st[st.index("## Step 7"):st.index("## 输出")]
+    check("复验工具或基线不可用按未核验交接，不误送代码修复",
+          "工具未安装标跳过" not in recheck and "非零退出先分类" in recheck
+          and "未执行（原因）" in recheck and "不交代码 bugfix" in recheck)
     front = (REPO / ".aidp/agents/frontend.md").read_text(encoding="utf-8")
     check("前端明确预处理器检查不覆盖 import/use 路径", "`@import` / `@use` 路径错**不在**该脚本覆盖内" in front)
 

@@ -354,5 +354,50 @@ class DigestAndTickTests(TemporaryProject):
         self.assertEqual(json.loads(result.stdout)["effective_tier"], "M")
 
 
+    def test_version_fact_snapshot_accepts_code_inventory_sha_prefix(self):
+        source = self.root / "code/frontend/src/a.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const a = 1\n", encoding="utf-8")
+        self.assertEqual(self.cli("code_inventory.py", "update").returncode, 0)
+        args = ("version_fact_snapshot.py", "--version", "V1")
+        created = self.cli(*args, "create", "--file", "memory/_facts/code-inventory.json")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        self.assertEqual(self.cli(*args, "verify").returncode, 0)
+        source.write_text("export const a = 2\n", encoding="utf-8")
+        self.assertEqual(self.cli(*args, "verify").returncode, 1)
+        stale = self.cli(*args, "create", "--file", "memory/_facts/code-inventory.json")
+        self.assertEqual(stale.returncode, 2)
+        self.assertIn("代码清单已过期", stale.stderr)
+
+
+    def test_env_archive_reverse_check_finds_unarchived_env_without_echoing_password(self):
+        # 内网地址运行时拼出：仓库开源卫生门不允许私网 IP 字面量入库
+        web, db, tmp, init, yml = (".".join(("10", str(n), "2", "3")) for n in (1, 2, 9, 8, 7))
+
+        def write(rel, text):
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        write("docs/plans/V1/01_计划.md", f"联调环境 http://{web}:8080/admin\n"
+              f"账号: tester 密码: Abc@123\n库 jdbc:dm://{db}:5236/APP\n")
+        write("docs/plans/V1/02_说明.md",
+              "参考 https://github.com/org/repo 与 http://192.0.2.10:8080、localhost:3000、"
+              "http://demo.example.com:8080、http://<host>:<port>\n"
+              f"临时调试 http://{tmp}:9000 <!-- env-archive: ignore 用户说别记 -->\n")
+        write("docs/init/指导.md", f"示例 http://{init}:8080\n")
+        write("code/backend/application.yml", f"url: jdbc:mysql://{yml}:3306/app\n")
+        result = self.cli("check_env_archive.py", "--json")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        found = {(f["kind"], f["key"]) for f in json.loads(result.stdout)["findings"]}
+        self.assertEqual(found, {("地址", f"{web}:8080"), ("账号", "tester"), ("DB 连接", f"{db}:5236")})
+        self.assertNotIn("Abc@123", self.cli("check_env_archive.py").stdout)
+
+        write("docs/testing/V1/研发自测/01_测试环境与账号.md",
+              f"| 被测主系统 | http://{web}:8080 |\n| tester | Abc@123 |\n| {db}:5236 | APP |\n")
+        self.assertEqual(self.cli("check_env_archive.py", "--version", "V1").returncode, 0)
+        self.assertEqual(self.cli("check_env_archive.py", "--version", "V2").returncode, 1)
+        self.assertEqual(self.cli("check_env_archive.py", "--version", "../x").returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

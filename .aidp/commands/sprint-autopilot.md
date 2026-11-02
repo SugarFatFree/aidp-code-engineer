@@ -153,7 +153,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 +
 | **0.5bis** | ★ 询问收敛总则（D5 适用面 + D4 最高口径 + D3 逐门默认表 + 仍需人工的两类白名单）| `phase-0-7.md` | **总是**（⛔ 不再以 `LOOP_UNATTENDED=1` 为触发条件：D5 明确白名单与逐门默认对**交互式单次同样生效**，两种模式只在「命中白名单后怎么处置」上不同。此前该行的门控恰好让交互式单次读不到这份唯一信源）|
 | **0.5.5** | 测试方案 AI 自动化预检（chrome-devtools-mcp 测试信息 + 安装预检）| `phase-0-8.md` | `IS_FRONTEND_WEB && test_strategy=chrome-mcp && deployment.mode!=none`（纯后端 / static-only / mode=none 整片跳过）|
 | **0.6** | ★ 铁律：字段缺失统一在 Phase 0 收集，**禁止执行主流程（Phase 2/3）中途阻塞** | `phase-0-8.md` | 总是 |
-| **0.6bis** | ★ 用例前置资源对账门（用例册声明的前置账号/数据 ↔ 约定 38 产物 `01_测试环境与账号.md`；委派 `check_testdata_prereq.py`）| `phase-0-9.md` | 总是（full 模式必判 `no-casebook`，由 Phase 3.1bis 补账）|
+| **0.6bis** | ★ 用例前置资源对账门（用例册声明的前置账号/数据 ↔ 约定 38 产物 `01_测试环境与账号.md`；委派 `check_testdata_prereq.py`；另跑 `check_env_archive.py` 反向对账）| `phase-0-9.md` | 总是（full 模式必判 `no-casebook`，由 Phase 3.1bis 补账）|
 | **0.7** | ★ AI 自动化开发测试流程就绪完整性总表（Phase 0 收口门 — 缺失即提示补充）| `phase-0-9.md` | 总是 |
 
 > 收口：0.7 收口门 + 前置硬门均过 → 进入 Phase 1。**执行前务必已按子步进度 Read 对应 `phase-0-N.md` 并逐项完成，不能只看本表。**

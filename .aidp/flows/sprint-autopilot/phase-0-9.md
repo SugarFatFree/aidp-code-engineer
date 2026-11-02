@@ -16,7 +16,10 @@
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 取 TARGET_VERSION
 python3 {{AIDP_HOME}}/scripts/check_testdata_prereq.py --version "$TARGET_VERSION" --record
+python3 {{AIDP_HOME}}/scripts/check_env_archive.py --version "$TARGET_VERSION"   # 约定 38 反向对账
 ```
+
+- **反向对账 exit 1**（正文已写环境 / 账号、权威文件里没有）→ 按约定 38 补录进 `01_测试环境与账号.md`（prod / UAT 存凭据文件）后复跑，不弹窗问人；地址或账号来源不明、判不准环境的，无人值守下留 WARN 进 0.7（细则 38.9）。
 
 - **`no-casebook`（exit 0）** → 用例册由 `/version` Step 2.4.3.5 才生成，**不是缺陷**：放行，由 **Phase 3.1.5 补账**（`phase-3-4.md`）。
 - **`reconciled`（exit 0）** → 通过，进 0.7。

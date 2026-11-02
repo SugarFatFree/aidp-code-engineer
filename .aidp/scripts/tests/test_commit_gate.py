@@ -118,9 +118,11 @@ def test_gate_pure():
     for p in (".aidp/commands/x.md", ".claude/settings.json", ".codex/config.toml", ".dsh/x.json",
               "docs/init/06_x.md", "scripts/x.py", ".aidp-rewrite-queue.txt", "AGENTS.md",
               "CLAUDE.md", "版本变更历史.md", "memory/aidp-config.yaml",
-              "memory/.sprint-autopilot-baseline.json"):
+              "memory/.sprint-autopilot-baseline.json",
+              "skills/aidp-code-engineer/scripts/scaffold.py"):
         check(f"_is_scaffold_contract {p} → 是", C(p) is True)
-    for p in ("code/backend/A.java", "docs/design/detail/V0.1.0/01_详细设计.md", "README.md"):
+    for p in ("code/backend/A.java", "docs/design/detail/V0.1.0/01_详细设计.md", "README.md",
+              "skills/biz-skill/run.py"):
         check(f"_is_scaffold_contract {p} → 否", C(p) is False)
 
     S = G.is_scaffold_only_change

@@ -336,8 +336,10 @@ DOC_EXTS = {".md", ".markdown", ".txt", ".rst", ".adoc"}
 #   根因：脚手架自带 .py/.mjs/.cjs/.js 脚本（AIDP_HOME/**、根 scripts/**）本身命中 SOURCE_EXTS，
 #   若不按路径排除，纯脚手架升级会被误判为"含业务代码修改"。
 #   ⚠️ 边界：只要有一处改动落在白名单外（如 code/ / docs/{version}/ 迭代产物），即视为含真实活动。
-#   `AIDP_HOME/` = 单一信源；`.claude/` / `.codex/` / `.dsh/` = 各 Agent 适配层。  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
-SCAFFOLD_CONTRACT_PREFIXES = (runtime_text('__AIDP_HOME__/', __file__), ".claude/", ".codex/", ".dsh/", "docs/init/", "scripts/")  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
+#   `AIDP_HOME/` = 单一信源；`.claude/` / `.codex/` / `.dsh/` = 各 Agent 适配层；  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
+#   `skills/aidp-code-engineer/` = 模板仓库根级脚手架引擎（只认这一个，其它根级 skills/ 仍按业务判）。
+SCAFFOLD_CONTRACT_PREFIXES = (runtime_text('__AIDP_HOME__/', __file__), ".claude/", ".codex/", ".dsh/", "docs/init/", "scripts/",  # runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样
+                              "skills/aidp-code-engineer/")
 # 根级脚手架文档（下游 upgrade 会同步）：项目记忆文件（AGENTS.md / CLAUDE.md）与版本变更历史
 SCAFFOLD_CONTRACT_ROOT_FILES = {"agents.md", "claude.md", "版本变更历史.md"}
 # AIDP 自身的入库产物（路径单一信源 = aidp_paths.REGISTRY；此处按字面列出以保持本脚本自包含）

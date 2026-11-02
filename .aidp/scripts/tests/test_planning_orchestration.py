@@ -343,7 +343,7 @@ def test_parallel_plan_selftest_backfill():
     script = "\n".join(l[3:] for l in fence.group(1).splitlines())
     script = script.replace("{{AIDP_HOME}}", str(REPO / ".aidp")).replace("{version}", "V1.0.0")
 
-    def run_case(reqs, strip_anchors=False, empty_plan=False):
+    def run_case(reqs, strip_anchors=False, empty_plan=False, nested_reqs=None):
         root = Path(tempfile.mkdtemp(prefix="aidp-plan-refs-"))
         plans = root / "docs/plans/V1.0.0"
         plans.mkdir(parents=True)
@@ -359,10 +359,21 @@ def test_parallel_plan_selftest_backfill():
             '{"REQ-101":{"label":"Sprint-001 Task 1.1","href":"old.md#task-1-1"}}', encoding="utf-8")
         cases = root / "docs/testing/V1.0.0/研发自测"
         cases.mkdir(parents=True)
-        body = "# 用例\n\n## 套件 SUITE-001: 下单\n> **研发执行计划来源**: " + "、".join(f"⟨PLAN-REF:{r}⟩" for r in reqs) + "\n"
+        sources = ("> **自测方案章节:** [范围](01_研发自测方案.md#范围)\n"
+                   "> **PRD 来源:** [REQ-101 下单](../../../requirements/V1.0.0/研发需求/01_研发需求.md#REQ-101)\n"
+                   "> **详细设计来源:** [下单设计](../../../design/detail/V1.0.0/01_详细设计.md#下单)\n")
+        body = "# 用例\n\n## 套件 SUITE-001: 下单\n" + sources + "> **研发执行计划来源**: " + "、".join(f"⟨PLAN-REF:{r}⟩" for r in reqs) + "\n"
         (cases / "02_全量自测用例.md").write_text(body, encoding="utf-8")
+        nested = cases / "模块/子模块/03_模块用例.md"
+        if nested_reqs is not None:
+            nested.parent.mkdir(parents=True)
+            nested_sources = sources.replace("](", "](../../")
+            nested.write_text("# 模块用例\n\n## 套件 SUITE-002: 导出\n" + nested_sources + "> **研发执行计划来源**: "
+                              + "、".join(f"⟨PLAN-REF:{req}⟩" for req in nested_reqs) + "\n", encoding="utf-8")
         out = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
         text = (cases / "02_全量自测用例.md").read_text(encoding="utf-8")
+        if nested_reqs is not None:
+            text += "\n" + nested.read_text(encoding="utf-8")
         shutil.rmtree(root, ignore_errors=True)
         return out.stdout, text
     out, text = run_case(["REQ-101", "REQ-104"])
@@ -370,6 +381,14 @@ def test_parallel_plan_selftest_backfill():
     check("占位符回填为 Sprint + Task 锚点链接（Sprint 号最小、其次 Task 号最小）",
           "⟨PLAN-REF" not in text and "[Sprint-001 Task 4.1](../../../plans/V1.0.0/01_研发执行计划.md#task-4-1)" in text
           and "[Sprint-001 Task 2.2](" in text)
+    out, text = run_case(["REQ-101"], nested_reqs=["REQ-104"])
+    check("同一用例根一次回填：嵌套两层的链接重算相对路径且保留锚点",
+          "export=0 resolve=0 upstream=0" in out and "⟨PLAN-REF" not in text
+          and "[Sprint-001 Task 4.1](../../../plans/V1.0.0/01_研发执行计划.md#task-4-1)" in text
+          and "[Sprint-001 Task 2.2](../../../../../plans/V1.0.0/01_研发执行计划.md#task-2-2)" in text)
+    out, text = run_case(["REQ-101"], nested_reqs=["REQ-999"])
+    check("嵌套用例缺映射时根目录与子目录都不改", "export=0" in out and "resolve=0" not in out
+          and text.count("⟨PLAN-REF:") == 2)
     out, text = run_case(["REQ-101", "REQ-999"])
     check("计划里没有 Task 承接的 REQ → resolve 拒绝（≠0）", "export=0" in out and "resolve=0" not in out)
     check("全有或全无：拒绝时一个占位符都不改", text.count("⟨PLAN-REF:") == 2)

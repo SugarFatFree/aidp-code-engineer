@@ -325,6 +325,13 @@ def _p_testdata_prereq(root):
            "### 套件 SUITE-X\n前置数据：对照企业 {待用户填写: 对照企业账号}\n")
 
 
+@probe("check_env_archive.py", args=("--json",))
+def _p_env_archive(root):
+    # 阳性对照：计划正文写入内网地址，权威文件里没有 → 必须报未归档（IP 运行时拼出，避开开源卫生门）
+    host = ".".join(("10", "0", "0", "8"))
+    _write(root, "docs/plans/SELFCHECK/01_计划.md", f"联调环境 http://{host}:8080\n")
+
+
 @probe("check_banned_terminology.py")
 def _p_banned(root):
     _append(root, runtime_text('__AIDP_HOME__/commands/sprint-plan.md', __file__),

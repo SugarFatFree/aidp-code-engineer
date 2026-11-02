@@ -284,6 +284,13 @@ def test_send_auto():
                                                        {"type": "command"}]}, m)
     check("★ 全部渠道不可用 → 3（合规降级，不是 1）",
           rc == 3 and [a["status"] for a in o["attempts"]] == ["unavailable", "unavailable"])
+    na_cmd = str(_fake_bin(td, "na", "import sys\nsys.stdin.read()\nsys.stderr.write('not logged in')\nsys.exit(3)\n"))
+    rc, o = N.send_auto({"enabled": True, "channels": [{"type": "command", "command": na_cmd}]}, m)
+    check("★ command 渠道退出码 3 = 渠道不可用（整体 3），区别于发送失败",
+          rc == 3 and [a["status"] for a in o["attempts"]] == ["unavailable"])
+    rc, o = N.send_auto({"enabled": True, "channels": [{"type": "command", "command": fail_cmd}]}, m)
+    check("command 渠道其它非零 = 发送失败（整体 1）",
+          rc == 1 and [a["status"] for a in o["attempts"]] == ["failed"])
 
     GOT.clear()
     rc, o = N.send_auto({"enabled": True, "fallback": True, "channels": [
@@ -411,7 +418,10 @@ def test_cli():
     rc, _, _ = _cli(root, "--title", "t", "--section", "x", "--sender", str(bad))
     check("--sender 失败 → 1", rc == 1)
     rc, _, _ = _cli(root, "--title", "t", "--section", "x", "--sender", "/nonexistent/demo-sender")
-    check("--sender 命令不存在 → 1（不崩溃）", rc == 1)
+    check("--sender 命令不存在 = 渠道不可用 → 3（不崩溃）", rc == 3)
+    na = _fake_bin(td, "na", "import sys\nsys.exit(3)\n")
+    rc, _, err = _cli(root, "--title", "t", "--section", "x", "--sender", str(na), "--json")
+    check("★ --sender 命令退出码 3 = 渠道不可用 → 3", rc == 3 and _json_line(err).get("ok") is False)
 
     # 发送成功 + --node → 登记台账（用假 gate 记录 argv）
     gate_log = os.path.join(td, "gate.json")

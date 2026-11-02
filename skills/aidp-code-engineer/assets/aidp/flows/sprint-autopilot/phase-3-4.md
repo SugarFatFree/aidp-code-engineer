@@ -93,7 +93,10 @@ with LockedBaseline("memory/.sprint-autopilot-baseline.json", write=True) as bl:
         if _ld:
             entry["deploy_reuse_of"] = _ld
             entry["deploy_reuse_reason"] = "test-only：本轮无新代码变更，复用最近一次部署"
-    ver.setdefault("builds", []).append(entry)
+    # ★ 按 build upsert：`set current_build` 已登记占位行，append 会同号两行
+    builds = ver.get("builds", [])
+    row = {k: v for x in builds + [entry] if x.get("build") == b for k, v in x.items()}
+    ver["builds"] = [x for x in builds if x.get("build") != b] + [row]
 PY
      echo "🔢 铸造 build 号：$BUILD（已落盘 build_seq=$BUILD_SEQ；下次重跑自增，不停在 1001；不打 git 分支/tag）${RETEST_LABEL:+ · $RETEST_LABEL}"
    fi

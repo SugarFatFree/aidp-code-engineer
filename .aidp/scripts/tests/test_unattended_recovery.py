@@ -281,6 +281,27 @@ def test_vcs_disabled_unattended_flow_contract():
     check("CICD 无 Git 不误判成功", "vcs_mode=none" in cicd and "unsupported:vcs-disabled" in cicd and "不得标记通过" in cicd)
 
 
+def test_build_mint_registers_one_row():
+    print("【铸 build：current_build 占位行与完整登记合并为一行】")
+    repo = Path(__file__).resolve().parents[3]
+    flow = (repo / ".aidp/flows/sprint-autopilot/phase-3-4.md").read_text(encoding="utf-8")
+    code = re.search(r"python3 - <<'PY'\n(.*?)\nPY", flow, re.S).group(1)
+    code = code.replace("{{AIDP_HOME}}", str(repo / ".aidp"))
+    with tempfile.TemporaryDirectory() as td:
+        bl = Path(td) / "memory/.sprint-autopilot-baseline.json"
+        bl.parent.mkdir()
+        bl.write_text('{"versions":{}}', encoding="utf-8")
+        for _ in range(2):
+            subprocess.run([sys.executable, str(repo / ".aidp/scripts/baseline_edit.py"), "--baseline", str(bl),
+                            "--version", "V1.0.0", "set", "build_seq", "1001",
+                            "current_build", "V1.0.0_build1001"], cwd=td, check=True, capture_output=True)
+            subprocess.run([sys.executable, "-c", code], cwd=td, check=True, capture_output=True,
+                           env=dict(os.environ, BV="V1.0.0", BUILD="V1.0.0_build1001", ENTRY_MODE="full"))
+        builds = json.loads(bl.read_text(encoding="utf-8"))["versions"]["V1.0.0"]["builds"]
+    check("同一 build 只有一行，且不是 unknown 占位", len(builds) == 1 and builds[0]["status"] == "running"
+          and builds[0].get("entry_mode") == "full")
+
+
 if __name__ == "__main__":
     test_fail_handle()
     test_env_reprobe()
@@ -288,5 +309,6 @@ if __name__ == "__main__":
     test_aiauto_stuck_phase_contract()
     test_vcs_disabled_unattended_flow_contract()
     test_prd_watch_steady_state()
+    test_build_mint_registers_one_row()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

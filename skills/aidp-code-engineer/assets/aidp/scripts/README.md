@@ -201,9 +201,9 @@ AIDP 级联恒「版本内单向向下」，约定 34 补了反向清算。它�
 | `dingtalk` | 钉钉机器人 markdown 消息；配了密钥则 URL 追加 `&timestamp=&sign=`（HmacSHA256 → base64 → urlencode） | `webhook_env` / `secret_env` |
 | `wecom` | 企业微信机器人 markdown 消息 | `webhook_env` |
 | `lark-cli` | 调飞书 CLI 发到 `chat_id`；命令不存在 = 该渠道不可用（可用 `bin` / `args` 覆盖调用形态） | `chat_id` |
-| `command` | 自定义命令，stdin 收中性 JSON，退出码 0 = 成功 | `command` |
+| `command` | 自定义命令，stdin 收中性 JSON；退出码 0 = 成功、3 = 渠道不可用、其它非零 = 发送失败 | `command` |
 
-⛔ webhook 地址与密钥**只经环境变量引用**（`*_env` 写变量名），不入库；仅用标准库 `urllib`。`--sender '<命令>'` = 调用方自选的自定义发送命令（stdin 收中性 JSON），与 `--auto` 互斥。
+⛔ webhook 地址与密钥**只经环境变量引用**（`*_env` 写变量名），不入库；仅用标准库 `urllib`。`--sender '<命令>'` = 调用方自选的自定义发送命令（stdin 收中性 JSON，退出码约定同 `command`），与 `--auto` 互斥。
 用法：`python3 {{AIDP_HOME}}/scripts/notify.py --title … --section … [--section-file F] [--link-text T --link-url U] (--auto | --sender '<发送命令>') [--node '#F' --version V --build B] [--alert] [--project-name '<项目中文名>'] [--print-only] [--json]`；`--self-check` 离线自测（本地 HTTP 桩，不发外网）。
 退出码：`0`=发送成功（给了 `--node` 则已登记 `sent`）/ `1`=尝试过的渠道全部失败（给了 `--node` 则登记 `undelivered`）/ `2`=参数或构造错误 / `3`=未配置任何可用渠道（`notify.enabled=false` / `channels` 为空 / 渠道均缺环境变量或命令，合规降级）。
 ⛔ `1` 与 `3` **都不是"去问用户"的信号**：按 flow 语义静默跳过本播报节点、不阻塞主流程；`needs_human`/熔断信号另有 baseline + 终端强警兜底。
@@ -704,6 +704,7 @@ SKILL 名 713 字符，那不是归属是噪音（窗口调小到 120 会漏掉�
 | 脚本 | 一句话 | 用法 |
 |------|--------|------|
 | `check_testdata_prereq.py` | 用例前置资源对账：用例册的 `{待用户填写: X}` 占位 ↔ 约定 38 产物 | `--version V0.1.0` |
+| `check_env_archive.py` | 约定 38 反向对账：正文已写环境地址 / 账号 / DB 连接，却未归档进 `01_测试环境与账号.md` | `--version V0.1.0` |
 | `check_underscore_glob.py` | 四族目录的通配 `.md` 扫描是否漏排 `_` 前缀（漏排 = 增量册被当用例源） | 无参 |
 | `check_case_ledger_pending.py` | 实测前门：本版还有没有**未级联**的用例增量（有 = 跑的是老用例集） | `--version V0.1.0` |
 | `incremental_cases.py` | 从 git 算本轮新增的用例 TC-ID（只认新增的用例**标题行**） | `--version V --build B --record` |

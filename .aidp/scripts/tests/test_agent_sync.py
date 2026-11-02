@@ -1743,7 +1743,8 @@ def test_legacy_symlink_cleanup_is_lexically_contained():
             results.append(AS.cleanup_legacy_link_is_generated(root, destination) == expected)
         check("仅项目内精确旧 commands/skills/plugins 子树视为生成链接", all(results))
     finally:
-        _rm(root)
+        # ⛔ root 本身就是 mkdtemp：不能走 `_rm`（删 parent），否则会删掉系统临时目录
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_user_edits_are_not_overwritten():

@@ -30,12 +30,12 @@
   lark-cli  飞书官方 CLI 发到指定会话；命令不存在视为该渠道不可用
             {type: lark-cli, chat_id: "<chat id>"[, args: [...]]}
             args 可覆盖默认参数表，支持占位 {chat_id} {card_json} {markdown} {title}
-  command   自定义命令，从 stdin 读中性 JSON，退出码 0 = 成功
+  command   自定义命令，从 stdin 读中性 JSON；退出码 0 = 成功、3 = 渠道不可用、其它非零 = 发送失败
             {type: command, command: "<命令>"}
   ⛔ webhook 地址与密钥只经 `*_env` 指定的环境变量读取，配置文件里不出现明文。
 
 两种发送形态（互斥）：
-  --sender '<命令>'  调用方指定发送命令（stdin 收中性 JSON，同 command 渠道）。
+  --sender '<命令>'  调用方指定发送命令（stdin 收中性 JSON，退出码约定同 command 渠道）。
   --auto             ★ 推荐：按 notify.channels 依次尝试。
 
 用法：
@@ -55,7 +55,7 @@
 
 退出码：0 = 发送成功（给了 --node 则已尝试登记台账）；1 = 已尝试的渠道全部失败（--node 登记为 undelivered）；
        2 = 参数 / 构造错误；3 = 未配置任何可用渠道（notify.enabled=false / channels 为空 /
-       所有渠道缺凭据或命令）——合规降级：调用方静默跳过本播报节点。
+       所有渠道缺凭据或命令 / 自定义命令返回 3）——合规降级：调用方静默跳过本播报节点。
        ⛔ 1 与 3 都不是「去问用户」的信号：两种情况都静默跳过本节点、不阻塞主流程。
        `--check-name` 只拿到英文兜底名时也返回 3。
 --section / --footer 里的字面 "\\n" 会被转成真实换行（书写便利）。
@@ -283,6 +283,11 @@ class Unavailable(Exception):
     """渠道当前不可用（缺环境变量 / 缺命令 / 缺 chat_id）——不算一次失败的发送。"""
 
 
+# command 渠道 / --sender 的自定义命令用退出码 3 声明「渠道不可用」（未登录、未配置等），
+# 与本脚本自身的 3 同义；其它非零才是「发送失败」
+COMMAND_UNAVAILABLE_RC = 3
+
+
 def _env(ch, key, required):
     name = str(ch.get(key) or "").strip()
     if not name:
@@ -328,6 +333,8 @@ def _run_stdin(argv, payload, timeout=60):
     except (OSError, subprocess.SubprocessError) as e:
         return False, f"调用异常：{e}"
     diag = (r.stderr or r.stdout or "").strip()[:300]
+    if r.returncode == COMMAND_UNAVAILABLE_RC:
+        raise Unavailable(diag or f"命令返回 {COMMAND_UNAVAILABLE_RC}：渠道不可用")
     return r.returncode == 0, diag or f"rc={r.returncode}"
 
 
@@ -757,7 +764,12 @@ def main(argv=None):
         try:
             ok, diag = _run_stdin(shlex.split(args.sender), json.dumps(msg, ensure_ascii=False))
         except Unavailable as e:
-            ok, diag = False, str(e)
+            out["attempts"] = [{"channel": "sender", "status": "unavailable", "diag": str(e)}]
+            out["error"] = str(e)
+            _undelivered(3)
+            print(json.dumps(out, ensure_ascii=False) if args.json else
+                  f"⚠️ 发送命令不可用（本节点跳过，不阻塞主流程）：{e}", file=sys.stderr)
+            return 3
         out["attempts"] = [{"channel": "sender", "status": "ok" if ok else "failed", "diag": diag}]
         if not ok:
             out["error"] = diag

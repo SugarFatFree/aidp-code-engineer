@@ -1597,7 +1597,8 @@ def test_release_baseline_check():
       · 生效形态唯一：判据必须绑【解析出的全路径】。自测时首版写成行正则匹配
         `redis.cluster`，而 YAML 里那行其实是 `nodes:`（父级才是 cluster）→ 本项
         永远匹配不到、静默空跑；
-      · 占位变量名唯一性：全路径命名的回检，撞名是下游真实注入事故的根因。
+      · 占位符 / 属性引用残留（约定 37.4-1 / 37.4-8）：全量配置每项写具体值，
+        占位满篇的配置拿到手没法用；密码只判口令本身，IP / 账号 / 编码 / token 填真实值。
     """
     print("【release_baseline_check 双轨部署基线 12 项机器门】")
     # ★ 两轨力度必须对称：全量轨回答「从零怎么搭」，任一轨空目录都等于本版无法全新部署。
@@ -1633,8 +1634,8 @@ def test_release_baseline_check():
             "  # 应用认证码\n"
             "  auth-code: ${AUTH_CODE:__FILL_ME__}\n"
             "  kop:\n"
-            "    # 知识库认证码 · 现网真值与上面不同\n"
-            "    auth-code: ${AUTH_CODE:__FILL_ME__}\n"
+            "    # 知识库地址\n"
+            "    host: ${KOP_HOST}\n"
             "spring:\n"
             "  datasource:\n"
             "    # 库密码\n"
@@ -1653,9 +1654,9 @@ def test_release_baseline_check():
         cats = {e["check"] for e in o.get("errors", [])}
         check("有 ERROR → exit 1 且 ok=False", rc == 1 and o.get("ok") is False)
         check("抓到 SQL 环境绑定物残留（schema 前缀 / STORAGE）", "SQL 环境绑定物" in cats)
-        check("抓到明文凭据", "明文凭据" in cats)
-        check("★ 抓到占位变量名撞名（全路径命名回检）", "占位变量名唯一性" in cats)
-        check("抓到 ${a.b} 引用不可解析", "引用可解析" in cats)
+        check("抓到密码明文", "密码明文" in cats)
+        check("★ 抓到占位符残留（__FILL_ME__ / ${ENV}）", "占位符残留" in cats)
+        check("★ 抓到 ${a.b} 属性引用残留", "属性引用残留" in cats)
         check("★ 抓到生效形态不唯一（判据绑全路径、非行文本）", "生效形态唯一" in cats)
         check("抓到失效相对链接", "相对链接" in cats)
 
@@ -1684,12 +1685,17 @@ def test_release_baseline_check():
             "CREATE TABLE IF NOT EXISTS T_USER (ID VARCHAR(64));\n", encoding="utf-8")
         (ok / "配置文件/全量/nacos/app.yml").write_text(
             "sso:\n"
-            "  # 应用认证码 · 换环境必改\n"
-            "  auth-code: ${SSO_AUTH_CODE:__FILL_ME__}\n"
-            "  kop:\n"
-            "    # 知识库认证码 · 与应用认证码不同值\n"
-            "    auth-code: ${SSO_KOP_AUTH_CODE:__FILL_ME__}\n"
+            "  # 应用认证码 · 研发环境取值，换环境必改\n"
+            "  auth-code: ak-7f3e9c21\n"
+            "  # 研发环境取值，换环境必改；与 sso.api-url 共 2 处须同步修改\n"
+            "  authn-url: http://192.0.2.8:8080/sso-authn\n"
+            "  api-url: http://192.0.2.8:8080/sso-api  # 与 sso.authn-url 共 2 处须同步修改\n"
+            "  token: tk-12ab34cd  # 研发环境取值\n"
             "spring:\n"
+            "  datasource:\n"
+            "    username: SYSDBA  # 研发环境账号\n"
+            "    # 示例值，非真实口令；部署时填目标环境真实口令\n"
+            "    password: Dm@Example2026\n"
             "  redis:\n"
             "    # 单机形态生效；集群形态见下方注释段（切换须删 database、开拓扑刷新）\n"
             "    host: 192.0.2.1\n"
@@ -1737,14 +1743,14 @@ def test_release_baseline_check():
         (rt / "配置文件/全量/00_索引.md").write_text("# 配置全量索引\n", encoding="utf-8")
         (rt / "sql/全量/01_建表.sql").write_text(
             "CREATE TABLE IF NOT EXISTS T (ID VARCHAR(1));\n", encoding="utf-8")
-        # 本版加 WS/SSE 的典型 nginx：一处明文 Basic 凭据 + 一处已占位化
+        # 本版加 WS/SSE 的典型 nginx：一处 Basic 真实口令 + 一处真实 api-key（非密码，不判）
         (rt / "配置文件/全量/nginx.conf").write_text(
             "server {\n"
             "  location /ws {\n"
             '    proxy_set_header Authorization "Basic YWRtaW46cGFzcw==";\n'
             "  }\n"
             "  location /sse {\n"
-            "    proxy_set_header X-Api-Key ${NGINX_SSE_API_KEY:__FILL_ME__};\n"
+            "    proxy_set_header X-Api-Key ak-5d6e7f8a9b;\n"
             "    proxy_buffering off;\n"
             "  }\n"
             "}\n", encoding="utf-8")
@@ -1752,10 +1758,10 @@ def test_release_baseline_check():
         (rt / "配置文件/全量/docker-compose.yml").write_text(
             "services:\n  app:\n    image: app:latest\n    restart: always\n", encoding="utf-8")
         rc, o = run(root, "V0.6.0")
-        cred = [e for e in o["errors"] if e["check"] == "明文凭据"]
-        check("★ nginx.conf 里的 Authorization Basic 明文凭据被抓（authorization 曾漏收）",
+        cred = [e for e in o["errors"] if e["check"] == "密码明文"]
+        check("★ nginx.conf 里 Authorization Basic 解出的真实口令被抓",
               rc == 1 and len(cred) == 1 and "nginx.conf" in cred[0]["msg"])
-        check("★ 已 ${...:__FILL_ME__} 占位的那行不误报", len(cred) == 1)
+        check("★ 真实 api-key 不再判 ERROR（敏感性只按密码划分）", len(cred) == 1)
         check("★ compose/k8s 编排样板豁免『注释完备性』（否则逐行噪音）",
               not [w for w in o["warns"] if w["check"] == "注释完备性"])
 
@@ -2887,50 +2893,93 @@ def test_classify_business_words_in_source_tree():
 
 
 def test_release_credential_gate_coverage():
-    """明文凭据门：`全量/` 下随 tag 冻结入 git，凭据进去不可逆 —— 五类写法都要拦住。"""
-    print("【发布基线 · 明文凭据门覆盖面】")
+    """密码明文门（约定 37.4-7）：敏感性只按「密码」划分。
+
+    正向：各类写法里的真实口令都要拦住（`全量/` 随 tag 冻结入 git，进去不可逆）；
+    负向：示例值（注释声明「示例值」或值含 Example）放行，IP / 账号 / 编码 / auth-code /
+    token / api-key / access-key 填真实值不判——此前一并当凭据，下游报了 14 条假 ERROR。
+    """
+    print("【发布基线 · 密码明文门覆盖面】")
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "rbc", str(Path(HERE).parents[0] / "release_baseline_check.py"))
     rbc = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(rbc)
 
+    def errs(d):
+        rep = rbc.Report()
+        rbc.check_configs(d, rep)
+        rbc.check_nonyaml_runtime_files(d, rep)
+        return rep.errors
+
     root = Path(tempfile.mkdtemp())
     d = root / "docs/deployment/V0.1.0/配置文件/全量"
     d.mkdir(parents=True)
     (d / "application.properties").write_text(
-        "spring.datasource.password=P@sswOrd123\noss.secret-key=AKIAIOSFODNN7EXAMPLE\n"
+        "spring.datasource.password=P@sswOrd123\noss.secret-key=wJalrXUtnFEMI-K7MDENG\n"
         "server.port=8080\n", encoding="utf-8")
-    (d / ".env").write_text("API_KEY=sk-live-abcdef1234567890\n", encoding="utf-8")
+    (d / ".env").write_text("DB_PASSWORD=sk-live-abcdef1234567890\n", encoding="utf-8")
     (d / "app.yml").write_text(
         "spring:\n  datasource:\n    url: jdbc:mysql://root:P@ss@192.0.2.10:3306/db\n"
         "nginx:\n  headers:\n    - \"Authorization: Basic YWRtaW46cGFzc3dvcmQxMjM=\"\n"
-        "  script: |\n    curl -H \"Authorization: Basic YWRtaW46cGFzc3c=\" https://x\n",
+        "  script: |\n    curl -H \"Authorization: Basic YWRtaW46cGFzc3c=\" https://x\n"
+        "minio:\n  # 本质是 admin 口令\n  secret-key: Real-Minio-9\n",
         encoding="utf-8")
-    rep = rbc.Report()
-    rbc.check_configs(d, rep)
-    rbc.check_nonyaml_runtime_files(d, rep)
-    msgs = " ".join(e["msg"] for e in rep.errors)
+    e1 = errs(d)
+    msgs = " ".join(e["msg"] for e in e1)
+    check("全部归「密码明文」", e1 and all(e["check"] == "密码明文" for e in e1))
     check("★ .properties 的 password 被拦（此前白名单里根本不扫 .properties）",
-          "application.properties" in msgs and "password" in msgs)
-    check("★ .properties 的 secret-key 被拦", "secret-key" in msgs)
-    check("★ .env 被拦（同样不在原白名单里）", ".env" in msgs)
-    check("★ YAML 值内嵌 URL userinfo 被拦（EMBEDDED_CRED 此前只接非 YAML 路径）",
-          "userinfo" in msgs or "内嵌账号口令" in msgs)
-    check("★ YAML 列表项里的 Basic 凭据被拦（键路径解析器整段跳过列表项）",
-          "app.yml:6" in msgs)
-    check("★ YAML 块标量里的 Basic 凭据被拦（块标量同样被整段跳过）",
-          "app.yml:8" in msgs)
+          "application.properties:1" in msgs)
+    check("★ .properties 的 secret-key 被拦（口令性质）", "application.properties:2" in msgs)
+    check("★ .env 的 DB_PASSWORD 被拦", ".env:1" in msgs)
+    check("★ YAML 值内嵌 URL userinfo 口令被拦", "app.yml:3" in msgs)
+    check("★ YAML 列表项里 Basic 解出的口令被拦（键路径解析器整段跳过列表项）", "app.yml:6" in msgs)
+    check("★ YAML 块标量里 Basic 解出的口令被拦（块标量同样被整段跳过）", "app.yml:8" in msgs)
+    check("★ YAML 的 minio.secret-key 被拦", "app.yml:11" in msgs)
 
-    # 负向：干净配置不得误报
+    # 负向：按新口径填写的配置（密码示例值 + 其余真实值）零误报
     d2 = root / "docs/deployment/V0.2.0/配置文件/全量"
     d2.mkdir(parents=True)
-    (d2 / "clean.yml").write_text("server:\n  port: 8080   # 服务端口\n", encoding="utf-8")
-    (d2 / "clean.properties").write_text("app.name=demo\n", encoding="utf-8")
-    rep2 = rbc.Report()
-    rbc.check_configs(d2, rep2)
-    rbc.check_nonyaml_runtime_files(d2, rep2)
-    check("干净配置零误报", not [e for e in rep2.errors if e["check"] == "明文凭据"])
+    (d2 / "app.yml").write_text(
+        "spring:\n  datasource:\n"
+        "    url: jdbc:dm://192.0.2.10:5236/APP  # 研发环境取值，换环境必改\n"
+        "    username: SYSDBA  # 研发环境账号\n"
+        "    # 示例值，非真实口令；部署时填目标环境真实口令\n"
+        "    password: Real-Looking-But-Declared-1\n"
+        "  redis:\n    password: Redis@Example2026  # 示例值，非真实口令\n"
+        "minio:\n  access-key: minioadmin  # 研发环境账号\n"
+        "  secret-key: Minio@Example2026  # 示例值，非真实口令\n"
+        "sso:\n  app-id: 10086  # 研发环境取值\n  app-code: portal  # 研发环境取值\n"
+        "  tenant-id: t-001  # 研发环境取值\n  auth-code: ac-9f8e7d6c  # 研发环境取值\n"
+        "  token: tk-123456789  # 研发环境取值\n  api-key: ak-abcdef  # 研发环境取值\n"
+        "  callback: http://192.0.2.8/cb?token=abc123  # URL 内嵌 token 不判\n"
+        "  basic: http://admin:Admin@Example2026@192.0.2.9/x  # 示例值，非真实口令\n",
+        encoding="utf-8")
+    (d2 / "clean.properties").write_text(
+        "app.name=demo\n# 示例值，非真实口令\nspring.datasource.password=Pg@Example2026\n",
+        encoding="utf-8")
+    (d2 / "nginx.conf").write_text(
+        "server {\n  set $u ${host};\n"
+        '  proxy_set_header Authorization "Bearer eyJhbGciOiJIUzI1NiJ9abcdef";\n}\n',
+        encoding="utf-8")
+    e2 = errs(d2)
+    check("★ 示例值 + 真实 IP/账号/编码/auth-code/token 零误报", not e2)
+    check("★ nginx 原生变量 ${host} 不算占位符",
+          not [e for e in e2 if e["check"] == "占位符残留"])
+
+    # 反向守卫：占位 / 注入 / 属性引用写法都是违规，不再当合规写法
+    d3 = root / "docs/deployment/V0.3.0/配置文件/全量"
+    d3.mkdir(parents=True)
+    (d3 / "app.yml").write_text(
+        "a:\n  pwd: ${A_PWD:__FILL_ME__}  # x\n  host: ${ENV_HOST}  # x\n"
+        "  port: ${APP_PORT:8080}  # x\n  url: ${ep-hosts.sso}/x  # x\n", encoding="utf-8")
+    (d3 / "app.properties").write_text("b.secret-key=${B_SECRET_KEY:__FILL_ME__}\n", encoding="utf-8")
+    e3 = errs(d3)
+    kinds = [e["check"] for e in e3]
+    check("★ __FILL_ME__ / ${ENV} / ${ENV:默认值} 判占位符残留",
+          kinds.count("占位符残留") == 4)
+    check("★ ${a.b} 判属性引用残留", kinds.count("属性引用残留") == 1)
+    check("占位写法不重复报成密码明文", "密码明文" not in kinds)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -3464,8 +3513,8 @@ def test_autopilot_mainline_regressions():
 
 
 def test_release_speedups_and_gate_fixes():
-    """发布基线相关判据：布局探测统一 / SQL 列注释误报 / 共用占位豁免 / build 补登记 / 版本改名。"""
-    print("【发布基线：布局探测 / 列注释误报 / 占位豁免 / build 补登记 / 版本改名】")
+    """发布基线相关判据：布局探测统一 / SQL 列注释误报 / 共用占位豁免作废 / build 补登记 / 版本改名。"""
+    print("【发布基线：布局探测 / 列注释误报 / 占位豁免作废 / build 补登记 / 版本改名】")
     scripts = Path(HERE).parents[0]
 
     # P5① SQL：COMMENT ON COLUMN 的列限定不得被当成 schema 前缀
@@ -3481,7 +3530,7 @@ def test_release_speedups_and_gate_fixes():
     check("P5① 真 schema 前缀仍被检出",
           len(pat.findall(RB.COMMENT_ON_RE.sub(" ", real_bound))) == 1)
 
-    # P5② 占位变量「刻意共用」豁免
+    # P5② 「刻意共用」豁免随占位写法一并作废：共用占位同样是占位符残留
     cfg = Path(tempfile.mkdtemp())
     (cfg / "bootstrap.yml").write_text(
         "spring:\n"
@@ -3489,24 +3538,12 @@ def test_release_speedups_and_gate_fixes():
         "    nacos:\n"
         "      config:\n"
         "        # baseline-check: shared-placeholder 配置中心与注册中心同一实例\n"
-        "        server-addr: ${NACOS_SERVER_ADDR:FILL_ME}\n"
-        "      discovery:\n"
-        "        # baseline-check: shared-placeholder 同上\n"
-        "        server-addr: ${NACOS_SERVER_ADDR:FILL_ME}\n"
-        "  datasource:\n"
-        "    # 主库\n"
-        "    url: ${SPRING_DATASOURCE_URL:FILL_ME}\n"
-        "    # 从库（未声明共用，应报错）\n"
-        "    slave-url: ${SPRING_DATASOURCE_URL:FILL_ME}\n", encoding="utf-8")
+        "        server-addr: ${NACOS_SERVER_ADDR:FILL_ME}\n", encoding="utf-8")
     rep = RB.Report()
     RB.check_configs(cfg, rep)
-    errs = [str(x) for x in rep.errors if "占位变量" in str(x)]
-    notes = [str(x) for x in rep.notes if "占位变量" in str(x)]
-    check("★ P5② 声明共用的占位不再判错", not any("NACOS_SERVER_ADDR" in e for e in errs))
-    check("P5② 豁免项仍可见（降 note，不是静默后门）",
-          any("NACOS_SERVER_ADDR" in n for n in notes))
-    check("P5② 未声明的撞名仍 ERROR",
-          any("SPRING_DATASOURCE_URL" in e for e in errs))
+    check("★ P5② shared-placeholder 豁免已作废，共用占位照样 ERROR",
+          any(x["check"] == "占位符残留" for x in rep.errors) and not rep.notes)
+    check("P5② 豁免口常量已移除", not hasattr(RB, "SHARED_PLACEHOLDER_RE"))
     shutil.rmtree(cfg, ignore_errors=True)
 
     # P6 set current_build 时自动登记 builds[]

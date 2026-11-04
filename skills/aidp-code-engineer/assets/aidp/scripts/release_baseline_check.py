@@ -7,10 +7,11 @@
 约定 37 的判据链大多是"要记得做"的动作，而其中最伤人的几类错误恰恰是
 **人眼逐行看必漏、脚本一秒抓到**的类型（下游两个项目的实跑回流）：
 
-  · **占位变量名撞名**（37.4-7）—— `app.auth-code` 与 `app.kb.auth-code` 都被脱敏成
-    `${AUTH_CODE}`、`spring.datasource.password` 与 `spring.data.redis.password` 都成了
-    `${PASSWORD}`，而现网真值各不相同。照这份基线注入环境变量，应用认证码会和知识库
-    认证码撞、库密码会和 Redis 密码撞。一次校验抓到 3 组。
+  · **占位符残留**（37.4-1）—— 全量配置是「拿到即可对照使用的示例配置」，
+    `${XXX:__FILL_ME__}` / `${ENV}` / `${ep-hosts.xxx}` 满篇的配置拿到手没法用（下游实跑：
+    一份全量配置 30 多处占位）。每项都要写具体值。
+  · **密码明文**（37.4-7）—— 只有密码类填虚构示例值，真实口令不进 git；
+    IP / 账号 / 编码 / token 等按真实值填，不判凭据。
   · **环境绑定物残留**（37.3-4）—— schema 前缀 / TABLESPACE / STORAGE 没清干净，
     脚本被钉死在原环境，换环境执行必然失败。
   · **裸配置项**（37.4-9）—— 既无行内注释、上一行也非注释的配置行，部署方无从判断该不该改。
@@ -23,9 +24,10 @@
   1. 结构完整性        两轨对称落位（根下不得散落 .sql / 配置项清单）+ 全量轨目录 / 00_索引.md 就位
   2. YAML 语法         全量配置每个 .yml 逐文件解析 + .md 内 ```yaml 代码块逐块解析
   3. SQL 环境绑定物     schema 限定前缀 / TABLESPACE / STORAGE 命中数须为 0
-  4. 明文凭据          YAML 配置的凭据键非占位值 + 非 YAML 运行时文件（nginx.conf 等）逐行扫描
-  5. 占位变量名唯一性   ${NAME:...} 的 NAME 不得被多个配置路径共用（★ 全路径命名回检）
-  6. ${a.b} 引用可解析  被引用键须在合并后的配置集中存在
+  4. 密码明文          密码类键（password / passwd / pwd / secret-key …）与 URL userinfo、
+                      HTTP Basic 里的口令须为示例值（注释声明「示例值」或值含 Example）
+  5. 占位符残留        `__FILL_ME__` / `${ENV}` / `${ENV:默认值}` 一律 ERROR（37.4-1）
+  6. 属性引用残留      `${a.b}` 引用一律 ERROR：重复值直接写具体值 + 注释同步关系（37.4-8）
   7. 注释完备性        「无行内注释且上一行非注释」的配置行数须为 0
   8. 生效形态唯一       多形态中间件配置同时只能有一组生效（其余整段注释）
   9. 相对链接有效性     .md 内相对链接目标存在
@@ -75,9 +77,6 @@ ENV_BOUND_SQL = (
     (re.compile(r"\bSTORAGE\s*\(", re.I), "STORAGE 存储子句"),
 )
 
-# 占位变量「刻意共用」豁免声明：`# baseline-check: shared-placeholder <原因>`
-SHARED_PLACEHOLDER_RE = re.compile(r"baseline-check:\s*shared-placeholder\b")
-
 # COMMENT ON COLUMN "T"."C" IS '...' / COMMENT ON TABLE "T" IS '...'
 # —— 列/表限定语法，非环境绑定物；匹配 schema 前缀前先整句摘除（见 check 3 注释）。
 COMMENT_ON_RE = re.compile(
@@ -94,25 +93,29 @@ MIGRATION_SQL = (
     (re.compile(r"\bDROP\s+TABLE\b(?!\s+IF\s+NOT)", re.I), "DROP TABLE"),
 )
 
-# 4. 明文凭据：键名命中 + 值不是占位符 → ERROR
-CREDENTIAL_KEY_RE = re.compile(
-    r"(password|passwd|pwd|secret|token|access[-_]?key|secret[-_]?key|"
-    r"private[-_]?key|credential|auth[-_]?code|api[-_]?key|"
-    # ★ authorization / bearer 是 nginx 反代与 compose 环境变量里最常见的凭据载体，
-    #   早期漏收：合成用例里 `proxy_set_header Authorization "Basic ..."` 一路绿灯放行。
-    r"authorization|bearer)", re.I)
+# 4. 密码明文：敏感性只按「密码」划分（约定 37.4-7）。只有口令本身判 ERROR；
+#    token / auth-code / api-key / access-key / 账号 / IP / 编码都按真实值填写，⛔ 不再判凭据——
+#    此前把它们一并当凭据，下游按「示例值」口径填好的配置报了 14 条假 ERROR。
+#    secret-key 收进来是因为它本质是口令（如 MinIO 的 secret-key 即 admin 账号口令）。
+PASSWORD_KEY_RE = re.compile(r"(password|passwd|pwd|passphrase|secret[-_]?key)$", re.I)
+# 非 YAML 文件（.properties / .env / nginx …）里的「密码键 = 值」
+PASSWORD_KV_RE = re.compile(
+    r"([\w.\-]*(?:password|passwd|pwd|passphrase|secret[-_]?key))[\"']?\s*[=:]\s*[\"']?([^\s\"';,]+)",
+    re.I)
+# 示例值识别：行内或上一行注释声明「示例值」，或值本身是固定示例形态（含 Example）
+EXAMPLE_DECL = "示例值"
+EXAMPLE_VALUE_RE = re.compile(r"example", re.I)
 
-# 4（补）: 内嵌凭据【字面量】——键名不含敏感词、但值本身就是凭据的两类高频写法
-EMBEDDED_CRED = (
-    (re.compile(r"\bBasic\s+[A-Za-z0-9+/]{12,}={0,2}"), "HTTP Basic base64 凭据"),
-    (re.compile(r"://[^/\s:@]+:[^/\s:@]+@"), "URL userinfo 内嵌账号口令"),
-)
-PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][\w]*)(?::([^}]*))?\}")
-# 占位约定：${大写变量:__FILL_ME__}
+# 4（补）: 值里内嵌的口令——URL userinfo 的口令部分、HTTP Basic 解出的口令按密码判；
+#          值里内嵌的 token 不判
+URL_USERINFO_RE = re.compile(r"://([^/\s:@]+):([^/\s@]+)@")
+BASIC_RE = re.compile(r"\bBasic\s+([A-Za-z0-9+/]{8,}={0,2})")
+
+# 5 / 6. 占位符与属性引用残留（约定 37.4-1 / 37.4-8：每项写具体值）
 FILL_ME = "__FILL_ME__"
-
-# 5/6. 属性引用 ${a.b} —— 与占位变量（全大写）区分：含点号或含小写即视为属性引用
-PROP_REF_RE = re.compile(r"\$\{([A-Za-z_][\w.\-]*)(?::([^}]*))?\}")
+REF_RE = re.compile(r"\$\{([^}]*)\}")
+# nginx 原生变量 `${host}`（全小写、无点）不是占位符
+NGINX_VAR_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 # 8. 多形态中间件：同一组内同时生效多于一个 → ERROR
 # ★ 判据绑【解析出的全路径】，不绑原始行文本：YAML 是嵌套的，集群节点那行长这样
@@ -127,7 +130,7 @@ FORM_GROUPS = {
 MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)#][^)]*)\)")
 
 # ★ 运行时部署配置文件（nginx / compose / k8s）——约定 37.2：完整文件属【全量轨】。
-#   它们仍受【凭据 / 占位唯一性 / 语法】校验，但**豁免 7 注释完备性**：
+#   它们仍受【密码明文 / 占位残留 / 语法】校验，但**豁免 7 注释完备性**：
 #   那一项是给"配置项清单式"配置用的（每项都要写业务含义与后果），
 #   而 compose/k8s 大量是编排样板（image / ports / volumes），逐行要注释纯属噪音。
 RUNTIME_DEPLOY_RE = re.compile(r"^(nginx.*\.conf|.*\.conf|docker-compose.*\.ya?ml|k8s-.*\.ya?ml)$", re.I)
@@ -206,6 +209,97 @@ def yaml_sanity(text):
         else:
             seen[path] = lineno
     return problems
+
+
+# ── 4 / 5 / 6 共用判据（YAML 键行、非 YAML 行、增量 yaml 代码块三处同口径） ──────────
+
+PASSWORD_HINT = "密码类填虚构示例值，并在行内或上一行注释写明「示例值，非真实口令」"
+
+
+def _declares_example(raw, prev):
+    """行内注释或上一行注释声明了「示例值」。"""
+    if "#" in raw and EXAMPLE_DECL in raw.split("#", 1)[1]:
+        return True
+    p = (prev or "").strip()
+    return p.startswith(("#", "//", ";")) and EXAMPLE_DECL in p
+
+
+def _is_example(secret, raw, prev):
+    return bool(EXAMPLE_VALUE_RE.search(secret)) or _declares_example(raw, prev)
+
+
+def _embedded_passwords(value):
+    """值里内嵌的口令：URL userinfo 的口令部分、HTTP Basic 解出的口令。"""
+    import base64
+    import binascii
+    out = [("URL userinfo 内嵌口令", m.group(2)) for m in URL_USERINFO_RE.finditer(value)]
+    for m in BASIC_RE.finditer(value):
+        try:
+            decoded = base64.b64decode(m.group(1), validate=True).decode("utf-8", "replace")
+        except (binascii.Error, ValueError):
+            continue
+        if ":" in decoded:
+            out.append(("HTTP Basic 内嵌口令", decoded.split(":", 1)[1]))
+    return out
+
+
+def _password_findings(key, value, raw, prev):
+    """返回该行的密码明文命中标签列表；示例值 / 空值 / 占位（另由 5 报）放行。"""
+    hits = []
+    value = value.strip().strip('"\'')
+    if key and PASSWORD_KEY_RE.search(key) and value and "${" not in value \
+            and FILL_ME not in value and not _is_example(value, raw, prev):
+        hits.append("密码类键")
+    for label, secret in _embedded_passwords(value):
+        if secret and "${" not in secret and not _is_example(secret, raw, prev):
+            hits.append(label)
+    return hits
+
+
+def _ref_findings(value, nginx=False):
+    """返回 [(检查项, 原文)]：占位符残留 / 属性引用残留。"""
+    out = []
+    if FILL_ME in value:
+        out.append(("占位符残留", FILL_ME))
+    for m in REF_RE.finditer(value):
+        inner = m.group(1).strip()
+        name = inner.split(":", 1)[0]
+        if nginx and NGINX_VAR_RE.match(inner):
+            continue
+        if "." in name or name != name.upper():
+            out.append(("属性引用残留", m.group(0)))
+        elif FILL_ME not in inner:
+            out.append(("占位符残留", m.group(0)))
+    return out
+
+
+def _report_refs(rep, where, findings):
+    for check, src in findings:
+        if check == "占位符残留":
+            rep.error(check, f"{where} 残留占位/注入写法 `{src}` —— 全量配置是「拿到即可对照使用的示例配置」，"
+                             f"每项写具体值（取基线环境实况值，不知道怎么填就用研发环境的值；约定 37.4-1）；"
+                             f"{PASSWORD_HINT}")
+        else:
+            rep.error(check, f"{where} 残留属性引用 `{src}` —— 不为「只改一处」把值抽成 `${{a.b}}`："
+                             f"重复值直接写具体值，并注释标明「共 N 处须同步修改」（约定 37.4-8）")
+
+
+def scan_entries(rep, label, text, nginx=False):
+    """对一段 YAML 文本的键行跑 4 / 5 / 6。返回 parse_config_lines 结果供调用方复用。"""
+    entries = parse_config_lines(text)
+    lines = text.splitlines()
+    for lineno, path, val, is_comment in entries:
+        if is_comment or path is None or not val:
+            continue
+        raw = lines[lineno - 1]
+        prev = lines[lineno - 2] if lineno >= 2 else ""
+        bare = val.split("#")[0].strip()
+        where = f"{label}:{lineno} `{path}`"
+        for why in _password_findings(path.split(".")[-1], bare, raw, prev):
+            rep.error("密码明文", f"{where} 疑似真实口令（{why}）—— 真实口令不进 git（历史不可逆）；"
+                                  f"{PASSWORD_HINT}（如 `Nacos@Example2026`）")
+        _report_refs(rep, where, _ref_findings(bare, nginx))
+    return entries
 
 
 # ── 各项校验 ──────────────────────────────────────────────────────────────────
@@ -361,9 +455,6 @@ def check_configs(cfg_full, rep):
                   f"缺了它全新部署无从下手")
         return
 
-    all_keys = set()            # 6. 引用解析用：合并后的配置集
-    placeholder_owner = {}      # 5. 变量名 → [完整配置路径]
-    shared_exempt = {}          # 5. 声明了 shared-placeholder 的变量名 → [出处]
     for f in files:
         rel = f.relative_to(cfg_full)
         try:
@@ -383,7 +474,8 @@ def check_configs(cfg_full, rep):
             for p in yaml_sanity(text):
                 rep.error("YAML 语法", f"{rel} {p}")
 
-        entries = parse_config_lines(text)
+        # 4 / 5 / 6. 密码明文 / 占位符残留 / 属性引用残留
+        entries = scan_entries(rep, str(rel), text)
         lines = text.splitlines()
         is_runtime_deploy = bool(RUNTIME_DEPLOY_RE.match(f.name))
         live_paths = [p for _ln, p, _v, is_c in entries if p and not is_c]
@@ -394,44 +486,7 @@ def check_configs(cfg_full, rep):
                 continue
             if path is None:
                 continue
-            all_keys.add(path)
             raw = lines[lineno - 1]
-
-            # 4. 明文凭据：键名命中且值既非空、又不是占位符
-            if CREDENTIAL_KEY_RE.search(path.split(".")[-1]) and val:
-                bare = val.split("#")[0].strip().strip('"\'')
-                if bare and not bare.startswith("${"):
-                    rep.error("明文凭据",
-                              f"{rel}:{lineno} `{path}` 疑似明文凭据 —— 真值不入 git（历史不可逆），"
-                              f"应占位为 ${{全路径大写:{FILL_ME}}}")
-
-            # 4bis. 值本身即凭据（键名不含敏感词）：`url: jdbc:mysql://root:P@ss@host/db`、
-            #       `Authorization: Basic xxx`。EMBEDDED_CRED 此前**只接在非 YAML 路径**上，
-            #       YAML 侧完全不设防。
-            _bare_v = (val or "").split("#")[0].strip().strip('"\'')
-            if _bare_v and "${" not in _bare_v and FILL_ME not in _bare_v:
-                for _pat, _label in EMBEDDED_CRED:
-                    if _pat.search(_bare_v):
-                        rep.error("明文凭据",
-                                  f"{rel}:{lineno} `{path}` 值内嵌凭据（{_label}）—— "
-                                  f"应占位为 ${{全路径大写:{FILL_ME}}}")
-                        break
-
-            # 5. 占位变量名唯一性（★ 全路径命名回检）
-            # ★ 显式共用豁免：`# baseline-check: shared-placeholder <原因>`（本行或上一行）。
-            #   有些共用是**刻意的**：如 nacos 的 config.* 与 discovery.* 指向同一台实例，
-            #   共用 ${NACOS_SERVER_ADDR} 正是要它们永远同值——拆成两个变量反而制造
-            #   "配置中心与注册中心指向不同实例"的事故面。没有豁免口，这条 ERROR 恒红。
-            _shared = bool(SHARED_PLACEHOLDER_RE.search(raw)) or (
-                lineno >= 2 and bool(SHARED_PLACEHOLDER_RE.search(lines[lineno - 2])))
-            for m in PLACEHOLDER_RE.finditer(val or ""):
-                name = m.group(1)
-                if name.upper() != name:
-                    continue                    # 全大写才是脱敏占位；小写走属性引用
-                if _shared:
-                    shared_exempt.setdefault(name, []).append(f"{rel}:{lineno}")
-                    continue
-                placeholder_owner.setdefault(name, []).append(f"{rel}:{lineno} {path}")
 
             # 7. 注释完备性：既无行内注释、上一行也非注释（运行时部署编排文件豁免，见 RUNTIME_DEPLOY_RE）
             has_inline = "#" in raw.split(":", 1)[-1]
@@ -450,61 +505,26 @@ def check_configs(cfg_full, rep):
                           f"{rel} {group} 同时生效 {len(active)} 种形态（{' / '.join(active)}）—— "
                           f"框架只认其一、另一套静默失效；非当前形态须整段注释")
 
-    # 5. 汇总撞名
-    for name, owners in sorted(placeholder_owner.items()):
-        paths = {o.split(" ", 1)[1] for o in owners}
-        if len(paths) > 1:
-            rep.error("占位变量名唯一性",
-                      f"`${{{name}}}` 被 {len(paths)} 个不同配置路径共用（{' / '.join(sorted(paths))}）—— "
-                      f"占位变量名必须由完整配置路径生成；撞名会让不同真值被注入成同一个值。"
-                      f"若共用是刻意的（如指向同一实例），在该行或上一行加注释 "
-                      f"`# baseline-check: shared-placeholder <原因>` 豁免")
-    # 豁免项只登记不判错，但必须**可见**——否则豁免会变成静默的后门
-    for name, where in sorted(shared_exempt.items()):
-        rep.note("占位变量名唯一性",
-                 f"`${{{name}}}` 已声明刻意共用（{len(where)} 处：{' / '.join(where[:3])}"
-                 f"{' …' if len(where) > 3 else ''}）→ 跳过唯一性判定")
-
-    # 6. ${a.b} 属性引用可解析
-    for f in files:
-        rel = f.relative_to(cfg_full)
-        try:
-            text = f.read_text(encoding="utf-8")
-        except Exception:
-            continue
-        for lineno, path, val, is_comment in parse_config_lines(text):
-            if is_comment or not val:
-                continue
-            for m in PROP_REF_RE.finditer(val):
-                ref, default = m.group(1), m.group(2)
-                if ref.upper() == ref and "." not in ref:
-                    continue                     # 全大写无点 = 脱敏占位，不是属性引用
-                if ref in all_keys or default is not None:
-                    continue
-                rep.error("引用可解析",
-                          f"{rel}:{lineno} `{path}` 引用 ${{{ref}}}，但合并后的配置集中不存在该键"
-                          f"（且无默认值）—— 启动期占位符解析会失败")
-
 
 def check_nonyaml_runtime_files(cfg_full, rep):
-    """4（补）: 非 YAML 的运行时部署文件（典型 nginx.conf）的明文凭据扫描。
+    """4 / 5 / 6（补）: 键路径解析器管不到的行——非 YAML 运行时文件（典型 nginx.conf）逐行扫描。
 
-    nginx.conf 走不进 YAML 解析器，但它照样会带凭据——`proxy_set_header Authorization "Basic ..."`、
-    上游 basic auth、`ssl_certificate_key` 指向的私钥路径等。约定 37.2 把它归【全量轨】后，
-    这份文件就在 `全量/` 里随 tag 冻结入 git，**凭据一旦进去 git 历史不可逆**。
+    nginx.conf 走不进 YAML 解析器，但它照样会带口令（上游 basic auth、URL 内嵌口令）与
+    占位写法。约定 37.2 把它归【全量轨】后，这份文件就在 `全量/` 里随 tag 冻结入 git，
+    **真实口令一旦进去 git 历史不可逆**。
     """
     if not cfg_full.is_dir():
         return
     # ⛔ 此处原本是**白名单**（只认 nginx.conf / docker-compose* / k8s-*），于是
     #    `.properties` / `.env` / `.json` **一个都不扫**——实测合成基线里
-    #    `spring.datasource.password=…`、`oss.secret-key=…` 全程 0 ERROR、exit 0 放行。
-    #    `全量/` 下的一切都随 tag 冻结入 git，凭据进去不可逆，故改为**黑名单**：
+    #    `spring.datasource.password=…` 全程 0 ERROR、exit 0 放行。
+    #    `全量/` 下的一切都随 tag 冻结入 git，故改为**黑名单**：
     #    除 .md（说明文档）与 YAML（走上面的键路径解析）外，逐行扫。
     SKIP_SUFFIX = {".md", ".png", ".jpg", ".jpeg", ".gif", ".svg",
                    ".pdf", ".zip", ".gz", ".jar", ".woff", ".woff2", ".ttf", ".ico"}
     # ★ YAML 也要扫，但**只扫键路径解析器跳过的那些行**——它对 `- 列表项` 与块标量
     #   （`|` / `>` 之后的缩进块）整段 `continue`，于是 `- "Authorization: Basic …"`
-    #   这类写法在两条路径上都无人过问。键行本身已由上面的 4 / 4bis 覆盖，这里排除以免重复报。
+    #   这类写法在两条路径上都无人过问。键行本身已由 scan_entries 覆盖，这里排除以免重复报。
     #   ⚠️ 键名判据必须**收紧到真正的 YAML 键**（无空格无引号）：写宽了会把
     #   `- "Authorization: Basic …"` 和块标量里的 `curl -H "Authorization: …"` 一并当成键行
     #   跳过——而这两种恰恰是本段唯一要抓的对象。
@@ -513,6 +533,7 @@ def check_nonyaml_runtime_files(cfg_full, rep):
         if not f.is_file() or f.suffix.lower() in SKIP_SUFFIX:
             continue
         _yaml_only_unparsed = f.suffix.lower() in (".yml", ".yaml")
+        nginx = f.suffix.lower() == ".conf"
         rel = f.relative_to(cfg_full)
         try:
             lines = f.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -524,21 +545,32 @@ def check_nonyaml_runtime_files(cfg_full, rep):
                 continue
             if _yaml_only_unparsed and _KEYLINE_RE.match(ln):
                 continue                        # 键行归 YAML 路径，避免重复报
-            if "${" in ln or FILL_ME in ln:
-                continue                        # 已占位化
-            why = None
-            if CREDENTIAL_KEY_RE.search(ln):
-                why = "凭据键"
-            else:
-                for pat, label in EMBEDDED_CRED:
-                    if pat.search(ln):
-                        why = label
-                        break
-            if not why:
-                continue
-            rep.error("明文凭据",
-                      f"{rel}:{i} 疑似明文凭据（{why}）—— {ln[:70]} · 应占位为 "
-                      f"${{全路径大写:{FILL_ME}}}（本文件随 tag 入 git，凭据进去不可逆）")
+            prev = lines[i - 2] if i >= 2 else ""
+            where = f"{rel}:{i}"
+            whys = []
+            for m in PASSWORD_KV_RE.finditer(ln):
+                whys += _password_findings(m.group(1), m.group(2), raw, prev)
+            whys += [w for w in _password_findings("", ln, raw, prev) if w not in whys]
+            if whys:
+                rep.error("密码明文",
+                          f"{where} 疑似真实口令（{' / '.join(whys)}）—— {ln[:70]} · {PASSWORD_HINT}"
+                          f"（本文件随 tag 入 git，真实口令进去不可逆）")
+            _report_refs(rep, where, _ref_findings(ln, nginx))
+
+
+def check_increment_values(ver_dir, rep):
+    """4 / 5 / 6（增量轨）: `配置文件/增量/*.md` 的 yaml 代码块同口径——发布期配置两轨都不留占位、不放真实口令。"""
+    inc = ver_dir / "配置文件" / "增量"
+    if not inc.is_dir():
+        return
+    for md in sorted(inc.glob("*.md")):
+        rel = md.relative_to(ver_dir)
+        try:
+            text = md.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for i, block in enumerate(re.findall(r"```ya?ml\n(.*?)```", text, re.S), 1):
+            scan_entries(rep, f"{rel} 第 {i} 个 yaml 代码块", block)
 
 
 # 零变更声明的识别词：约定 37.5-7 要求「在 00_索引.md 写清『为什么是零』+ 判据」。
@@ -706,6 +738,7 @@ def run(root, version):
     check_sql_env_bound(sql_full, rep)
     check_configs(cfg_full, rep)
     check_nonyaml_runtime_files(cfg_full, rep)
+    check_increment_values(ver_dir, rep)
     check_increment_presence(ver_dir, rep)
     check_increment_terseness(ver_dir, rep)
     check_yaml_blocks_and_links(ver_dir, rep)

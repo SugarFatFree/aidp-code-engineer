@@ -89,6 +89,8 @@ README 自动生成分**三档**，判定的唯一实现是 `readme_policy.py::i
 
 内容形态与代码 README 不同：**只做子目录清单 + 各自用途**，不写技术栈与启动命令。
 
+**⛔ 一个目录只要一份导航（`reason=index-anchor`）**：默认用 README；目录里已有**契约明确要求**的 `00_索引.md`（约定 15：版本规划四类文档、架构设计多文档等需要序号的同类多文件）（以及约定 37 部署全量轨的固定名 `建表说明.md` / `配置说明.md`）时，它就是本目录的导航，**不再生成导航 README**——两份并存必然漂移，读者也不知道该看哪份。⛔ 也不要为了"有导航"给普通目录另建 `00_索引.md`；`docs/deployment/` 不套约定 15 编号，版本根用 README。`verify.py::check_code_readme` 对两者并存的目录报 WARN：把 README 独有的信息并入 `00_索引.md` 后删除 README。
+
 ### 第 3 档 · 不需要 README（`required=False`，`reason=flat-leaf-directory`）
 
 源码树之外、且无多级子目录的平铺目录——仅平铺少量 SQL / 脚本 / Markdown / 图片。文件再多也不构成导航需求。

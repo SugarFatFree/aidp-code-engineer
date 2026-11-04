@@ -1590,17 +1590,17 @@ def test_release_scope_covers_transitional_versions():
 
 
 def test_release_baseline_check():
-    """约定 37：双轨部署基线的 12 项机器门必须真抓到缺陷，且干净基线不误报。
+    """约定 37：双轨部署基线的 13 项机器门必须真抓到缺陷，且干净基线不误报。
 
     ★ 断言绑【缺陷类别是否被抓到】，不绑具体文案——文案微调不该让测试变红。
     重点回归两处曾经/极易静默失效的判据：
       · 生效形态唯一：判据必须绑【解析出的全路径】。自测时首版写成行正则匹配
         `redis.cluster`，而 YAML 里那行其实是 `nodes:`（父级才是 cluster）→ 本项
         永远匹配不到、静默空跑；
-      · 占位符 / 属性引用残留（约定 37.4-1 / 37.4-8）：全量配置每项写具体值，
-        占位满篇的配置拿到手没法用；密码只判口令本身，IP / 账号 / 编码 / token 填真实值。
+      · 占位符残留（约定 37.4-1）：值必须可见，`__FILL_ME__` / 无默认值的 `${ENV}` 拿到手没法用；
+        `${ENV:默认值}` 与可解析的 `${a.b}` 合规。密码只判口令本身，IP / 账号 / 编码 / token 填真实值。
     """
-    print("【release_baseline_check 双轨部署基线 12 项机器门】")
+    print("【release_baseline_check 双轨部署基线 13 项机器门】")
     # ★ 两轨力度必须对称：全量轨回答「从零怎么搭」，任一轨空目录都等于本版无法全新部署。
     #   此前配置侧空判 ERROR、SQL 侧空判 WARN，而门的放行判据是"有无 ERROR"
     #   → 空 SQL 全量轨可以 exit 0 直接放行（约定 37 明写「零变更的版本同样要产全量」）。
@@ -1622,10 +1622,10 @@ def test_release_baseline_check():
         bad = root / "docs/deployment/V0.2.0"
         (bad / "sql/全量").mkdir(parents=True)
         (bad / "配置文件/全量/nacos").mkdir(parents=True)
-        (bad / "00_索引.md").write_text("见 [断链](sql/全量/不存在.md)\n", encoding="utf-8")
-        (bad / "sql/全量/00_索引.md").write_text(
+        (bad / "README.md").write_text("见 [断链](sql/全量/不存在.md)\n", encoding="utf-8")
+        (bad / "sql/全量/建表说明.md").write_text(
             "# 全量索引\n\n导出源：192.0.2.10:3306 / schema `app_prod`\n本版无剔除项（已交叉核对）\n", encoding="utf-8")
-        (bad / "配置文件/全量/00_索引.md").write_text(
+        (bad / "配置文件/全量/配置说明.md").write_text(
             "# 配置全量索引\n\n导出源：nacos@192.0.2.10:8848 / namespace `prod`\n本版无剔除项（已交叉核对）\n", encoding="utf-8")
         (bad / "sql/全量/01_建表-用户.sql").write_text(
             'CREATE TABLE "APP"."T_USER" (ID VARCHAR(64)) STORAGE(ON "MAIN");\n', encoding="utf-8")
@@ -1656,7 +1656,7 @@ def test_release_baseline_check():
         check("抓到 SQL 环境绑定物残留（schema 前缀 / STORAGE）", "SQL 环境绑定物" in cats)
         check("抓到密码明文", "密码明文" in cats)
         check("★ 抓到占位符残留（__FILL_ME__ / ${ENV}）", "占位符残留" in cats)
-        check("★ 抓到 ${a.b} 属性引用残留", "属性引用残留" in cats)
+        check("抓到 ${a.b} 引用不可解析", "引用可解析" in cats)
         check("★ 抓到生效形态不唯一（判据绑全路径、非行文本）", "生效形态唯一" in cats)
         check("抓到失效相对链接", "相对链接" in cats)
 
@@ -1665,19 +1665,19 @@ def test_release_baseline_check():
         (ok / "sql/全量").mkdir(parents=True)
         (ok / "配置文件/全量/nacos").mkdir(parents=True)
         # 双轨场景导航是约定 37「两套绝不叠加」的唯一载体，机器门要求写明两条互斥路径
-        (ok / "00_索引.md").write_text(
+        (ok / "README.md").write_text(
             "# 索引\n\n- 全新部署（从零搭）→ 只执行 sql/全量/ + 配置文件/全量/\n"
             "- 升级已有环境 → 只执行 sql/增量/ + 配置文件/增量/\n（两套绝不叠加执行）\n"
             # 本夹具刻意不产增量轨 → 按约定 37.5-7 必须显式声明零变更，
             #   否则「本版真没改」与「压根没产增量轨」在产物上同形（新 check_increment_presence 判 ERROR）
             "\n本版无增量：配置中心该区间无变更记录，SQL 亦无 DDL。\n",
             encoding="utf-8")
-        (ok / "sql/全量/00_索引.md").write_text(
+        (ok / "sql/全量/建表说明.md").write_text(
             "# 全量索引\n\n导出源：192.0.2.10:3306 / schema `app_prod`（应用实际连接）\n"
             "本版无剔除项（已交叉核对）\n"
             # 只读采集方式：G-RELEASE-2「全程只读」半条的可复核落点
             "DDL 经 INFORMATION_SCHEMA 元数据视图只读导出\n", encoding="utf-8")
-        (ok / "配置文件/全量/00_索引.md").write_text(
+        (ok / "配置文件/全量/配置说明.md").write_text(
             "# 配置全量索引\n\n导出源：配置中心 nacos@192.0.2.10:8848 / namespace `prod`\n"
             "本版无剔除项（已交叉核对）\n"
             "配置经配置中心只读 API 拉取\n", encoding="utf-8")
@@ -1710,7 +1710,7 @@ def test_release_baseline_check():
         # ── 全量轨缺失是 ERROR：「本版零变更」不是不产全量的理由 ──
         empty = root / "docs/deployment/V0.4.0"
         empty.mkdir(parents=True)
-        (empty / "00_索引.md").write_text("# 索引\n", encoding="utf-8")
+        (empty / "README.md").write_text("# 索引\n", encoding="utf-8")
         rc, o = run(root, "V0.4.0")
         check("★ 缺全量轨 → ERROR（零变更版本同样要产全量）",
               rc == 1 and "结构完整性" in {e["check"] for e in o["errors"]})
@@ -1719,9 +1719,9 @@ def test_release_baseline_check():
         legacy = root / "docs/deployment/V0.5.0"
         (legacy / "sql/全量").mkdir(parents=True)
         (legacy / "配置文件/全量").mkdir(parents=True)
-        (legacy / "00_索引.md").write_text("# 索引\n", encoding="utf-8")
-        (legacy / "sql/全量/00_索引.md").write_text("# 全量索引\n", encoding="utf-8")
-        (legacy / "配置文件/全量/00_索引.md").write_text("# 配置全量索引\n", encoding="utf-8")
+        (legacy / "README.md").write_text("# 索引\n", encoding="utf-8")
+        (legacy / "sql/全量/建表说明.md").write_text("# 全量索引\n", encoding="utf-8")
+        (legacy / "配置文件/全量/配置说明.md").write_text("# 配置全量索引\n", encoding="utf-8")
         (legacy / "sql/全量/01_建表.sql").write_text(
             "CREATE TABLE IF NOT EXISTS T (ID VARCHAR(1));\n", encoding="utf-8")
         (legacy / "配置文件/全量/app.yml").write_text("a:\n  # x\n  b: 1\n", encoding="utf-8")
@@ -1734,13 +1734,25 @@ def test_release_baseline_check():
         check("★ 配置项清单滞留 配置文件/ 根 → ERROR",
               "配置文件/配置项清单.md" in msgs)
 
+        # ── ★ 三份说明文件旧名 00_索引.md → ERROR，并给出新名（约定 37.2 改名精简）──
+        old = root / "docs/deployment/V0.5.1"
+        (old / "sql/全量").mkdir(parents=True)
+        (old / "配置文件/全量").mkdir(parents=True)
+        for rel in ("00_索引.md", "sql/全量/00_索引.md", "配置文件/全量/00_索引.md"):
+            (old / rel).write_text("# 旧索引\n", encoding="utf-8")
+        rc, o = run(root, "V0.5.1")
+        msgs = " ".join(e["msg"] for e in o["errors"])
+        check("★ 旧名 00_索引.md 三处都报 ERROR 并指向新名",
+              rc == 1 and all(n in msgs for n in ("README.md", "建表说明.md", "配置说明.md"))
+              and msgs.count("是旧名") == 3)
+
         # ── ★ nginx/compose/k8s 属【全量轨】（约定 37.2）：凭据要抓、编排样板不要求逐行注释 ──
         rt = root / "docs/deployment/V0.6.0"
         (rt / "sql/全量").mkdir(parents=True)
         (rt / "配置文件/全量").mkdir(parents=True)
-        (rt / "00_索引.md").write_text("# 索引\n", encoding="utf-8")
-        (rt / "sql/全量/00_索引.md").write_text("# 全量索引\n", encoding="utf-8")
-        (rt / "配置文件/全量/00_索引.md").write_text("# 配置全量索引\n", encoding="utf-8")
+        (rt / "README.md").write_text("# 索引\n", encoding="utf-8")
+        (rt / "sql/全量/建表说明.md").write_text("# 全量索引\n", encoding="utf-8")
+        (rt / "配置文件/全量/配置说明.md").write_text("# 配置全量索引\n", encoding="utf-8")
         (rt / "sql/全量/01_建表.sql").write_text(
             "CREATE TABLE IF NOT EXISTS T (ID VARCHAR(1));\n", encoding="utf-8")
         # 本版加 WS/SSE 的典型 nginx：一处 Basic 真实口令 + 一处真实 api-key（非密码，不判）
@@ -1770,16 +1782,16 @@ def test_release_baseline_check():
         (ts / "sql/全量").mkdir(parents=True)
         (ts / "配置文件/全量").mkdir(parents=True)
         (ts / "配置文件/增量").mkdir(parents=True)
-        (ts / "00_索引.md").write_text(
+        (ts / "README.md").write_text(
             "# 索引\n\n- 全新部署 → sql/全量/ + 配置文件/全量/\n- 升级已有环境 → sql/增量/ + 配置文件/增量/\n"
             # 本夹具只有配置增量、没有 SQL 增量（合法的「本版无 DDL」），
             #   按约定 37.5-7 必须显式声明零，否则与「压根没产 SQL 增量轨」同形
             "\n本版 SQL 无增量：配置中心该区间仅配置变更，无 DDL。\n",
             encoding="utf-8")
-        (ts / "sql/全量/00_索引.md").write_text(
+        (ts / "sql/全量/建表说明.md").write_text(
             "# 全量索引\n\n导出源：192.0.2.10:3306 / schema `app_prod`\n本版无剔除项（已交叉核对）\n"
             "DDL 经 INFORMATION_SCHEMA 元数据视图只读导出\n", encoding="utf-8")
-        (ts / "配置文件/全量/00_索引.md").write_text(
+        (ts / "配置文件/全量/配置说明.md").write_text(
             "# 配置全量索引\n\n导出源：nacos@192.0.2.10:8848 / namespace `prod`\n本版无剔除项（已交叉核对）\n"
             "配置经配置中心只读 API 拉取\n", encoding="utf-8")
         (ts / "sql/全量/01_建表.sql").write_text(
@@ -1800,7 +1812,7 @@ def test_release_baseline_check():
         check("极简度只报 WARN 不阻断发布", rc == 0)
 
         inc.write_text(
-            "# 变更\n\n> 判定依据见 `../全量/00_索引.md`。\n\n"
+            "# 变更\n\n> 各环境差异见 `../全量/配置说明.md`。\n\n"
             "## 新增\n```yaml\nsso:\n  ws-timeout: 60   # WS 长连接超时\n"
             "  api-key: x       # 必填·敏感\n```\n\n## 删除\n无\n", encoding="utf-8")
         rc, o = run(root, "V0.7.0")
@@ -2232,6 +2244,20 @@ def test_readme_three_tier_and_scan_noise():
     # 5 非代码目录、0 子目录但文件很多
     mk("docs/flatmany", files=tuple(f"f{i}.md" for i in range(200)))
     check("⑤ 200 个文件 0 子目录仍不 required", not dec("docs/flatmany")["required"])
+    # ⑤bis 多子目录但已有契约要求的 00_索引.md → 一个目录只要一份导航，不再要 README
+    mk("docs/testing/V1.0.0/研发自测", files=("00_索引.md", "01_研发自测方案.md"), dirs=("02_登录", "03_订单"))
+    d = dec("docs/testing/V1.0.0/研发自测")
+    check("★ ⑤bis 有 00_索引.md 的多子目录目录不 required（reason=index-anchor）",
+          not d["required"] and d["reason"] == "index-anchor")
+    # ⑤ter 部署全量轨的固定名说明文件同样是导航锚；部署目录里的 00_索引.md 是待迁移旧名，不算锚
+    mk("docs/deployment/V1.0.0/配置文件/全量/nacos", files=("app.yml",))
+    mk("docs/deployment/V1.0.0/配置文件/全量", files=("配置说明.md", "nginx.conf"))
+    d = dec("docs/deployment/V1.0.0/配置文件/全量")
+    check("★ ⑤ter 配置说明.md 是 配置文件/全量/ 的导航，不再要 README",
+          not d["required"] and d["reason"] == "index-anchor")
+    mk("docs/deployment/V1.0.0", files=("00_索引.md",), dirs=("sql",))
+    check("★ ⑤ter 部署版本根的旧名 00_索引.md 不压掉 README（版本根用 README 导航）",
+          dec("docs/deployment/V1.0.0")["reason"] == "navigation-hub")
 
     # 6-8 代码类不得回归
     mk("code/web/src/components", files=("a.vue",))
@@ -2892,6 +2918,114 @@ def test_classify_business_words_in_source_tree():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_release_profile_snapshot_same_shape():
+    """第 13 项引导层同形（约定 37.4-2）：环境段副本与源码同形 + 跨 profile 不缺项。
+
+    下游实跑：源码 prod 的配置中心地址 / 账号 / 口令故意无默认值（未注入即启动失败），副本却写死或
+    `__FILL_ME__`；且 dev 有、prod 没有的 `log-impl` 整个漏掉、无任何提示。
+    """
+    print("【发布基线 · 引导层同形与跨 profile 补齐】")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "rbc13", str(Path(HERE).parents[0] / "release_baseline_check.py"))
+    rbc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rbc)
+    root = Path(tempfile.mkdtemp())
+    res = root / "code/backend/app/src/main/resources"
+    res.mkdir(parents=True)
+    (res / "bootstrap-prod.yml").write_text(
+        "spring:\n  cloud:\n    nacos:\n      server-addr: ${NACOS_ADDR}\n"
+        "      password: ${NACOS_PWD}\n      namespace: ${NACOS_NS:prod}\n"
+        "server:\n  port: 8080\n", encoding="utf-8")
+    (res / "bootstrap-dev.yml").write_text(
+        "spring:\n  cloud:\n    nacos:\n      server-addr: ${NACOS_ADDR:192.0.2.5:8848}\n"
+        "      password: ${NACOS_PWD:nacos}\n      namespace: ${NACOS_NS:dev}\n"
+        "server:\n  port: 8080\n"
+        "mybatis-plus:\n  configuration:\n    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl\n"
+        "debug:\n  sql-trace: true\n", encoding="utf-8")
+    cfg = root / "docs/deployment/V1.0.0/配置文件/全量"
+    cfg.mkdir(parents=True)
+    head = "# 权威源码：code/backend/app/src/main/resources/bootstrap-prod.yml\n"
+
+    def errs(body):
+        (cfg / "bootstrap-prod.yml").write_text(head + body, encoding="utf-8")
+        rep = rbc.Report()
+        rbc.check_configs(cfg, rep)
+        rbc.check_profile_snapshots(root, cfg, rep)
+        return rep.errors
+
+    good = ("# baseline-check: profile-skip debug.sql-trace 仅研发调试开关，生产不配\n"
+            "spring:\n  cloud:\n    nacos:\n"
+            "      # 源码没有默认值，未注入即启动失败，部署侧必须注入；示例取研发环境\n"
+            "      server-addr: ${NACOS_ADDR:192.0.2.5:8848}\n"
+            "      # 示例值，非真实口令；源码没有默认值，未注入即启动失败，部署侧必须注入\n"
+            "      password: ${NACOS_PWD}\n"
+            "      namespace: ${NACOS_NS:prod}  # 照抄源码\n"
+            "server:\n  port: 8080  # 照抄源码\n")
+    e = errs(good)
+    check("★ 跨 profile 缺项（dev 有 log-impl、prod 没有）被抓",
+          [x for x in e if x["check"] == "引导层同形" and "log-impl" in x["msg"]])
+    check("★ profile-skip 标记的有意不配项放行", not [x for x in e if "sql-trace" in x["msg"]])
+    check("★ 源码无默认值 + 注释声明必须注入 → `${ENV}` 不判占位符残留",
+          not [x for x in e if x["check"] == "占位符残留"])
+    check("同形副本除缺项外零 ERROR", len(e) == 1)
+
+    # 补了 log-impl 但源码没跟着补 → 副本里的项不生效
+    e = errs(good + "mybatis-plus:\n  configuration:\n"
+                    "    log-impl: ${MP_LOG_IMPL:org.apache.ibatis.logging.slf4j.Slf4jImpl}  # 生产取 Slf4j\n")
+    check("★ 只改副本不改源码 → ERROR", any("源码" in x["msg"] and "log-impl" in x["msg"] for x in e))
+    (res / "bootstrap-prod.yml").write_text(
+        (res / "bootstrap-prod.yml").read_text(encoding="utf-8")
+        + "mybatis-plus:\n  configuration:\n"
+          "    log-impl: ${MP_LOG_IMPL:org.apache.ibatis.logging.slf4j.Slf4jImpl}\n", encoding="utf-8")
+    e = errs(good + "mybatis-plus:\n  configuration:\n"
+                    "    log-impl: ${MP_LOG_IMPL:org.apache.ibatis.logging.slf4j.Slf4jImpl}  # 生产取 Slf4j\n")
+    check("★ 源码同步补齐后零 ERROR", not e)
+
+    # 不同形的四种写法
+    bad = ("spring:\n  cloud:\n    nacos:\n"
+           "      server-addr: 192.0.2.5:8848  # 写死\n"
+           "      password: ${NACOS_PWD:Nacos@Example2026}  # 示例值\n"
+           "      namespace: ${NACOS_NS:dev}  # x\n"
+           "server:\n  port: ${PORT:8080}  # x\n"
+           "mybatis-plus:\n  configuration:\n"
+           "    log-impl: ${MP_LOG_IMPL:org.apache.ibatis.logging.slf4j.Slf4jImpl}  # x\n")
+    msgs = " ".join(x["msg"] for x in errs(bad))
+    check("★ 源码 `${ENV}` 副本写死 → ERROR", "server-addr` 源码是" in msgs)
+    check("★ 源码无默认值、副本未声明必须注入 → ERROR", "password` 源码无默认值" in msgs)
+    check("★ 默认值未照抄源码 → ERROR", "默认值须照抄源码 `prod`" in msgs)
+    check("★ 源码写死、副本自行改成环境变量 → ERROR", "port` 源码是写死值" in msgs)
+
+    # 第 1 项补：运行时部署文件不得漏收（⛔ 不只收后端；下游实跑全量/ 里 nginx 一份没有）
+    fe = root / "code/frontend/web"
+    (fe / "deploy").mkdir(parents=True)
+    (fe / "package.json").write_text("{}", encoding="utf-8")
+    (fe / "deploy/nginx.conf").write_text("server {}\n", encoding="utf-8")
+    (root / "code/backend/app/src/test").mkdir(parents=True)
+    (root / "code/backend/app/src/test/docker-compose.yml").write_text("x: 1\n", encoding="utf-8")
+    (root / "code/backend/app/logback.conf").write_text("x\n", encoding="utf-8")
+    (cfg / "配置说明.md").write_text("# 配置全量索引\n", encoding="utf-8")
+
+    def presence():
+        rep = rbc.Report()
+        rbc.check_runtime_files_presence(root, cfg, rep)
+        return rep
+    r = presence()
+    check("★ 仓库有 nginx.conf、全量/ 无同名份 → ERROR",
+          len(r.errors) == 1 and "nginx.conf" in r.errors[0]["msg"])
+    check("测试夹具里的 compose、非 nginx 的 .conf 不算部署物", "docker-compose" not in str(r.errors))
+    (cfg / "nginx.conf").write_text("server {}\n", encoding="utf-8")
+    r = presence()
+    check("★ 收录同名完整份后零 ERROR / WARN", not r.errors and not r.warns)
+    (cfg / "nginx.conf").unlink()
+    (fe / "deploy/nginx.conf").unlink()
+    r = presence()
+    check("★ 有前端、仓库与全量/ 都无 nginx 且索引未提及 → WARN", len(r.warns) == 1 and not r.errors)
+    (cfg / "配置说明.md").write_text("# 配置全量索引\n本项目前端走对象存储静态托管，无 nginx\n", encoding="utf-8")
+    check("索引写明无 nginx → 放行", not presence().warns)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def test_release_credential_gate_coverage():
     """密码明文门（约定 37.4-7）：敏感性只按「密码」划分。
 
@@ -2967,19 +3101,28 @@ def test_release_credential_gate_coverage():
     check("★ nginx 原生变量 ${host} 不算占位符",
           not [e for e in e2 if e["check"] == "占位符残留"])
 
-    # 反向守卫：占位 / 注入 / 属性引用写法都是违规，不再当合规写法
+    # 占位写法：值不可见的才违规；带默认值 / 可解析的引用合规
     d3 = root / "docs/deployment/V0.3.0/配置文件/全量"
     d3.mkdir(parents=True)
     (d3 / "app.yml").write_text(
+        "ep-hosts:\n  sso: http://192.0.2.8:8080  # 研发环境取值\n"
         "a:\n  pwd: ${A_PWD:__FILL_ME__}  # x\n  host: ${ENV_HOST}  # x\n"
-        "  port: ${APP_PORT:8080}  # x\n  url: ${ep-hosts.sso}/x  # x\n", encoding="utf-8")
+        "  port: ${APP_PORT:8080}  # 研发环境取值\n"
+        "  sso: ${ep-hosts.sso}/sso-authn  # 可解析引用\n"
+        "  kb: ${kb.host:http://192.0.2.9}/kb  # 带默认值的引用\n"
+        "  gone: ${ep-hosts.missing}/x  # x\n"
+        "  # 示例值，非真实口令\n  db-password: ${DB_PASSWORD:Dm@Example2026}\n"
+        "  redis-password: ${REDIS_PASSWORD:RealRedis9}  # 必填\n", encoding="utf-8")
     (d3 / "app.properties").write_text("b.secret-key=${B_SECRET_KEY:__FILL_ME__}\n", encoding="utf-8")
     e3 = errs(d3)
     kinds = [e["check"] for e in e3]
-    check("★ __FILL_ME__ / ${ENV} / ${ENV:默认值} 判占位符残留",
-          kinds.count("占位符残留") == 4)
-    check("★ ${a.b} 判属性引用残留", kinds.count("属性引用残留") == 1)
-    check("占位写法不重复报成密码明文", "密码明文" not in kinds)
+    where = " ".join(e["msg"] for e in e3)
+    check("★ __FILL_ME__ / 无默认值的 ${ENV} 判占位符残留", kinds.count("占位符残留") == 3)
+    check("★ ${ENV:默认值} 合规", "APP_PORT" not in where)
+    check("★ 可解析 / 带默认值的 ${a.b} 合规，解析不了的才报",
+          kinds.count("引用可解析") == 1 and "ep-hosts.missing" in where)
+    check("★ ${ENV:默认值} 的默认值按密码判：示例值放行、真实口令拦截",
+          kinds.count("密码明文") == 1 and "redis-password" in where)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -3538,7 +3681,7 @@ def test_release_speedups_and_gate_fixes():
         "    nacos:\n"
         "      config:\n"
         "        # baseline-check: shared-placeholder 配置中心与注册中心同一实例\n"
-        "        server-addr: ${NACOS_SERVER_ADDR:FILL_ME}\n", encoding="utf-8")
+        "        server-addr: ${NACOS_SERVER_ADDR}\n", encoding="utf-8")
     rep = RB.Report()
     RB.check_configs(cfg, rep)
     check("★ P5② shared-placeholder 豁免已作废，共用占位照样 ERROR",
@@ -4633,7 +4776,7 @@ def test_ddl_comment_and_release_order():
     # 已并进约定 37 机器门（release-4 无条件调它 → 忘不掉）
     rbc = (repo / ".aidp/scripts/release_baseline_check.py").read_text(encoding="utf-8")
     check("★ 已并入 release_baseline_check 第 12 项",
-          "check_ddl_comment_verified" in rbc and "12 项确定性校验" in rbc)
+          "check_ddl_comment_verified" in rbc and "13 项确定性校验" in rbc)
     check("★ 委派单一实现、不重写方言识别",
           "check_sql_ledger_comment.py" in rbc)
 
@@ -4733,6 +4876,7 @@ def main():
     test_cascade_residue_gate()
     test_classify_business_words_in_source_tree()
     test_release_credential_gate_coverage()
+    test_release_profile_snapshot_same_shape()
     test_report_na_result_state()
     test_cascade_obligation_gate()
     test_tick_target_version_per_command()

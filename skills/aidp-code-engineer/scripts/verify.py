@@ -543,6 +543,12 @@ def check_code_readme(root: Path, r: VerifyResult):
             if any(x.startswith(".") for x in rel.parts) or excluded:
                 continue
             dec = policy.is_readme_required_directory(path, None, root=root)
+            if dec.get("reason") == "index-anchor" and (path / "README.md").is_file():
+                anchor = next(n for n in (policy.INDEX_ANCHOR,) + tuple(getattr(policy, "DEPLOY_ANCHORS", ()))
+                              if (path / n).is_file())
+                r.warn(f"导航重复: {path.relative_to(root)}/ 同时有 README.md 与 {anchor}"
+                       f"（约定 19：一个目录只要一份导航，已有契约要求的 {anchor} 时删除 README.md，"
+                       f"其中独有的信息先并入 {anchor}）")
             if dec["required"] and dec.get("reason") == "navigation-hub" and not (path / "README.md").is_file():
                 r.warn(f"导航枢纽缺 README.md: {path.relative_to(root)}/（约定 19 第②档，只列子目录与用途）")
     scan_roots = [p for p in (root / "code", root / "web", root / "server", root / "src") if p.is_dir()]
@@ -585,6 +591,16 @@ def check_deployment_two_track_layout(root: Path, r: VerifyResult):
     if stale_cfg:
         r.error(f"约定 37：{len(stale_cfg)} 份配置产物在 配置文件/ 根（清单 → 增量/；完整文件 → 全量/）："
                 f"{_head(stale_cfg, 6, ', ')}")
+    renames = []
+    for v in _version_dirs(dep):
+        for old, new in (("00_索引.md", "README.md"), ("sql/全量/00_索引.md", "sql/全量/建表说明.md"),
+                         ("配置文件/全量/00_索引.md", "配置文件/全量/配置说明.md")):
+            if (v / old).is_file():
+                renames.append(f"git mv docs/deployment/{v.name}/{old} docs/deployment/{v.name}/{new}")
+    if renames:
+        r.warn(f"约定 37：{len(renames)} 份部署说明仍用旧名 00_索引.md（已改名并精简，见约定细则-5 §37.2 / §37.9）"
+               f"→ {_head(renames, 6, '；')}；搬完按新结构精简内容、回写引用"
+               f"（版本根已有导航 README.md 时先把其中独有内容并入，再删除重复的那份）")
     if missing_full:
         r.warn(f"约定 37 全量轨缺失：{_head(missing_full, 6, ', ')}（发布期由 /version 产出；未发布版本属正常）")
     if not stale_sql and not stale_cfg:

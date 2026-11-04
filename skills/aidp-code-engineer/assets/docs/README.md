@@ -16,7 +16,7 @@ docs/
 ├── references/{version}/         ★ 版本级：本版「提给第三方的需求」+ 本版对方资料（/sprint-design 落盘；引用链强制）
 ├── prototype/{version}/          原型资源 code + mockup
 ├── deployment/
-│   ├── {version}/                部署产物（版本级）：00_索引.md + sql/{增量,全量}/ + 部署流程/ + 配置文件/{增量,全量}/
+│   ├── {version}/                部署产物（版本级）：README.md + sql/{增量,全量}/ + 部署流程/ + 配置文件/{增量,全量}/
 │   └── tools/                    ★ 非版本隔离：跨版本运维 / 一次性工具归档（项目级特例）
 ├── requirements/
 │   └── {version}/研发需求/00_索引.md + 01_研发需求.md  AIDP 版本需求基线（由 /version 生成）
@@ -70,5 +70,5 @@ docs/
 | `plans/{version}/` | `01_研发执行计划.md`（必需） + `plan-{user}.md`（可选） |
 | `reports/{version}/` | 团队级用类型名（`delivery-report.md`），个人级带 user（`review-{user}.md`） |
 | `docs/deployment/{version}/sql/增量/` | `{NN}_<中文名>.sql`（中文命名+两位序号前缀，如 `01_用户表DDL.sql`，`99_回滚脚本.sql` 序号保留；⛔ `sql/` 根下不得直放 `.sql`；详见 [`init/06_版本与用户目录约定.md`](init/06_版本与用户目录约定.md) §2.5.4） |
-| `docs/deployment/{version}/sql/全量/` | `00_索引.md` + `{NN}_建表-<业务域>.sql` + `{NN}_初始化数据.sql`（全新部署基线，发布期产出，不含 ALTER；约定 37） |
-| `docs/deployment/{version}/配置文件/` | `增量/配置项清单.md`（固定名，本版变更）+ `全量/`（`00_索引.md` + 引导层环境文件 + nginx/compose/k8s 完整份 + `<配置中心>/*.yml`）；⛔ 根下不得直放配置产物 |
+| `docs/deployment/{version}/sql/全量/` | `建表说明.md` + `{NN}_建表-<业务域>.sql` + `{NN}_初始化数据.sql`（全新部署基线，发布期产出，不含 ALTER；约定 37） |
+| `docs/deployment/{version}/配置文件/` | `增量/配置项清单.md`（固定名，本版变更）+ `全量/`（`配置说明.md` + 引导层环境文件 + nginx/compose/k8s 完整份 + `<配置中心>/*.yml`）；⛔ 根下不得直放配置产物 |

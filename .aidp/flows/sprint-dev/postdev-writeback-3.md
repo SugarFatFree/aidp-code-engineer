@@ -53,7 +53,7 @@ git diff --name-only HEAD~1 2>/dev/null | grep -qiE 'init|rebuild|migrate|backfi
 - 检测到部署侧变更（`DEPLOY_CHANGE=1`）却最终无 `部署流程.md`（或仅占位符）。
 - **无人值守**（`--unattended`）：把该 WARN 记入 baseline（`versions.{V}.deploy_docs_missing=true`）+ autopilot **#4 提示**，不弹窗、不阻塞，但留痕，供部署前置门（`/sprint-batch` Step 6 / `/sprint-autopilot` Phase 3.2.1）拦截。
 
-**D) 固定命名契约 + 索引**：本版部署产物按固定角色名落位（**不套约定 15 的 `NN_` 分册编号**——部署产物是固定角色而非分册）：`部署流程/部署流程.md`、`部署流程/SQL执行台账.md`、`配置文件/增量/配置项清单.md`、`sql/增量/NN_*.sql`（+ 发布期 `sql/全量/`、`配置文件/全量/`，约定 37）。同时维护 `docs/deployment/{version}/00_索引.md`（本版部署产物清单 + 生成时间 + 各文件一句话用途），供 verify.py 与各命令按**固定路径**定位、不再模糊匹配。命名契约单一信源见 `06_版本与用户目录约定.md` §2.5.4。
+**D) 固定命名契约 + 索引**：本版部署产物按固定角色名落位（**不套约定 15 的 `NN_` 分册编号**——部署产物是固定角色而非分册）：`部署流程/部署流程.md`、`部署流程/SQL执行台账.md`、`配置文件/增量/配置项清单.md`、`sql/增量/NN_*.sql`（+ 发布期 `sql/全量/`、`配置文件/全量/`，约定 37）。版本根 `docs/deployment/{version}/README.md`（双轨场景导航）由发布期产出，开发期不维护；各产物按**固定路径**定位、不做模糊匹配。命名契约单一信源见 `06_版本与用户目录约定.md` §2.5.4。
 
 
 ---

@@ -46,14 +46,14 @@ def _mk_version_dir(root, *, inc_content=True, zero_decl=False, readonly_decl=Tr
     idx = "# 索引\n\n全新部署走全量轨，升级走增量轨，两套绝不叠加执行。\n"
     if zero_decl:
         idx += "\n本版无增量：配置中心在该区间无变更记录，SQL 亦无 DDL。\n"
-    (v / "00_索引.md").write_text(idx, encoding="utf-8")
-    # ⛔ 全量轨判据读的是**各全量子目录自己的** 00_索引.md，不是版本级那份
+    (v / "README.md").write_text(idx, encoding="utf-8")
+    # ⛔ 全量轨判据读的是**各全量子目录自己的**说明文件（建表说明.md / 配置说明.md），不是版本级那份
     #   （第一次写对照时就栽在这里：夹具写了版本级索引，判据一条都没跑到、阳性对照假绿）
     full_idx = "# 全量索引\n本版无剔除项（已交叉核对）。导出源：192.0.2.20:5236 schema=APP。\n"
     if readonly_decl:
         full_idx += "DDL 经 INFORMATION_SCHEMA 元数据视图只读导出；配置经配置中心只读 API 拉取。\n"
-    for sub in ("sql/全量", "配置文件/全量"):
-        (v / sub / "00_索引.md").write_text(full_idx, encoding="utf-8")
+    for sub, doc in (("sql/全量", "建表说明.md"), ("配置文件/全量", "配置说明.md")):
+        (v / sub / doc).write_text(full_idx, encoding="utf-8")
     if inc_content:
         (v / "sql/增量/01_加列.sql").write_text("ALTER TABLE T ADD COLUMN X INT;\n", encoding="utf-8")
         (v / "配置文件/增量/配置项清单.md").write_text("```yaml\na: b\n```\n", encoding="utf-8")

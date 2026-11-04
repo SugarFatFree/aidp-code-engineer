@@ -45,7 +45,7 @@
 - **前置**：`{version}` 必须**已存在版本规划产物**（`docs/design/detail/{version}/` 或 `docs/plans/{version}/` 存在）；否则报错并退出。
 - **★ 已发布版本保护**（本地 `python3 {{AIDP_HOME}}/scripts/release_scope.py --version "$VERSION" --json` 的 `released_tags` 命中本版本，或远端 `git ls-remote --tags origin` 命中 = 已打 tag；⛔ tag 识别一律经该脚本，**不要自己拼 glob**——本仓库的 tag 有**三种**风格〔`V*` / `release-V*` / `v*`，权威清单见 `flows/version/release-1.md`「tag 风格识别约定」〕，只认其中一种就会让这道保护被静默绕过、去改写一个**已发布**版本并移动已推送的 tag）：全量基线「随 tag 冻结」，补跑即改写已发布产物 → 走「改写已发布版本授权门」（发布路径白名单第 4 处，见 `release-1.md`）：**交互式**二选一（① 授权改写 ② 中止，改为新补丁版本补齐）；**无人值守拒绝执行**（登记 `release_debt.py add --step 3.3.7.9 --title "补跑被拒：版本已打 tag"` 后退出）。获授权后**采集基于 tag 对应代码**（`git worktree add <临时目录> v${VERSION#V}`，在该工作树内读 ORM 声明与配置消费面，⛔ 不用 HEAD 代码），产物写回主工作区。
 - **只跑一步**：**Step 3.3.7.9**（D 部分双轨部署基线 —— 产 `sql/全量/` + `配置文件/全量/` 全量轨
-  + 增量轨发布期校准 + `release_baseline_check.py` 12 项机器门）。**跳过其余全部**
+  + 增量轨发布期校准 + `release_baseline_check.py` 13 项机器门）。**跳过其余全部**
   （Step 0 ~ 3.3.7.8、3.3.8 ~ 3.3.13、3.4.x 发布提交/打 tag 一律不执行）。
 - **★ 欠账驱动**：开始先读 `docs/audit/{version}/发布欠账.md`（若存在）定位本步被跳过的原因；
   补齐成功即 `release_debt.py resolve --version {version} --step 3.3.7.9` 勾销。
@@ -54,7 +54,7 @@
 - **提交**：自行 `git add docs/deployment/{version}/` + commit（消息 `docs({version}): rebuild-baseline 补齐双轨部署基线`）
   + push 本分支，**绝不打 tag、不建/不推版本分支**。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
   > 🔗 约定 24 提交前门禁同其余 commit 路径（`git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet`；单一信源 = 约定 24）。
-- **完成播报**：打印本次产出的全量轨文件数 + 机器门 12 项结果 + 台账剩余未决项。
+- **完成播报**：打印本次产出的全量轨文件数 + 机器门 13 项结果 + 台账剩余未决项。
 
 ## `--finalize-docs` 补跑短路（发布期文档整理）
 

@@ -8,8 +8,8 @@
 **人眼逐行看必漏、脚本一秒抓到**的类型（下游两个项目的实跑回流）：
 
   · **占位符残留**（37.4-1）—— 全量配置是「拿到即可对照使用的示例配置」，
-    `${XXX:__FILL_ME__}` / `${ENV}` / `${ep-hosts.xxx}` 满篇的配置拿到手没法用（下游实跑：
-    一份全量配置 30 多处占位）。每项都要写具体值。
+    `${XXX:__FILL_ME__}` / 无默认值的 `${ENV}` 满篇的配置拿到手没法用（下游实跑：
+    一份全量配置 30 多处占位）。值要可见：写具体值，或 `${ENV:默认值}`。
   · **密码明文**（37.4-7）—— 只有密码类填虚构示例值，真实口令不进 git；
     IP / 账号 / 编码 / token 等按真实值填，不判凭据。
   · **环境绑定物残留**（37.3-4）—— schema 前缀 / TABLESPACE / STORAGE 没清干净，
@@ -19,23 +19,27 @@
 
 「判据是确定性的，就不该靠自觉消费」——故把这些项固化成有退出码的硬门。
 
-## 覆盖的 12 项校验
+## 覆盖的 13 项校验
 
-  1. 结构完整性        两轨对称落位（根下不得散落 .sql / 配置项清单）+ 全量轨目录 / 00_索引.md 就位
+  1. 结构完整性        两轨对称落位（根下不得散落 .sql / 配置项清单）+ 全量轨目录 / README.md · 建表说明.md · 配置说明.md 就位
+                      + 仓库里的 nginx / compose / k8s 运行时文件在 全量/ 有同名份（⛔ 不只收后端，37.4-2）
   2. YAML 语法         全量配置每个 .yml 逐文件解析 + .md 内 ```yaml 代码块逐块解析
   3. SQL 环境绑定物     schema 限定前缀 / TABLESPACE / STORAGE 命中数须为 0
   4. 密码明文          密码类键（password / passwd / pwd / secret-key …）与 URL userinfo、
                       HTTP Basic 里的口令须为示例值（注释声明「示例值」或值含 Example）
-  5. 占位符残留        `__FILL_ME__` / `${ENV}` / `${ENV:默认值}` 一律 ERROR（37.4-1）
-  6. 属性引用残留      `${a.b}` 引用一律 ERROR：重复值直接写具体值 + 注释同步关系（37.4-8）
+  5. 占位符残留        `__FILL_ME__` / 无默认值的 `${ENV}` → ERROR；`${ENV:默认值}` 放行（37.4-1）
+  6. ${a.b} 引用可解析  被引用键须在合并后的配置集中存在或自带默认值（37.4-8）
   7. 注释完备性        「无行内注释且上一行非注释」的配置行数须为 0
   8. 生效形态唯一       多形态中间件配置同时只能有一组生效（其余整段注释）
   9. 相对链接有效性     .md 内相对链接目标存在
  10. 增量极简度        增量配置文档无 Markdown 表格、行内注释 ≤20 字符（约定 37.5-6）
- 11. 全量核对可复核     `00_索引.md` 须写明**剔除结论**与**导出源**（实例地址 + schema/库名）——
+ 11. 全量核对可复核     `建表说明.md` / `配置说明.md` 须写明**剔除结论**与**导出源**（实例地址 + schema/库名）——
                       约定 37 全量基线的定义性判据「与真实环境交叉核对」，⛔ 二者均为 ERROR 级
  12. DDL 注释实查      本版有 `ADD COLUMN` 时，注释覆盖率须【实查库】并落 SQL执行台账「三之二」
                       （⛔ 校的是库里状态、不是脚本内容；委派 check_sql_ledger_comment.py）
+ 13. 引导层同形        `全量/` 根下的环境段副本（bootstrap-/application-{profile}.yml）与
+                      `# 权威源码：` 声明的源码同形（环境变量名 / 写法 / 默认值），且跨 profile
+                      不缺项（有意不配须 `# baseline-check: profile-skip <路径> <理由>`）（约定 37.4-2）
 
 ## 用法
 
@@ -111,7 +115,15 @@ EXAMPLE_VALUE_RE = re.compile(r"example", re.I)
 URL_USERINFO_RE = re.compile(r"://([^/\s:@]+):([^/\s@]+)@")
 BASIC_RE = re.compile(r"\bBasic\s+([A-Za-z0-9+/]{8,}={0,2})")
 
-# 5 / 6. 占位符与属性引用残留（约定 37.4-1 / 37.4-8：每项写具体值）
+# 13. 引导层同形（约定 37.4-2）
+PROFILE_FILE_RE = re.compile(r"^(bootstrap|application)-([\w.\-]+)\.ya?ml$", re.I)
+SOURCE_DECL_RE = re.compile(r"权威源码\s*[:：]\s*`?([^\s`]+)`?")
+PROFILE_SKIP_RE = re.compile(r"baseline-check:\s*profile-skip\s+([^\s#]+)\s+\S")
+# 源码无默认值的 `${ENV}`：副本必须写明这句，第 5 项凭它放行无默认值写法
+MUST_INJECT = "未注入即启动失败"
+SOURCE_SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", "docs", "memory", "out"}
+
+# 5 / 6. 占位符残留与属性引用可解析（约定 37.4-1 / 37.4-8：值必须可见）
 FILL_ME = "__FILL_ME__"
 REF_RE = re.compile(r"\$\{([^}]*)\}")
 # nginx 原生变量 `${host}`（全小写、无点）不是占位符
@@ -134,6 +146,8 @@ MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)#][^)]*)\)")
 #   那一项是给"配置项清单式"配置用的（每项都要写业务含义与后果），
 #   而 compose/k8s 大量是编排样板（image / ports / volumes），逐行要注释纯属噪音。
 RUNTIME_DEPLOY_RE = re.compile(r"^(nginx.*\.conf|.*\.conf|docker-compose.*\.ya?ml|k8s-.*\.ya?ml)$", re.I)
+# 仓库侧探测运行时部署文件用的收窄判据（任意 .conf 太宽：logback / supervisord 之类会被误收）
+REPO_RUNTIME_RE = re.compile(r"^(nginx.*\.conf|docker-compose.*\.ya?ml|k8s-.*\.ya?ml)$", re.I)
 
 
 class Report:
@@ -243,32 +257,49 @@ def _embedded_passwords(value):
     return out
 
 
+def _effective_values(value):
+    """值的实际生效形态：`${NAME:默认值}` 取默认值（默认值就是示例值），其余取原值。"""
+    defaults = [m.group(1).split(":", 1)[1] for m in REF_RE.finditer(value) if ":" in m.group(1)]
+    return defaults if "${" in value else [value]
+
+
 def _password_findings(key, value, raw, prev):
-    """返回该行的密码明文命中标签列表；示例值 / 空值 / 占位（另由 5 报）放行。"""
+    """返回该行的密码明文命中标签列表；示例值 / 空值 / 无默认值的占位（另由 5 报）放行。"""
     hits = []
     value = value.strip().strip('"\'')
-    if key and PASSWORD_KEY_RE.search(key) and value and "${" not in value \
-            and FILL_ME not in value and not _is_example(value, raw, prev):
-        hits.append("密码类键")
-    for label, secret in _embedded_passwords(value):
-        if secret and "${" not in secret and not _is_example(secret, raw, prev):
-            hits.append(label)
+    for v in _effective_values(value):
+        v = v.strip().strip('"\'')
+        if key and PASSWORD_KEY_RE.search(key) and v and FILL_ME not in v \
+                and not _is_example(v, raw, prev) and "密码类键" not in hits:
+            hits.append("密码类键")
+        for label, secret in _embedded_passwords(v):
+            if secret and "${" not in secret and not _is_example(secret, raw, prev):
+                hits.append(label)
     return hits
 
 
-def _ref_findings(value, nginx=False):
-    """返回 [(检查项, 原文)]：占位符残留 / 属性引用残留。"""
+def _ref_findings(value, known_keys=None, nginx=False):
+    """返回 [(检查项, 原文)]：占位符残留 / 引用不可解析。
+
+    ✅ 放行：`${ENV:默认值}`（默认值即示例值，部署方一眼可见）、能解析的属性引用
+       （被引用键在合并后的配置集中存在，或自带默认值）。
+    ❌ 拦截：`__FILL_ME__`、无默认值的 `${ENV}`（值不可见）、解析不了的 `${a.b}`（启动失败）。
+    known_keys=None 表示调用方拿不到完整配置集（如增量代码块），跳过可解析判定。
+    """
     out = []
     if FILL_ME in value:
         out.append(("占位符残留", FILL_ME))
     for m in REF_RE.finditer(value):
         inner = m.group(1).strip()
-        name = inner.split(":", 1)[0]
+        name, has_default = inner.split(":", 1)[0], ":" in inner
         if nginx and NGINX_VAR_RE.match(inner):
             continue
+        if FILL_ME in inner or has_default:
+            continue                          # __FILL_ME__ 已在上面报；带默认值放行
         if "." in name or name != name.upper():
-            out.append(("属性引用残留", m.group(0)))
-        elif FILL_ME not in inner:
+            if known_keys is not None and name not in known_keys:
+                out.append(("引用可解析", m.group(0)))
+        else:
             out.append(("占位符残留", m.group(0)))
     return out
 
@@ -276,15 +307,15 @@ def _ref_findings(value, nginx=False):
 def _report_refs(rep, where, findings):
     for check, src in findings:
         if check == "占位符残留":
-            rep.error(check, f"{where} 残留占位/注入写法 `{src}` —— 全量配置是「拿到即可对照使用的示例配置」，"
-                             f"每项写具体值（取基线环境实况值，不知道怎么填就用研发环境的值；约定 37.4-1）；"
-                             f"{PASSWORD_HINT}")
+            rep.error(check, f"{where} 残留占位 `{src}` —— 全量配置是「拿到即可对照使用的示例配置」，"
+                             f"写具体值，或至少写成 `${{ENV:默认值}}` 让值可见（取基线环境实况值，"
+                             f"不知道怎么填就用研发环境的值；约定 37.4-1）；{PASSWORD_HINT}")
         else:
-            rep.error(check, f"{where} 残留属性引用 `{src}` —— 不为「只改一处」把值抽成 `${{a.b}}`："
-                             f"重复值直接写具体值，并注释标明「共 N 处须同步修改」（约定 37.4-8）")
+            rep.error(check, f"{where} 引用 `{src}`，但合并后的配置集中不存在该键（且无默认值）"
+                             f"—— 启动期占位符解析会失败（约定 37.4-8）")
 
 
-def scan_entries(rep, label, text, nginx=False):
+def scan_entries(rep, label, text, known_keys=None, nginx=False):
     """对一段 YAML 文本的键行跑 4 / 5 / 6。返回 parse_config_lines 结果供调用方复用。"""
     entries = parse_config_lines(text)
     lines = text.splitlines()
@@ -298,7 +329,11 @@ def scan_entries(rep, label, text, nginx=False):
         for why in _password_findings(path.split(".")[-1], bare, raw, prev):
             rep.error("密码明文", f"{where} 疑似真实口令（{why}）—— 真实口令不进 git（历史不可逆）；"
                                   f"{PASSWORD_HINT}（如 `Nacos@Example2026`）")
-        _report_refs(rep, where, _ref_findings(bare, nginx))
+        refs = _ref_findings(bare, known_keys, nginx)
+        if MUST_INJECT in raw or MUST_INJECT in prev:
+            # 源码故意无默认值、部署侧必须注入：与源码同形保留 `${ENV}` 是合规写法（约定 37.4-2）
+            refs = [r for r in refs if not (r[0] == "占位符残留" and r[1] != FILL_ME)]
+        _report_refs(rep, where, refs)
     return entries
 
 
@@ -308,18 +343,24 @@ def check_structure(ver_dir, rep):
     """1. 结构完整性：两轨对称落位 + 两轨是否都有交代（约定 37.2）。"""
     sql_full = ver_dir / "sql" / "全量"
     cfg_full = ver_dir / "配置文件" / "全量"
-    idx = ver_dir / "00_索引.md"
+    # 三份说明文件的固定名（约定 37.2）：旧名 00_索引.md 已改名并精简
+    for old, new in (("00_索引.md", "README.md"), ("sql/全量/00_索引.md", "sql/全量/建表说明.md"),
+                     ("配置文件/全量/00_索引.md", "配置文件/全量/配置说明.md")):
+        if (ver_dir / old).is_file() and not (ver_dir / new).is_file():
+            rep.error("结构完整性", f"{ver_dir.name}/{old} 是旧名 —— 已改为 {new} 并精简内容"
+                                  f"（约定 37.2）：`git mv` 后按新结构重写，越短越好")
+    idx = ver_dir / "README.md"
     if not idx.is_file():
         # ★ ERROR 而非 WARN：它是约定 37「两套绝不叠加执行」的**唯一载体**。
         #   WARN 挡不住任何一步（本文件自陈），于是"双轨产出了、但没人说清哪套该用"可以一路发布出去。
-        rep.error("结构完整性", f"缺 {ver_dir.name}/00_索引.md —— 双轨场景导航（全新部署 / 升级 各拿哪些）没有落点")
+        rep.error("结构完整性", f"缺 {ver_dir.name}/README.md —— 双轨场景导航（全新部署 / 升级 各拿哪些）没有落点")
     else:
         # 存在还不够：必须真写了两条互斥路径，否则等于一张空索引
         _t = idx.read_text(encoding="utf-8", errors="replace")
         _miss = [w for w in ("全新部署", "升级") if w not in _t]
         if _miss:
             rep.error("结构完整性",
-                      f"{ver_dir.name}/00_索引.md 未写明双轨场景导航（缺「{'」「'.join(_miss)}」路径）"
+                      f"{ver_dir.name}/README.md 未写明双轨场景导航（缺「{'」「'.join(_miss)}」路径）"
                       f" —— 约定 37 要求显式声明「全新部署走全量轨 / 升级走增量轨，两套绝不叠加执行」")
 
     # ★ 两轨落位：sql/ 与 配置文件/ 根下不得直放两轨产物（与 verify.py::check_deployment_two_track_layout
@@ -334,16 +375,16 @@ def check_structure(ver_dir, rep):
                   + ("…" if len(stale) > 6 else "")
                   + " —— 增量轨应在 sql/增量/ 与 配置文件/增量/，nginx/compose/k8s 完整文件应在 "
                     "配置文件/全量/；按 `aidp-code-engineer` verify.py 给出的指引 `git mv` 搬迁并回写引用")
-    for label, d in (("SQL 全量轨", sql_full), ("配置全量轨", cfg_full)):
+    for label, d, doc in (("SQL 全量轨", sql_full, "建表说明.md"), ("配置全量轨", cfg_full, "配置说明.md")):
         if not d.is_dir():
             rep.error("结构完整性",
                       f"{label}目录缺失：{d.relative_to(ver_dir.parent.parent)} —— "
                       f"约定 37「零变更的版本同样要产全量」，全量描述的是「当前代码要跑起来需要什么」")
             continue
-        idx = d / "00_索引.md"
+        idx = d / doc
         if not idx.is_file():
             rep.error("结构完整性",
-                      f"{label}缺 00_索引.md —— 判据（表清单怎么定的 / 导出源 / 收录矩阵）没有落点，"
+                      f"{label}缺 {doc} —— 在什么库执行什么 / 文件导到哪、来源与剔除结论没有落点，"
                       f"产物无法自证")
             continue
         # ★ 存在性 ≠ 自证。约定 37 全量轨的**核心判据**是「表清单以代码 ORM 声明为准，
@@ -364,7 +405,7 @@ def check_structure(ver_dir, rep):
             #   脚本照样打「🎉 无 ERROR」exit 0，细则里两起真实回流一步都拦不住。
             #   兜底话术成本极低（"本版无剔除项（已交叉核对）"），不构成误伤。
             rep.error("结构完整性",
-                      f"{label} 00_索引.md 未见「剔除」相关结论 —— 约定 37 要求表清单以代码 ORM 声明为准"
+                      f"{label} {doc} 未见「剔除」相关结论 —— 约定 37 要求表清单以代码 ORM 声明为准"
                       f"再与真实库交叉核对，「代码有而库查无」的项须剔除并写明理由；"
                       f"确无剔除项也要就地写明「本版无剔除项（已交叉核对）」，否则无从区分"
                       f"「核对过、没有要剔的」与「压根没核对」")
@@ -374,7 +415,7 @@ def check_structure(ver_dir, rep):
         #   在无此断言时跑一遍不会被拦住任何一步。
         if not any(k in _t for k in ("导出源", "实例", "schema", "Schema", "SCHEMA")):
             rep.error("结构完整性",
-                      f"{label} 00_索引.md 未写明**导出源**（应用实际连接的实例地址 + schema/库名）——"
+                      f"{label} {doc} 未写明**导出源**（应用实际连接的实例地址 + schema/库名）——"
                       f"约定 37：全量基线以「代码 × 真实环境」交叉核对为准，导出源不写清则无从复核"
                       f"这份基线到底来自哪个库")
         # ★ 只读采集方式断言 —— 约定 37 的另一半（「产出过程全程只读」）的落点。
@@ -387,10 +428,53 @@ def check_structure(ver_dir, rep):
         if not any(k in _t for k in ("只读", "元数据视图", "information_schema",
                                      "INFORMATION_SCHEMA", "all_tab_", "ALL_TAB_")):
             rep.error("结构完整性",
-                      f"{label} 00_索引.md 未写明**只读采集方式**（DDL 走哪个元数据视图 / 配置走哪个只读 API）"
+                      f"{label} {doc} 未写明**只读采集方式**（DDL 走哪个元数据视图 / 配置走哪个只读 API）"
                       f" —— 约定 37.6 要求全程只读：不执行任何 DDL/DML、不改任何环境配置、不启动任何服务。"
                       f"采集方式不落文档，这条纪律就只是一句无从复核的自述")
     return sql_full, cfg_full
+
+
+def _repo_runtime_files(root):
+    """仓库里（docs/ 与 memory/ 之外）的运行时部署文件，以及是否存在前端子项目。"""
+    files, has_frontend = [], False
+    for cur, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SOURCE_SKIP_DIRS and not d.startswith(".")]
+        rel = Path(cur).relative_to(root)
+        if rel.parts[:2] == ("code", "frontend") and "package.json" in names:
+            has_frontend = True
+        if "test" in rel.parts or rel.parts[-2:] == ("src", "test"):
+            continue                          # 测试夹具（testcontainers 的 compose 等）不是部署物
+        for n in names:
+            if REPO_RUNTIME_RE.match(n) or (n.lower().endswith(".conf")
+                                            and Path(cur).name in ("nginx", "conf.d")):
+                files.append(rel / n)
+    return files, has_frontend
+
+
+def check_runtime_files_presence(root, cfg_full, rep):
+    """1（补）: 运行时部署文件不得漏收（约定 37.4-2 收录矩阵，⛔ 不只是后端）。
+
+    真实回流：发布产出的 `配置文件/全量/` 只有后端配置，nginx 配置一份没有——收录矩阵此前只列
+    引导层与配置中心两层，生成时 nginx / compose / k8s 与前端运行时配置整类被跳过、无任何提示。
+    """
+    if not cfg_full.is_dir():
+        return
+    idx = cfg_full / "配置说明.md"
+    idx_text = idx.read_text(encoding="utf-8", errors="replace") if idx.is_file() else ""
+    have = {p.name for p in cfg_full.rglob("*") if p.is_file()}
+    repo_files, has_frontend = _repo_runtime_files(root)
+    for rel in sorted(repo_files):
+        if rel.name in have or rel.name in idx_text:
+            continue
+        rep.error("结构完整性",
+                  f"仓库里有运行时部署文件 {rel.as_posix()}，配置文件/全量/ 却没有同名完整份 —— 全新部署照全量轨"
+                  f"会漏掉它（约定 37.2 / 37.4-2）；收录完整份（口令换示例值），确不需要则在 配置说明.md 写明理由")
+    repo_has_nginx = any(r.name.lower().startswith("nginx") or r.suffix == ".conf" for r in repo_files)
+    if has_frontend and not repo_has_nginx and not any(n.lower().startswith("nginx") or n.lower().endswith(".conf") for n in have) \
+            and "nginx" not in idx_text.lower():
+        rep.warn("结构完整性",
+                 "有前端子项目，但 配置文件/全量/ 无任何 nginx 配置、配置说明.md 也未提及 nginx —— 仓库里没有就从基线"
+                 "环境只读取回现网那份；确无 nginx（如走其它网关 / 静态托管）就在 配置说明.md 写明（约定 37.4-2）")
 
 
 def check_sql_env_bound(sql_full, rep):
@@ -400,7 +484,7 @@ def check_sql_env_bound(sql_full, rep):
     files = sorted(sql_full.glob("*.sql"))
     if not files:
         # ★ 与配置侧同级判 ERROR，不是 WARN：约定 37 明写「**零变更的版本同样要产全量**」，
-        #   而全量轨回答的是"从零怎么搭"——目录里只有一份 `00_索引.md`、一个 `.sql` 都没有，
+        #   而全量轨回答的是"从零怎么搭"——目录里只有一份 `建表说明.md`、一个 `.sql` 都没有，
         #   等于这个版本没法从零部署。此前两轨力度不对称（配置侧空判 ERROR、SQL 侧空判 WARN），
         #   而门的放行判据是"有无 ERROR" → 空 SQL 全量轨可以 exit 0 直接放行。
         rep.error("SQL 环境绑定物",
@@ -443,6 +527,19 @@ def check_sql_env_bound(sql_full, rep):
                      f"约定 37 要求建表一律幂等（共享表重复执行才无害）")
 
 
+def config_keys(cfg_full):
+    """全量配置里全部 YAML 文件的键路径（属性引用可解析判定用）。"""
+    keys = set()
+    for f in cfg_full.rglob("*"):
+        if f.is_file() and f.suffix.lower() in (".yml", ".yaml"):
+            try:
+                text = f.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            keys |= {p for _l, p, _v, c in parse_config_lines(text) if p and not c}
+    return keys
+
+
 def check_configs(cfg_full, rep):
     """2 / 4 / 5 / 6 / 7 / 8：配置侧全部逐文件判据。"""
     if not cfg_full.is_dir():
@@ -455,6 +552,7 @@ def check_configs(cfg_full, rep):
                   f"缺了它全新部署无从下手")
         return
 
+    known_keys = config_keys(cfg_full)          # 6. 引用解析用：合并后的配置集
     for f in files:
         rel = f.relative_to(cfg_full)
         try:
@@ -474,8 +572,8 @@ def check_configs(cfg_full, rep):
             for p in yaml_sanity(text):
                 rep.error("YAML 语法", f"{rel} {p}")
 
-        # 4 / 5 / 6. 密码明文 / 占位符残留 / 属性引用残留
-        entries = scan_entries(rep, str(rel), text)
+        # 4 / 5 / 6. 密码明文 / 占位符残留 / 引用可解析
+        entries = scan_entries(rep, str(rel), text, known_keys)
         lines = text.splitlines()
         is_runtime_deploy = bool(RUNTIME_DEPLOY_RE.match(f.name))
         live_paths = [p for _ln, p, _v, is_c in entries if p and not is_c]
@@ -529,6 +627,7 @@ def check_nonyaml_runtime_files(cfg_full, rep):
     #   `- "Authorization: Basic …"` 和块标量里的 `curl -H "Authorization: …"` 一并当成键行
     #   跳过——而这两种恰恰是本段唯一要抓的对象。
     _KEYLINE_RE = re.compile(r"^[A-Za-z_][\w.\-]*\s*:(\s|$)")
+    known_keys = config_keys(cfg_full)
     for f in sorted(cfg_full.rglob("*")):
         if not f.is_file() or f.suffix.lower() in SKIP_SUFFIX:
             continue
@@ -555,7 +654,114 @@ def check_nonyaml_runtime_files(cfg_full, rep):
                 rep.error("密码明文",
                           f"{where} 疑似真实口令（{' / '.join(whys)}）—— {ln[:70]} · {PASSWORD_HINT}"
                           f"（本文件随 tag 入 git，真实口令进去不可逆）")
-            _report_refs(rep, where, _ref_findings(ln, nginx))
+            _report_refs(rep, where, _ref_findings(ln, known_keys, nginx))
+
+
+def _leaf_map(text):
+    """YAML 文本 → {完整配置路径: (去注释的值, 行号)}，只收有值的叶子键。"""
+    out = {}
+    for lineno, path, val, is_comment in parse_config_lines(text):
+        if is_comment or not path or not val:
+            continue
+        out[path] = (val.split("#")[0].strip().strip('"\''), lineno)
+    return out
+
+
+def _env_form(value):
+    """`${VAR:默认}` → (VAR, 默认 或 None)；非整值环境变量写法 → None。"""
+    m = re.fullmatch(r"\$\{([A-Za-z_][\w.\-]*)(?::(.*))?\}", value)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _find_sources(root, name):
+    hits = []
+    for cur, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SOURCE_SKIP_DIRS and not d.startswith(".")]
+        if name in files:
+            hits.append(Path(cur) / name)
+    return hits
+
+
+def check_profile_snapshots(root, cfg_full, rep):
+    """13. 引导层环境段副本与源码同形 + 跨 profile 补齐（约定 37.4-2）。
+
+    副本自己声明「权威是源码、改副本不生效」——那它就必须与源码同形：下游实跑里源码 prod 的
+    配置中心地址 / 账号 / 口令故意不给默认值（没注入即启动失败），副本却写死了值或 `__FILL_ME__`；
+    且副本只照抄目标 profile 一份源文件，dev 有、prod 没有的 `log-impl` 整个漏掉、无任何提示。
+    """
+    if not cfg_full.is_dir():
+        return
+    for f in sorted(p for p in cfg_full.iterdir() if p.is_file() and PROFILE_FILE_RE.match(p.name)):
+        rel = f.relative_to(cfg_full)
+        try:
+            text = f.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        declared = SOURCE_DECL_RE.findall(text)
+        sources = [root / s for s in declared]
+        missing_decl = [s for s, p in zip(declared, sources) if not p.is_file()]
+        if missing_decl:
+            rep.error("引导层同形", f"{rel} 声明的权威源码不存在：{', '.join(missing_decl)} —— 路径写错或源码已改名，副本无从核对")
+            continue
+        if not sources:
+            found = _find_sources(root, f.name)
+            if len(found) != 1:
+                rep.warn("引导层同形",
+                         f"{rel} 未在文件头写 `# 权威源码：<源码路径>`，且仓库内同名源码 {len(found)} 份、无法唯一定位"
+                         f" —— 同形与跨 profile 补齐无法核对（约定 37.4-2）")
+                continue
+            sources = found
+        copy = _leaf_map(text)
+        lines = text.splitlines()
+        skipped = set(PROFILE_SKIP_RE.findall(text))
+        kind, profile = PROFILE_FILE_RE.match(f.name).groups()
+        for src in sources:
+            srel = src.relative_to(root).as_posix()
+            source = _leaf_map(src.read_text(encoding="utf-8", errors="replace"))
+            # ① 源码有 → 副本必须同形
+            for path, (sval, _ln) in source.items():
+                if path not in copy:
+                    if path not in skipped:
+                        rep.error("引导层同形", f"{rel} 漏项 `{path}`（源码 {srel} 有）—— 副本须与源码同形")
+                    continue
+                cval, cln = copy[path]
+                where = f"{rel}:{cln} `{path}`"
+                pw = bool(PASSWORD_KEY_RE.search(path.split(".")[-1]))
+                sform, cform = _env_form(sval), _env_form(cval)
+                if sform:
+                    if not cform or cform[0] != sform[0]:
+                        rep.error("引导层同形", f"{where} 源码是 `{sval}`，副本须保留同一环境变量 `${{{sform[0]}:…}}` 写法，现为 `{cval}`")
+                    elif sform[1] is None:
+                        ctx = lines[cln - 1] + (lines[cln - 2] if cln >= 2 else "")
+                        if MUST_INJECT not in ctx:
+                            rep.error("引导层同形", f"{where} 源码无默认值（未注入即启动失败），副本须在该行或上一行注释写明"
+                                                   f"「源码没有默认值，{MUST_INJECT}，部署侧必须注入」")
+                    elif cform[1] != sform[1] and not pw:
+                        rep.error("引导层同形", f"{where} 默认值须照抄源码 `{sform[1]}`，现为 `{cform[1]}`（只有口令换示例值）")
+                elif cform:
+                    rep.error("引导层同形", f"{where} 源码是写死值，副本 ⛔ 不得自行改成环境变量写法 `{cval}`")
+                elif cval != sval and not pw:
+                    rep.error("引导层同形", f"{where} 须照写源码的写死值 `{sval}`，现为 `{cval}`（只有口令换示例值）")
+            # ② 副本有、源码无 → 不生效
+            for path, (_v, cln) in copy.items():
+                if path not in source:
+                    rep.error("引导层同形", f"{rel}:{cln} `{path}` 源码 {srel} 里没有 —— 副本里的项不会生效，"
+                                           f"须同步补进源码（⛔ 不能只改副本）")
+            # ③ 跨 profile 缺项
+            union = {}
+            for sib in sorted(src.parent.glob(f"{kind}-*.y*ml")):
+                m = PROFILE_FILE_RE.match(sib.name)
+                if not m or sib == src:
+                    continue
+                for path in _leaf_map(sib.read_text(encoding="utf-8", errors="replace")):
+                    union.setdefault(path, sib.name)
+            for path, sib in sorted(union.items()):
+                if path in source or path in copy or path in skipped:
+                    continue
+                rep.error("引导层同形",
+                          f"{rel} 缺 `{path}`（{sib} 有、{profile} 没有）—— 同一服务各 profile 应是同一组配置项；"
+                          f"补成 `${{环境变量:默认值}}`（默认值按目标环境语义取，⛔ 不照抄 dev）并同步补进源码，"
+                          f"有意不配则写 `# baseline-check: profile-skip {path} <理由>`")
 
 
 def check_increment_values(ver_dir, rep):
@@ -570,10 +776,10 @@ def check_increment_values(ver_dir, rep):
         except Exception:
             continue
         for i, block in enumerate(re.findall(r"```ya?ml\n(.*?)```", text, re.S), 1):
-            scan_entries(rep, f"{rel} 第 {i} 个 yaml 代码块", block)
+            scan_entries(rep, f"{rel} 第 {i} 个 yaml 代码块", block)   # 无完整配置集，不判可解析
 
 
-# 零变更声明的识别词：约定 37.5-7 要求「在 00_索引.md 写清『为什么是零』+ 判据」。
+# 零变更声明的识别词：约定 37.5-7 要求「在版本根 README.md 写清『为什么是零』+ 判据」。
 # ⛔ 只认**显式**声明，不做语义猜测——猜错的方向是"把没写当成写了"，正是本检查要堵的。
 _ZERO_DECL_RE = re.compile(
     r"(无增量|零增量|本版无[^\n]{0,8}(变更|改动|脚本)|增量[^\n]{0,6}(为空|无内容|无脚本|无变更)"
@@ -590,13 +796,13 @@ def check_increment_presence(ver_dir, rep):
 
     判据按约定 37.5-7 定，⛔ 不是"空即报错"：**零变更是合法结论**（增量轨回答的是
     "已有环境怎么升级"，本版真没改就真的无需升级动作）。不合法的是**空得没有交代** ——
-    原文：「在 `00_索引.md` 写清『为什么是零』+ 判据……**不产出空文件，也不省略说明**」。
+    原文：「在版本根 `README.md` 写清『为什么是零』+ 判据……**不产出空文件，也不省略说明**」。
     ⇒ 三态：有内容 → 过；空但索引里有显式零变更声明 → INFO 过；空且无声明 → ERROR。
 
     这样「本版确实无变更」与「压根没产增量轨」才第一次在机器上可分辨 ——
     此前两者产物完全同形（都是一个不存在的目录）。
     """
-    idx = ver_dir / "00_索引.md"
+    idx = ver_dir / "README.md"
     idx_text = ""
     if idx.is_file():
         idx_text = idx.read_text(encoding="utf-8", errors="replace")
@@ -609,12 +815,12 @@ def check_increment_presence(ver_dir, rep):
             rep.note("增量轨存在性", f"{sub}/增量/ 有产出（{cn} 升级路径已交代）")
         elif declared:
             rep.note("增量轨存在性",
-                     f"{sub}/增量/ 为空，但 00_索引.md 已显式声明本版零变更 —— 合法（约定 37.5-7）")
+                     f"{sub}/增量/ 为空，但版本 README.md 已显式声明本版零变更 —— 合法（约定 37.5-7）")
         else:
             rep.error("增量轨存在性",
-                      f"{sub}/增量/ 缺失或为空，且 00_索引.md 未显式声明本版零变更 —— "
+                      f"{sub}/增量/ 缺失或为空，且版本 README.md 未显式声明本版零变更 —— "
                       f"「本版真没改」与「压根没产增量轨」产物完全同形，运维无从判断升级要不要做。"
-                      f"按约定 37.5-7：确为零变更就在 00_索引.md 写清「为什么是零」+ 判据"
+                      f"按约定 37.5-7：确为零变更就在版本根 README.md 写清「为什么是零」+ 判据"
                       f"（SQL 另附只读核验脚本让结论可自证），⛔ 不产出空文件、也不省略说明")
 
 
@@ -625,7 +831,7 @@ def check_increment_terseness(ver_dir, rep):
     （6 份文档 414 行 → 精简后 168 行，-59%，信息零丢失）。判据是确定性的，就不该靠自觉：
 
       · **Markdown 表格** → 增量该用代码块，表格意味着"代码块 + 下方表格"两处对照（必然漂移），
-        或塞进了各环境对照 / 判定依据表（那些归 `全量/00_索引.md`）；
+        或塞进了各环境对照 / 判定依据表（各环境差异归 `全量/配置说明.md`，判定依据归 git 提交记录）；
       · **行内注释 > 20 字符** → 注释该写"是什么 / 必配可选"，写不下就说明在写论证。
 
     两项都是 WARN 不是 ERROR：篇幅是可读性问题，硬拦发布不成比例；但必须**被看见**。
@@ -658,11 +864,11 @@ def check_increment_terseness(ver_dir, rep):
         if tables:
             rep.warn("增量极简度",
                      f"{rel} 含 {tables} 行 Markdown 表格 —— 增量只用代码块；"
-                     f"「代码块 + 下方表格」两处对照必然漂移，各环境对照 / 判定依据归 全量/00_索引.md")
+                     f"「代码块 + 下方表格」两处对照必然漂移，各环境差异归 全量/配置说明.md")
         for i, cmt in long_cmts[:5]:
             rep.warn("增量极简度",
                      f"{rel}:{i} 行内注释 {len(cmt)} 字符 > 20 —— 「{cmt[:24]}…」"
-                     f"；注释只写\"是什么 / 必配可选\"，论证归 全量/00_索引.md")
+                     f"；注释只写\"是什么 / 必配可选\"，论证归 git 提交记录")
         if len(long_cmts) > 5:
             rep.warn("增量极简度", f"{rel} 另有 {len(long_cmts) - 5} 处超长行内注释（已省略）")
 
@@ -735,10 +941,12 @@ def run(root, version):
     if not ver_dir.is_dir():
         return rep, None, f"部署目录不存在：docs/deployment/{version}"
     sql_full, cfg_full = check_structure(ver_dir, rep)
+    check_runtime_files_presence(root, cfg_full, rep)
     check_sql_env_bound(sql_full, rep)
     check_configs(cfg_full, rep)
     check_nonyaml_runtime_files(cfg_full, rep)
     check_increment_values(ver_dir, rep)
+    check_profile_snapshots(root, cfg_full, rep)
     check_increment_presence(ver_dir, rep)
     check_increment_terseness(ver_dir, rep)
     check_yaml_blocks_and_links(ver_dir, rep)
@@ -751,7 +959,7 @@ def run(root, version):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="约定 37 版本发布双轨部署基线 —— 12 项确定性校验")
+        description="约定 37 版本发布双轨部署基线 —— 13 项确定性校验")
     ap.add_argument("--version", required=True, help="版本号，如 V0.2.0（对应 docs/deployment/<version>/）")
     ap.add_argument("--root", default=".", help="仓库根目录，默认当前目录")
     ap.add_argument("--only", choices=["links"], default=None,

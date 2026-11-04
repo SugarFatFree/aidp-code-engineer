@@ -14,6 +14,11 @@ EXCLUDED_DIR_NAMES = {
 }
 EXCLUDED_DIR_PREFIXES = (".aidp-backup-",)
 
+# 契约强制的目录导航锚：约定 15 同类多文件编号的 `00_索引.md`，以及约定 37 部署全量轨的
+# 固定名说明文件。一个目录只要一份导航：有它就不再铺导航 README —— 两份并存必然漂移。
+INDEX_ANCHOR = "00_索引.md"
+DEPLOY_ANCHORS = ("建表说明.md", "配置说明.md")
+
 ENTRY_FILES = {
     "package.json", "pnpm-workspace.yaml", "vite.config.js", "vite.config.ts",
     "vue.config.js", "next.config.js", "nuxt.config.ts", "angular.json",
@@ -291,7 +296,8 @@ def is_readme_required_directory(path, project_layout, root=None):
        whose own subdirectory structure needs an index (``>= 2`` subdirectories,
        or one non-empty subdirectory).
     3. ``required=False`` — a flat leaf directory, a directory inside a source
-       tree (its README belongs to the owning unit), or an excluded tree.
+       tree (its README belongs to the owning unit), an excluded tree, or a
+       directory whose contract-mandated ``00_索引.md`` already navigates it.
 
     An explicit ``README_REQUIRED`` declaration outranks every automatic rule.
     ``project_layout`` is accepted for compatibility with existing callers;
@@ -340,6 +346,14 @@ def is_readme_required_directory(path, project_layout, root=None):
         # subdirectory depth here is package structure, not navigation.
         return _decision(False, "code-tree-internal", "none",
                          False, is_independent_module, False, subdir_count, False)
+    in_deploy = rel.parts[:2] == ("docs", "deployment")
+    # 部署目录不套约定 15 编号：那里的 `00_索引.md` 是待迁移的旧名，不能当导航锚（版本根用 README）
+    anchors = DEPLOY_ANCHORS if in_deploy else (INDEX_ANCHOR,)
+    if any((directory / name).is_file() for name in anchors):
+        # 目录已有契约强制的 `00_索引.md`（版本规划等需要序号的文档），它就是本目录的导航；
+        # 默认用 README，只有契约明确要求编号索引的目录才用 00_索引，二者不并存。
+        return _decision(False, "index-anchor", "none",
+                         False, False, False, subdir_count, False)
     if has_multi_level:
         return _decision(True, "navigation-hub", "navigation",
                          False, False, True, subdir_count, False)

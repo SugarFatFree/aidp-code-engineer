@@ -134,7 +134,7 @@
       - 兄弟模块 `*-common` / `*-util` 提供的工具 → **必须复用**，不得各自重新实现
     - **Why**：① 同项目并存多个 ORM / HTTP 客户端 / JSON 库 → 启动慢、依赖冲突、不一致 bug；② 减少 spring-boot 启动时间 + 内存占用；③ 团队熟悉度（已有方案团队已验证过）；④ 兄弟模块已封装的工具通常已含项目特定的错误处理 / 日志 / 监控埋点，比通用版更贴合
 11. **★ 历史死代码识别与处置（详见 `AGENTS.md` 约定 29）**：开发新 Controller / Service / DTO 前必须扫描历史版本是否已有同名/同语义代码；判定为死代码 + 本 Sprint 重做该模块时，**必须先删旧文件再写新文件**，禁止在旧 Controller / Service 上叠加新方法（约定 28 的"复用优先"前提是"仍在使用"，死代码不属于可复用对象）。
-    - **4 信号扫描脚本（写代码前必跑）**：
+    - **候选扫描（写代码前执行）**：以下静态搜索只能发现线索，未命中或路径/命令失败均不证明死代码；还须核对构造注入、反射/自动注册、网关与外部消费者，按约定 29 的全部证据裁决。
       ```bash
       TARGET_CLASS="OrderController"                              # 例：待判定的旧 Controller
       TARGET_PATH="code/backend/{子项目}/src/main/java/.../OrderController.java"
@@ -143,40 +143,37 @@
       # 信号 ① 无外部调用（前端 / 网关路由表 / 文档）
       grep -rE "${ROUTE_BASE}" \
            code/frontend/{子项目}/src/api/ docs/design/detail/{version}/03_接口设计.md \
-           docs/deployment/{version}/ 2>/dev/null || echo "信号①命中：无外部调用"
+           docs/deployment/{version}/ 2>/dev/null || echo "外部调用未检出或扫描失败：须继续核实，不能判死代码"
 
       # 信号 ② 无 @Autowired / @Resource 引用
       grep -rE "@(Autowired|Resource).*${TARGET_CLASS}|@(Autowired|Resource)\s+.*${TARGET_CLASS%Controller}Service" \
-           code/backend/{子项目}/src/ 2>/dev/null || echo "信号②命中：无依赖注入引用"
+           code/backend/{子项目}/src/ 2>/dev/null || echo "注解引用未检出或扫描失败：须补查构造注入及动态注册"
 
       # 信号 ③ 无路由表 / @RequestMapping 在用
       grep -rE "@(RequestMapping|GetMapping|PostMapping).*${ROUTE_BASE}" \
            code/backend/{子项目}/src/ 2>/dev/null | grep -v "${TARGET_CLASS}" \
-           || echo "信号③命中：无其他 Controller 重叠路由"
+           || echo "未检出重叠路由不证明当前路由无调用"
 
-      # 信号 ④ 需求/规划显式重做（强信号）
+      # ④ 需求/规划显式重做：仍使用时优先兼容迁移，不授权删除
       grep -rE "重做|重构|recreate" \
            docs/requirements/{version}/研发需求/ docs/design/detail/{version}/ docs/plans/{version}/ \
            | grep -iE "${TARGET_CLASS}|订单接口|订单管理"  # 替换为业务关键词
       ```
     - **4 信号定义 + 3 类处置（A 增量复用 / B 删旧重做默认自动 / C 兼容重构弹问询）判定表 → 单一信源见 `{{AIDP_HOME}}/rules/code.md` 约定 29**（自动加载），本条不复述判定表；下方 grep 脚本、删除清单留档、关联文件清单为 backend agent 的**后端侧操作补充**。
     - **删除清单留档（情形 B 必填）**：在 `docs/design/detail/{version}/*事实清单.md`「死代码删除清单」段追加：
-      | 文件路径 | 信号命中 | 处置情形 | 删除时间 | Sprint |
+      | 文件路径 | 已核实证据 | 处置情形 | 删除时间 | Sprint |
       |---------|---------|---------|---------|--------|
-      | `controller/OrderController.java` | ①②③④ | B 删旧重做 | 2026-06-04 | sprint-003 |
-      | `service/OrderService.java` + `Impl.java` | ②③ | B 删旧重做 | 2026-06-04 | sprint-003 |
-      | `mapper/OrderMapper.java` + `OrderMapper.xml` | ② | B 删旧重做 | 2026-06-04 | sprint-003 |
-      | `dto/OrderQueryDTO.java` + `OrderVO.java` | ② | B 删旧重做 | 2026-06-04 | sprint-003 |
-    - **必须连带删除的关联文件**（防止编译失败 / Bean 注入失败）：
+      | `<逐个候选文件>` | `<路由/静态与动态引用/外部消费者/独占性证据位置>` | `<A/B/C或未知保留>` | `<实际删除时间；保留填—>` | `<本轮Sprint>` |
+    - **逐项核验的关联文件候选**：仅证明由已废弃模块独占、无其他消费者后才删除；同名不代表独占。发布过的 SQL 不改写，表及数据操作另过数据库处置门。
       - 同名 Controller + Service + ServiceImpl + Mapper + Mapper XML + DTO + VO + Entity（如该 Entity 仅本模块用）
       - `@Configuration` 类中专门为该模块写的 Bean 定义
       - `application.yml` / `bootstrap.yml` 中仅该模块用的配置 key（如 `order.export.dir=...`）
-      - 仅该模块用的 SQL 文件 → 同步删除 `docs/deployment/{version}/sql/增量/{NN}_<旧模块>DDL.sql`（如有），并在 `99_回滚脚本.sql` 中加 `DROP TABLE` 项
+      - 仅该模块使用且尚未发布/执行的 SQL，核实后可清理；已执行或归属不明时保留，按增量迁移设计处理，不能因代码删除就自动补 DROP
       - 配套单测 `src/test/java/.../Order*Test.java`
     - **数据库表的处置（重要 — 不一定能删表）**：
       - 旧表如**已有生产数据** → 不可 `DROP TABLE`，按重构走"新表并存 → 数据迁移 → 切流量 → 老表归档/删"完整路径，**必须走情形 C** 弹问询
       - 旧表如**无生产数据**（如本 Sprint 才规划，未上线） → 可 `DROP TABLE`，在 SQL 99 回滚脚本同步补 DROP，事实清单标"无生产数据"
-      - **判定时机**：Phase 0A.5 扫到旧 Entity / Mapper 时同时扫 `memory/databaseBaseline.md` 确认对应表是否在基线中 + 询问用户该表是否有生产数据
+      - **判定时机**：Phase 0A.5 核对 `memory/databaseBaseline.md` 与环境元数据/授权记录；基线未登记不证明无数据。证据不足保留；交互式询问，已声明无人值守则按既有授权/保守默认处理，不因静态扫描未命中擅自 DROP。
     - **写新代码时的强约束**：
       - 禁止从旧 Service 复制方法实现（如确需借用某段算法 → 先 `git rm` 旧文件 → 再从 git history 借用片段重写）
       - 禁止保留旧 DTO 字段顺序 / 命名（如旧 `phone_num`，新代码按规范用 `phoneNumber`）
@@ -184,7 +181,7 @@
     - **回检**：① `/sprint-test` 阶段 `code-verification-loop` 「代码质量」维度子项「死代码残留」grep 新代码是否引用了已删除的旧类 / 旧字段名 → 命中即 **Critical** 回 `/sprint-bugfix`；② 编译验证：`mvn -q compiler:compile` / `gradle compileJava` 必须成功（残留 import 会编译失败）；③ 本回检由 `code-verification-loop` 维度 4「死代码/死引用残留」内置
     - **反模式（必须避免）**：
       - ❌ 旧 `OrderController`（300 行死代码），新规划"订单接口重做" → 在旧 Controller 上加新 `@PostMapping("/v2/export")` + 保留旧方法 → 接口冗余 + 文档对不上代码
-      - ❌ 旧 `OrderService` 已无 `@Autowired`，新规划"订单服务重做" → 创建 `OrderServiceV2` + 旧 Service 不删 → Bean 冗余 + IDE 跳转混乱
+      - ❌ 旧 `OrderService` 已按证据门确认不再使用，新规划"订单服务重做" → 创建 `OrderServiceV2` + 旧 Service 不删 → Bean 冗余 + IDE 跳转混乱
       - ❌ 旧表 `t_order_old` 有生产数据被当死代码 `DROP TABLE` → **数据丢失（最严重）**
       - ✅ 正确：识别为死代码 → `git rm` Controller/Service/Impl/Mapper/XML/DTO/VO → 写全新文件 → 表数据按情形 B/C 处理
 12. **★ HTTP 客户端配置驱动（详见 `dev-logic-architect` SKILL「HTTP 客户端配置驱动铁律」核心原则）**：写后端代码发起外部 HTTP 请求（对接第三方 / 调用其他微服务 / 聚合远程数据）时，**必须**按详细设计 A.2 章节定义的 HTTP 客户端方案（与 Phase 1 Step 3 选择 3 一致，如 OpenFeign / OkHttp / WebClient / RestClient / @HttpExchange / Retrofit / Apache HttpClient 5 / Ktor Client 等）实现，**严禁**在代码中硬编码 base URL / IP / 端口 / API Key / Secret / 私钥。

@@ -50,8 +50,9 @@
      --summary "Sprint-$SPRINT_NO 已派发子 Agent 执行" || exit 1
    ```
 
-   **② 委派子 Agent 执行该 Sprint（IRON-8）**：用 `Agent({run_in_background:false})` 派子 Agent 跑
-   `/sprint-full ${SPRINT_NO} --unattended --from-batch`（内部即 start→dev→test→bugfix→close 全链），
+   **② 委派子 Agent 执行该 Sprint（IRON-8）**：派发前重读 `check_open_sprints.py --version {TARGET_VERSION} --scope started --json`。`open=[]` 正常开工；`open` 恰为本轮编号时附 `--resume`（子命令恢复门仍须核对所属用户）；其他在途或读取错误直接按③失败记账，禁止先 close 清场。恢复不得改写已有 build，也不得绕过下一步的实物核验。
+   用 `Agent({run_in_background:false})` 派子 Agent 跑
+   `/sprint-full ${SPRINT_NO} --unattended --from-batch [--resume]`（正常 start→dev→test→bugfix→close；恢复跳过 start，从 dev 继续），
    要求它**只回传 compact JSON** `{"sprint":"NNN","closed":true|false,"reason":"..."}`。
    ⛔ **斜杠命令不能写进 bash 围栏**（它不是 shell 命令，在 Bash 工具里必 `127`；见 rationale.md「斜杠命令进围栏」）。
 

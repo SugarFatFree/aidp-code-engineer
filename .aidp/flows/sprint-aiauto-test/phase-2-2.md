@@ -1,8 +1,7 @@
-<!-- 二次切分 · phase-2 片2/2：覆盖 2.0.5 委派auto-test-runner / 2.1 登录测试循环 / 2.2 浏览器调用 / 2.3 skip-login / 2.4 运行时错误捕获-->
+<!-- 二次切分 · phase-2 片2/2：2.0.5–2.4 -->
 # sprint-aiauto-test · 执行分片 [2/2]（2.0.5 委派auto-test-runner / 2.1 登录测试循环 / 2.2 浏览器调用 / 2.3 skip-login / 2）
 
-> ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-2-2.md`。理据见同目录 `rationale.md`。
+> 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
 
 ### 2.0.5 组装 run-context + 派测试执行子 Agent（★ 执行内核入口）
 
@@ -28,6 +27,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 | 被测端类型 | `web` | Phase 0.0.6 Step 1 判定 IS_FRONTEND_WEB（本命令仅测 Web 浏览器项目）|
 | 驱动选择 | `chrome-devtools-mcp`（本地 `cli` / 远程 `mcp`，前缀按 Phase 0.1）| Phase 0.1 定的 DRIVER |
 | 环境地址 | 部署 URL | Phase 0.3 |
+| MCP | 按命令主体传 `client_mcp`（保留 `enabled`）及 Web 叶子入参 | 0.1.6 按 `TARGET_VERSION` 判定 |
 | 账号（各角色）| `$TEST_ROLES` 用户名/密码（密码不进日志）| Phase 0.4 |
 | 用例来源 | `PRIMARY_CASES` + `SUPPLEMENT_UNIQUE`（+ 跨版本 `[回归]` 用例，见 Phase 2.0）| Phase 2.0 |
 | `free_scan` | `--free-scan` 给出则 `true`，否则 `false`（默认关）| 本命令 flag |

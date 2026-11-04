@@ -630,6 +630,11 @@ COUNTER_FIELDS = {
 #   与「一切正常」在产物上完全同形 —— 比"无归零点"更隐蔽，因为它连锁死都不会发生。
 #   ⚠️ 只查 `*_streak` / `*_count` 这类**语义即计数器**的名字，避免误伤普通标志位。
 COUNTER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*(?:_streak|_count|_retry_count)$")
+# 已退役的门只保留升级清理，不再要求递增；其余计数器仍须有生产者。
+RETIRED_COUNTER_FIELDS = {
+    "aiauto_preflight_fail_streak",  # 测试链不再拉码或改写共享 checkout。
+    "shot_gate_fail_streak",        # 证据按用例契约核验，不按截图总数判失败。
+}
 
 
 def scan_baseline_orphans(root):
@@ -663,7 +668,7 @@ def scan_baseline_orphans(root):
             leaf = tok.rsplit(".", 1)[-1]
             if COUNTER_NAME_RE.match(leaf):
                 deleted.add(leaf)
-    for field in sorted(deleted):
+    for field in sorted(deleted - RETIRED_COUNTER_FIELDS):
         if re.search(r"\bbump\b[^\n]{0,200}\b" + re.escape(field) + r"\b", hay):
             continue
         if re.search(r"\bset\b[^\n]{0,200}\b" + re.escape(field) + r"\s+[1-9]", hay):

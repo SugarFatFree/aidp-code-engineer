@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scaffold_lib as L  # noqa: E402
 import scaffold_marker  # noqa: E402
+import runtime_layout  # noqa: E402
 
 QUEUE = L.REWRITE_QUEUE_FILE
 
@@ -35,10 +36,10 @@ def entry_states(root: Path, accepted) -> list:
     for line in L.queue_entries(root):
         e = L.parse_queue_entry(line)
         target = root / e["target"]
-        if e["target"] in accepted:
-            state = "accepted"
-        elif not target.is_file():
+        if not target.is_file():
             state = "missing"
+        elif e["target"] in accepted:
+            state = "accepted"
         elif e["before"] and L.sha256(target.read_bytes()) != e["before"]:
             state = "rewritten"
         else:
@@ -60,6 +61,38 @@ def promote_ledger(root: Path, states: list):
                 # memory 骨架另记未渲染模板，避免日期变化造成伪更新；语义合并收口也要推进它。
                 # 只更新上面的目标键，会使下一次 sync_memory 仍以旧模板判变更、反复入队。
                 L.uf_record(root, f"template:{e['target']}", data)
+
+
+def runtime_manifests(root: Path, states: list) -> dict:
+    """先校验全部运行包再写清单；只接纳队列中明确允许填写的契约。"""
+    updates = {}
+    for entry in states:
+        home, _, relative = entry["target"].partition("/")
+        if home not in runtime_layout.RUNTIME_HOME.values():
+            continue
+        if relative not in L.USER_FILLABLE_CONTRACTS:
+            raise ValueError(f"运行包待办不是用户填充型契约：{entry['target']}")
+        expected = f"{home}/skills/{L.SKILL_NAME}/assets/aidp/{relative}"
+        if entry["template"] != expected:
+            raise ValueError(f"运行包待办模板不属于对应脚手架：{entry['target']}")
+        template = runtime_layout._assert_contained(root / expected, root)
+        if not template.is_file() or template.stat().st_nlink > 1:
+            raise ValueError(f"运行包待办缺少安全的骨架模板：{expected}")
+        updates.setdefault(home, set()).add(relative)
+    manifests = {}
+    for home, relatives in updates.items():
+        runtime = runtime_layout._assert_contained(root / home, root)
+        path = runtime_layout._assert_contained(runtime / runtime_layout.RUNTIME_MANIFEST, root)
+        if not path.is_file() or path.stat().st_nlink > 1:
+            raise ValueError(f"运行包清单不是安全的普通文件：{path}")
+        manifests[home] = runtime_layout.validate_runtime(
+            runtime, expected_home=home, user_fillable_updates=relatives)
+    if len(manifests) > 1:
+        views = [runtime_layout.normalize_runtime(root / home, home) for home in manifests]
+        for relative in set().union(*updates.values()):
+            if any(view.get(relative) != views[0].get(relative) for view in views[1:]):
+                raise ValueError(f"双包用户填充内容不一致：{relative}")
+    return manifests
 
 
 def main(argv=None) -> int:
@@ -107,10 +140,16 @@ def main(argv=None) -> int:
         return emit(False, "queue-missing",
                     f"⛔ scaffold.pending = {pending}，但 {QUEUE} 不存在，无法核验语义改写是否完成。"
                     f"重跑 `scaffold.py <项目根> --mode upgrade` 重新生成队列后再收口", 1)
+    try:
+        manifests = runtime_manifests(root, states)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return emit(False, "blocked", f"⛔ 运行包语义改写尚不能收口：{exc}", 1)
     if a.status:
         if not pending and not states:
             return emit(True, "nothing-pending", f"✅ 无待交付升级（scaffold.version = {current or '未建立'}）", 0)
         return emit(True, "ready", f"✅ 队列已全部改写，可收口：{current or '未建立'} → {pending or current}（--status 未写入）", 0)
+    for home, manifest in manifests.items():
+        runtime_layout._write_manifest(root / home, manifest)
     promote_ledger(root, states)
     if queue.is_file():
         queue.unlink()

@@ -6,7 +6,7 @@
 - **方式 A（被编排器调用）**：`/sprint-full` / `/sprint-batch` 内部调用，执行当前 Sprint 的开发
 - **方式 B（独立直接调用）**：用户直接调用，自动累进创建新 Sprint 并串联后续 `/sprint-test` → `/sprint-bugfix` → `/sprint-close`
 
-**★ 本命令是编排器**：调用 `superpowers:test-driven-development`（TDD）+ `superpowers:subagent-driven-development`（并行开发）。
+**★ 本命令是编排器**：调用 `superpowers:test-driven-development`（TDD）；前后端实现由 AIDP 按具体文件写集隔离派发，规范审查后再做代码质量审查（详见 Phase 1.4），不把串行 Task SKILL 当作并行调度器。
 
 参数：$ARGUMENTS
 - `/sprint-dev` — 开发当前进行中的 Sprint（从 activeContext 读取）
@@ -411,7 +411,7 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 
 ### Phase 0A.5：★ 历史死代码扫描与处置决策门
 
-> **目的**：开发新页面/接口前，先识别历史版本是否存在**同名/同语义**的死代码。判定为死代码 + 本 Sprint 重做该板块时，**必须先删旧再写新**，禁止叠加。详细判定规则与 grep 脚本见 `{{AIDP_HOME}}/agents/frontend.md` 核心原则 11 + `{{AIDP_HOME}}/agents/backend.md` 核心原则 11；本步骤仅做命令编排（按约定 21 不复述规则）。
+> **目的**：写码前核实历史同名/同语义实现的可达性与引用。**删除判据唯一信源 = `{{AIDP_HOME}}/rules/code.md` 约定 29「删除证据门」**；Frontend/Backend Agent 的 grep 只提供候选线索，零命中、扫描错误或“重构”字样都不授权删除。只有证据门确认的 B 清单才执行删除，未知一律保留。
 
 **1. 识别本 Sprint 涉及的功能板块**（从设计/需求/计划读取）：
 
@@ -424,39 +424,34 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 # 输出疑似涉及的"业务关键词"清单（如：用户管理、订单导出、报表中心）
 ```
 
-**2. 对每个业务关键词跑死代码扫描**（按 agents/frontend.md + backend.md 核心原则 11 中的 4 信号脚本）：
+**2. 收集候选并逐文件核实证据**：读取 Frontend/Backend Agent 核心原则 11 的扫描线索，再按约定 29 核对可达入口、存活引用、动态/外部消费者与连带文件。扫描只完成一部分时不得把未核部分填“无”。
 
-输出 `memory/{version}/{user}/sprints/sprint-{NNN}-deadcode-scan-{YYYYMMDD-HHMM}.md`：
+输出 `memory/{version}/{user}/sprints/sprint-{NNN}-deadcode-scan-{YYYYMMDD-HHMM}.md`，删除前必须填写下表（证据列写具体文件:行或调用契约位置）：
 
-| # | 业务关键词 | 旧文件路径 | 信号①无菜单 | 信号②无 import | 信号③无路由/调用 | 信号④需求重做 | 归类 | 处置情形 |
-|---|----------|-----------|-----------|---------------|----------------|--------------|------|---------|
-| 1 | 用户管理 | `src/views/UserManage.vue` | ✓ | ✓ | ✓ | ✓ | 死代码 | B 删旧重做 |
-| 2 | 用户管理 | `src/store/userManage.ts` | n/a | ✓ | n/a | ✓ | 死代码 | B 删旧重做 |
-| 3 | 订单导出 | `controller/OrderExportController.java` | n/a | ✗（仍被引用） | ✗ | ✓ | 仍在用+需求重构 | **C 弹问询** |
-| 4 | 报表中心 | `src/views/ReportCenter.vue` | ✗（菜单仍有） | ✗ | ✗ | ✗ | 仍在用 | A 增量增强 |
+| 候选文件 | 本 Sprint 重做依据 | 可达入口证据 | 存活引用/动态消费者证据 | 连带文件独占依据 | 未核项 | 处置 |
+|---|---|---|---|---|---|---|
+| 每个候选各一行 | 需求/Task 位置 | 有/已证实无/未知 + 证据 | 有/已证实无/未知 + 证据 | 逐文件依据或不删除连带文件 | 必须列全，无则写无 | 按约定 29 判 A/B/C/保留待核 |
+
+详情页无菜单但仍有路由 → 不能判 B；动态 import/自动注册尚未查清 → 保留待核；仍在用且明确重构 → C；仅在全部删除证据充分且明确重做时 → B。
 
 **3. 决策门**（按 3 类处置规则）：
 
 | 情形 | 默认行为 | 是否弹 AskUserQuestion |
 |------|---------|----------------------|
 | **A 仍在用 + 增量增强** | 按约定 28 复用，正常往下写 | 否 |
-| **B 死代码 + 重做（默认）** | `vcs_mode=git` 自动 `git rm`；`vcs_mode=none` 对已确认归类为 B 的旧文件逐项 `Path.unlink()` 本地删除（仅文件，不删未核对目录，缺失文件如实记录），含连带文件；同步补 `99_回滚脚本.sql` DROP（如涉及表） + 在 `*事实清单.md` 「死代码删除清单」段追加表格 | 否（默认无问询，避免打扰用户） |
-| **C 仍在用 + 需求重构** | 弹 `AskUserQuestion`：「① 并存切流量（推荐）/ ② 直接替换 / ③ 单写新版保留旧版」三选一 | **是** |
+| **B 删除证据充分 + 明确重做** | `vcs_mode=git` 用 `git rm`；`vcs_mode=none` 逐项 `Path.unlink()` 删除证据清单内的文件。连带文件逐项证明独占，未证明的不删；数据库按下方 Step 4 单独核验 | 否 |
+| **C 仍在用 + 需求重构（优先于 B）** | 弹 `AskUserQuestion`：「① 并存切流量（推荐）/ ② 直接替换 / ③ 单写新版保留旧版」三选一 | **是** |
+| **保留待核** | 保留未知文件及关联资源，记录未核项；继续不依赖删除的工作，无法推进时返回有原因的失败信号 | 无人值守不询问、不自动删除 |
 
-★ **关键铁律**：归类为 B 的文件必须**在 Phase 0A.5 内完成实际删除**（`vcs_mode=git` 用 `git rm`；`vcs_mode=none` 经 Python `Path.unlink()` 删除已确认的本地文件，并用文件存在性复核），**不可**留待开发执行步骤里"边写边删"——否则 Agent 可能误以为"旧文件仍存在所以可以叠加"，反而触发反模式。
+★ **删除执行门**：只有已填齐扫描记录且通过约定 29 证据门的 B 文件，才在 Phase 0A.5 内删除并复核结果。证据不足不能为了完成本步骤而扩大删除范围；删除失败不得声称已经清理。
 
 ★ **情形 C 的 `--unattended` 降级（无人值守不挂死）**：`/loop` 无人值守（带 `--unattended`）下情形 C **不弹 `AskUserQuestion`**——优先消费 PRD `autopilot_decisions` 死代码处置预声明；无预声明则取**保守默认「① 并存切流量」**（新版并存 → 切流量 → 旧版留待人工删除，最不破坏现网），并在终端 + autopilot #4 里程碑通知 WARN「死代码情形 C 走无人值守默认①，旧版删除待人工复核」，**绝不挂起等待**。仅交互式（无 `--unattended`）才弹三选一。
 
 **4. 表数据安全检查**（情形 B 涉及后端 Entity / Mapper 删除时必跑）：
 
-```bash
-# 读 memory/databaseBaseline.md 确认该表是否在基线中
-grep "<旧表名>" memory/databaseBaseline.md
-# 命中 → 询问用户"该表是否有生产数据"
-#  - 有生产数据 → 升级到情形 C（不可直接 DROP TABLE）
-#  - 无生产数据 → 在 99_回滚脚本.sql 同步加 DROP TABLE
-# 不命中 → 该表是本 Sprint 才规划，无生产数据，可直接 DROP
-```
+读取 `memory/databaseBaseline.md`、本版建表/应用台账及目标环境的只读元数据，核实表归属、消费者与数据状态。**基线未登记不等于表不存在或无生产数据**；取不到实际证据时保留表及关联资源、登记待核，不能生成或执行 DROP。
+
+有存量数据/存活消费者时按 C 的兼容策略处理。即使已证实表无存量数据，删除或回滚 SQL 也须有本版部署/回滚授权与明确适用条件，不能因删除 Entity/Mapper 自动补 DROP。交互式缺失关键依据时集中询问；`--unattended`／`--from-batch` 按调用方待裁决或失败协议返回，不挂起、不猜空库。
 
 **5. 留档**：
 - 扫描清单：`memory/{version}/{user}/sprints/sprint-{NNN}-deadcode-scan-*.md`

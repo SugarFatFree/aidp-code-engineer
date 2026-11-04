@@ -133,41 +133,13 @@
     - **★ 图标语义化选取（款式可与原型不同、语义不可乱）**：图标款式可用项目图标库等价件，但**选哪个必须由功能语义决定、不得随机凑数**（语义匹配动作、同界面不同功能可区分、同语义全项目一致）。**详规单一信源见 `{{AIDP_HOME}}/rules/frontend.md` 约定 4「图标语义化选取」**（自动加载，含四条判定 + 回检严重度），本条不复述。
     - **Why**：① 同项目并存 Antd + Element Plus = 维护噩梦；② 包体积 + 首屏加载（前端尤其敏感）；③ 已有公共组件经过项目特定 UI/UX 校准（如 `<EChart>` 内含项目品牌色 + 默认配置）比通用版更贴合
 11. **★ 历史死代码识别与处置（详见 `AGENTS.md` 约定 29）**：开发新页面/组件前必须扫描历史版本是否已有同名/同语义代码；判定为死代码 + 本 Sprint 重做该板块时，**必须先删旧文件再写新文件**，禁止在旧文件上叠加新内容（约定 28 的"复用优先"前提是"仍在使用"，死代码不属于可复用对象）。
-    - **4 信号扫描脚本（写代码前必跑）**：
-      ```bash
-      # 待扫描的旧组件/页面文件（来自 Phase 0A.5 输出清单），逐个验证
-      TARGET="src/views/UserManage.vue"      # 例：待判定的旧页面
-      MOD_NAME="UserManage"                  # 组件名（无 .vue 后缀）
-      ROUTE_PATH="/user/manage"              # 路由路径（如已知）
-
-      # 信号 ① 无菜单入口
-      grep -rE "(menuItem|menuTree|asyncRoutes).*${MOD_NAME}|name:\s*['\"]${MOD_NAME}" \
-           code/frontend/{子项目}/src/router/ code/frontend/{子项目}/src/layout/ \
-           code/frontend/{子项目}/src/store/modules/permission* 2>/dev/null || echo "信号①命中：无菜单入口"
-
-      # 信号 ② 无父组件 import
-      grep -rE "import\s+.*from\s+['\"].*${MOD_NAME}|import\s+${MOD_NAME}\s+from" \
-           code/frontend/{子项目}/src/ 2>/dev/null || echo "信号②命中：无父组件 import"
-
-      # 信号 ③ 无路由引用
-      grep -rE "path:\s*['\"]${ROUTE_PATH}|component:\s*\(\)\s*=>\s*import\(.*${MOD_NAME}" \
-           code/frontend/{子项目}/src/router/ 2>/dev/null || echo "信号③命中：无路由引用"
-
-      # 信号 ④ 需求/规划显式重做（强信号）
-      grep -rE "重做|重构|recreate|重新实现" \
-           docs/requirements/{version}/研发需求/ docs/design/detail/{version}/ docs/plans/{version}/ \
-           | grep -i "${MOD_NAME}\|用户管理"  # 替换为业务关键词
-      ```
-    - **3 类处置（默认无人工问询，仅 C 弹）**：
-      - **A 增量增强**：4 信号都不命中 → 按约定 28 复用，正常往下写
-      - **B 删旧重做**（默认）：任一物理信号 ①②③ 命中**或** ④ 强信号命中 → **必须 `git rm <旧文件>`** 含组件文件 / 父组件中的 import 行 / router 中的路由项 / 配套 utils / 配套测试 → 再按新设计写全新组件
-      - **C 兼容重构**：①②③ 都不命中（仍在用） + ④ 命中 → 走"新版并存 → 切流量 → 删旧版"路径，弹 `AskUserQuestion` 让用户三选一（并存切流量 / 直接替换 / 单写新版保留旧版）
+    - **候选扫描与证据核实（写代码前必做）**：查菜单、路由、静态 import、动态 import/`import.meta.glob`、自动注册配置、模板引用及直接 URL 入口，并记录本 Sprint 的重做依据。grep/rg 只能提供线索：退出码 1 是本次模式未命中，退出码 2 是扫描失败，二者都不能证明“没有引用”。源码目录缺失或动态加载未核清时标未知。
+    - **处置唯一信源 = `{{AIDP_HOME}}/rules/code.md` 约定 29「删除证据门」与按序处置表**，本 Agent 不另立条件：有存活入口且重构先走 C；增量增强走 A；仅全部删除证据充分且明确重做才走 B；未知保留。**无菜单但有路由的详情页、自动注册或动态 import 组件不得因静态搜索未命中被删**。C 的交互/无人值守行为由 `/sprint-dev` Phase 0A.5 承接。
     - **删除清单留档（情形 B 必填）**：在 `docs/design/detail/{version}/*事实清单.md` 「死代码删除清单」段追加表格行：
-      | 文件路径 | 信号命中 | 处置情形 | 删除时间 | Sprint |
-      |---------|---------|---------|---------|--------|
-      | `src/views/UserManage.vue` | ①②③④ | B 删旧重做 | 2026-06-04 | sprint-003 |
-      | `src/store/modules/userManage.ts` | ② | B 删旧重做 | 2026-06-04 | sprint-003 |
-    - **必须连带删除的关联文件**（防止悬挂引用）：
+      | 文件路径 | 删除证据记录 | 处置情形 | 删除时间 | Sprint |
+      |---------|-------------|---------|---------|--------|
+      | `<本轮确认的候选>` | `sprint-{NNN}-deadcode-scan-*.md` 对应行（入口、引用、独占依据齐全） | B 删旧重做 | `<实际时间>` | `Sprint-{NNN}` |
+    - **连带文件候选**（逐项核实独占引用，未证实的不删除；同名不是证据）：
       - 同名 `.vue` SFC + 对应的 `.ts` store module + utils + 测试文件
       - `router/index.ts` 中的路由项（删除路由 entry）
       - 父布局 / 菜单配置中的 import + menu entry
@@ -180,7 +152,7 @@
     - **回检**：① `/sprint-test` 阶段 `code-verification-loop` 「代码质量」维度子项「死代码/死引用残留」grep 新代码是否引用了已删除文件 / 旧 class 名 / 旧路由路径 → 命中即 **Critical** 回 `/sprint-bugfix`；② 本回检由 `code-verification-loop` 维度 4「死代码/死引用残留」内置
     - **反模式（必须避免）**：
       - ❌ 旧 `UserManage.vue`（500 行死代码），新规划"用户管理重做" → 在旧文件上加新 `<el-tab>` + 新 `<el-table>` + 保留旧 form / 旧 table → 结果新旧样式混杂 + 文件 800 行突破复杂度阈值
-      - ❌ 旧组件 `<UserList>` 无 import 但保留文件，新规划"用户列表重做" → 创建 `<UserListNew>` + 旧文件不删 → 后续 Sprint 谁也分不清哪个是真用的
+      - ❌ 仅因 `<UserList>` 无静态 import 就删除文件，却未核对自动注册/动态加载 → 误删仍可达组件；应保留待核
       - ✅ 正确：识别为死代码 → `git rm src/views/UserManage.vue` → 写全新 `UserManage.vue`（保留同名以便外部链接不破坏，但内容 100% 新版）
 12. **★ 前端缓存机制用户确认（详见 `dev-logic-architect` SKILL「缓存机制用户确认原则」核心原则 / `code-verification-loop` SKILL 「代码质量」维度子项「缓存代码与设计一致性」）**：写前端代码时**严禁**未经设计授权就用 `localStorage` / `sessionStorage` / IndexedDB / 全局响应式 Store（Pinia/Vuex/Redux）/ axios 拦截器层 / Service Worker 等机制**长期缓存接口响应数据**。
     - **触发判定**：以下场景视为"接口数据缓存"，必须 A.2 有「缓存方案」子章节才能实施：
@@ -390,21 +362,21 @@ Step 5: ★ README 强制维护
 
 > ★ **WebMCP 是「客户端应用 MCP 业务能力」的 Web 端实现**，不是一个独立能力。本节只管 Web；
 > 小程序 / 移动 / 桌面的同一能力走 `{{AIDP_HOME}}/rules/client-mcp.md`（端无关详规），
-> 由各端负责人按 `check_client_mcp.py --install-rule` 安装，**⛔ 不要把本节的浏览器前提套过去**。
+> 由各端负责人按 `check_client_mcp.py --version "{version}" --install-rule` 安装，**⛔ 不要把本节的浏览器前提套过去**。
 
 **第一动作 = 判定，而不是实现**（两级：先跨端、再 Web 叶子）：
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json  # 跨端判定唯一实现
+python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json  # 跨端判定唯一实现
 #   → {"declared": true|false, "client_type": "web|miniprogram|mobile|desktop", "implementation": "..."}
-python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json      # 仅 client_type=web 时才跑
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json      # 仅 client_type=web 时才跑
 ```
 
 | 判定 | 本节行为 |
 | :- | :- |
 | **`declared: false`（默认，绝大多数项目）** | **整节跳过**。不写任何相关代码、不产任何产物位、不发任何告警、界面上不出现任何相关元素 |
 | `declared: true` 但 `client_type != web` | **本节整节不适用**（前端不实现别端的能力）；该端按 `{{AIDP_HOME}}/rules/client-mcp.md` 走 |
-| `declared: true` + `client_type=web` + `implementation=webmcp` | **第一动作 = 确保详规已安装**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`（幂等）——详规默认**不在** `rules/` 下（模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），未装则永远不会自动加载。装好后按 **`{{AIDP_HOME}}/rules/webmcp.md`** 执行 |
+| `declared: true` + `client_type=web` + `implementation=webmcp` | **第一动作 = 确保详规已安装**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --install-rule`（幂等）——详规默认**不在** `rules/` 下（模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），未装则永远不会自动加载。装好后按 **`{{AIDP_HOME}}/rules/webmcp.md`** 执行 |
 
 **★ 一次性推荐提示（仅当项目【从未做过】该决策时）**：本项目既未启用、PRD 也无 `client_mcp` / `webmcp` 段
 （即 `check_client_mcp.py` 的 `capability_state` 为 `not-declared`）且本 Sprint 确在写**带业务操作面的前端页面**时，

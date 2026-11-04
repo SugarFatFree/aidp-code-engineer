@@ -482,7 +482,7 @@ def test_aiauto_screenshot_collection():
     """实跑 flow 里的归集段：四种格式、数字轮次、格式变更与旧 tick 残图。"""
     print("\n[aiauto 截图归集实跑]")
     flow = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-1.md").read_text(encoding="utf-8")
-    script = flow.split("# ① 归集：", 1)[1].split("# ② 硬核验：", 1)[0]
+    script = flow.split("# ① 归集：", 1)[1].split("\nSHOTS", 1)[0] + "\nSHOTS\n"
     script = ("# ① 归集：" + script).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -580,6 +580,8 @@ def test_aiauto_client_mcp_flag():
             prd = root / "docs/requirements/V1.0.0/产品提供/PRD.md"
             prd.parent.mkdir(parents=True)
             prd.write_text("---\nautopilot_decisions:\n" + declaration + "---\n", encoding="utf-8")
+            _mcp_prd(root, 'V2.0.0', '  webmcp:\n    enabled: ' +
+                     ('false' if expected == '--webmcp-enabled' else 'true') + '\n')
             r = subprocess.run(["bash", "-c", script + '\nprintf "FLAG=%s\\n" "$CR_WEBMCP"'],
                                cwd=root, capture_output=True, text=True,
                                env={**os.environ, "TARGET_VERSION": "V1.0.0", "BUILD": "B1"})
@@ -623,7 +625,7 @@ def test_aiauto_report_summary_mapping():
 def test_cvl_callsite_contract_details():
     print("\n[CVL 调用边界回归]")
     st = (REPO / ".aidp/commands/sprint-test.md").read_text(encoding="utf-8")
-    check("调用方把 declared 桥接为 enabled:true", "显式补 `enabled: true`" in st)
+    check("调用方保留检测器 enabled:true 门控字段", "保留 `enabled`" in st)
     check("全部 Important 登记并保留 loop 推进标记，不沿用已解决的上游冲突说明",
           "Critical 与 Important 一律" in st and "登记 bug 与是否阻断是两件事" in st
           and "`loop 推进`" in st and "上游判据冲突，待澄清" not in st)
@@ -646,7 +648,132 @@ def test_cvl_callsite_contract_details():
     check("前端明确预处理器检查不覆盖 import/use 路径", "`@import` / `@use` 路径错**不在**该脚本覆盖内" in front)
 
 
+def _mcp_cli(root, script, *args):
+    result = subprocess.run([sys.executable, str(REPO / '.aidp/scripts' / script),
+                             '--root', str(root), '--json', *args], capture_output=True, text=True)
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError:
+        payload = {}
+    return result, payload
+
+
+def _mcp_prd(root, version, declaration):
+    path = root / f'docs/requirements/{version}/产品提供/PRD.md'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('---\nautopilot_decisions:\n' + declaration + '---\n', encoding='utf-8')
+
+
+def test_mcp_enabled_skill_contract():
+    print('\n[MCP 检测输出直传 SKILL 的 enabled 契约]')
+    fixtures = (
+        ('未声明', '', False, 'not-declared'),
+        ('显式关闭', '  client_mcp:\n    enabled: false\n', False, 'explicitly-disabled'),
+        ('未实现', '  client_mcp:\n    enabled: true\n    client_type: mobile\n', False, 'declared-unimplemented'),
+        ('非 Web', '  client_mcp:\n    enabled: true\n    client_type: mobile\n    implementation: app-native\n', True, 'declared'),
+        ('新 Web', '  client_mcp:\n    enabled: true\n    client_type: web\n    implementation: webmcp\n', True, 'declared'),
+        ('旧 Web', '  webmcp:\n    enabled: true\n', True, 'declared'),
+    )
+    for label, declaration, enabled, state in fixtures:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _mcp_prd(root, 'V1.0.0', declaration)
+            result, payload = _mcp_cli(root, 'check_client_mcp.py', '--detect')
+            check(f'{label}: enabled 与 declared 同值，可直传 SKILL', result.returncode == 0 and
+                  payload.get('enabled') is enabled and payload.get('declared') is enabled and
+                  payload.get('capability_state') == state)
+            if label == '新 Web':
+                result, payload = _mcp_cli(root, 'check_webmcp.py', '--detect')
+                check('新 Web 声明也启用 Web 适配', result.returncode == 0 and payload.get('enabled') is True)
+
+
+def test_mcp_version_scope():
+    print('\n[MCP 版本作用域：当前覆盖、历史继承与未来隔离]')
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mcp_prd(root, 'V0.9.0', '  webmcp:\n    enabled: false\n')
+        _mcp_prd(root, 'V0.10.0', '  webmcp:\n    enabled: true\n    entry_symbols: [window.CurrentTool]\n')
+        _mcp_prd(root, 'V0.11.0', '')
+        _mcp_prd(root, 'V0.12.0', '  webmcp:\n    enabled: false\n')
+        _mcp_prd(root, 'V0.13.0', '')
+        for script in ('check_client_mcp.py', 'check_webmcp.py'):
+            for version, expected in (('V0.8.0', False), ('V0.9.0', False), ('V0.10.0', True),
+                                      ('V0.11.0', True), ('V0.12.0', False), ('V0.13.0', False)):
+                result, payload = _mcp_cli(root, script, '--detect', '--version', version)
+                check(f'{script} {version}: 只继承不晚于目标的最近声明',
+                      result.returncode == 0 and payload.get('enabled') is expected)
+            result, payload = _mcp_cli(root, script, '--detect')
+            check(f'{script} 无参兼容按数值最新声明（不取字典序首份）',
+                  result.returncode == 0 and payload.get('enabled') is False)
+            result, _ = _mcp_cli(root, script, '--detect', '--version', '')
+            check(f'{script} 空目标版本不静默回落全局', result.returncode == 2)
+        result, payload = _mcp_cli(root, 'check_webmcp.py', '--detect', '--version', 'V0.11.0')
+        check('继承的入口标识符与声明来自同一版本', result.returncode == 0 and
+              payload.get('entry_symbols') == ['window.CurrentTool'] and 'V0.10.0' in payload.get('symbols_source', ''))
+        # 当前非 Web 或未实现声明必须截断旧 Web 能力，不能分别挑两份 PRD。
+        for declaration in ('  client_mcp:\n    enabled: true\n    client_type: mobile\n    implementation: bridge\n',
+                            '  client_mcp:\n    enabled: true\n    client_type: web\n    implementation: none\n'):
+            _mcp_prd(root, 'V0.11.0', declaration)
+            result, payload = _mcp_cli(root, 'check_webmcp.py', '--detect', '--version', 'V0.11.0')
+            check('当前跨端声明截断历史 Web 启用', result.returncode == 0 and payload.get('enabled') is False)
+
+
+def test_mcp_environment_scope():
+    print('\n[MCP 启动命令、origin 与环境回检同作用域]')
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mcp_prd(root, 'V0.9.0', '  webmcp:\n    enabled: true\n')
+        for version, host in (('V0.9.0', 'old.example'), ('V0.10.0', 'current.example'), ('V0.12.0', 'future.example')):
+            path = root / f'docs/testing/{version}/研发自测/01_测试环境与账号.md'
+            path.parent.mkdir(parents=True)
+            path.write_text(f'| 前端 | https://{host} |\n## WebMCP\n'
+                            f'| 完整启动命令 | `chrome --enable-features=WebMCP https://{host}` |\n', encoding='utf-8')
+        for version, host in (('V0.9.0', 'old.example'), ('V0.10.0', 'current.example'), ('V0.11.0', 'current.example')):
+            result, payload = _mcp_cli(root, 'check_webmcp.py', '--detect', '--version', version)
+            check(f'{version} 启动命令不取未来环境', result.returncode == 0 and
+                  payload.get('launch_command') == f'chrome --enable-features=WebMCP https://{host}')
+            result, payload = _mcp_cli(root, 'check_webmcp.py', '--launch-args', '--version', version)
+            check(f'{version} 自动 origin 与启动命令同源', result.returncode == 0 and
+                  payload.get('origins') == [f'https://{host}'])
+        current = root / 'docs/testing/V0.10.0/研发自测/01_测试环境与账号.md'
+        current.write_text('# 当前环境未登记\n', encoding='utf-8')
+        result, payload = _mcp_cli(root, 'check_webmcp.py', '--detect', '--version', 'V0.10.0')
+        check('当前环境已存在但缺命令时不拿旧命令冒充', result.returncode == 0 and payload.get('launch_command') == '')
+        result, payload = _mcp_cli(root, 'check_webmcp.py', '--launch-args', '--version', 'V0.10.0')
+        check('当前环境缺 origin 不拿历史或未来 origin 冒充', result.returncode == 2 and
+              str(payload.get('error', '')).startswith('no-origin'))
+        result, payload = _mcp_cli(root, 'check_webmcp.py', '--version', 'V0.10.0')
+        check('装配回检检查目标环境缺段，不能被未来环境放行', result.returncode == 1 and
+              any(f.get('check') == 'testenv-section' and 'V0.10.0' in f.get('file', '')
+                  for f in payload.get('findings', [])))
+
+
+def test_mcp_callsite_version_contract():
+    print('\n[MCP 实际调用点必须传目标版本并保留 enabled]')
+    missing, count = [], 0
+    for directory in ('commands', 'flows', 'agents', 'rules', 'templates/optional-rules'):
+        for path in (REPO / '.aidp' / directory).rglob('*.md'):
+            for match in re.finditer(r'check_(?:client_mcp|webmcp)\.py(?=\s+--)\s+([^`\n]+)',
+                                     path.read_text(encoding='utf-8')):
+                count += 1
+                if '--version' not in match.group(1):
+                    missing.append(str(path.relative_to(REPO)))
+    check('所有版本内调用携带 --version: ' + ', '.join(sorted(set(missing))), count >= 30 and not missing)
+    for command in ('sprint-design', 'sprint-test', 'sprint-selftest', 'sprint-aiauto-test'):
+        text = (REPO / f'.aidp/commands/{command}.md').read_text(encoding='utf-8')
+        check(f'{command} 明示直传 enabled 字段', 'enabled: true' in text and
+              ('保留 `enabled`' in text or '`enabled` / `declared`' in text or '`enabled`/`declared`' in text))
+    early = (REPO / '.aidp/flows/sprint-aiauto-test/phase-0-1.md').read_text(encoding='utf-8')
+    selected = early.split('# ★★ 版本号轻量预解析', 1)[1].split('TESTPLAN_DIR=', 1)[0]
+    check('浏览器分片前将显式 --target 的预解析版本落盘',
+          bool(re.search(r'autopilot_tick_flags\.py set --command aiauto-test\s+\\?\s*\n?\s*TARGET_VERSION', selected)))
+
+
 def main():
+    test_mcp_callsite_version_contract()
+    test_mcp_enabled_skill_contract()
+    test_mcp_version_scope()
+    test_mcp_environment_scope()
     test_aiauto_screenshot_collection()
     test_aiauto_convergence_aggregation()
     test_aiauto_client_mcp_flag()

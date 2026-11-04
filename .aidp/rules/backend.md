@@ -23,11 +23,11 @@ paths:
 
 ## 客户端能力开关的服务端一侧（★ 可选，仅当项目启用了客户端应用 MCP 等可选能力时适用）
 
-> **先判定，判定为否就没有本节**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json` 判
+> **先判定，判定为否就没有本节**：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json` 判
 > `enabled: false`（默认、绝大多数项目）→ **整节不适用**，不新增任何字段、接口、告警。
-> 前端侧详规单一信源 = WebMCP 可选规则（本节只写**后端该做什么**，不复述前端规则）。该规则**默认不安装**：权威模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，启用后经 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` 装到 `{{AIDP_HOME}}/rules/webmcp.md`。<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计（可选规则未启用即一字节不加载）-->
+> 前端侧详规单一信源 = WebMCP 可选规则（本节只写**后端该做什么**，不复述前端规则）。该规则**默认不安装**：权威模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，启用后经 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --install-rule` 装到 `{{AIDP_HOME}}/rules/webmcp.md`。<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计（可选规则未启用即一字节不加载）-->
 > ⚠️ 该详规**按需安装**：默认不在 `rules/` 下、模板位在 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，
-> 由启用的项目跑 `check_webmcp.py --install-rule` 装过去。
+> 由启用的项目跑 `check_webmcp.py --version "{version}" --install-rule` 装过去。
 
 启用后，后端须为该能力提供一个**运行时可开关的服务端标志**（三层 AND 模型的 **L2** 层，
 另两层是浏览器能力 L1 与使用者页面开关 L3）：

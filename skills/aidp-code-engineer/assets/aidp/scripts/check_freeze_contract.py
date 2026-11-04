@@ -288,7 +288,9 @@ def run(root="."):
                             fh.append(lines[k])
                         fh_win = "\n".join(fh)
                         scanned_sites = FAIL_HANDLE_REASON_RE.search(fh_win)
-                        if scanned_sites:
+                        # --preflight 写顶层故障原因，不写版本级 freeze_reason；
+                        # 与 autopilot_fail_handle.main 的模式分流保持一致，仍检查告警义务。
+                        if scanned_sites and not re.search(r"--preflight(?:\s|$)", fh_win):
                             _v = scanned_sites.group(1)
                             if _v in enum:
                                 writers.setdefault(_v, []).append(f"{rel}:{i+1}")

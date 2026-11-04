@@ -41,13 +41,12 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 # ⚠️ `$ARGUMENTS` 未注入时按用户原文重新 parse，并显式传入本轮已输出的 --lock-token（用原值，不重跑 begin）。
 # 任一结束路径（含配置等待 / yield / 失败）返回前均按命令正文「tick 占位收尾」finish；不能只在本 shell 装 EXIT trap。
 # IS_LOOP_CONTEXT（探测法单一信源在此；Phase 1.3 复用本处值、不再独立探测）：
-#   判据 = 当前 prompt 是否含 `/loop` 字样。纯 shell 读不到，**须由 Claude 就地改成 0/1**，不得跳过：
-IS_LOOP_CONTEXT=0    # ← Claude 按本轮 prompt 是否含 `/loop` 就地改为 0 / 1
-# ★ 确定性第二信源：`LOOP_EVIDENCE` 由 parse 按「近期是否反复唤起」自动算
-#   （只增补、不否定；根因见 rationale「IS_LOOP_CONTEXT 为何需要第二信源」）。
-[ "${LOOP_EVIDENCE:-0}" = "1" ] && [ "$IS_LOOP_CONTEXT" != "1" ] && {
-  IS_LOOP_CONTEXT=1
-  echo "🔁 LOOP_EVIDENCE=1（近期反复唤起）→ 补判 IS_LOOP_CONTEXT=1" >&2; }
+#   判据 = 本轮确由已挂载 /loop 任务唤起，不是 prompt 中引用过 /loop 字样；由执行体就地代入：
+IS_LOOP_CONTEXT=0    # ← 仅本轮真实 /loop 调度上下文取 1；手动调用、历史引用均取 0
+# LOOP_EVIDENCE 只是近期调用频次诊断；反复手动 --once 也会命中，绝不能证明未来有人唤醒。
+[ "${LOOP_EVIDENCE:-0}" = "1" ] && echo "近期反复调用（仅诊断，不升级 loop / wake 信号）" >&2
+# begin 只有核实当前进程继承仍存活的 agent_loop 锁持有者后才返回此 token。
+[ "${TICK_LOCK_TOKEN:-}" = "agent_loop" ] && IS_LOOP_CONTEXT=1
 #
 # ══ 第二步：由【本轮】3 个确定性信号 OR 派生 LOOP_UNATTENDED ══
 # ★ 无人值守信号 = 下列任一（OR），**三者都只看本轮、不读任何历史持久化值**：

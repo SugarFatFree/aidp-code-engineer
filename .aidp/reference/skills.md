@@ -55,7 +55,7 @@
 | Skill | 用途 | 被谁调用 | 未装时的回落 |
 |-------|------|---------|---------|
 | `superpowers:test-driven-development` | TDD 开发方法 | `/sprint-dev`（`/sprint-full` 经其调用）| 手工守 TDD 纪律：先写测试再写实现 |
-| `superpowers:subagent-driven-development` | 并行 subagent 开发 | `/sprint-dev`（`/sprint-full` 经其调用）| 串行实现（慢但等价） |
+| `superpowers:subagent-driven-development` | 按 Task 串行实现及两阶段审查 | AIDP 并行节点不调用；由 `/sprint-dev` 按写集隔离直接派发 | 无子 Agent 能力时按同一计划串行实现与审查 |
 | `superpowers:systematic-debugging` | 系统化调试 | `bugfix` SKILL 根因定位（经 `/sprint-bugfix`）| 按 `bugfix` SKILL Step 3 手工定位：复现 → 根因 → 最小修复 → 回归 |
 | `superpowers:verification-before-completion` | 完成前验证 | `/sprint-dev`、`/sprint-test`、`/sprint-batch`、`/sprint-bugfix` 方式 B | 走该命令自身的输出前硬门 |
 

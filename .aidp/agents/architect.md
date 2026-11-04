@@ -108,7 +108,7 @@
 
 **Step 4.5：客户端应用 MCP 能力设计（★ 可选，未启用即整步跳过）**
 
-**先判定，判定为否就没有本步**：`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`
+**先判定，判定为否就没有本步**：`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json`
 （**跨端**启用判定的**唯一实现**，⛔ 不要自己 grep PRD）。`declared: false`（默认、绝大多数项目）→
 **本步整步跳过**，不产任何章节、不占产物位、不发告警。
 
@@ -118,15 +118,15 @@
 通用半场仍会来核它——失效方向是**设计整段缺失却全绿**。
 
 `declared: true` 且 `client_type != web` 时，**先确保端无关详规已安装**
-（`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --install-rule`，幂等；模板位
+（`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --install-rule`，幂等；模板位
 `{{AIDP_HOME}}/templates/optional-rules/client-mcp.md`），再按 `flow-client-mcp.md` 的十列强制产出表
 逐工具落**应用自有 MCP 服务或桥接**的实现位置 / 工具类别三档 / 入出 Schema / 身份权限来源 /
 写操作确认 / 生命周期 / 错误契约 / 审计日志 / 调用证据载体；⛔ 不造通用对象名、统一桥接 URL、
 Chrome 版本门或 secure context 前提——那些是 Web 专有。
 
-`declared: true` 且 `client_type = web` 且 `implementation = webmcp` 时，**先确保详规已安装**（`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule`，幂等；
+`declared: true` 且 `client_type = web` 且 `implementation = webmcp` 时，**先确保详规已安装**（`python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --install-rule`，幂等；
 详规默认不在 `rules/` 下、模板位在 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`），
-再按其规则产出以下**额外**六项（细则一律见 WebMCP 可选规则，本处不复述——该规则**默认不安装**，权威模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，启用后经 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` 装到 `{{AIDP_HOME}}/rules/webmcp.md`）：<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计 -->
+再按其规则产出以下**额外**六项（细则一律见 WebMCP 可选规则，本处不复述——该规则**默认不安装**，权威模板位 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md`，启用后经 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --install-rule` 装到 `{{AIDP_HOME}}/rules/webmcp.md`）：<!-- ssp-check: ignore 这里的 rules/webmcp.md 是安装【目标位】，默认不存在正是设计 -->
 
 | 产出 | 要点 |
 | :- | :- |
@@ -202,7 +202,7 @@ Chrome 版本门或 secure context 前提——那些是 Web 专有。
 
 ### 🔴 跨版本/跨迭代禁令
 
-1. ❌ **禁止改写已归档 Sprint 产出的既有分册正文** — `docs/design/detail/{version}/` 下**已有分册的正文**在该 Sprint 关闭后不得覆盖改写。⚠️ 这**不是**锁死整个版本级目录：同一版本内 Sprint 关闭后仍会按约定 22 / `--supplement` 持续往该目录**新增** `NN_<业务主题>.md` 增量文档（`/version` 情况 B-2 亦然），那是合规的；红线只针对“改写既有正文”。Sprint 粒度的冻结见下一条。
+1. ❌ **禁止未经授权改写正式发布版本的设计产物** — 已发布版本按 `/version` 的改写授权门处理。**未发布版本的共享设计主文档不因其中某个 Sprint 关闭而冻结**：约定 22 的 `--ledger-cascade` 就地改既有正文并刷新索引；`--supplement` 按其契约新增分册，不混用两种落点。两路都保留变更溯源；不可变的 Sprint 历史记录见下一条。
 2. ❌ **禁止修改已归档的 Sprint 文件** — `memory/{version}/{user}/sprints/sprint-{NNN}.md` 永不修改
 
 ### 🔴 跨角色禁令

@@ -1043,7 +1043,8 @@ GUARDS = (
     #   而 CI 只跑一个版本时结构上不可见。失败点全在「维护者本机复现不了」的位置：
     #   新用户第一次 init（agent_sync 由脚手架末尾调用）、7×24 每个 tick（tick_flags）。
     ("check_python_floor", "check_python_floor", "最低 Python 版本", ("findings",), "ERROR", None, None),
-    ("check_memory_loss", "check_memory_loss", "memory 整段丢失", ("errors",), "WARN", None, None),
+    # 体检不能消费写前快照：它可能是尚未提交的人类记忆的唯一恢复来源。
+    ("check_memory_loss", "check_memory_loss", "memory 整段丢失", ("errors",), "WARN", ["--keep-snapshot"], None),
 )
 
 

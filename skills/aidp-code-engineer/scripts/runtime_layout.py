@@ -408,7 +408,8 @@ def _user_overlay(runtime: Path, home: str, source: str,
     return overlay
 
 
-def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict:
+def validate_runtime(runtime: Path, expected_home: Optional[str] = None,
+                     user_fillable_updates=()) -> dict:
     runtime = Path(runtime)
     _validate_required_dirs(runtime, "运行包", ValueError)
     manifest = _read_manifest(runtime)
@@ -417,7 +418,18 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None) -> dict
     if manifest.get("source") not in RUNTIME_HOME:
         raise ValueError("运行包 manifest source 非法")
     _validate_version(manifest.get("version"))
-    _manifest_user_files(manifest)
+    user_files = _manifest_user_files(manifest)
+    # finalize 只可更新已登记为用户填写文件的指纹；其他受管文件仍逐字校验。
+    updates = set(user_fillable_updates)
+    if not updates <= (L.USER_FILLABLE_CONTRACTS & user_files):
+        raise ValueError("只能收口 manifest 已登记的用户填充型契约")
+    for relative in updates:
+        path = _assert_contained(runtime / relative, runtime)
+        if not path.is_file() or path.stat().st_nlink > 1:
+            raise ValueError(f"用户填充型契约必须是非硬链接的普通文件: {relative}")
+        if _file_mode(path) != manifest["files"][relative]["mode"]:
+            raise ValueError(f"语义改写不能改变文件权限: {relative}")
+        manifest["files"][relative] = _file_metadata(path)
     expected_files = dict(manifest["files"])
     # 同版本脚本刷新可以保留门控契约的本地修改；受管原始指纹仍在 files，
     # 此处只校验被显式保留的实际字节，后续跨版本覆盖仍可识别本地修改。

@@ -294,11 +294,9 @@ mtime 还早于 PRD 的另判 `stale-fallback`，措辞更重、退出码同为 
 **2 次**历史 tick 连成链、且每段相邻间隔都不超过 `max(LOOP_EVIDENCE_WINDOW_SECONDS（默认 2400s）,
 scheduler.tick_max_seconds)` 才置 1。间隔上限随 tick 硬上限放宽，是因为单 Sprint tick 常达 1h ——
 旧版固定 2400s 窗口内要求 ≥2 次历史 tick，在长 tick 下恒不成立。标准示例另带 `--no-loop`，
-直接给出确定性的唤醒源信号，本值只作兜底。
+直接给出约定的唤醒源信号。本值现仅作调用频次诊断，**不能升级 IS_LOOP_CONTEXT 或 HAS_WAKE_SOURCE**：三次手动 `--once` 也符合该时间窗口，历史规律无法证明未来仍有调度者。
 
-两条设计约束：
-- **≥2 次而非 1 次**：手工连跑两遍不该被误升级成 loop；真正的 `/loop` 必然留下一串间隔相近的记录。
-- **只增补、不否定**：模型已判 1 时本值无作用。反向否定会把真 loop 判死，代价比漏判大得多。
+确定性第二信源改为 `begin` 验证后返回的 `TICK_LOCK_TOKEN=agent_loop`（继承仍存活 wrapper 的锁），再结合本轮真实 `/loop` 上下文与显式 `--no-loop`。无这些信号的 `--once`（含 unattended）必须 `HAS_WAKE_SOURCE=0`；不能完成一个 Sprint 就 yield 等待不存在的下一 tick。
 
 ### reset 旗标为何必须有执行者
 

@@ -1,11 +1,10 @@
 # sprint-autopilot · Phase 0 详情分片 [3/11]（0.0 Step 5 远程 chrome + 0.1 拉码与脏树门）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 0** 详情的**第 3/11 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> `/sprint-autopilot` Phase 0 第 3/11 片，按命令主体进度 `Read`。
 > - **本片覆盖**：0.0 Step 5（远程 chrome .mcp.json）+ 0.1（拉码 + 脏树决策门）
 > - **同 Phase 其它分片**：phase-0-1.md … phase-0-9.md（含 phase-0-6b.md）（清单见命令主体 Phase 0 骨架表「所在分片」列）
 >
-> ⚠️ **权威性**：进入 Phase 0 后以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤/硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-0-3.md`。理据见同目录 `rationale.md`。
+> 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
 
 ---
 

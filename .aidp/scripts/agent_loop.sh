@@ -32,7 +32,7 @@ home_name="$(basename -- "$AIDP_HOME")"
 host_name="$(basename -- "$(dirname -- "$AIDP_HOME")")"
 if [ "$home_name" = "aidp" ] && { [ "$host_name" = ".claude" ] || [ "$host_name" = ".agents" ]; }; then
   default_root="$(CDPATH= cd -- "$AIDP_HOME/../.." && pwd)"
-elif [ "$home_name" = ".aidp" ]; then
+elif [ "$home_name" = ".claude" ] || [ "$home_name" = ".agents" ] || [ "$home_name" = ".aidp" ]; then
   default_root="$(CDPATH= cd -- "$AIDP_HOME/.." && pwd)"
 else
   echo "[agent_loop] 非法 AIDP_HOME: $AIDP_HOME" >&2; exit 2

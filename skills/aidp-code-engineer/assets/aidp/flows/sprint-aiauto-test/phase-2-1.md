@@ -119,18 +119,16 @@ fi
 # ★ 有可用用例 → 清零环境熔断计数
 python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del case_gate_fail_streak || true
 
-# ★ 跨版本回归用例并入补充集（约定33 缺口5.2），随后随补充集统一去重（历史回归与本版用例撞功能点则去重保留其一）
+# 跨版本回归册并入补集；同功能点的不同边界用例仍须保留。
 [ -n "$REGRESSION_CASES" ] && SUPPLEMENT_CASES=$(printf '%s\n%s\n' "$SUPPLEMENT_CASES" "$REGRESSION_CASES" | sed '/^$/d' | sort -u)
 
-# D. 去重（按功能点 ID / 用例 ID 标识）：SUPPLEMENT_CASES 中已被 PRIMARY_CASES 覆盖的功能点直接跳过
-#    标识抽取规则：用例文件 frontmatter 或正文中的「功能点 ID」/「关联功能点」/「REQ-{version}-NNN」字段
-#    具体去重算法见 SKILL 内部 (dev-manual-testcase 输出用例时按 REQ 编号体系标注)
-# 纯 shell 去重：补充集中**文件名**已出现在主集里的条目剔除，其余条目**保留完整路径**（含版本目录，
-#   下游 is_headed_only / 子 Agent 都按路径读文件）；补充集内部按完整路径去重，不同版本的同名册各自保留。
-SUPPLEMENT_UNIQUE=$(awk 'NR==FNR { n=$0; sub(/.*\//, "", n); seen[n]=1; next }
-  { n=$0; sub(/.*\//, "", n); if (!(n in seen) && !($0 in kept)) { kept[$0]=1; print } }' \
-  <(printf '%s\n' $PRIMARY_CASES | sed '/^$/d') \
-  <(printf '%s\n' $SUPPLEMENT_CASES | sed '/^$/d'))
+# D. 去重仅按完整文件路径；不同目录/版本的同名册全部保留。
+# TC 级去重须核对同一身份、前置条件、步骤和断言，并记录覆盖映射；不能仅凭文件名或 REQ 相同跳过。
+# ID 相同但语义不同属于冲突，须先修正身份并保留两条，不得静默丢弃。
+SUPPLEMENT_UNIQUE=$(awk 'FILENAME==ARGV[1] { if (NF) seen[$0]=1; next }
+  NF && !($0 in seen) && !($0 in kept) { kept[$0]=1; print }' \
+  <(printf '%s\n' "$PRIMARY_CASES") \
+  <(printf '%s\n' "$SUPPLEMENT_CASES"))
 
 # E. ★ 渲染模式拆分（仅 DRIVER=mcp-remote 远程才拆延后集）：
 #    远程 MCP 切模式须重启（0.1.1.5），故无头跑时把「必须有头」用例拆出为延后集，本轮不跑，留到无头闭环收敛后由 Phase 3.5 提醒切有头补跑。

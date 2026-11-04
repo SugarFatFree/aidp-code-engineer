@@ -214,14 +214,14 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 >
 > ⚠️ 该能力**是跨端的**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**——
 > 只按 `check_webmcp.py` 判，非 Web 项目恒得 `enabled: false`，通用半场永不执行，**失效方向是全绿**。
-> 故先跑**跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`
-> （→ `declared` / `capability_state` / `client_type` / `implementation`），`declared: true` 即随 prompt 传整个
-> `client_mcp` 对象；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**补跑 `check_webmcp.py --detect --json`
+> 故先跑**跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json`
+> （→ `enabled` / `declared` / `capability_state` / `client_type` / `implementation`），`enabled: true` 即随 prompt 原样传整个
+> `client_mcp` 对象（保留 `enabled`，它与 `declared` 同值）；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**补跑 `check_webmcp.py --version "{version}" --detect --json`
 > 取 Web 叶子专有入参。⛔ 非 Web 不传 `webmcp_*`（它们只是 Web 适配输入，不为非 Web 创建入口；
 > 新旧声明冲突时 SKILL 侧须报错、不静默覆盖）。
 >
 > ```bash
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json    # 仅 Web 叶子 → enabled / entry_symbols / launch_command
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json    # 仅 Web 叶子 → enabled / entry_symbols / launch_command
 > ```
 >
 > Web 叶子 `enabled: true` → 另传 `webmcp_enabled: true` + `webmcp_entry_symbols: <脚本返回的数组原样>` + `webmcp_launch_command: <脚本返回的原样>`（⛔ 三个 SKILL 都明写「不要自拟」）

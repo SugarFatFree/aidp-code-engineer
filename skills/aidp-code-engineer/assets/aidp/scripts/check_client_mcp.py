@@ -41,6 +41,11 @@ Chrome 150+ 全是**浏览器专有**的，套到小程序/原生 App 上既判�
 「PRD 写着 mobile、实际按 web 判」这类错配一路跑到测试期才暴露，而那时的表现是
 「能力入口探不到」——与「端选错了」完全不同形态，排查必然走偏。
 
+版本范围：传 `--version` 时仅读目标版及历史，最近声明优先；未传兼容项目级检查，
+按数值取最新声明。所有动作共用此范围，当前显式关闭会截断历史启用。
+
+输出 `enabled` 与 `declared` 恒同值，前者供依赖 SKILL 直接消费，后者保留旧调用兼容。
+
 ## 四种状态（调用方按 `capability_state` 分流，⛔ 别只看 `declared`）
 
 | capability_state | 含义 | declared |
@@ -55,7 +60,7 @@ Chrome 150+ 全是**浏览器专有**的，套到小程序/原生 App 上既判�
 
 ## 用法
 
-    python3 AIDP_HOME/scripts/check_client_mcp.py [--root <仓库根>] --detect [--json]
+    python3 AIDP_HOME/scripts/check_client_mcp.py [--root <仓库根>] [--version <目标版本>] --detect [--json]
 
 退出码：`0`=判定完成（含未声明）/ `2`=声明冲突、取值非法或用法错。
 """
@@ -112,12 +117,12 @@ def _truthy(value):
     return str(value).strip().lower() in ("true", "yes", "on")
 
 
-def detect(root):
-    """跨端声明判定。冲突 / 非法取值抛 ValueError（调用方转 exit 2）。"""
-    result = {"declared": False, "capability_state": "not-declared", "client_type": None,
+def detect(root, version=None):
+    """跨端声明判定。enabled 与 declared 同值，供 SKILL 直接消费；非法声明抛 ValueError。"""
+    result = {"enabled": False, "declared": False, "capability_state": "not-declared", "client_type": None,
               "implementation": None, "source": "未声明（默认关闭）", "findings": []}
 
-    for path in check_webmcp._prd_files(root):
+    for path in check_webmcp._prd_files(root, version):
         head = "\n".join(check_webmcp._read(path).split("\n")[:200])
         cross, legacy = _block(head, "client_mcp"), _block(head, "webmcp")
         if cross is None and legacy is None:
@@ -130,7 +135,8 @@ def detect(root):
             if not legacy_on:
                 return dict(result, capability_state="explicitly-disabled",
                             source=f"PRD `autopilot_decisions.webmcp` 显式未启用（{rel}）")
-            return _web(result, rel, root, "PRD `autopilot_decisions.webmcp`（存量 Web 声明）")
+            return _web(result, rel, f"PRD `autopilot_decisions.webmcp`（存量 Web 声明：{rel}）",
+                        legacy=legacy)
 
         enabled = _truthy(_scalar(cross, "enabled"))
         client_type = (_scalar(cross, "client_type") or "").lower() or None
@@ -167,24 +173,23 @@ def detect(root):
                                              "确有实现请登记形态（app-native / bridge / webmcp）；"
                                              "⛔ 测试驱动（Appium / chrome-devtools 等）可用不构成应用提供能力的证据"}])
         if client_type == "web":
-            return _web(result, rel, root, where, implementation)
-        return dict(result, declared=True, capability_state="declared", client_type=client_type,
+            return _web(result, rel, where, implementation, legacy)
+        return dict(result, enabled=True, declared=True, capability_state="declared", client_type=client_type,
                     implementation=implementation, source=where)
 
     return result
 
 
-def _web(result, rel, root, source, implementation="webmcp"):
-    """Web 端：端专有事实（entry_symbols 等）一律取 `check_webmcp.py`，本脚本不另写一套。"""
-    web = check_webmcp.detect(root)
-    return dict(result, declared=True, capability_state="declared", client_type="web",
+def _web(result, rel, source, implementation="webmcp", legacy=None):
+    """只解析本次选中声明的 Web 事实；不再次扫全仓或递归调用 detect。"""
+    facts = check_webmcp._entry_facts(legacy, rel)
+    return dict(result, enabled=True, declared=True, capability_state="declared", client_type="web",
                 implementation=implementation, source=source,
-                web_adapter={"entry_symbols": web["entry_symbols"], "symbols_source": web["symbols_source"],
-                             "adapter_source": web["source"],
+                web_adapter={**facts, "adapter_source": source,
                              "note": "端专有运行前提与带参启动命令归 check_webmcp.py，本脚本不复制"})
 
 
-def guard(root):
+def guard(root, version=None):
     """脚手架侧装配守卫：**声明成立了，端无关详规有没有真的装到 `rules/`**。
 
     ⛔ 这条硬拦不是可选项：`rules/*.md` 是**路径触发**加载的，不在那儿就永远不会被读到 =
@@ -195,7 +200,7 @@ def guard(root):
     （刚升级未重装是正常中间态，且 `scaffold.py::refresh_optional_rules` 通常已自动刷新，
     这里只做兜底可见性）。
     """
-    det = detect(root)
+    det = detect(root, version)
     out = dict(det, applicable=bool(det["declared"]), passed=True)
     if not out["applicable"]:
         return out                       # 未声明 = 默认关闭：零 finding、零告警、零产物位
@@ -222,14 +227,14 @@ def guard(root):
     return out
 
 
-def install_rule(root, force=False):
+def install_rule(root, force=False, version=None):
     """把**端无关**详规从模板位装到 `AIDP_HOME/rules/`（幂等）。
 
     ⛔ **未声明即拒装**：`rules/` 是路径触发常驻加载，一次误装就让不提供本能力的项目
     每次编辑客户端代码白读一遍——正是「未启用即零成本」要消除的东西。
     ⛔ **Web 端不装本文件**：Web 详规是 `webmcp.md`，两份都装 = 同一能力两处规则、必然漂移。
     """
-    det = detect(root)
+    det = detect(root, version)
     if not det["declared"]:
         return {"ok": False, "action": "refused",
                 "detail": f"本项目未提供客户端 MCP 能力（{det['capability_state']}：{det['source']}）——⛔ 拒绝安装"}
@@ -254,6 +259,7 @@ def install_rule(root, force=False):
 def main():
     ap = argparse.ArgumentParser(description="客户端 MCP 能力暴露：跨端声明判定（未声明即 N/A）")
     ap.add_argument("--root", default=".")
+    ap.add_argument("--version", help="目标版本；仅向历史继承；省略兼容项目级最新声明")
     ap.add_argument("--detect", action="store_true", help="输出声明判定结果")
     ap.add_argument("--install-rule", action="store_true", help="声明成立且非 Web 端时，安装端无关详规到 rules/")
     ap.add_argument("--force", action="store_true", help="--install-rule：覆盖本地已改副本")
@@ -271,13 +277,13 @@ def main():
         print("[ERROR] --root 不是目录: %s" % root, file=sys.stderr)
         return 2
     try:
-        res = detect(root)
+        res = detect(root, args.version)
     except ValueError as exc:
         print(f"[check_client_mcp] {exc}", file=sys.stderr)
         return 2
 
     if args.install_rule:
-        out = install_rule(root, args.force)
+        out = install_rule(root, args.force, args.version)
         print(json.dumps(out, ensure_ascii=False, indent=2) if args.json
               else f"[{out['action'].upper()}] {out['detail']}")
         return 0 if out["ok"] or out["action"] == "delegated" else 1
@@ -293,7 +299,7 @@ def main():
         return 0
 
     # 默认动作 = 脚手架侧装配守卫（与 check_webmcp.py 同形）
-    g = guard(root)
+    g = guard(root, args.version)
     if args.json:
         print(json.dumps(g, ensure_ascii=False, indent=2))
     elif not g["applicable"]:

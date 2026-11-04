@@ -156,10 +156,30 @@ echo "♻️ $V retest-cap 解冻：检出人工修复信号，配额已归零�
    **绝不**把代码放到部署流水线永不构建的分支、也**绝不**等到部署阶段才作为 blocker 发现。
    - **就绪探针目标一致**：校验 `cloud_ready_*` URL host 与 `cloud_deploy_url` host 同源（都指向"新代码将部署到"的环境），不一致 WARN（避免探到部署了旧代码的另一环境得假绿）。
    - **边界仍守**：切分支/合并只为"部署源对齐"这一目的；**绝不打 tag**（人工 destructive 动作）。
-3. `AGENTS.md`「当前状态」有活跃 Sprint 的处置——**按是否无人值守分两条路，不得只写"退出提示"**：
-   - **交互式（`LOOP_UNATTENDED=0`）**：退出，提示先 `/sprint-close`。
-   - **★ `/loop` 无人值守（`LOOP_UNATTENDED=1`）**：**自动收口**——调 `/sprint-close --unattended` 把上一 tick 中断遗留的 Sprint 归档，成功即继续本 tick；与 0.5bis D3「上版收口自动收口、不问」同口径。
-     收口失败 → 计入顶层 `preflight_fail_streak`（复用 0.1 的熔断记账，`preflight_fail_reason="stale-active-sprint"`），达阈冻结并发一次 #4。
-     **★ 收口成功 / 本就无活跃 Sprint → 必须解冻**：`python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py stale-active-sprint || true`。0.1 的清零 case **只认它自己那 6 个 git 类 reason**，本 reason 落 `*)` 分支被明文"留给其成功路径清"——**这里就是那个成功路径**。缺这一行：遗留 Sprint 收口好了冻结也不解除，每 tick 在 0.1 静默 exit，唯一出路是 `--reset-baseline`（毁掉整份 baseline）。
-     ⛔ **绝不静默退出**：只写"退出提示先 close"而无无人值守分支 = 上一 tick 一旦中断留下未 close 的 Sprint，此后**每 tick 都在这里静默退出**，既不推进、也不告警、更不熔断（7×24 表现为"挂着但什么都不干"）。
-   - 无活跃 Sprint → OK
+3. **活跃 Sprint = 在途工作，不是待自动归档垃圾**。读取项目记忆当前版本/编号，并运行 `check_open_sprints.py --version {TARGET_VERSION} --scope started --json`；退出码 2 为读取失败，不当空集。
+   - 无活跃 Sprint → `python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py stale-active-sprint || true` 后继续。
+   - 交互式（`LOOP_UNATTENDED=0`）→ 提示用 `/sprint-full {NNN} --resume` 继续；只有开发与验证证据齐全才可 close。
+   - 无人值守：仅当**项目记忆版本 = TARGET_VERSION、唯一 open 编号 = 当前 active 编号**，并通过 `/sprint-full` 的 `--resume` 恢复门（Read 该命令并先执行其 `resume-gate`）才恢复。多个在途、跨版本/用户、游标指向另一个 Sprint 或读取失败均不自动接管。已有 `run_state.next_sprint` 为空可由已核实编号恢复；非空且不同（含 `done`）须报冲突。
+   - 校验成功后执行下面围栏，将已核实编号交给 Phase 3.2（**不在 Phase 0 关闭 Sprint**）：
+
+   <!-- resume-state -->
+   ```bash
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+   OPEN_JSON=$(python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version "$V" --scope started --json); RC=$?
+   [ "$RC" = 1 ] || { echo "恢复状态已变化或读取失败，请重新核验"; exit 1; }
+   SPRINT_NO=$(printf '%s' "$OPEN_JSON" | python3 -c 'import json,sys; x=json.load(sys.stdin)["open"]; assert len(x)==1; print(x[0].removeprefix("Sprint-"))') || exit 1
+   CURSOR=$($BE --version "$V" get run_state.next_sprint --default "")
+   [ -z "$CURSOR" ] || [ "$CURSOR" = "$SPRINT_NO" ] || { echo "resume-conflict: Sprint 游标不一致"; exit 1; }
+   python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot ENTRY_MODE full || exit 1
+   $BE --version "$V" set autopilot_entry_mode full || exit 1
+   # 已有 build 直接续 dev；手工启动而尚无 build 的，先过规划/铸 build 仪式。
+   BUILD=$($BE --version "$V" get current_build --default "")
+   NEXT_PHASE="3.1-plan"; [ -n "$BUILD" ] && NEXT_PHASE="3.2-dev"
+   # 仅修复续跑指针；run-state 会增加进入次数/写完成时间，留给 Phase 3 的实际派发处理。
+   $BE --version "$V" set run_state.next_phase "$NEXT_PHASE" run_state.next_sprint "$SPRINT_NO" || exit 1
+   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py stale-active-sprint || true
+   ```
+
+   Phase 1 续跑门据此强制执行；Phase 3.2 派 `/sprint-full {NNN} --resume --unattended --from-batch`，走 dev→test→bugfix→close，保留当前 build 和已有上下文。`--skip-dev` 本轮不恢复开发、不自动关闭，保持在途并报告冲突；不得用它把未交付 Sprint 送入部署。
+   - 任一恢复前置失败 → **实际执行** `python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --preflight --command autopilot --reason stale-active-sprint --why "active Sprint 恢复校验失败：附本轮版本/编号/用户或游标冲突证据"` 后结束本 tick（0=已记账、3=已冻结告警、2=入参错须修正）；恢复执行失败由 Phase 3.2 原有 `dev_fail_streak` 与 stuck 门记账，不伪造关闭记录。

@@ -68,7 +68,7 @@ PROTECTED = (
     "memory/databaseBaseline.md",
     # ★ 项目记忆文件（`AGENTS.md`，仅 Claude Code 时为 `CLAUDE.md`）——`/memory-sync`
     #   **自己点名会写**的文件（「当前状态」段由命令自动更新）：**命令会写、写坏了没有检出器**，
-    #   正是本门要防的形态。两个文件名都登记：不存在的那份按「工作区无此文件」跳过。
+    #   正是本门要防的形态。两个文件名都登记：无基线的跳过，有基线却缺失的报错。
     #   ⚠️ 二者并存时 `CLAUDE.md` 是 `@AGENTS.md` 薄壳、体量极小，
     #   L2「塌缩 ≥40%」对它天然更敏感（删掉一段占比就很高）——这正是想要的：
     #   它本来就不该被整段删。基线比对按各文件自身体量算，见 `_shrunk()`。
@@ -102,11 +102,22 @@ def na_vcs_disabled(capability):
 
 def protected_files(root):
     import glob
-    out = list(PROTECTED)
-    for g in ITERATION_GLOBS:
-        for p in sorted(glob.glob(os.path.join(root, g))):
-            out.append(os.path.relpath(p, root).replace(os.sep, "/"))
-    return out
+    from pathlib import PurePosixPath
+    out = set(PROTECTED)
+    # 工作区 glob 看不到整份被删的迭代记忆，必须并入快照和 HEAD 的受保护路径。
+    for base in (root, os.path.join(root, SNAPSHOT_DIR)):
+        for pattern in ITERATION_GLOBS:
+            for path in glob.glob(os.path.join(base, pattern)):
+                out.add(os.path.relpath(path, base).replace(os.sep, "/"))
+    if detect_mode(root) == "git":
+        result = subprocess.run(["git", "-C", str(root), "ls-tree", "-rz", "--name-only", "HEAD"],
+                                capture_output=True)
+        if result.returncode == 0:
+            for raw in result.stdout.split(b"\0"):
+                relative = os.fsdecode(raw)
+                if any(PurePosixPath(relative).match(pattern) for pattern in ITERATION_GLOBS):
+                    out.add(relative)
+    return sorted(out)
 
 
 def take_snapshot(root=".", files=None):
@@ -193,20 +204,24 @@ def run(root=".", shrink=0.4, files=None):
     # ★ 同 check_index_staleness：`applicable` 两条路都给，缺了就会让"通过"被读成"不适用"。
     res = {"applicable": True, "checked": 0, "skipped": [], "errors": []}
     targets = list(files or protected_files(root))
-    if detect_mode(root) != "git" and any(
-        os.path.isfile(os.path.join(root, rel)) and
-        not os.path.isfile(os.path.join(root, SNAPSHOT_DIR, rel))
-        for rel in targets
+    if detect_mode(root) != "git" and not any(
+        os.path.isfile(os.path.join(root, SNAPSHOT_DIR, rel)) for rel in targets
     ):
         return na_vcs_disabled("diff")
     for rel in targets:
         path = os.path.join(root, rel)
-        if not os.path.isfile(path):
-            res["skipped"].append({"file": rel, "why": "工作区无此文件"})
-            continue
         old, src = _baseline(root, rel)
         if old is None:
             res["skipped"].append({"file": rel, "why": "无快照且 HEAD 无此文件（新建），无可比基线"})
+            continue
+        if not os.path.isfile(path):
+            res["checked"] += 1
+            res["errors"].append({
+                "file": rel, "rule": "L3", "level": "ERROR", "section": "(整份)",
+                "msg": "基线（%s）中的受保护文件在工作区整份消失" % src,
+                "fix": "从 %s 恢复文件后再定点编辑" % (
+                    os.path.join(SNAPSHOT_DIR, rel) if src == "snapshot" else "git show HEAD:" + rel),
+            })
             continue
         new = open(path, encoding="utf-8").read()
         if IGNORE_RE.search("\n".join(new.split("\n")[:8])):

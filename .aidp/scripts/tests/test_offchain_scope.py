@@ -246,12 +246,80 @@ def test_standalone_push_debt():
           "--standalone" in a)
 
 
+def test_dispatch_and_deletion_contracts():
+    print("\n[O6] AIDP 派发、删除证据与角色收口契约")
+
+    def text(relative):
+        return (REPO / relative).read_text(encoding="utf-8")
+
+    dev = text(".aidp/commands/sprint-dev.md")
+    flow = text(".aidp/flows/sprint-dev/phase-1-dev-2.md")
+    dispatch = flow.split("### Phase 1.4：", 1)[1]
+    check("并行实现由 AIDP 编排，不借串行 SKILL 的调度语义",
+          "AIDP 主流程直接使用 Agent 工具编排" in dispatch
+          and "不调用 `superpowers:subagent-driven-development`" in dispatch)
+    check("写集覆盖新增/删除/测试/锁文件，冲突和依赖均控制并行准入",
+          all(s in dispatch for s in ("write_set", "create_dirs", "dependencies",
+                                      "写集无交集", "改为串行", "未知冲突按有冲突处理")))
+    check("共享文档和 Git 动作归主流程，子 Agent 不自行提交或关闭",
+          "Git index/commit/push" in dispatch and "由主流程统一处理" in dispatch
+          and "子 Agent 不自行提交或关闭 Sprint" in dispatch)
+    check("规范审查先于代码质量审查，Task 审查不替代 Sprint 验收/归档",
+          dispatch.index("规范符合性审查") < dispatch.index("代码质量审查")
+          and "两阶段审查未过不得" in dispatch
+          and "Task 审查不替代这两道门" in dispatch)
+
+    rule = text(".aidp/rules/code.md").split("## 约定 29", 1)[1].split("## 约定 35", 1)[0]
+    frontend = text(".aidp/agents/frontend.md").split("11. **", 1)[1].split("12. **", 1)[0]
+    check("四类信号仅提供候选，重构不是删除授权",
+          "4 类候选线索" in rule and "④ 也不是删除授权" in rule
+          and "任一命中即死代码" not in rule and "④ 强信号命中 →" not in frontend)
+    check("自动删除须全部证据，仍在使用的重构优先 C",
+          "删除证据门（B 的必要条件，全部满足）" in rule
+          and "C 优先于 B，分支互斥" in rule
+          and "无存活入口/调用方，且删除证据门全部满足" in rule)
+    check("详情页路由、动态加载和外部消费者不能被零命中误杀",
+          all(s in rule for s in ("无菜单但仍有路由", "动态/自动注册", "外部调用",
+                                 "扫描失败", "未知，保留原文件"))
+          and "未核部分填“无”" in dev)
+    check("关联文件逐项证明独占，数据库无登记不被解释为空库",
+          "每个连带文件也已证明仅由该候选使用" in rule
+          and "未证实的不删除" in frontend
+          and "基线未登记不等于表不存在或无生产数据" in dev
+          and "不能生成或执行 DROP" in dev)
+
+    for relative in (".aidp/rules/frontend.md", ".aidp/agents/ui.md",
+                     ".aidp/flows/sprint-dev/phase-1-dev-2.md"):
+        body = text(relative)
+        check(relative + "：L2 非阻断仅管 loop，不再承诺验收通过",
+              "不阻塞验收" not in body and "loop" in body and "验收仍不通过" in body
+              if relative != ".aidp/rules/frontend.md" else
+              "不阻塞验收" not in body and "验收结论为不通过" in body)
+
+    pm = text(".aidp/agents/pm.md")
+    architect = text(".aidp/agents/architect.md")
+    check("PM 只回填脚手架根记忆，归档保留判断而不整份复制",
+          "只定点回填" in pm and "不重写规范正文" in pm
+          and "不整份复制" in pm and "将 activeContext 完整复制" not in pm)
+    for relative, body in (("pm", pm), ("architect", architect)):
+        check(relative + "：共享主文档可级联，正式发布与 Sprint 历史仍保护",
+              "未发布版本的共享" in body and "--ledger-cascade" in body
+              and "改写授权门" in body and "Sprint" in body
+              and ("归档记录保持只读" in body or "永不修改" in body))
+    for relative in ("docs/init/02_迭代输入指导.md", "docs/init/05_commands详细规范.md",
+                     "docs/init/00_AIDP范式主文档.md"):
+        check(relative + "：开发调用描述已同步",
+              "subagent-driven-development" not in text(relative)
+              and "写集" in text(relative))
+
+
 def main():
     test_convention_41_text()
     test_offchain_budget_tiers()
     test_comment_ratio_gate()
     test_archive_and_mutation_rounds()
     test_standalone_push_debt()
+    test_dispatch_and_deletion_contracts()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     return 1 if _failed else 0
 

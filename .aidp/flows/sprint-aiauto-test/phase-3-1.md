@@ -92,7 +92,7 @@ if [ -f {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py ]; then
   # 新结果必带 --require-runtime-preflight；Web+WebMCP 另加 --webmcp-enabled。
   # 启用判定只走 check_client_mcp.py，兼容旧 webmcp 与新 client_mcp；冲突/检测失败不能当关闭。
   CR_WEBMCP=""
-  CR_CLIENT_JSON=$(python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json); CR_CLIENT_EXIT=$?
+  CR_CLIENT_JSON=$(python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "${TARGET_VERSION:?}" --detect --json); CR_CLIENT_EXIT=$?
   if [ "$CR_CLIENT_EXIT" -ne 0 ] || ! CR_WEBMCP=$(printf '%s' "$CR_CLIENT_JSON" | python3 -c "import json,sys
 d=json.load(sys.stdin)
 print('--webmcp-enabled' if d.get('declared') is True and d.get('client_type')=='web' and d.get('implementation')=='webmcp' else '')"); then
@@ -151,36 +151,14 @@ for rd in sorted(rounds, key=lambda p: int(p.name.split("-")[-1])):
         shutil.copy2(source, dest / source.name)
 SHOTS
 
-# ② 硬核验：截图非空才通过；缺图先记账、发 #4，再 exit 0 让位，不能只 echo 或裸 exit 1。
-if [ -z "$(find "$SHOT_DIR" -type f \( -iname '*.webp' -o -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \) 2>/dev/null | head -1)" ]; then
-  echo "❌ Phase 3 核验失败：截图为空 $SHOT_DIR —— auto-test-runner 未按 capture 契约在关键步骤（登录/提交/状态变化/断言/报错）出图"
-  # → 用例已跑完无法回补：data/{BUILD}.js 须把对应 case 的 screenshot 标"缺图"并记执行缺陷，不得静默
-  # ★ 记账 + 达阈冻结（防 /loop 每 tick 重撞同一失败）：连续 3 次即按 Phase 0.2「冻结字段写入契约」冻结本版
-  N=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" bump shot_gate_fail_streak)   # ★ 本门专属计数，⛔ 不与 3.2.6 两门共用
-  # 无唤醒源=没有下一 tick 叠 streak，阈值恒不可达 → 当场按达阈处置（根因见 rationale.md）
-  if [ "$N" -ge 3 ] || [ "${HAS_WAKE_SOURCE:-0}" = "0" ]; then
-    # ★ `unconverged_frozen_head` 必须与四件套**同批写入**（理据见 rationale.md「冻结快照 HEAD」）
-    python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" \
-      set needs_human true aiauto_frozen_at @now freeze_reason unconverged \
-      unconverged_frozen_head "$(git rev-parse HEAD 2>/dev/null || echo '')" \
-      needs_human_reason "连续 $N 次截图核验失败：auto-test-runner 未按 capture 契约出图"
-    python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_blocked_reason "frozen:unconverged@$TARGET_VERSION"
-    echo "⏸️ 连续 $N 次截图核验失败 → 冻结本版待人工（解冻靠新提交 / 新部署 / 人工 retry）"
-  fi
-  # ★ 发 #4 通知：参数须对齐 notify.py 真实签名（无 --kind/--body），写错会被 `|| true` 咽掉
-  python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" \
-    --auto --title "AI 测试受阻：截图为空" --header-color red \
-    --version "$TARGET_VERSION" --build "${BUILD:-?}" \
-    --section "截图核验失败第 $N 次（阈值 3）。$SHOT_DIR 下无截图（.webp/.png/.jpg/.jpeg），auto-test-runner 未按 capture 契约出图。本轮结论未采信、已让位。" || true
-  exit 0   # ⛔ 不用 exit 1：已记账 + 已告警 → 让位本 tick（同本命令其余各处门）
-fi
-# 核验通过只清本门计数；截图、finalize、骨架三门各用独立 streak，不能互相清零。
+# ② 证据义务由 check_result.py 与下方独立质量检查逐用例核验，不能用「目录非空」替代。
+# 前置探测即 block、未进入 UI 的合法结果可只有 API/DB/环境证据，零截图仍须生成如实报告。
+# 仅清旧版全局截图计数，不清其他门的阻塞状态。
 python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del shot_gate_fail_streak || true
 fi   # ← SKIP_REPORT 守卫结束
 ```
 
-- 截图齐 → 进 3.2.6 生成 HTML（3.2.6 末尾再自核验 `data/{BUILD}.js` + `index.html` 落盘 + 注册）；
-- 截图缺失且无法当场补 → 按上方代码：**发 #4 告警通知 + 记账 `shot_gate_fail_streak` + `exit 0` 让位本 tick**（⛔ 不是 `exit 1`：裸失败退出会丢掉一整轮已跑完的真实结论、零通知、静默冻结——正是本段上文点名要避免的形态），且**不更新 baseline 的"完成"字段、不发完成类通知**；连续 3 次达阈才按 `report-gate` 冻结本版。
+继续 3.2.5bis 质量检查，再进 3.2.6 生成 HTML。已进入 UI 且具有 capture 义务的用例缺图，按 SKILL 的证据契约记执行缺陷；前置 block 使用实际探测证据，不要求占位截图。`SHAPE_BAD=1`、质量检查 Critical 或 block 结果都不能宣称通过；报告必须保留真实失败原因。
 
 
 ### 3.2.5bis ★ 派 SKILL 的 8 维度独立质量检查子 Agent（Critical 门）

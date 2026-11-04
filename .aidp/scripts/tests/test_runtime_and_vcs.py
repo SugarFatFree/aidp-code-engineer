@@ -341,6 +341,47 @@ class VcsCapabilityTest(unittest.TestCase):
 
 
 
+class TestChainSourceOwnershipTest(unittest.TestCase):
+    def test_same_basename_cases_from_other_directories_survive_discovery(self):
+        text = (REPO / ".aidp/flows/sprint-aiauto-test/phase-2-1.md").read_text(encoding="utf-8")
+        snippet = text.split("# D. 去重", 1)[1].split("# E.", 1)[0]
+        snippet = snippet[snippet.index("SUPPLEMENT_UNIQUE="):]
+        primary = "docs/testing/V0.2/正式用例/02_全量自测用例.md"
+        dev = "docs/testing/V0.2/研发自测/02_全量自测用例.md"
+        previous = "docs/testing/V0.1/研发自测/02_全量自测用例.md"
+        env = dict(os.environ, PRIMARY_CASES=primary,
+                   SUPPLEMENT_CASES="\n".join((primary, dev, previous, dev)))
+        result = subprocess.run(["bash", "-c", snippet + '\nprintf "%s\\n" "$SUPPLEMENT_UNIQUE"'],
+                                env=env, text=True, capture_output=True, check=True)
+        self.assertEqual([dev, previous], result.stdout.splitlines())
+
+    def test_retired_counter_cleanup_does_not_hide_live_counter_defects(self):
+        guard = _load("check_flow_var_refs")
+        cleanup = "baseline_edit.py del aiauto_preflight_fail_streak shot_gate_fail_streak new_gate_fail_streak"
+        with mock.patch.object(guard, "_all_text", return_value=cleanup), \
+             mock.patch.object(guard, "_scan_baseline_fields", return_value=({}, guard.HANDOFF_FIELDS)):
+            findings = guard.scan_baseline_orphans(str(REPO))
+        missing = {f["field"] for f in findings if f["kind"] == "counter-field-no-increment"}
+        self.assertEqual({"new_gate_fail_streak"}, missing)
+
+    def test_empty_screenshot_directory_does_not_override_runner_evidence_contract(self):
+        text = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-1.md").read_text(encoding="utf-8")
+        section = text.split("# ② ", 1)[1].split("### 3.2.5bis", 1)[0]
+        self.assertNotIn("bump shot_gate_fail_streak", section)
+        self.assertNotIn("exit 0", section)
+        self.assertIn("check_result.py", section)
+        self.assertIn("block", section)
+        self.assertIn("HTML", section)
+
+    def test_testing_preflight_does_not_mutate_shared_checkout(self):
+        text = (REPO / ".aidp/flows/sprint-aiauto-test/phase-0-1.md").read_text(encoding="utf-8")
+        section = text.split("### 0.0 ", 1)[1].split("### 0.0.5", 1)[0]
+        shell = "\n".join(re.findall(r"```bash\n(.*?)```", section, re.S))
+        self.assertNotRegex(shell, r"git\s+(pull|rebase|switch|checkout|merge|stash)\b")
+        self.assertIn("push_commit", section)
+        self.assertIn("共享工作树", section)
+
+
 class DesignFactRenameTest(unittest.TestCase):
     def test_new_fact_file_renames_in_git_and_non_git_projects(self):
         command = (SCRIPTS.parent / "commands/sprint-design.md").read_text(encoding="utf-8")

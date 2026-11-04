@@ -33,7 +33,7 @@
 - `--skip-aiauto-test`：跳过 Step 6 浏览器仿真测试整合（纯开发模式）
 - `--aiauto-test-required`：父 autopilot 已安排独立测试链路；即使本批次 `--skip-aiauto-test`，仍须生成用例，并逐层透传。
 - `--auto-aiauto-test`：Step 6 跳过"是否要跑 AI 自动化测试"询问门，直接走部署确认 + 执行（仍会问 deployment 字段缺失项）
-- `--unattended`：★ autopilot `/loop` 无人值守标记（等价环境变量 `LOOP_UNATTENDED=1`）。① **隐含跳过 Step 0.0**（上下文压缩询问门——其唯一出口是等人应答、超时即终止整条命令）② **透传给 Step 3 每个 `/sprint-full → /sprint-dev`**，令其 Sprint 内部决策门（UI C/D、约定22 级联）改为消费 PRD `autopilot_decisions` 预声明、不弹窗（见「零询问连跑铁律」`--unattended` 例外）
+- `--unattended`：autopilot 无人值守标记（等价环境变量 `LOOP_UNATTENDED=1`）。跳过 Step 0.0 的 INFO 提示，并透传给每个 `/sprint-full → /sprint-dev`；内容决策按 PRD `autopilot_decisions` 或保守默认处理，不弹窗。
 
 **逐 Sprint 用例意图**：若 Step 6 将执行，或父链传 `--aiauto-test-required`，每次 `/sprint-full` 都带 `--aiauto-test-required`；仅父链和本批次均未安排实测时透传 `--skip-aiauto-test`。子批次 skip 只管不在此处启动浏览器，不取消父链已安排的实测。
 
@@ -41,7 +41,7 @@
 
 ### Step 0.0：上下文压缩建议
 
-> ⛔ **无人值守守卫（本 Step 首行判定，先于一切检测）**：`--unattended` 或环境变量 `LOOP_UNATTENDED=1` 命中 → **整段 Step 0.0 跳过**（等同 `--skip-context-check`），直接进 Step 0.1。**Why**：本门唯一出口是等人应答、超时即**终止整条命令**，无人值守下必然挂满超时后一个 Sprint 都不跑；且"上下文长"在无人值守下的正解是换执行形态（compact / 子 Agent / 分 tick），不是停下问人（见「零询问连跑铁律」的作用域澄清）。
+> **无人值守守卫**：`--unattended` 或 `LOOP_UNATTENDED=1` → 跳过本 INFO 提示（等同 `--skip-context-check`），直接进 Step 0.1。任何模式下都不得因上下文长度等待人工；用子 Agent 隔离或自动压缩继续。
 
 `/sprint-batch` 常紧接 `/version` 之后执行，两个命令都产生很长的上下文（PRD/设计/计划/自测用例等多文档生成）。**长上下文会导致 sprint-batch 内部子命令调用更慢、更易出错**。命令端在最开始执行**条件提示**：
 
@@ -51,9 +51,9 @@
 - (b) **会话短**：本会话从开头到现在轮次很少（凭感知 ≤ 5 轮往返） / 上下文窗口占用还很轻 → **是 → 跳过提示**
 - (c) **未跑大命令**：本会话**未执行**过 `/version` 或密集的 `/sprint-design` / `/sprint-requirements` 等大产物命令 → **是 → 跳过提示**
 
-> 这三项是**启发式判定**，Claude 无法精确数 tokens 或轮次；只要任一条件你能**直观感受到**满足，即可跳过提示。判定不确定（边界场景）时，**默认触发提示**（保守倾向 — 多问一次胜过让用户掉进长上下文坑）。
+> 这三项是**启发式判定**，Claude 无法精确数 tokens 或轮次；只要任一条件你能**直观感受到**满足，即可跳过提示。判定不确定时默认打印一次 INFO，随后继续。
 
-**2. 触发提示的条件**（以上三项任一为否，即触发）：
+**2. 触发提示的条件**（以上三项均为否时触发）：
 
 终端输出：
 
@@ -95,7 +95,7 @@
    - 研发执行计划：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/0[0-9]_M*研发执行计划.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**，理由同上一行研发需求；合法布局见 `/sprint-plan` Step 1「输出」）
    - 任一缺失（设计目录无任何内容主文档）→ **停止执行**，提示先执行 `/version {version} "{里程碑}"`
 2. 读取 `memory/{version}/{user}/activeContext.md`：
-   - 如有进行中的 Sprint → **停止执行**，提示先 `/sprint-close`（约定 9 是**硬停**不是提示，与 `/sprint-full` 前置检查 2、`/sprint-start` 同口径；写成提示会先落 Step 0.3 / Step 1 的副作用，才被子命令拦下）
+   - 如有进行中的 Sprint：仅当它属于当前版本、当前用户，且落在本批范围内时允许续跑；Step 1 再确认它仍在未关闭列表，Step 3 对该号传 `--resume`，保留已有任务状态。其他活跃 Sprint 或状态矛盾 → 硬失败退出，不为绕过开工门自动关闭。
 3. 读取 `memory/{version}/{user}/progress.md` 的 Sprint 历史
 
 ### Step 0.3：测试方案 AI 自动化预检（★ 跑 Sprint 之前就补全 AI 自动化测试信息）
@@ -123,13 +123,15 @@
 # ⛔ 绝不写成 `eval "$(...)"` 一行：脚本 fail-closed 时 **exit 1 且 stdout 零字节**，
 #    `eval` 会把退出码吞掉 → `REMAIN_COUNT` 未定义 → 执行列表为空 → **0 个 Sprint 跑完且零报错**，
 #    正是下方 Why 段要堵的那种假成功。形态与 `flows/sprint-autopilot/phase-3-5.md` 的调用保持一致。
-_PS=$(python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version "$VERSION" --shell) || exit 1
+# SPRINT_RANGE 从 $ARGUMENTS 的范围参数取得，无范围时置空；本批次全程保持不变。
+SPRINT_RANGE="${SPRINT_RANGE:-}"
+_PS=$(python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version "$VERSION" --range "$SPRINT_RANGE" --shell) || exit 1
 eval "$_PS"; : "${REMAIN_COUNT:?plan_sprints fail-closed}"   # ALL_SPRINTS / CLOSED_SPRINTS / REMAIN_SPRINTS / REMAIN_COUNT
 ```
 
 **Why**：计划是**多文件形态**（多用户拆 / 超阈拆 / 跨里程碑拆 `01_M1…` `02_M2…`）。只读到 M1 那一份时「全部 Sprint」就等于 M1 的 Sprint → M1 跑完差集为空 → 打印「✅ 全部 Sprint 已关闭」→ 照常部署、finalize、发报告与里程碑通知，而 **M2 的 Sprint 从未执行、且没有任何告警**：不报错、不重试、结论是「成功」。脚本对「目录下一份计划都没有」fail-closed（exit 1，⛔ 不返回空集——空集会被读成「全部已关闭」）。
 
-执行列表 = `REMAIN_SPRINTS` 与范围参数取交集。**确定后直接开跑，绝不就"要执行哪些 Sprint"向用户确认**（无范围参数即默认全部未完成 Sprint —— `progress.md` 仅用于断点续跑跳过**已 close** 的，不是让你只跑"当前一个"）。
+执行列表直接取脚本按范围过滤后的 `REMAIN_SPRINTS`。若 Step 0.2 发现活跃 Sprint，它必须仍在该列表且优先续跑；否则按状态矛盾硬失败退出。确定后直接执行，无范围即全部未完成 Sprint，不再询问范围。
 
 ```
 例：
@@ -179,10 +181,10 @@ N 个 Sprint 子 Agent 各自重读同一批**本版内完全不变**的文档�
 
 ```
 for NNN in 执行列表:
-    result = /sprint-full {NNN} --from-batch [skip-bugfix] [--unattended] [--stop-on-blocker]   # ★ 本命令带 --stop-on-blocker 时必透传（bugfix 超限的停顿判定在 /sprint-full Phase 4 内部，不透传则本 flag 与不带完全等价）；带 --unattended 时必透传，令 Sprint 内部决策门消费 PRD 预声明、不弹窗
+    result = /sprint-full {NNN} --from-batch [--resume] [skip-bugfix] [--unattended] [--stop-on-blocker]   # ★ 本命令带 --stop-on-blocker 时必透传（bugfix 超限的停顿判定在 /sprint-full Phase 4 内部，不透传则本 flag 与不带完全等价）；带 --unattended 时必透传，令 Sprint 内部决策门消费 PRD 预声明、不弹窗
     update progress(NNN, result)
-    if result.kind == "硬失败"（编译/前端校验/设计文档缺失）:
-        break  # 仅此一种情况允许中断
+    if result.kind == "硬失败" or (带 --stop-on-blocker and result.kind == "软失败"):
+        break  # 记账退出；无人值守不得原地等人
         # ⛔ 中断后仍须执行本批次的落点/终态检查——break 只跳出 Sprint 循环，不改变逐 Sprint `--cascade-now` 的收口结果：
         #   漏跑则本批次已产生的开发期变更台账当轮无人收口，与「本批次确实没有变更」在机器上同形。
     update context_digest(NNN)   # Step 2.5 的增量更新：把本 Sprint 新增的公共产物追加进摘要
@@ -237,8 +239,8 @@ for NNN in 执行列表:
   - progress.md 中所有 Sprint 状态为 ✅ 完成
 ```
 
-> ⛔ **完成自检（连跑铁律的可验证收口）**：进入本步前**重跑一次** `plan_sprints.py --shell`，核对 **`REMAIN_COUNT == 0`**（即 `ALL_SPRINTS − CLOSED_SPRINTS` 为空）。⛔ **不得拿「已 close 数 == Step 1 执行列表长度」当判据**——执行列表本身就是那次读计划的产物，读漏了一份计划时它与已 close 数天然相等，自检与被检对象同源、恒自洽。若 `REMAIN_COUNT > 0`（还有 Sprint 没跑）→ **未完成**，**回 Step 3 继续跑剩余 Sprint**，**绝不**在此提前收尾 / 汇报"全部完成" / 进 Step 6。唯一例外 = Step 4 硬失败中断（已记账并在汇总报告标明中断点）。
-> ⛔ **回 Step 3 必须有进度判据与次数上限，否则是单 tick 内的死循环**：记录回跳前的「已 close 数」，回跳一轮后若该数**没有增加**即判**无进展**；连续 2 轮无进展 → 停止回跳，按 Step 4 硬失败处置（记账 + 汇总报告标明中断点 + 交上游熔断）。**Why**：`/sprint-full` 的前置检查 2（约定 9 未归档）是**硬停**，而 Step 4 的失败分类表**没有「前置检查失败」这一行** —— 该返回不被归类，就落进这里的无界重试；而 autopilot 的通用 stuck 熔断是 **tick 级**判据，管不到单 tick **内部**的循环，于是表现为上下文持续膨胀直到撞上限，且全程零告警。
+> ⛔ **完成自检**：进入本步前重跑 Step 1 的 `plan_sprints.py --version "$VERSION" --range "$SPRINT_RANGE" --shell`，始终扫描全部计划分册，核对 **`REMAIN_COUNT == 0`**。无范围参数时检查全版本；显式范围时只检查该范围内未关闭 Sprint，范围外剩余项留待后续批次，不能自动扩张本次授权。不得仅比较已 close 数与初始列表长度。若范围内仍有剩余 → 回 Step 3 继续；遇 Step 4 停止条件则记账并报告中断，不能宣称完成。报告须区分「本批范围完成」与「全版本完成」。
+> **无进展上限**：回跳前后比较本批范围内已 close 数；连续 2 轮未增加 → 按 Step 4 硬失败收口并交上游熔断。前置检查失败本身已属硬失败，不应进入重试；此上限兜底未识别的无进展状态。
 
 ### Step 5.5：级联职责说明（不再单独触发）
 

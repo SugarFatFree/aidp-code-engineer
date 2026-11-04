@@ -439,7 +439,40 @@ def test_sprint_start_gate_scope():
         check("计划中的等待开发说明不当成已启动", module.scan(root, "V1.0.0", scope="started")["ok"])
 
 
+def test_planning_intent_dispatch():
+    print("\n[P2] 强制规划与补件语义不能被未变快照吞掉")
+    flow = (REPO / ".aidp/flows/sprint-autopilot/phase-3-3.md").read_text(encoding="utf-8")
+    version = (REPO / ".aidp/commands/version.md").read_text(encoding="utf-8")
+    planning = (REPO / ".aidp/flows/version/planning-3.md").read_text(encoding="utf-8")
+    check("version 登记 force-replan / repair-planning", all(f"| `{flag}` |" in version
+          for flag in ("--force-replan", "--repair-planning")))
+    decision = version[version.index("模式决议："):version.index("**分支 → 流程章节对照**")]
+    check("强制与缺件分支优先于 B-1 输入未变退出", "B-0" in decision
+          and decision.index("B-0") < decision.index("**情况 B-1"))
+    check("补件按族复用已有主文档，不误走只含变化的 supplement", "repair 模式" in planning
+          and "fresh 调用" in planning and "缺失" in planning)
+    match = re.search(r"<!-- planning-intent -->\s*```bash\n(.*?)```", flow, re.S)
+    check("autopilot 实际组装并输出规划调用参数", match is not None)
+    if not match:
+        return
+    with tempfile.TemporaryDirectory(prefix="aidp-plan-intent-") as directory:
+        for force, done, unattended, expected in (
+                (1, 1, 1, "--force-replan --unattended"),
+                (0, 0, 1, "--repair-planning --unattended"),
+                (1, 0, 0, "--force-replan"),
+                (0, 1, 0, "")):
+            for name, value in (("TARGET_VERSION", "V1.0.0"), ("FORCE_REPLAN", str(force)),
+                                ("PLANNING_DONE", str(done)), ("LOOP_UNATTENDED", str(unattended))):
+                args = [sys.executable, str(SCRIPTS / "autopilot_tick_flags.py"), "set", "--command", "autopilot", name, value]
+                subprocess.run(args, cwd=directory, check=True, capture_output=True)
+            body = match.group(1).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+            result = subprocess.run(["bash", "-c", body], cwd=directory, capture_output=True, text=True)
+            check(f"force={force} done={done} unattended={unattended} 参数不丢失",
+                  result.returncode == 0 and result.stdout.strip() == f"/version V1.0.0 {expected}".strip())
+
+
 if __name__ == "__main__":
+    test_planning_intent_dispatch()
     test_sprint_start_gate_scope()
     test_run_metrics_stage_and_render()
     test_parallel_plan_selftest_backfill()

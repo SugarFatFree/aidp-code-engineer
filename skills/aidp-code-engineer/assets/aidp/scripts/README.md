@@ -296,7 +296,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 ## agent_loop.sh — 非交互唤起 AIDP 命令
 
-`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过；锁文件以追加方式打开，取得锁后才写入本轮起点 `started_at`；无 `flock` 时退回 python3 `fcntl`，两者都不可用则写告警并以 3 退出）、日志追加到 `memory/.aidp/logs/<命令>.log`。执行行一律 `9>&-`，tick 拉起的后台常驻进程不继承锁。
+支持当前平铺运行根及旧嵌套布局，从脚本位置定位项目根，不依赖调用者的工作目录。`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过；锁文件以追加方式打开，取得锁后才写入本轮起点 `started_at`；无 `flock` 时退回 python3 `fcntl`，两者都不可用则写告警并以 3 退出）、日志追加到 `memory/.aidp/logs/<命令>.log`。执行行一律 `9>&-`，tick 拉起的后台常驻进程不继承锁。
 **tick 硬超时**：`AIDP_TICK_MAX_SECONDS`（默认 7200，`0` = 关闭）给每轮 tick 套 `timeout`（缺失时依次退回 `gtimeout`、python3 实现，同 `124/137` 语义）。每轮结束调 `aidp_scheduler.py tick-result`：超时写 `loop-tick-timeout` 告警台账并累计连续超时次数，连续 3 次（`AIDP_TICK_TIMEOUT_ALERT_AFTER`）起经 `notify.py --alert` 播报；非超时轮清零。⛔ 裸执行没有上限时，挂死的 tick 会永久持锁、让整条链路静默停摆。
 
 Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 取 `agent_env.py detect` 第一个）；执行模板（`{prompt}` 占位）：`AIDP_AGENT_EXEC` > `scheduler.exec.<agent>` > 内置默认（Claude Code `claude -p --permission-mode acceptEdits {prompt}`、Codex `codex exec --sandbox workspace-write {prompt}`；DeepSeek Harness 无内置默认、须配置，写法以所用版本官方文档为准）。
@@ -392,11 +392,11 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 ## check_webmcp.py — 前端 WebMCP 的启用判定 + 脚手架侧装配守卫（★ 未启用即整体 N/A）
 
-**第一职责是「启用判定的单一实现」**：WebMCP 是**可选**能力（详规 `{{AIDP_HOME}}/rules/webmcp.md`），横跨 rules / agents / flows / verify 五六个落点，每个落点都要回答「本项目启用了吗」。各处各自 grep PRD 必然判据漂移，且**一处判错就给未启用项目凭空长出告警和产物位**、直接违反「默认关闭」总原则。故 `--detect` 是该判定的唯一实现，其余落点一律调它。声明位置按序：① PRD `autopilot_decisions.webmcp.enabled: true`（**可选段，不计入必填 8 段；段不存在 = 未启用**）② `docs/architecture/架构约束.md` 显式声明。
+**第一职责是「启用判定的单一实现」**：WebMCP 是**可选**能力（详规 `{{AIDP_HOME}}/rules/webmcp.md`），横跨 rules / agents / flows / verify 五六个落点，每个落点都要回答「本项目启用了吗」。各处各自 grep PRD 必然判据漂移，且**一处判错就给未启用项目凭空长出告警和产物位**、直接违反「默认关闭」总原则。故 `--detect` 是该判定的唯一实现，其余落点一律调它。版本化调用必须传 `--version`：目标版优先，只向历史继承，显式关闭即停止；无参兼容项目级最新声明。先读 PRD `autopilot_decisions.client_mcp` 的 WebMCP 实现（兼容旧 `webmcp`），未声明才读架构基线；启动命令和环境地址采用相同版本作用域。
 **第二职责是「按需安装详规」**：`--install-rule` 把 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` 幂等装到 `{{AIDP_HOME}}/rules/webmcp.md`（未启用时**拒绝安装**，`--force` 可强装）。⚠️ **详规默认不在 `rules/` 下是刻意的**——`rules/*.md` 是**路径触发**加载的，常驻会让绝大多数不启用该能力的项目每次编辑前端代码白读十几 KB。配套四条保证见 `{{AIDP_HOME}}/rules/README.md`「按需安装的可选规则」段（漏装硬拦 / **随升级自动刷新** / 升级不删 / 不误报孤儿）；其中"刷新"由 `scaffold.py::refresh_optional_rules` 承担——安装位**不在 bundle 下发面里**，两条同步路径都碰不到它，不专门处理就永久停在安装那天的版本。
 ★ **职责边界（别把代码合规检查加回来）**：WebMCP 检查分两处、判据不重叠——**代码实现合规**（单一适配层 / `unregisterTool` / 错误契约死文案 / 写操作绕通道 / 敏感值外泄 / 白名单）归上游 `code-verification-loop` **维度 9** + 其 `scripts/check_webmcp_adapter.py`；**脚手架侧装配**归本脚本。前两项曾在本脚本实现过，上游落地后已**移交**（同一判据两份实现 = 改一处漏一处、两处都自称权威，是本仓最高频漂移源；`check_di_resolvability.py` 有同样先例）。`test_guard_scripts.py` 有一条防回归断言盯着这件事。
-未启用 → `applicable:false` + 退出码 `0` + **零 finding**，`verify.py` 侧连 `note()` 都不发。启用后跑三项守卫：① **详规已安装**（ERROR — `rules/*.md` 是路径触发加载的，不在那儿就永不加载 = 规则等于不存在）② **详规未过期**（WARN — 与模板位不一致，即自动刷新没跑到或副本被本地改过）③ **「测试环境与账号」已回写 WebMCP 段**（ERROR，**只判最新版本**不连坐旧版；下游踩过：用例三处指向该文档、文档里从未写，文件在锚点空、链接检查查不出来）。
-用法：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py [--root <仓库根>] [--detect] [--install-rule] [--force] [--json]`，退出码 `0`（通过或 N/A）/`1`/`2`；由 `verify.py::check_webmcp` 映射为 **ERROR**（仅启用时）。★ 命令端据 `--detect` 的输出把 `webmcp_enabled` / `webmcp_entry_symbols` 传给四个上游 SKILL（`dev-logic-architect` 维度 33 / `dev-manual-testcase` 用例族 + 维度 20 / `code-verification-loop` 维度 9 / `auto-test-runner` `invoke` 能力）——它们**全部入参门控且明令不自行探测**，⛔ **不传 = 那些维度永不启用**，启用了该能力的项目会静默漏掉四层质量门。
+未启用 → `applicable:false` + 退出码 `0` + **零 finding**，`verify.py` 侧连 `note()` 都不发。启用后跑三项守卫：① **详规已安装**（ERROR — `rules/*.md` 是路径触发加载的，不在那儿就永不加载 = 规则等于不存在）② **详规未过期**（WARN — 与模板位不一致，即自动刷新没跑到或副本被本地改过）③ **「测试环境与账号」已回写 WebMCP 段**（ERROR，只判目标版本作用域的环境文件，不连坐其他版本；下游踩过：用例三处指向该文档、文档里从未写，文件在锚点空、链接检查查不出来）。
+用法：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py [--root <仓库根>] [--version <目标版本>] [--detect] [--install-rule] [--force] [--json]`，退出码 `0`（通过或 N/A）/`1`/`2`；由 `verify.py::check_webmcp` 映射为 **ERROR**（仅启用时）。★ 命令端据 `--detect` 的输出把 `webmcp_enabled` / `webmcp_entry_symbols` 传给四个上游 SKILL（`dev-logic-architect` 维度 33 / `dev-manual-testcase` 用例族 + 维度 20 / `code-verification-loop` 维度 9 / `auto-test-runner` `invoke` 能力）——它们**全部入参门控且明令不自行探测**，⛔ **不传 = 那些维度永不启用**，启用了该能力的项目会静默漏掉四层质量门。
 
 ## check_client_mcp.py — 「客户端 MCP 能力暴露」的跨端声明判定【唯一实现】
 
@@ -404,7 +404,7 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 「客户端 MCP 能力」是**跨端**功能点（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**（`client_type=web` + `implementation_kind=webmcp`）。存量 Web 项目的 `webmcp_declared` / `webmcp_entry_available` / `requires_webmcp` 继续作为别名接收。
 
-用法：`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py [--root .] [--json] [--self-check]`；可选规则模板位 `{{AIDP_HOME}}/templates/optional-rules/client-mcp.md` → 安装位 `{{AIDP_HOME}}/rules/client-mcp.md`（已登记进 `scaffold_lib.py::OPTIONAL_RULES`，随升级自动刷新、也不会被误报孤儿）。
+输出 `enabled=declared`，直接满足依赖 SKILL 的启用入参；不能只传能力状态而漏掉 `enabled`。用法：`python3 {{AIDP_HOME}}/scripts/check_client_mcp.py [--root .] [--version <目标版本>] [--json] [--self-check]`；可选规则模板位 `{{AIDP_HOME}}/templates/optional-rules/client-mcp.md` → 安装位 `{{AIDP_HOME}}/rules/client-mcp.md`（已登记进 `scaffold_lib.py::OPTIONAL_RULES`，随升级自动刷新、也不会被误报孤儿）。
 
 ## aiauto_readiness.py — 客户端用例的前置状态（⛔ 绝不产 pass）
 
@@ -752,7 +752,7 @@ SKILL 名 713 字符，那不是归属是噪音（窗口调小到 120 会漏掉�
 硬编码 `01_研发执行计划.md`：多用户拆 `NN_研发执行计划-{姓名}.md`、超阈拆 `02_`…、跨 ≥3 里程碑拆
 `01_M1研发执行计划.md` 都是 `dev-execution-planner` 明确支持的形态，取第一份 = **M1 跑完即判「全部 Sprint 已关闭」，
 M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"——无人值守下最坏的一类失效）。
-用法：`python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version V0.1.0 [--root .] [--shell | --json]`。
+用法：`python3 {{AIDP_HOME}}/scripts/plan_sprints.py --version V0.1.0 [--root .] [--range NNN-NNN] [--shell | --json]`。范围也支持 `NNN-`；只筛选剩余集，全集和已关闭集仍保留。批次开工、收尾使用同一范围，范围未命中计划时 exit 1，不能假报完成。
 `--shell` 导出 `PLAN_FILE_COUNT` / `PLAN_FILES` / `ALL_SPRINTS` / `CLOSED_SPRINTS` /
 `REMAIN_SPRINTS` / `REMAIN_COUNT` / `FIRST_SPRINT` / `NEXT_SPRINT` / `CURRENT_SPRINT`
 （变量名与 `check_flow_var_refs.py::SCRIPT_INJECTED` 登记表由回归用例钉死一致）。
@@ -1086,13 +1086,13 @@ python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --command 
 `memory/` 下的项目级长期记忆（`projectBrief` / `productContext` / `systemPatterns` /
 `techContext` / `databaseBaseline`）**相当一部分由人手写，且往往是仓库里唯一一份记录**——
 覆盖即永久丢失。确定性防线靠本脚本：与比对基线比 **L1 段落消失 / L2 段落塌缩 ≥40% / L3 整份塌缩**，任一命中 exit 1。
-受保护面另含 `memory/V*/*/{activeContext,progress}.md`。
+受保护面另含 `memory/V*/*/{activeContext,progress}.md`；候选取工作区、快照和 HEAD 的并集，整份文件被删除同样报 L3，不能因文件不存在跳过。
 **比对基线优先取写前快照**：写入前调 `--snapshot`，把受保护文件的工作区现状存到 `memory/.aidp/memory-snapshot/`（未提交的手写内容同样受保护）；检查通过后自动清掉快照（`--keep-snapshot` 保留），报红时保留快照供取回被吞段落。无快照时回落 `git HEAD`。
 
 ⛔ **填 `（待填充）` 占位符不算丢失**——那正是约定 8 强制要求的动作，按标题**前缀**匹配，
 误伤这一条等于用一道门去阻止另一条约定要求做的事。
 
-调用方：`/memory-sync` Step 0 写前快照 + Step 3 收尾（硬门，exit 1）+ `verify.py`（WARN，只要可见）。
+调用方：`/memory-sync` Step 0 写前快照 + Step 3 收尾（硬门，exit 1）+ `verify.py`（WARN，始终传 `--keep-snapshot`，只读体检不得清除写前快照）。
 `--file` 可显式指定扫描面。
 
 **非 Git 且无快照 = 不适用**（退出码 `3`，`N/A(vcs-disabled)`）：本门是差分门，没有基线就没有"丢了什么"可言。

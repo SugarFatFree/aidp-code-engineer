@@ -116,9 +116,9 @@ fi
 > 那一半就永远不会执行——**失效方向是全绿**。故调 SKILL 前取**两级**判定：
 >
 > ```bash
-> python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json  # 跨端判定唯一实现
+> python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json  # 跨端判定唯一实现
 > #   → declared / capability_state / client_type / implementation
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json      # 仅 Web 叶子的专有事实
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json      # 仅 Web 叶子的专有事实
 > #   → enabled / entry_symbols（client_type=web 且 implementation=webmcp 时才需要）
 > ```
 >
@@ -141,8 +141,8 @@ fi
 > `DEV_MOCK` 三字段 `since`·`owner`·`REMOVE_WHEN`）；缺字段由 2B 判 Critical，⛔ 不存在
 > "写个裸标记就能关掉 2A"这条后门。判据与字段集以 `code-verification-loop` SKILL 为单一信源，本处不复制。
 
-> `check_client_mcp.py` 的 `declared: true` → 随 prompt 传 **`client_mcp`** 对象：
-> **显式补 `enabled: true`**（SKILL 门控读此键，检测器返回的 `declared` 不是它的别名），再保留
+> `check_client_mcp.py` 的 `enabled: true` → 随 prompt 原样传 **`client_mcp`** 对象：
+> **保留 `enabled`**（SKILL 门控读此键，检测器保证它与 `declared` 同值），以及
 > `client_type` / `implementation` / `capability_state` / `source` 等检测事实；
 > `declared-unimplemented` → 报告列前置缺失，不伪造 `enabled: true`；检测退出 2（声明冲突/非法值）须先修正声明，⛔ 不冒充未启用；
 > **另**当 `client_type=web` 且 `implementation=webmcp` 时**再加**传 `webmcp_enabled: true`

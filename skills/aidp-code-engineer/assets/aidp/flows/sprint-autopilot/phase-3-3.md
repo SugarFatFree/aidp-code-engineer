@@ -28,7 +28,25 @@
    失败/决策卡点会主动 @你，无消息即一切顺利
    ```
 
-2. **跑 `/version {TARGET_VERSION} [--unattended]`**（⛔ 无人值守下必带——`/version` 有多个交互门）（**仅当 `PLANNING_DONE=0` 或带 `--force-replan`，且 `NO_PLANNING!=1`**；否则整步跳过）（含里程碑参数，从 Phase 0.6 收集到的 `autopilot_decisions` 推断）：
+2. **跑 `/version {TARGET_VERSION} {规划意图参数} [--unattended]`**（⛔ 无人值守下必带——`/version` 有多个交互门）（**仅当 `PLANNING_DONE=0` 或带 `--force-replan`，且 `NO_PLANNING!=1`**；否则整步跳过）（含里程碑参数，从 Phase 0.6 收集到的 `autopilot_decisions` 推断）：
+   - **先组装实际调用参数**：下列围栏输出就是命令参数依据，独立子 Agent prompt / 内联 / 降级重试均原样携带；不能只在条件判断中读 `FORCE_REPLAN` 却给 `/version` 发裸参数。`NO_PLANNING=1` 时整步不调用；其余强制优先于补件。
+
+   <!-- planning-intent -->
+   ```bash
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   VERSION_ARGS=()
+   if [ "${FORCE_REPLAN:-0}" = 1 ]; then
+     VERSION_ARGS+=(--force-replan)
+   elif [ "${PLANNING_DONE:-0}" = 0 ]; then
+     VERSION_ARGS+=(--repair-planning)
+   fi
+   [ "${LOOP_UNATTENDED:-0}" = 1 ] && VERSION_ARGS+=(--unattended)
+   printf '/version %s' "${TARGET_VERSION:?}"
+   for ARG in "${VERSION_ARGS[@]}"; do printf ' %s' "$ARG"; done
+   printf '\n'
+   ```
+
+   `--repair-planning` 使 `/version` 在快照未变时仍补六类缺件；`--force-replan` 使其实际进入强制规划。里程碑作为独立引号参数附加，不吞掉上述 flags。完成后重新核验六类实物与审计报告；仍缺件按本步失败记账，不写成功出口。
    - **★★ 上下文隔离（#2 子 Agent 委派，仅 `LOOP_UNATTENDED=1`）**：`/version` 是全链路最重的一段，**优先委派【独立子 Agent】执行**（隔离上下文）——子 Agent 在其自身上下文里读 `{{AIDP_HOME}}/commands/version.md` 跑完整规划链 + 终审，只回传 **compact JSON**：`{version, planning_done:bool, artifacts:[主产物路径], sprint_count:N, auditor_verdict:"pass"|"block", key_counts:{req,design,api,db,cases}, fail_reason?}`。主流程据此发 #1b / 写 `run_state` / 进 3.1.5。**⛔ 交互式（`LOOP_UNATTENDED=0`）不委派**：`/version` 的决策类 `AskUserQuestion` 需用户在场应答，子 Agent 无法与用户交互 → 内联执行（见下条）。**回退**：子 Agent 工具不可用 → 内联执行，行为与产物完全不变。理据（为何这是规划 tick 破 1M 的最大来源）见 rationale.md。
      > ⛔⛔ **委派 × flag 一致性铁律（二选一，不许骑墙）**：`LOOP_UNATTENDED=0` 时**要么严格内联不委派**，
      > **要么**委派时**绝不给子 Agent 传 `--unattended`**（改走「子 Agent 回传 `needs_interaction` →
@@ -37,8 +55,8 @@
      > 弹窗全被跳过、`pending_actions` 挂 7 小时无人处置）。**出口自检**：「是否委派」「是否传该 flag」
      > 与 `LOOP_UNATTENDED` 三者必须自洽，不自洽即停下改正、不得带着不一致继续推进。委派失败 → **先走「子 Agent 派发失败的分层重试与降级」（P0-3 C1–C3，见 `flows/sprint-autopilot/invariants.md`）**：瞬时服务端错误（529/503/超时）指数退避重试 → 退避用满换**更小粒度**（把 `/version` 拆成 requirements/design/plan 分段各自委派）→ 仍不成才内联（带 C3 上下文预算护栏、不足则分批落盘续跑）；**唯有确定性失败**（子 Agent 早退 / 回传不合 compact 契约 / audit 反复 Critical）才按「失败处置」记 `dev_fail_streak`，不静默当成功。
    - **★ `--unattended` 按 `LOOP_UNATTENDED` 条件透传**：
-     - **交互式（`LOOP_UNATTENDED=0`：用户当面跑 `--once` / 明确执行意图，非 `/loop` 守护）→ 调 `/version {TARGET_VERSION}`（★ 不带 `--unattended`）**：让 `/version` 走**完整交互式版本规划**，其决策类 `AskUserQuestion` 用户在场、该发生就发生。
-     - **无人值守（`LOOP_UNATTENDED=1`：`/loop` 守护 / cron `--no-loop`）→ 调 `/version {TARGET_VERSION} --unattended`**（7×24 兜底铁律）：`/version` 的交互门按 Phase 0.6 预声明的 `autopilot_decisions` 自动落值或走保守默认，绝不挂死。
+     - **交互式（`LOOP_UNATTENDED=0`：用户当面跑 `--once` / 明确执行意图，非 `/loop` 守护）→ 调 `/version {TARGET_VERSION} {规划意图参数}`（★ 不带 `--unattended`）**：让 `/version` 走**完整交互式版本规划**，其决策类 `AskUserQuestion` 用户在场、该发生就发生。
+     - **无人值守（`LOOP_UNATTENDED=1`：`/loop` 守护 / cron `--no-loop`）→ 调 `/version {TARGET_VERSION} {规划意图参数} --unattended`**（7×24 兜底铁律）：`/version` 的交互门按 Phase 0.6 预声明的 `autopilot_decisions` 自动落值或走保守默认，绝不挂死。
    - `--full-auto` 模式下自动用 `autopilot_decisions` 填所有 `AskUserQuestion` 决策
    - **强制不跳过** `version-auditor`（独立子 Agent 审计八项 A–H）；`--unattended` 下审计 `block` 时 `/version` 自动修复 3 轮仍不过 → **返回 `audit-block` 失败信号**（不弹窗，见 `version.md` Step 2.4.7）
      > 📌 **本步的审计 ≠ Phase 3.3 的 autopilot 终审，两者产物必须是【不同文件】**：`/version` 内部审计写 `docs/audit/{V}/version-output-audit-YYYY-MM-DD.md`；Phase 3.3 的 autopilot 终审另写 `docs/audit/{V}/version-output-audit-{BUILD}.md`。**严禁**让本步产物顶替 Phase 3.3 终审（同名会使收尾门 glob 到上游遗留文件即判通过、终审没跑也能过），命名规则单一信源见 `phase-3-8.md` Phase 3.3。

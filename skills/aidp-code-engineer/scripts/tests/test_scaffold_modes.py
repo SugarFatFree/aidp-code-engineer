@@ -1722,6 +1722,144 @@ class OptionalRuleRefreshTest(unittest.TestCase):
             self.assertFalse(os.path.lexists(root / ".aidp"))
 
 
+class RuntimeFillableRewriteTest(unittest.TestCase):
+    relative = "reference/子Agent必读.md"
+
+    def prepare(self, root, agents="claude", old_baseline=True):
+        scaffold(root, "--agent", agents)
+        homes = ([".claude"] if agents == "claude" else [".agents"]
+                 if agents == "codex" else [".claude", ".agents"])
+        for home in homes:
+            target = root / home / self.relative
+            target.write_text("# 项目约定\n保留团队流程和 token=fixture-secret\n", encoding="utf-8")
+            if old_baseline:
+                L.uf_record(root, f"{home}/{self.relative}", b"old skeleton\n")
+        scaffold_marker.write_version(root, "V0.0.1")
+        return homes
+
+    def test_changed_skeleton_queues_preserves_and_finalizes_runtime(self):
+        for agents in ("claude", "codex", "claude,codex"):
+            with self.subTest(agents=agents), H.TempRepo() as root:
+                homes = self.prepare(root, agents)
+                original = {home: (root / home / self.relative).read_bytes() for home in homes}
+                result = scaffold(root, "--mode", "upgrade", "--agent", agents)
+                entries = [L.parse_queue_entry(line) for line in result["rewrite_queue"]]
+                targets = {f"{home}/{self.relative}" for home in homes}
+                self.assertEqual({entry["target"] for entry in entries}, targets)
+                self.assertTrue(result["pending"])
+                self.assertEqual(scaffold_marker.read_version(root), "V0.0.1")
+                blocked = H.run_script("finalize_upgrade.py", "--root", root, "--json", check=False)
+                self.assertEqual(blocked.returncode, 1, blocked.stdout)
+                for entry in entries:
+                    target = root / entry["target"]
+                    home = entry["target"].split("/", 1)[0]
+                    self.assertEqual(target.read_bytes(), original[home])
+                    self.assertEqual(entry["before"], L.sha256(original[home]))
+                    self.assertTrue((root / entry["template"]).is_file())
+                    self.assertNotEqual(entry["template"], entry["target"])
+                    merged = S.render_home_bytes((root / entry["template"]).read_bytes(), home)
+                    target.write_bytes(merged + original[home])
+                manifest_before = {(root / home / runtime_layout.RUNTIME_MANIFEST):
+                                   (root / home / runtime_layout.RUNTIME_MANIFEST).read_bytes()
+                                   for home in homes}
+                ready = H.run_script("finalize_upgrade.py", "--root", root, "--status", check=False)
+                self.assertEqual(ready.returncode, 0, ready.stdout + ready.stderr)
+                for path, data in manifest_before.items():
+                    self.assertEqual(path.read_bytes(), data, "--status 不写运行包清单")
+                final = H.run_script("finalize_upgrade.py", "--root", root, check=False)
+                self.assertEqual(final.returncode, 0, final.stdout + final.stderr)
+                self.assertFalse(L.queue_entries(root))
+                self.assertEqual(scaffold_marker.read_version(root), BUNDLE_VERSION)
+                for home in homes:
+                    runtime_layout.validate_runtime(root / home, expected_home=home)
+                    self.assertIn(b"token=fixture-secret", (root / home / self.relative).read_bytes())
+                again = scaffold(root, "--mode", "upgrade", "--agent", agents, "--force")
+                self.assertFalse(again["pending"], again["rewrite_queue"])
+
+    def test_unchanged_skeleton_does_not_queue_local_filling(self):
+        with H.TempRepo() as root:
+            self.prepare(root, old_baseline=False)
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertFalse(result["pending"], result["rewrite_queue"])
+            self.assertIn(b"fixture-secret", (root / ".claude" / self.relative).read_bytes())
+
+    def test_legacy_missing_ledger_uses_previous_template(self):
+        with H.TempRepo() as root:
+            self.prepare(root, old_baseline=False)
+            ledger = L._uf_load(root)
+            ledger.pop(f".claude/{self.relative}", None)
+            (root / L.USER_FILLABLE_BASELINE).write_text(json.dumps(ledger), encoding="utf-8")
+            old_tpl = root / ".claude/skills/aidp-code-engineer/assets/aidp" / self.relative
+            old_tpl.write_bytes(b"old skeleton\n")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertIn(f".claude/{self.relative}",
+                          {L.parse_queue_entry(line)["target"] for line in result["rewrite_queue"]})
+
+    def test_legacy_pending_rerun_does_not_promote_unmerged_skeleton(self):
+        with H.TempRepo() as root:
+            self.prepare(root, old_baseline=False)
+            label = f".claude/{self.relative}"
+            ledger = L._uf_load(root)
+            ledger.pop(label, None)
+            (root / L.USER_FILLABLE_BASELINE).write_text(json.dumps(ledger), encoding="utf-8")
+            old_tpl = root / ".claude/skills/aidp-code-engineer/assets/aidp" / self.relative
+            old_tpl.write_bytes(b"old skeleton\n")
+            scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            # 队列意外丢失后的重跑仍需恢复待办，不能把新版已安装误当成已语义合并。
+            (root / L.REWRITE_QUEUE_FILE).unlink()
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertIn(label, {L.parse_queue_entry(line)["target"]
+                                  for line in result["rewrite_queue"]})
+
+    def test_finalize_accept_and_missing_or_linked_targets(self):
+        with H.TempRepo() as root:
+            self.prepare(root)
+            scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            label = f".claude/{self.relative}"
+            target = root / label
+            content = target.read_bytes()
+            target.unlink()
+            result = H.run_script("finalize_upgrade.py", "--root", root, "--accept", label,
+                                  check=False)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            external = root.parent / "external-reference.md"
+            external.write_bytes(content + b"external secret\n")
+            target.symlink_to(external)
+            result = H.run_script("finalize_upgrade.py", "--root", root, "--accept", label,
+                                  check=False)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertEqual(external.read_bytes(), content + b"external secret\n")
+            self.assertTrue(L.queue_entries(root))
+            target.unlink()
+            target.write_bytes(content)
+            result = H.run_script("finalize_upgrade.py", "--root", root, "--accept", label,
+                                  check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(target.read_bytes(), content)
+            runtime_layout.validate_runtime(root / ".claude")
+            self.assertFalse(scaffold(root, "--force")["pending"])
+
+    def test_finalize_does_not_accept_unrelated_contract_drift(self):
+        with H.TempRepo() as root:
+            self.prepare(root)
+            scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            target = root / ".claude" / self.relative
+            # 单独构造待办，使本测试独立覆盖 finalize，而非先因缺少入队失败。
+            L.enqueue(root, f".claude/{self.relative}",
+                      root / ".claude/skills/aidp-code-engineer/assets/aidp" / self.relative)
+            scaffold_marker.write_pending(root, BUNDLE_VERSION)
+            target.write_bytes(target.read_bytes() + b"\nreviewed new rules\n")
+            command = root / ".claude/commands/sprint-dev.md"
+            command.write_bytes(command.read_bytes() + b"\nunrelated drift\n")
+            before = (root / ".claude" / runtime_layout.RUNTIME_MANIFEST).read_bytes()
+            result = H.run_script("finalize_upgrade.py", "--root", root, "--json", check=False)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertTrue(L.queue_entries(root))
+            self.assertIsNotNone(scaffold_marker.read_pending(root))
+            self.assertEqual((root / ".claude" / runtime_layout.RUNTIME_MANIFEST).read_bytes(), before)
+
+
 class NativeRuntimeVerifyTest(unittest.TestCase):
     def test_manifest_validation_on_minimal_native_runtime(self):
         with H.TempRepo() as root:

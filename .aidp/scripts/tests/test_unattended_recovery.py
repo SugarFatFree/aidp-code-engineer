@@ -302,7 +302,94 @@ def test_build_mint_registers_one_row():
           and builds[0].get("entry_mode") == "full")
 
 
+def test_active_sprint_recovery():
+    print("\n[R7] 中断 Sprint 必须恢复开发，缺交付证据不得关闭")
+    flow = (REPO / ".aidp/flows/sprint-autopilot/phase-0-6b.md").read_text(encoding="utf-8")
+    active = flow[flow.index("### 0.4 "):]
+    full = (REPO / ".aidp/commands/sprint-full.md").read_text(encoding="utf-8")
+    close = (REPO / ".aidp/commands/sprint-close.md").read_text(encoding="utf-8")
+    dispatch = (REPO / ".aidp/flows/sprint-autopilot/phase-3-5.md").read_text(encoding="utf-8")
+    check("active Sprint 不再按中断直接关闭", "调 `/sprint-close --unattended`" not in active)
+    check("恢复入口落 3.2-dev 游标并由 full --resume 执行", 'NEXT_PHASE="3.2-dev"' in active
+          and "set run_state.next_phase" in active and "--resume" in dispatch)
+    check("close 无证据返回 incomplete-sprint，禁止写关闭归档", "incomplete-sprint" in close
+          and "无测试证据，按未验证归档" not in close)
+    match = re.search(r"<!-- resume-gate -->\s*```bash\n(.*?)```", full, re.S)
+    check("full --resume 有可执行身份与在途轮次校验", match is not None)
+    if not match:
+        return
+    body = match.group(1).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+    body = body.replace("{version}", "V1.0.0").replace("{NNN}", "001")
+    with tempfile.TemporaryDirectory(prefix="aidp-resume-") as directory:
+        root = Path(directory)
+        plan = root / "docs/plans/V1.0.0/01_研发执行计划.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_text("- Sprint-001 登录\n- Sprint-002 导出\n", encoding="utf-8")
+        memory = root / "memory/V1.0.0/alice"
+        memory.mkdir(parents=True)
+        ctx = memory / "activeContext.md"
+        ctx.write_text("- 当前 Sprint：Sprint-001\n- 已完成：登录接口\n- 待办：权限检查\n", encoding="utf-8")
+        before = ctx.read_bytes()
+        def run():
+            return subprocess.run(["bash", "-c", body], cwd=root, text=True, capture_output=True,
+                                  env={**os.environ, "AIDP_USER": "alice"})
+        check("同号同用户中断可续跑且不重置上下文", run().returncode == 0 and ctx.read_bytes() == before)
+        handoff = re.search(r"<!-- resume-state -->\s*```bash\n(.*?)```", active, re.S)
+        check("恢复状态有可执行交接围栏", handoff is not None)
+        if handoff:
+            baseline = root / "memory/.sprint-autopilot-baseline.json"
+            baseline.write_text(json.dumps({"autopilot": {"target_version": "V1.0.0"}, "versions": {
+                "V1.0.0": {"current_build": "V1.0.0_build1001", "run_state": {
+                    "current_phase": "3.2-dev", "next_phase": "3.2-dev", "next_sprint": "001",
+                    "phase_enter_count": 4}}}}), encoding="utf-8")
+            script = handoff.group(1).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+            result = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+            state = _bl(root)["versions"]["V1.0.0"]
+            check("恢复同 build / 同 Sprint 并保留停滞计数", result.returncode == 0
+                  and state["current_build"] == "V1.0.0_build1001"
+                  and state["run_state"]["next_phase"] == "3.2-dev"
+                  and str(state["run_state"]["next_sprint"]) == "001"
+                  and state["run_state"]["phase_enter_count"] == 4)
+            check("恢复交接不生成关闭归档", not (memory / "sprints/sprint-001.md").exists()
+                  and ctx.read_bytes() == before)
+        ctx.write_text("- 当前 Sprint：Sprint-002\n", encoding="utf-8")
+        check("不能用 --resume 接管另一 Sprint", run().returncode != 0)
+        ctx.write_bytes(before)
+        other = root / "memory/V1.0.0/bob"
+        other.mkdir()
+        (other / "activeContext.md").write_bytes(before)
+        check("跨用户同号在途不得自动接管", run().returncode != 0)
+        shutil.rmtree(other)
+        (memory / "progress.md").write_text("Sprint-001 ✅ 已关闭\n", encoding="utf-8")
+        (memory / "sprints").mkdir()
+        (memory / "sprints/sprint-001.md").write_text("已归档\n", encoding="utf-8")
+        check("已关闭 Sprint 不得当作中断开发重跑", run().returncode != 0)
+
+
+def test_wake_source_requires_scheduler():
+    print("\n[R8] 手动调用频次不能伪装成下一 tick 唤醒源")
+    flow = (REPO / ".aidp/flows/sprint-autopilot/phase-0-1.md").read_text(encoding="utf-8")
+    body = flow[flow.index("IS_LOOP_CONTEXT=0    #"):flow.index("# ★ 把「本轮将怎么跑」")]
+    body = body.replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+    cases = [("反复手动 once", 0, 0, 0, "token", "0:0"),
+             ("反复 once unattended", 0, 0, 1, "token", "0:1"),
+             ("真实 loop", 1, 0, 1, "token", "1:1"),
+             ("cron no-loop", 0, 1, 1, "token", "1:1"),
+             ("wrapper 锁持有者", 0, 0, 1, "agent_loop", "1:1")]
+    with tempfile.TemporaryDirectory(prefix="aidp-wake-evidence-") as directory:
+        for label, context, no_loop, unattended, token, expected in cases:
+            script = body.replace("IS_LOOP_CONTEXT=0    #", f"IS_LOOP_CONTEXT={context}    #")
+            script += '\nprintf "RESULT=%s:%s\\n" "$HAS_WAKE_SOURCE" "$LOOP_UNATTENDED"\n'
+            env = {**os.environ, "LOOP_EVIDENCE": "0" if token == "agent_loop" else "1", "HAS_ONCE_FLAG": "1",
+                   "HAS_NO_LOOP_FLAG": str(no_loop), "HAS_UNATTENDED_FLAG": str(unattended),
+                   "TICK_LOCK_TOKEN": token}
+            result = subprocess.run(["bash", "-c", script], cwd=directory, capture_output=True, text=True, env=env)
+            check(label, result.returncode == 0 and f"RESULT={expected}" in result.stdout)
+
+
 if __name__ == "__main__":
+    test_wake_source_requires_scheduler()
+    test_active_sprint_recovery()
     test_fail_handle()
     test_env_reprobe()
     test_clear_and_manual()

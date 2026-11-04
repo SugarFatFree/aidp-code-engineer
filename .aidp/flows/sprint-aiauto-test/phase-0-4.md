@@ -1,8 +1,7 @@
-<!-- 二次切分 · phase-0 片4/9：覆盖 0.1.1.5 模式切换铁律 / 0.1.2 环境探测 / 0.1.2.1 实例归属 / 0.1.3 场景分流 / 0.1.4 自启命令-->
+<!-- 二次切分 · phase-0 片4/9：0.1.1.5–0.1.4 -->
 # sprint-aiauto-test · 执行分片 [4/9]（0.1.1.5 模式切换铁律 / 0.1.2 环境探测 / 0.1.2.1 实例归属 / 0.1.3 场景分流 / 0.1.4 自启命令）
 
-> ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-0-4.md`。理据见同目录 `rationale.md`。
+> 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
 
 #### 0.1.1.5 ★ 模式切换铁律（**仅 `DRIVER=mcp-remote` 远程**：改配置后须重启 — 防"首次配置错就要重启" 坑）
 
@@ -120,10 +119,11 @@ echo "实例归属判定：$OWNERSHIP（依据 = chrome-devtools status 的 daem
 > 本步只做启动参数；0.1.6 的入参供给与驱动预检照旧，不重复。
 
 ```bash
-# 前端访问地址取自 01_测试环境与账号.md / 测试方案（Phase 0.0.5 已解析）
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)" || exit 1
+# 前端访问地址取自目标版本作用域的 01_测试环境与账号.md（Phase 0.0.5 已解析）
 # ⛔ 不传 --origin：前端地址由脚本自己读「测试环境与账号」（约定 38 保证在那里）。
 #   flow 分片间 shell 变量不持久，传 $FRONTEND_URL 必取空 → 报错被吞 → WebMCP 静默永不启用。
-python3 {{AIDP_HOME}}/scripts/check_webmcp.py --launch-args --driver cli --json
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "${TARGET_VERSION:?}" --launch-args --driver cli --json
 #   手工起 chrome 时传 --driver manual
 ```
 
@@ -159,7 +159,7 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-t
 # ★ 渲染模式开关：默认无头（无需 GUI）；有头模式置空（RENDER_MODE=headed 时）
 HEADLESS_FLAG=$( [ "${RENDER_MODE:-headless}" = "headless" ] && echo "--headless=new" || echo "" )
 # ★ WebMCP 启动参数（0.1.3.5）：未启用时恒为空串 → 下面三条命令与本能力上线前逐字节一致
-WEBMCP_FLAGS=$(python3 {{AIDP_HOME}}/scripts/check_webmcp.py --launch-args --driver manual 2>/dev/null || true)
+WEBMCP_FLAGS=$(python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "${TARGET_VERSION:?}" --launch-args --driver manual) || exit 1
 # ★ 第二道防线：只接受真的以 `--` 开头的启动参数。脚本侧已把 N/A 提示改走 stderr，
 #   但这条捕获的结果会**直接拼进 chrome 启动命令**——任何一次回归（提示语误回 stdout、
 #   或新增一行 info）都会把中文塞进命令行、并让下面的 `-n` 判定误命中清空 --user-data-dir。

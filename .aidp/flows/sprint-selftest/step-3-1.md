@@ -19,11 +19,10 @@
 > `/sprint-aiauto-test` Phase 0.0.5 从「测试环境与账号」文件读 chrome 地址、URL、账号，字段齐全时无需交互询问。
 
 > ★ **可选段「六、WebMCP 带参浏览器」的产出规则是二值的**（模板正文见 `step-3-2.md`）：
-> 先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json`——`enabled: false`（默认、绝大多数项目）
+> 先跑 `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json`——`enabled: false`（默认、绝大多数项目）
 > → **整段不写入生成的文件**（不留空壳、不留占位标题）；`enabled: true` → **本段即为必填**，
 > 且须填**真实可复制执行**的启动命令（含两个浏览器开关 + 独立 `--user-data-dir`）+ 两行自检，
-> ⛔ 不接受只留占位符。机器回检 = `check_webmcp.py` 的 `testenv-section` 项（**只判最新版本那一份**，
-> 旧版本写于启用之前、没有该段属正常，不连坐）。
+> ⛔ 不接受只留占位符。机器回检 = `check_webmcp.py` 的 `testenv-section` 项（**按 `--version` 检查本版环境**；缺文件才继承最近历史，不读未来版本）。
 
 **跳过条件（append-only 感知，非整份跳过）**：`docs/testing/{version}/研发自测/01_测试环境与账号.md` 已存在时——**已填写的字段值一律不覆盖**（保护现场手工填写）；但仍按下方「合并规则 2」检测本版**新增**且文件中**确无**对应条目的系统/角色/URL/库并**追加补充**（append-only），无新增则等价跳过。**绝不改动、绝不删除已有条目**。
 

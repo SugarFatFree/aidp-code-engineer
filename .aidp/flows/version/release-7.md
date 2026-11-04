@@ -1,8 +1,8 @@
 # /version · 版本发布流程详情 — 分片 7/9
 
-> 本片覆盖：**Step 3.4 打 tag + 建分支 + 提交推送（3.4.1–3.4.4）**（3.3.12bis / 3.3.13 在 `release-6.md`）。
-> **Step 3.5（更新项目记忆文件「当前状态」）与 3.6（发布报告）全文见 `release-7b.md`**，进入该步第一动作 = Read 该文件。
-> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 本片：**Step 3.4 打 tag / 建分支 / 提交推送（3.4.1–3.4.4）**；3.3.12bis / 3.3.13 见 `release-6.md`。
+> **Step 3.5 更新记忆与 3.6 发布报告**：进入前 Read `release-7b.md`。
+> 分片清单见 `{{AIDP_HOME}}/commands/version.md`，按 Step 读取执行。
 
 <!-- BODY-BELOW -->
 ### Step 3.4：打 Git 标签 + 创建版本分支并自动提交推送（自动 push）
@@ -187,6 +187,12 @@ if [ -n "$PUSH_FAILED" ]; then
 fi
 
 PUSH_COMMIT=$(git rev-parse HEAD)
+# 同一提交重入沿用首次 push 时刻，避免每次降级都重新等满。
+PUSH_AT=$($BE --version "$VERSION" get release_push_at --default "")
+if [ -z "$PUSH_AT" ] || [ "$($BE --version "$VERSION" get release_push_commit --default "")" != "$PUSH_COMMIT" ]; then
+  PUSH_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  $BE --version "$VERSION" set release_push_commit "$PUSH_COMMIT" release_push_at "$PUSH_AT" || exit 1
+fi
 if [ "${CLASSIFY_ERROR:-0}" = "1" ]; then
   CICD_SKIPPED=false
   echo "⚠️ 发布 push 分类失败 → fail-closed，按正式代码进入 CICD 监听"
@@ -199,16 +205,15 @@ if [ "$CICD_SKIPPED" = "true" ]; then
   echo "✅ 发布 push 判定为 docs-only → 不触发 CICD、不监听、不跑就绪探针"
 else
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-  # ⛔ `--shell` 只输出 TARGET_VERSION、不输出 VERSION，故本块自取（见 rationale.md）
+  # --shell 仅输出 TARGET_VERSION，本块重取 VERSION。
   VERSION="{version}"
   [ -z "$VERSION" ] || case "$VERSION" in "{version}") VERSION="${TARGET_VERSION:-}";; esac
   [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
-  # ⛔ `autopilot_decisions.*` 在 PRD frontmatter、不在 baseline（取必得空串 → 下方 fail-closed 恒成立）。
+  # 部署决策取 PRD frontmatter。
   PRD_FILE=$(find "docs/requirements/$VERSION/产品提供" -maxdepth 1 -name '*.md' 2>/dev/null | sort | head -1)
   yml() { [ -n "$PRD_FILE" ] && awk -v k="$1" '/^---$/{f=!f;next} f && $1==k":"{print $2;exit}' "$PRD_FILE"; }
-  # ★ 先判部署形态：mode=local / none / 未接入 CICD 流水线的项目**没有云端流水线可等**。
-  #   ⛔ 缺这道门 → 推 tag 后 fail-closed 退出、版本半截收口（见 rationale.md）。
+  # local / none 无云端流水线，直接归档。
   DEP_MODE=$(yml mode); [ -n "$DEP_MODE" ] || DEP_MODE="none"
   if [ "$DEP_MODE" = "local" ] || [ "$DEP_MODE" = "none" ]; then
     echo "ℹ️ deployment.mode=$DEP_MODE（无云端流水线）→ 跳过 CICD 监听与就绪探针，直接进 Step 3.5"
@@ -216,31 +221,34 @@ else
   CICD_ENV=$(yml cicd_env); [ -n "$CICD_ENV" ] || CICD_ENV="prod"
   CLOUD_HEALTH_URL=$(yml cloud_ready_api_url)
   CLOUD_AUTH_URL=$(yml cloud_ready_login_url)
-  # ⚠️ 传 --auth-url 必须同时给凭证，否则鉴权探针恒判未就绪。
+  # 鉴权探针需同时提供 URL 与凭证。
   AUTH_HEADER=$(yml cloud_ready_auth_header)
   CLOUD_DEPLOY_TIMEOUT=$(yml cloud_deploy_check_timeout_seconds); [ -n "$CLOUD_DEPLOY_TIMEOUT" ] || CLOUD_DEPLOY_TIMEOUT=300
   [ -n "$CLOUD_HEALTH_URL" ] || { echo "⛔ 缺少部署就绪 health URL，fail-closed"; exit 1; }
+  WATCH_RC=0
   WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --commit "$PUSH_COMMIT" --env "$CICD_ENV" \
-    --version "$VERSION") || WATCH_RC=$?
-  WATCH_RC=${WATCH_RC:-0}
-  [ "$WATCH_RC" -eq 0 ] || [ "$WATCH_RC" -eq 1 ] || [ "$WATCH_RC" -eq 2 ] || [ "$WATCH_RC" -eq 3 ] || {
-    echo "⛔ cicd_watch 异常 → 按正式代码 fail-closed，禁止宣告发布完成"; exit 1; }
-  if [ "$WATCH_RC" -eq 3 ]; then
-    # rc=3 = 未接入 CICD（disabled / not-configured）或提供方 CLI 不可用：不监听流水线，直接跑就绪探针确认部署结果
-    echo "⚠️ cicd_watch 未监听（$(printf '%s' "$WATCH_JSON" | jq -r '.verdict // "?"')：$(printf '%s' "$WATCH_JSON" | jq -r '.reason // ""')）→ 仅按就绪探针判定部署"
-    WATCH_JSON='{"next_action":"probe"}'
-  fi
+    --version "$VERSION" --push-at "$PUSH_AT") || WATCH_RC=$?
   while :; do
-    ACTION=$(printf '%s' "$WATCH_JSON" | jq -r '.next_action // "abort"')
+    ACTION=$(printf '%s' "$WATCH_JSON" | jq -er '.next_action') || exit 1
+    CICD_STATUS=$(printf '%s' "$WATCH_JSON" | jq -r '.verdict // "unknown"')
+    case "$WATCH_RC" in
+      0|1|2) ;;
+      3) ACTION=probe; CICD_STATUS=unknown ;; # 未接入/CLI 不可用，保留原原因
+      4) [ "$ACTION" = probe ] && printf '%s' "$WATCH_JSON" | jq -e '.degraded == true' >/dev/null || exit 1
+         CICD_STATUS=unknown ;; # 推送即自动部署：只放行探针，不冒充流水线成功
+      *) echo "⛔ cicd_watch 异常 rc=$WATCH_RC，禁止宣告发布完成"; exit 1 ;;
+    esac
+    EVIDENCE=$(printf '%s' "$WATCH_JSON" | CICD_STATUS="$CICD_STATUS" PUSH_COMMIT="$PUSH_COMMIT" PUSH_AT="$PUSH_AT" jq -c '. + {status:env.CICD_STATUS, push_commit:env.PUSH_COMMIT, push_at:env.PUSH_AT}') || exit 1
+    $BE --version "$VERSION" set release_cicd "$EVIDENCE" || exit 1
+    [ "$CICD_STATUS" != unknown ] || echo "⚠️ CICD 未确认：$EVIDENCE；部署结果另由探针判定"
     case "$ACTION" in
       poll)
-        # 单次调用到上限仍在运行（verdict=running）→ 继续 poll 同一运行
+        # 继续 poll 同一运行与提交。
         RUN_ID=$(printf '%s' "$WATCH_JSON" | jq -r '.run_id // empty')
         [ -n "$RUN_ID" ] || { echo "⛔ cicd_watch 返回 poll 但缺 run_id"; exit 1; }
         WATCH_RC=0
         WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$RUN_ID" \
-          --commit "$PUSH_COMMIT" --env "$CICD_ENV" --version "$VERSION") || WATCH_RC=$?
-        [ "$WATCH_RC" -le 3 ] || { echo "⛔ cicd_watch 异常 fail-closed"; exit 1; } ;;
+          --commit "$PUSH_COMMIT" --env "$CICD_ENV" --version "$VERSION" --push-at "$PUSH_AT") || WATCH_RC=$? ;;
       probe)
         python3 {{AIDP_HOME}}/scripts/autopilot-deploy-watch.py \
           --health-url "$CLOUD_HEALTH_URL" \
@@ -253,31 +261,29 @@ else
         [ -n "$RETRY_COMMIT" ] || { echo "⛔ cicd_watch retry 缺少 retry_commit，禁止漂移重跑"; exit 1; }
         RETRY_COUNT=$($BE --version "$VERSION" get cicd_run.cicd_retry_count --default 0)
         [ "$RETRY_COUNT" -lt 3 ] || { echo "⛔ CICD 重试已达 3 次 → 转人工"; exit 1; }
-        # ⛔ prod 不自动重跑：自动重跑只对 dev/test 成立（同下方 trigger 分支口径）
+        # prod 禁止自动重跑。
         case "$CICD_ENV" in
           prod|production)
             echo "⛔ 生产环境 CICD 失败：禁止自动重跑，请用户确认后手动重跑（commit=$RETRY_COMMIT）"; exit 1 ;;
         esac
-        # 重试 = cicd_watch.py --mode retry（平台由 cicd.provider 决定）
         RUN_ID=$(printf '%s' "$WATCH_JSON" | jq -r '.run_id // empty')
-        # ★ 空值必须当场炸（否则 `--run-id ""` 让 ≤3 次重试第一次就撞死，且报错文案盖住真因）
+        # 缺运行 ID 不得重试。
         [ -n "$RUN_ID" ] || { echo "⛔ cicd_watch retry 未返回 run_id —— 重试链中止"; exit 1; }
         RETRY_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode retry --run-id "$RUN_ID" --env "$CICD_ENV" \
           --version "$VERSION") || { echo "⛔ 重试被拒：$RETRY_JSON"; exit 1; }
         $BE --version "$VERSION" bump cicd_run.cicd_retry_count
         NEW_RUN_ID=$(printf '%s' "$RETRY_JSON" | jq -r '.run_id // empty')
-        # ⛔ 不能 `|| exit 1`：exit 1 = 需调用方做写动作、非错误，用它会让 ≤3 次封顶成 1 次。
+        # 监听返回统一交循环顶部按 rc + next_action 分流。
         WATCH_RC=0
         if [ -n "$NEW_RUN_ID" ]; then
           WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode poll --run-id "$NEW_RUN_ID" \
-            --commit "$RETRY_COMMIT" --env "$CICD_ENV" --version "$VERSION") || WATCH_RC=$?
+            --commit "$RETRY_COMMIT" --env "$CICD_ENV" --version "$VERSION" --push-at "$PUSH_AT") || WATCH_RC=$?
         else
           # 不回显新 id → 按原 commit 重新锁定
           WATCH_JSON=$(python3 {{AIDP_HOME}}/scripts/cicd_watch.py --commit "$RETRY_COMMIT" --env "$CICD_ENV" \
-            --version "$VERSION") || WATCH_RC=$?
+            --version "$VERSION" --push-at "$PUSH_AT") || WATCH_RC=$?
         fi
-        WATCH_RC=${WATCH_RC:-0}
-        [ "$WATCH_RC" -le 3 ] || { echo "⛔ cicd_watch 异常 fail-closed"; exit 1; } ;;
+        ;;
       trigger)
         echo "⛔ 发布 push 未触发 CICD；生产环境禁止自动 trigger，请用户确认后手动触发"; exit 1 ;;
       abort|*)
@@ -289,6 +295,7 @@ fi
 ```
 
 > ★ **推送分类与监听（约定 31.5）**：有 `current_build` 写 build、无则 `--standalone` 写版本级，⛔ 禁空 build；分类用 `BASE_REF`。
+> Step 3.6 读取版本级 `release_cicd`：`status=unknown` 时列出原原因与 `degraded`；探针通过不能写成「流水线已确认成功」。
 > ⛔ **发布期边界**：`next_action=trigger` 时**绝不自动触发**——只终端提示，由用户主动要求才执行 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --env <env> --ref <branch>`；`memory/aidp-config.yaml` 的 `cicd.provider=none` 或未配置 `cicd.pipelines` 时不适用。（余下理据见 `rationale.md`）
 
 #### Step 3.4.4：失败处置

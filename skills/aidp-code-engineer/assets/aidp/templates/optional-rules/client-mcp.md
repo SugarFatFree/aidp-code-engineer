@@ -15,7 +15,7 @@ paths:
 >
 > `rules/*.md` 是**路径触发**加载的：命中 `paths:` 就整份进上下文。绝大多数项目
 > **不提供**客户端 MCP 能力，不该为此在每次编辑客户端代码时白读一遍本文件。
-> 启用判定唯一实现 = `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json`；
+> 启用判定唯一实现 = `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json`；
 > 判为 `declared` 后才由 `--install-rule` 装到 `{{AIDP_HOME}}/rules/client-mcp.md`。
 
 ## 〇、先分清两条轴（混了，后面每一条都会判错）

@@ -30,9 +30,12 @@ WebMCP 是一项**可选**前端能力，**绝大多数项目不启用**。它�
 命令端据此把 `webmcp_enabled` / `webmcp_entry_symbols` 传给 SKILL。
 ⛔ **不传 = 那些维度永不启用**：启用了该能力的项目会静默漏掉设计/用例/验收/执行四层质量门。
 
+版本范围：所有动作传 `--version` 时仅读目标版及历史，最近声明优先；未传兼容
+项目级检查，按数值取最新声明/环境。环境文件已存在时不因字段缺失穿透到旧文件。
+
 声明位置按序读，命中即止：
 
-  ① PRD 头部 `autopilot_decisions.webmcp.enabled: true`
+  ① PRD 头部 `autopilot_decisions.client_mcp` 的 Web+WebMCP 叶子，兼容旧 `webmcp` 声明
      —— **可选段，不计入必填段；段不存在 = 未启用**（默认关闭天然成立，不给未启用项目加收集负担）
   ② `docs/architecture/架构约束.md` 里显式声明 `webmcp` 启用
 
@@ -51,7 +54,7 @@ WebMCP 是一项**可选**前端能力，**绝大多数项目不启用**。它�
    通常已自动刷新，这里是**兜底可见性**。
 3. **「测试环境与账号」已回写 WebMCP 段**（ERROR）：启用后用例会指向该文档取带参浏览器启动命令。
    下游真实踩过——**用例三处指向该文档，而文档里从未回写这一段**；文件在、内容锚点空，
-   链接检查查不出来，执行者第一步就卡住。**只判最新版本**（旧版写于启用之前没有该段属正常，不连坐）。
+   链接检查查不出来，执行者第一步就卡住。**只判目标版本作用域的环境文件**（无参才取最新，不连坐其他版本）。
 
 ## 能力入口标识符（⚠️ 会过期，务必看这段）
 
@@ -64,7 +67,7 @@ WebMCP 的挂载位置**已经迁移过一次**，规范仍在演进。故标识
 
 ## 用法
 
-    python3 AIDP_HOME/scripts/check_webmcp.py [--root <仓库根>] [--detect] [--install-rule] [--force] [--json]
+    python3 AIDP_HOME/scripts/check_webmcp.py [--root <仓库根>] [--version <目标版本>] [--detect] [--install-rule] [--force] [--json]
 
 退出码：`0`=通过或未启用（N/A）/ `1`=检出问题 / `2`=用法或读取错误。
 """
@@ -145,13 +148,27 @@ def _ver_key(name):
     return [int(x) for x in re.findall(r"\d+", name)] or [0]
 
 
-def _prd_files(root):
-    """PRD 目录内的 .md（各版本 docs/requirements/{V}/产品提供/）。"""
-    base = os.path.join(root, "docs", "requirements")
+def _version_dirs(base, version=None):
+    """目标版及历史版本，按数值倒序；无参兼容项目级检查，取最新声明。
+
+    显式空值/非法版本拒绝，防止调用方未赋值时静默读到未来版本。
+    """
+    pattern = r"[Vv]?\d+(?:\.\d+)*"
+    if version is not None and not re.fullmatch(pattern, version):
+        raise ValueError(f"非法目标版本：{version!r}")
     if not os.path.isdir(base):
         return []
+    return sorted((v for v in os.listdir(base)
+                   if re.fullmatch(pattern, v) and os.path.isdir(os.path.join(base, v))
+                   and (version is None or _ver_key(v) <= _ver_key(version))),
+                  key=_ver_key, reverse=True)
+
+
+def _prd_files(root, version=None):
+    """当前版声明优先，缺声明时继承最近历史；绝不读目标之后的 PRD。"""
+    base = os.path.join(root, "docs", "requirements")
     out = []
-    for ver in sorted(os.listdir(base)):
+    for ver in _version_dirs(base, version):
         d = os.path.join(base, ver, "产品提供")
         if not os.path.isdir(d):
             continue
@@ -161,56 +178,65 @@ def _prd_files(root):
     return out
 
 
-def detect(root):
-    """启用判定的**唯一实现**。返回 {enabled, source, entry_symbols, symbols_source}。"""
-    symbols, sym_src = DEFAULT_ENTRY_SYMBOLS, "内置默认（⚠️ 可能过期，建议项目显式声明 entry_symbols）"
-
-    # ① PRD 头部 autopilot_decisions.webmcp
-    for p in _prd_files(root):
-        head = "\n".join(_read(p).split("\n")[:200])
-        m = re.search(r"^\s*webmcp:\s*$((?:\n[ \t]+.*|\n\s*)*)", head, re.M)
-        if not m:
-            continue
-        block = m.group(1)
-        # entry_symbols 声明（YAML 行内数组或块数组均识别）
+def _entry_facts(block=None, rel=""):
+    """解析已选中声明的 Web 入口；不另选 PRD，避免能力与标识符跨版本串线。"""
+    symbols = list(DEFAULT_ENTRY_SYMBOLS)
+    source = "内置默认（⚠️ 可能过期，建议项目显式声明 entry_symbols）"
+    if block:
         sm = re.search(r"entry_symbols:\s*\[([^\]]*)\]", block)
-        if not sm:
+        got = []
+        if sm:
+            got = [s.strip().strip("'\"") for s in sm.group(1).split(",") if s.strip()]
+        else:
             bm = re.search(r"entry_symbols:\s*$((?:\n[ \t]+-\s*.*)+)", block, re.M)
             if bm:
                 got = re.findall(r"-\s*['\"]?([^'\"\n]+?)['\"]?\s*$", bm.group(1), re.M)
-                if got:
-                    symbols, sym_src = [g.strip() for g in got if g.strip()], f"PRD 声明（{os.path.relpath(p, root)}）"
-        else:
-            got = [s.strip().strip("'\"") for s in sm.group(1).split(",") if s.strip()]
-            if got:
-                symbols, sym_src = got, f"PRD 声明（{os.path.relpath(p, root)}）"
-        if re.search(r"enabled:\s*(true|yes|on)\b", block, re.I):
-            return {"enabled": True, "source": f"PRD `autopilot_decisions.webmcp.enabled`（{os.path.relpath(p, root)}）",
-                    "entry_symbols": symbols, "symbols_source": sym_src}
-        # 段在但 enabled 非 true → 显式关闭，不再往下找（显式声明优先）
-        return {"enabled": False, "source": f"PRD 显式声明未启用（{os.path.relpath(p, root)}）",
-                "entry_symbols": symbols, "symbols_source": sym_src}
+                got = [g.strip() for g in got if g.strip()]
+        if got:
+            symbols, source = got, f"PRD 声明（{rel}）"
+    return {"entry_symbols": symbols, "symbols_source": source}
 
-    # ② 架构约束文档
+
+def detect(root, version=None):
+    """Web 叶子启用判定：与跨端入口共用声明选择、启停和冲突校验。"""
+    from check_client_mcp import detect as detect_client
+
+    client = detect_client(root, version)
+    facts = _entry_facts()
+    if "web_adapter" in client:
+        facts = {key: client["web_adapter"][key] for key in facts}
+    if client["capability_state"] != "not-declared":
+        return {"enabled": client["enabled"] and client["client_type"] == "web"
+                           and client["implementation"] == "webmcp",
+                "source": client["source"], **facts}
+
+    # 无版本声明时仍兼容项目级架构基线；显式关闭/非 Web/未实现均不得落到此处。
     for cand in ("架构约束.md", "架构设计.md"):
         p = os.path.join(root, "docs", "architecture", cand)
         if os.path.isfile(p) and re.search(r"WebMCP.*(?:启用|开启|采用)|启用\s*WebMCP", _read(p)):
-            return {"enabled": True, "source": f"docs/architecture/{cand} 显式声明",
-                    "entry_symbols": symbols, "symbols_source": sym_src}
-
-    return {"enabled": False, "source": "未声明（默认关闭）",
-            "entry_symbols": symbols, "symbols_source": sym_src}
+            return {"enabled": True, "source": f"docs/architecture/{cand} 显式声明", **facts}
+    return {"enabled": False, "source": client["source"], **facts}
 
 
-def detect_with_launch(root):
-    """`detect()` + `launch_command`（供给三个上游 SKILL 的第三个入参）。"""
-    d = detect(root)
-    d["launch_command"] = _launch_command(root) if d["enabled"] else ""
+def detect_with_launch(root, version=None):
+    """`detect()` + 同一目标版本作用域的 `launch_command`。"""
+    d = detect(root, version)
+    d["launch_command"] = _launch_command(root, version) if d["enabled"] else ""
     return d
 
 
-def _launch_command(root):
-    """从最新版「测试环境与账号」的 WebMCP 段解析**带参浏览器完整启动命令**。
+def _testenv_file(root, version=None):
+    """目标版环境文件优先；仅文件缺失时继承最近历史，已有空文件不得穿透。"""
+    base = os.path.join(root, "docs", "testing")
+    for ver in _version_dirs(base, version):
+        path = os.path.join(base, ver, "研发自测", "01_测试环境与账号.md")
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _launch_command(root, version=None):
+    """从目标版本作用域的「测试环境与账号」解析**带参浏览器完整启动命令**。
 
     ★ 为什么必须由命令端供给：`dev-manual-testcase` / `dev-logic-architect` / `auto-test-runner`
     三个 SKILL 都把 `webmcp_launch_command` 列为**调用方入参并明令「不要自拟」**——
@@ -220,25 +246,20 @@ def _launch_command(root):
     取不到返回空串：调用方据此传空并让 SKILL 引用**文档路径**（`dev-manual-testcase` 的
     维度 20 允许「取自 `webmcp_launch_command` 或环境文档」），⛔ 不得自拟一条顶上。
     """
-    tbase = os.path.join(root, "docs", "testing")
-    if not os.path.isdir(tbase):
+    path = _testenv_file(root, version)
+    if path is None:
         return ""
-    for ver in sorted(os.listdir(tbase), key=_ver_key, reverse=True):
-        p = os.path.join(tbase, ver, "研发自测", "01_测试环境与账号.md")
-        if not os.path.isfile(p):
-            continue
-        txt = _read(p)
-        m = re.search(r"WebMCP[^\n]*\n(?:.*\n)*?\|\s*完整启动命令\s*\|\s*`?([^`|\n]+?)`?\s*\|", txt)
-        if m:
-            cmd = m.group(1).strip()
-            # 模板占位符（`<可直接复制执行的整行命令…>`）不算已登记
-            if cmd and not cmd.startswith("<"):
-                return cmd
-        # 兜底：段内首条含白名单参数的命令行
-        m2 = re.search(r"^\s*([^\n]*--unsafely-treat-insecure-origin-as-secure[^\n]*)$", txt, re.M)
-        if m2 and "<" not in m2.group(1):
-            return m2.group(1).strip().lstrip("`").rstrip("`")
-        return ""
+    txt = _read(path)
+    m = re.search(r"WebMCP[^\n]*\n(?:.*\n)*?\|\s*完整启动命令\s*\|\s*`?([^`|\n]+?)`?\s*\|", txt)
+    if m:
+        cmd = m.group(1).strip()
+        # 模板占位符（`<可直接复制执行的整行命令…>`）不算已登记
+        if cmd and not cmd.startswith("<"):
+            return cmd
+    # 兜底：段内首条含白名单参数的命令行
+    m2 = re.search(r"^\s*([^\n]*--unsafely-treat-insecure-origin-as-secure[^\n]*)$", txt, re.M)
+    if m2 and "<" not in m2.group(1):
+        return m2.group(1).strip().lstrip("`").rstrip("`")
     return ""
 
 
@@ -297,8 +318,8 @@ def _chrome_major(executable=""):
     return None
 
 
-def frontend_origin(root):
-    """从最新版「测试环境与账号」里取前端访问地址并收敛成 origin。
+def frontend_origin(root, version=None):
+    """从目标版本作用域的「测试环境与账号」取前端访问地址并收敛成 origin。
 
     ★ 为什么由脚本自己读、而不是让 flow 传变量进来：flow 分片之间是**独立的 Bash 调用**，
       shell 变量不跨分片存活。让调用方传 `$FRONTEND_URL` 的写法在这里必然取到空串，
@@ -306,28 +327,20 @@ def frontend_origin(root):
       **WebMCP 静默永不启用**，症状与"浏览器不支持"一模一样——正是本能力要消灭的那个坑。
       地址的权威落点由约定 38 保证一定在这份文档里，直接读它没有中间环节。
     """
-    tbase = os.path.join(root, "docs", "testing")
-    if not os.path.isdir(tbase):
+    path = _testenv_file(root, version)
+    if path is None:
         return ""
-    for ver in sorted(os.listdir(tbase), key=_ver_key, reverse=True):
-        p = os.path.join(tbase, ver, "研发自测", "01_测试环境与账号.md")
-        if not os.path.isfile(p):
-            continue
-        txt = _read(p)
-        # 优先取显式标了「前端」的那一行；否则取文档里第一个 http(s) 地址
-        m = re.search(r"前端[^\n|]*\|[^|\n]*?(https?://[^\s|`）)]+)", txt)
-        if not m:
-            m = re.search(r"(https?://[^\s|`）)]+)", txt)
-        if m:
-            o = normalize_origin(m.group(1))
-            if o:
-                return o
-    return ""
+    txt = _read(path)
+    # 优先取显式标了「前端」的那一行；否则取文档里第一个 http(s) 地址
+    m = re.search(r"前端[^\n|]*\|[^|\n]*?(https?://[^\s|`）)]+)", txt)
+    if not m:
+        m = re.search(r"(https?://[^\s|`）)]+)", txt)
+    return (normalize_origin(m.group(1)) or "") if m else ""
 
 
-def launch_args(root, origins, driver="cli", executable=""):
+def launch_args(root, origins, driver="cli", executable="", version=None):
     """推导本轮该带的启动参数。driver: `cli`（chrome-devtools 自起）/ `manual`（手工起 chrome）。"""
-    det = detect(root)
+    det = detect(root, version)
     res = {"enabled": det["enabled"], "driver": driver, "origins": [],
            "insecure_origins": [], "chrome_major": None,
            "cli_args": [], "chrome_flags": [], "user_data_dir": "",
@@ -340,7 +353,7 @@ def launch_args(root, origins, driver="cli", executable=""):
         return res
     # 未显式传 --origin → 自动从「测试环境与账号」取（见 frontend_origin 的 why）
     if not origins:
-        auto = frontend_origin(root)
+        auto = frontend_origin(root, version)
         origins = [auto] if auto else []
     for raw in origins or []:
         o = normalize_origin(raw)
@@ -351,7 +364,7 @@ def launch_args(root, origins, driver="cli", executable=""):
         if not origin_is_secure(o):
             res["insecure_origins"].append(o)
     if not res["origins"]:
-        res["error"] = ("no-origin：既未传 --origin，也未能从最新版 "
+        res["error"] = ("no-origin：既未传 --origin，也未能从目标版本作用域的 "
                         "docs/testing/*/研发自测/01_测试环境与账号.md 取到前端地址"
                         "（按约定 38 该地址本应已归档在那里）")
         return res
@@ -391,7 +404,7 @@ def launch_args(root, origins, driver="cli", executable=""):
     return res
 
 
-def install_rule(root, force=False):
+def install_rule(root, force=False, version=None):
     """把详规从模板位安装到 `AIDP_HOME/rules/`（幂等）。
 
     **Why 详规默认不在 rules/ 下**：`rules/*.md` 是**路径触发**加载的——只要编辑的文件命中
@@ -402,7 +415,7 @@ def install_rule(root, force=False):
     **⛔ 未启用时拒绝安装**：否则一次误装就让该项目永久承担这份常驻成本，
     而它恰恰是本设计要消除的东西。
     """
-    det = detect(root)
+    det = detect(root, version)
     src, dst = os.path.join(root, RULE_TEMPLATE), os.path.join(root, RULE_INSTALLED)
     if not det["enabled"] and not force:
         return {"ok": False, "action": "refused",
@@ -422,8 +435,8 @@ def install_rule(root, force=False):
             "detail": f"已{'更新' if was else '安装'} {RULE_INSTALLED}（源：{RULE_TEMPLATE}）"}
 
 
-def run(root):
-    det = detect(root)
+def run(root, version=None):
+    det = detect(root, version)
     if not det["enabled"]:
         # ★ 未启用 = N/A：零 finding、零告警、不占产物位（rules/webmcp.md 适用前提）
         return {"applicable": False, "enabled": False, "reason": det["source"],
@@ -464,19 +477,11 @@ def run(root):
     #   别加回来：同一判据两份实现 = 改一处漏一处、两处都自称权威（见模块 docstring「职责边界」）。
 
     # 启用后「测试环境与账号」必须回写 WebMCP 段（下游踩过：用例三处指向它、文档里从未写）
-    # ★ 只判**最新版本**那一份：旧版本写于启用之前、没有该段是正常的，连坐会制造永远修不掉的红灯。
-    testenv_ok, testenv_seen = True, []
-    tbase = os.path.join(root, "docs", "testing")
-    if os.path.isdir(tbase):
-        for ver in sorted(os.listdir(tbase), key=_ver_key):
-            p = os.path.join(tbase, ver, "研发自测", "01_测试环境与账号.md")
-            if os.path.isfile(p):
-                testenv_seen.append(os.path.relpath(p, root))
-        if testenv_seen:
-            testenv_ok = bool(TESTENV_MARK.search(_read(os.path.join(root, testenv_seen[-1]))))
-    if testenv_seen and not testenv_ok:
+    # 与启动命令/origin 共用环境选择；旧版检查不得被未来环境中的段落放行。
+    testenv = _testenv_file(root, version)
+    if testenv and not TESTENV_MARK.search(_read(testenv)):
         findings.append({
-            "level": "ERROR", "check": "testenv-section", "file": testenv_seen[-1],
+            "level": "ERROR", "check": "testenv-section", "file": os.path.relpath(testenv, root),
             "detail": "已启用 WebMCP，但「测试环境与账号」里没有 WebMCP 段（带参浏览器启动命令 + 两行自检）。"
                       "用例会指向该文档取启动命令——**文件在、内容锚点空，链接检查查不出来，"
                       "执行者第一步就卡住**（下游真实踩过）。补跑 `/sprint-selftest --capture`",
@@ -491,6 +496,7 @@ def run(root):
 def main():
     ap = argparse.ArgumentParser(description="WebMCP 启用判定 + 确定性守卫（未启用即 N/A）")
     ap.add_argument("--root", default=".")
+    ap.add_argument("--version", help="目标版本；仅向历史继承；省略兼容项目级最新声明")
     ap.add_argument("--detect", action="store_true", help="只做启用判定，不跑检查")
     ap.add_argument("--install-rule", action="store_true",
                     help=runtime_text('把详规从模板位安装到 __AIDP_HOME__/rules/（幂等；未启用时拒绝）', __file__))
@@ -517,14 +523,14 @@ def main():
 
     try:
         if args.install_rule:
-            res = install_rule(args.root, args.force)
+            res = install_rule(args.root, args.force, args.version)
             if args.json:
                 print(json.dumps(res, ensure_ascii=False, indent=2))
             else:
                 print(f"[{'OK' if res['ok'] else 'REFUSED'}] {res['detail']}")
             return 0 if res["ok"] else 1
         if args.launch_args:
-            r = launch_args(args.root, args.origin, args.driver, args.executable)
+            r = launch_args(args.root, args.origin, args.driver, args.executable, args.version)
             if args.json:
                 print(json.dumps(r, ensure_ascii=False, indent=2))
             elif r["error"] == "webmcp-not-enabled":
@@ -549,12 +555,12 @@ def main():
                 sys.stderr.write(f"   ⚠️ {w}\n")
             return 0 if not r["error"] or r["error"] == "webmcp-not-enabled" else 2
         if args.probe_snippet:
-            _r = detect_with_launch(args.root)
+            _r = detect_with_launch(args.root, args.version)
             print(PROBE_SNIPPET.replace(
                 "%SYMBOLS%", json.dumps(_r.get("entry_symbols") or DEFAULT_ENTRY_SYMBOLS,
                                         ensure_ascii=False)))
             return 0
-        res = detect_with_launch(args.root) if args.detect else run(args.root)
+        res = detect_with_launch(args.root, args.version) if args.detect else run(args.root, args.version)
     except Exception as e:
         if args.json:
             print(json.dumps({"error": str(e)}, ensure_ascii=False))

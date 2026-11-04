@@ -29,12 +29,13 @@
 #### 步骤 1：启用判定（本步的第一动作，判定为否就没有后面所有步骤）
 
 ```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)" || exit 1
 # ① 跨端声明判定（唯一实现；⛔ 不要拿 check_webmcp.py 顶替这一条）
-python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json
-# → {"declared": true|false, "capability_state": "...", "client_type": "...", "implementation": "..."}
+python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "${TARGET_VERSION:?}" --detect --json
+# → {"enabled": true|false, "declared": true|false, "capability_state": "...", "client_type": "...", "implementation": "..."}
 
 # ② 仅当 client_type=web 且 implementation=webmcp 时，再取 Web 叶子专有事实
-python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "${TARGET_VERSION:?}" --detect --json
 # → {"enabled": true|false, "entry_symbols": [...], "symbols_source": "..."}
 ```
 
@@ -59,7 +60,7 @@ python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json
 上游在缺该入参时**直接报入参错（exit 2）而不是猜默认值**——猜错的方向是「扫不到 → 0 命中 → 假绿」。
 把 `--detect` 返回的数组**原样**传下去即可。
 
-⚠️ **`client_mcp` 对象（`client_type` / `implementation` / `capability_state`）无论哪个端都必须进 run-context**：
+⚠️ **`client_mcp` 对象（保留 `enabled` / `declared` / `client_type` / `implementation` / `capability_state`）无论哪个端都必须进 run-context**：
 它是上游 `application_mcp` **四态**（declared / entry / registration / invocation）的唯一入口，
 不写 = 四态永远取不到。⛔ 非 Web **不传 `webmcp_*`**——那是 Web 适配输入，不为别端创建入口。
 
@@ -112,7 +113,7 @@ python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/detect_drivers.py web --we
 
 #### 步骤 5：写入 run-context
 
-追加：`client_mcp` 对象（`client_type` / `implementation` / `capability_state` 与其来源）——**所有已声明端都写**；
+追加：`client_mcp` 对象（保留 `enabled` / `declared` / `client_type` / `implementation` / `capability_state` 与其来源）——**所有已声明端都写**；
 **Web 叶子另加**：WebMCP 启用来源（`source`）、`entry_symbols` 与其来源、驱动版本预检结果、`webmcp_launch_command` = **完整命令字符串**（原样传，⛔ 不传「取用位置」、不改写、不自拟）；
 **非 Web 另加**：步骤 2b 的 `aiauto_readiness.py` 评估结论（可跑 / 前置缺失及其 `block_reason`）。
 报告侧的达成路径标注纪律见 `driver-web-webmcp.md`「七、报告纪律」。

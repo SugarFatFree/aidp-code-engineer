@@ -661,7 +661,7 @@ Sprint-001（执行期）
 | **Sprint 执行** | `/sprint-batch` | 批量执行多个 Sprint（主体为循环 `/sprint-full`，末段 Step 6 触发部署 + AI 自动化测试） | `superpowers:verification-before-completion`（输出前硬门；⛔ 顶层循环**不用** `executing-plans`——它会停下征询，与「零询问连跑」冲突）|
 | | `/sprint-full` | 单 Sprint 一键执行 | - |
 | | `/sprint-start` | 启动 Sprint | - |
-| | `/sprint-dev` | 开发阶段（支持独立使用 + 自动累进） | `superpowers:test-driven-development` + `superpowers:subagent-driven-development` |
+| | `/sprint-dev` | 开发阶段（支持独立使用 + 自动累进） | `superpowers:test-driven-development`；AIDP 按写集隔离派发，规范审查后做代码质量审查 |
 | | `/sprint-test` | 测试阶段（静态扫描 + 可选接口测试；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（`api-tester` 为可选外部能力） |
 | | `/sprint-bugfix` | 问题修复（独立可用 + 自动累进） | `bugfix` skill + `superpowers:systematic-debugging` |
 | | `/sprint-close` | Sprint 关闭 | - |

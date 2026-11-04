@@ -1268,6 +1268,42 @@ def _runtime_source() -> Path:
     return L.template_aidp() or L.BUNDLE_AIDP
 
 
+def snapshot_runtime_fillable(root: Path) -> dict:
+    """安装前保存已吸收的骨架指纹；旧项目补记旧下发件，防重跑误认新件已合并。"""
+    ledger = L._uf_load(root)
+    baselines = {}
+    for home in runtime_layout.RUNTIME_HOME.values():
+        for relative in sorted(L.USER_FILLABLE_CONTRACTS):
+            label = f"{home}/{relative}"
+            baseline = ledger.get(label)
+            previous = root / home / "skills" / L.SKILL_NAME / "assets/aidp" / relative
+            if baseline is None and (previous.is_file()
+                                      or (root / home / runtime_layout.RUNTIME_MANIFEST).is_file()):
+                # 无旧模板时用空骨架表示未知，宁可入队复核，不能把新安装等同于已吸收。
+                data = previous.read_bytes() if previous.is_file() else b""
+                baseline = L.sha256(data)
+                L.uf_record(root, label, data)
+            baselines[label] = baseline
+    return baselines
+
+
+def sync_runtime_fillable(root: Path, homes: list, baselines: dict, rep: Report):
+    """overlay 保留项目原文；只登记骨架或排入现有语义改写队列，绝不拼接内容。"""
+    for home in homes:
+        manifest = runtime_layout._read_manifest(root / home)
+        for relative in sorted(L.USER_FILLABLE_CONTRACTS):
+            label = f"{home}/{relative}"
+            template = root / home / "skills" / L.SKILL_NAME / "assets/aidp" / relative
+            if not template.is_file() or not (root / label).is_file():
+                continue
+            data = template.read_bytes()
+            if relative not in manifest.get("user_files", []) \
+                    or baselines.get(label) == L.sha256(data):
+                L.uf_record(root, label, data)
+            elif L.enqueue(root, label, template):
+                rep.act("queue", label, "保留用户填写内容，待语义合并新版运行包骨架")
+
+
 def _native_namespaces(root: Path, agents: list):
     paths = []
     if "claude" in agents:
@@ -1501,7 +1537,8 @@ def _preflight_native_project_paths(root: Path, version: str, user: str):
                 if path.is_symlink():
                     raise ValueError(f"项目目录包含 symlink，拒绝写入：{path}")
     files = {"README.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
-             L.USER_FILLABLE_BASELINE, "memory/aidp-config.yaml", "memory/README.md", "env/.env"}
+             L.USER_FILLABLE_BASELINE, L.REWRITE_QUEUE_FILE,
+             "memory/aidp-config.yaml", "memory/README.md", "env/.env"}
     files.update(f"docs/{rel}" for rel, _source in L.iter_files(L.ASSETS / "docs"))
     files.update(rel for _tpl, rel in L.MEMORY_TEMPLATES)
     for rel in sorted(files):
@@ -1655,7 +1692,7 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
     _preflight_native_adapter(root, agents, source)
     managed = {".aidp", MIGRATION_FAILURE_LEDGER, ".claude", ".agents", ".codex", ".dsh", "docs", "memory",
                "env", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
-               L.USER_FILLABLE_BASELINE}
+               L.USER_FILLABLE_BASELINE, L.REWRITE_QUEUE_FILE}
     managed.update(Path(rel).parts[0] for rel in L.skeleton_dirs(root, version, user)
                    if rel and not rel.startswith(".aidp/"))
     journal = _NativeInstallJournal(root, managed)
@@ -1783,6 +1820,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     # ⛔ 快照必须在安装前取：`templates/` 是受管契约，安装后模板位已是新版、再比就分不出
     #    「用户改过」与「版本升级」。
     optional_rules_before = snapshot_optional_rules(root, [home for _kind, home in specs])
+    fillable_before = snapshot_runtime_fillable(root)
+    fillable_homes = []
     for kind, home in specs:
         dest = root / home
         preserve_gated = False
@@ -1824,6 +1863,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                           if manifest is not None else installed_manifest(root))
         if isinstance(_prev_manifest, dict):
             for _rel, _sha in sorted(_prev_manifest.items()):
+                if _rel in L.USER_FILLABLE_CONTRACTS:
+                    continue  # overlay 保留用户内容，不属于被覆盖的契约。
                 if preserve_gated and Path(_rel).parts[0] not in L.UNGATED_DIRS:
                     continue
                 _live = dest / _rel
@@ -1841,6 +1882,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind,
                                       backup_callback=backup_runtime, preserve_gated=preserve_gated)
         rep.act("install", home + "/", "Agent 原生运行包")
+        if not preserve_gated:
+            fillable_homes.append(home)
         # ★ 孤儿契约：上一版受管清单里有、当前脚手架已不提供 —— 只报告不删除。
         #   漏报的后果是项目里留着一份「看着生效、实际早已无调用方」的契约，
         #   而它与「本项目特化了这一条」在磁盘上完全同形，只有对照旧 manifest 才分得清。
@@ -1885,6 +1928,9 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                                 and path.suffix != ".pyc")
             journal.expect(destination / ".aidp-scaffold-generated")
     _install_native_skill(root, agents, rep, bk)
+    journal.expect(L.REWRITE_QUEUE_FILE)
+    sync_runtime_fillable(root, fillable_homes, fillable_before, rep)
+    journal.record(L.USER_FILLABLE_BASELINE)
     manage_gitkeep(root, dirs, rep)
     for rel in dirs:
         journal.record(root / rel / ".gitkeep")

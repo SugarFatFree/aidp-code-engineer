@@ -21,6 +21,7 @@
 - `--aiauto-test-required` — 透传外层后续实测意图给 `/sprint-dev`，仅要求生成用例。
 - `--skip-aiauto-test` — 透传外层未安排实测；若同时带 required，required 优先。
 - `--stop-on-blocker`                        — 遇阻塞项即停并回传，不继续后续阶段（`/sprint-batch` 的合法停顿来源之一）
+- `--resume` — 仅模式 A：恢复同版本、同用户、同编号的已启动未关闭 Sprint；通过下方恢复门后跳过 Phase 1，保留 activeContext，从 Phase 2 继续。不是关闭或开新 Sprint 的豁免。
 
 **用例意图透传**：调用 `/sprint-dev` 时必须原样传递 `--aiauto-test-required` / `--skip-aiauto-test`。`--from-batch` 只表达被编排，不表达是否实测；不得据此把已取消的实测恢复，也不得吞掉已安排的实测用例。
 
@@ -49,7 +50,46 @@
    <!-- dup-check: ignore 前置检查清单需各命令自包含，读者不应为一行 glob 跳转 -->
    - 研发执行计划：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/0[0-9]_M*研发执行计划.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**，理由同上一行研发需求；合法布局见 `/sprint-plan` Step 1「输出」）
    - 任一缺失 → **停止执行**，提示先执行 `/version {version} "{里程碑}"`
-2. ★ **约定 9 前置门（确定性判据，⛔ 不读 `activeContext.md` 自行裁量）**：
+2. **带 `--resume` 时先执行恢复门，成功即替代下方开工门**（先按参数解析归一 `{NNN}` 为三位数字；自然语言模式 B 不允许 resume；调用方版本必须与前置流程解析的当前版本一致）：
+
+   <!-- resume-gate -->
+   ```bash
+   python3 - "{version}" "{NNN}" <<'PY'
+import re, sys
+from pathlib import Path
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from check_open_sprints import scan
+from vcs import developer_identity
+root = Path.cwd(); version, sprint = sys.argv[1:]
+user = developer_identity(root)
+state = scan(root, version, scope="started")
+key = f"Sprint-{sprint}"
+if state["open"] != [key] or key not in state["planned"]:
+    raise SystemExit("resume-conflict: 必须是计划内唯一已启动未关闭 Sprint")
+owners = []
+for directory in (root / "memory" / version).iterdir():
+    if not directory.is_dir():
+        continue
+    active = directory / "activeContext.md"
+    text = active.read_text(encoding="utf-8") if active.is_file() else ""
+    current = any(re.search(r"(?:当前\s*Sprint|Sprint\s*编号)\s*[:：|]\s*" + key + r"\b", line.replace("*", "").replace("`", ""))
+                  and not re.search(r"已关闭|未开始|待开始", line) for line in text.splitlines())
+    marker = directory / "sprints" / f"sprint-{sprint}.started.json"
+    if current or marker.is_file():
+        owners.append(directory.name)
+    if directory.name == user and not current:
+        raise SystemExit("resume-conflict: 当前用户 activeContext 不匹配，禁止重置后冒充恢复")
+if owners != [user]:
+    raise SystemExit("resume-conflict: 所属用户不唯一或不是当前用户")
+print(f"RESUME_OK={sprint}")
+PY
+   RESUME_RC=$?
+   [ "$RESUME_RC" -eq 0 ] || exit "$RESUME_RC"
+   ```
+
+   成功后读取原 activeContext 的已完成/待办、任务清单和实际代码；**跳过 Phase 1 `/sprint-start`**（它会重置上下文）。进入 Phase 2 `/sprint-dev {NNN} skip-test --cascade-now [--unattended]` 并透传原有 flags，以实际文件核实已完成项、补完未完成项，然后照常 Phase 3→4→5；测试必须针对恢复后的代码重跑。任何阶段失败即返回 `closed:false`，不得提前归档。
+   恢复门非零 → 返回 `resume-conflict` 交调用方失败记账，不改上下文、不自动 close。
+3. ★ **未带 `--resume` 才执行约定 9 开工门（确定性判据，⛔ 不读 `activeContext.md` 自行裁量）**：
 
    ```bash
    python3 {{AIDP_HOME}}/scripts/check_open_sprints.py --version {version} --scope started --json
@@ -136,6 +176,8 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 
 ### Phase 1：启动 Sprint
 
+已通过 `--resume` 恢复门时**跳过本阶段**，直接 Phase 2；保留原 activeContext，不调用会重置上下文的 `/sprint-start`。
+
 ```
 执行：/sprint-start {NNN} [--unattended]（无人值守时透传）
 ```
@@ -158,7 +200,7 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 # ★ --unattended（由 /sprint-batch 透传）时必传，令 /sprint-dev 的 UI C/D 门与约定22 级联门消费 PRD autopilot_decisions 预声明、不弹窗（autopilot 7×24 兜底）
 ```
 
-（`/sprint-dev` 内部使用 `superpowers:test-driven-development` + `superpowers:subagent-driven-development`，本命令不另行调用。）
+（`/sprint-dev` 内部使用 TDD，并由 AIDP 按写集隔离派发开发子 Agent、依次做规范与代码审查；本命令不另建并行或分支收尾流程。）
 
 ```
 ▶ Phase 2 完成：代码已实现

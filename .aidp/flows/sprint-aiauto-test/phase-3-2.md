@@ -1,8 +1,7 @@
 <!-- 二次切分 · phase-3 片2/6：覆盖 3.2.6 生成AI测试报告HTML（该build子页+综合首页刷新）-->
 # sprint-aiauto-test · 执行分片 [2/6]（3.2.6 生成AI测试报告HTML（该build子页+综合首页刷新））
 
-> ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-3-2.md`。理据见同目录 `rationale.md`。
+> 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
 
 ### 3.2.6 ★ 生成 AI测试报告 HTML（该 build 子页 + 综合首页刷新）
 

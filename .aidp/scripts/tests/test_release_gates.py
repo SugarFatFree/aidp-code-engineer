@@ -320,7 +320,106 @@ def test_flow_move_modes():
         check(f"研发自测子目录化 git={mode} tracked={tracked}", rc == 0 and not src and dst is not None)
 
 
+def test_release_cicd_degraded_probe():
+    """执行发布 push 围栏，替身只隔离 Git/平台网络；循环与 rc 判据直接取生产分片。"""
+    print('\n[R6] 发布 CICD 降级交接：rc4 + probe、证据与 push 时刻')
+    block = _flow_block(REPO / '.aidp/flows/version/release-7.md', 2)
+    degraded = {'verdict': 'not-observed', 'next_action': 'probe', 'degraded': True,
+                'degraded_reason': '平台未观测到本次运行', 'push_auto_deploy': True}
+    poll = {'verdict': 'running', 'next_action': 'poll', 'run_id': 'run-1'}
+    retry = {'verdict': 'failed', 'next_action': 'retry', 'run_id': 'run-1', 'retry_commit': 'release-sha'}
+    scenes = (
+        ('首轮新提交', [(4, degraded)], True, 0),
+        ('首轮降级', [(4, degraded)], True, 0),
+        ('poll 降级', [(0, poll), (4, degraded)], True, 0),
+        ('retry 后 poll 降级', [(1, retry), (0, {'run_id': 'run-2'}), (4, degraded)], True, 0),
+        ('retry 后 detect 降级', [(1, retry), (0, {}), (4, degraded)], True, 0),
+        ('降级但探针失败', [(4, degraded)], False, 1),
+        ('rc4 未要求 probe', [(4, {**degraded, 'next_action': 'abort'})], False, 0),
+        ('未知退出码', [(5, degraded)], False, 0),
+        ('真实失败不得降级', [(2, {'verdict': 'failed', 'next_action': 'abort'})], False, 0),
+        ('正常成功', [(0, {'verdict': 'success', 'next_action': 'probe'})], True, 0),
+    )
+    stub = '''import json, os, sys
+from pathlib import Path
+root = Path(os.environ['SCENE_ROOT'])
+name, args = Path(sys.argv[1]).name, sys.argv[2:]
+statefile = root / 'state.json'
+state = json.loads(statefile.read_text())
+def save(): statefile.write_text(json.dumps(state, ensure_ascii=False))
+if name == 'baseline_edit.py':
+    while args and args[0].startswith('--'):
+        args = args[2:]
+    action = args.pop(0)
+    if action == 'current-version': print('V0.2.0')
+    elif action in ('get', 'take'):
+        key = args[0]
+        print(state.get(key, args[2] if len(args) > 2 else ''))
+        if action == 'take': state.pop(key, None); save()
+    elif action == 'set':
+        for key, value in zip(args[::2], args[1::2]):
+            try: state[key] = json.loads(value)
+            except ValueError: state[key] = value
+        save()
+    elif action == 'bump':
+        key = args[0]; state[key] = int(state.get(key, 0)) + 1; save(); print(state[key])
+elif name == 'autopilot_tick_flags.py': print('TARGET_VERSION=V0.2.0')
+elif name == 'classify_push.py': print('{}')
+elif name == 'cicd_watch.py':
+    with (root / 'watch-calls.jsonl').open('a') as stream: stream.write(json.dumps(args) + '\\n')
+    queuefile = root / 'queue.json'
+    queue = json.loads(queuefile.read_text())
+    if not queue: raise SystemExit(99)
+    code, value = queue.pop(0); queuefile.write_text(json.dumps(queue))
+    print(json.dumps(value, ensure_ascii=False)); raise SystemExit(code)
+elif name == 'autopilot-deploy-watch.py':
+    (root / 'probe-called').touch(); raise SystemExit(int(os.environ['PROBE_RC']))
+else: raise SystemExit('Unexpected command: ' + name)
+'''
+    for label, sequence, success, probe_rc in scenes:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / 'stub.py').write_text(stub, encoding='utf-8')
+            # 已推同一提交的监听重入：必须保留首次 push 时刻，不能每次重新等满。
+            pushed_at = '2026-01-01T00:00:00Z'
+            (root / 'state.json').write_text(json.dumps({
+                'release_push_commit': 'previous-sha' if label == '首轮新提交' else 'release-sha',
+                'release_push_at': pushed_at}), encoding='utf-8')
+            (root / 'queue.json').write_text(json.dumps(sequence), encoding='utf-8')
+            prd = root / 'docs/requirements/V0.2.0/产品提供/PRD.md'
+            prd.parent.mkdir(parents=True)
+            prd.write_text('---\nautopilot_decisions:\n  deployment:\n    mode: cloud\n'
+                           '    cicd_env: test\n    cloud_ready_api_url: https://example.com/health\n---\n', encoding='utf-8')
+            prefix = '''python3() { command "$REAL_PYTHON" "$SCENE_ROOT/stub.py" "$@"; }
+git() { case "$1" in rev-parse) printf 'release-sha\\n';; symbolic-ref) printf 'main\\n';; push) return 0;; *) return 42;; esac; }
+'''
+            result = subprocess.run(['bash', '-c', prefix + block], cwd=root, capture_output=True, text=True,
+                                    env={**os.environ, 'SCENE_ROOT': td, 'REAL_PYTHON': sys.executable,
+                                         'PROBE_RC': str(probe_rc)})
+            check(f'{label}: 正确继续或阻断发布', (result.returncode == 0) is success)
+            called = (root / 'probe-called').exists()
+            expected_probe = success or probe_rc != 0
+            check(f'{label}: 仅合法 probe 分支执行探针', called is expected_probe)
+            state = json.loads((root / 'state.json').read_text())
+            if label == '首轮新提交':
+                check('新 push commit 更新并持久化开始时刻',
+                      state.get('release_push_commit') == 'release-sha' and
+                      state.get('release_push_at') and state['release_push_at'] != pushed_at)
+                pushed_at = state.get('release_push_at')
+            if expected_probe:
+                calls = [json.loads(line) for line in (root / 'watch-calls.jsonl').read_text().splitlines()]
+                reads = [args for args in calls if 'retry' not in args]
+                check(f'{label}: watch/poll/detect 均携首次 --push-at', all(
+                    '--push-at' in args and args[args.index('--push-at') + 1] == pushed_at for args in reads))
+                if sequence[-1][0] == 4:
+                    evidence = state.get('release_cicd', {})
+                    check(f'{label}: 保留 unknown、降级标记与平台原原因',
+                          evidence.get('status') == 'unknown' and evidence.get('degraded') is True and
+                          evidence.get('degraded_reason') == degraded['degraded_reason'])
+
+
 def main():
+    test_release_cicd_degraded_probe()
     test_increment_presence()
     test_readonly_collection_declared()
     test_residual_release_gate()

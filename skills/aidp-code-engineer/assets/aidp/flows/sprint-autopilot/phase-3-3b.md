@@ -74,9 +74,8 @@ else
   # ★ 六类全打：判定条件已是六类，诊断行却只报四类 —— 缺的恰好是研发自测方案 / 测试环境与账号时，
   #   打印出来的四个值全是 1 却判 PLANNING_DONE=0，诊断信息与结论直接矛盾、无从排障。
   echo "📋 $TARGET_VERSION 版本规划缺失或不完整（PLAN=$PLAN_OK REQ=$REQ_OK DESIGN=$DESIGN_OK TESTCASE=$TESTCASE_OK SCHEME=$SCHEME_OK ENV=$ENV_OK），将跑 /version 规划补齐"
-  # ★ 常见触发：TESTCASE=0 而其余=1 —— 执行计划已在、研发自测缺失。走 /version 幂等续跑：
-  #   version 对已存在的研发需求/详细设计/执行计划走 supplement/幂等（不覆盖已人工微调产物），
-  #   仅经 Step 2.4.3 补齐研发自测；且 version「三步落盘自检」会硬门兜底，绝不再放行「自测缺失」。
+  # TESTCASE=0 等缺件由 phase-3-3 实际传 --repair-planning，绕过输入未变 B-1。
+  # 已有族只读复用，缺失族 fresh 补建；研发自测生产者为 Step 2.4.3.5，六类落盘门兜底。
 fi
 
 # ★★ P0-1 incremental 硬判据②裁定（缺一强制降级 full）：Phase 3.0 step 1 置的【暂定 incremental】必须 PLANNING_DONE=1 才最终成立；
@@ -142,7 +141,7 @@ python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PL
 | `PLANNING_DONE` | 含义 | 3.1 行为 |
 |----------------|------|---------|
 | `1` | 规划产物齐全（典型 = S1 进行中 / 用户预先手工规划）| **跳过 step 2 的 `/version`**，直接走 step 3 解析 Sprint 数 → 进 3.2 开发测试 |
-| `0` | 无规划 / 半成品（典型 = S0 仅 PRD / 上次规划中断在 design 之前 / **执行计划已在但研发自测缺失**）| 正常跑 step 2 的 `/version`（`/version` 自身对半成品幂等续跑、补齐缺失产物——含经 Step 2.4.3 补齐研发自测）|
+| `0` | 无规划 / 半成品（典型 = S0 仅 PRD / 上次规划中断在 design 之前 / **执行计划已在但研发自测缺失**）| 跑 step 2 的 `/version {TARGET_VERSION} --repair-planning [--unattended]`（已有族只读复用，缺失族 fresh 补建；自测由 Step 2.4.3.5 生成）|
 
 ★ **强制重新规划的逃生阀**：用户加 `--force-replan` flag → 无视 `PLANNING_DONE`，强制跑 `/version` 重新规划（用于 PRD 大改、需推翻已有设计重新规划的场景）。
 

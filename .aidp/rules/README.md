@@ -17,8 +17,8 @@
 
 | 可选规则 | 模板位 | 安装命令 | 承载内容 |
 |------|------|------|------|
-| `client-mcp.md` | `{{AIDP_HOME}}/templates/optional-rules/client-mcp.md` | `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --install-rule` | **跨端**（小程序 / 移动 / 桌面）客户端应用 MCP 业务能力：端无关的声明 / 工具契约 / 身份与权限 / 写确认 / 审计与调用证据（⛔ 不套浏览器运行前提）|
-| `webmcp.md` | `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` | `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule` | 同一能力的 **Web 端实现**：secure context 运行前提 / 三层 AND 开关与时序 / 能力入口 API 表面实测事实 / 10 条实现铁律 |
+| `client-mcp.md` | `{{AIDP_HOME}}/templates/optional-rules/client-mcp.md` | `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --install-rule` | **跨端**（小程序 / 移动 / 桌面）客户端应用 MCP 业务能力：端无关的声明 / 工具契约 / 身份与权限 / 写确认 / 审计与调用证据（⛔ 不套浏览器运行前提）|
+| `webmcp.md` | `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` | `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --install-rule` | 同一能力的 **Web 端实现**：secure context 运行前提 / 三层 AND 开关与时序 / 能力入口 API 表面实测事实 / 10 条实现铁律 |
 
 > ★ **为什么不直接放本目录**：本目录的加载是**路径触发**的——只要编辑的文件命中 `paths:`，
 > **整份文件就进上下文**。可选规则若常驻这里，**绝大多数根本不启用该能力的项目**每次编辑对应代码
@@ -43,12 +43,12 @@
 >
 > **改动一律改模板位**（那是权威源）；装到本目录的是副本，改了无法回流、下次重装被覆盖。
 > **★ 两个脚本分两层，别混用**（混用的失效方向是**全绿**）：
-> - **跨端启用判定的唯一实现** = `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect`
+> - **跨端启用判定的唯一实现** = `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect`
 >   —— 客户端应用 MCP 能力**是跨端的**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**。
 >   任何"这个项目启没启用该能力"的判断一律调它；它读 `autopilot_decisions.client_mcp`，
 >   并把存量的 `autopilot_decisions.webmcp` 兼容归一为 `client_type=web + implementation=webmcp`。
 > - **Web 端专有事实**（secure context / 浏览器版本 / 启动开关 / `entry_symbols` / `launch_command`）
->   = `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect`，**仅在 `client_type=web` 且
+>   = `python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect`，**仅在 `client_type=web` 且
 >   `implementation=webmcp` 时才调**。⛔ 拿它去判非 Web 项目恒得 `enabled: false`，
 >   通用半场就永远不会执行。
 >

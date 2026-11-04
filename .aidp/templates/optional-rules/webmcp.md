@@ -20,7 +20,7 @@ paths:
 > **只有项目显式启用后才安装到 `{{AIDP_HOME}}/rules/webmcp.md`**：
 >
 > ```bash
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --install-rule     # 幂等；未启用时拒绝安装
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --install-rule     # 幂等；未启用时拒绝安装
 > ```
 >
 > - **未启用的项目**：`rules/` 下没有本文件 → **一个字节都不加载**，零成本。
@@ -46,7 +46,7 @@ paths:
 > **启用判定的唯一实现**（禁止各处各自 grep，那正是判据漂移的来源）：
 >
 > ```bash
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --detect --json
+> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json
 > # → {"enabled": true|false, "source": "...", "rule_installed": true|false}
 > ```
 >
@@ -122,7 +122,7 @@ WebMCP 需页面主动实现、直接调业务函数、页面自己声明能力�
 而且 `chrome-devtools` CLI **原生支持透传**：
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/check_webmcp.py --launch-args --driver cli
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --launch-args --driver cli
 # 不传 --origin 时自动读「测试环境与账号」的前端地址（约定 38 保证已归档）
 # → chrome-devtools start --categoryExperimentalWebmcp true \
 #     --chromeArg "--enable-features=WebMCP" \
@@ -161,7 +161,7 @@ python3 {{AIDP_HOME}}/scripts/check_webmcp.py --launch-args --driver cli
 **自检方法**（须写进「测试环境与账号」文档，见 `/sprint-selftest` Step 3）——⛔ **别手写 `typeof <入口>` 逐个试**，用脚本产的探测片段（**白名单优先 + 全局扫描兜底**）：
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/check_webmcp.py --probe-snippet   # 输出一段 JS，注入页面 evaluate
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --probe-snippet   # 输出一段 JS，注入页面 evaluate
 ```
 
 它返回 `{isSecureContext, whitelist:{<各入口>: typeof}, suspects:[{where,name,type}]}`。

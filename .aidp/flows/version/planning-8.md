@@ -125,7 +125,8 @@ VID_EXIT=$?
 **所有子调用 + 校验全部通过**后，把当前 PRD、原型、**代码**三类输入的 sha256 + mtime 写入 / 更新 `memory/{version}/.aidp-inputs-snapshot.json`（★ `code_files` 取 `code-inventory.json` 内容 sha256 一条，⛔ 不逐文件 hash；清单缺失记 `code_snapshot: unavailable`、⛔ 不当"没变"。理据见 `rationale.md`）：
 
 - fresh 模式（情况 A） → `snapshot_run: "fresh"`
-- 补充模式（情况 B-2） → `snapshot_run: "supplement-{NN}"`
+- repair / replan（B-0） → `snapshot_run: "repair"` / `"replan"`；必须待缺件、审计及同轮输入变化的 B-2 全部成功才更新，失败保留旧快照。
+- 补充模式（情况 B-2，含 repair 后的补充） → `snapshot_run: "supplement-{NN}"`
 - `snapshot_at` 用 ISO-8601 本地时区
 - 加入 .gitignore？**不要**，本快照需要进版本库随项目走，否则换台机器 / 换分支后 /version 会误判为 fresh
 - 子调用 / 校验中途失败 → **绝不**更新快照，避免下次跑 /version 把"失败但有部分产物"误当"已完成"

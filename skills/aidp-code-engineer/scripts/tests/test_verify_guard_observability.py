@@ -15,7 +15,11 @@ import json
 import subprocess
 import sys
 import unittest
+import tempfile
+from unittest import mock
 from pathlib import Path
+
+import _helpers as H
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 REPO = SCRIPTS.parents[2]
@@ -110,6 +114,68 @@ class GuardTimeoutAttributionTest(unittest.TestCase):
         data, err = V._run_guard(REPO, "check_flow_shell_escapes")
         self.assertIsNone(err, err)
         self.assertIsInstance(data, dict)
+
+
+class MemorySnapshotProtectionTest(unittest.TestCase):
+    script = REPO / ".aidp/scripts/check_memory_loss.py"
+    snapshot = "memory/.aidp/memory-snapshot"
+    content = "# 长期记忆\n## 用户决策\n未提交的重要约定\n"
+
+    def memory_guard(self, root, *args):
+        return subprocess.run([sys.executable, str(self.script), "--root", str(root), *args],
+                              capture_output=True, text=True)
+
+    def test_verify_guard_keeps_snapshot_after_passing(self):
+        with H.TempRepo() as root:
+            target = root / "memory/projectBrief.md"
+            target.parent.mkdir(parents=True)
+            target.write_text(self.content, encoding="utf-8")
+            self.assertEqual(self.memory_guard(root, "--snapshot").returncode, 0)
+            saved = root / self.snapshot / "memory/projectBrief.md"
+            with mock.patch.object(V, "_contract_root", return_value=REPO / ".aidp"):
+                result = V.VerifyResult()
+                V.check_memory_loss(root, result)
+            self.assertFalse(result.errors + result.warnings, result.errors + result.warnings)
+            self.assertTrue(saved.is_file(), "verify 的只读体检不得删除快照")
+            self.assertEqual(saved.read_text(encoding="utf-8"), self.content)
+
+    def test_deleted_snapshot_files_are_errors_and_snapshot_survives(self):
+        for relative in ("memory/projectBrief.md", "AGENTS.md",
+                         "memory/V0.1.0/tester/progress.md",
+                         "memory/V0.1.0/tester/activeContext.md"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(self.content, encoding="utf-8")
+                self.assertEqual(self.memory_guard(root, "--snapshot").returncode, 0)
+                target.unlink()
+                result = self.memory_guard(root, "--json")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                data = json.loads(result.stdout)
+                self.assertIn(relative, {entry["file"] for entry in data["errors"]})
+                self.assertEqual((root / self.snapshot / relative).read_text(encoding="utf-8"),
+                                 self.content)
+
+    def test_deleted_head_iteration_file_is_checked_without_snapshot(self):
+        with H.TempRepo() as root:
+            relative = "memory/V0.1.0/tester/progress.md"
+            target = root / relative
+            target.parent.mkdir(parents=True)
+            target.write_text(self.content, encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", relative], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"],
+                           check=True, capture_output=True)
+            target.unlink()
+            result = self.memory_guard(root, "--json")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(relative, {entry["file"] for entry in json.loads(result.stdout)["errors"]})
+
+    def test_new_file_without_baseline_is_not_a_deletion(self):
+        with H.TempRepo() as root:
+            result = self.memory_guard(root, "--json")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)["errors"], [])
 
 
 if __name__ == "__main__":

@@ -2754,6 +2754,27 @@ def test_plan_sprints_multifile():
     rc, d = run()
     check("多用户拆分 NN_研发执行计划-{开发者}.md 也被扫到", "004" in d["all_sprints"])
 
+    rc, bounded = run("--range", "001-002")
+    check("显式范围全部关闭即完成，不误跑范围外 Sprint",
+          rc == 0 and bounded.get("remain_count") == 0
+          and bounded.get("all_sprints") == ["001", "002", "003", "004"])
+    rc, bounded = run("--range", "002-003")
+    check("范围筛选仍扫全部分册，只返回范围内未关闭 Sprint",
+          rc == 0 and bounded.get("remain_sprints") == ["003"])
+    rc, opened = run("--range", "003-")
+    check("开放范围包含后续分册", rc == 0 and opened.get("remain_sprints") == ["003", "004"])
+    for invalid in ("003-001", "abc", "001-003;false"):
+        rc, _ = run("--range", invalid)
+        check(f"非法范围 {invalid} 返回用法错误", rc == 2)
+    rc, _ = run("--range", "008-009")
+    check("范围不命中任何计划 Sprint 不能假成功", rc == 1)
+    cp_range = subprocess.run([sys.executable, script, "--root", str(root),
+                              "--version", "V0.1.0", "--range", "001-002", "--shell"],
+                             capture_output=True, text=True)
+    check("范围收尾 shell 输出保留全量清单且剩余为零",
+          cp_range.returncode == 0 and "REMAIN_COUNT=0" in cp_range.stdout
+          and "ALL_SPRINTS='001 002 003 004'" in cp_range.stdout)
+
     root2 = Path(tempfile.mkdtemp())
     (root2 / "docs/plans/V0.1.0").mkdir(parents=True)
     (root2 / "docs/plans/V0.1.0/01_研发执行计划.md").write_text("正文无编号\n", encoding="utf-8")
@@ -7678,10 +7699,11 @@ def test_gates_see_the_encapsulated_form():
     (d / ".aidp/scripts").mkdir(parents=True, exist_ok=True)
     shutil.copy(repo / ".aidp/scripts/autopilot_unfreeze.py", d / ".aidp/scripts")
 
-    def freeze_probe(extra):
+    def freeze_probe(extra, reason="probe-timeout", preflight=False):
+        mode = "--preflight" if preflight else '--version "$V"'
         (d / ".aidp/flows/sprint-autopilot/probe.md").write_text(
-            "```bash\npython3 .aidp/scripts/autopilot_fail_handle.py --version \"$V\" \\\n"
-            "  --phase p --reason probe-timeout --why w" + extra + "\n```\n", encoding="utf-8")
+            "```bash\npython3 .aidp/scripts/autopilot_fail_handle.py " + mode + " \\\n"
+            "  --phase p --reason " + reason + " --why w" + extra + "\n```\n", encoding="utf-8")
         r = subprocess.run([sys.executable, str(repo / ".aidp/scripts/check_freeze_contract.py"),
                             "--root", str(d), "--json"], capture_output=True, text=True)
         o = json.loads(r.stdout)
@@ -7690,6 +7712,12 @@ def test_gates_see_the_encapsulated_form():
 
     check("★ 阴性：默认发卡形态不报 ERROR", not freeze_probe(""))
     check("★ 阳性：--no-card 判 ERROR（冻结停不响）", bool(freeze_probe(" --no-card")))
+    check("前置故障原因不误套版本级冻结枚举",
+          not freeze_probe("", reason="stale-active-sprint", preflight=True))
+    check("相同原因用于版本级冻结仍须拒绝",
+          bool(freeze_probe("", reason="stale-active-sprint")))
+    check("前置故障也不能禁用告警",
+          bool(freeze_probe(" --no-card", reason="stale-active-sprint", preflight=True)))
 
     # ② yield 守卫：fail_handle 视为守卫（它内建 wake 判断）+ 行内 UNATTENDED_YIELD 形态可见
     yg = (repo / ".aidp/scripts/check_yield_guard.py").read_text(encoding="utf-8")

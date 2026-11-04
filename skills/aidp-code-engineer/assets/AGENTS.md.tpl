@@ -36,7 +36,7 @@
 - **运行目录**：本项目的 AIDP 真源为 `各 Agent 的运行根/` —— 即 Agent 自己的目录，契约平铺其下；模板仓库的 `.aidp` 目录是维护源，**下游项目根没有这个目录**。Claude Code 与其他 Agent 并存时从 `.claude/` 的装配副本读取。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 - **无 Git 分流**：先读取脚手架返回的 `vcs_mode=git|none`；`none` 仍可规划、开发、本地测试和本地归档，Git 提交、推送、tag、CICD 监听不可假定成功，正式发布必须 fail closed、不得宣布已发布。是否建立 Git 仓库由用户决定，不自动 `git init`。
 
-- **单一信源 = `{{AIDP_HOME}}/`**：命令、角色、规则、流程、脚本、hook、模板、SKILL、插件只在这里维护；各 Agent 的入口（`.claude/commands|skills|plugins`、`.codex/skills/aidp`、`.codex/skills`、`.dsh/commands`、`.agents/skills`、各 Agent hook / MCP 配置等）由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成，⛔ 不手改生成物；生成入口登记在根 `.gitignore` 托管块、不入库，clone 后先跑一次。
+- **单一信源 = `{{AIDP_HOME}}/`**：命令、角色、规则、流程、脚本、hook、模板、SKILL、插件在此维护并入库。`agent_sync.py` 生成其他 Agent 的装配副本、指针入口和配置，生成物不手改，是否忽略以根 `.gitignore` 托管块为准；不能把运行真源一并忽略。具体目录所有权见 `{{AIDP_HOME}}/reference/agent-tools.md`，clone 后运行 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 恢复适配入口。
 - **命令与 SKILL 分离**：AIDP 命令只放 `各 Agent 的运行根/commands/`，公共 SKILL 只放 `各 Agent 的运行根/skills/`，插件只放 `各 Agent 的运行根/plugins/`。Claude Code 使用 `.claude/commands/<命令>.md`（`/<命令>`）；Codex 使用官方发现根 `.codex/skills/aidp/<命令>/SKILL.md`（`$<命令>`，只允许用户显式调用；该文件是**指针入口**，权威正文仍在 `各 Agent 的运行根/commands/<命令>.md`，执行第一动作即 Read 它）；DeepSeek Harness 使用 `.dsh/commands/<命令>.md`（`/<命令>`）。Codex 与 DeepSeek Harness 共用 `.agents/skills/` 中的公共 SKILL，命令参数均保持 `$ARGUMENTS` 语义。Codex 命令正文遇到明确的 `/foo args` 串联时，确定性读取 `各 Agent 的运行根/commands/foo.md`，把 `args` 原样作为子命令 `$ARGUMENTS` 在当前执行链内联执行；文件不存在或无法唯一映射时 fail closed。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 - **当前 Agent 判定**：`python3 各 Agent 的运行根/scripts/agent_env.py detect`——`AIDP_AGENT` 环境变量优先，其次项目根存在 `.codex/` → Codex、`.dsh/` → DeepSeek Harness、`.claude/` → Claude Code（可并存）。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
 - **项目记忆文件**：只用 Claude Code 时为 `CLAUDE.md`；Codex / DeepSeek Harness 为 `AGENTS.md`；并存时正文在 `AGENTS.md`、`CLAUDE.md` 仅一行 `@AGENTS.md`。脚本一律经 `agent_env.py memory-file` 取路径。
@@ -184,7 +184,7 @@
 | `bugfix` | `/sprint-bugfix` |
 | `notify.py`（脚本，非 skill）★ | `/sprint-autopilot`·`/sprint-aiauto-test` 里程碑通知（约定 32，渠道按 `memory/aidp-config.yaml` `notify.channels`）|
 | `aidp-code-engineer` | 脚手架 init/migrate/upgrade |
-| `superpowers:*`（tdd/subagent/debugging/verification）| `/sprint-dev`（tdd/subagent/verification）·`bugfix` SKILL（debugging）·`/sprint-batch`（verification）·`/sprint-test`·`/sprint-bugfix` 方式 B（verification）。⛔ `executing-plans` 会停下征询，与 G-BATCH-1「零询问连跑」冲突，**不得**用于 `/sprint-batch` 顶层循环 |
+| `superpowers:*`（tdd/debugging/verification）| `/sprint-dev`（tdd/verification）·`bugfix` SKILL（debugging）·`/sprint-batch`、`/sprint-test`、`/sprint-bugfix` 方式 B（verification）。并行开发由 AIDP 按写集隔离编排，不调用串行 `subagent-driven-development`；`executing-plans` 不用于零询问的 `/sprint-batch` 顶层循环 |
 
 > 外部可选：`api-tester` 等（未装即跳过）；浏览器实测驱动 `chrome-devtools-mcp` 随仓库分发于 `各 Agent 的运行根/plugins/chrome-devtools-mcp/`：Claude Code 使用完整项目插件，Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json`（见 `各 Agent 的运行根/reference/skills.md`）。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 
@@ -234,7 +234,7 @@
 
 18. **★ 代码目录统一标准（`{子项目}` 中间层为铁律）**：新建 `code/` 强制前后端二分 `code/frontend/{子项目}/` + `code/backend/{子项目}/`，源码根标志（`src/`/`pom.xml`/`build.gradle`/`package.json`/`go.mod` 等）**只能落在 `{子项目}` 层下、严禁直放 `code/frontend`·`code/backend` 父目录根**（即便单项目也须有 `{子项目}` 层）；`{子项目}名` 经用户确认门（默认推荐 `<项目名>-frontend|backend`、不静默采用）。**详规（init/migrate/upgrade 三模式行为 + Agent 读写边界 + 强制范围）见 `{{AIDP_HOME}}/rules/code.md`**；回检 = `verify.py::check_code_layout`。
 
-19. **★ README 强制规范（三档：代码单元 / 导航枢纽 / 平铺叶子）**：**① 代码单元 README** — 前后端子项目根（多模块含每个 module）必有 `README.md`（用途/技术栈/启动命令/目录或模块概览/主要配置/外部依赖），让"新人/AI/CI"5 分钟跑起来；源码单元内部目录不生成。**② 导航 README** — 源码树之外、直接子目录数 ≥ 2 或有 1 个非空子目录的枢纽目录必有，只列子目录清单与用途；**⛔ 一个目录只要一份导航**：默认用 README，目录已有契约要求的 `00_索引.md`（约定 15 需编号的版本规划文档等）时不再生成 README，二者不并存。**③ 其余不生成** — 源码树之外且无多级子目录的平铺目录，文件再多也不生成。判定唯一实现 = `readme_policy.py::is_readme_required_directory`（`scaffold`/`migrate`/`verify` 一律调它，禁止各写一套路径判断），`README_REQUIRED` 显式声明优先级最高，存量范围外 README 只报告不删除。**详规见 `{{AIDP_HOME}}/rules/code.md`**；触发 = `/sprint-dev` 首次写码前 / `/sprint-init`，回检 = `verify.py::check_code_readme`。
+19. **★ README 三档规范**：① 前后端子项目根（含每个 module）必有 `README.md`，说明用途、技术栈、启动、目录、配置与依赖；源码单元内部不生成。② 源码树外直接子目录 ≥2 或有 1 个非空子目录的枢纽，只保留一份导航，默认 README；已有契约要求的 `00_索引.md`（约定 15）或部署说明时不再补 README。③ 其余平铺目录不生成。判定唯一实现 = `readme_policy.py::is_readme_required_directory`，`README_REQUIRED` 显式声明优先，存量范围外 README 只报告不删除。详规见 `{{AIDP_HOME}}/rules/code.md`；触发 = `/sprint-dev` 首次写码前 / `/sprint-init`，回检 = `verify.py::check_code_readme`。
 
 20. **★ 文件复杂度 + 复用封装强制规范**（任务需要的复用 ≠ 过度抽象）：单文件按语言软阈值（Java/Kotlin ≤500、Vue/React ≤300、TS/JS ≤400、Python ≤600、Go ≤500、SQL DDL ≤800）、单方法/函数硬阈值 ≤50 行必拆；同 Sprint 内 3 次复用即抽公共单元（**★ 前端视觉单元收紧到 2 次**——逻辑的重复会被 bug 打出来，**样式的重复不报错、只会分叉**；**★ 判据类逻辑**——URL/base 拼装、鉴权头、租户解析、时间格式化、金额换算、脱敏归一——**散落 ≥2 处即须收敛，比 3 次阈值更严**）；复制型代码必落 `SYNC-WITH: <源文件>` 标记 + 技术债项写明「为什么现在不抽 / 解除条件」（缺任一 = 未处理，⛔ 登记不是免责声明）；抽取须**整族 + 全参数化**、且**与重构分两次提交**；禁 God Class（>1000 行）/ 瑞士军刀方法 / 3+ 复制粘贴 / 无 3 次复用的空抽象。**详规（各语言阈值 + 豁免）见 `{{AIDP_HOME}}/rules/code.md`**；回检 = 超阈值 Important、>2 倍 Critical 回 `/sprint-bugfix`。
 
@@ -254,7 +254,7 @@
 
 28. **★ 实现层"已有技术栈/组件复用优先"原则**：实现层优先用项目已有栈/组件（不强引原型用而项目无的库），**★ 作用域仅"实现选型层"（用哪个库/组件去实现），绝不豁免约定 4 的视觉+内容+操作逻辑三层对齐**——"用项目组件 ≠ 用组件库默认观感 ≠ 可砍内容/简化流程"；已有栈能满足禁引新库，不支持须 `AskUserQuestion` 同意 + 写 `systemPatterns.md` ADR。**详规见 `{{AIDP_HOME}}/rules/code.md`**；回检 = `code-verification-loop` 维度 4 grep 新增依赖是否在 baseline。
 
-29. **★ 历史死代码识别与处置（重做型开发铁律）**：开发已有同名/同语义历史代码时，先做死代码识别**再**写、**禁在旧文件上叠加**。死代码 4 信号（无菜单入口 / 无引用 / 无路由 / 显式标重做）；3 类处置——A 仍在用→按约定 28 复用、B 死代码→先 `git rm` 再重写（自动）、C 显式重构→"并存→切流量→删旧"（弹问询让用户选）。**详规（4 信号 + 3 类处置表 + 留档）见 `{{AIDP_HOME}}/rules/code.md`**；判定 = `/sprint-dev` Phase 0A.5「死代码扫描决策门」，回检 = `code-verification-loop` 维度 4「死代码/死引用残留」Critical。
+29. **★ 历史代码识别与处置**：开发同名/同语义模块前先核对历史代码。无菜单、无静态引用、无路由、显式重做仅是候选信号，须补查动态入口及实际可达性；未知保留。A 仍使用→按约定 28 复用；B 证据充分且不再使用→按清单删旧重写；C 仍使用且显式重构优先→兼容迁移，未获裁决不删。关联文件逐项证明独占引用，不能连带推定。详规见 `{{AIDP_HOME}}/rules/code.md`；判定入口 = `/sprint-dev` Phase 0A.5，回检 = `code-verification-loop` 维度 4。
 
 30. **★ 命令 / Agent / 文档正文只陈述「最终行为」；版本号与变更历史收口归档**（强制）：`{{AIDP_HOME}}/commands/*.md`、`{{AIDP_HOME}}/agents/*.md`、**`{{AIDP_HOME}}/flows/**`、`{{AIDP_HOME}}/reference/**`、`{{AIDP_HOME}}/rules/**`**、`docs/init/*.md`、根级项目记忆文件（`AGENTS.md` / `CLAUDE.md`）/`README.md` 等指令/文档正文只描述当前该做什么（★ 契约正文的大头如今在 flows/reference/rules 三处，它们同受本条约束——**唯 `rationale.md` 例外**，那本就是承载「为什么这么定」的根因文件），**禁止**铺陈版本变更历史（"原来怎样→现在改成怎样→为什么"），**也不写任何范式版本号戳**（文件头 `AIDP Vx.y` / 标题 `（Vx.y）` / 页脚 `基于 AIDP Vx.y 范式` / 行内 `（Vx.y 新增）`/`Vx.y 起` 等一律不写）。
 

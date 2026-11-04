@@ -4,6 +4,8 @@
 > 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
+> **B-0 调度优先**：`repair 模式` 仅给缺失族执行下方 fresh 调用，已有主文档只读；`replan` 四族全部执行 fresh 调用、保留已启动 Sprint 编号与状态。完整缺件/保护/快照规则见 `planning-1.md` Step 2.0，必须传给各子命令；输入未变不取消本次调用。任一族拒绝补件即返回失败，不回落 B-1。
+
 #### Step 2.4.1：调用 /sprint-requirements
 
 > ★ **`{qr_level}`** = `/version` 的 `--qr-level` 值，**未传为 `critical`**（`--fast` 同样取 `critical`），本 Step 起四个子命令一律原样透传（⛔ 不得因「需求少」自行降档或升档）。

@@ -61,7 +61,7 @@
 **Phase 4 — 完成初始化：**
 1. 生成 `memory/{version}/{user}/activeContext.md`（初始状态：等待 Sprint-001）
 2. 生成 `memory/{version}/{user}/progress.md`（所有功能模块标记为"未开始"）
-3. 生成 `AGENTS.md`（项目信息、当前 {version}/{user}、Agent 路由、初始化文件清单）
+3. 经 `agent_env.py memory-file` 定位脚手架已生成的项目记忆文件，只定点回填「当前状态」的 {version}/{user}；不重写规范正文（同 `/sprint-init` Step 4.3）
 4. 输出完整初始化报告（列出所有生成文件）
 
 ### 流程 B：Sprint 启动（/sprint-start）
@@ -78,9 +78,9 @@
 ### 流程 C：Sprint 关闭（/sprint-close）
 
 1. 读取相关文件（activeContext、需求文档、测试报告、bugfix 记录，均按 {version}/{user} 路径）
-2. 若用户未提供验收结果，**主动逐项询问**（★ `--unattended` 下**不询问**，按 `/sprint-close` Step 1「无人值守验收派生」三档确定性推导，单一信源在该命令，本文件不复述）
+2. 验收取值与交互一律按 `/sprint-close` Step 1；`--unattended`／`--from-batch` 不询问，按该命令的证据门推导并返回状态。本角色不另设默认通过或归档分支
 3. 记录本 Sprint 验收结论（每功能 ✅/⚠️/❌ + 回顾）到 progress.md + Sprint 归档；不单独出验收报告文件，验收内容由 AI执行报告「需求功能 / 风险与建议」段承载
-4. **归档**：将 activeContext 完整复制到 `memory/{version}/{user}/sprints/sprint-{NNN}.md`
+4. **归档**：按 `/sprint-close` Step 3 的取舍与篇幅规则裁剪 activeContext，保留事后不可重建的判断、取舍及遗留事项，再写 `memory/{version}/{user}/sprints/sprint-{NNN}.md`；不整份复制，不能裁掉未完成工作或缺陷
    - 文件头部添加归档标记和只读警告
 5. 更新 `memory/{version}/{user}/progress.md`（Sprint 状态、功能完成度、Bugfix 统计、技术债务）
 6. 重置 `memory/{version}/{user}/activeContext.md`（清空，写入等待状态和遗留事项）
@@ -146,7 +146,7 @@
 ### 🔴 跨版本/跨迭代禁令
 
 1. ❌ **禁止修改已归档的 Sprint 文件** — `memory/{version}/{user}/sprints/sprint-{NNN}.md` 一旦创建，永不修改
-2. ❌ **禁止修改已关闭 Sprint 的需求文档和归档记录** — 只能在新 Sprint 中创建新文档
+2. ❌ **禁止未经授权改写正式发布版本的需求产物** — 已发布版本走 `/version` 改写授权门；未发布版本的共享需求主文档不因单个 Sprint 关闭而冻结，约定 22 的 `--ledger-cascade` 可就地追平正文并刷新索引，`--supplement` 仍按其契约新增分册。Sprint 归档记录保持只读
 3. ❌ **禁止在未关闭当前 Sprint 时启动新 Sprint** — 必须先执行 /sprint-close
 
 ### 🔴 跨角色禁令

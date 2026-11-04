@@ -34,11 +34,11 @@ Step 0: ★ UI 视觉来源判定 + L1/L2 二层分级
   - 判定结果写入当前 Sprint UI 规范作为基线
   - ★ **视觉对齐 L1/L2 二层分级（详见 CLAUDE.md 约定 4）**：
       • **L1 大体页面样式（必须严格对齐 — 偏差 Critical）**：容器/版心、颜色 token（主色/品牌色/文字色/警告/成功/危险）、字号 h1~caption 体系、间距体系、圆角等级、阴影等级、字体、必须出现的元素 — 误差 ≤ 2px / 一阶色阶
-      • **L2 组件内部细节（项目组件默认 — 偏差 Important 不阻塞验收，仅 L1 偏差 Critical 强阻塞）**：表单类（el-input/select/checkbox/radio/date-picker/cascader/...）/ 反馈类（el-message/notification/dialog/drawer/popover/tooltip）/ 展示类（el-tag/badge/progress/card/skeleton/alert）/ 导航类（el-pagination/tabs/breadcrumb/steps/menu）的下拉箭头/日历视觉/弹窗动画/Tag 圆角/Progress 样式 — 项目组件默认实现，不强行覆写
+      • **L2 组件内部细节（项目组件默认 — 偏差 Important 可非阻断 loop 推进，但验收仍不通过，仅 L1 偏差 Critical 强阻塞）**：表单类（el-input/select/checkbox/radio/date-picker/cascader/...）/ 反馈类（el-message/notification/dialog/drawer/popover/tooltip）/ 展示类（el-tag/badge/progress/card/skeleton/alert）/ 导航类（el-pagination/tabs/breadcrumb/steps/menu）的下拉箭头/日历视觉/弹窗动画/Tag 圆角/Progress 样式 — 项目组件默认实现，不强行覆写
       • **L2 主题 token 仍受 L1 约束**：`<el-tag type="success">` 的绿色 从 L1 体系取项目品牌绿，不用 Element Plus 默认浅绿；通过 `theme/variables.scss` / `--el-color-*` 统一覆写
       • **图标缺失**：原型用了项目图标库没有的图标款 → 拉 SVG 入 `src/assets/icons/`（详见 frontend.md 核心原则 10 配套流程），禁止为单图标引入完整图标库
       • **不确定时默认归 L1**（保守，避免视觉漂移）
-      • `/sprint-test` `code-verification-loop`「代码质量」维度子项「视觉还原」按 L1/L2 分级回检：L1 偏差 Critical 强阻塞回 `/sprint-bugfix`；L2 偏差 Important 不阻塞验收
+      • `/sprint-test` `code-verification-loop`「代码质量」维度子项「视觉还原」按 L1/L2 分级回检：L1 偏差 Critical 强阻塞回 `/sprint-bugfix`；L2 偏差 Important 可非阻断 loop 推进，但验收仍不通过
   - ★ **字段/列裁剪三件套（详见 CLAUDE.md 约定 4）**：原型可见的列表列/表单字段，若因接口不支持需裁剪/改名/被接口字段覆盖 → 禁止静默删除，必须 ① 在研发需求登记「原型字段→处置」对照表 ② 经产品确认（C/D 决策门）③ 触发约定 22 级联（统一走末段 Step X.0.0）。本 Step 仅做事前门提示，规则单一信源在约定 4，不复述
 Step 0.3: ★ 设计令牌落地门（情形 B/C 必过 — 约定 4「情形 B/C 设计令牌提取铁律」；先令牌、后写页面）
   - **仅情形 B/C 触发**（无高保真、对齐原型）；情形 A/D 走高保真、本门退化为"从高保真核对 token"。
@@ -92,19 +92,23 @@ Step 4.6: ★ 同族增量项静态门（约定 20 姊妹条「同族增量项�
 
 ### Phase 1.4：并行开发（★ 全栈场景推荐）
 
-当范围为 "all"（空参数）时，调用 `superpowers:subagent-driven-development`：
+当范围为 `all` 时，由 **AIDP 主流程直接使用 Agent 工具编排**，不调用 `superpowers:subagent-driven-development`：该 SKILL 按 Task 串行实现与两阶段审查，并不提供并行实现能力；本节点不引入其工作树、提交或分支收尾流程。
+
+1. **派发前核对写集与依赖**：按本 Sprint 的 Task 列出每个实现子 Agent 的具体文件 `write_set`（含新增、删除、测试及依赖锁文件），不能只写“前端/后端目录”。写集无交集且没有尚未交付的前后依赖才可并行；公共配置、共享类型、代码生成输出等有交集时改为串行，未知冲突按有冲突处理。各自允许的创建目录也须明确，新增范围先回报主流程重新分配。
+2. **隔离写权限**：各实现子 Agent 只修改自己的 `write_set`，共享输入只读；需求/设计/计划/用例族台账、memory、baseline、Git index/commit/push 与分支切换由主流程统一处理。子 Agent 回传文档缺口与级联线索，不并发写共享文档；发现依赖或写集冲突先停受影响任务并回报，不覆盖他人文件。
+3. **主流程负责收回及审查**：收到实际完成回传后，先派独立只读子 Agent 对照 Task/设计做规范符合性审查；通过后再派独立只读子 Agent 做代码质量审查。问题交原实现者在原写集内修复并复审；两阶段审查未过不得将该 Task 标为完成。无法派发时按工具映射的同 prompt 串行回退并说明，不能跳审。
+4. **Sprint 收口仍归原链路**：实现与上述审查完成后，主流程统一执行本命令的开发后回写；`/sprint-test` 负责静态验收及修复交接，`/sprint-close` 负责最终走查与归档。Task 审查不替代这两道门，子 Agent 不自行提交或关闭 Sprint。
 
 ```
-并行任务：
-  subagent-1 (backend-dev)：按后端开发步骤执行
-  subagent-2 (frontend-dev)：按前端开发步骤执行
-
-共享输入：docs/design/detail/{version}/* + 01_研发执行计划.md
-独立产出：后端代码 / 前端代码
-
-★ 必填字段（缺一即派单不合规，见下）：
-  cascade_mode: ledger | now      # 默认 ledger（攒批）
-  dev_scale:    S | M | L
+实现派单：
+  backend-dev / frontend-dev：分别按对应开发步骤执行
+  write_set: [具体文件路径；含测试/锁文件/待删除文件]
+  create_dirs: [允许新增文件的目录；没有则为空]
+  dependencies: [须先取得的交付物；无则为空]
+  cascade_mode: ledger | now
+  dev_scale: S | M | L
+共享只读输入：docs/design/detail/{version}/* + 本 Sprint 执行计划
+回传：完成的 Task、实际改动文件、验证证据、级联线索、阻塞及原因
 ```
 
 > ⛔⛔ **派单简报必须携带 `cascade_mode` + `dev_scale`，且 `ledger` 时【不得罗列待改文档清单】**：

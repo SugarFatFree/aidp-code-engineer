@@ -73,7 +73,7 @@
 | **Sprint 执行** | `/sprint-batch [范围]` | 批量执行多个 Sprint | `superpowers:verification-before-completion`（⛔ 不用 `executing-plans`：它会停下征询，与「零询问连跑」冲突）| [`{{AIDP_HOME}}/commands/sprint-batch.md`](../../{{AIDP_HOME}}/commands/sprint-batch.md) |
 | | `/sprint-full {NNN}\|"<描述>"` | 单 Sprint 一键（支持按计划或自动累进） | 串联下方 5 个 | [`{{AIDP_HOME}}/commands/sprint-full.md`](../../{{AIDP_HOME}}/commands/sprint-full.md) |
 | | `/sprint-start {NNN}` | 启动单个 Sprint | - | [`{{AIDP_HOME}}/commands/sprint-start.md`](../../{{AIDP_HOME}}/commands/sprint-start.md) |
-| | `/sprint-dev [scope\|"描述"]` | 开发阶段（★ 支持独立累进） | `superpowers:test-driven-development` + `superpowers:subagent-driven-development` | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |
+| | `/sprint-dev [scope\|"描述"]` | 开发阶段（★ 支持独立累进） | `superpowers:test-driven-development`；AIDP 按写集隔离派发，规范审查后做代码质量审查 | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |
 | | `/sprint-test` | 测试阶段（静态扫描 + 可选接口测试；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（+ 外部可选 `api-tester`） | [`{{AIDP_HOME}}/commands/sprint-test.md`](../../{{AIDP_HOME}}/commands/sprint-test.md) |
 | | `/sprint-bugfix [sprint-NNN\|bugfix-*.md\|"描述"]` | 问题修复（★ 支持独立使用 + 自动累进；可按 Sprint / 指定文件名 / 描述累进三种入参） | `bugfix` + `superpowers:systematic-debugging` | [`{{AIDP_HOME}}/commands/sprint-bugfix.md`](../../{{AIDP_HOME}}/commands/sprint-bugfix.md) |
 | | `/sprint-close {NNN}` | Sprint 关闭 | - | [`{{AIDP_HOME}}/commands/sprint-close.md`](../../{{AIDP_HOME}}/commands/sprint-close.md) |

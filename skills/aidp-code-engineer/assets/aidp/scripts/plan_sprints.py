@@ -25,7 +25,8 @@
   · 计划文件 = `docs/plans/{version}/` **一层内**所有 `*研发执行计划*.md`（按文件名排序，全取）
   · Sprint 全集 = 上述文件里所有 `Sprint-NNN` 的 NNN，去重排序
   · 已关闭 = `memory/{version}/*/sprints/sprint-*.md` 里的 NNN（兼容 `sprint-abc001.md` 形态）
-  · 剩余 = 全集 − 已关闭，保持全集顺序
+  · 剩余 = 全集 − 已关闭，保持全集顺序；传 --range 时再与范围取交集
+  · --range 不裁剪 ALL_SPRINTS / CLOSED_SPRINTS，初次执行和收尾必须使用相同范围
 
 ## 退出码（与全仓下发脚本同一套）
 
@@ -102,11 +103,19 @@ def main():
         description="研发执行计划 → Sprint 集合（全部计划文件的唯一口径）")
     ap.add_argument("--root", default=".")
     ap.add_argument("--version", required=True)
+    ap.add_argument("--range", default="", dest="sprint_range",
+                    help="仅筛选剩余 Sprint：NNN-NNN 或 NNN-；仍扫描全部计划")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--shell", action="store_true", help="输出可 eval 的 shell 赋值")
     g.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
+    bounds = None
+    if args.sprint_range:
+        match = re.fullmatch(r"(\d{3})-(\d{3})?", args.sprint_range)
+        if not match or (match[2] and match[1] > match[2]):
+            ap.error("--range 必须为 NNN-NNN 或 NNN-，且起点不得大于终点")
+        bounds = (match[1], match[2] or "999")
     res = scan(args.root, args.version)
 
     if not res["plan_files"]:
@@ -122,6 +131,15 @@ def main():
         if args.json:
             print(json.dumps(res, ensure_ascii=False))
         return 1
+
+    if bounds:
+        scoped = [s for s in res["all_sprints"] if bounds[0] <= s <= bounds[1]]
+        if not scoped:
+            sys.stderr.write(f"⛔ 范围 {args.sprint_range} 未命中任何计划 Sprint → fail-closed\n")
+            return 1
+        res["remain_sprints"] = [s for s in res["remain_sprints"] if s in scoped]
+        res["remain_count"] = len(res["remain_sprints"])
+        res["next_sprint"] = next(iter(res["remain_sprints"]), "")
 
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))

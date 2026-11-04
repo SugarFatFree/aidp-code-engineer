@@ -48,12 +48,12 @@
 >
 > | 序 | 数据源 | 推导 |
 > |---|---|---|
-> | ① | `docs/testing/{version}/sprint-{NNN}/*-test-report.md` 各功能用例结果 | 全通过 → ✅；有失败 → ⚠️ |
+> | ① | `docs/testing/{version}/sprint-{NNN}/*-test-report.md` 或本 Sprint 落盘的 code-verification-loop 静态验证结果 | 全通过 → ✅；有失败 → ⚠️ |
 > | ② | 本 Sprint「问题汇总清单」/ `docs/bugfix/{version}/` 未闭环缺陷 | 有未闭环 → ⚠️（附缺陷编号） |
-> | ③ | ①②均无数据（如静态-only 轮） | ⚠️ 部分通过 + 注明「无测试证据，按未验证归档」 |
+> | ③ | ①②均无数据 | 返回 `incomplete-sprint`，保留 activeContext，不执行 Step 2–5、不写关闭标记或归档 |
 >
-> **⛔ 一律不判 ❌「移入下期」**——那是范围决策、属用户职权，无人值守不得代行；确需移出本期
-> 由用户事后决定。**⛔ 也不得因推导不出而挂起**：走 ③ 归档并在 `progress.md` 留痕即可。
+> **关闭证据前置门**：①②只决定已交付工作的验收等级，不能证明开发完成。先逐项核对本 Sprint 计划任务、activeContext 已完成记录与实际文件；有待开发任务、范围不明或只存在启动记录 → 同样返回 `incomplete-sprint`。还须有**本 Sprint、本轮代码**的测试/静态验证结果（静态-only 可用 `/sprint-test` 的 code-verification-loop 结果，缺陷清单本身不等于验证已执行）；旧报告或空报告不算。资料不全时由调用方恢复 dev→test→bugfix，补齐后再 close。
+> **⛔ 一律不判 ❌「移入下期」**——那是范围决策、属用户职权；无人值守失败返回调用方记账，不弹窗、不以「部分通过」把未完成开发从待跑集合中扣除。
 
 ## Step 2：记录验收结论（不单独出验收报告文件）
 

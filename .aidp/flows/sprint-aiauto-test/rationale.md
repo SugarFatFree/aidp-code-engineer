@@ -174,19 +174,15 @@ Phase 3 的 final 收口门失败时走的是「记账 + 让位本 tick」（`ex
 
 ---
 
-### 0.0 拉码冲突的顶层熔断记账
+### 0.0 共享工作树的同步职责
 
-**`LOOP_UNATTENDED=1`（测试链路专属顶层熔断）**：rebase 冲突发生在 `TARGET_VERSION` 解析**之前**，无版本上下文可写 `versions.{V}.*`，故走 `autopilot_fail_handle.py --preflight --command aiauto-test`，记测试链路专属顶层键 `aiauto_preflight_fail_streak` / `aiauto_preflight_frozen_at` / `aiauto_preflight_fail_reason`。与开发链路的 `preflight_*` 分键：两条链路的拉码失败是独立事件，共用计数会让一条链路的冲突把另一条链路熔断。未达阈只记账退本 tick；达阈置 `aiauto_preflight_frozen_at`、发 #4 并写本地告警台账，之后静默退出。`fetch`/`pull` 成功一次即清零三键。
+OS 调度默认把开发与测试链路指向同一项目，各自的命令锁并不互斥。测试侧 `pull --rebase --autostash` 会临时抽走开发中的文件；失败时无条件 abort 还可能中止开发侧事务。因此代码同步由开发链路负责，测试侧直接读 baseline，并核对目标 version/build、push_commit 与实际部署指纹；不把当前 HEAD 当作部署证据。旧测试拉码熔断三键在 Phase 0.0 清理，其他测试门的阻塞状态保持独立。
 
 ---
 
 ### 「研发自测/ 配置优先」总则
 
 ★ **「研发自测/ 配置优先」总则（单一信源，下文各 Phase 引用本节，不复述）**：chrome 连接地址 / 部署 URL / 测试账号统一维护在 `docs/testing/{version}/研发自测/`（由 `/sprint-selftest` Step 3 与用例配套生成）。**字段读取成功时，对应的 Phase 0.1（chrome 地址）/ 0.3（部署 URL）/ 0.4（账号）交互收集环节自动跳过**，仅缺失或未填才回退交互式收集。开发测试环境账号明文入库（便于团队共享）；仅生产 / UAT 敏感账号用 `memory/.sprint-autopilot-credentials.json`（约定 38）。
-
-（收口写法）
-
-**`LOOP_UNATTENDED=1`**：见上节「0.0 拉码冲突的顶层熔断记账」（测试链路专属 `aiauto_preflight_*` 三键）。
 
 ### 「选不出被测版本」这个出口为什么也必须回写 `aiauto_blocked_reason`
 
@@ -231,7 +227,7 @@ autopilot 每 tick 累加 `test_loop_missing_streak`，3 tick 后按 `config-mis
 
 ### 0.2 取版与去重门注释
 
-- **心跳写入点在 0.0.0**：0.0 拉码冲突 / 0.1.1 chrome 缺失 / 0.1.5 远端引导三处 early-exit 都在 0.2 之前。心跳写在 0.2 会停在最后一次进 0.2 的时刻，autopilot 判「测试链路未挂载」并冻 `config-missing`，而该 reason 的解冻判据正是心跳，双向卡死。
+- **心跳写入点在 0.0.0**：0.0.5 无可测版本 / 0.1.1 chrome 缺失 / 0.1.5 远端引导三处 early-exit 都在 0.2 之前。心跳写在 0.2 会停在最后一次进 0.2 的时刻，autopilot 判「测试链路未挂载」并冻 `config-missing`，而该 reason 的解冻判据正是心跳，双向卡死。
 - **`--target` 分支同样落盘 `TARGET_VERSION`**：tick 命名空间为空时，下游 `--shell` 按回落表取到 autopilot 正在开发的版本，报告 / `aiauto_tested_at` / `builds[].status` / 冻结与 streak 全部写进错版本，「强制锁定」失效。
 - **默认取版**：「当前开发版本」= `phase_beta_done_at` 非空且 `internal_released_at` 为空（autopilot 跑完部署、尚未准发布），判据单一信源 `baseline_edit.py current-version`。
 - **冻结契约**：四件一次写齐、只经 `baseline_edit.py`；解冻路径见 `autopilot_unfreeze.py::aiauto_probe`；冻结前先收口本 build 的 AI执行报告（本命令是其关闭方 R-4）。

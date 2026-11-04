@@ -91,11 +91,11 @@ autopilot_decisions:
   #   新项目写 client_mcp:，它是设计期 / 测试期 / 验收期三侧读取的那一个键；
   #   ⛔ 只写下面的 webmcp: 兼容段，非 Web 项目会被归一成 client_type=web，
   #      端选错的表现是「能力入口探不到」，与「端不对」完全不同形态、排查必走偏。
-  # 跨端判定唯一实现：python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --detect --json（各处禁止自行 grep）
-  # Web 叶子专有事实（secure context / 浏览器版本 / 启动开关）：check_webmcp.py --detect --json
+  # 跨端判定唯一实现：python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json（各处禁止自行 grep）
+  # Web 叶子专有事实（secure context / 浏览器版本 / 启动开关）：check_webmcp.py --version "{version}" --detect --json
   # 详规单一信源：{{AIDP_HOME}}/rules/client-mcp.md（跨端）+ {{AIDP_HOME}}/rules/webmcp.md（Web 叶子）
   #   （★ 两者均按需安装：默认在模板位 {{AIDP_HOME}}/templates/optional-rules/，
-  #     启用后跑 check_client_mcp.py --install-rule / check_webmcp.py --install-rule 装到 rules/）
+  #     启用后跑 check_client_mcp.py --version "{version}" --install-rule / check_webmcp.py --version "{version}" --install-rule 装到 rules/）
   client_mcp:
     enabled: true                                     # 仅当项目【显式决定】启用才写本段
     client_type: web                                  # web | miniprogram | mobile | desktop

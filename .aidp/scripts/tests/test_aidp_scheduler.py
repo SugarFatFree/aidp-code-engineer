@@ -324,6 +324,43 @@ def test_agent_loop():
         shutil.rmtree(home, ignore_errors=True)
 
 
+def test_agent_loop_installed_layouts():
+    print("【安装后平铺运行根启动双链路】")
+    from pathlib import Path
+    scaffold_scripts = Path(SCRIPTS).parents[1] / "skills" / "aidp-code-engineer" / "scripts"
+    sys.path.insert(0, str(scaffold_scripts))
+    from runtime_layout import render_text
+
+    for runtime_home, agent in ((".claude", "claude"), (".agents", "codex"), (".agents", "dsh")):
+        root = _mkproj()
+        home = tempfile.mkdtemp()
+        try:
+            installed = Path(root) / runtime_home / "scripts"
+            installed.parent.mkdir()
+            shutil.move(str(Path(root) / ".aidp" / "scripts"), str(installed))
+            for path in installed.iterdir():
+                if path.suffix in {".py", ".sh"}:
+                    path.write_text(render_text(path.read_text(encoding="utf-8"), runtime_home), encoding="utf-8")
+            for command in ("sprint-autopilot", "sprint-aiauto-test"):
+                env = dict(os.environ, HOME=home, AIDP_AGENT=agent,
+                           AIDP_AGENT_EXEC='printf "%s\\n" "$PWD" "$AIDP_HOME" {prompt} > captured.txt')
+                for key in ("AIDP_HOME", "AIDP_PROJECT_ROOT", "AIDP_TICK_COMMAND", "AIDP_TICK_TOKEN"):
+                    env.pop(key, None)
+                result = subprocess.run(["bash", str(installed / "agent_loop.sh"), "--once", command],
+                                        cwd=home, env=env, capture_output=True, text=True, timeout=30)
+                capture = Path(root) / "captured.txt"
+                lines = capture.read_text(encoding="utf-8").splitlines() if capture.exists() else []
+                prefix = "$" if agent == "codex" else "/"
+                check(f"{runtime_home}/{agent}/{command} 从外部目录启动并定位项目根",
+                      result.returncode == 0 and lines == [root, str(installed.parent),
+                          f"{prefix}{command} --unattended --no-loop"])
+                check(f"{runtime_home}/{agent}/{command} 日志写入项目运行态",
+                      (Path(root) / "memory" / ".aidp" / "logs" / f"{command}.log").is_file())
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(home, ignore_errors=True)
+
+
 def _alerts(root):
     p = os.path.join(root, S.ALERTS_REL)
     return [json.loads(x) for x in open(p, encoding="utf-8").read().splitlines()] if os.path.isfile(p) else []
@@ -671,6 +708,7 @@ if __name__ == "__main__":
     test_watchdog_never_started()
     test_watchdog_manual_without_install()
     test_agent_loop()
+    test_agent_loop_installed_layouts()
     test_agent_loop_timeout_and_lock()
     test_tick_result_and_lock_age()
     test_install_preflight()

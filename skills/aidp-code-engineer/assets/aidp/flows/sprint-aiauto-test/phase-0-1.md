@@ -76,29 +76,20 @@ python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now
 # 记为 UNATTENDED_YIELD：`发 #4 + exit`（绝不 AskUserQuestion / 绝不 60 分钟轮询）
 ```
 
-### 0.0 拉取远端最新代码（同 /sprint-autopilot Phase 0.0）
+### 0.0 读取共享工作树与部署基线
 
-> `vcs_mode=none` 时记录拉码 `unsupported:vcs-disabled` 后直接进 0.0.5 读取本地测试方案；不运行 Git fetch/pull/rebase，不记 `aiauto_preflight_fail_streak`，不因 Git 不可用冻结。此后仅在真实本地部署就绪证据存在时继续浏览器实测，绝不以「未能拉码」等同测试已通过。
+开发链路负责同步代码；测试链路直接读取同一项目的 baseline，不在共享工作树执行 pull、rebase、autostash、切分支或中止其他进程的 Git 操作。两条 OS 调度链路的命令锁彼此独立，测试侧改写工作树会抽走开发中的文件。
 
-`git fetch + git pull --rebase --autostash`，保证 baseline 文件读到 sprint-autopilot 最新写入的状态；rebase 冲突 → **一律 `git rebase --abort` + 记一行日志**：
-- **`LOOP_UNATTENDED=1`（测试链路专属顶层熔断，退出本 tick）**：冲突发生在版本解析之前、无版本上下文，走 `--preflight --command aiauto-test`（键 `aiauto_preflight_fail_streak / aiauto_preflight_frozen_at / aiauto_preflight_fail_reason`，不与开发链路的 `preflight_*` 共用）：
-  ```bash
-  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-  if git fetch --quiet && git pull --rebase --autostash --quiet; then
-    python3 {{AIDP_HOME}}/scripts/baseline_edit.py del aiauto_preflight_fail_streak aiauto_preflight_frozen_at aiauto_preflight_fail_reason >/dev/null 2>&1 || true
-  else
-    git rebase --abort 2>/dev/null || true
-    if [ "${LOOP_UNATTENDED:-0}" = "1" ]; then
-      [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get aiauto_preflight_frozen_at --default '')" ] && { echo "⏸️ 测试链路拉码已熔断待人工，静默退出"; exit 0; }
-      python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --preflight --command aiauto-test \
-        --reason preflight-incomplete --streak-key aiauto_preflight_fail_streak --threshold 3 \
-        --why "测试链路 git pull --rebase 冲突（git-pull-conflict），已 abort；人工解决冲突后下一 tick 拉取成功即自动清零"
-      exit 0
-    fi
-    echo "⚠️ 拉取冲突已 abort，交互式按本地 checkout 继续本轮测试"
-  fi
-  ```
-- **交互式则 abort 后直接用当前本地 checkout 继续本轮测试**——测试只读代码、不写代码，拉取冲突不构成阻塞，绝不 @用户卡住等待（如需同步最新代码请到 `/sprint-autopilot` 开发链路侧处置冲突）。
+- 本轮被测对象以 `TARGET_VERSION`、`BUILD`、对应 `push_commit` 和实际部署指纹为准；当前 checkout 的 HEAD 不能替代部署证据。开发正在改写的本地用例不能直接视为该 build 的冻结用例集，须先核对其归属；对不上则记录阻塞，不得判绿。
+- 独立测试 checkout 必须由其同步责任方在测试前准备好目标版本；本命令不通过自动拉码改变被测对象。
+- `vcs_mode=none` 使用本地部署就绪证据，Git 检查记 `unsupported:vcs-disabled`，不因缺 Git 冻结。
+- 旧版测试链路拉码熔断已失去适用条件，只清理这三个专属旧键，不清其他门的阻塞：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py del aiauto_preflight_fail_streak aiauto_preflight_frozen_at aiauto_preflight_fail_reason || exit 1
+```
+
+随后进入 0.0.5，按本次目标版本读取测试方案。
 
 ### 0.0.5 读取测试方案文档（主配置入口）
 
@@ -150,6 +141,9 @@ if [ -z "$TARGET_VERSION" ]; then
   python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_blocked_reason "no-testable-version" >/dev/null 2>&1 || true
   echo "ℹ️ 尚无可测版本（current-version 为空）→ 跳过测试方案预读，退出本 tick"; exit 0
 fi
+# 后续浏览器/MCP 分片重读 tick；必须保留本轮显式 --target。
+python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test \
+  TARGET_VERSION "$TARGET_VERSION" >/dev/null || exit 1
 
 # ★ 测试环境与账号配置可能 ① 单独成文（如 研发自测/01_测试环境与账号.md）② 直接内嵌在「测试人员的测试方案」或「研发自测方案」的章节里（不单独开文件）
 #   → 按内容标记找承载配置的 .md（独立或内嵌都能命中），不假设有独立文件、不写死文件名；测试人员目录优先、研发自测兜底

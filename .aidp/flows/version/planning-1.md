@@ -95,7 +95,15 @@
 >
 > **三类 config 子类的特殊语义**：变化触发 B-2 补充模式时，sprint-design Step 0.3 四象限「③ 代码超前-补写」**额外触发** /sprint-dev Step X.7 流程更新 `docs/deployment/{version}/配置文件/增量/配置项清单*.md`——配置变化在两份文档同时记录：事实清单（设计/开发视角，精挑路径/端口）+ 配置项清单（运维视角，全量 key），互相在「说明」列引用对方。详见 memory `config-manifest-runtime-doc.md` 与事实清单关系矩阵。
 
-**算法**：
+**repair / replan 模式（Step 1 B-0，先于下方快照分流）**：
+
+- 保留原输入快照并计算差异，不能删快照或先把它刷新成当前值来绕过 B-1。模式与缺件清单必须写入每个规划子命令调用上下文，分片/子 Agent 不能自行按「输入未变」退出。
+- `repair`：按 `planning-5.md` 六类判据列出缺件及其生产者，顺序 requirements → design → plan → selftest；已有族只读复用、缺失族走 `planning-3.md` 的 **fresh 调用**（不带 `--supplement`，使用当前全部输入与已有上游）。自测用例/方案/环境任一缺失，都进入 selftest；传清缺失目标与已有文件只读清单，只补缺文件。环境文件仍执行 Step 2.4.1.6。目录中的索引不代替内容主文档。
+- `replan`：四个生产者全部按 fresh 调用重新规划，基于当前完整输入；本 flag 是重生成规划的明确授权，允许更新未发布规划主文档。已有 Sprint 启动记录、归档、任务编号与完成状态须保留并映射回计划，禁止删历史、把已完成工作重编号后重跑。若重规划无法保持已启动任务的范围/编号，返回 `replan-conflict`，无人值守交调用方记账，不自动关闭或重置在途 Sprint。
+- 两种模式都继续 Step 2.4.4–2.4.7 的归一、自检、交叉引用和审计；repair 的归一仅补缺索引项，不覆盖已有内容主文档。Step 2.5/2.6 只创建缺失 memory，不重置既有 progress、activeContext。
+- repair 若同时检测到输入变化：先补件，再以**原快照差异**走 B-2，已有族只产增量；不因补件先写快照而吞变化。所有生成与审计都成功后才执行 Step 2.7.5 更新快照，`snapshot_run` 记 `repair` / `replan`（再补充则记 `supplement-NN`）。失败保持旧快照，返回具体缺件/失败，不宣称规划完成。
+
+**算法**（fresh / supplement；repair / replan 已在上方分流，不重新推断模式）：
 
 1. **fresh 模式**（情况 A）：本步先跳过；待 Step 2.4.x 全部成功后，在 Step 2.7.5 生成 `.aidp-inputs-snapshot.json`（`snapshot_run: "fresh"`）
 2. **补充模式**（情况 B-2）：

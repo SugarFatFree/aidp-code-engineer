@@ -83,9 +83,24 @@ DEV_CASES=$(find "$V/研发自测" -maxdepth 2 -name "*.md" \
 #     让 /sprint-bugfix 缺陷反哺生成的回归用例跨版本沉淀、每版 release 自动复跑历史回归集（不从零开始）。
 #     标记来源：正文/frontmatter 含「[回归]」「回归用例」「关联缺陷:」任一（由 dev-manual-testcase 产出、bugfix 反哺时打标）。
 #     注：[回归] 标记 + 关联缺陷字段由 dev-manual-testcase 产出（见其用例模板 + check_testcase_format），本 glob 直接消费。
+# 只取严格早于目标的版本目录；本仓 V主.次[.补丁]，省略补丁按 0 比较，非法目录不入历史。
 REGRESSION_CASES=$(
-  for d in $(find docs/testing -maxdepth 2 -type d -name "研发自测" 2>/dev/null | sort); do
-    case "$d" in *"/${TARGET_VERSION}/"*) continue;; esac   # 跳过当前版本（已在 DEV_CASES）
+  for d in $(python3 - "$TARGET_VERSION" <<'PY'
+import re, sys
+from pathlib import Path
+
+def version_key(name):
+    m = re.fullmatch(r"[Vv](0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\.(0|[1-9][0-9]*))?", name)
+    return tuple(int(n or 0) for n in m.groups()) if m else None
+
+target = version_key(sys.argv[1])
+for version in Path("docs/testing").glob("*"):
+    key = version_key(version.name)
+    cases = version / "研发自测"
+    if target is not None and key is not None and key < target and cases.is_dir():
+        print(cases)
+PY
+  ); do
     find "$d" -maxdepth 2 -name "*.md" -not -name "_*" -not -name "00_*" -not -name "01_研发自测方案.md" -not -name "01_测试环境与账号.md" -not -name "README.md" 2>/dev/null
   done | while read -r f; do grep -qiE '\[回归\]|回归用例|关联缺陷[:：]' "$f" 2>/dev/null && echo "$f"; done | sort -u
 )

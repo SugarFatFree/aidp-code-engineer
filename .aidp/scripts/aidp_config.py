@@ -40,7 +40,7 @@ CONFIG_REL = os.path.join("memory", "aidp-config.yaml")
 # Stop 护栏的盲打逃生舱（`touch` 即关，优先级高于 yaml 键）
 STOP_GUARD_OFF_REL = os.path.join("memory", ".autopilot-stop-guard-off")
 
-TEMPLATE = runtime_text("# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n\nproject:\n  # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，\n  # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。\n  name: null\n  name_cn: null\n\ncommit_gate:\n  # 提交前门禁总开关（约定 24：每次 git commit 前跑 __AIDP_HOME__/scripts/commit_gate.py）。\n  # 关掉之后：不再检查台账积压 / CICD 推送欠账。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32：__AIDP_HOME__/scripts/notify.py）。\n  # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。\n  enabled: false\n  # 一个渠道失败时是否尝试下一个\n  fallback: true\n  # autopilot 启动时是否发 #0a「渠道已连通」通知（默认不发，避免噪音）\n  channel_ready_card: false\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只经环境变量引用，不明文入库。\n  channels: []\n  # 例：\n  #   - {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #   - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #   - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #   - {type: lark-cli, chat_id: \"<chat id>\"}\n  #   - {type: command, command: \"<读 stdin JSON 的发送命令>\"}\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 无人值守下是否允许自动触发 / 重试流水线。\n  auto_trigger: true\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: \"...\", view: \"...\", trigger: \"...\", retry: \"...\", check: \"...\"}\n  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。\n  # 只记事实、不改 CICD 配置。由 `__AIDP_HOME__/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。\n  push_auto_deploy: false\n  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4\n  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻\n  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。\n  push_deploy_min_wait_seconds: 300\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（python3 __AIDP_HOME__/scripts/aidp_scheduler.py install）：\n  # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知\n  stale_cycles: 3\n  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久\n  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。\n  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；\n  # watchdog 用 max(stale 阈值, 本值, 1h) 作「持锁超期 = 挂死」的判据。0 = 不设上限（不推荐）。\n  tick_max_seconds: 7200\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: \"codex exec --sandbox workspace-write {prompt}\"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n", __file__)
+TEMPLATE = runtime_text("# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n\nproject:\n  # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，\n  # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。\n  name: null\n  name_cn: null\n\ndevelopment:\n  # 首次修改需求或修复漏洞前由用户选择，之后在本项目沿用。\n  # null = 尚未选择；current = 直接在当前分支修改；new = 每次独立任务新建分支。\n  # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。\n  branch_policy: null\n\ncommit_gate:\n  # 提交前门禁总开关（约定 24：每次 git commit 前跑 __AIDP_HOME__/scripts/commit_gate.py）。\n  # 关掉之后：不再检查台账积压 / CICD 推送欠账。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32：__AIDP_HOME__/scripts/notify.py）。\n  # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。\n  enabled: false\n  # 一个渠道失败时是否尝试下一个\n  fallback: true\n  # autopilot 启动时是否发 #0a「渠道已连通」通知（默认不发，避免噪音）\n  channel_ready_card: false\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只经环境变量引用，不明文入库。\n  channels: []\n  # 例：\n  #   - {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #   - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #   - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #   - {type: lark-cli, chat_id: \"<chat id>\"}\n  #   - {type: command, command: \"<读 stdin JSON 的发送命令>\"}\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 无人值守下是否允许自动触发 / 重试流水线。\n  auto_trigger: true\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: \"...\", view: \"...\", trigger: \"...\", retry: \"...\", check: \"...\"}\n  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。\n  # 只记事实、不改 CICD 配置。由 `__AIDP_HOME__/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。\n  push_auto_deploy: false\n  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4\n  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻\n  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。\n  push_deploy_min_wait_seconds: 300\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（python3 __AIDP_HOME__/scripts/aidp_scheduler.py install）：\n  # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知\n  stale_cycles: 3\n  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久\n  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。\n  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；\n  # watchdog 用 max(stale 阈值, 本值, 1h) 作「持锁超期 = 挂死」的判据。0 = 不设上限（不推荐）。\n  tick_max_seconds: 7200\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: \"codex exec --sandbox workspace-write {prompt}\"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n", __file__)
 
 
 # ───────────────────────── 读 ─────────────────────────
@@ -148,7 +148,7 @@ def load(root="."):
     if not os.path.isfile(p):
         return {}, True
     try:
-        text = open(p, encoding="utf-8").read()
+        text = _AidpPath(p).read_text(encoding="utf-8")
     except (OSError, ValueError):
         # ⚠️ ValueError 覆盖 UnicodeDecodeError：文件被塞进二进制 / 存成别的编码时，
         #    没有这一支就是**当场抛异常**而不是 fail-closed —— 每个调用方都会崩，
@@ -203,6 +203,38 @@ def project_config(root="."):
     sec = _dig(data, "project")
     sec = sec if isinstance(sec, dict) else {}
     return {"name": _str_or_none(sec.get("name")), "name_cn": _str_or_none(sec.get("name_cn"))}
+
+
+def validate_branch_policy(value):
+    """仅接受未选择或两种用户偏好；非法值不能静默退回当前分支。"""
+    if value is not None and value not in ("current", "new"):
+        raise ValueError("development.branch_policy 必须为 null、current 或 new")
+    return value
+
+
+def read_branch_policy(root="."):
+    """读取项目偏好，不创建配置、不探测或修改 Git。"""
+    data, ok = load(root)
+    if not ok or not isinstance(data, dict):
+        raise ValueError("无法解析 memory/aidp-config.yaml")
+    section = data.get("development")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise ValueError("development 必须是配置映射")
+    return validate_branch_policy(section.get("branch_policy"))
+
+
+def branch_policy(root="."):
+    """只读业务修改前置：未选择的 Git 项目需交互，无 Git 项目不适用。"""
+    from vcs import detect_mode
+
+    mode = detect_mode(root)
+    policy = read_branch_policy(root)
+    needs_choice = mode == "git" and policy is None
+    return {"vcs_mode": mode, "policy": policy, "needs_choice": needs_choice,
+            "status": "not-applicable" if mode == "none" else
+                      "needs-choice" if needs_choice else "ready"}
 
 
 def commit_gate_enabled(root="."):
@@ -386,6 +418,39 @@ def _fmt(value):
     return str(value)
 
 
+def _set_inline_branch_policy(line, value):
+    """仅处理 development 内联映射；按原始跨度替换，保留额外键与注释。"""
+    from autopilot_decisions_merge import _strip_comment
+
+    content = _strip_comment(line)
+    raw = content.split(":", 1)[1].lstrip()
+    if not raw.startswith("{"):
+        return None
+    if not raw.endswith("}"):
+        raise ValueError("development 内联映射不完整")
+    begin = content.index("{", content.index(":") + 1) + 1
+    end = len(content) - 1
+    body = line[begin:end]
+    matches, cursor = [], 0
+    for item in _split_flow(body):
+        offset = body.index(item, cursor)
+        cursor = offset + len(item)
+        key, separator, old = item.partition(":")
+        if separator and _flow_scalar(key) == "branch_policy":
+            start = offset + len(key) + 1 + len(old) - len(old.lstrip())
+            matches.append((begin + start, begin + offset + len(item)))
+    if len(matches) > 1:
+        raise ValueError("development.branch_policy 重复，无法确定写入位置")
+    if matches:
+        start, stop = matches[0]
+        return line[:start] + _fmt(value) + line[stop:]
+    # 没有此键时追加到同一映射中，不能在映射后另塞一份块式配置。
+    trimmed = body.rstrip()
+    at = begin + len(trimmed)
+    separator = (" " if trimmed.endswith(",") else ", ") if trimmed else ""
+    return line[:at] + separator + "branch_policy: " + _fmt(value) + line[at:]
+
+
 def set_scalar(root, dotted, value):
     """外科手术式写入一个 `段.键`（⛔ 只支持两层，够用且不必引入序列化器）。
 
@@ -395,8 +460,10 @@ def set_scalar(root, dotted, value):
     if len(parts) != 2:
         raise ValueError("set_scalar 只支持 `段.键` 两层：%s" % dotted)
     sec, key = parts
+    if dotted == "development.branch_policy":
+        validate_branch_policy(value)
     p = ensure(root)
-    lines = open(p, encoding="utf-8").read().splitlines()
+    lines = _AidpPath(p).read_text(encoding="utf-8").splitlines()
 
     sec_at = None
     for i, ln in enumerate(lines):
@@ -405,8 +472,15 @@ def set_scalar(root, dotted, value):
             break
     if sec_at is None:
         lines += ["", "%s:" % sec, "  %s: %s" % (key, _fmt(value))]
-        open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+        _AidpPath(p).write_text("\n".join(lines) + "\n", encoding="utf-8")
         return p
+
+    if dotted == "development.branch_policy":
+        inline = _set_inline_branch_policy(lines[sec_at], value)
+        if inline is not None:
+            lines[sec_at] = inline
+            _AidpPath(p).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return p
 
     end = len(lines)
     for j in range(sec_at + 1, len(lines)):
@@ -419,14 +493,14 @@ def set_scalar(root, dotted, value):
         if st.startswith(key + ":"):
             indent = lines[j][:len(lines[j]) - len(lines[j].lstrip())]
             lines[j] = "%s%s: %s" % (indent, key, _fmt(value))
-            open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+            _AidpPath(p).write_text("\n".join(lines) + "\n", encoding="utf-8")
             return p
     # 段内无该键：插在段末最后一行非空之后
     ins = end
     while ins > sec_at + 1 and not lines[ins - 1].strip():
         ins -= 1
     lines.insert(ins, "  %s: %s" % (key, _fmt(value)))
-    open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    _AidpPath(p).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return p
 
 
@@ -534,10 +608,23 @@ def main(argv=None):
     s.add_argument("--root", default=argparse.SUPPRESS)
     sub.add_parser("show").add_argument("--root", default=argparse.SUPPRESS)
     sub.add_parser("ensure").add_argument("--root", default=argparse.SUPPRESS)
+    sub.add_parser("branch-policy", help="只读查询开发分支偏好与首次选择状态").add_argument(
+        "--root", default=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     if a.self_check:
         return _self_check()
     root = a.root
+    if a.cmd == "branch-policy":
+        try:
+            result = branch_policy(root)
+        except ValueError as exc:
+            from vcs import detect_mode
+            print(json.dumps({"vcs_mode": detect_mode(root), "policy": None,
+                              "needs_choice": False, "status": "invalid",
+                              "error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(result, ensure_ascii=False))
+        return 3 if result["needs_choice"] else 0
     if a.cmd == "get":
         v = get(root, a.key)
         print("" if v is None else _fmt(v))
@@ -545,7 +632,13 @@ def main(argv=None):
     if a.cmd == "set":
         raw = a.value
         val = True if raw == "true" else False if raw == "false" else raw
-        set_scalar(root, a.key, val)
+        if a.key == "development.branch_policy" and raw == "null":
+            val = None
+        try:
+            set_scalar(root, a.key, val)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         return 0
     if a.cmd == "ensure":
         print(ensure(root))

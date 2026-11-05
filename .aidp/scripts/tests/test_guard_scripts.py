@@ -6737,9 +6737,38 @@ def test_dev_scale_and_reversal_gate():
     idx = pw1.find("档位不影响的东西")
     check("★「受影响结论清单」列入档位不可裁剪项",
           idx > 0 and "受影响结论清单" in pw1[idx:idx + 400])
-    # S 档就地追加不能变成"可以不留痕"
-    check("★ S 档硬门放宽但保留下限（两者都没有 = Fail）",
-          "S 档「就地追加」同样算 Pass" in dev and "两者都没有\"永远是 Fail" in dev)
+    protocol = (repo / ".aidp/flows/sprint-dev/incremental-contract.md").read_text(encoding="utf-8")
+    start = (repo / ".aidp/commands/sprint-start.md").read_text(encoding="utf-8")
+    design = (repo / ".aidp/commands/sprint-design.md").read_text(encoding="utf-8")
+    design_check = (repo / ".aidp/flows/sprint-design/step-1.6-落盘后回检.md").read_text(encoding="utf-8")
+    # 缩短文档链不能丢规格，M 等真实完成回传，L 安全门不能被降档。
+    check("★ S 卡和台账均必需，不把延期说成正式用例已生成",
+          "契约卡＋台账缺一即 Fail" in dev
+          and "契约 AC 不能冒充正式实测用例" in protocol
+          and "required=true" in protocol)
+    check("★ M 文档汇合是 test 前硬门，skip-test 不免除",
+          "M 必须等 docs 完整成文" in protocol and "不省 M 的文档汇合义务" in protocol
+          and "不能带未完成 docs 进入验收" in ledger)
+    check("★ L 优先判新表/破坏性，兼容 ALTER 可为 M",
+          "档位优先级 L → S → M" in protocol and "兼容 ALTER" in pw1
+          and "新表/破坏性前置安全门" in protocol)
+    check("★ dev_scale 开发前生产、开发后复核并与 sup_scale 同 tier",
+          'stage:\"preflight\"' in protocol and 'stage:\"actual\"' in pw1
+          and "sup_scale.tier" in pw1 and "sup_scale" in protocol)
+    check("★ start 能从契约 Task/AC 取范围，仍登记确定性启动证据",
+          "契约卡的执行工作单" in start and "--record-start {NNN}" in start)
+    check("★ M 合册使用调用层映射，不谎称上游 M 一册",
+          "--compact-contract" in design and "dev_scale=M / design_output_scale=S" in design
+          and "上游 scale=M 原生三册" in design)
+    check("★ 合册回检实际读接口章节与契约，不依赖独立接口文件",
+          "interface_documents" in design_check and "另显式读取契约卡" in design_check
+          and "链接目标必须实际读到" in design_check)
+    check("★ 命令测试带输入/环境/范围，targeted 不替代 full",
+          all(x in protocol for x in ("test_ledger.py run", "--input <契约卡路径>",
+                                      "--env-id", "--scope targeted", "targeted 不会代替 full")))
+    check("★ 同轮 test-close 不自动 cascade-now",
+          "本命令自身必须已带 `--cascade-now`" not in dev
+          and "同轮 test→close 不自动置 --cascade-now" in dev)
 
     # ★ 同版本口径反转清算（约定 34 ⑥）：跨版本机制此时无"历史版本"可检索，完全是盲区
     check("★ 存在 Phase 0B.1.3 口述追加/反转决策门", "Phase 0B.1.3" in dev)
@@ -6753,10 +6782,21 @@ def test_dev_scale_and_reversal_gate():
     check("★ 作废用显式标记、不静默改写", "显式作废标记" in dev)
     check("★ 约定 34 主行已覆盖同版本反转", "同一版本 / 同一 Sprint 内" in aidp)
 
-    # ★ 台账边界：口述新需求是"开发的输入"，不能攒到明天
+    # ★ 台账不代替输入规格；S/M 可攒批，但规格须先明确且编号原子分配。
     check("★ 增量册有边界表（什么走 / 什么不走）", "什么走增量册、什么不走" in ledger)
-    check("★ 明示口述累进不入增量册（否则今天在无规格下开发）",
-          "不走增量册" in ledger and "开发的输入" in ledger)
+    check("★ S/M 口述先契约再登记，L 保留完整文档前置",
+          all(x in ledger for x in ("S 口述累进", "M 口述累进", "L 口述累进", "已放行契约卡")))
+    check("★ C 在同版本 changes 域原子分配，不能各族读最大号",
+          "alloc_id.py --kind C" in ledger and "--scope changes" in ledger
+          and "禁止 grep 最大号" in ledger and "不是文件内局部序号" in ledger)
+    check("★ 开发者只回工作单，四族串行单写者",
+          "主流程单写者串行登记" in ledger and "不并发整文件追加" in ledger
+          and "开发 Agent 不改正式文档/族台账" in ledger)
+    check("★ test_plan 是验收和部署前同源命令，不用 targeted 冒充 full",
+          all(x in protocol for x in ("test_plan", "full_argv", "targeted_argv", "env_id", "inputs"))
+          and "部署前复用本计划的同一原 argv" in protocol)
+    check("★ 时点记录不把速度目标变成绕过授权门",
+          "可部署时间" in protocol and "不能因超时绕授权或硬门" in protocol)
 
 
 def test_design_goals_ratchet():

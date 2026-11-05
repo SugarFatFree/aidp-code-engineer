@@ -809,17 +809,15 @@ bugfix-{YYYYMMDD}-{user}.md
 
 ### 8.1 Git 分支策略
 
-```
-main                              生产分支（每个版本发布后合并，打 tag）
-  └── develop                     开发主干
-        ├── sprint/sprint-001     Sprint 主分支
-        │     ├── feat/T-001-user-login      功能分支（Task 编号，AIDP 无 User Story 层）
-        │     ├── fix/BUG-20260304-1         缺陷修复分支
-        │     └── ...
-        └── docs/sprint-001-design           文档分支（按需）
-```
+脚手架首次接入或首次修改前，由用户选择一次工作分支策略，保存在 `memory/aidp-config.yaml` 的 `development.branch_policy`，需求修改与漏洞修复共用；升级及切换 Agent 不重问、不重置。
 
-版本发布时由 `/version` 命令打 tag（详见 `05_commands详细规范.md`）。
+| 选择 | 行为 |
+|---|---|
+| `current`：直接当前分支 | 沿用当前分支，包括 main/master；不自动新建、切换分支或 worktree |
+| `new`：每个独立任务新分支 | 主流程每个任务创建一次，前后端、文档、修复、复验和续跑沿用，不按 Task/BUG 再分叉 |
+| `null`：尚未选择 | 交互式首次询问；无人值守返回缺配置，不替用户选择；无 Git 跳过 |
+
+执行细则见 `{{AIDP_HOME}}/reference/agent-tools.md`「工作分支：首次选择、项目内沿用」。该偏好不授权提交、推送、合并或创建 worktree。`/version` 发布时的 tag/版本分支是独立的发布制品流程，不因日常工作分支偏好改变（详见 `05_commands详细规范.md`）。
 
 ### 8.2 Memory 文件写权限分工
 

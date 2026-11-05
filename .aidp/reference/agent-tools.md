@@ -33,6 +33,27 @@
 | `$CLAUDE_PROJECT_DIR` | 项目根目录 | 优先用宿主提供的项目根变量；有 Git 时可用 `git rev-parse --show-toplevel`，非 Git 时从当前工作目录解析项目根 |
 | chrome-devtools MCP 工具（`mcp__chrome-devtools__*`） | 浏览器自动化 | 插件 `{{AIDP_HOME}}/plugins/chrome-devtools-mcp/` 由 `agent_sync.py` 为各 Agent 装配后使用同名工具（Claude Code 插件形态工具名为 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`）|
 
+### 工作分支：首次选择、项目内沿用
+
+需求修改、漏洞修复、自然语言直接改码与外部 SKILL 都遵守同一偏好。**修改前**由最外层执行体读取：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy
+```
+
+- Git 项目 `needs_choice=true`（exit 3）且没有用户明确选择或既有项目指令可沿用 → 主流程只问一次固定两项：① **直接修改当前分支**；② **每个独立任务新建工作分支**。得到明确答复后才保存，未答复不取默认值。已设置 `current` / `new` 后直接沿用，不因换 Sprint、命令、Agent、会话或升级重复询问。用户主动修改偏好时才更新。
+- 保存选择：`python3 {{AIDP_HOME}}/scripts/aidp_config.py set development.branch_policy current` 或将末值换为 `new`。只有真实选择才写入；文件损坏/非法值（exit 2）应修复，不得当作缺省重置。项目选择存在 `memory/aidp-config.yaml`，不另写第二份个人记忆取代它。
+- 无 Git → `not-applicable`，不问、不建仓。无人值守/子 Agent 不自行代选：优先继承父任务已核实的策略与分支；缺选择则返回 `needs-choice`，父编排按已有配置缺失处置记录并停止修改，不能假填 `current` 或每 tick 弹窗。脚手架可先安装，业务修改必须等选择完成。
+
+| 已选策略 | 修改行为 |
+|---|---|
+| `current` | 沿用任务开始时所在分支，包括 main/master；不自动新建、切换分支或 worktree。已在特性分支就沿用它，不自动退回主干。 |
+| `new` | 最外层主流程在独立任务开始时创建一次分支，完成一次需求及其中的修复、复验均沿用。记录任务标识、起点与分支名到既有 activeContext/任务记录；续跑先核对该记录，子命令和子 Agent 继承，不按文件、BUG 或修复轮次重复创建。 |
+
+创建前检查当前 HEAD、工作区与已有任务记录；脏树、detached HEAD、同名但归属不明或切换失败时停止分支动作并说明，不自动 stash/reset/丢改动、不从另一个任务分支继续派生。正常命名按任务用 `feat/<task>` 或 `fix/<task>`，先校验合法性；不得强制移动已有分支。用户本轮指定的分支/临时策略优先，只有用户要求“以后都这样”才改永久偏好。
+
+派单简报传 `branch_policy`、`task_branch` 与任务标识。外部 Superpowers 的默认 worktree/功能分支/主分支限制不替代用户已选策略；创建 worktree 仍需单独授权。策略不授权 commit、push、合并、删分支或部署。autopilot 开发链在选定工作分支上持续推进、跨 tick 不另建；部署源对齐与 `/version` 发布分支是独立授权，不得拿部署源不一致当理由悄悄改项目偏好或切走当前分支。
+
 ## 三、7×24 无人值守（操作系统调度为主）
 
 **非 Git 能力矩阵**：`vcs_mode=none` 可安装、规划、开发、本地测试和本地归档；Git diff / commit / push / tag、基于 commit SHA 的 CICD 监听及正式发布不可用。不可用步骤标记 `unsupported:vcs-disabled` 或明确阻断，不得报告为通过或宣布已发布；脚手架不自动 `git init`。

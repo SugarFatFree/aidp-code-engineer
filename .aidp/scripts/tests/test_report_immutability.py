@@ -16,6 +16,7 @@ import tempfile
 import shutil
 import datetime
 import hashlib
+import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -190,7 +191,265 @@ def test_render_mode_provenance():
           not errs({"renderMode": None}))
 
 
+def _flow_block(relative, marker):
+    text = (REPO / ".aidp/flows" / relative).read_text(encoding="utf-8")
+    return next(block for block in re.findall(r"^[ \t]*```bash\n(.*?)^[ \t]*```", text, re.M | re.S)
+                if marker in block).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+
+
+def _retest_scene(root, *, once=False, target=False, finalized=True, build=True, skeleton=True):
+    version, current = "V0.1", "V0.1_build1001"
+    node = {"last_deployed_at": "2026-09-16T09:00:00+08:00",
+            "phase_beta_done_at": "2026-09-16T09:00:00+08:00",
+            "aiauto_tested_at": "2026-09-16T10:00:00+08:00",
+            "driver_actual_pending": "cli", "build_seq": 1001,
+            "pending_clarifications": [{"raised_build": current, "question": "旧轮待确认"}]}
+    if build:
+        node["current_build"] = current
+        node["builds"] = [{"build": current, "status": "closed" if finalized else "running",
+                           "started_at": "2026-09-16T08:00:00+08:00",
+                           "ai_report_finalized": finalized}]
+    flags = {"TARGET_FLAG_VALUE": version if target else "", "HAS_ONCE_FLAG": "1" if once else "0",
+             "TARGET_VERSION": version, "LOOP_UNATTENDED": "0", "HAS_WAKE_SOURCE": "0",
+             "PREFLIGHT_RUN_ID": "f07-run"}
+    data = {"versions": {version: node}, "autopilot": {"target_version": version, "tick": {
+        "aiauto-test": flags, "autopilot": {"TARGET_VERSION": version, "ENTRY_MODE": "test-only"}}}}
+    baseline = root / "memory/.sprint-autopilot-baseline.json"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text(json.dumps(data), encoding="utf-8")
+    prd = root / "docs/requirements/V0.1/产品提供/PRD.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_text("---\ndeployment:\n  mode: local\n---\n", encoding="utf-8")
+    if build and skeleton:
+        _mk_reports(root, current)
+    return baseline, current
+
+
+def _test_entry_flow(root):
+    block = _flow_block("sprint-aiauto-test/phase-0-6.md", 'BASELINE_FILE="memory/')
+    # EXIT trap 同时观察正常落尾与交接 early-exit，不替换任何生产判断或脚本。
+    trap = 'trap \'printf "\\n__STATE__%s|%s|%s\\n" "${NEED_HANDOFF:-0}" "${BUILD:-}" "${REPORT_ENABLED:-}"\' EXIT\n'
+    result = subprocess.run(["bash", "-c", trap + block], cwd=root, capture_output=True, text=True, timeout=60)
+    state = result.stdout.rsplit("__STATE__", 1)[-1].strip().split("|")
+    return result, state
+
+
+def test_finalized_build_routes_to_handoff_before_testing():
+    print("\n[F07] 实际 Phase 0.2 围栏：定稿 build 的显式复测必须先交接")
+    for flag in ("once", "target"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            baseline, old = _retest_scene(root, **{flag: True})
+            before = json.loads(baseline.read_text())["versions"]["V0.1"]
+            result, state = _test_entry_flow(root)
+            after = json.loads(baseline.read_text())["versions"]["V0.1"]
+            check(f"--{flag}: 已定稿且骨架齐全仍触发交接", result.returncode == 0 and state == ["1", old, "1"])
+            check(f"--{flag}: 开测前不认领旧 build 驱动或归档旧待确认项",
+                  after["builds"] == before["builds"] and
+                  after.get("pending_clarifications") == before["pending_clarifications"])
+            check(f"--{flag}: 测试侧不自行铸号/清除定稿标记", after["current_build"] == old and
+                  after["build_seq"] == 1001 and after["builds"][0]["ai_report_finalized"])
+            payload = root / "input.json"
+            payload.write_text("{}", encoding="utf-8")
+            emit = subprocess.run([sys.executable, str(REPO / ".aidp/scripts/emit-report.py"),
+                                   "--kind", "test", "--version", "V0.1", "--build", old,
+                                   "--data", str(payload), "--repo-root", str(root), "--json"],
+                                  capture_output=True, text=True)
+            check(f"--{flag}: 旧报告真实 emit 仍受不可变锁保护", emit.returncode == 2 and '"frozen": true' in emit.stdout)
+
+    for label, options, expected_handoff in (
+        ("未定稿续跑", {"once": True, "finalized": False}, "0"),
+        ("骨架缺失", {"target": True, "finalized": False, "skeleton": False}, "1"),
+        ("standalone", {"once": True, "build": False}, "0"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            baseline, old = _retest_scene(root, **options)
+            result, state = _test_entry_flow(root)
+            node = json.loads(baseline.read_text())["versions"]["V0.1"]
+            check(f"{label}: 交接判定正确", result.returncode == 0 and state[0] == expected_handoff)
+            check(f"{label}: 不产生额外 build", node.get("current_build", "") == ("" if options.get("build") is False else old)
+                  and node["build_seq"] == 1001)
+            if options.get("build") is False:
+                check("standalone: 仅截图命名，不启用官方报告", state[2] == "0" and not node.get("builds"))
+
+
+def test_handoff_callback_cannot_recursively_remint():
+    print("\n[F07] 同一次交接回调若仍无可测 build 必须失败返回")
+    for finalized, skeleton in ((True, True), (False, False)):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            baseline, old = _retest_scene(root, once=True, finalized=finalized, skeleton=skeleton)
+            data = json.loads(baseline.read_text())
+            data["versions"]["V0.1"]["aiauto_handoff_run_id"] = "f07-run"
+            baseline.write_text(json.dumps(data), encoding="utf-8")
+            result, state = _test_entry_flow(root)
+            check(f"finalized={finalized}/skeleton={skeleton}: 同 run 不递归交接", result.returncode != 0)
+            node = json.loads(baseline.read_text())["versions"]["V0.1"]
+            check("回调失败仍保留原 build", node["current_build"] == old and node["build_seq"] == 1001)
+            data = json.loads(baseline.read_text())
+            data["autopilot"]["tick"]["aiauto-test"]["PREFLIGHT_RUN_ID"] = "f07-next-run"
+            baseline.write_text(json.dumps(data), encoding="utf-8")
+            retried, state = _test_entry_flow(root)
+            check("新外部 run 可重试，不被旧交接标记锁死", retried.returncode == 0 and state[0] == "1")
+
+
+def test_handoff_preserves_unattended_wake_semantics():
+    for wake in ("0", "1"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            baseline, _ = _retest_scene(root, once=True)
+            data = json.loads(baseline.read_text())
+            data["autopilot"]["tick"]["aiauto-test"].update(LOOP_UNATTENDED="1", HAS_WAKE_SOURCE=wake)
+            baseline.write_text(json.dumps(data), encoding="utf-8")
+            result = subprocess.run(["bash", "-c", _flow_block("sprint-aiauto-test/phase-0-6b.md", "HANDOFF_ARGS=")],
+                                    cwd=root, capture_output=True, text=True, timeout=60)
+            lines = [line for line in result.stdout.splitlines() if line.startswith(("交接命令：", "返回命令："))]
+            check(f"无人值守 wake={wake}: 两侧完整透传且 no-loop 不伪造唤醒源", result.returncode == 0 and
+                  len(lines) == 2 and all("--unattended" in line and "--once" in line and
+                                         (("--no-loop" in line) == (wake == "1")) for line in lines))
+
+
+def test_real_test_only_handoff_mints_once_and_reuses_deployment():
+    print("\n[F07] 真实 test-only 围栏往返：R-1 铸号/部署登记/新骨架/测试回调")
+    scripts = REPO / ".aidp/scripts"
+    def cli(root, *args):
+        return subprocess.run([sys.executable, str(scripts / "autopilot_tick_flags.py"), *args],
+                              cwd=root, capture_output=True, text=True, timeout=60)
+    def bash(root, block):
+        return subprocess.run(["bash", "-c", block], cwd=root, capture_output=True, text=True, timeout=60)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        baseline, old = _retest_scene(root, once=True)
+        old_reports = {p: p.read_bytes() for p in (root / "docs/reports").rglob("*.js")}
+        old_token = cli(root, "begin", "--command", "aiauto-test")
+        assert old_token.returncode == 0, old_token.stderr
+        prepared = bash(root, _flow_block("sprint-aiauto-test/phase-0-6b.md", "HANDOFF_ARGS="))
+        check("正常交接准备成功，--once 不被当成失败直接冻结", prepared.returncode == 0 and
+              not json.loads(baseline.read_text())["versions"]["V0.1"].get("needs_human"))
+        handoff = next(line.split("/sprint-autopilot ", 1)[1] for line in prepared.stdout.splitlines()
+                       if line.startswith("交接命令："))
+        callback = next(line.split("/sprint-aiauto-test ", 1)[1] for line in prepared.stdout.splitlines()
+                       if line.startswith("返回命令："))
+        check("两次调用透传 once、目标版及同一 run id", all("--once" in args and "--target V0.1" in args
+              and "--preflight-run-id f07-run" in args for args in (handoff, callback)))
+        check("无唤醒源不伪造 no-loop", "--no-loop" not in handoff and "--no-loop" not in callback)
+        release = cli(root, "finish", "--command", "aiauto-test", "--lock-token", old_token.stdout.strip())
+        assert release.returncode == 0, release.stderr
+        dev_token = cli(root, "begin", "--command", "autopilot")
+        assert dev_token.returncode == 0, dev_token.stderr
+        parsed = cli(root, "parse", "--command", "autopilot", "--lock-token", dev_token.stdout.strip(),
+                     "--arguments=" + handoff)
+        assert parsed.returncode == 0, parsed.stderr
+        route = bash(root, _flow_block("sprint-autopilot/phase-3-2.md", 'ENTRY_MODE="full"'))
+        assert route.returncode == 0, route.stderr
+        mint = _flow_block("sprint-autopilot/phase-3-4.md", 'CUR_SEQ="${CUR##*_build}"')
+        result = bash(root, mint)
+        assert result.returncode == 0, result.stderr
+        node = json.loads(baseline.read_text())["versions"]["V0.1"]
+        new = node["current_build"]
+        row = next(row for row in node["builds"] if row["build"] == new)
+        check("新号确由生产 R-1 铸造，保留 retest_of", new == "V0.1_build1002" and row.get("retest_of") == old)
+        check("R-1 登记 test-only 部署复用证据", row.get("entry_mode") == "test-only" and
+              row.get("deploy_reuse_of") == node["last_deployed_at"])
+        payload = root / "skeleton.json"
+        payload.write_text(json.dumps({"build": new, "version": "V0.1", "overview": {"statusKind": "pend"},
+                                       "steps": [], "features": []}), encoding="utf-8")
+        emitted = subprocess.run([sys.executable, str(scripts / "emit-report.py"), "--kind", "exec",
+                                  "--version", "V0.1", "--build", new, "--data", str(payload),
+                                  "--repo-root", str(root), "--templates-root", str(REPO / ".aidp/templates/reports"),
+                                  "--record-baseline", "0", "--json"], capture_output=True, text=True)
+        check("生产 emit 生成新 build 骨架，不使用 force-amend", emitted.returncode == 0)
+        if emitted.returncode:
+            raise AssertionError(emitted.stdout + emitted.stderr)
+        test_token = cli(root, "begin", "--command", "aiauto-test")
+        assert test_token.returncode == 0, test_token.stderr
+        parsed = cli(root, "parse", "--command", "aiauto-test", "--lock-token", test_token.stdout.strip(),
+                     "--arguments=" + callback)
+        assert parsed.returncode == 0, parsed.stderr
+        result, state = _test_entry_flow(root)
+        check("同 run 回调从新 build 开测，不再交接", result.returncode == 0 and state == ["0", new, "1"])
+        repeated = bash(root, mint)
+        node = json.loads(baseline.read_text())["versions"]["V0.1"]
+        check("R-1 再进入复用活动 build，不重复铸号", repeated.returncode == 0 and node["current_build"] == new
+              and node["build_seq"] == 1002 and len(node["builds"]) == 2)
+        check("往返后旧报告字节保持不变", all(p.read_bytes() == content for p, content in old_reports.items()))
+        for command, token in (("aiauto-test", test_token), ("autopilot", dev_token)):
+            released = cli(root, "finish", "--command", command, "--lock-token", token.stdout.strip())
+            assert released.returncode == 0, released.stderr
+
+
+def test_os_handoff_child_keeps_wrapper_lock():
+    """OS 链同步调用依靠现有 wrapper 身份，不强释锁或伪造下次唤醒。"""
+    import fcntl
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        path = root / "memory/.aidp/locks/loop-sprint-aiauto-test.lock"
+        path.parent.mkdir(parents=True)
+        record = json.dumps({"owner": "agent_loop", "token": "fixture-wrapper"})
+        with path.open("w+") as handle:
+            handle.write(record)
+            handle.flush()
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            env = dict(os.environ, AIDP_TICK_COMMAND="sprint-aiauto-test", AIDP_TICK_TOKEN="fixture-wrapper")
+            result = subprocess.run([sys.executable, str(REPO / ".aidp/scripts/autopilot_tick_flags.py"),
+                                     "begin", "--command", "aiauto-test"], cwd=root, env=env,
+                                    capture_output=True, text=True)
+            check("OS 同步子链继承 wrapper 身份即可重入，未释放原锁",
+                  result.returncode == 0 and result.stdout.strip() == "agent_loop" and path.read_text() == record)
+
+
+def test_completed_test_cursor_does_not_reopen_old_build():
+    print("\n[F07] 实际阶段入口：complete/done 必须短路；新 build 不继承旧终态")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        baseline, old_build = _retest_scene(root)
+        data = json.loads(baseline.read_text())
+        data["versions"]["V0.1"]["aiauto_run_state"] = {
+            "current_phase": "3-audit", "phase_status": "complete", "next_phase": "done",
+            "phase_token": old_build, "phase_enter_count": 1,
+        }
+        baseline.write_text(json.dumps(data), encoding="utf-8")
+        original = baseline.read_bytes()
+        def enter(build):
+            return subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aiauto_phase_entry.py"),
+                                   "--version", "V0.1", "--phase", "1-probe", "--next-phase", "2-exec",
+                                   "--build", build, "--baseline", str(baseline), "--no-card"],
+                                  capture_output=True, text=True)
+        result = enter(old_build)
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
+        check("同 build 的 complete/done 不再进入探测", result.returncode == 0 and output.get("skip_phase")
+              and output.get("resume_phase") == "done")
+        check("终态短路不重写旧游标/停滞计数", baseline.read_bytes() == original)
+        baseline.write_bytes(original)
+        result = enter("V0.1_build1002")
+        check("不同 build 可从 Phase 1 开始", result.returncode == 0 and
+              not json.loads(result.stdout).get("skip_phase"))
+        data["versions"]["V0.1"].pop("aiauto_run_state")
+        baseline.write_text(json.dumps(data), encoding="utf-8")
+        original = baseline.read_bytes()
+        result = enter(old_build)
+        check("定稿但游标缺失也不得重新实测", result.returncode != 0 and baseline.read_bytes() == original)
+        data["versions"]["V0.1"]["aiauto_run_state"] = {
+            "current_phase": "3-audit", "phase_status": "running", "next_phase": "done",
+            "phase_token": old_build,
+        }
+        baseline.write_text(json.dumps(data), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aiauto_phase_entry.py"),
+                                 "--version", "V0.1", "--phase", "3-audit", "--next-phase", "done",
+                                 "--build", old_build, "--baseline", str(baseline), "--no-card", "--complete"],
+                                capture_output=True, text=True)
+        check("正常审计先 finalize 再 complete 的出口不受影响", result.returncode == 0 and
+              json.loads(baseline.read_text())["versions"]["V0.1"]["aiauto_run_state"]["phase_status"] == "complete")
+
+
 def main():
+    test_finalized_build_routes_to_handoff_before_testing()
+    test_handoff_callback_cannot_recursively_remint()
+    test_handoff_preserves_unattended_wake_semantics()
+    test_real_test_only_handoff_mints_once_and_reuses_deployment()
+    test_os_handoff_child_keeps_wrapper_lock()
+    test_completed_test_cursor_does_not_reopen_old_build()
     test_immutability_lock_is_live()
     test_driver_truthfulness_window()
     test_render_mode_provenance()

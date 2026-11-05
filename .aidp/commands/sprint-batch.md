@@ -15,7 +15,7 @@
 > ⛔ **零询问连跑铁律（置顶强调 — 下游最易违反）**：本命令一旦启动，**Sprint 循环体（Step 3）内默认直接连跑研发执行计划的全部 Sprint、全程零询问**，把整张计划当**一个不可分割的任务**：
 > - **不问"跑哪个 Sprint"**：无范围参数 = 跑**全部**研发执行计划文件里的未完成 Sprint（首跑 = 001→最后）；只跑一段才显式传 `001-003`。**严禁**启动时 `AskUserQuestion` 让用户选 Sprint。
 > - **不问"是否继续下一个 Sprint"**：一个 `/sprint-full` 返回后**立即**进下一个，直到执行列表全部关闭。
-> - **本命令的连跑节奏**：由 Step 1 的 `plan_sprints.py` 执行列表与 Step 3 的逐 Sprint 循环决定；Sprint 之间**绝不**冒出「继续吗 / 跑哪个」类询问。遇阻塞按 Step 4 分类与逐 Sprint `--cascade-now` 处理，不把编排节奏委托给带交互停顿的通用 SKILL。
+> - **本命令的连跑节奏**：由 Step 1 的 `plan_sprints.py` 执行列表与 Step 3 的逐 Sprint 循环决定；Sprint 之间**绝不**冒出「继续吗 / 跑哪个」类询问。遇阻塞按 Step 4 分类处理；文档义务按子命令分档汇合与既有阶段收口处理，不把编排节奏委托给带交互停顿的通用 SKILL。
 > - **Step 3 循环体内的唯一合法停顿**：① 硬失败（编译/前端校验失败、设计文档缺失，见 Step 4）② `/sprint-full` 内部必要决策门（UI 来源 C/D、约定 22 破坏性变更确认门、Critical 裁决）③ 显式 `--stop-on-blocker`（软失败也停）。除此之外，**Sprint 之间任何"要不要继续 / 跑哪个"的询问都是违规**。
 > - ⛔ **严禁自发弹「工作量大 / 如何推进 / 全自主全做 vs 分阶段逐个确认」范围·进度门**（catch-all，**两种模式都禁**）：研发执行计划的全部 Sprint（含单 Sprint 内多个 REQ / 多端工作）是**一个不可分割、必须一次跑完的整体**。模型**不得**以"两个 REQ / 工作量较大 / 每个 Sprint 可控 / 稳妥起见"为由，自发弹「我全自主完成 N 个 Sprint vs 先做某 Sprint 给你 review 再继续」这类询问——它既违反上面"不问是否继续下一个 Sprint"，也**不属于** ② 的「必要决策门」（② 仅指 UI 来源/上游级联/Critical 这类**内容决策**，**不含**"要不要一次做完 / 分几段做"这种**范围·节奏决策**，后者永远默认"一次全做完"、无需问）。`--unattended` 下更是绝对禁止。
 >   - **★ `--unattended` 例外（autopilot `/loop` 无人值守）= catch-all 绝不停等**：本命令带 `--unattended` 时，上面 ②③ 的内部决策门**以及任何未枚举的交互门一律不再停下等人**——透传 `--unattended` 给 `/sprint-full → /sprint-dev`，由其消费 PRD `autopilot_decisions` 预声明（UI C/D 走 `visual_baseline`、约定22 级联默认自动，见 `/sprint-dev` Step 0 / Step X.0.0）、或走文档化保守默认、或转失败熔断（Critical 无法自动裁决时），**绝不 `AskUserQuestion`**。这堵住 autopilot 7×24 在 Sprint 内部弹窗挂死的缺口；PRD 未预声明则走各门文档化的保守默认。
@@ -29,6 +29,7 @@
 - 起始范围：`/sprint-batch 002-` 从 002 开始跑到最后
 - `skip-bugfix`：整体跳过 Sprint 内 bugfix 循环（仅记录 bug，不修复）
 - `--skip-context-check`：跳过 Step 0.0 上下文压缩建议（明确不需要 /compact 时使用）
+- `--cascade-now`：仅用户/父链显式要求时透传给每个 `/sprint-full`；默认不自动添加 `--cascade-now`，按 S/M/L 契约执行文档汇合与攒批。
 - `--stop-on-blocker`：遇阻即停模式（bugfix 循环超限就暂停；默认非阻塞模式继续）
 - `--skip-aiauto-test`：跳过 Step 6 浏览器仿真测试整合（纯开发模式）
 - `--aiauto-test-required`：父 autopilot 已安排独立测试链路；即使本批次 `--skip-aiauto-test`，仍须生成用例，并逐层透传。
@@ -181,12 +182,12 @@ N 个 Sprint 子 Agent 各自重读同一批**本版内完全不变**的文档�
 
 ```
 for NNN in 执行列表:
-    result = /sprint-full {NNN} --from-batch [--resume] [skip-bugfix] [--unattended] [--stop-on-blocker]   # ★ 本命令带 --stop-on-blocker 时必透传（bugfix 超限的停顿判定在 /sprint-full Phase 4 内部，不透传则本 flag 与不带完全等价）；带 --unattended 时必透传，令 Sprint 内部决策门消费 PRD 预声明、不弹窗
+    result = /sprint-full {NNN} --from-batch [--resume] [skip-bugfix] [--cascade-now] [--unattended] [--stop-on-blocker]   # ★ 本命令带 --stop-on-blocker 时必透传（bugfix 超限的停顿判定在 /sprint-full Phase 4 内部，不透传则本 flag 与不带完全等价）；带 --unattended 时必透传，令 Sprint 内部决策门消费 PRD 预声明、不弹窗
     update progress(NNN, result)
     if result.kind == "硬失败" or (带 --stop-on-blocker and result.kind == "软失败"):
         break  # 记账退出；无人值守不得原地等人
-        # ⛔ 中断后仍须执行本批次的落点/终态检查——break 只跳出 Sprint 循环，不改变逐 Sprint `--cascade-now` 的收口结果：
-        #   漏跑则本批次已产生的开发期变更台账当轮无人收口，与「本批次确实没有变更」在机器上同形。
+        # ⛔ 中断后仍须执行本批次的落点/终态检查——break 只跳出 Sprint 循环，不消除已登记义务：
+        #   区分未决条目与已完成但未清理的台账；本检查不触发新的通用级联。
     update context_digest(NNN)   # Step 2.5 的增量更新：把本 Sprint 新增的公共产物追加进摘要
     # ✅ 完成 / ⚠️ 软失败（bugfix 超限 / 用例失败 / Critical 待裁决）→ 都视为该 Sprint 已结束
     # 立即继续下一个 NNN，禁止：
@@ -244,7 +245,7 @@ for NNN in 执行列表:
 
 ### Step 5.5：级联职责说明（不再单独触发）
 
-本命令链内由 `/sprint-full` → `/sprint-dev --cascade-now` 按 Sprint 即时处理约定 22；版本级台账收口由 `/version` 阶段门处理。这里不再根据提交时间或批次结束再次派发通用级联，避免同一批台账重复消费。保留 Step 5.6 的落点/终态检查职责。
+本命令经 `/sprint-full` → `/sprint-dev` 消费 `flows/sprint-dev/incremental-contract.md`：S 正式成文默认攒批，M 在验收前完成本轮文档汇合，L 先完整文档；实测 required 门照常执行。仅显式收到 `--cascade-now` 才逐层透传，不因批量运行、提交或同轮 test→close 自动开启。其余版本级/阶段级台账由 `/version` 与 autopilot 既有收口点消费。本步不再派通用级联，Step 5.6 只核落点及台账清理状态，未决义务保持可发现。
 
 ### Step 5.6：级联落点门（进入 Step 6 前必跑，中断轮也核验）
 

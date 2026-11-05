@@ -6,7 +6,7 @@
 - **方式 A（被编排器调用）**：`/sprint-full` / `/sprint-batch` 内部调用，执行当前 Sprint 的开发
 - **方式 B（独立直接调用）**：用户直接调用，自动累进创建新 Sprint 并串联后续 `/sprint-test` → `/sprint-bugfix` → `/sprint-close`
 
-**★ 本命令是编排器**：调用 `superpowers:test-driven-development`（TDD）；前后端实现由 AIDP 按具体文件写集隔离派发，规范审查后再做代码质量审查（详见 Phase 1.4），不把串行 Task SKILL 当作并行调度器。
+**★ 本命令是编排器**：调用 `superpowers:test-driven-development`（TDD）；实现与适用的文档任务由 AIDP 按具体文件写集隔离派发，汇合一次 reviewer 契约一致性审查，再由 `/sprint-test` 一次 CVL 质量检查；修复后只差量复核，不逐 Task 重复双完整审查。权威协议 = `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。
 
 参数：$ARGUMENTS
 - `/sprint-dev` — 开发当前进行中的 Sprint（从 activeContext 读取）
@@ -19,7 +19,7 @@
 - `--cascade-now` — ★ **跳过攒批、当场跑完约定 22 四级级联**（默认行为是把变更按族记入 `_开发期{族}增量.md`、留到收口点批量级联，见 `flows/sprint-dev/postdev-writeback-1.md` 步骤 3.8 + `{{AIDP_HOME}}/reference/开发期族增量.md`）。用于**当轮就要拿到自测用例**的场景——收口点不含 `/sprint-close`，当天开发当天关闭的 Sprint 靠它兜底
 - `--aiauto-test-required` — 内部编排/用户明确要实测时传递：本轮必须生成正式用例；不启动浏览器，也不代表测试已完成。
 - `--skip-aiauto-test` — 外层未安排实测时透传；没有 `--aiauto-test-required` 则将用例生成义务登记到增量册，测试入口再补齐。
-- `--dev-scale=S|M|L` — ★ **显式覆盖 Step X.0.0 的改动量档位判定**（S=小改动：L2 就地在既有册追加小节、不另起分册；M=现行全量级联；L=全量 + 部署基线联动）。不带则据本 Sprint 实际改动文件数 + 是否有接口/表/语义变更**自动判档**。⛔ 档位**只伸缩承载形态**，L1 需求留痕 / L4 自测用例 / 约定 22 检测项与触发级别 / 各类硬门**任何档位都不省**（详见 `flows/sprint-dev/postdev-writeback-1.md` 步骤 3.5）
+- `--dev-scale=S|M|L` — 显式覆盖普通体量档位：S=契约卡＋受影响四族台账；M=契约卡先放行、代码与 docs 按写集并行、test 前完整文档汇合；L=先完整文档后开发。新表/破坏性契约的 L 前置门不能被降档绕过。开发前生产 `dev_scale`，开发后 Step X.0.0 按实际范围复核，`sup_scale` 同步同一 tier。档位只伸缩承载与时机，需求/用例覆盖义务、约定 22/34 及所有适用检查项均保留，详见 `flows/sprint-dev/incremental-contract.md`。
 - `--unattended` — ★ autopilot `/loop` 无人值守标记：Step 0 UI 门（C/D）、**Phase 0A.5 死代码决策门情形 C**、Step X.0.0 约定22 级联门、**约定28 引新库同意门**均**不弹 `AskUserQuestion`**，改**消费 PRD `autopilot_decisions` 预声明**（visual_baseline → A/B/C/D；约定22 默认自动级联；死代码情形 C 默认「① 并存切流量」；需引新库无栈支持 → 转失败处置熔断而非弹窗），避免 7×24 挂死（由 `/sprint-autopilot` → `/sprint-batch` → 本命令透传）
 - `--from-batch` — 批量子任务标志（由 `/sprint-full` 透传）：本命令不弹 `AskUserQuestion`，内容决策门按「⏸ 待裁决」返回上层（语义单一信源 = `/sprint-full` 参数表）
   - ⛔ **`--unattended` 绝不弹任何交互门（catch-all，覆盖所有未枚举门）**：上面点名的 4 个门只是**举例**，不是穷举白名单。在 `--unattended` 下，**除本命令文档明确写出的「失败/熔断转人工」路径外，严禁 `AskUserQuestion`、严禁以任何形式停下征询用户**。**尤其严禁自发弹出「开发工作量较大 / 如何推进 / 我全自主完成 vs 先做某 Sprint 阶段确认 / 是否继续 / 要不要分阶段」这类范围·进度确认门**——本 Sprint（含累进产生的多个 Sprint）的全部前后端工作是**一个不可分割、必须一次做完的整体**，`--unattended` 本身即「把全部做完」的授权，**不得**以"工作量大 / 稳妥起见"为由降级为分阶段或征询。凡本应由用户拍板处一律走 PRD `autopilot_decisions` 预声明或文档化保守默认；确实无法自动解决的转失败处置（熔断冻结 + 继续/通知，见对应门），**绝不挂起等待用户输入**。
@@ -40,6 +40,8 @@
 - **★ 运行时验证纪律 = 约定 35（详规 `{{AIDP_HOME}}/rules/code.md`，约定 21 不复述）**：开发/验证代码**默认只静态验证**（类型/语法/lint/确定性脚本）；**绝不为"看 UI 效果 / 验证运行时"擅自启动前后端服务**（`npm run dev`/`vite`/`mvn spring-boot:run` 等——抢端口/冲突/卡机）**或跑完整构建**。需运行时/浏览器验证 → **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**。**★ Bash 起任何常驻服务类命令前先自检**「是否用户显式要求 / 是否 `deployment.mode=local` 授权例外」，否则中止改走 (a)/(b)/(c)。
 
 ## 前置流程
+
+**工作分支先决条件**：最外层入口按 `{{AIDP_HOME}}/reference/agent-tools.md`「工作分支：首次选择、项目内沿用」读取 `development.branch_policy`；首次由用户选择并保存，之后沿用。父任务已提供 `task_branch` 时核对并继承，需求累进、修复和子 Agent 不再建分支。未选择的无人值守调用返回 `needs-choice`，不伪造默认选择。本命令的“分支 A/B”是流程路径，不是创建 Git 分支的指令。
 
 **VCS 能力分流（先于任何 Git 命令）**：以 `{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 取得 `vcs_mode=git|none`；`{user}` 以同模块 `developer_identity(Path.cwd())` 解析（显式身份 → 本地 Git 身份 → `AIDP_USER` → OS 用户），不再要求 Git 身份存在。`vcs_mode=none` 时仍执行本地 Sprint 取号、需求/设计/代码开发与静态验证；所有 Git-only 差异、commit、push、CICD 检查分别记 `unsupported:vcs-disabled`（`status=unsupported`，不是 passed），不执行 Git 命令，也不因缺 Git 中止本地开发。Phase 0B.0 的 tag 检测仅适用于 `git`；`none` 时用项目记忆/部署产物等本地发布信号判定，未知发布状态走既有保守版本落点门，绝不把无 Git 等同未发布。后续 `/sprint-test`、`/sprint-close` 沿用同一模式。
 
@@ -194,18 +196,19 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 
 ### Phase 0B.1.1：★ 自动文档增量流
 
-**触发条件**：分支 B 必跑（除非参数含 `skip-doc-sync`）。
+**触发条件**：分支 B 必跑契约放行；`skip-doc-sync` 只影响成文调度，不能跳过规格、反转清算、台账或 M/L 完成门。
 
-**★ 单一权威路径（Phase 0B.1.1 ↔ Step X.0.0 的关系与衔接，消除"两头落空"）**：
-- **分支 B（口述累进）下，Phase 0B.1.1 是文档同步的唯一主路径**——"先补文档、后写代码"，本步研发需求 / 设计 / 计划补充在开发前必须生成；研发自测用例按步骤 4 的 `required` 读数生成或登记延期。应生成的产物**在进入 Phase 1 开发前必须已生成并登记**，不得延后、不得指望末段 Step X.0.0 兜。
-- **末段 Step X.0.0 在分支 B 下只是"兜底增量"**：仅捕捉 Phase 0B.1.1 完成**之后、开发过程中又新冒出**的额外漂移（临时加的接口/字段/规则）。它**不是**分支 B 补文档的主战场（分支 A 才是），**更不允许**把 Phase 0B.1.1 应做的 6 类补充推迟到 X.0.0——那会造成"0B.1.1 觉得 X.0.0 会补、X.0.0 觉得 0B.1.1 已补"的两头落空。
-- **铁律**：分支 B 必须先跑完 Phase 0B.1.1（含下方硬门）再开发；X.0.0 只增量、不接管。二者共用同一套 `NN_<业务主题>.md` 补充文档体系（约定 15）与约定 22 级联链，**绝不重复生成同一批增量、也绝不互相甩锅**。
+**第一动作 = Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`**，按“契约卡放行”先判档、写卡与四族义务，再分流。该片是分档时机与并行汇合的唯一权威；下方步骤 1–6 是**正式成文配方**，不能对所有档位无条件串行执行。
+- **S**：先契约卡＋受影响四族短行，跳过下方完整成文配方进入 Phase 0B.1.3/0B.2；用例按步骤 4 判定并双重登记，required=true 时正式用例必须生成，不能把卡的 AC 当用例。后续完整成文由约定 22 收口或显式 `--cascade-now` 负责。
+- **M**：契约卡放行后启动 Sprint，Phase 1 同时派代码与 docs；docs 按下面配方依次成文，**完整文档硬门移到本轮汇合、先于 `/sprint-test`**。主流程记录 docs owner/任务/写集，不能把文档义务交给无人负责的末尾兜底。
+- **L**：下面配方与完整文档硬门均在开发前完成，再进入 Phase 1。
+- **Step X.0.0**：检测实现期新增漂移、复核实际档位、主流程登记工作单；不重新生成 docs 已完成的同一批内容。正式补充与台账合并仍各走 `--supplement` / `--ledger-cascade`，不能混用落点。
 
 **典型场景**：产品口述新功能 → 研发用 `/sprint-dev "<描述>"` 直接开发 → 历史问题是只追代码不追文档 → 现在用本流程自动追平。
 
-**步骤**（8 步串行，含 2.5「`--scale` 派生」与 3bis（独立一步、不能并进步骤 3）；任一步失败暂停并要求用户处理，不静默继续）：
+**正式成文配方**（L 开发前、M docs 分支、S 收口时执行；docs 内按依赖串行，代码可按契约并行。任一步失败记缺项，交原 docs Agent 修正；确需产品决策才待裁决，不静默放行）：
 
-1. **记录口述补充**：把命令参数 `"<描述>"` + 当前时间 + git user 写入新文件：
+1. **记录口述补充**：由主流程把命令参数 `"<描述>"` + 当前时间 + developer_identity 写入来源文件；契约放行时已经创建则复用同一文件，docs 不重复创建：
    `docs/requirements/{version}/产品提供/口述补充-{YYYYMMDD-HHMM}.md`（每次累进一份；用时间戳区分多次口述；该目录已有 PRD 时本文件作为同级补充）
 
 2. **生成研发需求补充**：经 `/sprint-requirements {version} --supplement={NN} [--unattended]` 编排（研发需求唯一入口，内部调 `ux-logic-extractor` skill 增量补充、prompt 驱动；★ **不直调 SKILL**——直调会跳过命令端的落盘归一 / 多系统拆分 / 头部元数据表 / AIDP 硬规范回检，与同轮其余三层 `/sprint-design --supplement [--unattended]` · `/sprint-plan --supplement [--unattended]` · `/sprint-selftest --supplement [--unattended]` 走命令中介保持一致），输入：
@@ -219,51 +222,15 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 
    skill 内置的不中断原则、数据闭环完整性等会自动生效（沿用主文档 `Q-NNN` 编号空间往后递增，数据闭环孤立端用 `Q-FLOW-NNN`），命令端按 AGENTS.md 约定 21 不复述具体条款，详见 `{{AIDP_HOME}}/skills/ux-logic-extractor/SKILL.md`。
 
-2.5. **★ 口述规模档位判定门（`sup_scale`）——【必跑】，下面步骤 3 / 3bis / 4 的 `{档位}` 就是它的产出**
+2.5. **★ 口述规模档位判定门（`sup_scale`）——开发前已生产，此处复核并传递**
 
-   > ⛔ **本步不可省**：步骤 3 / 3bis / 4 三处都写 `--scale={档位}`，而 `{档位}` **只有本步生产**。
-   > 不判就传不出去，三个下游 SKILL 全部**缺省回退 L 档全套**——正文一行不少，
-   > "小改动不走大流程"整个失效（下游实证：6 个源文件、零建表、零 SQL、零配置项、零新增端点的一轮，
-   > 产出 762 行四层规划文档，文档:代码 ≈ 5:1）。
+   判据与字段的单一信源 = `flows/sprint-dev/incremental-contract.md`“契约卡放行”。**判档发生在步骤 1/2 成文之前**，不能先跑完整需求 SKILL 再决定是否需要它。复用 `versions.{V}.sprints.{新NNN}.dev_scale`，并保留 `versions.{V}.sprints.{新NNN}.sup_scale` 的 REQ/PAGE/第三方等原字段，两者 tier 相同；正式需求揭示了新表/破坏性变化时立即升 L、重过开发前门。
 
-   **判据（与 `/version` Step 2.4.1.5「需求规模档位」同构，据步骤 2 产出的研发需求增量确定性计算）**：
-   `REQ_COUNT`=本轮增量的研发需求条目数 · `PAGE_COUNT`=涉及页面/原型数 · `HAS_DDL`=是否新建表 ·
-   `HAS_API`=是否新增接口端点 · `HAS_CONFIG`=是否新增配置项 · `THIRD_PARTY`=四值（取值与判法**完全复用**
-   Step 2.4.1.5 的表，本处不复述）。
+   **S（语义子档）**的「受影响结论清单」仍逐条包含落点、file:line、旧结论、新结论、失效/改写/不受影响；写入契约卡，正式需求成文时回链。空表或整体描述不算完成，约定 34 安全性回答不可省。
 
-   | 档位 | 判据 | 承载形态 |
-   |------|------|---------|
-   | **S** | `REQ≤5 且 PAGE≤2 且 !HAS_DDL 且 THIRD_PARTY ∈ {none, field-level}` | 设计合并 1 册；**允许就地在既有册追加小节、不另起 `NN_` 分册** |
-   | **S（语义子档）** | 见下方独立判据 | 同上 **+ 强制产出「受影响结论清单」** |
-   | **M** | `REQ≤15 或 PAGE≤5`（未命中 S），或 `THIRD_PARTY = endpoint-level` | 3 册（详设/接口/数据库）|
-   | **L** | 超出 M，或 `HAS_DDL`，或 `THIRD_PARTY = new-system` | 现状全套 |
+   以下正式调用仍显式传 `--scale={档位}`，只写 baseline 不传参视为未执行档位策略。M 设计合册另带 `--compact-contract=<契约卡路径>`，命令端记录版式映射，不能谎称上游 scale=M 原生输出一册。
 
-   **★ S（语义子档）——「语义变更」不一刀切抬档**：
-   `HAS_SEMANTIC=true` 但同时满足 **`REQ≤5` 且 `!HAS_DDL` 且 `!HAS_API` 且 `!HAS_CONFIG` 且改动面 ≤6 个源文件**
-   → **判 S 档**，但**强制产出「受影响结论清单」**（下方）。
-   > **Why**：原判据把「语义变更」当成一个**布尔**、命中即抬到 M——可"一个展示占位值从 `—` 改成 `0`"
-   > 与"新建一个业务域"被判成同一档。语义变更的**影响面明确、可枚举**，该管的是"有没有逐条清算"，
-   > **不是"要不要另写 762 行册子"**。这与 `THIRD_PARTY` 已经从布尔改成四值是同一个教训。
-
-   **★「受影响结论清单」（S 语义子档的强制伴生项，把"详略度"与"级联完整性"解耦）**：
-   在研发需求增量里产一张表，**逐条打勾**、不得只写整体描述：
-
-   | # | 受影响落点 | 位置 | 旧结论 | 新结论 | 处置 |
-   |---|---|---|---|---|---|
-   | 1 | 需求条目 / ADR / 用例断言 / 反向断言 / 铁律注释 / `REQ-XXX` 代码注释 | 具体文件:行 | … | … | 失效 / 改写 / 不受影响 |
-
-   > ⛔ **清单不是"档位的一部分"、是"级联保证的一部分"**：档位只伸缩**写多少**，
-   > 约定 22 的检测项与触发级别、L1 需求留痕、L4 自测用例产出**任何档位都不省**。
-   > 本清单存在的意义正是：**降档不降级联**。
-
-   - **落盘留痕**：写 baseline `versions.{V}.sprints.{新NNN}.sup_scale`
-     （`{tier, req_count, page_count, has_ddl, has_api, has_config, has_semantic, third_party, source:"auto"|"user", at}`）。
-   - **用户覆盖**：`/sprint-dev "<描述>" --dev-scale=S|M|L` 显式覆盖（留痕 `source:"user"`）。
-   - **打印**：`📐 口述规模档位：S（REQ=3 PAGE=1 建表=否 接口=否 配置=否 语义=是 第三方=none）→ 设计就地追加小节 + 受影响结论清单`。
-   - **⛔ 判出的档位必须真的传下去**：步骤 3 / 3bis / 4 的 `--scale=` 一律填本步结果；
-     只写进 baseline 而不传给 SKILL = 白判一次档（与 Step X.0.0 步骤 3.5 同一个坑）。
-
-3. **触发增量设计**：调 `/sprint-design {version} --supplement={NN} --scale={档位} [--unattended]` 派生增量设计：
+3. **触发增量设计**：调 `/sprint-design {version} --supplement={NN} --scale={档位} [--unattended]` 派生增量设计；M 另带 `--compact-contract=<契约卡路径>`，设计/接口默认合册、保留上游强制独立专题：
    - Step 0.6.4.7 全扫 code/ 拿当前代码现状（含本 sprint 即将新增功能可能已部分实现的情形）
    - Step 0.3 按四象限对比口述新功能 vs 代码现状：判定走"② 新增"还是"③ 代码超前-补写"
    - 以增量 prompt 驱动调 dev-logic-architect（按其 SKILL 增量约定，无 mode 参数）产出详细设计 / 接口设计 / 数据库设计的补充文档（均归一为 `NN_<业务主题>.md`，按实际范围）
@@ -273,7 +240,7 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
    > ⛔ **`/sprint-design` 不产研发执行计划**——它全文不涉及 `dev-execution-planner`，其补充模式产物只有 详细设计 / 接口设计 / 对外开放接口 / 数据库设计 / DDL SQL 五类。⛔ 因此**不得把"计划增量"并进步骤 3**——那会让下方硬门第 6 项（**不可 N/A 的必 Pass 项**）无人生产、恒 Fail。成因见 `{{AIDP_HOME}}/flows/sprint-dev/rationale.md`「计划增量为何必须独立一步」。
    > 即便临场改为直调 `dev-execution-planner` 兜住，也会绕过 `/sprint-plan` 的 Step 1.5 三脚本回检、Step 1.6 SQL 路径回写、Step 2 关联文档注入——故必须走命令编排、不得直调 SKILL。
 
-4. **★ 研发自测用例适用性（先判后生成）**：用 `check_case_ledger_pending.py --prepare` 读取真实外层意图；`required=true` 才生成正式用例，`false` 则只记欠账后跳到步骤 5。纯技术内部调整也必须留痕，不能只打印 WARN。
+4. **★ 研发自测用例适用性（先判后生成）**：主流程执行 `check_case_ledger_pending.py --prepare` 读取真实外层意图，将读数交 docs；`required=true` 才生成正式用例，`false` 则双重登记欠账后跳到步骤 5。S 同样执行本判定，不能因为跳过成文配方而漏掉它。确需正式用例而缺增量计划时先通过既有生成链补齐必要上游输入，不能给 SKILL 假计划或拿卡的 AC 充正式用例。纯技术内部调整也必须留痕，不能只打印 WARN。
 
    | 外层意图 | prepare 参数 | 行为 |
    |---|---|---|
@@ -310,11 +277,11 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 
 5. **更新各目录导航锚**：本轮新增的 6 类增量文档在对应目录导航锚各追加一行（类型=补充 + 生成时间）——研发需求 / 详细设计 / 接口设计 / 数据库设计 / 研发执行计划 / **研发自测用例**均 → `00_索引.md`（研发自测已对齐通用范式，另在 `01_研发自测方案.md` §8 用例索引段同步登记业务导航）
 
-6. **完成报告**：列明已生成的需求/设计/计划；用例按真实状态二选一写「正式用例已生成并通过回检」或「延期并已双重登记，待实测前补齐」，不得在延期状态下宣称已生成用例。然后进入 Sprint-{新NNN} 开发。
+6. **完成回传**：列明已生成的需求/设计/计划与当前契约修订；用例真实二选一写「正式用例已生成并通过回检」或「延期并已双重登记，待实测前补齐」。M docs 回主流程汇合，L 回开发前放行，S 收口回成文结果；不得重复启动 Sprint、不得在延期状态宣称已生成用例。
 
-**★ Phase 0B.1.1 完成硬门（Pass/Fail — 任一 Fail 不得进入 Phase 1 开发、不得输出"开发完成"）**：
+**★ Phase 0B.1.1 正式文档硬门（L 开发前 / M 汇合时 / S 显式成文时）**：
 
-> 参照 `/sprint-plan` / `/version` 末段硬门表：分支 B 的"自动文档增量流"必须逐项 Pass 才放行开发；命令端在离开 Phase 0B.1.1 前逐条自检（可用 `ls`/`grep` 客观验证文件与索引登记），**任一 Fail → 停下补齐该项，绝不带病进开发、更不得在末尾对用户反问"要不要补设计文档/还是先这样"**（那属被禁的自发确认门，见文首硬约束）。
+> 契约放行由 `incremental-contract.md` 负责；下表核正式产物，**不把 S/M 的开发前契约门替换成六册存在性门**。L 未通过不得开发；M 未通过不得进入 `/sprint-test` 或宣称本轮交付完成；S 默认只契约＋台账，不虚报正式文档/用例已经生成。成文失败交原 docs Agent 补齐，不自由反问“要不要补”。
 
 | # | 校验项 | Pass 判据 | Fail 处置 |
 |---|--------|-----------|-----------|
@@ -328,14 +295,12 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 | 8 | 各目录 `00_索引.md` 登记 | 上述已生成的增量在对应目录 `00_索引.md` 均有"类型=补充 + 生成时间"登记行 | 缺登记 → 回步骤 5 补登记 |
 
 - **N/A 合法**：项 4/5 在本轮确无对应变更时、项 7 在步骤 4 明确延期且双重留痕时标 N/A（附一句判据，如"本轮无接口变更"）即算 Pass；项 1/2/3/6/8 为**必 Pass 项**，不可 N/A。
-- **★ S 档「就地追加」同样算 Pass（配合步骤 2.5）**：步骤 2.5 判为 **S 档**时，项 2/3/6 的 Pass 判据放宽为
-  「**新建 `NN_*.md`** 或 **既有册中本轮新增小节 + 该目录 `00_索引.md` 生成时间已刷新**」二者取一——
-  ⛔ 但**"两者都没有"永远是 Fail**：S 档降的是**承载形态**，不是"可以不留痕"。
-  S 语义子档另加一项必 Pass：**「受影响结论清单」已产出且逐条有处置结论**（空表 / 只写整体描述 = Fail）。
-- **`skip-doc-sync` 例外**：显式带该参数时本硬门整体跳过（见下方「跳过」），但须在完成报告显式 WARN 漂移风险。
+- **M 合册同样算 Pass**：项 3/4/5 按实际合册中的详细设计/接口/数据库章节及契约回链核对，不要求三个独立文件；适用内容缺失仍 Fail。上游强制独立专题照旧。
+- **S 契约放行不等于正式成文通过**：契约卡＋台账缺一即 Fail；语义子档的「受影响结论清单」须逐条有处置。正式成文时按 `--supplement` 新增或 `--ledger-cascade` 合入既有册并刷新索引，不能虚报。
+- **`skip-doc-sync` 不豁免 M/L 完成硬门**：已延期的义务保留可发现状态，不能仅凭 WARN 返回成功。
 - **无人值守（`--unattended`）同样受硬门约束**：Fail 项按上表"Fail 处置"自动重跑对应 SKILL；重跑仍 Fail → 转失败处置（熔断冻结 + #4 里程碑通知 WARN），**不挂起、也不放行带病开发**。
 
-**跳过**：参数含 `skip-doc-sync` → 仅做步骤 1（记口述）；步骤 2~6 与上述完成硬门跳过。⛔ **但必须同轮把本轮口述变更按条目行格式写进【受影响各族】的增量册**（四族落点见 `{{AIDP_HOME}}/reference/开发期族增量.md`；终端 WARN 不落盘 = 欠账不可发现：`commit_gate::pending_cascade`、`check_cascade_landing.py`、阶段收口入口**统一扫描这四份册子**；不写则用户直接走 `/version` 发布时，收口点 3 的必删门会因「册子不存在」判为合法终态放行，即带着待级联条目走到版本发布）。此外终端 WARN「已跳过文档增量流，本 Sprint 完成后请人工跑 `/version` 补充模式校对；不跑会让设计/代码持续漂移」
+**显式延期**：`skip-doc-sync` 下仍须记录口述、完成契约卡与反转门，主流程原子取号后把本轮口述变更写进受影响各族台账（见 `{{AIDP_HOME}}/reference/开发期族增量.md`）。S 可以带已登记成文义务继续；M 必须在汇合时补齐、L 必须开发前补齐，不能用该参数宣告缺件通过。台账与工作单是后续可发现的输入，终端 WARN 不能替代落盘。
 
 ### Phase 0B.1.3：★ 开发期口述追加 / 口径反转的处理（约定 34 ⑥ 决策门）
 
@@ -349,7 +314,7 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 
 | 判定 | 判据 | 处置 |
 |---|---|---|
-| **追加** | 新口述**只增加新结论**，不与任何已写入文档的结论矛盾 | 走常规增量：按 Phase 0B.1.1 步骤 2~5 追加（受**步骤 2.5 档位门**约束，小改动不另起分册）|
+| **追加** | 新口述**只增加新结论**，不与任何已写入文档的结论矛盾 | 主流程更新契约修订、复核档位、登记四族；S 保持攒批，M 更新 docs 任务，L 先补齐文档；受影响工作单重派 |
 | **反转** | 新口述**推翻了已写入文档的既有结论**——口径反向 / 白名单方向调转 / 默认值·状态机·权限范围改写 | **必走下面步骤 2~4，一步不省** |
 
 **步骤 2 — 失效结论清算（逐条打勾，⛔ 不许靠"重跑一遍 0B.1.1"代替）**
@@ -381,12 +346,12 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 - 整册被推翻的：在该册头部加**整册作废标记**并指向新册。
 - ⛔ 直接把旧文字改掉 = 代码注释里引用的旧编号无处可查，后来者只能按旧印象改回去。
 
-**完成判据**：步骤 1 判定结论 + 步骤 2 清算表 + 步骤 3 的安全性回答，三者都写进本轮 `docs/requirements/{version}/产品提供/口述补充-*.md` 或研发需求增量；缺任一项不得继续开发。
+**完成判据**：步骤 1 判定结论 + 步骤 2 清算表 + 步骤 3 的安全性回答，三者写进本轮契约卡（无卡的存量路径写口述补充或研发需求增量）；缺任一项不得继续开发。开发期当场只落≤10行的显式作废标记并登记需求族已知失准点，全文订正在成文/收口时完成。主流程递增 contract_revision，暂停受影响写集并重派；旧修订回传不得当成新契约完成。
 
 ### Phase 0B.2：启动新 Sprint
 
 ```
-执行：/sprint-start {新NNN} [--unattended]（无人值守时透传）
+执行：/sprint-start {新NNN} [--unattended]（无人值守时透传；调用上下文必须附契约卡路径、修订、dev_scale 与放行证据）
 ```
 
 ### 转入共用「Phase 1 开发执行」段（本命令核心）
@@ -541,7 +506,9 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 - 在「已完成工作」中追加完成项
 - 更新「当前工作焦点」为"开发完成，等待测试"
 
-> ★ **若本命令触发 `git commit`**（自动提交场景）：按**约定 24**——**每次** commit 前先跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），**不是禁止 commit**（判定字段与处置单一信源 = 约定 24，本命令不复述）。
+> ★ **若本命令触发 `git commit`**：主流程汇合合法写集并集后按 `incremental-contract.md`“写集派发”传 `--owner` 与重复 `--allow-path` 给 `commit_gate.py --quiet`，每次读取完整 JSON；暂存区外路径 WARN 核对归属，不覆盖他人索引。退出码 3/4 是欠账信号、不是禁止 commit；台账结构/清理异常修正复核，实际级联仅由阶段入口或显式 `--cascade-now` 触发，CICD 欠账按约定 31.5 补监听。默认仅主流程写 Git，用户明确授权 worker 时须串行交接索引。
+
+> **日常累进的推送时机**：会触发部署的 push 留到下方验收汇合结束；按契约卡 `test_plan` 经 `test_ledger.py run --scope full` 核验当前树稳定 PASS，命令/环境/输入不变时直接复用。`skip-test` 把验收和此门交父编排，不等于允许提前部署；无父编排时如实返回“开发完成、尚未可部署”。此门不新增 push/部署授权。
 
 > ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、失败自动重试（`cicd_watch.py --mode retry`）≤3 次并通过就绪探针。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`{{AIDP_HOME}}/flows/sprint-autopilot/invariants.md`）。
 
@@ -552,20 +519,17 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 **默认行为**（分支 B，或分支 A 不带 `skip-test`）：开发完成后自动执行：
 
 ```
-# ★ 本串联块同轮跑 test → bugfix → close，而约定 22 的收口点**不含 `/sprint-close`**：
-#   不当场级联，本 Sprint 的 `/sprint-test` 就拿不到本轮新增的 L4 用例（要等次日首次提交才成文）。
-#   ⛔ 故走到这里时**本命令自身必须已带 `--cascade-now`**（`/sprint-full` 已硬编码传它，两边同款）；
-#   分支 B 或不带 skip-test 的分支 A 进入本块前自动置上，别留给用户记得加。
+# 先执行 incremental-contract.md“开发与文档汇合”：S 保留四族欠账，M 完整文档必须齐备，L 已有文档照常核对。
+# 同轮 test→close 不自动置 --cascade-now；显式实测要求先补正式用例，契约卡不是用例。
+# 向 test 透传契约卡、修订、改动前基线、原实现/docs Agent 与汇合证据。
 # ⛔ 本命令带 --unattended 时，下面三条【必须逐条透传】——不传则下游各自弹交互门，
 #   无人值守链在此挂死（/sprint-close 的"确认验收"更是只有该 flag 才走机械推导）。
 #   三条缺一不可（`/sprint-full` 同款，两边须同步）。
 1. /sprint-test [--unattended]                    # 测试（含 code-verification-loop）
 
-2. 如发现 bug:
-   循环：
-     /sprint-bugfix sprint-{NNN} [--unattended]   # 修复
-     /sprint-test [--unattended]                   # 回归
-   直到全部 Fixed/Verified 或循环 5 次
+2. test 当轮把错误性发现交原实现 Agent 修复并差量复核；不重复整段 CVL。
+   当轮仍有未闭环 BUG 时才交 /sprint-bugfix sprint-{NNN} [--unattended]；
+   返回同一验收上下文按问题与修复后 diff 复核，沿用既有最多 5 次失败处置，不另嵌完整 test 循环。
 
 3. /sprint-close {NNN} [--unattended]             # 关闭归档
 ```

@@ -29,11 +29,13 @@
 | `progress.md` | L3 该用户在该版本的进度 | 该用户 |
 | `sprints/sprint-{NNN}.md` | L4 Sprint 归档快照（只追加） | 该用户（仅创建） |
 
+`activeContext`、`progress` 与根记忆当前状态只写 `ID / 状态 / 结果或阻塞 / 证据链接` 短行，不复制实现日志或验收正文。根记忆整体进度保留最近 2 个 Sprint 摘要，历史移交 `progress.md`；progress 的历史关闭行和归档链接必须保留，不以窗口限制删掉。未决问题一直保留到实际解决；归档篇幅仍按约定 9。
+
 ### 项目配置（人维护）
 
 | 文件 | 内容 |
 |------|------|
-| `aidp-config.yaml` | 项目级开关与集成配置：提交前门禁 `commit_gate`、里程碑通知 `notify`、CICD `cicd`（提供方 `provider`，默认 GitHub Actions + 环境→流水线映射 `pipelines`）、7×24 调度 `scheduler`（`aidp_scheduler.py` 读取）、Stop 护栏 `stop_guard`、脚手架版本 `scaffold`、autopilot 决策兜底 `autopilot_decisions`。团队共享、随 git 提交；⛔ 密钥只经环境变量引用，不明文入库 |
+| `aidp-config.yaml` | 项目级开关与集成配置：工作分支偏好 `development.branch_policy`（null 首次询问 / current 当前分支 / new 每个独立任务一次新分支；升级保留）、提交前门禁 `commit_gate`、里程碑通知 `notify`、CICD `cicd`（提供方 `provider`，默认 GitHub Actions + 环境→流水线映射 `pipelines`）、7×24 调度 `scheduler`（`aidp_scheduler.py` 读取）、Stop 护栏 `stop_guard`、脚手架版本 `scaffold`、autopilot 决策兜底 `autopilot_decisions`。团队共享、随 git 提交；⛔ 密钥只经环境变量引用，不明文入库 |
 
 ### 运行时状态文件（点号开头，项目级）
 
@@ -43,6 +45,8 @@
 |------|------|------|--------|
 | `.sprint-autopilot-baseline.json` | ★ `/sprint-autopilot`（开发链路）与 `/sprint-aiauto-test`（测试链路）**共享的版本状态机 baseline**（项目级扁平 `versions.{V}` + `current_build` + 项目级运行时记录 `project_state`），是两条链路判断"当前开发/被测版本"的唯一依据 | ✅ 入库共享 | 两命令 |
 | `.aidp/`（目录） | 本地运行态，路径单一信源 = `{{AIDP_HOME}}/scripts/aidp_paths.py`：里程碑通知台账、Stop 护栏计数 `stop-guard-count` 与放行留痕 `stop-guard-skips.jsonl`（滚动保留最近 50 条）、**本地告警台账 `alerts.jsonl`**（冻结 / 链路失联 / 通知未送达恒追加一行，无通知渠道时"停得响"靠它）、并发写锁 `locks/`（0 字节 `flock` 载体）、7×24 调度日志 `logs/`、memory 写前快照 `memory-snapshot/` | ❌ 已 gitignore（纯本地）| `aidp_paths.py` 各写方（`baseline_edit.py` / `notify.py` / `autopilot_fail_handle.py` / `agent_loop.sh` / `aidp_scheduler.py` / Stop hook 等）|
+| `.aidp/id-alloc.jsonl` | 同工作区原子保留 C/BUG/REQ/Q/D/ADR 等编号；已分配未使用可留空洞，源文档与作用域共同核对重号 | ❌ 本地；新克隆从已有定义取高水位 | `alloc_id.py`，不手工追加 |
+| `.aidp/test-ledger.jsonl` | 代码内容、显式输入、命令/范围/环境绑定的测试结果及独立审查快照；失效即重跑 | ❌ 本地；不作为跨机器通过凭证 | `test_ledger.py`，不手工填 PASS |
 | `.autopilot-stop-guard-off` | Stop 护栏人工禁用逃生舱（存在即全程放行，⛔ 用完即删）| ❌ 已 gitignore | 人工创建 |
 | `.sprint-autopilot-credentials.json` | 测试账号（明文敏感）| ❌ 已 gitignore + `chmod 600` | `/sprint-aiauto-test` Phase 0.4「测试账号加载」（`flows/sprint-aiauto-test/phase-0-7.md`）—— ⛔ 不是 `/sprint-autopilot`：其 `phase-0-8.md` 明写「不在本命令收集」 |
 | `_facts/code-inventory.json` | 代码事实增量缓存（API 端点 / 数据库表 / 前端路由 / 页面 / 配置，sha 比对刷新）| ❌ 已 gitignore（可由代码重建，无需入库）| `{{AIDP_HOME}}/scripts/code_inventory.py` |

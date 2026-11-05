@@ -150,7 +150,8 @@ def test_gate_cli_cascade():
         expect = {"commit_gate_enabled", "is_template_project", "working_tree_dirty",
                   "has_business_code_change", "is_scaffold_only_change", "today",
                   "pending_cascade", "cascaded_not_cleaned",
-                  "suspected_cascade_bypass", "pending_cicd", "offchain", "context", "debts"}
+                  "suspected_cascade_bypass", "pending_cicd", "offchain", "context", "debts",
+                  "path_scope", "id_allocation"}
         check("JSON 字段集合与契约一致", set(info) == expect)
         check("today 为 YYYY-MM-DD", len(info.get("today") or "") == 10)
         check("context 默认 bare-conversation", info.get("context") == "bare-conversation")
@@ -603,10 +604,10 @@ def test_standalone_release_pending_base():
     print("【独立发布：远端待推基准跨围栏】")
     from pathlib import Path
     flow = (Path(REPO) / ".aidp/flows/version/release-7.md").read_text(encoding="utf-8")
-    capture = flow.split("# push 基准", 1)[1].split("# ★ 终态落账门", 1)[0]
-    classify = flow.split("#### Step 3.4.3", 1)[1].split('if [ -n "$BUILD" ]; then', 1)[1].split('\nfi\n# ⛔', 1)[0]
-    capture = "# push 基准" + capture
-    classify = 'if [ -n "$BUILD" ]; then' + classify + "\nfi\n"
+    # 按执行边界取生产代码，说明注释精简不能改变用例提取范围。
+    capture = flow[flow.index('PUSH_BRANCH='):flow.index('\nNO_TAG_FLAG=')]
+    push_flow = flow.split("#### Step 3.4.3", 1)[1]
+    classify = push_flow[push_flow.index('if [ -n "$BUILD" ]; then'):push_flow.index('\nPUSH_FAILED=')]
     for formal in (True, False, None):
         with tempfile.TemporaryDirectory() as tmp:
             root, remote = os.path.join(tmp, "work"), os.path.join(tmp, "remote.git")
@@ -794,7 +795,56 @@ def test_non_git_boundaries():
         check("推送分类不能写入 baseline", not os.path.exists(os.path.join(d, "memory")))
 
 
+def test_staged_path_allowlist():
+    print("【暂存区路径白名单】")
+    with tempfile.TemporaryDirectory() as d:
+        _init_repo(d)
+        mkfile(os.path.join(d, "src/allowed.py"))
+        mkfile(os.path.join(d, "views/页面 空格.js"))
+        _git(d, "add", ".")
+        _git(d, "commit", "-qm", "fixture")
+        mkfile(os.path.join(d, "src/allowed.py"), "changed\n")
+        mkfile(os.path.join(d, "views/页面 空格.js"), "changed\n")
+        _git(d, "add", "src/allowed.py")
+        cp, data = _run_gate(d, "--quiet", "--allow-path", "src/**", "--owner", "backend")
+        check("只核对暂存区，其他Agent未暂存改动不误报",
+              cp.returncode == 0 and data.get("path_scope", {}).get("outside") == [])
+        _git(d, "add", "views/页面 空格.js")
+        cp, data = _run_gate(d, "--quiet", "--allow-path", "src/**", "--owner", "backend")
+        check("白名单外路径含中文空格也正确WARN且quiet不可隐藏",
+              data.get("path_scope", {}).get("outside") == ["views/页面 空格.js"]
+              and "WARN" in cp.stderr and cp.returncode == 0)
+        cp, data = _run_gate(d, "--quiet", "--allow-path", "src/**", "--allow-path", "views/**")
+        check("编排者汇合白名单可包含双方路径", data.get("path_scope", {}).get("outside") == [])
+        _git(d, "reset", "--hard", "HEAD")
+        _git(d, "mv", "views/页面 空格.js", "src/moved.js")
+        cp, data = _run_gate(d, "--quiet", "--allow-path", "src/**")
+        check("移动必须检查原路径删除权限", "views/页面 空格.js" in data.get("path_scope", {}).get("outside", []))
+        cp, data = _run_gate(d, "--quiet")
+        check("未声明白名单不冒充已核验", data.get("path_scope", {}).get("applicable") is False)
+        cp, _ = _run_gate(d, "--allow-path", "../**")
+        check("白名单不能越出仓库", cp.returncode == 2)
+
+
+def test_id_allocation_gate():
+    print("【编号账本提交检查】")
+    from alloc_id import allocate
+    from aidp_paths import id_alloc_ledger
+    with tempfile.TemporaryDirectory() as d:
+        _init_repo(d)
+        allocate(d, "BUG", 2, "worker", version="V1.0.0")
+        cp, info = _run_gate(d, "--quiet")
+        check("预留未使用空洞不报欠账", cp.returncode == 0 and info.get("id_allocation", {}).get("passed"))
+        with open(id_alloc_ledger(d), "a", encoding="utf-8") as stream:
+            stream.write("truncated\n")
+        cp, info = _run_gate(d, "--quiet")
+        check("损坏账本作为可见欠账，不吞掉quiet告警", cp.returncode == 3
+              and "id-allocation-invalid" in info.get("debts", []) and "编号" in cp.stderr)
+
+
 def main():
+    test_staged_path_allowlist()
+    test_id_allocation_gate()
     test_non_git_boundaries()
     test_gate_pure()
     test_gate_cli_cascade()

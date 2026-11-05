@@ -16,6 +16,8 @@
 
 2.5 **★ 部署触发前置 → 部署前安全网 → 部署动作（任何开发路径完成后都从这里执行：`/sprint-batch`、逐 tick 单 Sprint 全部关闭、incremental、自动修复复测轮；⛔ 不属于 `/sprint-batch` 步骤）**
 
+   - **日常累进部署测试门（先于 push 或任何部署触发）**：存在本轮契约卡时，读取其 `test_plan`，对每套 `full_argv` 按相同 `cwd/env_id/inputs` 经 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --scope full --env-id <环境标识> -- <原始测试argv>` 执行/复用，并使用卡中的实际 `--cwd`、逐条 `--input`。必须返回稳定 PASS；targeted 或缺失账本不能代替。修复迭代先定向，汇合验收后若代码未变本门复用；最后一次代码变更使旧记录失效，集中补全量后再部署。最多两次是正常路径预算，失败或持续变更时如实超额并记录原因，不以预算截断质量门。测试命令不得擅自起服务或完整构建，约定 35 授权照旧。
+
    > **`vcs_mode=none` 独立出口（优先于下方 Git 推送围栏）**：开发/测试/Sprint 关闭成果仍留在本地。对提交、推送、推送分类、远端 CICD 各节点写当前 build `steps[]` 为 `status=skipped`、`reason=unsupported:vcs-disabled`，baseline 同步保留未推送事实；不执行 `git status/add/commit/push`，不伪造 `push_commit` / `push_at` / `cicd_skipped=true`（该字段只表示 Git push 后按内容分类跳过 CICD）。`mode=local` 不经过 Git/CICD，必须探本地服务真实就绪（启动命令成功不等于就绪）；就绪后按下方「部署完成 → 落盘交接信号」写 `last_deployed_at` + `phase_beta_done_at` 并记录本地探活 URL/结果，未就绪则不得写证据或交接测试；依赖 Git push 的 cloud 路径只记未部署，不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d 部署成功通知，不启动对旧代码的浏览器测试。随后继续 Phase 3.3 本地审计、Phase 3.4 报告和收尾；不得因跳过 Git 节点冻结本地开发。`git` 时执行下方原围栏。
 
    - **★ 部署触发前置：开发成果提交 + 分类 + 推送（确定性步骤，绝不可省）**：dev 循环 /（incremental）增量改动完成后、执行下方「部署动作」**之前**，必须把本轮改动提交并推到 origin。本步以 `git status --porcelain` 为准兜底，不依赖子命令是否已提交：
@@ -32,7 +34,7 @@
         git status --porcelain
         # porcelain 非空时：git add -A + git commit（消息按 full/incremental 模式生成，末尾带 Co-Authored-By）
         ```
-        commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON：退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
+        commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读完整 JSON：退出码 3/4 是欠账信号，不是禁止 commit。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 推送欠账仍按约定 31.5 补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
      3. **push 前分类（唯一入口）**：在 `git push` 前执行，始终显式传入提交前保存的 `BASE_REF`（不能在提交后用默认 `HEAD` 推断）：
         ```bash
         eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"

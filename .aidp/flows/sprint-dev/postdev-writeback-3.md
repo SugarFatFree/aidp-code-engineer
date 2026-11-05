@@ -69,7 +69,9 @@ git diff --name-only HEAD~1 2>/dev/null | grep -qiE 'init|rebuild|migrate|backfi
 PRD 行级原子条目 → 研发需求（C-4）、研发需求字段 → 详细设计（C-5）、原型覆盖度（F）、
 语义变更派生完整性（G）、跨版本需求作废（H）——**五项 Critical 全部落空**。
 
-### 收口点：本轮累进产出了四类文档中的任意一份 → 必须跑一次范围收敛的审计
+### 收口点：本轮正式文档汇合后复用一次增量审计
+
+**先 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`“开发与文档汇合”**。S 仅契约卡/口述原文/族台账时没有正式成文产物，不触发本段；M 等 docs 完成且修订匹配后在汇合点执行，L/显式成文沿用本段。相同契约修订与正式产物内容已有审计证据时复用，不因回写、汇合各跑一次；有新差异只补相关条目。以下审计是既有文档审计，不能替代汇合 reviewer 契约检查或 test 的 CVL，也不新增审计层。
 
 ```bash
 # ⛔ `VERSION` 在 /sprint-dev 全链路无赋值方：取空后四个 `-- <path>` 退化成整目录比对，
@@ -77,19 +79,19 @@ PRD 行级原子条目 → 研发需求（C-4）、研发需求字段 → 详细
 #    但判据失真、无人值守下纯烧成本）。真源 = baseline。
 VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version 2>/dev/null)
 [ -n "$VERSION" ] || { echo "⛔ 取不到当前版本号 → 无法界定审计范围，⛔ 不得静默跳过本收口点"; exit 1; }
-# 判据：本轮是否动过四类文档（含各族内容主文档）
-CHANGED=$(git diff --name-only "${BASE_REF:-HEAD~1}"..HEAD -- \
-  "docs/requirements/${VERSION}" "docs/design/detail/${VERSION}" \
-  "docs/plans/${VERSION}" "docs/testing/${VERSION}" | head -1)
+# 判据：主流程按本轮实际写集核正式需求/设计/计划/用例产物。
+# 已提交、暂存、未暂存、未跟踪文件均需覆盖；排除口述原文、契约卡、族台账和仅状态记录。
+# BASE_REF 使用契约记录的本 Sprint 改动前基线；无可信基线时按实际工作单核对，不以空 diff 跳过。
+# CHANGED 由上述核对填本轮正式产物清单；M 未收齐 docs 回传不能填写“无变化”。
 ```
 
-`CHANGED` 非空 → 用 `Agent({run_in_background:false})` 派 **version-auditor 子 Agent**
+本轮正式产物清单非空且内容发生变化 → 用 `Agent({run_in_background:false})` 派 **version-auditor 子 Agent**
 （独立上下文，`{{AIDP_HOME}}/agents/version-auditor.md`），并在派单简报里显式声明：
 
 | 传给它 | 值 |
 | :- | :- |
 | `scope` | `incremental`（⛔ **只审本轮改动涉及的条目**，不重跑全版全量——那会让每次口述累进都付一次规划期审计的成本）|
-| `changed_files` | 上面 `git diff` 的完整清单 |
+| `changed_files` | 主流程核对后的本轮实际正式产物清单（含未提交/未跟踪产物） |
 | `trigger` | **`accretion`（★ 必传）** —— ⛔ 漏传即落回缺省 `version`，而 `version` 下 Agent 按
 **规划期日期路径**写盘、忽略下面的 `output_path`：同一天先跑过 `/version` 规划审计的话，
 这份累进报告会把整份规划审计**静默覆盖**掉 |

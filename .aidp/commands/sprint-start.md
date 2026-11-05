@@ -2,7 +2,7 @@
 
 你正在执行 `/sprint-start` 命令，启动当前 Sprint 的执行。
 
-**★**：需求和设计已在版本规划时生成，本命令只负责读取需求、更新状态、启动执行。
+**★**：普通计划路径读取既有需求/设计；日常 S/M 累进读取已放行契约卡及稳定基线。本命令只负责读取规格、更新状态、启动执行，不重复成文。
 
 参数：$ARGUMENTS
 请从参数中解析 Sprint 编号。
@@ -22,6 +22,8 @@
 3. 后续路径全部使用解析到的 `{version}` / `{user}`。
 
 ## 前置检查
+
+**日常累进契约入口**：若调用方传来 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md`，先 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。解析其唯一 `aidp-contract` fenced JSON 块，按协议核 version/sprint/owner 与本轮一致、正整数修订、`status=approved` 且 `approved_revision=contract_revision`，不能仅凭文件存在放行；解析失败、重复块/键、身份不符或 draft 均停止契约路径。S/M 可从卡的 REQ/AC/Task/依赖取得本 Sprint 范围，以下需求/计划/设计前置项以“既存版本基线＋已放行契约”满足，不要求新 Task 已成正式计划；L 仍须正式文档硬门通过。未传卡或卡缺项时保持普通计划路径，不凭空生成替代规格；未关闭 Sprint 门与启动记录无论档位都执行。
 
 1. ★ **确认无未关闭的 Sprint（约定 9 前置门；确定性判据，⛔ 不靠读 `activeContext.md` 自行裁量）**：
 
@@ -47,7 +49,7 @@
 
 **Step 1.1 从研发执行计划获取本 Sprint 的"何时做"**
 
-从 `docs/plans/{version}/00_索引.md` 定位执行计划正文（无索引的存量项目扫描该目录内容），包含主文档、人员/里程碑分册与 `NN_Phase*.md` 任务分册。在其中定位 `Sprint-{NNN}` 及其 Task，提取：
+S/M 日常累进先从已放行契约卡的执行工作单取本轮 Task、目标、依赖和 AC；正式计划尚在生成时不得误读旧 Sprint。其它路径从 `docs/plans/{version}/00_索引.md` 定位执行计划正文（无索引的存量项目扫描该目录内容），包含主文档、人员/里程碑分册与 `NN_Phase*.md` 任务分册。在其中定位 `Sprint-{NNN}` 及其 Task，提取：
 - **Sprint 目标**（一句话）
 - **包含的功能模块列表**
 - **开始 / 结束日期**与时间估算
@@ -65,7 +67,7 @@
 
 ## Step 2：更新 memory/{version}/{user}/activeContext.md
 
-重置并更新 activeContext：
+重置并更新 activeContext（S/M 本轮字段来源为契约卡，以下正式计划/需求来源用于普通计划路径；显式写 `contract_path: <相对路径>`、`contract_revision: <与卡一致的正整数>`、dev_scale 和改动前基线引用；后续恢复只读核对，不重置上下文）：
 - 当前 Sprint：Sprint-{NNN}
 - Sprint 目标（**来源：`*研发执行计划*.md`（全部分册）**）
 - 本次迭代范围 = 功能模块列表 + 各模块的验收标准（**来源：`*研发执行计划*.md`（全部分册） + 研发需求/01_研发需求.md 联合**）

@@ -1,7 +1,7 @@
-# /version · 版本规划流程详情 — 分片 3/8
+# /version · 版本规划〔3/8〕
 
-> 本片覆盖：**Step 2.4.1 requirements / 2.4.2 design / 2.4.3 plan / 2.4.3.5 selftest**。
-> 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
+> 覆盖 Step 2.4.1 requirements / 2.4.2 design / 2.4.3 plan / 2.4.3.5 selftest。
+> 按 `{{AIDP_HOME}}/commands/version.md` 骨架表进度 `Read`，以本片为准。
 
 <!-- BODY-BELOW -->
 > **B-0 调度优先**：`repair 模式` 仅给缺失族执行下方 fresh 调用，已有主文档只读；`replan` 四族全部执行 fresh 调用、保留已启动 Sprint 编号与状态。完整缺件/保护/快照规则见 `planning-1.md` Step 2.0，必须传给各子命令；输入未变不取消本次调用。任一族拒绝补件即返回失败，不回落 B-1。
@@ -97,9 +97,26 @@ DST="docs/testing/{version}/研发自测/01_测试环境与账号.md"
 if [ -f "$DST" ]; then
   echo "🔑 测试环境与账号：已存在，跳过"
 else
-  # 上一版本 = 版本号排序里紧挨着本版的前一个（本版目录此时可能尚未建，故先剔除本版再取末位）
-  SRC=$(ls -1d docs/testing/V*/研发自测/01_测试环境与账号.md 2>/dev/null \
-        | grep -v "/{version}/" | sort -V | tail -1)
+  # 与 sprint-selftest 一致：取严格小于目标且有配置的最近历史，repair 不从未来继承。
+  # 本仓 V主.次[.补丁]，省略补丁按 0 比较；非法目录不参与。
+  SRC=$(python3 - "{version}" <<'PY'
+import re, sys
+from pathlib import Path
+
+def version_key(name):
+    m = re.fullmatch(r"[Vv](0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\.(0|[1-9][0-9]*))?", name)
+    return tuple(int(n or 0) for n in m.groups()) if m else None
+
+target = version_key(sys.argv[1])
+history = []
+for version in Path("docs/testing").glob("*"):
+    key = version_key(version.name)
+    source = version / "研发自测/01_测试环境与账号.md"
+    if target is not None and key is not None and key < target and source.is_file():
+        history.append((key, str(source)))
+print(max(history)[1] if history else "")
+PY
+  )
   if [ -n "$SRC" ]; then
     mkdir -p "$(dirname "$DST")" && cp "$SRC" "$DST"
     echo "🔑 测试环境与账号：继承自 $SRC（待 2.4.3.5 校准）"

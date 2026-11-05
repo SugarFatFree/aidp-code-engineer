@@ -2,14 +2,16 @@
 
 你正在执行 `/sprint-test` 命令，为当前 Sprint 执行测试和验收检查。
 
-**★ 本命令是 skill 编排器**：核心调用 `code-verification-loop` skill（**仅验收模式 `mode=verify-only`**：开发已由 `/sprint-dev` 完成，本命令只验收、不修复，问题清单交 `/sprint-bugfix`）和 `superpowers:verification-before-completion`（完成前验证）；并按需经 `/sprint-selftest`（用例缺失时补齐研发自测，唯一入口）/ `api-tester`（后端接口测试，可选）。
+**★ 本命令是验收编排器**：汇合后只调用一次完整 `code-verification-loop`（CVL，`mode=verify-only`，SKILL 自身只验不修），再由调用层把可确定的错误当轮交原实现 Agent 修复、定向测试并交独立 reviewer 差量复核，不新起 `/sprint-bugfix`。完成前使用 `superpowers:verification-before-completion`；正式用例按真实 required 意图经 `/sprint-selftest` 补齐，`api-tester` 仍只提供可选在线观察。
 
 参数：$ARGUMENTS（可选，Sprint 编号。如省略，从 activeContext 中读取当前 Sprint）
 
 | 参数 | 作用 |
 |------|------|
-| `--unattended` | **无人值守上下文标记**（`/sprint-full` 逐层透传而来）：① 本命令自身任何决策门**不弹 `AskUserQuestion`**；② **必须向下透传**给 `/sprint-selftest` 与 `/sprint-bugfix`——`/sprint-selftest` 内部的 `dev-manual-testcase` SKILL 有「生成用例前必须主动询问方案 8 项 + 5 组连接信息」的强制第零步，不透传即在此挂死；③ **派 `code-verification-loop` 验收子 Agent 时把无人值守上下文写进 prompt**（需要人工裁决的节点记录结论 + 标注待人工确认后返回）|
+| `--unattended` | **无人值守上下文标记**（`/sprint-full` 逐层透传而来）：① 本命令自身任何决策门**不弹 `AskUserQuestion`**；② **必须向下透传**给 `/sprint-selftest` 与原实现 Agent——`/sprint-selftest` 内部的 `dev-manual-testcase` SKILL 有「生成用例前必须主动询问方案 8 项 + 5 组连接信息」的强制第零步，不透传即在此挂死；③ **派 `code-verification-loop` 验收子 Agent 时把无人值守上下文写进 prompt**（需要人工裁决的节点记录结论 + 标注待人工确认后返回）|
 | `--from-batch` | 批量子任务标志（由 `/sprint-full` 透传）：本命令不弹 `AskUserQuestion`，内容决策门按「⏸ 待裁决」返回上层（语义单一信源 = `/sprint-full` 参数表） |
+| `--aiauto-test-required` / `--skip-aiauto-test` | 原样消费外层实测意图；required 优先，不据 `--from-batch` 猜实测。 |
+| `--resume-acceptance` | 恢复同版本同 Sprint 未闭环验收。先校验原始完整 CVL 报告、修订、实际写集及修复证据；可信则从 Step 6 差量闭环继续，不重新完整 CVL；缺可信原始质量证据则回 Step 2 完整验收，不能冒充增量。 |
 
 ## 前置流程
 
@@ -22,10 +24,18 @@
 
 ## 前置检查
 
-1. 读取 `memory/{version}/{user}/activeContext.md` 获取当前 Sprint 编号和范围
-2. 确认需求文档存在：`ls docs/requirements/{version}/研发需求/{01_研发需求,00_索引,00_研发需求}.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——multi 模式按系统拆分时 `01_研发需求.md` 本就不存在，硬判会把合规项目误判缺失而错误停止）
-3. 确认设计文档存在：`docs/design/detail/{version}/`（glob 加载 `01_详细设计.md`/`02_数据库设计.md`/`03_接口设计.md`，历史裸名 `接口设计.md` 兼容）
-4. 确认代码已实现（前端校验（lint + 类型检查，不打包）：Step 2 派出的 `code-verification-loop` **维度 0 静态基线门**已作前置门跑过一次；**后端编译不在维度 0 内**〔理由见 Step 7〕，仅在本命令 Step 7 收敛，且仅本 Sprint 改动侧 + 资源受限）
+第一动作 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`，再显式 Read `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md` 和 `memory/{version}/{user}/activeContext.md`。契约卡不走排除 `_*` 的正式文档 glob；既有计划内 Sprint 无卡时保持完整需求/设计/计划门，不得借缺卡降为 S；采用新累进协议却缺卡 → 返回开发补卡，不猜档位。
+
+- **M**：检查完整需求、设计、计划及适用用例的真实内容与原有回检；汇合证据必须含当前 `contract_revision`、实际写集、docs路径、docs 完成状态与 **reviewer=pass** 的契约一致性结果。任一缺失、仍运行、旧修订或路径仅占位 → 恢复缺失 docs/实现任务，重新汇合通过后才进入 CVL。
+- **S**：契约完整、实现与契约一致、受影响四族待成文义务已登记即可进入静态验收；正式正文允许攒批。不得把契约 AC 冒充正式实测用例，不为本次静态验收强启完整文档生成。
+- **L / 旧流程**：保留先完整文档、再代码的原有门；需求按 `docs/requirements/{version}/研发需求/{01_研发需求,00_索引,00_研发需求}.md` 兼容布局读取，设计/计划按索引实际路径读，不能只认裸名或硬编码 `03_接口设计.md`。
+- 新协议各档均核对 reviewer 的当前契约修订与实际写集；变更越过契约/涉及破坏性、版本承诺或部署授权 → 回原安全门，分档不提供豁免。
+
+**正式用例门独立于静态验收**：消费契约卡中 `check_case_ledger_pending.py --prepare` 的真实 required/deferred 读数及外层实测意图，得到 `CASE_REQUIRED=1|0`。有 `--aiauto-test-required` 时必须 required=true；`--skip-aiauto-test` 不能覆盖 required。缺读数先按原调用上下文执行该脚本 prepare，不默认 false。required=true 且用例缺失/用例族欠账未清 → 经 `/sprint-selftest` 补齐并通过 `python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version {version} --json` 再放行；required=false 可保留 deferred，但报告必须明确实测未完成。Step 1 与 Step 2.5 同样消费该读数。
+
+**测试计划输入**：消费契约卡 `test_plan` 的 `cwd`、`full_argv`（多套）、`targeted_argv`、`env_id`、`inputs` 与授权边界。必须是已有项目真实测试命令；缺失先回开发补齐，不用 `true` / `echo` / 空命令冒充测试。`TEST_ENV_ID`、`FULL_TEST_ARGV` 与每个 cwd/inputs 从这些字段取实值，部署前调用保持同组参数才能复用；旧计划内无卡时据现有项目测试配置记录等价计划。报告逐套列出实际字段与 run_id，不把 targeted PASS 当 full。
+
+**命令测试账本**：所有命令型验证使用 `test_ledger.py run` 包装，原 argv 原样传入；开发/修复用 `--scope targeted`，汇合后验收和修复集中收敛用 `--scope full`。同树、命令、scope、环境及 inputs 的 PASS 无限复用，targeted 不能替代 full；环境标识 `TEST_ENV_ID` 来自实际工具链/外部状态，变化则换值或 `--force`，不得硬编码假稳定环境。full 指既定完整测试命令，不授权启动服务、打包或浏览器实测。只要输入变更就重新计算账本，禁止凭上一次文本“通过”跳过。
 
 ## 执行步骤
 
@@ -71,7 +81,7 @@ fi
 **★ 用例缺失时不中断**：
 
 ```bash
-if [ -z "$PRIMARY" ]; then
+if [ -z "$PRIMARY" ] && [ "$CASE_REQUIRED" = 1 ]; then
   echo "⚠️ 正式用例/ 和 研发自测/ 均无用例"
   echo "→ 当前命令经 /sprint-selftest 补齐研发自测方案 + 自测用例（不中断 /sprint-test 流程）"
   # Claude 直接调用命令 /sprint-selftest {version}（研发自测唯一入口）：其内部调 dev-manual-testcase 生成
@@ -80,6 +90,8 @@ fi
 ```
 
 **Claude 行动指引**：若上述 if 命中，**立即在当前 sprint-test 会话中调用命令 `/sprint-selftest {version} [--unattended]`**（研发自测唯一入口；⛔ 本命令带 `--unattended` 时**必须透传**，否则 SKILL 的强制询问第零步会在无人可答处挂死）补齐用例，然后继续 Step 1 之后的"Sprint 范围裁切 + 补充用例维度"流程；**不要**让用户去单独跑 `/version`。
+
+**required=false 的静态轮次**：不触发上面的补齐调用。已有用例可裁切；无正式用例时只按契约 AC 做静态核对，报告记 deferred 与四族义务，不伪造用例统计。Step 2.5 缺正式用例时同样记录延期，不改成强制生成。后续实测仍先过正式用例门。
 
 **1. Sprint 范围裁切**：从 `研发自测/` 下用例文档中**抽取**本 Sprint（按 `01_研发执行计划.md` 中 Sprint-{NNN} 行的功能范围）涉及的测试套件，汇总到 `sprint-{NNN}-testcases.md` 的「人工自测套件清单」段（仅链接 + 序号，不复制正文）
 
@@ -162,10 +174,10 @@ fi
 > 开发期更早的"复杂度+复用"自检由 Frontend Agent Step 4.5 / Backend Agent Step 7.5 承担（作为更早的自检关口，不取代 SKILL 兜底）。
 
 **调用参数**（按 SKILL 输入要求传入）：
-- **运行模式**：`mode=verify-only`——并在任务描述里写明「代码已由 `/sprint-dev` 完成（跳过 Step 1 开发）；只验收、不修复，问题清单交 `/sprint-bugfix`」。⛔ 不传即 SKILL 默认 `loop`：会重跑开发（Step 1）并自带最多 5 轮修复，与本命令 → `/sprint-bugfix` 的修复路径重叠（`/sprint-full` 外层还有一层 bugfix 循环）
+- **运行模式**：`mode=verify-only`——任务描述写明「代码与文档已按档位汇合；只验收、不修复，单轮完整问题清单交调用方」。CVL **不支持 delta 参数**，不构造 `mode=delta` 或虚构开关。只做这一次完整质量审查；修复后由调用层 reviewer 查问题与新增 diff，**不得宣称 CVL 二次完整通过**。其命令型检查同样经测试账本复用，不能用账本替代语义质量审查。
 - **代码路径**：`code/`（按本项目实际单/多前后端组织取根目录或子项目目录）
-- **设计文档路径**：`docs/design/detail/{version}/`（含本目录下全部分册）
-- **接口文档路径**：`docs/design/detail/{version}/03_接口设计.md`（历史裸名 `接口设计.md` 兼容）；如做了拆分则传 `docs/design/detail/{version}/` 让 skill 按 glob 加载
+- **设计文档路径**：`docs/design/detail/{version}/` 下真实正式产物，并显式附 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md` 与 `contract_revision`。S 未成文部分以契约卡为本轮规格、四族台账为待成文义务，明确告诉 CVL 不把预期延期误报成“正式文档已齐备”；SKILL 自身判据和原结论保持原样。
+- **接口文档路径**：按契约卡 docs路径/`00_索引.md` 指向的真实接口章节；M 合册直接传合册与契约接口章节，不传不存在的 `03_接口设计.md`。旧布局兼容 `03_接口设计.md` / `接口设计.md`，多分册则传目录与明确文件清单。
 - **被测项目根**：仓库根（`.`）——供 SKILL 的**四个外部脚本门控维度**定位被测项目侧脚本：
   - **维度 10「UI 还原度确定性检查」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`
   - **维度 12「上游调用日志可见性与脱敏」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py`
@@ -175,7 +187,7 @@ fi
 - **被验收版本号**：`{version}`（如 `V0.14.0`）——**维度 13 专用且必填**。它比维度 10/12 多这一个参数，SKILL 侧明令「值由调用方传入，⛔ 不得自拟或省略；取不到就按『不适用（未取到 `--version` 值）』留行」。⚠️ **漏传不会报错、只会让维度 13 恒落「不适用」**：脚本缺 `--version` 值时 argparse 直接 `exit 2`（用法错），而 SKILL 对 exit 2 的处置是「修正参数后重跑」——既不计过也不计不过，报告里两侧都不留痕。故本行与上一行是**两个独立参数**，不要合并、不要省略。
 
 - **改动前基线 ref**（SKILL `verify-only` 输出契约明令：维度 0 类型检查的存量基线及维度 4 / 7 / 8 / 14 的一切基线对照**一律取改动前**；未给时 SKILL 回落 `git merge-base HEAD <主干分支>`——**主干开发时 merge-base 就是 `HEAD`**，本次改动被整批吞成「存量」，方向是假绿。故本参数**必须显式传**，⛔ 不得省略交给 SKILL 回落）：
-  - `vcs_mode=git`：传**本 Sprint 起点 commit**（`/sprint-dev` 动手前的 HEAD，与 `flows/sprint-dev/postdev-writeback-1.md` X.0.0 变更检测用的 `{sprint-start-sha}` 同一值）。⚠️ 仓库内**没有持久化字段**记录它，按序解析、取到即停：① 上游编排（`/sprint-full` 等）显式透传的起点 commit；② 本 Sprint 改动全部仍在工作区未提交（本 Sprint 无已提交 commit）→ `HEAD`；③ 当前在特性分支 → `git merge-base HEAD <主干分支>`，**仅当结果 ≠ `HEAD` 才有效**；④ 以上皆不成立 → 按下方「取不到」处置。⛔ 不得用 `HEAD~1` 顶替（多 commit 的 Sprint 会漏掉前面的改动）、⛔ 不得凭感觉挑一个 commit。
+  - `vcs_mode=git`：传**本 Sprint 起点 commit**（`/sprint-dev` 动手前的 HEAD，与 `flows/sprint-dev/postdev-writeback-1.md` X.0.0 变更检测用的 `{sprint-start-sha}` 同一值）。先读取契约卡保存的改动前基线 ref，验证它确为本 Sprint 起点；旧流程无卡时按序解析、取到即停：① 上游编排（`/sprint-full` 等）显式透传的起点 commit；② 本 Sprint 改动全部仍在工作区未提交（本 Sprint 无已提交 commit）→ `HEAD`；③ 当前在特性分支 → `git merge-base HEAD <主干分支>`，**仅当结果 ≠ `HEAD` 才有效**；④ 以上皆不成立 → 按下方「取不到」处置。⛔ 不得用 `HEAD~1` 顶替（多 commit 的 Sprint 会漏掉前面的改动）、⛔ 不得凭感觉挑一个 commit。
   - `vcs_mode=none`：无可检出的改动前代码（`sprint-{NNN}-local-before.json` 只有 sha256、不含旧内容，跑不了改动前的类型检查）→ 一律按「取不到」处置。
   - **取不到时**：prompt 里显式写「改动前基线 ref：无（取不到；⛔ 不得回落 merge-base / 本轮首跑错误数）」，由 SKILL 按其契约把依赖基线的项落「**基线无效，本项未核验**」（`未执行（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`）。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**无人值守 / 编排调用必须向上游返回「不通过 / 未核验」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
 
@@ -220,8 +232,10 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 
 **与 AIDP 的衔接**：
 - **验收结论以 SKILL 返回的结论字段（`通过` / `不通过`）为准**，⛔ 命令端不按 `loop 推进` 自行重判、也不改判。严重度、推进标记和验收结论的关系以 SKILL.md「严重度与 loop 推进」为单一信源；**仅非阻断 Important 仍按 SKILL 返回的 `不通过` 交接**，不能把 loop 可收尾解释为验收通过。**登记 bug 与是否阻断是两件事**：转写时保留唯一问题编号、原严重度、`loop 推进` 与证据，以下完整转写要求不改变 SKILL 返回结论。
-- skill 问题清单中的 **Critical 与 Important 一律**逐条转写为 bug 记录追加到 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`（「来源」列写 `code-verification-loop 维度 N`），后续由 `/sprint-bugfix` 处理；⛔ 本命令不修代码。仅转 Critical 会漏掉 SKILL 返回的 Important 修复项；按上条保留结论与非阻断标记，不在命令端补「存在 Important 即阻断」的判据。唯一例外：`问题=本项未核验` 且原因为基线无效或工具环境不可用的条目，按上方「改动前基线 ref · 取不到时」的失败交接处置，不转 bug。Suggestion 不转 bug，写入测试报告改进建议
-- skill 结论 `通过` → 命令端把通过结论写入 `docs/testing/{version}/sprint-{NNN}/`，进入 `/sprint-close`
+- **Critical 与 Important 一律**保留完整发现，代码缺陷逐条登记 BUG；`问题=本项未核验` 且原因为基线/工具不可用 → 保留失败信号和原因，不转代码 BUG。登记时保留唯一问题编号、原严重度、`loop 推进`、file:line、证据与来源回链，非阻断不等于可删除。
+- **处置三分**（依据 `/sprint-bugfix`「缺陷处置默认决策纪律」，不调用该命令）：① 当前行为错误，包括**错误性 Suggestion** → 原实现 Agent 当轮修复；② 纯优化、当前行为正确 → 记录不修理由/可选后续建议，不扩范围；③ 产品口径或对外承诺未定 → 记录具体待回答问题、挂起原因与影响，按原授权门返回。工具/基线未核验单列，不用“产品待确认”包住技术缺陷。
+- 主流程先用 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind BUG --count 1 --owner orchestrator --version {version} --scope bugs` 原子预留 BUG ID，再串行追加 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`；同一 CVL 问题回链已有记录则复用 ID。编号器不可用 → 保留待登记工作单并报阻塞，不自行 grep 最大值或编造编号。子 Agent 不并发写共享记录/卡/memory，不擅自提交。
+- 原始 CVL 结论写入报告后保留不变；即使原结果 `通过`，错误性 Suggestion 仍须进入 Step 6。调用层修复后的验收结论另列，全部证据收敛才登记 review baseline 并交 close，不能直接用首轮 CVL 通过跳过后续验证。
 
 ### Step 2.5：★ 研发自测用例预判断
 
@@ -302,12 +316,15 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 - **研发自测问题汇总清单引用**：仅写**跳转链接 + 状态计数摘要**（如「待修复 P0=N₁ / P1=N₂ / P2=N₃ / P3=N₄；已修复 M；已验证 K」），**不嵌入清单全文**（避免与原清单双倍维护）；指向 `docs/testing/{version}/研发自测/` 下用例文档末尾的「问题汇总清单」表（按 glob 汇总所有分册的清单计数）；下游 `/sprint-bugfix` 会从该清单批量读取「待修复」行
 - 静态验收结论：✅ 建议进入部署实测 / ⚠️ 有条件进入实测 / ❌ 静态验收不通过；**在线结果不参与静态验收结论**，最终发布仍须独立通过部署与浏览器实测门
 
-### Step 6：Bugfix 验证（回归测试）
+### Step 6：原实现者当轮修复与差量复核
 
-回归范围两类来源（**新轮 sprint-bugfix 跑完后再回来**）：
+1. 按 Step 2 的 BUG ID、根因/复现证据与具体写集，把错误交回**原实现 Agent**；docs 问题交原 docs Agent。先写能复现错误的失败测试，再做最小修复；不新起 `/sprint-bugfix`，不把 CVL 切回 loop。原 Agent 已结束可恢复其上下文；确实不可恢复时主流程记录原因并显式移交原工作单、契约与写集，不能重开 Sprint。契约变更先修订 `contract_revision`，重新过受影响的分档汇合/授权门。
+2. 每轮只跑受影响定向命令：`python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd . --scope targeted --env-id "$TEST_ENV_ID" --input "docs/design/detail/{version}/_sprint-{NNN}-契约卡.md" -- <原定向测试命令及参数>`；旧计划内无卡时改为真实设计输入。主流程串行回填 BUG 状态、修复文件、测试 `run_id/status/reused/before_hash/after_hash`。
+3. 独立只读 reviewer 复核**原问题 + 修复新增 diff + 受影响契约/调用点**，保留修订、实际写集、复核判据、证据与结论。它是调用层差量复核，不是 CVL 的第二次完整验收。原问题未覆盖、回归失败或新错误 → 返回原实现 Agent；每轮定向验证，不每轮全量。连续 5 轮未闭环或真实授权/环境阻塞 → 返回未闭环项与原因给外层，不能标通过。
+4. 全部修复汇合后集中执行一次 Step 7 的 full 命令集（无变化的 PASS 可复用）；full 新失败回原实现者定向修复，收敛后再取当前树 full。原始 CVL、每轮差量结果和最终验收结论分别留存；非阻断 Important 未解决也不得被命令端改成通过。
+5. 来自外部 bugfix 的「已修复」记录及用例清单按复现路径核对 diff；人工/浏览器用例只标「已修复·待人工验证」，真实执行通过后才可标「已验证」，不把静态结果冒充实测。
 
-1. **docs/bugfix/{version}/ 下状态为「已修复」的零散 bug**：按 bug 复现步骤与修复报告静态复核、检查回归面，更新「验证结果」（静态复核结论 + 待人工执行项）
-2. **「研发自测 末尾的问题汇总清单」中状态从「待修复」→「已修复」的行**（扫描 `docs/testing/{version}/研发自测.md` / `docs/testing/{version}/研发自测/**/*.md` 的清单段；如有测试人员用例则同时扫 `docs/testing/{version}/正式用例/*.md`）：用对应 `用例 ID` 在用例文件里反查该用例的执行步骤，对照修复 diff **静态复核**（修复是否覆盖复现步骤涉及的代码路径）；复核通过 → 该行标「已修复·待人工验证」并在 test-report 列出需研发执行的用例 ID（⛔ 本命令不执行用例，同 Step 2.5 第 5 条）；研发执行通过后再改「已验证」，失败 → 改「修复未通过，需返工」
+**报告处置必须完整**：已修项写 BUG/CVL 回链、原严重度、修复证据和验证范围；已提交写真实 commit SHA，**尚未提交**写“尚未提交 + 账本 `after_hash` 写树证据”，不得伪造 SHA 或用旧 HEAD 冒充本轮修复提交。挂起写具体原因/缺什么/影响；纯优化与非缺陷写不修理由及依据。三类都保留原发现，不把低等级错误藏到建议里。
 
 ### Step 7：完成前验证
 
@@ -315,7 +332,32 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 - 确认待人工执行的用例清单已列入测试报告（⛔ 本命令不执行用例）
 - 确认测试报告已生成
 - 确认 bug 记录完整
-- ★ **确认本 Sprint 改动侧编译/前端校验通过（Step 6 bugfix 之后的【复验收敛点】）**：⚠️ **前端**部分不再是「唯一收敛点」——`code-verification-loop` 已把 `npx --no-install vue-tsc/tsc --noEmit` + `npx --no-install eslint <改动文件>`（**error 阻断、warning 不阻断**）立为**维度 0 静态基线门**（前置、不计入 15 维度；⛔ **判级与适用性以 SKILL 的 `references/flow-dims-core.md` 为准、命令端不另立判据**；复验沿用 Step 2 传入的改动前基线 ref，非零退出先分类），Step 2 的验收子 Agent 里已跑过一遍。⛔ **但后端编译不在维度 0 内**（该 SKILL 明确不做 `mvn compile`）：它会跑到 `generate-resources` 相，而 `frontend-maven-plugin` 官方默认就绑在那，于是一条写着「只编译不打包」的命令可以真的触发 `npm run build`（直接违反约定 35 ②）。故**后端编译在本步是唯一收敛点**；前端部分本步是 **Step 6 bugfix 之后的复验点**——修完的改动需要再过一次回检，删了就没人管。**仅处理本 Sprint 实际改动的一侧**——改了前端才校验前端（**lint + 类型检查，不打包**）、改了后端才编后端，**未改动的一侧不处理**；执行走**资源受限方式**（`nice` + 限并发 worker/线程，可选 `taskset/cpulimit` 硬顶核数，避免 CPU 打满），配方见 `agents/backend.md`「Step 7: 编译验证」/ `agents/frontend.md`「Step 4: 前端验收校验」。**前端验收期不跑完整打包**（打包 = bundle+压缩，CPU 杀手且验收不需要产物），部署打包由使用者按需自行执行。确认属于本轮代码的编译/前端校验错误 → 按硬失败回 `/sprint-bugfix`；工具不可用或基线无效 → 按 Step 2 的「未执行（原因）」+ Important「本项未核验」交接，不交代码 bugfix、不记通过。
+- **本 Sprint 改动侧的完整命令集集中收敛**：前端 lint + 类型检查，不打包；后端编译按 `agents/backend.md`「Step 7: 编译验证」规避会触发前端打包的 lifecycle，不能把 CVL 维度 0 当作后端已编译。仅改动侧、资源受限，保留 `npx --no-install`、改动前基线及原判级。非零退出先分类：代码错误回 Step 6 原实现者，工具/基线不可用记「未执行（原因）」+ Important「本项未核验」，不交代码 bugfix、不记通过。
+
+汇合后和修复收敛后的完整测试用 `test_plan` 同一组真实 argv（`FULL_TEST_ARGV` 为 Bash 数组，不是拼接后 eval 的字符串）。下例为 cwd=`.`、inputs 含契约卡的实例；按每套计划真实 cwd 和全部 inputs 替换，部署时原样复用。下面每条完整命令执行一次；多条时分别存实际 run_id，所有必需命令均 PASS 才能登记 review，不能只挑一条通过的测试。此处不创建“永远 exit 0”的占位测试。
+
+<!-- acceptance-full-test -->
+```bash
+python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd . --scope full \
+  --env-id "$TEST_ENV_ID" \
+  --input "docs/design/detail/{version}/_sprint-{NNN}-契约卡.md" \
+  -- "${FULL_TEST_ARGV[@]}"
+```
+
+末行 JSON 的 `status=PASS`、`before_hash=after_hash` 才可消费，`reused=true` 代表复用了同树同环境证据。旧计划内无卡时把 `--input` 换为真实设计/计划输入；依赖其他 docs/memory 数据的命令必须逐项追加 `--input`，不能因默认忽略 docs/memory 漏掉真实测试输入。
+
+**测试 PASS 不代表审查完成**。一次真实完整 CVL 及必要的差量 reviewer 已完成、所有错误闭环、报告非空且结论可进入关闭，才执行下面的显式登记。将完整命令集的**全部**实际 full PASS run_id 登记到同一 review，多套时重复传 `--run-id`，不能只登记最后一套或仅把其它 ID 写在散文报告里。每套必须是其命令键下最新运行、相同 `TEST_ENV_ID` 与当前树；任何一套的后继失败、未完成或替代运行都会使该审查引用失效。下例是单套命令的写法，`FULL_RUN_ID` 为其实际 ID。报告保留原 CVL 结果、各差量证据与调用层最终结论，不改写原始不通过。
+
+<!-- acceptance-record-review -->
+```bash
+python3 {{AIDP_HOME}}/scripts/test_ledger.py record-review --root . \
+  --name "{version}-sprint-{NNN}" --run-id "$FULL_RUN_ID" --env-id "$TEST_ENV_ID" \
+  --report "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md" \
+  --input "docs/design/detail/{version}/_sprint-{NNN}-契约卡.md" \
+  --input "docs/design/detail/{version}/"
+```
+
+登记前按实际审查范围追加需求/计划/受影响四族台账及架构约束等 `--input`；无卡旧流程删卡参数但必须保留真实设计输入。先冻结契约修订/汇合证据再跑测试，之后 run_id 写报告而非回写已指纹的卡，避免自行改变测试输入。报告中真实修复 SHA / 尚未提交 after_hash、test_plan 各套字段与 run_id 全部填完、最终落盘后才 record-review；之后不得为补 SHA 改写已绑定报告，后续提交回链写独立记录。报告/契约变化必须重新核实，禁止以补登记掩盖未审差异。登记失败保留旧证据、返回验收未完成，不交 close。
 
 ### Step 8：更新状态
 
@@ -351,8 +393,12 @@ code-verification-loop 验收结果：
 缺陷清单（均位于 docs/bugfix/{version}/）：
 - bugfix-{YYYYMMDD}-{user}.md — {问题标题} — P{X}
 
+调用层闭环：{已修 + 真实 SHA/尚未提交写树 hash；挂起原因；不修理由}
+差量复核：{reviewer / contract_revision / 实际写集 / 证据}
+测试与审查基线：{full run_id 列表 / reused / env-id / review 名称}
+
 📌 下一步：
-1. /sprint-bugfix sprint-{NNN} → 修复发现的问题
-2. /sprint-test → 修复后再次执行测试（回归验证）
-3. /sprint-close {NNN} → 所有测试通过后关闭 Sprint
+- 所有必需证据通过 → /sprint-close {NNN}
+- 有未闭环项 → 返回原实现者继续定向修复；外层恢复时 /sprint-test {NNN} --resume-acceptance
+- 环境/产品待决 → 回传具体原因，不冒充通过或默认重跑完整验收
 ```

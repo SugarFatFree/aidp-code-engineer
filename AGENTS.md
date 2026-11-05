@@ -33,6 +33,10 @@
 - **模板 `.aidp/` 只用于维护**：下游安装后不存在根 `.aidp/`；仅 Claude Code 时运行真源为 `.claude/`，使用 Codex / DeepSeek Harness（含并存）时共享真源为 `.agents/`，Claude Code 从 `.claude/` 读取装配副本。下发文档以 `{{AIDP_HOME}}` 表示安装后的运行真源。
 - **命令适配由 `agent_sync.py` 生成**：Claude Code → `.claude/commands/`，Codex → 官方发现根 `.codex/skills/aidp/`，DeepSeek Harness → `.dsh/commands/`；增删 `.aidp/commands/` 后重跑该脚本。Codex 命令正文中的 `/foo args` 按适配前言确定性读取 `.aidp/commands/foo.md`，并原样传递子命令 `$ARGUMENTS`。
 
+## 工作分支
+
+本仓维护已由用户选择：**直接修改当前分支**。需求修改、漏洞修复及其复验沿用任务开始时的分支，不自动新建分支、切分支或创建 worktree，也不重复询问。用户本轮明确指定其他策略时才按指定执行；该选择不构成提交、推送、合并或删除分支的授权。此偏好只管本仓，下游分支策略由脚手架首次询问并保存在各项目配置中。
+
 ## 提交规范
 
 Conventional Commits（`feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`），一次提交只做一件事；脚手架同步可用 `chore(skill): sync aidp-code-engineer`。

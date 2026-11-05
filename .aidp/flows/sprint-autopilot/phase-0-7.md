@@ -30,7 +30,7 @@ autopilot_decisions:
   # === ★ 部署 + 测试环境 ===
   deployment:
     mode: local                            # local（本地启动） | cloud（云端自动部署） | none（不部署，强制 test_strategy=static-only）
-    branch_strategy: current               # ★ dev 代码落哪个分支 + 与部署源对齐（Phase 0.4）：current（在当前分支开发，尊重"直接提交部署源分支"的项目约定，默认）| feature（建 feature/autopilot-{V}，须同时确定"合并回部署源"策略，否则代码搁浅在部署永不构建的分支上）| <指定分支名>。留空=自动推断：读部署源 ref（cicd-provider 取本次提交流水线运行的构建分支 / git-push 未配置 cicd.pipelines 取 CI 监听分支），当前分支==部署源→current；否则交互式 AskUserQuestion、无人值守默认收敛 current 并 WARN。⛔ 严禁在 master 上无条件建 feature/autopilot-{V}：它 + 不自动 merge master + 部署源是 master 三者组合会造成"dev 完成却部署不了"的死结，且要到部署阶段才暴露
+    branch_strategy: null                  # 仅兼容既有部署配置提示，不再据此默认建/切工作分支。工作偏好统一读 memory/aidp-config.yaml 的 development.branch_policy（首次用户选择current/new）；部署源不一致按Phase 0.4单独核对合并/流水线授权，不覆盖该偏好
 
     # --- mode=local 必填段（chrome-devtools 测本地 dev server）---
     local_frontend_command: "npm run dev"            # 前端启动命令（在 code/frontend/{子项目}/ 下执行）

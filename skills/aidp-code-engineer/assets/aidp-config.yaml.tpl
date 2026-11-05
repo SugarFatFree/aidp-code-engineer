@@ -11,6 +11,12 @@ project:
   name: {{project}}
   name_cn: "{{project_cn}}"
 
+development:
+  # 首次修改需求或修复漏洞前由用户选择，之后在本项目沿用。
+  # null = 尚未选择；current = 直接在当前分支修改；new = 每次独立任务新建分支。
+  # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。
+  branch_policy: null
+
 commit_gate:
   # 提交前门禁总开关（约定 24：每次 git commit 前跑 {{AIDP_HOME}}/scripts/commit_gate.py）。
   # 关掉之后：不再检查台账积压 / CICD 推送欠账。

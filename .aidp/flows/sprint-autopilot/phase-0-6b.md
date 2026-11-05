@@ -93,11 +93,14 @@ python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
 | ① | `HEAD` ≠ `retest_frozen_head` **且** `HEAD` ≠ `last_autopilot_head` | 冻结之后有**人**提交过（不是 autopilot 自己推的） |
 | ② | `last_deployed_at` 晚于 `retest_cap_frozen_at` | 冻结之后发生过新部署 |
 
-命中后的动作（三件，缺一不可）——**必须可执行地落盘，⛔ 散文不算动作**：
+判据统一由 `autopilot_unfreeze.py::aiauto_probe` 执行，与批量探针同源；先读取探针结果，命中后才清理冻结与配额：
 
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
 BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+RETEST_PROBE=$(python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --aiauto-probe "$V" --json) || exit 1
+CAN_UNFREEZE=$(printf '%s' "$RETEST_PROBE" | python3 -c 'import json,sys; print(int(json.load(sys.stdin).get("unfreeze") is True))') || exit 1
+[ "$CAN_UNFREEZE" = 1 ] || { echo "复测配额仍冻结：无有效恢复证据"; exit 0; }
 # ★ 冻结四件套 + retest-cap 专属三件，成套清；⛔ 尤其不能漏 auto_retest_streak：
 #   它是累加型字段，不归零则人工介入后恒 = cap，
 #   下一轮一有可修复缺陷就立刻再撞上限转人工，「每周期最多自动跑 3 轮」退化成 0 轮。
@@ -138,14 +141,11 @@ echo "♻️ $V retest-cap 解冻：检出人工修复信号，配额已归零�
 
 1. `git status --porcelain` 非空（含未 commit 改动）→ **按上方 0.1「脏树决策门」处理（交互三选一 / `/loop` 无人值守走安全默认），不静默退出**
    - **例外**：`PRD_ROOT` 内任一版本子目录的 unstaged 改动**允许**（命令的检测目标就是 PRD 改动）
-2. **分支策略 + 部署源对齐（★ 不无条件强制建 feature 分支；dev 代码必须落到"部署实际构建的那个分支"，否则代码搁浅、部署拿不到、autopilot 到部署阶段才卡死）**：
-   - **解析 DEV_BRANCH**（本轮代码落哪，按 `deployment.branch_strategy`）：
-     - `current`（默认，尊重"直接提交部署源分支"的项目约定）→ **就在当前分支开发**（哪怕是 master/main），**不强制建 feature 分支**；PRE_RELEASE 阶段也在当前分支跑。
-     - `feature` → 建/切 `feature/autopilot-{TARGET_VERSION}`；**但必须同时确定"合并回部署源"策略**（见下一致性校验），否则代码会搁浅在部署永不构建的分支上。
-     - `<指定分支名>` → 建/切该分支。
-     - **留空 = 自动推断**：读**部署源 ref（DEPLOY_SOURCE_REF，见下）**——当前分支 == 部署源 → 取 `current`；否则**交互式** `AskUserQuestion` 三选一（current / feature+合并 / 指定分支），**`/loop` 无人值守**默认收敛到 `current`（最保证"部署拿得到代码"）并终端 WARN。⛔ **严禁在 master 上无条件建 `feature/autopilot-{V}`**：它 + 不自动 merge master + 部署源是 master 三者组合会造成"dev 完成却部署不了"的死结，且要到部署阶段才暴露。
-   - **读部署源 ref（DEPLOY_SOURCE_REF）**：`mode=local`/`none`/`manual-script` → 构建工作树/本地脚本、无远程分支约束（DEV_BRANCH 自由，默认 current）；`mode=cicd-provider`（已配置 `cicd.pipelines`）→ 经 **Phase 3.2.1 Step A0 流水线解析**（优先观测本次提交起跑的流水线运行、再取其构建分支核验）确定；`git-push`/`ci-pipeline` 未配置 `cicd.pipelines` → CI 监听的固定分支（一般 = 部署环境对应分支，如 master；无法自动读则询问/取当前分支）。
-   - **★ 一致性前置校验门（共同根因：dev 分支 → 部署构建源 三者闭环一致，矛盾前置暴露、不拖到 Phase 3.2 部署）**：DEV_BRANCH == DEPLOY_SOURCE_REF → 通过（部署拿得到本轮代码）；**不一致** → **交互式** `AskUserQuestion`（①改 `branch_strategy=current` 在部署源分支直接开发·推荐最省事 ②保留 feature 分支并记 `PENDING_MERGE_TO=<DEPLOY_SOURCE_REF>`、Phase 3.2 push 前先合并回部署源 ③换一条构建源 ref==DEV_BRANCH 的流水线）；**`/loop` 无人值守**：PRD 已声明 feature+合并 → 记 `PENDING_MERGE_TO`；否则默认收敛 `current` + WARN。★ **「记」= 可执行落盘，不是散文**（⛔ 不落盘则 Phase 3.2 的合并段整段不可达）：
+2. **项目工作分支偏好 + 部署源对齐**：
+   - **解析 DEV_BRANCH**：先按 `{{AIDP_HOME}}/reference/agent-tools.md` 的一次选择协议读取 `development.branch_policy`。已选 current → 沿用本任务当前分支，包括 main/master，不自动建/切分支；已选 new → 顶层开发任务创建一次并保存任务/分支关联，后续 tick、Sprint、BUG 修复及子 Agent 全部继承。只读测试链不创建分支。
+   - **未选择**：交互式仅问当前/新分支两项并保存；无人值守返回 `needs-choice`，交已有配置缺失处置，不猜 current、不猜 feature。脚手架已记录偏好则不再问。`deployment.branch_strategy` 的 current/feature/指定名仅作既有部署配置提示，不能覆盖项目工作偏好；发现矛盾先核实，不据此自动新建或切走任务分支。
+   - **读部署源 ref（DEPLOY_SOURCE_REF）**：`mode=local`/`none`/`manual-script` → 构建工作树/本地脚本、无远程分支约束（DEV_BRANCH 沿用已选工作策略）；`mode=cicd-provider`（已配置 `cicd.pipelines`）→ 经 **Phase 3.2.1 Step A0 流水线解析**（优先观测本次提交起跑的流水线运行、再取其构建分支核验）确定；`git-push`/`ci-pipeline` 未配置 `cicd.pipelines` → CI 监听的固定分支（一般 = 部署环境对应分支，如 master；无法自动读则询问/取当前分支）。
+   - **一致性前置校验门**：DEV_BRANCH == DEPLOY_SOURCE_REF → 通过；不一致时保持已选工作分支。已有明确合并授权则记录 `PENDING_MERGE_TO`；否则交互式只确认本次部署方案（授权合并到部署源 / 使用构建当前分支的流水线 / 暂停部署），不重复询问开发偏好。无人值守无合并或流水线授权时按部署配置缺失处置，不能靠自动切分支、合并或更改永久偏好绕过。仅经上述授权后执行以下落盘：
      ```bash
      # DEPLOY_SOURCE_REF 由上一条「读部署源 ref」得出（流水线运行的构建分支 / 本地模式为空），
      # 由执行体就地代入字面量；⛔ 空值不落盘（落空串等于没记，反而掩盖"该合并却没合"）。
@@ -155,7 +155,7 @@ echo "♻️ $V retest-cap 解冻：检出人工修复信号，配额已归零�
      ```
    **绝不**把代码放到部署流水线永不构建的分支、也**绝不**等到部署阶段才作为 blocker 发现。
    - **就绪探针目标一致**：校验 `cloud_ready_*` URL host 与 `cloud_deploy_url` host 同源（都指向"新代码将部署到"的环境），不一致 WARN（避免探到部署了旧代码的另一环境得假绿）。
-   - **边界仍守**：切分支/合并只为"部署源对齐"这一目的；**绝不打 tag**（人工 destructive 动作）。
+   - **边界仍守**：部署切分支/合并必须有对应授权，不得暗改工作偏好；**绝不打 tag**（独立发布授权）。
 3. **活跃 Sprint = 在途工作，不是待自动归档垃圾**。读取项目记忆当前版本/编号，并运行 `check_open_sprints.py --version {TARGET_VERSION} --scope started --json`；退出码 2 为读取失败，不当空集。
    - 无活跃 Sprint → `python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py stale-active-sprint || true` 后继续。
    - 交互式（`LOOP_UNATTENDED=0`）→ 提示用 `/sprint-full {NNN} --resume` 继续；只有开发与验证证据齐全才可 close。

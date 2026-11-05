@@ -10,6 +10,8 @@
 
 #### 输入文件
 
+日常 S/M 优先显式读已放行契约卡与引用的既存基线，服从 `incremental-contract.md`；下列设计全目录读取用于 L/普通计划路径。M 不读取 docs Agent 尚未交付的变动正文；原型与既有 UI 约束照常读取，接口以当前契约修订为准。
+
 项目级：
 1. `memory/techContext.md`
 2. `memory/systemPatterns.md`
@@ -94,27 +96,27 @@ Step 4.6: ★ 同族增量项静态门（约定 20 姊妹条「同族增量项�
 
 当范围为 `all` 时，由 **AIDP 主流程直接使用 Agent 工具编排**，不调用 `superpowers:subagent-driven-development`：该 SKILL 按 Task 串行实现与两阶段审查，并不提供并行实现能力；本节点不引入其工作树、提交或分支收尾流程。
 
-1. **派发前核对写集与依赖**：按本 Sprint 的 Task 列出每个实现子 Agent 的具体文件 `write_set`（含新增、删除、测试及依赖锁文件），不能只写“前端/后端目录”。写集无交集且没有尚未交付的前后依赖才可并行；公共配置、共享类型、代码生成输出等有交集时改为串行，未知冲突按有冲突处理。各自允许的创建目录也须明确，新增范围先回报主流程重新分配。
-2. **隔离写权限**：各实现子 Agent 只修改自己的 `write_set`，共享输入只读；需求/设计/计划/用例族台账、memory、baseline、Git index/commit/push 与分支切换由主流程统一处理。子 Agent 回传文档缺口与级联线索，不并发写共享文档；发现依赖或写集冲突先停受影响任务并回报，不覆盖他人文件。
-3. **主流程负责收回及审查**：收到实际完成回传后，先派独立只读子 Agent 对照 Task/设计做规范符合性审查；通过后再派独立只读子 Agent 做代码质量审查。问题交原实现者在原写集内修复并复审；两阶段审查未过不得将该 Task 标为完成。无法派发时按工具映射的同 prompt 串行回退并说明，不能跳审。
-4. **Sprint 收口仍归原链路**：实现与上述审查完成后，主流程统一执行本命令的开发后回写；`/sprint-test` 负责静态验收及修复交接，`/sprint-close` 负责最终走查与归档。Task 审查不替代这两道门，子 Agent 不自行提交或关闭 Sprint。
+**第一动作 = Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`**；普通计划路径复用既有设计/Task 作为规格，日常 S/M 用契约卡。
+
+1. **派发前核对写集与依赖**：按 Task 列具体 `write_set`（新增、删除、测试、锁文件均含）、`create_dirs`、`dependencies`。写集无交集且依赖已交付才并行；公共配置/共享类型/生成物有交集改为串行，未知冲突按有冲突处理。M 同时派 docs，S 默认无完整 docs 生成任务，L 先文档。
+2. **隔离写权限**：docs Agent 独占正式文档写集，开发 Agent 只回各自工作单，不改文档/台账。契约卡、四族台账、memory、baseline、Git index/commit/push 由主流程统一处理；原子编号登记与 Git 交接按协议执行。默认子 Agent 不自行提交或关闭 Sprint；用户明确授权 worker 提交时串行交接索引，不并发 git add/commit。
+3. **汇合一次审查**：删除 Task 级双完整审查，保留实现者自检；主流程收齐实现与适用文档后派一次独立只读 reviewer 对照契约做规范符合性审查，随后 `/sprint-test` 一次 CVL 代码质量审查。原检查项不取消，问题交原实现者修复并差量复核；无法派发时按同 prompt 串行回退并说明，不能跳审。
+4. **Sprint 收口仍归原链路**：主流程执行开发后回写与协议“开发与文档汇合”，M 完整文档未完成不能进入 test；`/sprint-close` 只验收后 diff 与归档，不重审整个 Sprint。
 
 ```
-实现派单：
-  backend-dev / frontend-dev：分别按对应开发步骤执行
+派单（每个 Agent 独立白名单 prompt）：
+  owner: backend-dev | frontend-dev | docs
+  contract_path / contract_revision: 本轮契约（计划路径给既有规格引用）
   write_set: [具体文件路径；含测试/锁文件/待删除文件]
   create_dirs: [允许新增文件的目录；没有则为空]
   dependencies: [须先取得的交付物；无则为空]
+  work_order: [本 Agent 独占的工作单路径]
   cascade_mode: ledger | now
   dev_scale: S | M | L
-共享只读输入：docs/design/detail/{version}/* + 本 Sprint 执行计划
-回传：完成的 Task、实际改动文件、验证证据、级联线索、阻塞及原因
+  git_writer: false（用户显式授权时须先串行交接索引）
+共享只读输入：当前契约修订 + 所引用的稳定基线；禁止读取其他 Agent 未交付的改动正文
+回传：完成的 Task、实际改动文件、验证账本证据、文档/契约偏差、阻塞及原因
 ```
 
-> ⛔⛔ **派单简报必须携带 `cascade_mode` + `dev_scale`，且 `ledger` 时【不得罗列待改文档清单】**：
-> 这两个判定结果由主链路的 `postdev-writeback-1.md` 步骤 3.5 / 3.8 先判好，而**子 Agent 读不到那份 flow**
-> ——简报里一旦直接点名"要改哪 6 份文档"，就等价于一次强制 `--cascade-now` 全量级联，
-> 攒批机制在派单路径上当场失效（实测：6 个源文件的小改动，文档改动量是代码的 1.75 倍）。
-> **字段语义、`ledger` 模式下「文档级联」段的替换文本、台账一行格式，
-> 单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`「子 Agent 执行时的派单契约」**，此处不复述。
+> **派单简报必须携带 `cascade_mode` + `dev_scale`**：两者由开发前契约放行生产，开发后 X.0.0 仅复核。`ledger` 下开发 Agent **不得罗列待改文档清单**或自行追加四族台账，偏差只记工作单；M docs 的正式成文白名单由主流程单独分配，不构成开发 Agent 的级联授权。台账一行格式与清理语义的单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`“子 Agent 执行时的派单契约”，此处不复述。
 

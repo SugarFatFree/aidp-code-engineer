@@ -59,6 +59,16 @@ def preflight_cache(root="."):
     return _local(root, "preflight-cache.json")
 
 
+def id_alloc_ledger(root="."):
+    """同工作区并发编号保留账本，空洞允许保留，不入库。"""
+    return _local(root, "id-alloc.jsonl")
+
+
+def test_ledger(root="."):
+    """测试执行与验收基线账本，绑定当前工作区内容，不入库。"""
+    return _local(root, "test-ledger.jsonl")
+
+
 def logs_dir(root="."):
     """7×24 调度运行日志目录（`agent_loop.sh` / `aidp_scheduler.py` 写）。"""
     return _local(root, "logs")
@@ -124,6 +134,8 @@ REGISTRY = (
     (stop_guard_skips, "Stop 护栏放行留痕", "运行时日志", "不入库"),
     (alerts_ledger, "本地告警台账", "运行时日志", "不入库"),
     (preflight_cache, "同 tick 前置检查缓存", "运行时状态", "不入库"),
+    (id_alloc_ledger, "并发编号分配账本", "运行时状态", "不入库"),
+    (test_ledger, "测试与验收证据账本", "运行时状态", "不入库"),
     (aidp_config, "人维护配置（开关/版本戳/决策兜底）", "人维护配置", "入库"),
     (credentials, "生产/UAT 凭据", "人维护配置", "⛔ 永不入库"),
 )

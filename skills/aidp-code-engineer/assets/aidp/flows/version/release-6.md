@@ -6,7 +6,7 @@
 <!-- BODY-BELOW -->
 ### Step 3.3.11：★ 全量详细设计生成（仅正式发布，变更范围增量重算 + 覆盖式只留最新、独立自包含）
 
-**目标**：把「最新代码事实 + 全量历史需求 + 各版本详细设计」整合成一份**独立可交付的全量版本详细设计**，落 `docs/design/detail/全量/`。它是**跨版本累积的最新全量设计**（区别于 `docs/design/detail/{version}/` 的**单版本增量**设计），供交付 / 新人 / 审计**脱离其它文件独立通读、独立使用**。
+**目标**：整合最新代码事实、全量历史需求和各版详细设计，生成 `docs/design/detail/全量/` 的跨版本全量设计，供交付、新人、审计独立使用；`docs/design/detail/{version}/` 仍只存单版增量。
 
 **执行时机**：Step 3.3.10（`release-5.md`；发布期收敛）之后、Step 3.4.1（`release-7.md`；发布提交）之前——收敛完成、本版本设计已是最新干净态，再据此重算全量。
 
@@ -47,7 +47,7 @@
   4. **有块未过 → 保留旧版 + 差异报告 + 不更新 sidecar**：任一专题块守恒未过 → **不替换旧 `全量/`**（旧版原样保留、绝不先 rm）、staging 保留供人工核对、产出「差异报告」（见失败兜底），且**不刷新 sidecar**（下次仍从上一成功基线 diff，未落地的变更自然进下次 Δ、不丢失）。
 - **★ 现状 vs 规范如实留痕（"最新代码为唯一事实源"的落地）**：全量设计须**如实标注代码现状与理想规范的偏离**——占位桩 / mock 骨架、`@Deprecated` 等废弃接口、违反项目规范的存量写法等，一律照实写进设计（标注「现状：… ／ 规范应为：…」），**不得只写理想设计而掩盖代码现状**。
 
-**编排（命令层整合合成为主，不改上游 SKILL）**：本步以**命令层文档整合合成**为主（类同 Step 3.3.10 收敛的合并思路）——把各版本收敛后设计**按专题合并** → 以**最新代码事实校正**（代码为准：删已被代码淘汰的设计、补代码已实现而设计漏写的）→ 以**全量需求**补全覆盖 → 产出自包含 `全量/`。可选调 `dev-logic-architect` 做设计正文的质量提升 / 查漏，但**全量目录组织 / 自包含改写 / 覆盖式只留最新是命令层职责**；若调 SKILL，命令端 override 输出路径为 `全量/` 并显式传「自包含、仅目录内导航、不引用外部文件、覆盖只留最新」打包约束，SKILL 内部规则为单一信源、命令端不复述（约定 21）。
+**编排**：命令层按专题整合已收敛设计，以最新代码增删校正、以全量需求补齐，生成自包含 `全量/`；不改上游 SKILL。可选调 `dev-logic-architect` 查漏提质，输出路径 override 为 `全量/`，显式传入「自包含、仅目录内导航、不引用外部文件、覆盖只留最新」。目录组织与上述约束由命令层负责，SKILL 内部规则仍以其自身为准（约定 21）。
 
 **★ 执行清单（以真实代码为唯一事实源，如实标注现状 vs 规范）**：分专题产出每块时按此清单落地——
 1. **枚举真实代码事实**：从 `code/` + 本版本 `*事实清单.md` 提取该专题的**真实**接口签名/路由、表结构/字段、跨项目调用、配置项（application.yml/vite）——这是**唯一事实源**。
@@ -55,7 +55,7 @@
 3. **如实标注现状 vs 规范**：占位桩/mock 骨架、`@Deprecated` 废弃接口、违反规范的存量写法 → 照实写进设计并标「现状：… ／ 规范应为：…」，**不掩盖代码现状**。
 4. **守恒核对该块**：该专题「代码事实项 ∪ 全量需求项」逐条在 staging 块可查到，缺项即该块守恒不过、挂欠账。
 
-**★ 上游收敛部分失败的容错（关键鲁棒性）**：Step 3.3.10（`release-5.md`）收敛**部分失败**（个别族/项挂欠账、主文档未完全收敛干净）时，**本步仍能基于代码产出可用全量**（理据见 `rationale.md`）；故上游文档收敛未尽善**不阻断**全量重算，只是把「还没收敛干净的主题」按代码现状如实写、并在报告注明「该主题以代码现状为准，上游收敛欠账见 `发布欠账.md`」。**绝不因上游收敛未完成就整步跳过全量重算**。
+**上游收敛部分失败仍重算**：3.3.10 的个别主题欠账不阻断本步；按代码现状生成，并在报告注明「该主题以代码现状为准，上游收敛欠账见 `发布欠账.md`」，不得整步跳过（理据见 `rationale.md`）。
 
 **排除（全量目录非版本目录）**：`全量/` **不是** `{version}` 版本目录——不进版本级收敛（3.3.10）/ 版本规划产物审计（Step 2.4.7）/ `DESIGN_COUNT` 版本探测；`/sprint-design` 前版基线扫描（Step 0.1 / 0.2）、`/health-check` 目录层级检查、`verify.py` 目录巡检均**豁免 `全量`、`.全量-staging` 与 `.全量-baseline.json`**（与 `README` 同级豁免，不当作 `V*` 版本目录/文件判违规）。`.全量-staging/` 是本步增量生成的临时暂存目录（`.` 前缀隐藏、天然不匹配 `V*`），成功即搬空、失败时保留供 `--finalize-docs`/人工核对；`.全量-baseline.json` 是变更范围增量的基线锚点 sidecar（`.` 前缀隐藏、`全量/` 目录之外、不进交付正文），随全量成功生成刷新。
 
@@ -65,7 +65,7 @@
 - **完全生成失败**（连 staging 都没建起来，如代码扫描异常）→ 保留旧 `全量/` 不动 + WARN + 欠账登记，继续 Step 3.4。
 - 发布报告 Step 3.6 加对应 WARN + 差异报告链接；**绝不出现「旧版已删、新版没成」的空全量**。
 
-**与 Step 3.4.1（`release-7.md`）的协作**：Step 3.4.1 的 `git add docs/` 会把 `全量/` 的 `git rm` 旧 + 重生新一并落到 `release({version})` 提交。
+**提交衔接**：把 `全量/` 实际新增、修改、删除文件及 `.全量-baseline.json` 登记入 `release_artifact_paths`；Step 3.4.1 按文件暂存，不再整目录 `git add docs/`。
 
 **发布报告段（版本溯源只进报告 / 生成日志，不进交付件正文）**：Step 3.6 发布报告新增「全量详细设计」段（**本次重算方式** `增量 / 全量` + 触发原因 / **重算专题 Δ 清单**（增量时）+ **前滚专题清单** / `releases_since_full` 计数 / 全集索引核对是否无孤儿 / 生成的分册清单 / 自包含自检是否通过 / **参考的历史版本文档清单**——本次整合扫描到的 `docs/requirements/` 与 `docs/design/detail/` 下各 `V*`）。**★ 版本溯源信息只允许出现在发布报告 / 生成日志**——`全量/` 交付件正文（含 `00_索引`）**严禁**出现「整合的版本范围 `Vx→Vy`」「整合版本范围」等字样；需溯源时正文统一表述为「基于截至 `{当前版本}` 的最新代码实现的完整设计快照」。
 
@@ -87,26 +87,61 @@ python3 {{AIDP_HOME}}/scripts/check_release_residual_gate.py --version "$VERSION
 
 ### Step 3.3.13：★ 代码内版本标识对齐检查（打 tag 前最后一道，Important 级不硬阻断）
 
-> 本步必须在 Step 3.4 前完成，自动修正才能随发布提交与 tag 一并落地；`--no-tag` 准发布同样执行。构建描述符通常已在规划期更新，本步负责兜底复核。
+> 本步须在 3.4 前完成，修正随发布提交及 tag 落地；`--no-tag` 同样执行。
 
-
-
-**执行**（判定口径以脚本为单一信源，本处不复述扫描落点/归一化/deny-list）：
+**检查**（扫描与判定以脚本为准）：
 
 ```bash
 python3 {{AIDP_HOME}}/scripts/check_version_identifier.py --version {version} --json > /tmp/vid-{version}.json
 VID_EXIT=$?
 ```
 
-- **0** → 对齐/无落点，记 INFO 进 Step 3.4；**1** → 按下表处置；**2** → 脚本异常，WARN + 登记欠账后继续。
-  **任何分支都不阻断发布**（除非用户主动选中止）。
+- **0** → 对齐/无落点，记 INFO；**1** → 按下表；**2** → WARN + 欠账。检查不一致本身不阻断发布；已修正但写集不明时由 3.4.1 阻断，用户也可主动中止。
 
 **处置分流**：
 
 | 场景 | 动作 |
 |------|------|
-| **交互式**，检出不一致 | **直接改，⛔ 不问**：`check_version_identifier.py --version {version} --apply --apply-scope all`；逐处打印 `旧值 → 新值`，改动交 3.4.1 一并提交 |
+| **交互式**，检出不一致 | 执行下方修正围栏；只自动修正版本标识，不授权夹带文件内原有开发修改；实际写集落盘交 3.4.1 |
 | **交互式**，`--apply` 后**复检仍不一致** | 此时才 `AskUserQuestion`（白名单第 3 处）：① 人工改后继续 ② 保持不变+理由（登记欠账）③ 中止发布 |
 | **无人值守** | **WARN + 自动登记**欠账（步骤=3.3.13，定位=`{file}:{line} {name}={value}`，补跑 `--finalize-docs`），继续 3.4 —— ⛔ **不自动改代码** |
+
+**交互式修正围栏**（无人值守不执行）：复用脚本 JSON 的 `applied[].file`（含 Maven parent 联动），保存路径与修正后 Git blob。`blocked` 是修正前已有的混杂修改，须先核对归属、由用户决定分离或纳入，不能自动整文件提交；保存失败/中断后禁止带不明写集打 tag。复跑保留已登记路径。
+
+```bash
+python3 - "{version}" "{{AIDP_HOME}}" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+version, home = sys.argv[1:]
+be = [sys.executable, home + '/scripts/baseline_edit.py', '--version', version]
+def output(args):
+    return subprocess.check_output(args)
+def save(value):
+    subprocess.run([*be, 'set', 'release_version_fix', json.dumps(value)], check=True)
+prior = json.loads(output([*be, 'get', 'release_version_fix', '--default', '{"files":{},"blocked":[]}']))
+if not isinstance(prior, dict) or not isinstance(prior.get('files'), dict):
+    raise SystemExit('版本修正写集不完整，先核对上次中断的修改')
+files, blocked = dict(prior['files']), set(prior.get('blocked', []))
+def blob(path):
+    return output(['git', 'hash-object', '--', path]).decode().strip()
+dirty = {os.fsdecode(p) for p in (output(['git', 'diff', '--name-only', '-z', 'HEAD']) +
+         output(['git', 'ls-files', '--others', '--exclude-standard', '-z'])).split(b'\0') if p}
+before = {p: blob(p) if Path(p).is_file() else None for p in dirty}
+save(None)  # apply 中断或 JSON 丢失时，下一分片必须拒绝未知写集。
+proc = subprocess.run([sys.executable, home + '/scripts/check_version_identifier.py',
+    '--version', version, '--apply', '--apply-scope', 'all', '--json'], capture_output=True, text=True)
+result = json.loads(proc.stdout)
+if proc.returncode not in (0, 1) or 'error' in result:
+    raise SystemExit('版本修正异常，保留工作区并人工核对写集')
+for hit in result.get('applied', []):
+    path = hit['file']
+    if path in before and before[path] != prior['files'].get(path):
+        blocked.add(path)
+    files[path] = blob(path)
+    print(f"{path}: {hit['value']} → {hit['new_value']}")
+save({'files': files, 'blocked': sorted(blocked)})
+raise SystemExit(proc.returncode)
+PY
+```
 
 > 三档分流与 Step 3.6 报告体现方式见 `rationale.md`「版本标识三档分流」。

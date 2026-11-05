@@ -11,7 +11,14 @@
 >
 > 📌 **给派发方**：正因为有这份必读文件，派发 prompt **只写本次任务特有的信息**（改哪个模块 / 验收标准 /
 > 涉及哪几个文件）即可，**不必**把项目级固定上下文再抄一遍（下游实测：抄一遍会让单次 prompt 达 3000~5000 字
-> 且每次高度重复）。若开工中发现该文件缺了某个坑，**当轮**就补进去。
+> 且每次高度重复）。若发现缺少踩坑信息，写入本 Agent 的工作单，当轮交主流程补充，不直接改共享文件。
+
+**派单入口与共享写入（先于下文角色流程）**：
+
+- 先读 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 的派单协议。核对 `contract_path/contract_revision`、`interface_documents`、`write_set`、`work_order`；后端目录权限不能扩大本次具体写集。
+- 日常 S/M 显式读取契约卡，核版本/Sprint/开发者身份及 `status=approved`、`approved_revision=contract_revision`，并与派单修订一致。缺卡、未批准、修订失配或依赖未交付时不开始实现，回传具体缺口；实现中发生契约变更先交主流程修订重派，不能自行批准。
+- **共享写入统一交主流程**：memory、baseline、四族台账、bugfix 记录、事实清单、`子Agent必读.md` 只读；本 Agent 在 `work_order` 回传 BUG/来源、偏差、待登记内容与证据。下文“更新/追加/留档”这些共享资产均按此交接，不直接写。独立调用时由本次主会话承担主流程登记，不能把权限扩大给并行 worker。
+- 默认不自行 git add/commit/push，也不自行操作 Git index（含 git rm）或关闭 Sprint；沿用父任务分支。用户显式授权 worker Git 写入时仍须串行交接索引与白名单。数据库执行另守既有授权及 SQL 交付依赖，文件写集不构成 DB 授权。
 
 ---
 
@@ -33,7 +40,7 @@
 |------|---------|---------|
 | `code/backend/{子项目}/` 下的后端源代码| 创建/修改 | Sprint 开发阶段 |
 | `docs/deployment/{version}/sql/增量/` 下的 SQL 脚本 | 执行 | Sprint 开发阶段（执行 Architect 生成的 SQL） |
-| `docs/bugfix/{version}/bugfix-*.md` | 创建 | 开发中发现 Bug 时 |
+| 本 Agent 独占的 `work_order` | 创建/更新 | 回传开发证据、BUG 与共享文档待办；由主流程登记 |
 
 > ⚠️ **写码路径铁律（约定 18）**：源码只能落在 `code/backend/{子项目}/` 下（`src/`、`pom.xml`、`build.gradle`… 都在 `{子项目}/` 内）——**严禁**把 `src/` 直接写进 `code/backend` 根（即便单项目也必须有 `{子项目}` 层）。`{子项目}名` 与目录由 `/sprint-dev` Phase 1.1.5 门确认/创建，本 Agent 只在其下写码。
 > ⚠️ **运行时端点契约不自造（约定 21 消费上游确认值）**：端口 / context-path / API 前缀 / 根包名等**不得由本 Agent 现编**——一律读 `docs/architecture/技术选型.md`「运行时端点契约」段 + `docs/design/detail/{version}/*事实清单.md`（`/sprint-dev` Phase 1.1.5 / `/sprint-design` Step 0.5.5 已由用户确认），据此写 `application.yml` 等配置；基线缺失才回门确认，不静默取值。
@@ -44,16 +51,22 @@
 
 > **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
-激活后，**必须按以下顺序读取**，未读完不得开始工作：
+激活后，先按调用路径选择规格，未读完适用输入不得开始工作：
+
+- **日常 S/M**：先读已批准 `contract_path` 的当前修订，再读其引用的稳定技术栈、架构、DB 基线与实际 `interface_documents`；M 不读取 docs Agent 尚未交付的正文，不要求固定 `02_数据库设计.md` / `03_接口设计.md`。接口/库表内容可在契约卡或合册中，缺必要规格回传主流程，不能把缺分册当无接口/无 DDL。
+- **普通计划 / L / 独立角色**：保留完整正式规格门，先读 `00_索引.md` 定位详细设计、数据库与接口章节；无索引时按真实分册读取，兼容历史裸名。无卡不能自行降为 S/M。
+
+下文“设计/API/数据库设计”均指本路径已核实的规格；S/M 包括已批准卡的对应章节，不因正文固定册名再次读取成文中的文件。SQL Task 必须等指定文件交付并核实执行授权，其余独立 Task 可继续；缺交付不能标“无 SQL”。
 
 ```
-必读（每次）：
+必读（每次；日常 S/M 只取卡所引用的稳定基线）：
   1. memory/techContext.md                                         → 技术栈和脚手架结构
   2. memory/systemPatterns.md                                      → 架构规范和禁止事项
-  3. docs/architecture/                                      → ★ 全局架构约束三件套 + 可选架构设计文档（单/多文档，全目录识别）
-  4. docs/design/detail/{version}/01_详细设计.md → 模块结构设计（裸名 `详细设计.md` 为历史兼容）
-  5. docs/design/detail/{version}/02_数据库设计.md  → ★ 数据库设计（裸名 `数据库设计.md` 为历史兼容）
-  6. docs/design/detail/{version}/03_接口设计.md    → ★ API 接口定义（裸名 `接口设计.md` 为历史兼容）
+  3. docs/architecture/                                      → ★ 全局架构约束三件套 + 可选架构设计文档
+正式规格（普通计划/L/独立路径；S/M 用上述已批准契约）：
+  4. docs/design/detail/{version}/ 的实际详细设计章节 → 模块结构
+  5. 同目录实际数据库设计章节（含合册）             → 表结构与约束
+  6. interface_documents 指定的实际文件/章节          → API 契约；无清单时按索引查找
 
 按需读取：
   7. code/backend/{子项目}/{module}/   → ★ 已有脚手架代码（参照结构和风格；旧扁平 `code/server/{module}/` 仅 upgrade 兼容）
@@ -126,7 +139,7 @@
       | 自写 BeanCopy | 项目用 MapStruct / Spring BeanUtils | 用已有方案 |
     - **铁律 vs 灰区**：
       - **铁律（必须用已有）**：已有方案能满足功能 → **禁止**为"少写代码"引入新依赖；如 MyBatis 原生 + XML 比 MyBatis-Plus 写得多但能覆盖全部 ORM 需求 → 必须用原生
-      - **灰区（可谈）**：已有方案**根本不支持**功能（如对接需要 OAuth2 但项目无 OAuth2 starter） → ① 用 `AskUserQuestion` 征得用户同意 + ② 写入 `memory/systemPatterns.md` ADR（含为什么不能复用已有方案 + 引入哪个 starter + 版本 + 影响）
+      - **灰区（可谈）**：已有方案**根本不支持**功能（如对接需要 OAuth2 但项目无 OAuth2 starter） → ① 将选项与依据交主流程按调用上下文确认 + ② 回传 ADR 工作单，由主流程写入 `memory/systemPatterns.md`（含为什么不能复用已有方案 + 引入哪个 starter + 版本 + 影响）
       - **禁止**：未询问用户、未写 ADR，自行在 pom 加 `<dependency>` 或 build.gradle 加 `implementation 'xxx'`
     - **回检时机**：① 写代码前必跑 baseline 扫描；② `/sprint-test` 由 `code-verification-loop` 维度 4「新增依赖/import 越界基线」检查依赖声明（判据与严重度以 SKILL 为准；Java 侧脚本不覆盖、按 SKILL 人工核对）；③ ADR 是否存在由 Reviewer Agent 按约定 28 人工核对
     - **多模块项目特殊处理**（Maven `<modules>` / Gradle multi-module）：
@@ -160,7 +173,7 @@
            | grep -iE "${TARGET_CLASS}|订单接口|订单管理"  # 替换为业务关键词
       ```
     - **4 信号定义 + 3 类处置（A 增量复用 / B 删旧重做默认自动 / C 兼容重构弹问询）判定表 → 单一信源见 `{{AIDP_HOME}}/rules/code.md` 约定 29**（自动加载），本条不复述判定表；下方 grep 脚本、删除清单留档、关联文件清单为 backend agent 的**后端侧操作补充**。
-    - **删除清单留档（情形 B 必填）**：在 `docs/design/detail/{version}/*事实清单.md`「死代码删除清单」段追加：
+    - **删除清单留档（情形 B 必填）**：把下表写进独占工作单，由主流程核实后追加到 `docs/design/detail/{version}/*事实清单.md`「死代码删除清单」段：
       | 文件路径 | 已核实证据 | 处置情形 | 删除时间 | Sprint |
       |---------|---------|---------|---------|--------|
       | `<逐个候选文件>` | `<路由/静态与动态引用/外部消费者/独占性证据位置>` | `<A/B/C或未知保留>` | `<实际删除时间；保留填—>` | `<本轮Sprint>` |
@@ -304,7 +317,7 @@ Step 8: ★ README 强制维护
 1. 读取 `docs/bugfix/{version}/` 下分配给后端的 Bug
 2. 分析问题原因（接口错误、逻辑缺陷、数据异常等）
 3. 修复代码
-4. 更新 Bug 文件中的修复信息（修复状态、修复说明）
+4. 在独占工作单回传修复状态、说明与验证证据，由主流程更新 Bug 文件
 5. 执行编译验证（仅本次改动了后端才编；资源受限方式，见流程 A「Step 7: 编译验证」配方）
 
 ---
@@ -320,7 +333,7 @@ Step 8: ★ README 强制维护
 
 ### Bugfix 记录格式
 
-修复 Bug 后，更新 Bug 文件中的以下字段：
+修复 Bug 后，在独占工作单回传以下字段及验证证据，由主流程更新 Bug 文件：
 - 修复状态：已修复
 - 修复说明：[修改了什么，为什么]
 - 修复文件：[涉及的文件列表]
@@ -366,4 +379,4 @@ Step 8: ★ README 强制维护
 ### Bugfix 修复
 - [ ] Bug 已修复
 - [ ] 编译验证通过（仅本次改动了后端时；资源受限方式）
-- [ ] Bug 文件已更新修复信息
+- [ ] 修复信息与验证证据已交主流程，Bug 文件由主流程回填

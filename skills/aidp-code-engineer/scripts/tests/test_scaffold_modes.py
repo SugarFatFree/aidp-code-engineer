@@ -153,6 +153,362 @@ def assert_no_runtime(case, root, home, allow=()):
             left.append(f"{name}({'、'.join(rest)})")
     case.assertEqual(left, [], f"{home} 残留受管内容：{left}")
 
+class AgentSwitchSafetyTest(unittest.TestCase):
+    @staticmethod
+    def options(agent, force=False):
+        return Namespace(mode="upgrade", agent=agent, user="alice", json=True,
+                         version="V0.1.0", name_cn=None, force=force,
+                         adapter_mode="copy", no_agent_sync=False,
+                         keep_backups=1, keep_days=7, branch_policy=None)
+
+    def test_switch_preserves_agent_top_level_files(self):
+        for old, new, home in (("claude", "codex", ".claude"),
+                               ("codex", "claude", ".agents")):
+            with self.subTest(old=old), H.TempRepo() as root:
+                scaffold(root, "--agent", old, "--user", "alice")
+                user_files = {
+                    "settings.json": b'{"team": true}\n',
+                    "settings.local.json": b'{"local": true}\n',
+                    "worktrees/topic/uncommitted.txt": b"uncommitted work\n",
+                    "team-state.json": b'{"custom": true}\n',
+                }
+                for relative, content in user_files.items():
+                    path = root / home / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                if old == "claude":
+                    self.assertFalse(runtime_layout._runtime_modified(root / home))
+                result = scaffold(root, "--mode", "upgrade", "--agent", new)
+                self.assertEqual(result["agents"], [new])
+                for relative, content in user_files.items():
+                    self.assertTrue((root / home / relative).is_file(), relative)
+                    self.assertEqual((root / home / relative).read_bytes(), content)
+                assert_no_runtime(self, root, home)
+                self.assertEqual(scaffold(root)["agents"], [new])
+                # 顶层用户内容保留下来后，显式重新启用仍能安装并清除禁用标记。
+                restored = scaffold(root, "--mode", "upgrade", "--agent", old)
+                self.assertEqual(restored["agents"], [old])
+                runtime_layout.validate_runtime(root / home, expected_home=home)
+                for relative, content in user_files.items():
+                    if relative == "settings.json":
+                        self.assertTrue(json.loads((root / home / relative).read_text())["team"])
+                    else:
+                        self.assertEqual((root / home / relative).read_bytes(), content)
+
+    def test_switch_preserves_user_entries_and_manifest_user_files(self):
+        for old, new, home in (("claude", "codex", ".claude"),
+                               ("codex", "claude", ".agents")):
+            with self.subTest(old=old), H.TempRepo() as root:
+                scaffold(root, "--agent", old, "--user", "alice")
+                user_files = {"commands/team-command.md": b"team command\n",
+                              "skills/team/SKILL.md": b"team skill\n",
+                              "skills/api-tester/team-secret.json": b'{"secret": "local"}\n'}
+                for relative, content in user_files.items():
+                    path = root / home / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                # 真实重装将用户文件收入 user_files；退出运行包仍应保留。
+                scaffold(root, "--mode", "upgrade", "--agent", old, "--force")
+                manifest = runtime_layout._read_manifest(root / home)
+                self.assertTrue(set(user_files) <= set(manifest["user_files"]))
+                empty = root / home / "skills/team/empty"
+                empty.mkdir()
+                scaffold(root, "--mode", "upgrade", "--agent", new, "--force")
+                for relative, content in user_files.items():
+                    self.assertTrue((root / home / relative).is_file(), relative)
+                    self.assertEqual((root / home / relative).read_bytes(), content)
+                self.assertTrue(empty.is_dir())
+                self.assertFalse((root / home / runtime_layout.RUNTIME_MANIFEST).exists())
+                self.assertFalse((root / home / "commands/sprint-dev.md").exists())
+                self.assertFalse((root / home / "skills/api-tester/SKILL.md").exists())
+                self.assertEqual(scaffold(root)["agents"], [new])
+
+    def test_reenable_accepts_only_user_files_confirmed_by_active_runtime(self):
+        for old, new, home in (("claude", "codex", ".claude"),
+                               ("codex", "claude", ".agents")):
+            with self.subTest(old=old), H.TempRepo() as root:
+                scaffold(root, "--agent", old, "--user", "alice")
+                user_file = root / home / "commands/team-command.md"
+                user_file.write_text(f"run from {home}/commands/team-command.md\n")
+                user_file.chmod(0o600)
+                scaffold(root, "--mode", "upgrade", "--agent", new)
+                foreign = user_file.parent / "foreign.md"
+                original = user_file.read_bytes()
+                for change in ("unknown", "content", "mode"):
+                    with self.subTest(change=change):
+                        if change == "unknown":
+                            foreign.write_text("unregistered\n")
+                        elif change == "content":
+                            user_file.write_bytes(b"changed after disabling\n")
+                        else:
+                            user_file.chmod(0o644)
+                        before = S._complete_tree_state(root / home)
+                        with self.assertRaisesRegex(RuntimeError, "残留"):
+                            S.run(root, self.options(old))
+                        self.assertEqual(S._complete_tree_state(root / home), before)
+                        if foreign.exists():
+                            foreign.unlink()
+                        user_file.write_bytes(original)
+                        user_file.chmod(0o600)
+                restored = scaffold(root, "--mode", "upgrade", "--agent", old)
+                self.assertEqual(restored["agents"], [old])
+                self.assertEqual(user_file.read_bytes(), original)
+                self.assertEqual(runtime_layout._file_mode(user_file), "0600")
+                runtime_layout.validate_runtime(root / home, expected_home=home)
+
+    def test_no_agent_sync_switch_removes_generated_runtime_entries(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "codex", "--user", "alice")
+            generated = [path for _relative, path in runtime_layout.owned_entries(root / ".agents")
+                         if path.is_dir() and (path / runtime_layout.ADAPTER_MARKER).is_file()]
+            self.assertTrue(generated, "真实安装应生成插件 SKILL namespace")
+            options = self.options("claude")
+            options.no_agent_sync = True
+            S.run(root, options)
+            for path in generated:
+                self.assertFalse(path.exists(), path)
+            assert_no_runtime(self, root, ".agents")
+
+    def test_unused_unmanaged_agent_directory_is_preserved(self):
+        with H.TempRepo() as root:
+            custom = root / ".claude/skills/aidp-code-engineer/SKILL.md"
+            custom.parent.mkdir(parents=True)
+            custom.write_text("project-owned skill\n")
+            scaffold(root, "--mode", "upgrade", "--agent", "codex", "--user", "alice")
+            self.assertEqual(custom.read_text(), "project-owned skill\n")
+            self.assertEqual(scaffold(root)["agents"], ["codex"])
+
+    def test_switch_rejects_managed_symlink_without_touching_external_file(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            external = root.parent / "external.md"
+            external.write_text("outside user content\n")
+            command = root / ".claude/commands/sprint-dev.md"
+            command.unlink()
+            command.symlink_to(external)
+            before = S._complete_tree_state(root / ".claude")
+            with self.assertRaisesRegex((RuntimeError, ValueError), "symlink"):
+                S.run(root, self.options("codex"))
+            self.assertEqual(external.read_text(), "outside user content\n")
+            self.assertEqual(S._complete_tree_state(root / ".claude"), before)
+            assert_no_runtime(self, root, ".agents")
+
+    def test_remove_runtime_rejects_manifest_path_outside_owned_directories(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            settings = root / ".claude/settings.local.json"
+            settings.write_text('{"local": true}\n')
+            manifest = runtime_layout._read_manifest(root / ".claude")
+            manifest["files"]["settings.local.json"] = runtime_layout._file_metadata(settings)
+            runtime_layout._write_manifest(root / ".claude", manifest)
+            before = S._complete_tree_state(root / ".claude")
+            with self.assertRaisesRegex(ValueError, "受管边界"):
+                S.run(root, self.options("codex"))
+            self.assertEqual(S._complete_tree_state(root / ".claude"), before)
+            assert_no_runtime(self, root, ".agents")
+
+    def test_partial_cleanup_failure_rolls_back_runtime_and_user_data(self):
+        for old, new, home in (("claude", "codex", ".claude"),
+                               ("codex", "claude", ".agents")):
+            with self.subTest(old=old), H.TempRepo() as root:
+                scaffold(root, "--agent", old, "--user", "alice")
+                (root / home / "settings.local.json").write_text('{"local": true}\n')
+                before = S._complete_tree_state(root / home)
+                config = (root / "memory/aidp-config.yaml").read_bytes()
+                real_unlink = Path.unlink
+                removed = []
+
+                def fail_during_cleanup(path, *args, **kwargs):
+                    if path.parent == root / home / "commands":
+                        removed.append(path.name)
+                        if len(removed) == 2:
+                            raise OSError("injected cleanup failure")
+                    return real_unlink(path, *args, **kwargs)
+
+                with mock.patch.object(Path, "unlink", fail_during_cleanup):
+                    with self.assertRaisesRegex(OSError, "injected cleanup failure"):
+                        S.run(root, self.options(new))
+                self.assertGreaterEqual(len(removed), 2)
+                self.assertEqual(S._complete_tree_state(root / home), before)
+                self.assertEqual((root / "memory/aidp-config.yaml").read_bytes(), config)
+                assert_no_runtime(self, root, ".agents" if home == ".claude" else ".claude")
+
+
+class ConfigSubKeySafetyTest(unittest.TestCase):
+    def assert_yaml_value(self, text, expected):
+        # 脚手架保持零第三方依赖；有 PyYAML 时额外用严格解析器验证合法性。
+        try:
+            import yaml
+        except ImportError:
+            return
+        self.assertEqual(yaml.safe_load(text), expected)
+
+    def test_nonempty_top_level_values_are_preserved_without_invalid_children(self):
+        for key, value in (("cicd", "{provider: none, auto_trigger: false}"),
+                           ("notify", "{enabled: false, channel: local}"),
+                           ("commit_gate", "{enabled: false, mode: custom}"),
+                           ("cicd", "false"), ("notify", "[local, email]"),
+                           ("commit_gate", "null"), ("notify", "|\n  custom text")):
+            with self.subTest(key=key, value=value):
+                have = f"{key}: {value}\n"
+                skipped = []
+                result, filled = S._fill_missing_sub_keys(have, f"{key}:\n  new_key: true\n", skipped)
+                self.assertEqual(result, have)
+                self.assertEqual(filled, [])
+                self.assertEqual(skipped, [key])
+
+    def test_sync_config_reports_preserved_inline_sections(self):
+        have = ("cicd: {provider: none, auto_trigger: false}\n"
+                "notify: {enabled: false, channel: local}\n"
+                "commit_gate: {enabled: false, mode: custom}\n")
+        template = "".join(f"{key}:\n  new_key: true\n"
+                           for key in ("cicd", "notify", "commit_gate"))
+        with H.TempRepo() as root:
+            config = root / "memory/aidp-config.yaml"
+            config.parent.mkdir()
+            config.write_text(have)
+            source = root.parent / "config.tpl"
+            source.write_text(template)
+            report = S.Report()
+            with mock.patch.object(L, "CONFIG_TPL_REL", str(source)):
+                S.sync_config(root, {}, report, S.Backup(root, report))
+            self.assertEqual(config.read_text(), have)
+            self.assertTrue(any("未自动补齐" in warning and "cicd、notify、commit_gate" in warning
+                                for warning in report.warnings))
+            self.assert_yaml_value(config.read_text(), {
+                "cicd": {"provider": "none", "auto_trigger": False},
+                "notify": {"enabled": False, "channel": "local"},
+                "commit_gate": {"enabled": False, "mode": "custom"}})
+
+    def test_block_mapping_and_empty_commented_section_still_fill(self):
+        have = "cicd: # keep comment\n  provider: none\nnotify: # empty\n"
+        template = "cicd:\n  provider: github\n  auto_trigger: true\nnotify:\n  enabled: false\n"
+        result, filled = S._fill_missing_sub_keys(have, template)
+        self.assert_yaml_value(result, {
+            "cicd": {"provider": "none", "auto_trigger": True}, "notify": {"enabled": False}})
+        self.assertEqual(filled, ["cicd.auto_trigger", "notify.enabled"])
+        self.assertIn("cicd: # keep comment", result)
+
+
+class BranchPolicyTest(unittest.TestCase):
+    def setUp(self):
+        # 使用最新配置真源，不要求为这组定向测试先修改仓库 bundle。
+        from mirror_to_bundle import render_config_tpl
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        template = Path(directory.name) / "config.tpl"
+        template.write_text(render_config_tpl((H.REPO / "memory/aidp-config.yaml").read_text(
+            encoding="utf-8")), encoding="utf-8")
+        patch = mock.patch.object(L, "CONFIG_TPL_REL", str(template))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def options(self, mode="init", policy=None):
+        return Namespace(mode=mode, agent="claude", user="alice", json=True,
+                         version="V0.1.0", name_cn=None, force=False,
+                         adapter_mode="copy", no_agent_sync=True,
+                         keep_backups=1, keep_days=7, branch_policy=policy)
+
+    @staticmethod
+    def snapshot(root):
+        return {p.relative_to(root).as_posix():
+                ("link", os.readlink(p)) if p.is_symlink() else
+                ("dir", None) if p.is_dir() else ("file", p.read_bytes())
+                for p in root.rglob("*")}
+
+    def test_install_unset_upgrade_preserves_or_explicitly_changes(self):
+        with H.TempRepo() as root, mock.patch.object(S, "_install_native_skill"):
+            result = S.run(root, self.options())
+            self.assertIsNone(result["branch_policy"])
+            self.assertTrue(result["needs_choice"])
+            self.assertIsNone(S.aidp_config.read_branch_policy(root))
+            self.assertIn("branch_policy: null", (root / "memory/aidp-config.yaml").read_text())
+            for policy in ("new", None, "current"):
+                result = S.run(root, self.options("upgrade", policy))
+                expected = policy or "new"
+                self.assertEqual(result["branch_policy"], expected)
+                self.assertFalse(result["needs_choice"])
+                self.assertEqual(S.aidp_config.read_branch_policy(root), expected)
+
+    def test_init_and_migrate_explicit_choices_do_not_change_git_branch(self):
+        for mode, policy in (("init", "current"), ("migrate", "new")):
+            with self.subTest(mode=mode), H.TempRepo() as root, \
+                    mock.patch.object(S, "_install_native_skill"):
+                git_before = self.snapshot(root / ".git")
+                result = S.run(root, self.options(mode, policy))
+                self.assertEqual(result["branch_policy"], policy)
+                self.assertEqual(self.snapshot(root / ".git"), git_before)
+
+    def test_detect_is_read_only_for_unset_selected_and_non_git(self):
+        with H.TempRepo() as root:
+            for policy in (None, "current", "new"):
+                if policy is not None:
+                    S.aidp_config.set_scalar(root, "development.branch_policy", policy)
+                before = self.snapshot(root)
+                result = scaffold(root, "--detect")
+                self.assertEqual(result["vcs_mode"], "git")
+                self.assertEqual(result["branch_policy"], policy)
+                self.assertEqual(result["needs_choice"], policy is None)
+                self.assertEqual(self.snapshot(root), before)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = scaffold(root, "--detect")
+            self.assertEqual(result["vcs_mode"], "none")
+            self.assertIsNone(result["branch_policy"])
+            self.assertFalse(result["needs_choice"])
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_invalid_policy_rejected_before_any_install_write(self):
+        with H.TempRepo() as root:
+            before = self.snapshot(root)
+            result = H.run_script("scaffold.py", root, "--branch-policy", "feature", check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(self.snapshot(root), before)
+            S.aidp_config.ensure(root)
+            path = root / "memory/aidp-config.yaml"
+            path.write_text("development:\n  branch_policy: feature\n", encoding="utf-8")
+            before = self.snapshot(root)
+            with self.assertRaisesRegex(ValueError, "branch_policy"):
+                S.run(root, self.options())
+            result = H.run_script("scaffold.py", root, "--detect", check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(self.snapshot(root), before)
+
+    def test_upgrade_inline_policy_preserves_extra_keys_and_comment(self):
+        with H.TempRepo() as root, mock.patch.object(S, "_install_native_skill"):
+            path = root / "memory/aidp-config.yaml"
+            path.parent.mkdir()
+            inline = "development: {branch_policy: current, extra: keep} # keep comment\n"
+            path.write_text(inline, encoding="utf-8")
+            result = S.run(root, self.options("upgrade", "new"))
+            self.assertEqual(result["branch_policy"], "new")
+            self.assertIn(inline.replace("current", "new"), path.read_text(encoding="utf-8"))
+            self.assertEqual(S.aidp_config.get(root, "development.extra"), "keep")
+            self.assertNotIn("  branch_policy:", path.read_text(encoding="utf-8"))
+            result = S.run(root, self.options("upgrade"))
+            self.assertEqual(result["branch_policy"], "new")
+            self.assertIn(inline.replace("current", "new"), path.read_text(encoding="utf-8"))
+
+    def test_policy_write_uses_install_rollback(self):
+        with H.TempRepo() as root:
+            S.aidp_config.set_scalar(root, "development.branch_policy", "current")
+            path = root / "memory/aidp-config.yaml"
+            before = path.read_bytes()
+            with mock.patch.object(S, "_install_native_skill", side_effect=OSError("after config")):
+                with self.assertRaisesRegex(OSError, "after config"):
+                    S.run(root, self.options("upgrade", "new"))
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(S.aidp_config.read_branch_policy(root), "current")
+
+    def test_policy_write_preserves_project_path_safety(self):
+        with H.TempRepo() as root, tempfile.TemporaryDirectory() as external:
+            target = Path(external)
+            (root / "memory").symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                S.run(root, self.options(policy="new"))
+            self.assertEqual(list(target.iterdir()), [])
+
+
 class InitSmokeTest(unittest.TestCase):
     def _init(self, agents):
         with H.TempRepo() as root:

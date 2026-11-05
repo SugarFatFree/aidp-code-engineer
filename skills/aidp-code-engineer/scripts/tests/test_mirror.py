@@ -69,6 +69,13 @@ def make_template(root: Path):
 
 
 class MirrorLoopTest(unittest.TestCase):
+    def test_branch_policy_is_unset_in_downstream_template(self):
+        from mirror_to_bundle import render_config_tpl
+        for policy in ("null", "current", "new"):
+            with self.subTest(policy=policy):
+                source = CONFIG + f"\ndevelopment:\n  branch_policy: {policy}\n"
+                self.assertIn("development:\n  branch_policy: null\n", render_config_tpl(source))
+
     def test_loop(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

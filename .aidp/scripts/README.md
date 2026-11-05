@@ -14,6 +14,23 @@
 > 它现场跑 `--help` 取真值，**永不过期**（手写速查表必然过期，那是又一处「加东西的人不会
 > 想起去改」的副本）。⚠️ usage 里**不带 `--` 的那些是位置参数**，是最常踩的一类。
 
+## alloc_id.py — 同工作区原子编号分配
+
+`python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind C --count 5 --owner orchestrator --version V1.0.0 --scope changes --json` 返回 `ids/start/end` 连续号段，锁内同时读取已有定义与 `memory/.aidp/id-alloc.jsonl`。C 四族用 changes，同事件跨族复用；测试缺陷 C 用 bugs；BUG/REQ/Q/D/ADR/TC 也支持，ADR 项目级不带版本。`--prefix REQ-V1.0.0` 或 `TC-模块` 保持项目既有编号形态。`--check --json` 供 commit_gate 与重号复核，实际多定义仍报错、引用与未使用空洞不报错。损坏账本拒绝分配；锁保证同 checkout 原子，不承诺跨 clone 分布式锁。`--self-check` 包含重号阳性与并发锁验证。
+
+## test_ledger.py — 分层测试复用与审查基线
+
+```bash
+python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd . --scope targeted --env-id <稳定环境标识> --input <契约卡路径> -- <测试命令argv>
+python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd . --scope full --env-id <稳定环境标识> --input <契约卡路径> -- <全量测试命令argv>
+python3 {{AIDP_HOME}}/scripts/test_ledger.py record-review --root . --name <版本-Sprint> --run-id <full通过ID> --env-id <同环境标识> --report <验收报告路径> --input <契约卡路径>
+python3 {{AIDP_HOME}}/scripts/test_ledger.py review-delta --root . --name <版本-Sprint> --env-id <同环境标识>
+```
+
+执行原 argv，保留输出，stdout 末行给结果 JSON。`scope/cwd/argv/env_id/环境摘要/内容树/显式inputs` 全同且前后树稳定的 PASS 才复用；targeted 不替代 full。开发只定向，汇合验收集中 full，部署前重用同计划 full，最后代码变更后再执行；修复轮不反复全量。正常同类 M 样本目标最多两次实际 full，异常必须如实记录，不能为次数指标跳过失败或变更后的验证。`--force` 用于外部状态无法可信指纹的场景，`--timeout` 限制命令时长。
+
+默认排除 docs/memory 与根记忆/导航；其中实际测试输入必须 `--input` 显式加入。凭据只进入环境摘要，不把值写入账本；命令参数也不应内嵌真实密码。`record-review` 只有在完整审查及最终报告完成后才调用，不能用测试 PASS 伪造审查；`review-delta` 只证明基线可信及差异可读，不证明新 diff 已审。多套 full 在同一 review 重复传 `--run-id`，逐套绑定最新稳定 PASS；任一套出现后继 FAIL/ERROR/RUNNING/TREE_CHANGED 或被新 PASS 取代，旧 review 都失效，新 PASS 须明确重新登记。账本缺失、损坏、环境不符或报告改写时停止复用并返回验收，不能宣称零变化。`--self-check` 同时包含缓存命中及失效阳性对照。
+
 ## aidp_runtime.py — 运行包与项目根路径解析
 
 供运行脚本导入 `runtime_root()`、`project_root()` 和 `runtime_text()`：从脚本位置识别模板仓库或 Agent 原生运行包，展开运行路径，不依赖 Git 查找项目根。它是库模块，不作为独立命令调用。
@@ -1215,6 +1232,8 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 写入是**逐行外科手术**而非重新序列化 —— 这份文件一半的价值在注释（每个开关旁写着
 关掉之后会发生什么），`yaml.dump()` 一次就把它退化成无注释的 json。
 读取顺序恒为「本文件 → 内置缺省」。
+
+`python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy` 只读返回工作分支策略的 `vcs_mode/policy/needs_choice/status`；Git 未选择退出 3，非法配置退出 2，已选及无 Git 不适用退出 0。首次由用户选 `current` 或 `new` 后用 `set development.branch_policy <选择>` 保存，后续沿用；缺值不自动变成 current。脚手架三模式支持显式 `--branch-policy current|new`，升级无该参数保留旧值；模板始终 null，不携带维护者偏好。脚本只保存和查询，实际任务分支继承及创建约束见 `reference/agent-tools.md`。
 
 ## autopilot_decisions_merge.py — PRD frontmatter × 兜底配置的决策合并
 

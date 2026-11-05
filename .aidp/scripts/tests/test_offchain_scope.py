@@ -264,10 +264,22 @@ def test_dispatch_and_deletion_contracts():
     check("共享文档和 Git 动作归主流程，子 Agent 不自行提交或关闭",
           "Git index/commit/push" in dispatch and "由主流程统一处理" in dispatch
           and "子 Agent 不自行提交或关闭 Sprint" in dispatch)
-    check("规范审查先于代码质量审查，Task 审查不替代 Sprint 验收/归档",
+    protocol = text(".aidp/flows/sprint-dev/incremental-contract.md")
+    check("汇合一次契约审查先于 test CVL，移除 Task 双完整审查但不删检查项",
           dispatch.index("规范符合性审查") < dispatch.index("代码质量审查")
-          and "两阶段审查未过不得" in dispatch
-          and "Task 审查不替代这两道门" in dispatch)
+          and "删除 Task 级双完整审查" in dispatch
+          and "原检查项不取消" in dispatch and "差量复核" in dispatch)
+    check("M docs 独占写集，开发偏差回专属工作单",
+          "docs Agent 独占正式文档写集" in dispatch
+          and "开发 Agent 只回各自工作单" in dispatch
+          and "contract_revision" in dispatch and "work_order" in dispatch)
+    check("默认主流程唯一 Git 写者，用户授权 worker 也须串行交接",
+          "默认编排者是唯一 Git 写者" in protocol
+          and "用户显式授权 worker 提交" in protocol
+          and "绝不多人同时 `git add/commit`" in protocol)
+    check("commit_gate 校验汇合写集并集，外路径只核对不重置他人索引",
+          "--owner orchestrator" in protocol and "--allow-path" in protocol
+          and "并集" in protocol and "不擅自 reset 他人暂存" in protocol)
 
     rule = text(".aidp/rules/code.md").split("## 约定 29", 1)[1].split("## 约定 35", 1)[0]
     frontend = text(".aidp/agents/frontend.md").split("11. **", 1)[1].split("12. **", 1)[0]
@@ -313,7 +325,36 @@ def test_dispatch_and_deletion_contracts():
               and "写集" in text(relative))
 
 
+def test_worker_contract_inputs_and_write_scope():
+    """直接检查会被开发子 Agent Read 的角色，防父协议正确而角色仍强制旧读写。"""
+    print('\n[O7] S/M 开发角色的契约输入与独占写集')
+    for role in ('backend', 'frontend'):
+        body = (REPO / f'.aidp/agents/{role}.md').read_text(encoding='utf-8')
+        entry = body.split('## 一、身份定义', 1)[0]
+        startup = body.split('## 二、会话启动检查清单', 1)[1].split('## 三、核心工作流程', 1)[0]
+        check(f'{role} 开头接收契约身份、实际接口路径与具体写集',
+              all(field in entry for field in ('contract_path', 'contract_revision',
+                                               'interface_documents', 'write_set', 'work_order')))
+        check(f'{role} 先校验已批准修订，失配不开始实现',
+              'approved_revision=contract_revision' in entry and 'status=approved' in entry
+              and '不开始实现' in entry)
+        check(f'{role} S/M 不读取成文中的正文或强求固定分册',
+              'S/M' in startup and '不读取 docs Agent 尚未交付的正文' in startup
+              and '不要求固定 `02_数据库设计.md` / `03_接口设计.md`' in startup)
+        check(f'{role} 普通计划/L 仍读完整正式规格',
+              '普通计划 / L / 独立角色' in startup and '00_索引.md' in startup)
+        check(f'{role} 共享内容统一回主流程，不能直接改 bug/memory/事实',
+              '共享写入统一交主流程' in entry
+              and all(term in entry for term in ('memory', 'bugfix', '事实清单', '子Agent必读')))
+        check(f'{role} 原宽泛 bugfix 写权限已撤回工作单',
+              '| `docs/bugfix/{version}/bugfix-*.md` | 创建' not in body
+              and '本 Agent 独占的 `work_order`' in body)
+        check(f'{role} 不再命令 worker 就地更新公共踩坑资料',
+              '当轮**就补进去' not in entry and '不自行 git add/commit/push' in entry)
+
+
 def main():
+    test_worker_contract_inputs_and_write_scope()
     test_convention_41_text()
     test_offchain_budget_tiers()
     test_comment_ratio_gate()

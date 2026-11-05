@@ -331,6 +331,34 @@ def test_skill_invocation_contracts():
               "flow-qr-dispatch.md" in t and "原样跑全部脚本" in t)
 
 
+def test_batch_cascade_and_bugfix_scope_contracts():
+    """父编排不能恢复隐式级联；导入的测试缺陷须与 SKILL 的 Sprint 过滤同域。"""
+    print('\n[批量级联与测试缺陷归属契约]')
+    batch = (REPO / '.aidp/commands/sprint-batch.md').read_text(encoding='utf-8')
+    push = (REPO / '.aidp/flows/sprint-autopilot/phase-3-5b.md').read_text(encoding='utf-8')
+    check('batch 不再把显式级联写成逐 Sprint 固定动作',
+          '逐 Sprint `--cascade-now`' not in batch
+          and '`/sprint-dev --cascade-now` 按 Sprint 即时处理' not in batch)
+    check('batch 明确默认攒批且只透传显式 cascade-now',
+          '不自动添加 `--cascade-now`' in batch and '[--cascade-now]' in batch)
+    check('push 提交门不因积压派发整套级联，CICD 欠账仍补监听',
+          '台账积压 → 派台账收口子 Agent' not in push
+          and '不因提交门返回欠账而派级联' in push and '补监听' in push)
+    mb = (REPO / '.aidp/flows/sprint-bugfix/mode-b.md').read_text(encoding='utf-8')
+    skill = (REPO / '.aidp/skills/bugfix/SKILL.md').read_text(encoding='utf-8')
+    check('依赖 SKILL 的 Sprint 参数实际过滤 Sprint 列',
+          '给了 Sprint 编号 → 仅处理 Sprint 列匹配的条目' in skill)
+    check('来源 B 不再无条件留空 Sprint，核实归属后再登记',
+          '追加条目的 Sprint 列留空' not in mb
+          and '已核实属于指定 Sprint' in mb and 'Sprint 列填该编号' in mb)
+    check('未知归属显式范围冲突，不把整版缺陷强绑当前 Sprint',
+          'scope-conflict' in mb and '不把整版缺陷强绑当前 Sprint' in mb)
+    check('下传范围与导入清单一致，不清空参数绕过过滤',
+          '派单前对账' in mb and '不得通过删掉 Sprint 参数扩大修复范围' in mb)
+    check('无 Sprint 的零散入口仍可导入留空归属',
+          '无 Sprint 过滤' in mb and '可留空' in mb)
+
+
 def test_vcs_mode_command_contracts():
     print("\n[vcs_mode 命令入口与无 Git 语义]")
     for name in ("sprint-dev", "sprint-test", "sprint-autopilot", "sprint-aiauto-test", "sprint-close", "version"):
@@ -648,6 +676,179 @@ def test_cvl_callsite_contract_details():
     check("前端明确预处理器检查不覆盖 import/use 路径", "`@import` / `@use` 路径错**不在**该脚本覆盖内" in front)
 
 
+def test_incremental_acceptance_contract():
+    print('\n[日常累进验收：分档汇合、同轮修复与差量关闭]')
+    st = (REPO / '.aidp/commands/sprint-test.md').read_text(encoding='utf-8')
+    close = (REPO / '.aidp/commands/sprint-close.md').read_text(encoding='utf-8')
+    full = (REPO / '.aidp/commands/sprint-full.md').read_text(encoding='utf-8')
+    bugfix = (REPO / '.aidp/commands/sprint-bugfix.md').read_text(encoding='utf-8')
+    check('验收显式消费契约卡和权威汇合流程',
+          '_sprint-{NNN}-契约卡.md' in st and 'flows/sprint-dev/incremental-contract.md' in st)
+    check('M 汇合核修订、真实写集、docs 与 reviewer pass',
+          all(x in st for x in ('contract_revision', '实际写集', 'docs路径', 'reviewer=pass')))
+    check('S 静态验收不强制补正式用例，required 仍门控',
+          'required=false' in st and '四族' in st and 'CASE_REQUIRED' in st)
+    check('错误性 Suggestion 同轮归原实现者，等级不变',
+          all(x in st for x in ('错误性 Suggestion', '原实现 Agent', '原严重度', '不新起 `/sprint-bugfix`')))
+    check('CVL 无虚构 delta 入参，原结论与差量结果分开',
+          '不支持 delta 参数' in st and '不得宣称 CVL 二次完整通过' in st)
+    check('已修证据允许未提交树 hash，但不能造 SHA',
+          '尚未提交' in st and 'after_hash' in st and '不得伪造' in st)
+    check('close 零差异不重复审查，缺基线退回验收',
+          'review-delta' in close and '零 diff' in close and '无可信 review baseline' in close)
+    check('close 保留归档和 cascade_obligation，不重跑全 Sprint 审查',
+          'check_cascade_obligation.py' in close and '约定 9' in close
+          and '对本 Sprint 的代码与设计进行最终走查' not in close)
+    check('full 尊重显式 cascade-now，不无条件开启',
+          '[--cascade-now]' in full and '`--cascade-now` 不可省' not in full)
+    check('full 与 bugfix 外层仅接管未闭环项，无每轮完整 test',
+          all('只接管未闭环项' in text and '不重复完整' in text for text in (full, bugfix))
+          and not re.search(r'/sprint-bugfix sprint-.*\n\s*/sprint-test', full + bugfix))
+    mode_c = bugfix.split('## 方式 C：', 1)[1].split('## 输出', 1)[0]
+    check('bugfix C 委派 sprint-dev 新协议，不重复四层前置',
+          'incremental-contract.md' in mode_c and '/sprint-dev "{描述}" skip-test' in mode_c
+          and '/sprint-requirements {version} --supplement' not in mode_c)
+
+
+def test_incremental_contract_resume():
+    """直接执行 full 的恢复门，未成正式计划的 S/M 仍保留严格身份与修订校验。"""
+    print('\n[S/M 契约卡中断恢复真实示例]')
+    full = (REPO / '.aidp/commands/sprint-full.md').read_text(encoding='utf-8')
+    match = re.search(r'<!-- resume-gate -->\s*```bash\n(.*?)```', full, re.S)
+    check('恢复门可提取', bool(match))
+    if not match:
+        return
+    script = match.group(1).replace('{{AIDP_HOME}}', str(REPO / '.aidp')) \
+        .replace('{version}', 'V1.0.0').replace('{NNN}', '001')
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        ctx = root / 'memory/V1.0.0/alice/activeContext.md'
+        ctx.parent.mkdir(parents=True)
+        ctx.write_text('- 当前 Sprint：Sprint-001\n- contract_revision: 1\n'
+                       '- contract_path: docs/design/detail/V1.0.0/_sprint-001-契约卡.md\n'
+                       '- 已完成：接口\n', encoding='utf-8')
+        before = ctx.read_bytes()
+        card = root / 'docs/design/detail/V1.0.0/_sprint-001-契约卡.md'
+        card.parent.mkdir(parents=True)
+        valid = {'version': 'V1.0.0', 'sprint': '001', 'owner': 'alice',
+                 'contract_revision': 1, 'dev_scale': 'M', 'approved_revision': 1,
+                 'status': 'approved'}
+
+        def invoke(data):
+            card.write_text('# 契约卡\n```aidp-contract\n' + json.dumps(data) + '\n```\n', encoding='utf-8')
+            return subprocess.run(['bash', '-c', script], cwd=root, capture_output=True, text=True,
+                                  env={**os.environ, 'AIDP_USER': 'alice'})
+
+        result = invoke(valid)
+        check('M 已放行卡无正式计划仍可恢复且不重置 activeContext',
+              result.returncode == 0 and ctx.read_bytes() == before)
+        check('S 已放行卡同样可恢复', invoke({**valid, 'dev_scale': 'S'}).returncode == 0)
+        for label, patch in (
+            ('未放行', {'status': 'draft'}), ('版本不符', {'version': 'V2.0.0'}),
+            ('用户不符', {'owner': 'bob'}), ('编号不符', {'sprint': '002'}),
+            ('批准修订过期', {'approved_revision': 0}),
+            ('active 修订不符', {'contract_revision': 2, 'approved_revision': 2}),
+            ('L 不能借卡省正式计划', {'dev_scale': 'L'}),
+            ('布尔不能冒充修订整数', {'contract_revision': True, 'approved_revision': True}),
+            ('尚未批准', {'approved_revision': None}),
+        ):
+            check(label + ' 拒绝恢复', invoke({**valid, **patch}).returncode != 0)
+        card.write_text('# 存在但没有放行证据\n', encoding='utf-8')
+        result = subprocess.run(['bash', '-c', script], cwd=root, capture_output=True, text=True,
+                                env={**os.environ, 'AIDP_USER': 'alice'})
+        check('仅存在卡文件不能放行', result.returncode != 0)
+        for label, raw in (
+            ('坏 JSON', '{broken'),
+            ('重复键', json.dumps(valid)[:-1] + ', "owner": "alice"}'),
+            ('非 JSON 常量', json.dumps(valid)[:-1] + ', "extra": NaN}'),
+            ('多块', json.dumps(valid) + '\n```\n```aidp-contract\n' + json.dumps(valid)),
+        ):
+            card.write_text('```aidp-contract\n' + raw + '\n```\n', encoding='utf-8')
+            result = subprocess.run(['bash', '-c', script], cwd=root, capture_output=True, text=True,
+                                    env={**os.environ, 'AIDP_USER': 'alice'})
+            check(label + ' 拒绝恢复', result.returncode != 0)
+        ctx.write_text(before.decode().replace('contract_path: docs/', 'contract_path: wrong/'), encoding='utf-8')
+        check('active 契约路径不符拒绝恢复', invoke(valid).returncode != 0)
+        ctx.write_bytes(before)
+        other = root / 'memory/V1.0.0/bob/activeContext.md'
+        other.parent.mkdir(parents=True)
+        other.write_bytes(before)
+        check('另一个用户同号在途仍拒绝', invoke(valid).returncode != 0)
+
+
+def test_acceptance_ledger_command_examples():
+    """提取命令正文实跑：full PASS ≠ review、零变化复用、修改和坏证据阻断。"""
+    print('\n[验收/关闭账本命令真实示例]')
+    st = (REPO / '.aidp/commands/sprint-test.md').read_text(encoding='utf-8')
+    close = (REPO / '.aidp/commands/sprint-close.md').read_text(encoding='utf-8')
+    snippets = {}
+    for name, text in (('acceptance-full-test', st), ('acceptance-record-review', st),
+                       ('close-review-delta', close)):
+        match = re.search(r'<!-- ' + name + r' -->\s*```bash\n(.*?)\n```', text, re.S)
+        check(name + ' 可提取真实调用', bool(match))
+        if match:
+            snippets[name] = match.group(1).replace('{{AIDP_HOME}}', str(REPO / '.aidp')) \
+                .replace('{version}', 'V1.0.0').replace('{NNN}', '001')
+    if len(snippets) != 3:
+        return
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        code = root / 'app.py'
+        code.write_text('value = 1\n', encoding='utf-8')
+        contract = root / 'docs/design/detail/V1.0.0/_sprint-001-契约卡.md'
+        contract.parent.mkdir(parents=True)
+        contract.write_text('contract_revision: 1\nAC: value == 1\n', encoding='utf-8')
+        report = root / 'docs/testing/V1.0.0/sprint-001/sprint-001-test-report.md'
+        report.parent.mkdir(parents=True)
+        report.write_text('CVL: 通过\nreviewer: 已核 value == 1\n', encoding='utf-8')
+        run_id = ''
+
+        def invoke(name, env_id='fixture-static'):
+            prelude = (f'TEST_ENV_ID={env_id}\nFULL_RUN_ID={run_id}\n'
+                       f'FULL_TEST_ARGV=("{sys.executable}" -B -c "import app; assert app.value == 1")\n')
+            result = subprocess.run(['bash', '-e', '-c', prelude + snippets[name]],
+                                    cwd=root, capture_output=True, text=True)
+            try:
+                payload = json.loads(result.stdout.strip().splitlines()[-1])
+            except (IndexError, ValueError):
+                payload = {}
+            return result, payload
+
+        first, passed = invoke('acceptance-full-test')
+        run_id = passed.get('run_id', '')
+        check('真实断言得到 full PASS 和树 hash', first.returncode == 0 and
+              passed.get('status') == 'PASS' and passed.get('before_hash') == passed.get('after_hash'))
+        reused, hit = invoke('acceptance-full-test')
+        check('同树/同命令 full PASS 复用', reused.returncode == 0 and hit.get('reused') is True)
+        missing, _ = invoke('close-review-delta')
+        check('只有测试 PASS、未审查登记时 close 拒绝', missing.returncode != 0)
+        recorded, _ = invoke('acceptance-record-review')
+        check('真实报告显式登记审查基线', recorded.returncode == 0)
+        delta, clean = invoke('close-review-delta')
+        check('零 diff 有可验证证据', delta.returncode == 0 and clean.get('code_changed') is False
+              and all(clean.get(key) == [] for key in ('added', 'changed', 'removed')))
+        memory = root / 'memory/V1.0.0/tester/progress.md'
+        memory.parent.mkdir(parents=True)
+        memory.write_text('Sprint-001 已归档\n', encoding='utf-8')
+        delta, clean = invoke('close-review-delta')
+        check('close 归档 memory 不抹除既有审查证据', delta.returncode == 0 and clean.get('code_changed') is False)
+        contract.write_text('contract_revision: 2\nAC: value == 2\n', encoding='utf-8')
+        delta, dirty = invoke('close-review-delta')
+        check('契约变更进入差量而非被 docs 默认忽略', delta.returncode == 0 and
+              str(contract.relative_to(root)) in dirty.get('changed', []))
+        contract.write_text('contract_revision: 1\nAC: value == 1\n', encoding='utf-8')
+        code.write_text('value = 2\n', encoding='utf-8')
+        delta, dirty = invoke('close-review-delta')
+        check('验收后代码变化可定位', delta.returncode == 0 and 'app.py' in dirty.get('changed', []))
+        failed, payload = invoke('acceptance-full-test')
+        check('变更导致真实断言失败，不能复用先前 PASS', failed.returncode != 0 and payload.get('status') == 'FAIL')
+        report.write_text('篡改验收报告\n', encoding='utf-8')
+        invalid, _ = invoke('close-review-delta')
+        check('报告变化使 close 拒绝旧基线', invalid.returncode != 0)
+        wrong_env, _ = invoke('close-review-delta', 'different-env')
+        check('环境变化使 close 拒绝旧基线', wrong_env.returncode != 0)
+
+
 def _mcp_cli(root, script, *args):
     result = subprocess.run([sys.executable, str(REPO / '.aidp/scripts' / script),
                              '--root', str(root), '--json', *args], capture_output=True, text=True)
@@ -770,6 +971,10 @@ def test_mcp_callsite_version_contract():
 
 
 def main():
+    test_batch_cascade_and_bugfix_scope_contracts()
+    test_incremental_acceptance_contract()
+    test_incremental_contract_resume()
+    test_acceptance_ledger_command_examples()
     test_mcp_callsite_version_contract()
     test_mcp_enabled_skill_contract()
     test_mcp_version_scope()

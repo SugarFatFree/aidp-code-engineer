@@ -418,7 +418,126 @@ git() { case "$1" in rev-parse) printf 'release-sha\\n';; symbolic-ref) printf '
                           evidence.get('degraded_reason') == degraded['degraded_reason'])
 
 
+def test_release_actual_write_set():
+    """真实临时 Git 仓执行发布围栏：版本修正、记忆与文档必须一起入库。"""
+    print('\n[R7] 发布实际写集与无关修改隔离（执行围栏）')
+    release6 = REPO / '.aidp/flows/version/release-6.md'
+    release7 = REPO / '.aidp/flows/version/release-7.md'
+    blocks = re.findall(r'^```bash\n(.*?)\n```', release6.read_text(), re.M | re.S)
+    apply_block = next((b for b in blocks if '--apply-scope' in b),
+                       'python3 {{AIDP_HOME}}/scripts/check_version_identifier.py '
+                       '--version {version} --apply --apply-scope all')
+    apply_block = apply_block.replace('{version}', 'V0.2.0').replace('{{AIDP_HOME}}', str(REPO / '.aidp'))
+    commit_block = _flow_block(release7, 0).replace('{{AIDP_HOME}}', str(REPO / '.aidp'))
+    be = [sys.executable, str(REPO / '.aidp/scripts/baseline_edit.py'), '--version', 'V0.2.0']
+    real_git = shutil.which('git')
+    for scene in ('clean', 'dirty-version-file', 'changed-after-fix', 'unrelated-staged', 'add-failure', 'post-commit-residue'):
+        with tempfile.TemporaryDirectory(prefix='aidp-release-write-set-') as td:
+            root = Path(td)
+            version_files = ['code/frontend/app/package.json', 'code/backend/app/pom.xml']
+            artifacts = ['docs/reports/V0.2.0/release notes.md', 'docs/reports/V0.2.0/obsolete.md',
+                         'memory/V0.2.0/test/progress.md', 'CLAUDE.md']
+            originals = {
+                version_files[0]: '{"name":"app","version":"0.1.0"}\n',
+                version_files[1]: '<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId>'
+                                  '<artifactId>app</artifactId><version>0.1.0</version></project>\n',
+                'code/frontend/app/src/main.js': 'old business\n',
+                'frontend/unrelated.js': 'old frontend\n',
+                **{path: 'old artifact\n' for path in artifacts},
+                '.gitignore': 'memory/.sprint-autopilot-baseline.json*\nmemory/.aidp/\n.claude/\nbin/\n',
+            }
+            for path, content in originals.items():
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding='utf-8')
+            (root / '.claude').mkdir()
+            def git(*args):
+                return subprocess.run([real_git, *args], cwd=root, capture_output=True, text=True, check=True)
+            git('init', '-q')
+            git('config', 'user.name', 'test')
+            git('config', 'user.email', 'test@example.org')
+            git('add', '.')
+            git('commit', '-qm', 'baseline')
+            for path in artifacts:
+                (root / path).write_text('released artifact\n', encoding='utf-8')
+            (root / artifacts[1]).unlink()
+            for path in ('code/frontend/app/src/main.js', 'frontend/unrelated.js'):
+                (root / path).write_text('unrelated dirty business\n', encoding='utf-8')
+            (root / 'code/backend/app/unrelated.py').write_text('untracked business\n', encoding='utf-8')
+            if scene == 'dirty-version-file':
+                (root / version_files[0]).write_text('{"name":"app","version":"0.1.0","private":true}\n')
+            if scene == 'unrelated-staged':
+                git('add', 'code/frontend/app/src/main.js')
+            subprocess.run([*be, 'set', 'release_artifact_paths', json.dumps(artifacts),
+                            'phase_beta_done_at', '@now'], cwd=root, check=True,
+                           capture_output=True, text=True)
+            env = {**os.environ, 'AIDP_AGENT': 'claude'}
+            applied = subprocess.run(['bash', '-c', apply_block], cwd=root, env=env,
+                                     capture_output=True, text=True, timeout=20)
+            check(f'{scene}: 真实版本修正执行成功', applied.returncode == 0)
+            fix = subprocess.run([*be, 'get', 'release_version_fix', '--default', '{}'], cwd=root,
+                                 capture_output=True, text=True, check=True)
+            saved = json.loads(fix.stdout)
+            check(f'{scene}: 修正路径跨围栏落盘', set(version_files) <= set((saved or {}).get('files', {})))
+            if scene == 'clean':
+                replay = subprocess.run(['bash', '-c', apply_block], cwd=root, env=env,
+                                        capture_output=True, text=True, timeout=20)
+                replay_fix = subprocess.run([*be, 'get', 'release_version_fix'], cwd=root,
+                                            capture_output=True, text=True, check=True)
+                check('修正围栏重入无新修正时保留原实际写集',
+                      replay.returncode == 0 and json.loads(replay_fix.stdout) == saved)
+            if scene == 'changed-after-fix':
+                (root / version_files[0]).write_text('{"name":"app","version":"0.2.0","private":true}\n')
+            if scene in ('add-failure', 'post-commit-residue'):
+                shim = root / 'bin'
+                shim.mkdir()
+                code = (f'#!{sys.executable}\nimport subprocess, sys\nfrom pathlib import Path\n'
+                        f'args = sys.argv[1:]\nscene = {scene!r}\n'
+                        "if scene == 'add-failure' and 'add' in args: raise SystemExit(39)\n"
+                        f'rc = subprocess.call([{real_git!r}, *args])\n'
+                        "if scene == 'post-commit-residue' and 'commit' in args and rc == 0:\n"
+                        f' Path({version_files[0]!r}).write_text(\'{{"version":"0.9.0"}}\\n\')\n'
+                        'raise SystemExit(rc)\n')
+                (shim / 'git').write_text(code)
+                (shim / 'git').chmod(0o755)
+                env['PATH'] = f'{shim}:{env["PATH"]}'
+            # 仅隔离无关的产物欠账扫描；版本/记忆/baseline 与所有 Git 操作均是真实 CLI。
+            prefix = ('python3() { case "$1" in */release_debt.py) return 0;; '
+                      f'*) command "{sys.executable}" "$@";; esac; }}\n')
+            committed = subprocess.run(['bash', '-c', prefix + commit_block], cwd=root, env=env,
+                                       capture_output=True, text=True, timeout=20)
+            if scene == 'clean':
+                if committed.returncode:
+                    print(committed.stdout + committed.stderr)
+                check('CLAUDE-only 发布围栏成功，不依赖不存在的 AGENTS.md', committed.returncode == 0)
+                check('code/ 中 package/pom 新版号均进入提交', all(
+                    '0.2.0' in git('show', f'HEAD:{path}').stdout for path in version_files))
+                check('真实记忆与带空格文档进入提交，删除产物同步入库',
+                      all(git('show', f'HEAD:{path}').stdout == 'released artifact\n'
+                          for path in (artifacts[0], artifacts[2], 'CLAUDE.md'))
+                      and artifacts[1] not in git('ls-tree', '-r', '--name-only', 'HEAD').stdout.splitlines())
+                check('无关 dirty/untracked 业务文件既未提交也未暂存',
+                      git('show', 'HEAD:code/frontend/app/src/main.js').stdout == 'old business\n'
+                      and git('show', 'HEAD:frontend/unrelated.js').stdout == 'old frontend\n'
+                      and not git('diff', '--cached', '--name-only').stdout
+                      and 'code/backend/app/unrelated.py' in git('ls-files', '--others', '--exclude-standard').stdout)
+                check('提交后全部发布写集无残留', not git('status', '--porcelain', '--', *version_files, *artifacts).stdout)
+            else:
+                reason = {'dirty-version-file': '原有混杂', 'changed-after-fix': '版本修正后又有未核对变更',
+                          'unrelated-staged': '暂存区含写集外修改',
+                          'add-failure': '39', 'post-commit-residue': '发布写集未全部入库'}[scene]
+                check(f'{scene}: fail-closed 且确因预期原因阻断',
+                      committed.returncode != 0 and reason in committed.stdout + committed.stderr)
+                if scene == 'post-commit-residue':
+                    check('提交后残留是在真实发布提交完成后检出', git('rev-list', '--count', 'HEAD').stdout.strip() == '2')
+                if scene != 'post-commit-residue':
+                    check(f'{scene}: 未创建夹带或不完整发布提交', git('rev-list', '--count', 'HEAD').stdout.strip() == '1')
+    for path in (release6, release7):
+        check(f'{path.name}: 分片小于 20480 字节', path.stat().st_size < 20480)
+
+
 def main():
+    test_release_actual_write_set()
     test_release_cicd_degraded_probe()
     test_increment_presence()
     test_readonly_collection_declared()

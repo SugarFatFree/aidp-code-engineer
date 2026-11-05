@@ -11,7 +11,7 @@
 
 后续 Step 1.6 / 1.6.5 / 1.7 / 1.7.5（读产物文档做静态核验）+ SKILL 脚本复核**全部并入一个 general-purpose 子 Agent 统一执行**，主对话不读产物文档正文 / 不读脚本 stdout，只据子 Agent 回传的紧凑结果决定是否暂停 Step 2~6。
 
-**派单方式**：`Agent` 派 general-purpose 子 Agent（**不用 Explore**，理据见 `rationale.md`），prompt 传：Step 1.6~1.7.5 检查清单原文 + 下方「SKILL 脚本复核」与「需额外入参的补跑项」两段 + `HAS_OPEN_API`/`HAS_THIRD_PARTY_DEP` 信号 + 事实清单路径。子 Agent 一次读完产物、跑完全部回检与脚本、就地写各「⚠️ 告警」表，**只回传紧凑结果**：① 合并 Pass/Fail 表（各项 + 各脚本退出码）② 阻塞项（base 不匹配 / 消费者级联 P0 / 对外接口免登录违规 / 脚本判不通过，含 file:line + 建议）③ 自动归一化/补写清单。
+**派单方式**：`Agent` 派 general-purpose 子 Agent（**不用 Explore**，理据见 `rationale.md`），prompt 传：Step 1.6~1.7.5 检查清单原文 + 下方「SKILL 脚本复核」与「需额外入参的补跑项」两段 + `HAS_OPEN_API`/`HAS_THIRD_PARTY_DEP` 信号 + 事实清单路径 + 本轮实际设计/接口文件清单（含合册章节、显式契约卡路径）。子 Agent 一次读完、跑全部回检，只回传紧凑结果：① Pass/Fail 与退出码 ② 含 file:line 的阻塞项 ③ 归一化/补写清单。**M docs 独占写集时回检 Agent 只读**，告警表和修订交原 docs Agent；普通串行路径需代写时也先交接具体文档白名单，不能同时写整份文件。
 
 - 子 Agent 回传任一**阻塞项** → 按各步原规则**暂停后续 Step 2~6**，等用户裁决；无阻塞项 → 继续。
 - 子 Agent 失败（超时/异常/返回空）→ 命令端内联兜底跑同一组清单 + 脚本（标注"⚠️ 子 Agent 失效兜底"），禁止静默放过。
@@ -50,7 +50,7 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 
 ### Step 1.6：★ 路径事实回检
 
-skill 输出落盘后，命令端在 `docs/design/detail/{version}/*接口设计.md`（glob 兼容 `03_接口设计.md` 与历史裸名；及拆分后的同主题分册）里**抽取所有 URL 前缀/端口/proxy**，与 Step 0.6.5 的「事实清单」逐条比对。
+skill 输出落盘后，命令端从本轮返回的 `interface_documents` 解析真实接口章节（包含详细设计合册）；无该清单的存量调用才用 `docs/design/detail/{version}/*接口设计.md` 兼容 glob。M 合册时**另显式读取契约卡中的接口章节**，抽取所有 URL 前缀/端口/proxy，与 Step 0.6.5「事实清单」逐条比对。不能因不存在独立 `03_接口设计.md` 判无接口；链接目标必须实际读到，正式文件发现仍排除 `_*`，卡只通过显式输入消费。
 
 **核心：把每个出现的路径拆成 `<base> + <endpoint 后缀>`**（base = context-path + API 版本前缀，由事实清单定义；endpoint 后缀 = 业务路径，由本次设计定义），分别校验：
 

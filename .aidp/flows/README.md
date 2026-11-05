@@ -66,7 +66,7 @@
 | `version` | 规划 planning×8 + 发布 release×9〔含二次切分的 7b / 7c〕，**17 片** |
 | `sprint-aiauto-test` | Phase 0/1/2/3，**18 片**（phase-0×9〔含二次切分的 0-6b、可选能力的 0-8〕/ phase-1 / phase-2×2 / phase-3×6〔含二次切分的 3-3b〕）|
 | `sprint-design` | 5 大 Step 段，**9 片** |
-| `sprint-dev` | Phase 1 开发×2 + 回写×3，**5 片** |
+| `sprint-dev` | 累进契约与并行汇合 `incremental-contract.md` + Phase 1 开发×2 + 回写×3，**6 片** |
 | `sprint-selftest` | Step 1×2 / Step 3×2，**4 片** |
 | `sprint-batch` | `step-6` + `step-6b`（浏览器测试链路），**2 片** |
 | `sprint-bugfix` | `mode-b` + `mode-b2`（独立修复路径），**2 片** |

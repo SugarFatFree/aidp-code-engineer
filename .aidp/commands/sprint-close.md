@@ -13,7 +13,7 @@
 
 ## 前置流程
 
-**VCS 能力分流**：`{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 给出 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 给出 `{user}`。`vcs_mode=none` 时 Step 1–5 本地验收结论、走查、Sprint 归档与 memory 更新仍可完成；缺 Git 差异时使用 `activeContext.md` 的涉及文件清单作为走查范围。Git-only commit/push/发布交接标 `unsupported:vcs-disabled`，不是 passed；Sprint 本地归档完成不等于版本发布完成，也不得提示已推送或已发布。Git 模式沿用原流程。
+**VCS 能力分流**：`{{AIDP_HOME}}/scripts/vcs.py` 的 `detect_mode(Path.cwd())` 给出 `vcs_mode=git|none`，`developer_identity(Path.cwd())` 给出 `{user}`。`vcs_mode=none` 时 Step 1–5 本地验收结论、走查、Sprint 归档与 memory 更新仍可完成；缺 Git 差异时仍用测试账本的内容树快照核验差量，`activeContext.md` 文件清单仅作辅助，不能证明零变化。Git-only commit/push/发布交接标 `unsupported:vcs-disabled`，不是 passed；Sprint 本地归档完成不等于版本发布完成，也不得提示已推送或已发布。Git 模式沿用原流程。
 
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
@@ -48,7 +48,7 @@
 >
 > | 序 | 数据源 | 推导 |
 > |---|---|---|
-> | ① | `docs/testing/{version}/sprint-{NNN}/*-test-report.md` 或本 Sprint 落盘的 code-verification-loop 静态验证结果 | 全通过 → ✅；有失败 → ⚠️ |
+> | ① | `docs/testing/{version}/sprint-{NNN}/*-test-report.md` 的调用层最终结论 + 原始 CVL + 差量复核 + full 测试证据 | 全部闭环 → ✅；有失败/未核验 → ⚠️，不得仅看原首轮结论或单条测试 PASS |
 > | ② | 本 Sprint「问题汇总清单」/ `docs/bugfix/{version}/` 未闭环缺陷 | 有未闭环 → ⚠️（附缺陷编号） |
 > | ③ | ①②均无数据 | 返回 `incomplete-sprint`，保留 activeContext，不执行 Step 2–5、不写关闭标记或归档 |
 >
@@ -63,42 +63,25 @@
 - Sprint 回顾（经验教训）+ 遗留事项 → 随 activeContext 归档进 `memory/{version}/{user}/sprints/sprint-{NNN}.md`（Step 3）
 - 手动分步流（无 autopilot、无 AI执行报告）下，progress.md + Sprint 归档即本 Sprint 验收结论的单一记录
 
-## Step 2.5：★ Reviewer Agent 代码走查
+## Step 2.5：验收后差量与证据核对
 
-读取 `{{AIDP_HOME}}/agents/reviewer.md` 获取 Reviewer Agent 角色定义，对本 Sprint 的代码与设计进行最终走查：
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 与本轮契约卡（新协议路径 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md`），消费 `/sprint-test` 的原始完整 CVL、修复差量证据及最终验收结论。**不重复完整审查**，不因进入 close 再跑全 Sprint CVL/reviewer。
 
-**走查范围**：
-- 本 Sprint 涉及的源代码（参考 `memory/{version}/{user}/activeContext.md` 的「本次涉及文件」清单）
-- 对照 `docs/design/detail/{version}/` 设计文档目录下全部分册检查实现一致性
-- 对照 `docs/architecture/` 检查架构约束符合性
-- 对照 `memory/systemPatterns.md` 检查代码规范符合性
+`TEST_ENV_ID` 使用验收时同一实际环境值；审查名称与验收完全一致。此门必须在任何关闭标记、归档或上下文重置之前执行：
 
-**走查维度**：详见 `{{AIDP_HOME}}/agents/reviewer.md` 流程 A（reviewer Agent 为单一信源，命令端不复述具体维度清单）
-
-**输出**（按 `06_版本与用户目录约定.md` §2.2.2 命名）：
-- 个人级走查报告：`docs/reports/{version}/review-{user}.md`（若已存在则在文末追加 Sprint 章节）
-- 总体结论：✅ 建议合并 / ⚠️ 小问题修复后合并 / ❌ 需要重大修改
-- 若发现新 bug → 追加到 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`
-
-**跳过条件**：
-- 本 Sprint 仅为文档变更、无代码改动
-- 或本项目明确禁用走查环节（在 `memory/projectBrief.md` 中标注）
-
-### Step 2.5.1：★ 实现偏离设计门（机器前置，先跑再走查）
-
+<!-- close-review-delta -->
 ```bash
-python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version {version}   # 0 通过 / 1 Important（或 fail-closed）/ 2 用法错
+python3 {{AIDP_HOME}}/scripts/test_ledger.py review-delta --root . \
+  --name "{version}-sprint-{NNN}" --env-id "$TEST_ENV_ID"
 ```
 
-把详细设计里**点名过的字段与常量**逐个到源码里找落点。它专抓一类在本方代码里
-**完全看不出问题**的偏离——编译过、类型检查过、界面完整、不报错，但换了个数据来源，
-上线后整个功能的每一行都是错值（典型形态：设计写「取 `channel=X` 渠道订单的
-`userId`」，实现做成「用 `createBy` 反推」，直到上游反馈才发现）。
+- 非零退出，或**无可信 review baseline**（缺记录/报告为空或变化/环境不一致/无法取树/任一必需 full 运行已被失败、未完成或新运行取代）→ 返回 `acceptance-required`，**退回 `/sprint-test` 验收**；保留 activeContext，不关闭。不能按“仅文档”“项目禁用走查”“没有 Git”静默跳过，也不能自动 record-review 制造基线。测试 PASS 本身不证明真实质量审查已完成。
+- 成功且 `added/changed/removed` 均为空、`code_changed=false` → **零 diff**，只引用既有报告与 run_id，直接继续归档，不再派 reviewer、不重复设计锚点机器门。
+- 有差异 → 以三份路径列表为实际范围；`code_changed` 是账本总输入树变化信号，包含显式绑定的契约/docs，不能据它断言“只有代码变化”。读取 `{{AIDP_HOME}}/agents/reviewer.md`，只审**验收后的 diff 及受影响证据/调用点**，结论追加到 `docs/reports/{version}/review-{user}.md`，不改写已绑定的原始测试报告。
+- 差异涉及契约/需求/接口/DDL → 先回原实现/docs Agent 修订契约与四族义务，重过受影响汇合/破坏性安全门。确定错误当轮原实现者修复、原子登记 BUG、定向测试与 reviewer 差量复核；测试完整性由 `/sprint-test {NNN} --resume-acceptance [--from-batch] [--unattended]` 集中 full 收敛，不能在 close 放过失效测试证据。无新代码仅证据变化也须写清差异处置依据，不能把文件存在等同已核验。
+- 设计锚点受差异影响时，按 CVL 原判据在账本中执行 `python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version {version}`（scope=targeted）；保留 Important 的改代码/改设计并级联/有理由豁免三选一。已经覆盖且输入未变则复用，不能每次 close 全量重跑。缺失的必需设计证据仍退回验收，不把脚本 SKIP 当通过。
 
-- **Important、不是 Critical**：找不到落点不等于错，可能是设计过时。要的是**给出交代**：
-  ① 改代码 ② 改设计（并按约定 22 级联）③ 在设计那一行写 `design-anchor-ignore: <理由>`（理由必填）。
-- 结果**并入下方 Reviewer 走查报告**（`agents/reviewer.md` 模板的「必须修改 / 建议修改」段），不另出文件。
-- 无设计文档 / 无源码 → `[SKIP]` exit 0，不阻塞。
+**归档写入不抹旧证据**：后续 docs/memory 归档、义务台账、ADR 更新与原验收报告分开。账本默认忽略 docs/memory，真实契约、设计和规则输入已由验收 `--input` 显式绑定；归档后若修改了这些输入，再检查差量并复核关联影响，完成前不重置 activeContext。不能为追求零 diff 覆盖旧 baseline 或清除账本。约定 9、`cascade_obligation`、版本/破坏性/部署授权继续适用，close 不获得部署或自动升级授权。
 
 ## Step 3：归档 activeContext
 

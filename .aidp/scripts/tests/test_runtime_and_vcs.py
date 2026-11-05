@@ -382,6 +382,123 @@ class TestChainSourceOwnershipTest(unittest.TestCase):
         self.assertIn("共享工作树", section)
 
 
+class HistoricalVersionFlowTest(unittest.TestCase):
+    """执行 flow 的实际 Bash 围栏，防止旧版测试/repair 读入未来版本。"""
+
+    def _fence(self, relative, marker):
+        text = (REPO / ".aidp/flows" / relative).read_text(encoding="utf-8")
+        return next(block for block in re.findall(r"^```bash\n(.*?)^```", text, re.S | re.M)
+                    if marker in block)
+
+    def _file(self, root, version, name="02_回归用例.md", content="[回归]\n"):
+        relative = Path("docs/testing") / version / "研发自测" / name
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return relative.as_posix()
+
+    def _regressions(self, root, target):
+        block = self._fence("sprint-aiauto-test/phase-2-1.md", "REGRESSION_CASES=$(")
+        snippet = "REGRESSION_CASES=$(" + block.split("REGRESSION_CASES=$(", 1)[1]
+        snippet = snippet.split('[ -n "$REGRESSION_CASES" ] && echo', 1)[0]
+        result = subprocess.run(
+            ["bash", "-e", "-c", snippet + '\nprintf "%s\\n" "$REGRESSION_CASES"'],
+            cwd=root, env=dict(os.environ, TARGET_VERSION=target, LC_ALL="C"),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines() if result.stdout.strip() else []
+
+    def _inherit_environment(self, root, target):
+        block = self._fence("version/planning-3.md", 'DST="docs/testing/{version}')
+        result = subprocess.run(["bash", "-e", "-c", block.replace("{version}", target)],
+                                cwd=root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return root / "docs/testing" / target / "研发自测/01_测试环境与账号.md"
+
+    def test_regressions_only_include_strictly_older_numeric_versions(self):
+        versions = ("V0.9", "V1.0", "V1.0.0", "V1.1", "V1.9", "V1.10", "V1.11", "V2.0", "V10.0")
+        cases = (
+            ("V0.8", ()),
+            ("V1.0", ("V0.9",)),
+            ("V1.0.0", ("V0.9",)),
+            ("V1.10", ("V0.9", "V1.0", "V1.0.0", "V1.1", "V1.9")),
+            ("V2.0", versions[:7]),
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            paths = {v: self._file(root, v) for v in versions}
+            for target, expected in cases:
+                with self.subTest(target=target):
+                    self.assertEqual(self._regressions(root, target), sorted(paths[v] for v in expected))
+
+    def test_regressions_ignore_non_version_directories_and_non_case_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for version in ("archive", "Vbackup", "V0.8-backup", "V0.8.0.1", "V01.0"):
+                self._file(root, version)
+            expected = self._file(root, "V0.9", "02_保留.md")
+            for name in ("_开发期增量.md", "00_索引.md", "01_研发自测方案.md",
+                         "01_测试环境与账号.md", "README.md"):
+                self._file(root, "V0.9", name)
+            self._file(root, "V0.9", "03_普通用例.md", "普通用例\n")
+            self.assertEqual(self._regressions(root, "V1.0"), [expected])
+
+    def test_regression_discovery_preserves_same_name_and_distinct_tc_boundaries(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            first = self._file(root, "V0.8", content="[回归]\nTC-001: 输入为空\n")
+            second = self._file(root, "V0.9", content="关联缺陷：BUG-1\nTC-001: 超过长度上限\n")
+            nested = self._file(root, "V0.9", "嵌套/02_回归用例.md", "回归用例\nTC-002: 恰好最大长度\n")
+            paths = self._regressions(root, "V1.0")
+            self.assertEqual(paths, sorted((first, second, nested)))
+            block = self._fence("sprint-aiauto-test/phase-2-1.md", "SUPPLEMENT_UNIQUE=")
+            dedup = block.split("# D. 去重", 1)[1].split("# E.", 1)[0]
+            dedup = dedup[dedup.index("SUPPLEMENT_UNIQUE="):]
+            result = subprocess.run(
+                ["bash", "-e", "-c", dedup + '\nprintf "%s\\n" "$SUPPLEMENT_UNIQUE"'],
+                cwd=root, env=dict(os.environ, PRIMARY_CASES=first,
+                                   SUPPLEMENT_CASES="\n".join(paths + paths)),
+                text=True, capture_output=True, check=True,
+            )
+            self.assertEqual(result.stdout.splitlines(), sorted((second, nested)))
+
+    def test_regressions_without_testing_directory_are_empty(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(self._regressions(Path(td), "V1.0"), [])
+
+    def test_environment_inherits_nearest_strictly_older_version(self):
+        versions = ("V0.9", "V1.0", "V1.0.0", "V1.1", "V1.9", "V1.10", "V1.11", "V2.0", "V10.0")
+        for target, expected in (("V1.0", "V0.9"), ("V1.0.0", "V0.9"),
+                                 ("V1.10", "V1.9"), ("V2.0", "V1.11")):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                for version in versions:
+                    if version != target:
+                        self._file(root, version, "01_测试环境与账号.md", version + "\n")
+                # 最近的更低版本没有配置文件时仍须回退到最近有文件的历史版本。
+                (root / "docs/testing" / (expected + ".1") / "研发自测").mkdir(parents=True, exist_ok=True)
+                destination = self._inherit_environment(root, target)
+                self.assertEqual(destination.read_text(encoding="utf-8"), expected + "\n")
+
+    def test_environment_without_valid_history_does_not_create_draft(self):
+        for versions in ((), ("V1.0.0", "V1.1", "V10.0"),
+                         ("archive", "Vbackup", "V0.8-backup", "V0.8.0.1", "V01.0")):
+            with self.subTest(versions=versions), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                for version in versions:
+                    self._file(root, version, "01_测试环境与账号.md", version + "\n")
+                self.assertFalse(self._inherit_environment(root, "V1.0").exists())
+
+    def test_environment_preserves_existing_target(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for version in ("V0.9", "V1.0", "V1.1"):
+                self._file(root, version, "01_测试环境与账号.md", version + "\n")
+            destination = self._inherit_environment(root, "V1.0")
+            self.assertEqual(destination.read_text(encoding="utf-8"), "V1.0\n")
+
+
 class DesignFactRenameTest(unittest.TestCase):
     def test_new_fact_file_renames_in_git_and_non_git_projects(self):
         command = (SCRIPTS.parent / "commands/sprint-design.md").read_text(encoding="utf-8")

@@ -343,12 +343,13 @@ def test_config_consolidation():
           repo_keys == tpl_keys)
     # ★ 键集相等还不够：注释是写给下游人看的配置说明，两份各自演进后 ensure() 建出来的那份
     #   讲的是旧口径（曾漏掉 cicd 专属参数位置、把模板仓库说成「没有 scaffold 段」、写死 `.aidp/`）。
-    #   口径：除 project 段的两个值外逐字相等（运行根占位按本机渲染）。
+    #   项目名称与维护者已选分支策略不下发，其余正文逐字相等（运行根按本机渲染）。
     from aidp_runtime import runtime_text as _rt
     _want = (REPO / "memory/aidp-config.yaml").read_text(encoding="utf-8")
     _want = re.sub(r"(?m)^(  name(?:_cn)?): .*$", r"\1: null", _want, count=2)
+    _want = re.sub(r"(?m)^(  branch_policy): .*$", r"\1: null", _want, count=1)
     _want = _rt(_want.replace("{{AIDP_HOME}}", "__AIDP_HOME__"), str(REPO / ".aidp/scripts/aidp_config.py"))
-    check("★ 配置骨架正文与 memory/aidp-config.yaml 逐字一致（仅 project 两值置 null）", cfg.TEMPLATE == _want)
+    check("★ 配置骨架正文一致且不传播项目名称或维护者分支选择", cfg.TEMPLATE == _want)
     # ★ 读方拿得到键才算配置项存在：scheduler_config 不返回 tick_max_seconds 时，
     #   挂死判据恒取 0 → max(threshold, 0, 3600) 恒等于 3600，用户配的 7200 静默失效。
     for _k in ("tick_max_seconds",):
@@ -364,6 +365,84 @@ def test_config_consolidation():
                              capture_output=True).returncode == 0)
     else:
         skip("版本戳访问器 --self-check", "脚手架 skill 的 scaffold_marker.py 未就位")
+
+
+def test_branch_policy_config():
+    """首次选择状态不靠默认值伪造；查询只读，持久化沿用项目配置。"""
+    print("\n[F8] 开发分支偏好与首次选择")
+    cfg = _load("branch_cfg", str(REPO / ".aidp/scripts/aidp_config.py"))
+    script = REPO / ".aidp/scripts/aidp_config.py"
+
+    def cli(root, *args):
+        return subprocess.run([sys.executable, "-B", str(script), "--root", str(root), *args],
+                              capture_output=True, text=True)
+
+    def snapshot(root):
+        return {p.relative_to(root).as_posix(): p.read_bytes()
+                for p in root.rglob("*") if p.is_file()}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        result = cli(root, "branch-policy")
+        data = json.loads(result.stdout)
+        check("无 Git 查询不适用且不创建配置或仓库", result.returncode == 0 and data == {
+            "vcs_mode": "none", "policy": None, "needs_choice": False, "status": "not-applicable"}
+            and list(root.iterdir()) == [])
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+        before = snapshot(root)
+        result = cli(root, "branch-policy")
+        check("Git 未选择返回 needs-choice/3，且查询零写入", result.returncode == 3
+              and json.loads(result.stdout)["needs_choice"] is True and snapshot(root) == before)
+        cfg.ensure(root)
+        check("配置骨架为 null，不替新项目作选择", cfg.read_branch_policy(root) is None)
+        for policy in ("current", "new"):
+            result = cli(root, "set", "development.branch_policy", policy)
+            before = snapshot(root)
+            query = cli(root, "branch-policy")
+            check(f"{policy} 保存后沿用，查询不改树", result.returncode == 0 and query.returncode == 0
+                  and json.loads(query.stdout) == {"vcs_mode": "git", "policy": policy,
+                                                   "needs_choice": False, "status": "ready"}
+                  and cli(root, "get", "development.branch_policy").stdout.strip() == policy
+                  and snapshot(root) == before)
+        before = snapshot(root)
+        result = cli(root, "set", "development.branch_policy", "feature")
+        check("非法写入返回 2 且保留配置", result.returncode == 2 and snapshot(root) == before)
+        result = cli(root, "set", "development.branch_policy", "null")
+        check("显式清除恢复待选择状态", result.returncode == 0
+              and cli(root, "branch-policy").returncode == 3)
+        path = root / "memory/aidp-config.yaml"
+        for bad in ("feature", "false", "[]"):
+            path.write_text("development:\n  branch_policy: " + bad + "\n", encoding="utf-8")
+            before = snapshot(root)
+            query = cli(root, "branch-policy")
+            check(f"非法存量值 {bad} 返回 invalid/2，不降级为 current", query.returncode == 2
+                  and json.loads(query.stdout)["status"] == "invalid" and snapshot(root) == before)
+        path.write_text("development: broken\n", encoding="utf-8")
+        check("错误配置段类型不能伪装成未选择", cli(root, "branch-policy").returncode == 2)
+
+
+def test_inline_branch_policy_write():
+    """内联配置只更新偏好，不丢同段额外键、嵌套值与行尾注释。"""
+    cfg = _load("inline_branch_cfg", str(REPO / ".aidp/scripts/aidp_config.py"))
+    cases = (
+        ("development: {branch_policy: current, extra: keep} # keep comment\n",
+         "development: {branch_policy: new, extra: keep} # keep comment\n"),
+        ('development: {extra: "a,b", "branch_policy": current, nested: {x: keep}} # note\n',
+         'development: {extra: "a,b", "branch_policy": new, nested: {x: keep}} # note\n'),
+        ("development: {extra: keep} # note\n",
+         "development: {extra: keep, branch_policy: new} # note\n"),
+        ("development: {} # note\n", "development: {branch_policy: new} # note\n"),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "memory").mkdir()
+        path = root / "memory/aidp-config.yaml"
+        for source, expected in cases:
+            path.write_text(source, encoding="utf-8")
+            cfg.set_scalar(root, "development.branch_policy", "new")
+            check("内联偏好保存且保留其他字节：" + source.strip(),
+                  path.read_text(encoding="utf-8") == expected
+                  and cfg.read_branch_policy(root) == "new")
 
 
 def test_runtime_dir_bootstrap():
@@ -395,6 +474,8 @@ def main():
     test_lock_path_single_source()
     test_runtime_artifact_paths()
     test_config_consolidation()
+    test_branch_policy_config()
+    test_inline_branch_policy_write()
     test_runtime_dir_bootstrap()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed / {_skipped} skipped ══")
     return 1 if _failed else 0

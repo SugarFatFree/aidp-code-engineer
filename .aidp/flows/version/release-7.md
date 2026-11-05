@@ -7,11 +7,11 @@
 <!-- BODY-BELOW -->
 ### Step 3.4：打 Git 标签 + 创建版本分支并自动提交推送（自动 push）
 
-> ★ `--no-tag`（仅 autopilot 准发布）：跳过 3.3.11 / 3.4.2；仍执行 3.4.1 提交（含终态落账门）、3.4.3 推送、3.4.4 失败处置。3.3 版本历史与 3.5 均标「🟡 已准发布（未打 tag）」，3.6 出准发布报告并说明可正式 `/version {version}` 补打。
+> `--no-tag`（仅 autopilot 准发布）：跳过 3.3.11/3.4.2，其余提交、终态门、推送和失败处置照常。3.3/3.5 标「已准发布（未打 tag）」，3.6 报告说明可正式 `/version {version}` 补打。
 
 #### Step 3.4.1：提交本轮发布产物
 
-发布流程会改动 `memory/{version}/{user}/progress.md`、`AGENTS.md`、activeContext / sprints/ 等；工作区有未提交变更时先打一个发布提交：
+**登记实际产物**：先执行下方终态门，再核对本轮文档、版本记忆及 `agent_env.py memory-file` 返回的真实项目记忆，经 `baseline_edit.py --version {version} set release_artifact_paths '<路径JSON数组>'` 登记具体文件（含新增、删除、全量 sidecar、欠账）。原有修改须先确认归属，不能以目录或全部 dirty 代替。下方合并 3.3.13 的版本修正写集逐文件暂存；重用清单前核对本轮内容。
 
 ```bash
 # ★ 自取版本号（见 rationale）
@@ -19,8 +19,8 @@ VERSION="{version}"; case "$VERSION" in "{version}"|"") VERSION=$(python3 {{AIDP
 [ -n "$VERSION" ] || { echo "⛔ 取不到版本号"; exit 1; }
 BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 BUILD=$($BE --version "$VERSION" get current_build --default "")
-# push 基准在发布 commit 前保存：取实际推送目标远端 HEAD，覆盖已经提交但尚未推送的代码。
-# 远端不可达 / 对象本地不存在 / 首推时均保持空值，分类器按错误保守监听；不得拿提交后的 HEAD 兜底。
+set -e
+# commit 前保存实际远端 HEAD，含已提交未推代码；远端/对象不可用或首推留空，保守监听，禁用提交后 HEAD。
 PUSH_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || true)
 PUSH_REMOTE=origin; PUSH_REF="refs/heads/$PUSH_BRANCH"   # 与 3.4.3 的实际 push 目标相同
 REMOTE_LINE=$(git ls-remote --refs "$PUSH_REMOTE" "$PUSH_REF" 2>/dev/null || true)
@@ -30,50 +30,64 @@ $BE --version "$VERSION" set release_push_base_ref "$BASE_REF" || exit 1
 if [ -n "$BUILD" ]; then
   $BE --version "$VERSION" --build "$BUILD" set push_base_ref "$BASE_REF" || exit 1
 fi
-# ★ 终态落账门：关键产物缺失且台账无对应条目 = 静默跳过 → 当场补登记（随本提交入库）
+# 终态门：关键产物缺失且无台账时补登记，随发布提交入库。
 NO_TAG_FLAG=""   # ← 带 --no-tag 时执行体就地改为 --no-tag
 python3 {{AIDP_HOME}}/scripts/release_debt.py gate --version "$VERSION" $NO_TAG_FLAG --register-missing
-# 检查工作区
-if [ -n "$(git status --porcelain)" ]; then
-  git add memory/{version}/ AGENTS.md docs/reports/{version}/ 版本更新日志.md README.md 2>/dev/null || true
-  git add plans/ dev/ tests/ release/ frontend/ backend/ packages/ 2>/dev/null || true
-  git add docs/requirements/requirements-*.md 2>/dev/null || true
-  git add docs/deployment/{version}/ 2>/dev/null || true
-  git add docs/deployment/tools/ 2>/dev/null || true
-  git add docs/reports/{version}/ 2>/dev/null || true
-  # ★★ 四族规划主文档 + 全量设计 + 审计/欠账 ⛔ 绝不能省：3.3.9.5/3.3.10/3.3.11 只改工作区，落库全靠本步。
-  git add docs/requirements/{version}/ docs/design/detail/{version}/ docs/design/detail/全量/ 2>/dev/null || true
-  git add docs/plans/{version}/ docs/testing/{version}/ docs/audit/{version}/ 2>/dev/null || true
-  git add docs/references/{version}/ 2>/dev/null || true
-  git commit -m "release({version}): {milestone}"
-fi
-# ★ 提交后断言：发布产物必须全部入库（fail-closed）
-if git -c core.quotepath=false status --porcelain docs/ | grep -q .; then
-  echo "⛔ 发布产物未入库，`docs/` 仍有未提交改动："
-  git -c core.quotepath=false status --porcelain docs/
-  echo "   → 补 git add 后 `git commit --amend --no-edit`，⛔ 不得带着残余打 tag"
-  exit 1
-fi
+# 发布写集：只提交明确登记的文件；未知/混杂/残留均阻断，不能 || true 吞错。
+python3 - "$VERSION" "{{AIDP_HOME}}" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+version, home = sys.argv[1:]
+be = [sys.executable, home + '/scripts/baseline_edit.py', '--version', version]
+def output(args):
+    return subprocess.check_output(args)
+def read(key, default='null'):
+    return json.loads(output([*be, 'get', key, '--default', default]))
+def git(*args):
+    return output(['git', '--literal-pathspecs', *args])
+def names(raw):
+    return {os.fsdecode(p) for p in raw.split(b'\0') if p}
+artifacts = read('release_artifact_paths')
+fix = read('release_version_fix', '{"files":{},"blocked":[]}')
+if (not isinstance(artifacts, list) or any(not isinstance(p, str) or not p for p in artifacts)
+        or not isinstance(fix, dict) or not isinstance(fix.get('files'), dict)
+        or fix.get('blocked')):
+    raise SystemExit('发布写集缺失或含原有混杂修改，先核对归属并重新登记')
+paths = sorted(set(artifacts) | set(fix['files']))
+memory = json.loads(output([sys.executable, home + '/scripts/agent_env.py', 'memory-file']))['memory_file']
+for required in (memory, 'docs/audit/' + version + '/发布欠账.md'):
+    if git('status', '--porcelain', '--', required) and required not in paths:
+        raise SystemExit('发布记忆或终态欠账尚未核对登记：' + required)
+for path in paths:
+    p = Path(path)
+    if p.is_absolute() or '..' in p.parts or '.git' in p.parts or p.is_dir():
+        raise SystemExit('发布写集必须逐文件指定仓内路径：' + path)
+    if not p.exists():
+        git('ls-files', '--error-unmatch', '--', path)  # 允许已跟踪文件的删除，不忽略未知路径。
+for path, expected in fix['files'].items():
+    if git('hash-object', '--', path).decode().strip() != expected:
+        raise SystemExit('版本修正后又有未核对变更：' + path)
+if names(git('diff', '--cached', '--name-only', '-z')) - set(paths):
+    raise SystemExit('暂存区含写集外修改；先保留并分离，禁止夹带发布')
+subprocess.run([*be, 'set', 'release_write_paths', json.dumps(paths)], check=True)
+for path in paths:
+    git('add', '--', path)
+if git('diff', '--cached', '--name-only', '-z'):
+    subprocess.run(['git', 'commit', '-m', 'release(' + version + '): {milestone}'], check=True)
+# 全写集断言覆盖 code/、真实记忆及文档，不依赖顶层目录布局。
+for path in paths:
+    if git('status', '--porcelain', '--untracked-files=all', '--', path):
+        raise SystemExit('发布写集未全部入库，禁止打 tag：' + path)
+PY
 ```
 
-> 🔗 **约定 24 提交前门禁（本路径同样适用）**：提交前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit。
+> **约定 24**：提交前运行 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet`；rc 3/4 不禁 commit，台账异常修正复核、CICD 欠账补监听，实际级联仅由阶段入口或显式要求触发。
 
 #### Step 3.4.2：打 tag（tag 命名用小写 v SemVer 风格）
 
-**tag 命名约定（强制）**：
+**命名**：新 tag 统一小写 `v` + SemVer（`V0.1.0` → `v0.1.0`）；历史 `V*` / `release-V*` 不改，前版识别仍覆盖三种风格。
 
-- 默认 tag 名 = **`v{version 去 V 前缀}`**（如 `V0.1.0` → tag = `v0.1.0`；`V1.2.3` → tag = `v1.2.3`）
-- **历史 tag** 保持原样不动（`V*` / `release-V*` 等历史风格）；"前一已发布版本"的识别统一按「tag 风格识别约定」三种风格全覆盖取最新
-
-**Step 3.4.2.1 ~ 3.4.2.3：冲突检测 + 授权分流 + 打 tag / 建版本分支（⛔ 必须同一个 Bash 块）**
-
-打 tag 前把 `{version}` 转成 `v0.1.0` 形态，并验证不与已有 tag/分支重名。撞名时**保持同名、移动到本次发布提交**
-（不加时间后缀、不改名）；但移动**远端已存在**的 tag 是 destructive、**须先授权**（理据见 `rationale.md`）。
-
-> ⚠️⚠️ **两个变量、两件事，⛔ 严禁合并成一个**：`REPUBLISH` 只回答「撞名了吗」，
-> `FORCE_AUTHORIZED` 才回答「可以强推吗」（理据见 `rationale.md`）。
-> ⚠️ **检测 → 授权 → 建 tag/分支必须在同一个 Bash 块**：围栏之间 shell 变量不存活，
-> 拆开则三个变量全部取空。跨块传递一律经 baseline（下方末尾已落盘，供 Step 3.4.3 读回）。
+**Step 3.4.2.1–3：检测 → 授权 → 建 tag/分支须在同一 Bash 块**。撞名保持同名、移动到本次发布提交，不加后缀；移动已有远端 tag 须明确授权。`REPUBLISH` 仅表示撞名，`FORCE_AUTHORIZED` 才是强推授权，两者不得合并。跨围栏变量经 baseline 落盘，由 3.4.3 读回（理据见 `rationale.md`）。
 
 **授权分流（先做，结果就地写进下方 `FORCE_AUTHORIZED`）**：
 
@@ -133,8 +147,7 @@ $BE --version "$VERSION" set release_republish "$REPUBLISH" \
   release_force_authorized "$FORCE_AUTHORIZED" release_tag_name "$TAG_NAME" release_branch_name "$BRANCH_NAME"
 ```
 
-> **版本分支命名**：大写 `V{version}`（如 `V0.1.0`），与小写 tag `v0.1.0` 在 case-sensitive git ref
-> 命名空间中天然隔离。**`--no-tag` 准发布模式整段跳过 Step 3.4.2**（`TAG_NAME`/`BRANCH_NAME` 都不生成）。
+> 版本分支用大写 `V`（`V0.1.0`），与小写 `v` tag 区分；`--no-tag` 整段跳过 3.4.2，不生成 tag/分支。
 
 #### Step 3.4.3：自动推送 commit + tag + 版本分支
 
@@ -151,11 +164,9 @@ else
   BASE_REF=$($BE --version "$VERSION" get release_push_base_ref --default "")
   python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
 fi
-# ⛔ 三处 push 逐个捕获 rc，任一失败即落盘 + 阻断：本围栏无 `set -e`，不捕获就会带着
-#   **从未推出去的 commit** 继续跑探针并宣告"发布完成"。见 `rationale.md`「push 失败为何必须显式分流」。
+# 三处 push 分别捕获失败；落盘并阻断后续探针/发布完成声明。
 PUSH_FAILED=""
-# ★ tag/分支推送口径从 baseline 读回（⛔ 不靠跨围栏 shell 变量）；`-f` 唯一通行条件 =
-#   撞名 AND 已获显式授权。理据见 `rationale.md`「推送口径为何从 baseline 读回」。
+# baseline 读回推送口径；仅撞名且本次明确授权时允许 -f。
 TAG_NAME=$($BE --version "$VERSION" get release_tag_name --default "")
 BRANCH_NAME=$($BE --version "$VERSION" get release_branch_name --default "")
 REPUBLISH=$($BE --version "$VERSION" get release_republish --default 0)
@@ -163,7 +174,7 @@ REPUBLISH=$($BE --version "$VERSION" get release_republish --default 0)
 FORCE_AUTHORIZED=$($BE --version "$VERSION" take release_force_authorized --default 0) || exit 1
 if [ "$REPUBLISH" = "1" ] && [ "$FORCE_AUTHORIZED" = "1" ]; then PUSH_F="-f"; else PUSH_F=""; fi
 git push origin "$(git symbolic-ref --short HEAD)" || PUSH_FAILED="commit"
-# ⛔ 用 if 而非 `[ -n ] && git push`：后者变量为空时整体 rc=1，接 `||` 会把"本轮不推 tag"误判成失败。
+# 用 if 区分未创建与推送失败，不能用 &&/|| 混判。
 if [ -n "$TAG_NAME" ]; then
   # 保护策略拒绝强推时的降级仍在本围栏内，沿用已消费的本次授权；不跨 tick 持久化。
   if ! git push $PUSH_F origin "$TAG_NAME" 2>memory/.aidp/release-tag-push.err; then
@@ -296,7 +307,7 @@ fi
 
 > ★ **推送分类与监听（约定 31.5）**：有 `current_build` 写 build、无则 `--standalone` 写版本级，⛔ 禁空 build；分类用 `BASE_REF`。
 > Step 3.6 读取版本级 `release_cicd`：`status=unknown` 时列出原原因与 `degraded`；探针通过不能写成「流水线已确认成功」。
-> ⛔ **发布期边界**：`next_action=trigger` 时**绝不自动触发**——只终端提示，由用户主动要求才执行 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --env <env> --ref <branch>`；`memory/aidp-config.yaml` 的 `cicd.provider=none` 或未配置 `cicd.pipelines` 时不适用。（余下理据见 `rationale.md`）
+> **发布期禁止自动 trigger**：仅用户主动要求时执行 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --env <env> --ref <branch>`；`cicd.provider=none` 或无 `cicd.pipelines` 时不适用。理据见 `rationale.md`。
 
 #### Step 3.4.4：失败处置
 

@@ -1,7 +1,7 @@
 ---
 name: aidp-code-engineer
 description: AIDP 范式项目脚手架。把空项目初始化（init）、把已有非 AIDP 项目改建（migrate）、把本脚手架的旧版本项目升级（upgrade）为 AIDP 范式项目；按项目使用的 AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）装配入口，执行后校验结构完整性。当用户要求初始化 AIDP 项目、接入 AIDP、改建为 AIDP 结构、升级 AIDP 脚手架时使用。
-argument-hint: "[init|migrate|upgrade] [--version V0.1.0] [--user NAME] [--agent claude|codex|dsh] [--adapter-mode link|copy] [--name-cn 中文名] [--force]"
+argument-hint: "[init|migrate|upgrade] [--version V0.1.0] [--user NAME] [--agent claude|codex|dsh] [--adapter-mode link|copy] [--branch-policy current|new] [--name-cn 中文名] [--force]"
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 ---
@@ -28,6 +28,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 | `--user NAME` | 开发者标识；缺省取 `git config user.name` |
 | `--agent claude\|codex\|dsh` | 项目根没有任何 Agent 标记目录时装配哪些 Agent，可逗号多选 |
 | `--adapter-mode link\|copy` | 入口装配方式；Windows 默认 `copy`，其他默认 `link` |
+| `--branch-policy current\|new` | 项目工作分支偏好：current 直接修改当前分支；new 每个独立任务新建一次。显式提供才写入，缺省保留原值；未选择保持 null，首次修改前由用户选择 |
 | `--name-cn 中文名` | 项目中文名，写入 `memory/aidp-config.yaml` 的 `project.name_cn` |
 | `--force` | 无视版本门控，覆盖全部契约文件（已填写的用户填充型契约仍受保护） |
 
@@ -72,6 +73,10 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
     └── CONTRACT_MANIFEST.json  # 受版本门控契约文件的 sha256 指纹
 ```
 
+## 日常累进配套交付
+
+运行包包含 `alloc_id.py` 原子编号与 `test_ledger.py` 测试/审查证据账本，路径统一在 `{{AIDP_HOME}}/scripts/`；开发放行与汇合协议为 `flows/sprint-dev/incremental-contract.md`。安装只交付实现，不预填目标项目的编号或 PASS 记录。`memory/.aidp/id-alloc.jsonl`、`test-ledger.jsonl` 是本地运行态，升级保留，不复制到其他项目；账本缺失时从真实定义取号或重新测试，不能从模板补一份“已通过”。文件锁需要 POSIX 环境；没有可靠文件锁时拒绝分配/复用，不降级为无锁写入。
+
 ## 执行流程
 
 ### Phase 0：探测与确认（三模式共用）
@@ -82,7 +87,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --detect
    ```
 
-   输出 JSON：`mode`（已安装 `.claude/` 或 `.agents/` 运行包 → upgrade；未安装但有代码 → migrate；否则 init）、`user`、`version_guess`、`agents.markers`、`scaffold`（脚手架版本 / 项目版本 / pending / 队列条数）、`memory_files`、`code_units`、`docs`、`inputs`（根目录 PRD / 原型）。
+   输出 JSON：`mode`（已安装 `.claude/` 或 `.agents/` 运行包 → upgrade；未安装但有代码 → migrate；否则 init）、`user`、`version_guess`、`agents.markers`、`scaffold`（脚手架版本 / 项目版本 / pending / 队列条数）、`memory_files`、`code_units`、`docs`、`inputs`（根目录 PRD / 原型）、`vcs_mode`、`branch_policy`、`needs_choice`（工作分支的一次性选择状态）。
 
 2. 确定模式：`$ARGUMENTS` 显式给出则用之；否则用探测结果，并用 `AskUserQuestion` 向用户确认（可切换）。
 3. 确定 `{version}`：`--version` → `version_guess` → 询问（默认 `V0.1.0`，格式 `V主.次[.修订]`）。
@@ -91,6 +96,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    - 否则取 `--agent`；再无则取环境变量 `AIDP_AGENT`；再无则用 `AskUserQuestion` 询问（可多选：Claude Code / Codex / DeepSeek Harness）；无人值守时默认 claude。
    - 脚本会创建对应标记目录。以后要追加 Agent：先创建其标记目录，再跑 `upgrade`。
 5. 适配层方式：Windows 默认 `copy`，其他默认 `link`（符号链接）；用户要求时传 `--adapter-mode copy|link`。
+6. **工作分支策略（init / migrate / upgrade 共用，代码移动前完成）**：显式 `--branch-policy` 表示本次用户选择；否则已有 `current/new` 直接保留，不再询问；项目自定义指令已明确选定时据其保存并说明，不重复问。Git 项目 `needs_choice=true` 时只问固定两项：①直接修改当前分支；②每个独立任务新建一次工作分支。将用户答案通过下方脚手架命令的 `--branch-policy current|new` 保存到 `memory/aidp-config.yaml`；未答复不代选。无 Git 不问、不自动建仓。非交互安装可先完成装配但保持 null，报告“工作分支尚未选择，首次修改前需选择”；绝不把安装成功当业务修改授权。升级缺配置时同此规则，已选值不重置，其他 Agent 适配共用该项目配置。安装器自身不创建/切换 Git 分支或 worktree。
 
 ### Mode 1：init（空项目）
 
@@ -103,7 +109,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 2. **执行脚手架**：
 
    ```bash
-   python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --mode init --version {version} --agent {agents} [--adapter-mode link|copy]
+   python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --mode init --version {version} --agent {agents} [--adapter-mode link|copy] [--branch-policy current|new]
    ```
 
    脚本确定性完成：目录骨架与 `.gitkeep` → `{{AIDP_HOME}}/` 全部契约 → 脚手架自身安装 → `docs/init` 范式文档、`docs/**/README.md`、`docs/architecture/` 三份约束骨架 → `memory/aidp-config.yaml`、`memory/README.md`、5 份项目级 memory → 根 `README.md`、`env/.env`、`.gitignore` 托管区 → 项目记忆文件 → 导航 README → 写 `scaffold.version` → `agent_sync.py` 装配入口与 Stop hook。
@@ -130,7 +136,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 3. **执行脚手架**：
 
    ```bash
-   python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --mode migrate --version {version} --agent {agents}
+   python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --mode migrate --version {version} --agent {agents} [--branch-policy current|new]
    ```
 
    与 init 的差异：先备份将被触及的文件到 `.aidp-backup-<时间戳>/`；已存在的根 `README.md`、非 AIDP 形态的 `docs/**/README.md` 与 `memory/README.md` 保留原文；`code/` 下已有自定义代码目录时不补建 `code/frontend|backend`；原有 CLAUDE.md / AGENTS.md 的非 AIDP 内容并入新记忆文件「项目自定义」段并进入语义改写队列复核。
@@ -164,7 +170,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 2. **执行脚手架**：
 
    ```bash
-   python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --mode upgrade [--version {version}] [--force]
+   python3 {SKILL_DIR}/scripts/scaffold.py <项目根> --mode upgrade [--version {version}] [--force] [--branch-policy current|new]
    ```
 
    契约处置由版本门控决定（输出 `contract_decision`）：

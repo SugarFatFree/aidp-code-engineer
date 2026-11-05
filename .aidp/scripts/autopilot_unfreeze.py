@@ -164,7 +164,8 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
         return {"unfreeze": False, "note": "未冻结"}
     if fr in _HUMAN_ONLY:
         return {"unfreeze": False, "reason": fr, "note": "交接类：仅人工，探针一律不解冻"}
-    fzt = _ts(vn.get("aiauto_frozen_at"))
+    retest_cap = vn.get("needs_human_kind") == "retest-cap"
+    fzt = (_ts(vn.get("retest_cap_frozen_at")) if retest_cap else 0) or _ts(vn.get("aiauto_frozen_at"))
     if fr in _UNFREEZE_BY_AIDP_CONFIG:
         cfg = os.path.join(root, "memory", "aidp-config.yaml")
         try:
@@ -191,7 +192,7 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
                 continue
     elif fr in _UNFREEZE_BY_DEPLOY:
         dep = vn.get("last_deployed_at")
-        if _ts(dep) > fzt:
+        if _ts(dep) > fzt and (not retest_cap or fzt > 0):
             return {"unfreeze": True, "reason": fr, "evidence": f"冻结后已有新部署（{dep}）"}
     if fr in _UNFREEZE_BY_HEAD:
         import subprocess
@@ -218,10 +219,14 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
                        or vn.get("frozen_head")
                        or data.get("last_autopilot_head")
                        or vn.get("last_autopilot_head") or "")
-        if cur and frozen_head and cur != frozen_head:
+        if retest_cap:
+            # 配额冻结不能被另一版本的自动 push 清零，也不能使用不相干快照或 mtime 兜底。
+            frozen_head = vn.get("retest_frozen_head") or ""
+        last_auto = data.get("last_autopilot_head") or vn.get("last_autopilot_head") or ""
+        if cur and frozen_head and cur != frozen_head and (not retest_cap or cur != last_auto):
             return {"unfreeze": True, "reason": fr,
                     "evidence": f"冻结后有新提交（HEAD {cur[:8]} ≠ 冻结时 {frozen_head[:8]}）"}
-        if cur and not frozen_head:
+        if cur and not frozen_head and not retest_cap:
             # 快照缺失时**不静默判"不解冻"**——那正是永久冻结的形态。降级为按 mtime 兜底：
             # 冻结之后仓库里有任何 `code/` 改动即视为有人来修过。
             try:

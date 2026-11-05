@@ -16,6 +16,12 @@
 | `code-verification-loop` | 代码验收循环（多维度核验，维度清单以 SKILL.md 为单一信源；`mode=verify-only` 仅验收）| `/sprint-test`（仅验收模式）；开发期预检直调其脚本：`/sprint-dev`、Frontend/Backend Agent |
 | `bugfix` | Bug 修复流程 | `/sprint-bugfix` |
 
+### 编号与执行证据的调用层协议
+
+凡调用 SKILL 生成 C / BUG / REQ / Q / D / ADR 等新条目，调用方先用 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind REQ --count 5 --owner docs --version {version} --scope requirements --prefix REQ-{version}` 预留实际所需号段，将 `ids`、作用域与既有定义表交执行方；不足时再次分配，不从最大号猜号、不把同段给不同任务。已有编号不改，同事件跨族同号视为关联而非重号，空洞不补齐。上游只支持自行编号时在独占工作单中生成，落正式文档前由编排者按预留映射一次性改写定义与引用并检查，不让未映射草稿并发写入正式册。
+
+测试复用由调用方的 `test_ledger.py` 执行真实测试命令并保存 PASS 证据；它不替代 SKILL 的语义质量检查，不提供虚构的 SKILL 缓存或 delta 参数。依赖 SKILL 的正文保持来源原样；单独使用这些 SKILL 时仍按其自身契约执行。
+
 ### 脚手架 Skill（与公共 SKILL **同住** `{{AIDP_HOME}}/skills/`，但⛔ 不在上表那张契约位表里）
 
 > 它是**安装器**，不是下发契约的一部分：被 `scaffold_lib.py::RUNTIME_EXCLUDES` 排除出运行包、
@@ -44,6 +50,8 @@
 | `chrome-devtools-mcp`（插件） | 浏览器实测驱动 MCP + 6 份配套调试 SKILL（`/sprint-aiauto-test`、`dev-manual-testcase` 推荐）| 随仓库分发于 `各 Agent 的运行根/plugins/chrome-devtools-mcp/`（Apache-2.0）：Claude Code 使用 `.claude/plugins/` 完整项目插件（工具名 `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`）；Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json` |<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 
 ### Superpowers 插件 Skills（★ 全局内置插件，非项目 vendored）
+
+调用前把项目已选 `development.branch_policy` 与本任务 `task_branch` 传给执行方；外部技能不得自行新建工作分支或 worktree。`current` 是用户已明确允许在当前分支（包括 main/master）修改；`new` 也只由主流程创建一次，嵌套技能沿用。未选择时由主流程按 `agent-tools.md` 首次询问，不让每个技能分别问或替用户决定。
 
 > 📍 **安装位置在【用户级全局】，不在项目里**——Claude Code 下来自 `claude-plugins-official` 市场，
 > 落点 `~/.claude/plugins/cache/claude-plugins-official/superpowers`；其他 Agent 未装时按下表回落。

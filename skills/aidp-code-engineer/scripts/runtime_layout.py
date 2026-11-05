@@ -646,6 +646,61 @@ def remove_tree_safely(path: Path, boundary: Optional[Path] = None) -> None:
         raise RuntimeError(f"拒绝删除异常路径: {target}")
 
 
+def remove_runtime(runtime: Path, home: str) -> None:
+    """退出运行包，只删除 manifest 契约与带标记的生成入口；外层安装事务负责回滚。"""
+    runtime = _assert_contained(Path(runtime), Path(runtime).parent)
+    manifest_path = _assert_contained(runtime / RUNTIME_MANIFEST, runtime)
+    manifest = _read_manifest(runtime)
+    if manifest.get("schema") != "aidp.runtime/v1":
+        raise ValueError("运行包 manifest schema 非法")
+    _validate_source_home(manifest.get("source"), home)
+    _validate_version(manifest.get("version"))
+    user_files = _manifest_user_files(manifest)
+    files, directories = [], set()
+    # 先验证整份删除计划，避免非法 manifest / symlink 在部分删除之后才被发现。
+    for relative, metadata in manifest["files"].items():
+        if not _user_owned_path(relative) or len(relative.split("/")) < 2 \
+                or _excluded(relative) or _runtime_ignored(relative.split("/")):
+            raise ValueError(f"运行包 manifest 路径越出受管边界: {relative}")
+        path = _assert_contained(runtime / relative, runtime)
+        if not _lexists(path):
+            continue
+        if not path.is_file() or path.stat().st_nlink != 1:
+            raise ValueError(f"运行包契约不是独立普通文件: {path}")
+        if relative in user_files or (relative in L.USER_FILLABLE_CONTRACTS
+                                     and _file_metadata(path) != metadata):
+            continue
+        files.append(path)
+        if path.suffix == ".py":
+            cache = _assert_contained(path.parent / "__pycache__", runtime)
+            if cache.is_dir():
+                for bytecode in sorted(cache.iterdir()):
+                    if bytecode.name.startswith(path.stem + ".") and bytecode.suffix == ".pyc":
+                        _assert_contained(bytecode, runtime)
+                        if not bytecode.is_file() or bytecode.stat().st_nlink != 1:
+                            raise ValueError(f"运行包字节码不是独立普通文件: {bytecode}")
+                        files.append(bytecode)
+    generated = []
+    for relative, path in owned_entries(runtime):
+        _assert_contained(path, runtime)
+        if path.is_dir():
+            marker = _assert_contained(path / ADAPTER_MARKER, runtime)
+            if marker.is_file():
+                generated.append(path)
+    for path in files + generated:
+        directories.update(parent for parent in path.parents
+                           if parent != runtime and runtime in parent.parents)
+    for path in files:
+        _assert_contained(path, runtime).unlink()
+    for path in generated:
+        remove_tree_safely(path, runtime)
+    _assert_contained(manifest_path, runtime).unlink()
+    # 只收空壳，不递归删除；用户加在受管 SKILL 内的凭据、子目录也原地保留。
+    for path in sorted(directories, key=lambda p: len(p.parts), reverse=True):
+        if path.is_dir() and not path.is_symlink() and not any(path.iterdir()):
+            path.rmdir()
+
+
 def _runtime_modified(destination: Path) -> bool:
     manifest = _read_manifest(destination)
     expected = manifest.get("files")
@@ -851,6 +906,44 @@ def _restore_owned(previous: Path, destination: Path, replace_func) -> None:
         replace_func(src, dst)
 
 
+def _confirmed_retired_overlay(destination: Path, home: str, source: str,
+                               boundary: Path) -> Dict[str, dict]:
+    """仅凭另一有效包明确登记的用户文件，恢复停用后保留的条目。"""
+    other_source = "shared" if source == "claude" else "claude"
+    other_home = RUNTIME_HOME[other_source]
+    counterpart = _assert_contained(boundary / other_home, boundary)
+    marker = _assert_contained(counterpart / RUNTIME_MANIFEST, boundary)
+    if destination != boundary / home or not marker.is_file():
+        raise RuntimeError(f"残留内容没有有效运行包的归属证明，拒绝接管: {destination}")
+    manifest = validate_runtime(counterpart, expected_home=other_home)
+    registered = set(manifest.get("user_files", []))
+    confirmed = _user_overlay(counterpart, other_home, other_source)
+    overlay, directories = {}, set()
+    for _relative, entry in owned_entries(destination):
+        _assert_contained(entry, destination)
+        paths = [entry, *entry.rglob("*")] if entry.is_dir() else [entry]
+        for path in paths:
+            _assert_contained(path, destination)
+            relative = path.relative_to(destination).as_posix()
+            if path.is_dir():
+                directories.add(relative)
+                continue
+            if relative not in registered or not path.is_file() or path.stat().st_nlink != 1:
+                raise RuntimeError(f"残留文件未由另一运行包 user_files 确认，拒绝接管: {relative}")
+            data = path.read_bytes()
+            if _is_text(data):
+                data = data.decode("utf-8").replace(home, "{{AIDP_HOME}}").encode("utf-8")
+            value = {"content": data, "mode": _file_mode(path)}
+            if confirmed.get(relative) != value:
+                raise RuntimeError(f"残留用户文件内容或权限与另一运行包不一致，拒绝接管: {relative}")
+            overlay[relative] = value
+    parents = {parent.as_posix() for name in overlay for parent in Path(name).parents}
+    if directories - parents:
+        raise RuntimeError("残留目录未由用户文件清单确认，拒绝接管: "
+                           + "、".join(sorted(directories - parents)))
+    return overlay
+
+
 def render_runtime(source_root: Path, destination: Path, home: str, version: str,
                    source: str, backup_callback: Optional[Callable[[Path], Path]] = None,
                    replace_func: Callable[[object, object], None] = os.replace,
@@ -870,6 +963,7 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
         previous = transaction / "previous"
         moved_old = False
         expected_destination_digest = None
+        retired_overlay = {}
         try:
             if _lexists(destination):
                 if destination.is_symlink() or not destination.is_dir():
@@ -877,7 +971,8 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                 # ⛔ 判据是「像不像一个未受管的运行包」，不是「目录在不在」：运行根降层后就是
                 #    `.claude` / `.agents` 本身，它们作为 Agent 标记目录在首次安装前**本来就存在**
                 #    （里面可能已有 settings.json）。按"存在即必须有 manifest"判会让 init 直接失败。
-                #    真正要拦的是：里面已有受管目录却没有 manifest —— 那是来路不明的同名运行包。
+                #    已有受管目录却没有 manifest 时默认拒绝；唯一例外是另一有效包的
+                #    user_files 能逐项确认残留，供停用后重新启用，不放宽陌生目录接管。
                 if not (destination / RUNTIME_MANIFEST).is_file():
                     # ⛔ 安装器自身不算占位：下游把脚手架 skill 装在 `<运行根>/skills/` 下
                     #    （自举形态），那会让 `skills/` 先于运行包存在 —— 按"有受管目录即拒"
@@ -890,9 +985,8 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
 
                     squatters = sorted(name for name in RUNTIME_DIRS if _occupied(name))
                     if squatters:
-                        raise RuntimeError(
-                            f"同名目录已有受管目录却缺运行包 manifest，拒绝覆盖: {destination}"
-                            f"（{'、'.join(squatters[:4])}）")
+                        retired_overlay = _confirmed_retired_overlay(
+                            destination, home, source, boundary)
                 expected_destination_digest = tree_digest(destination)
                 # 首次接管（目录已在、但还没装过）无 manifest 可比，谈不上"被改过"。
                 if (destination / RUNTIME_MANIFEST).is_file() and (preserve_gated or _runtime_modified(destination)):
@@ -918,7 +1012,7 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
             # 用户物叠加要读上一版 manifest —— 只有**装过**才有。运行根降层后目录本身可能
             # 早已存在（Agent 标记目录），按"目录在不在"触发会去读不存在的 manifest。
             overlay = (_user_overlay(destination, home, source, contract)
-                       if (destination / RUNTIME_MANIFEST).is_file() else {})
+                       if (destination / RUNTIME_MANIFEST).is_file() else retired_overlay)
             counterpart = None
             counterpart_digest = None
             if destination == boundary / RUNTIME_HOME[source]:

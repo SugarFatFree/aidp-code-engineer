@@ -48,6 +48,7 @@ if not (_runtime_scripts / "vcs.py").is_file():
     _runtime_scripts = L.BUNDLE_AIDP / "scripts"
 sys.path.insert(0, str(_runtime_scripts))
 import vcs  # noqa: E402
+import aidp_config  # noqa: E402
 import agent_sync as agent_adapter  # noqa: E402
 
 LEGACY_AIDP_DIR = ".aidp"
@@ -239,6 +240,7 @@ def detect(root: Path) -> dict:
     mode, reason = detect_mode(root)
     env = os.environ.get("AIDP_AGENT", "").strip()
     cfg = read_project_cfg(root)
+    policy = aidp_config.branch_policy(root)
     return {
         "root": str(root),
         "mode": mode,
@@ -246,7 +248,9 @@ def detect(root: Path) -> dict:
         "project": cfg.get("name") or root.name,
         "project_cn": cfg.get("name_cn"),
         "user": vcs.developer_identity(root),
-        "vcs_mode": vcs.detect_mode(root),
+        "vcs_mode": policy["vcs_mode"],
+        "branch_policy": policy["policy"],
+        "needs_choice": policy["needs_choice"],
         "version_guess": guess_version(root),
         "agents": {"markers": marker_agents(root), "env": env or None,
                    "resolved_without_prompt": (marker_agents(root) or (parse_agents(env) if env else None))},
@@ -773,7 +777,7 @@ def _yaml_sub_entries(block: str) -> "dict[str, list[str]]":
     return entries
 
 
-def _fill_missing_sub_keys(have: str, tpl: str) -> "tuple[str, list[str]]":
+def _fill_missing_sub_keys(have: str, tpl: str, skipped=None) -> "tuple[str, list[str]]":
     """把模板里新增的**二级配置键**补进项目已有的同名顶层段，已有键一字不动。
 
     ⛔ 只补不改：新版本在 `notify:` / `cicd:` / `commit_gate:` 这类**已存在**的段里加子键时，
@@ -802,11 +806,20 @@ def _fill_missing_sub_keys(have: str, tpl: str) -> "tuple[str, list[str]]":
         tpl_entries = _yaml_sub_entries(tpl_block)
         if not tpl_entries:
             continue
+        value = lines[begin].split(":", 1)[1].strip()
+        if value and not value.startswith("#"):
+            # 内联映射、scalar、list、块标量、anchor 等均不能直接追加块式子键。
+            # 不用宽松 YAML 解析器猜测或重排用户内容，原样保留并报告未自动补齐。
+            if skipped is not None:
+                skipped.append(key)
+            continue
         block_lines = lines[begin:end]
         have_names = {m.group(1) for m in
                       (_SUB_KEY_RE.match(line) for line in block_lines[1:]) if m}
         body = [line for line in block_lines[1:] if line.strip()]
         if body and not have_names:
+            if skipped is not None:
+                skipped.append(key)
             continue                            # 缩进风格对不上，不碰
         missing = [name for name in tpl_entries if name not in have_names]
         if not missing:
@@ -832,31 +845,48 @@ def _fill_missing_sub_keys(have: str, tpl: str) -> "tuple[str, list[str]]":
     return "\n".join(out).rstrip("\n") + "\n", filled
 
 
-def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claude",)):
+def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claude",),
+                branch_policy=None):
+    aidp_config.validate_branch_policy(branch_policy)
     tpl = L.render((L.SKILL_DIR / L.CONFIG_TPL_REL).read_text(encoding="utf-8"), ctx)
     tpl = tpl.replace("{{AIDP_HOME}}", runtime_home_for(agents))
     dst = root / "memory/aidp-config.yaml"
-    if not dst.exists():
+    existed = dst.exists()
+    if not existed:
         dst.parent.mkdir(parents=True, exist_ok=True)
         L.write_text_lf(dst, tpl)
         rep.act("create", "memory/aidp-config.yaml")
-        return
-    have = dst.read_text(encoding="utf-8")
-    present = set(re.findall(r"^([A-Za-z_][\w-]*):", have, re.M))
-    missing = [(k, v) for k, v in _yaml_top_blocks(tpl).items() if k not in present]
-    if missing:
-        have = have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing)
-    have, filled = _fill_missing_sub_keys(have, tpl)
-    if not missing and not filled:
-        return
-    bk.save("memory/aidp-config.yaml")
-    L.write_text_lf(dst, have)
-    detail = []
-    if missing:
-        detail.append("补齐配置段：" + "、".join(k for k, _ in missing))
-    if filled:
-        detail.append("补齐配置键：" + "、".join(filled))
-    rep.act("update", "memory/aidp-config.yaml", "；".join(detail))
+    else:
+        have = dst.read_text(encoding="utf-8")
+        present = set(re.findall(r"^([A-Za-z_][\w-]*):", have, re.M))
+        missing = [(k, v) for k, v in _yaml_top_blocks(tpl).items() if k not in present]
+        if missing:
+            have = have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing)
+        skipped = []
+        have, filled = _fill_missing_sub_keys(have, tpl, skipped)
+        if skipped:
+            rep.warn("配置段已保留原值，未自动补齐子键（非块式映射或缩进不兼容），"
+                     "请对照新版模板检查：" + "、".join(skipped))
+        if missing or filled:
+            bk.save("memory/aidp-config.yaml")
+            L.write_text_lf(dst, have)
+            detail = []
+            if missing:
+                detail.append("补齐配置段：" + "、".join(k for k, _ in missing))
+            if filled:
+                detail.append("补齐配置键：" + "、".join(filled))
+            rep.act("update", "memory/aidp-config.yaml", "；".join(detail))
+    save_branch_policy(root, branch_policy, rep, bk, backup=existed)
+
+
+def save_branch_policy(root: Path, policy, rep: Report, bk: "Backup", backup=True):
+    """缺参保留原值；显式偏好沿用配置写入与安装事务，不执行 Git 动作。"""
+    aidp_config.validate_branch_policy(policy)
+    if policy is not None and aidp_config.read_branch_policy(root) != policy:
+        if backup:
+            bk.save("memory/aidp-config.yaml")
+        aidp_config.set_scalar(root, "development.branch_policy", policy)
+        rep.act("update", "memory/aidp-config.yaml", "保存显式开发分支偏好：" + policy)
 
 
 def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup",
@@ -1750,13 +1780,16 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                              bool(L.queue_entries(root)), a.force)
     if decision == "protect":
         rep.warn("项目脚手架版本高于当前脚手架包，保留原运行包和 Agent 入口")
+        preference_backup = Backup(root, rep)
+        save_branch_policy(root, getattr(a, "branch_policy", None), rep, preference_backup)
         dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
         return {"mode": mode, "project": project, "version": version, "user": user,
                 "vcs_mode": vcs.detect_mode(root), "dsh_extensions": dsh_extensions,
                 "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
                 "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
                 "contract_decision": decision, "pending": False, "rewrite_queue": [],
-                "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": None,
+                "orphans": rep.orphans, "local_overwritten": rep.local_overwritten,
+                "backup": preference_backup.dir.name if preference_backup.dir else None,
                 "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     if migrate_legacy and a.no_agent_sync:
         rep.warn("旧运行目录迁移需要先校验 Agent 原生命令入口，不能使用 --no-agent-sync")
@@ -1911,7 +1944,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         journal.record(rel)
     sync_docs(root, bool(previous), rep, bk, agents)
     journal.record(L.USER_FILLABLE_BASELINE)
-    sync_config(root, ctx, rep, bk, agents)
+    sync_config(root, ctx, rep, bk, agents, branch_policy=getattr(a, "branch_policy", None))
     sync_memory(root, ctx, bool(previous), rep, bk, agents)
     journal.record(L.USER_FILLABLE_BASELINE)
     sync_root_files(root, ctx, agents, rep, bk)
@@ -1955,16 +1988,20 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         destination = root / home
         if not os.path.lexists(destination):
             continue
-        if destination.is_symlink() or not destination.is_dir() \
-                or not (destination / runtime_layout.RUNTIME_MANIFEST).is_file():
+        runtime_layout._assert_contained(destination, root)
+        if not destination.is_dir():
             raise ValueError(f"未受管运行目录不能清理：{destination}")
+        manifest_path = destination / runtime_layout.RUNTIME_MANIFEST
+        runtime_layout._assert_contained(manifest_path, root)
+        if not manifest_path.exists():
+            continue  # 保留下来的 Agent 配置 / 用户目录，不是仍启用的运行包。
         if runtime_layout._runtime_modified(destination):
             old_state = _complete_tree_state(destination)
             saved = bk.save_tree(home)
             if saved is None or _complete_tree_state(saved) != old_state:
                 raise RuntimeError(f"不再启用的运行包备份失败：{destination}")
-        shutil.rmtree(destination)
-        rep.act("remove", home + "/", "Agent 集合不再启用")
+        runtime_layout.remove_runtime(destination, home)
+        rep.act("remove", home + "/", "移除停用 Agent 的受管运行包，保留用户内容")
     for agent in KNOWN_AGENTS:
         marker_dir = root / MARKER_DIRS[agent]
         if not marker_dir.is_dir():
@@ -1988,8 +2025,10 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         target = root / rel / L.SKILL_NAME
         if not os.path.lexists(target):
             continue
-        if target.is_symlink() or not (target / ".aidp-scaffold-generated").is_file():
-            raise ValueError(f"未受管脚手架 SKILL 不能清理：{target}")
+        runtime_layout._assert_contained(target, root)
+        marker = runtime_layout._assert_contained(target / ".aidp-scaffold-generated", root)
+        if not marker.is_file():
+            continue  # 同名用户 SKILL 没有生成标记，不属于可清理范围。
         old_state = _complete_tree_state(target)
         saved = bk.save_tree(f"{rel}/{L.SKILL_NAME}")
         if saved is None or _complete_tree_state(saved) != old_state:
@@ -2032,6 +2071,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
 
 # ── 主流程 ──────────────────────────────────────────────────────────────────
 def run(root: Path, a) -> dict:
+    aidp_config.validate_branch_policy(getattr(a, "branch_policy", None))
+    aidp_config.read_branch_policy(root)  # 非法旧配置在任何安装写入前拒绝；未选 null 不阻断安装。
     if (root / ".aidp").is_symlink() and (root / ".aidp").exists():
         raise ValueError(f"旧运行目录是 symlink，拒绝跟随：{root / '.aidp'}")
     rep = Report()
@@ -2042,8 +2083,12 @@ def run(root: Path, a) -> dict:
     if (root / LEGACY_AIDP_DIR).is_dir():
         if mode == "init":
             raise ValueError("旧运行目录已存在，不能按 init 覆盖；请使用 migrate")
-        return _run_native(root, a, mode, agents, agent_source, migrate_legacy=True)
-    return _run_native(root, a, mode, agents, agent_source)
+        result = _run_native(root, a, mode, agents, agent_source, migrate_legacy=True)
+    else:
+        result = _run_native(root, a, mode, agents, agent_source)
+    policy = aidp_config.branch_policy(root)
+    result.update(branch_policy=policy["policy"], needs_choice=policy["needs_choice"])
+    return result
 
 
 def print_human(res: dict):
@@ -2103,6 +2148,8 @@ def main(argv=None) -> int:
     ap.add_argument("--agent", default="", help="项目根无 Agent 标记目录时装配的 Agent：claude,codex,dsh")
     ap.add_argument("--adapter-mode", choices=("link", "copy"), default="copy" if os.name == "nt" else "link")
     ap.add_argument("--name-cn", default=None, help="项目中文名（写入 memory/aidp-config.yaml）")
+    ap.add_argument("--branch-policy", choices=("current", "new"), default=None,
+                    help="显式保存开发分支偏好；缺省保留已有选择或 null，不创建或切换分支")
     ap.add_argument("--force", action="store_true", help="无视版本门控覆盖契约文件")
     ap.add_argument("--keep-backups", type=int, default=L.PRUNE_KEEP_LAST_DEFAULT,
                     help="备份保留个数（0 = 不清理）")
@@ -2116,7 +2163,12 @@ def main(argv=None) -> int:
         print(f"项目根不存在：{root}", file=sys.stderr)
         return 2
     if a.detect:
-        print(json.dumps(detect(root), ensure_ascii=False, indent=2))
+        try:
+            result = detect(root)
+        except ValueError as exc:
+            print(json.dumps({"status": "invalid", "error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if L.is_template_project(root):
         print(f"{MARKS['block']} 目标是 AIDP 模板项目自身：模板维护请用 mirror_to_bundle.py，不在模板上运行脚手架",

@@ -155,6 +155,24 @@ fi
 # 2.5 读 build 号 + 判定「测试报告生成门」（AI测试报告仅在 /sprint-autopilot 流水线驱动时生成）
 # current_build 只由 autopilot 3.1.5 铸造 → 存在 == autopilot 流水线驱动；缺失 == 直接调用（standalone/独立 loop/他命令）
 BUILD=$(jq -r ".versions.\"$TARGET_VERSION\".current_build // empty" $BASELINE_FILE 2>/dev/null)
+# 2.5.1 先判可写性，再认领驱动/归档待确认项；--once/--target 只豁免去重，不豁免定稿锁。
+NEED_HANDOFF=0
+if [ -n "$BUILD" ]; then
+  REPORT_ENABLED=1
+  RPT_AI="docs/reports/${TARGET_VERSION}/AI执行报告"
+  BUILD_FINALIZED=$(jq -r ".versions.\"$TARGET_VERSION\".builds[]? | select(.build==\"$BUILD\") | .ai_report_finalized // false" "$BASELINE_FILE")
+  if [ "$BUILD_FINALIZED" = "true" ] || [ ! -f "$RPT_AI/data/${BUILD}.js" ]; then
+    NEED_HANDOFF=1
+    HANDOFF_RUN_ID=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get aiauto_handoff_run_id --default "")
+    if [ -n "${PREFLIGHT_RUN_ID:-}" ] && [ "$HANDOFF_RUN_ID" = "$PREFLIGHT_RUN_ID" ]; then
+      echo "⛔ 同次交接返回后 $BUILD 仍已定稿或缺骨架 → 失败返回调用方，不递归交接/铸号"
+      exit 2
+    fi
+    echo "🔁 NEED_HANDOFF=1：$BUILD 已定稿或缺执行骨架；立即 Read phase-0-6b.md，交接 autopilot test-only 后结束原调用"
+    exit 0   # 只结束本围栏；执行体必须处理交接，禁止继续 Phase 1/2 或 force-amend 旧报告。
+  fi
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del handoff_fail_streak 2>/dev/null || true
+fi
 if [ -n "$BUILD" ]; then
   REPORT_ENABLED=1
   echo "🔢 本轮测试归属 build：$BUILD（autopilot 驱动 → 截图 + AI测试报告 HTML 均归此 build）"
@@ -205,29 +223,6 @@ fi
 python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test SELECT_MODE "$SELECT_MODE"
 [ "$SELECT_MODE" != "all" ] && echo "🔎 【子集轮】select=$SELECT_MODE —— 准则仅对子集成立，不写 aiauto_tested_at"
 
-
-# 2.5.1 ★ 自愈式交接（autopilot 驱动 current_build 存在却无 AI执行报告 → 不死胡同拦截，交接回 autopilot test-only 补齐）
-#   骨架归属与触发判据见 rationale「自愈式交接」
-NEED_HANDOFF=0
-if [ "$REPORT_ENABLED" = "1" ]; then
-  RPT_AI="docs/reports/${TARGET_VERSION}/AI执行报告"
-  if [ ! -f "$RPT_AI/data/${BUILD}.js" ]; then
-    echo "🔁 自愈式交接触发：autopilot 驱动（current_build=$BUILD）但执行数据缺失"
-    echo "   缺：$RPT_AI/data/${BUILD}.js（autopilot Phase 3.1.5 铸造 build 时即应写计划态并注册两页）"
-    # ★ 透传无人值守：恒带 --unattended；有唤醒源（/loop 或 OS 调度）再加 --no-loop，无唤醒源（如 --once --unattended）不加，
-    #   否则被调侧误判「有下一 tick」而让位、却没有下一 tick 来接。
-    HANDOFF_NO_LOOP=""
-    if [ "${LOOP_UNATTENDED:-0}" = "1" ]; then
-      [ "${HAS_WAKE_SOURCE:-0}" = "1" ] && HANDOFF_NO_LOOP=" --unattended --no-loop" || HANDOFF_NO_LOOP=" --unattended"
-    fi
-    echo "   → 交接：立即 invoke  /sprint-autopilot --skip-dev [--unattended] --target $TARGET_VERSION${HANDOFF_NO_LOOP}  （test-only 入口；[--unattended] 按 LOOP_UNATTENDED 条件透传）补齐 AI执行报告，再结束本轮 aiauto-test。"
-    NEED_HANDOFF=1
-  else
-    echo "✅ AI执行报告骨架就绪（data/${BUILD}.js 已在；index.html 结果 + plan.html 计划同源渲染）→ 直接往下测"
-    # ★ 清零必须落在成功分支（见 rationale「交接计数器为何只增不减」）
-    python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del handoff_fail_streak 2>/dev/null || true
-  fi
-fi
 
 # 3. 读 deployment 配置（PRD 头部 autopilot_decisions.deployment）
 PRD_FILE=$(ls docs/requirements/$TARGET_VERSION/产品提供/*.md 2>/dev/null | head -1)

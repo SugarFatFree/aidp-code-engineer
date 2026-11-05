@@ -85,12 +85,17 @@ def main(argv=None):
         skip = False
         if not args.complete and same_build and old.get("phase_status") == "complete":
             following = old.get("next_phase")
-            if following in PHASES[:-1] and PHASES.index(args.phase) < PHASES.index(following):
+            if following in PHASES and PHASES.index(args.phase) < PHASES.index(following):
                 print(json.dumps({"ok": True, "skip_phase": True, "resume_phase": following,
                                   "complete": False, "next_phase": following}, ensure_ascii=False))
                 return 0
             if following in PHASES[:-1] and PHASES.index(args.phase) > PHASES.index(following):
                 raise ValueError("必须先执行游标指定的阶段 %s" % following)
+        # Phase 0.2 交接才可铸新 build；游标缺失也不能把已定稿轮次重新打开。
+        # 审计阶段先定稿、再 --complete 是正常出口，不能拦截完成态写入。
+        if not args.complete and any(b.get("build") == args.build and b.get("ai_report_finalized")
+                                     for b in node.get("builds", []) if isinstance(b, dict)):
+            raise ValueError("本 build 报告已定稿，须回 Phase 0.2 交接 autopilot test-only 后用新 build 实测")
         if args.complete:
             if not running or active != args.phase:
                 raise ValueError("不能完成一个未进入或不属于本 build 的阶段")

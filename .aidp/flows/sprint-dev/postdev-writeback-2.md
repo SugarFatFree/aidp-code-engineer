@@ -33,7 +33,7 @@
 5. **自动触发 L3 — 研发执行计划**：`/sprint-plan --ledger-cascade [--unattended]` → **就地改** `docs/plans/{version}/01_研发执行计划.md`（新增任务条目 / 工时调整 / 拆分调整）
 6. **自动触发 L4 — 研发自测用例**：`/sprint-selftest --ledger-cascade [--unattended]`（研发自测唯一入口，内部经 `dev-manual-testcase` 增量）→ **就地改** `docs/testing/{version}/研发自测/` 既有用例册；输入：本轮各族增量 + 既存 `docs/testing/{version}/研发自测/` 下自测方案与用例文件 + `code/` 实际代码；本批新增的"非计划内功能点"必须覆盖到用例
 
-> 分支 A（Sprint 末尾回头补文档）与分支 B（Sprint 开始前先文档后开发）的关系见 `postdev-writeback-1.md` Step X.0.0「与 Phase 0B.1.1 的关系」段；两者收敛到同一套补充文档体系。
+> 分支 A/B 的分档与成文时机统一见 `incremental-contract.md`：S 契约＋台账，M 契约先行、docs 并行后汇合，L 先完整文档。X.0.0 只收新漂移，不重复已成文内容；正式补充与既有主文档级联分开核落点。
 
 #### Step X.2：调用 dev-logic-architect skill 更新设计（由 Step X.0.0 自动驱动；走 `/sprint-design --ledger-cascade [--unattended]` 编排）
 

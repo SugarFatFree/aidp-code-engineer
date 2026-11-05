@@ -57,6 +57,38 @@ def _fh(root, *args):
     return cp.returncode, out, cp.stderr
 
 
+def test_retest_cap_probe_ignores_autopilot_pushes():
+    print("\n[R0] 复测配额不能被其他版本的自动提交重置")
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    base = {"last_autopilot_head": "bot-other-version", "versions": {"V1.0.0": {
+        "needs_human": True, "needs_human_kind": "retest-cap", "freeze_reason": "unconverged",
+        "aiauto_frozen_at": "2026-01-01T00:00:00Z", "retest_cap_frozen_at": "2026-01-02T00:00:00Z",
+        "retest_frozen_head": "frozen", "unconverged_frozen_head": "older", "auto_retest_streak": 3}}}
+    root = _mk(base)
+    try:
+        def probe(head):
+            with patch("subprocess.run", return_value=SimpleNamespace(stdout=head, returncode=0)):
+                return U.aiauto_probe_all(str(root))
+        check("自动提交不解冻任何被封顶版本", probe("bot-other-version")["unfreezable"] == [])
+        check("冻结快照与其它快照不同时仍不误解冻", probe("frozen")["unfreezable"] == [])
+        check("不同于冻结与自动提交的人工提交可解冻", probe("human-fix")["unfreezable"] == ["V1.0.0"])
+        version = base["versions"]["V1.0.0"]
+        version["last_deployed_at"] = "2026-01-01T12:00:00Z"
+        (root / "memory/.sprint-autopilot-baseline.json").write_text(json.dumps(base))
+        check("早于配额冻结的新部署不解冻", probe("bot-other-version")["unfreezable"] == [])
+        version["last_deployed_at"] = "2026-01-03T00:00:00Z"
+        (root / "memory/.sprint-autopilot-baseline.json").write_text(json.dumps(base))
+        check("当前版本在配额冻结后重新部署可解冻", probe("bot-other-version")["unfreezable"] == ["V1.0.0"])
+        version.pop("last_deployed_at")
+        version.pop("retest_frozen_head")
+        (root / "memory/.sprint-autopilot-baseline.json").write_text(json.dumps(base))
+        check("配额冻结缺快照不使用其它版本提交时间兜底", probe("human-fix")["unfreezable"] == [])
+        check("探测本身不修改配额", _bl(root)["versions"]["V1.0.0"]["auto_retest_streak"] == 3)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_fail_handle():
     print("\n[R1] 失败处置：链路分键 / 幂等 / 通知策略 / 告警台账")
     root = _mk({"aiauto": {"wake_source_this_tick": "1"}, "versions": {"V1.0.0": {}}})
@@ -388,6 +420,7 @@ def test_wake_source_requires_scheduler():
 
 
 if __name__ == "__main__":
+    test_retest_cap_probe_ignores_autopilot_pushes()
     test_wake_source_requires_scheduler()
     test_active_sprint_recovery()
     test_fail_handle()

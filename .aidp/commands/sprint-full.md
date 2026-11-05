@@ -22,6 +22,8 @@
 - `--skip-aiauto-test` — 透传外层未安排实测；若同时带 required，required 优先。
 - `--stop-on-blocker`                        — 遇阻塞项即停并回传，不继续后续阶段（`/sprint-batch` 的合法停顿来源之一）
 - `--resume` — 仅模式 A：恢复同版本、同用户、同编号的已启动未关闭 Sprint；通过下方恢复门后跳过 Phase 1，保留 activeContext，从 Phase 2 继续。不是关闭或开新 Sprint 的豁免。
+- `--cascade-now` — 仅用户/父链显式要求时原样透传；不因同轮 test→close 自动加上，S/M/L 依契约协议决定成文时机。
+- `--dev-scale=S|M|L` — 原样透传 `/sprint-dev` 判档，不绕过新表/破坏性安全门。
 
 **用例意图透传**：调用 `/sprint-dev` 时必须原样传递 `--aiauto-test-required` / `--skip-aiauto-test`。`--from-batch` 只表达被编排，不表达是否实测；不得据此把已取消的实测恢复，也不得吞掉已安排的实测用例。
 
@@ -44,7 +46,7 @@
 
 ## 前置检查
 
-1. 确认版本规划文档已生成：
+1. **模式 A 非 resume** 确认版本规划文档已生成；`--resume` 先过第 2 条恢复门，正式计划路径保持下列文档检查，已放行 S/M 契约路径读既存版本基线与卡，不要求本轮已成正式计划。模式 B 按下方契约协议判档，不在入口强制先生成本轮四层正式文档：
    - `ls docs/requirements/{version}/研发需求/{01_研发需求,00_索引,00_研发需求}.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——multi 模式按系统拆分时 `01_研发需求.md` 本就不存在，硬判会把合规项目误判缺失而错误停止）
    - **详细设计**：`ls docs/design/detail/{version}/*.md` 有内容主文档即可（★ **用 glob 探测、兼容约定 14 三态**——拆分态 `00_索引.md`+`01_详细设计.md`… / 单份态 `00_详细设计.md` / 历史存量裸名 `详细设计.md`；**不硬编码裸名**，否则拆分态项目会被误判缺失而错误停止）
    <!-- dup-check: ignore 前置检查清单需各命令自包含，读者不应为一行 glob 跳转 -->
@@ -55,7 +57,7 @@
    <!-- resume-gate -->
    ```bash
    python3 - "{version}" "{NNN}" <<'PY'
-import re, sys
+import json, re, sys
 from pathlib import Path
 sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from check_open_sprints import scan
@@ -64,8 +66,45 @@ root = Path.cwd(); version, sprint = sys.argv[1:]
 user = developer_identity(root)
 state = scan(root, version, scope="started")
 key = f"Sprint-{sprint}"
-if state["open"] != [key] or key not in state["planned"]:
-    raise SystemExit("resume-conflict: 必须是计划内唯一已启动未关闭 Sprint")
+if state["open"] != [key]:
+    raise SystemExit("resume-conflict: 必须是唯一已启动未关闭 Sprint")
+resume_source = "plan"
+if key not in state["planned"]:
+    # 新协议 S/M 可尚未成正式计划；严格消费启动时的放行块，不按文件存在放行。
+    contract_path = f"docs/design/detail/{version}/_sprint-{sprint}-契约卡.md"
+    def unique_object(pairs):
+        result = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError("契约 JSON 重复键")
+            result[name] = value
+        return result
+    try:
+        card = (root / contract_path).read_text(encoding="utf-8")
+        fence = chr(96) * 3
+        blocks = re.findall(r"(?m)^" + fence + r"aidp-contract\s*\n([\s\S]*?)^" + fence + r"\s*$", card)
+        if len(blocks) != 1 or len(re.findall(r"(?m)^" + fence + r"aidp-contract\b", card)) != 1:
+            raise ValueError("契约须恰有一个 aidp-contract 块")
+        def invalid_constant(value):
+            raise ValueError(f"非法 JSON 常量：{value}")
+        gate = json.loads(blocks[0], object_pairs_hook=unique_object, parse_constant=invalid_constant)
+        revision = gate.get("contract_revision") if isinstance(gate, dict) else None
+        if (not isinstance(gate, dict) or gate.get("version") != version
+                or gate.get("sprint") != sprint or gate.get("owner") != user
+                or gate.get("dev_scale") not in ("S", "M")
+                or type(revision) is not int or revision <= 0
+                or type(gate.get("approved_revision")) is not int
+                or gate["approved_revision"] != revision or gate.get("status") != "approved"):
+            raise ValueError("契约身份/档位/批准修订无效")
+        context = (root / "memory" / version / user / "activeContext.md").read_text(encoding="utf-8")
+        plain = context.replace("**", "").replace("`", "")
+        revisions = re.findall(r"(?m)^\s*(?:-\s*)?contract_revision\s*[:：]\s*([1-9]\d*)\s*$", plain)
+        paths = re.findall(r"(?m)^\s*(?:-\s*)?contract_path\s*[:：]\s*(\S+)\s*$", plain)
+        if revisions != [str(revision)] or paths != [contract_path]:
+            raise ValueError("activeContext 契约路径/修订不匹配")
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"resume-conflict: {exc}")
+    resume_source = "contract"
 owners = []
 for directory in (root / "memory" / version).iterdir():
     if not directory.is_dir():
@@ -82,12 +121,13 @@ for directory in (root / "memory" / version).iterdir():
 if owners != [user]:
     raise SystemExit("resume-conflict: 所属用户不唯一或不是当前用户")
 print(f"RESUME_OK={sprint}")
+print(f"RESUME_SOURCE={resume_source}")
 PY
    RESUME_RC=$?
    [ "$RESUME_RC" -eq 0 ] || exit "$RESUME_RC"
    ```
 
-   成功后读取原 activeContext 的已完成/待办、任务清单和实际代码；**跳过 Phase 1 `/sprint-start`**（它会重置上下文）。进入 Phase 2 `/sprint-dev {NNN} skip-test --cascade-now [--unattended]` 并透传原有 flags，以实际文件核实已完成项、补完未完成项，然后照常 Phase 3→4→5；测试必须针对恢复后的代码重跑。任何阶段失败即返回 `closed:false`，不得提前归档。
+   成功后读取原 activeContext 的已完成/待办、任务清单和实际代码；**跳过 Phase 1 `/sprint-start`**（它会重置上下文）。进入 Phase 2 `/sprint-dev {NNN} skip-test [--cascade-now] [--unattended]` 并透传原有 flags，以实际文件核实已完成项、补完未完成项，然后照常 Phase 3→4→5；测试必须针对恢复后的代码重跑。任何阶段失败即返回 `closed:false`，不得提前归档。
    恢复门非零 → 返回 `resume-conflict` 交调用方失败记账，不改上下文、不自动 close。
 3. ★ **未带 `--resume` 才执行约定 9 开工门（确定性判据，⛔ 不读 `activeContext.md` 自行裁量）**：
 
@@ -120,7 +160,7 @@ else:
 
 ### Phase 0A：读取 Sprint 范围
 
-从 `docs/plans/{version}/01_研发执行计划.md` 读取指定 Sprint 的任务范围和目标。
+从 `docs/plans/{version}/01_研发执行计划.md` 读取指定 Sprint 的任务范围和目标。恢复门输出 `RESUME_SOURCE=contract` 时改读已校验卡的 REQ/AC/Task 与原 activeContext，补完实际未完成项；approved 只代表开发前契约放行，不代表 M 文档已汇合或验收通过。
 
 ---
 
@@ -128,45 +168,23 @@ else:
 
 ### Phase 0B.0：★ 版本落点决策门（累进前置，最先跑，先于任何持久副作用）
 
-> ⛔ **本门之前还须先过约定 9「未关闭 Sprint 不得开新」**——`/sprint-start` 的硬停排在
-> Phase 1，而 0B.1 取号 / 0B.2 产 6 类增量文档**都排在它之前**：
-> 存在未关闭 Sprint 时，一条龙会先落一批持久副作用才被子命令拦下，
-> 而独立分步执行时这些副作用根本不会发生。故本命令**进入 Phase 0B 之前**先自检未关闭 Sprint，
-> 命中即**停止执行**、要求先 `/sprint-close`——与本 Phase 自己写的「先于任何持久副作用」同一条原则。
+> 开工门仍先于任何持久副作用。模式 B 的版本落点实际委派 `/sprint-dev [--unattended] [--from-batch]` 的 Phase 0B.0，沿用已有授权/未知状态 fail-closed 规则；本层只传递用户已作出的选择，不重复询问或先建目录。
 
-> **同 `/sprint-dev` 分支 B「Phase 0B.0 版本落点决策门」——单一信源见该处，本处不复述判定逻辑（约定 21）**。要点：若「当前版本」**已发布**（有 release tag / `progress.md`·版本更新日志标「✅ 已发布」）且未开始新版本规划，**累进前（且先于任何 `mkdir {新版本}` 等持久副作用）必须让用户三选一**——**① 落回已发布版本 re-release**（⚠️ 会强制移动已推送 tag，若已被他人/CI/制品库消费有实际风险）**② 新开 patch 版本 `{x.y.z+1}`（推荐默认、不动 tag、风险最低）③ 新开 minor 版本 `{x.y+1.0}`**；**patch/minor 版本号语义由用户定、执行体不自裁**（命令可给推荐+理由）；**绝不静默往已发布版本累进、绝不自行裁量版本号、绝不决策前建目录**（核心约定 2「自动累进仅适用于当前版本未发布时」）。`--unattended` 罕见命中→**保守默认新开 patch**（不动 tag）+ baseline `decidable_skips` 留痕（落点 = `builds[current_build]`，无 build 才回落版本级），与 `/sprint-dev` Phase 0B.0 同口径。`RELEASED` 为空（当前版本未发布，如已在新版本迭代中）→ 跳过本门，直接进 Phase 0B.1。
+> 版本号 / tag / 持久目录的决定继续由原版本落点门负责；`--unattended` / `--from-batch` 只改变交互方式，不扩大版本、破坏性操作或部署授权。原门的默认决策留痕仍在 `builds[current_build].decidable_skips[]`（无 build 才回落版本级），本层消费其结果。
 
-### Phase 0B.1：计算新 Sprint 序号
+### Phase 0B.1：编号由开发入口统一分配
 
-```bash
-# ★ 取号一律走脚本，【绝不】自己 glob 当前版本目录（见下方 Why）
-NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 004
-```
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。本层不预留编号、不生成文档、不写 activeContext；Phase 2 委派 `/sprint-dev [--unattended] [--from-batch] "{目标描述}" skip-test`，由它执行版本/开工门、全局取号、契约卡与分档并回传 `{NNN}`，本层随后使用该真实编号。
 
-> ⛔ **Sprint 编号是【项目全局流水号】，跨版本连续自增、不随版本重置**（`06_版本与用户目录约定.md` §3.3）。
-> ⛔ 扫描路径**不得带 `{version}` 限定**（带了新版本目录天然为空 → MAX=0 → 又从 `sprint-001` 起）。
-> 脚本 `next` 子命令**跨全部版本**扫 `memory/*/*/sprints/` + `docs/plans/*/…研发执行计划.md` 取 MAX+1。
+### Phase 0B.2：契约分档与文档时机
 
-### Phase 0B.2：★ 自动文档增量流（与 `/sprint-dev` Phase 0B.1.1 同一机制，产 `NN_<业务主题>.md`）
-
-模式 B 的累进文档生成**复用 `/sprint-dev` Phase 0B.1.1「自动文档增量流」的同一套机制**（单一信源，不另立分叉、不内联追加主文档正文）——把用户口述描述转化为**独立补充文档** `NN_<业务主题>.md`，6 类文档**共享同一 NN**、逐级级联，符合约定 15（补充命名）+ 约定 22（上游级联）：
-
-**完整步骤（记口述 → L1 需求 → L2 设计 → L3 计划 → L4 用例 → 刷 `00_索引.md` → 完成报告，含各步的输入 / 路径占位符显式传参 / `--unattended` 透传 / 跳过条件）以 `/sprint-dev` Phase 0B.1.1 为单一信源**，⛔ 本命令按约定 21 不复述、不改判定。
-
-> ★ **约定 22 铁律**：模式 B 累进新 Sprint 触发「需求漏项 / 功能点增删」→ 必级联 **L1 需求 → L2 设计 → L3 计划 → L4 研发自测用例**，不可只补前三级而漏 L4。**完整步骤（输入 / 路径占位符显式传参 / 跳过条件等）以 `/sprint-dev` Phase 0B.1.1 为单一信源**，本命令按约定 21 不复述、不改判定，仅在此声明模式 B 与其共用同一机制——累进产出统一为独立的 `NN_<业务主题>.md`，不内联追加进主文档正文。
+`{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 为唯一权威，由 Phase 2 的开发入口执行：S 契约先行、四族义务攒批；M 代码/docs 按互斥写集并行并在验收前完整汇合；L 先完成正式文档再开发。本层不另跑 L1→L2→L3→L4 的前置全套，不把 test→close 解释为自动 `--cascade-now`。显式传入的 `--cascade-now` 仍必须原样透传，正式用例 required 门不变。
 
 ---
 
 ### Phase 0B.3：★ 口述追加 / 口径反转清算门（模式 B 专属，约定 34 ⑥）
 
-> 与 Phase 0B.2 **对称**：模式 B 的口述描述可能不是「追加」而是**推翻**本版已写入文档的既有结论
-> （口径反向 / 白名单方向调转 / 默认值·状态机·权限范围改写）。**单一信源见 `/sprint-dev` Phase 0B.1.3**，
-> 本步只做编排触发、不复述判定（约定 21）。
-> ⛔ **不能靠 Phase 0B.2 兜住**：0B.2 指向的是 `/sprint-dev` Phase 0B.1.1（自动文档增量流），
-> 它做的是**追加**；反转要做的是**逐条清算失效结论 + 显式作废标记**，两者处理方式不同、缺一不可。
-> **完成判据（照搬其三项，缺任一不得进入 Phase 2）**：① 已判定「追加 vs 反转」；
-> ② 若为反转，所有引用旧结论的落点（需求条目 / ADR / 用例断言 / 反向断言式子 / 铁律 / 代码 `REQ-XXX` 注释）
-> 已逐条清算并加显式作废标记；③ 已回答「旧口径下判定为安全的设计，在新口径下是否仍然安全」。
+> 口径反转仍由 `/sprint-dev` Phase 0B.1.3 在派发实现之前执行，并把失效结论/落点、旧安全结论是否成立及四族义务写入契约。本层核对开发回传，缺失不得进入 Phase 3；S 只推迟成文，不推迟反转清算。
 
 ## 阶段检查点协议（模式 A 和 B 通用）
 
@@ -176,7 +194,7 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 
 ### Phase 1：启动 Sprint
 
-已通过 `--resume` 恢复门时**跳过本阶段**，直接 Phase 2；保留原 activeContext，不调用会重置上下文的 `/sprint-start`。
+模式 B **跳过本阶段**：由 Phase 2 的 `/sprint-dev "{目标描述}" skip-test [--from-batch] [--unattended]` 在契约放行后启动，外层不得先取号/先 start。模式 A 已通过 `--resume` 恢复门时同样跳过本阶段，保留原 activeContext。其余模式 A 按下方启动。
 
 ```
 执行：/sprint-start {NNN} [--unattended]（无人值守时透传）
@@ -194,13 +212,15 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 ### Phase 2：开发
 
 ```
-执行：/sprint-dev {NNN} skip-test --cascade-now [--from-batch] [--unattended]  ★ `--cascade-now` 不可省：本命令同轮跑 test 与 close，而约定 22 的收口点**不含 `/sprint-close`**——台账详规自己点名这是「残余空档」且规避方式就是该 flag；不传则当天开发当天关闭的 Sprint，其 L4 用例要到次日首次提交才成文
+模式 A：/sprint-dev {NNN} skip-test [--cascade-now] [--from-batch] [--unattended]
+模式 B：/sprint-dev "{目标描述}" skip-test [--cascade-now] [--from-batch] [--unattended]
+# --cascade-now 仅已有显式参数才传；--dev-scale、实测意图同样原样透传。模式 B 完成后消费真实 {NNN}、契约与汇合证据。
 # ★ 必传 skip-test：本命令是编排器，test/bugfix/close 由下方 Phase 3/4/5 统一负责；
 #   若不传 skip-test，/sprint-dev 会自行串联 test→bugfix→close（其默认行为），与本命令 Phase 3/4/5 重复执行整条链。
 # ★ --unattended（由 /sprint-batch 透传）时必传，令 /sprint-dev 的 UI C/D 门与约定22 级联门消费 PRD autopilot_decisions 预声明、不弹窗（autopilot 7×24 兜底）
 ```
 
-（`/sprint-dev` 内部使用 TDD，并由 AIDP 按写集隔离派发开发子 Agent、依次做规范与代码审查；本命令不另建并行或分支收尾流程。）
+（`/sprint-dev` 按契约分档、写集隔离和 TDD 执行，汇合时只做一次契约一致性 reviewer；完整质量审查在 Phase 3。M 的 docs 未完成/修订不一致、任一汇合证据失败均返回 `closed:false`，不得进入测试。）
 
 ```
 ▶ Phase 2 完成：代码已实现
@@ -223,21 +243,14 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
   - 新增 bug：{N} 个
 ```
 
-### Phase 4：Bugfix 循环
+### Phase 4：只接管未闭环项
 
-**如果 Phase 3 发现了 bug**（且参数不含 `skip-bugfix`）：
+Phase 3 已完成当轮原实现者修复、定向测试、reviewer 差量复核与集中 full，本层不重修已闭环项、不重复完整 CVL 或完整 `/sprint-test`。
 
-```
-do {
-  /sprint-bugfix sprint-{NNN} [--from-batch] [--unattended]   # 修复本 Sprint 相关的 bug
-  /sprint-test {NNN} [--from-batch] [--unattended]            # 回归验收
-} while (仍有未修复 && 循环次数 < 5)
-```
-
-终止：
-- ✅ 全部 Fixed/Verified → 进入 Phase 5
-- ⚠️ 循环 5 次超限 → **默认**：标记本 Sprint 为"⚠️ 软失败：bugfix 循环超限"，**继续进入 Phase 5 关闭 Sprint**（未修 bug 留在 `bugfix-*-{user}.md` 状态为「待修复」交给批量末段人工处理）；遇阻即停模式（参数 `--stop-on-blocker` 或 `/sprint-batch` 显式 stop-on-blocker 传入）→ 停止等待人工
-- `skip-bugfix` → 跳过，bug 留待后续 `/sprint-bugfix` 处理
+- 没有未闭环项且验收基线可信 → 进入 Phase 5。
+- 只有可修复残项且允许 bugfix → 保留当前 Sprint 与问题 ID，委派原实现者继续；需要独立修复入口才调用 `/sprint-bugfix sprint-{NNN} [--from-batch] [--unattended]`，仅传未闭环项与证据。随后用 `/sprint-test {NNN} --resume-acceptance [--from-batch] [--unattended]` 续接差量与最终 full，不重跑已完成完整质量审查。
+- 产品/版本/破坏性或环境待决 → 回传具体原因；不让 bugfix 无谓空转。外层和验收共用本次问题的修复轮次，连续 5 轮仍未闭环返回失败，不能外层重置计数再来 5 轮。
+- `skip-bugfix` 只跳过外层补救，不取消验收内部纠错，也不豁免关闭证据。残项未闭环 / `--stop-on-blocker` 命中 → 返回 `closed:false`，保留上下文，不以软失败继续归档。
 
 ```
 ▶ Phase 4 完成：Bugfix 循环
@@ -293,17 +306,14 @@ do {
 ```
 🎉 /sprint-full "{描述}" 完成（自动累进 Sprint-{新NNN}）
 
-📋 增量追加的文件（★ 模式 B 新增；统一产**独立 `NN_<业务主题>.md`**、6 类共享同一 NN、不内联主文档正文，机制见 Phase 0B.2）：
+📋 本轮产物（按真实档位与落盘状态列出）：
 - docs/requirements/{version}/产品提供/口述补充-{YYYYMMDD-HHMM}.md（口述记录）
-- docs/requirements/{version}/研发需求/NN_<业务主题>.md（研发需求增量）
-- docs/design/detail/{version}/NN_<业务主题>.md（详细设计 / 接口 / 数据库增量，按拆分态目录续编 NN）
-- docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql（新增 DDL/ALTER 文件，如有；序号续当前版本最大序号 +1）
-- docs/plans/{version}/NN_<业务主题>.md（研发执行计划增量）
-- docs/testing/{version}/研发自测/NN_<业务主题>.md（研发自测用例增量，L4 约定 22）
-- 各目录 `00_索引.md` 各追加一行（类型=补充 + 生成时间，指向本轮 `NN_<业务主题>.md`）
+- docs/design/detail/{version}/_sprint-{NNN}-契约卡.md（修订、真实写集、汇合证据）
+- {已完成的正式需求/设计合册或分册/计划/适用用例与 SQL 路径；不列未生成文件}
+- {S 待成文四族义务与用例 required/deferred 状态}
 
 各阶段摘要：
-  Phase 0B：✅ 增量文档已追加
+  Phase 0B：{S 契约与义务登记 / M 并行汇合 / L 先完整文档}
   Phase 1-5：✅ 完成
 
 📋 Sprint 产出：

@@ -94,6 +94,8 @@ run() {
 # ── 脚本本体（.aidp/scripts/）──
 run "test_report_schema.py（报告数据契约）" python3 .aidp/scripts/tests/test_report_schema.py
 run "test_commit_gate.py（提交前门禁 + 提交/推送分类）" python3 .aidp/scripts/tests/test_commit_gate.py
+run "test_alloc_id.py（原子编号分配与作用域）" python3 .aidp/scripts/tests/test_alloc_id.py
+run "test_test_ledger.py（测试复用与审查差量）" python3 .aidp/scripts/tests/test_test_ledger.py
 run "test_notify.py（里程碑通知：渠道渲染 / 签名 / 回落 / 退出码）" python3 .aidp/scripts/tests/test_notify.py
 run "cicd_watch.py --selftest（CICD 多提供方监听：脚本自带离线自测）" python3 .aidp/scripts/cicd_watch.py --selftest
 run "test_agent_sync.py（多 Agent 装配：agent_env / agent_sync）" python3 .aidp/scripts/tests/test_agent_sync.py

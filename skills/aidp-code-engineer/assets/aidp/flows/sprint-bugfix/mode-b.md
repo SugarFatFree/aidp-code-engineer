@@ -51,17 +51,32 @@
 
 - **来源 A · 已有记录**（用户手动写的 `bugfix-*-{user}.md` 表格行）→ 无需处理。
 - **用户口述、尚无任何记录**（`/sprint-bugfix "<描述>"` 或自然语言路由进来的零散 bug）→ 按约定 10 写 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`（一天一人一份，已存在则追加），含**表格行 + 详情章节**，字段按 `bugfix` SKILL Step 2.2b 的四字段（现象 / 归因 / 证据 / 处置）填。
-- **来源 B · 问题汇总清单**：扫 `docs/testing/{version}/研发自测/**/*.md` + `docs/testing/{version}/正式用例/**/*.md` 末尾「问题汇总清单」表中状态为「待修复」的行，逐行追加到今日 `bugfix-{YYYYMMDD}-{user}.md`：
+- **来源 B · 问题汇总清单**：扫 `docs/testing/{version}/研发自测/**/*.md` + `docs/testing/{version}/正式用例/**/*.md` 末尾「问题汇总清单」表中状态为「待修复」的行，先核本次范围与归属，再将范围内条目追加到今日 `bugfix-{YYYYMMDD}-{user}.md`；显式指定问题文件时仅消费该文件，不额外导入整版清单：
   - 字段映射：序号 / 用例 ID（反查执行步骤定位根因）/ 问题描述 / 严重程度 P0~P3 / 复现步骤；表格行「来源」列写回链 `<清单文件>#<序号>`。
   - **序号前缀**：`T-NNN` 用例自测发现 / `C-NNN` AI 自动化测试失败用例（`/sprint-batch` Step 6.5 写）/ `R-NNN` chrome 运行时错误（`/sprint-aiauto-test` Phase 2.4 写，问题描述带 `[chrome运行时]` 前缀；「用例 ID」为 `运行时-<页面>` 时根因定位以「复现步骤」列为准）。
   - **去重**：bugfix 文件里已有同一回链（`<清单文件>#<序号>`）→ 不重复追加；与来源 A 条目**问题描述完全相同**（去首尾空格 + 标点统一后 exact match）→ 视为重复、以 A 为主并补回链；⛔ 不做语义模糊合并。
-  - Sprint 列：清单按版本组织，追加条目的 Sprint 列留空（零散模式处理）。
+  - **Sprint 归属与调用范围**：来源清单按版本组织，不代表其中每条都属于当前 Sprint。按来源记录的显式 Sprint，或用例的 REQ/Task 回链与本 Sprint 计划/已批准契约的唯一映射核实，并保留证据位置：
+
+    | 本次过滤与归属证据 | 导入/派单 |
+    |---|---|
+    | 带 `sprint-{NNN}`，已核实属于指定 Sprint | Sprint 列填该编号，加入本次待修集合 |
+    | 带 `sprint-{NNN}`，明确属于其他 Sprint | 保留原归属，列为范围外，不加入本次待修集合 |
+    | 带 `sprint-{NNN}`，归属未知、多义或与已有 BUG 归属冲突 | 返回 `scope-conflict`，列来源回链与缺失/矛盾证据；暂停该次派单，不宣称“无待修复”或已处理，不把整版缺陷强绑当前 Sprint |
+    | 无 Sprint 过滤（零散模式） | 已知归属照录，未知归属可留空，按本次零散范围导入 |
+
+    同回链已存在但 Sprint 为空时，只有核实唯一归属后才补该列；已有非空归属不得为了通过过滤而改写。无需新建 Sprint。
+
+**编号与共享写入**：新条目先由主流程调用 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind BUG --count 1 --owner orchestrator --version {version} --scope bugs` 原子预留；来源编号（T/C/R）仅作回链，不代替 BUG ID。已有同一回链复用原 ID，禁止 grep 最大号。编号器不可用保留待登记工作单并报阻塞；主流程串行读最新记录后写入，修复 Agent 只回传自己的工作单。
 
 **Why**：命令路由表把「口述零散 bug」「测试问题清单」都指向本流程，而 SKILL 只扫 `docs/bugfix/`。不先落条目，这些 bug 要么被 SKILL 扫描忽略、要么修完查无此事，`/sprint-close` 归档与回归验证都拿不到。
 
 #### Step 1：调用 bugfix skill（附项目级专项）
 
+**派单前对账**：用实际将传的 Sprint/文件过滤逐条核本次待修 BUG ID，保证 Step 0 范围内的导入项均可被 SKILL 读到；遗漏或归属不明返回 `scope-conflict`，不静默跳项。**不得通过删掉 Sprint 参数扩大修复范围**，也不得改写其他 Sprint 的归属来凑匹配。把已核实 BUG ID 与来源回链一并交给执行方。
+
 使用 `Skill` 工具调用 `bugfix` skill，参数 = 调用方给定的 `sprint-{NNN}` / 文件名，**都没有则留空（零散模式）**。修复流程（归因拆分 → 根因定位〔方法论 `superpowers:systematic-debugging`，⛔ 根因证据确认前不改代码〕→ 修复 → 逐项验证 → 修复报告）以 SKILL 为单一信源，命令端不复述、不另行调用 systematic-debugging（约定 21）。
+
+来自验收的调用只接管尚未闭环 BUG，保留原严重度（包括错误性 Suggestion）、原证据、契约修订、具体写集和原始 CVL 报告回链。先给出失败测试再修复，每轮经 `test_ledger.py run --scope targeted` 定向验证；SKILL 不得另起完整 CVL。Git index/commit/push 与共享文档由主流程独占，显式授权另行串行交接。纯优化写不修理由，真实产品/版本/破坏性或部署授权问题按原门，不因进入修复自动获得授权。
 
 调用 prompt **附带下列项目级专项**（SKILL 未覆盖，属本项目路径 / 配置类 bug 的附加检查）：
 
@@ -85,19 +100,20 @@
 
 > **★ 契约边界（约定 21，与 SKILL 5.3 对齐）**：根因 / 证据 / 修复方案的**权威落点 = SKILL 生成的 `bugfix-*-report.md`**；问题记录与来源清单只就地回填状态、Commit 与报告链接，⛔ 不复写根因。
 
-**bugfix 记录（`bugfix-*-{user}.md`）**——表格行「状态」改 `已修复`、「Commit」填 hash；详情章节追加一行 `修复报告：<report 相对路径>#<小节锚点>`，以及**部署提醒**（前端/后端/DB/Redis 是否需要重启或变更，报告未覆盖时）。
+**bugfix 记录（`bugfix-*-{user}.md`）**——表格行「状态」改 `已修复`；已提交的「Commit」填真实修复 SHA，尚未提交写“尚未提交 + 账本 after_hash”，不得伪造提交或用旧 HEAD 代替；详情章节追加一行 `修复报告：<report 相对路径>#<小节锚点>`，以及**部署提醒**（前端/后端/DB/Redis 是否需要重启或变更，报告未覆盖时）。
 
 **来源 B 清单行**（由 Step 0 回链定位；**不改 template 表结构**，6 列保持原状）：
 1. 「状态」列从 `待修复` 改为 `已修复`
 2. 「复现步骤」列末尾**追加内嵌 HTML**（保持列数不变）：`<br><sub>✅ 已修复 / commit: <hash> / 报告: <report 相对路径></sub>`
-3. **不要删行** — 清单本身就是审计轨迹，状态「待修复」→「已修复」→「已验证」逐步演进；/sprint-test Step 6 回归后再改「已验证」
+3. **不要删行** — 未提交时第 2 条的 commit 字段同样改写为“尚未提交 + after_hash”。静态复核仅标「已修复·待人工验证」，真实用例执行通过后才改「已验证」。已修、挂起原因、不修理由分别回传，不能删除未核验项。
 
 #### Step 4：编译（后端）/ 前端校验（★ 仅改动侧 + 资源受限 + 前端不打包）
 
 调用 `superpowers:verification-before-completion`：
 - **仅处理本次 bugfix 实际改动的一侧**——改了后端才执行编译命令、改了前端才执行前端校验（**lint + 类型检查，不打包**），未改动侧不处理
 - 执行走**资源受限方式**（`nice` + 限并发 worker/线程，可选 `taskset/cpulimit`，避免 CPU 打满），配方见 `agents/backend.md`「Step 7: 编译验证」/ `agents/frontend.md`「Step 4: 前端验收校验」；**前端不跑完整打包**，部署打包由使用者按需自行执行
-- 运行相关单元测试
+- 运行相关单元测试；命令均从契约卡 `test_plan.targeted_argv/cwd/env_id/inputs` 取真实值，经 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd <实际目录> --scope targeted --env-id <实际环境标识> --input <真实契约或设计输入> -- <原命令及参数>` 执行。无卡的独立修复按现有项目命令与真实输入建立同样计划，不造占位命令。读取末行 JSON 的 run_id/status/reused/before_hash/after_hash；同树 PASS 复用，失败/未执行不当通过。
+- 被已有验收会话调用时只回定向结果，由该会话在修复汇合后集中 full 与 reviewer 差量复核；独立方式 B 在 Step 6 文档回写完成后集中一次 full，不每条 BUG 重跑全量，不自动重启完整 CVL。
 
 #### Step 5 ~ 6
 

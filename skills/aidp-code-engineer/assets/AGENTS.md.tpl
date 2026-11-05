@@ -44,6 +44,10 @@
 
 ---
 
+## 工作分支偏好
+
+修改需求、代码或修复漏洞前，最外层执行体读取 `python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy`。Git 项目未选择时只询问一次“直接当前分支 / 每个独立任务新建分支”，保存到 `memory/aidp-config.yaml` 的 `development.branch_policy` 后持续沿用；无 Git 不询问。`current` 包括 main/master，不自动切换；`new` 只在任务开始创建一次，嵌套命令、子 Agent、复验和续跑共用该分支。不得因外部 SKILL 默认要求工作树就覆盖此选择；未选择的无人值守任务返回配置缺失，不代选。完整处理见 `{{AIDP_HOME}}/reference/agent-tools.md`「工作分支：首次选择、项目内沿用」。
+
 ## 语言与沟通偏好
 
 - 开发者母语**中文**；Claude 面向开发者的反馈/提示/解释/计划/总结/追问/报告/错误说明**一律优先中文**。
@@ -53,7 +57,7 @@
 
 ## 当前状态
 
-> 此区域由 `/memory-sync`、`/version`、`/sprint-*` 系列命令自动更新
+> 此区域由 `/memory-sync`、`/version`、`/sprint-*` 系列命令定点更新，只写状态短行与证据链接。「整体进度」至多包含最近 2 个 Sprint 摘要，早期记录先移交 `progress.md`，不删历史关闭证据或未决项。
 
 - **当前版本**：{{version}}
 - **当前开发者**：{{user}}
@@ -171,7 +175,7 @@
 
 ## 本项目使用的 Skills
 
-> 各 SKILL **详细用途**见 **`{{AIDP_HOME}}/reference/skills.md`**（按需 Read）+ 各 `SKILL.md`（单一信源，约定 21）；本节只列「skill → 被谁调用」供路由。
+> 各 SKILL **详细用途**见 **`{{AIDP_HOME}}/reference/skills.md`**（按需 Read）+ 各 `SKILL.md`（单一信源，约定 21）；本节只列「skill → 被谁调用」供路由。生成新业务编号前须 Read 该参考的「编号与执行证据的调用层协议」，通过 `alloc_id.py` 预留号段并传给执行方，禁止并发自行取最大号加一。
 
 | Skill | 被谁调用 |
 |-------|---------|

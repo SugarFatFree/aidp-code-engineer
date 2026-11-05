@@ -28,6 +28,7 @@
 > 同一变更跨族共用同一个 `C-NNN`、只记与该族相关的那一面；不存在则从
 > `{{AIDP_HOME}}/templates/_开发期族增量.md` 拷骨架），**然后直接跳到 Step 5.1**。
 >
+> - 编号由主流程 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind C --count 1 --owner orchestrator --version {version} --scope changes` 原子预留；同事件跨四族复用同一 C 号，读取最新台账后串行写入。不可用时保留待登记工作单，不自行 grep 最大号。
 > - 一行格式：`- C-{NNN} · MM-DD HH:MM · 改了什么·为什么 · 🔴破坏性（可选）· sprint-{NNN}`
 > - 🔴 破坏性变更须同时在台账「⚠️ 已知失准点」段登记失准位置，否则 gate 判 `destructive_unregistered`。
 > - **唯一合法例外 = 显式 `--cascade-now`**（或本轮恰好命中收口点）→ 才走下面 1~7 步。
@@ -105,4 +106,6 @@ fi
 #### Step 6：更新 activeContext
 
 在 `memory/{version}/{user}/activeContext.md` 的「待处理 Bugfix」区域更新修复状态。
+
+独立方式 B 在代码/文档/测试输入都稳定后，按实际 `test_plan.full_argv/cwd/env_id/inputs` 用 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd <实际目录> --scope full --env-id <实际环境标识> --input <真实契约或设计输入> -- <原完整测试命令及参数>` 集中验证（多套逐一 PASS）。已有验收会话则把全部变动与定向证据回传，由该会话统一 full 与差量 reviewer，不重复完整验收。独立修复没有真实质量审查时不可 `record-review` 冒充已验收；关闭仍回验收补齐。报告先填真实 SHA/尚未提交树 hash 后再被验收绑定，之后补 SHA 也不能改写已绑定报告。
 

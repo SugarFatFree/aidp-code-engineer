@@ -99,7 +99,7 @@ def render_memory_readme(text: str) -> str:
 
 
 def render_config_tpl(text: str) -> str:
-    """memory/aidp-config.yaml → 下游模板：project 段取占位符，scaffold 段清空。"""
+    """下游模板：project 取占位符，scaffold 与维护项目的分支偏好清空。"""
     lines = text.splitlines()
     out, sec = [], None
     hit = {"name": False, "name_cn": False}
@@ -112,6 +112,11 @@ def render_config_tpl(text: str) -> str:
                 val = "{{project}}" if m.group(2) == "name" else '"{{project_cn}}"'
                 out.append(f"{m.group(1)}{m.group(2)}: {val}")
                 hit[m.group(2)] = True
+                continue
+        if sec == "development":
+            m = re.match(r"^(\s+)branch_policy\s*:", ln)
+            if m:
+                out.append(f"{m.group(1)}branch_policy: null")
                 continue
         if sec == "scaffold":
             m = re.match(r"^(\s+)(version|pending)\s*:", ln)

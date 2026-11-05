@@ -25,6 +25,8 @@
 | PRD 头部 `autopilot_decisions.deployment.mode == none` | 直接跳过，报告里标 `⏭️ 已跳过（该版本 deployment.mode=none）` |
 | 上述全不命中 | 进 6.1 |
 
+实际部署触发前，日常累进按契约卡 `test_plan` 经 `test_ledger.py run --scope full` 核验最后代码树；同树同命令/范围/环境/输入的 PASS 复用，变更则补全量。执行协议见 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`，命令原始 argv 与 `env_id` 不得临时改成更小范围来制造命中。缺可信结果不能部署；仅跳过本段浏览器测试不免除外层部署门。
+
 #### Step 6.0.5 ★ SQL 已应用校验（部署前安全网 — 防「部署后表缺失报错」，约定 6）
 
 > 本版本详细设计若含数据库，SQL 落 `docs/deployment/{version}/sql/增量/`，由 `/sprint-dev` 后端 Phase 1.2 Step 1 **开发期自动应用到开发库**（检测驱动、幂等，约定 6）。本步是**部署/测试前的兜底核验**——堵住边界（本版本有 SQL 但某些 Sprint 全前端未触发后端 Step 1、或开发期 DB 曾不可达导致未应用），避免未应用的 SQL 静默流到部署后才炸。

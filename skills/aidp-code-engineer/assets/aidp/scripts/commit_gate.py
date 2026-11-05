@@ -25,6 +25,8 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
     "pending_cicd": dict,            # ★ 约定 31.5：已推送正式代码却未经推送分类器，或分类后部署终态长时间未记录
     "offchain": dict,                # ★ 约定 41：链外任务动作预算 + 规模档位
     "context": str,                  # --context 原样回显（留痕）
+    "path_scope": dict,              # --allow-path 暂存区白名单，越界只报 WARN（不改变欠账退出码）
+    "id_allocation": dict,           # 已启用时核对原子编号账本及实际定义；损坏/重号登记欠账
     "debts": [str]                   # 未落地义务代号清单（非空 ⇔ 退出码 3）：cascade-not-cleaned /
                                      #   cascade-unparsed / cascade-archived-not-deleted / cascade-destructive-unregistered /
                                      #   cascade-bypass / cicd-push-pending
@@ -153,6 +155,27 @@ def _date(spec=None):
         return subprocess.run(args, capture_output=True, text=True, timeout=10).stdout.strip()
     except (subprocess.SubprocessError, OSError):
         return ""
+
+
+def staged_path_scope(root, allowed=(), owner=""):
+    """只核对实际暂存区；重命名拆为删除/新增，两端都受白名单约束。"""
+    for pattern in allowed:
+        base = pattern[:-3] if pattern.endswith("/**") else pattern
+        if not base or base.startswith("/") or "\\" in base or any(
+                part in ("", ".", "..") for part in base.split("/")) or any(c in base for c in "*?["):
+            raise ValueError("白名单只接受仓库相对文件路径或目录/**，不能含上级路径")
+    result = {"applicable": bool(allowed), "owner": owner, "allowed": list(allowed),
+              "staged": [], "outside": []}
+    if not allowed:
+        return result
+    output, rc = _git(root, "diff", "--cached", "--no-renames", "--name-only", "-z", strip=False)
+    if rc:
+        raise ValueError("无法读取暂存区，未执行白名单检查")
+    result["staged"] = sorted(path for path in output.split("\0") if path)
+    result["outside"] = [path for path in result["staged"] if not any(
+        path.startswith(pattern[:-2]) if pattern.endswith("/**") else path == pattern
+        for pattern in allowed)]
+    return result
 
 
 # ───────────────────────── 约定 22：开发期族增量册 ─────────────────────────
@@ -720,6 +743,18 @@ def offchain_budget(root: str, context: str, porcelain: str) -> dict:
 
 # ───────────────────────── 汇总 ─────────────────────────
 
+def id_allocation_status(root):
+    """已启用原子分配时复核账本；未启用的历史项目不凭空增加登记义务。"""
+    from aidp_paths import id_alloc_ledger
+    if not os.path.exists(id_alloc_ledger(root)):
+        return {"applicable": False, "reason": "no-allocation-ledger"}
+    try:
+        from alloc_id import check_ledger
+        return dict(check_ledger(root), applicable=True)
+    except (OSError, ValueError, ImportError) as exc:
+        return {"applicable": True, "passed": False, "errors": [{"detail": str(exc)}]}
+
+
 def gather(root: str, context: str = "bare-conversation", cascade_now: bool = False) -> dict:
     enabled = commit_gate_enabled(root)
     is_tpl = is_template_project(root)
@@ -743,6 +778,7 @@ def gather(root: str, context: str = "bare-conversation", cascade_now: bool = Fa
         "cascaded_not_cleaned": int(cascade.get("cascaded_not_cleaned") or 0),
         "suspected_cascade_bypass": bypass,
         "pending_cicd": pending_cicd(root),
+        "id_allocation": id_allocation_status(root),
         "offchain": offchain_budget(root, context, porcelain),
         "context": context,
     }
@@ -752,6 +788,9 @@ def debt_items(info: dict) -> list:
     """未落地义务清单（与退出码 3 的判据逐项对齐）。"""
     casc = info.get("pending_cascade") or {}
     items = []
+    allocation = info.get("id_allocation") or {}
+    if allocation.get("applicable") and not allocation.get("passed"):
+        items.append("id-allocation-invalid")
     if int(casc.get("cascaded_not_cleaned") or 0) > 0:
         items.append("cascade-not-cleaned")
     if casc.get("unparsed"):
@@ -769,6 +808,10 @@ def debt_items(info: dict) -> list:
 
 def _print_obligations(info: dict) -> None:
     """未落地义务告警区 —— 【恒打印，`--quiet` 也不压制】。"""
+    allocation = info.get("id_allocation") or {}
+    if allocation.get("applicable") and not allocation.get("passed"):
+        sys.stderr.write("[WARN] 编号分配账本或源文档重号检查未通过：%s\n"
+                         % json.dumps(allocation.get("errors", []), ensure_ascii=False))
     casc = info.get("pending_cascade") or {}
     byp = info.get("suspected_cascade_bypass") or {}
     if byp.get("suspected"):
@@ -850,12 +893,23 @@ def main(argv=None):
                          "AIDP 命令内的 commit 前判定传 aidp-command；自然语言对话里的直接提交用默认值")
     ap.add_argument("--cascade-now", action="store_true",
                     help="本轮显式当场级联（约定 22 唯一合法例外）→ 抑制 suspected_cascade_bypass 告警")
+    ap.add_argument("--allow-path", action="append", default=[],
+                    help="派发白名单，可重复；只接受精确相对路径或目录/**，暂存越界只报 WARN")
+    ap.add_argument("--owner", default="", help="本次提交写集的责任 Agent，仅用于留痕")
     args = ap.parse_args(argv)
 
     if detect_mode(args.repo_root) != "git":
         print(json.dumps(unsupported("commit")))
         return EXIT_UNSUPPORTED
+    try:
+        scope = staged_path_scope(args.repo_root, args.allow_path, args.owner)
+    except ValueError as exc:
+        ap.error(str(exc))
     info = gather(args.repo_root, context=args.context, cascade_now=args.cascade_now)
+    info["path_scope"] = scope
+    if scope["outside"]:
+        sys.stderr.write("[WARN] 暂存区包含派发白名单外路径（owner=%s）：%s；提交前由编排者核对归属，禁止带入他人改动。\n"
+                         % (args.owner or "未声明", ", ".join(scope["outside"])))
     info["debts"] = debt_items(info) if info["commit_gate_enabled"] else []
     print(json.dumps(info, ensure_ascii=False))
 

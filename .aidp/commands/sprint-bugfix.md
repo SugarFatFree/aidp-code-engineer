@@ -25,10 +25,14 @@
 - `/sprint-bugfix "<描述>" --minor` — 强制方式 B（零散修复，不新开 Sprint）
 - `/sprint-bugfix "<描述>" --accrue` — 强制方式 C（累进新 Sprint，跳过语义判定）
 - `/sprint-bugfix "<描述>" skip-test` — 跳过后续 test/close 串联
+- `--cascade-now` / `--dev-scale=S|M|L` — 显式要求原样透传开发入口，不默认强制级联。
+- `--aiauto-test-required` / `--skip-aiauto-test` — 实测意图透传，required 优先，不以被编排自动恢复已取消实测。
 - `--unattended` — 无人值守：所有决策门按下文规则**自动判定**，不弹 `AskUserQuestion`；由 `/sprint-batch` → `/sprint-full` → 本命令逐层透传（漏传即在版本落点决策门挂起）
 - `--from-batch` — 批量子任务标志（由 `/sprint-full` 透传）：本命令不弹 `AskUserQuestion`，内容决策门按「⏸ 待裁决」返回上层（语义单一信源 = `/sprint-full` 参数表）
 
 ## 前置流程
+
+**工作分支先决条件**：按 `{{AIDP_HOME}}/reference/agent-tools.md`「工作分支：首次选择、项目内沿用」读取项目 `development.branch_policy`。独立修复未选时只由主流程询问并保存一次；验收内修复、方式 A 或同任务续跑继承 `task_branch`，不因新增 BUG、调用 bugfix SKILL 或开始修复轮次另建分支。无人值守缺选择返回 `needs-choice`，不代选；无 Git 跳过。
 
 按 `docs/init/06_版本与用户目录约定.md`：
 1. **{version}** ← 项目记忆文件（路径经 `python3 {{AIDP_HOME}}/scripts/agent_env.py memory-file` 取：`AGENTS.md`，只用 Claude Code 时为 `CLAUDE.md`）「当前状态.当前版本」
@@ -48,7 +52,7 @@
 
 > **「不做这个修复，当前行为是不是错的？」**
 > - **是（当前行为错误）** → 属"写错了"，**当场改、不问**。
-> - **否，只是可以更好** → 属"要什么"（真正的产品/架构取舍），**等人**。
+> - **否，只是可以更好** → 纯优化，记录不修理由或后续建议，不为优化阻塞本轮；确需在两个合理行为/产品口径间选择才按下方正向白名单等待裁决。
 > - **拿不准属哪档** → ⚠️ **默认当场改**——"失败被伪装成成功""错误被吞掉"这类缺陷每多存在一天就多误导用户一天；挂起等人的代价是**确定的**（阻塞到人醒），修错的代价**可控**（git 可回退）。
 
 ### 缺陷类型 → 默认处置映射表（命中即按默认处置直接修、无需询问）
@@ -79,7 +83,7 @@
 > 此时按默认处置直接修。无人值守链路里这条落成结构化字段（`pending_clarifications[].question`），
 > 由收尾门校验，见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-3-3b.md`。
 
-> 表未穷举：新类型按「一、核心判据」归档——问一句"当前行为是不是错的"，是→默认修、否→问人。
+> 表未穷举：新类型按「一、核心判据」归档——问一句"当前行为是不是错的"，是→默认修、否→记录纯优化不修理由；只有真实产品取舍才待裁决。
 > **★ 编码期正确写法（前移、防这类缺陷从源头发生）单一信源 = `{{AIDP_HOME}}/rules/code.md`「错误契约与失败可见性 + fail-closed + 上游契约权威」**（约定 23 姊妹条）：本表管"发现了默认怎么修"（处置层），code.md 管"写代码时就该长什么样"（编码层），互补不重复（约定 21）。修复时按 code.md 的正确写法改。
 
 ### 批量挂起的成本意识（无人值守尤重）
@@ -122,7 +126,7 @@
 - **不新开 Sprint、不做累进**——编排器已持有当前 Sprint 上下文，本方式只在其内闭环修复；需要累进的较大 bug 由编排器自行决定是否改走方式 C。
 - **执行体 = 方式 B 全流程**：编排器传入的参数（`sprint-{NNN}` 过滤 / 空）落到方式 B 的参数分支，按方式 B 的骨架表 + `{{AIDP_HOME}}/flows/sprint-bugfix/mode-b.md` 逐项执行。
 - **零询问**：编排器上下文（尤其 `/sprint-batch` 连跑、`/sprint-autopilot` 无人值守）下不弹 `AskUserQuestion`，一律按上方「缺陷处置默认决策纪律」的默认处置直接修。
-- **收口**：修完把结果回填给编排器（已修 / 未修 + 原因），由编排器决定是否再跑一轮回归。
+- **收口**：只接管未闭环项，复用原问题 ID/证据；已修项带真实 SHA 或尚未提交写树 hash，挂起原因与不修理由分列。定向测试后回传编排器，由已有验收会话完成 reviewer 差量复核和集中 full，不重复完整 `/sprint-test` / CVL。
 
 ---
 
@@ -170,66 +174,40 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 
 > **同 `/sprint-dev` 分支 B「Phase 0B.0 版本落点决策门」**：当前版本已发布且未开始新版本规划时，**先弹版本落点门再动任何持久副作用**——三选一（re-release / 新 patch / 新 minor）与各自的 tag 影响、无人值守保守默认，**单一信源见 `/sprint-dev` Phase 0B.0，本处不复述**（约定 21）。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->
 
-### Phase 0C.1：累进 Sprint 序号 + 追加增量文档
+### Phase 0C.1：缺陷归口与契约委派
 
-Sprint 序号计算复用 `/sprint-full` Phase 0B.1 —— ⛔ 取号一律 `python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next`（**跨全部版本**扫 MAX+1），绝不自己 glob 当前版本目录（那会让新版本又从 001 起）；**增量产物与 `/sprint-dev`·`/sprint-full` 完全同款**：
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。主流程把现象、复现步骤、根因证据、期望行为和来源回链落入当前版本 bugfix 记录；新增 BUG 用 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind BUG --count 1 --owner orchestrator --version {version} --scope bugs` 原子取号，已有 BUG 复用。不自行 grep 最大值；编号接口不可用保留待登记工作单并停在该门。
 
-> ★ **两条落点路径，按入口分流，⛔ 不可混用**：
-> - **约定 22 攒批级联**（`--ledger-cascade`，方式 B-2 的 Step 5、由收口点驱动）→ **就地改内容主文档正文**，⛔ **不新建 `NN_` 分册**（`check_cascade_landing.py` 见到新建 NN_ 即 exit 1）。这是 bug 修复触发上游文档同步时的**默认路径**。
-> - **产品侧 PRD/原型变更的增量分册**（`--supplement={NN}`）→ 落 `NN_<业务主题>.md`、不改主文档正文。下方第 2~6 条描述的正是这条路径。
->
-> ⛔ 下文「不写回主文档正文」只约束 `--supplement` 这一条，**不适用于 `--ledger-cascade`**——三个规划期 SKILL 的「增量 / 补充生成约定」第 2 条已各自把该限制**按 flag 分流**到 `--supplement`（单一信源在 SKILL 侧，命令端不复述、也不覆盖，约定 21）。
-> **溯源不因此变弱**：`00_索引.md` 记「类型=补充 + 生成时间」，增量文档头部三类回链（专职索引 / 本轮输入来源 / 同轮其他层补充）指回主文档，比内联追加更可审计。
+**方式 C 不自行重复四层前置**：编号、契约卡、S/M/L 判档、反转清算、文档成文和汇合统一委派 Phase 1 的 `/sprint-dev` 新协议。S 攒批、M 代码/docs 并行后完整汇合、L 先文档，不能因“bugfix”强制全部走 L。已完成的版本落点决策连同缺陷记录、具体修复约束透传，入口不重复决策、不先建新 Sprint 目录。四族同事件复用 C 号与正式用例 required 门仍按权威流程。
 
-0. 约定 9 前置门已在 Phase 0C.00 执行（⛔ 不得挪到取号之后）。
-1. 新编号 = `python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next`（跨版本连续，同 `/sprint-full` Phase 0B.1）
-1bis. **★ 档位判定（`--scale` 的唯一生产者）**：下面第 3 / 5 / 6 步都消费 `--scale={档位}`，⛔ 不判就传不出去、
-   三个下游 SKILL 全部缺省回退 **L 档全套**（正文一行不省，等于白判）。判据**复用 `/sprint-dev` Phase 0B.1.1 步骤 2.5**
-   （`REQ_COUNT` / `PAGE_COUNT` / `HAS_DDL` / `HAS_API` / `HAS_CONFIG` / `THIRD_PARTY` 四值 + S 语义子档），此处不复述；
-   结果落 baseline `versions.{V}.sprints.{新NNN}.sup_scale`，并打印 `📐 档位：{S|M|L}`。
-2. **研发需求增量**：经 `/sprint-requirements {version} --supplement={NN} [--unattended]` 编排 → `NN_<业务主题>.md`（**不直调 SKILL**——直调会跳过命令端的落盘归一 / 多系统拆分 / 头部元数据表 / AIDP 硬规范回检）
-3. **设计增量**：经 `/sprint-design {version} --supplement={NN} --scale={档位} [--unattended]` 编排（内部以增量 prompt 驱动 `dev-logic-architect` 做根因分析 + 派生设计）→ 详细设计 / 接口设计 / 数据库设计的 `NN_<业务主题>.md`
-4. 新增 SQL 文件 `docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql`（按 SKILL 命名规范）
-5. **研发执行计划增量**：经 `/sprint-plan {version} --supplement={NN} --scale={档位} [--unattended]` 编排 → `docs/plans/{version}/NN_<业务主题>.md`（⛔ 不是追加进 `01_研发执行计划.md`；也**不能**挂在 `/sprint-design` 上——它不产计划）
-6. **★ 研发自测用例增量（L4，⛔ 不得跳过）**：经 `/sprint-selftest {version} --supplement={NN} --scale={档位} [--unattended]` 编排
-   （研发自测唯一入口，内部 `dev-manual-testcase` 增量）→ `docs/testing/{version}/研发自测/NN_<业务主题>.md`。
-   ⛔ `/sprint-full` Phase 0B.2 要求「必级联 L1→L2→L3→**L4**」，
-   漏它即命中约定 22 的典型漏项「只补了详细设计、把需求与自测用例留在旧口径」，且 bug 修复恰是最该产回归用例的场景。
-   纯技术内部调整（未触达任何用户可见功能）可标 N/A + 写明判据。
-7. **各目录 `00_索引.md` 登记**：上述已生成的增量在对应目录 `00_索引.md` 各追加一行（类型=补充 + 生成时间）。
+### Phase 0C.2：启动由开发入口承担
 
-### Phase 0C.2：启动新 Sprint
-
-```
-执行：/sprint-start {新NNN} [--unattended]（无人值守时透传）
-```
+本层不另调 `/sprint-start`，由 Phase 1 在契约放行后启动并回传真实 `{新NNN}`，避免重复取号或重置上下文。
 
 ### Phase 1：开发修复
 
 ```
-执行：`/sprint-dev {新NNN} skip-test [--unattended]`（开发已启动的 Sprint-{新NNN}；★ 必须显式传 `skip-test` 抑制 `/sprint-dev` 自带的 test→bugfix→close 串联，否则会与本命令 Phase 2-4 重复跑测试；后续 test/close 由本命令 Phase 2-4 接管。★ 本命令被 autopilot 增量路径以 `--unattended` 调起时**必透传** `--unattended`，令 `/sprint-dev` 的 UI 门/约定22 门消费 PRD 预声明、不弹窗）
+执行：/sprint-dev "{描述}" skip-test [--cascade-now] [--from-batch] [--unattended]
 ```
+
+透传 BUG ID/根因证据与具体修复工作单，由原开发入口编排实现者使用 bugfix SKILL 的根因方法；不让两组 Agent 同时改同一写集。`skip-test` 必传以抑制开发入口自带的后续串联，test/close 由本层接管；`--cascade-now` 仅已有显式要求才传，`--dev-scale` 及实测 required/skip 意图同样透传。M 的 docs 与契约 reviewer 汇合必须通过，skip-test 不省汇合门。
 
 ### Phase 2：测试
 
 ```
-执行：/sprint-test [--unattended]（★ 本命令带 --unattended 时必透传，否则下游弹门挂死）
+执行：/sprint-test {新NNN} [--from-batch] [--unattended]（实测意图同样原样透传；只做一次完整 CVL，原实现者当轮闭环）
 ```
 
-### Phase 3：Bugfix 循环（回归中发现新 bug 时）
+### Phase 3：只接管未闭环项
 
-```
-do {
-  /sprint-bugfix sprint-{新NNN} [--unattended]      # 方式 B
-  /sprint-test [--unattended]
-} while (仍有未修复 && 循环次数 < 5)
-```
-★ 循环内两条**同样必透传** `--unattended`（与 Phase 1/2/4 同款，无例外）：本循环里的 `/sprint-test` 若遇用例缺失会调 `/sprint-selftest`，进而在 `dev-manual-testcase` 的强制询问第零步挂死——**无人值守链最深、最难察觉的一处停摆点**。
+`/sprint-test` 已负责当轮原实现者修复与差量复核。本层不重复完整验收、不重修已闭环 BUG；仅对其返回的可修复残项恢复原实现者，必要时方式 B 接管同一 Sprint/BUG，随后 `/sprint-test {新NNN} --resume-acceptance [--from-batch] [--unattended]` 续接定向复核与最终集中 full。共用验收的修复轮次，累计连续 5 轮失败即返回未闭环项，不另起五轮完整验收。
+
+产品/版本/破坏性/环境待决保持具体原因并返回上层，不能静默关闭。所有下游继续原样透传 `--unattended` / `--from-batch` 和实测意图；没有可信原始质量证据时回验收补齐，不宣称 CVL 增量模式。
 
 ### Phase 4：关闭
 
 ```
-执行：/sprint-close {新NNN} [--unattended]（★ 同上必透传；close 的机械推导验收只认该 flag）
+执行：/sprint-close {新NNN} [--from-batch] [--unattended]（仅验收已闭环、证据可信时；否则返回 closed:false 并保留上下文）
 ```
 
 **跳过串联**：参数含 `skip-test` → 只做 Phase 0C + 开发，不自动 test/close。
@@ -263,15 +241,14 @@ do {
 ```
 🎉 /sprint-bugfix "{描述}" 完成（自动累进 Sprint-{新NNN}）
 
-📋 本轮增量产物（统一 `NN_<业务主题>.md`，不改内容主文档正文）：
-- docs/requirements/{version}/研发需求/NN_<业务主题>.md（研发需求增量）
-- docs/design/detail/{version}/NN_<业务主题>.md（详细设计 / 接口设计 / 数据库设计增量，按需）
-- docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql（新增 DDL/ALTER 文件，如有；序号续当前版本最大序号 +1）
-- docs/plans/{version}/NN_<业务主题>.md（研发执行计划增量）
-- 各目录 00_索引.md：各追加一行（类型=补充 + 生成时间）
+📋 本轮产物（按 S/M/L 实际状态列出，不把延期写成已完成）：
+- BUG 记录与来源回链
+- docs/design/detail/{version}/_sprint-{新NNN}-契约卡.md
+- {已成文的需求/设计/计划/适用用例与 SQL 的真实路径}
+- {四族待成文义务与正式用例 required/deferred 状态}
 
 各阶段摘要：
-  Phase 0C：✅ 增量文档已产出并登记
+  Phase 0C：{契约分档、缺陷登记与汇合证据}
   Phase 1-4：✅ 完成
 
 📋 Sprint 产出：

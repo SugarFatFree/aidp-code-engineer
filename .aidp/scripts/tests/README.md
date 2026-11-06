@@ -24,6 +24,10 @@
 | `test_release_gates.py` | 发布期硬门（`check_release_residual_gate.py` 等的双侧对照 + 各脚本 `--self-check`） | `python3 .aidp/scripts/tests/test_release_gates.py` | Python 标准库 |
 | `test_report_immutability.py` | 报告不可变门（已 finalize build 的篡改检出 + skeleton 期前移）+ driver 如实性窗口 + `renderMode` 取证来源 | `python3 .aidp/scripts/tests/test_report_immutability.py` | Python 标准库 |
 | `test_unattended_recovery.py` | 无人值守失败处置与自动恢复：`autopilot_fail_handle.py --command` 按链路取唤醒源、同 reason 冻结幂等、未达阈不发通知、冻结写本地告警台账 `memory/.aidp/alerts.jsonl`；`autopilot_unfreeze.py` 环境类复探（退避 + 上限）/ `--clear` / `--manual` | `python3 .aidp/scripts/tests/test_unattended_recovery.py` | Python 标准库 |
+| `test_stop_guard.py` | 缺build与handback失败的Stop阻止上限、告警去重及成功清计数 | `python3 .aidp/scripts/tests/test_stop_guard.py` | Python标准库、真实hook进程 |
+| `test_unattended_edges.py` | JSON渲染取证正反例、实测参数、脏树默认及旧运行路径说明 | `python3 .aidp/scripts/tests/test_unattended_edges.py` | Python标准库、Bash |
+| `test_dispatch_retry.py` | C1/C2退避封顶、无唤醒源失败处置、成功清零及实际规划围栏 | `python3 .aidp/scripts/tests/test_dispatch_retry.py` | Python标准库、Bash |
+| `test_cicd_deployment.py` | CICD降级probe、need-accept边界、即时冻结及成功出口 | `python3 .aidp/scripts/tests/test_cicd_deployment.py` | Python标准库、离线提供方替身 |
 | `test_planning_orchestration.py` | 版本规划编排层：SKILL 阶段计量与 `规划耗时.md` 渲染 / `--qr-level` 透传与移交清单结清门（用各 SKILL 自己的 `qr_orchestration.py` 写清单对账）/ Critical 维度永不移交 / `--fast` 发布前补审 / PRD 行对账表 / 计划‖自测并行回填围栏实跑 / Sprint 开工范围与真实归档门 | `python3 .aidp/scripts/tests/test_planning_orchestration.py` | Python 标准库 + bash |
 | `test_aidp_scheduler.py` | `aidp_scheduler.py`（7×24 操作系统调度）：systemd / crontab / launchd / schtasks 渲染、周期解析、install / uninstall / status、心跳巡检告警、`agent_loop.sh --once` 参数补齐 | `python3 .aidp/scripts/tests/test_aidp_scheduler.py` | Python 标准库 |
 | `test_agent_sync_router.py` | Codex / DeepSeek Harness 原生命令生成、Codex frontmatter 与 `$ARGUMENTS` 正文保真、命令/SKILL 重名保护、`--check` 漂移、gitignore 托管块去重 | `python3 .aidp/scripts/tests/test_agent_sync_router.py` | Python 标准库 + `git` |

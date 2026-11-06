@@ -28,8 +28,9 @@ if [ -n "${TARGET_FLAG_VALUE:-}" ]; then
   #   ⛔ 不要再复制本清单——三份手抄过的字段集曾各不相同。
   $BE --version "$TARGET_VERSION" del needs_human needs_human_reason \
     needs_human_kind aiauto_frozen_at freeze_reason \
-    dev_fail_streak dev_fail_phase auto_retest_streak retest_cap_frozen_at retest_frozen_head \
-    env_reprobe_attempts env_reprobe_last_at env_reprobe_exhausted_at \
+    dev_fail_streak dev_fail_phase dev_fail_reason auto_retest_streak retest_cap_frozen_at retest_frozen_head \
+    subagent_retry_at subagent_retry_round subagent_retry_stage subagent_retry_phase \
+    cicd_run.cicd_retry_count env_reprobe_attempts env_reprobe_last_at env_reprobe_exhausted_at \
     test_loop_missing_streak probe_fail_streak push_probe_fail_streak \
     cicd_unreachable_streak cicd_cli_fail_streak \
     prerelease_deploy_block_streak prerelease_test_hold_streak
@@ -91,8 +92,8 @@ fi
 >   #   漏掉 auto_retest_streak / retest_cap_frozen_at 一类计数 = **刚解冻下一 tick 又达阈重冻**。
 >   #   `--manual` 一次清干净冻结四件套 + needs_human_kind + retest_cap_frozen_at + 全部 STREAK_FIELDS，
 >   #   且逐个字段检查返回码；清单单一信源 = `autopilot_unfreeze.py::manual_unfreeze`。
->   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual "$_v" --json >/dev/null
->   case "$($BE get aiauto_blocked_reason)" in *"@$_v") $BE del aiauto_blocked_reason;; esac
+>   # 由脚本只清与本次冻结同 reason/版本的阻塞；不覆盖测试链路另一个真实原因。
+>   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual "$_v" --json >/dev/null || exit 1
 >   echo "🔓 $_v 具备解冻证据 → 已解冻重回候选"
 > done
 > [ -n "$V" ] || { echo "ℹ️ 本 tick 尚无 TARGET_VERSION（首 tick / 刚 reset）→ 单版探针跳过，probe-all 已跑完"; }
@@ -101,9 +102,8 @@ fi
 > if [ -n "$UNFZ" ]; then
 >   # ⛔ 同上：手抄清单必然发散。少清一个计数（needs_human_kind / auto_retest_streak /
 >   #   retest_cap_frozen_at 等）⇒ 解冻后下一 tick 立刻达阈重冻。
->   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual "$V" --json >/dev/null
->   # 顶层 aiauto_blocked_reason 只在指向本版时才清（可能是别的版本写的）
->   case "$($BE get aiauto_blocked_reason)" in *"@$V") $BE del aiauto_blocked_reason;; esac
+>   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual "$V" --json >/dev/null || exit 1
+>   # 顶层阻塞由脚本按冻结原因和版本核对清理，不再按版本后缀无条件删除。
 >   echo "🔓 $V $UNFZ → 解冻重回候选，下轮铸新 build 复测"
 > fi
 > ```

@@ -505,8 +505,7 @@ Phase 3.3 才写 `aiauto_tested_at`。位于它**之前**的门若裸 `exit 1`�
 | `testplan-incomplete` | 配置类 | 测试方案文件 mtime 晚于冻结时刻 |
 | `cicd-auto-trigger-off` | 配置类 | `memory/aidp-config.yaml` mtime（开启 `cicd.auto_trigger` / 调整 `cicd.provider`·`cicd.pipelines`）|
 | `prd-missing` | 配置类 | **PRD 目录 mtime**：`docs/requirements/{V}/产品提供/` 晚于冻结时刻。⛔ 与 `config-missing` 分开：后者认心跳，而心跳是本链路每 tick 无条件先写的，自己写的冻结会被自己刚刷的心跳立刻解冻 |
-| `config-missing` | 配置类 | **心跳专判**：测试链路心跳晚于冻结时刻（补挂第二条 loop 不产生新部署，故不能用 mtime）|
-| `preflight-incomplete` | 门控类 | **只由 Phase 0.7 前置收口门再次通过时显式解冻**（成功路径调 `autopilot_unfreeze.py preflight-gate`，同时清版本级四件套 + 顶层 blocked_reason）。⛔ 探针一律不判——它此前借用 `config-missing`，而后者认心跳，双 loop 下第二条 loop 每 5 分钟刷心跳就把它误解冻，而前置配置一字节没变 |
+| `config-missing` | 配置类 | 冻结后出现新鲜心跳且测试真实阻塞已解除；复用 `autopilot_unfreeze.py::test_loop_alive`，仅剔除自身冻结标记，不能用心跳掩盖其它阻塞 |
 | `unconverged` | 收敛类 | 新部署 或 人工 |
 | `plan-transient` | 收敛类 | **HEAD 变更**（有人推了新提交 ⇒ 具备重试价值）或 人工。`/version` 规划因**派发失败 / 网络抖动 / 超时**等瞬态原因未走完时用它，⛔ 别再回落 `release-blocked`——那是交接类、仅人工，把一次重试就能过去的事钉成必须人来救，而 `needs_human_reason` 还会把人指向一份根本没有 Critical 的审计报告 |
 | `release-blocked` | 交接类 | **仅人工**（发布期验收阻塞，须人清 P0 后重跑发布）|
@@ -514,8 +513,9 @@ Phase 3.3 才写 `aiauto_tested_at`。位于它**之前**的门若裸 `exit 1`�
 | `handoff-exhausted` | 交接类 | 仅人工 |
 | `stuck-phase` | 交接类 | 仅人工 |
 
-> **★ `retest-cap` 是唯一合法的变体、不是漏网**：复测达上限的冻结走 `needs_human_kind="retest-cap"`
-> + `retest_cap_frozen_at`，**不写 `freeze_reason`**。它的解冻判据是「人工是否有新提交」
+> **历史解冻兼容**：旧 `preflight-incomplete` 不再允许新写入，不属于上表现行枚举；读取/清理路径保留。Phase 0.7 通过后 `autopilot_unfreeze.py preflight-gate` 清旧前置状态、对应版本冻结和阻塞，心跳不会代替前置门解冻。
+
+> **★ `retest-cap` 配额冻结**：写 `needs_human_kind="retest-cap"`、`retest_cap_frozen_at` 和 `freeze_reason="unconverged"` 四件套。其提交恢复判据是「人工是否有新提交」
 > （`HEAD` ≠ `retest_frozen_head` 且 ≠ `last_autopilot_head`），与本表任何一类都不同构，
 > 故独立成一路（口径单一信源 = 命令主体 step 3bis）。守卫按 `needs_human_kind` 识别并放行。
 
@@ -578,7 +578,7 @@ autopilot 以为测试链路在干活、一直等；测试链路其实每 tick �
 故必须同时维护第二个字段 `aiauto_blocked_reason`：本 tick 能正常推进 → 清空；
 因冻结/阻塞 early-exit → 写 `frozen:<reason>@<version>`。**`@<version>` 后缀不可省**：
 全局类原因（机器无浏览器/驱动）对任何版本成立，而版本类原因只说明"那一版"卡住——
-拿它判本版会让 A 版一冻、B 版每 tick 连坐。判活的统一实现 = `autopilot-ceremony-gate.py::test_loop_alive`。
+拿它判本版会让 A 版一冻、B 版每 tick 连坐。判活的统一实现 = `autopilot_unfreeze.py::test_loop_alive`。
 
 ### 交接计数器为何只增不减（handoff_fail_streak）
 

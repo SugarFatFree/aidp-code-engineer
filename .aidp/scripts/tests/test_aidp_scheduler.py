@@ -53,6 +53,12 @@ def _mkproj(config=""):
     shutil.copytree(SCRIPTS, os.path.join(d, ".aidp", "scripts"),
                     ignore=shutil.ignore_patterns("tests", "__pycache__"))
     os.makedirs(os.path.join(d, "memory"))
+    # 所有真实子进程用离线通知替身，不能继承维护者通知配置访问外网。
+    notify_path = os.path.join(d, ".aidp", "scripts", "notify.py")
+    with open(notify_path, encoding="utf-8") as fh:
+        notify_source = fh.read()
+    with open(notify_path, "w", encoding="utf-8") as fh:
+        fh.write(notify_source.replace("sys.exit(main())", "sys.exit(3)"))
     if config:
         with open(os.path.join(d, "memory", "aidp-config.yaml"), "w", encoding="utf-8") as fh:
             fh.write(config)
@@ -394,7 +400,10 @@ def test_agent_loop_timeout_and_lock():
         check("连续超时计数累加到 3", st.get("sprint-autopilot", {}).get("streak") == 3)
         r = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="true"))
         st = json.load(open(os.path.join(root, S.TICK_TIMEOUT_STATE_REL), encoding="utf-8"))
-        check("非超时轮清零连续计数", r.returncode == 0 and "sprint-autopilot" not in st)
+        check("超时达阈后的退避轮不清计数", r.returncode == 0 and st["sprint-autopilot"]["streak"] == 3)
+        r = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="true"))
+        st = json.load(open(os.path.join(root, S.TICK_TIMEOUT_STATE_REL), encoding="utf-8"))
+        check("成功执行清零连续计数", r.returncode == 0 and "sprint-autopilot" not in st)
 
         lock = os.path.join(root, "memory", ".aidp", "locks", "loop-sprint-autopilot.lock")
         body = json.load(open(lock, encoding="utf-8"))
@@ -632,7 +641,11 @@ def test_cicd_retry_priority_and_poll():
         Path(S.BASELINE_REL).write_text(json.dumps(data), encoding="utf-8")
         # 用替身拦截 CICD 平台边界；真实执行 flow、tick flags 与 baseline 读取。
         Path(".aidp/scripts/cicd_watch.py").write_text(
-            'import sys,json\nn=sys.argv[sys.argv.index("--max-retries")+1] if "--max-retries" in sys.argv else "missing"\n'
+            'import sys,json\nfrom pathlib import Path\n'
+            'if sys.argv[sys.argv.index("--mode")+1] == "consume":\n'
+            ' Path("memory/.aidp/consume-code").write_text(sys.argv[sys.argv.index("--result-code")+1])\n'
+            ' print(json.dumps({"next_action":"abort"})); sys.exit(3)\n'
+            'n=sys.argv[sys.argv.index("--max-retries")+1] if "--max-retries" in sys.argv else "missing"\n'
             'print(json.dumps({"verdict":"failed","received_max_retries":n}))\nsys.exit(2)\n', encoding="utf-8")
         flow = Path(SCRIPTS).parent / "flows/sprint-autopilot/phase-3-6b.md"
         code = flow.read_text(encoding="utf-8").split("```bash\n", 1)[1].split("```", 1)[0]
@@ -640,6 +653,8 @@ def test_cicd_retry_priority_and_poll():
                                 capture_output=True, text=True, timeout=30)
         rec = json.loads(Path("memory/.aidp/cicd-poll.json").read_text())
         check("实际 poll 调用收到 PRD max-retries=0", rec.get("received_max_retries") == "0")
+        check("原始失败 rc 交给 consume 且冻结出口终止围栏",
+              result.returncode == 3 and Path("memory/.aidp/consume-code").read_text() == "2")
         prd.write_text("autopilot_decisions:\n  deployment:\n    cicd_max_retries: invalid\n", encoding="utf-8")
         check("非法 PRD 值回落项目配置", TF._cicd_max_retries({"TARGET_VERSION": "V1.0.0"}) == "8")
         Path("memory/aidp-config.yaml").unlink()
@@ -702,7 +717,193 @@ def test_scheduler_docs():
           "入口默认是相对符号链接" not in scripts_readme and "managed-copy" in scripts_readme)
 
 
+def test_all_failures_and_backoff():
+    print("【所有失败归因、分键告警与退避】")
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    root = _mkproj()
+    try:
+        log = Path(root) / "tick.log"
+        cmd = "sprint-autopilot"
+        def result(rc, text="", offset=0):
+            log.write_text(text, encoding="utf-8")
+            return S.do_tick_result(root, SimpleNamespace(command=cmd, rc=rc, tick_max="60",
+                                    log=str(log), log_offset=offset), send_notify=False)
+        with patch.object(S, "TICK_TIMEOUT_ALERT_AFTER", 3):
+            vals = [result(17) for _ in range(6)]
+            check("普通 rc17 连续累计，达阈只通知一次", [v[1]["streak"] for v in vals] == list(range(1, 7))
+                  and [v[1]["notified"] for v in vals] == [False, False, True, False, False, False])
+            check("达阈后的退避轮数指数增长", [v[1].get("skip_remaining") for v in vals] == [0, 0, 1, 2, 4, 8])
+            check("非零失败不会写业务心跳", not Path(root, S.BASELINE_REL).exists())
+            changed = result(1, "insufficient_quota: credit balance is too low")[1]
+            check("切换原因保留总连续失败，但使用新告警键", changed["streak"] == 7
+                  and changed.get("kind") == "loop-agent-quota" and changed["notified"])
+            result(0)
+            check("成功删除整个失败及退避状态", cmd not in json.loads(Path(root, S.TICK_TIMEOUT_STATE_REL).read_text()))
+            cases = [(1, "insufficient_quota", "loop-agent-quota"),
+                     (1, "额度不足", "loop-agent-quota"),
+                     (1, "HTTP 429 Too Many Requests", "loop-agent-rate-limit"),
+                     (1, "invalid_api_key: authentication failed", "loop-agent-auth"),
+                     (1, "HTTP 401 Unauthorized", "loop-agent-auth"),
+                     (127, "bash: missing_cli: command not found", "loop-agent-cli-missing"),
+                     (126, "Permission denied", "loop-agent-failed"),
+                     (124, "", "loop-tick-timeout"), (137, "", "loop-tick-timeout")]
+            for rc, text, kind in cases:
+                result(0)
+                check(f"rc={rc} / {text or 'timeout'} 正确归因", result(rc, text)[1].get("kind") == kind)
+            result(0)
+            old = "HTTP 429 Too Many Requests\n"
+            check("当前轮 offset 排除旧日志额度错误", result(17, old + "ordinary failure", len(old))[1].get("kind")
+                  == "loop-agent-failed")
+            result(0)
+            vals = [result(code)[1] for code in (17, 18, 17, 18)]
+            check("交替退出码仍累计总失败并按码去重", vals[2]["streak"] == 3 and vals[2]["notified"]
+                  and vals[3]["notified"])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_real_failure_backoff():
+    print("【真实 wrapper 失败、跳轮与恢复】")
+    from pathlib import Path
+    root, home = _mkproj(), tempfile.mkdtemp()
+    try:
+        env = {"HOME": home, "AIDP_AGENT": "claude", "AIDP_TICK_TIMEOUT_ALERT_AFTER": "2",
+               "AIDP_AGENT_EXEC": "printf x >> attempts; printf 'HTTP 429 Too Many Requests\\n'; exit 1"}
+        vals = [_loop(root, ["--once", "sprint-autopilot"], env) for _ in range(3)]
+        state = json.loads(Path(root, S.TICK_TIMEOUT_STATE_REL).read_text()).get("sprint-autopilot", {})
+        check("两次失败后第三轮跳过且不计失败", [v.returncode for v in vals] == [1, 1, 0]
+              and Path(root, "attempts").read_text() == "xx" and state.get("streak") == 2)
+        check("429 正确进入持久告警", any(x.get("kind") == "loop-agent-rate-limit" for x in _alerts(root)))
+        r = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="true"))
+        check("退避结束成功清状态，不伪造心跳", r.returncode == 0
+              and "sprint-autopilot" not in json.loads(Path(root, S.TICK_TIMEOUT_STATE_REL).read_text())
+              and not Path(root, S.BASELINE_REL).exists())
+        r = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="aidp_nonexistent_cli_987"))
+        check("CLI 不存在的真实 rc127 进入归因", r.returncode == 127
+              and any(x.get("kind") == "loop-agent-cli-missing" for x in _alerts(root)))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_tick_state_concurrency_and_notification():
+    print("【真实 tick-result 并发计数、通知锁外与 tick-check 原子消费】")
+    from pathlib import Path
+    root, home = _mkproj(), tempfile.mkdtemp()
+    try:
+        Path(root, ".aidp", "scripts", "notify.py").write_text(
+            "import fcntl,os\nfrom baseline_edit import lock_path\n"
+            f"p=lock_path({str(Path(root, S.TICK_TIMEOUT_STATE_REL))!r})\n"
+            "with open(p,'a') as fh:\n"
+            " try:\n  fcntl.flock(fh,fcntl.LOCK_EX|fcntl.LOCK_NB)\n  free=True\n"
+            " except BlockingIOError:\n  free=False\n"
+            "with open('tick-notify','a') as fh: fh.write(str(free)+'\\n')\n")
+        env = dict(os.environ, HOME=home, AIDP_TICK_TIMEOUT_ALERT_AFTER="2")
+        base = [sys.executable, SCHED, "tick-result", "--root", root, "--rc", "17", "--json"]
+        procs = [subprocess.Popen(base + ["--command", command], env=env, cwd=root,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                 for command in ("sprint-autopilot", "sprint-aiauto-test") for _ in range(6)]
+        for p in procs:
+            p.communicate(timeout=20)
+        state = json.loads(Path(root, S.TICK_TIMEOUT_STATE_REL).read_text())
+        check("开发测试各六次并发失败计数不丢失", all(state[c]["streak"] == 6 for c in state) and len(state) == 2)
+        lines = Path(root, "tick-notify").read_text().splitlines()
+        # 并发写状态可能短暂持锁；另跑单独案例严格验证通知阶段的锁释放。
+        check("每条链路只发一次阈值通知", len(lines) == 2)
+        _sched(["tick-result", "--command", "sprint-autopilot", "--rc", "0"], root, home)
+        for _ in range(2):
+            subprocess.run(base + ["--command", "sprint-autopilot"], cwd=root, env=env,
+                           capture_output=True, text=True, timeout=20)
+        check("单轮通知发送时状态锁已释放", Path(root, "tick-notify").read_text().splitlines()[-1] == "True")
+        base = [sys.executable, SCHED, "tick-check", "--root", root, "--command", "sprint-autopilot", "--json"]
+        procs = [subprocess.Popen(base, env=env, cwd=root, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True) for _ in range(2)]
+        vals = [json.loads(p.communicate(timeout=20)[0]) for p in procs]
+        check("只有一个并发 tick-check 消费剩余退避轮", sorted(p.returncode for p in procs) == [0, 4]
+              and sum(v["skip"] for v in vals) == 1 and all(v["streak"] == 2 for v in vals))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_watchdog_env_concurrency_and_grace():
+    print("【独立 watchdog 凭据、并发去重与超时宽限】")
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    root, home = _mkproj("scheduler:\n  tick_max_seconds: 7200\n"), tempfile.mkdtemp()
+    try:
+        now = datetime.now(timezone.utc)
+        Path(root, S.BASELINE_REL).write_text(json.dumps({"aiauto_test_heartbeat_at": "2000-01-01T00:00:00Z"}))
+        envfile = Path(home, ".config", "aidp", "env")
+        envfile.parent.mkdir(parents=True)
+        envfile.write_text("AIDP_TEST_SECRET='offline token'\nAIDP_TICK_MAX_SECONDS=10000\n"
+                           f"MALICIOUS=$(touch {root}/executed)\ntouch {root}/executed\n")
+        # 并发轮只证明去重与凭据；锁外发送另用独立轮验证，避免误把其它进程持锁当本进程持锁。
+        Path(root, ".aidp", "scripts", "notify.py").write_text(
+            "import os,fcntl,time\nfrom baseline_edit import lock_path\n"
+            f"p=lock_path({str(Path(root, S.WATCHDOG_STATE_REL))!r})\n"
+            "os.makedirs(os.path.dirname(p),exist_ok=True)\nwith open(p,'a') as fh:\n"
+            " try:\n  fcntl.flock(fh,fcntl.LOCK_EX|fcntl.LOCK_NB)\n  free=True\n"
+            " except BlockingIOError:\n  free=False\n"
+            "with open('notify-proof','a') as fh:\n"
+            " fh.write(str(os.environ.get('AIDP_TEST_SECRET')=='offline token')+' '+str(free)+'\\n')\n"
+            "time.sleep(0.3)\n")
+        env = dict(os.environ, HOME=home)
+        procs = [subprocess.Popen([sys.executable, SCHED, "watchdog", "--root", root, "--json"],
+                                 cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                 for _ in range(6)]
+        outputs = [p.communicate(timeout=20) for p in procs]
+        recs = [r for r in _alerts(root) if r.get("kind") == "loop-heartbeat-stale"]
+        proof = Path(root, "notify-proof").read_text().splitlines()
+        check("六个真实 watchdog 并发只写一次告警并只通知一次", len(recs) == 1 and len(proof) == 1
+              and all(p.returncode == 3 for p in procs))
+        check("并发轮通知获得 env 凭据", len(proof) == 1 and proof[0].split()[0] == "True")
+        # 六个竞争者都已退出；此时若仍取不到锁，只可能是通知调用方没有释放。
+        Path(root, S.WATCHDOG_STATE_REL).unlink()
+        Path(root, "notify-proof").unlink()
+        single = _sched(["watchdog", "--json"], root, home)
+        check("独立通知获得 env 凭据，状态锁已释放", single.returncode == 3
+              and Path(root, "notify-proof").read_text().splitlines() == ["True True"])
+        check("env 内容从未执行，秘密不进输出", not Path(root, "executed").exists()
+              and all("offline token" not in out + err for out, err in outputs))
+        lock = Path(root, "memory", ".aidp", "locks", "loop-sprint-autopilot.lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with patch.dict(os.environ, {"HOME": home, "AIDP_TICK_MAX_SECONDS": "9000"}):
+            for age, expected in ((10001, "running"), (10180, "running"), (10181, "hung")):
+                lock.write_text(json.dumps({"owner": "session", "started_at": now.timestamp() - age}))
+                rep = S.heartbeat_report(root, now=now)["dev"]
+                check(f"env 文件优先且 +180s 宽限：{age}s → {expected}", rep["state"] == expected
+                      and rep["lock_hung_threshold_seconds"] == 10180)
+        # 通知失败仍可见；不把失败伪装为发送成功。
+        Path(root, S.WATCHDOG_STATE_REL).unlink()
+        Path(root, ".aidp", "scripts", "notify.py").write_text("import sys\nsys.exit(9)\n")
+        r = _sched(["watchdog", "--json"], root, home)
+        check("通知失败持久留痕且 watchdog 仍报故障", r.returncode == 3
+              and any(x.get("kind") == "loop-notify-failed" for x in _alerts(root)))
+        # 本地台账写失败不能标记为已告警，下一轮应能重试。
+        Path(root, S.WATCHDOG_STATE_REL).unlink()
+        with patch.object(S, "_append_alert", return_value=None):
+            S.do_watchdog(root, SimpleNamespace(scheduled=False), send_notify=False)
+        _, res = S.do_watchdog(root, SimpleNamespace(scheduled=False), send_notify=False)
+        check("台账失败不消费去重标记", "test" in res["alerted"])
+        # wrapper 与 watchdog 同样安全加载，值按文本导出。
+        lock.unlink()
+        r = _loop(root, ["--once", "sprint-autopilot"],
+                  {"HOME": home, "AIDP_AGENT": "claude", "AIDP_AGENT_EXEC": "test \"$AIDP_TEST_SECRET\" = 'offline token'"})
+        check("wrapper 安全加载凭据但不执行 env 文件", r.returncode == 0 and not Path(root, "executed").exists())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
 if __name__ == "__main__":
+    test_all_failures_and_backoff()
+    test_real_failure_backoff()
+    test_watchdog_env_concurrency_and_grace()
+    test_tick_state_concurrency_and_notification()
     test_render()
     test_watchdog()
     test_watchdog_never_started()

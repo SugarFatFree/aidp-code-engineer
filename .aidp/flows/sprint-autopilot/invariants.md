@@ -240,27 +240,41 @@
 - **C1 先按失败类型分流（判据确定化）**：
   - **瞬时服务端错误**（`529` / `Overloaded` / `overloaded_error` / `503` / 网关 5xx / 连接中断 / 单次派发超时）→ **自动重试、指数退避（★ 跨 tick 退避，不在单 tick 内前台 `sleep`）**，**不累加 `dev_fail_streak`、不发 #4**。仅退避轮次用满仍失败才转 C2。
     - ⛔ **禁止单 tick 内前台 sleep 等退避**：部分运行环境直接禁前台 `sleep`；即便不禁，`30s+60s+120s` 也会**白吃掉 3.5 分钟 tick**（10m tick 里三分之一空转，5m tick 更离谱），且 sleep 期间 tick 可能已被判超时。
-    - **落地 = 记「下次可重试时刻」，未到点直接让位本 tick**：
+    - **确定性执行 = `dispatch_retry.py`，不可再手写无上限 bump**。派发前用 `gate`；已确认瞬态错误用 `failure --kind transient`；确定性错误用 `failure --kind deterministic`；只有工具确实不存在/后台执行能力不可用才用 `failure --kind unavailable`。下列围栏每次独立执行，`DISPATCH_OP`/`DISPATCH_KIND` 按实际事件填写：
       ```bash
-      eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
+      eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
       BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
-      # ① 派发前先看闸门：未到点 → 本 tick 不重试、直接让位（不算失败、不记 streak）
-      RETRY_AT=$($BE --version "$TARGET_VERSION" get subagent_retry_at)
-      to_ts() { $BE epoch "$1" 2>/dev/null || echo 0; }   # 跨平台：BSD/macOS date 无 -d
-      if [ -n "$RETRY_AT" ] && [ "$(date +%s)" -lt "$(to_ts "$RETRY_AT")" ]; then
-        echo "⏳ 子 Agent 退避中（下次可重试 $RETRY_AT）→ 让位本 tick，下次 /loop 唤起再派"
-        exit 0
-      fi
-      # ② 派发命中瞬时错误 → 按退避轮次算下次可重试时刻，写盘后让位本 tick
-      R=$($BE --version "$TARGET_VERSION" bump subagent_retry_round)     # 1→2→3
-      case "$R" in 1) D=30;; 2) D=60;; *) D=120;; esac
-      $BE --version "$TARGET_VERSION" set subagent_retry_at "$(python3 -c 'import datetime as d,sys; print((d.datetime.now().astimezone()+d.timedelta(seconds=int(sys.argv[1]))).isoformat(timespec="seconds"))' "$D")"
-      echo "⏳ 子 Agent 瞬时错误（第 $R 次）→ 退避 ${D}s，本 tick 让位（不记 dev_fail_streak、不发 #4）"
-      exit 0
-      # ③ 派发成功 → 清闸门：$BE --version "$TARGET_VERSION" del subagent_retry_at subagent_retry_round
-      # ④ subagent_retry_round > 3（退避轮次用满）→ 清闸门后转 C2 换更小粒度
+      DISPATCH_PHASE=$($BE --version "$TARGET_VERSION" get run_state.current_phase)
+      DISPATCH_OP=gate
+      DISPATCH_KIND=transient
+      DISPATCH_RC=0
+      python3 {{AIDP_HOME}}/scripts/dispatch_retry.py "$DISPATCH_OP" --kind "$DISPATCH_KIND" \
+        --version "$TARGET_VERSION" --phase "${DISPATCH_PHASE:?}" \
+        --has-wake-source "${HAS_WAKE_SOURCE:-0}" || DISPATCH_RC=$?
+      case "$DISPATCH_RC" in
+        0)  echo "派发闸门已开，执行当前单元" ;;
+        11) echo "C1 已耗尽：本轮改派 C2 小粒度单元，按已落盘产物续跑" ;;
+        12) echo "工具确实不可用：进入 C3 预算检查，通过后才可内联" ;;
+        10) [ "${HAS_WAKE_SOURCE:-0}" = 1 ] || exit 2
+            echo "退避已落盘，保留当前 run_state，等待下一 tick"; exit 0 ;;
+        13) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" \
+              --phase "$DISPATCH_PHASE" --reason plan-transient --freeze-now \
+              --why "派发需退避但无唤醒源，无法托付下一 tick，显式冻结待恢复"
+            exit $? ;;
+        20) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" \
+              --phase "$DISPATCH_PHASE" --reason plan-transient \
+              --why "派发确定性失败或 C2 小粒度重试耗尽，保留当前阶段断点"
+            exit $? ;;
+        *)  echo "派发状态读写失败，不得继续派发或写成功出口"; exit 2 ;;
+      esac
       ```
-    - **退避时长 < tick 间隔时**（如 30s vs 10m tick）本就等价"下个 tick 再试"，写 `subagent_retry_at` 只为让**同 tick 内的后续派发点**也遵守闸门；退避轮次与时长仅作上界，实际重试时刻由 `/loop` 节奏决定。抖动由派发序号派生，**⛔ 脚本内不得用被禁的时间/随机 API**。
+    - `subagent_retry_round` 在 **full/split 每档分别限 3 次退避（30/60/120s）**；第四次 full 失败清时刻、轮次归零并持久化 `stage=split`，第四次 split 失败返回 20，不能再被 `*) D=120` 吞掉。`gate` 不加次数；成功后必须执行下列清零，**只在当前工作单元产物与回传均验证成功后执行**（C2 一部分产物落盘不等于整段成功）：
+      ```bash
+      eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+      DISPATCH_PHASE=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get run_state.current_phase)
+      python3 {{AIDP_HOME}}/scripts/dispatch_retry.py --version "$TARGET_VERSION" --phase "${DISPATCH_PHASE:?}" success
+      ```
+    - 成功原子删除 `subagent_retry_at/round/stage/phase`；阶段切换也隔离旧闸门。无唤醒源返回 **13，绝不返回成功让位**；上面消费者立即调用统一失败处置显式冻结，禁止前台 sleep 或宣称下轮续跑。有唤醒源时由 tick 节奏兑现退避，不发 #4、不记开发 streak；只有 13/20 才交失败 API。
   - **确定性失败**（框架脚本非零退出 / 子 Agent 回传不合 compact 契约 / 业务逻辑失败 / `version-auditor` 反复 Critical）→ **不重试**，直接进「失败处置」记 `dev_fail_streak`（同现状）。
 - **★ 嵌套子 Agent 的可观测性（委派方必须定义【产物级】完成判据，不得只依赖通知）**：委派可以嵌套
   （实测已达三层：autopilot → 规划子 Agent → 2 个 auditor），而**层数越深，完成通知越不可靠** ——
@@ -282,7 +296,7 @@
   "等子 Agent 通知回来再继续"这种只有单一依赖的等待——通知不来就永久挂起，且挂起时毫无告警
   （与「阶段完成 = 产物已落盘可校验」同一条原则的另一面）。**能不嵌套就不嵌套**：三层已是实测上限，
   再深应改为同层并列委派。
-- **C2 降级阶梯（显式顺序，执行体不得跳级直奔最贵档）**：① **同粒度子 Agent 重试**（C1 退避）→ ② **换更小粒度子 Agent**（按自然边界再拆：`/version` 拆成 requirements/design/plan 分段委派、测试拆成按模块委派、单 Sprint 拆成前/后端分派，各自上下文更小、更易被服务端接纳）→ ③ **主循环内联执行（最后手段）**。**⛔ 绝不因一次 529 就跳到 ③**。
+- **C2 降级阶梯（显式顺序，执行体不得跳级直奔最贵档）**：① **同粒度子 Agent 重试**（C1 退避）→ ② **换更小粒度子 Agent**（按自然边界再拆：`/version` 拆成 requirements/design/plan 分段委派、测试拆成按模块委派、单 Sprint 拆成前/后端分派）。`stage=split` 跨 tick 保留，不重跑已落盘且通过校验的分段；C2 仍耗尽必须执行上面 rc=20 的 **`--reason plan-transient` 失败处置**，不能再静默重试。③ **主循环内联执行**仅供工具/真正后台能力不可用时的最后手段（rc=12，按 C3），**⛔ 绝不把一次 529 或确定性业务失败称为工具不可用**。
 - **C3 内联降级的上下文预算护栏（堵"一口气把整轮塞进主上下文"）**：真要降到 ③ 内联前，**先估算主循环剩余上下文预算**（粗估被委派段的典型注入量 vs 当前已用）——**不足以容纳整段** → **⛔ 不得一口气内联**，改为**分批内联 + 中途落盘 + 下个 tick 续跑**（按 C2② 自然边界切片，每片内联跑完即把结论/产物落 baseline `run_state` 或落盘，`UNATTENDED_YIELD` 退本 tick，下次 `/loop` 从落盘游标续跑），行为等价、只分摊上下文。**⛔ 同受"无受托人不得 yield"约束**：`HAS_WAKE_SOURCE=0` 时本条的 yield 同样禁用——改为**继续分批内联、每批落盘后在本轮内接着跑下一批**（落盘照做，它同时是崩溃续跑的保险）；确实撑不住再按失败处置显式告警交人，**绝不 yield 成停摆**。**⛔ 绝不在预算不足时硬塞整轮致触发 compact / 破 1M**。
 - **C4 降级留痕（可追溯）**：任何一次降级（重试次数 / 是否换小粒度 / 是否内联 / 是否分批续跑）**必须写进本轮报告**（AI执行报告 `incidents[]` 或「遗留风险」）**+ 落 baseline** `versions.{V}.builds[].exec_path`（取值 `subagent` / `subagent→split` / `inline` / `inline-batched`）。〔`auto-test-runner` 侧 env-facts 已含 `executionPath`（字段集**判据 = 其 `assets/env-facts-schema.json` 里配了 `XSource` 的全部字段**，⛔ 别在此写死条数——字段会增，写死必腐化）——autopilot 的 `exec_path` 与之**取值域对齐**即可，不必再各留一份。〕
 

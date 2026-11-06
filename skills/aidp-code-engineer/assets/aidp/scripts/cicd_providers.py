@@ -48,6 +48,8 @@
   会按常见取值（success/passed/failed/error/running/pending/canceled…）自动归一。
 - `trigger` / `retry` 输出 `{"run_id": "..."}` 或空输出（表示新运行需随后按 commit 探测）。
 - `view` 查无此运行时以非 0 退出并在输出里包含 `not found` 或 `404`。
+- 原始退出码 4 保留为 `NeedAccept` 授权请求（可输出 `{"need_accept": true, "reason": "..."}`），
+  cicd_watch 输出 `verdict=need-accept,next_action=accept`，不自动接受、不降级探针。
 """
 import base64
 import json
@@ -63,6 +65,17 @@ DEFAULT_PROVIDER = "github-actions"
 
 PARSE_ERR = "__parse_error__:"
 NOT_FOUND = "__not_found__:"
+
+
+class NeedAccept(Exception):
+    """Command 原始 rc=4 是授权边界，不能转成普通失败或降级探针。"""
+
+    def __init__(self, action, response):
+        self.action = action
+        self.response = response
+        data, _ = parse_json_blob(response)
+        reason = data.get("reason") if isinstance(data, dict) else None
+        super().__init__(reason or response or f"cicd.command.{action} 需要人工确认")
 
 # 平台原始状态 → 归一状态（小写比较）
 _STATUS_ALIASES = {
@@ -427,6 +440,8 @@ class Command(Provider):
             rc, out, err = EXEC(cmd, self.root, int(self.conf.get("timeout", 120)), shell=True)
         except subprocess.TimeoutExpired:
             return False, f"cicd.command.{action} 执行超时", "timeout"
+        if rc == 4:
+            raise NeedAccept(action, (out or err).strip())
         if rc != 0:
             return False, (err or out).strip()[:300] or f"exit={rc}", "error"
         return True, out, "ok"

@@ -43,36 +43,10 @@ PRD_ROOT="${1:-docs/requirements/}"   # 用户传入 = 优先；否则默认 doc
 
 # 校验
 if [ ! -d "$PRD_ROOT" ]; then
-  # ⛔ 不裸 exit 1（/loop 每 tick 重撞、零告警）：内联记账，口径同 phase-0-3.md 的 `_preflight_fail`
-  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
-  S=$($BE bump preflight_fail_streak); $BE set preflight_fail_reason "prd-root-missing"
-  # 无唤醒源（--once / 无 /loop）时没有下一 tick 叠 streak ⇒ 阈值恒不可达、永不熔断
-  HAS_WAKE_SOURCE=$($BE get autopilot.wake_source_this_tick --default 0)
-  if [ "$S" -ge "${PREFLIGHT_THRESHOLD:-3}" ] || [ "$HAS_WAKE_SOURCE" = "0" ]; then
-    $BE set preflight_frozen_at @now
-    # ⛔ 阻塞值必须带 `@<作用域>`，且作用域必须落在 `autopilot_unfreeze.py` 的清除前缀内。
-    #   写成裸 `frozen:prd-root-missing`（无 @）有两个后果，且都是永久的：
-    #   ① 无 @ ⇒ ceremony-gate 的 `test_loop_alive` 判它「全局阻塞、对任何版本成立」⇒ 两条 loop
-    #      好好挂着也恒判「测试链路未挂载」，phase-3-9 每 tick 叠 test_loop_missing_streak 把正常
-    #      build 冻成 config-missing，phase-2 的准发布也永久走 missing 熔断；
-    #   ② 该前缀不在 `BLOCKED_PREFIX`（`frozen:preflight-incomplete@`）内 ⇒ 下面成功路径的
-    #      `autopilot_unfreeze.py prd-root-missing` 清得掉三个 preflight_* 键，**清不掉它**。
-    #   故复用与 0.7 收口门同一个已被覆盖的值（`@preflight` 是伪作用域，匹配不到任何真实版本）。
-    $BE set aiauto_blocked_reason "frozen:preflight-incomplete@preflight"
-  fi
-  echo "⛔ PRD root 不存在：$PRD_ROOT（第 $S 次）→ 达阈即熔断待人工"
-  # ★ 发 #4：⛔「发 #4」必须是这一行命令，不是一句注释——PRD root 缺失是整条链路最上游的门，
-  #   它一旦把版本挡住而通知渠道零消息，表现就是「挂着跑却什么都没发生」，无人会来看终端。
-  #   ⛔ 本步在选版之前，无版本号 ⇒ **不带 `--node`**（notify 对「有 --node 缺 --version」发送前 fail-closed，rc=2 一个字节都发不出）。
-  python3 {{AIDP_HOME}}/scripts/notify.py --alert --auto --header-color red \
-    --title "前置受阻：PRD 目录不存在" \
-    --section "PRD root 不存在：$PRD_ROOT（连续第 $S 次）。请确认 docs/requirements/ 下的产品输入已就位后重触发。"
-  NRC=$?
-  case "$NRC" in
-    0|3) : ;;   # 0 已发 / 3 未配置渠道（合规降级，告警已落 memory/.aidp/alerts.jsonl）
-    *) echo "⚠️ #4 未发出（notify.py rc=$NRC）——不阻断熔断处置" ;;
-  esac
-  exit 0
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --preflight --command autopilot \
+    --reason prd-root-missing --why "PRD root 不存在：$PRD_ROOT，请确认产品输入已就位" \
+    --threshold "${PREFLIGHT_THRESHOLD:-3}"
+  RC=$?; case "$RC" in 0|3) exit 0;; *) exit "$RC";; esac
 else
   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py prd-root-missing || true
 fi

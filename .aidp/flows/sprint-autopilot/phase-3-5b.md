@@ -7,7 +7,8 @@
 
 ---
 
-2. **跑 `/sprint-batch --skip-context-check --skip-aiauto-test --unattended`**（`--batch-one-tick` / 交互式路径；内部按其「零询问连跑铁律」严格 for 循环跑完研发执行计划全部 Sprint）：
+2. **跑 `/sprint-batch --skip-context-check --skip-aiauto-test --unattended [--aiauto-test-required]`**（`--batch-one-tick` / 交互式路径；内部按其「零询问连跑铁律」严格 for 循环跑完研发执行计划全部 Sprint）：
+   - `SKIP_AIAUTO_TEST!=1` 时实际调用必须追加 `--aiauto-test-required`，显式跳过实测才不传；批次的 `--skip-aiauto-test` 仅避免重复启动浏览器。
    - ⛔ 必传 `--unattended`；所有交互门（含未枚举的范围/进度确认）均不得弹出，增量路径调用 `/sprint-dev`/`/sprint-bugfix` 同样必传。`HAS_WAKE_SOURCE=1` 可跨 tick 自动续跑，但不得向人征询。
    - ⛔ 必传 `--skip-context-check --skip-aiauto-test`：前者跳过 compact 询问，后者把部署与浏览器测试留给本命令及独立 `/sprint-aiauto-test`，并保持 AI 执行报告骨架由 autopilot 产出。
    - `/sprint-batch` 连跑全部 Sprint，不问起始 Sprint 或是否继续；`--single-sprint` 仅用于 autopilot 单 Sprint 路径。本片无 `--skip-dev` 分支，`test-only` 已在 `phase-3-2.md` 前置分流。

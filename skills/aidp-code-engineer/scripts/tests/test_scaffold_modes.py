@@ -2175,6 +2175,7 @@ class RuntimeFillableRewriteTest(unittest.TestCase):
             label = f".claude/{self.relative}"
             target = root / label
             content = target.read_bytes()
+            original_mode = target.stat().st_mode & 0o777
             target.unlink()
             result = H.run_script("finalize_upgrade.py", "--root", root, "--accept", label,
                                   check=False)
@@ -2188,7 +2189,12 @@ class RuntimeFillableRewriteTest(unittest.TestCase):
             self.assertEqual(external.read_bytes(), content + b"external secret\n")
             self.assertTrue(L.queue_entries(root))
             target.unlink()
-            target.write_bytes(content)
+            previous_umask = os.umask(0o077)
+            try:
+                target.write_bytes(content)
+            finally:
+                os.umask(previous_umask)
+            target.chmod(original_mode)
             result = H.run_script("finalize_upgrade.py", "--root", root, "--accept", label,
                                   check=False)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

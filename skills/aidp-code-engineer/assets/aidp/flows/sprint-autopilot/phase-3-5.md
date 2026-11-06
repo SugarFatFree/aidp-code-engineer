@@ -52,7 +52,7 @@
 
    **② 委派子 Agent 执行该 Sprint（IRON-8）**：派发前重读 `check_open_sprints.py --version {TARGET_VERSION} --scope started --json`。`open=[]` 正常开工；`open` 恰为本轮编号时附 `--resume`（子命令恢复门仍须核对所属用户）；其他在途或读取错误直接按③失败记账，禁止先 close 清场。恢复不得改写已有 build，也不得绕过下一步的实物核验。
    用 `Agent({run_in_background:false})` 派子 Agent 跑
-   `/sprint-full ${SPRINT_NO} --unattended --from-batch [--resume]`（正常 start→dev→test→bugfix→close；恢复跳过 start，从 dev 继续），
+   `/sprint-full ${SPRINT_NO} --unattended --from-batch [--resume] [--aiauto-test-required]`（正常 start→dev→test→bugfix→close；恢复跳过 start，从 dev 继续），
    要求它**只回传 compact JSON** `{"sprint":"NNN","closed":true|false,"reason":"..."}`。
    ⛔ **斜杠命令不能写进 bash 围栏**（它不是 shell 命令，在 Bash 工具里必 `127`；见 rationale.md「斜杠命令进围栏」）。
 
@@ -94,7 +94,7 @@
      [ "$FH" = 3 ] && { echo "⛔ Sprint-$SPRINT_NO 无 close 归档（dev_fail_streak=$S）→ 已冻结本版止损"; exit 0; }
      echo "UNATTENDED_YIELD ⛔ Sprint-$SPRINT_NO 无 close 归档产物（dev_fail_streak=$S）→ 让位本 tick"; exit 0
    fi
-   $BE --version "$V" del dev_fail_streak dev_fail_phase || true
+   python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --success --version "$V" --phase 3.2-dev || exit 1
    # 本块开头那次 plan_sprints 扫描发生在子 Agent 收工【之后】，CLOSED/REMAIN 已是最新态
    REMAIN_AFTER="$NEXT_SPRINT"
    $BE --version "$V" run-state "3.2-dev" "3.2-dev" "${REMAIN_AFTER:-done}" \

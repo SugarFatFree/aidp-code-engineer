@@ -14,8 +14,8 @@
 #     export ARGUMENTS="<参数>"（供原生命令正文读取）；
 #   · 加载 ~/.config/aidp/env（可选，KEY=VALUE 行；放通知 webhook、CICD 令牌等凭据环境变量）；
 #   · flock 互斥：同一命令上一轮未结束则本轮跳过（无 flock 时退回 python3 fcntl；两者皆无即告警退出非 0）；
-#   · tick 硬超时（timeout → gtimeout → python3 回退）；超时写 memory/.aidp/alerts.jsonl 并计连续超时，
-#     连续达阈发告警通知（`aidp_scheduler.py tick-result`）；
+#   · tick 硬超时（timeout → gtimeout → python3 回退）；所有非零退出写 memory/.aidp/alerts.jsonl，
+#     连续达阈按原因/退出码通知一次并指数退避，成功清状态（`aidp_scheduler.py tick-result/tick-check`）；
 #   · 日志追加到 memory/.aidp/logs/<命令>.log。
 #
 # Agent：AIDP_AGENT 环境变量 > memory/aidp-config.yaml 的 scheduler.agent（auto 时按 agent_env.py detect 取第一个）。
@@ -76,12 +76,17 @@ done
 args="$* ${extra[*]:-}"
 args="$(echo "$args" | sed -e 's/^ *//' -e 's/ *$//')"
 
-if [ -f "$HOME/.config/aidp/env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "$HOME/.config/aidp/env"
-  set +a
-fi
+# KEY=VALUE 仅作数据读取，NUL 分隔直接 export；禁止 source/eval 执行凭据文件。
+while IFS= read -r -d '' env_key && IFS= read -r -d '' env_value; do
+  export "$env_key=$env_value"
+done < <(python3 - "$SCRIPT_DIR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from aidp_scheduler import env_file_values
+for key, value in env_file_values().items():
+    sys.stdout.buffer.write(key.encode() + b'\0' + value.encode() + b'\0')
+PY
+)
 
 cfg_get() {
   # $1 = agent | exec.<agent>
@@ -98,13 +103,14 @@ elif k.startswith("exec."):
 PY
 }
 
+configure_agent() {
 agent="${AIDP_AGENT:-}"
 if [ -z "$agent" ]; then
   agent="$(cfg_get agent)"
   [ -n "$agent" ] || agent=auto
 fi
 if [ "$agent" = "auto" ]; then
-  agent="$(python3 "$AIDP_HOME/scripts/agent_env.py" detect | python3 -c 'import json,sys; print(json.load(sys.stdin)["agents"][0])')"
+  agent="$(python3 "$AIDP_HOME/scripts/agent_env.py" detect | python3 -c 'import json,sys; print(json.load(sys.stdin)["agents"][0])')" || return 2
 fi
 agent="${agent%%,*}"
 
@@ -112,7 +118,7 @@ case "$agent" in
   codex)  prompt="\$${cmd} ${args}"; default_exec='codex exec --sandbox workspace-write {prompt}' ;;
   dsh)    prompt="/${cmd} ${args}";  default_exec='' ;;
   claude) prompt="/${cmd} ${args}";  default_exec='claude -p --permission-mode acceptEdits {prompt}' ;;
-  *) echo "[agent_loop] 未知 Agent: $agent" >&2; exit 2 ;;
+  *) echo "[agent_loop] 未知 Agent: $agent" >&2; return 2 ;;
 esac
 exec_tpl="${AIDP_AGENT_EXEC:-}"
 [ -n "$exec_tpl" ] || exec_tpl="$(cfg_get "exec.$agent")"
@@ -120,8 +126,9 @@ exec_tpl="${AIDP_AGENT_EXEC:-}"
 if [ -z "$exec_tpl" ]; then
   echo "[agent_loop] Agent=$agent 没有内置的非交互执行命令：请在 memory/aidp-config.yaml 的 scheduler.exec.$agent" \
        "或环境变量 AIDP_AGENT_EXEC 中配置（{prompt} 为占位符，写法以该 Agent 当前版本官方文档为准）" >&2
-  exit 2
+  return 2
 fi
+}
 
 export AIDP_TICK_COMMAND="$cmd"
 export ARGUMENTS="$args"
@@ -235,15 +242,34 @@ PY
       loop_alert loop-lock-error "${cmd} 锁记录不可读，本轮拒绝执行"
       exit 3
     fi
+    # 只有取得链路锁且无直接 tick 占位才消费退避轮；跳过不是执行成功或失败。
+    admission=0
+    python3 "$AIDP_HOME/scripts/aidp_scheduler.py" tick-check --root "$root" --command "$cmd" \
+      --quiet 9>&- >>"$log" 2>&1 || admission=$?
+    if [ "$admission" = 4 ]; then
+      echo "[agent_loop] $(date '+%F %T') ${cmd} 失败退避，跳过本轮" >>"$log"
+      exit 0
+    elif [ "$admission" != 0 ]; then
+      loop_alert loop-state-error "${cmd} 读取退避状态失败（rc=${admission}），本轮拒绝执行"
+      exit "$admission"
+    fi
     export AIDP_TICK_TOKEN
     AIDP_TICK_TOKEN=$(python3 -c 'import uuid; print(uuid.uuid4().hex)' 9>&-)
     # ★ 取得锁之后才写本轮起点（锁文件以 `>>` 打开、不截断）：aidp_scheduler watchdog 据此算持锁时长。
     #   ⛔ 旧写法 `9>"$lock"` 在 flock 之前就截断文件 —— 每次「跳过」都刷新 mtime，
     #   用 mtime 估 tick 起点的挂死判定因此永不触发。
     printf '{"owner":"agent_loop","pid":%s,"token":"%s","started_at":%s}\n' "${BASHPID:-$$}" "$AIDP_TICK_TOKEN" "$(date +%s)" >"$lock" || exit 3
+    log_offset=$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]))' "$log" 9>&-)
+    rc=0
+    configure_agent >>"$log" 2>&1 || rc=$?
+    if [ "$rc" != 0 ]; then
+      echo "[agent_loop] Agent 配置失败，请检查 scheduler.exec.${agent:-auto}，见 $log" >&2
+      python3 "$AIDP_HOME/scripts/aidp_scheduler.py" tick-result --root "$root" --command "$cmd" \
+        --rc "$rc" --log "$log" --log-offset "$log_offset" --quiet 9>&- >>"$log" 2>&1 || true
+      exit "$rc"
+    fi
     quoted=$(printf '%q' "$prompt")
     echo "[agent_loop] $(date '+%F %T') 开始 agent=$agent prompt=$prompt" >>"$log"
-    rc=0
     cmdline="${exec_tpl//\{prompt\}/$quoted}"
     # ★ tick 必须有硬超时。⛔ 裸执行没有上限时的失效形态是**最安静的一种**：
     #   Agent 进程挂死（网络悬停 / 模型侧无响应 / 等一个永不回来的工具结果）→ 本函数永不返回
@@ -254,11 +280,13 @@ PY
     # 环境变量优先，其次 memory/aidp-config.yaml 的 scheduler.tick_max_seconds，最后 7200。
     # ★ 执行行一律 `9>&-`：tick 里 nohup 拉起的常驻进程（dev server / chrome）若继承 fd 9，
     #   会在 tick 结束后永久持锁，后续每轮都被判「上一轮仍在运行」。
-    tick_max="${AIDP_TICK_MAX_SECONDS:-}"
-    if [ -z "$tick_max" ]; then
-      tick_max=$(python3 "$AIDP_HOME/scripts/aidp_config.py" get scheduler.tick_max_seconds 2>/dev/null || true)
-    fi
-    case "$tick_max" in ""|*[!0-9]*) tick_max=7200 ;; esac
+    tick_max=$(python3 - "$SCRIPT_DIR" "$root" <<'PY' 9>&-
+import os, sys
+sys.path.insert(0, sys.argv[1])
+from aidp_scheduler import effective_tick_max
+print(effective_tick_max(sys.argv[2], env=os.environ))
+PY
+    )
     if [ "$tick_max" -gt 0 ] 2>/dev/null; then
       if [ -n "$timeout_bin" ]; then
         "$timeout_bin" --signal=TERM --kill-after=60 "$tick_max" bash -c "$cmdline" 9>&- >>"$log" 2>&1 || rc=$?
@@ -275,9 +303,9 @@ PY
       bash -c "$cmdline" 9>&- >>"$log" 2>&1 || rc=$?
     fi
     echo "[agent_loop] $(date '+%F %T') 结束 rc=$rc" >>"$log"
-    # 超时记账：落告警台账 + 连续超时计数，连续达阈发告警通知；非超时轮清零。旁路，不改本轮 rc。
+    # 所有非零退出记账、按本轮日志归因并退避；只有成功执行清零。保留 Agent 原始 rc。
     python3 "$AIDP_HOME/scripts/aidp_scheduler.py" tick-result --root "$root" --command "$cmd" \
-      --rc "$rc" --tick-max "$tick_max" --log "$log" --quiet 9>&- >>"$log" 2>&1 || true
+      --rc "$rc" --tick-max "$tick_max" --log "$log" --log-offset "$log_offset" --quiet 9>&- >>"$log" 2>&1 || true
     exit "$rc"
   ) 9>>"$lock"
 }
@@ -288,7 +316,7 @@ if [ "$once" = 1 ]; then
   exit 0
 fi
 
-echo "[agent_loop] agent=$agent interval=${secs}s prompt=$prompt（日志：$log）" >&2
+echo "[agent_loop] command=$cmd interval=${secs}s（日志：$log）" >&2
 while true; do
   python3 "$AIDP_HOME/scripts/aidp_scheduler.py" watchdog --quiet >>"$log" 2>&1 || true
   run_one || true   # 单轮失败已持久记账；前台守护仍须等到下一轮，不能被 set -e 退出。

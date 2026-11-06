@@ -1,11 +1,6 @@
 # sprint-autopilot · Phase 3 详情分片 [8/14]（3.3 终审 + 3.4 收尾 Step 1–3 关闭方判定与发报告）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 8/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
-> - **本片覆盖**：3.3（终审 version-auditor）+ 3.4 收尾 Step 1–3（finalize 结果态 / emit-report 产报告 / #3 通知）
-> - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
->
-> ⚠️ **权威性**：进入 Phase 3 后以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤/硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-3-8.md`。理据见同目录 `rationale.md`。
+> **第 8/14 片**：3.3 终审 + 3.4 收尾 Step 1–3（定稿/报告/#3通知）。按命令主体 Phase 3 骨架表依次 Read，不省略子步骤与硬门；理据见同目录 `rationale.md`。
 
 ---
 
@@ -156,6 +151,7 @@ BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
 #    交互式单次（HAS_WAKE_SOURCE=0）同样由本次调用在本轮内跑完——0.3.4bis 那个触发点是 /loop
 #    语境、本轮早已跑过，"没有下一 tick" 不是把缺陷连同处置决定交还用户的理由。
 #    结构级兜底 = 收尾门 3m（报告 defects[] 有"待复验"却无后继 build 也未冻结 = FAIL）。
+python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --success --version "$V" --phase 3.3-audit || exit 1
 $BE --version "$V" run-state "3.3-audit" "3.4-finish" "done" \
   --summary "Phase 3.3 终审完成 + Phase 3.4 完成通知已发" --pending ""
 ```

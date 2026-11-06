@@ -150,6 +150,27 @@ def _ts(v):
         return 0
 
 
+def test_loop_alive(bl, version, ttl_min=90):
+    """写冻结与解冻共用：心跳在 TTL 内，且没有本版或全局测试阻塞。"""
+    from datetime import datetime
+    hb = bl.get("aiauto_test_heartbeat_at")
+    if not hb:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(hb))
+        now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+        if not 0 <= (now - dt).total_seconds() <= float(ttl_min) * 60:
+            return False
+    except (ValueError, TypeError, OverflowError):
+        return False
+    ab = str(bl.get("aiauto_blocked_reason") or "")
+    if ab:
+        reason, _, target = ab.removeprefix("frozen:").partition("@")
+        if not target or target == version or reason == "chrome-unavailable":
+            return False
+    return True
+
+
 def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json"):
     """判定版本级 aiauto 冻结是否已具备解冻证据；返回 {unfreeze, reason, evidence}。"""
     path = os.path.join(root, baseline)
@@ -179,8 +200,13 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
                 "note": "preflight-incomplete 只由 Phase 0.7 收口门通过时显式解冻，探针不判"}
     elif fr in _UNFREEZE_BY_HEARTBEAT:
         hb = data.get("aiauto_test_heartbeat_at")
-        if _ts(hb) > fzt:
-            return {"unfreeze": True, "reason": fr, "evidence": f"测试链路心跳已恢复（{hb}）"}
+        live = dict(data)
+        # 只排除本门自己写的标记；真实测试阻塞仍参与判定，避免新心跳误解冻。
+        if live.get(BLOCKED_KEY) == "frozen:config-missing@" + version:
+            live.pop(BLOCKED_KEY)
+        ttl = os.environ.get("AIAUTO_TEST_HEARTBEAT_TTL_MIN", "30")
+        if fzt > 0 and _ts(hb) > fzt and test_loop_alive(live, version, ttl):
+            return {"unfreeze": True, "reason": fr, "evidence": f"测试链路活性已恢复（{hb}，无有效阻塞）"}
     elif fr in _UNFREEZE_BY_PRD:
         import glob
         for f in glob.glob(os.path.join(root, "docs/requirements", version, "产品提供", "*")):
@@ -345,7 +371,8 @@ REPROBE_MAX_INTERVAL = 4 * 3600       # 单次间隔封顶 4 小时
 REPROBE_MAX_ATTEMPTS = 10             # 用尽后转人工（发一次告警）
 FREEZE_FIELDS = ["needs_human", "aiauto_frozen_at", "probe_frozen_at", "freeze_reason",
                  "needs_human_reason"]
-STREAK_FIELDS = ["dev_fail_streak", "dev_fail_phase", "probe_fail_streak", "push_probe_fail_streak",
+STREAK_FIELDS = ["dev_fail_streak", "dev_fail_phase", "dev_fail_reason", "cicd_run.cicd_retry_count",
+                 "probe_fail_streak", "push_probe_fail_streak",
                  "prerelease_deploy_block_streak", "prerelease_test_hold_streak", "auto_retest_streak",
                  "test_loop_missing_streak", "cicd_unreachable_streak", "cicd_cli_fail_streak",
                  "aiauto_gate_fail_streak", "env_reprobe_attempts", "env_reprobe_last_at",
@@ -384,7 +411,7 @@ def _load_baseline(root):
 
 
 def _clear_version(root, version, extra_fields=()):
-    """清版本级冻结字段 + 以 `@<version>` 结尾的顶层 aiauto_blocked_reason。返回失败说明列表。
+    """清版本级冻结字段 + 同 reason/版本的顶层 aiauto_blocked_reason。返回失败说明列表。
 
     `stuck-phase` 另需重置**正在生效的停滞窗口**：它的判据分布在 `run_state`（开发链路）与
     `aiauto_run_state`（测试链路）两处，只清冻结字段不清计数，下个 tick 判据原封不动成立 →
@@ -393,6 +420,13 @@ def _clear_version(root, version, extra_fields=()):
     """
     failed = []
     before = (_load_baseline(root) or {}).get("versions", {}).get(version) or {}
+    if before.get("freeze_reason") == "plan-transient":
+        dispatch_fields = ["subagent_retry_at", "subagent_retry_round", "subagent_retry_stage", "subagent_retry_phase"]
+        extra_fields = [*extra_fields, *dispatch_fields]
+        if before.get("current_build"):
+            r = _be_cmd(root, ["--version", version, "--build", before["current_build"], "del", *dispatch_fields])
+            if r.returncode:
+                return ["清当前 build 调度退避状态失败"]
     r = _be_cmd(root, ["--version", version, "del", *FREEZE_FIELDS, *extra_fields])
     if r.returncode != 0:
         failed.append("del versions.%s 冻结字段 rc=%s %s" % (version, r.returncode, (r.stderr or "").strip()[:120]))
@@ -406,7 +440,7 @@ def _clear_version(root, version, extra_fields=()):
             if reset.returncode:
                 failed.append(f"{label}停滞窗口重置失败")
     d = _load_baseline(root) or {}
-    if str(d.get("aiauto_blocked_reason") or "").endswith("@" + version):
+    if d.get("aiauto_blocked_reason") == "frozen:%s@%s" % (before.get("freeze_reason"), version):
         r = _be_cmd(root, ["del", "aiauto_blocked_reason"])
         if r.returncode != 0:
             failed.append("del aiauto_blocked_reason rc=%s" % r.returncode)
@@ -460,7 +494,26 @@ def env_reprobe(root, version, apply=False, now=None):
         return out
     out["reprobe"] = True
     if apply:
-        failed = _clear_version(root, version)
+        # 到期放行一次真实尝试：预算不能仍处于耗尽态；退避次数和冻结快照不属于重试预算。
+        retry_fields = ["dev_fail_streak", "dev_fail_phase", "dev_fail_reason", "probe_fail_streak",
+                        "push_probe_fail_streak", "prerelease_deploy_block_streak",
+                        "cicd_unreachable_streak", "cicd_cli_fail_streak", "cicd_run.cicd_retry_count"]
+        failed = []
+        build = vn.get("current_build")
+        if build:
+            r = _be_cmd(root, ["--version", version, "--build", build, "del", *retry_fields])
+            if r.returncode:
+                failed.append("清当前 build 重试预算失败")
+        # Phase 2 的 hold 只重判部署证据，不执行部署；需恢复到部署入口才可能产新证据。
+        if fr == "deploy-unreachable" and (vn.get("run_state") or {}).get("next_phase") == "2-prerelease":
+            r = _be_cmd(root, ["--version", version, "set", "run_state.next_phase", "3.2.1-deploy"])
+            if r.returncode:
+                failed.append("恢复部署游标失败")
+        if not failed:
+            failed = _clear_version(root, version, extra_fields=retry_fields)
+        if failed:
+            out.update(errors=failed, note="复探准备失败，未完成放行")
+            return out
         r = _be_cmd(root, ["--version", version, "set", "env_reprobe_attempts", str(attempts + 1),
                            "env_reprobe_last_at", "@now"])
         if r.returncode != 0:

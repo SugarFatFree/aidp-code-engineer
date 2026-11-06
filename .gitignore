@@ -74,7 +74,7 @@ skills/*/assets/config.json
 # memory/.sprint-autopilot-baseline.json 刻意入库、团队共享（项目级版本状态机，不含个人信息）
 # 测试账号文件（敏感：明文账号密码；命令端会自动追加此条 + chmod 600）
 memory/.sprint-autopilot-credentials.json
-# 里程碑通知发送台账（完成核验门 autopilot-ceremony-gate.py 用；本地校验状态）
+# 旧版里程碑台账残留；现位置 memory/.aidp/ceremony-ledger.json
 memory/.autopilot-ceremony-ledger.json
 # 本地运行态目录（锁文件、提交前门禁台账等）
 memory/.aidp/
@@ -84,7 +84,8 @@ memory/.aidp/
 # ⛔ 必须两条：数据文件本身就是点开头的，而 `memory/*.lock` 的 `*` 不匹配前导点
 memory/*.lock
 memory/.*.lock
-# Stop hook（autopilot-stop-guard.py）的本地运行态：熔断计数 / fail-open 台账 / 人工逃生舱开关
+# 旧版 Stop 计数/skips 残留；现位置 memory/.aidp/stop-guard-count 与 stop-guard-skips.jsonl
+# 人工逃生舱开关仍沿用 .autopilot-stop-guard-off
 memory/.autopilot-stop-guard-count
 memory/.autopilot-stop-guard-skips.jsonl
 memory/.autopilot-stop-guard-off

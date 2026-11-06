@@ -1020,7 +1020,7 @@ def _check_prerelease_cross_shell_gate():
         root = Path(td)
         (root / "memory").mkdir()
         (root / ".aidp/scripts").mkdir(parents=True)
-        for name in ("autopilot_tick_flags.py", "baseline_edit.py", "aidp_runtime.py", "vcs.py"):
+        for name in ("autopilot_tick_flags.py", "baseline_edit.py", "aidp_runtime.py", "vcs.py", "autopilot_fail_handle.py"):
             shutil.copy2(repo / ".aidp/scripts" / name, root / ".aidp/scripts" / name)
         baseline = root / "memory/.sprint-autopilot-baseline.json"
         script = root / ".aidp/scripts/autopilot_tick_flags.py"
@@ -2649,8 +2649,8 @@ def test_handback_has_auto_trigger():
     hook = (repo / ".aidp/hooks/autopilot-stop-guard.py").read_text(encoding="utf-8")
     check("★ Stop hook 真的会跑 handback-check（不是只写在散文里）",
           "handback-check" in hook)
-    check("★ 违背时阻止结束，而不是打印一句就放行",
-          "_exit_block" in hook.split("handback-check", 1)[1][:800])
+    check("★ handback 违背时经有界阻止，不打印后直接放行",
+          "_exit_bounded_block(root, cnt_key" in hook.split("handback-check", 1)[1][:1000])
     gate = (repo / ".aidp/scripts/autopilot-ceremony-gate.py").read_text(encoding="utf-8")
     check("ceremony-gate 仍提供 handback-check 子命令", "cmd_handback_check" in gate)
 
@@ -3790,7 +3790,7 @@ def test_autopilot_deadlocks_and_gate_bypasses():
           "--reason config-missing" in p39)
     gate = repo / ".aidp/scripts/autopilot-ceremony-gate.py"
     gsrc = gate.read_text(encoding="utf-8")
-    check("C5/H11 gate 提供统一 test_loop_alive", "def test_loop_alive(" in gsrc)
+    check("C5/H11 gate 与解冻探针共用 test_loop_alive", "from autopilot_unfreeze import test_loop_alive" in gsrc)
     check("★ H11 3b2 不再只看心跳", "_hb_fresh = test_loop_alive(_bl, V)" in gsrc)
 
     # test_loop_alive 三态（心跳新鲜但被本版阻塞 → 不算活）
@@ -4140,7 +4140,10 @@ def test_stop_guard_failopen_ledger():
         env.pop("AIDP_TICK_COMMAND", None)
         if tick:
             env["AIDP_TICK_COMMAND"] = tick
-        r = subprocess.run([sys.executable, str(hook)], input=stdin,
+        # 每个作用域判定场景是独立会话；同会话连续阻止上限由 test_stop_guard.py 验证。
+        payload = json.loads(stdin)
+        payload.setdefault("session_id", __import__("uuid").uuid4().hex)
+        r = subprocess.run([sys.executable, str(hook)], input=json.dumps(payload),
                            capture_output=True, text=True, env=env, timeout=120)
         led = mem / ".aidp/stop-guard-skips.jsonl"
         lines = [json.loads(x) for x in
@@ -7168,14 +7171,24 @@ def test_deploy_pending_and_frontend_evidence():
         poll = root / "memory/.aidp/cicd-poll.json"
         poll.parent.mkdir(parents=True)
 
-        def run_exit(verdict, wake, commit="abc"):
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        sha = "0123456789abcdef"
+
+        def run_exit(verdict, wake, commit=sha):
             baseline.write_text(json.dumps({"autopilot": {"target_version": "V0.1", "wake_source_this_tick": wake},
                                             "versions": {"V0.1": {"current_build": "V0.1_build1001",
                                                                     "cicd_run": {"run_id": "r1"},
-                                                                    "builds": [{"build": "V0.1_build1001", "push_commit": "abc"}]}}}),
+                                                                    "builds": [{"build": "V0.1_build1001", "push_commit": sha}]}}}),
                                 encoding="utf-8")
-            poll.write_text(json.dumps({"verdict": verdict, "run_id": "r1", "run_commit": commit}), encoding="utf-8")
-            if not c_exit:
+            poll.write_text(json.dumps({"mode": "poll", "verdict": verdict, "run_id": "r1", "run_commit": commit,
+                                       "expected_commit": sha, "next_action": "probe" if verdict == "success" else "poll"}),
+                            encoding="utf-8")
+            # 出口判定已收进消费入口；末尾围栏仅读其已落盘游标，不再重放固定 poll.json。
+            consumed = subprocess.run([sys.executable, str(repo / ".aidp/scripts/cicd_watch.py"),
+                                      "--mode", "consume", "--version", "V0.1", "--root", str(root),
+                                      "--result", str(poll), "--result-code", "0"],
+                                     cwd=root, capture_output=True, text=True)
+            if not c_exit or consumed.returncode not in (0, 2):
                 return {}
             result = subprocess.run(["bash", "-c", c_exit.group(1).replace("{{AIDP_HOME}}", ".aidp")],
                                     cwd=root, capture_output=True, text=True)
@@ -7186,14 +7199,18 @@ def test_deploy_pending_and_frontend_evidence():
         check("CICD success 的 commit 与本 build 不符不得放行",
               run_exit("success", 1, "other").get("next_phase") == "3.2.1-deploy")
         check("CICD running 有唤醒源时留部署游标", run_exit("running", 1).get("next_phase") == "3.2.1-deploy")
+        # 后续就绪/无 Git 场景保持原夹具边界；临时 Git 仅供 consume 的 CICD 能力校验。
+        shutil.rmtree(root / ".git")
         check("无唤醒源 running 必须有有限续轮询/终止分支",
               '[ "${HAS_WAKE_SOURCE:-0}" = "0" ]' in cicd and '--timeout 120' in cicd and
               '--freeze-now --phase 3.2.1-deploy --reason deploy-unreachable' in cicd)
-        c_poll = re.search(r"轮询由 .*?```bash\n(.*?)\n```", cicd, re.S)
+        c_poll = re.search(r"轮询围栏.*?```bash\n(.*?)\n```", cicd, re.S)
         d_watch = re.search(r"探针轮询 = .*?```bash\n(.*?)\n  ```", probe, re.S)
         check("CICD 与就绪探针各有可执行围栏", bool(c_poll and d_watch))
         (root / ".aidp/scripts/cicd_watch.py").write_text(
             "import json,os,sys\n"
+            "if '--mode' in sys.argv and sys.argv[sys.argv.index('--mode')+1]=='consume':\n"
+            " print(json.dumps({'next_action':'poll'})); sys.exit(0)\n"
             "p='memory/poll-count'; n=int(open(p).read())+1 if os.path.exists(p) else 1\n"
             "open(p,'w').write(str(n))\n"
             "v='success' if os.environ.get('MOCK_FINISH')=='1' and n==2 else 'running'\n"

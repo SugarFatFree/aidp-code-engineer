@@ -19,7 +19,8 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
     uninstall  [--platform P] [--dry-run] [--json]
     status     [--platform P] [--json]
     watchdog   [--quiet] [--json]          # 心跳巡检：定时唤醒时无心跳从首次巡检起计时，超时告警
-    tick-result --command C --rc N [--tick-max S] [--log P]   # agent_loop 每轮结束调用：超时记账 + 连续超时告警
+    tick-result --command C --rc N [--tick-max S] [--log P] [--log-offset N]  # 所有失败归因、计数与告警
+    tick-check  --command C [--json]       # 持链路锁后消费退避：rc=4 跳过，不能调用 tick-result
     --self-check
 
 平台（`--platform` 缺省自动判定）：
@@ -35,7 +36,8 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
 
   0 = 成功（watchdog：无陈旧链路）
   2 = 用法错 / 平台不支持 / 装配命令执行失败
-  3 = watchdog 检出陈旧链路（已写告警台账）
+  3 = watchdog 检出故障链路 / tick-result 连续失败达阈（本地告警可见）
+  4 = tick-check 本轮退避跳过（未执行，不记成功或失败）
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
@@ -49,6 +51,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import time
@@ -67,9 +70,9 @@ PLATFORMS = ("systemd", "cron", "launchd", "schtasks")
 BASELINE_REL = os.path.join("memory", ".sprint-autopilot-baseline.json")
 ALERTS_REL = os.path.join("memory", ".aidp", "alerts.jsonl")
 WATCHDOG_STATE_REL = os.path.join("memory", ".aidp", "scheduler-watchdog.json")
-# 各链路连续 tick 超时计数（agent_loop 每轮结束经 `tick-result` 维护；非超时轮清零）
+# 沿用旧路径兼容升级；现记录所有非零退出，只有成功执行才清零。
 TICK_TIMEOUT_STATE_REL = os.path.join("memory", ".aidp", "tick-timeouts.json")
-# 连续超时多少次升级为告警通知（每满一个周期再发一次，避免每轮刷屏）
+# 连续失败达阈后，原因 + rc 分键通知一次，直到成功恢复。兼容旧环境变量名。
 try:
     TICK_TIMEOUT_ALERT_AFTER = max(1, int(os.environ.get("AIDP_TICK_TIMEOUT_ALERT_AFTER", "3") or 3))
 except ValueError:
@@ -77,6 +80,53 @@ except ValueError:
 TIMEOUT_RCS = (124, 137)
 CRON_MARK = "# AIDP-SCHEDULER"
 GRACE_SECONDS = 300
+TICK_FINISH_GRACE_SECONDS = 180
+MAX_BACKOFF_ROUNDS = 32
+
+
+def env_file_values():
+    """读取可选 KEY=VALUE / export KEY=VALUE 文件；只解引号，不展开或执行 shell。
+
+    文件值覆盖进程环境，保持 agent_loop 历史优先级。非法行忽略，值永不输出诊断。
+    """
+    values = {}
+    path = os.path.join(os.path.expanduser("~"), ".config", "aidp", "env")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except FileNotFoundError:
+        return values
+    for line in lines:
+        match = re.fullmatch(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)", line.rstrip("\r\n"))
+        if not match:
+            continue
+        key, raw = match.groups()
+        try:
+            # comments=False 保留 webhook URL 中的 #；尾随空白注释单独处理。
+            parts = shlex.split(raw, comments=False, posix=True)
+        except ValueError:
+            continue
+        if not parts:
+            value = ""
+        elif len(parts) == 1 or (len(parts) > 1 and parts[1].startswith("#")):
+            value = parts[0]
+        else:
+            continue
+        if "\x00" not in value:
+            values[key] = value
+    return values
+
+
+def scheduler_env():
+    return dict(os.environ, **env_file_values())
+
+
+def effective_tick_max(root, env=None):
+    """wrapper 与独立巡检共享：env 文件 > 进程环境 > 项目配置 > 7200。"""
+    env = scheduler_env() if env is None else env
+    raw = env.get("AIDP_TICK_MAX_SECONDS") or scheduler_config(root).get("tick_max_seconds", 7200)
+    text = str(raw)
+    return int(text) if re.fullmatch(r"[0-9]+", text) else 7200
 
 
 # ───────────────────────── 通用 ─────────────────────────
@@ -615,9 +665,8 @@ def heartbeat_report(root, now=None, intervals=None):
         secs = (intervals or {}).get(chain) or parse_interval(cfg.get(meta["interval_key"])) \
             or parse_interval({"dev": "10m", "test": "5m"}[chain])
         threshold = int(cfg.get("stale_cycles") or 3) * secs + GRACE_SECONDS
-        # 挂死阈值：一轮 tick 再慢也不该跑过这个数。取「stale 阈值」与 `tick_max_seconds`
-        # 的较大者，且有 1h 下限 —— 单 Sprint 实测可达 1h 量级，压太低会把正常长 tick 误杀。
-        hung_threshold = max(threshold, int(cfg.get("tick_max_seconds") or 0), 3600)
+        # 允许硬超时后的 TERM/KILL 与记账通知收尾；环境覆盖与 wrapper 使用同一解析器。
+        hung_threshold = max(threshold, effective_tick_max(root) + TICK_FINISH_GRACE_SECONDS, 3600)
         raw = bl.get(meta["heartbeat"])
         dt = _parse_ts(raw)
         age = int((now - dt).total_seconds()) if dt else None
@@ -659,16 +708,40 @@ def _append_alert(root, rec):
         return None
 
 
-def do_watchdog(root, a, now=None, send_notify=True):
-    rep = heartbeat_report(root, now=now)
-    state_p = os.path.join(root, WATCHDOG_STATE_REL)
+def _notify_alert(root, rec, title):
+    """状态锁释放后通知；失败留本地台账，不输出子进程中的凭据。"""
+    notify = os.path.join(root, runtime_relpath("scripts/notify.py", __file__))
     try:
-        with open(state_p, encoding="utf-8") as fh:
-            state = json.load(fh)
-        if not isinstance(state, dict):
-            state = {}
-    except (OSError, ValueError):
-        state = {}
+        result = subprocess.run([sys.executable, notify, "--auto", "--alert", "--header-color", "red",
+                                 "--title", title, "--section", rec["message"], "--repo-root", root],
+                                capture_output=True, text=True, timeout=90, cwd=root, env=scheduler_env())
+        status = "sent" if result.returncode == 0 else f"exit-{result.returncode}"
+    except (OSError, subprocess.SubprocessError):
+        status = "unavailable"
+    if status != "sent":
+        failure = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                   "source": "aidp_scheduler", "kind": "loop-notify-failed", "command": rec["command"],
+                   "alert_kind": rec["kind"], "status": status,
+                   "message": f"通知未送达（{status}），原始告警保留在本地台账"}
+        _append_alert(root, failure)
+        sys.stderr.write(f"[AIDP-ALERT] {failure['message']}\n")
+    return status
+
+
+def do_watchdog(root, a, now=None, send_notify=True):
+    from baseline_edit import LockedBaseline
+    notifications = []
+    with LockedBaseline(os.path.join(root, WATCHDOG_STATE_REL), write=True) as locked:
+        if not isinstance(locked.data, dict):
+            raise ValueError("watchdog 状态必须是 JSON 对象")
+        rc, res = _watchdog(root, a, locked.data, notifications, now=now)
+    res["notifications"] = [_notify_alert(root, rec, title) for rec, title in notifications] if send_notify else []
+    return rc, res
+
+
+def _watchdog(root, a, state, notifications, now=None):
+    # 状态读取、心跳判断、去重标记与原子写回全部处于同一把锁内。
+    rep = heartbeat_report(root, now=now)
     now = now or datetime.now(timezone.utc)
     stale, alerted = [], []
     for chain, r in rep.items():
@@ -695,7 +768,6 @@ def do_watchdog(root, a, now=None, send_notify=True):
         marker = r["heartbeat_at"] if r["state"] == "stale" else r["state"]
         if state.get(chain) == marker:
             continue                      # 同一失联状态只告警一次
-        state[chain] = marker
         label = CHAINS[chain]["label"]
         last = f"最后心跳 {r['heartbeat_at']}" if r["heartbeat_at"] else "从未收到心跳"
         if r["state"] == "hung":
@@ -718,79 +790,115 @@ def do_watchdog(root, a, now=None, send_notify=True):
                "chain": chain, "command": r["command"], "heartbeat_at": r["heartbeat_at"],
                "age_seconds": r["age_seconds"], "threshold_seconds": r["threshold_seconds"],
                "message": msg}
-        _append_alert(root, rec)
-        sys.stderr.write(f"🚨 [AIDP-ALERT] {msg}\n")
-        alerted.append(chain)
-        if send_notify:
-            notify = os.path.join(root, runtime_relpath("", __file__), "scripts", "notify.py")
-            if os.path.isfile(notify):
-                try:
-                    subprocess.run([sys.executable, notify, "--auto", "--alert", "--header-color", "red",
-                                    "--title", f"{label}心跳中断", "--section", msg, "--repo-root", root],
-                                   capture_output=True, text=True, timeout=90, cwd=root)
-                except (OSError, subprocess.SubprocessError):
-                    pass              # 通知失败不阻断：告警台账已落
-    try:
-        os.makedirs(os.path.dirname(state_p), exist_ok=True)
-        with open(state_p, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, ensure_ascii=False)
-    except OSError:
-        pass
+        ledger = _append_alert(root, rec)
+        sys.stderr.write(f"[AIDP-ALERT] {msg}\n")
+        if ledger:
+            state[chain] = marker
+            alerted.append(chain)
+        else:
+            sys.stderr.write("[AIDP-ALERT] 告警台账写入失败，下次巡检重试\n")
+        notifications.append((rec, f"{label}心跳中断"))
     return (3 if stale else 0), {"action": "watchdog", "chains": rep, "stale": stale, "alerted": alerted}
 
 
-def do_tick_result(root, a, send_notify=True):
-    # 开发/测试由不同进程并发结束，计数共享一份文件，必须锁内重读并原子替换。
-    from baseline_edit import LockedBaseline
-    state_p = os.path.join(root, TICK_TIMEOUT_STATE_REL)
-    with LockedBaseline(state_p, write=True) as locked:
-        if not isinstance(locked.data, dict):
-            raise ValueError("tick timeout 状态必须是 JSON 对象")
-        return _tick_result(root, a, locked.data, send_notify=send_notify)
-
-
-def _tick_result(root, a, state, send_notify=True):
-    """agent_loop 每轮结束调用：超时（rc 124/137）→ 告警台账 + 连续计数，达阈发告警通知；否则清零。
-
-    ⛔ 超时只写日志 + stderr 等于没告警：cron 丢弃 stderr，而被杀的 tick 往往连 run_state
-    都没来得及写，下一轮原样重跑同一段 —— 每 tick_max 秒静默重来一遍、永不熔断。
-    """
-    cmd = a.command or ""
+def tick_failure_kind(root, a):
+    """只读本轮日志尾 16KiB 作归因；不把可能含凭据的原文写入通知或台账。"""
     rc = int(a.rc)
+    if rc in TIMEOUT_RCS:
+        return "loop-tick-timeout"
+    text = ""
+    if a.log:
+        path = a.log if os.path.isabs(a.log) else os.path.join(root, a.log)
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                fh.seek(max(0, fh.tell() - 16384, int(getattr(a, "log_offset", 0) or 0)))
+                text = fh.read(16384).decode("utf-8", errors="replace").lower()
+        except OSError:
+            pass
+    if re.search(r"insufficient[_ -]quota|quota.{0,40}(?:exceed|exhaust)|credit balance.{0,30}(?:low|insufficient)|"
+                 r"(?:usage|spending|billing) limit|out of credits|额度不足|余额不足|配额.{0,12}(?:耗尽|超限)", text):
+        return "loop-agent-quota"
+    if re.search(r"\b429\b|rate[_ -]?limit|too many requests|请求过于频繁", text):
+        return "loop-agent-rate-limit"
+    if re.search(r"\b(?:401|403)\b|unauthori[sz]ed|authentication.{0,20}(?:fail|error)|invalid[_ -](?:api[_ -])?key|"
+                 r"(?:token|credentials?).{0,20}(?:expir|invalid)|not logged in|鉴权失败|认证失败", text):
+        return "loop-agent-auth"
+    if rc == 127 or re.search(r"command not found|(?:cli|executable).{0,30}not found", text):
+        return "loop-agent-cli-missing"
+    return "loop-agent-failed"
+
+
+def do_tick_check(root, a):
+    """一次调度唤醒消费一个退避轮；调用方应先取得链路锁。跳过不写 tick-result。"""
+    from baseline_edit import LockedBaseline
+    with LockedBaseline(os.path.join(root, TICK_TIMEOUT_STATE_REL), write=True) as locked:
+        if not isinstance(locked.data, dict):
+            raise ValueError("tick 状态必须是 JSON 对象")
+        cur = locked.data.get(a.command) or {}
+        remaining = max(0, int(cur.get("skip_remaining") or 0))
+        if remaining:
+            cur["skip_remaining"] = remaining - 1
+        return (4 if remaining else 0), {"action": "tick-check", "command": a.command,
+                                        "skip": bool(remaining), "skip_remaining": max(0, remaining - 1),
+                                        "streak": int(cur.get("streak") or 0)}
+
+
+def do_tick_result(root, a, send_notify=True):
+    # 开发/测试并发结束时锁内重读原子替换；网络通知不持状态锁。
+    from baseline_edit import LockedBaseline
+    notifications = []
+    with LockedBaseline(os.path.join(root, TICK_TIMEOUT_STATE_REL), write=True) as locked:
+        if not isinstance(locked.data, dict):
+            raise ValueError("tick 状态必须是 JSON 对象")
+        rc, res = _tick_result(root, a, locked.data, notifications)
+    if send_notify and notifications:
+        rec, title = notifications[0]
+        res["notification_status"] = _notify_alert(root, rec, title)
+    return rc, res
+
+
+def _tick_result(root, a, state, notifications):
+    """所有非零退出累计，原因+rc 在本次连续故障期内各通知一次；成功清除整个状态。"""
+    cmd, rc = a.command, int(a.rc)
     cur = state.get(cmd) if isinstance(state.get(cmd), dict) else {}
     res = {"action": "tick-result", "command": cmd, "rc": rc, "timed_out": rc in TIMEOUT_RCS,
-           "streak": 0, "alerted": False, "notified": False}
-    if rc not in TIMEOUT_RCS:
-        if cur.get("streak"):
-            state.pop(cmd, None)
+           "streak": 0, "skip_remaining": 0, "alerted": False, "notified": False}
+    if rc == 0:
+        state.pop(cmd, None)
         return 0, res
     streak = int(cur.get("streak") or 0) + 1
-    now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    state[cmd] = {"streak": streak, "last_at": now_iso, "last_rc": rc,
-                  "first_at": cur.get("first_at") or now_iso}
-    label = next((m["label"] for m in CHAINS.values() if m["command"] == cmd), cmd)
-    msg = (f"{label}（{cmd}）本轮 tick 超过 {a.tick_max}s 上限被终止（rc={rc}，连续第 {streak} 次）"
-           + (f"，日志 {a.log}" if a.log else "")
-           + "。被杀的 tick 多半没写 run_state，下一轮会重跑同一段；"
-           "请查日志定位卡点（大 Sprint / 挂死的工具调用 / 网络悬停）")
-    _append_alert(root, {"at": now_iso, "source": "agent_loop", "kind": "loop-tick-timeout",
-                         "command": cmd, "rc": rc, "tick_max_seconds": a.tick_max,
-                         "streak": streak, "log": a.log or None, "message": msg})
-    sys.stderr.write(f"🚨 [AIDP-ALERT] {msg}\n")
-    res.update(streak=streak, alerted=True)
+    kind = tick_failure_kind(root, a)
+    key = f"{kind}:{rc}"
+    failures = cur.get("failures") or {}
+    failure = failures.setdefault(key, {"count": 0, "alerted": False})
+    failure["count"] += 1
     n = max(1, TICK_TIMEOUT_ALERT_AFTER)
-    if streak >= n and (streak - n) % n == 0:
-        res["notified"] = True
-        if send_notify:
-            notify = os.path.join(root, runtime_relpath("", __file__), "scripts", "notify.py")
-            if os.path.isfile(notify):
-                try:
-                    subprocess.run([sys.executable, notify, "--auto", "--alert", "--header-color", "red",
-                                    "--title", f"{label} tick 连续 {streak} 次超时",
-                                    "--section", msg, "--repo-root", root],
-                                   capture_output=True, text=True, timeout=90, cwd=root)
-                except (OSError, subprocess.SubprocessError):
-                    pass          # 通知失败不阻断：告警台账已落
+    skip = min(MAX_BACKOFF_ROUNDS, 2 ** min(5, streak - n)) if streak >= n else 0
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    state[cmd] = {"streak": streak, "last_at": now_iso, "last_rc": rc,
+                  "first_at": cur.get("first_at") or now_iso, "kind": kind, "failure_key": key,
+                  "failures": failures, "skip_remaining": skip}
+    label = next((m["label"] for m in CHAINS.values() if m["command"] == cmd), cmd)
+    reason = {"loop-tick-timeout": f"tick 超过 {a.tick_max}s 上限被终止",
+              "loop-agent-quota": "Agent 额度或余额不足", "loop-agent-rate-limit": "Agent 请求被限流",
+              "loop-agent-auth": "Agent 鉴权失败", "loop-agent-cli-missing": "Agent CLI 不存在",
+              "loop-agent-failed": "Agent 执行失败"}[kind]
+    msg = (f"{label}（{cmd}）{reason}（rc={rc}，连续第 {streak} 次，本原因/退出码第 {failure['count']} 次）"
+           + (f"，日志 {a.log}" if a.log else "") + f"；后续跳过 {skip} 轮再试")
+    due = streak >= n and not failure["alerted"]
+    rec = {"at": now_iso, "source": "agent_loop", "kind": kind, "command": cmd, "rc": rc,
+           "tick_max_seconds": a.tick_max, "streak": streak, "failure_key": key,
+           "failure_count": failure["count"], "notification_due": due,
+           "skip_remaining": skip, "log": a.log or None, "message": msg}
+    ledger = _append_alert(root, rec)
+    sys.stderr.write(f"[AIDP-ALERT] {msg}\n")
+    if due:
+        # 只有落下可见台账才能消费通知去重标记；通知失败由独立记录呈现。
+        failure["alerted"] = bool(ledger)
+        notifications.append((rec, f"{label} tick 连续 {streak} 次失败"))
+    res.update(streak=streak, kind=kind, failure_key=key, skip_remaining=skip,
+               alerted=bool(ledger), notified=due)
     return (3 if streak >= n else 0), res
 
 
@@ -921,7 +1029,7 @@ def _print(res, as_json, quiet=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="AIDP 7×24 操作系统调度装配（开发链路 + 测试链路）")
-    ap.add_argument("action", nargs="?", choices=("install", "uninstall", "status", "watchdog", "tick-result"))
+    ap.add_argument("action", nargs="?", choices=("install", "uninstall", "status", "watchdog", "tick-result", "tick-check"))
     ap.add_argument("--agent", choices=("auto", "claude", "codex", "dsh"), default=None)
     ap.add_argument("--dev-interval", dest="dev_interval", default=None)
     ap.add_argument("--test-interval", dest="test_interval", default=None)
@@ -933,7 +1041,8 @@ def main(argv=None):
     ap.add_argument("--command", default=None, help="tick-result：链路命令名（如 sprint-autopilot）")
     ap.add_argument("--rc", type=int, default=None, help="tick-result：本轮 tick 退出码")
     ap.add_argument("--tick-max", dest="tick_max", default="", help="tick-result：本轮硬超时秒数（仅用于告警文案）")
-    ap.add_argument("--log", default="", help="tick-result：本轮日志路径（仅用于告警文案）")
+    ap.add_argument("--log", default="", help="tick-result：本轮日志路径（读取尾部作失败归因）")
+    ap.add_argument("--log-offset", type=int, default=0, help="tick-result：本轮日志起始字节，排除旧轮次错误")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true")
     a = ap.parse_args(argv)
@@ -950,15 +1059,18 @@ def main(argv=None):
             rc, res = do_uninstall(root, a)
         elif a.action == "status":
             rc, res = do_status(root, a)
-        elif a.action == "tick-result":
-            if not a.command or a.rc is None:
-                sys.stderr.write("⛔ tick-result 需要 --command 与 --rc\n")
+        elif a.action in ("tick-result", "tick-check"):
+            if not a.command or (a.action == "tick-result" and a.rc is None):
+                sys.stderr.write("tick-result 需要 --command 与 --rc；tick-check 需要 --command\n")
                 return 2
-            rc, res = do_tick_result(root, a)
+            rc, res = do_tick_result(root, a) if a.action == "tick-result" else do_tick_check(root, a)
         else:
             rc, res = do_watchdog(root, a)
     except ValueError as e:
-        sys.stderr.write(f"⛔ {e}\n")
+        sys.stderr.write(f"[aidp_scheduler] {e}\n")
+        return 2
+    except OSError as e:
+        sys.stderr.write(f"[aidp_scheduler] 操作失败（{type(e).__name__}）\n")
         return 2
     _print(res, a.json, quiet=a.quiet)
     return rc

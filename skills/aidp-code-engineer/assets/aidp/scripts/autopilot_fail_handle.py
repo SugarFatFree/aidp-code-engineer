@@ -36,6 +36,10 @@
 `--extra` 用于冻结时一并写入的版本级附加字段（如 `unconverged_frozen_head=<sha>`），
 可重复；⛔ 必须与四件套同批写入，分两次写会留下"冻了但解冻判据缺失"的中间态。
 
+`--success --version V --phase P [--build B]`：成功出口清匹配阶段的 `dev_fail_streak` / 范围字段，
+不清任何冻结；`--build` 必须与失败调用保持一致。默认失败计数仅连续的同 phase / reason 累加。
+前置模式已冻结同 reason 仍记账，但不刷新冻结时间、不重复告警，返回 3。
+
 `--reason` 必须在「冻结字段写入契约」的枚举内（与 `check_freeze_contract.py` 同源，
 从 `flows/sprint-autopilot/rationale.md` 的权威表实时解析，⛔ 不在本脚本里再写一份）。
 
@@ -184,8 +188,9 @@ def run(a):
     # 幂等：同版本已按同一 reason 冻结 → no-op（不刷新冻结时刻，解冻判据不被后移；不重发 #4）
     cur_nh = (_be(["--version", a.version, "get", "needs_human", "--default", ""]).stdout or "").strip()
     cur_fr = (_be(["--version", a.version, "get", "freeze_reason", "--default", ""]).stdout or "").strip()
-    if cur_nh.lower() == "true" and cur_fr == a.reason:
-        out.update(frozen=True, already_frozen=True)
+    if cur_nh.lower() == "true" and (cur_fr == a.reason or (a.reason == "config-missing" and cur_fr)):
+        # 测试侧已有真实冻结时，开发侧 config-missing 不能替换其原因/时间/恢复证据。
+        out.update(frozen=True, already_frozen=True, reason=cur_fr)
         return 3, out
 
     # ★ --freeze-now = 「熔断条件已由调用方判定成立，直接冻」——用于判据不是 streak 的冻结点
@@ -198,6 +203,16 @@ def run(a):
         out["has_wake_source"] = None
         freeze = True
     else:
+        if a.streak_key == "dev_fail_streak":
+            phase = (_be(vargs + ["get", "dev_fail_phase", "--default", ""]).stdout or "").strip()
+            reason = (_be(vargs + ["get", "dev_fail_reason", "--default", ""]).stdout or "").strip()
+            fields = ["dev_fail_phase", a.phase, "dev_fail_reason", a.reason]
+            if (phase, reason) != (a.phase, a.reason):
+                fields += ["dev_fail_streak", "0"]
+            saved = _be(vargs + ["set", *fields])
+            if saved.returncode:
+                out["errors"].append("连续失败范围写入失败")
+                return 2, out
         r = _be(vargs + ["bump", a.streak_key])
         if r.returncode != 0:
             out["errors"].append("bump %s 失败：%s" % (a.streak_key, (r.stderr or "").strip()[:160]))
@@ -236,9 +251,12 @@ def run(a):
             _be(["--version", a.version, "set",
                  "needs_human", "true", "aiauto_frozen_at", "@now",
                  "freeze_reason", a.reason, "needs_human_reason", a.why] + extra),
-            _be(["set", "aiauto_blocked_reason", "frozen:%s@%s" % (a.reason, a.version)]),
-            _be(["--version", a.version, "set", "dev_fail_phase", a.phase]),
+            _be(vargs + ["set", "dev_fail_phase", a.phase]),
         ]
+        blocked = (_be(["get", "aiauto_blocked_reason", "--default", ""]).stdout or "").strip()
+        # config-missing 是开发侧诊断，不能覆盖测试侧真实阻塞（新心跳不代表阻塞已恢复）。
+        if a.reason != "config-missing" or not blocked:
+            writes.append(_be(["set", "aiauto_blocked_reason", "frozen:%s@%s" % (a.reason, a.version)]))
         bad = [w for w in writes if getattr(w, "returncode", 1) != 0]
         if bad:
             for w in bad:
@@ -252,8 +270,8 @@ def run(a):
                 "⛔ 不要按「已冻结」处置：修好 baseline 可写性后重跑本命令。\n")
             return 2, out          # 2 = 入参/环境错，与其余脚本同口径
         out["frozen"] = True
-    else:
-        _be(["--version", a.version, "set", "dev_fail_phase", a.phase])
+    elif a.streak_key == "dev_fail_streak":
+        _be(vargs + ["set", "dev_fail_phase", a.phase])
 
     title = a.title or ("已冻结：%s" % a.reason if freeze else "阶段失败：%s" % a.phase)
     if a.freeze_now:
@@ -292,6 +310,8 @@ def _preflight(a):
     import json as _j
     k_streak, k_frozen, k_reason = PREFLIGHT_KEYS[a.command]
     out = {"mode": "preflight", "command": a.command, "reason": a.reason, "errors": []}
+    old_reason = (_be(["get", k_reason, "--default", ""]).stdout or "").strip()
+    old_frozen = (_be(["get", k_frozen, "--default", ""]).stdout or "").strip()
     r = _be(["bump", k_streak])
     if r.returncode != 0:
         sys.stderr.write("⛔ %s 自增失败，未做任何处置\n" % k_streak)
@@ -300,14 +320,20 @@ def _preflight(a):
         streak = int((r.stdout or "0").strip() or 0)
     except ValueError:
         streak = 0
-    _be(["set", k_reason, a.reason])
+    if old_frozen and old_reason == a.reason:
+        out.update(streak=streak, frozen=True, already_frozen=True, card_sent=False)
+        print(_j.dumps(out, ensure_ascii=False) if a.json else "前置同 reason 已冻结：仅记账，不重复告警")
+        return 3
+    saved = _be(["set", k_reason, a.reason])
+    if saved.returncode:
+        return 2
     # ★ 与主路径同一语义：无唤醒源（`--once` / 无 /loop）时**没有下一 tick 来叠 streak**，
     #   阈值恒不可达 ⇒ 首次失败要当场熔断。漏这一条的形态正是「静默停摆」：
     #   `/sprint-autopilot --once --unattended` 撞上 detached HEAD / pull 冲突，
     #   只记 streak=1、不冻结、不发 #4、没有下一 tick，整轮就此结束而终端一切正常。
     wake = (_be(["get", WAKE_KEY[a.command], "--default", "0"]).stdout or "0").strip()
     out["has_wake_source"] = wake
-    freeze = streak >= a.threshold or wake == "0"
+    freeze = bool(old_frozen) or streak >= a.threshold or wake == "0"
     if freeze:
         w = _be(["set", k_frozen, "@now"])
         if w.returncode != 0:
@@ -344,7 +370,24 @@ def _preflight(a):
         print(("⏸️ 前置失败已熔断待人工（%s，连续 %d 次 ≥ %d）" % (a.reason, streak, a.threshold))
               if freeze else
               ("⛔ 前置失败（%s）第 %d 次：%s → 已记账，退本 tick" % (a.reason, streak, a.why)))
-    return 0
+    return 3 if freeze else 0
+
+
+def success(a):
+    """只清成功阶段自己的连续失败计数；不解除任何冻结。"""
+    scope = ["--version", a.version] + (["--build", a.build] if a.build else [])
+    current = _be(scope + ["get", "dev_fail_phase", "--default", ""])
+    out = {"version": a.version, "phase": a.phase, "cleared": False}
+    if current.returncode:
+        return 2, out
+    if (current.stdout or "").strip() != a.phase:
+        return 0, out
+    written = _be(scope + ["set", "dev_fail_streak", "0"])
+    if written.returncode:
+        return 2, out
+    deleted = _be(scope + ["del", "dev_fail_phase", "dev_fail_reason"])
+    out["cleared"] = deleted.returncode == 0
+    return (0 if out["cleared"] else 2), out
 
 
 def main(argv=None):
@@ -359,6 +402,7 @@ def main(argv=None):
     #   故不走版本级四件套；「记账 → 判阈 → 冻结 → 发 #4」这套动作与主路径相同，⛔ 不在 flow 里另写一份。
     ap.add_argument("--preflight", action="store_true",
                     help="前置熔断模式（无版本号）：记 preflight_* / aiauto_preflight_*（按 --command）")
+    ap.add_argument("--success", action="store_true", help="本阶段成功：仅清匹配 phase 的 dev_fail_streak 及范围字段，不清冻结")
     ap.add_argument("--reason", default="", help="freeze_reason（须在契约枚举内）")
     ap.add_argument("--why", default="", help="写进 needs_human_reason 的真因，⛔ 别写「失败了」")
     ap.add_argument("--build", default="")
@@ -379,6 +423,13 @@ def main(argv=None):
     _BASELINE_OVERRIDE = a.baseline
     if a.self_check:
         return _self_check()
+    if a.success:
+        if not a.version.strip() or not a.phase.strip() or a.preflight:
+            sys.stderr.write("--success 需要 --version / --phase，不能与 --preflight 连用\n")
+            return 2
+        rc, out = success(a)
+        print(json.dumps(out, ensure_ascii=False) if a.json else str(out))
+        return rc
     for k in ("reason", "why"):
         if not (getattr(a, k) or "").strip():
             sys.stderr.write(f"⛔ --{k} 必填\n")
@@ -398,7 +449,7 @@ def main(argv=None):
         if rc == 2:
             sys.stderr.write("⛔ 入参/环境错 —— **什么都没写**，不要当成已处置\n")
         elif out.get("already_frozen"):
-            print("⏸️ %s 已按 %s 冻结（未重复写入、未重发 #4）" % (a.version, a.reason))
+            print("⏸️ %s 已按 %s 冻结（未重复写入、未重发 #4）" % (a.version, out["reason"]))
         elif out["frozen"]:
             print("⏸️ 已冻结 %s（%s，%s）%s"
                   % (a.version, a.reason,

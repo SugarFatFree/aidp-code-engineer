@@ -138,7 +138,7 @@ autopilot_decisions:
 - **★ D3 逐门默认（补齐"预声明覆盖不全"的门，无人值守一律走默认、不弹窗）**：
   | 门 | 无人值守默认 | 来源 |
   |----|------|------|
-  | 脏树处置（working tree 非空） | `git add -A` 纳入本轮提交（同 Phase 3.5 确定性提交） | Phase 3.5 |
+  | 脏树处置（working tree 非空） | 按前置门尝试 `pull --rebase --autostash`；失败以 `dirty-tree` 记账熔断，不擅自暂存他人修改 | Phase 0.1（`phase-0-3.md`） |
   | 上版收口（存在未 close 的上个 Sprint/版本残留） | 按既有归档流程自动收口，不问 | Phase 3.x |
   | 模块边界 / 技术边界确认 | 取 PRD 预声明；无则按项目既有技术栈/目录约定确定性推断（约定 18/28） | PRD `autopilot_decisions` + 约定 28 |
   | test-intent 流程裁剪 | 保守默认 full、不裁剪（除非显式 `--skip-dev`） | Phase 0.1 |

@@ -1,10 +1,6 @@
 # sprint-autopilot · Phase 3 详情分片 [9/14]（3.4 收尾 Step 4+ 完成核验门与收尾动作）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 9/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
-> - **本片覆盖**：3.4 收尾 Step 4+（完成核验门 autopilot-ceremony-gate + 收尾动作）
-> - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
->
-> 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
+> **第 9/14 片**：3.4 收尾 Step 4+（完成核验门与收尾动作）。按命令主体 Phase 3 骨架表依次 Read，不省略步骤与硬门；理据见 `rationale.md`。
 
 ---
 
@@ -217,6 +213,7 @@
          --summary "收尾 ceremony 闸未过（连续 $DFS tick）" --pending ""   # ⛔ 不写本门自己：3k 会因它死锁，见 rationale.md
        exit 0   # ⛔ 不是 exit 1：已记账 + 已告警 + 已写 run_state，让位本 tick 而非让 /loop 空撞
      }
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --success --version "$V" --phase 3.4-ceremony-gate || exit 1
    else
      echo "⚠️ 缺 $GATE（重跑脚手架补全）→ 回退下方内联校验（弱于脚本，仅兜底）"
    fi

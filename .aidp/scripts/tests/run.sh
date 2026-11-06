@@ -106,6 +106,10 @@ run "test_field_level_and_evidence.py（写读错层 / 保护面 / 落点收编�
 run "test_offchain_scope.py（约定41 链外动作边界 + 约定17 反向门）" python3 .aidp/scripts/tests/test_offchain_scope.py
 run "test_baseline_archive.py（baseline 归档回落 + decisions 双信源）" python3 .aidp/scripts/tests/test_baseline_archive.py
 run "test_unattended_recovery.py（无人值守失败处置 + 自动恢复）" python3 .aidp/scripts/tests/test_unattended_recovery.py
+run "test_stop_guard.py（结束护栏所有阻止路径有界）" python3 .aidp/scripts/tests/test_stop_guard.py
+run "test_unattended_edges.py（报告取证、参数透传与兼容路径）" python3 .aidp/scripts/tests/test_unattended_edges.py
+run "test_dispatch_retry.py（派发退避上限与成功清零）" python3 .aidp/scripts/tests/test_dispatch_retry.py
+run "test_cicd_deployment.py（部署监听、降级与即时冻结）" python3 .aidp/scripts/tests/test_cicd_deployment.py
 run "test_planning_orchestration.py（版本规划编排层：计量 / 移交 / 并行回填 / PRD 行对账）" python3 .aidp/scripts/tests/test_planning_orchestration.py
 run "test_aidp_scheduler.py（7×24 操作系统调度）" python3 .aidp/scripts/tests/test_aidp_scheduler.py
 run "test_agent_sync_router.py（原生命令生成 + 参数保真）" python3 .aidp/scripts/tests/test_agent_sync_router.py

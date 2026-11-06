@@ -59,6 +59,7 @@ if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_relpath, runtime_text
 import argparse
+import ast
 import json
 import os
 import re
@@ -637,6 +638,42 @@ RETIRED_COUNTER_FIELDS = {
 }
 
 
+def _python_streak_writers(root):
+    """脚本化失败处理的真实 argv；不把示例注释当作计数生产者。"""
+    base = _AidpPath(root) / runtime_relpath("", __file__) / "scripts"
+    writers = set()
+    for path in base.glob("*.py"):
+        if path.name == _AidpPath(__file__).name:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            args = call.args
+            if len(args) == 1 and isinstance(args[0], (ast.List, ast.Tuple)):
+                args = args[0].elts
+            values = [a.value if isinstance(a, ast.Constant) and isinstance(a.value, str) else None for a in args]
+            if "autopilot_fail_handle.py" in values and "--streak-key" in values:
+                index = values.index("--streak-key") + 1
+                if index < len(values) and values[index]:
+                    writers.add(values[index])
+        if path.name == "autopilot_fail_handle.py":
+            # --preflight 内部按 PREFLIGHT_KEYS 路由 bump；从生产实现提取键，禁止守卫手抄名单。
+            handler = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_preflight"), None)
+            bumps = handler is not None and any(isinstance(n, ast.List) and len(n.elts) >= 2
+                and isinstance(n.elts[0], ast.Constant) and n.elts[0].value == "bump"
+                and isinstance(n.elts[1], ast.Name) and n.elts[1].id == "k_streak" for n in ast.walk(handler))
+            if bumps:
+                for node in tree.body:
+                    if isinstance(node, ast.Assign) and any(isinstance(n, ast.Name) and n.id == "PREFLIGHT_KEYS" for n in node.targets):
+                        try:
+                            writers.update(value[0] for value in ast.literal_eval(node.value).values())
+                        except (ValueError, TypeError, KeyError):
+                            pass
+    return writers
+
+
 def scan_baseline_orphans(root):
     """B 类结果：**交接字段**读了但全仓找不到确定性写入点。
 
@@ -668,7 +705,8 @@ def scan_baseline_orphans(root):
             leaf = tok.rsplit(".", 1)[-1]
             if COUNTER_NAME_RE.match(leaf):
                 deleted.add(leaf)
-    for field in sorted(deleted - RETIRED_COUNTER_FIELDS):
+    python_writers = _python_streak_writers(root)
+    for field in sorted(deleted - RETIRED_COUNTER_FIELDS - python_writers):
         if re.search(r"\bbump\b[^\n]{0,200}\b" + re.escape(field) + r"\b", hay):
             continue
         if re.search(r"\bset\b[^\n]{0,200}\b" + re.escape(field) + r"\s+[1-9]", hay):

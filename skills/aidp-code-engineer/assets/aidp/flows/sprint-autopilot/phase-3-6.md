@@ -36,29 +36,28 @@
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
    B=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" get current_build --default "")
    GIT_PUSH_COMMIT=$([ -n "$B" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$B" get push_commit --default "" || echo "")
+   GIT_PUSH_AT=$([ -n "$B" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$B" get push_at --default "" || echo "")
    CENV="<dev|test|prod>"; mkdir -p memory/.aidp
-   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "${GIT_PUSH_COMMIT:?}" --env "$CENV" \
-     --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json
-   DRC=$?; cat memory/.aidp/cicd-detect.json
-   # ★ 命中（rc=0 且 next_action=poll）→ 输出 JSON 直接回写 baseline（⛔ 散文声明不算写入）
-   if [ "$DRC" = "0" ] && [ "$(jq -r '.next_action' memory/.aidp/cicd-detect.json)" = "poll" ]; then
-     python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" set \
-       cicd_run.env "$CENV" \
-       cicd_run.pipeline "$(jq -r '.pipeline // ""' memory/.aidp/cicd-detect.json)" \
-       cicd_run.run_id "$(jq -r '.run_id // ""' memory/.aidp/cicd-detect.json)" \
-       cicd_run.run_commit "$(jq -r '.run_commit // ""' memory/.aidp/cicd-detect.json)" \
-       cicd_run.commit_verified "$(jq -r '.commit_verified // false' memory/.aidp/cicd-detect.json)"
+   DRC=0
+   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "${GIT_PUSH_COMMIT:?}" --push-at "$GIT_PUSH_AT" --env "$CENV" \
+     --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json || DRC=$?
+   cat memory/.aidp/cicd-detect.json
+   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+     --result memory/.aidp/cicd-detect.json --result-code "$DRC" || exit $?
+   # consume 已持久化原结果与 rc、校验本 build 推送锚点并写出口。
+   # 合法 rc4/probe/degraded → 直接 Read phase-3-7.md 跑 Step D；不再执行 A/B/C。
+   if [ "$(jq -r '.next_action' memory/.aidp/cicd-detect.json)" = "poll" ]; then
+     python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" set cicd_run.env "$CENV"
    fi
-   # rc=2 unreachable / rc=3 CLI 类 → 按 phase-3-6b.md「瞬时故障记账」（CJ=memory/.aidp/cicd-detect.json）
    # 需要跨多条流水线观测时，对 cicd.pipelines 里的每个 env（或 --pipeline <标识>）各跑一次 detect
    ```
    **匹配优先级（commit 是唯一能区分"我的提交"与"他人同期提交 / 上一条旧运行"的信号）**：
    - **① commit 强绑定（首选）**：运行的 commit `== GIT_PUSH_COMMIT`（`cicd_watch.py` 内按前缀兼容短 SHA）命中的那条运行为本次部署运行，`cicd_run.commit_verified=true`。**⛔ 不得仅凭「有一条运行时间在我 push 之后」就认领。**
-   - **② 回退·时间+触发类型（弱信号，仅当平台运行记录取不到 commit 时——罕见）**：`createdAt` 晚于 `GIT_PUSH_AT` **且** `event` 属 push 自动触发。此路 `commit_verified=false`——**未经 commit 核验**，Step C 遇异常不得据它当"确已是我的运行"。
+   - **② 时间+触发类型仅作排查线索**：平台取不到 commit 时不得凭它认领运行；`commit_verified=false`，禁止把未知运行写成部署成功。已记录推送即自动部署的项目只能走脚本明确给出的合法降级出口。
    命中 → 上面代码块已把 `RESOLVED_PIPELINE`（`pipeline`）+ **`RESOLVED_RUN_ID`**（`run_id`，Step C 按它精确轮询、不滑最新）+ `RESOLVED_RUN_COMMIT`（`run_commit`）+ `cicd_run.env` 写入 baseline，`RUN_TRIGGERED=auto`，**直接进 Step C**（Step A/B 跳过）。观测到**多条**流水线的候选运行 → 交步骤 2/3 核验收敛；**有运行却无一条 commit 等于 `GIT_PUSH_COMMIT`** = 本次提交的运行尚未起跑（非"抓最近一条顶替"）→ 交 Step B 主动触发。
 2. **触发分支 == 本轮 DEV_BRANCH（观测命中的核验 / 未观测到时的主匹配）**：观测命中后仍**核对**其构建分支 == DEV_BRANCH（防止拿到一条恰好在跑、却构建别的分支的运行）；**没观测到任何自动触发**（未配 push 触发 / 尚未起跑）→ 拉 `cicd.pipelines` 对照表（`env / 流水线标识 / 监听分支（读平台流水线定义的触发分支，如 GitHub Actions 的 on.push.branches、GitLab CI 的 rules / only）/ 最近一次运行`），以「监听/构建分支 == DEV_BRANCH」为**唯一可机械核验的强信号**主匹配（排除分支不符者），未自动触发者交 Step B 主动触发。
 3. **辅匹配 = 部署目标 + 声明的部署 URL**：候选仍多于一个时，用 `cloud_deploy_url`/`cloud_backend_url` 的 host 与流水线里声明的部署 environment / 目标 URL 做二次收敛，靠拢"新代码实际部署到的那个环境"。
-4. **★ 仍识别不出 → 提前找用户确认哪条流水线执行部署**：多个命中 / 零命中 / 分支与 DEV_BRANCH 全不匹配 → **交互式**用 `AskUserQuestion` 把对照表（env/流水线/分支/部署目标/最近运行）给用户选；**`/loop` 无人值守**下→ **绝不机械猜定**：按「冻结字段写入契约」写齐（本片无 `freeze()` 助手，它在 `phase-3-6b.md`）：
+4. **★ 仍识别不出 → 提前找用户确认哪条流水线执行部署**：多个命中 / 零命中 / 分支与 DEV_BRANCH 全不匹配 → **交互式**用 `AskUserQuestion` 把对照表（env/流水线/分支/部署目标/最近运行）给用户选；**`/loop` 无人值守**下→ **绝不机械猜定**：通过独立可执行的失败处理命令写齐冻结字段：
      ```bash
      eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
      # 冻结四件套 + #4 一次做完（⛔ 「发 #4 @用户」必须由这一行真的发出去，写成散文等于没发）
@@ -80,7 +79,22 @@
 
 > Step A0 point1「观测法」已在 push 后等 `cicd_post_push_wait_seconds` 检测、命中自动起跑即记 `RUN_TRIGGERED=auto`+`RESOLVED_PIPELINE` 直接进 Step C。本 Step A 只在 **A0 未走观测法**（如 A0 靠触发分支主匹配选定流水线、尚未确认它是否已被本次 push 自动起跑）时做一次针对 `RESOLVED_PIPELINE` 的防重复触发确认，避免一次推送跑两次构建。
 - **若 A0 已置 `RUN_TRIGGERED=auto`** → 本 Step A 整体跳过，直接进 Step C。
-- **否则**：流水线常配「push 触发」，`RESOLVED_PIPELINE` 可能已被本轮 push 起跑——`python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "$GIT_PUSH_COMMIT" --pipeline "$RESOLVED_PIPELINE" --timeout 480 > memory/.aidp/cicd-detect.json` 读最近运行（命中后同 A0 代码块回写 baseline），**优先按运行 commit `== GIT_PUSH_COMMIT` 命中**（强绑定，`commit_verified=true`）；取不到 commit 时才回退弱信号（`commit_verified=false`）——弱信号的三个条件与「为何不能只看时间」见 rationale.md「自动触发运行的强弱绑定」。
+- **否则**：执行下面独立围栏，用选定流水线做防重复检测，仍以本 build 的 push SHA 强绑定。选定流水线必须已写入 `cicd_run.pipeline`；不能只存在上一围栏的 shell 变量中。
+  ```bash
+  eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
+  B=$($BE get current_build --default "")
+  GIT_PUSH_COMMIT=$($BE --build "${B:?}" get push_commit --default "")
+  GIT_PUSH_AT=$($BE --build "$B" get push_at --default "")
+  RESOLVED_PIPELINE=$($BE get cicd_run.pipeline --default "")
+  mkdir -p memory/.aidp; DRC=0
+  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "${GIT_PUSH_COMMIT:?}" --push-at "$GIT_PUSH_AT" \
+    --pipeline "${RESOLVED_PIPELINE:?}" --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json || DRC=$?
+  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+    --result memory/.aidp/cicd-detect.json --result-code "$DRC" || exit $?
+  ```
+  - **合法降级**（rc4 + probe + degraded，消费通过）→ 直接进 Step D，不触发、不轮询；保留 unknown 和原原因。
+  - **need-accept**（rc4 + accept）→ 消费入口保留请求并冻结，交用户按原授权边界处理，不能自动接受。
   - **已自动触发**（`next_action=poll`）→ 记 `RUN_TRIGGERED=auto` + `RESOLVED_RUN_ID`（命中运行的 run id）+ `RESOLVED_RUN_COMMIT`（= 命中运行的 commit），跳过 Step B 直接进 Step C 监控**这条 `RESOLVED_RUN_ID`**。
   - **未自动触发**（`next_action=trigger`：无新运行 / **有运行却无一条 commit 等于 `GIT_PUSH_COMMIT`** / 最近运行早于本次 push）→ 进 Step B 主动触发；**绝不**把一条 commit 不符的旧运行（他人提交 / 上一版旧部署）当成本次运行放行。
 
@@ -93,28 +107,38 @@
     BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
     B=$($BE get current_build --default "")
     GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --build "$B" get push_commit --default "" || echo "")
+    GIT_PUSH_AT=$([ -n "$B" ] && $BE --build "$B" get push_at --default "" || echo "")
     RESOLVED_PIPELINE=$($BE get cicd_run.pipeline --default "")
     DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
-    mkdir -p memory/.aidp; CJ=memory/.aidp/cicd-trigger.json
-    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --pipeline "${RESOLVED_PIPELINE:?}" --ref "$DEV_BRANCH" \
-      --version "$TARGET_VERSION" --timeout 480 > "$CJ"
-    # next_action=poll → 输出已带新 run_id；next_action=detect → 平台不回显 run id，用 commit 强绑定重新锁定
-    if [ "$(jq -r '.next_action' "$CJ")" = "detect" ]; then
-      CJ=memory/.aidp/cicd-detect.json
-      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "$GIT_PUSH_COMMIT" --pipeline "$RESOLVED_PIPELINE" \
-        --version "$TARGET_VERSION" --timeout 480 > "$CJ"
+    AUTO=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get cicd.auto_trigger 2>/dev/null); AUTO=${AUTO:-true}
+    if [ "$AUTO" != "true" ]; then
+      python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$TARGET_VERSION" --build "$B" \
+        --freeze-now --phase 3.2.1-deploy --reason cicd-auto-trigger-off \
+        --why "cicd.auto_trigger=false，需人工触发 $RESOLVED_PIPELINE（commit $GIT_PUSH_COMMIT）"
+      exit 3
     fi
-    RID=$(jq -r '.run_id // empty' "$CJ")
-    [ -n "$RID" ] && $BE set cicd_run.run_id "$RID" cicd_run.run_commit "$(jq -r '.run_commit // ""' "$CJ")"
+    mkdir -p memory/.aidp; CJ=memory/.aidp/cicd-trigger.json; CRC=0
+    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --pipeline "${RESOLVED_PIPELINE:?}" --ref "$DEV_BRANCH" \
+      --commit "${GIT_PUSH_COMMIT:?}" --version "$TARGET_VERSION" --timeout 480 > "$CJ" || CRC=$?
+    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+      --result "$CJ" --result-code "$CRC" || exit $?
+    # next_action=detect → 平台不回显 run id，用本 build 的 push_commit 强绑定重新锁定。
+    if [ "$(jq -r '.next_action' "$CJ")" = "detect" ]; then
+      CJ=memory/.aidp/cicd-detect.json; CRC=0
+      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "$GIT_PUSH_COMMIT" --push-at "$GIT_PUSH_AT" --pipeline "$RESOLVED_PIPELINE" \
+        --version "$TARGET_VERSION" --timeout 480 > "$CJ" || CRC=$?
+      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+        --result "$CJ" --result-code "$CRC" || exit $?
+    fi
     ```
-    ⚠️ 按分支触发构建的是**分支当前 HEAD**：锁定运行后核对其 commit `== GIT_PUSH_COMMIT`，不等（期间分支又被推进）→ 记 `commit_verified=false` 并在报告中注明，不冒充本次提交的部署。
+    ⚠️ 按分支触发构建的是**分支当前 HEAD**：受理只代表请求已发送，尚未核验的 `run_commit` 保持空。随后 poll 核对实际 commit 与 `GIT_PUSH_COMMIT`，错绑即冻结，禁止冒充本次提交的部署。
   - **`auto_trigger=false`** → **不触发**，按「冻结字段写入契约」写齐 `needs_human=true` + `aiauto_frozen_at=@now` + `freeze_reason=cicd-auto-trigger-off` + 顶层 `aiauto_blocked_reason`，发 #4 后冻结本版；`needs_human_reason` 写明「`cicd.auto_trigger=false`，需人工触发部署」+ 已解析的 `pipeline` / 待构建 commit。
   - 与 Step C 的差别：**重试**（`cicd_watch.py --mode retry`）重跑的是已失败运行的原 commit；**首次触发**跑的是分支 HEAD，二者同受 `cicd.auto_trigger` 控制。
   - 触发被平台拒绝（`--mode trigger` exit 2 / `verdict=trigger-failed`，如 GitHub Actions 未声明 `workflow_dispatch`、Jenkins Job 不允许远程构建）→ 按环境类失败处置：发 #4 说明「流水线不支持手动触发，请配置 push 触发或在平台侧开启手动/API 触发」+ 原样抄录 `reason`，冻结 `freeze_reason=pipeline-unknown`。
-- 触发并锁定运行成功 → 上面代码块已写 `cicd_run.run_id` / `cicd_run.run_commit`（应 == `GIT_PUSH_COMMIT`），`RUN_TRIGGERED=manual`，进 Step C。锁定未命中（`run_id` 空）→ 出口游标留 `3.2.1-deploy`，下 tick 再 detect。
+- 触发受理并取得 run id → consume 写 `cicd_run.run_id`，`RUN_TRIGGERED=manual`，进 Step C 核验平台实际 SHA。detect 合法降级 → 已写 `3.2.1-probe`，直接 Step D；锁定未命中且未降级 → 留 `3.2.1-deploy`，下 tick 再 detect。
 
 
 > ⬇️ **Step C（监控执行 + 失败重试）与出口 run-state 已外置到 `phase-3-6b.md`**
 > （本片达 20KB 上限，按本目录二次切分约定拆）。**进入 Step C 前必须 `Read` 它**——
-> 那里有 `freeze()` 四件套助手、`CICD_RETRY` 的 baseline 读回、以及按 Step C 结论分流的出口游标，
+> 那里有结果消费与即时冻结入口、`CICD_RETRY` 的 baseline 读回、以及按 Step C 结论分流的出口游标，
 > ⛔ 都不是可选附录。

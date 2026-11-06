@@ -599,7 +599,7 @@ Phase 3 了"，但 `3.0-route` 是**另一个版本（TARGET_VERSION）**要跑�
 **定则**：测试链路作为独立 loop 确实在跑、报告由它 finalize 时，autopilot 就该按 `skeleton` 判。
 判据必须是「**真在干活**」而不是「有心跳」：心跳由测试链路每 tick 起始无条件先写（早于任何
 early-exit），冻结或被去重门跳过的空转 loop 心跳照样新鲜（5m 间隔 << 30min 窗口）。
-统一实现 = `autopilot-ceremony-gate.py::test_loop_alive`（心跳新鲜 AND `aiauto_blocked_reason`
+统一实现 = `autopilot_unfreeze.py::test_loop_alive`（心跳新鲜 AND `aiauto_blocked_reason`
 不指向本版），收尾门 3b2 与本处共用同一个函数，不再各写一套。
 
 ### 斜杠命令进围栏 / 裸退让熔断永不达阈（逐 tick 单 Sprint 分支的两个坑）

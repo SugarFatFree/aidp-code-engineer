@@ -10,6 +10,7 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
     watch   —— detect + poll（默认）
     trigger —— 主动触发一次运行（写动作）
     retry   —— 重试一次失败的运行（写动作）
+    consume —— 显式消费 JSON + 原始退出码，记录本 build 证据、冻结与出口（不调用平台）
     冷启动等待 / 就绪探针 / 写 last_deployed_at → 归 `autopilot-deploy-watch.py`
 
 平台差异全部收在 `cicd_providers.py`：`memory/aidp-config.yaml` 的 `cicd.provider` 选
@@ -18,7 +19,8 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
 
 ★ 读写分离：`detect` / `poll` / `watch` **只读**，把"该不该触发 / 该不该重试"判成结论
 （`next_action`），写动作由调用方显式再调 `--mode trigger` / `--mode retry`。
-是否允许无人值守自动执行写动作由调用方按 `cicd.auto_trigger` 决定，本脚本不越权代判。
+调用方按 `cicd.auto_trigger` 显式发起写动作；本脚本再次拒绝 auto_trigger=false。
+Command 原始 rc=4 独立表示 need-accept，绝不自动追加 --accept 或降级放行。
 
 ## 用法
 
@@ -30,6 +32,7 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
     python3 AIDP_HOME/scripts/cicd_watch.py --mode poll    --run-id <id> --commit <push-sha> --env test
     python3 AIDP_HOME/scripts/cicd_watch.py --mode trigger --env test [--ref <branch>]
     python3 AIDP_HOME/scripts/cicd_watch.py --mode retry   --run-id <id>  --env test
+    python3 AIDP_HOME/scripts/cicd_watch.py --mode consume --version V0.1.0 --result result.json --result-code 4
     python3 AIDP_HOME/scripts/cicd_watch.py --selftest     # 离线自测（假平台输出，不访问网络）
 
 ## 退出码（★ 与闸门类脚本的 0/1/2 语义不同，按本文档为准）
@@ -39,7 +42,9 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
          poll / watch 到 `--timeout` 仍在运行（verdict=running，next_action=poll：下个 tick 继续 poll 同一 run_id，
          不交人工、不耗重试配额；`--timeout` 默认 480s，保证单次调用短于宿主工具的 10 分钟上限）
     1 —— **需要调用方做写动作**：next_action=trigger（未被触发）或 next_action=retry（失败且配额未尽）
-    4 —— **降级放行就绪探针**（仅当 `cicd.push_auto_deploy` 已记录为 true）：
+    4 —— 先看 JSON：`verdict=need-accept,next_action=accept` = 平台授权请求，不能放行。
+         仅 `next_action=probe,degraded=true` 才是**降级放行就绪探针**
+         （仅当 `cicd.push_auto_deploy` 已记录为 true）：
          平台给不出状态（不可达 / 运行消失 / 状态未知）或压根没观测到本次 commit 起跑的运行时，
          补等满 `cicd.push_deploy_min_wait_seconds`（缺省 300）后以 `verdict=…` `next_action=probe`
          `degraded=true` 放行 —— 调用方**照 rc=0 进就绪探针，⛔ 不冻结**。
@@ -59,7 +64,11 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
          cli-missing / unauthenticated / provider-unavailable（CLI 未装 / 未登录 / 凭据失效 → 调用方按
          streak 记账后冻结为可自动复探的 `cicd-cli-unavailable`）；bad-args（参数缺失）
 
-输出键：verdict / next_action / run_id / run_commit（命中运行的 commit，取不到为 null）/ run_url / reason …
+consume 退出码：0=已记录可继续的结论（看 next_action）；1=已记账、让位；
+2=拒绝推进/输入错误；3=已冻结。consume 不重试、不接受授权，也不写部署就绪时间。
+
+输出键：verdict / next_action / expected_commit（请求 SHA，不是已观测 SHA）/
+run_id / run_commit（命中运行的 commit，取不到为 null）/ run_url / reason …
 
 stdout 恒为一行 JSON；诊断/进度写 stderr。
 """
@@ -148,7 +157,8 @@ def degrade_to_probe(out, verdict, why, push_at, min_wait):
         time.sleep(left)
     log("⚠️ 未经平台确认流水线结果 → 降级为就绪探针；"
         "部署失败不会自动重试，构建慢于等待时长时可能探到旧服务")
-    out.update(ok=True, verdict=verdict, next_action="probe", degraded=True,
+    out.setdefault('run_commit', None)
+    out.update(ok=True, verdict=verdict, next_action="probe", degraded=True, reason=why,
                degraded_reason=why, min_wait_seconds=min_wait, waited_seconds=int(left),
                push_at=push_at or None)
     print(json.dumps(out, ensure_ascii=False))
@@ -283,9 +293,160 @@ def _cmd(mode, env, pipeline, run_id=None):
     return " ".join(parts)
 
 
+def consume_result(a, root):
+    """显式消费本次平台输出；独立围栏共用证据、冻结和出口，绝不执行平台写动作。"""
+    baseline = Path(a.baseline)
+    if not baseline.is_absolute():
+        baseline = root / baseline
+    here = Path(__file__).resolve().parent
+
+    def call(script, *args):
+        proc = subprocess.run([sys.executable, str(here / script), '--baseline', str(baseline),
+                               *args], cwd=root, capture_output=True, text=True, timeout=60)
+        if proc.returncode not in (0, 3):
+            raise ValueError(f'{script} exit={proc.returncode}: {proc.stderr or proc.stdout}')
+        return proc.returncode
+
+    def edit(*args):
+        return call('baseline_edit.py', '--version', a.version, *args)
+
+    def done(code, action, reason):
+        print(json.dumps({'ok': code == 0, 'mode': 'consume', 'next_action': action,
+                          'reason': reason}, ensure_ascii=False))
+        return code
+
+    try:
+        if not a.version or not a.result or a.result_code is None:
+            raise ValueError('consume 必须传 --version / --result / --result-code')
+        path = Path(a.result)
+        result = json.loads((path if path.is_absolute() else root / path).read_text(encoding='utf-8'))
+        if not isinstance(result, dict):
+            raise ValueError('consume 输入必须是 CICD JSON 对象')
+        node = json.loads(baseline.read_text(encoding='utf-8'))['versions'][a.version]
+        build = next((b for b in node.get('builds', []) if b.get('build') == node.get('current_build')), {})
+        push = build.get('push_commit') or ''
+        classification = build.get('change_classification') or {}
+        if classification.get('cicd_skipped') is True and not classification.get('classification_error'):
+            return done(0, 'skip', '本 build 分类明确跳过 CICD')
+        if not push:
+            raise ValueError('本 build 缺 push_commit，禁止消费流水线证据')
+        old = node.get('cicd_run') or {}
+        verdict, action = result.get('verdict'), result.get('next_action')
+        rc = a.result_code
+        reason = result.get('reason') or result.get('degraded_reason') or verdict or 'invalid-result'
+        edit('set', 'cicd_run.observation', json.dumps({'build': build['build'], 'push_commit': push,
+             'exit_code': rc, 'result': result}, ensure_ascii=False),
+             'cicd_run.status', 'unknown', 'cicd_run.degraded', 'false', 'cicd_run.commit_verified', 'false')
+        edit('del', 'cicd_run.degraded_reason')
+        # 每次新结果先撤销旧 probe 游标；下面只有可核验成功或合法降级能再次前进。
+        edit('run-state', '3.2.1-deploy', '3.2.1-deploy', 'done', '--pending', 'cicd-watch',
+             '--summary', 'CI/CD 结果已记录；本次部署证据待核验')
+        fail_args = ['--command', 'autopilot', '--version', a.version, '--build', build['build'],
+                     '--phase', '3.2.1-deploy']
+
+        def frozen(code):
+            if code != 3:
+                raise ValueError('即时冻结未成功落盘，禁止宣称已冻结')
+            return done(3, 'abort', reason)
+
+        if verdict in ('need-accept', 'auto-trigger-off'):
+            # 平台授权边界独立于 auto_trigger。保留原请求，交互确认/无人值守冻结；不拼 --accept。
+            return frozen(call('autopilot_fail_handle.py', *fail_args, '--freeze-now',
+                               '--reason', 'cicd-auto-trigger-off', '--why', str(reason)))
+        if verdict in ('trigger-failed', 'unknown-status') and not (rc == 4 and action == 'probe'):
+            return frozen(call('autopilot_fail_handle.py', *fail_args, '--freeze-now',
+                               '--reason', 'pipeline-unknown', '--why', str(reason)))
+        if verdict == 'retry-failed':
+            return frozen(call('autopilot_fail_handle.py', *fail_args, '--freeze-now',
+                               '--reason', 'cicd-unreachable', '--why', str(reason)))
+        if verdict == 'commit-mismatch':
+            return frozen(call('autopilot_fail_handle.py', *fail_args, '--freeze-now',
+                               '--reason', 'cicd-run-vanished', '--why', str(reason)))
+
+        # push_commit 是锚点；未知平台结果仅绑定请求 SHA，不得伪造 run_commit/commit_verified。
+        bound = (result.get('mode') in ('detect', 'watch', 'poll', 'trigger', 'retry') and
+                 result.get('expected_commit') == push and
+                 (not old.get('pipeline') or result.get('pipeline') == old['pipeline']) and
+                 (result.get('mode') != 'poll' or result.get('run_id') == old.get('run_id')))
+        if bound and rc in (0, 1, 2) and verdict in ('success', 'failed', 'running', 'triggered', 'retried'):
+            # 确实取到平台响应才清连续环境故障；降级 unknown 不构成恢复证据。
+            edit('del', 'cicd_unreachable_streak', 'cicd_cli_fail_streak')
+        degraded = (result.get('mode') in ('detect', 'watch', 'poll') and
+                    rc == 4 and action == 'probe' and result.get('degraded') is True and
+                    result.get('push_auto_deploy') is True and
+                    verdict in ('not-observed', 'unreachable', 'vanished', 'unknown-status'))
+        success = (result.get('mode') in ('watch', 'poll') and rc == 0 and verdict == 'success' and
+                   action == 'probe' and result.get('run_id') and
+                   cp.match_commit({'commit': result.get('run_commit')}, push))
+        if (degraded or success) and bound and not node.get('needs_human'):
+            evidence = ['cicd_run.status', 'unknown' if degraded else 'success',
+                        'cicd_run.degraded', json.dumps(degraded), 'cicd_run.expected_commit', push,
+                        'cicd_run.commit_verified', json.dumps(not degraded)]
+            if degraded:
+                evidence += ['cicd_run.degraded_reason', str(result.get('degraded_reason') or reason)]
+            edit('set', *evidence)
+            if success:
+                call('autopilot_fail_handle.py', *fail_args, '--success')
+                for phase in ('3.2.1-deploy', '3.2.1-cicd'):
+                    call('autopilot_fail_handle.py', '--command', 'autopilot', '--version', a.version,
+                         '--phase', phase, '--success')
+            edit('run-state', '3.2.1-deploy', '3.2.1-probe', 'done', '--pending', 'deploy-probe',
+                 '--summary', ('流水线状态 unknown：' + str(reason) + '；降级交接就绪探针'
+                               if degraded else '流水线成功；交接就绪探针'))
+            return done(0, 'probe', reason)
+        if rc == 4 or (action == 'probe' and not success) or (success and not bound):
+            return done(2, 'abort', '拒绝无效、过期或未绑定本 build 的 probe 结果')
+        if node.get('needs_human'):
+            return done(3, 'abort', '版本已冻结，先按恢复契约处理')
+        if verdict == 'failed' and rc == 2:
+            return frozen(call('autopilot_fail_handle.py', *fail_args, '--freeze-now',
+                               '--reason', 'deploy-unreachable', '--why', str(reason)))
+        if verdict == 'vanished':
+            return frozen(call('autopilot_fail_handle.py', *fail_args, '--freeze-now',
+                               '--reason', 'cicd-run-vanished', '--why', str(reason)))
+        # 平台环境计数保持版本级，与 env-reprobe 的恢复字段一致。
+        if verdict == 'unreachable':
+            code = call('autopilot_fail_handle.py', '--command', 'autopilot', '--version', a.version,
+                        '--phase', '3.2.1-deploy', '--reason', 'cicd-unreachable',
+                        '--streak-key', 'cicd_unreachable_streak', '--threshold', '3', '--why', str(reason))
+            return done(code or 1, 'abort', reason)
+        if verdict in ('cli-missing', 'unauthenticated', 'provider-unavailable'):
+            code = call('autopilot_fail_handle.py', '--command', 'autopilot', '--version', a.version,
+                        '--phase', '3.2.1-deploy', '--reason', 'cicd-cli-unavailable',
+                        '--streak-key', 'cicd_cli_fail_streak', '--threshold', '3', '--why', str(reason))
+            return done(code or 1, 'abort', reason)
+        if action in ('poll', 'detect', 'trigger', 'retry') and not bound:
+            return done(2, 'abort', '拒绝未绑定本 build 的继续监听或写动作结论')
+        if rc == 0 and action == 'detect' and result.get('mode') in ('trigger', 'retry'):
+            edit('del', 'cicd_run.run_id')
+        if rc == 0 and action == 'poll' and not result.get('run_id'):
+            return done(2, 'abort', 'poll 结论缺运行 id，禁止沿用旧运行')
+        if rc == 0 and action == 'poll' and result.get('run_id') and bound:
+            edit('set', 'cicd_run.run_id', str(result['run_id']), 'cicd_run.pipeline', result.get('pipeline') or '',
+                 'cicd_run.run_commit', result.get('run_commit') or '',
+                 'cicd_run.commit_verified', json.dumps(cp.match_commit({'commit': result.get('run_commit')}, push)))
+        if rc in (0, 1) and action in ('poll', 'detect', 'trigger', 'retry'):
+            return done(0, action, reason)
+        return done(2, 'abort', reason)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        return done(2, 'abort', str(exc))
+
+
 def run(argv, root_override=None):
+    try:
+        return _run(argv, root_override)
+    except cp.NeedAccept as exc:
+        print(json.dumps({'ok': False, 'verdict': 'need-accept', 'next_action': 'accept',
+                          'need_accept': True, 'provider_exit_code': 4, 'action': exc.action,
+                          'reason': str(exc), 'provider_response': exc.response}, ensure_ascii=False))
+        return 4
+
+
+def _run(argv, root_override=None):
     ap = argparse.ArgumentParser(description="CICD 推送即监听（平台无关）")
-    ap.add_argument("--mode", choices=("watch", "detect", "poll", "trigger", "retry"), default="watch")
+    ap.add_argument("--mode", choices=("watch", "detect", "poll", "trigger", "retry", "consume"), default="watch")
+    ap.add_argument('--result', help='consume：本次 cicd_watch JSON 文件')
+    ap.add_argument('--result-code', type=int, help='consume：本次 cicd_watch 的原始退出码')
     ap.add_argument("--selftest", action="store_true", help="离线自测（假平台输出，不访问网络）")
     ap.add_argument("--commit", help="本次 push 的 HEAD commit（detect 的强绑定依据）")
     ap.add_argument("--push-at", help="push 完成时刻 ISO 串；同一 commit 多次运行时取其后最新的一条")
@@ -319,7 +480,10 @@ def run(argv, root_override=None):
     if detect_mode(root) != "git":
         print(json.dumps(unsupported("cicd-sha"), ensure_ascii=False))
         return EXIT_UNSUPPORTED
-    out = {"ok": False, "mode": a.mode, "checked_at": datetime.now().isoformat(timespec="seconds")}
+    if a.mode == 'consume':
+        return consume_result(a, root)
+    out = {"ok": False, "mode": a.mode, "expected_commit": a.commit,
+           "checked_at": datetime.now().isoformat(timespec="seconds")}
 
     def emit(code, **kw):
         out.update(kw)
@@ -365,20 +529,34 @@ def run(argv, root_override=None):
         retried = 0
     out.update(retry_count=retried, max_retries=max_retries)
 
+    # 调用方仍须显式发起写动作；这里复核配置，避免独立围栏丢失授权闸。
+    if a.mode in ('trigger', 'retry') and cfg.get('auto_trigger', True) is False:
+        return emit(2, verdict='auto-trigger-off', next_action='abort',
+                    reason='cicd.auto_trigger=false，需人工触发或重跑部署')
+    if a.mode == 'retry' and retried >= max_retries:
+        return emit(2, verdict='failed', next_action='abort',
+                    reason=f'重试已用尽（{retried}/{max_retries}）')
     # ── 写动作 ────────────────────────────────────────────────────────────────
     if a.mode == "trigger":
         ref = a.ref or current_branch(root) or "main"
         ok, res = provider.trigger(pipeline, ref)
         if not ok:
             return emit(2, verdict="trigger-failed", next_action="abort", reason=str(res))
-        return emit(0, ok=True, verdict="triggered", ref=ref, run_id=res, run_commit=a.commit,
+        return emit(0, ok=True, verdict="triggered", ref=ref, run_id=res, run_commit=None,
                     next_action="poll" if res else "detect",
                     reason="已受理" + ("" if res else "，运行 id 需按 commit 探测"))
     if a.mode == "retry":
+        if a.commit:
+            found, observed = provider.view_run(pipeline, a.run_id)
+            if not found:
+                return emit(2, verdict='retry-failed', next_action='abort', reason=str(observed))
+            if not cp.match_commit(observed, a.commit):
+                return emit(2, verdict='commit-mismatch', next_action='abort',
+                            reason='重试运行与本 build push_commit 不一致，禁止写动作')
         ok, res = provider.retry(pipeline, a.run_id)
         if not ok:
             return emit(2, verdict="retry-failed", next_action="abort", reason=str(res))
-        return emit(0, ok=True, verdict="retried", run_id=res, retried_from=a.run_id, run_commit=a.commit,
+        return emit(0, ok=True, verdict="retried", run_id=res, retried_from=a.run_id, run_commit=None,
                     next_action="poll" if res else "detect",
                     reason="已受理" + ("" if res else "，新运行 id 需按 commit 探测"))
 

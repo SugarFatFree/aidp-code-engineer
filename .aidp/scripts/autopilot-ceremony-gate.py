@@ -1538,39 +1538,8 @@ def advance_run_state_on_final_pass(root, baseline_rel, version):
           f"已留痕 advanced_by=ceremony-gate@final-pass）")
 
 
-def test_loop_alive(bl, version, ttl_min=90):
-    """测试链路是否**真在干活**：心跳新鲜 AND 阻塞原因不指向本版（也不是全局阻塞）。
-
-    ⛔ 只看心跳不够：心跳是测试链路**每 tick 起始无条件先写**的（在任何 early-exit 之前），
-    所以冻结/被去重门跳过的空转 loop 心跳照样新鲜（5m 间隔 << 30min 窗口）。
-    只认心跳会让「内联驱动 chrome 却从未真委派」这个本该被堵的形态直接通过。
-    `phase-3-9.md` 的 TEST_LOOP_ALIVE 早已是这个口径，此处与之对齐。
-
-    `aiauto_blocked_reason` 值形如 `frozen:<reason>@<version>`：**版本类**阻塞只说明那一版卡住，
-    无 `@` 的历史值按全局处理（对任何版本都成立）。
-    """
-    hb = bl.get("aiauto_test_heartbeat_at")
-    if not hb:
-        return False
-    try:
-        dt = datetime.fromisoformat(str(hb))
-        now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
-        if (now - dt).total_seconds() > ttl_min * 60:
-            return False
-    except (ValueError, TypeError):
-        return False
-    ab = bl.get("aiauto_blocked_reason") or ""
-    if ab:
-        # ⛔ 归属口径必须与 `phase-2.md` 的读侧一致（该值形如 `frozen:<reason>@<version>`）：
-        #    **全局类原因（chrome-unavailable，机器无浏览器/驱动）对任何版本成立**——少这一条时，
-        #    A 版被 chrome-unavailable 冻住而查询 B 版会返回「活着」，于是 `phase-3-9.md` 的两个
-        #    根因分诊分支（前置都是 TEST_ALIVE=0）都不进：streak 不 bump、#4 不发，
-        #    autopilot 每 tick 顺利收尾，而那一版的浏览器实测一轮都没跑过。
-        rsn = ab.split("@", 1)[0].replace("frozen:", "", 1)
-        tgt = ab.split("@", 1)[1] if "@" in ab else ""
-        if (not tgt) or tgt == version or rsn == "chrome-unavailable":
-            return False
-    return True
+# 活性判据与 config-missing 解冻共用，保留本模块的导出与 CLI。
+from autopilot_unfreeze import test_loop_alive
 
 
 def cmd_test_loop_alive(a):

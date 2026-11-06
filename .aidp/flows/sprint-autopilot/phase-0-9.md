@@ -81,60 +81,16 @@ test_strategy=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get test_strategy
 # 本门当前唯一的必需项是远程 chrome 通路；REQ 为空 = 无必需项 → 直接放行（其余就绪项均为可降级项，见上表）
 if [ -z "$REQ" ]; then
   echo "✅ 0.7 收尾核验门：本轮无必需项（本地 CLI 驱动 / 非 chrome-mcp）→ 放行"
+  python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py preflight-gate || exit 1
 elif [ -f {{AIDP_HOME}}/scripts/autopilot-preflight.py ]; then
   python3 {{AIDP_HOME}}/scripts/autopilot-preflight.py gate --require "$REQ" || {
     echo "⛔ 收尾核验门未通过 → 回 0.0 对应 Step 就地补做（写 .mcp.json）后复跑本门，通过才进 Phase 1；绝不带缺失进 Phase 1/2/3 或委派 /sprint-aiauto-test"
-    # ⛔ **本 tick 内补做 + 复跑仍不过才走下面**：绝不裸 `exit 1` —— `/loop` 会每 tick 重撞同一处，
-    #    零 streak、零 #4、零冻结，表现为完全静默的永久空转（Phase 0-3 的 `_preflight_fail` 定义在
-    #    另一个 Bash 块里、跨块取不到，故此处内联同款三件套，不调用它）。
-    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
-    S=$($BE bump preflight_fail_streak); $BE set preflight_fail_reason "preflight-gate"
-    # ★ 无唤醒源（`--once` / 无 /loop）时没有下一 tick 来把 streak 叠到阈值 ⇒ 阈值恒不可达、
-    #   永不冻结，而 exit 0 会被上游读成"前置过了"。故 HAS_WAKE_SOURCE=0 时【当场】按达阈处置。
-    HAS_WAKE_SOURCE=$($BE get autopilot.wake_source_this_tick --default 0)
-    # ★ 本门跑在选版之前，版本号可能还没有。两个分支都要发通知，故在此统一取一次。
-    # ⛔ **无版本号时必须去掉 `--node "#4"`**：`notify.py` 对「给了 #N 却缺 --version」是
-    #   **发送前 fail-closed**（record-card 侧 --version 必填），整条通知一个字节都发不出去——
-    #   而这恰好是「自称已告警、实际全程静默」最纯粹的形态。不登台账总好过不发通知。
-    PF_V=$($BE get autopilot.target_version --default "")
-    CARD_ID=""; [ -n "$PF_V" ] && CARD_ID="--node #4 --version $PF_V"
-    if [ "$S" -lt "${PREFLIGHT_THRESHOLD:-3}" ] && [ "$HAS_WAKE_SOURCE" = "1" ]; then
-      # ⛔ 未达阈这几次**同样要真发 #4**：本门在整条链路最上游，它把版本挡住而通知渠道零消息 =
-      #   「挂着跑却什么都没发生」（与下面达阈分支同一条理由）。⛔ 别退回只 echo 一句"发 #4"——
-      #   那是把「静默空转」原样保留下来，而这正是本门要消灭的形态。
-      echo "⛔ 前置失败（preflight-gate）第 $S 次 → 发 #4 告警后退本 tick"
-      python3 {{AIDP_HOME}}/scripts/notify.py $CARD_ID --auto --header-color red \
-        --title "前置受阻：0.7 收口门未过（第 $S 次）" \
-        --section "连续 $S 次未过（缺 $REQ），未达阈值 ${PREFLIGHT_THRESHOLD:-3}，本 tick 让位重试。" \
-        || [ $? -eq 3 ] || echo "⚠️ #4 未发出（渠道全部失败）——前置仍未过，不静默推进"
-    else
-      # ⛔ 只写 preflight_frozen_at 不够：外部 cron / 巡检唯一能抓的视图是
-      #   `jq -r '.versions[]|select(.needs_human==true)'`，落不进去就是本段自己要防的
-      #   「静默卡住无人可知」（本步随后还明写"不再刷 #4"）。四件套一次写齐。
-      $BE set preflight_frozen_at @now
-      # 本门在选版之前跑，版本号从 baseline 取（同本围栏其它字段的取法）。
-      # ⛔ 取不到真实版本时**不写版本级冻结**：`versions._preflight` 是个伪版本节点，
-      #    运维用 `jq '.versions[]|select(.needs_human==true)'` 巡检会永远看到一个叫
-      #    `_preflight` 的幽灵待人工版本，而 `autopilot_unfreeze.py preflight-gate` 只清 3 个
-      #    顶层 preflight_* 键、清不掉版本级四件套 ⇒ 永久残留。顶层 preflight_frozen_at
-      #    （上一行已写）本身已足够止损。
-      if [ -n "$PF_V" ]; then
-        # 冻结四件套 + **最后一张 #4** 一次做完（熔断条件已由上面的 streak 判定成立 → --freeze-now）。
-        # ⛔ 这一张必须真发：本门在整条链路最上游，它把版本挡住而通知渠道零消息 = 「挂着跑却什么都没发生」。
-        python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$PF_V" --freeze-now \
-          --phase 0.7-preflight --reason preflight-incomplete \
-          --why "Phase 0.7 前置收口门连续 $S 次未过（缺 $REQ），无人值守无法收集"
-      else
-        $BE set aiauto_blocked_reason "frozen:preflight-incomplete@preflight"
-        # ⛔ 此处**不带 `--node`**（本 tick 无版本号，带了就发不出去，见上方 CARD_ID 说明）。
-        python3 {{AIDP_HOME}}/scripts/notify.py --auto --header-color red \
-          --title "前置受阻：0.7 收口门未过" \
-          --section "连续 $S 次未过（缺 $REQ），且本 tick 尚无目标版本号。" \
-          || [ $? -eq 3 ] || echo "⚠️ 最后一条 #4 未发出（渠道全部失败）——已熔断待人工，但无人知道"
-      fi
-      echo "⏸️ 前置失败已熔断待人工（preflight-gate，连续 $S 次 ≥ ${PREFLIGHT_THRESHOLD:-3}）→ 已发最后一条 #4，此后静默不再刷"
-    fi
-    exit 0; }   # ★ exit 0 让位本 tick（已记账 + 已告警），不是 exit 1 让 /loop 空撞
+    # 本 tick 补做并复跑仍失败才执行。统一入口负责记账、冻结幂等和首告警。
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --preflight --command autopilot \
+      --reason preflight-gate --why "Phase 0.7 收口门未过（缺 $REQ），无人值守无法收集" \
+      --threshold "${PREFLIGHT_THRESHOLD:-3}"
+    RC=$?; case "$RC" in 0|3) exit 0;; *) exit "$RC";; esac
+  }
   # ★ 门通过 = 本作用域失败已恢复 → 解冻（0.1 只清它自己那 5 个 git 类 reason（外加空 reason 分支），本 reason 留给此处）
   python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py preflight-gate >/dev/null 2>&1 || true
 else

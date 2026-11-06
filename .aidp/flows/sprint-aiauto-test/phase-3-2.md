@@ -101,7 +101,7 @@ path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
    # ① 未替换占位符（残留 {渲染模式}/{中文或英文占位} 花括号）
    grep -nE '\{[一-龥A-Za-z_][^}]*\}' "$DATA" && GATE_BAD="残留未替换占位符 → 回 3bis 重取证重写"
    # ② 环境事实未取证：renderMode 非 null 却缺 renderModeSource（= 值无取证来源，疑意图/示例穿透）
-   if [ -z "$GATE_BAD" ] && grep -qE 'renderMode\s*:\s*"(headless|headed)"' "$DATA" && ! grep -qE 'renderModeSource\s*:' "$DATA"; then
+   if [ -z "$GATE_BAD" ] && grep -qE '"?renderMode"?\s*:\s*"(headless|headed)"' "$DATA" && ! grep -qE '"?renderModeSource"?\s*:' "$DATA"; then
      GATE_BAD="renderMode 有值但无 renderModeSource（未取证/意图穿透）→ 回 3bis 补运行取证"
    fi
    if [ -n "$GATE_BAD" ]; then

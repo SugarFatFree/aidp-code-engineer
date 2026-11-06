@@ -270,6 +270,8 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 ★ **`4` = 降级放行就绪探针**（仅当 `cicd.push_auto_deploy` 已记录为 true）：平台给不出状态（不可达 / 运行消失 / 状态未知）或未观测到本次 commit 起跑的运行时，补等满 `cicd.push_deploy_min_wait_seconds`（缺省 300）后返回 `next_action=probe` + `degraded=true`，调用方**照 rc=0 进就绪探针、⛔ 不冻结**。它防的是一个**自锁**误冻：那类项目的流水线无法被单独触发（推送本身就是触发），于是「未起跑 → 主动触发」恒失败、「取不到状态 → 熔断」必然冻结，而解冻证据又是部署成功。⛔ 代价随 `degraded=true` 落进部署证据：未经平台确认、失败不自动重试、构建慢于等待时长时可能探到旧服务，**不得当作「确认成功」**。⛔ `failed`（取到明确失败态）与退出码 3（CLI 未装/未登录，可自动复探的 `cicd-cli-unavailable`）**都不走本通道**。开关：`aidp_state.py cicd-push-autodeploy-yes|-no`（只记事实，不改平台配置）；参数 `--push-auto-deploy auto|yes|no` / `--min-wait <秒>` 可覆盖。
 
+**部署结果消费**：`--mode consume --result <JSON路径> --result-code <原始退出码>` 将本次平台输出与本 build 的 push_commit 一起核对，原样保留原因；合法降级只进入 probe，不写流水线成功或部署完成。Command 提供方的原始 rc4 若为授权请求，保留 `verdict=need-accept`，不自动 accept、不与降级 probe 混用。即时冻结由 consume 的字面量原因调用 `autopilot_fail_handle.py --freeze-now`，无需跨 Bash 围栏继承函数；成功用匹配 phase/build 的 `--success` 清失败计数。完整必需参数见 `--help`，实际接线在部署 A0/B/C 围栏。
+
 ## cicd_providers.py — CICD 平台适配层（约定 31.5）
 
 `cicd_watch.py` 的底座：各平台统一暴露 `check()` / `list_runs()` / `view_run()` / `trigger()` / `retry()`，运行状态归一为 `queued|running|success|failure|cancelled|skipped|unknown`。内置 `github-actions`（`gh` CLI 已登录）、`gitlab-ci`（REST API，`cicd.gitlab-ci.url` / `project`，令牌经 `token_env`）、`jenkins`（REST API，`cicd.jenkins.url`，账号 / API Token 经 `user_env` / `token_env`）、`command`（`cicd.command.<动作>` 命令模板，占位符 `{pipeline}` `{commit}` `{run_id}` `{ref}` `{limit}`）。⛔ 令牌只经环境变量引用。接口细节以模块 docstring 为准。
@@ -314,14 +316,15 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 ## agent_loop.sh — 非交互唤起 AIDP 命令
 
 支持当前平铺运行根及旧嵌套布局，从脚本位置定位项目根，不依赖调用者的工作目录。`--once <命令> [参数…]` 单次执行（供操作系统调度调用）；`<间隔> <命令> [参数…]` 前台循环（临时使用）。每轮自动补齐 `--unattended --no-loop`、export `AIDP_TICK_COMMAND`（Stop 护栏据此识别 autopilot tick）与 `ARGUMENTS`（原样作为命令参数）、加载可选的 `~/.config/aidp/env` 凭据、flock 互斥（上一轮未结束则跳过；锁文件以追加方式打开，取得锁后才写入本轮起点 `started_at`；无 `flock` 时退回 python3 `fcntl`，两者都不可用则写告警并以 3 退出）、日志追加到 `memory/.aidp/logs/<命令>.log`。执行行一律 `9>&-`，tick 拉起的后台常驻进程不继承锁。
-**tick 硬超时**：`AIDP_TICK_MAX_SECONDS`（默认 7200，`0` = 关闭）给每轮 tick 套 `timeout`（缺失时依次退回 `gtimeout`、python3 实现，同 `124/137` 语义）。每轮结束调 `aidp_scheduler.py tick-result`：超时写 `loop-tick-timeout` 告警台账并累计连续超时次数，连续 3 次（`AIDP_TICK_TIMEOUT_ALERT_AFTER`）起经 `notify.py --alert` 播报；非超时轮清零。⛔ 裸执行没有上限时，挂死的 tick 会永久持锁、让整条链路静默停摆。
+**退出与退避**：`AIDP_TICK_MAX_SECONDS` 默认7200（0关闭），由 timeout/gtimeout/Python 提供硬超时。每轮 `tick-result` 记全部非零退出，结合本轮 `--log-offset` 后日志尾区分超时、额度、限流、鉴权、CLI缺失和其它错误；成功才清连续失败。默认连续3次（沿用 `AIDP_TICK_TIMEOUT_ALERT_AFTER`）达到告警阈值，同一故障期间按原因/退出码只通知一次，本地记录不依赖远程渠道。随后 `tick-check` 按1/2/4/8/16/32轮封顶退避，rc4仅表示本轮跳过，不能伪记心跳或成功。
 
 Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 取 `agent_env.py detect` 第一个）；执行模板（`{prompt}` 占位）：`AIDP_AGENT_EXEC` > `scheduler.exec.<agent>` > 内置默认（Claude Code `claude -p --permission-mode acceptEdits {prompt}`、Codex `codex exec --sandbox workspace-write {prompt}`；DeepSeek Harness 无内置默认、须配置，写法以所用版本官方文档为准）。
 
 ## aidp_scheduler.py — 7×24 操作系统调度装配（开发链路 + 测试链路 + 独立 watchdog）
 
 7×24 的运行载体：为**开发链路**（`sprint-autopilot`）与**测试链路**（`sprint-aiauto-test`）各装一个用户级定时任务，分别调用 `agent_loop.sh --once <命令> --unattended`；第三条独立 watchdog 任务默认每 5 分钟巡检，即使两条链路都从未启动也可在宽限期后告警。平台自动选择：Linux `systemd --user` timer（无 systemd 时 crontab）、macOS launchd、Windows 输出 `schtasks` 命令供手工执行。
-`watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。另判 **`hung`（挂死）**：链路已 stale 但互斥锁仍被持有、且持锁时长超过 `max(stale 阈值, scheduler.tick_max_seconds, 1h)` → 写 `loop-tick-hung` 告警。⛔ 这一档必须有：Agent 进程挂死时锁被永久持有，之后每次调度都被 `agent_loop.sh` 的 `flock -n` 跳过，而 watchdog 只按「持锁 = 正在跑」判 `running` —— 于是永不 stale、零告警、整条链路静默停摆（tick 内部的 stuck 熔断救不了：tick 根本没开始）。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。
+`watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。另判 **`hung`（挂死）**：链路已 stale 但互斥锁仍被持有、且持锁时长超过 `max(stale 阈值, 有效 tick_max_seconds + 180s, 1h)` → 写 `loop-tick-hung` 告警。⛔ 这一档必须有：Agent 进程挂死时锁被永久持有，之后每次调度都被 `agent_loop.sh` 的 `flock -n` 跳过，而 watchdog 只按「持锁 = 正在跑」判 `running` —— 于是永不 stale、零告警、整条链路静默停摆（tick 内部的 stuck 熔断救不了：tick 根本没开始）。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。
+wrapper 与独立 watchdog 均读取 `~/.config/aidp/env` 的 KEY=VALUE（支持 export 与引号），仅解析不执行 shell/命令替换；文件值覆盖进程值，并传给通知子进程。watchdog 锁内完成读状态、判定与标记，通知在锁外发送；通知失败有本地记录，不谎称送达。
 `install` 先做预检：无 `flock` 且无 python3 `fcntl`、或 Agent=dsh 未配 `scheduler.exec.dsh` → ERROR 不装；无 `timeout`/`gtimeout`、Agent=claude 而 `.claude/settings.json` 的 `permissions.allow` 未放行 `Bash`/`Agent` → WARN。
 用法：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install|uninstall|status|watchdog [--agent auto|claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m] [--platform systemd|cron|launchd|schtasks] [--dry-run] [--json]`；`--self-check` 离线自测（临时目录渲染三条任务）。配置段 = `memory/aidp-config.yaml` 的 `scheduler`（`aidp_config.scheduler_config()`）。
 
@@ -816,7 +819,7 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 两条链路所有「解冻」动作的唯一入口，一律幂等（不满足条件即 no-op + exit 0）：
 
 - **前置熔断按 reason 解冻**：`autopilot_unfreeze.py <prd-root-missing|stale-active-sprint|preflight-gate>` —— **仅当**当前 `preflight_fail_reason` 恰等于入参时才清三件套（这三类失败点在 0.1 之后产生，0.1 自身不清它们；恢复条件要用产生点自己的上下文判定，故由各自成功路径调用本入口）。未知 reason 退 2。
-- **环境类冻结自动复探**：`--env-reprobe <V> [--apply]` —— 环境类集合从冻结枚举表实时解析（如 `cicd-unreachable` / `cicd-cli-unavailable` / `chrome-unavailable`）；指数退避 20min×2^n、单次封顶 4h、最多 10 次，到期配 `--apply` 放行并清以 `@V` 结尾的顶层 `aiauto_blocked_reason`；次数用尽写本地告警台账并转人工。
+- **环境类冻结自动复探**：`--env-reprobe <V> [--apply]` —— 环境类集合从冻结枚举表实时解析（如 `cicd-unreachable` / `cicd-cli-unavailable` / `chrome-unavailable`）；指数退避 20min×2^n、单次封顶 4h、最多 10 次，到期配 `--apply` 清对应冻结及其失败/重试预算，保留其他原因的测试阻塞；准发布部署失败恢复到实际部署游标；次数用尽写本地告警台账并转人工。
 - **成功路径显式解冻**：`--clear <V> --reason <freeze_reason>` —— 仅当该版 `freeze_reason` 与入参一致时清（如驱动检测通过后清 `chrome-unavailable`）。
 - **人工解冻**：`--manual <V>` —— 清该版冻结字段、复测上限冻结标记与全部失败计数；#4 通知正文按冻结类别附这条恢复指令。
 - **只判不写**：`--aiauto-probe <V>` / `--aiauto-probe-all`（判 aiauto 冻结是否具备解冻证据；配置类 reason 如 `cicd-auto-trigger-off` 以 `memory/aidp-config.yaml` 修改时间晚于冻结时刻为证据，部署类以冻结后出现新部署为证据）；`--notify-reprobe`（里程碑通知通道被关后配置恢复即重开，清 `notify_enabled` / `notify_disabled_reason` / `notify_disabled_at`）。
@@ -1035,6 +1038,10 @@ python3 {{AIDP_HOME}}/scripts/autopilot_reset.py --arguments="$ARGUMENTS"; rc=$?
   的早退分支失效，反而进入一堆读空值的路径。
 
 
+## dispatch_retry.py — 子 Agent 派发的有界退避
+
+`gate` / `failure --kind transient|deterministic|unavailable` / `success` 配合 `--version`、`--phase`、`--has-wake-source 0|1` 消费版本级派发状态；脚本只判定/记账，不派Agent或等待。C1完整派发与C2小粒度每档最多3次退避（30/60/120秒），用尽转下一档或统一失败处置。无唤醒源返回13，调用方在本轮明确失败告警，不以exit0等待不存在的下轮；仅真正工具不可用才进C3预算回退。成功清retry_at/round/stage/phase；plan-transient恢复时也清，以免旧exhausted阻挡重试。生产调用者 = `sprint-autopilot/invariants.md` 与规划入口，`--self-check` 提供正反例。
+
 ## autopilot_fail_handle.py — 「失败处置」五步一次做完
 
 两条链路的失败处置是**五步固定动作**：`bump <streak>` → 判阈 → 达阈写冻结四件套
@@ -1054,7 +1061,7 @@ python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --command 
 ```
 
 `--command` 决定唤醒源键与前置熔断计数键（测试链路必须传 `aiauto-test`，否则会误读开发链路的唤醒源）；`--preflight` 为无版本号的前置熔断模式。
-同版本同 reason 已冻结 → no-op（不刷新冻结时刻、不重发 #4）；未达阈默认不发通知（`--card-on-streak` 显式开启）。
+版本已有冻结不覆盖其原因/时刻与测试真实 blocked_reason；`--preflight` 同原因已冻结时继续记账但不重复发卡，返回3。未达阈默认不发通知（`--card-on-streak` 显式开启）。`dev_fail_streak` 按 phase/reason 连续计算，换任一从1开始；成功出口用 `--success --version V --phase <同阶段> [--build B]` 清匹配作用域计数，不解除冻结。
 
 `--reason` 的合法集**直接调 `check_freeze_contract._parse_enum`**（同一信源，⛔ 不另写一份）。
 退出码：**0 = 已记账让位本 tick / 3 = 已冻结（达阈或无唤醒源）/ 2 = 入参错，此时什么都没写**

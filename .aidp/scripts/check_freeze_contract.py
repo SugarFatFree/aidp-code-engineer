@@ -53,6 +53,7 @@ if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_relpath
 import argparse
+import ast
 import json
 import os
 import re
@@ -132,7 +133,7 @@ def _parse_enum(root):
     p = os.path.join(root, runtime_relpath("", __file__), ENUM_FILE)
     if not os.path.isfile(p):
         return set(), False
-    lines = open(p, encoding="utf-8").read().splitlines()
+    lines = _AidpPath(p).read_text(encoding="utf-8").splitlines()
     try:
         start = next(i for i, ln in enumerate(lines) if ENUM_MARK in ln)
     except StopIteration:
@@ -191,6 +192,42 @@ def _logical_window(lines, i):
 EXEMPT_BASENAMES = {"rationale.md"}
 
 
+def _python_failure_writers(root, enum, writers, findings):
+    """检查生产 Python 调用的实际 argv；注释/字符串示例不计写入者。"""
+    base = _AidpPath(root) / runtime_relpath("", __file__) / "scripts"
+    for path in sorted(base.glob("*.py")):
+        relative = str(path.relative_to(root))
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeError) as exc:
+            findings.append({"level": "ERROR", "file": relative, "line": 0,
+                             "detail": f"Python 冻结调用扫描失败：{exc}"})
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            args = list(node.args)
+            if len(args) == 1 and isinstance(args[0], (ast.List, ast.Tuple)):
+                args = args[0].elts
+            values = [a.value if isinstance(a, ast.Constant) and isinstance(a.value, str) else None for a in args]
+            if "autopilot_fail_handle.py" not in values:
+                continue
+            detail = None
+            if "--no-card" in values:
+                detail = "Python 失败调用禁用了告警（--no-card），不得静默冻结"
+            if "--reason" in values and "--preflight" not in values:
+                index = values.index("--reason") + 1
+                reason = values[index] if index < len(values) else None
+                if reason is None:
+                    detail = "Python 失败调用的 --reason 必须为可核验字面量，不能用变量绕过枚举检查"
+                elif reason not in enum:
+                    detail = f"Python 失败调用的 --reason `{reason}` 不在契约枚举内"
+                else:
+                    writers.setdefault(reason, []).append(f"{relative}:{node.lineno}")
+            if detail:
+                findings.append({"level": "ERROR", "file": relative, "line": node.lineno, "detail": detail})
+
+
 def run(root="."):
     enum, enum_ok = _parse_enum(root)
     findings = []
@@ -202,6 +239,7 @@ def run(root="."):
                 "passed": False}
 
     writers, readers, scanned = {}, {}, 0
+    _python_failure_writers(root, enum, writers, findings)
 
     # ★ 解冻分支已从 flow 内联下沉到 `AIDP_HOME/scripts/autopilot_unfreeze.py` 的四个集合里，
     #   而 SCAN_DIRS 只有 flows/commands —— 判据 4「每个枚举都有解冻路径」于是**结构上永不触发**：

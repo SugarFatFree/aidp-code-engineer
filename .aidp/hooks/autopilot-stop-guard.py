@@ -106,6 +106,35 @@ def _exit_allow_noted(root, branch, detail=""):
     sys.exit(0)
 
 
+def _load_counts(path):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _exit_bounded_block(root, key, message):
+    """所有提前阻止路径同样受次数上限约束；达到上限仅首次记告警。"""
+    _paths().ensure_runtime_dir(str(root))
+    path = Path(_paths().stop_guard_count(str(root)))
+    counts = _load_counts(path)
+    try:
+        count = max(0, int(counts.get(key) or 0))
+    except (ValueError, TypeError):
+        count = 0
+    if count > STOP_GUARD_MAX_BLOCKS:
+        _exit_allow()
+    counts[key] = count + 1
+    try:
+        path.write_text(json.dumps(counts, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        _exit_allow_noted(root, "count-write-failed", "计数无法保存，放行避免无限阻止：" + key)
+    if count >= STOP_GUARD_MAX_BLOCKS:
+        _exit_allow_noted(root, "max-blocks-reached", f"{key} 连续阻止已达上限 {count}，放行止损；未收口原因：{message}")
+    _exit_block(message)
+
+
 def _agent_flag():
     """`--agent <claude|codex|dsh>`：由 agent_sync.py 接线时写进 hook 命令，缺省 claude。"""
     argv = sys.argv[1:]
@@ -359,7 +388,8 @@ def main():
                               "版本 %s 已按契约冻结（needs_human + 四件套齐），豁免收尾门"
                               % (_rsv or "?"))
         if _np and _np not in ("done", "finished", "complete", "completed", ""):
-            _exit_block(
+            run_key = str(data.get("session_id") or _rs.get("phase_entered_at") or _np)
+            _exit_bounded_block(root, f"{_rsv}:no-build:{run_key}",
                 f"run_state.next_phase={_rs.get('next_phase')} 尚未收口，但本轮尚未铸 build："
                 f"请继续推进该阶段，或先跑 `/sprint-autopilot --target {_rsv} --once` 铸 build 后再收尾。"
                 "（⛔ 不要停在这里等人——无人值守下没有人会来。）")
@@ -426,13 +456,6 @@ def main():
     cnt_file = Path(_paths().stop_guard_count(str(root)))
     cnt_key = f"{V}_{B}"
 
-    def _load_counts():
-        try:
-            raw = json.loads(cnt_file.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else {}
-        except Exception:
-            return {}  # 缺失 / 损坏 → 从零开始
-
     if r.returncode == 0:
         # ★★ 收尾门过了还要再问一句「活儿真派出去了吗」——HANDBACK 检查。
         #    gate 的 `check` **刻意不含**这一项（它在 3.7 / 3.4 step2 就跑，那时 run_state
@@ -447,12 +470,12 @@ def main():
                  "--repo-root", str(root), "--record"],
                 capture_output=True, text=True, timeout=60)
             if hb.returncode != 0:
-                _exit_block((hb.stdout or "") + (hb.stderr or "")
+                _exit_bounded_block(root, cnt_key, (hb.stdout or "") + (hb.stderr or "")
                             or "handback-check 判定：仍有未完成的 run_state，却在无唤醒源下交还控制权")
         except Exception:
             pass          # 探测失败不阻断（与本 hook 其余外部调用同口径：宁可放行不误杀）
         # 收尾门已过 → 清本 build 的熔断计数、放行
-        counts = _load_counts()
+        counts = _load_counts(cnt_file)
         if counts.pop(cnt_key, None) is not None:
             try:
                 cnt_file.write_text(json.dumps(counts, ensure_ascii=False), encoding="utf-8")
@@ -473,7 +496,7 @@ def main():
                           f"rc={r.returncode}: {(r.stderr or '')[:200]}")
 
     # returncode == 1 → 收尾门未过（仪式产物确实缺失）。熔断上限检查（防无限 wedge）
-    counts = _load_counts()
+    counts = _load_counts(cnt_file)
     cnt = int(counts.get(cnt_key) or 0)
     if cnt >= STOP_GUARD_MAX_BLOCKS:
         # 达上限 → fail-open，避免无限阻止；大声告警交人工

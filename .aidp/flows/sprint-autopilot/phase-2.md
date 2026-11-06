@@ -73,31 +73,9 @@ FIN="${FIN:-false}"
        echo "✅ 0b 测试收敛：本 build 已于 $AT 测过、已收敛、报告已 finalize → 允许准发布归档"
      else
        # 未收敛不归档；测试链路存活须心跳新鲜且本版未阻塞（见 rationale.md）。
-   TEST_LOOP_ALIVE=$(AP_V="$PRE_RELEASE_VERSION" python3 - <<'PY' 2>/dev/null || echo 0
-import json,os,datetime
-try:
-    b=json.load(open("memory/.sprint-autopilot-baseline.json"))
-    ab=b.get("aiauto_blocked_reason") or ""  # 测试侧已冻结/阻塞 → 心跳再新也不算"活着"（仅当该阻塞对本版成立）
-    if ab:
-        rsn=ab.split("@",1)[0].replace("frozen:","",1); tgt=ab.split("@",1)[1] if "@" in ab else ""
-        if (not tgt) or tgt==os.environ.get("AP_V","") or rsn=="chrome-unavailable":
-            print(0); raise SystemExit
-    hb=b.get("aiauto_test_heartbeat_at")
-    ttl=float(os.environ.get("AIAUTO_TEST_HEARTBEAT_TTL_MIN","30")); alive=0
-    if hb is not None:
-        try:
-            age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(hb).astimezone(datetime.timezone.utc)).total_seconds()/60.0
-            alive=1 if age<=ttl else 0
-        except Exception:
-            # fail-closed（与 ceremony-gate 同口径；理据见 rationale.md）
-            alive=0
-    print(alive)
-except SystemExit:
-    pass
-except Exception:
-    print(0)
-PY
-)
+       AIAUTO_TEST_HEARTBEAT_TTL_MIN="${AIAUTO_TEST_HEARTBEAT_TTL_MIN:-30}"
+       TEST_LOOP_ALIVE=$(python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py test-loop-alive \
+         --version "$PRE_RELEASE_VERSION" --ttl-min "${AIAUTO_TEST_HEARTBEAT_TTL_MIN:-30}") || exit 1
        if [ "$TEST_LOOP_ALIVE" = "1" ]; then
          # fail_handle 统一记账、判阈和冻结告警；未达阈只记账（见 rationale.md）。
          VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
@@ -119,7 +97,7 @@ PY
            --phase 2-prerelease-testloop --reason config-missing \
            --streak-key test_loop_missing_streak \
            --threshold "${TEST_LOOP_MISSING_THRESHOLD:-3}" \
-           --why "测试链路未挂载(缺 /loop 5m /sprint-aiauto-test --unattended)，本 build 浏览器实测未执行"
+           --why "测试链路心跳过期/缺失或有效阻塞（blocked=${BLOCKED:-无}），本 build 浏览器实测未执行"
          if [ "$?" = "3" ]; then
            # 达阈后仍须按 phase-3-9.md 完成静态-only 报告与 #3（理据见 rationale.md）。
            echo "⛔ 测试链路缺失达阈 → 先按 phase-3-9.md 三步实跑静态-only 收尾（testSummary 如实标"
@@ -152,7 +130,7 @@ PY
              freeze_reason prerelease_deploy_block_streak prerelease_test_hold_streak test_loop_missing_streak || true
            # 只清本版顶层阻塞，不误清其他版本。
            AB=$(jq -r '.aiauto_blocked_reason // ""' "$BASELINE_FILE")
-           case "$AB" in *"@$PRE_RELEASE_VERSION") $BE del aiauto_blocked_reason || true;; esac
+           case "$AB" in "frozen:$FR@$PRE_RELEASE_VERSION") $BE del aiauto_blocked_reason || true;; esac
            $BE --version "$PRE_RELEASE_VERSION" set prerelease_transitional true \
              prerelease_transitional_newer "$NEWER_V" prerelease_unconverged_reason "$FR"
            PRERELEASE_HOLD=0   # 翻转：继续走下面 1~4 步归档
@@ -197,7 +175,7 @@ PY
      echo "⛔ Phase 2 未放行，不得登记归档成功" >&2
    fi
    ```
-   - 必需归档失败或核验不明 → 不执行步骤 3–5 成功落账 / #pre-done；按下列失败处置并继续 Phase 3。无 Git 仅对实际本地归档失败记 `local-archive-failed`，不得因 Git 不可用记 `release-blocked`。
+   - 必需归档失败或核验不明 → 不执行步骤 3–5 成功落账 / #pre-done；按下列失败处置并继续 Phase 3。实际归档失败统一记 `release-blocked`；无 Git 本身不是失败，`why` 必须写清本地归档缺口。
    - 失败处置（记账 + 判阈 + 冻结四件套 + #4）：
 
   ```bash
@@ -205,13 +183,13 @@ PY
   python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PRERELEASE_ARCHIVE_OK 0 || exit 1
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
   VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode)
-  ARCHIVE_REASON=release-blocked; ARCHIVE_WHY="准发布归档失败：归档流程 Step 3.1~3.6 未走完"
+  ARCHIVE_WHY="准发布归档失败：归档流程 Step 3.1~3.6 未走完"
   if [ "$VCS_MODE" = "none" ]; then
-    ARCHIVE_REASON=local-archive-failed; ARCHIVE_WHY="本地归档失败：文档/SQL/memory 未全部完成或本地发布状态无法核实（Git 发布 unsupported:vcs-disabled）"
+    ARCHIVE_WHY="本地归档失败：文档/SQL/memory 未全部完成或本地发布状态无法核实（Git 发布 unsupported:vcs-disabled）"
   fi
   # ⛔ 版本必须是 `PRE_RELEASE_VERSION`（理据见 rationale.md「Phase 2 的失败处置传哪个版本」）
   python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
-    --phase 2-prerelease --reason "$ARCHIVE_REASON" --why "$ARCHIVE_WHY"
+    --phase 2-prerelease --reason release-blocked --why "$ARCHIVE_WHY"
   # 退出码：0=已记账让位本 tick／3=已冻结（达阈或无唤醒源）／2=入参错（⛔ 此时什么都没写）
   ```
 
@@ -255,6 +233,8 @@ PY
      else
        ARCHIVE_SUMMARY="准发布归档完成（--no-tag），已写 internal_released_at，#pre-done 按通知台账如实记录"
      fi
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --success \
+       --version "$PRE_RELEASE_VERSION" --phase 2-prerelease || exit 1
      python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PRE_RELEASE_VERSION" \
        run-state "2-prerelease" "done" "" --summary "$ARCHIVE_SUMMARY" --pending ""
    fi

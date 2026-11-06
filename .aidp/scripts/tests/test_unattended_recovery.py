@@ -419,7 +419,187 @@ def test_wake_source_requires_scheduler():
             check(label, result.returncode == 0 and f"RESULT={expected}" in result.stdout)
 
 
+def test_recovery_regressions():
+    print("\n[R9] 冻结幂等、活性同源、环境重试与连续失败范围")
+    from datetime import datetime, timezone
+    args = ["--preflight", "--reason", "prd-root-missing", "--why", "目录缺失"]
+    root = _mk({"versions": {}})
+    try:
+        rc, _, _ = _fh(root, *args)
+        first = _bl(root)
+        ledger = root / "memory/.aidp/alerts.jsonl"
+        lines = ledger.read_text().splitlines()
+        rc2, out, _ = _fh(root, *args, "--card-on-streak")
+        check("前置首次及重复冻结均 rc3", rc == rc2 == 3)
+        check("前置同 reason 只记账、不刷新时刻不发卡", out.get("already_frozen")
+              and _bl(root)["preflight_fail_streak"] == 2
+              and first["preflight_frozen_at"] == _bl(root)["preflight_frozen_at"]
+              and ledger.read_text().splitlines() == lines)
+        rc, _, _ = _fh(root, "--preflight", "--reason", "preflight-gate", "--why", "新原因")
+        check("前置换 reason 首次告警仍发送", rc == 3 and len(ledger.read_text().splitlines()) == len(lines) + 1)
+    finally:
+        shutil.rmtree(root)
+
+    for blocked in ("frozen:account-invalid@V1.0.0", "frozen:chrome-unavailable@V2.0.0", "global-error"):
+        data = _frozen("config-missing", 60)
+        data["aiauto_blocked_reason"] = blocked
+        data["aiauto_test_heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+        root = _mk(data)
+        try:
+            check("新心跳不绕过真实阻塞 " + blocked, not U.aiauto_probe(str(root), "V1.0.0")["unfreeze"])
+        finally:
+            shutil.rmtree(root)
+    data = _frozen("config-missing", 60)
+    data["aiauto_test_heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+    root = _mk(data)
+    try:
+        check("仅自身 config-missing 标记不造成自锁", U.aiauto_probe(str(root), "V1.0.0")["unfreeze"])
+    finally:
+        shutil.rmtree(root)
+    root = _mk({"aiauto_blocked_reason": "frozen:chrome-unavailable@V2.0.0", "versions": {"V1.0.0": {}}})
+    try:
+        _fh(root, "--version", "V1.0.0", "--phase", "2-prerelease-testloop", "--reason", "config-missing", "--why", "测试阻塞")
+        check("config-missing 写侧保留测试真实 blocked_reason", _bl(root)["aiauto_blocked_reason"] == "frozen:chrome-unavailable@V2.0.0")
+    finally:
+        shutil.rmtree(root)
+
+    root = _mk(_frozen("deploy-unreachable", 25 * 60, dev_fail_phase="2-prerelease-deploy",
+                      prerelease_deploy_block_streak=3, cicd_run={"cicd_retry_count": 3, "run_id": "keep"},
+                      run_state={"next_phase": "2-prerelease", "next_sprint": "done"}))
+    try:
+        r = U.env_reprobe(str(root), "V1.0.0", apply=True)
+        vn = _bl(root)["versions"]["V1.0.0"]
+        check("复探重置 CICD 重试预算并保留运行证据", r["applied"] and vn["cicd_run"].get("cicd_retry_count", 0) == 0 and vn["cicd_run"]["run_id"] == "keep")
+        check("准发布部署失败复探后实际可重部署", vn["run_state"]["next_phase"] == "3.2.1-deploy"
+              and vn.get("prerelease_deploy_block_streak", 0) == 0)
+    finally:
+        shutil.rmtree(root)
+
+    root = _mk({"autopilot": {"wake_source_this_tick": "1"}, "versions": {"V1.0.0": {}}})
+    try:
+        def fail(phase, reason):
+            return _fh(root, "--version", "V1.0.0", "--phase", phase, "--reason", reason, "--why", "失败", "--threshold", "10")
+        fail("3.1-plan", "plan-transient")
+        _, out, _ = fail("3.1-plan", "plan-transient")
+        check("同 phase/reason 连续累加", out.get("streak") == 2)
+        _, out, _ = fail("3.2-dev", "plan-transient")
+        check("换 phase 从1重计", out.get("streak") == 1)
+        _, out, _ = fail("3.2-dev", "handoff-exhausted")
+        check("换 reason 从1重计", out.get("streak") == 1)
+        rc, _, _ = _fh(root, "--success", "--version", "V1.0.0", "--phase", "3.1-plan")
+        check("其他阶段成功不误清计数", rc == 0 and _bl(root)["versions"]["V1.0.0"]["dev_fail_streak"] == 1)
+        rc, _, _ = _fh(root, "--success", "--version", "V1.0.0", "--phase", "3.2-dev")
+        vn = _bl(root)["versions"]["V1.0.0"]
+        check("本阶段成功清零及范围元数据", rc == 0 and vn.get("dev_fail_streak") == 0
+              and "dev_fail_phase" not in vn and "dev_fail_reason" not in vn)
+    finally:
+        shutil.rmtree(root)
+
+    root = _mk(_frozen("account-invalid", 60))
+    try:
+        before = _bl(root)
+        rc, _, _ = _fh(root, "--version", "V1.0.0", "--phase", "2-prerelease-testloop",
+                        "--reason", "config-missing", "--why", "测试仍阻塞", "--freeze-now")
+        check("config-missing 不覆盖已有测试冻结证据", rc == 3 and _bl(root) == before)
+    finally:
+        shutil.rmtree(root)
+
+    flow = (REPO / ".aidp/flows/sprint-autopilot/phase-2.md").read_text()
+    check("归档失败使用合法字面量 release-blocked", "local-archive-failed" not in flow
+          and '--phase 2-prerelease --reason release-blocked' in flow)
+    for name in ("phase-0-6.md", "phase-0-9.md"):
+        flow = (REPO / ".aidp/flows/sprint-autopilot" / name).read_text()
+        check(name + " 前置失败统一入口", "--preflight" in flow and "bump preflight_fail_streak" not in flow)
+
+
+def test_recovery_scope_boundaries():
+    print("\n[R10] 恢复边界与真实 flow 入口")
+    from datetime import datetime, timezone, timedelta
+    for age in (120, 7200):
+        data = _frozen("config-missing", 60 if age == 120 else 10000)
+        data["aiauto_test_heartbeat_at"] = (datetime.now(timezone.utc) - timedelta(seconds=age)).isoformat()
+        root = _mk(data)
+        try:
+            check("心跳必须晚于冻结且在 TTL 内 " + str(age), not U.aiauto_probe(str(root), "V1.0.0")["unfreeze"])
+        finally:
+            shutil.rmtree(root)
+    data = _frozen("config-missing", 60)
+    data["aiauto_test_heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+    data["aiauto_blocked_reason"] = "frozen:account-invalid@V2.0.0"
+    root = _mk(data)
+    try:
+        check("其他版本局部阻塞不影响恢复", U.aiauto_probe(str(root), "V1.0.0")["unfreeze"])
+        U.clear_if_reason(str(root), "V1.0.0", "config-missing")
+        check("清冻结不误删其他测试阻塞", _bl(root)["aiauto_blocked_reason"] == data["aiauto_blocked_reason"])
+    finally:
+        shutil.rmtree(root)
+
+    root = _mk(_frozen("plan-transient", 60, subagent_retry_at="old", subagent_retry_round=3,
+                      subagent_retry_stage="exhausted", subagent_retry_phase="3.1-plan"))
+    try:
+        U.clear_if_reason(str(root), "V1.0.0", "plan-transient")
+        check("plan-transient 恢复清调度退避状态", not any(k.startswith("subagent_retry_") for k in _bl(root)["versions"]["V1.0.0"]))
+    finally:
+        shutil.rmtree(root)
+
+    root = _mk({"autopilot": {"wake_source_this_tick": "1"}, "versions": {"V1.0.0": {
+        "dev_fail_streak": 2, "dev_fail_phase": "3.2-dev", "dev_fail_reason": "plan-transient",
+        "current_build": "V1.0.0_build1001", "builds": [{"build": "V1.0.0_build1001"}]}}})
+    try:
+        args = ["--version", "V1.0.0", "--build", "V1.0.0_build1001", "--phase", "3.2.1-deploy"]
+        _fh(root, *args, "--reason", "deploy-unreachable", "--why", "部署失败")
+        rc, _, _ = _fh(root, *args, "--success")
+        vn = _bl(root)["versions"]["V1.0.0"]
+        check("build 成功不清版本计数", rc == 0 and vn["dev_fail_streak"] == 2 and vn["builds"][0]["dev_fail_streak"] == 0)
+    finally:
+        shutil.rmtree(root)
+    root = _mk(_frozen("release-blocked", 60, dev_fail_streak=3, dev_fail_phase="2-prerelease", dev_fail_reason="release-blocked"))
+    try:
+        before = _bl(root)["versions"]["V1.0.0"]["aiauto_frozen_at"]
+        _fh(root, "--success", "--version", "V1.0.0", "--phase", "2-prerelease")
+        vn = _bl(root)["versions"]["V1.0.0"]
+        check("成功清零 API 不绕过人工冻结", vn["needs_human"] and vn["freeze_reason"] == "release-blocked" and vn["aiauto_frozen_at"] == before)
+    finally:
+        shutil.rmtree(root)
+
+    data = _frozen("deploy-unreachable", 25 * 60, current_build="V1.0.0_build1002",
+                   cicd_run={"cicd_retry_count": 3}, env_reprobe_attempts=0,
+                   run_state={"next_phase": "3.2.1-deploy"},
+                   unconverged_frozen_head="keep", retest_frozen_head="keep2",
+                   builds=[{"build": "V1.0.0_build1001", "dev_fail_streak": 3},
+                           {"build": "V1.0.0_build1002", "dev_fail_streak": 3,
+                            "dev_fail_phase": "3.2.1-deploy", "dev_fail_reason": "deploy-unreachable",
+                            "cicd_run": {"cicd_retry_count": 3}}])
+    root = _mk(data)
+    try:
+        U.env_reprobe(str(root), "V1.0.0", apply=True)
+        vn = _bl(root)["versions"]["V1.0.0"]
+        check("部署复探清当前build预算、保留历史build", vn["builds"][1].get("dev_fail_streak", 0) == 0
+              and vn["builds"][1]["cicd_run"].get("cicd_retry_count", 0) == 0
+              and vn["builds"][0]["dev_fail_streak"] == 3 and vn["run_state"]["next_phase"] == "3.2.1-deploy")
+        check("复探保留冻结 HEAD 证据和退避计数", vn["unconverged_frozen_head"] == "keep"
+              and vn["retest_frozen_head"] == "keep2" and vn["env_reprobe_attempts"] == 1)
+    finally:
+        shutil.rmtree(root)
+
+    flow = (REPO / ".aidp/flows/sprint-autopilot/phase-0-6.md").read_text()
+    fence = re.search(r"#### 0.3.1.*?```bash\n(.*?)```", flow, re.S).group(1)
+    root = _mk({"versions": {}})
+    try:
+        body = fence.replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+        for _ in range(2):
+            cp = subprocess.run(["bash", "-c", body], cwd=root, capture_output=True, text=True,
+                                env={**os.environ, "AIDP_FEISHU_WEBHOOK": ""})
+        check("PRD 前置真实围栏重入只告警一次", cp.returncode == 0
+              and len((root / "memory/.aidp/alerts.jsonl").read_text().splitlines()) == 1
+              and _bl(root)["preflight_fail_streak"] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
 if __name__ == "__main__":
+    test_recovery_scope_boundaries()
+    test_recovery_regressions()
     test_retest_cap_probe_ignores_autopilot_pushes()
     test_wake_source_requires_scheduler()
     test_active_sprint_recovery()

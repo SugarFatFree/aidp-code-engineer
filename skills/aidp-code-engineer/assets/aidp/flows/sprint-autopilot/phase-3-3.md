@@ -29,7 +29,33 @@
    ```
 
 2. **跑 `/version {TARGET_VERSION} {规划意图参数} [--unattended]`**（⛔ 无人值守下必带——`/version` 有多个交互门）（**仅当 `PLANNING_DONE=0` 或带 `--force-replan`，且 `NO_PLANNING!=1`**；否则整步跳过）（含里程碑参数，从 Phase 0.6 收集到的 `autopilot_decisions` 推断）：
-   - **先组装实际调用参数**：下列围栏输出就是命令参数依据，独立子 Agent prompt / 内联 / 降级重试均原样携带；不能只在条件判断中读 `FORCE_REPLAN` 却给 `/version` 发裸参数。`NO_PLANNING=1` 时整步不调用；其余强制优先于补件。
+   - **先落阶段入口再派发**：仅实际跑本步时执行；退避、失败、进程中断均保留 `next_phase=3.1-plan`，不能提前写 `3.1.5-build`。`--enter` 不写完成时刻：
+
+     ```bash
+     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+     python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" \
+       run-state "3.1-plan" "3.1-plan" "" --enter \
+       --summary "版本规划执行中，完成后核验产物与审计" --pending "planning" || exit $?
+     DISPATCH_RC=0
+     python3 {{AIDP_HOME}}/scripts/dispatch_retry.py --version "$TARGET_VERSION" --phase 3.1-plan \
+       --has-wake-source "${HAS_WAKE_SOURCE:-0}" gate || DISPATCH_RC=$?
+     case "$DISPATCH_RC" in
+       0)  echo "规划派发闸门已开" ;;
+       11) echo "按 C2 小粒度续跑，保留已通过校验的规划产物" ;;
+       12) echo "先走 C3 预算检查，再内联规划" ;;
+       10) [ "${HAS_WAKE_SOURCE:-0}" = 1 ] || exit 2
+           echo "规划退避中，已保留入口等待下一 tick"; exit 0 ;;
+       13) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" \
+             --phase 3.1-plan --reason plan-transient --freeze-now \
+             --why "规划退避未到点且无唤醒源，显式冻结，保留规划入口"; exit $? ;;
+       20) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" \
+             --phase 3.1-plan --reason plan-transient \
+             --why "规划 C2 派发重试已耗尽，保留规划入口"; exit $? ;;
+       *) exit 2 ;;
+     esac
+     ```
+
+   - **再组装实际调用参数**：下列围栏输出就是命令参数依据，独立子 Agent prompt / 内联 / 降级重试均原样携带；不能只在条件判断中读 `FORCE_REPLAN` 却给 `/version` 发裸参数。`NO_PLANNING=1` 时整步不调用；其余强制优先于补件。
 
    <!-- planning-intent -->
    ```bash
@@ -53,7 +79,7 @@
      > 主流程代问 → 结果回灌」协议）。**"委派"与"传 unattended"是两个独立决定，绝不因前者顺手做后者**：
      > 该 flag 的语义是"没人可答"，而交互式恰恰有人可答（实测：交互式误委派并传该 flag，决策类
      > 弹窗全被跳过、`pending_actions` 挂 7 小时无人处置）。**出口自检**：「是否委派」「是否传该 flag」
-     > 与 `LOOP_UNATTENDED` 三者必须自洽，不自洽即停下改正、不得带着不一致继续推进。委派失败 → **先走「子 Agent 派发失败的分层重试与降级」（P0-3 C1–C3，见 `flows/sprint-autopilot/invariants.md`）**：瞬时服务端错误（529/503/超时）指数退避重试 → 退避用满换**更小粒度**（把 `/version` 拆成 requirements/design/plan 分段各自委派）→ 仍不成才内联（带 C3 上下文预算护栏、不足则分批落盘续跑）；**唯有确定性失败**（子 Agent 早退 / 回传不合 compact 契约 / audit 反复 Critical）才按「失败处置」记 `dev_fail_streak`，不静默当成功。
+     > 与 `LOOP_UNATTENDED` 三者必须自洽，不自洽即停下改正、不得带着不一致继续推进。委派失败 → **先走「子 Agent 派发失败的分层重试与降级」（P0-3 C1–C3，见 `flows/sprint-autopilot/invariants.md`）**：瞬时服务端错误（529/503/超时）有界退避 → 换**更小粒度**（requirements/design/plan 分段委派）→ C2 耗尽按 `plan-transient` 失败处置；只有工具/真正后台能力不可用才按 C3 预算降级内联。确定性失败（回传不合 compact 契约 / 业务失败 / audit 反复 Critical）直接记账，不得冒充 529 重试。
    - **★ `--unattended` 按 `LOOP_UNATTENDED` 条件透传**：
      - **交互式（`LOOP_UNATTENDED=0`：用户当面跑 `--once` / 明确执行意图，非 `/loop` 守护）→ 调 `/version {TARGET_VERSION} {规划意图参数}`（★ 不带 `--unattended`）**：让 `/version` 走**完整交互式版本规划**，其决策类 `AskUserQuestion` 用户在场、该发生就发生。
      - **无人值守（`LOOP_UNATTENDED=1`：`/loop` 守护 / cron `--no-loop`）→ 调 `/version {TARGET_VERSION} {规划意图参数} --unattended`**（7×24 兜底铁律）：`/version` 的交互门按 Phase 0.6 预声明的 `autopilot_decisions` 自动落值或走保守默认，绝不挂死。
@@ -64,25 +90,29 @@
 
    ```bash
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-   # ★ reason 必须按**失败类别**分流，⛔ 不能一律 audit-critical：后者属人工专属解冻档
-   #   （`_HUMAN_ONLY`，探针一律不解冻），把「子 Agent 派发失败 / 网络抖动 / 超时」这类
-   #   瞬态错误按它冻上，是把一次重试就能过去的事变成必须人来救；而 needs_human_reason
-   #   还会把人指向一份根本没有 Critical 的审计报告。
-   # ⛔ 下面这行由 Claude 按 `/version` 的实际返回**就地改写**为 audit-block 或 other，
-   #    取不到时保持 other —— 默认值必须落在**可自动解冻**的一侧（宁可多试一轮，
-   #    不要把瞬态错误钉成人工专属）。
-   PLAN_FAIL_KIND=other    # ← 仅当 /version 明确返回 audit-block 时改成 audit-block
-   # ⛔ reason 写**字面量**、别收进变量再 `--reason "$_R"`：`check_freeze_contract` 的写入者
-   #   识别看的是字面 reason，走变量会让这两个枚举值双双变成「零写入者」——而那道门正是
-   #   用来发现「读侧留了解冻分支、写侧其实没人写」的，先把自己弄瞎不可接受。
+   # 按实际返回填写；未知原因不冒充瞬态。仅明确 audit-block 使用人工审计解冻档。
+   PLAN_FAIL_KIND=deterministic   # audit-block / transient / deterministic / unavailable
    V3="--version ${TARGET_VERSION:?} --phase 3.1-plan"
-   case "$PLAN_FAIL_KIND" in
-     audit-block) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py $V3 --reason audit-critical \
-       --why "version-auditor 审计 block 且自动修复 3 轮未过，需人工裁决" ;;
-     *)           python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py $V3 --reason plan-transient \
-       --why "/version 规划未走完（派发/网络/超时等），非审计 block" ;;
+   if [ "$PLAN_FAIL_KIND" = audit-block ]; then
+     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py $V3 --reason audit-critical \
+       --why "version-auditor 审计 block 且自动修复 3 轮未过，需人工裁决"
+     exit $?
+   fi
+   DISPATCH_RC=0
+   python3 {{AIDP_HOME}}/scripts/dispatch_retry.py $V3 failure --kind "$PLAN_FAIL_KIND" \
+     --has-wake-source "${HAS_WAKE_SOURCE:-0}" || DISPATCH_RC=$?
+   case "$DISPATCH_RC" in
+     11) echo "C1 已耗尽：本轮改派 requirements/design/plan 小粒度单元，仍处于 3.1-plan" ;;
+     12) echo "工具/后台能力不可用：按 C3 检查预算后内联，产物未齐不能写出口" ;;
+     10) [ "${HAS_WAKE_SOURCE:-0}" = 1 ] || exit 2
+         echo "规划退避已落盘，等待下一 tick"; exit 0 ;;
+     13) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py $V3 --reason plan-transient --freeze-now \
+           --why "规划派发需退避但无唤醒源，显式冻结，保留规划入口"; exit $? ;;
+     20) python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py $V3 --reason plan-transient \
+           --why "规划 C2 派发重试耗尽或确定性失败，非审计 block"; exit $? ;;
+     *) echo "派发状态异常，禁止写成功出口"; exit 2 ;;
    esac
-   # 0=已记账让位本 tick／3=已冻结（达阈或无唤醒源）／2=入参错（⛔ 什么都没写）
+   # 11/12 必须实际完成拆分/内联并重新校验，不能因这段 shell 返回成功就推进。
 
    ```
 
@@ -157,8 +187,12 @@ BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION}"
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 读回 AUDIT_VERDICT（3.1 step 2 落盘）等
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot-prd-watch.py --version "$V" --shell 2>/dev/null || echo SHOULD_RUN=0)"
 [ "${SHOULD_RUN:-0}" = "1" ] && echo "⚠️ PRD 在本次规划【进行中】发生变化（${TRIGGER_REASON:-}）：四类产物可能基于旧 PRD，请按 /version 补充模式重跑增量并走约定 22 级联"
+# 仅完成校验通过后清闸门与本阶段失败 streak；失败/退避不走这里。
+python3 {{AIDP_HOME}}/scripts/dispatch_retry.py --version "$V" --phase 3.1-plan success || exit $?
+python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --phase 3.1-plan --success || exit $?
 $BE --version "$V" run-state "3.1-plan" "3.1.5-build" "" \
-  --summary "Phase 3.1 版本规划完成（PLANNING_DONE=${PLANNING_DONE:-1}）：需求/设计/计划/自测用例/自测方案/测试环境六类产物已就位，auditor verdict=${AUDIT_VERDICT:-pass}" --pending ""
+  --summary "Phase 3.1 版本规划完成（PLANNING_DONE=${PLANNING_DONE:-1}）：需求/设计/计划/自测用例/自测方案/测试环境六类产物已就位，auditor verdict=${AUDIT_VERDICT:-pass}" --pending "" || exit $?
+$BE --version "$V" set run_state.phase_status complete
 ```
 
 > 规划被跳过（`PLANNING_DONE=1` 且无 `--force-replan`）时同样要写——写盘记录的是"本 Phase 已推进"，不是"本 Phase 做了活"（此时①②仍需成立：产物本就在，才谈得上"可跳过"）。

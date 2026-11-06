@@ -86,7 +86,7 @@ build/
 #   只存可共享的项目级版本状态机（versions.{V}，不按用户分桶、不含任何 git 用户名）+ 项目级运行时记录 project_state，故不在此忽略。
 # 测试账号文件（敏感 — username + password 明文；命令端会自动追加此条 + chmod 600）
 memory/.sprint-autopilot-credentials.json
-# 里程碑通知发送台账（完成核验门 autopilot-ceremony-gate.py 用；本地校验状态，不入库）
+# 旧版里程碑台账残留；现位置 memory/.aidp/ceremony-ledger.json 由运行态目录统一忽略
 memory/.autopilot-ceremony-ledger.json
 # 本地运行态目录（锁文件、提交前门禁台账等）
 memory/.aidp/
@@ -100,9 +100,9 @@ memory/.*.lock
 # 代码事实索引：100% 由 code_inventory.py 从 code/ 派生重建，入库只会带来无尽 diff 与合并冲突。
 memory/_facts/code-inventory.json
 # === Stop hook（autopilot-stop-guard.py）的三个本地运行态：纯本地、不入库 ===
-# 熔断计数（按 version_build 分键；收尾门通过即清）
+# 旧版计数残留；现位置 memory/.aidp/stop-guard-count（按任务/build分键）
 memory/.autopilot-stop-guard-count
-# fail-open 台账：护栏「本可介入却放行」的留痕，事后复盘用（滚动保留最近 50 条）
+# 旧版 fail-open 台账残留；现位置 memory/.aidp/stop-guard-skips.jsonl（滚动保留最近50条）
 memory/.autopilot-stop-guard-skips.jsonl
 # 人工临时禁用护栏的逃生舱开关（存在即全程放行；⛔ 用完记得删）
 memory/.autopilot-stop-guard-off

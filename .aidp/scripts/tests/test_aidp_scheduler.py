@@ -139,6 +139,155 @@ def test_render():
         shutil.rmtree(home, ignore_errors=True)
 
 
+def test_installed_intervals():
+    print("【安装周期跨进程巡检、重装与卸载】")
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    for platform in ("systemd", "cron", "launchd"):
+        root, home = _mkproj(), tempfile.mkdtemp()
+        state = Path(root, "memory", ".aidp", "scheduler-installation.json")
+        ns = SimpleNamespace(platform=platform, agent="codex", dev_interval="1h",
+                             test_interval="1h", dry_run=False, scheduled=True)
+        start = datetime.now(timezone.utc) - timedelta(minutes=40)
+        Path(root, S.BASELINE_REL).write_text(json.dumps(
+            {m["heartbeat"]: start.isoformat() for m in S.CHAINS.values()}))
+        try:
+            with patch.dict(os.environ, {"HOME": home}), \
+                    patch.object(S, "install_preflight", return_value=([], [])), \
+                    patch.object(S, "_run", return_value=(0, "")) as run, \
+                    patch.object(S, "_read_crontab", return_value=[]), \
+                    patch.object(S, "_write_crontab", return_value=(0, "")) as write_tab:
+                ns.dry_run = True
+                S.do_install(root, ns)
+                check(f"{platform} dry-run 不写安装态或执行装配", not state.exists()
+                      and not run.called and not write_tab.called)
+                ns.dry_run = False
+                rc, install = S.do_install(root, ns)
+                check(f"{platform} 成功安装保存实际 1h 周期", rc == 0 and state.exists()
+                      and json.loads(state.read_text()).get("intervals") == {"dev": 3600, "test": 3600})
+                rep = S.heartbeat_report(root, now=start + timedelta(minutes=40))
+                check(f"{platform} 40min 未到下次唤醒不误报", all(
+                    r["state"] == "fresh" and r["threshold_seconds"] == 11100 for r in rep.values()))
+                # 新进程只拿 root，不继承安装命令行或内存里的 intervals。
+                result = _sched(["watchdog", "--scheduled", "--json"], root, home)
+                check(f"{platform} 独立 watchdog 消费安装周期", result.returncode == 0 and all(
+                    r["threshold_seconds"] == 11100 for r in json.loads(result.stdout)["chains"].values()))
+                Path(root, "memory", "aidp-config.yaml").write_text(
+                    "scheduler:\n  dev_interval: 2m\n  test_interval: 3m\n")
+                _, status = S.do_status(root, ns)
+                check(f"{platform} 配置热改不伪装 timer 已重装", status["config"]["dev_interval"] == "2m"
+                      and all(r["threshold_seconds"] == 11100 for r in status["heartbeats"].values())
+                      and status.get("installation", {}).get("intervals") == {"dev": 3600, "test": 3600})
+                # 显式传周期的手工调用继续优先，未安装模式仍走配置。
+                manual = S.heartbeat_report(root, intervals={"dev": 120, "test": 180})
+                check(f"{platform} 显式手工周期优先", manual["dev"]["threshold_seconds"] == 660
+                      and manual["test"]["threshold_seconds"] == 840)
+                before = state.read_bytes() if state.exists() else b""
+                ns.dev_interval = ns.test_interval = "2h"
+                ns.dry_run = True
+                S.do_install(root, ns)
+                S.do_uninstall(root, ns)
+                check(f"{platform} 重装/卸载 dry-run 保留安装态", state.exists() and state.read_bytes() == before)
+                ns.dry_run = False
+                run.return_value = write_tab.return_value = (1, "offline failure")
+                rc, _ = S.do_install(root, ns)
+                check(f"{platform} 失败重装不写入新周期", rc == 2 and state.exists()
+                      and state.read_bytes() == before)
+                rc, _ = S.do_uninstall(root, ns)
+                check(f"{platform} 失败卸载保留安装周期", rc == 2 and state.exists()
+                      and state.read_bytes() == before)
+                run.return_value = write_tab.return_value = (0, "")
+                S.do_install(root, ns)
+                check(f"{platform} 成功重装更新周期", all(r["threshold_seconds"] == 21900
+                      for r in S.heartbeat_report(root).values()))
+                ns.dev_interval = ns.test_interval = None
+                S.do_install(root, ns)
+                check(f"{platform} 无覆盖重装采用当前配置", S.heartbeat_report(root)["dev"]["threshold_seconds"] == 660)
+                rc, _ = S.do_uninstall(root, ns)
+                check(f"{platform} 卸载清除有效安装周期", rc == 0
+                      and (not state.exists() or not json.loads(state.read_text()))
+                      and S.heartbeat_report(root)["test"]["threshold_seconds"] == 840)
+                run.return_value = write_tab.return_value = (1, "offline failure")
+                ns.dev_interval = ns.test_interval = "1h"
+                rc, _ = S.do_install(root, ns)
+                check(f"{platform} 首次安装失败无成功安装态", rc == 2
+                      and (not state.exists() or not json.loads(state.read_text())))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(home, ignore_errors=True)
+
+
+def test_installation_state_edges():
+    print("【安装态失败边界、锁与超期去重】")
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from baseline_edit import lock_path
+    root, home = _mkproj(), tempfile.mkdtemp()
+    state = Path(root, "memory", ".aidp", "scheduler-installation.json")
+    ns = SimpleNamespace(platform="systemd", agent="codex", dev_interval="1h",
+                         test_interval="1h", dry_run=False, scheduled=True)
+    try:
+        with patch.dict(os.environ, {"HOME": home}), \
+                patch.object(S, "install_preflight", return_value=([], [])), \
+                patch.object(S, "_run", return_value=(0, "")) as run:
+            run.side_effect = [(0, ""), (0, ""), (1, "late failure")]
+            rc, _ = S.do_install(root, ns)
+            check("部分任务启动后失败也不保存成功安装态", rc == 2 and not state.exists())
+            run.side_effect = None
+            def installed_under_lock(argv):
+                check("外部装配时已持安装态锁且未提前公布成功", not _lock_free(lock_path(str(state)))
+                      and not state.exists())
+                return 0, ""
+            run.side_effect = installed_under_lock
+            S.do_install(root, ns)
+            run.side_effect = None
+            before = state.read_bytes()
+            ns.dev_interval = ns.test_interval = "2h"
+            with patch.object(S.os, "replace", side_effect=OSError("offline disk failure")):
+                try:
+                    S.do_install(root, ns)
+                except OSError:
+                    failed = True
+                else:
+                    failed = False
+            check("安装态原子写失败不返回成功且旧记录完整", failed and state.read_bytes() == before
+                  and _lock_free(lock_path(str(state))))
+            ns.platform = "schtasks"
+            S.do_install(root, ns)
+            S.do_uninstall(root, ns)
+            check("schtasks 仅输出命令不伪造或清除成功安装态", state.read_bytes() == before)
+            ns.platform = "cron"
+            with patch.object(S, "_read_crontab", return_value=[]), \
+                    patch.object(S, "_write_crontab", return_value=(0, "")):
+                S.do_uninstall(root, ns)
+            check("卸载其他平台不清除已装平台周期", state.read_bytes() == before)
+
+            start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            Path(root, S.BASELINE_REL).write_text(json.dumps(
+                {m["heartbeat"]: start.isoformat() for m in S.CHAINS.values()}))
+            at_boundary = start + timedelta(seconds=11100)
+            rc, res = S.do_watchdog(root, ns, now=at_boundary, send_notify=False)
+            check("1h 安装周期仍保留 stale_cycles 与 300s 宽限", rc == 0 and res["stale"] == [])
+            rc, res = S.do_watchdog(root, ns, now=at_boundary + timedelta(seconds=1), send_notify=False)
+            check("超过真实阈值仍告警两条链路", rc == 3 and res["alerted"] == ["dev", "test"])
+            rc, res = S.do_watchdog(root, ns, now=at_boundary + timedelta(seconds=2), send_notify=False)
+            check("安装周期下仍保持同一心跳通知去重", rc == 3 and res["alerted"] == [] and len(_alerts(root)) == 2)
+            Path(root, S.BASELINE_REL).unlink()
+            Path(root, S.WATCHDOG_STATE_REL).unlink()
+            S.do_watchdog(root, ns, now=start, send_notify=False)
+            rc, res = S.do_watchdog(root, ns, now=start + timedelta(minutes=40), send_notify=False)
+            check("1h 安装后从未启动也按安装周期给宽限", rc == 0
+                  and all(r["state"] == "unknown" for r in res["chains"].values()))
+            rc, res = S.do_watchdog(root, ns, now=at_boundary + timedelta(seconds=1), send_notify=False)
+            check("从未启动超安装周期宽限仍报故障", rc == 3
+                  and all(r["state"] == "never-started" for r in res["chains"].values()))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def test_watchdog():
     print("【watchdog 心跳巡检】")
     root = _mkproj()
@@ -900,6 +1049,8 @@ def test_watchdog_env_concurrency_and_grace():
 
 
 if __name__ == "__main__":
+    test_installed_intervals()
+    test_installation_state_edges()
     test_all_failures_and_backoff()
     test_real_failure_backoff()
     test_watchdog_env_concurrency_and_grace()

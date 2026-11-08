@@ -17,7 +17,7 @@
 
 2.5 **★ 部署触发前置 → 部署前安全网 → 部署动作（任何开发路径完成后都从这里执行：`/sprint-batch`、逐 tick 单 Sprint 全部关闭、incremental、自动修复复测轮；⛔ 不属于 `/sprint-batch` 步骤）**
 
-   - **日常累进部署测试门（先于 push 或任何部署触发）**：存在本轮契约卡时，读取其 `test_plan`，对每套 `full_argv` 按相同 `cwd/env_id/inputs` 经 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --scope full --env-id <环境标识> -- <原始测试argv>` 执行/复用，并使用卡中的实际 `--cwd`、逐条 `--input`。必须返回稳定 PASS；targeted 或缺失账本不能代替。修复迭代先定向，汇合验收后若代码未变本门复用；最后一次代码变更使旧记录失效，集中补全量后再部署。最多两次是正常路径预算，失败或持续变更时如实超额并记录原因，不以预算截断质量门。测试命令不得擅自起服务或完整构建，约定 35 授权照旧。
+   - **日常累进部署测试门（先于 push 或任何部署触发）**：只消费 `/sprint-test` Step 7 的当前 Sprint 单测证据，按该协议复用或补跑；约定 35 与部署授权不变。
 
    > **`vcs_mode=none` 独立出口（优先于下方 Git 推送围栏）**：开发/测试/Sprint 关闭成果仍留在本地。对提交、推送、推送分类、远端 CICD 各节点写当前 build `steps[]` 为 `status=skipped`、`reason=unsupported:vcs-disabled`，baseline 同步保留未推送事实；不执行 `git status/add/commit/push`，不伪造 `push_commit` / `push_at` / `cicd_skipped=true`（该字段只表示 Git push 后按内容分类跳过 CICD）。`mode=local` 不经过 Git/CICD，必须探本地服务真实就绪（启动命令成功不等于就绪）；就绪后按下方「部署完成 → 落盘交接信号」写 `last_deployed_at` + `phase_beta_done_at` 并记录本地探活 URL/结果，未就绪则不得写证据或交接测试；依赖 Git push 的 cloud 路径只记未部署，不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d 部署成功通知，不启动对旧代码的浏览器测试。随后继续 Phase 3.3 本地审计、Phase 3.4 报告和收尾；不得因跳过 Git 节点冻结本地开发。`git` 时执行下方原围栏。
 

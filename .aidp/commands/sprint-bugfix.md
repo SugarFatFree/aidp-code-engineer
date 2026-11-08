@@ -126,7 +126,7 @@
 - **不新开 Sprint、不做累进**——编排器已持有当前 Sprint 上下文，本方式只在其内闭环修复；需要累进的较大 bug 由编排器自行决定是否改走方式 C。
 - **执行体 = 方式 B 全流程**：编排器传入的参数（`sprint-{NNN}` 过滤 / 空）落到方式 B 的参数分支，按方式 B 的骨架表 + `{{AIDP_HOME}}/flows/sprint-bugfix/mode-b.md` 逐项执行。
 - **零询问**：编排器上下文（尤其 `/sprint-batch` 连跑、`/sprint-autopilot` 无人值守）下不弹 `AskUserQuestion`，一律按上方「缺陷处置默认决策纪律」的默认处置直接修。
-- **收口**：只接管未闭环项，复用原问题 ID/证据；已修项带真实 SHA 或尚未提交写树 hash，挂起原因与不修理由分列。定向测试后回传编排器，由已有验收会话完成 reviewer 差量复核和集中 full，不重复完整 `/sprint-test` / CVL。
+- **收口**：只接管未闭环项，复用原问题 ID/证据；已修项带真实 SHA 或尚未提交写树 hash，挂起原因与不修理由分列。定向测试后回传编排器，由已有验收会话完成 reviewer 差量复核和集中 Sprint 单测，不重复完整 `/sprint-test` / CVL。
 
 ---
 
@@ -200,7 +200,7 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 
 ### Phase 3：只接管未闭环项
 
-`/sprint-test` 已负责当轮原实现者修复与差量复核。本层不重复完整验收、不重修已闭环 BUG；仅对其返回的可修复残项恢复原实现者，必要时方式 B 接管同一 Sprint/BUG，随后 `/sprint-test {新NNN} --resume-acceptance [--from-batch] [--unattended]` 续接定向复核与最终集中 full。共用验收的修复轮次，累计连续 5 轮失败即返回未闭环项，不另起五轮完整验收。
+`/sprint-test` 已负责当轮原实现者修复与差量复核。本层不重复完整验收、不重修已闭环 BUG；仅对其返回的可修复残项恢复原实现者，必要时方式 B 接管同一 Sprint/BUG，随后 `/sprint-test {新NNN} --resume-acceptance [--from-batch] [--unattended]` 续接定向复核与最终 Sprint 单测收敛。共用验收的修复轮次，累计连续 5 轮失败即返回未闭环项，不另起五轮完整验收。
 
 产品/版本/破坏性/环境待决保持具体原因并返回上层，不能静默关闭。所有下游继续原样透传 `--unattended` / `--from-batch` 和实测意图；没有可信原始质量证据时回验收补齐，不宣称 CVL 增量模式。
 

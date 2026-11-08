@@ -68,7 +68,11 @@ PRE_CUR_BUILD=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".current_build // empty
 # build 插值写法同 phase-3-4.md；原因见 rationale.md。
 FIN=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".builds[]? | select(.build==\"$PRE_CUR_BUILD\") | .ai_report_finalized // false" "$BASELINE_FILE" | head -1)
 FIN="${FIN:-false}"
-     if [ -n "$AT" ] && [ "$UNC" = "0" ] && [ "$FIN" = "true" ] && [ "$(to_ts "$LAST_DEP")" -le "$(to_ts "$AT")" ]; then
+     JOIN_STATE=$($BE --version "$PRE_RELEASE_VERSION" --build "$PRE_CUR_BUILD" get test_join.overall_status --default "")
+     if [ "$JOIN_STATE" = "RUNNING" ] || [ "$JOIN_STATE" = "UNVERIFIED" ] || [ "$JOIN_STATE" = "TIMEOUT" ]; then
+       echo "ℹ️ 本 build 测试状态 $JOIN_STATE，准发布暂缓；等待/未核验不递增失败计数、不冻结"
+       PRERELEASE_HOLD=1
+     elif [ -n "$AT" ] && [ "$UNC" = "0" ] && [ "$FIN" = "true" ] && [ "$(to_ts "$LAST_DEP")" -le "$(to_ts "$AT")" ]; then
        $BE --version "$PRE_RELEASE_VERSION" del test_loop_missing_streak prerelease_test_hold_streak || true
        echo "✅ 0b 测试收敛：本 build 已于 $AT 测过、已收敛、报告已 finalize → 允许准发布归档"
      else

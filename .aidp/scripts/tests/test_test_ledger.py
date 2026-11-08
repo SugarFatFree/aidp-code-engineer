@@ -24,19 +24,82 @@ class TestLedgerTests(unittest.TestCase):
         (self.root / "src/app.py").write_text("answer = 1\n")
         (self.root / "memory").mkdir()
         self.count = self.root / "memory/count"
+        self.scoped = False
+        self.scope_multi = False
+        self.last_scope = None
         self.command = [sys.executable, "-c", (
             "from pathlib import Path; "
             f"p=Path({str(self.count)!r}); "
             "p.write_text(str(int(p.read_text())+1) if p.exists() else '1')"
         )]
 
+    def enable_scopes(self):
+        if self.scoped:
+            return
+        self.scoped = True
+        self.git("init", "-q")
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("config", "user.name", "test")
+        (self.root / ".gitignore").write_text("memory/\ndocs/\n__pycache__/\n")
+        (self.root / "tests").mkdir(exist_ok=True)
+        (self.root / "tests/test_app.py").write_text("import unittest\nfrom pathlib import Path\nclass AppTest(unittest.TestCase):\n def test_app(self): self.assertIn('answer', Path('src/app.py').read_text())\n")
+        self.git("add", "src", "tests", ".gitignore")
+        self.git("commit", "-qm", "scope baseline")
+        self.scope_base = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
+                                         check=True, text=True, capture_output=True).stdout.strip()
+
+    def scope_path(self, plan):
+        rel = "memory/scopes/" + plan["scope_hash"] + ".json"
+        target = self.root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(plan))
+        self.last_scope = (rel, plan["scope_hash"])
+        return rel, plan["scope_hash"]
+
+    def scope_for_run(self, command, options):
+        if str(SCRIPT.parent) not in sys.path:
+            sys.path.insert(0, str(SCRIPT.parent))
+        import test_scope
+        inputs = [options[i + 1] for i, value in enumerate(options) if value == "--input"]
+        cwd = next((options[i + 1] for i, value in enumerate(options) if value == "--cwd"), ".")
+        if self.scope_multi:
+            runners = [{"cwd": "suite-" + name, "suffixes": [".py"], "inputs": [f"docs/{name}.json"],
+                        "argv": [*command, "{tests}"]} for name in ("a", "b")]
+            selected = "a" if "docs/a.json" in inputs else "b"
+            cwd = "suite-" + selected
+            write_set = [f"suite-{name}/src/app.py" for name in ("a", "b")]
+        else:
+            runners = [{"cwd": cwd, "suffixes": [".py"], "inputs": inputs, "argv": [*command, "{tests}"]}]
+            write_set = ["src/app.py"]
+        plan = test_scope.derive(self.root, self.scope_base, runners, write_set)
+        rel, hash_value = self.scope_path(plan)
+        item = next(item for item in plan["runs"] if item["cwd"] == cwd)
+        return ["--cwd", cwd, "--scope-file", rel, "--scope-hash", hash_value], item["argv"]
+
+    def scope_for_ids(self, ids):
+        rows = [json.loads(line) for line in self.ledger().read_text().splitlines()] if self.ledger().exists() else []
+        for run_id in ids:
+            row = next((r for r in rows if r.get("run_id") == run_id and r["kind"] == "run"), None)
+            if row and row.get("scope_binding"):
+                return self.scope_path(row["scope_binding"]["plan"])
+        return self.last_scope or ("memory/no-scope.json", "missing")
+
     def argv(self, action="run", options=(), command=None):
         argv = [sys.executable, str(SCRIPT), action, "--root", str(self.root),
                 "--env-id", "local-test"]
         if action == "run":
-            argv += ["--scope", "full", *options, "--", *(command or self.command)]
+            command = command or self.command
+            scope = next((options[i + 1] for i, value in enumerate(options) if value == "--scope"), "sprint")
+            binding = []
+            if self.scoped and scope == "sprint":
+                binding, command = self.scope_for_run(command, options)
+            argv += ["--scope", "sprint", *options, *binding, "--", *command]
         else:
             argv += list(options)
+            if action == "record-review" and "--scope-file" not in options:
+                ids = [options[i + 1] for i, value in enumerate(options) if value == "--run-id"]
+                rel, hash_value = self.scope_for_ids(ids)
+                argv += ["--scope-file", rel, "--scope-hash", hash_value]
         return argv
 
     def invoke(self, options=(), command=None, action="run", expected=0, env=None):
@@ -292,7 +355,8 @@ class TestLedgerTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(row["status"] == "PASS" for row in rows))
 
-    def test_review_requires_full_pass_and_nonempty_report(self):
+    def test_review_requires_scoped_sprint_evidence_and_nonempty_report(self):
+        self.enable_scopes()
         run = self.invoke(options=("--scope", "targeted"))
         report = self.root / "memory/review.md"
         report.write_text("Reviewed code and tests; no blocking findings.")
@@ -306,6 +370,7 @@ class TestLedgerTests(unittest.TestCase):
         self.assertEqual(self.invoke(action="record-review", options=args)["kind"], "review")
 
     def make_review(self, command=None, options=(), name="acceptance"):
+        self.enable_scopes()
         run = self.invoke(command=command, options=options)
         (self.root / "memory/review.md").write_text("Reviewed this tree with no blocking findings.")
         self.invoke(action="record-review", options=("--name", name, "--run-id", run["run_id"],
@@ -440,14 +505,24 @@ class TestLedgerTests(unittest.TestCase):
         self.invoke(action="review-delta", options=("--name", "a"), expected=2)
 
     def full_suites(self):
-        (self.root / "docs").mkdir()
+        self.enable_scopes()
+        self.scope_multi = True
+        (self.root / "docs").mkdir(exist_ok=True)
         (self.root / "memory/exit").write_text("0")
-        (self.root / "memory/review.md").write_text("Reviewed suites A and B.")
-        command = [sys.executable, "-c", "from pathlib import Path; raise SystemExit(int(Path('memory/exit').read_text()))"]
-        runs = []
+        (self.root / "memory/review.md").write_text("Reviewed Sprint suites A and B.")
+        command = [sys.executable, "-c", f"from pathlib import Path; raise SystemExit(int(Path({str(self.root / 'memory/exit')!r}).read_text()))"]
         for name in ("a", "b"):
             (self.root / f"docs/{name}.json").write_text(name)
-            runs.append(self.invoke(command=command, options=("--input", f"docs/{name}.json")))
+            module = self.root / ("suite-" + name)
+            (module / "src").mkdir(parents=True, exist_ok=True)
+            (module / "tests").mkdir(exist_ok=True)
+            (module / "src/app.py").write_text("answer = 1\n")
+            (module / "tests/test_app.py").write_text((self.root / "tests/test_app.py").read_text())
+        self.git("add", "suite-a", "suite-b")
+        self.git("commit", "-qm", "suite baseline")
+        self.scope_base = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
+                                         check=True, text=True, capture_output=True).stdout.strip()
+        runs = [self.invoke(command=command, options=("--input", f"docs/{name}.json")) for name in ("a", "b")]
         return command, runs
 
     def review_options(self, runs):
@@ -512,15 +587,25 @@ class TestLedgerTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("ledger_api_test", SCRIPT)
         ledger = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(ledger)
+        self.enable_scopes()
+        first = self.invoke()
+        (self.root / "memory/review.md").write_text("Reviewed selected Sprint test.")
+        scope_file, scope_hash = self.scope_for_ids([first["run_id"]])
+        single = ledger.record_review(self.root, "single", first["run_id"], "local-test", "memory/review.md",
+                                      scope_file=scope_file, scope_hash=scope_hash)
+        self.assertEqual(single["run_ids"], [first["run_id"]])
         _, runs = self.full_suites()
         ids = [run["run_id"] for run in runs]
-        single = ledger.record_review(self.root, "single", ids[0], "local-test", "memory/review.md")
-        self.assertEqual(single["run_ids"], ids[:1])
-        multi = ledger.record_review(self.root, "multi", ids, "local-test", "memory/review.md")
+        scope_file, scope_hash = self.scope_for_ids(ids)
+        multi = ledger.record_review(self.root, "multi", ids, "local-test", "memory/review.md",
+                                     scope_file=scope_file, scope_hash=scope_hash)
         self.assertEqual(multi["run_ids"], ids)
         for invalid in (None, [], "", [ids[0], ids[0]], ["", ids[1]], [42, ids[1]], [{}, ids[1]]):
             with self.subTest(invalid=invalid), self.assertRaises(ledger.LedgerError):
-                ledger.record_review(self.root, "invalid", invalid, "local-test", "memory/review.md")
+                ledger.record_review(self.root, "invalid", invalid, "local-test", "memory/review.md",
+                                     scope_file=scope_file, scope_hash=scope_hash)
+        with self.assertRaises(ledger.LedgerError):
+            ledger.record_review(self.root, "unbound", ids, "local-test", "memory/review.md")
 
     def test_review_delta_rejects_corrupt_run_ids_and_reads_legacy_single_baseline(self):
         _, runs = self.full_suites()
@@ -543,11 +628,15 @@ class TestLedgerTests(unittest.TestCase):
                 self.invoke(action="review-delta", options=("--name", "acceptance"), expected=2)
         legacy = dict(original[-1])
         legacy.pop("run_ids", None)
+        legacy.pop("scope_hash", None)
+        legacy.pop("scope_file", None)
         save_review(legacy)
         delta = self.invoke(action="review-delta", options=("--name", "acceptance"))
         self.assertEqual(delta["run_ids"], ids[-1:])
         self.assertEqual(delta["run_id"], ids[-1])
         self.assertFalse(delta["code_changed"])
+        self.assertTrue(delta["legacy"])
+        self.assertTrue(delta["requires_verification"])
 
     def test_review_delta_uses_accepted_snapshot_not_head(self):
         self.make_review()
@@ -578,6 +667,7 @@ class TestLedgerTests(unittest.TestCase):
                     options=("--name", "new-review", "--run-id", run["run_id"], "--report", "memory/review.md"))
 
     def test_review_inherits_test_inputs_and_additional_contract_inputs(self):
+        self.enable_scopes()
         (self.root / "docs").mkdir()
         (self.root / "docs/fixture.json").write_text("fixture1")
         (self.root / "docs/contract.md").write_text("contract1")
@@ -697,6 +787,111 @@ class TestLedgerTests(unittest.TestCase):
         self.assertTrue(self.invoke(env=noise)["reused"])
         changed = dict(noise, LEDGER_SESSION_TOKEN="another-session")
         self.assertFalse(self.invoke(env=changed)["reused"])
+
+    def test_full_api_uses_dedicated_build_ledger_across_worktree_paths(self):
+        spec = importlib.util.spec_from_file_location("ledger_full_api_test", SCRIPT)
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        self.git("init", "-q")
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("config", "user.name", "test")
+        self.git("add", "src/app.py")
+        self.git("commit", "-qm", "build")
+        main_run = self.invoke()
+        with tempfile.TemporaryDirectory(prefix="aidp-build-cache-") as temp:
+            cache = Path(temp) / "build-ledger"
+            original = None
+            for index in range(2):
+                wt = Path(temp) / f"wt-{index}"
+                self.git("worktree", "add", "--detach", str(wt), "HEAD")
+                try:
+                    output, exit_code = ledger.run(root=wt, cwd=".", scope="full", env_id="build-1",
+                                                   command=[sys.executable, "-c", "pass"], ledger_root=cache)
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(output["status"], "PASS")
+                    self.assertEqual(output["reused"], bool(index))
+                    if original is None:
+                        original = output
+                    else:
+                        self.assertEqual(output["run_id"], original["run_id"])
+                        self.assertEqual(output["root"], original["root"], "复用保留原执行 worktree 位置")
+                finally:
+                    self.git("worktree", "remove", "--force", str(wt))
+            self.assertTrue((cache / "memory/.aidp/test-ledger.jsonl").is_file())
+            main_again = self.invoke()
+            self.assertTrue(main_again["reused"])
+            self.assertEqual(main_again["run_id"], main_run["run_id"])
+            self.assertEqual(len(ledger.load(self.root)), 1, "独立 build 账本不得混入主仓 Sprint 记录")
+
+    def test_tool_wrapper_exit_127_is_unverified_not_code_failure(self):
+        out = self.invoke(command=[sys.executable, "-c", "raise SystemExit(127)"], expected=127)
+        self.assertEqual(out["status"], "ERROR")
+        self.assertIn("未核验", out["error"])
+
+    def test_run_api_validates_timeout_and_environment(self):
+        spec = importlib.util.spec_from_file_location("ledger_validation_api_test", SCRIPT)
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        for extra in ({"timeout": float("nan")}, {"timeout": 0}, {"env_id": " "}):
+            options = {"root": self.root, "cwd": ".", "scope": "full", "env_id": "build",
+                       "command": [sys.executable, "-c", "pass"], **extra}
+            with self.subTest(extra=extra), self.assertRaises(ledger.LedgerError):
+                ledger.run(**options)
+        self.assertFalse(self.ledger().exists())
+
+    def test_loading_carried_rows_rechecks_dependencies_and_rejects_legacy_proof(self):
+        self.enable_scopes()
+        sys.path.insert(0, str(SCRIPT.parent))
+        import test_scope
+        import test_ledger
+        for name, text in {
+            "src/b.py": "value = 1\n",
+            "src/a.py": "from src.b import value\n",
+            "tests/__init__.py": "",
+            "tests/test_a.py": "import unittest\nfrom src.a import value\nclass A(unittest.TestCase):\n def test_a(self): self.assertEqual(value, 1)\n",
+            "tests/test_b.py": "import unittest\nfrom src.b import value\nclass B(unittest.TestCase):\n def test_b(self): self.assertGreater(value, 0)\n",
+        }.items():
+            (self.root / name).write_text(text)
+        runners = [{"suffixes": [".py"], "argv": [sys.executable, "-B", "-m", "unittest", "{tests}"]}]
+        plan = test_scope.derive(self.root, self.scope_base, runners)
+        rel, _ = self.scope_path(plan)
+        command = [sys.executable, str(SCRIPT), "run-scope", "--root", str(self.root),
+                   "--scope-file", rel, "--env-id", "local-test"]
+        first = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        original = test_ledger.load(self.root)
+        source = next(r for r in original if r["command"][-1] == "tests/test_a.py")
+        (self.root / "src/b.py").write_text("value = 2\n")
+        plan = test_scope.derive(self.root, self.scope_base, runners)
+        rel, _ = self.scope_path(plan)
+        snapshot = test_ledger.tree_snapshot(self.root)
+        item = next(r for r in plan["runs"] if r["tests"] == ["tests/test_a.py"])
+        # 按旧实现会接受的结构保存真实来源 PASS + 错误 CARRIED；校验和全部合法。
+        carried = dict(source, run_id="historical-bad-carry", status="CARRIED", exit_code=None,
+                       before_hash=snapshot["hash"], after_hash=None, assessment_hash=snapshot["hash"],
+                       files=snapshot["files"], source_run_id=source["run_id"], parent_run_id=source["run_id"],
+                       source_tree_hash=source["after_hash"], scope_binding={"plan": plan, "item": item},
+                       scope_hash=plan["scope_hash"], delta=["src/b.py"])
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                rows = json.loads(json.dumps([*original, carried]))
+                if legacy:
+                    for row in rows:
+                        historical = row["scope_binding"]["plan"]
+                        historical.pop("dependencies", None)
+                        historical["scope_hash"] = test_scope.digest({k: v for k, v in historical.items() if k != "scope_hash"})
+                        row["scope_hash"] = historical["scope_hash"]
+                test_ledger.save(self.root, rows)
+                with self.assertRaisesRegex(test_ledger.LedgerError, "carry-forward"):
+                    test_ledger.load(self.root)
+                for action in ("run-scope", "verify"):
+                    args = [sys.executable, str(SCRIPT), action, "--root", str(self.root),
+                            "--scope-file", rel, "--env-id", "local-test"]
+                    if action == "verify":
+                        args += ["--scope-hash", plan["scope_hash"], "--run-id", carried["run_id"]]
+                    rejected = subprocess.run(args, capture_output=True, text=True)
+                    self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
+                    self.assertIn("carry-forward", rejected.stdout)
 
     def test_self_check_has_positive_and_negative_cases(self):
         p = subprocess.run([sys.executable, str(SCRIPT), "--self-check"],

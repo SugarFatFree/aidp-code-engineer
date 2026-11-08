@@ -30,7 +30,7 @@
 | 决策与受影响结论 | 方案取舍；旧结论→新结论、具体落点、失效/改写/不受影响；口径反转必须回答旧安全结论是否仍成立并当轮补守卫 |
 | 执行工作单 | 每个 Task 的 REQ/步骤/AC/依赖、owner、具体 write_set/create_dirs；工作单回传落点由主流程分配，开发者只写自己的文件 |
 | 用例义务 | `check_case_ledger_pending.py --prepare` 的 required/deferred 真实读数、正式用例路径或延期原因；契约 AC 不能冒充正式实测用例 |
-| test_plan | 每套测试固定 `cwd`、`full_argv`（原始 argv 列表）、`targeted_argv`、`env_id`、`inputs`（契约/设计/fixture 路径）；从项目已存在测试命令采集，可登记多套，不擅自启动服务/完整构建。`sprint-test` 与部署前复用本计划的同一原 argv，不能换成一条更轻的命令冒充 full |
+| test_plan | 保留每套 `cwd`、`env_id`、`inputs`、开发用 `targeted_argv`；新增 `unit_runners`（每个模块的 `cwd/suffixes/argv/env_id/inputs`，字段及选择器规则见 `/sprint-test` Step 2.6）。`/sprint-test` 与部署前复用同一 `unit_runners` 推导结果。`full_argv` 只供 `/sprint-aiauto-test`，其冻结计划块与部署 commit 校验格式见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md`。命令全部取自项目已有测试配置，不造占位命令 |
 | 时点 | 开始、契约放行、各分支结束、汇合、验收、可部署时间；卡在验收测试前冻结，验收/可部署时点及 run_id 写独立报告，不回写卡触发自我失效。阻塞契约卡目标≤10分钟，同类 M 全栈无 DDL 回放从口述到可部署目标≤70分钟（现状140分钟的50%）。仅用于定位耗时，不能因超时绕授权或硬门；未做业务回放不得宣称实证，缺证据不编造时间 |
 | 汇合证据 | contract_revision、实际文件清单、docs状态与正式产物路径、reviewer契约一致性结果、测试账本证据；未完成项和缺失原因不能删 |
 
@@ -61,7 +61,7 @@ AIDP 主流程直接使用 Agent 工具编排，不调用 `superpowers:subagent-
 2. M 设计/接口默认合册并引用契约卡章节，**调用层将任务档位与输出布局分开**：经 `/sprint-design --scale=M --compact-contract=<契约卡路径> [--unattended]`，内部使用上游已有“目标产出：1 册合并设计”的自然语言能力及 `scale=S` 输出布局；记录 `dev_scale=M / design_output_scale=S`。上游 `scale=M` 原生是三册，不能谎称它支持一册。完整接口/DDL内容、溯源、Critical、机器门和强制专题均不删；有强制独立专题时保留该专题并说明。索引登记真实合册章节。所有消费者显式读取契约与合册，不能只传不存在的 `03_接口设计.md`。
 3. 正式补充文档用 `--supplement`；消化既有族台账用 `--ledger-cascade`，由调用层负责把已核验内容合入既有主文档。两者作用域分开，不让新增补充册冒充级联落点；成功落地的义务才能清条，未生成用例继续保留。沿用现有设计/计划/用例回检和增量文档审计，**同修订同产物证据只汇总一次**，不新增审计。
 4. **删除 Task 级双完整审查**。实现者保留 TDD、必要静态自检；汇合只派一次独立只读 reviewer 做**契约一致性审查**（Task/REQ/AC、接口、DDL、决策及受影响结论，原检查项不取消）。问题交原实现/docs Agent 修复，再查问题和新 diff；契约通过后由 `/sprint-test` 做一次 CVL 完整质量检查，此后只做差量复核，不重复完整审查。
-5. 命令型测试统一经账本：`python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd . --scope targeted --env-id <环境标识> --input <契约卡路径> -- <原命令及argv>`。开发用 targeted；既定汇合/验收要求的完整命令用 full（完整指该命令的测试范围，不授权启动服务或打包）。仅 hash/输入/环境相同的 PASS 可复用，失败、工具不可用、未执行不能复用为通过；**targeted 不会代替 full**。契约修订、输入或环境变化重新执行；不重复无变化的已通过命令。
+5. 开发期保留 TDD 与相关定向验证（`test_ledger.py run --scope targeted`）；汇合、修复收敛及部署前只消费 `/sprint-test` Step 2.6 / Step 7 的 Sprint 单测协议与范围证据，**targeted 与 sprint 互不替代**，失败、工具不可用、未执行不能算通过；范围推导与执行协议只在该命令定义。
 6. 主流程在卡的“汇合证据”登记上述结果。`/sprint-test` 独立调用也先核此门；未完成时恢复缺失 docs/实现任务，不带未成文 M 进入 CVL。卡无正式用例时明确 deferred；显式实测入口必须补齐正式用例和用例族门后再执行。
 
 ## 验收后差量

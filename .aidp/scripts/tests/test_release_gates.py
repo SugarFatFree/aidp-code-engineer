@@ -536,7 +536,42 @@ def test_release_actual_write_set():
         check(f'{path.name}: 分片小于 20480 字节', path.stat().st_size < 20480)
 
 
+def test_changelog_uses_semver_baseline_and_original_tag():
+    first = (REPO / '.aidp/flows/version/release-1.md').read_text(encoding='utf-8')
+    section = first.split('### tag 风格识别约定', 1)[1].split('### Step 3.1', 1)[0]
+    block = re.search(r'```bash\n(.*?)\n```', section, re.S).group(1)
+    block = block.replace('{{AIDP_HOME}}', str(REPO / '.aidp')).replace('{version}', 'V0.3.0')
+    second = (REPO / '.aidp/flows/version/release-2.md').read_text(encoding='utf-8')
+    commits = re.search(r'<!-- release-changelog-commits -->\s*```bash\n(.*?)\n```', second, re.S)
+    check('发布日志以原始tag为Git引用，不用归一展示版本',
+          'git log {prev-version}' not in second and 'git describe --tags' not in second)
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        def git(*args):
+            return subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True, check=True).stdout.strip()
+        git('init', '-q'); git('config', 'user.name', 'audit'); git('config', 'user.email', 'audit@example.invalid')
+        for index, tag in enumerate(('v0.1.0', 'V0.2.0', 'release-V0.2.5')):
+            (root / 'app.txt').write_text(str(index))
+            git('add', 'app.txt'); git('commit', '-qm', f'feat(app): released-{index}'); git('tag', tag)
+        (root / 'app.txt').write_text('pending')
+        git('add', 'app.txt'); git('commit', '-qm', 'fix(app): pending')
+        for expected in ('release-V0.2.5', 'V0.2.0', 'v0.1.0', ''):
+            result = subprocess.run(['bash', '-e', '-c', block + '\nprintf "%s" "$PREV"'],
+                                    cwd=root, capture_output=True, text=True)
+            check('混合tag原始基线=' + (expected or '首版'), result.returncode == 0 and result.stdout == expected)
+            if commits:
+                command = commits.group(1).replace('{{AIDP_HOME}}', str(REPO / '.aidp')).replace('{version}', 'V0.3.0')
+                run = subprocess.run(['bash', '-e', '-c', command], cwd=root, capture_output=True, text=True)
+                check('原始tag范围可执行=' + (expected or '首版'), run.returncode == 0 and 'fix(app): pending' in run.stdout)
+                if expected == 'release-V0.2.5':
+                    check('不把已发布提交重复写入新日志', 'released-' not in run.stdout)
+            if expected:
+                git('tag', '-d', expected)
+    check('变更日志有可提取执行入口', commits is not None)
+
+
 def main():
+    test_changelog_uses_semver_baseline_and_original_tag()
     test_release_actual_write_set()
     test_release_cicd_degraded_probe()
     test_increment_presence()

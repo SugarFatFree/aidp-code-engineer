@@ -11,9 +11,15 @@
 | `test_report_schema.py` | `emit-report.py` 数据契约校验（`validate_payload`）+ `buildNo` 派生 + **示例文件自校验（示例即契约、永不分叉）** + 改坏必红 | `python3 .aidp/scripts/tests/test_report_schema.py` | Python 标准库；③④ 加载 JS 示例需 `node`（缺则跳过、非失败） |
 | `test_report_render.js` | 渲染口径（`pct` 经渲染路径：0.84→84%、100.0→100% 不出 10000%）+ 坏数据健壮性（risks 分组对象不白屏 / cases 别名无 undefined / 无 buildNo 不 `#undefined`） | `node .aidp/scripts/tests/test_report_render.js` | `node` |
 | `test_report_lightbox.js` | 截图灯箱交互：滚轮缩放（含以光标为锚点、上下限、阻止页面滚动）、放大后拖拽平移、双击复位、换图重置。⛔ 判据是**真触发 wheel/mousedown 再断言 transform**，不是「源码里有没有 wheel 字样」——那种字符串匹配改坏了照样绿 | `node .aidp/scripts/tests/test_report_lightbox.js` | `node` |
+| `test_release_unit_report.js` | 发布测试报告独立保留实测/单测事实，失败与未核验不判绿，历史兼容 | `node .aidp/scripts/tests/test_release_unit_report.js` | Node.js |
 | `test_commit_gate.py` | `commit_gate.py`（约定 24）：模板项目判定 / 业务代码与纯脚手架判定 / 约定 22 台账积压（stale、多态识别、已级联未清理、归档标记、格式漂移）/ `suspected_cascade_bypass` / 约定 41 `offchain` 档位 / `pending_cicd` 推送欠账 / CLI 退出码 0·3 与 `--quiet` 告警恒打印 / `commit_gate.enabled` 总开关；另含 `classify_commit_change` · `classify_push` 分类（按 commit 键控记录、部署终态） | `python3 .aidp/scripts/tests/test_commit_gate.py` | Python 标准库 + `git` |
 | `test_alloc_id.py` | 原子号段分配：历史取号、作用域交叠、账本损坏、空洞与引用、并发锁 | `python3 .aidp/scripts/tests/test_alloc_id.py` | Python 标准库、POSIX 文件锁 |
 | `test_test_ledger.py` | 真实测试执行与PASS复用：内容树、范围/命令/环境/输入隔离、并发、失败与树漂移、验收快照及差量 | `python3 .aidp/scripts/tests/test_test_ledger.py` | Python 标准库、POSIX 文件锁、Git |
+| `test_test_scope.py` | Sprint 单测确定性推导（按运行器分组、无对应单测、无运行器、不回落全量）+ `run-scope` 逐套记账（PASS 复用/FAIL/EMPTY）+ 全量单测 worktree 账本复用（清理后仍命中） | `python3 .aidp/scripts/tests/test_test_scope.py` | Python 标准库、Git |
+| `test_build_unit_test.py` | 部署完整提交隔离执行、并发缓存、超时清理 | `python3 .aidp/scripts/tests/test_build_unit_test.py` | Python 标准库、Git、Node（报告渲染） |
+| `test_unit_report.py` | 全量单测/实测独立展示、缺证据不能通过、旧报告兼容 | `python3 .aidp/scripts/tests/test_unit_report.py` | Python 标准库、Git、Node（报告渲染） |
+| `test_aiauto_test_join.py` | 单测失败幂等登记、未核验不冻结、准发布状态 | `python3 .aidp/scripts/tests/test_aiauto_test_join.py` | Python 标准库、Git、Node（报告渲染） |
+| `test_aiauto_parallel.py` | 真实并行替身、执行器→报告→状态汇总、不同build复跑 | `python3 .aidp/scripts/tests/test_aiauto_parallel.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_notify.py` | `notify.py`（约定 32）：feishu / dingtalk / wecom / lark-cli / command 渠道渲染与发送、飞书 · 钉钉签名、`--auto` 渠道回落、`--sender`、`--print-only` / `--json` 结构、退出码 0/1/2/3、项目名解析与 `--check-name`、发送成功才登记台账 | `python3 .aidp/scripts/tests/test_notify.py` | Python 标准库（本地 127.0.0.1 HTTP 桩 + 假 lark-cli，不联网） |
 | `cicd_watch.py --selftest`（脚本自带，非本目录文件） | CICD 多提供方监听（`cicd_watch.py` + `cicd_providers.py`）的离线自测，由 `run.sh` 一并调起 | `python3 .aidp/scripts/cicd_watch.py --selftest` | Python 标准库 |
 | `test_agent_sync.py` | `agent_env.py`（detect / memory-file / `--self-check`）+ `agent_sync.py`（临时 git 仓库装配 Claude Code / Codex / DeepSeek Harness、记忆文件搬迁、幂等、`--check` 漂移、copy 模式、清理与合并、`--self-check`） | `python3 .aidp/scripts/tests/test_agent_sync.py` | Python 标准库 + `git` |

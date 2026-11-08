@@ -547,7 +547,9 @@ def test_aiauto_convergence_aggregation():
     raw = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-3.md").read_text(encoding="utf-8")
     block = re.search(r'> ```bash\n(.*?)> ```', raw, re.S).group(1)
     block = "\n".join(line[2:] if line.startswith("> ") else line for line in block.splitlines())
-    block = block.split("# ★★ 以下三类状态", 1)[0]
+    # 本函数保留旧无 unitTests 的九类统计场景；联合分支在 test_unit_report 中实跑。
+    block = "OPEN_BUGS=" + block.split("\nOPEN_BUGS=", 1)[1]
+    block = block.split("\nAUTO_FIXABLE_FOUND=", 1)[0]
     block = "\n".join(line for line in block.splitlines() if not line.startswith('eval "$('))
     block = block.replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
     base = {"case_id": "TC-1", "status": "pass", "execution_mode": "direct",
@@ -622,7 +624,13 @@ def test_aiauto_report_summary_mapping():
     """执行 flow 的字段桥接代码，确认聚合输出可映射为 SPA summary 且坏统计拒写。"""
     print("\n[aiauto 报告字段映射实跑]")
     raw = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-2.md").read_text(encoding="utf-8")
-    mapper = raw.split("! printf '%s' \"$GEN_JSON\" | python3 -c '\n", 1)[1].split("\n' \"$BTR/.build-input-$BUILD.json\"", 1)[0]
+    import ast
+    code = raw.split("<<'BROWSER_SUMMARY'\n", 1)[1].split("\nBROWSER_SUMMARY", 1)[0]
+    node = next(n for n in ast.parse(code).body if isinstance(n, ast.FunctionDef) and n.name == "report_summary")
+    mapper = "import json,sys\nfrom pathlib import Path\n" + ast.get_source_segment(code, node) + "\n"
+    mapper += ('agg=json.load(sys.stdin)\nsummary=report_summary(agg)\n'
+               'path=Path(sys.argv[1]); data=json.loads(path.read_text(encoding="utf-8"))\n'
+               'data["summary"]=summary\npath.write_text(json.dumps(data,ensure_ascii=False),encoding="utf-8")\n')
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         results = root / "round-1/results"
@@ -777,12 +785,12 @@ def test_incremental_contract_resume():
 
 
 def test_acceptance_ledger_command_examples():
-    """提取命令正文实跑：full PASS ≠ review、零变化复用、修改和坏证据阻断。"""
+    """提取命令正文实跑：Sprint 单测 PASS ≠ review、零变化复用、修改和坏证据阻断。"""
     print('\n[验收/关闭账本命令真实示例]')
     st = (REPO / '.aidp/commands/sprint-test.md').read_text(encoding='utf-8')
     close = (REPO / '.aidp/commands/sprint-close.md').read_text(encoding='utf-8')
     snippets = {}
-    for name, text in (('acceptance-full-test', st), ('acceptance-record-review', st),
+    for name, text in (('acceptance-sprint-unit', st), ('acceptance-record-review', st),
                        ('close-review-delta', close)):
         match = re.search(r'<!-- ' + name + r' -->\s*```bash\n(.*?)\n```', text, re.S)
         check(name + ' 可提取真实调用', bool(match))
@@ -793,59 +801,84 @@ def test_acceptance_ledger_command_examples():
         return
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
+
+        def git(*args):
+            return subprocess.run(['git', '-C', str(root), *args], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        git('init', '-q')
+        git('config', 'user.email', 't@example.invalid')
+        git('config', 'user.name', 't')
         code = root / 'app.py'
-        code.write_text('value = 1\n', encoding='utf-8')
+        code.write_text('value = 0\n', encoding='utf-8')
+        (root / 'test_app.py').write_text('import unittest\nimport app\nclass AppTest(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(app.value, 1)\n', encoding='utf-8')
+        git('add', '-A')
+        git('commit', '-qm', 'base')
+        base = git('rev-parse', 'HEAD')
+        code.write_text('value = 1\n', encoding='utf-8')  # 本 Sprint 真实改动：推导出 test_app.py
+        runners = root / 'runners.json'
+        runners.write_text(json.dumps([{'suffixes': ['.py'], 'argv': [
+            sys.executable, '-B', '-m', 'unittest', '{tests}']}]), encoding='utf-8')
         contract = root / 'docs/design/detail/V1.0.0/_sprint-001-契约卡.md'
         contract.parent.mkdir(parents=True)
         contract.write_text('contract_revision: 1\nAC: value == 1\n', encoding='utf-8')
-        report = root / 'docs/testing/V1.0.0/sprint-001/sprint-001-test-report.md'
-        report.parent.mkdir(parents=True)
+        scope_dir = root / 'docs/testing/V1.0.0/sprint-001'
+        scope_dir.mkdir(parents=True)
+        report = scope_dir / 'sprint-001-test-report.md'
         report.write_text('CVL: 通过\nreviewer: 已核 value == 1\n', encoding='utf-8')
-        run_id = ''
+        run_set = root / 'docs/testing/V1.0.0/sprint-001/sprint-001-run-set.json'  # 与命令正文同一路径
 
         def invoke(name, env_id='fixture-static'):
-            prelude = (f'TEST_ENV_ID={env_id}\nFULL_RUN_ID={run_id}\n'
-                       f'FULL_TEST_ARGV=("{sys.executable}" -B -c "import app; assert app.value == 1")\n')
+            prelude = (f'TEST_ENV_ID={env_id}\nSINCE={base}\nWRITE_SET=()\n'
+                       f'UNIT_RUNNERS_JSON="$(cat {runners})"\n')
             result = subprocess.run(['bash', '-e', '-c', prelude + snippets[name]],
                                     cwd=root, capture_output=True, text=True)
-            try:
-                payload = json.loads(result.stdout.strip().splitlines()[-1])
-            except (IndexError, ValueError):
-                payload = {}
-            return result, payload
+            return result
 
-        first, passed = invoke('acceptance-full-test')
-        run_id = passed.get('run_id', '')
-        check('真实断言得到 full PASS 和树 hash', first.returncode == 0 and
-              passed.get('status') == 'PASS' and passed.get('before_hash') == passed.get('after_hash'))
-        reused, hit = invoke('acceptance-full-test')
-        check('同树/同命令 full PASS 复用', reused.returncode == 0 and hit.get('reused') is True)
-        missing, _ = invoke('close-review-delta')
+        def run_set_payload():
+            try:
+                return json.loads(run_set.read_text(encoding='utf-8').strip().splitlines()[-1])
+            except (OSError, IndexError, ValueError):
+                return {}
+
+        first = invoke('acceptance-sprint-unit')
+        payload = run_set_payload()
+        check('真实推导并执行 Sprint 单测得到 PASS', first.returncode == 0 and payload.get('status') == 'PASS'
+              and len(payload.get('run_ids', [])) == 1)
+        reused = invoke('acceptance-sprint-unit')
+        again = run_set_payload()
+        check('同树同命令 Sprint 单测复用 PASS', reused.returncode == 0 and again['runs'][0].get('reused') is True)
+        missing = invoke('close-review-delta')
         check('只有测试 PASS、未审查登记时 close 拒绝', missing.returncode != 0)
-        recorded, _ = invoke('acceptance-record-review')
+        recorded = invoke('acceptance-record-review')
         check('真实报告显式登记审查基线', recorded.returncode == 0)
-        delta, clean = invoke('close-review-delta')
+        delta, clean = invoke('close-review-delta'), None
+        clean = json.loads(delta.stdout.strip().splitlines()[-1]) if delta.stdout.strip() else {}
         check('零 diff 有可验证证据', delta.returncode == 0 and clean.get('code_changed') is False
               and all(clean.get(key) == [] for key in ('added', 'changed', 'removed')))
         memory = root / 'memory/V1.0.0/tester/progress.md'
         memory.parent.mkdir(parents=True)
         memory.write_text('Sprint-001 已归档\n', encoding='utf-8')
-        delta, clean = invoke('close-review-delta')
+        delta = invoke('close-review-delta')
+        clean = json.loads(delta.stdout.strip().splitlines()[-1]) if delta.stdout.strip() else {}
         check('close 归档 memory 不抹除既有审查证据', delta.returncode == 0 and clean.get('code_changed') is False)
         contract.write_text('contract_revision: 2\nAC: value == 2\n', encoding='utf-8')
-        delta, dirty = invoke('close-review-delta')
+        delta = invoke('close-review-delta')
+        dirty = json.loads(delta.stdout.strip().splitlines()[-1]) if delta.stdout.strip() else {}
         check('契约变更进入差量而非被 docs 默认忽略', delta.returncode == 0 and
               str(contract.relative_to(root)) in dirty.get('changed', []))
         contract.write_text('contract_revision: 1\nAC: value == 1\n', encoding='utf-8')
         code.write_text('value = 2\n', encoding='utf-8')
-        delta, dirty = invoke('close-review-delta')
+        delta = invoke('close-review-delta')
+        dirty = json.loads(delta.stdout.strip().splitlines()[-1]) if delta.stdout.strip() else {}
         check('验收后代码变化可定位', delta.returncode == 0 and 'app.py' in dirty.get('changed', []))
-        failed, payload = invoke('acceptance-full-test')
-        check('变更导致真实断言失败，不能复用先前 PASS', failed.returncode != 0 and payload.get('status') == 'FAIL')
+        failed = invoke('acceptance-sprint-unit')
+        check('变更导致 Sprint 单测真实失败，不能复用先前 PASS',
+              failed.returncode != 0 and run_set_payload().get('status') == 'FAIL')
         report.write_text('篡改验收报告\n', encoding='utf-8')
-        invalid, _ = invoke('close-review-delta')
+        invalid = invoke('close-review-delta')
         check('报告变化使 close 拒绝旧基线', invalid.returncode != 0)
-        wrong_env, _ = invoke('close-review-delta', 'different-env')
+        wrong_env = invoke('close-review-delta', 'different-env')
         check('环境变化使 close 拒绝旧基线', wrong_env.returncode != 0)
 
 

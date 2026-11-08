@@ -226,15 +226,20 @@ def render_tree(source_root: Path, destination: Path, home: str,
             if not source.is_file():
                 raise RuntimeError(f"运行包真源包含异常类型: {source}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            data = source.read_bytes()
-            if _is_text(data):
-                # 必须走字节写：manifest 指纹 / bundle 逐字比对 / 双包规范化三处都按 LF 字节算账，
-                # 用 write_text 会在 Windows 上被翻成 CRLF，整包假漂移。
-                L.write_text_lf(target, render_text(data.decode("utf-8"), home,
-                                                    template_root=source_root))
-                shutil.copymode(source, target)
-            else:
-                shutil.copy2(source, target)
+            _render_file(source, target, home, source_root)
+
+
+def _render_file(source: Path, target: Path, home: str, source_root: Path) -> None:
+    """单文件渲染与补缺共用 LF、占位符和权限规则。"""
+    if source.is_symlink() or not source.is_file():
+        raise RuntimeError(f"运行包真源必须是普通文件: {source}")
+    data = source.read_bytes()
+    if _is_text(data):
+        L.write_text_lf(target, render_text(data.decode("utf-8"), home,
+                                          template_root=source_root))
+        shutil.copymode(source, target)
+    else:
+        shutil.copy2(source, target)
 
 
 def _file_hash(path: Path) -> str:
@@ -948,7 +953,7 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                    source: str, backup_callback: Optional[Callable[[Path], Path]] = None,
                    replace_func: Callable[[object, object], None] = os.replace,
                    preserve_gated: bool = False) -> dict:
-    """原子替换；同版本 preserve_gated 仅渲染 scripts，保留门控字节和原始指纹。"""
+    """原子替换；同版本刷新 scripts、补已安装契约缺失，保留现存门控字节。"""
     _validate_source_home(source, home)
     destination = Path(destination)
     boundary = _default_boundary(destination)
@@ -1001,7 +1006,9 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                         raise RuntimeError("备份期间运行包发生并发修改，拒绝替换")
 
             old_manifest = _read_manifest(destination) if preserve_gated else None
-            contract = {relative for relative, _p in _source_contract_files(Path(source_root))
+            source_files = dict(_source_contract_files(Path(source_root)))
+            restored = set()
+            contract = {relative for relative in source_files
                         if not preserve_gated or relative.split("/", 1)[0] in L.UNGATED_DIRS}
             if old_manifest is not None:
                 if old_manifest.get("version") != version:
@@ -1040,11 +1047,15 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                     if relative.split("/", 1)[0] not in L.GATED_DIRS:
                         continue
                     original = _assert_contained(destination / relative, destination)
-                    if not original.is_file():
-                        raise ValueError(f"门控契约缺失，无法在同版本 scripts 刷新中重建: {relative}")
                     target = stage / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(original, target)
+                    if original.is_file():
+                        shutil.copy2(original, target)
+                    elif not _lexists(original) and relative in source_files:
+                        _render_file(source_files[relative], target, home, Path(source_root))
+                        restored.add(relative)
+                    else:
+                        raise ValueError(f"门控契约缺失且真源无法补齐，或路径类型异常: {relative}")
             for relative, entry in sorted(overlay.items()):
                 target = stage / relative
                 if target.exists() and relative not in L.USER_FILLABLE_CONTRACTS:
@@ -1068,7 +1079,8 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
             if old_manifest is not None:
                 local = {}
                 for relative, baseline in old_manifest["files"].items():
-                    if relative.split("/", 1)[0] not in L.GATED_DIRS or relative in overlay:
+                    if (relative.split("/", 1)[0] not in L.GATED_DIRS
+                            or relative in overlay or relative in restored):
                         continue
                     if manifest["files"][relative] != baseline:
                         local[relative] = manifest["files"][relative]

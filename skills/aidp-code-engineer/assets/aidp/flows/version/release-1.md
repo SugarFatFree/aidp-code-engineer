@@ -1,4 +1,4 @@
-# /version · 版本发布流程详情 — 分片 1/9
+# /version · 版本发布流程详情 — 分片 1/10
 
 > 本片覆盖：**交互式发布=全量执行 决策纪律 / tag 风格识别约定 / Step 3.1 前置条件检查**。
 > 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
@@ -6,7 +6,7 @@
 <!-- BODY-BELOW -->
 > （原整段标题「/version · 版本发布流程详情（Step 3.1–3.6，情况 B-3）」—— 该范围现由 1/7…7/7 全部分片共同承载，本片只覆盖上面「本片覆盖」列出的部分）
 
-> 本文件是 `/version` 命令 **版本发布流程（情况 B-3）** 详情的**第 1/9 片**（⛔ 本片不含 版本发布流程 全部子步——其余在 `-2` … `-6` / `-7` / `-7b` / `-7c` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段）（交互式发布决策纪律 + tag 风格识别约定 + Step 3.1–3.6），由命令主体（`{{AIDP_HOME}}/commands/version.md`）在**进入版本发布流程时用 Read 工具按需加载**——把这 840+ 行从"每次调用整体入上下文"改为"走到发布流程才载"，降低"lost in the middle"式漏步。命令主体只保留本段的**硬门提醒 + Step 3.1–3.6 骨架表 + 指向本文件的指针**。
+> 本文件是 `/version` 命令 **版本发布流程（情况 B-3）** 详情的**第 1/10 片**（⛔ 本片不含 版本发布流程 全部子步——其余在 `-2` … `-6` / `-4b` / `-7` / `-7b` / `-7c` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段）（交互式发布决策纪律 + tag 风格识别约定 + Step 3.1–3.6），由命令主体（`{{AIDP_HOME}}/commands/version.md`）在**进入版本发布流程时用 Read 工具按需加载**——把这 840+ 行从"每次调用整体入上下文"改为"走到发布流程才载"，降低"lost in the middle"式漏步。命令主体只保留本段的**硬门提醒 + Step 3.1–3.6 骨架表 + 指向本文件的指针**。
 >
 > ⚠️ **权威性**：进入版本发布流程后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤或硬门。本文件内「tag 风格识别约定」**只服务发布期**；规划期 Step 2.4.7 的 `prev_version` 走另一套口径（产物目录 SemVer 扫描，含未发布的中间过渡版本），见 `planning-7.md`「prev_version 取值口径」。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/version/`。理据/根因见同目录 `rationale.md`。
@@ -70,22 +70,14 @@
 >
 > ⛔ **不适用于规划期**：Step 2.4.7 的 `prev_version` **不走本节**——规划期要的是「上一**迭代**版本」（含未发布的中间过渡版本），按产物目录 SemVer 扫描取值，单一信源在 `planning-7.md`「prev_version 取值口径」。两套口径刻意不同：过渡版本从未对外发布，发布期更新日志要跨过它把其变更并入本次条目，规划期增量基线却必须落在它上面。
 
-本仓库存在**三种 tag 命名风格**，识别"前一已发布版本"时必须三种全覆盖、按时间排序取最新：
-
-| 风格 | 示例 | 出现时期 |
-|------|------|---------|
-| `V*` | `V0.0.1` | 早期直接大写 |
-| `release-V*` | `release-V0.1.0` | 中段短暂启用 |
-| `v*` | `v0.1.0` | 当前标准 |
-
-统一识别命令：
+识别 `V*`、`release-V*`、`v*` 三种 tag，统一由 `release_scope.py` 按版本语义取**严格小于本次版本**的最近已发布版本，与部署增量轨同源；不按带前缀的 tag 字符串排序，也不另用 `git describe` 取不同参照。
 
 ```bash
-# 取最新一个已发布 tag（三种风格全覆盖，按 version:refname 倒序）
-PREV=$(git tag --sort=-version:refname | grep -iE '^(release-)?[Vv][0-9]+\.[0-9]+\.[0-9]+' | head -1)
+RELEASE_SCOPE_JSON=$(python3 {{AIDP_HOME}}/scripts/release_scope.py --root . --version "{version}" --json) || exit 2
+PREV=$(printf '%s' "$RELEASE_SCOPE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("prev_released_tag") or "")') || exit 2
 ```
 
-如需归一为 `V{major}.{minor}.{patch}` 形式（如日志展示）：`echo "$PREV" | sed -E 's/^release-//; s/^v/V/'`。首次发布（无任何 tag）时 `PREV` 为空，记为 `（首版）`。
+`PREV` 始终保留原始 tag 名，用于 `git log`/diff 等 Git 引用。展示时可另取 `PREV_DISPLAY=$(printf '%s' "$PREV" | sed -E 's/^release-//; s/^v/V/')`，禁止用展示名替换 Git ref。首次发布时 `PREV` 为空，显示 `（首版）`，提交范围取整个 HEAD 历史。
 
 ### Step 3.1：前置条件检查（未关闭 Sprint 自动关闭）
 

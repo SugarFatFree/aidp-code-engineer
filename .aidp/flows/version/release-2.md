@@ -1,4 +1,4 @@
-# /version · 版本发布流程详情 — 分片 2/9
+# /version · 版本发布流程详情 — 分片 2/10
 
 > 本片覆盖：**Step 3.2 收集信息 / 3.3 版本历史表 / 3.3.5 版本更新日志**。
 > 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
@@ -25,12 +25,21 @@
 **目标**：在项目根目录 `版本更新日志.md` **两处写入**（顶部版本概览表 + 下方详情区块）本版本条目，简明记录本版本相对**前一已发布版本**的新增功能与修复的问题；条目控制在一页内可读完，不展开实现细节。
 
 **前置数据采集**：
-- 前一版本 `{prev-version}`：按「tag 风格识别约定」取最新已发布 tag 并归一为 `V*` 形式；首次发布则记为 `（首版）`
+- 前一版本：按 `release-1.md`「tag 风格识别约定」取得原始 `prev_released_tag`；展示名另行归一，Git ref 保持原样；首次发布记为 `（首版）`
 - 新增功能来源：`memory/{version}/*/progress.md` 的「功能模块完成状态」/「Sprint 列表」摘要
 - 修复**候选集**来源：`docs/bugfix/{version}/bugfix-*.md` 状态为「已修复 / 已验证」的条目
-- 兜底/补全：`git log {prev-version}..HEAD --pretty=format:'%s' | grep -E '^(feat|fix)\('`，`feat(*)` 归入新增；`fix(*)` **只取候选集**，⛔ **不得直接把 `fix(` 提交等同于对外修复项**——该前缀只说明提交类型，不说明这个缺陷对使用者存在过
+- 兜底/补全：执行下面的原始 tag 范围采集，`feat(*)` 归入新增；`fix(*)` 只取候选集，须验证该缺陷在前一已发布版本真实存在。
 - **两类候选都必须逐条过下方「修复段准入判据」才能进 🐛 修复段**
 
+
+<!-- release-changelog-commits -->
+```bash
+RELEASE_SCOPE_JSON=$(python3 {{AIDP_HOME}}/scripts/release_scope.py --root . --version "{version}" --json) || exit 2
+PREV_TAG=$(printf '%s' "$RELEASE_SCOPE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("prev_released_tag") or "")') || exit 2
+LOG_RANGE="HEAD"; [ -z "$PREV_TAG" ] || LOG_RANGE="$PREV_TAG..HEAD"
+RELEASE_COMMITS=$(git log "$LOG_RANGE" --pretty=format:'%s') || exit 2
+printf '%s\n' "$RELEASE_COMMITS" | python3 -c 'import re,sys; print("".join(l for l in sys.stdin if re.match(r"^(feat|fix)(\([^)]*\))?!?:",l)),end="")'
+```
 
 **★ 修复段准入判据（逐条过，不靠印象）**
 
@@ -41,7 +50,8 @@
 判定方法 —— 对每条候选修复，查「被修的那个东西是哪个版本引入的」：
 
 ```bash
-PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null)   # 上一个已发布 tag
+RELEASE_SCOPE_JSON=$(python3 {{AIDP_HOME}}/scripts/release_scope.py --root . --version "{version}" --json) || exit 2
+PREV_TAG=$(printf '%s' "$RELEASE_SCOPE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("prev_released_tag") or "")') || exit 2
 # ① 被修的文件是哪次提交新增的
 git log --diff-filter=A --pretty='%h %ad %s' --date=short -- <被修文件>
 # ② 被改的那段代码/文案何时引入（比 ① 更准，能穿透文件重命名）

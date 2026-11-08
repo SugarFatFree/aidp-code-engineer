@@ -1786,6 +1786,22 @@ class LegacyRuntimeMigrationTest(unittest.TestCase):
             self.assertEqual((backed_up / "team-notes.txt").read_text(), "团队修改\n")
             self.assertEqual((backed_up / "SKILL.md").read_text(), "旧脚手架正文\n")
 
+    def test_same_version_upgrade_restores_deleted_managed_contract(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            runtime = root / ".claude"
+            missing = runtime / "commands/sprint-test.md"
+            expected = missing.read_bytes()
+            missing.unlink()
+            kept = runtime / "commands/sprint-dev.md"
+            local = kept.read_bytes() + b"\nlocal project note\n"
+            kept.write_bytes(local)
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertEqual(missing.read_bytes(), expected)
+            self.assertEqual(kept.read_bytes(), local)
+            self.assertTrue(result["backup"])
+            runtime_layout.validate_runtime(runtime, expected_home=".claude")
+
     def test_same_version_upgrade_refreshes_ungated_scripts(self):
         """`scripts/` 不受版本门控：同版本 bundle 修了脚本，upgrade 也必须下发（manifest 自洽也不能跳过）。"""
         import json as _json

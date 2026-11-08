@@ -12,7 +12,9 @@
 >
 > ⛔ **新 build = 全量回归（命令端编排决策）**：修复后**铸新 build 复测**（铸 build 是命令/autopilot 职责）时，须**全量重跑本版本所有用例、不只复验被修的那几条**——**"跨 build 全量重跑、不沿用上一 build 的 `[√]`、resume/`[√]` 跳过仅限同一 build 内中断恢复"的 tasks.md 状态机作用域，以 `auto-test-runner` SKILL 为单一信源（约定 21 不复述）**。配合上面「覆盖率 100%」判据共同保证不留死角（实战教训：只验被修的 P0、漏了同源 P1 旁路取数）。
 
-**收敛判定（★ 三条同时满足才算收敛 —— 双终止判据「问题清单空 且 覆盖率 100%」的落地）**：
+**双路收敛以 Phase 3.3 `settle.converged` 为准**：全量单测必须 PASS，实测 PASS 或有证据的 N/A，且既有缺陷/覆盖率门通过。`unitTests` 缺失的新调用、UNVERIFIED/TIMEOUT/RUNNING 都不得取 CONVERGED=1；后两片不再只按浏览器通过率重算。纯后端 N/A 无浏览器页面，不进入切有头提醒/眼检；未执行浏览器也不得为了眼检启动浏览器或占用单测预算。
+
+**历史无 unitTests 恢复的收敛判定（★ 三条同时满足）**：
 1. 本版本所有**无头可跑用例**最近一轮**全部通过**（本轮无「① 用例失败」）；
 2. 主用例文档末尾「问题汇总清单」**无任何 `待修复` 行**（① 用例失败 + ② 运行时错误都已被修复 + 重新部署 + 重测验证）；
 3. **★ 用例覆盖率 = 100%**——本 build 无任何**标「阻塞 block / 未执行」而未解除**的用例：之前轮次因环境/前置未满足标 block 或跳过的用例，必须**本轮已解除并实际跑过**、或**有明确豁免依据**（如"需真实第三方数据、本期 Mock 覆盖不到"，记入报告豁免清单）。**"还有用例没跑到 / 一直 block 着"不算收敛**——防"只复验被修用例、其余用例长期未覆盖就宣告通过"。
@@ -27,7 +29,18 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-t
 #   （3.4 streak 清零 / 3.7 报告 finalize + #3 通知 均消费同一 CONVERGED；见 3.3 开头 Critical 修复说明）
 # 本步只按 CONVERGED + 远程守卫决定"是否切有头提醒"（HEADED_REMINDER）：仅 DRIVER=mcp-remote 远程 + 无头 + 有「必须有头」延后用例才提醒
 case "${DRIVER}" in mcp*) IS_MCP=1 ;; *) IS_MCP=0 ;; esac   # 两个 MCP 变体同受"切模式须重启"约束
-if [ "$IS_MCP" != "1" ] || [ "${RENDER_MODE:-headless}" != "headless" ] || [ -z "$DEFERRED_HEADED_CASES" ]; then
+BROWSER_VERIFIED=$(python3 - "$TARGET_VERSION" "$BUILD" <<'HEADED_STATE'
+import sys
+from pathlib import Path
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from unit_report_merge import read_payload, browser_status
+v,b=sys.argv[1:]; p=Path(f"docs/reports/{v}/AI测试报告/data/{b}.js")
+d=read_payload(p) if p.exists() else {}; print(browser_status(d) if "unitTests" in d else "legacy")
+HEADED_STATE
+)
+if [ "$BROWSER_VERIFIED" != "PASS" ] && [ "$BROWSER_VERIFIED" != "legacy" ]; then
+  HEADED_REMINDER=0
+elif [ "$IS_MCP" != "1" ] || [ "${RENDER_MODE:-headless}" != "headless" ] || [ -z "$DEFERRED_HEADED_CASES" ]; then
   HEADED_REMINDER=0   # 本地 cli / 整体有头 / 无延后用例 → 无须切有头提醒（CONVERGED 已算，下游 3.4/3.7 照常消费）
 else
   HEADED_REMINDER=1   # 远程无头且有延后 → 按 CONVERGED 决定是否一次性提醒切有头（见下）
@@ -74,7 +87,19 @@ fi
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # 有头能力 = 已配远程 chrome MCP（DRIVER=mcp-remote，即 .mcp.json 有 chrome-{git_user} 条目）或 本机有 GUI 桌面（GUI_OK=1）
 case "${DRIVER}" in mcp*) IS_MCP=1 ;; *) IS_MCP=0 ;; esac
-if [ "$IS_MCP" = "1" ] || [ "${GUI_OK:-0}" = "1" ]; then
+BROWSER_VERIFIED=$(python3 - "$TARGET_VERSION" "$BUILD" <<'GLANCE_STATE'
+import sys
+from pathlib import Path
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from unit_report_merge import read_payload, browser_status
+v,b=sys.argv[1:]; p=Path(f"docs/reports/{v}/AI测试报告/data/{b}.js")
+d=read_payload(p) if p.exists() else {}; print(browser_status(d) if "unitTests" in d else "legacy")
+GLANCE_STATE
+)
+if [ "$BROWSER_VERIFIED" != "PASS" ] && [ "$BROWSER_VERIFIED" != "legacy" ]; then
+  HEADED_CAPABLE=0
+  echo "本轮浏览器 N/A 或尚未核验完成，不执行有头眼检"
+elif [ "$IS_MCP" = "1" ] || [ "${GUI_OK:-0}" = "1" ]; then
   HEADED_CAPABLE=1   # 直接开有头眼检（Step 2）
 else
   HEADED_CAPABLE=0   # DRIVER=cli 且 GUI_OK=0：本机无 GUI 又未配远程 chrome MCP

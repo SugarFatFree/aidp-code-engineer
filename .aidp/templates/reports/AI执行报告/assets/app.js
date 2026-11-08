@@ -219,6 +219,7 @@
    * =================================================================== */
   var RUNS = (window.__AIRUNS__ || []).slice().map(function (b) {
     if (b && b.buildNo == null) b.buildNo = parseInt((String(b.build || "").match(/_build(\d+)$/) || [])[1], 10) || 0;  // 渲染端兜底派生（与 emit-report.py P1-6 双保险，防 #undefined）
+    applyUnitConclusion(b);
     return b;
   }).sort(function (a, b) { return a.buildNo - b.buildNo; });
 
@@ -268,6 +269,46 @@
   /* =====================================================================
    * 渲染：综合首页（dashboard）
    * =================================================================== */
+  function applyUnitConclusion(b) {
+    if (!b.unitTests) return;
+    var u = b.unitTests, ts = b.testSummary || {}, status = u.status;
+    var valid = u.schema === 1 && u.build === b.build && b.commit && u.commit === b.commit &&
+      ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"].indexOf(status) >= 0 && Array.isArray(u.runs);
+    if (status === "PASS" && (!valid || !u.runs.length || u.runs.some(function (r) {
+      return !r || r.status !== "PASS" || !r.run_id || !r.command || !r.cwd || !r.env_id ||
+        (r.counts && r.counts.failed > 0) || (r.failed_cases || []).length;
+    }) || (u.counts && u.counts.failed > 0) || (u.failed_cases || []).length)) valid = false;
+    if (!valid) status = "UNVERIFIED";
+    var unitFailed = [u].concat(Array.isArray(u.runs) ? u.runs : []).some(function (r) {
+      return r && (r.status === "FAIL" || (r.failed_cases || []).length || (r.counts && r.counts.failed > 0));
+    });
+    if (ts.fail > 0 || ts.openBugs > 0 || ts.openDefects > 0 || ts.runtime_errors > 0 || unitFailed) status = "FAIL";
+    var bs = b.browserTests && b.browserTests.reason ? b.browserTests.status : null;
+    if (status !== "FAIL") {
+      if (ts.pendingBrowserTest || bs === "RUNNING" || status === "RUNNING") status = "RUNNING";
+      else if (bs === "TIMEOUT" || status === "TIMEOUT") status = "TIMEOUT";
+      else if (bs === "UNVERIFIED" || ts.pendingCases > 0) status = "UNVERIFIED";
+    }
+    if (status === "PASS") {
+      var na = b.browserTests && b.browserTests.status === "N/A" && b.browserTests.reason;
+      var total = (ts.total || 0) - (ts.na || 0);
+      if (ts.pendingBrowserTest || ts.block > 0 || ts.skip > 0 ||
+          (!na && !(ts.total > 0 && ts.total === ts.na) && !(total > 0 && ts.pass === total && ts.browserTested !== false))) status = "UNVERIFIED";
+    }
+    ts.overallStatus = status;
+    b.testSummary = ts;
+    b.overview = b.overview || {};
+    if (status !== "PASS") {
+      b.overview.statusKind = status === "FAIL" ? "fail" : "pend";
+      b.overview.statusText = status === "FAIL" ? "测试失败" : "测试未核验完成";
+    }
+  }
+  function unitConclusionHtml(b) {
+    if (!b.unitTests) return "";
+    var status = b.testSummary.overallStatus;
+    var text = { PASS: "通过", FAIL: "失败", UNVERIFIED: "未核验，不能通过", TIMEOUT: "超时，不能通过", RUNNING: "运行中，不能收尾" };
+    return '<div class="card"><h2>总体结论：' + esc(status) + ' · ' + esc(text[status]) + '</h2><p>全量实测与全量单测共同判定，实测通过率不代表单测结果。</p></div>';
+  }
   function renderOverview() {
     var root = $("#view-overview");
     if (!RUNS.length) { root.innerHTML = '<div class="card empty-tip">暂无 build 执行数据。请在 data/ 目录添加 {version}_build{N}.js 并在 index.html 引入。</div>'; return; }
@@ -318,7 +359,7 @@
       + '<thead><tr><th>Build</th><th>完成时间</th><th>功能完成率</th><th>测试通过率</th><th>结果</th><th>缺陷</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div></div></div>';
 
-    root.innerHTML = banner + cockpit + trend + grid;
+    root.innerHTML = banner + unitConclusionHtml(latest) + cockpit + trend + grid;
 
     root.querySelectorAll("tr.clickable").forEach(function (tr) {
       tr.addEventListener("click", function () { location.hash = "#/build/" + encodeURIComponent(tr.getAttribute("data-build")); });
@@ -517,15 +558,31 @@
       + '</div>';
 
     // —— 组装（章节序号动态编号，可选章节无数据则跳过）——
-    var n = 0, html = head;
+    var n = 0, html = head + unitConclusionHtml(b);
     html += chap(++n, "执行概览", "整体" + (SK_WORD[sk] || "完成") + " · 待跟进 " + (o.pendingCount != null ? o.pendingCount : 0) + " 项", cockpit);
     html += chap(++n, "需求功能清单", featCount + " 项", featInner);
-    html += chap(++n, "测试详情",
+    html += chap(++n, b.unitTests ? "全量实测" : "测试详情",
       ts.pendingBrowserTest ? "待实测"
         : (ts.total != null
             ? ((ts.unit === "dimension" ? "维度通过率 " : "通过率 ") + (ts.passRate != null ? pct(ts.passRate) : "—"))
             : "待实测"),
-      funnelInner);
+      (b.browserTests && b.browserTests.status === "N/A" ? '<p>浏览器 N/A · ' + esc(b.browserTests.reason) + '</p>' : '') + funnelInner);
+    if (b.unitTests) {
+      var u = b.unitTests;
+      var unitItems = [u].concat(Array.isArray(u.runs) ? u.runs : []);
+      var unitHtml = unitItems.map(function (item, i) {
+        var counts = ["passed", "failed", "skipped"].map(function (key) {
+          var count = item.counts && item.counts[key];
+          return key + '：' + (typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : "未提供");
+        }).join(" / ");
+        return '<article><h3>' + (i ? 'run_id：' + esc(item.run_id) : '单测汇总') + ' · 状态：' + esc(item.status) + '</h3>'
+          + (i ? '<p>真实命令</p><pre>' + esc(Array.isArray(item.command) ? JSON.stringify(item.command) : item.command) + '</pre><p>cwd：<code>' + esc(item.cwd) + '</code> · env_id：<code>' + esc(item.env_id) + '</code></p>' : '<p>' + esc(item.reason) + '</p>')
+          + '<p>' + esc(counts) + '</p><p>失败用例</p><pre>' + esc(item.failed_cases && item.failed_cases.length ? JSON.stringify(item.failed_cases, null, 2) : "未提供")
+          + '</pre><p>首要错误</p><pre>' + esc(item.primary_error || "未提供") + '</pre>'
+          + (i ? '<p>日志：<code>' + esc(item.log || "未提供") + '</code></p>' : '') + '</article>';
+      }).join("");
+      html += chap(++n, "全量单测", ts.overallStatus === "PASS" ? "通过" : "总体不能通过", unitHtml);
+    }
     html += chap(++n, "步骤执行", (b.steps || []).length + " 步"
       + (dist.plan ? " · " + dist.plan + " 步未回填实际状态" : "")
       + (dist.unknown ? " · ⚠️ " + dist.unknown + " 步状态值非法" : ""), stepsInner);

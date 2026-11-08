@@ -1,9 +1,11 @@
 <!-- 二次切分 · phase-2 片2/2：2.0.5–2.4 -->
-# sprint-aiauto-test · 执行分片 [2/2]（2.0.5 委派auto-test-runner / 2.1 登录测试循环 / 2.2 浏览器调用 / 2.3 skip-login / 2）
+# sprint-aiauto-test · 执行分片 [2/2]（2.0.5–2.4 实测委派）
 
 > 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
 
 ### 2.0.5 组装 run-context + 派测试执行子 Agent（★ 执行内核入口）
+
+进入本分支前先按 `phase-2-unit.md` 同批派出独立单测子 Agent；本分支失败/超时只回传实测状态，不取消另一分支。报告与共享状态由主协调器汇合后统一处理。
 
 Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phase 2.0 已选定用例集（`PRIMARY_CASES` + `SUPPLEMENT_UNIQUE`，已剔除远程延后集）。此处组装 `auto-test-runner` 的 run-context，**按模块（= 套件）各派一个「测试执行子 Agent」**（`Agent`/Task 工具）：
 
@@ -11,7 +13,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 >
 > **子 Agent prompt 必含的路径清单（只给路径、不贴正文；读取范围以 SKILL 第二步为单一信源）**：
 > - **默认只读两份**：`{{AIDP_HOME}}/skills/auto-test-runner/references/execution-contract-lite.md`（精简执行契约：红线 / 状态机 / 四态与 `block_reason` 枚举 / 产物契约 / 判不准翻页索引）+ 被测端对应的 `references/driver-<端>.md`（本命令为 Web 端 → `driver-web.md`；**只读命中的那一份**）
-> - **其余全文按需再读**：判不准时按精简契约的索引取 `execution-methodology.md` / `report-format.md` / `driver-adapters.md` / `usecase-format.md`。⛔ 不要求子 Agent 整份预读四份全文——每个模块子 Agent 都全量加载 = 成倍重复加载（SKILL 明令，根因见其 `references/rationale.md`）；⚠️ 收的是加载量、不是强制度，精简契约每条仍是硬要求
+> - **按需取全文**：判不准再按索引读 `execution-methodology.md` / `report-format.md` / `driver-adapters.md` / `usecase-format.md`；不要求各模块预读全部全文，精简契约各项仍强制。
 > - 本模块用例文件路径 + run-context 文件路径
 > - 要求：**读完再驱动浏览器执行**；跑完回传 compact `{module,total,pass,fail,block,evidence_dir,defects[]}`
 > - **复测轮（`retest_of` 非空）追加**：prompt 必须附**上一 build 的 block 用例清单（含各自原因）**，
@@ -44,7 +46,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 
 > ★ **约定 33 配套边界（约定 21）**：命令端只负责把「DB 连接 / 跨系统前置数据」作为 run-context 参数**交给** auto-test-runner；**用起来**（DB 断言、前置段执行）以 auto-test-runner SKILL 为单一信源（`result-schema` 的 `db_assertion` 字段），命令端不复述、不实现。
 
-派单后（主 Agent **每收回一个执行子 Agent 即执行一次 `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now`**，长批次期间心跳不陈旧）各执行子 Agent 按 auto-test-runner 执行流程（第零步~第四步）分模块批量跑完、断点可续、实时打印进度（见 2.2.2），产出每条用例 `results/{TC-ID}.json`（`status`=pass/fail/block/**na** + `evidence` 截图摘要+路径）+ `tasks.md` 进度 + 固定结构报告。命令端**等 skill 跑完**再进 2.4（运行时错误后处理）+ Phase 3（AI测试报告 HTML）。
+派单后（主 Agent **每收回一个执行子 Agent 即执行一次 `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now`**，长批次期间心跳不陈旧）各执行子 Agent 按 auto-test-runner 执行流程（第零步~第四步）分模块批量跑完、断点可续、实时打印进度（见 2.2.2），产出每条用例 `results/{TC-ID}.json`（`status`=pass/fail/block/**na** + `evidence` 截图摘要+路径）+ `tasks.md` 进度 + 固定结构报告。本分支跑完只返回结果；命令端等两路终态后按 `phase-2-unit.md` 汇合，再进 Phase 3。
 
 > ★ **无人值守一致**：auto-test-runner 执行不中途等人、阻塞标 block 继续；run-context 缺失项由 Phase 0 一次性收全（0.0.6），委派时不再追问。
 > ✅ **运行时错误对接已就绪**：`result-schema.json` 的 `runtimeErrors[]` 必填 `type`/`message`/`severity`，命令端只消费、不重算。字段全表见 `rationale.md`「运行时错误对接」。

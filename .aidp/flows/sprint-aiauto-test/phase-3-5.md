@@ -7,7 +7,83 @@
 
 ### 3.7 ★ finalize AI执行报告 + 发 #3 里程碑通知（#F 之后 · 本 build 收尾 · R-4）
 
-> **本步是 sprint-autopilot 子流程 R 的 R-4「收尾」在测试链路侧的落地**：autopilot 委派前只产了 AI执行报告**骨架**（data 计划态 + 注册两页 + `testSummary` 占位），把「用真实测试结论 finalize data 结果态 + 发报告本体 + 发 #3」解耦到本步——确保 #3 在 **#F 之后**发、且携带**真实浏览器测试结论**。整个 build 的期望最终顺序：实时回写 data steps → 部署 → 浏览器测试 → AI测试报告 + #F → **本步 finalize data 结果态 + #3（末尾，带真实结论）**。
+> **本步落实 sprint-autopilot 子流程 R-4 收尾**：委派前的 AI执行报告仅有骨架（计划态 data、两页注册、占位 `testSummary`）。本步用真实测试结论 finalize，再发报告本体和 #3。顺序固定为部署 → 测试 → AI测试报告 + #F → **AI执行报告结果态 + #3**；#3 必须在 #F 之后。
+
+### 新双路终态收尾（优先于下方历史分支）
+
+本 build 测试 data 含 `unitTests` 时执行下块，然后直接到 Step 4 数据清理判定，**不得再执行下方历史 CONVERGED-only Step 1–3**。两路完成或超时都要交付明确结论；`report_ready` 控制能否收尾，`success_ready` 控制绿灯，`finalize_ready` 单独控制报告不可变冻结。RUNNING 不得进入 final。UNVERIFIED/TIMEOUT 出报告、可发橙色终态通知，但不写 closed/finalized、不冻结、不设 tested_at。真实失败发红色；只有结构化分类确认可自动修复的实测问题和单测 FAIL 交修复新 build。缺分类时返回 3.3 补齐，不等待、不发完成卡、不冻结；环境未核验不冒充代码失败。下块再次幂等 settle，校验报告分类已真实落盘和当前用例/缺陷欠账未变化，不能跳过 3.3 后仅凭报告 FAIL 收尾。
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+python3 - "$TARGET_VERSION" "$BUILD" "${REPORT_ENABLED:-0}" "${NOTIFY_ENABLED:-1}" <<'JOINT_FINAL'
+import json, shutil, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from unit_report_merge import read_payload, report_ready, finalize_ready, overall_status
+from aiauto_test_join import settle
+v,b,official,notify=sys.argv[1:]
+root=Path.cwd(); script=Path("{{AIDP_HOME}}/scripts")
+test_dir=root / "docs/reports" / v / "AI测试报告"
+p=read_payload(test_dir / "data" / (b+".js"))
+if "unitTests" not in p:
+    print("历史无单测报告：继续下方原收尾分支")
+    raise SystemExit(0)
+if not report_ready(p):
+    raise SystemExit("仍有运行中分支；不能 final/发 #3/冻结")
+joined=settle(root,v,b,p,standalone=official!="1",triage=p.get("failureTriage"))
+if joined["triage_status"] != "COMPLETE":
+    raise SystemExit("缺陷待分流：返回 3.3 补分类并 emit/settle，不发 #3、不冻结")
+status=joined["overall_status"]; color="green" if status=="PASS" else "red" if status=="FAIL" else "orange"
+if official=="1":
+    exec_dir=root / "docs/reports" / v / "AI执行报告"
+    old=read_payload(exec_dir / "data" / (b+".js"))
+    overview=dict(old.get("overview") or {})
+    overview.update(statusKind="done" if status=="PASS" else "fail" if status=="FAIL" else "pend",
+                    testPassRate=p["summary"].get("passRate"))
+    patch={"build":b,"commit":p["commit"],"overview":overview,
+           "result":"success" if status=="PASS" else "failed" if status=="FAIL" else "partial"}
+    draft=exec_dir / (".build-input-"+b+".json")
+    draft.write_text(json.dumps(patch,ensure_ascii=False),encoding="utf-8")
+    unit=root / "memory" / v / ("aiauto-unit-"+b+".json")
+    if not unit.exists(): unit=root / "memory/.aidp/build-unit" / v / b / "result.json"
+    subprocess.run([sys.executable,str(script/"emit-report.py"),"--kind","exec","--patch",
+        "--version",v,"--build",b,"--data",str(draft),"--unit-result",str(unit),
+        "--commit",p["commit"],"--json"],check=True)
+    if shutil.which("node"):
+        subprocess.run(["node",str(script/"report_render_smoke.js"),str(exec_dir),b],check=True)
+    else:
+        print("Node 不可用：exec HTML 已生成，渲染冒烟未执行")
+    has_browser=bool(p.get("cases"))
+    subprocess.run([sys.executable,str(script/"autopilot-ceremony-gate.py"),"check",
+        "--version",v,"--build",b,"--stage","final","--will-browser-test",str(int(has_browser)),
+        "--notify",notify,"--expect-cards","#D,#R,#F" if has_browser else "#R,#F",
+        "--baseline","memory/.sprint-autopilot-baseline.json"],check=True)
+    url=f"docs/reports/{v}/AI执行报告/index.html#/build/{b}"
+    if notify=="1":
+        rc=subprocess.run([sys.executable,str(script/"notify.py"),"--auto","--node","#3",
+            "--header-color",color,"--title",f"AI 执行报告：{status}","--version",v,"--build",b,
+            "--section",f"全量实测：{p['summary']['browserStatus']}；全量单测：{p['unitTests']['status']}；总体：{status}。",
+            "--link-text","查看完整报告","--link-url",url]).returncode
+        if rc not in (0,3): print("#3 通知未送达，保留通知台账重试",file=sys.stderr)
+    executed=read_payload(exec_dir / "data" / (b+".js"))
+    if finalize_ready(p) and finalize_ready(executed):
+        subprocess.run([sys.executable,str(script/"baseline_edit.py"),"--version",v,"--build",b,
+            "set","status","closed","ai_report_finalized","true","ai_report_finalized_at","@now",
+            "finished_at","@now","pass_rate",json.dumps(p["summary"].get("passRate"))],check=True)
+    else:
+        print("报告已交付，但验证尚不完整：不 closed、不 ai_report_finalized、不冻结；按原预算/重试协议补核验")
+else:
+    if shutil.which("node"):
+        subprocess.run(["node",str(script/"report_render_smoke.js"),str(test_dir),b],check=True)
+    else:
+        print("Node 不可用：test HTML 已生成，渲染冒烟未执行")
+    print(f"standalone 联合报告已交付：{status}；不创建版本 baseline 或执行报告")
+JOINT_FINAL
+```
+
+上述任一步失败不得继续发绿灯或写 frozen 标记；保留失败输出供主协调者修复同 build 产物。缺工具/超时/未核验不转作旧未收敛计数触发冻结。实际实测或单测代码失败仍走 `settle` 的 BUG/auto_fixable_pending → `/sprint-bugfix` → 新 build 两路重跑。
+
+### 历史无 unitTests 的收尾兼容
 
 **触发前置**（都满足才执行；任一不满足整步跳过）：
 1. `REPORT_ENABLED=1`（autopilot 驱动，有 `current_build`）—— standalone 直接调用无 AI执行报告，不 finalize；
@@ -37,24 +113,11 @@
    GATE={{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py
    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"   # ⚠️ 必须定义在 if 之外：通过分支也要用它清 streak
    if [ -f "$GATE" ]; then
-     # ⛔ **必传 `--expect-cards`（本门自称"本 build 唯一权威仪式门"，就必须真的校通知台账）**：
-     #   实测事故：本门不传该 flag → 落进退化分支，而退化判据当时把"规划期无 build 的
-     #   #0/#1/#1b"也算进本 build，**只要跑过规划就恒真** → 一整轮测试期通知零推送照样 PASS。
-     #   更糟的是 autopilot 侧 `sprint-autopilot/phase-3-9.md` 明确写着「测试链路通知 #D/#R/#F/#G/#3 本门不期望，
-     #   归其 Phase 3.7 final 门校」——**两条链路各自把责任推给对方，而被指定的这一方并没有真校**。
-     #   期望集 = 测试链路三条**必发**通知 #D/#R/#F（⛔ 漏 #R 会让它落进校验真空：autopilot 侧
-     #   明说不校它、本门又不期望它）。#3 由 build 关闭方发、在本门之后（脚本对 final 阶段已自动豁免）；
-     #   #G 是条件通知，两侧均不无条件期望。
      python3 "$GATE" check --version "$TARGET_VERSION" --build "$BUILD" \
        --stage final --will-browser-test 1 --notify "${NOTIFY_ENABLED:-1}" \
        --expect-cards "#D,#R,#F" \
        --baseline memory/.sprint-autopilot-baseline.json || FINAL_GATE_BAD="最终仪式门未过（ceremony-gate --stage final）"
    else
-     # ★ B4 兜底：gate 脚本缺失 → 内联校验 exec+test SPA + 两份交付台账在位，绝不静默 exit 1 阻死 #3/收尾
-     # ⛔ 台账在**顶层** `report_deliveries[{build}]`，既不在 `versions.{V}` 下、也少不了 build 那一层。
-     #    写成 `.versions."{V}".report_deliveries.exec_report` 会恒取空 → 恒判"交付台账缺失" →
-     #    bump report_gate_fail_streak → 3 tick 后按 handoff-exhausted 冻结。正确写法见姊妹分片
-     #    `sprint-autopilot/phase-3-9.md` 同名兜底段。
      EXEC_D=$(jq -r ".report_deliveries.\"${BUILD}\".exec_report // empty" memory/.sprint-autopilot-baseline.json 2>/dev/null)
      TEST_D=$(jq -r ".report_deliveries.\"${BUILD}\".test_report // empty" memory/.sprint-autopilot-baseline.json 2>/dev/null)
      if [ -f "docs/reports/${TARGET_VERSION}/AI执行报告/index.html" ] && [ -f "docs/reports/${TARGET_VERSION}/AI测试报告/index.html" ] && [ -n "$EXEC_D" ] && [ -n "$TEST_D" ]; then
@@ -63,19 +126,7 @@
        FINAL_GATE_BAD="最终仪式门未过（内联兜底：SPA / 交付台账缺失）"
      fi
    fi
-   # ── 统一处置（⛔ 绝不裸 exit 1）──
-   #   此刻 `aiauto_tested_at` 已写、`builds[].status` 已是 tested、未收敛 streak 已清零 →
-   #   裸退后下 tick 直接命中去重门 exit 0，本 build **永远不会被重新处理**；而 autopilot 的
-   #   准发布 0b 门只校 `aiauto_tested_at` + `unconverged_streak`、**不校 finalize**，会照常归档。
-   #   净结果：#3 永不发、报告永远停在骨架、零告警，版本却被当成"已测收敛并归档"——
-   #   比"每 tick 重撞"更隐蔽的一种永久静默死。
    if [ -n "$FINAL_GATE_BAD" ]; then
-     # ⛔ **不能复用 report_gate_fail_streak**：它被前三道门（3.2.5 截图 / 3.2.6 step5 /
-     #    5bis 骨架钢门）共用，且那三道**通过即 `del` 清零**。能走到本门的 tick 必然已过前三道
-     #    → 三次清零都已执行 → 本处 bump 永远返回 1 → `[ "$N" -ge 3 ]` **恒假**、永不冻结，
-     #    每 5 分钟从 Phase 0 重跑整轮浏览器实测。故本门用独立计数器。
-     # 记账 → 判阈 → 冻结 → #4 一次做完（未达阈只记账不发通知；无唤醒源时脚本当场按达阈处置）。
-     # ⛔ reason 不写 handoff-exhausted（人工专属）：真因 = 报告交付缺失，与 deploy-unreachable 同域、可自动复探。
      python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" --build "${BUILD:-}" \
        --phase 3.7-final-gate --reason deploy-unreachable \
        --streak-key final_gate_fail_streak --threshold "${REPORT_GATE_FREEZE_THRESHOLD:-3}" \
@@ -96,9 +147,6 @@ Stop hook / emit-report 不可变锁。恒读 false 的后果是 0b 门永不通
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 BEV="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
-# ★ PASS_RATE **必须在本围栏现取**：它由上一步 gen_report 聚合，而那是**另一次 Bash 调用**，
-#   shell 变量不存活 → `${PASS_RATE:-0}` 恒落 0 → `builds[].pass_rate` 恒记 0，
-#   报告首页与准发布判据读到的通过率全是 0。故从已落盘的报告数据现取，别靠跨围栏变量。
 PASS_RATE=$(grep -oE '"passRate"[[:space:]]*:[[:space:]]*[0-9.]+' \
   "docs/reports/${TARGET_VERSION}/AI执行报告/data/${BUILD}.js" 2>/dev/null \
   | head -1 | grep -oE '[0-9.]+$')

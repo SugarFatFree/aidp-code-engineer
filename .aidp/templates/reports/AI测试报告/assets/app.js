@@ -74,6 +74,68 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
       + '<p style="margin:6px 0 0;font-size:13px">排查：按契约修 <code>data/{BUILD}.js</code>（比率 0~1、cases 含 result/title、buildNo 等）后重跑 <code>emit-report.py</code>。</p></div>';
   }
   function $(sel) { return document.querySelector(sel); }
+  function unitStatus(b) {
+    var u = b.unitTests;
+    if (u == null) return null;
+    if (!u || u.schema !== 1 || u.build !== b.build || !b.commit || u.commit !== b.commit ||
+        ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"].indexOf(u.status) < 0 || !Array.isArray(u.runs)) return "UNVERIFIED";
+    if (u.status === "PASS" && (!u.runs.length || u.runs.some(function (r) {
+      return !r || r.status !== "PASS" || !r.run_id || !r.command || !r.cwd || !r.env_id ||
+        (r.counts && r.counts.failed > 0) || (r.failed_cases || []).length;
+    }) || (u.counts && u.counts.failed > 0) || (u.failed_cases || []).length)) return "UNVERIFIED";
+    return u.status;
+  }
+  function unitHasFailure(u) {
+    return !!u && [u].concat(Array.isArray(u.runs) ? u.runs : []).some(function (r) {
+      return r && (r.status === "FAIL" || (r.failed_cases || []).length || (r.counts && r.counts.failed > 0));
+    });
+  }
+  function testVerdict(b) {
+    var s = b.summary || {}, u = unitStatus(b);
+    if (s.fail > 0 || s.openBugs > 0 || s.openDefects > 0 || s.runtime_errors > 0 || (b.runtimeErrors || []).length || unitHasFailure(b.unitTests)) return "FAIL";
+    var bs = b.browserTests && b.browserTests.reason ? b.browserTests.status : null;
+    if (s.pendingBrowserTest || bs === "RUNNING" || u === "RUNNING") return "RUNNING";
+    if (bs === "TIMEOUT" || u === "TIMEOUT") return "TIMEOUT";
+    if (bs === "UNVERIFIED" || u === "UNVERIFIED" || s.pendingCases > 0) return "UNVERIFIED";
+    if (s.block > 0 || s.skip > 0) return "UNVERIFIED";
+    var na = bs === "N/A";
+    if (na || (s.total > 0 && s.na === s.total)) return u ? "PASS" : "N/A";
+    return passDenom(s) > 0 && s.pass === passDenom(s) && s.browserTested !== false ? "PASS" : "UNVERIFIED";
+  }
+  var UNIT_TEXT = { PASS: "通过", FAIL: "失败", UNVERIFIED: "未核验，不能通过", TIMEOUT: "超时，不能通过", RUNNING: "运行中，不能收尾" };
+  function testConclusion(b) {
+    if (!b.unitTests) return ""; // 历史报告不追溯补造单测结论。
+    var status = testVerdict(b);
+    var cls = status === "PASS" ? "pass" : status === "FAIL" ? "fail" : "block";
+    return '<div class="section card"><h2>总体结论：<span class="badge ' + cls + '">' + esc(status) + ' · ' + esc(UNIT_TEXT[status]) + '</span></h2>'
+      + '<p>全量实测与全量单测共同判定；实测通过率仅统计实测用例。</p></div>';
+  }
+  function unitCounts(counts) {
+    return ["passed", "failed", "skipped"].map(function (key) {
+      var n = counts && counts[key];
+      return key + '：' + (typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : "未提供");
+    }).join(" / ");
+  }
+  function unitDetails(item) {
+    var failed = Array.isArray(item.failed_cases) ? item.failed_cases : [];
+    return '<p>' + esc(unitCounts(item.counts)) + '</p><p>失败用例</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">'
+      + esc(failed.length ? failed.map(function (c) { return typeof c === "string" ? c : JSON.stringify(c); }).join("\n") : "未提供")
+      + '</pre><p>首要错误</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(item.primary_error || "未提供") + '</pre>';
+  }
+  function renderUnitTests(b) {
+    var u = b.unitTests;
+    if (!u) return '<section class="section card"><h2>全量单测</h2><p>历史报告未记录单测结果。</p></section>';
+    var status = unitStatus(b);
+    var runs = Array.isArray(u.runs) ? u.runs : [];
+    return '<section class="section card"><h2>全量单测</h2><p><b>' + esc(status) + ' · ' + esc(UNIT_TEXT[status]) + '</b> · ' + esc(u.reason || "未提供原因") + '</p>'
+      + (unitHasFailure(u) && status !== "FAIL" ? '<p>已发现失败，验证尚未完成。</p>' : '')
+      + '<p>commit：<code>' + esc(u.commit) + '</code> · 复用结果：' + (u.reused ? "是" : "否") + '</p>' + unitDetails(u)
+      + runs.map(function (r) { return '<article><h3>run_id：<code>' + esc(r.run_id) + '</code> · 状态：' + esc(r.status) + '</h3>'
+        + '<p>真实命令</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(Array.isArray(r.command) ? JSON.stringify(r.command) : r.command) + '</pre>'
+        + '<p>cwd：<code>' + esc(r.cwd) + '</code> · env_id：<code>' + esc(r.env_id) + '</code></p>' + unitDetails(r)
+        + '<p>日志：<code>' + esc(r.log || "未提供") + '</code></p></article>'; }).join("")
+      + (runs.length ? "" : '<p>未执行任何单测 run。</p>') + '</section>';
+  }
   // driver 字段口径（cli|mcp-remote|mcp-plugin-fallback|manual）→ 友好标签；plugin 降级加⚠️警示，防报告失真被忽略
   function driverLabel(d) {
     var map = {
@@ -318,7 +380,7 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
       + '<thead><tr><th>Build</th><th>完成时间</th><th>通过率</th><th>通过</th><th>失败</th><th>阻塞</th><th>忽略</th><th>不适用</th><th>缺陷</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div></div>';
 
-    root.innerHTML = '<div class="section">' + kpi + '</div>' + trend + grid;
+    root.innerHTML = testConclusion(latest) + '<div class="section">' + kpi + '</div>' + trend + grid;
 
     // 绑定行点击 → 跳转该 build 子页
     root.querySelectorAll("tr.clickable").forEach(function (tr) {
@@ -405,7 +467,7 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
 
     // 概览 KPI
     var kpi = '<div class="kpi-grid">'
-      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">' + pct(s.passRate) + rateWarnBadge(s.passRate) + '</div><div class="kpi-sub">' + s.pass + ' / ' + passDenom(s) + ' 通过（分母扣除不适用）</div></div>'
+      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">' + (s.passRate == null ? "未提供" : pct(s.passRate)) + rateWarnBadge(s.passRate) + '</div><div class="kpi-sub">' + s.pass + ' / ' + passDenom(s) + ' 通过（分母扣除不适用）</div></div>'
       + '<div class="kpi"><div class="kpi-label">用例总数</div><div class="kpi-value">' + s.total + '</div></div>'
       + '<div class="kpi"><div class="kpi-label">不适用</div><div class="kpi-value">' + (s.na || 0) + '</div></div>'
       + '<div class="kpi accent-fail"><div class="kpi-label">失败 / 阻塞</div><div class="kpi-value">' + s.fail + ' / ' + s.block + '</div></div>'
@@ -459,7 +521,9 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
       + metaItem("访问地址", b.testUrl, true)
       + '</div></div></div>';
 
-    root.innerHTML = '<div class="section">' + kpi + '</div>' + charts + caseTable + defTable + rtTable + meta;
+    var browserNA = b.browserTests && b.browserTests.status === "N/A";
+    var realHead = '<h2>全量实测</h2>' + (browserNA ? '<p>浏览器 N/A · ' + esc(b.browserTests.reason) + '</p>' : '');
+    root.innerHTML = testConclusion(b) + '<section class="section">' + realHead + kpi + charts + caseTable + defTable + rtTable + '</section>' + renderUnitTests(b) + meta;
     } catch (e) { console.error("[report] renderBuild 失败", e); root.innerHTML = errBanner(b, e); }
   }
   function metaItem(k, v, wide) {

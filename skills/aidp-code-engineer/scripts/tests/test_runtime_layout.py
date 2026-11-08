@@ -358,6 +358,48 @@ class ManifestContractTest(RuntimeLayoutTestCase):
 
 
 class AtomicInstallTest(RuntimeLayoutTestCase):
+    def test_same_version_refresh_restores_missing_gated_files_and_directories(self):
+        for home, kind in ((".claude", "claude"), (".agents", "shared")):
+            for missing in ("commands/sprint-dev.md", "commands", "skills/demo"):
+                with self.subTest(home=home, missing=missing), tempfile.TemporaryDirectory() as td:
+                    base = Path(td)
+                    source = make_source(base)
+                    runtime = base / home
+                    R.render_runtime(source, runtime, home, "V1.2.1", kind)
+                    if (runtime / missing).is_dir():
+                        shutil.rmtree(runtime / missing)
+                    else:
+                        (runtime / missing).unlink()
+                    sibling = runtime / "agents/sample.txt"
+                    sibling.write_text("local content\n", encoding="utf-8")
+                    (source / "commands/sprint-dev.md").write_text(
+                        "new {{AIDP_HOME}}/scripts/tool.py\n", encoding="utf-8")
+                    (source / "commands/not-installed.md").write_text("new contract\n", encoding="utf-8")
+                    R.render_runtime(source, runtime, home, "V1.2.1", kind, preserve_gated=True,
+                                     backup_callback=lambda old: shutil.copytree(old, base / "backup"))
+                    self.assertTrue((runtime / missing).exists())
+                    self.assertEqual(sibling.read_text(encoding="utf-8"), "local content\n")
+                    self.assertFalse((runtime / "commands/not-installed.md").exists())
+                    manifest = R.validate_runtime(runtime, home)
+                    restored = "skills/demo/SKILL.md" if missing == "skills/demo" else "commands/sprint-dev.md"
+                    self.assertEqual(manifest["files"][restored], R._file_metadata(runtime / restored))
+                    self.assertNotIn(restored, manifest.get("local_modifications", {}))
+
+    def test_same_version_missing_gated_source_refuses_without_destroying_runtime(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".claude"
+            R.render_runtime(source, runtime, ".claude", "V1.2.1", "claude")
+            relative = "commands/sprint-dev.md"
+            (runtime / relative).unlink()
+            (source / relative).unlink()
+            before = R.tree_digest(runtime)
+            with self.assertRaisesRegex(ValueError, "缺失"):
+                R.render_runtime(source, runtime, ".claude", "V1.2.1", "claude", preserve_gated=True,
+                                 backup_callback=lambda old: shutil.copytree(old, base / "backup"))
+            self.assertEqual(R.tree_digest(runtime), before)
+
     def test_same_version_refresh_preserves_gated_baselines_and_new_script_modes(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

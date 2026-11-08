@@ -46,6 +46,8 @@ _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_text
+from unit_report_merge import (merge_unit_tests, unverified_result, validate_report_units,
+                               report_ready, finalize_ready, success_ready, open_bug_count, triage_state)
 import argparse
 import glob
 import hashlib
@@ -183,6 +185,7 @@ def validate_payload(kind, payload):
     for k in _REQUIRED.get(kind, []):
         if payload.get(k) is None:
             errs.append(f"缺失顶层必填字段 `{k}`")
+    errs.extend(validate_report_units(payload, kind))
     # 数组字段类型（risks 用分组对象是 #③ 白屏根因，专项点名）
     for k in _ARRAY_FIELDS.get(kind, []):
         v = payload.get(k)
@@ -319,8 +322,8 @@ def validate_payload(kind, payload):
                     errs.append(f"summary 缺必填计数子键 `{_k}`：缺键会让计数对账门整段静默跳过")
                 elif not isinstance(_v, int) or isinstance(_v, bool):
                     errs.append(f"summary.{_k}=`{_v}` 必须是整数，实际 {type(_v).__name__}")
-            if summary.get("passRate") is None:
-                errs.append("summary 缺必填子键 `passRate`（0~1 小数，分母 = total - na）")
+            if summary.get("passRate") is None and summary.get("total") != summary.get("na", 0):
+                errs.append("summary 缺必填子键 `passRate`（0~1 小数，分母 = total - na；无可执行用例时允许 null）")
             counts_ok = all(isinstance(v, int) and not isinstance(v, bool) for v in nums.values())
             if counts_ok:
                 s = sum(nums[k] for k in counters)
@@ -370,9 +373,14 @@ def validate_payload(kind, payload):
     return errs
 
 
-def ensure_skeleton(report_dir, tpl_dir):
-    """报告目录缺 index.html → 从模板拷骨架，并清掉示例 data + 其注册行。返回 True=本次新建。"""
+def ensure_skeleton(report_dir, tpl_dir, refresh_units=False):
+    """缺骨架时生成；新单测契约刷新渲染器，避免旧目录把 unitTests 静默丢弃。"""
     if os.path.isfile(os.path.join(report_dir, "index.html")):
+        if refresh_units:
+            source = os.path.join(tpl_dir, "assets", "app.js")
+            target = os.path.join(report_dir, "assets", "app.js")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copyfile(source, target)
         return False
     if not os.path.isdir(tpl_dir):
         raise FileNotFoundError(runtime_text(
@@ -524,6 +532,30 @@ def derive_test_summary(payload, reports_root, version, build):
     summ = src.get("summary") if isinstance(src, dict) else None
     if not isinstance(summ, dict):
         return None
+    if src.get("build") != build:
+        raise ValueError("AI测试报告 build 与目标 build 不匹配，拒绝派生 testSummary")
+    if src.get("unitTests") is not None:
+        if payload.get("commit") not in (None, "", src.get("commit")):
+            raise ValueError("AI执行报告 commit 与同 build 测试报告不匹配")
+        payload["commit"] = src.get("commit")
+        payload["unitTests"] = src["unitTests"]
+        # 分类引用与事实必须同源；exec 不得保留旧分类或遗漏用例导致引用失配。
+        for key in ("failureTriage", "cases"):
+            if key in src:
+                payload[key] = src[key]
+            else:
+                payload.pop(key, None)
+        for key in ("defects", "runtimeErrors"):
+            source = src.get(key) or []
+            source_ids = {item.get("id") for item in source if isinstance(item, dict) and item.get("id")}
+            kept = [item for item in payload.get(key, []) if item not in source
+                    and not (isinstance(item, dict) and item.get("id") in source_ids)]
+            if source or key in payload:
+                payload[key] = kept + source
+        if src.get("browserTests") is not None:
+            payload["browserTests"] = src["browserTests"]
+        else:
+            payload.pop("browserTests", None)
     derived = dict(summ)
     given = payload.get("testSummary")
     if given == derived:
@@ -680,6 +712,10 @@ def main():
     ap.add_argument("--version", required=True)
     ap.add_argument("--build", required=True)
     ap.add_argument("--data", required=True, help="结果 JSON 文件（push 到全局容器的对象）")
+    ap.add_argument("--unit-result", help="合并 build_unit_test 的 result.json；显式指定但缺失时记 UNVERIFIED")
+    ap.add_argument("--failure-triage", help="主协调者针对本 build/commit 的结构化缺陷分类 JSON")
+    ap.add_argument("--commit", help="目标 build.commit；必须与 baseline 及单测结果精确匹配")
+    ap.add_argument("--browser-na-reason", help="纯后端等浏览器不适用理由；允许产出无浏览器用例的报告")
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--templates-root", default=runtime_text('__AIDP_HOME__/templates/reports', __file__))
     ap.add_argument("--reports-root", default="docs/reports")
@@ -767,6 +803,57 @@ def main():
             # 注入本轮增量用例集（incremental_cases.py 从 git 算出）——报告据此
             # 把「测试类型」写成「全量（含本轮增量 N 条）」并点名逐条结果。
             enrich_incremental(payload, args.baseline, args.version, args.build)
+        if args.failure_triage:
+            triage = _load_json(args.failure_triage)
+            if not isinstance(triage, dict):
+                raise ValueError("缺陷分类 JSON 缺失或非法")
+            if args.kind == "exec" and payload.get("failureTriage") != triage:
+                raise ValueError("exec 分类须继承同 build 测试报告；先 emit test")
+            payload["failureTriage"] = triage
+        # 单测结果独立于浏览器 cases；历史没有单测字段/文件的 emit 保持旧口径。
+        unit_path = args.unit_result or os.path.join(
+            "memory", ".aidp", "build-unit", args.version, args.build, "result.json")
+        if args.unit_result or os.path.isfile(unit_path) or "unitTests" in payload:
+            build_entry = get_build_entry(args.baseline, args.version, args.build)
+            baseline_commit = build_entry.get("push_commit") or build_entry.get("commit")
+            if args.commit and baseline_commit and args.commit != baseline_commit:
+                raise ValueError("--commit 与 baseline build.commit 不匹配")
+            commit = args.commit or baseline_commit or payload.get("commit")
+            if os.path.isfile(unit_path):
+                unit = _load_json(unit_path)
+                if unit is None:
+                    raise ValueError(f"单测结果 JSON 无法解析：{unit_path}")
+            elif args.unit_result:
+                unit = unverified_result(args.build, commit, f"单测结果文件缺失：{unit_path}")
+            else:
+                unit = payload["unitTests"]
+            if args.browser_na_reason:
+                payload["browserTests"] = {"status": "N/A", "reason": args.browser_na_reason}
+                key = "summary" if args.kind == "test" else "testSummary"
+                payload.setdefault(key, {"total": 0, "pass": 0, "fail": 0, "block": 0,
+                                         "skip": 0, "na": 0, "passRate": None})
+                if args.kind == "test":
+                    payload.setdefault("cases", [])
+            node = ((_load_json(args.baseline, {}) or {}).get("versions") or {}).get(args.version) or {}
+            if node.get("current_build") == args.build:
+                pending = node.get("case_ledger_pending", 0)
+                if type(pending) is not int or pending < 0:
+                    raise ValueError("case_ledger_pending 必须为非负整数")
+                summary = payload.setdefault("summary" if args.kind == "test" else "testSummary", {})
+                summary.update(pendingCases=pending, openBugs=open_bug_count(os.getcwd(), args.version))
+            payload = merge_unit_tests(payload, unit, args.build, commit, args.kind)
+            out["unit_result"] = unit_path
+            out["overallStatus"] = payload["summary" if args.kind == "test" else "testSummary"]["overallStatus"]
+            out["report_ready"] = report_ready(payload)
+            out["freeze_ready"] = finalize_ready(payload)
+            out["success_ready"] = success_ready(payload)
+            routing = triage_state(payload)
+            out["triage_status"] = routing["status"]
+            out["triage_missing"] = routing["missing"]
+        elif args.failure_triage:
+            raise ValueError("--failure-triage 必须同时提供 --unit-result 或已有单测结果")
+        elif args.browser_na_reason:
+            raise ValueError("--browser-na-reason 必须同时提供 --unit-result 或已有单测结果")
         # ★ P0-1 数据契约 fail-fast：字段名/结构/单位漂移在写盘前拦下（执行体是 AI，必然会漂，不能靠散文契约自觉）
         schema_errs = validate_payload(args.kind, payload)
         if schema_errs:
@@ -790,7 +877,7 @@ def main():
                 out["error"] = msg
                 print(json.dumps(out, ensure_ascii=False, indent=2) if args.json else f"⛔ {msg}")
                 return 3
-        out["scaffolded"] = ensure_skeleton(report_dir, tpl_dir)
+        out["scaffolded"] = ensure_skeleton(report_dir, tpl_dir, refresh_units="unitTests" in payload)
         out["data_file"] = write_data_file(report_dir, args.build, payload, global_var)
         out["registered_pages"] = register_script(report_dir, args.build, pages)
         out["stray_markdown"] = scan_stray_markdown(report_dir)

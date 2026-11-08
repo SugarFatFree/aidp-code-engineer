@@ -96,6 +96,11 @@ run "test_report_schema.py（报告数据契约）" python3 .aidp/scripts/tests/
 run "test_commit_gate.py（提交前门禁 + 提交/推送分类）" python3 .aidp/scripts/tests/test_commit_gate.py
 run "test_alloc_id.py（原子编号分配与作用域）" python3 .aidp/scripts/tests/test_alloc_id.py
 run "test_test_ledger.py（测试复用与审查差量）" python3 .aidp/scripts/tests/test_test_ledger.py
+run "test_test_scope.py（Sprint 单测推导 / run-scope 逐套记账 / worktree 全量复用）" python3 .aidp/scripts/tests/test_test_scope.py
+run "test_build_unit_test.py（部署提交隔离执行与缓存）" python3 .aidp/scripts/tests/test_build_unit_test.py
+run "test_unit_report.py（双路报告与终态口径）" python3 .aidp/scripts/tests/test_unit_report.py
+run "test_aiauto_test_join.py（两路汇总与失败登记）" python3 .aidp/scripts/tests/test_aiauto_test_join.py
+run "test_aiauto_parallel.py（两路真实并发与报告交接）" python3 .aidp/scripts/tests/test_aiauto_parallel.py
 run "test_notify.py（里程碑通知：渠道渲染 / 签名 / 回落 / 退出码）" python3 .aidp/scripts/tests/test_notify.py
 run "cicd_watch.py --selftest（CICD 多提供方监听：脚本自带离线自测）" python3 .aidp/scripts/cicd_watch.py --selftest
 run "test_agent_sync.py（多 Agent 装配：agent_env / agent_sync）" python3 .aidp/scripts/tests/test_agent_sync.py
@@ -139,10 +144,11 @@ run "test_dsh_plugin_state.py（脚手架侧：DSH 扩展状态机 —— 已装
 if command -v node >/dev/null 2>&1; then
   run "test_report_render.js（报告渲染口径）" node .aidp/scripts/tests/test_report_render.js
   run "test_report_lightbox.js（截图灯箱缩放/拖拽交互）" node .aidp/scripts/tests/test_report_lightbox.js
+  run "test_release_unit_report.js（发布报告联合测试结论）" node .aidp/scripts/tests/test_release_unit_report.js
 else
   echo ""
-  echo "⏭️ 无 node → 跳过 test_report_render.js / test_report_lightbox.js（渲染与交互类断言需 node）"
-  total_skip=$((total_skip + 2))
+  echo "⏭️ 无 node → 跳过 test_report_render.js / test_report_lightbox.js / test_release_unit_report.js（渲染与交互类断言需 node）"
+  total_skip=$((total_skip + 3))
 fi
 
 echo ""

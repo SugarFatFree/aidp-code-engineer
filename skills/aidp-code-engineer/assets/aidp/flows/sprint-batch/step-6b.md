@@ -56,6 +56,8 @@
 
 #### Step 6.5 问题回写「问题汇总清单」表（失败用例 C-NNN；运行时错误 R-NNN 由 aiauto-test 自写）
 
+双路 build 先读 `aiauto_test_result.overall_status/unit_status/bug_ids`：`RUNNING` 继续接续，`UNVERIFIED/TIMEOUT` 显示未核验、不当成功、不冻结；单测 FAIL 已由 `aiauto_test_join.py` 登记在 `docs/bugfix/{version}/bugfix-unit-{BUILD}.md`，交 `/sprint-bugfix` 消费该文件，不重复写 C-NNN。下文 `failed` 仅统计实测用例，不用它覆盖联合结论。
+
 aiauto-test 跑完后，sprint-batch 读 baseline 的 `aiauto_test_result` 段。**`failed`（失败用例）与 `runtime_errors`（运行时错误）是两类问题**：运行时错误（含"通过用例上的接口报错"、"无用例覆盖页面的报错"）已由 `/sprint-aiauto-test` Phase 2.4/3 自行回写 `R-NNN` 行，sprint-batch **不重复写**；本步骤只负责把**失败用例**写成 `C-NNN`。如有失败用例（`aiauto_test_result.failed > 0`）：
 
 1. 解析 `aiauto_test_report` 路径，读「失败汇总」段（Markdown 表）

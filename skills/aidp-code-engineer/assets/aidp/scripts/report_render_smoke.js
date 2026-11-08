@@ -56,6 +56,50 @@ function scanPage(htmlSrc) {
   return { scripts, views };
 }
 
+/** 单测报告的前端消费契约；旧报告缺 unitTests 保持兼容。 */
+function validateUnitReport(b, build) {
+  if (!Object.prototype.hasOwnProperty.call(b, "unitTests")) return;
+  const u = b.unitTests, states = ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"];
+  function requireFact(ok, message) { if (!ok) throw new Error("unitTests 契约：" + message); }
+  requireFact(u && u.schema === 1 && b.build === build && u.build === build && typeof b.commit === "string" && b.commit.trim() && u.commit === b.commit, "build/commit/schema 不匹配");
+  requireFact(states.includes(u.status) && typeof u.reason === "string" && typeof u.reused === "boolean" && Array.isArray(u.runs), "status/reason/reused/runs 非法");
+  const ids = new Set();
+  [u].concat(u.runs).forEach((item, index) => {
+    requireFact(item && states.includes(item.status) && Array.isArray(item.failed_cases), "run 状态或失败用例非法");
+    requireFact(item.primary_error == null || typeof item.primary_error === "string", "primary_error 非法");
+    if (item.counts != null) {
+      requireFact(typeof item.counts === "object" && !Array.isArray(item.counts), "counts 非法");
+      ["passed", "failed", "skipped"].forEach((key) => requireFact(item.counts[key] == null || Number.isInteger(item.counts[key]) && item.counts[key] >= 0, "counts." + key + " 非法"));
+    }
+    if (item.status === "PASS") requireFact(!(item.counts && item.counts.failed > 0) && !item.failed_cases.length, "PASS 却存在失败用例");
+    if (index) {
+      ["run_id", "cwd", "env_id"].forEach((key) => requireFact(typeof item[key] === "string" && item[key].trim(), key + " 缺失"));
+      const command = item.command;
+      requireFact(typeof command === "string" && command.trim() || Array.isArray(command) && command.length && command.every((arg) => typeof arg === "string") && command[0].trim(), "command 必须为命令字符串或 argv 数组");
+      requireFact(!ids.has(item.run_id), "run_id 重复"); ids.add(item.run_id);
+      requireFact(item.log == null || typeof item.log === "string", "log 非法");
+    }
+  });
+  if (u.status === "PASS") requireFact(u.runs.length && u.runs.every((r) => r.status === "PASS"), "PASS 但无完成 run");
+  if (["PASS", "FAIL"].includes(u.status)) requireFact(u.runs.every((r) => r.status !== "RUNNING"), "已完成状态仍有 RUNNING run");
+  if (b.browserTests != null) requireFact(["N/A", "UNVERIFIED", "TIMEOUT", "RUNNING"].includes(b.browserTests.status) && typeof b.browserTests.reason === "string" && b.browserTests.reason.trim(), "browserTests 状态非法或缺理由");
+  const s = b.summary || b.testSummary || {};
+  let browser = "UNVERIFIED";
+  if (s.fail > 0 || s.openBugs > 0 || s.openDefects > 0 || s.runtime_errors > 0 || (b.runtimeErrors || []).length) browser = "FAIL";
+  else if (s.pendingBrowserTest) browser = "RUNNING";
+  else if (s.pendingCases > 0 && !(b.browserTests && ["RUNNING", "TIMEOUT"].includes(b.browserTests.status))) browser = "UNVERIFIED";
+  else if (b.browserTests) browser = b.browserTests.status;
+  else if (!(s.block > 0 || s.skip > 0)) {
+    if (s.total > 0 && s.total === s.na) browser = "N/A";
+    else if (s.total - (s.na || 0) > 0 && s.pass === s.total - (s.na || 0) && s.browserTested !== false) browser = "PASS";
+  }
+  const pending = ["RUNNING", "TIMEOUT", "UNVERIFIED"].find((s) => [browser, u.status].includes(s));
+  const unitFailed = [u].concat(u.runs).some((r) => r.status === "FAIL" || r.failed_cases.length || r.counts && r.counts.failed > 0);
+  const overall = browser === "FAIL" || unitFailed ? "FAIL" : pending || (["PASS", "N/A"].includes(browser) ? "PASS" : "UNVERIFIED");
+  requireFact(s.overallStatus === overall && s.unitStatus === u.status && s.browserStatus === browser, "summary 总结论与单测/实测不一致");
+  if (b.overview && overall !== "PASS") requireFact(b.overview.statusKind !== "done", "执行报告误标完成");
+}
+
 /** 在一个全新沙箱里按序 eval data + 渲染脚本，返回各候选容器的 innerHTML */
 function renderPage(dataJs, scriptPaths, build, viewIds) {
   const cache = {};
@@ -83,6 +127,7 @@ function renderPage(dataJs, scriptPaths, build, viewIds) {
     // ① 先 eval data（自注册 window.__AIRUNS__/__BUILDS__），再按 html 中的顺序 eval 渲染脚本
     const runData = new Function("window", "document", "location", fs.readFileSync(dataJs, "utf8"));
     runData(win, doc, win.location);
+    (win.__BUILDS__ || win.__AIRUNS__ || []).forEach((b) => validateUnitReport(b, build));
     for (const sp of scriptPaths) {
       const runApp = new Function("window", "document", "location", "console", "localStorage",
         fs.readFileSync(sp, "utf8"));

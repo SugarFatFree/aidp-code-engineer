@@ -30,7 +30,11 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
   schtasks  Windows → 只输出 `schtasks` 命令（需在 Git Bash / WSL 等可运行 bash 的环境下执行），不自动执行
 
 配置：`memory/aidp-config.yaml` 的 `scheduler` 段（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `exec`），
-命令行参数优先。心跳：开发链路 `autopilot_loop_heartbeat_at`、测试链路 `aiauto_test_heartbeat_at`（baseline 顶层）。
+安装命令行参数优先。成功装配后将周期保存到 `memory/.aidp/scheduler-installation.json`；
+watchdog / status 优先使用此快照，配置周期热改须重装才生效，无安装态（含手工 loop）时使用配置。
+status 的 installation 返回上次成功装配快照，config 返回当前配置。失败重装保留旧快照，
+不承诺回滚已执行的系统命令；dry-run 和 schtasks 仅输出命令，不写安装态。
+心跳：开发链路 `autopilot_loop_heartbeat_at`、测试链路 `aiauto_test_heartbeat_at`（baseline 顶层）。
 
 ## 退出码
 
@@ -70,6 +74,7 @@ PLATFORMS = ("systemd", "cron", "launchd", "schtasks")
 BASELINE_REL = os.path.join("memory", ".sprint-autopilot-baseline.json")
 ALERTS_REL = os.path.join("memory", ".aidp", "alerts.jsonl")
 WATCHDOG_STATE_REL = os.path.join("memory", ".aidp", "scheduler-watchdog.json")
+INSTALLATION_STATE_REL = os.path.join("memory", ".aidp", "scheduler-installation.json")
 # 沿用旧路径兼容升级；现记录所有非零退出，只有成功执行才清零。
 TICK_TIMEOUT_STATE_REL = os.path.join("memory", ".aidp", "tick-timeouts.json")
 # 连续失败达阈后，原因 + rc 分键通知一次，直到成功恢复。兼容旧环境变量名。
@@ -500,24 +505,32 @@ def do_install(root, a):
     res["notes"].append(runtime_text('非交互执行需 Agent 预授权工具权限，详见 __AIDP_HOME__/reference/agent-tools.md 第三节', __file__))
     if a.dry_run:
         return 0, res
-    os.makedirs(os.path.join(root, "memory", ".aidp", "logs"), exist_ok=True)
-    if plat == "cron":
-        slug = project_slug(root)
-        keep = [ln for ln in _read_crontab() if f"{CRON_MARK} {slug} " not in ln]
-        rc, err = _write_crontab(keep + res["cron_lines"])
-        if rc != 0:
-            res["error"] = f"crontab 写入失败：{err.strip()[:200]}"
-            return 2, res
-        return 0, res
-    for p, body in res["files"].items():
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as fh:
-            fh.write(body)
-    for argv in res["commands"]:
-        rc, out = _run(argv)
-        if rc != 0:
-            res["error"] = f"{' '.join(argv)} 失败（rc={rc}）：{out.strip()[:200]}"
-            return 2, res
+    from baseline_edit import LockedBaseline
+    # 装配与记录共用一把锁，避免并发重装把较早的周期覆盖到较晚的任务上。
+    # 只有全部成功才写回；dry-run / schtasks 仅输出命令均不会进入此处。
+    with LockedBaseline(os.path.join(root, INSTALLATION_STATE_REL), write=True) as locked:
+        locked.write = False
+        os.makedirs(os.path.join(root, "memory", ".aidp", "logs"), exist_ok=True)
+        if plat == "cron":
+            slug = project_slug(root)
+            keep = [ln for ln in _read_crontab() if f"{CRON_MARK} {slug} " not in ln]
+            rc, err = _write_crontab(keep + res["cron_lines"])
+            if rc != 0:
+                res["error"] = f"crontab 写入失败：{err.strip()[:200]}"
+                return 2, res
+        else:
+            for p, body in res["files"].items():
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            for argv in res["commands"]:
+                rc, out = _run(argv)
+                if rc != 0:
+                    res["error"] = f"{' '.join(argv)} 失败（rc={rc}）：{out.strip()[:200]}"
+                    return 2, res
+        locked.data = {"platform": plat, "intervals": intervals,
+                       "installed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        locked.write = True
     return 0, res
 
 
@@ -546,24 +559,38 @@ def do_uninstall(root, a):
         return 2, res
     if a.dry_run:
         return 0, res
-    if plat == "cron":
-        keep = [ln for ln in _read_crontab() if f"{CRON_MARK} {slug} " not in ln]
-        rc, err = _write_crontab(keep)
-        if rc != 0:
-            res["error"] = f"crontab 写入失败：{err.strip()[:200]}"
-            return 2, res
-        return 0, res
-    timers_first = [c for c in res["commands"] if "daemon-reload" not in c]
-    for argv in timers_first:
-        _run(argv)                      # 未装过时失败无害
-    for p in res["removed"]:
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-    for argv in res["commands"]:
-        if "daemon-reload" in argv:
-            _run(argv)
+    from baseline_edit import LockedBaseline
+    with LockedBaseline(os.path.join(root, INSTALLATION_STATE_REL), write=True) as locked:
+        locked.write = False
+        if plat == "cron":
+            keep = [ln for ln in _read_crontab() if f"{CRON_MARK} {slug} " not in ln]
+            rc, err = _write_crontab(keep)
+            if rc != 0:
+                res["error"] = f"crontab 写入失败：{err.strip()[:200]}"
+                return 2, res
+        else:
+            timers_first = [c for c in res["commands"] if "daemon-reload" not in c]
+            for argv in timers_first:
+                rc, out = _run(argv)
+                # 未装过时仍幂等；有任务文件却停用失败，不能清除其安装周期。
+                if rc != 0 and any(os.path.isfile(p) for p in res["removed"]):
+                    res["error"] = f"{' '.join(argv)} 失败（rc={rc}）：{out.strip()[:200]}"
+                    return 2, res
+            for p in res["removed"]:
+                try:
+                    os.remove(p)
+                except FileNotFoundError:
+                    pass
+            for argv in res["commands"]:
+                if "daemon-reload" in argv:
+                    rc, out = _run(argv)
+                    if rc != 0:
+                        res["error"] = f"{' '.join(argv)} 失败（rc={rc}）：{out.strip()[:200]}"
+                        return 2, res
+        if locked.data.get("platform") == plat:
+            # 空记录表示无已知安装；保留锁 inode，不能删锁文件制造第二把锁。
+            locked.data = {}
+            locked.write = True
     return 0, res
 
 
@@ -650,8 +677,27 @@ def lock_held(root, command):
     return False
 
 
+def installed_schedule(root):
+    """上次成功装配的周期快照；只读原子替换后的完整文件，不把配置热改当成已重装。"""
+    try:
+        with open(os.path.join(root, INSTALLATION_STATE_REL), encoding="utf-8") as fh:
+            state = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(state, dict):
+        raise ValueError("scheduler 安装态必须是 JSON 对象")
+    if not state:
+        return {}
+    intervals = state.get("intervals")
+    if state.get("platform") not in PLATFORMS or not isinstance(intervals, dict) or any(
+            type(intervals.get(c)) is not int or intervals[c] < 60 for c in CHAINS):
+        raise ValueError("scheduler 安装态周期无效，请重新 install")
+    return state
+
+
 def heartbeat_report(root, now=None, intervals=None):
     cfg = scheduler_config(root)
+    installed = installed_schedule(root).get("intervals", {})
     now = now or datetime.now(timezone.utc)
     try:
         with open(os.path.join(root, BASELINE_REL), encoding="utf-8") as fh:
@@ -662,7 +708,8 @@ def heartbeat_report(root, now=None, intervals=None):
         bl = {}
     out = {}
     for chain, meta in CHAINS.items():
-        secs = (intervals or {}).get(chain) or parse_interval(cfg.get(meta["interval_key"])) \
+        secs = (intervals or {}).get(chain) or installed.get(chain) \
+            or parse_interval(cfg.get(meta["interval_key"])) \
             or parse_interval({"dev": "10m", "test": "5m"}[chain])
         threshold = int(cfg.get("stale_cycles") or 3) * secs + GRACE_SECONDS
         # 允许硬超时后的 TERM/KILL 与记账通知收尾；环境覆盖与 wrapper 使用同一解析器。
@@ -928,7 +975,7 @@ def do_status(root, a):
             installed[f"cron:{chain}"] = any(f"{CRON_MARK} {slug} {chain}" in ln for ln in tab)
     return 0, {"action": "status", "platform": plat, "root": root, "slug": slug,
                "installed": installed, "config": scheduler_config(root),
-               "heartbeats": heartbeat_report(root)}
+               "installation": installed_schedule(root), "heartbeats": heartbeat_report(root)}
 
 
 # ───────────────────────── 自检 ─────────────────────────

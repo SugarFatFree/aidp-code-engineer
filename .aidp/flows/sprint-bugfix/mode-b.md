@@ -50,6 +50,7 @@
 `bugfix` SKILL 只读 `docs/bugfix/{version}/bugfix-*.md`（其输入契约），故一切来源都先落成这里的条目：
 
 - **来源 A · 已有记录**（用户手动写的 `bugfix-*-{user}.md` 表格行）→ 无需处理。
+- **build 单测失败**：消费 `aiauto_test_result.bug_ids` 指向的 `bugfix-unit-{BUILD}.md`；复用原 BUG ID/部署 commit/run_id，不重新登记。显式 Sprint 过滤仍先核归属，不能把整个 build 的缺陷强绑到任意 Sprint。
 - **用户口述、尚无任何记录**（`/sprint-bugfix "<描述>"` 或自然语言路由进来的零散 bug）→ 按约定 10 写 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`（一天一人一份，已存在则追加），含**表格行 + 详情章节**，字段按 `bugfix` SKILL Step 2.2b 的四字段（现象 / 归因 / 证据 / 处置）填。
 - **来源 B · 问题汇总清单**：扫 `docs/testing/{version}/研发自测/**/*.md` + `docs/testing/{version}/正式用例/**/*.md` 末尾「问题汇总清单」表中状态为「待修复」的行，先核本次范围与归属，再将范围内条目追加到今日 `bugfix-{YYYYMMDD}-{user}.md`；显式指定问题文件时仅消费该文件，不额外导入整版清单：
   - 字段映射：序号 / 用例 ID（反查执行步骤定位根因）/ 问题描述 / 严重程度 P0~P3 / 复现步骤；表格行「来源」列写回链 `<清单文件>#<序号>`。
@@ -113,7 +114,7 @@
 - **仅处理本次 bugfix 实际改动的一侧**——改了后端才执行编译命令、改了前端才执行前端校验（**lint + 类型检查，不打包**），未改动侧不处理
 - 执行走**资源受限方式**（`nice` + 限并发 worker/线程，可选 `taskset/cpulimit`，避免 CPU 打满），配方见 `agents/backend.md`「Step 7: 编译验证」/ `agents/frontend.md`「Step 4: 前端验收校验」；**前端不跑完整打包**，部署打包由使用者按需自行执行
 - 运行相关单元测试；命令均从契约卡 `test_plan.targeted_argv/cwd/env_id/inputs` 取真实值，经 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd <实际目录> --scope targeted --env-id <实际环境标识> --input <真实契约或设计输入> -- <原命令及参数>` 执行。无卡的独立修复按现有项目命令与真实输入建立同样计划，不造占位命令。读取末行 JSON 的 run_id/status/reused/before_hash/after_hash；同树 PASS 复用，失败/未执行不当通过。
-- 被已有验收会话调用时只回定向结果，由该会话在修复汇合后集中 full 与 reviewer 差量复核；独立方式 B 在 Step 6 文档回写完成后集中一次 full，不每条 BUG 重跑全量，不自动重启完整 CVL。
+- 被已有验收会话调用时只回定向结果，由该会话在修复汇合后集中 Sprint 单测（`run-scope`）与 reviewer 差量复核；独立方式 B 在 Step 6 文档回写完成后集中一次 Sprint 单测，不每条 BUG 重跑，不自动重启完整 CVL。
 
 #### Step 5 ~ 6
 

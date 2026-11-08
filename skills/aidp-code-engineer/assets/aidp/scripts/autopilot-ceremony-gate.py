@@ -514,6 +514,22 @@ def cmd_handback_check(args):
     return 1 if violation else 0
 
 
+def check_unit_report(root, version, build, commit):
+    """仪式门校报告终态与部署归属，不把未核验当通过或触发测试失败冻结。"""
+    from unit_report_merge import read_payload, report_ready, validate_report_units
+    path = os.path.join(root, "docs", "reports", version, "AI测试报告", "data", build + ".js")
+    try:
+        payload = read_payload(path)
+        errors = validate_report_units(payload, "test")
+        if payload.get("build") != build or payload.get("commit") != commit:
+            errors.append("报告与部署 build/commit 不匹配")
+        if not report_ready(payload):
+            errors.append("两路测试尚未终态，不能收尾")
+        return not errors, "; ".join(errors)
+    except (OSError, ValueError, TypeError) as exc:
+        return False, str(exc)
+
+
 def cmd_check(args):
     root = args.repo_root
     V, B = args.version, args.build
@@ -708,12 +724,19 @@ def cmd_check(args):
     rec("无违规 markdown 报告(应只产 HTML SPA)", not stray,
         "" if not stray else f"检出并应删除：{', '.join(os.path.basename(s) for s in stray)}（报告须 HTML SPA，见 emit-report.py）")
 
+    joint_build = next((r for r in ((_load_json(os.path.join(root, args.baseline)).get("versions") or {})
+                        .get(V) or {}).get("builds", []) if r.get("build") == B), {})
+    joint_required = bool(joint_build.get("test_join"))
+    if joint_required and args.stage == "final":
+        terminal, reason = check_unit_report(root, V, B, joint_build.get("push_commit"))
+        rec("双路测试报告终态与部署提交一致", terminal, reason)
+
     # 3b. AI测试报告 SPA（仅当本 build 有浏览器测试 → aiauto-test 应经 emit-report.py --kind test 产出）
     #   ★ BUG-2 修复：本段【只在 --stage final 校】。测试报告 SPA 由测试链路在 #F 之后才产出，
     #   而 skeleton 阶段是"委派【前】只校执行报告骨架"——此时测试报告必然尚不存在，若不分 stage
     #   就校，skeleton 必 FAIL、形成"委派前跑 skeleton → FAIL → 无法委派"的时序死结。与同为测试相关的
     #   3b2/3c（均已 --stage final 守卫）对齐。执行报告骨架（1/2 段）不受影响、skeleton 照常校。
-    if args.will_browser_test == 1 and args.stage == "final":
+    if (args.will_browser_test == 1 or joint_required) and args.stage == "final":
         t_idx = os.path.join(rpt_test, "index.html")
         t_data = os.path.join(rpt_test, "data", f"{B}.js")
         t_ok = os.path.isfile(t_idx) and os.path.isfile(t_data)
@@ -752,7 +775,7 @@ def cmd_check(args):
     if args.stage == "final":
         bl = _load_json(os.path.join(root, args.baseline))
         deliveries = (bl.get("report_deliveries") or {}).get(B, {})
-        need_nodes = ["exec_report"] + (["test_report"] if args.will_browser_test == 1 else [])
+        need_nodes = ["exec_report"] + (["test_report"] if args.will_browser_test == 1 or joint_required else [])
         miss_deliv = []
         for n in need_nodes:
             dv = (deliveries.get(n) or {}).get("delivery")

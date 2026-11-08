@@ -508,7 +508,7 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 > ★ **若本命令触发 `git commit`**：主流程汇合合法写集并集后按 `incremental-contract.md`“写集派发”传 `--owner` 与重复 `--allow-path` 给 `commit_gate.py --quiet`，每次读取完整 JSON；暂存区外路径 WARN 核对归属，不覆盖他人索引。退出码 3/4 是欠账信号、不是禁止 commit；台账结构/清理异常修正复核，实际级联仅由阶段入口或显式 `--cascade-now` 触发，CICD 欠账按约定 31.5 补监听。默认仅主流程写 Git，用户明确授权 worker 时须串行交接索引。
 
-> **日常累进的推送时机**：会触发部署的 push 留到下方验收汇合结束；按契约卡 `test_plan` 经 `test_ledger.py run --scope full` 核验当前树稳定 PASS，命令/环境/输入不变时直接复用。`skip-test` 把验收和此门交父编排，不等于允许提前部署；无父编排时如实返回“开发完成、尚未可部署”。此门不新增 push/部署授权。
+> **日常累进的推送时机**：部署触发前消费 `/sprint-test` Step 7 的当前 Sprint 单测证据；`skip-test` 交父编排完成该门，无父编排则返回“开发完成、尚未可部署”，不新增 push/部署授权。
 
 > ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、失败自动重试（`cicd_watch.py --mode retry`）≤3 次并通过就绪探针。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`{{AIDP_HOME}}/flows/sprint-autopilot/invariants.md`）。
 

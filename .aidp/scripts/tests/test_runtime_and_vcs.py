@@ -366,12 +366,14 @@ class TestChainSourceOwnershipTest(unittest.TestCase):
 
     def test_empty_screenshot_directory_does_not_override_runner_evidence_contract(self):
         text = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-1.md").read_text(encoding="utf-8")
-        section = text.split("# ② ", 1)[1].split("### 3.2.5bis", 1)[0]
+        section = text.split("### 3.2.5 ★", 1)[1].split("### 3.2.5bis", 1)[0]
+        after_collection = section.split("\nSHOTS\n", 1)[1]
         self.assertNotIn("bump shot_gate_fail_streak", section)
-        self.assertNotIn("exit 0", section)
+        self.assertNotIn("exit 0", after_collection)
         self.assertIn("check_result.py", section)
-        self.assertIn("block", section)
-        self.assertIn("HTML", section)
+        self.assertIn("前置 block 使用实际探测证据", after_collection)
+        self.assertIn("不要求占位截图", after_collection)
+        self.assertIn("HTML", after_collection)
 
     def test_testing_preflight_does_not_mutate_shared_checkout(self):
         text = (REPO / ".aidp/flows/sprint-aiauto-test/phase-0-1.md").read_text(encoding="utf-8")

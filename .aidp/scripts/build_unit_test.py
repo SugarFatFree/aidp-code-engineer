@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""在部署 commit 的 detached worktree 内执行 build 全量单测（无网络安装/部署）。
+
+run --root ROOT --version VERSION --build BUILD --commit SHA --plan JSON [--timeout 3600]
+status --root ROOT --version VERSION --build BUILD
+--self-check  用真实临时 Git 仓库和标准库 unittest 验证隔离、缓存及失败分类。
+
+计划格式及运行协议唯一信源：flows/sprint-aiauto-test/phase-2-unit.md。
+本进程为阻塞式子 Agent 执行器；run/status 从不冻结链路。终态按 build 固定，
+同 build 的后续调用仅读结果；新 build 即使同 SHA 也重新执行。使用 POSIX flock。
+"""
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path, PurePosixPath
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
+
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+import test_ledger
+from aidp_paths import baseline, runtime_dir
+from baseline_edit import load_archived_node
+
+SCHEMA = 1
+STATUSES = {"PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"}
+NULL_COUNTS = {"passed": None, "failed": None, "skipped": None}
+MISSING = re.compile(
+    r"ModuleNotFoundError|ImportError:|No module named|Cannot find module|ERR_MODULE_NOT_FOUND|"
+    r"command not found|not recognized as an internal|No such file or directory|"
+    r"ClassNotFoundException|NoClassDefFoundError|spawn .+ ENOENT", re.I)
+
+
+class BuildError(ValueError):
+    pass
+
+
+class BudgetExpired(KeyboardInterrupt):
+    pass
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def component(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", value):
+        raise BuildError("version/build 必须是安全的非空路径分量")
+    return value
+
+
+def build_dir(root, version, build):
+    return Path(runtime_dir(root)) / "build-unit" / component(version) / component(build)
+
+
+def blank(version, build, commit, status="UNVERIFIED", reason="not-started"):
+    return {"schema": SCHEMA, "version": version, "build": build, "commit": commit,
+            "status": status, "reason": reason, "runs": [], "counts": dict(NULL_COUNTS),
+            "failed_cases": [], "primary_error": None, "reused": False}
+
+
+def atomic_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".write-", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(value, stream, ensure_ascii=True, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def save_result(directory, result):
+    atomic_json(directory / "result.json", dict(result, checksum=digest(result)))
+
+
+def load_result(directory):
+    path = directory / "result.json"
+    if not path.exists():
+        return None
+    result = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(result, dict):
+        raise BuildError("本地结果必须是 JSON 对象")
+    checksum = result.pop("checksum", None)
+    if (checksum != digest(result) or result.get("schema") != SCHEMA
+            or result.get("status") not in STATUSES):
+        raise BuildError("本地结果损坏，不能复用")
+    return result
+
+
+def git(root, *args, timeout=30):
+    env = {"PATH": os.defpath, "HOME": str(root), "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
+    proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                          env=env, timeout=timeout)
+    if proc.returncode:
+        raise BuildError(proc.stderr.decode("utf-8", "replace").strip() or "Git 命令失败")
+    return proc.stdout
+
+
+def relative(value, allow_dot=False):
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise BuildError("需要非空的项目相对路径")
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or ".git" in path.parts or "\\" in value:
+        raise BuildError(f"路径不可逃出 worktree：{value}")
+    if str(path) == "." and not allow_dot:
+        raise BuildError("输入路径不能是整个项目")
+    return str(path)
+
+
+def load_plan(root, version, build, commit, plan):
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit or ""):
+        raise BuildError("commit 必须是完整小写 Git SHA，禁止 HEAD/分支/缩写")
+    actual = git(root, "rev-parse", "--verify", commit + "^{commit}").decode().strip()
+    if actual != commit:
+        raise BuildError("commit 不是可核验的完整 commit SHA")
+    if not isinstance(plan, dict) or plan.get("schema") != SCHEMA:
+        raise BuildError("plan.schema 必须是 1")
+    if plan.get("version") != version or plan.get("build") != build or plan.get("commit") != commit:
+        raise BuildError("plan 的 version/build/commit 与请求不一致")
+
+    baseline_path = Path(baseline(root))
+    node = {}
+    if baseline_path.exists():
+        data = json.loads(baseline_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("versions", {}), dict):
+            raise BuildError("baseline versions 结构无效")
+        node = data.get("versions", {}).get(version, {})
+        if not isinstance(node, dict):
+            raise BuildError("baseline 版本节点无效")
+        if node.get("archived"):
+            node = load_archived_node(str(baseline_path), version) or node
+    if not isinstance(node.get("builds", []), list) or any(not isinstance(item, dict) for item in node.get("builds", [])):
+        raise BuildError("baseline builds 必须是对象数组")
+    matches = [item for item in node.get("builds", []) if item.get("build") == build]
+    if matches:
+        if len(matches) != 1 or matches[0].get("push_commit") != commit:
+            raise BuildError("baseline 本 build push_commit 与部署 commit 不一致或缺失")
+    else:
+        deployment = plan.get("deployment", {})
+        if not isinstance(deployment, dict):
+            raise BuildError("standalone deployment 必须是对象")
+        if (plan.get("standalone") is not True or deployment.get("commit") != commit
+                or deployment.get("verified") is not True
+                or not isinstance(deployment.get("evidence"), str)
+                or not deployment["evidence"].strip()):
+            raise BuildError("没有 baseline 本 build；standalone 必须提供已核验部署 commit 及 evidence")
+
+    source = plan.get("source", {})
+    if not isinstance(source, dict):
+        raise BuildError("source 必须是对象")
+    source_path = relative(source.get("path"))
+    payload = git(root, "show", f"{commit}:{source_path}")
+    if source.get("sha256") != hashlib.sha256(payload).hexdigest():
+        raise BuildError("计划来源 SHA256 与部署 commit 内文件不符")
+    if source_path.lower().endswith(".json"):
+        config = json.loads(payload)
+    else:
+        blocks = re.findall(r"^```aidp-test-plan[ \t]*\n(.*?)^```[ \t]*$",
+                            payload.decode("utf-8"), re.M | re.S)
+        if len(blocks) != 1:
+            raise BuildError("契约卡须有且仅有一个 fenced aidp-test-plan JSON 块")
+        config = json.loads(blocks[0])
+        if not isinstance(config, dict) or config.get("schema") != SCHEMA:
+            raise BuildError("aidp-test-plan 块的 schema 必须是 1")
+    if not isinstance(config, dict) or not isinstance(config.get("test_plan", config), dict):
+        raise BuildError("项目测试配置必须是 JSON 对象")
+    suites = plan.get("suites")
+    # 只读取部署 commit 中的配置；不读取主工作区相同路径。
+    configured = config.get("test_plan", config).get("suites")
+    if not isinstance(suites, list) or not suites or suites != configured:
+        raise BuildError("冻结 suites 必须与部署 commit 内项目测试配置完全一致且非空")
+    for suite in suites:
+        if not isinstance(suite, dict):
+            raise BuildError("suite 必须是对象")
+        command = suite.get("full_argv")
+        if (not isinstance(command, list) or not command
+                or any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in command)):
+            raise BuildError("full_argv 必须是真实非空字符串数组")
+        exe = Path(command[0]).name
+        if exe in {"true", "false", "echo", "printf", "sh", "bash", "zsh", "fish", "cmd", "powershell"}:
+            raise BuildError("full_argv 不接受占位命令或 shell 包装")
+        if any(arg in {"install", "ci", "build", "start", "serve", "deploy"} for arg in command[1:]):
+            raise BuildError("单测计划不可安装依赖、构建、启动或部署服务")
+        for position, arg in enumerate(command):
+            if str(root) in arg or re.search(r"(?:^|[=/])\.\.(?:/|$)", arg):
+                raise BuildError("full_argv 不可引用主工作区或父目录路径")
+            if position and (arg.startswith("/") or re.search(r"^--?[^=]+=/", arg)):
+                raise BuildError("测试参数只能引用 worktree 相对路径；外部工具路径只允许 argv[0]")
+        if Path(command[0]).is_absolute() and Path(command[0]).resolve().is_relative_to(root):
+            raise BuildError("测试可执行程序不可来自主工作区")
+        relative(suite.get("cwd"), allow_dot=True)
+        if not isinstance(suite.get("env_id"), str) or not suite["env_id"].strip():
+            raise BuildError("每套必须有 env_id")
+        if not isinstance(suite.get("inputs"), list):
+            raise BuildError("每套必须显式给出 inputs 数组")
+        for value in suite["inputs"]:
+            relative(value)
+        if suite.get("external_dependencies") not in ("none", "isolated"):
+            raise BuildError("每套须声明 external_dependencies=none 或 isolated，不能指向部署环境")
+        env = suite.get("env", {})
+        if not isinstance(env, dict) or any(not isinstance(k, str) or not k or "=" in k or "\x00" in k
+                                           or not isinstance(v, str) or "\x00" in v for k, v in env.items()):
+            raise BuildError("env 必须是字符串映射")
+        for key, value in env.items():
+            path_parts = value.split(os.pathsep)
+            if (str(root) in value or re.search(r"(?:^|[:=/])\.\.(?:/|$)", value)
+                    or any(Path(part).is_absolute() and Path(part).resolve().is_relative_to(root)
+                           for part in path_parts)
+                    or key in {"HOME", "PWD", "TMPDIR", "GIT_DIR", "GIT_WORK_TREE"}):
+                raise BuildError("env 不可覆盖隔离路径或引用主工作区/父目录")
+        if "junit_xml" in suite:
+            relative(suite["junit_xml"])
+    return plan
+
+
+def assert_worktree_inputs(worktree, suite):
+    cwd = (worktree / suite["cwd"]).resolve()
+    if not cwd.is_relative_to(worktree) or not cwd.is_dir():
+        raise BuildError("cwd 必须是 worktree 内现有目录")
+    for value in suite["inputs"]:
+        path = (worktree / value).resolve()
+        if not path.is_relative_to(worktree) or not path.exists():
+            raise BuildError(f"输入缺失或逃出 worktree：{value}")
+    if "junit_xml" in suite:
+        path = (worktree / suite["junit_xml"]).resolve()
+        if not path.is_relative_to(worktree):
+            raise BuildError("JUnit XML 路径逃出 worktree")
+        if path.exists():
+            raise BuildError("JUnit XML 已存在，拒绝把旧报告当成本次结果")
+    # 任何跟踪的向外符号链接/未装配 submodule 都破坏部署树隔离。
+    for entry in git(worktree, "ls-files", "--stage", "-z").split(b"\0"):
+        if not entry:
+            continue
+        metadata, name = entry.split(b"\t", 1)
+        path = worktree / os.fsdecode(name)
+        if metadata.startswith(b"160000"):
+            raise BuildError("部署树含未装配 submodule，本执行器不下载依赖")
+        if path.is_symlink() and not path.resolve().is_relative_to(worktree):
+            raise BuildError(f"部署树符号链接指向 worktree 外：{os.fsdecode(name)}")
+
+
+@contextmanager
+def isolated_environment(directory, suite):
+    # 不继承部署连接串、PYTHONPATH、NODE_OPTIONS、用户 site 等隐式配置。
+    home = directory / "home"
+    temporary = directory / "tmp"
+    home.mkdir(exist_ok=True)
+    temporary.mkdir(exist_ok=True)
+    env = {"PATH": os.defpath, "HOME": str(home), "TMPDIR": str(temporary),
+           "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONNOUSERSITE": "1",
+           "PYTHONDONTWRITEBYTECODE": "1", "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
+    env.update(suite.get("env", {}))
+    original = dict(os.environ)
+    os.environ.clear()
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
+
+
+@contextmanager
+def capture(path):
+    # ledger 的 Popen 继承 fd，而非 Python redirect_stdout；日志包含完整 stdout/stderr。
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved = [os.dup(1), os.dup(2)]
+    try:
+        with path.open("wb") as stream:
+            os.dup2(stream.fileno(), 1)
+            os.dup2(stream.fileno(), 2)
+            yield
+            sys.stdout.flush()
+            sys.stderr.flush()
+    finally:
+        for target, fd in zip((1, 2), saved):
+            os.dup2(fd, target)
+            os.close(fd)
+
+
+def parse_output(text, junit=None):
+    counts, failed, error = dict(NULL_COUNTS), [], None
+    if junit is not None:
+        xml = ET.parse(junit).getroot()
+        cases = list(xml.iter("testcase"))
+        if cases:
+            failures = [case for case in cases if case.find("failure") is not None or case.find("error") is not None]
+            skipped = sum(case.find("skipped") is not None for case in cases)
+            counts = {"passed": len(cases) - len(failures) - skipped, "failed": len(failures), "skipped": skipped}
+            failed = [(case.get("classname", "") + "." + case.get("name", "?")).lstrip(".") for case in failures]
+            if failures:
+                element = failures[0].find("failure")
+                if element is None:
+                    element = failures[0].find("error")
+                error = element.get("message") or (element.text or "").strip() or failed[0]
+        else:
+            # 没有 testcase 时只接受叶 testsuite 明确、完整的计数，避免父子重复计数。
+            leaves = [node for node in xml.iter("testsuite") if not list(node.iter("testcase"))
+                      and not list(node.findall("testsuite"))]
+            if leaves and all(all(k in node.attrib for k in ("tests", "failures", "errors", "skipped")) for node in leaves):
+                totals = {key: sum(int(node.get(key)) for node in leaves)
+                          for key in ("tests", "failures", "errors", "skipped")}
+                counts = {"passed": totals["tests"] - totals["failures"] - totals["errors"] - totals["skipped"],
+                          "failed": totals["failures"] + totals["errors"], "skipped": totals["skipped"]}
+    else:
+        summaries = list(re.finditer(r"^Ran (\d+) tests? in [^\n]+\n\s*\n(OK(?: \([^\n]*\))?|FAILED \([^\n]*\)|NO TESTS RAN)", text, re.M))
+        if summaries:
+            counts = {"passed": 0, "failed": 0, "skipped": 0}
+            for match in summaries:
+                fields = {key.strip(): int(value) for key, value in re.findall(r"([a-z ]+)=(\d+)", match[2])}
+                nfailed = fields.get("failures", 0) + fields.get("errors", 0) + fields.get("unexpected successes", 0)
+                # expected failures 归 skipped；unexpected successes 属 unittest 真实失败。
+                nskip = fields.get("skipped", 0) + fields.get("expected failures", 0)
+                counts["failed"] += nfailed
+                counts["skipped"] += nskip
+                counts["passed"] += int(match[1]) - nfailed - nskip
+            failed = re.findall(r"^(?:FAIL|ERROR): (.+)$", text, re.M)
+    if any(value is not None and value < 0 for value in counts.values()):
+        raise BuildError("测试报告计数非法")
+    if error is None:
+        lines = text.splitlines()
+        error = next((line.strip() for line in lines if "ModuleNotFoundError:" in line), None)
+        error = error or next((line.strip() for line in lines if MISSING.search(line)), None)
+        if error is None:
+            error = next((line.strip() for line in lines if re.search(r"(?:AssertionError|\w+Error):", line)), None)
+        if error is None and failed:
+            error = failed[0]
+    return counts, failed, error
+
+
+def classify(row, code, text, counts):
+    if code == 124:
+        return "TIMEOUT", "total-budget-exhausted"
+    if code == 127 or MISSING.search(text):
+        return "UNVERIFIED", "tool-or-module-unavailable"
+    if counts["passed"] is not None and sum(counts.values()) == 0:
+        return "UNVERIFIED", "no-tests-executed"
+    if row["status"] == "PASS" and code == 0:
+        if counts["failed"]:
+            return "FAIL", "test-cases-failed"
+        return "PASS", "tests-passed"
+    if row["status"] == "FAIL" and counts["failed"]:
+        return "FAIL", "test-cases-failed"
+    return "UNVERIFIED", row.get("error") or "test-execution-not-verified:" + row["status"]
+
+
+def summarize(result):
+    runs = result["runs"]
+    if runs:
+        result["counts"] = {key: (sum(run["counts"][key] for run in runs)
+                                  if all(run["counts"][key] is not None for run in runs) else None)
+                            for key in NULL_COUNTS}
+    result["failed_cases"] = [case for run in runs for case in run["failed_cases"]]
+    result["primary_error"] = result.get("primary_error") or next(
+        (run["primary_error"] for run in runs if run["primary_error"]), None)
+
+
+def read_status(root, version, build):
+    root = Path(root).resolve()
+    directory = build_dir(root, version, build)
+    try:
+        result = load_result(directory)
+        if result is None:
+            return blank(version, build, None)
+        if result["status"] == "RUNNING":
+            with (directory / "lifecycle.lock").open("a+b") as stream:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return result
+                result.update(status="UNVERIFIED", reason="executor-interrupted", reused=True)
+                result["primary_error"] = "执行器已退出但无终态；不自动重跑或删除遗留 worktree"
+        else:
+            result["reused"] = True
+        return result
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        result = blank(version, build, None, reason="invalid-local-result")
+        result["primary_error"] = str(exc)
+        return result
+
+
+def run_build(root, version, build, commit, plan, timeout=3600, retry=False):
+    """plan 可为字典或 JSON 文件路径；只在独立子进程主线程调用（信号/环境/fd 隔离）。"""
+    root = Path(root).resolve()
+    result = blank(version, build, commit)
+    try:
+        directory = build_dir(root, version, build)
+        directory.mkdir(parents=True, exist_ok=True)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise BuildError("timeout 必须是正有限秒数")
+        if not isinstance(plan, dict):
+            plan = json.loads(Path(plan).read_text(encoding="utf-8"))
+        plan_hash = digest(plan)
+        with (directory / "lifecycle.lock").open("a+b") as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                running = load_result(directory) or blank(version, build, commit, "RUNNING", "executor-active")
+                if running.get("commit") != commit or running.get("plan_hash", plan_hash) != plan_hash:
+                    raise BuildError("同 build 已有不同 commit/plan 的执行器")
+                return running
+            previous = load_result(directory)
+            if previous:
+                load_plan(root, version, build, commit, plan)
+                if previous.get("commit") != commit or previous.get("plan_hash") != plan_hash:
+                    raise BuildError("同 build 的 commit/plan 已冻结；变更必须使用新 build")
+                if previous["status"] == "RUNNING":
+                    previous.update(status="UNVERIFIED", reason="executor-interrupted")
+                    previous["primary_error"] = "执行器中断；保留现场，不自动重跑或删除遗留 worktree"
+                    save_result(directory, previous)
+                if not retry or previous["status"] not in {"UNVERIFIED", "TIMEOUT"}:
+                    return dict(previous, reused=True)
+                atomic_json(directory / f"result-attempt-{previous.get('attempt', 1)}.json", previous)
+            result.update(plan_hash=plan_hash, status="RUNNING", reason="validating",
+                          attempt=previous.get("attempt", 1) + 1 if previous else 1,
+                          started_at=time.time(), deadline_at=time.time() + timeout, pid=os.getpid())
+            save_result(directory, result)
+            return execute(root, directory, result, plan, timeout)
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        result.update(status="UNVERIFIED", reason="invalid-request", primary_error=str(exc))
+        return result
+
+
+def execute(root, directory, result, plan, timeout):
+    worktree = directory / "worktree"
+    owned = False
+    deadline = time.monotonic() + timeout
+    expired = False
+
+    def interrupt(signum, frame):
+        nonlocal expired
+        expired = signum == signal.SIGALRM
+        raise BudgetExpired()
+
+    old_handlers = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT)}
+    signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        load_plan(root, result["version"], result["build"], result["commit"], plan)
+        registered = git(root, "worktree", "list", "--porcelain", "-z").split(b"\0")
+        if os.path.lexists(worktree) or os.fsencode("worktree " + str(worktree)) in registered:
+            raise BuildError("固定 worktree 路径已存在或已注册；拒绝接管或删除")
+        # 创建唯一空目录即取得本次清理权限；失败也仅清理本次创建的目录。
+        worktree.mkdir()
+        owned = True
+        git(root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", str(worktree), result["commit"],
+            timeout=max(0.001, deadline - time.monotonic()))
+        atomic_json(directory / "plan.json", plan)
+        result["reason"] = "executing"
+        result["worktree"] = str(worktree)
+        save_result(directory, result)
+        for index, suite in enumerate(plan["suites"]):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BudgetExpired()
+            assert_worktree_inputs(worktree, suite)
+            log = directory / f"suite-{result['attempt']}-{index + 1}.log"
+            row, code = None, None
+            with isolated_environment(directory, suite), capture(log):
+                row, code = test_ledger.run(root=worktree, cwd=suite["cwd"], scope="full",
+                                            env_id=suite["env_id"], command=suite["full_argv"],
+                                            inputs=suite["inputs"], force=True,
+                                            timeout=max(0.001, deadline - time.monotonic()),
+                                            ledger_root=directory / "ledger")
+            text = log.read_text(encoding="utf-8", errors="replace")
+            junit = worktree / suite["junit_xml"] if "junit_xml" in suite else None
+            counts, failures, error = dict(NULL_COUNTS), [], None
+            report_error = None
+            try:
+                counts, failures, error = parse_output(text, junit)
+            except (OSError, ValueError, ET.ParseError) as exc:
+                report_error = str(exc)
+            status, reason = classify(row, code, text, counts)
+            if report_error:
+                status, reason, error = "UNVERIFIED", "invalid-test-report", report_error
+            if expired or time.monotonic() >= deadline:
+                status, reason = "TIMEOUT", "total-budget-exhausted"
+            result["runs"].append({"run_id": row["run_id"], "status": status, "reason": reason,
+                                   "command": suite["full_argv"], "cwd": suite["cwd"],
+                                   "env_id": suite["env_id"], "inputs": suite["inputs"],
+                                   "counts": counts, "failed_cases": failures,
+                                   "primary_error": error or row.get("error"), "log": str(log),
+                                   "exit_code": code})
+            summarize(result)
+            save_result(directory, result)
+            if status == "TIMEOUT":
+                break
+        statuses = {run["status"] for run in result["runs"]}
+        result["status"] = next(status for status in ("TIMEOUT", "FAIL", "UNVERIFIED", "PASS") if status in statuses)
+        result["reason"] = {"PASS": "all-suites-passed", "FAIL": "test-cases-failed",
+                            "UNVERIFIED": "one-or-more-suites-unverified", "TIMEOUT": "total-budget-exhausted"}[result["status"]]
+    except (BudgetExpired, KeyboardInterrupt):
+        result.update(status="TIMEOUT" if expired or time.monotonic() >= deadline else "UNVERIFIED",
+                      reason="total-budget-exhausted" if expired or time.monotonic() >= deadline else "executor-interrupted")
+    except subprocess.TimeoutExpired:
+        result.update(status="TIMEOUT", reason="total-budget-exhausted")
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        result.update(status="UNVERIFIED", reason="execution-unverified", primary_error=str(exc))
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        for sig, handler in old_handlers.items():
+            signal.signal(sig, handler)
+        if owned:
+            try:
+                git(root, "worktree", "remove", "--force", str(worktree), timeout=30)
+            except (BuildError, OSError, subprocess.SubprocessError) as exc:
+                # git add 失败且未注册时，只能移除仍为空的自有目录；不递归删除未知内容。
+                try:
+                    worktree.rmdir()
+                except OSError:
+                    result.update(status="UNVERIFIED", reason="worktree-cleanup-failed",
+                                  primary_error=str(exc))
+        result["finished_at"] = time.time()
+        summarize(result)
+        save_result(directory, result)
+    return result
+
+
+def self_check():
+    with tempfile.TemporaryDirectory(prefix="aidp-build-unit-selfcheck-") as temporary:
+        root = Path(temporary) / "repo"
+        root.mkdir()
+        git(root, "init", "-q")
+        git(root, "config", "user.email", "selfcheck@example.invalid")
+        git(root, "config", "user.name", "Self check")
+        (root / ".gitignore").write_text("memory/\n__pycache__/\n")
+        (root / "test_sample.py").write_text("import unittest\nclass Sample(unittest.TestCase):\n def test_ok(self): self.assertEqual(2+2,4)\n")
+        suites = [{"full_argv": [sys.executable, "-m", "unittest", "-v", "test_sample"],
+                   "cwd": ".", "env_id": "stdlib", "inputs": [], "external_dependencies": "none"}]
+        config = json.dumps({"suites": suites}).encode()
+        (root / "unit-plan.json").write_bytes(config)
+        git(root, "add", ".")
+        git(root, "commit", "-qm", "fixture")
+        commit = git(root, "rev-parse", "HEAD").decode().strip()
+        plan = {"schema": 1, "version": "V1", "build": "build1", "commit": commit,
+                "standalone": True, "deployment": {"commit": commit, "verified": True, "evidence": "self-check fixture"},
+                "source": {"path": "unit-plan.json", "sha256": hashlib.sha256(config).hexdigest()}, "suites": suites}
+        (root / "test_sample.py").write_text("raise RuntimeError('dirty main must never run')\n")
+        first = run_build(root, "V1", "build1", commit, plan)
+        second = run_build(root, "V1", "build1", commit, plan)
+        plan["build"] = "build2"
+        third = run_build(root, "V1", "build2", commit, plan)
+        checks = [first["status"] == "PASS", first["counts"] == {"passed": 1, "failed": 0, "skipped": 0},
+                  second["reused"], first["runs"] == second["runs"], third["status"] == "PASS",
+                  first["runs"][0]["run_id"] != third["runs"][0]["run_id"],
+                  not (build_dir(root, "V1", "build1") / "worktree").exists()]
+        return {"ok": all(checks), "checks": len(checks)}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--self-check", action="store_true")
+    sub = parser.add_subparsers(dest="action")
+    for action in ("run", "status"):
+        child = sub.add_parser(action)
+        child.add_argument("--root", required=True)
+        child.add_argument("--version", required=True)
+        child.add_argument("--build", required=True)
+        if action == "run":
+            child.add_argument("--commit", required=True)
+            child.add_argument("--plan", required=True, help="冻结计划 JSON 文件路径")
+            child.add_argument("--timeout", type=float, default=3600, help="全部套件共享总秒数预算")
+            child.add_argument("--retry", action="store_true", help="仅显式重试本 build 的 UNVERIFIED/TIMEOUT；不重跑 PASS/FAIL")
+    args = parser.parse_args(argv)
+    try:
+        if args.self_check:
+            result = self_check()
+            code = 0 if result["ok"] else 1
+        elif args.action == "run":
+            result = run_build(args.root, args.version, args.build, args.commit, args.plan, args.timeout, args.retry)
+            code = 0  # 业务结论只由 JSON 表达，FAIL/TIMEOUT 不终止实测链路。
+        elif args.action == "status":
+            result = read_status(args.root, args.version, args.build)
+            code = 0
+        else:
+            parser.error("需要 run/status 或 --self-check")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        result = {"schema": SCHEMA, "status": "UNVERIFIED", "reason": str(exc), "reused": False}
+        code = 0
+    print(json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

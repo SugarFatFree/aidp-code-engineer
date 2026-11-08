@@ -132,6 +132,53 @@ try {
   check(smoke().status === 1, "新增页面脚本缺失 → 不得静默跳过");
 } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 
+console.log("⑤ 全量单测与实测独立展示、合并结论和转义");
+const unitBuild = "V0.1.0_build123", unitCommit = "a".repeat(40);
+function unitFixture(status) {
+  const failed = status === "FAIL" ? ["test_<script>alert(1)</script>"] : [];
+  const error = status === "FAIL" ? "AssertionError <expected> & actual" : null;
+  return { schema: 1, build: unitBuild, commit: unitCommit, status, reason: "全量命令 <run>", reused: false,
+    counts: null, failed_cases: failed, primary_error: error,
+    runs: [{ run_id: "real-run-1", status, command: ["python3", "-m", "unittest", "<script>alert(1)</script>"],
+      cwd: "code/backend", env_id: "local", counts: null, failed_cases: failed, primary_error: error, log: "log/unit.txt" }] };
+}
+for (const status of ["FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING", "PASS"]) {
+  const payload = { build: unitBuild, version: "V0.1.0", buildNo: 123, commit: unitCommit, unitTests: unitFixture(status),
+    summary: { total: 1, pass: 1, fail: 0, block: 0, skip: 0, na: 0, passRate: 1 },
+    cases: [{ id: "TC-1", title: "浏览器通过", result: "pass" }] };
+  r = render(TEST, "__BUILDS__", payload, unitBuild);
+  check(!r.threw && r.html.includes("全量实测") && r.html.includes("全量单测"), status + "：独立实测与单测段落可见");
+  check(r.html.includes(status + " · ") && r.html.includes("总体结论"), status + "：总体结论反映单测状态");
+  check(r.html.includes("passed：未提供") && r.html.includes("failed：未提供"), status + "：未知计数明确未提供");
+  check(r.html.includes("real-run-1") && r.html.includes("python3") && r.html.includes("code/backend"), status + "：真实命令、run_id、cwd 可见");
+  check(!r.html.includes("<script>alert(1)</script>") && r.html.includes("&lt;script&gt;"), status + "：原始 argv 在 HTML 中安全转义");
+  if (status === "FAIL") check(r.html.includes("test_&lt;script&gt;") && r.html.includes("AssertionError &lt;expected&gt; &amp; actual"), "失败用例与首要错误真实可见且转义");
+  const exec = { build: unitBuild, version: "V0.1.0", buildNo: 123, commit: unitCommit, unitTests: unitFixture(status),
+    overview: { statusKind: "done", statusText: "已完成", testPassRate: 1 }, testSummary: payload.summary,
+    steps: [], features: [], defects: [], risks: [], todos: [] };
+  r = render(EXEC, "__AIRUNS__", exec, unitBuild);
+  check(!r.threw && r.html.includes("总体结论：" + status) && r.html.includes("全量单测"), status + "：执行报告同步总体状态");
+  if (status !== "PASS") check(!r.html.includes("整体完成"), status + "：执行报告不能误标整体完成");
+}
+const backend = { build: unitBuild, version: "V0.1.0", buildNo: 123, commit: unitCommit, unitTests: unitFixture("PASS"),
+  browserTests: { status: "N/A", reason: "纯后端无浏览器适用面" },
+  summary: { total: 0, pass: 0, fail: 0, block: 0, skip: 0, na: 0, passRate: 0 }, cases: [] };
+r = render(TEST, "__BUILDS__", backend, unitBuild);
+check(!r.threw && r.html.includes("浏览器 N/A") && r.html.includes("纯后端无浏览器适用面"), "纯后端也生成完整 HTML 与 N/A 理由");
+check(r.html.includes("PASS · 通过"), "纯后端 N/A + 单测 PASS 可通过");
+backend.unitTests.commit = "wrong-commit";
+r = render(TEST, "__BUILDS__", backend, unitBuild);
+check(r.html.includes("UNVERIFIED · 未核验") && !r.html.includes("PASS · 通过"), "错 commit 的单测不能渲染全绿");
+
+backend.unitTests = unitFixture("TIMEOUT");
+backend.unitTests.runs.unshift(Object.assign({}, unitFixture("FAIL").runs[0], { run_id: "earlier-failed-run" }));
+r = render(TEST, "__BUILDS__", backend, unitBuild);
+check(r.html.includes("FAIL · 失败") && r.html.includes("TIMEOUT · 超时") && r.html.includes("已发现失败，验证尚未完成"), "先有失败再超时：总体仍 FAIL，单测保留 TIMEOUT 及未完成说明");
+const timeoutExec = { build: unitBuild, version: "V0.1.0", commit: unitCommit, unitTests: backend.unitTests,
+  browserTests: backend.browserTests, testSummary: backend.summary, overview: { statusKind: "done" }, steps: [], features: [] };
+r = render(EXEC, "__AIRUNS__", timeoutExec, unitBuild);
+check(r.html.includes("总体结论：FAIL") && r.html.includes("TIMEOUT"), "执行报告也保留失败与超时双重事实");
+
 console.log();
 if (fails.length) { console.log("❌ " + fails.length + " 项失败"); process.exit(1); }
 console.log("✅ 全部通过"); process.exit(0);

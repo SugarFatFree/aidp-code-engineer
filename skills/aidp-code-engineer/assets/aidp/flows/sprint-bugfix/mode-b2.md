@@ -107,5 +107,5 @@ fi
 
 在 `memory/{version}/{user}/activeContext.md` 的「待处理 Bugfix」区域更新修复状态。
 
-独立方式 B 在代码/文档/测试输入都稳定后，按实际 `test_plan.full_argv/cwd/env_id/inputs` 用 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd <实际目录> --scope full --env-id <实际环境标识> --input <真实契约或设计输入> -- <原完整测试命令及参数>` 集中验证（多套逐一 PASS）。已有验收会话则把全部变动与定向证据回传，由该会话统一 full 与差量 reviewer，不重复完整验收。独立修复没有真实质量审查时不可 `record-review` 冒充已验收；关闭仍回验收补齐。报告先填真实 SHA/尚未提交树 hash 后再被验收绑定，之后补 SHA 也不能改写已绑定报告。
+独立方式 B 收敛及部署前遵循 `/sprint-test` Step 2.6 / Step 7；已有验收会话则回传原实现者的修复与单测证据，不重复完整 CVL，也不以测试代替质量审查。
 

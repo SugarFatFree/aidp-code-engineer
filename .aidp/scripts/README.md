@@ -18,18 +18,17 @@
 
 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind C --count 5 --owner orchestrator --version V1.0.0 --scope changes --json` 返回 `ids/start/end` 连续号段，锁内同时读取已有定义与 `memory/.aidp/id-alloc.jsonl`。C 四族用 changes，同事件跨族复用；测试缺陷 C 用 bugs；BUG/REQ/Q/D/ADR/TC 也支持，ADR 项目级不带版本。`--prefix REQ-V1.0.0` 或 `TC-模块` 保持项目既有编号形态。`--check --json` 供 commit_gate 与重号复核，实际多定义仍报错、引用与未使用空洞不报错。损坏账本拒绝分配；锁保证同 checkout 原子，不承诺跨 clone 分布式锁。`--self-check` 包含重号阳性与并发锁验证。
 
-## test_ledger.py — 分层测试复用与审查基线
+## test_ledger.py / test_scope.py — Sprint 范围与可追溯复用
 
-```bash
-python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd . --scope targeted --env-id <稳定环境标识> --input <契约卡路径> -- <测试命令argv>
-python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd . --scope full --env-id <稳定环境标识> --input <契约卡路径> -- <全量测试命令argv>
-python3 {{AIDP_HOME}}/scripts/test_ledger.py record-review --root . --name <版本-Sprint> --run-id <full通过ID> --env-id <同环境标识> --report <验收报告路径> --input <契约卡路径>
-python3 {{AIDP_HOME}}/scripts/test_ledger.py review-delta --root . --name <版本-Sprint> --env-id <同环境标识>
-```
+Sprint 单测的范围推导、执行、verify 与 record-review 协议唯一信源为 `{{AIDP_HOME}}/commands/sprint-test.md` Step 2.6 / Step 7。范围从 Sprint 起点 commit、实际改动与契约写集确定性生成；执行前重推清单并校验 hash。直接使用任意命令的 sprint PASS 不能冒充带范围证据的验收。失败、未执行不能通过；无对应单测列 Minor，零运行集记 EMPTY。
 
-执行原 argv，保留输出，stdout 末行给结果 JSON。`scope/cwd/argv/env_id/环境摘要/内容树/显式inputs` 全同且前后树稳定的 PASS 才复用；targeted 不替代 full。开发只定向，汇合验收集中 full，部署前重用同计划 full，最后代码变更后再执行；修复轮不反复全量。正常同类 M 样本目标最多两次实际 full，异常必须如实记录，不能为次数指标跳过失败或变更后的验证。`--force` 用于外部状态无法可信指纹的场景，`--timeout` 限制命令时长。
+`test_ledger.py` 保留 argv/cwd/env_id/inputs 与树证据；未受后续变动影响的结果可显式 CARRIED，保留 source_run_id，不能伪装成当前树重跑。命令、依赖、环境变化使对应证据失效。`--self-check` 可做轻量验证。
 
-默认排除 docs/memory 与根记忆/导航；其中实际测试输入必须 `--input` 显式加入。凭据只进入环境摘要，不把值写入账本；命令参数也不应内嵌真实密码。`record-review` 只有在完整审查及最终报告完成后才调用，不能用测试 PASS 伪造审查；`review-delta` 只证明基线可信及差异可读，不证明新 diff 已审。多套 full 在同一 review 重复传 `--run-id`，逐套绑定最新稳定 PASS；任一套出现后继 FAIL/ERROR/RUNNING/TREE_CHANGED 或被新 PASS 取代，旧 review 都失效，新 PASS 须明确重新登记。账本缺失、损坏、环境不符或报告改写时停止复用并返回验收，不能宣称零变化。`--self-check` 同时包含缓存命中及失效阳性对照。
+## build_unit_test.py / unit_report_merge.py / aiauto_test_join.py — build 两路测试
+
+全量单测执行协议只在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md` 定义。执行器校验部署 commit 的冻结计划，用独立 detached worktree 运行、清理并保存每 build 的账本；`status` 读取真实终态，单次总预算默认 3600 秒。不同 build 分离缓存，同 build PASS 不重跑。
+
+`emit-report.py --unit-result <结果JSON> --commit <部署SHA>` 经 `unit_report_merge.py` 合并两路数据；HTML 分开显示实测与单测，未知计数显示未提供。`aiauto_test_join.py begin/settle/release-state` 声明在途、合并终态、幂等登记 BUG 与读取准发布状态；未核验/超时不写通过、不写冻结，运行中不能 finalize。旧报告保持原有兼容读法。
 
 ## aidp_runtime.py — 运行包与项目根路径解析
 
@@ -325,6 +324,7 @@ Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 
 7×24 的运行载体：为**开发链路**（`sprint-autopilot`）与**测试链路**（`sprint-aiauto-test`）各装一个用户级定时任务，分别调用 `agent_loop.sh --once <命令> --unattended`；第三条独立 watchdog 任务默认每 5 分钟巡检，即使两条链路都从未启动也可在宽限期后告警。平台自动选择：Linux `systemd --user` timer（无 systemd 时 crontab）、macOS launchd、Windows 输出 `schtasks` 命令供手工执行。
 `watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。另判 **`hung`（挂死）**：链路已 stale 但互斥锁仍被持有、且持锁时长超过 `max(stale 阈值, 有效 tick_max_seconds + 180s, 1h)` → 写 `loop-tick-hung` 告警。⛔ 这一档必须有：Agent 进程挂死时锁被永久持有，之后每次调度都被 `agent_loop.sh` 的 `flock -n` 跳过，而 watchdog 只按「持锁 = 正在跑」判 `running` —— 于是永不 stale、零告警、整条链路静默停摆（tick 内部的 stuck 熔断救不了：tick 根本没开始）。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。
 wrapper 与独立 watchdog 均读取 `~/.config/aidp/env` 的 KEY=VALUE（支持 export 与引号），仅解析不执行 shell/命令替换；文件值覆盖进程值，并传给通知子进程。watchdog 锁内完成读状态、判定与标记，通知在锁外发送；通知失败有本地记录，不谎称送达。
+成功安装后，实际周期保存到 `memory/.aidp/scheduler-installation.json`；watchdog 与 status 优先读取已安装周期，配置热改需重装才生效。`status --json` 分别返回 `installation` 与当前 `config`；dry-run/仅输出命令不记录安装成功，失败重装保留上次成功快照，成功卸载清除对应安装态。
 `install` 先做预检：无 `flock` 且无 python3 `fcntl`、或 Agent=dsh 未配 `scheduler.exec.dsh` → ERROR 不装；无 `timeout`/`gtimeout`、Agent=claude 而 `.claude/settings.json` 的 `permissions.allow` 未放行 `Bash`/`Agent` → WARN。
 用法：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install|uninstall|status|watchdog [--agent auto|claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m] [--platform systemd|cron|launchd|schtasks] [--dry-run] [--json]`；`--self-check` 离线自测（临时目录渲染三条任务）。配置段 = `memory/aidp-config.yaml` 的 `scheduler`（`aidp_config.scheduler_config()`）。
 

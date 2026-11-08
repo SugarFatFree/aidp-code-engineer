@@ -5,15 +5,15 @@
   用途：/version 正式发布版本时产出的「版本级最终测试报告」=
         一份面向交付 / 存档的正式对外测试报告，简洁、专业、适合打印。
   定位说明（与旧版的关键区别）：
-    - 这是「本版本的测试结果」，读者**不感知底层有几个 build**；
-    - 报告里任何地方都不出现 build 号 / 构建版本 / build 趋势图 / 按 build 分节；
+    - 这是「本版本的测试结果」，保留验收 build / commit 用于单测身份核验与追溯；
+    - 不做 build 趋势图或按 build 分节，不将多轮用例混为一轮；
     - 报告里不含任何应用截图（不渲染 screenshots、不内联 base64、不放截图链接）。
   自包含说明：CSS + JS + 数据 + SVG 图表全部内联在这一个 .html 文件里，
               零外部文件、零 CDN、零外链、零 fetch —— 拷给任何人 file:// 双击即看。
   数据来源（聚合规则）：
-    - 内联 window.__BUILDS__ 仍保留底层多 build 数据数组（与 AI测试报告同 schema，
-      schema 见 ../README.md：每个 build 含 summary / suites / cases / defects / runtimeErrors）；
-    - 但渲染时**只取 buildNo 最大的那个 build**（最后收敛的一轮 = 最终验收态）聚合成版本级视图；
+    - 内联 window.__BUILDS__ 与 AI测试报告同 schema（见 ../README.md），保留 build / commit、
+      summary / suites / cases / defects / runtimeErrors，以及 unitTests / browserTests / failureTriage；
+    - 发布转换取 buildNo 最大的最新验收候选并拒绝 RUNNING；模板也不把运行中或未核验显示为通过；
     - 不逐 build 展示、不做 build 间趋势对比。
   下游用法：把文件名 {version} 替换为实际版本号（如 V0.1.0-测试报告.html）；
             把下方「内联数据」中的 window.__BUILDS__ 替换为本版本真实 build 数据，
@@ -191,10 +191,10 @@
 
   <!--
     ========== 内联数据（替换为真实数据）==========
-    字段 schema 与 AI测试报告 同源（见 ../README.md「字段 schema」），但本报告按定位做两处**刻意裁剪**：
-      · 不内联 screenshots（本报告不含任何应用截图，发布链「剥离后内联」亦要求删除截图字段）；
-      · build / buildNo / version 等 build 标识字段在真实产出时同样删除（源码里也不出现 build 号）。
-    保留多 build 数组（schema 不变），但版本级报告**只渲染 buildNo 最大的那个 build**。
+    字段 schema 与 AI测试报告 同源（见 ../README.md「字段 schema」）：
+      · 发布转换仅删除 screenshot / screenshots 字段（本报告不含应用截图）；
+      · 保留 build / buildNo / version / commit 及两路测试证据，联合摘要不能覆盖原始事实。
+    数组接口保持兼容，发布转换内联单个最新终态候选；模板不回退旧 PASS 掩盖新失败。
     ★ 以下示例**逐项自洽**，改数据时须保持：
       · summary.total == cases[] 条数（契约硬要求：cases[] 是完整清单，⛔ 不得只列摘录——
         摘录会把未列出的用例静默计入已测，分母也就无从溯源）；
@@ -408,7 +408,7 @@
       return;
     }
 
-    // 最终验收态 = 最后收敛的一轮（buildNo 最大）；版本级报告只用这一份聚合
+    // 最新验收候选（buildNo 最大）；下方仍校验运行状态与联合证据，不能直接视为已通过。
     var FINAL = BUILDS[BUILDS.length-1];
     var summary = FINAL.summary || { total:0, pass:0, fail:0, block:0, skip:0, na:0, passRate:0 };
     // 五态分布按 RESULT_KEYS 取，⛔ 不再手写四键字面量（漏 na 时「总用例数」与分布之和不等）
@@ -449,19 +449,99 @@
     defectList.sort(function(a,b){ return (SEV_ORDER[a.severity]!=null?SEV_ORDER[a.severity]:9) - (SEV_ORDER[b.severity]!=null?SEV_ORDER[b.severity]:9); });
     var openDefects = defectList.filter(function(d){ return !isClosed(d.status); });
 
-    // 结论级别：全部通过 / 有遗留 / 未通过
-    var verdict; // ok / warn / bad
-    if(dist.fail===0 && openDefects.length===0 && passRate>=0.999){
-      verdict="ok";
-    } else if(passRate>=0.9 && !openDefects.some(function(d){ return d.severity==="P0"||d.severity==="P1"; })){
-      verdict="warn";
-    } else {
-      verdict="bad";
-    }
+    // 新报告按两路事实联合判定；summary 的联合字符串只用于交叉核验，不能覆盖事实。
+    function obj(v){ return v && typeof v === "object" && !Array.isArray(v) ? v : {}; }
+    function list(v){ return Array.isArray(v) ? v : []; }
+    function nonempty(v){ return typeof v === "string" && v.trim().length > 0; }
+    function count(v){ return Number.isInteger(v) && v >= 0; }
+    function state(v){ return typeof v === "string" ? v.toUpperCase() : ""; }
+    var STATES = ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"];
+    var unit = obj(FINAL.unitTests), browser = obj(FINAL.browserTests), runs = list(unit.runs);
+    var joint = Object.prototype.hasOwnProperty.call(FINAL, "unitTests") ||
+      Object.prototype.hasOwnProperty.call(FINAL, "browserTests") ||
+      ["overallStatus", "unitStatus", "browserStatus"].some(function(k){ return summary[k] != null; });
+    if(joint) passRate = passDenom ? dist.pass / passDenom : 0;
+    var facts = list(FINAL.cases), actual = { pass:0, fail:0, block:0, skip:0, na:0 };
+    var consistent = Array.isArray(FINAL.cases) && count(summary.total) && facts.length === summary.total;
+    facts.forEach(function(c){
+      if(c && RESULT_KEYS.indexOf(c.result) >= 0) actual[c.result]++;
+      else consistent = false;
+    });
+    RESULT_KEYS.forEach(function(k){
+      var value = summary[k] == null && k === "na" ? 0 : summary[k];
+      if(!count(value) || value !== actual[k]) consistent = false;
+    });
+    var browserFailed = summary.fail > 0 || actual.fail > 0 || summary.openBugs > 0 ||
+      summary.openDefects > 0 || summary.runtime_errors > 0 || openDefects.length > 0 ||
+      list(FINAL.runtimeErrors).length > 0 || state(browser.status) === "FAIL" ||
+      list(FINAL.suites).some(function(s){ return s && s.fail > 0; });
+    var browserState;
+    if(browserFailed) browserState = "FAIL";
+    else if(summary.pendingBrowserTest || state(browser.status) === "RUNNING") browserState = "RUNNING";
+    else if(state(browser.status) === "TIMEOUT") browserState = "TIMEOUT";
+    else if(!consistent || summary.pendingCases > 0 || summary.browserTested === false || actual.block || actual.skip ||
+      (browser.status != null && ["PASS", "N/A"].indexOf(state(browser.status)) < 0)) browserState = "UNVERIFIED";
+    else if(state(browser.status) === "N/A") {
+      browserState = nonempty(browser.reason) && actual.pass === 0 ? "N/A" : "UNVERIFIED";
+    } else if(summary.total > 0 && actual.na === summary.total) {
+      browserState = facts.every(function(c){ return nonempty(c.note); }) ? "N/A" : "UNVERIFIED";
+    } else browserState = actual.pass > 0 ? "PASS" : "UNVERIFIED";
+
+    var unitItems = [unit].concat(runs);
+    var unitFailed = unitItems.some(function(r){
+      return r && (state(r.status) === "FAIL" || list(r.failed_cases).length > 0 || obj(r.counts).failed > 0);
+    });
+    var unitValid = unit.schema === 1 && nonempty(FINAL.build) && unit.build === FINAL.build &&
+      nonempty(FINAL.commit) && unit.commit === FINAL.commit && typeof unit.reason === "string" &&
+      typeof unit.reused === "boolean" && Array.isArray(unit.runs);
+    var runIds = new Set();
+    unitItems.forEach(function(raw, i){
+      var r = obj(raw);
+      if(STATES.indexOf(r.status) < 0 || !Array.isArray(r.failed_cases) ||
+        (r.primary_error != null && typeof r.primary_error !== "string") ||
+        (r.status === "PASS" && nonempty(r.primary_error))) unitValid = false;
+      if(r.counts != null && (r.counts !== obj(r.counts) || ["passed", "failed", "skipped"].some(function(k){
+        return r.counts[k] != null && !count(r.counts[k]);
+      }))) unitValid = false;
+      if(i){
+        var commandOk = nonempty(r.command) || (Array.isArray(r.command) && nonempty(r.command[0]) &&
+          r.command.every(function(arg){ return typeof arg === "string"; }));
+        if(!nonempty(r.run_id) || runIds.has(r.run_id) || !commandOk || !nonempty(r.cwd) || !nonempty(r.env_id)) unitValid = false;
+        runIds.add(r.run_id);
+      }
+    });
+    if(unit.status === "PASS" && (!runs.length || runs.some(function(r){ return !r || r.status !== "PASS"; }))) unitValid = false;
+    var unitState = unitValid ? unit.status : "UNVERIFIED";
+    // 已失败的 run 与后续超时/运行中并存：保留失败事实，也显式保留尚未完成状态。
+    var pendingState = ["RUNNING", "TIMEOUT", "UNVERIFIED"].find(function(s){
+      return browserState === s || unitState === s || unitItems.some(function(r){ return r && state(r.status) === s; });
+    });
+    var running = summary.pendingBrowserTest || [FINAL.status, summary.overallStatus, summary.unitStatus,
+      summary.browserStatus, browser.status].some(function(s){ return state(s) === "RUNNING"; }) ||
+      unitItems.some(function(r){ return r && state(r.status) === "RUNNING"; });
+    var overall = browserFailed || unitFailed ? "FAIL" : pendingState ||
+      (unitState === "PASS" && ["PASS", "N/A"].indexOf(browserState) >= 0 ? "PASS" : "UNVERIFIED");
+    var mismatch = [["unitStatus", unit.status], ["browserStatus", browserState], ["overallStatus", overall]].some(function(pair){
+      return summary[pair[0]] != null && summary[pair[0]] !== pair[1];
+    });
+    if(joint && (mismatch || !unitValid) && overall !== "FAIL") overall = "UNVERIFIED";
+    if(running && overall !== "FAIL") overall = "RUNNING";
+    var jointNote = (running ? "源 build 尚在运行，不能作为最终验收报告。" : "")
+      + (mismatch || !unitValid ? "联合摘要或单测证据不一致，需重新核验。" : "")
+      + (pendingState ? "验证尚未完成，需补齐实测或单测证据。" : "");
+
+    // 无 unitTests、无联合字段的历史报告沿用原口径，不补造历史单测。
+    var verdict;
+    if(joint) verdict = overall === "PASS" ? "ok" : overall === "FAIL" ? "bad" : "pending";
+    else if(running) verdict = "pending";
+    else if(dist.fail===0 && openDefects.length===0 && passRate>=0.999) verdict="ok";
+    else if(passRate>=0.9 && !openDefects.some(function(d){ return d.severity==="P0"||d.severity==="P1"; })) verdict="warn";
+    else verdict="bad";
     var VERDICT_META = {
-      ok:   { badge:"ok",   label:"✅ 测试通过",   icon:"✅" },
-      warn: { badge:"warn", label:"⚠️ 有遗留缺陷", icon:"⚠️" },
-      bad:  { badge:"bad",  label:"❌ 未通过",     icon:"❌" }
+      ok:      { badge:"ok",   label:"✅ 测试通过",   icon:"✅" },
+      warn:    { badge:"warn", label:"⚠️ 有遗留缺陷", icon:"⚠️" },
+      bad:     { badge:"bad",  label:"❌ 未通过",     icon:"❌" },
+      pending: { badge:"warn", label:"⚠️ 未核验完成", icon:"⚠️" }
     };
     var vm = VERDICT_META[verdict];
 
@@ -484,18 +564,48 @@
       + infoItem("里程碑", META.milestone)
       + infoItem("发布日期", META.releaseDate)
       + '<div class="info-item"><span class="info-k">测试环境</span><span class="info-v">'+envText+'</span></div>'
-      + '<div class="info-item"><span class="info-k">测试结论</span><span class="info-v" style="color:'+(verdict==="ok"?COLORS.pass:verdict==="warn"?COLORS.block:COLORS.fail)+'">'+esc(vm.label)+'</span></div>'
+      + '<div class="info-item"><span class="info-k">测试结论</span><span class="info-v" style="color:'+(vm.badge==="ok"?COLORS.pass:vm.badge==="warn"?COLORS.block:COLORS.fail)+'">'+esc(vm.label)+'</span></div>'
       + '</div></div></section>';
 
-    /* ---- ② 测试总览 KPI 卡 ---- */
-    var kpiSec = '<section class="section"><div class="section-title">测试总览</div><div class="kpi-grid">'
+    /* ---- 两路证据独立展示：未知计数与命令绝不补成零或伪造命令 ---- */
+    var STATUS_TEXT = { PASS:"通过", FAIL:"失败", UNVERIFIED:"未核验", TIMEOUT:"超时", RUNNING:"运行中", "N/A":"不适用" };
+    function statusText(s){ return s + " · " + (STATUS_TEXT[s] || "未核验"); }
+    function provided(v){ return v == null || v === "" ? "未提供" : typeof v === "object" ? JSON.stringify(v) : String(v); }
+    function countsText(c){
+      return ["passed", "failed", "skipped"].map(function(k){ return k + "：" + (count(obj(c)[k]) ? obj(c)[k] : "未提供"); }).join("；");
+    }
+    function failureText(item){
+      return list(item.failed_cases).length ? list(item.failed_cases).map(provided).join("；") : "未提供";
+    }
+    var unitSec = "";
+    if(joint){
+      var runRows = runs.map(function(raw){
+        var r = obj(raw);
+        return '<tr><td>'+esc(provided(r.run_id))+'</td><td>'+esc(statusText(state(r.status) || "UNVERIFIED"))+'</td>'
+          + '<td class="wrap">'+esc(provided(r.command))+'</td><td class="wrap">'+esc(provided(r.cwd))+' / '+esc(provided(r.env_id))+'</td>'
+          + '<td class="wrap">'+esc(countsText(r.counts))+'</td><td class="wrap">'+esc(failureText(r))+'</td>'
+          + '<td class="wrap">'+esc(provided(r.primary_error))+'</td></tr>';
+      }).join("") || '<tr><td colspan="7" class="empty-tip">run_id / 命令 / 计数 / 失败用例 / 首要错误：未提供</td></tr>';
+      unitSec = '<section class="section"><div class="section-title">联合测试结论与证据</div><div class="card"><div class="info-grid">'
+        + infoItem("总体结论", statusText(overall)) + infoItem("全量实测", statusText(browserState))
+        + infoItem("全量单测", statusText(unitState)) + infoItem("验收 build", provided(FINAL.build))
+        + infoItem("代码 commit", provided(FINAL.commit)) + infoItem("实测说明", provided(browser.reason))
+        + infoItem("单测说明", provided(unit.reason)) + infoItem("单测计数", countsText(unit.counts))
+        + infoItem("失败用例", failureText(unit)) + infoItem("首要错误", provided(unit.primary_error))
+        + '</div><p>'+esc(jointNote)+'</p><div class="table-wrap"><table class="report-table"><thead><tr>'
+        + '<th>run_id</th><th>单测状态</th><th>命令（原始 argv）</th><th>cwd / env_id</th><th>计数</th><th>失败用例</th><th>首要错误</th>'
+        + '</tr></thead><tbody>'+runRows+'</tbody></table></div></div></section>';
+    }
+
+    /* ---- ② 实测 KPI 不混入单测计数 ---- */
+    var kpiSec = '<section class="section"><div class="section-title">'+(joint ? '全量实测（浏览器 / 适用面）' : '测试总览')+'</div><div class="kpi-grid">'
       + '<div class="kpi accent-brand"><div class="kpi-label">总用例数</div><div class="kpi-value">'+total+'</div></div>'
       + '<div class="kpi accent-pass"><div class="kpi-label">通过</div><div class="kpi-value">'+dist.pass+'</div></div>'
       + '<div class="kpi accent-fail"><div class="kpi-label">失败</div><div class="kpi-value">'+dist.fail+'</div></div>'
       + '<div class="kpi accent-block"><div class="kpi-label">阻塞</div><div class="kpi-value">'+dist.block+'</div></div>'
       + '<div class="kpi accent-skip"><div class="kpi-label">忽略</div><div class="kpi-value">'+dist.skip+'</div></div>'
       + '<div class="kpi accent-na"><div class="kpi-label">不适用</div><div class="kpi-value">'+dist.na+'</div><div class="kpi-sub">本场景不存在该功能，不计通过率分母</div></div>'
-      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">'+pct(passRate)+'</div><div class="kpi-sub">'+dist.pass+' / '+passDenom+' 通过'+(dist.na? '（已剔除 '+dist.na+' 条不适用）':'')+'</div></div>'
+      + '<div class="kpi accent-pass"><div class="kpi-label">通过率</div><div class="kpi-value">'+(joint && !passDenom ? (browserState === 'N/A' ? '不适用' : '未提供') : pct(passRate))+'</div><div class="kpi-sub">'+dist.pass+' / '+passDenom+' 通过'+(dist.na? '（已剔除 '+dist.na+' 条不适用）':'')+'</div></div>'
       + '</div></section>';
 
     /* ---- ③ 图表：通过率环形图 + 用例分布 ---- */
@@ -530,7 +640,7 @@
        发布流程要求把该 build 的 cases 内联进本模板（见 /version 发布链「剥离后内联」），
        契约又要求 cases[] 是**完整**用例清单、不得只列摘录 —— 若此处无渲染方，那份被强制
        内联的完整清单就只是死负载：报告上「总用例 50 / 通过 40」谁也无法回溯到哪 50 条。
-       列集合刻意不含截图列与 build 列（本报告定位：不出现任何 build 号 / 任何截图路径）。 */
+       用例表不含截图列与 build 列；验收身份在联合证据区单列展示。 */
     var caseList = FINAL.cases || [];
     var caseRows = caseList.map(function(c){
       var r = c.result || "";
@@ -558,7 +668,14 @@
     var conclText = "", conclList = "";
     // 有 na 时必须写明分母口径，否则「共执行 11 条、通过 9 条、通过率 90%」三个数对不上账
     var naNote = dist.na ? '（其中 '+dist.na+' 条不适用、不计入通过率分母）' : '';
-    if(verdict==="ok"){
+    if(joint){
+      conclText = '全量实测：<strong>'+esc(statusText(browserState))+'</strong>；全量单测：<strong>'+esc(statusText(unitState))
+        + '</strong>。总体结论：<strong>'+esc(statusText(overall))+'</strong>。'
+        + (overall === "PASS" ? '适用测试全部通过，达到发布标准。' : overall === "FAIL" ? '已发现失败，未通过验收。' : '尚不能确认满足发布条件。')
+        + esc(jointNote);
+    } else if(verdict==="pending"){
+      conclText = '源 build 尚在运行，不能作为最终验收报告；需等待终态并重新生成。';
+    } else if(verdict==="ok"){
       conclText = '本版本共执行 '+total+' 条测试用例'+naNote+'，全部通过，通过率 '+pct(passRate)+'，无未关闭缺陷。测试结论：<strong>全部通过，达到发布标准</strong>。';
     } else if(verdict==="warn"){
       conclText = '本版本共执行 '+total+' 条测试用例'+naNote+'，通过 '+dist.pass+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷（均为非阻断级）。测试结论：<strong>核心功能通过，存在可接受的遗留缺陷</strong>，建议发布并跟踪以下遗留项：';
@@ -567,10 +684,10 @@
       conclText = '本版本共执行 '+total+' 条测试用例'+naNote+'，通过 '+dist.pass+' 条，失败 '+dist.fail+' 条，通过率 '+pct(passRate)+'，存在 '+openDefects.length+' 项未关闭缺陷。测试结论：<strong>未通过验收，需修复后重测</strong>。待处理缺陷：';
       conclList = '<ul>'+openDefects.map(function(d){ return '<li><span class="sev '+esc(d.severity)+'">'+esc(d.severity)+'</span> '+esc(d.id)+' '+esc(d.title)+'（'+esc(d.status)+'）</li>'; }).join("")+'</ul>';
     }
-    var conclSec = '<section class="section"><div class="section-title">测试结论</div><div class="conclusion '+verdict+'"><div class="c-title">'+vm.icon+' '+esc(vm.label.replace(/^[^\s]+\s/,''))+'</div><div>'+conclText+'</div>'+conclList+'</div></section>';
+    var conclSec = '<section class="section"><div class="section-title">测试结论</div><div class="conclusion '+vm.badge+'"><div class="c-title">'+vm.icon+' '+esc(vm.label.replace(/^[^\s]+\s/,''))+'</div><div>'+conclText+'</div>'+conclList+'</div></section>';
 
     /* ---- 装配输出（顺序：信息表 → KPI → 图表 → 套件 → 用例明细 → 缺陷 → 结论）---- */
-    app.innerHTML = infoSec + kpiSec + chartSec + suiteSec + caseSec + defSec + conclSec;
+    app.innerHTML = infoSec + unitSec + kpiSec + chartSec + suiteSec + caseSec + defSec + conclSec;
 
     /* ---- 页脚：生成说明 + 日期占位 ---- */
     var genBy = META.generatedBy || "/version 发布时自动生成";

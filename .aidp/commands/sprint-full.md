@@ -245,7 +245,7 @@ else:
 
 ### Phase 4：只接管未闭环项
 
-Phase 3 已完成当轮原实现者修复、定向测试、reviewer 差量复核与集中 full，本层不重修已闭环项、不重复完整 CVL 或完整 `/sprint-test`。
+Phase 3 已完成当轮原实现者修复、定向测试、reviewer 差量复核与集中 Sprint 单测，本层不重修已闭环项、不重复完整 CVL 或完整 `/sprint-test`。
 
 - 没有未闭环项且验收基线可信 → 进入 Phase 5。
 - 只有可修复残项且允许 bugfix → 保留当前 Sprint 与问题 ID，委派原实现者继续；需要独立修复入口才调用 `/sprint-bugfix sprint-{NNN} [--from-batch] [--unattended]`，仅传未闭环项与证据。随后用 `/sprint-test {NNN} --resume-acceptance [--from-batch] [--unattended]` 续接差量与最终 full，不重跑已完成完整质量审查。

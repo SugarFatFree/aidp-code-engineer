@@ -13,10 +13,9 @@ ROOT = Path(__file__).resolve().parents[3]
 class UnattendedEdgeTests(unittest.TestCase):
     def test_report_source_check_understands_emitted_json(self):
         text = (ROOT / '.aidp/flows/sprint-aiauto-test/phase-3-2.md').read_text()
-        lines = text.splitlines()
-        start = next(i for i, line in enumerate(lines) if 'if [ -z "$GATE_BAD" ] && grep' in line)
-        end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == 'fi')
-        block = '\n'.join(lines[start:end + 1])
+        match = re.search(r"<<'REPORT_READY'\n(.*?)\nREPORT_READY", text, re.S)
+        self.assertIsNotNone(match, '报告来源校验必须有真实可执行入口')
+        block = match.group(1).replace('{{AIDP_HOME}}', str(ROOT / '.aidp'))
         for payload, invalid in (({'renderMode': 'headless'}, True),
                                  ({'renderMode': 'headed', 'renderModeSource': 'env-facts'}, False),
                                  ({'renderMode': None}, False)):
@@ -24,10 +23,14 @@ class UnattendedEdgeTests(unittest.TestCase):
             with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'build.js'
                 path.write_text('window.__BUILDS__.push(' + json.dumps(payload) + ');')
-                result = subprocess.run(['bash', '-c', 'GATE_BAD=""\n' + block + '\nprintf "%s" "$GATE_BAD"'],
-                                        env=dict(os.environ, DATA=str(path)), capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(bool(result.stdout), invalid)
+                import sys
+                result = subprocess.run([sys.executable, '-c', block, str(path)],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode != 0, invalid, result.stdout + result.stderr)
+                if invalid:
+                    self.assertIn('renderMode 缺运行取证来源', result.stderr)
+                else:
+                    self.assertIn('报告已按真实终态汇总', result.stdout)
 
     def test_python_failure_callers_are_checked_without_comment_exemptions(self):
         import importlib.util

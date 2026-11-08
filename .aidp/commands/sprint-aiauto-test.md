@@ -105,9 +105,15 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 | `--reset-credentials` | 关 | 删 `memory/.sprint-autopilot-credentials.json`，重收账号 |
 | `--headed-glance` | 关 | ★ 仅做有头眼检：直接打开「眼检页面集」逐页截图肉眼快验，**不重跑完整用例**（远程切有头重启 Claude Code 后续用，见 Phase 3.6）|
 
+## 双路协调入口
+
+对已部署 build 开测时，主流程先 Read `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md` 的双路协调协议，固定 build 与部署 commit，再在同一批 Agent 调用中启动实测分支与单测分支；不能等浏览器分支返回后才启动单测。Phase 0/1/2 的浏览器前置、无用例及 early-exit 只结束实测分支并返回状态；协调器继续等另一分支，不取消它。两路终态后由协调器执行 Phase 3，子 Agent 不自行 finalize、通知或修改共享 baseline。
+
+纯后端且无浏览器适用面时，实测明确回传 N/A 和依据，跳过浏览器连接/账号/截图门；单测和 HTML 报告照常。standalone 也需明确部署 build/commit，不能拿当前 HEAD 猜被部署版本；完整身份与缓存、报告规则仅见上述分片。
+
 ## Phase 0：前置条件检查
 
-> ⛔ **Phase 0 前置硬门（exit-1 级铁律 — 任何入口 / 任何用户意图都不得绕过）**：在跑任何浏览器实测 / 委派执行之前，**必须先完整跑完 Phase 0.0.0–0.4**——① `0.0.0` 最先派生 `LOOP_UNATTENDED`（否则后续无人值守分支误判挂死）② `0.0.7` 连接模式护栏（同机无 `.mcp.json` 必走本地 CLI，禁 MCP 变体顶替，与文首 ⛔⛔ 浏览器驱动铁律同源）③ `0.2` 步骤 2.5.1 自愈交接（autopilot 驱动但本 build AI执行报告骨架缺失 → 交接回 `/sprint-autopilot --skip-dev` 补齐，绝不在骨架缺失下散落 AI测试报告）。未跑完 Phase 0 → 不得进 Phase 1/2/3。
+> ⛔ **实测分支 Phase 0 前置硬门（不取消已启动的单测分支）**：在跑任何浏览器实测 / 委派执行之前，**必须先完整跑完 Phase 0.0.0–0.4**——① `0.0.0` 最先派生 `LOOP_UNATTENDED`（否则后续无人值守分支误判挂死）② `0.0.7` 连接模式护栏（同机无 `.mcp.json` 必走本地 CLI，禁 MCP 变体顶替，与文首 ⛔⛔ 浏览器驱动铁律同源）③ `0.2` 步骤 2.5.1 自愈交接（autopilot 驱动但本 build AI执行报告骨架缺失 → 交接回 `/sprint-autopilot --skip-dev` 补齐，绝不在骨架缺失下散落 AI测试报告）。未跑完 Phase 0 → 不得驱动浏览器；协调器仍按双路协议汇总未核验结果。
 >
 > ⛔⛔ **详细步骤已外置为 9 个分片、进入 Phase 0 的【第一动作】= 按需加载**：Phase 0 的完整 0.0.0–0.4 步骤拆为 **`phase-0-1.md` … `phase-0-7.md`（其中 0.2 因超 20KB 上限二次切分为 `phase-0-6.md` + `phase-0-6b.md`）**（均在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供"知道有哪几步 + 定位分片"，权威判定与操作一律以对应分片为准。分片清单：`phase-0-1.md`(0.0.0/0.0/0.0.5) · `phase-0-2.md`(0.0.6/0.0.7) · `phase-0-3.md`(0.1/0.1.1/0.1.1.4) · `phase-0-4.md`(0.1.1.5/0.1.2/0.1.2.1/0.1.3/0.1.3.5/0.1.4) · `phase-0-5.md`(0.1.5) · `phase-0-6.md`(0.2 子步骤 1–4) · `phase-0-6b.md`(0.2 两段执行铁律) · `phase-0-7.md`(0.3/0.4) · `phase-0-8.md`(0.1.6，★ 可选能力、未启用整段跳过)。
 
@@ -188,7 +194,7 @@ python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:
 
 > ⛔ **执行内核委派 `auto-test-runner` skill（单一信源，约定 21）**：本 Phase 的用例执行方法论全部沉淀在 `auto-test-runner` skill，**命令端不复述、不手写逐条 chrome 调用**——只做三件事：① 组装 run-context（2.0.5）② **按模块派「测试执行子 Agent」**（用 `Agent`/Task 工具，prompt 里只给 `auto-test-runner` 的 `SKILL.md` + 方法论文件路径 + 本模块用例路径 + run-context 路径，令子 Agent **自行 `Read`**；⛔ 主循环**不**用 `Skill` 工具 invoke auto-test-runner——子 Agent 拿不到 Skill 工具，且把几千行方法论灌进主循环纯属浪费上下文）③ 消费其产物做 AIDP 后处理（运行时错误升级 bug / AI测试报告 HTML / 里程碑通知）。2.1/2.2 的浏览器操作细节仅为 **skill 内部行为示意**，命令端绝不自己直驱浏览器。
 >
-> ⛔⛔ **详细步骤已外置为 2 个分片、进入 Phase 2 的【第一动作】= 按需加载**：Phase 2 的完整 2.0–2.4 步骤拆为 **`phase-2-1.md`（2.0）+ `phase-2-2.md`（2.0.5–2.4）**（均在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以对应分片为准。
+> ⛔⛔ **详细步骤已外置、进入 Phase 2 的【第一动作】= 按需加载**：Phase 2 的完整 2.0–2.4 步骤拆为 **`phase-2-1.md`（2.0）+ `phase-2-2.md`（2.0.5–2.4）**，全量单测子 Agent 为 **`phase-2-unit.md`（2.0.5u）**（均在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以对应分片为准。
 
 **Phase 2 子步骤骨架（每步先 Read「所在分片」再执行）**：
 
@@ -198,6 +204,7 @@ python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:
 | **2.0.0bis** | `phase-2-1.md` | 用例增量前置门的补充判据 | 恒适用 |
 | **2.0** | `phase-2-1.md` | 用例来源优先级解析（★ 测试人员为主 + 研发自测查漏补充 + 跨版本 `[回归]` 继承 + 渲染模式拆分）| 恒适用 |
 | **2.0.5** | `phase-2-2.md` | 组装 run-context + 派测试执行子 Agent（★ 执行内核入口）| 恒适用（执行内核入口） |
+| **2.0.5u** | `phase-2-unit.md` | ★ 全量单测子 Agent：与 2.0.5 并行；在部署 commit 的独立 worktree 中以 `test_ledger.py run --scope full` 执行，失败登记 BUG，超时/未核验不阻断实测、不冻结 | 恒适用（不适用项按分片判定记「本项未核验」）|
 | **2.0.7** | `phase-2-1.md` | ★ 前置数据体检门（用例声明的前置数据是否真的在）| 恒适用（**检出步**） |
 | **2.1** | `phase-2-2.md` | 登录 → 测试 → 登出循环（★ skill 内部行为示意，命令端不手写直驱）| `--skip-login` 未传（否则走 2.3） |
 | **2.2** | `phase-2-2.md` | chrome-devtools-mcp 调用（★ skill 内部行为示意 — auto-test-runner「Web 端驱动适配器」执行）| 被测端含 `web`（由 Phase 0.0.5 的测试方案 `client` 字段算出） |
@@ -206,13 +213,13 @@ python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:
 
 > ★ **WebMCP 条件启用入参**（默认不传）：`auto-test-runner` 的 **`invoke` 补充能力**（列出/调用页面登记的工具，属 **Web 适配器的可选能力、不是第五个端**）与其**驱动版本校验**均为**入参门控**，SKILL **明令不自行探测**。组装 run-context（2.0.5）时**先跑跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "${TARGET_VERSION:?}" --detect --json`，`enabled: true` 即把整个 `client_mcp` 对象（保留 `enabled`/`declared`/`client_type`/`implementation`/`capability_state`）原样写进 run-context——它是 SKILL 侧 `application_mcp` 四态（declared / entry / registration / invocation）的唯一入口，**不写 = 非 Web 项目的四态永远取不到、专项用例既不 block 也不留痕**；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**跑 `check_webmcp.py --version "${TARGET_VERSION:?}" --detect --json`，`enabled: true` 才把 `webmcp_enabled: true` + `webmcp_entry_symbols` + `webmcp_launch_command` 一并写进 run-context 并在派子 Agent 的 prompt 里点明；**不传 = `invoke` 与版本校验永不启用**。⛔ 非 Web 不传 `webmcp_*`。⛔ 版本不足时由 SKILL 标 `block(webmcp-driver-too-old)`，**不得静默降级为「就当没有 WebMCP」**——那会让这一整类用例全绿式消失、报告看不出漏测。Phase 0.1.6（`phase-0-8.md`）已做驱动就绪预检，本处只负责把入参传下去。
 
-> 收口：auto-test-runner 跑完 → 进入 Phase 3 生成报告。**执行前务必已 Read `phase-2-1.md` + `phase-2-2.md`。**
+> 收口：两路执行终态汇合后才进入 Phase 3 生成报告；完整协议见 `phase-2-unit.md`。**执行前务必已 Read `phase-2-1.md` + `phase-2-2.md`。**
 
 ---
 
 ## Phase 3：测试报告生成（HTML — AI测试报告）
 
-> ⛔ **Phase 3 关键硬门**：① `3.0`/`3.2.7` 报告生成门 —— AI测试报告**仅在 `/sprint-autopilot` 流水线驱动（`REPORT_ENABLED=1`，baseline 有 `current_build`）时生成**，standalone 只跑测试不产报告 ② `3.2.5` 截图落盘硬核验 —— 归集后截图目录必须存在且非空，**缺失绝不生成"完成"报告** ③ `3.7`（R-4）finalize AI执行报告真实 testSummary + 发 #3 里程碑通知，一旦 `ai_report_finalized=true` 即冻结、结论变化只能铸新 build（报告不可变铁律，见文首 ⛔）。
+> ⛔ **Phase 3 关键硬门**：① `3.0`/`3.2.7` 报告生成门 —— 已绑定部署 build 的双路测试均生成 AI测试报告（含 standalone / 纯后端），未提供部署身份则只记未核验，不捏造 build ② `3.2.5` 截图落盘硬核验 —— 归集后截图目录必须存在且非空，**缺失绝不生成"完成"报告** ③ `3.7`（R-4）finalize AI执行报告真实 testSummary + 发 #3 里程碑通知，一旦 `ai_report_finalized=true` 即冻结、结论变化只能铸新 build（报告不可变铁律，见文首 ⛔）。
 >
 > ⛔⛔ **详细步骤已外置为 6 个分片、进入 Phase 3 的【第一动作】= 按需加载**：Phase 3 的完整 3.0–3.8 步骤拆为 **`phase-3-1.md` … `phase-3-5.md`（其中 3.4 因超 20KB 上限二次切分为 `phase-3-3.md` + `phase-3-3b.md`）**（均在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/`）。**按下表「所在分片」列，进入某子步骤前先 Read 对应分片、逐项执行、绝不凭骨架或记忆略过**——下方骨架仅供定位，权威判定一律以对应分片为准。分片清单：`phase-3-1.md`(3.0/3.1/3.2/3.2.5) · `phase-3-2.md`(3.2.6) · `phase-3-3.md`(3.2.7/3.2.8/3.3) · `phase-3-3b.md`(3.4) · `phase-3-4.md`(3.5/3.6) · `phase-3-5.md`(3.7/3.8)。
 
@@ -220,7 +227,7 @@ python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:
 
 | 子步骤 | 所在分片 | 作用（一句话） | 适用条件（不满足则整片跳过、无需 Read） |
 |---|---|---|---|
-| **3.0** | `phase-3-1.md` | 报告生成门（AI测试报告仅 autopilot 流水线驱动时生成）| 恒适用（**判定步** —— 报告生成门自己判要不要产报告，⛔ 不由本列预判跳过） |
+| **3.0** | `phase-3-1.md` | 报告生成门（双路 build 恒生成；旧无 build 场景按原门）| 恒适用（**判定步** —— 报告生成门自己判要不要产报告，⛔ 不由本列预判跳过） |
 | **3.1** | `phase-3-1.md` | 报告产物（HTML 唯一形态 — 不产出 docs/testing markdown 报告）| `REPORT_ENABLED=1`（由 3.0 算出） |
 | **3.2** | `phase-3-1.md` | 报告内容（捕获后渲染进 HTML 的数据）| `REPORT_ENABLED=1`（由 3.0 算出） |
 | **3.2.5** | `phase-3-1.md` | ★ 归集 skill 证据 + 截图落盘硬核验（强制；缺失绝不生成"完成"报告）| 恒适用（证据归集与截图核验与报告是否生成无关） |

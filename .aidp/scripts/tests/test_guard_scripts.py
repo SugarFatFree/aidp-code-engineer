@@ -6766,9 +6766,10 @@ def test_dev_scale_and_reversal_gate():
     check("★ 合册回检实际读接口章节与契约，不依赖独立接口文件",
           "interface_documents" in design_check and "另显式读取契约卡" in design_check
           and "链接目标必须实际读到" in design_check)
-    check("★ 命令测试带输入/环境/范围，targeted 不替代 full",
-          all(x in protocol for x in ("test_ledger.py run", "--input <契约卡路径>",
-                                      "--env-id", "--scope targeted", "targeted 不会代替 full")))
+    sprint_test = Path(REPO, '.aidp/commands/sprint-test.md').read_text(encoding='utf-8')
+    check("★ Sprint 单测范围协议在唯一入口，targeted 与 sprint 互不替代",
+          all(x in sprint_test for x in ("test_scope.py", "test_ledger.py verify", "--scope-hash", "--env-id"))
+          and "targeted 与 sprint 互不替代" in protocol)
     check("★ 同轮 test-close 不自动 cascade-now",
           "本命令自身必须已带 `--cascade-now`" not in dev
           and "同轮 test→close 不自动置 --cascade-now" in dev)
@@ -6795,9 +6796,10 @@ def test_dev_scale_and_reversal_gate():
     check("★ 开发者只回工作单，四族串行单写者",
           "主流程单写者串行登记" in ledger and "不并发整文件追加" in ledger
           and "开发 Agent 不改正式文档/族台账" in ledger)
-    check("★ test_plan 是验收和部署前同源命令，不用 targeted 冒充 full",
-          all(x in protocol for x in ("test_plan", "full_argv", "targeted_argv", "env_id", "inputs"))
-          and "部署前复用本计划的同一原 argv" in protocol)
+    check("★ test_plan 是验收和部署前同源命令，Sprint 单测由运行器推导、不用 targeted 冒充",
+          all(x in protocol for x in ("test_plan", "unit_runners", "targeted_argv", "env_id", "inputs"))
+          and "`/sprint-test` 与部署前复用同一 `unit_runners` 推导结果" in protocol
+          and "targeted 与 sprint 互不替代" in protocol)
     check("★ 时点记录不把速度目标变成绕过授权门",
           "可部署时间" in protocol and "不能因超时绕授权或硬门" in protocol)
 

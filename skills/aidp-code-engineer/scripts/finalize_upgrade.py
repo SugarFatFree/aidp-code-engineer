@@ -51,9 +51,13 @@ def entry_states(root: Path, accepted) -> list:
 def promote_ledger(root: Path, states: list):
     """已收口条目的指纹台账推进到新版骨架（记骨架指纹，不记项目文件指纹）。"""
     for e in states:
-        if e["target"] in ("AGENTS.md", "CLAUDE.md"):
-            continue
         tpl = root / e["template"]
+        if e["target"] in ("AGENTS.md", "CLAUDE.md"):
+            if e["template"] and tpl.is_file():
+                L.uf_record(root, "template:main-memory", tpl.read_bytes())
+                L.uf_record(root, "merged:main-memory",
+                            L.memory_managed_text(L.read_text(root / e["target"])).encode("utf-8"))
+            continue
         if e["template"] and tpl.is_file():
             data = tpl.read_bytes()
             L.uf_record(root, L.ledger_label(e["target"]), data)

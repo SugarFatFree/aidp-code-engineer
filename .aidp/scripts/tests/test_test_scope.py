@@ -240,7 +240,7 @@ class ScopeEvidenceTests(ScopeFixture):
     scope_file = RunScopeTests.scope_file
 
     def runners(self, **extra):
-        return [{"suffixes": [".py"], "argv": [PY, "-B", "-m", "unittest", "{tests}"], **extra}]
+        return [{"suffixes": [".py"], "batch": False, "argv": [PY, "-B", "-m", "unittest", "{tests}"], **extra}]
 
     def execute(self, scope, expect=0, *extra):
         return self.ledger("run-scope", "--root", str(self.root), "--scope-file", scope,
@@ -595,6 +595,238 @@ class ScopeEvidenceTests(ScopeFixture):
         self.assertNotEqual(first["runs"][0]["key"], second["runs"][0]["key"])
         self.assertFalse(second["runs"][0]["reused"])
         self.assertEqual(self.verify(scope, second)["status"], "PASS")
+
+
+class TaskScopeTests(ScopeFixture):
+    """无 Sprint 的真实任务范围、续跑和独立审查证据。"""
+
+    def context(self, **kwargs):
+        import entry_context
+        return entry_context.resolve_context(self.root, "sprint-dev", version="V1",
+            additional_grants=["related-test", "review"],
+            authorization_source={"kind": "user-text", "request_id": "scope-fixture", "text": "运行专项测试并审查"},
+            **kwargs)["execution_context"]
+
+    def task_scope(self, context, runners=None):
+        runners = runners if runners is not None else [
+            {"suffixes": [".py"], "batch": False, "argv": [PY, "-B", "-m", "unittest", "{tests}"]}]
+        p = subprocess.run([PY, str(SCOPE), "--root", str(self.root), "--execution-context", context,
+                            "--runners-json", json.dumps(runners), "--json"], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        plan = json.loads(p.stdout)
+        path = Path(context).parent / "scope.json"
+        path.write_text(json.dumps(plan))
+        return str(path), plan
+
+    def execute_task(self, context, scope, expect=0, *extra):
+        return self.ledger("run-scope", "--root", str(self.root), "--execution-context", context,
+                           "--scope-file", scope, "--env-id", "e1", *extra, expect=expect)
+
+    def verify_task(self, context, scope, result, expect=0):
+        return self.ledger("verify", "--root", str(self.root), "--execution-context", context,
+                           "--scope-file", scope, "--scope-hash", result["scope_hash"], "--env-id", "e1",
+                           *(arg for value in result["run_ids"] for arg in ("--run-id", value)), expect=expect)
+
+    def test_no_sprint_task_reuses_only_its_own_evidence(self):
+        first_context, second_context = self.context(), self.context()
+        self.write("src/calc.py", "def f(): return 2\n")
+        first_scope, first_plan = self.task_scope(first_context)
+        second_scope, second_plan = self.task_scope(second_context)
+        self.assertNotEqual(first_plan["scope_hash"], second_plan["scope_hash"])
+        self.assertNotIn("sprint", first_plan["execution_context"])
+        self.assertEqual(first_plan["since"], self.base)
+        first = self.execute_task(first_context, first_scope)
+        self.assertEqual(first["kind"], "task-run-set")
+        self.assertEqual(first["runs"][0]["scope"], "task")
+        self.assertTrue(self.execute_task(first_context, first_scope)["runs"][0]["reused"])
+        second = self.execute_task(second_context, second_scope)
+        self.assertFalse(second["runs"][0]["reused"])
+        self.assertNotEqual(first["runs"][0]["key"], second["runs"][0]["key"])
+        self.verify_task(second_context, second_scope, dict(second, run_ids=first["run_ids"]), expect=2)
+        self.verify_task(first_context, first_scope, first)
+        self.execute_task(second_context, first_scope, expect=2)
+        self.ledger("run-scope", "--root", str(self.root), "--scope-file", first_scope, "--env-id", "e1", expect=2)
+        formal_plan = self.derive(first_plan["runners"])
+        self.write("memory/formal-scope.json", json.dumps(formal_plan))
+        formal = self.ledger("run-scope", "--root", str(self.root), "--scope-file", "memory/formal-scope.json",
+                             "--env-id", "e1")
+        self.verify_task(first_context, first_scope, dict(first, run_ids=formal["run_ids"]), expect=2)
+        self.ledger("verify", "--root", str(self.root), "--scope-file", "memory/formal-scope.json",
+                    "--scope-hash", formal["scope_hash"], "--env-id", "e1", "--run-id", first["run_ids"][0], expect=2)
+
+    def test_preexisting_dirty_is_excluded_until_changed_or_declared(self):
+        self.write("src/calc.py", "def f(): return 2\n")
+        context = self.context()
+        _, initial = self.task_scope(context)
+        self.assertEqual(initial["changed"], [])
+        self.assertEqual(initial["runs"], [])
+        self.write("src/calc.py", "def f(): return 3\n")
+        _, changed = self.task_scope(context)
+        self.assertEqual(changed["changed"], ["src/calc.py"])
+        declared = self.context(write_set=["src/calc.py"])
+        _, selected = self.task_scope(declared)
+        self.assertEqual(selected["tests"], ["tests/test_calc.py"])
+        self.write("src/calc.py", "def f():\n    return 1\n")
+        self.assertEqual(git(self.root, "diff", "--name-only", "HEAD"), "")
+        _, restored = self.task_scope(context)
+        self.assertEqual(restored["changed"], ["src/calc.py"])
+        self.assertEqual(restored["tests"], ["tests/test_calc.py"])
+
+    def test_failure_pending_and_missing_runs_never_verify(self):
+        self.write("tests/test_calc.py", "import unittest\nfrom pathlib import Path\n"
+                   "class CalcTests(unittest.TestCase):\n"
+                   " def test_ok(self): self.assertFalse(Path('memory/fail').exists())\n")
+        context = self.context(write_set=["src/calc.py"])
+        scope, _ = self.task_scope(context)
+        first = self.execute_task(context, scope)
+        self.verify_task(context, scope, dict(first, run_ids=[]), expect=2)
+        self.write("memory/fail", "fail")
+        failed = self.execute_task(context, scope, 1, "--force")
+        self.assertEqual(failed["status"], "FAIL")
+        self.verify_task(context, scope, first, expect=2)
+        self.verify_task(context, scope, failed, expect=2)
+        (self.root / "memory/fail").unlink()
+        recovered = self.execute_task(context, scope)
+        self.assertFalse(recovered["runs"][0]["reused"])
+        import test_ledger
+        rows = test_ledger.load(self.root)
+        pending = dict(rows[-1], run_id="pending-task-run", status="RUNNING", exit_code=None, after_hash=None)
+        test_ledger.save(self.root, [*rows, pending])
+        self.verify_task(context, scope, recovered, expect=2)
+
+    def test_task_review_is_machine_json_and_cannot_be_test_pass(self):
+        import entry_context
+        first_context, second_context = self.context(), self.context()
+        self.write("src/calc.py", "def f(): return 2\n")
+        scope, plan = self.task_scope(first_context)
+        result = self.execute_task(first_context, scope)
+        report = str(Path(first_context).parent / "review.json")
+        args = ["record-review", "--root", str(self.root), "--name", "same-name", "--env-id", "e1",
+                "--execution-context", first_context, "--scope-file", scope, "--scope-hash", plan["scope_hash"],
+                "--report", report, "--run-id", result["run_ids"][0]]
+        Path(report).write_text(json.dumps(result))
+        self.ledger(*args, expect=2)
+        review = {"schema": 1, "kind": "code-review", "status": "PASS", "scope_hash": plan["scope_hash"],
+                  "execution_context": entry_context.evidence_identity(entry_context.load_context(self.root, first_context)),
+                  "reviewer": "review-agent", "findings": [],
+                  "checks": [{"kind": "code-review", "status": "PASS", "evidence": ["src/calc.py:1 f returns int"]}]}
+        Path(report).write_text(json.dumps(review))
+        recorded = self.ledger(*args)
+        delta = self.ledger("review-delta", "--root", str(self.root), "--name", "same-name", "--env-id", "e1",
+                            "--execution-context", first_context)
+        self.assertEqual(recorded["review_id"], delta["review_id"])
+        self.assertFalse(delta["code_changed"])
+        self.ledger("review-delta", "--root", str(self.root), "--name", "same-name", "--env-id", "e1",
+                    "--execution-context", second_context, expect=2)
+        self.ledger("review-delta", "--root", str(self.root), "--name", "same-name", "--env-id", "e1", expect=2)
+        self.assertFalse((self.root / "docs/testing").exists())
+        review["checks"][0]["status"] = "UNVERIFIED"
+        Path(report).write_text(json.dumps(review))
+        self.ledger(*args, expect=2)
+
+    def test_task_carry_preserves_real_source_and_dependency_proof(self):
+        ScopeEvidenceTests.counting_suite(self, "calc", 1)
+        ScopeEvidenceTests.counting_suite(self, "other", 1)
+        context = self.context(write_set=["src/calc.py", "src/other.py"])
+        scope, _ = self.task_scope(context)
+        first = self.execute_task(context, scope)
+        self.write("src/calc.py", "value = 2\n")
+        scope, _ = self.task_scope(context)
+        second = self.execute_task(context, scope)
+        carried = next(r for r in second["runs"] if r["status"] == "CARRIED")
+        self.assertIn(carried["source_run_id"], first["run_ids"])
+        self.assertIsNone(carried["exit_code"])
+        self.assertIsNone(carried["after_hash"])
+        self.assertEqual((self.root / "memory/other-count").read_text(), "1")
+        self.assertEqual(self.verify_task(context, scope, second)["status"], "CARRIED")
+
+    def test_formal_context_remains_sprint_and_isolated_from_legacy(self):
+        import entry_context
+        context = self.context(sprint="001", write_set=["src/calc.py"])
+        scope, _ = self.task_scope(context)
+        out = self.execute_task(context, scope)
+        self.assertEqual(out["kind"], "sprint-run-set")
+        self.assertEqual(out["runs"][0]["scope"], "sprint")
+        self.assertEqual(self.verify_task(context, scope, out)["kind"], "sprint-verification")
+        self.ledger("verify", "--root", str(self.root), "--scope-file", scope, "--scope-hash", out["scope_hash"],
+                    "--env-id", "e1", "--run-id", out["run_ids"][0], expect=2)
+
+    def test_unrunnable_and_no_git_tasks_fail_closed(self):
+        context = self.context(write_set=["src/calc.py"])
+        scope, _ = self.task_scope(context, runners=[])
+        out = self.execute_task(context, scope, expect=2)
+        self.assertEqual(out["status"], "UNVERIFIED")
+        self.verify_task(context, scope, out, expect=2)
+        shutil.rmtree(self.root / ".git")
+        no_git = self.context()
+        p = subprocess.run([PY, str(SCOPE), "--root", str(self.root), "--execution-context", no_git, "--json"],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.ledger("run", "--root", str(self.root), "--execution-context", no_git, "--scope", "task",
+                    "--env-id", "e1", "--", PY, "-c", "pass", expect=2)
+
+    def test_submodule_tasks_expand_files_isolate_evidence_and_reject_missing_checkout(self):
+        source = self.tmp / "submodule-source"
+        source.mkdir()
+        git(source, "init", "-q")
+        git(source, "config", "user.email", "t@example.invalid")
+        git(source, "config", "user.name", "t")
+        for name, text in {
+            "pyproject.toml": "",
+            "src/calc.py": "value = 1\n",
+            "tests/__init__.py": "",
+            "tests/test_calc.py": "import unittest\nfrom src.calc import value\n"
+                                  "class Calc(unittest.TestCase):\n def test_value(self): self.assertGreater(value, 0)\n",
+        }.items():
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        git(source, "add", "-A")
+        git(source, "commit", "-qm", "submodule baseline")
+        git(self.root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), "vendor/pkg")
+        git(self.root, "commit", "-qam", "parent gitlink")
+        self.base = git(self.root, "rev-parse", "HEAD")
+        self.write("vendor/pkg/src/calc.py", "value = 2\n")  # 任务开始前已有的子模块 dirty。
+        first_context, second_context = self.context(), self.context()
+        runners = [{"cwd": "vendor/pkg", "suffixes": [".py"],
+                    "argv": [PY, "-B", "-m", "unittest", "{tests}"]}]
+        _, initial = self.task_scope(first_context, runners)
+        self.assertEqual(initial["changed"], [])
+        declared = self.context(write_set=["vendor/pkg/src"])
+        _, explicit = self.task_scope(declared, runners)
+        self.assertEqual(explicit["tests"], ["vendor/pkg/tests/test_calc.py"])
+        self.write("vendor/pkg/src/calc.py", "value = 3\n")
+        first_scope, first_plan = self.task_scope(first_context, runners)
+        second_scope, second_plan = self.task_scope(second_context, runners)
+        self.assertEqual(first_plan["changed"], ["vendor/pkg/src/calc.py"])
+        self.assertEqual(first_plan["tests"], ["vendor/pkg/tests/test_calc.py"])
+        self.assertNotEqual(first_plan["scope_hash"], second_plan["scope_hash"])
+        first = self.execute_task(first_context, first_scope)
+        second = self.execute_task(second_context, second_scope)
+        self.assertEqual(first["status"], "PASS")
+        self.assertFalse(second["runs"][0]["reused"])
+        self.assertTrue(self.execute_task(first_context, first_scope)["runs"][0]["reused"])
+        self.verify_task(first_context, first_scope, first)
+        self.verify_task(second_context, second_scope, dict(second, run_ids=first["run_ids"]), expect=2)
+        shutil.rmtree(self.root / "vendor/pkg")
+        (self.root / "vendor/pkg").mkdir()
+        p = subprocess.run([PY, str(SCOPE), "--root", str(self.root), "--execution-context", first_context,
+                            "--runners-json", json.dumps(runners), "--json"], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertEqual(json.loads(p.stdout)["kind"], "error")
+        self.execute_task(first_context, first_scope, expect=2)
+        self.verify_task(first_context, first_scope, first, expect=2)
+
+    def test_context_baseline_and_write_set_cannot_be_overridden(self):
+        context = self.context(write_set=["src/calc.py"])
+        for extra in (["--since", "missing"], ["--write-set", "web/card.tsx"]):
+            p = subprocess.run([PY, str(SCOPE), "--root", str(self.root), "--execution-context", context,
+                                *extra, "--json"], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.ledger("run", "--root", str(self.root), "--execution-context", context, "--scope", "sprint",
+                    "--env-id", "e1", "--", PY, "-c", "pass", expect=2)
+        self.ledger("run", "--root", str(self.root), "--scope", "task", "--env-id", "e1",
+                    "--", PY, "-c", "pass", expect=2)
 
 
 class WorktreeLedgerTests(ScopeFixture):

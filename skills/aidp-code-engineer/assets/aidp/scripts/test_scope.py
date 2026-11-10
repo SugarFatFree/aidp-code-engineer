@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""从 Sprint 起点 commit、当前树和契约 write_set 推导单测，绝不回落全量。
+"""从任务/Sprint 起点 commit、当前树和 write_set 推导单测，绝不回落全量。
 
 --root . --since SHA --runners-json JSON [--write-set PATH ...] --json
+--root . --execution-context PATH --runners-json JSON --json
+light 从冻结上下文取起点/写集，排除未改动的初始 dirty；无需 Sprint 号或契约卡。
+上下文全身份进入 scope_hash，执行/验证时必须携带同一上下文，不能跨任务借用证据。
 运行器示例：{"suffixes":[".py"],"cwd":"api","argv":["python3","-m","unittest","{tests}"]}
 命名运行器必须选择 {tests}（独立 argv 项，路径相对 cwd）或 {test_classes}（Java 全限定类名）。
 related 运行器须声明 mode=related，使用 {sources} 独立项和 Jest --findRelatedTests
-或 Vitest related；不能使用空选择。每个 run 只选择一个测试文件/related 源文件，便于增量补测。
+或 Vitest related；不能使用空选择。已知多选择器运行器安全合批，batch:false 保留逐文件证据。
 命名映射只作种子；Python import/from、本地测试辅助代码与包初始化的传递闭包补充选择。
 模块由运行器 cwd 与最近的构建清单确定；依赖可跨模块。未知加载明确记录并保守补测。
 无映射/不支持的代码进入 unmapped（Minor）；已有测试缺运行器进入 unrunnable（Important 未核验）。
-scope_hash 绑定完整确定性输出（含工作树内容指纹）；执行方必须重新 derive 验真。
+scope_hash 绑定完整确定性输出；依赖分析按真实树/输入/环境/工具 hash 缓存，本批验真一次。
+runner.resources 显式声明资源到 consumer/tests 的映射；无映射 JSON/YAML/SQL 保留 Minor 缺口。
 范围文件请写入 docs/ 或 memory/，避免输出自身成为测试输入。退出码：0 推导成功，2 输入错误。
 """
 from __future__ import annotations
 
 import argparse
+import copy
+import time
 import ast
-import tokenize
+import stat
 import hashlib
 import json
 import os
@@ -27,6 +33,8 @@ import sys
 import tempfile
 
 SCHEMA = 2
+RESOURCE_EXTS = frozenset((".json", ".yaml", ".yml", ".sql"))
+_ANALYSIS_CACHE = {}
 CODE_EXTS = frozenset((".java", ".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go",
                        ".rs", ".kt", ".kts", ".cs", ".rb", ".php", ".c", ".h", ".cpp", ".swift",
                        ".scala", ".sc", ".m", ".mm", ".dart", ".ex", ".exs", ".erl", ".clj", ".sh", ".sql"))
@@ -39,6 +47,9 @@ MODULE_MARKERS = frozenset(("package.json", "pom.xml", "build.gradle", "build.gr
 
 class ScopeError(ValueError):
     """范围输入不明确；不能回落全量。"""
+    def __init__(self, message):
+        super().__init__(message)
+        self.status = "BUDGET_EXCEEDED" if message.startswith("BUDGET_EXCEEDED") else "UNVERIFIED"
 
 
 def digest(value):
@@ -60,8 +71,9 @@ def git_paths(root, *args):
     return [os.fsdecode(path) for path in git_output(root, *args).split(b"\0") if path]
 
 
-def repository_files(root):
-    return sorted(set(git_paths(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")))
+def repository_files(root, execution_context=None):
+    from project_inventory import git_worktree_inventory
+    return git_worktree_inventory(root)["files"]
 
 
 def relative_path(root, value, directory=False):
@@ -81,14 +93,40 @@ def resolve_since(root, since):
     return os.fsdecode(git_output(root, "rev-parse", "--verify", f"{since}^{{commit}}")).strip()
 
 
-def changed_files(root, since, write_set):
+def changed_files(root, since, write_set, execution_context=None, files=None, inventory=None):
     since = resolve_since(root, since)
     names = set(git_paths(root, "diff", "--name-only", "--no-renames", "-z", since, "--"))
     names.update(git_paths(root, "ls-files", "--others", "--exclude-standard", "-z"))
+    if files is None:
+        files = repository_files(root, execution_context)
+    if execution_context is not None and execution_context["mode"] == "light":
+        from entry_context import initial_file_hash, initial_hash
+        from project_inventory import git_worktree_inventory, default_excluded
+        observed = inventory if inventory is not None else git_worktree_inventory(root, since=since)
+        # 父仓 diff 只给 gitlink 目录；递归 pin 差异给出候选，初始 dirty 还覆盖恢复为 Git 基线。
+        # 干净且未变化的文件无需逐个 git show，完整执行树仍由 tree_snapshot 内容指纹约束。
+        candidates = names | set(observed["preexisting_dirty"]) | set(execution_context["preexisting_dirty"])
+        # 干净符号链接也可能仅目标内容变化；初始已实读的少量路径保持逐内容比较。
+        candidates.update(p for p, value in execution_context["initial_files"].items() if value is not None)
+        # Git 不报告非 executable 权限位变化，廉价 stat 仍须保留旧内容指纹的权限语义。
+        for path, baseline in execution_context.get("initial_git_files", {}).items():
+            if PurePosixPath(path).suffix not in CODE_EXTS | RESOURCE_EXTS:
+                continue
+            try:
+                current_mode = stat.S_IMODE((root / path).stat().st_mode)
+            except OSError:
+                candidates.add(path)
+            else:
+                if current_mode != baseline["mode"]:
+                    candidates.add(path)
+        names.update(p for p in candidates
+                     if not default_excluded(p, observed["repositories"])
+                     and PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS
+                     and initial_file_hash(root / p) != initial_hash(root, execution_context, p))
     for value in write_set:
         rel = relative_path(root, value)
         if (root / rel).is_dir():
-            names.update(p for p in repository_files(root) if within(p, rel))
+            names.update(p for p in files if within(p, rel))
         else:
             names.add(rel)
     return sorted(names)
@@ -158,7 +196,23 @@ def validate_runners(runners, root=None):
         if root is not None:
             from test_ledger import normalize_inputs
             inputs = normalize_inputs(root, inputs)
-        item = {"suffixes": sorted(set(suffixes)), "argv": argv, "cwd": cwd, "mode": mode,
+        batch = runner.get("batch")
+        if batch is not None and type(batch) is not bool:
+            raise ScopeError("runner.batch 必须为布尔值")
+        if batch is None:
+            names = [Path(a).name for a in argv]
+            batch = ("{test_classes}" in placeholders and names[0] in ("mvn", "mvnw")
+                     or names[0] in ("pytest", "py.test", "jest", "vitest")
+                     or names[0] in ("npx", "npm", "pnpm") and any(x in names for x in ("jest", "vitest", "pytest"))
+                     or names[0].startswith(("python", "pypy")) and "-m" in argv
+                     and argv[argv.index("-m") + 1] in ("unittest", "pytest"))
+        resources = runner.get("resources", {})
+        if not isinstance(resources, dict) or any(not isinstance(v, list) or not all(isinstance(x, str) for x in v) for v in resources.values()):
+            raise ScopeError("runner.resources 必须为 resource 路径到 consumer/tests 路径数组的映射")
+        if root is not None:
+            resources = {relative_path(root, k): sorted(set(relative_path(root, x) for x in v)) for k, v in resources.items()}
+            inputs = normalize_inputs(root, [*inputs, *(p for p in resources if (root / p).exists())])
+        item = {"batch": batch, "resources": resources, "suffixes": sorted(set(suffixes)), "argv": argv, "cwd": cwd, "mode": mode,
                 "env_id": env_id, "inputs": inputs}
         if item not in normalized:
             normalized.append(item)
@@ -204,12 +258,31 @@ def mapped_tests(rel, files, modules):
 DEPENDENCY_POLICY = "python-import-closure-v1"
 
 
-def dependency_analysis(root, files, modules, runners):
+def read_frozen_source(root, path, frozen_files=None):
+    """解析只使用已与冻结快照核对的同一字节缓冲，拒绝读入 A→B→A 中间态 B。"""
+    target = root / path
+    try:
+        content = target.read_bytes()
+        mode = target.lstat().st_mode
+        link = os.readlink(target) if stat.S_ISLNK(mode) else None
+        if link is not None:
+            mode = target.stat().st_mode
+    except OSError as exc:
+        raise ScopeError(f"UNVERIFIED：无法读取冻结分析输入 {path}：{exc}") from exc
+    if frozen_files is not None:
+        observed = digest({"sha256": hashlib.sha256(content).hexdigest(), "mode": stat.S_IMODE(mode), "link": link})
+        if observed != frozen_files.get(path):
+            raise ScopeError(f"TREE_CHANGED：实际解析字节与冻结快照不一致：{path}")
+    return content
+
+
+def dependency_analysis(root, files, modules, runners, deadline=None, repositories=(".",), frozen_files=None):
     """解析本地 Python 导入闭包；命名映射只增加依赖，绝不证明独立。
 
     不执行项目代码。缺失/外部导入、动态加载及无法解析的文件均显式标记 unknown。
     闭包随 scope_hash 入账，历史复验不需要从当前工作树猜测旧文件内容。
     """
+    from project_inventory import default_excluded
     files = set(files)
     python_files = {p for p in files if p.endswith(".py")}
     directories = {str(parent) for p in python_files for parent in PurePosixPath(p).parents}
@@ -218,8 +291,9 @@ def dependency_analysis(root, files, modules, runners):
     def parse(path):
         if path not in parsed:
             try:
-                with tokenize.open(root / path) as stream:
-                    parsed[path] = ast.parse(stream.read(), filename=path)
+                content = read_frozen_source(root, path, frozen_files)
+                # ast.parse(bytes) 保留 Python 源码编码声明/BOM 的处理，且不再次打开源码。
+                parsed[path] = ast.parse(content, filename=path)
             except (OSError, UnicodeError, SyntaxError) as exc:
                 parsed[path] = type(exc).__name__
         return parsed[path]
@@ -278,6 +352,8 @@ def dependency_analysis(root, files, modules, runners):
         seeds.update(named_sources.get(test, ()))
         pending, closure = list(seeds), set()
         while pending:
+            if deadline is not None and time.monotonic() > deadline:
+                raise ScopeError("BUDGET_EXCEEDED：依赖扫描时间超出预算")
             path = pending.pop()
             if path in closure:
                 continue
@@ -336,7 +412,7 @@ def dependency_analysis(root, files, modules, runners):
                             else:
                                 rel = target.relative_to(root).as_posix()
                                 # docs/memory 等默认排除状态仍遵守 --input/env-id 契约。
-                                if not rel.startswith(NON_CODE_ROOTS):
+                                if not default_excluded(rel, repositories):
                                     dependencies.add(rel)
                                     dependencies.update(p for p in files if within(p, rel))
                         else:
@@ -365,7 +441,7 @@ def dependency_impact(proof, changes, include_runner=True):
     return ""
 
 
-def render_argv(argv, tests, root=None, cwd=".", sources=()):
+def render_argv(argv, tests, root=None, cwd=".", sources=(), frozen_files=None):
     relative_tests = [PurePosixPath(t).relative_to(cwd).as_posix() for t in tests]
     relative_sources = [PurePosixPath(t).relative_to(cwd).as_posix() for t in sources]
     classes = []
@@ -374,7 +450,7 @@ def render_argv(argv, tests, root=None, cwd=".", sources=()):
         if any("{test_classes}" in a for a in argv) and not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", PurePosixPath(test).stem):
             raise ScopeError(f"测试类名不是精确 Java 标识符：{test}")
         if root is not None and PurePosixPath(test).suffix == ".java":
-            package = re.search(r"^\s*package\s+([\w.]+)\s*;", (root / test).read_text(encoding="utf-8"), re.MULTILINE)
+            package = re.search(r"^\s*package\s+([\w.]+)\s*;", read_frozen_source(root, test, frozen_files).decode("utf-8"), re.MULTILINE)
         classes.append((package.group(1) + "." if package else "") + PurePosixPath(test).stem)
     rendered = []
     for item in argv:
@@ -391,16 +467,108 @@ def render_argv(argv, tests, root=None, cwd=".", sources=()):
     return rendered
 
 
-def derive(root, since, runners, write_set=()):
+def execution_context_data(root, context):
+    """CLI 路径由入口模块验真；Python 调用也可传已加载的上下文。"""
+    if context is None:
+        return None
+    from entry_context import load_context, validate_context
+    return validate_context(root, context) if isinstance(context, dict) else load_context(root, context)
+
+
+def context_identity(root, context):
+    context = execution_context_data(root, context)
+    if context is None:
+        return None
+    from entry_context import evidence_identity as entry_identity
+    return entry_identity(context)
+
+
+def derive(root, since, runners, write_set=(), execution_context=None):
     root = Path(root).resolve()
+    execution_context = execution_context_data(root, execution_context)
+    identity = context_identity(root, execution_context)
+    if identity is not None:
+        if since and resolve_since(root, since) != identity["since"]:
+            raise ScopeError("--since 与 execution-context 起点冲突")
+        if write_set and sorted(set(relative_path(root, p) for p in write_set)) != identity["write_set"]:
+            raise ScopeError("--write-set 与 execution-context 范围冲突")
+        since, write_set = identity["since"], identity["write_set"]
     since = resolve_since(root, since)
     runners = validate_runners(runners, root)
     write_set = sorted(set(relative_path(root, p) for p in write_set))
-    changes = [p for p in changed_files(root, since, write_set)
-               if not p.startswith(NON_CODE_ROOTS) and PurePosixPath(p).suffix in CODE_EXTS]
-    files = [p for p in repository_files(root) if not p.startswith(NON_CODE_ROOTS) and (root / p).is_file()]
+    from project_inventory import git_worktree_inventory, default_excluded
+    from test_ledger import tree_snapshot, environment_hash
+    started = time.monotonic()
+    scan_seconds = min(10, execution_context["execution_budget"]["elapsed_seconds"]) if execution_context else 300
+    deadline = started + scan_seconds
+    if execution_context:
+        from execution_policy import reserve_budget, PolicyError
+        if scan_seconds <= 0:
+            raise PolicyError("BUDGET_EXCEEDED", "没有可用于静态扫描的时间预算")
+        scan_reservation = reserve_budget(root, execution_context, "elapsed_seconds", scan_seconds, action="static")
+    limit = execution_context.get("execution_budget", {}).get("scanned_files") if execution_context else None
+    inventory = git_worktree_inventory(root, since=since, max_files=limit)
+    repository = inventory["files"]
+    if execution_context:
+        from execution_policy import reserve_budget
+        reserve_budget(root, execution_context, "scanned_files", len(repository), action="static")
+    snapshot = tree_snapshot(root, [path for runner in runners for path in runner["inputs"]])
+    changes = [p for p in changed_files(root, since, write_set, execution_context, repository, inventory)
+               if not p.startswith(NON_CODE_ROOTS) and PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS]
+    changes = sorted(set(changes) | {p for p in inventory["preexisting_dirty"]
+                    if PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS})
+    resource_paths = {p for r in runners for p in r["resources"]}
+    changes = [p for p in changes if p in resource_paths or not default_excluded(p, inventory["repositories"])]
+    if execution_context is not None and identity["mode"] == "light":
+        from entry_context import initial_file_hash, initial_hash
+        dirty = set(execution_context["preexisting_dirty"])
+        # 把初始脏文件恢复为 Git 基线也是本任务改动，虽然 git diff 已不再列出它。
+        candidates = set(changes) | {p for p in dirty if not p.startswith(NON_CODE_ROOTS)
+                                     and PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS}
+        changes = sorted(p for p in candidates if p not in dirty
+                         or any(within(p, declared) for declared in write_set)
+                         or initial_file_hash(root / p) != initial_hash(root, execution_context, p))
+    files = [p for p in repository if not default_excluded(p, inventory["repositories"]) and (root / p).is_file()]
     modules = module_roots(files, runners)
-    dependencies = dependency_analysis(root, files, modules, runners)
+    tool_hash = digest([hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                        hashlib.sha256(Path(__file__).with_name("project_inventory.py").read_bytes()).hexdigest(),
+                        hashlib.sha256(Path(__file__).with_name("test_ledger.py").read_bytes()).hexdigest()])
+    analysis_key = digest([str(root), snapshot["hash"], environment_hash(), tool_hash, files, modules, runners])
+    analysis = _ANALYSIS_CACHE.get(analysis_key)
+    pending_analysis = None
+    if analysis is None:
+        from aidp_paths import ensure_runtime_dir
+        cache_file = Path(ensure_runtime_dir(root)) / "scope-analysis" / (analysis_key + ".json")
+        try:
+            record = json.loads(cache_file.read_text(encoding="utf-8"))
+            candidate = record["analysis"]
+            if (record.get("key") == analysis_key and record.get("checksum") == digest(candidate)
+                    and candidate.get("policy") == DEPENDENCY_POLICY and isinstance(candidate.get("tests"), dict)
+                    and all(isinstance(v, dict) and isinstance(v.get("files"), list) and isinstance(v.get("unknown"), list)
+                            for v in candidate["tests"].values())):
+                analysis = candidate
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
+        if analysis is None:
+            analysis = dependency_analysis(root, files, modules, runners, deadline=deadline, repositories=inventory["repositories"], frozen_files=snapshot["files"])
+            pending_analysis = analysis
+    dependencies = copy.deepcopy(analysis)
+    # 显式资源依赖进入传递闭包，既用于选测，也用于跨树证据判断。
+    for runner in runners:
+        for resource, consumers in runner["resources"].items():
+            for test, proof in dependencies["tests"].items():
+                mapped = {t for consumer in consumers for t in mapped_tests(consumer, files, modules)}
+                if test in consumers or test in mapped or set(consumers).intersection(proof["files"]):
+                    proof["files"] = sorted(set(proof["files"]) | {resource})
+    reverse = {}
+    unknown = set()
+    for test, proof in dependencies["tests"].items():
+        for source in proof["files"]:
+            reverse.setdefault(source, set()).add(test)
+        if test.endswith(".py") and proof["unknown"]:
+            unknown.add(test)
+    proven_tests, conservative_tests = set(), set()
+
     mapping, unmapped, tests, related = [], [], set(), []
     for rel in changes:
         matching = [r for r in runners if r["mode"] == "related" and within(rel, r["cwd"])
@@ -413,26 +581,21 @@ def derive(root, since, runners, write_set=()):
             related.append((rel, owners[0]))
             mapping.append({"change": rel, "tests": [rel] if is_test(rel) else [], "reason": "framework related"})
             continue
-        found = set(mapped_tests(rel, files, modules))
+        found = set(mapped_tests(rel, files, modules)) | reverse.get(rel, set())
         proven = set(found)
-        reasons = []
+        proven_tests.update(proven)
         if rel.endswith(".py"):
-            for test, proof in dependencies["tests"].items():
-                if not test.endswith(".py"):
-                    continue
-                reason = dependency_impact(proof, [rel], include_runner=False)
-                if reason:
-                    found.add(test)
-                    reasons.append(f"{test}: {reason}")
-                if rel in proof["files"]:
-                    proven.add(test)
+            conservative_tests.update(unknown - proven)
         if found:
             tests.update(found)
-            mapping.append({"change": rel, "tests": sorted(found),
-                            "reason": "；".join(reasons) or ("改动的测试文件" if is_test(rel) else "命名及目录映射")})
+            mapping.append({"change": rel, "tests": sorted(found), "classification": "proven",
+                            "reason": "本地依赖、资源声明或命名目录映射"})
         if not proven:
             unmapped.append(rel)
+    conservative_tests -= proven_tests
+    tests.update(conservative_tests)
     runs, claimed = [], set()
+    groups = {}
     for test in sorted(tests):
         matching = [r for r in runners if within(test, r["cwd"]) and PurePosixPath(test).suffix in r["suffixes"]]
         if not matching:
@@ -446,36 +609,67 @@ def derive(root, since, runners, write_set=()):
             # 已知测试文件本身可以作为框架 related 输入。
             related.append((test, runner))
         else:
-            runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"], "tests": [test], "sources": [],
-                         "module": module_for(test, modules), "mode": "named",
-                         "env_id": runner["env_id"], "inputs": runner["inputs"],
-                         "argv": render_argv(runner["argv"], [test], root, runner["cwd"])})
+            key = digest(runner) if runner["batch"] else digest([runner, test])
+            groups.setdefault(key, (runner, []))[1].append(test)
         claimed.add(test)
+    related_groups = {}
     for source, runner in related:
+        key = digest(runner) if runner["batch"] else digest([runner, source])
+        related_groups.setdefault(key, (runner, set()))[1].add(source)
+    for runner, selected in related_groups.values():
+        selected = sorted(selected)
         runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"],
-                     "tests": [source] if is_test(source) else [], "sources": [source],
-                     "module": module_for(source, modules), "mode": "related",
+                     "tests": [p for p in selected if is_test(p)], "sources": selected,
+                     "module": module_for(selected[0], modules), "mode": "related",
                      "env_id": runner["env_id"], "inputs": runner["inputs"],
-                     "argv": render_argv(runner["argv"], [], root, runner["cwd"], [source])})
-    # 共用账本的内容指纹算法，避免范围与证据对“同树”作不同解释。
-    from test_ledger import tree_snapshot
-    snapshot = tree_snapshot(root, [path for runner in runners for path in runner["inputs"]])
+                     "argv": render_argv(runner["argv"], [], root, runner["cwd"], selected, frozen_files=snapshot["files"])})
+    for runner, selected in groups.values():
+        runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"], "tests": selected, "sources": [],
+                     "module": module_for(selected[0], modules), "mode": "named",
+                     "env_id": runner["env_id"], "inputs": runner["inputs"],
+                     "argv": render_argv(runner["argv"], selected, root, runner["cwd"], frozen_files=snapshot["files"])})
+    # 分析期间的并发修改不得形成混合树证明。
+    if tree_snapshot(root, [path for runner in runners for path in runner["inputs"]])["hash"] != snapshot["hash"]:
+        raise ScopeError("TREE_CHANGED：范围推导期间输入变化，请重新推导")
+    if time.monotonic() > deadline:
+        raise ScopeError("BUDGET_EXCEEDED：范围扫描时间超出预算")
+    if execution_context:
+        from execution_policy import settle_elapsed
+        settle_elapsed(root, execution_context, scan_reservation, time.monotonic() - started)
+    # 只有前后内容一致才发布分析缓存，失效/混合树的分析不能污染后续恢复的原树。
+    if len(_ANALYSIS_CACHE) >= 8:
+        _ANALYSIS_CACHE.clear()
+    _ANALYSIS_CACHE[analysis_key] = analysis
+    if pending_analysis is not None:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=cache_file.parent, delete=False) as stream:
+            json.dump({"key": analysis_key, "analysis": analysis, "checksum": digest(analysis)}, stream)
+            temporary = stream.name
+        os.replace(temporary, cache_file)
     dependencies["tests"] = {test: dependencies["tests"][test] for test in sorted(tests)}
     result = {"schema": SCHEMA, "since": since, "write_set": write_set, "runners": runners,
               "changed": changes, "tests": sorted(tests), "runs": runs,
               "unrunnable": sorted(tests - claimed), "mapping": mapping, "unmapped": unmapped,
-              "modules": modules, "dependencies": dependencies, "tree_hash": snapshot["hash"]}
+              "modules": modules, "dependencies": dependencies, "tree_hash": snapshot["hash"],
+              "analysis_version": tool_hash,
+              "selection": {"proven": sorted(proven_tests), "conservative": sorted(conservative_tests),
+                            "unanalysable": sorted(unmapped), "reason": "unknown dependency candidates require bounded execution"}}
+    if identity is not None:
+        result["execution_context"] = identity
     result["scope_hash"] = digest(result)
     return result
 
 
-def validate_scope(root, scope):
+def validate_scope(root, scope, execution_context=None):
     if not isinstance(scope, dict) or scope.get("schema") != SCHEMA:
         raise ScopeError("范围文件版本/结构错误，请重新运行 test_scope.py")
     unsigned = {k: v for k, v in scope.items() if k != "scope_hash"}
     if scope.get("scope_hash") != digest(unsigned):
         raise ScopeError("scope_hash 与范围内容不匹配")
-    current = derive(root, scope.get("since"), scope.get("runners"), scope.get("write_set", []))
+    if scope.get("execution_context") != context_identity(root, execution_context):
+        raise ScopeError("范围 execution-context 与当前任务不一致；不能跨任务或 Sprint 使用")
+    current = derive(root, scope.get("since"), scope.get("runners"), scope.get("write_set", []),
+                     execution_context=execution_context)
     if current != scope:
         raise ScopeError("范围与当前树/确定性推导不一致，请重新运行 test_scope.py")
     return current
@@ -512,6 +706,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", default=".")
     parser.add_argument("--since", default="")
+    parser.add_argument("--execution-context", help="入口冻结上下文 JSON；light 不需要 Sprint")
     parser.add_argument("--runners-json", default="[]")
     parser.add_argument("--write-set", action="append", default=[])
     parser.add_argument("--json", action="store_true")
@@ -519,10 +714,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         out = self_check() if args.self_check else derive(Path(args.root).resolve(), args.since,
-                                                          json.loads(args.runners_json), args.write_set)
+                                                          json.loads(args.runners_json), args.write_set,
+                                                          args.execution_context)
         code = 0 if out.get("ok", True) else 1
     except (OSError, ValueError, TypeError) as exc:
-        out, code = {"kind": "error", "error": str(exc)}, 2
+        out, code = {"kind": "error", "status": getattr(exc, "status", "UNVERIFIED"), "error": str(exc)}, 2
     print(json.dumps(out, ensure_ascii=True, sort_keys=True, indent=None if args.json else 2))
     return code
 

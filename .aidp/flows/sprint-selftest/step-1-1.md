@@ -20,12 +20,12 @@
 >                                  → 命令端事后整体归一到 docs/testing/{version}/研发自测/00_索引.md + 01_研发自测方案.md
 >    - 输出 ②（SKILL 主流程生成，均带 NN_ 前缀，用例从 02_ 起）：单文件 02_全量自测用例.md / 02_增量自测用例.md；多文件 02_自测用例-总览.md + 03_<模块>.md…
 >                                  → 命令端整体归一到 研发自测/（保留 SKILL 的 NN_ 前缀原名，不改名）
->    - SKILL 内部跑多维度独立 Agent 检查 + 多轮 Quality Review 阻塞完成（维度数 / 轮数以 SKILL.md 为准）
+>    - SKILL使用有效qr_level；scripts仍含机器门/Critical最低自检，非Critical语义未授权为NOT_REQUESTED
 >    - SKILL 第零步会**主动询问**研发自测方案（范围/环境/执行人/通过准则/缺陷跟踪）— 用户已在 prompt 中显式回答的项跳过，未回答的走默认值（详见 SKILL.md 第零步 0.3 默认值表）
 > ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 > ```
 
-使用 `Skill` 工具调用 `dev-manual-testcase`，由 skill 自主完成研发自测方案 + 自测用例生成 + 内置多维度独立 Agent 检查 + 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**，命令端按 CLAUDE.md 约定 21 不复述、不修改，仅做编排和项目级补充。
+使用 `Skill` 工具调用 `dev-manual-testcase`，由 skill 自主完成研发自测方案 + 自测用例生成 + 内置多维度独立 Agent 检查 + 当前有效qr_level内的最低生成自检，不额外启动未授权语义QR。**SKILL 内规则为单一信源**，命令端按 CLAUDE.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
 > 详细规则查 `{{AIDP_HOME}}/skills/dev-manual-testcase/SKILL.md`；命令端只负责传入路径上下文 + 输出位置 override。
 
@@ -46,7 +46,7 @@ else
 fi
 ```
 
-> ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
+> 自测生成前按 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 得出有效QR_LEVEL并显式传给SKILL；返回后用同档parse-handoff核既有移交块。
 >
 > ★ **带编排层规模入参时**（`--prd-presence-table` / `--module-case-cap` / `--matrix-scope` / `--module-kind` / `--plan-ref-mode`，只由 `/version` 传）：收到哪个就把对应 SKILL 入参**原样**写进调用参数（映射见 `SKILL编排层接入.md` 第一节），没收到的 ⛔ 不补。
 > **`--plan-ref-mode=deferred` 时**：执行计划正与本命令并行生成（可能不存在或写到一半）——下方横幅与信号块里的「研发执行计划」行**整行删掉**，

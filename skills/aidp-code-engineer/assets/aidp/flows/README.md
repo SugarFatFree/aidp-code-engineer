@@ -62,11 +62,11 @@
 
 | 命令 | flow **执行分片**（数；不含 `rationale.md` / `invariants.md` / `usage-guard.md`）|
 |------|-----------|
-| `sprint-autopilot` | Phase 0/1/2/3 执行分片 **27 片**（phase-0×11〔含二次切分的 `phase-0-6b`、`phase-0-6b2`〕/ phase-1 / phase-2 / phase-3×14〔含二次切分的 `phase-3-3b`、`phase-3-4b`、`phase-3-5b`、`phase-3-6b`、`phase-3-9b`〕）|
-| `version` | 规划 planning×8 + 发布 release×10〔含二次切分的 4b / 7b / 7c〕，**18 片** |
+| `sprint-autopilot` | Phase 0/1/2/3 执行分片 **28 片**（phase-0×11〔含二次切分的 `phase-0-6b`、`phase-0-6b2`〕/ phase-1 / phase-2 / phase-3×15〔含二次切分的 `phase-3-3b`、`phase-3-4a`、`phase-3-4b`、`phase-3-5b`、`phase-3-6b`、`phase-3-9b`〕）|
+| `version` | 规划 planning×10〔含 3b / 7b〕 + 发布 release×10〔含 4b / 7b / 7c〕，**20 片** |
 | `sprint-aiauto-test` | Phase 0/1/2/3，**19 片**（phase-0×9〔含二次切分的 0-6b、可选能力的 0-8〕/ phase-1 / phase-2×3〔含 2.0.5u 全量单测子 Agent 的 phase-2-unit〕/ phase-3×6〔含二次切分的 3-3b〕）|
 | `sprint-design` | 5 大 Step 段，**9 片** |
-| `sprint-dev` | 累进契约与并行汇合 `incremental-contract.md` + Phase 1 开发×2 + 回写×3，**6 片** |
+| `sprint-dev` | 轻量上下文 `light-context.md` + 正式累进契约 `incremental-contract.md` + Phase 1 开发×2 + 回写×3，**7 片** |
 | `sprint-selftest` | Step 1×2 / Step 3×2，**4 片** |
 | `sprint-batch` | `step-6` + `step-6b`（浏览器测试链路），**2 片** |
 | `sprint-bugfix` | `mode-b` + `mode-b2`（独立修复路径），**2 片** |

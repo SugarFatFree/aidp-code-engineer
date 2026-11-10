@@ -19,8 +19,12 @@ cicd_watch.py —— CICD「推送即监听」确定性内核（约定 31.5，�
 
 ★ 读写分离：`detect` / `poll` / `watch` **只读**，把"该不该触发 / 该不该重试"判成结论
 （`next_action`），写动作由调用方显式再调 `--mode trigger` / `--mode retry`。
-调用方按 `cicd.auto_trigger` 显式发起写动作；本脚本再次拒绝 auto_trigger=false。
-Command 原始 rc=4 独立表示 need-accept，绝不自动追加 --accept 或降级放行。
+trigger/retry 必须传 --execution-context，校验当前任务 deploy grant 后占用共享预算。
+cicd.auto_trigger 缺省 false；旧布尔不是授权。当前明确 deploy grant 可复用现有 provider，
+只有带用户来源的明确项目禁用仍阻止写入。只读监听不获得写权限或部署探针权限。
+未授权写建议/探针转 NOT_REQUESTED + next_action=none + readonly=true，保留 observed_verdict；
+真实失败仍 rc2/ok=false，不能假绿。consume 对该状态不冻结、不记部署成功、不留部署待办。
+已授权 deploy 后，Command 原始 rc=4 仍独立表示 need-accept，不自动追加 --accept。
 
 ## 用法
 
@@ -30,14 +34,16 @@ Command 原始 rc=4 独立表示 need-accept，绝不自动追加 --accept 或�
 
     python3 AIDP_HOME/scripts/cicd_watch.py --mode detect  --commit <sha> --env test
     python3 AIDP_HOME/scripts/cicd_watch.py --mode poll    --run-id <id> --commit <push-sha> --env test
-    python3 AIDP_HOME/scripts/cicd_watch.py --mode trigger --env test [--ref <branch>]
-    python3 AIDP_HOME/scripts/cicd_watch.py --mode retry   --run-id <id>  --env test
-    python3 AIDP_HOME/scripts/cicd_watch.py --mode consume --version V0.1.0 --result result.json --result-code 4
+    python3 AIDP_HOME/scripts/cicd_watch.py --mode trigger --env test --commit <sha> --execution-context <context.json> [--ref <branch>]
+    python3 AIDP_HOME/scripts/cicd_watch.py --mode retry --run-id <id> --commit <sha> --env test --execution-context <context.json>
+    python3 AIDP_HOME/scripts/cicd_watch.py --mode consume --version V0.1.0 --execution-context <context.json> --result result.json --result-code 4
+    # detect/poll/watch 同样传当前 --execution-context；缺省仅观测，不交接部署探针。
     python3 AIDP_HOME/scripts/cicd_watch.py --selftest     # 离线自测（假平台输出，不访问网络）
 
 ## 退出码（★ 与闸门类脚本的 0/1/2 语义不同，按本文档为准）
 
-    0 —— 运行**终态成功**（next_action=probe）；detect 已命中运行（next_action=poll）；
+    0 —— NOT_REQUESTED/none（未请求部署，仅只读观测，ok=false，绝非部署成功）；
+         已授权部署时运行终态成功（next_action=probe）；detect 已命中运行（next_action=poll）；
          trigger / retry 已受理（next_action=poll：已拿到 run_id；=detect：需按 commit 再探测）；
          poll / watch 到 `--timeout` 仍在运行（verdict=running，next_action=poll：下个 tick 继续 poll 同一 run_id，
          不交人工、不耗重试配额；`--timeout` 默认 480s，保证单次调用短于宿主工具的 10 分钟上限）
@@ -80,6 +86,8 @@ if _aidp_scripts not in _aidp_sys.path:
 from aidp_runtime import runtime_text
 from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 import argparse
+import hashlib
+import shlex
 import json
 import os
 import subprocess
@@ -90,6 +98,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cicd_providers as cp  # noqa: E402
+import execution_policy as policy
+from entry_context import load_context
 
 DEFAULT_BASELINE = Path("memory") / ".sprint-autopilot-baseline.json"
 SELF = runtime_text('python3 __AIDP_HOME__/scripts/cicd_watch.py', __file__)
@@ -285,12 +295,91 @@ def do_poll(provider, pipeline, run_id, args):
         time.sleep(args.interval)
 
 
-def _cmd(mode, env, pipeline, run_id=None):
-    parts = [SELF, "--mode", mode]
-    parts += ["--env", env] if env else (["--pipeline", pipeline] if pipeline else [])
+def deployment_context(root, path, version=None):
+    """授权只取当前任务的可验真上下文；配置和脚本调用本身不是用户来源。"""
+    if not path:
+        return None, '未提供 execution-context；主动部署未请求'
+    try:
+        ctx = load_context(root, path)
+        if version and ctx['version'] != version:
+            raise ValueError('execution-context 与请求 version 不一致')
+        return policy.require_action(ctx, 'deploy'), None
+    except (OSError, ValueError, TypeError) as exc:
+        return None, str(exc)
+
+
+def not_requested(out, reason, observed=None):
+    """保留平台事实，撤销可执行写建议和探针授权。"""
+    observed = observed or out.get('verdict')
+    for key in ('trigger_cmd', 'retry_cmd', 'next_retry_count', 'retry_run_id', 'retry_commit'):
+        out.pop(key, None)
+    out.update(ok=False, verdict='NOT_REQUESTED', execution_status='NOT_REQUESTED',
+               next_action='none', readonly=True, degraded=False, authorization_reason=reason)
+    if observed and observed != 'NOT_REQUESTED':
+        out['observed_verdict'] = observed
+    return out
+
+
+def write_operation(root, ctx, provider, cfg, pipeline, a):
+    """每次主动平台操作先验权和占预算；真实工具错误按同输入持久化停止。"""
+    ref = (a.ref or current_branch(root) or 'main') if a.mode == 'trigger' else None
+    inputs = {'mode': a.mode, 'pipeline': pipeline, 'commit': a.commit,
+              'ref': ref, 'run_id': a.run_id if a.mode == 'retry' else None, 'config': cfg}
+    input_hash = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+    try:
+        policy.require_action(ctx, 'deploy')
+        policy.reserve_budget(root, ctx, 'processes', 1, input_hash, action='deploy')
+        if a.mode == 'retry':
+            policy.reserve_budget(root, ctx, 'retries', 1, input_hash, action='deploy')
+    except (OSError, ValueError) as exc:
+        return 2, dict(ok=False, verdict='execution-stopped', next_action='abort',
+                      execution_status=getattr(exc, 'status', 'UNAUTHORIZED'), reason=str(exc),
+                      policy_details=getattr(exc, 'details', {}))
+
+    def finish(code, status, **result):
+        policy.record_outcome(root, ctx, 'deploy', status, input_hash,
+                              root_cause=result.get('reason'), evidence=result)
+        return code, dict(result, execution_status=status)
+
+    try:
+        good, verdict, reason = provider.check()
+        if not good:
+            return finish(3, 'ENV_UNAVAILABLE', ok=False, verdict=verdict, next_action='abort', reason=reason)
+        if a.mode == 'retry':
+            found, observed = provider.view_run(pipeline, a.run_id)
+            if not found:
+                return finish(2, 'TOOL_ERROR', ok=False, verdict='retry-failed', next_action='abort',
+                              reason=str(observed))
+            if not cp.match_commit(observed, a.commit):
+                return finish(2, 'FAIL', ok=False, verdict='commit-mismatch', next_action='abort',
+                              reason='重试运行与本 build push_commit 不一致或未知，禁止写动作')
+        ok, res = (provider.trigger(pipeline, ref) if a.mode == 'trigger'
+                   else provider.retry(pipeline, a.run_id))
+        if not ok:
+            return finish(2, 'TOOL_ERROR', ok=False, verdict=a.mode + '-failed', next_action='abort',
+                          reason=str(res))
+        details = {'ref': ref} if a.mode == 'trigger' else {'retried_from': a.run_id}
+        return finish(0, 'PASS', ok=True, verdict='triggered' if a.mode == 'trigger' else 'retried',
+                      run_id=res, run_commit=None, next_action='poll' if res else 'detect',
+                      reason='已受理' + ('' if res else '，运行 id 需按 commit 探测'), **details)
+    except cp.NeedAccept as exc:
+        policy.record_outcome(root, ctx, 'deploy', 'UNAUTHORIZED', input_hash,
+                              root_cause=str(exc), evidence=exc.response)
+        raise
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return finish(2, 'TOOL_ERROR', ok=False, verdict=a.mode + '-failed', next_action='abort', reason=str(exc))
+
+
+def _cmd(mode, env, pipeline, run_id=None, *, context=None, commit=None):
+    parts = ['--mode', mode]
+    parts += ['--env', env] if env else (['--pipeline', pipeline] if pipeline else [])
     if run_id:
-        parts += ["--run-id", str(run_id)]
-    return " ".join(parts)
+        parts += ['--run-id', str(run_id)]
+    if context:
+        parts += ['--execution-context', str(context)]
+    if commit:
+        parts += ['--commit', commit]
+    return SELF + ' ' + shlex.join(parts)
 
 
 def consume_result(a, root):
@@ -310,9 +399,9 @@ def consume_result(a, root):
     def edit(*args):
         return call('baseline_edit.py', '--version', a.version, *args)
 
-    def done(code, action, reason):
+    def done(code, action, reason, **details):
         print(json.dumps({'ok': code == 0, 'mode': 'consume', 'next_action': action,
-                          'reason': reason}, ensure_ascii=False))
+                          'reason': reason, **details}, ensure_ascii=False))
         return code
 
     try:
@@ -338,6 +427,25 @@ def consume_result(a, root):
              'exit_code': rc, 'result': result}, ensure_ascii=False),
              'cicd_run.status', 'unknown', 'cicd_run.degraded', 'false', 'cicd_run.commit_verified', 'false')
         edit('del', 'cicd_run.degraded_reason')
+        ctx, authorization_reason = deployment_context(root, a.execution_context, a.version)
+        # 未授权可选部署只记观测。旧结果不能把新任务的 push 权限升级为部署权限。
+        if verdict == 'NOT_REQUESTED' or (ctx is None and action != 'poll'):
+            bound = (result.get('mode') in ('detect', 'watch', 'poll', 'trigger', 'retry') and
+                     result.get('expected_commit') == push and
+                     (not old.get('pipeline') or result.get('pipeline') == old['pipeline']) and
+                     (result.get('mode') != 'poll' or result.get('run_id') == old.get('run_id')))
+            edit('run-state', '3.2.1-deploy', '3.3-audit' if bound else '3.2.1-deploy',
+                 'done', '--pending', '', '--summary',
+                 'NOT_REQUESTED：仅记录只读观测；主动部署与探针不执行' if bound else '只读观测未绑定本 build，拒绝推进')
+            if not bound:
+                return done(2, 'abort', '拒绝未绑定本 build 的只读观测')
+            observed = result.get('observed_verdict') or verdict
+            failed = observed in ('failed', 'trigger-failed', 'retry-failed', 'commit-mismatch',
+                                  'parse-error', 'unreachable', 'vanished', 'unknown-status')
+            edit('set', 'cicd_run.status', 'not_requested')
+            return done(2 if failed else 0, 'none', reason, ok=False, verdict='NOT_REQUESTED',
+                        execution_status='NOT_REQUESTED', readonly=True, observed_verdict=observed,
+                        authorization_reason=result.get('authorization_reason') or authorization_reason)
         # 每次新结果先撤销旧 probe 游标；下面只有可核验成功或合法降级能再次前进。
         edit('run-state', '3.2.1-deploy', '3.2.1-deploy', 'done', '--pending', 'cicd-watch',
              '--summary', 'CI/CD 结果已记录；本次部署证据待核验')
@@ -436,15 +544,20 @@ def run(argv, root_override=None):
     try:
         return _run(argv, root_override)
     except cp.NeedAccept as exc:
-        print(json.dumps({'ok': False, 'verdict': 'need-accept', 'next_action': 'accept',
-                          'need_accept': True, 'provider_exit_code': 4, 'action': exc.action,
-                          'reason': str(exc), 'provider_response': exc.response}, ensure_ascii=False))
-        return 4
+        result = dict(getattr(exc, 'cicd_result', {}), ok=False, verdict='need-accept', next_action='accept',
+                      need_accept=True, provider_exit_code=4, action=exc.action,
+                      reason=str(exc), provider_response=exc.response)
+        denied = getattr(exc, 'authorization_reason', '缺少当前部署授权')
+        if denied:
+            not_requested(result, denied)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if denied else 4
 
 
 def _run(argv, root_override=None):
     ap = argparse.ArgumentParser(description="CICD 推送即监听（平台无关）")
     ap.add_argument("--mode", choices=("watch", "detect", "poll", "trigger", "retry", "consume"), default="watch")
+    ap.add_argument('--execution-context', help='当前任务 context.json；trigger/retry 必须有可追溯 deploy 授权')
     ap.add_argument('--result', help='consume：本次 cicd_watch JSON 文件')
     ap.add_argument('--result-code', type=int, help='consume：本次 cicd_watch 的原始退出码')
     ap.add_argument("--selftest", action="store_true", help="离线自测（假平台输出，不访问网络）")
@@ -485,11 +598,33 @@ def _run(argv, root_override=None):
     out = {"ok": False, "mode": a.mode, "expected_commit": a.commit,
            "checked_at": datetime.now().isoformat(timespec="seconds")}
 
+    ctx, authorization_reason = deployment_context(root, a.execution_context, a.version)
+    out['readonly'] = ctx is None
+
     def emit(code, **kw):
         out.update(kw)
-        out.setdefault("run_commit", None)
+        out.setdefault('run_commit', None)
+        if ctx is None and (out.get('next_action') in ('trigger', 'retry', 'probe') or
+                            out.get('verdict') == 'failed'):
+            observed = out.get('verdict')
+            not_requested(out, authorization_reason)
+            code = 2 if observed in ('failed', 'unreachable', 'vanished', 'unknown-status') else 0
         print(json.dumps(out, ensure_ascii=False))
         return code
+
+    def invoke(operation, *args):
+        try:
+            return operation(*args)
+        except cp.NeedAccept as exc:
+            exc.cicd_result = dict(out)
+            exc.authorization_reason = authorization_reason
+            raise
+
+    def degrade(verdict, reason):
+        if ctx is None:
+            return emit(2 if verdict != 'not-observed' else 0, verdict=verdict,
+                        next_action='probe', reason=reason)
+        return degrade_to_probe(out, verdict, reason, a.push_at, push_min_wait)
 
     # ⛔ 用归一后的 `root`（它吃 `root_override`），不是原始 `a.root` ——
     #    否则离线自测与任何传 override 的调用方都会去读**当前目录**的配置，判据静默取错。
@@ -500,8 +635,8 @@ def _run(argv, root_override=None):
         return emit(3, verdict="bad-args", next_action="abort", reason=f"{a.mode} 模式必须传 --commit")
     if a.mode in ("poll", "retry") and not a.run_id:
         return emit(3, verdict="bad-args", next_action="abort", reason=f"{a.mode} 模式必须传 --run-id")
-    if a.mode == "poll" and not (a.commit or "").strip():
-        return emit(3, verdict="bad-args", next_action="abort", reason="poll 模式必须传 --commit（本次 push SHA）")
+    if a.mode in ('poll', 'trigger', 'retry') and not (a.commit or '').strip():
+        return emit(3, verdict='bad-args', next_action='abort', reason=f'{a.mode} 模式必须传 --commit（本次 push SHA）')
 
     try:
         cfg = load_cicd_config(root)
@@ -518,9 +653,9 @@ def _run(argv, root_override=None):
         return emit(3, verdict="not-configured", next_action="abort", reason=src)
     out.update(pipeline=pipeline, pipeline_source=src)
 
-    p_ok, p_verdict, p_reason = provider.check()
-    if not p_ok:
-        return emit(3, verdict=p_verdict, next_action="abort", reason=p_reason)
+    if a.mode in ('trigger', 'retry') and ctx is None:
+        not_requested(out, authorization_reason)
+        return emit(0, reason='本任务未授权主动部署；不执行平台写操作')
 
     max_retries = a.max_retries if a.max_retries is not None else int(cfg.get("max_retries", 3))
     try:
@@ -529,41 +664,26 @@ def _run(argv, root_override=None):
         retried = 0
     out.update(retry_count=retried, max_retries=max_retries)
 
-    # 调用方仍须显式发起写动作；这里复核配置，避免独立围栏丢失授权闸。
-    if a.mode in ('trigger', 'retry') and cfg.get('auto_trigger', True) is False:
+    # 默认/旧布尔不是授权或禁令；仅保留有用户来源的明确项目禁用冲突。
+    if a.mode in ('trigger', 'retry') and cfg.get('auto_trigger_explicitly_disabled') is True:
         return emit(2, verdict='auto-trigger-off', next_action='abort',
-                    reason='cicd.auto_trigger=false，需人工触发或重跑部署')
+                    authorization_source=cfg.get('auto_trigger_source'),
+                    reason='项目已明确禁止主动触发/重跑部署，保留用户策略来源；未执行平台写操作')
     if a.mode == 'retry' and retried >= max_retries:
         return emit(2, verdict='failed', next_action='abort',
                     reason=f'重试已用尽（{retried}/{max_retries}）')
-    # ── 写动作 ────────────────────────────────────────────────────────────────
-    if a.mode == "trigger":
-        ref = a.ref or current_branch(root) or "main"
-        ok, res = provider.trigger(pipeline, ref)
-        if not ok:
-            return emit(2, verdict="trigger-failed", next_action="abort", reason=str(res))
-        return emit(0, ok=True, verdict="triggered", ref=ref, run_id=res, run_commit=None,
-                    next_action="poll" if res else "detect",
-                    reason="已受理" + ("" if res else "，运行 id 需按 commit 探测"))
-    if a.mode == "retry":
-        if a.commit:
-            found, observed = provider.view_run(pipeline, a.run_id)
-            if not found:
-                return emit(2, verdict='retry-failed', next_action='abort', reason=str(observed))
-            if not cp.match_commit(observed, a.commit):
-                return emit(2, verdict='commit-mismatch', next_action='abort',
-                            reason='重试运行与本 build push_commit 不一致，禁止写动作')
-        ok, res = provider.retry(pipeline, a.run_id)
-        if not ok:
-            return emit(2, verdict="retry-failed", next_action="abort", reason=str(res))
-        return emit(0, ok=True, verdict="retried", run_id=res, retried_from=a.run_id, run_commit=None,
-                    next_action="poll" if res else "detect",
-                    reason="已受理" + ("" if res else "，新运行 id 需按 commit 探测"))
+    # ── 写动作：预算与错误记录覆盖实际平台调用 ─────────────────────────────────
+    if a.mode in ('trigger', 'retry'):
+        code, result = invoke(write_operation, root, ctx, provider, cfg, pipeline, a)
+        return emit(code, **result)
 
     # ── 只读：detect / poll ─────────────────────────────────────────────────────
+    p_ok, p_verdict, p_reason = invoke(provider.check)
+    if not p_ok:
+        return emit(3, verdict=p_verdict, next_action='abort', reason=p_reason)
     hit = None
     if a.mode in ("watch", "detect"):
-        hit, verified, reason = do_detect(provider, pipeline, a)
+        hit, verified, reason = invoke(do_detect, provider, pipeline, a)
         out["commit_verified"] = verified
         if hit is None and reason.startswith("parse-error:"):
             return emit(2, triggered=False, verdict="parse-error", next_action="abort",
@@ -571,7 +691,7 @@ def _run(argv, root_override=None):
         if hit is None and reason.startswith("unreachable:"):
             why = reason[len("unreachable:"):]
             if push_auto:
-                return degrade_to_probe(out, "unreachable", why, a.push_at, push_min_wait)
+                return degrade('unreachable', why)
             return emit(2, triggered=False, verdict="unreachable", next_action="abort",
                         reason=why)
         if hit is None:
@@ -579,12 +699,10 @@ def _run(argv, root_override=None):
             #    主动触发恒失败 → 按失败熔断 → 冻结，而解冻证据又是部署成功（自锁）。
             #    改为补等满最短时长后降级放行就绪探针（rc=4）。
             if push_auto:
-                return degrade_to_probe(out, "not-observed",
-                                        "已记录推送即自动部署，但未观测到本次 commit 起跑的运行",
-                                        a.push_at, push_min_wait)
+                return degrade('not-observed', '已记录推送即自动部署，但未观测到本次 commit 起跑的运行')
             return emit(1, ok=True, triggered=False, verdict="not-triggered", next_action="trigger",
                         reason="本次 commit 未起跑该流水线的任何运行",
-                        trigger_cmd=_cmd("trigger", a.env, a.pipeline))
+                        trigger_cmd=_cmd('trigger', a.env, a.pipeline, context=a.execution_context, commit=a.commit))
         out.update(triggered=True, run_id=hit.get("id"), trigger=hit.get("event"),
                    run_url=hit.get("url"), detect_reason=reason, run_commit=hit.get("commit"))
         if a.mode == "detect":
@@ -592,7 +710,7 @@ def _run(argv, root_override=None):
 
     run_id = a.run_id or (hit or {}).get("id")
     out["run_id"] = run_id
-    verdict, got, why = do_poll(provider, pipeline, run_id, a)
+    verdict, got, why = invoke(do_poll, provider, pipeline, run_id, a)
     out.update(verdict=verdict, reason=why, status=status_text(got) if got else None)
     if got and got.get("url"):
         out["run_url"] = got.get("url")
@@ -609,20 +727,19 @@ def _run(argv, root_override=None):
         if retried < max_retries:
             return emit(1, ok=True, next_action="retry", next_retry_count=retried + 1,
                         retry_run_id=run_id, retry_commit=(got or {}).get("commit"),
-                        retry_cmd=_cmd("retry", a.env, a.pipeline, run_id))
+                        retry_cmd=_cmd('retry', a.env, a.pipeline, run_id, context=a.execution_context, commit=a.commit))
         return emit(2, ok=False, next_action="abort", reason=f"{why}；重试已用尽（{retried}/{max_retries}）")
     if verdict == "commit-mismatch":
         return emit(2, ok=False, next_action="abort")
     if verdict == "parse-error":
-        return emit(2, ok=False, next_action="abort",
-                    reason=f"{why}｜⚠️ 这是解析缺陷（非平台不可达），请检查 CICD 适配配置或报修脚本；"
-                           f"报修前若需推进，按约定 31.5 口径**直接重试**（CICD 失败的第一动作恒为重试），"
-                           f"**不要回头查业务代码**")
+        return emit(2, ok=False, next_action='abort',
+                    reason=f'{why}｜这是解析缺陷（非平台不可达）；保留原错误并停止本次工具链，'
+                           '修复输入或 CICD 适配后再运行，不触发平台重跑')
     # unreachable / vanished / unknown-status —— 交调用方处置（unreachable 按 streak 记账），不消耗重试配额
     # ★ 例外：已记录推送即自动部署时，"取不到状态"不构成冻结理由（见 degrade_to_probe）。
     #   ⛔ 但 `failed`（取到了明确失败态）绝不降级 —— 那是真失败，上面已先行返回。
     if push_auto and verdict in ("unreachable", "vanished", "unknown-status"):
-        return degrade_to_probe(out, verdict, why or verdict, a.push_at, push_min_wait)
+        return degrade(verdict, why or verdict)
     return emit(2, ok=False, next_action="abort")
 
 
@@ -719,15 +836,23 @@ def selftest():
         cfg_path = os.path.join(tmp, "memory", "aidp-config.yaml")
 
         def write_cfg(text):
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                f.write(text)
+            # 这是离线 provider 夹具的能力配置，授权另由真实 context 提供。
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                f.write(text.replace('cicd:\n', 'cicd:\n  auto_trigger: true\n', 1))
 
         cp.EXEC, cp.HTTP = fake_exec, fake_http
+        from entry_context import resolve_context
+        context = resolve_context(Path(tmp), 'sprint-dev', version='V0.1.0',
+            additional_grants=['deploy'], authorization_source={'kind': 'user-text',
+            'request_id': 'offline-selftest', 'text': '离线夹具授权部署；平台 I/O 全部由假实现替代'})['execution_context']
 
         def go(argv):
+            if '--mode' in argv and argv[argv.index('--mode') + 1] in ('trigger', 'retry') and '--commit' not in argv:
+                argv = argv + ['--commit', sha]
             buf = io.StringIO()
             with redirect_stdout(buf), redirect_stderr(io.StringIO()):
-                code = run(argv + ["--post-push-wait", "0", "--interval", "0"], root_override=tmp)
+                code = run(argv + ['--post-push-wait', '0', '--interval', '0',
+                                   '--execution-context', context], root_override=tmp)
             return code, json.loads(buf.getvalue().strip().splitlines()[-1])
 
         case("状态归一：passed→success / canceled→cancelled / waiting_for_resource→queued",

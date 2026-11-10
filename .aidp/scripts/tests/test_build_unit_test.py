@@ -94,6 +94,24 @@ class BuildUnitTests(unittest.TestCase):
         registered = self.git("worktree", "list", "--porcelain")
         self.assertNotIn(str(directory / "worktree"), registered)
 
+    def test_parent_authorization_is_rechecked_before_full_test(self):
+        from entry_context import resolve_context
+        plan = self.freeze()
+        ordinary = resolve_context(self.root, 'sprint-dev', version=self.version)
+        result = self.run_plan(plan, execution_context=ordinary['execution_context'])
+        self.assertEqual(result['status'], 'UNVERIFIED')
+        self.assertEqual(result['authorization_status'], 'NOT_REQUESTED')
+        self.assertEqual(result['runs'], [])
+        self.assertFalse(build_unit.build_dir(self.root, self.version, self.build).exists())
+        granted = resolve_context(self.root, 'sprint-dev', version=self.version,
+            additional_grants=['full-regression'], authorization_source={
+                'kind': 'user-text', 'request_id': 'fixture-full', 'text': '运行完整单元测试'})
+        passed = self.run_plan(plan, execution_context=granted['execution_context'], timeout=10)
+        self.assertEqual(passed['status'], 'PASS', passed)
+        again = self.run_plan(plan, execution_context=granted['execution_context'], timeout=10)
+        self.assertTrue(again['reused'])
+        self.assert_cleaned()
+
     def test_dirty_main_and_config_do_not_affect_commit_worktree(self):
         plan = self.freeze(baseline=True)
         (self.root / "test_sample.py").write_text("raise RuntimeError('dirty main')\n")

@@ -390,6 +390,24 @@ def _adapter_generated(runtime: Path, relative: str) -> bool:
     return False
 
 
+def _rewrite_user_home(data: bytes, old_home: str, new_home: str) -> bytes:
+    """用户字节只改明确的项目运行路径；裸根、域名和任意配置值不是模板。
+
+    兼容 `home/reference` 与 `./home/scripts/x.py`，排除用户级 / 绝对路径及
+    Agent 自有目录；逐行保留原换行，`runtime-path-ignore` 与契约渲染同口径。
+    """
+    if not _is_text(data):
+        return data
+    pattern = re.compile(
+        r"(?<![\w./~:\\-])(?P<prefix>\./)?" + re.escape(old_home)
+        + r"(?=/(?:" + "|".join(map(re.escape, RUNTIME_DIRS)) + r")(?=/|[^\w./-]|$))")
+    return "\n".join(
+        line if _IGNORE_PATH_RE.search(line) else pattern.sub(
+            lambda match: (match.group("prefix") or "") + new_home, line)
+        for line in data.decode("utf-8").split("\n")
+    ).encode("utf-8")
+
+
 def _user_overlay(runtime: Path, home: str, source: str,
                   contract: Optional[set] = None) -> Dict[str, dict]:
     manifest = _read_manifest(runtime)
@@ -406,9 +424,7 @@ def _user_overlay(runtime: Path, home: str, source: str,
         if relative in user_files or relative not in expected \
                 or (relative in L.USER_FILLABLE_CONTRACTS
                     and _file_metadata(path) != expected[relative]):
-            data = path.read_bytes()
-            if _is_text(data):
-                data = data.decode("utf-8").replace(home, "{{AIDP_HOME}}").encode("utf-8")
+            data = _rewrite_user_home(path.read_bytes(), home, "{{AIDP_HOME}}")
             overlay[relative] = {"content": data, "mode": _file_mode(path)}
     return overlay
 
@@ -533,8 +549,8 @@ def _restore_home_token(line: str, home: str) -> str:
         out.append(needle if literal else "{{AIDP_HOME}}/")
         index = found + len(needle)
     line = "".join(out)
-    # 裸运行根（后面不接 `/`，如用户文件内容 "new .claude"）：同样要反解，
-    # 否则双包比较会因这类内容天然不同而分叉。`~` 前缀仍排除。
+    # 受管模板中的裸 token 渲染结果（如 "new .claude"）也要反解；
+    # 用户文件另走 `_rewrite_user_home`，不得把裸根视为 token。`~` 前缀仍排除。
     out, index = [], 0
     while True:
         found = line.find(home, index)
@@ -573,7 +589,7 @@ def packages_share_one_source(packages, source_root: Path) -> bool:
     分两侧判，缺一不可：
     · **契约侧** —— 每个包里由真源提供的文件，必须逐字等于该真源按自己 home 渲染的结果。
     · **用户侧** —— manifest 登记的 `user_files`（项目自己填的、跨包同步的那些）在两包间
-      规范化后必须相同；它们不在真源里，只能靠反解比较。
+      仅归一明确的运行路径后必须逐字相同；普通字面量不参与反解。
 
     ⛔ 别退回"整包反解后相等"：运行根降层后运行根字符串与 Agent 自有路径同名，
     契约正文里的字面量无法与渲染产物区分，那条路结构性不可判定（见 `_restore_home_token`）。
@@ -600,15 +616,25 @@ def packages_share_one_source(packages, source_root: Path) -> bool:
 def normalize_runtime(runtime: Path, home: str) -> Dict[str, dict]:
     """把运行根反向规范化为 token，并保留权限模式供双包比较。
 
+    用户文件按 manifest 归属只归一明确运行路径；受管模板保留既有 token 反解规则。
     ⛔ 带 `runtime-path-ignore` 的行**原样保留**，与渲染端同口径：那些是适配位对照表，
     逐字写着各 Agent 的目录（`.claude/skills/` 与 `.agents/skills/` 同现一行）。
     若在这里也做反解，Claude 包会把 `.claude/...` 变成 token、shared 包不会，
     双包比较当场分叉 —— 而两包本就该规范化成同一份。
     """
+    runtime = Path(runtime)
+    manifest = _read_manifest(runtime) if (runtime / RUNTIME_MANIFEST).is_file() else None
+    user_files = _manifest_user_files(manifest) if manifest is not None else set()
     normalized = {}
-    for relative, path in _runtime_files(Path(runtime)):
+    for relative, path in _runtime_files(runtime):
         data = path.read_bytes()
-        if _is_text(data):
+        user_owned = manifest is not None and (
+            relative in user_files or relative not in manifest["files"]
+            or (relative in L.USER_FILLABLE_CONTRACTS
+                and _file_metadata(path) != manifest["files"][relative]))
+        if user_owned:
+            data = _rewrite_user_home(data, home, "{{AIDP_HOME}}")
+        elif _is_text(data):
             lines = data.decode("utf-8").split("\n")
             data = "\n".join(line if _IGNORE_PATH_RE.search(line)
                              else _restore_home_token(line, home)
@@ -935,9 +961,7 @@ def _confirmed_retired_overlay(destination: Path, home: str, source: str,
                 continue
             if relative not in registered or not path.is_file() or path.stat().st_nlink != 1:
                 raise RuntimeError(f"残留文件未由另一运行包 user_files 确认，拒绝接管: {relative}")
-            data = path.read_bytes()
-            if _is_text(data):
-                data = data.decode("utf-8").replace(home, "{{AIDP_HOME}}").encode("utf-8")
+            data = _rewrite_user_home(path.read_bytes(), home, "{{AIDP_HOME}}")
             value = {"content": data, "mode": _file_mode(path)}
             if confirmed.get(relative) != value:
                 raise RuntimeError(f"残留用户文件内容或权限与另一运行包不一致，拒绝接管: {relative}")
@@ -1058,18 +1082,13 @@ def render_runtime(source_root: Path, destination: Path, home: str, version: str
                         raise ValueError(f"门控契约缺失且真源无法补齐，或路径类型异常: {relative}")
             for relative, entry in sorted(overlay.items()):
                 target = stage / relative
+                data = _rewrite_user_home(entry["content"], "{{AIDP_HOME}}", home)
                 if target.exists() and relative not in L.USER_FILLABLE_CONTRACTS:
-                    rendered = target.read_bytes()
-                    if _is_text(rendered):
-                        rendered = rendered.decode("utf-8").replace(
-                            home, "{{AIDP_HOME}}").encode("utf-8")
-                    if entry != {"content": rendered, "mode": _file_mode(target)}:
+                    if {"content": data, "mode": entry["mode"]} != {
+                            "content": target.read_bytes(), "mode": _file_mode(target)}:
                         raise RuntimeError(f"私有文件与新受管真源冲突: {relative}")
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    data = entry["content"]
-                    if _is_text(data):
-                        data = data.replace(b"{{AIDP_HOME}}", home.encode("utf-8"))
                     target.write_bytes(data)
                     target.chmod(int(entry["mode"], 8))
             manifest = build_runtime_manifest(

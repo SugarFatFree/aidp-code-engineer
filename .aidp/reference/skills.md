@@ -16,6 +16,12 @@
 | `code-verification-loop` | 代码验收循环（多维度核验，维度清单以 SKILL.md 为单一信源；`mode=verify-only` 仅验收）| `/sprint-test`（仅验收模式）；开发期预检直调其脚本：`/sprint-dev`、Frontend/Backend Agent |
 | `bugfix` | Bug 修复流程 | `/sprint-bugfix` |
 
+### light/formal 能力复用边界
+
+执行身份由 AIDP 调用层的 `entry_context.py` 固定；普通自然语言默认 light，复用命令、角色或 CVL 适用能力不升级为 Sprint。light 的范围、真实审查与完成门见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，报告是任务目录机器 JSON，不要求契约卡或 docs Markdown。formal 的契约、完整 CVL 和 Sprint 归档门保持。
+
+依赖 SKILL 正文与方法论保持原样。调用层只选适用能力、提供本次范围/实际基线与输出位置；不虚构 SKILL 的 light/delta 参数，不用测试 PASS 代替质量审查，也不复制一套上游步骤。依赖要求完整正式输入而 light 不具备时，复用已有角色和可独立执行的检查能力，缺项如实记录，不为迎合依赖强造 Sprint 文档。
+
 ### 编号与执行证据的调用层协议
 
 凡调用 SKILL 生成 C / BUG / REQ / Q / D / ADR 等新条目，调用方先用 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind REQ --count 5 --owner docs --version {version} --scope requirements --prefix REQ-{version}` 预留实际所需号段，将 `ids`、作用域与既有定义表交执行方；不足时再次分配，不从最大号猜号、不把同段给不同任务。已有编号不改，同事件跨族同号视为关联而非重号，空洞不补齐。上游只支持自行编号时在独占工作单中生成，落正式文档前由编排者按预留映射一次性改写定义与引用并检查，不让未映射草稿并发写入正式册。

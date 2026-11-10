@@ -408,10 +408,19 @@ def read_status(root, version, build):
         return result
 
 
-def run_build(root, version, build, commit, plan, timeout=3600, retry=False):
+def run_build(root, version, build, commit, plan, timeout=3600, retry=False, execution_context=None):
     """plan 可为字典或 JSON 文件路径；只在独立子进程主线程调用（信号/环境/fd 隔离）。"""
     root = Path(root).resolve()
     result = blank(version, build, commit)
+    if execution_context is not None:
+        from execution_policy import require_action, PolicyError
+        try:
+            require_action(execution_context, "full-regression")
+        except PolicyError as exc:
+            result.update(status="UNVERIFIED", reason="action-not-requested" if exc.status == "UNAUTHORIZED" else "policy-unverified",
+                          authorization_status="NOT_REQUESTED" if exc.status == "UNAUTHORIZED" else exc.status,
+                          executed=False, primary_error=str(exc))
+            return result
     try:
         directory = build_dir(root, version, build)
         directory.mkdir(parents=True, exist_ok=True)
@@ -440,13 +449,39 @@ def run_build(root, version, build, commit, plan, timeout=3600, retry=False):
                 if not retry or previous["status"] not in {"UNVERIFIED", "TIMEOUT"}:
                     return dict(previous, reused=True)
                 atomic_json(directory / f"result-attempt-{previous.get('attempt', 1)}.json", previous)
+            reservation = None
+            if execution_context is not None:
+                from execution_policy import reserve_budget, settle_elapsed
+                input_hash = digest({"commit": commit, "plan": plan, "environment": test_ledger.environment_hash()})
+                if retry:
+                    reserve_budget(root, execution_context, "retries", 1, input_hash, action="full-regression")
+                reserve_budget(root, execution_context, "processes", len(plan.get("suites", [])),
+                               input_hash, action="full-regression")
+                available = reserve_budget(root, execution_context, "elapsed_seconds", 0,
+                                           input_hash, action="full-regression")["remaining"]
+                timeout = min(timeout, available)
+                if timeout <= 0:
+                    raise BuildError("任务执行耗时预算已用尽")
+                reservation = reserve_budget(root, execution_context, "elapsed_seconds", timeout,
+                                             input_hash, action="full-regression")
             result.update(plan_hash=plan_hash, status="RUNNING", reason="validating",
                           attempt=previous.get("attempt", 1) + 1 if previous else 1,
                           started_at=time.time(), deadline_at=time.time() + timeout, pid=os.getpid())
             save_result(directory, result)
-            return execute(root, directory, result, plan, timeout)
+            started = time.monotonic()
+            completed = execute(root, directory, result, plan, timeout)
+            if reservation is not None:
+                try:
+                    settle_elapsed(root, execution_context, reservation, time.monotonic() - started)
+                except ValueError as exc:
+                    # 测试事实已经落盘；预算结算故障另记，不能把已结束测试留下假RUNNING。
+                    completed["budget_error"] = str(exc)
+                    save_result(directory, completed)
+            return completed
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         result.update(status="UNVERIFIED", reason="invalid-request", primary_error=str(exc))
+        if getattr(exc, "status", None):
+            result.update(policy_status=exc.status, reason="task-policy-stopped", executed=False)
         return result
 
 
@@ -585,6 +620,7 @@ def main(argv=None):
         child.add_argument("--version", required=True)
         child.add_argument("--build", required=True)
         if action == "run":
+            child.add_argument("--execution-context", help="继承父任务授权与预算；status只读不消费预算")
             child.add_argument("--commit", required=True)
             child.add_argument("--plan", required=True, help="冻结计划 JSON 文件路径")
             child.add_argument("--timeout", type=float, default=3600, help="全部套件共享总秒数预算")
@@ -595,7 +631,7 @@ def main(argv=None):
             result = self_check()
             code = 0 if result["ok"] else 1
         elif args.action == "run":
-            result = run_build(args.root, args.version, args.build, args.commit, args.plan, args.timeout, args.retry)
+            result = run_build(args.root, args.version, args.build, args.commit, args.plan, args.timeout, args.retry, args.execution_context)
             code = 0  # 业务结论只由 JSON 表达，FAIL/TIMEOUT 不终止实测链路。
         elif args.action == "status":
             result = read_status(args.root, args.version, args.build)

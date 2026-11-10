@@ -316,7 +316,7 @@ def test_vcs_disabled_unattended_flow_contract():
 def test_build_mint_registers_one_row():
     print("【铸 build：current_build 占位行与完整登记合并为一行】")
     repo = Path(__file__).resolve().parents[3]
-    flow = (repo / ".aidp/flows/sprint-autopilot/phase-3-4.md").read_text(encoding="utf-8")
+    flow = (repo / ".aidp/flows/sprint-autopilot/phase-3-4a.md").read_text(encoding="utf-8")
     code = re.search(r"python3 - <<'PY'\n(.*?)\nPY", flow, re.S).group(1)
     code = code.replace("{{AIDP_HOME}}", str(repo / ".aidp"))
     with tempfile.TemporaryDirectory() as td:

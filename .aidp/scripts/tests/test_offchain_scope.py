@@ -44,20 +44,36 @@ def _load(name, path):
 def test_convention_41_text():
     print("\n[O1] 约定 41 落点与锚点一致性")
     a = (REPO / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8")
-    check("★ 主行存在且编号为 41", "\n41. **★ 链外任务的动作边界" in a)
-    check("锚点声明已从 1–40 改到 1–41", "约定编号 1–41 为稳定锚点" in a)
+    convention = next((line for line in a.splitlines() if line.startswith("41. ")), "")
+    policy = (REPO / ".aidp/flows/sprint-dev/light-context.md").read_text(encoding="utf-8")
+    check("主行保留编号41及light/formal身份，并指向动作策略单一源",
+          "light/formal" in convention and "身份" in convention
+          and "flows/sprint-dev/light-context.md" in convention)
+    check("稳定锚点保持 1–41", "约定编号 1–41 为稳定锚点" in a)
     check("细则分片映射已登记 41", "约定 37·38·41" in a)
-    for kw in ("⛔ 不铸 build", "⛔ 不跑浏览器实测", "部署默认否"):
-        check(f"主行写明「{kw}」", kw in a)
-    check("★ 写明档位只伸缩动作集、不伸缩可追溯性", "档位只伸缩动作集" in a)
+    check("单一策略保留light不铸build边界", "light 不铸 build" in policy)
+    check("普通开发只含实现与静态，部署及live须各自授权",
+          "普通开发默认 `implement + static`" in policy
+          and "light 不铸 build、默认不部署" in policy
+          and "在已有任务上分别增加 `commit`、`push`、`deploy`" in policy
+          and "自然浏览器请求只授权所指页面/流程，不借用全组合" in policy)
+    check("light不认领旧Sprint且不重置既有状态",
+          "light 无 Sprint 卡/归档，不认领旧 Sprint" in convention
+          and "light 收尾不创建 Sprint 归档、不重置已有 activeContext/progress" in a)
+    check("风险复杂度成本分开，formal身份及历史不能扩大授权",
+          "规模风险、复杂度、成本分别判断" in convention
+          and "formal 保留编号、规格、归档，但不增授权" in convention
+          and "复杂度、已有 activeContext 或历史计划不能升级身份或授权" in a)
 
     d5 = (REPO / ".aidp/reference/约定细则-5.md").read_text(encoding="utf-8")
     for sec in ("41.1", "41.2", "41.3", "41.4", "41.5", "41.6"):
         check(f"细则含 {sec}", f"#### {sec}" in d5)
 
     inv = (REPO / ".aidp/flows/sprint-autopilot/invariants.md").read_text(encoding="utf-8")
-    check("★ IRON 系列已声明反向作用域（缺它则被泛化到全场景）",
-          "⛔ 不适用于「链外任务」" in inv and "约定 41" in inv)
+    check("★ IRON作用域限于autopilot且受父授权约束，未请求项不变欠账",
+          "⛔ 不适用于「链外任务」" in inv and "约定41" in "".join(inv.split())
+          and "下文必须项仅对父授权范围生效" in inv
+          and "NOT_REQUESTED不执行、不作欠账/PASS或freeze" in inv)
 
     d4 = (REPO / ".aidp/reference/约定细则-4.md").read_text(encoding="utf-8")
     check("★ 约定 34 已有执行时机（与约定 22 攒批口径对齐，此前两条冲突）",
@@ -70,26 +86,29 @@ def test_offchain_budget_tiers():
     print("\n[O2] 链外动作预算与规模档位判定")
     hg = _load("hg", str(REPO / ".aidp/scripts/commit_gate.py"))
     d = Path(tempfile.mkdtemp())
+    for args in (("init", "-q"), ("config", "user.name", "fixture"),
+                 ("config", "user.email", "fixture@example.invalid"), ("commit", "--allow-empty", "-qm", "base")):
+        subprocess.run(["git", "-C", str(d), *args], check=True, capture_output=True)
 
     def budget(porc, ctx="bare-conversation"):
         return hg.offchain_budget(str(d), ctx, porc)
 
     b = budget(" M code/a.vue\n M code/b.ts\n")
     check("XS：≤2 代码文件 → 不归档、不部署",
-          b["tier"] == "XS" and not b["actions"]["sprint_archive"] and b["deploy"] is False)
+          b["risk_tier"] == "S" and b["cost"]["band"] == "XS" and not b["actions"]["sprint_archive"] and b["deploy"] is False)
     b = budget(" M code/a.ts\n M code/b.ts\n M code/c.ts\n M code/d.ts\n")
-    check("S：≤5 文件 → 加单测、仍不部署",
-          b["tier"] == "S" and b["actions"]["unit_test"] and b["deploy"] is False)
+    check("S：文件数量只是成本，不授予单测或部署",
+          b["tier"] == "S" and not b["actions"]["unit_test"] and b["deploy"] is False)
 
     (d / "alter.sql").write_text("ALTER TABLE T ADD COLUMN X INT;", encoding="utf-8")
     b = budget(" M code/a.ts\n M alter.sql\n")
-    check("★ M：含 DDL → 归档 + 部署须用户确认（⛔ 不是默认做）",
-          b["tier"] == "M" and b["actions"]["sprint_archive"] and b["deploy"] == "ask-user")
+    check("★ M：含 DDL 增加影响分析，不自动取得Sprint身份",
+          b["tier"] == "M" and not b["actions"]["sprint_archive"] and b["deploy"] is False)
 
     (d / "new.sql").write_text("CREATE TABLE T_NEW(ID INT);", encoding="utf-8")
     b = budget(" M new.sql\n")
-    check("★ L：含新表 → 判 L（约定 41 要求转正式 /sprint-* 链路）",
-          b["tier"] == "L" and b["ddl"] == "new-table")
+    check("★ L：含新表只提高风险分析，仍不自动建Sprint",
+          b["tier"] == "L" and b["ddl"] == "new-table" and not b["actions"]["sprint_archive"])
 
     check("★ 恒定禁止项与档位无关：任何档都不铸 build、不跑浏览器实测",
           budget(" M code/a.ts\n")["forbidden"] == ["铸 build", "浏览器实测"])
@@ -265,10 +284,12 @@ def test_dispatch_and_deletion_contracts():
           "Git index/commit/push" in dispatch and "由主流程统一处理" in dispatch
           and "子 Agent 不自行提交或关闭 Sprint" in dispatch)
     protocol = text(".aidp/flows/sprint-dev/incremental-contract.md")
-    check("汇合一次契约审查先于 test CVL，移除 Task 双完整审查但不删检查项",
-          dispatch.index("规范符合性审查") < dispatch.index("代码质量审查")
-          and "删除 Task 级双完整审查" in dispatch
-          and "原检查项不取消" in dispatch and "差量复核" in dispatch)
+    check("汇合只消费获准审查，CVL复用review证据且修复仅复核delta",
+          "review未授权则NOT_REQUESTED" in dispatch
+          and "review已授权且无full-cvl时派一次只读reviewer" in dispatch
+          and "一次CVL并复用为review证据" in dispatch
+          and "不先叠整轮契约reviewer" in dispatch
+          and "只修已授权scope" in dispatch and "复核delta" in dispatch)
     check("M docs 独占写集，开发偏差回专属工作单",
           "docs Agent 独占正式文档写集" in dispatch
           and "开发 Agent 只回各自工作单" in dispatch
@@ -318,16 +339,29 @@ def test_dispatch_and_deletion_contracts():
               "未发布版本的共享" in body and "--ledger-cascade" in body
               and "改写授权门" in body and "Sprint" in body
               and ("归档记录保持只读" in body or "永不修改" in body))
+    policy = text(".aidp/flows/sprint-dev/light-context.md")
     for relative in ("docs/init/02_迭代输入指导.md", "docs/init/05_commands详细规范.md",
                      "docs/init/00_AIDP范式主文档.md"):
-        check(relative + "：开发调用描述已同步",
-              "subagent-driven-development" not in text(relative)
-              and "写集" in text(relative))
+        body = text(relative)
+        # 命令总览明确只作索引：检查它链接的权威执行策略，不要求复制派单细则。
+        if relative == "docs/init/05_commands详细规范.md":
+            scope_bound = ("总览和索引" in body and "不再重复" in body
+                           and "commands/sprint-dev.md" in body
+                           and "flows/sprint-dev/light-context.md" in body
+                           and all(flag in policy for flag in ("--write-set", "--acceptance", "--execution-context"))
+                           and any(clause in policy for clause in ("并行写集不交叉", "并行写集必须不相交")))
+        else:
+            scope_bound = "写集" in body
+        check(relative + "：开发调用描述及权威写集边界已同步",
+              "subagent-driven-development" not in body and scope_bound)
 
 
 def test_worker_contract_inputs_and_write_scope():
     """直接检查会被开发子 Agent Read 的角色，防父协议正确而角色仍强制旧读写。"""
     print('\n[O7] S/M 开发角色的契约输入与独占写集')
+    protocol = (REPO / '.aidp/flows/sprint-dev/incremental-contract.md').read_text(encoding='utf-8')
+    light = (REPO / '.aidp/flows/sprint-dev/light-context.md').read_text(encoding='utf-8')
+    command = (REPO / '.aidp/commands/sprint-dev.md').read_text(encoding='utf-8')
     for role in ('backend', 'frontend'):
         body = (REPO / f'.aidp/agents/{role}.md').read_text(encoding='utf-8')
         entry = body.split('## 一、身份定义', 1)[0]
@@ -336,13 +370,20 @@ def test_worker_contract_inputs_and_write_scope():
               all(field in entry for field in ('contract_path', 'contract_revision',
                                                'interface_documents', 'write_set', 'work_order')))
         check(f'{role} 先校验已批准修订，失配不开始实现',
-              'approved_revision=contract_revision' in entry and 'status=approved' in entry
-              and '不开始实现' in entry)
+              'incremental-contract.md' in entry and '不开始实现' in entry
+              and 'approved_revision=contract_revision' in protocol and 'status=approved' in protocol)
         check(f'{role} S/M 不读取成文中的正文或强求固定分册',
               'S/M' in startup and '不读取 docs Agent 尚未交付的正文' in startup
               and '不要求固定 `02_数据库设计.md` / `03_接口设计.md`' in startup)
-        check(f'{role} 普通计划/L 仍读完整正式规格',
-              '普通计划 / L / 独立角色' in startup and '00_索引.md' in startup)
+        check(f'{role} formal 普通计划/L 仍读完整正式规格',
+              'formal 普通计划 / L' in startup and '00_索引.md' in startup)
+        check(f'{role} light 在卡片门之前分流并保留写集限制',
+              'light-context.md' in entry and '**仅 formal**' in entry
+              and entry.index('light-context.md') < entry.index('**仅 formal**')
+              and '**light**' in startup and 'formal 完整规格清单不用于 light' in startup
+              and 'write_set' in entry and '--write-set' in light and '--acceptance' in light
+              and 'light 不创建 Sprint、契约卡或替代审批文档' in light
+              and command.index('return') < command.index('## formal 流程'))
         check(f'{role} 共享内容统一回主流程，不能直接改 bug/memory/事实',
               '共享写入统一交主流程' in entry
               and all(term in entry for term in ('memory', 'bugfix', '事实清单', '子Agent必读')))
@@ -353,7 +394,59 @@ def test_worker_contract_inputs_and_write_scope():
               '当轮**就补进去' not in entry and '不自行 git add/commit/push' in entry)
 
 
+def test_documented_entry_routes():
+    """执行真实命令的入口围栏，防文档声称light但实际仍认领历史Sprint。"""
+    print('\n[O8] 命令入口围栏执行与历史Sprint隔离')
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        active = root / 'memory/V0.1.0/alice/activeContext.md'
+        active.parent.mkdir(parents=True)
+        active.write_text('当前 Sprint：Sprint-077\n旧任务仍在执行\n', encoding='utf-8')
+        original = active.read_bytes()
+        plan = root / 'docs/plans/V0.1.0/01_研发执行计划.md'
+        plan.parent.mkdir(parents=True)
+        plan.write_text('# 历史计划\nSprint-078 待开发\n', encoding='utf-8')
+        for command in ('sprint-start', 'sprint-dev', 'sprint-test',
+                        'sprint-bugfix', 'sprint-close', 'sprint-full', 'version'):
+            body = (REPO / f'.aidp/commands/{command}.md').read_text(encoding='utf-8')
+            fence = body.split('```bash\n', 1)[1].split('\n```', 1)[0]
+            shell = fence.replace('{{AIDP_HOME}}', str(REPO / '.aidp')).replace('{version}', 'V0.1.0')
+            env = dict(os.environ)
+            env.pop('EXECUTION_CONTEXT', None)
+            env.pop('EXPLICIT_SPRINT', None)
+            cp = subprocess.run(['bash', '-c', shell], cwd=root, env=env,
+                                capture_output=True, text=True)
+            expected = 'formal' if command in ('sprint-full', 'version') else 'light'
+            try:
+                result = json.loads(cp.stdout)
+            except ValueError:
+                result = {}
+            check(f'{command} 真实入口解析为 {expected}',
+                  cp.returncode == 0 and result.get('mode') == expected)
+            if expected == 'light':
+                check(f'{command} light在formal正文前明确return',
+                      body.index('return') < body.index('## formal 流程'))
+                context = result.get('execution_context')
+                if context:
+                    env['EXECUTION_CONTEXT'] = context
+                    resumed = subprocess.run(['bash', '-c', shell], cwd=root, env=env,
+                                             capture_output=True, text=True)
+                    try:
+                        inherited = json.loads(resumed.stdout)
+                    except ValueError:
+                        inherited = {}
+                    check(f'{command} 嵌套重试继承原task_id',
+                          resumed.returncode == 0 and inherited.get('task_id') == result.get('task_id'))
+        check('既有active状态与历史计划未被入口改写',
+              active.read_bytes() == original and 'Sprint-078 待开发' in plan.read_text(encoding='utf-8'))
+        check('入口未分配Sprint卡片、started或归档',
+              not list(root.rglob('_sprint-*-契约卡.md'))
+              and not list(root.rglob('.started*'))
+              and not (active.parent / 'sprints').exists())
+
+
 def main():
+    test_documented_entry_routes()
     test_worker_contract_inputs_and_write_scope()
     test_convention_41_text()
     test_offchain_budget_tiers()

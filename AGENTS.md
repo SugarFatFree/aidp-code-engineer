@@ -41,7 +41,24 @@
 
 Conventional Commits（`feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`），一次提交只做一件事；脚手架同步可用 `chore(skill): sync aidp-code-engineer`。
 
-## ★ 模板 ↔ 脚手架同步（改完契约文件后、commit 前必跑；⛔ 不手工 `cp`）
+## 维护验证：默认按影响范围
+
+本节只管本仓维护，不下发。**审计、修复、提交和版本号更新都不自动触发全量回归**；先判断改动影响，再选择足以验证本次行为的检查。
+
+| 本次工作 | 默认验证范围 |
+|---|---|
+| 纯审计、未改代码 | 只读检查；对疑点做最小反例验证 |
+| 局部代码修复 | 对应测试文件或用例，加直接受影响的调用链检查 |
+| 文档、命令或配置调整 | 适用的引用、CLI 参数、语法、镜像及格式检查；行为变化补实际调用反例 |
+| 跨多个基础模块的发布验收 | 先评估定向覆盖；只有不足以覆盖联动风险时，才执行一次最终全量 |
+
+- **全量触发条件**：用户明确要求全量回归，或跨基础模块发布验收确有必要。后者执行前须说明涉及哪些模块、定向验证为何不足；“正在审计”“准备提交”“更新版本”本身不是理由。用户要求只读、不测试或仅轻量验证时，不自行扩大。
+- **避免重复**：修复阶段先复验失败项及受影响范围；同一内容、环境和检查条件下复用已有结果。完成编辑并同步后才启动全量；纯文案或格式调整不重跑全量，记录差异并补相应静态检查。
+- **如实记录**：区分通过、失败、未执行与环境不可用；工具或依赖缺失先定位环境，不登记为业务缺陷，不把中止或跳过当成通过。
+- **全量入口**（仅满足上述条件时）：`bash .aidp/scripts/tests/run.sh`。shell 负责调度和汇总，实际运行 Python 测试及少量 Node.js 测试；已包含脚手架侧测试，不再叠跑一遍脚手架全套。
+- **脚手架侧单独验证**：优先选择 `skills/aidp-code-engineer/scripts/tests/` 中受影响的文件或用例；确需覆盖整个脚手架侧时用 `python3 -m unittest discover -s skills/aidp-code-engineer/scripts/tests`，不与已覆盖它的 `run.sh` 重复执行。`verify.py` 不运行回归单测。
+
+## ★ 模板 ↔ 脚手架同步与静态检查（按改动适用，commit 前完成；⛔ 不手工 `cp`）
 
 ```bash
 # ① 下发记忆源 → 脚手架模板（改过 .aidp/AIDP-AGENTS.md 时）
@@ -50,10 +67,7 @@ python3 skills/aidp-code-engineer/scripts/sync_memory_md.py
 python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py
 # ③ 模板自检（镜像类 ERROR 应为 0）
 python3 skills/aidp-code-engineer/scripts/verify.py . --template --read-only
-# ④ 回归单测（本清单是它唯一的调用方：verify.py 不跑单测，单测是模板项目自有；run.sh 已含脚手架单测，第二行供单独调试）
-bash .aidp/scripts/tests/run.sh
-python3 -m unittest discover -s skills/aidp-code-engineer/scripts/tests
-# ⑤ 文档引用与开源卫生（CI 同样必跑；私有痕迹按模式识别，需按具体名称扫描时加 --denylist <本地文件>）
+# ④ 文档引用与开源卫生（CI 同样必跑；私有痕迹按模式识别，需按具体名称扫描时加 --denylist <本地文件>）
 python3 .aidp/scripts/check_code_symbol_refs.py
 python3 .aidp/scripts/check_cli_invocation.py
 python3 .aidp/scripts/check_private_markers.py

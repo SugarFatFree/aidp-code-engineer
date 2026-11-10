@@ -58,6 +58,68 @@ python3 {{AIDP_HOME}}/scripts/emit-report.py --kind exec|test --version V0.1.0 -
 
 > 收尾钢门 `autopilot-ceremony-gate.py check` 校验：执行报告 SPA + 测试报告 SPA（有浏览器测试时）+ 无违规 markdown + `report_deliveries` 交付台账 + 里程碑通知台账——**任一路径**（含 test-only）都无法用「只落 markdown / 未交付」收尾。
 
+## 只补交付：本地 HTML、在线上传、通知各自独立
+
+报告成功写出不等于测试通过，也不等于上传成功或通知送达。`report_deliveries.<build>.<exec_report|test_report>` 保留旧 `delivery=local` / `url` / `integrity` 接口，并增加三个独立状态：
+
+| 字段 | 含义 |
+|------|------|
+| `local.status=ready`、`local.url` | 已存在的仓库 HTML；默认需要仓库访问权限 |
+| `upload.status=not_requested|succeeded|failed` | 下游上传扩展的独立结果；成功记录 `url`，失败保留 `reason` |
+| `notification.status=not_attempted|sent|failed|unavailable` | 最近一次报告通知结果；发送成功才记 `sent`，保留所发 URL/节点/时间 |
+
+本地报告始终保留。默认不上传、不 ZIP、不自动外发附件；既有下游上传扩展继续自行负责上传及授权，通用脚本只登记它已取得的结果。`delivery-repair` 不执行上传/测试、不重渲染、不改变报告 checksum、finalized 标记或测试结论，不接受 `--data` / `--patch` / `--force-amend`。已 finalized 的 PASS/FAIL 报告均可补交付，测试结果变化才需要新 build。台账本身丢失或 checksum 不一致时拒绝补写，不能用补交付掩盖事实损坏。
+
+以下接线在**已有报告及其交付台账**后执行；`REPORT_UPLOAD_STATUS/URL/REASON` 仅接收下游已授权上传扩展的真实返回值，不是新上传命令插槽。未配置扩展时不设置这些变量，保持本地模式；只重发通知时跳过上传登记块。standalone 没有 baseline 时可查询/发送本地报告，不新建版本 baseline。
+
+```bash
+: "${TARGET_VERSION:?须指定已有报告版本}"
+: "${BUILD:?须指定已有报告 build}"
+: "${REPORT_KIND:?取 exec 或 test}"
+case "$REPORT_KIND" in
+  exec) REPORT_NODE='#3' ;;
+  test) REPORT_NODE='#F' ;;
+  *) echo "REPORT_KIND 只能取 exec 或 test" >&2; exit 2 ;;
+esac
+
+# 不执行上传；只接下游上传扩展已经返回的事实。
+case "${REPORT_UPLOAD_STATUS:-not_requested}" in
+  succeeded)
+    python3 {{AIDP_HOME}}/scripts/emit-report.py delivery-repair \
+      --kind "$REPORT_KIND" --version "$TARGET_VERSION" --build "$BUILD" \
+      --upload-status succeeded --url "${REPORT_UPLOAD_URL:?缺上传成功 URL}" --json || exit 1
+    ;;
+  failed)
+    python3 {{AIDP_HOME}}/scripts/emit-report.py delivery-repair \
+      --kind "$REPORT_KIND" --version "$TARGET_VERSION" --build "$BUILD" \
+      --upload-status failed --reason "${REPORT_UPLOAD_REASON:?缺上传失败原因}" --json || exit 1
+    ;;
+  not_requested) ;;
+  *) echo "未知上传状态，不登记为成功" >&2; exit 2 ;;
+esac
+
+# 无修改参数时仅查询：不测试、不上传、不通知、不改报告。
+python3 {{AIDP_HOME}}/scripts/emit-report.py delivery-repair \
+  --kind "$REPORT_KIND" --version "$TARGET_VERSION" --build "$BUILD" --json || exit 1
+
+# 通过原有通知渠道传链接；--report-kind 与 --link-url 互斥。
+# 修复投递只说明沿用报告结论，不以绿色标题冒充 PASS。
+NOTICE_RC=0
+python3 {{AIDP_HOME}}/scripts/notify.py --auto --node "$REPORT_NODE" \
+  --version "$TARGET_VERSION" --build "$BUILD" --report-kind "$REPORT_KIND" \
+  --header-color blue --title "报告补交付" --section "测试结论沿用本 build 已有报告；本次未重跑测试。" \
+  --link-text "查看已有报告" --json || NOTICE_RC=$?
+case "$NOTICE_RC" in
+  0) echo "报告通知已送达" ;;
+  1|3) echo "通知未送达；本地报告/上传事实保留，可稍后只重试通知。" ;;
+  *) echo "报告通知参数或事实校验失败，按诊断修复。" >&2; exit "$NOTICE_RC" ;;
+esac
+```
+
+`notify.py --report-kind` 自动读取交付台账：上传成功用 HTTP(S) URL（直达本 build）；上传失败附原因并明确写「在线上传失败，当前提供仓库路径，需要仓库访问权限。」；本来只有 local 时只写「当前提供仓库路径，需要仓库访问权限。」，不得谎称上传失败。`--print-only` 可离线查看所有渠道的卡片/markdown，不发消息、不写通知台账。
+
+通知配置诊断入口是 `python3 {{AIDP_HOME}}/scripts/notify.py --check-config --json`（不发送探测，0=本地条件就绪，3=unavailable）。`migration_complete` 仅表示通用 schema 已齐全，`migration_scope=generic-schema-only`；`ready` 另查必填字段、环境变量和 executable，`delivery_verified` 恒为 false。通用 helper 只补 `enabled/fallback/channel_ready_card/channels` 缺键，保留自定义 channels 和参数；未知 command 目标语义、下游旧目标及脚本迁移由下游处理，不自动推断。
+
 ## ★ 数据契约 schema（`emit-report.py validate_payload` 强制校验的单一信源）
 
 > 结果 JSON 的字段名 / 结构 / 单位以本节 + 各 `data/示例_build1001.js` 为准。**执行体是 AI、字段必然会漂**，故由 `emit-report.py` 在写盘前 fail-fast（不符 exit 3）；渲染端 `assets/app.js` 另有兜底（口径归一 + 数组归一 + 缺失显示 `—` + 单章节异常不白屏）。二者双侧断言，注释不是断言。

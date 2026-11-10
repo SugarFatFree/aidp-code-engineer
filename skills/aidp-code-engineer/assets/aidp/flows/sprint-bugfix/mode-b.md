@@ -1,3 +1,5 @@
+> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
+
 # sprint-bugfix · 方式 B 详情（独立修复已记录的 bug — ★ 最常用）
 
 > 本文件是 `/sprint-bugfix` 命令 **方式 B（独立修复已记录的 bug）** 的完整详细步骤，由命令主体（`{{AIDP_HOME}}/commands/sprint-bugfix.md`）在**判定为方式 B 时用 Read 工具按需加载**——把这一段（前置准备 / 独立使用流程 / 执行步骤 Step 1–6）从"每次调用整体入上下文"改为"走到方式 B 才载"，降低"lost in the middle"式漏步。命令主体只保留方式 B 的**骨架表 + 关键规则 + 指向本文件的指针**。
@@ -31,7 +33,7 @@
 
 1. 用户在 `docs/bugfix/{version}/bugfix-{今日}-{user}.md` 手动添加 bug 表格行和详情章节
 2. 执行 `/sprint-bugfix`，Claude 自动：
-   - 扫描当前用户的所有 bug 文件
+   - 只读本次用户指定文件/编号/业务范围的bug记录，不接管所有历史待办
    - 筛选状态为「Open 待修」或「待修复」的条目
    - 按优先级修复（P0 > P1 > P2 > P3）
    - 回填修复信息到 bug 文件
@@ -73,13 +75,22 @@
 
 #### Step 1：调用 bugfix skill（附项目级专项）
 
+未在route.authorized_actions中的implement记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action implement || exit $?
+```
+
+
 **派单前对账**：用实际将传的 Sprint/文件过滤逐条核本次待修 BUG ID，保证 Step 0 范围内的导入项均可被 SKILL 读到；遗漏或归属不明返回 `scope-conflict`，不静默跳项。**不得通过删掉 Sprint 参数扩大修复范围**，也不得改写其他 Sprint 的归属来凑匹配。把已核实 BUG ID 与来源回链一并交给执行方。
 
-使用 `Skill` 工具调用 `bugfix` skill，参数 = 调用方给定的 `sprint-{NNN}` / 文件名，**都没有则留空（零散模式）**。修复流程（归因拆分 → 根因定位〔方法论 `superpowers:systematic-debugging`，⛔ 根因证据确认前不改代码〕→ 修复 → 逐项验证 → 修复报告）以 SKILL 为单一信源，命令端不复述、不另行调用 systematic-debugging（约定 21）。
+使用 `Skill` 工具调用 `bugfix` skill，参数 = 调用方给定的 `sprint-{NNN}` / 文件名，**都没有则用本次核实的BUG清单限定输入，不让空参数变成全版本扫描**。修复流程（归因拆分 → 根因定位〔方法论 `superpowers:systematic-debugging`，⛔ 根因证据确认前不改代码〕→ 修复 → 逐项验证 → 修复报告）以 SKILL 为单一信源，命令端不复述、不另行调用 systematic-debugging（约定 21）。
 
-来自验收的调用只接管尚未闭环 BUG，保留原严重度（包括错误性 Suggestion）、原证据、契约修订、具体写集和原始 CVL 报告回链。先给出失败测试再修复，每轮经 `test_ledger.py run --scope targeted` 定向验证；SKILL 不得另起完整 CVL。Git index/commit/push 与共享文档由主流程独占，显式授权另行串行交接。纯优化写不修理由，真实产品/版本/破坏性或部署授权问题按原门，不因进入修复自动获得授权。
+来自验收的调用只接管尚未闭环 BUG，保留原严重度（包括错误性 Suggestion）、原证据、契约修订、具体写集和原始 CVL 报告回链。related-test已授权才生成/执行失败测试并经test_ledger定向验证；否则只实现修复+static，不把未测写PASS；SKILL 不得另起完整 CVL。Git index/commit/push 与共享文档由主流程独占，显式授权另行串行交接。纯优化写不修理由，真实产品/版本/破坏性或部署授权问题按原门，不因进入修复自动获得授权。
 
-调用 prompt **附带下列项目级专项**（SKILL 未覆盖，属本项目路径 / 配置类 bug 的附加检查）：
+调用prompt必须带父execution_context/revision/action/budget/inputs hash/写集，明确未授权tests/review/document不能被SKILL扩展；执行方法与授权不兼容时只复用适用能力并返回具体限制。再**附带下列项目级专项**（SKILL 未覆盖，属本项目路径 / 配置类 bug 的附加检查）：
 
 **★ 路径/URL/proxy 类 bug**（典型症状：404 / 双前缀 / `/<base>/<base>/...` 重复 / CORS / 跳转错误），修复前**必须**：
 
@@ -89,13 +100,22 @@
 4. **修完单点不够 — 必须把同表中"形态类似"的其他消费者点也巡检一遍**（如改 axios 守卫必同时看 SSE / WebSocket 的独立 URL 拼装是否同病）
 5. 如本次修复实际上是"base 已变但消费者未联动"的清算 → 必须回写事实清单的「⚠️ 本次变更」表「已联动消费者点」列
 
-**★ 配置项清单联动**：本 bug 修复改动了任一配置文件（同 `/sprint-dev` Step X.7 触发条件清单）→ **同步执行** `/sprint-dev` Step X.7 的增量更新流程——往 `docs/deployment/{version}/配置文件/增量/配置项清单*.md` 的对应段（①新增配置 / ②删除配置 / ③运行时配置文件变更，**3 段代码块结构、无表格**）追加条目，行内注释标注来源（Sprint 编号或 `bugfix-{YYYYMMDD}`）。
+**★ 配置项清单联动**：本 bug 修复改动了任一配置文件（同 `/sprint-dev` Step X.7 触发条件清单）→ document已授权才执行 `/sprint-dev` Step X.7；否则仅登记事实漂移。已授权时按其 的增量更新流程——往 `docs/deployment/{version}/配置文件/增量/配置项清单*.md` 的对应段（①新增配置 / ②删除配置 / ③运行时配置文件变更，**3 段代码块结构、无表格**）追加条目，行内注释标注来源（Sprint 编号或 `bugfix-{YYYYMMDD}`）。
 
 **★ 部署流程 + SQL执行台账联动（检测驱动，独立于是否改配置）**：详见同目录 `rationale.md`「部署流程 + SQL执行台账联动的检测驱动细则」。
 
 #### Step 2：推送分类与监听（约定 31.5）
 
-部署上下文下，修复 push 前先保存 `BASE_REF`，调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF"`（链外无 build → `--standalone`）。无正式代码变更且无分类错误 → 仍校验 push 成功、记 `cicd_skipped=true`，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误 → 走 `cicd_watch.py --mode watch --commit <sha> --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；失败经 `--mode retry` 重试≤3）+ `autopilot-deploy-watch.py` 就绪探针。⛔ 不得以远端状态反推分类。
+未在route.authorized_actions中的push记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action push || exit $?
+```
+
+
+部署上下文下，修复 push 前先保存 `BASE_REF`，调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF"`（链外无 build → `--standalone`）。无正式代码变更且无分类错误 → 仍校验 push 成功、记 `cicd_skipped=true`，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误 → 走 `cicd_watch.py --mode watch --commit <sha> --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；主动retry另须deploy grant与变化证据/预算，不以push授权扩权）+ `autopilot-deploy-watch.py` 就绪探针。⛔ 不得以远端状态反推分类。
 
 #### Step 3：回填状态与报告链接
 
@@ -113,8 +133,8 @@
 调用 `superpowers:verification-before-completion`：
 - **仅处理本次 bugfix 实际改动的一侧**——改了后端才执行编译命令、改了前端才执行前端校验（**lint + 类型检查，不打包**），未改动侧不处理
 - 执行走**资源受限方式**（`nice` + 限并发 worker/线程，可选 `taskset/cpulimit`，避免 CPU 打满），配方见 `agents/backend.md`「Step 7: 编译验证」/ `agents/frontend.md`「Step 4: 前端验收校验」；**前端不跑完整打包**，部署打包由使用者按需自行执行
-- 运行相关单元测试；命令均从契约卡 `test_plan.targeted_argv/cwd/env_id/inputs` 取真实值，经 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --cwd <实际目录> --scope targeted --env-id <实际环境标识> --input <真实契约或设计输入> -- <原命令及参数>` 执行。无卡的独立修复按现有项目命令与真实输入建立同样计划，不造占位命令。读取末行 JSON 的 run_id/status/reused/before_hash/after_hash；同树 PASS 复用，失败/未执行不当通过。
-- 被已有验收会话调用时只回定向结果，由该会话在修复汇合后集中 Sprint 单测（`run-scope`）与 reviewer 差量复核；独立方式 B 在 Step 6 文档回写完成后集中一次 Sprint 单测，不每条 BUG 重跑，不自动重启完整 CVL。
+- related-test未授权则本项NOT_REQUESTED并进入Step 5；已授权先执行 `python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . --execution-context "$EXECUTION_CONTEXT" --action related-test`，成功才运行相关单元测试；命令均从契约卡 `test_plan.targeted_argv/cwd/env_id/inputs` 取真实值，经 `python3 {{AIDP_HOME}}/scripts/test_ledger.py run --root . --execution-context "$EXECUTION_CONTEXT" --cwd <实际目录> --scope targeted --env-id <实际环境标识> --input <真实契约或设计输入> -- <原命令及参数>` 执行。无卡的独立修复按现有项目命令与真实输入建立同样计划，不造占位命令。读取末行 JSON 的 run_id/status/reused/before_hash/after_hash；同树 PASS 复用，失败/未执行不当通过。
+- 被已有验收会话调用时只回定向结果，由该会话在修复汇合后集中 Sprint 单测（`run-scope`）与 reviewer 差量复核；独立方式B仅related-test已授权时在Step 6后集中一次当前Sprint单测，不每条 BUG 重跑，不自动重启完整 CVL。
 
 #### Step 5 ~ 6
 

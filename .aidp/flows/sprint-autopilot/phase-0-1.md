@@ -151,19 +151,15 @@ fi
 **Step 1 — 通知渠道检查（读 `notify` 段；首次必跑）**：
 
 ```bash
-N_ENABLED=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.enabled)
-N_CHANNELS=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get notify.channels)
-[ "$N_ENABLED" = "true" ] && [ -n "$N_CHANNELS" ] && [ "$N_CHANNELS" != "[]" ] && CH_OK=1 || CH_OK=0
+if python3 {{AIDP_HOME}}/scripts/notify.py --check-config --json; then
+  CH_OK=1
+else
+  CH_OK=0
+fi
 ```
 
-`CH_OK` 表征**配置层面是否有可尝试的渠道**；渠道真正发不发得出去由 `notify.py --auto` 实发时逐个判定（任一成功即算播报成功）。整体 `NOTIFY_ENABLED` 由 Step 3 统一落盘。
+`CH_OK` 只表示**启用且至少一个渠道具备本地发送条件**（必填字段/环境变量/可执行文件），不发送探测。`channels` 非空不代表迁移完成或可用；`migration_complete` 仅对应通用 schema，未知 command 目标参数由下游确认，`delivery_verified=false` 不能当成已验证送达。真正送达由真实里程碑的 `notify.py --auto` 结果决定。用户通知开关由 Step 3 独立落盘。
 
-- **`CH_OK=0`（`notify.enabled=false` 或 `notify.channels` 为空）** → 打印一行提示后继续，**⛔ 不弹窗问人**（通知是可选增强、缺失不阻塞开发主流程）：
-  ```
-  ℹ️ 未配置里程碑通知渠道（memory/aidp-config.yaml → notify），本轮通知节点静默跳过。
-     如需播报：置 notify.enabled: true，并在 notify.channels 中添加渠道
-     （如 {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}），
-     webhook 地址/密钥只经环境变量引用，⛔ 不明文入库（约定 32）。
-  ```
+- **`CH_OK=0`** → 保留 JSON 的逐渠道 `unavailable` 原因和 `repair` 入口（关闭、未配置、缺字段、缺环境变量、命令不存在等）；继续主流程，**不弹窗、不发送探测、不自动安装服务**。需恢复时只按诊断编辑 `memory/aidp-config.yaml` 或准备下游依赖，再跑同一离线检查。webhook 地址/密钥只经环境变量引用，不明文入库。
 - **`CH_OK=1`** → 进 Step 2。
 

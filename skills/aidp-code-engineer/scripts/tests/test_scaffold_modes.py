@@ -22,6 +22,156 @@ import verify as V
 BUNDLE_VERSION = L.bundle_version()
 
 
+class NotificationConfigDiagnosticsTest(unittest.TestCase):
+    def test_real_upgrade_diagnostic_does_not_clear_memory_conflict(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            target = root / "CLAUDE.md"
+            original = target.read_text(encoding="utf-8")
+            conflict = original.replace("开发者母语**中文**", "开发者母语**法文**")
+            self.assertNotEqual(original, conflict)
+            target.write_text(conflict, encoding="utf-8")
+            scaffold_marker.write_version(root, "V0.0.1")
+            result = scaffold(root, "--mode", "upgrade", "--agent", "claude")
+            self.assertTrue(result["pending"])
+            self.assertFalse(result["notify_diagnostics"]["delivery_verified"])
+            self.assertEqual(target.read_text(encoding="utf-8"), conflict)
+            self.assertTrue(result["rewrite_queue"])
+            final = H.run_script("finalize_upgrade.py", "--root", root, "--json", check=False)
+            self.assertEqual(final.returncode, 1, final.stdout)
+
+    def test_upgrade_notification_diagnostic_is_read_only_and_never_sends(self):
+        with H.TempRepo() as root:
+            script = root / ".claude/scripts/notify.py"
+            script.parent.mkdir(parents=True)
+            script.write_text("# diagnostic fixture\n")
+            report = S.Report()
+            responses = [
+                {"ready": False, "status": "unavailable", "reason": "notify.channels 未配置", "channels": [], "delivery_verified": False},
+                {"ready": False, "status": "unavailable", "reason": "逐项诊断", "channels": [{"field": "channels[0]", "status": "unavailable", "reason": "command 缺失"}], "repair": "编辑notify.channels", "delivery_verified": False},
+                {"ready": True, "status": "ready", "channels": [], "delivery_verified": False},
+            ]
+            for response in responses:
+                with self.subTest(ready=response["ready"], reason=response.get("reason")):
+                    with mock.patch.object(S.subprocess, "run", return_value=subprocess.CompletedProcess([], 0 if response["ready"] else 3, json.dumps(response), "")) as runner:
+                        actual = S.diagnose_notify_config(root, ".claude", report)
+                    argv = runner.call_args.args[0]
+                    self.assertIn("--check-config", argv)
+                    self.assertNotIn("--auto", argv)
+                    self.assertNotIn("--title", argv)
+                    self.assertEqual(actual, response)
+            self.assertTrue(any("未配置" in note for note in report.notes))
+            self.assertTrue(any("不可用" in note for note in report.warnings))
+            self.assertTrue(any("未发送" in note for note in report.notes))
+
+
+class MainMemoryUpgradeTest(unittest.TestCase):
+    """真实 init→upgrade→重复 upgrade；正文保留或明确 pending，而非只断言备份。"""
+
+    def test_pending_memory_follows_body_when_agent_layout_changes(self):
+        with H.TempRepo() as root:
+            env, _log = fake_dsh_env(root, preinstalled=True)
+            scaffold(root, "--agent", "claude", "--user", "alice", env=env)
+            target = root / "CLAUDE.md"
+            body = target.read_text(encoding="utf-8").replace("开发者母语**中文**", "开发者母语**法文**")
+            target.write_text(body, encoding="utf-8")
+            scaffold_marker.write_version(root, "V0.0.1")
+            first = scaffold(root, "--mode", "upgrade", "--agent", "claude", env=env)
+            self.assertTrue(first["pending"])
+            first_entry = next(L.parse_queue_entry(e) for e in first["rewrite_queue"]
+                               if L.parse_queue_entry(e)["target"] == "CLAUDE.md")
+            for agents in ("claude,codex,dsh", "codex"):
+                result = scaffold(root, "--mode", "upgrade", "--agent", agents, env=env)
+                self.assertTrue(result["pending"])
+                self.assertEqual((root / "AGENTS.md").read_text(encoding="utf-8"), body)
+                entries = [L.parse_queue_entry(e) for e in result["rewrite_queue"]]
+                main = [e for e in entries if e["target"] in ("CLAUDE.md", "AGENTS.md")]
+                self.assertEqual(len(main), 1)
+                self.assertEqual(main[0]["target"], "AGENTS.md")
+                self.assertEqual(main[0]["before"], first_entry["before"])
+                self.assertEqual(main[0]["evidence"], first_entry["evidence"])
+                self.assertTrue((root / main[0]["template"]).is_file())
+                final = H.run_script("finalize_upgrade.py", "--root", root, "--json", check=False)
+                self.assertEqual(final.returncode, 1, final.stdout)
+                self.assertIn("AGENTS.md", json.loads(final.stdout)["unconsumed"])
+
+    def test_six_upgrade_scenarios_in_native_layouts(self):
+        for agents in ("claude", "codex", "dsh", "claude,codex,dsh"):
+            for scenario in ("custom", "annotation", "status", "conflict", "missing", "noop"):
+                with self.subTest(agents=agents, scenario=scenario), H.TempRepo() as root:
+                    env, _log = fake_dsh_env(root, preinstalled=True)
+                    scaffold(root, "--agent", agents, "--user", "alice", env=env)
+                    target = root / ("CLAUDE.md" if agents == "claude" else "AGENTS.md")
+                    original = target.read_text(encoding="utf-8")
+                    note = "项目注解：客户联调材料在 memory/customer.md。"
+                    if scenario == "custom":
+                        body = original + "\n项目 custom：发布窗口为周五。\n"
+                    elif scenario == "annotation":
+                        body = original.replace("## 语言与沟通偏好", note + "\n\n## 语言与沟通偏好")
+                    elif scenario == "status":
+                        body = original.replace("- **当前 Sprint**", "联调仍等待客户验收。\n\n- **当前 Sprint**")
+                    elif scenario == "conflict":
+                        body = original.replace("开发者母语**中文**", "开发者母语**法文**")
+                        for installed in L.installed_skill_candidates(root):
+                            path = root / installed / L.MEMORY_TPL_REL
+                            old = path.read_text(encoding="utf-8").replace("开发者母语**中文**", "开发者母语**英文**")
+                            path.write_text(old, encoding="utf-8")
+                            L.uf_record(root, "template:main-memory", path.read_bytes())
+                    elif scenario == "missing":
+                        body = original.replace("## 语言与沟通偏好", note + "\n\n## 语言与沟通偏好")
+                        for installed in L.installed_skill_candidates(root):
+                            (root / installed / L.MEMORY_TPL_REL).unlink()
+                        ledger = L._uf_load(root)
+                        for key in ("template:main-memory", "merged:main-memory"):
+                            ledger.pop(key, None)
+                        (root / L.USER_FILLABLE_BASELINE).write_text(json.dumps(ledger), encoding="utf-8")
+                    else:
+                        body = original
+                    target.write_text(body, encoding="utf-8")
+                    scaffold_marker.write_version(root, "V0.0.1")
+                    result = scaffold(root, "--mode", "upgrade", "--agent", agents, env=env)
+                    after = target.read_text(encoding="utf-8")
+                    if scenario in ("conflict", "missing"):
+                        self.assertTrue(result["pending"], result)
+                        self.assertEqual(after, body)
+                        entries = [L.parse_queue_entry(line) for line in result["rewrite_queue"]]
+                        entry = next(e for e in entries if e["target"] == target.name)
+                        proof = json.dumps(entry["evidence"], ensure_ascii=False)
+                        self.assertIn("法文" if scenario == "conflict" else note, proof)
+                        if scenario == "conflict":
+                            self.assertIn("英文", proof)
+                            self.assertIn("中文", proof)
+                        blocked = H.run_script("finalize_upgrade.py", "--root", root, "--json", check=False)
+                        self.assertEqual(blocked.returncode, 1, blocked.stdout)
+                    else:
+                        self.assertFalse(result["pending"], result["rewrite_queue"])
+                        if scenario == "annotation":
+                            self.assertIn(note, L.custom_section(after))
+                            self.assertEqual(after.count(note), 1)
+                        elif scenario == "status":
+                            self.assertIn("联调仍等待客户验收。", after)
+                        elif scenario == "custom":
+                            self.assertIn("项目 custom：发布窗口为周五。", L.custom_section(after))
+                        else:
+                            self.assertEqual(after, original)
+                    self.assertEqual(after.count("## 项目自定义"), 1)
+                    again = scaffold(root, "--mode", "upgrade", "--agent", agents, env=env)
+                    self.assertEqual(target.read_text(encoding="utf-8"), after)
+                    self.assertEqual(again["rewrite_queue"], result["rewrite_queue"])
+                    if scenario in ("conflict", "missing"):
+                        # 真正把项目内容迁入生效 custom 后，沿用 finalize 收口闭环。
+                        resolved = original + "\n" + ("项目语言特例：客户材料使用法文。" if scenario == "conflict" else note) + "\n"
+                        target.write_text(resolved, encoding="utf-8")
+                        final = H.run_script("finalize_upgrade.py", "--root", root, "--json", check=False)
+                        self.assertEqual(final.returncode, 0, final.stdout)
+                        self.assertEqual(L._uf_load(root)["template:main-memory"],
+                                         L.sha256((L.SKILL_DIR / L.MEMORY_TPL_REL).read_bytes()))
+                        # force 也不应把已收口的同骨架重排回队列。
+                        done = scaffold(root, "--mode", "upgrade", "--agent", agents, "--force", env=env)
+                        self.assertFalse(done["pending"], done["rewrite_queue"])
+                        self.assertEqual(target.read_text(encoding="utf-8"), resolved)
+
+
 def scaffold(root, *args, env=None):
     p = subprocess.run(
         [sys.executable, str(H.SCRIPTS / "scaffold.py"), str(root), "--json", *map(str, args)],

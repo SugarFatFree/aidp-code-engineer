@@ -1,13 +1,26 @@
+> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
+
 # sprint-dev · 日常累进契约与并行汇合
 
 > 本片是 `/sprint-dev`、`/sprint-start`、`/sprint-full`、`/sprint-bugfix` 累进路径与 `/sprint-test` 前置汇合的共同权威。先读本片再准备/消费契约。约定 22/24/31.5/34/35/38/41、版本落点及未关闭 Sprint 门继续适用；本片不授权浏览器实测、部署、完整构建或铸 build。
+
+**动作前置**：按 `light-context.md` 的父策略围栏执行本片；document/review/related-test/full-cvl/docs-audit 各自获授权才派发。正式身份和风险档位不授予这些动作。
 
 ## 契约卡放行
 
 1. 主流程先按 `{{AIDP_HOME}}/reference/agent-tools.md` 读取项目工作分支偏好，继承或一次性确定 `task_branch`，不为子任务另建分支；再完成既有版本落点与未关闭 Sprint 门，取得全局 Sprint 号，保存口述原文到 `docs/requirements/{version}/产品提供/口述补充-{YYYYMMDD-HHMM}.md`。**先判档、后生成正式文档**，不为判档先跑完整需求 SKILL。
 2. 主流程创建 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md`，唯一写者是主流程。卡是本轮开发规格，不是假装已生成的正式设计/用例，不登记进 `00_索引.md`；正式文档发现型 glob 仍排除 `_*`，开发与验收显式读取卡。
-3. **档位优先级 L → S → M**：含新表、破坏性接口/数据契约或架构变更先判 L；其余少量需求（REQ≤5、PAGE≤2）、预计≤5源文件、无接口/DDL/新增配置且影响可枚举为 S；**S（语义子档）**允许≤6源文件、`!HAS_API && !HAS_DDL && !HAS_CONFIG`，但必须逐条清算受影响结论；其它普通接口变更、兼容 ALTER、跨模块变化为 M，超出既有 M 规模预算仍为 L。拿不准升档。用户 `--dev-scale` 可覆盖普通体量，不得绕过新表/破坏性前置安全门。
-4. 写 `versions.{V}.sprints.{NNN}.dev_scale` 的 `{tier, dev_files, has_api, has_ddl, has_new_table, has_destructive, has_semantic, has_config, source, stage:"preflight", at}`；口述 `sup_scale` 保留原有 REQ/PAGE/第三方等字段，并令 `tier` 与本轮 `dev_scale.tier` 一致。开发后 Step X.0.0 用实际范围复核这两个读数，不能把开发后的判定当开发前派单的生产方。调用正式生成时显式传 `--scale={档位}`；设计合册的版式映射见下文，不能默默回落 L。
+3. **规模同源评估**：开发前与开发后都执行下面命令，冻结同一执行上下文。`DEVELOPMENT_FACTS_JSON` 来自实际需求/页面/API/语义/配置/架构/破坏性事实；pre 填预计值，post 填实际值，不复写 since。
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须继承冻结任务路径}"
+DEVELOPMENT_FACTS_JSON="${DEVELOPMENT_FACTS_JSON:?从本轮计划或实际业务事实生成JSON}"
+python3 {{AIDP_HOME}}/scripts/development_scope.py --root . \
+  --execution-context "$EXECUTION_CONTEXT" --facts-json "$DEVELOPMENT_FACTS_JSON" --json
+```
+
+4. 消费 `risk_tier` 作为 `dev_scale.tier`，保存 `complexity`、`cost`、`sql_evidence`、`ddl_unknown`、`impact_check_required`；`sup_scale.tier` 同步该值并保留原 REQ/PAGE/第三方字段。成本按文件数独立展示，>10 文件不直接抬 L；兼容 ALTER、新表、破坏性与 SQL unknown 分开。unknown 要核影响，不推断无 DDL、不自动启动全套流程。`--dev-scale` 仅表达承载偏好，不绕过已证实的风险/授权门。正式生成传 `--scale={档位}`；无 document 授权只记录事实和最小必要规格，不强制生成六册。
+
 
 **机器可读身份与放行块**：契约卡必须恰有一个 fenced `aidp-contract` 块，块内是严格 JSON（无注释、无重复键）；示例值按本轮替换：
 
@@ -39,33 +52,33 @@
 | 档位 | 开发前 | 开发期间 | 进入 sprint-test 前 |
 |---|---|---|---|
 | S | 契约字段完整、反转门通过、受影响四族义务已登记 | 代码按契约实现；默认不启动完整文档生成 | 契约与实现汇合；正式文档可继续攒批；required=true 的用例必须先补齐，否则不得声称用例齐备 |
-| M | 契约字段完整、接口/DDL/决策已明确、反转门通过、四族义务已登记 | backend/frontend/docs 按具体写集并行；docs 内按需求→设计→计划→适用用例顺序成文 | **完整需求/设计/计划与适用用例已落盘并通过原有回检**，docs返回完成且与当前契约修订一致，否则不进入验收 |
-| L | 完整文档及原 Phase 0B.1.1 硬门先通过 | 再派代码开发 | 既有完整文档门与本片汇合门均通过 |
+| M | 契约字段完整、接口/DDL/决策已明确、反转门通过、受影响义务已登记 | 代码按写集并行；document 已授权才派 docs 成文 | 已请求的文档/检查按当前修订汇合；未请求项 NOT_REQUESTED，不能伪报成文或阻断单纯开发 |
+| L | 已知新表/破坏性/架构事实及必要安全决策先明确；document 已授权时先过正式文档门 | 在已授权范围内开发；真实缺失的业务或安全事实才阻塞 | 验证已要求的交付物与原安全门，不能以 L 自动加 heavy 检查 |
 
-`skip-doc-sync` 不能跳过契约、反转与义务登记；M/L 的完成门不能靠该 flag 变成成功。`--cascade-now` 保留为用户/父链显式要求的立即级联，不因同轮 test→close 自动置上。用例是否必须生成由真实实测意图判定，不能为了省文档把 required 改为 false。
+`skip-doc-sync` 不能跳过契约、反转与义务登记；已授权 M/L 文档完成门不能靠该 flag 变成成功；未授权成文记 NOT_REQUESTED。`--cascade-now` 保留为用户/父链显式要求的立即级联，不因同轮 test→close 自动置上。用例是否必须生成由真实实测意图判定，不能为了省文档把 required 改为 false。
 
 ## 写集派发
 
-AIDP 主流程直接使用 Agent 工具编排，不调用 `superpowers:subagent-driven-development`。每个派单 prompt 必须带：`owner`、`contract_path`、`contract_revision`、`dev_scale`、`cascade_mode`、具体 `write_set`（含新增/删除/测试/锁文件）、`create_dirs`、`dependencies`、专属工作单路径、验证范围、Git 权限及已确定的 `branch_policy/task_branch`。**写集无交集**且依赖已交付才并行；未知冲突按有冲突处理，公共配置/生成物有交集改为串行，不能只给目录标签。
+AIDP 主流程直接使用 Agent 工具编排，不调用 `superpowers:subagent-driven-development`。每个派单 prompt 必须先带父 `execution_context/revision/action/execution_budget/input_hash`，再带：`owner`、`contract_path`、`contract_revision`、`dev_scale`、`cascade_mode`、具体 `write_set`（含新增/删除/测试/锁文件）、`create_dirs`、`dependencies`、专属工作单路径、验证范围、Git 权限及已确定的 `branch_policy/task_branch`。**写集无交集**且依赖已交付才并行；未知冲突按有冲突处理，公共配置/生成物有交集改为串行，不能只给目录标签。
 
 - backend/frontend 只写各自代码白名单与工作单；docs Agent 独占分配给它的正式文档写集，按 `sprint-requirements`→`sprint-design`→`sprint-plan`→适用的 `sprint-selftest` 调用，保留每个命令回检。DDL SQL/共享类型等生成物也必须指定唯一写者；backend 消费 SQL 的 Task 须等待 SQL 文件交付，其余独立 Task 可继续，不能因文件尚未生成就记“无 SQL”。**文档生成内部不能并行读写尚未交付的计划**；增量自测不使用仅 fresh 规划支持的 `plan_ref_mode=deferred`。
 - 成文配方里的 `check_case_ledger_pending.py --prepare/--complete`、编号预留与 baseline 更新由主流程执行后把读数交 docs；docs 调用的子命令/SKILL若涉及共享状态或 Git，先回报主流程代办，不越过白名单。
 - 卡、四族台账、memory、baseline 及 Git index/commit/push **由主流程统一处理**。代码 Agent 检出契约偏差只写各自工作单回传，不改共享台账/文档、不自行重分配编号。docs 的回检子 Agent 只读，修订交 docs 原 Agent；若确需代写，由 docs 释放相应写集后串行交接。
 - 主流程确认偏差后修订契约，再重派受影响 Task；旧修订完成回传不能算当前修订通过。口径反转仍执行 Phase 0B.1.3，显式作废旧结论，不能静默覆盖。
 - 主流程合并工作单后用 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind C --count 5 --owner orchestrator --version {version} --scope changes` 原子预留本批连续编号（`5` 按真实条数替换）；一次变更跨族复用同号，**禁止 grep 最大号自行分配**。读最新台账后由主流程串行写入受影响各族，禁止多个 Agent 并发整文件追加。分配失败停止登记并保留工作单，不能自造编号。
-- 默认编排者是唯一 Git 写者，**子 Agent 不自行提交或关闭 Sprint**。用户显式授权 worker 提交时，主流程先暂停其它 Git 写者，串行交接索引所有权和白名单，worker 完成后交回；绝不多人同时 `git add/commit`。主流程汇合后按全部合法写集并集运行 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --owner orchestrator --allow-path '<具体路径>' --allow-path '<获准目录>/**'`（按并集重复 `--allow-path`，仅精确路径或 `dir/**`）；暂存区外路径 WARN 必须核对归属，不擅自 reset 他人暂存。每次提交仍读完整 gate JSON，台账欠账不触发自动整套级联。
+- 默认编排者是唯一 Git 写者，**子 Agent 不自行提交或关闭 Sprint**。用户显式授权 worker 提交时，主流程先暂停其它 Git 写者，串行交接索引所有权和白名单，worker 完成后交回；绝不多人同时 `git add/commit`。主流程汇合后按全部合法写集并集运行 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT" --owner orchestrator --allow-path '<具体路径>' --allow-path '<获准目录>/**'`（按并集重复 `--allow-path`，仅精确路径或 `dir/**`）；暂存区外路径 WARN 必须核对归属，不擅自 reset 他人暂存。每次提交先require_action(commit)，再读完整gate JSON；exit5/NOT_AUTHORIZED立即禁止提交，台账欠账不触发自动整套级联。
 
 ## 开发与文档汇合
 
-1. 等待各 Agent 实际回传，核对当前契约修订、Task/AC、实际写集、必要静态验证和所有偏差工作单；失败/超时/缺证据不能等同完成。M 必须等 docs 完整成文；`skip-test` 只省后续自动验收，不省 M 的文档汇合义务。S 未要求立即成文时维持四族短行欠账。
+1. 等待各 Agent 实际回传，核对当前契约修订、Task/AC、实际写集、必要静态验证和所有偏差工作单；失败/超时/缺证据不能等同完成。document 已授权的 M 才等 docs 成文；`skip-test` 不取消已授权文档义务，未请求文档无需补齐。S 未要求立即成文时维持四族短行欠账。
 2. M 设计/接口默认合册并引用契约卡章节，**调用层将任务档位与输出布局分开**：经 `/sprint-design --scale=M --compact-contract=<契约卡路径> [--unattended]`，内部使用上游已有“目标产出：1 册合并设计”的自然语言能力及 `scale=S` 输出布局；记录 `dev_scale=M / design_output_scale=S`。上游 `scale=M` 原生是三册，不能谎称它支持一册。完整接口/DDL内容、溯源、Critical、机器门和强制专题均不删；有强制独立专题时保留该专题并说明。索引登记真实合册章节。所有消费者显式读取契约与合册，不能只传不存在的 `03_接口设计.md`。
 3. 正式补充文档用 `--supplement`；消化既有族台账用 `--ledger-cascade`，由调用层负责把已核验内容合入既有主文档。两者作用域分开，不让新增补充册冒充级联落点；成功落地的义务才能清条，未生成用例继续保留。沿用现有设计/计划/用例回检和增量文档审计，**同修订同产物证据只汇总一次**，不新增审计。
-4. **删除 Task 级双完整审查**。实现者保留 TDD、必要静态自检；汇合只派一次独立只读 reviewer 做**契约一致性审查**（Task/REQ/AC、接口、DDL、决策及受影响结论，原检查项不取消）。问题交原实现/docs Agent 修复，再查问题和新 diff；契约通过后由 `/sprint-test` 做一次 CVL 完整质量检查，此后只做差量复核，不重复完整审查。
-5. 开发期保留 TDD 与相关定向验证（`test_ledger.py run --scope targeted`）；汇合、修复收敛及部署前只消费 `/sprint-test` Step 2.6 / Step 7 的 Sprint 单测协议与范围证据，**targeted 与 sprint 互不替代**，失败、工具不可用、未执行不能算通过；范围推导与执行协议只在该命令定义。
-6. 主流程在卡的“汇合证据”登记上述结果。`/sprint-test` 独立调用也先核此门；未完成时恢复缺失 docs/实现任务，不带未成文 M 进入 CVL。卡无正式用例时明确 deferred；显式实测入口必须补齐正式用例和用例族门后再执行。
+4. **删除 Task 级双完整审查**。实现者保留必要静态自检；related-test 获授权才执行 TDD；review 获授权才派一次独立只读 reviewer 做**契约一致性审查**（Task/REQ/AC、接口、DDL、决策及受影响结论，原检查项不取消）。问题交原实现/docs Agent 修复，再查问题和新 diff；full-cvl 获授权时由 `/sprint-test` 做一次完整质量检查；该次 CVL 可作为 review 证据，无需另跑完整 reviewer，之后只复核 delta。
+5. related-test 获授权时开发期执行 TDD 与相关定向验证（`test_ledger.py run --scope targeted`）；汇合、修复收敛及部署前仅在 related-test 已授权时消费 `/sprint-test` Step 2.6 / Step 7 的 Sprint 单测协议与范围证据，**targeted 与 sprint 互不替代**，失败、工具不可用、未执行不能算通过；范围推导与执行协议只在该命令定义。
+6. 主流程在卡的“汇合证据”登记上述结果。`/sprint-test` 独立调用也先核此门；已要求而未完成时恢复对应任务；未授权 docs/review 为 NOT_REQUESTED，不擅自恢复。卡无正式用例时明确 deferred；显式实测入口必须补齐正式用例和用例族门后再执行。
 
 ## 验收后差量
 
-`/sprint-test` 负责保留一次 CVL 原始完整结果及修复后的复核证据；错误性 Suggestion 按 bugfix 默认决策纪律登记 BUG、当轮交原实现 Agent 修复，不能仅因等级是 Suggestion 挂起。只有产品口径/对外承诺未定才待裁决；工具/基线未核验不能改成代码 BUG。CVL 的 `verify-only` 自身不修复、不支持伪造的增量模式，修复调度归 AIDP。
+`/sprint-test` 负责保留一次 CVL 原始完整结果及修复后的复核证据；错误性 Suggestion 保留发现；implement 已授权才按 bugfix 纪律登记 BUG、交原实现 Agent 修复，不能仅因等级是 Suggestion 挂起。只有产品口径/对外承诺未定才待裁决；工具/基线未核验不能改成代码 BUG。CVL 的 `verify-only` 自身不修复、不支持伪造的增量模式，修复调度归 AIDP。
 
-`/sprint-close` 消费本轮验收证据，只核验收后 diff；无有效验收证据或差异无法判定时不能宣称零变化。变动涉及契约则先修订并回相关门，修复与差量复核结果单独留痕，不能覆盖原 CVL 不通过结论。约定 22 义务登记、关闭记录与 Sprint 归档继续保留。
+`/sprint-close` 消费本轮验收证据，按授权只核验收后 diff；无有效验收证据或差异无法判定时不能宣称零变化。变动涉及契约则先修订并回相关门，修复与差量复核结果单独留痕，不能覆盖原 CVL 不通过结论。约定 22 义务登记、关闭记录与 Sprint 归档继续保留。

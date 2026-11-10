@@ -24,7 +24,7 @@
 
   · 计划文件 = `docs/plans/{version}/` **一层内**所有 `*研发执行计划*.md`（按文件名排序，全取）
   · Sprint 全集 = 上述文件里所有 `Sprint-NNN` 的 NNN，去重排序
-  · 已关闭 = `memory/{version}/*/sprints/sprint-*.md` 里的 NNN（兼容 `sprint-abc001.md` 形态）
+  · 已关闭 = progress 同行 Sprint + ✅ 验收记录 ∩ 非空归档（兼容 `sprint-abc001.md`）
   · 剩余 = 全集 − 已关闭，保持全集顺序；传 --range 时再与范围取交集
   · --range 不裁剪 ALL_SPRINTS / CLOSED_SPRINTS，初次执行和收尾必须使用相同范围
 
@@ -56,38 +56,18 @@ import re
 import shlex
 import sys
 
-_SPRINT_RE = re.compile(r"Sprint-(\d{3})")
-_CLOSED_RE = re.compile(r"sprint-(?:[a-z]+)?(\d{3})\.md$")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sprint_inventory import inventory, closure_evidence
 
 
 def scan(root: str, version: str):
-    plan_dir = os.path.join(root, "docs", "plans", version)
-    # ★ 全取、排序——不是 -print -quit 的第一份（见文件头「它堵的是哪一类失效」）
-    plan_files = sorted(glob.glob(os.path.join(plan_dir, "*研发执行计划*.md")))
-
-    all_sp: list = []
-    for f in plan_files:
-        try:
-            text = open(f, encoding="utf-8", errors="ignore").read()
-        except OSError:
-            continue
-        for m in _SPRINT_RE.finditer(text):
-            if m.group(1) not in all_sp:
-                all_sp.append(m.group(1))
-    all_sp.sort()
-
-    closed: list = []
-    mem_dir = os.path.join(root, "memory", version)
-    for f in glob.glob(os.path.join(mem_dir, "*", "sprints", "sprint-*.md")):
-        m = _CLOSED_RE.search(os.path.basename(f))
-        if m and m.group(1) not in closed:
-            closed.append(m.group(1))
-    closed.sort()
-
-    remain = [s for s in all_sp if s not in closed]
+    item = inventory(root, version)[version]
+    all_sp, closed = sorted(item["planned"]), sorted(item["closed"])
+    remain = sorted(item["planned"] - item["closed"])
     return {
-        "plan_files": [os.path.relpath(f, root) for f in plan_files],
-        "plan_file_count": len(plan_files),
+        "plan_files": item["plan_files"],
+        "plan_file_count": len(item["plan_files"]),
         "all_sprints": all_sp,
         "closed_sprints": closed,
         "remain_sprints": remain,
@@ -95,6 +75,7 @@ def scan(root: str, version: str):
         "first_sprint": all_sp[0] if all_sp else "",
         "next_sprint": remain[0] if remain else "",
         "current_sprint": closed[-1] if closed else "",
+        "evidence": closure_evidence(item, item["planned"]),
     }
 
 

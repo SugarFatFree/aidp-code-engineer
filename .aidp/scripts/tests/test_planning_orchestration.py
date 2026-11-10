@@ -3,7 +3,7 @@
 """版本规划编排层回归：接入 SKILL「编排层调用协议」后的命令侧机器门。
 
 · `aidp_run_metrics.py`：`[AIDP-STAGE]` 打点即时落盘、子 Agent 总 token、`规划耗时.md` 渲染；
-· `--qr-level` 分级派发：只由 `/version` 传、四个子命令原样转给 SKILL 并校验移交清单；
+· `--qr-level` 分级派发：继承父授权计算有效档位，四个子命令始终传给 SKILL 并按同档位校验移交；
 · `check_version_audit_landed.py`：移交清单未结清即不通过（与 SKILL 真实写入格式对账）；
 · `prd_presence_table.py`：表 D → PRD 行对账表，产物必须被 dev-manual-testcase 自己的硬门正确解析；
 · `--fast`：移交审计延后、清单即痕迹，发布 Step 3.1 机器判未结清并补跑；
@@ -12,6 +12,8 @@
   （⚠️ 语义检出能力是大模型判断、无法确定性回归；这里守的是更底层的保证：没有 Critical 维度被裁掉。）
 """
 import json
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -99,21 +101,74 @@ SUBCMDS = {"sprint-requirements": "ux-logic-extractor", "sprint-design": "dev-lo
 
 
 def test_qr_level_dispatch_contract():
-    print("\n[Q1] 分级派发：/version 传、子命令转给 SKILL 并校验移交清单")
+    print("\n[Q1] 分级派发：父授权决定有效档位、四入口显式传递并校验移交")
     version = (REPO / ".aidp/commands/version.md").read_text(encoding="utf-8")
     planning3 = (REPO / ".aidp/flows/version/planning-3.md").read_text(encoding="utf-8")
+    recipe = (REPO / ".aidp/reference/SKILL编排层接入.md").read_text(encoding="utf-8")
+    fences = re.findall(r"```bash\n(.*?)\n\s*```", recipe, re.S)
+    policy_fence = next((block for block in fences if 'REQUESTED_QR_LEVEL=' in block), None)
+    handoff_fence = next((block for block in fences if '$QO parse-handoff' in block), None)
     check("/version 参数表登记 --qr-level 且写明缺省 critical",
           re.search(r"^\| `--qr-level=scripts\\\|critical\\\|full` \|.*缺省 `critical`", version, re.M) is not None)
     calls = re.findall(r"执行：/sprint-(?:requirements|design|plan|selftest) \{version\}[^\n]*", planning3)
-    check("规划链 8 处子命令调用（fresh + 补充）全部透传 --qr-level={qr_level}",
-          len(calls) == 8 and all("--qr-level={qr_level}" in c for c in calls))
-    check("planning-3 写明 {qr_level} 的取值（未传 = critical）", "**未传为 `critical`**" in planning3)
+    check("规划链 8 处子命令调用（fresh + 补充）透传档位及父上下文",
+          len(calls) == 8 and all('--qr-level={qr_level}' in call and
+                                  '--execution-context "$EXECUTION_CONTEXT"' in call for call in calls))
+    selection = next((line for line in planning3.splitlines() if '{qr_level}' in line), '')
+    check("planning-3 保留显式档位，未显式时 critical，仍按父授权使用",
+          all(part in selection for part in ('version', 'critical', '父授权', '继承'))
+          and re.search(r'未显式|未传', selection) is not None)
     for cmd, skill in SUBCMDS.items():
         body = (REPO / f".aidp/commands/{cmd}.md").read_text(encoding="utf-8")
-        item = next((l for l in body.splitlines() if l.startswith("- `--qr-level=")), "")
-        check(f"/{cmd} 登记 --qr-level：转给 {skill}、返回后 parse-handoff --expect-level",
-              f"`{skill}`" in item and "parse-handoff" in item and "--expect-level" in item
-              and "不带本 flag = 不传入参" in item)
+        item = next((line for line in body.splitlines() if line.startswith('- `--qr-level=')), '')
+        check(f"/{cmd} 显式传有效档位给 {skill}，parse-handoff 校验相同档位",
+              f'`{skill}`' in item and all(part in item for part in (
+                  '父授权', '无docs-audit取scripts', '始终', 'parse-handoff', 'expect-level保持一致',
+                  'reference/SKILL编排层接入.md'))
+              and handoff_fence is not None and '--expect-level <档位>' in handoff_fence)
+    check("共用父授权与移交校验围栏可提取", bool(policy_fence and handoff_fence))
+    if not policy_fence or not handoff_fence:
+        return
+    sys.path.insert(0, str(SCRIPTS))
+    import entry_context
+    policy_script = policy_fence.replace('{{AIDP_HOME}}', str(REPO / '.aidp'))
+    cases = (
+        ('入口名称不自授 document', 'sprint-plan', False, (), 'full', None),
+        ('仅 document 缺省使用 scripts', 'sprint-plan', True, (), '', 'scripts'),
+        ('仅 document 不能借 full flag 扩权', 'sprint-plan', True, (), 'full', 'scripts'),
+        ('公开 version 缺省 critical', 'version', True, (), '', 'critical'),
+        ('公开 version 保留显式 scripts', 'version', True, (), 'scripts', 'scripts'),
+        ('公开 version 保留显式 critical', 'version', True, (), 'critical', 'critical'),
+        ('公开 version 保留显式 full', 'version', True, (), 'full', 'full'),
+        ('version fast 缺省仍为 critical', 'version', True, ('--fast',), '', 'critical'),
+        ('version fast 不覆盖显式 full', 'version', True, ('--fast',), 'full', 'full'),
+        ('不允许 none 档关闭最低自检', 'version', True, (), 'none', None),
+    )
+    with tempfile.TemporaryDirectory(prefix='aidp-qr-parent-policy-') as directory:
+        root = Path(directory)
+        for index, (label, entry, explicit, options, requested, expected) in enumerate(cases):
+            source = ({'kind': 'explicit-command', 'request_id': f'qr-policy-{index}',
+                       'command': entry, 'options': list(options)} if explicit else None)
+            context = entry_context.resolve_context(root, entry, version='V1.0.0',
+                                                     authorization_source=source)['execution_context']
+            result = subprocess.run(['bash', '-e', '-c', policy_script], cwd=root, capture_output=True, text=True,
+                                    env={**os.environ, 'EXECUTION_CONTEXT': context, 'REQUESTED_QR_LEVEL': requested})
+            levels = re.findall(r'^qr_level=(\w+)$', result.stdout, re.M)
+            check(label, result.returncode == 0 and levels == [expected] if expected is not None
+                  else result.returncode != 0 and not levels)
+        for command, skill in SUBCMDS.items():
+            index = root / command / '00_索引.md'
+            index.parent.mkdir(parents=True)
+            index.write_text('# 夹具索引\n', encoding='utf-8')
+            qo = str(REPO / '.aidp/skills' / skill / 'scripts/qr_orchestration.py')
+            generated = _run(qo, 'handoff', '--qr-level', 'scripts', '--write', str(index))
+            script = handoff_fence.replace('{{AIDP_HOME}}', str(REPO / '.aidp')).replace('<SKILL>', skill) \
+                .replace('<上表的 00_索引.md>', shlex.quote(str(index))).replace('<档位>', 'scripts')
+            matching = subprocess.run(['bash', '-e', '-c', script], cwd=root, capture_output=True, text=True)
+            mismatched = subprocess.run(['bash', '-e', '-c', script.replace('--expect-level scripts', '--expect-level full')],
+                                        cwd=root, capture_output=True, text=True)
+            check(f"{command} 真实 scripts 移交按同档通过，冒充 full 被拒",
+                  generated.returncode == 0 and matching.returncode == 0 and mismatched.returncode != 0)
 
 
 def test_selftest_scale_control_wiring():
@@ -199,6 +254,9 @@ def test_prd_presence_table_roundtrip():
     check("本版不做的条目不入表（否则下游会补「应该存在」的反向用例）",
           [r["id"] for r in result.get("excluded_not_this_version", [])] == ["产品需求.md:L210"]
           and "产品需求.md:L210 |" not in table.read_text(encoding="utf-8"))
+    table_before = table.read_bytes()
+    again = _run(str(SCRIPTS / "prd_presence_table.py"), "--root", str(root), "--version", "V1.0.0", "--json")
+    check("同输入重导出 PRD 对账表字节不变，不制造指纹失效", again.returncode == 0 and table.read_bytes() == table_before)
     cases = root / "docs/testing/V1.0.0/研发自测"
     cases.mkdir(parents=True)
     stats = str(REPO / ".aidp/skills/dev-manual-testcase/scripts/check_case_stats.py")
@@ -230,8 +288,11 @@ def test_fast_mode_release_gate():
     p3 = (REPO / ".aidp/flows/version/planning-3.md").read_text(encoding="utf-8")
     p7 = (REPO / ".aidp/flows/version/planning-7.md").read_text(encoding="utf-8")
     p8 = (REPO / ".aidp/flows/version/planning-8.md").read_text(encoding="utf-8")
-    check("规划链：--fast 取 critical、任何档位加 --matrix-scope=p0",
-          "`--fast` 同样取 `critical`" in p3 and "带了 `--fast` → 任何档位都加 `--matrix-scope=p0`" in p3)
+    qr_selection = next((line for line in p3.splitlines() if '{qr_level}' in line), '')
+    check("规划链：fast 只在未显式指定时取 critical，任何档位加 --matrix-scope=p0",
+          '未显式给出' in row and all(part in qr_selection for part in ('显式', '继承', 'critical', '父授权'))
+          and re.search(r'未显式|未传', qr_selection) is not None
+          and "带了 `--fast` → 任何档位都加 `--matrix-scope=p0`" in p3)
     check("Step 2.4.7：--fast 不派移交审计；Step 2.5.0 带 --fast 且认 deferred 留痕",
           "`--fast` 不派、清单保留" in p7 and "--fast" in p8 and "qr-handoff-deferred-by-fast" in p8)
     rel = (REPO / ".aidp/flows/version/release-1.md").read_text(encoding="utf-8")
@@ -324,6 +385,10 @@ def test_critical_never_deferred():
     check("version-auditor 的 Critical 硬门 C-4 / C-5 / F / G 声明仍在",
           all(k in auditor for k in ("Step C-4：", "Step C-5：", "### F. 原型覆盖度审计", "### G. 语义变更派生完整性审计"))
           and auditor.count("Critical 硬门") >= 4)
+    check("version-auditor 独立读取 PRD 原文，不能仅信表D或对账表",
+          "docs/requirements/{version}/产品提供/**/*.md   → PRD 原始来源" in auditor
+          and "不能仅信 PRD 行对账表或表 D" in auditor
+          and "每次读 `产品提供/**/*.md` 原始全集" in auditor)
 
 
 def test_parallel_plan_selftest_backfill():
@@ -370,12 +435,33 @@ def test_parallel_plan_selftest_backfill():
             nested_sources = sources.replace("](", "](../../")
             nested.write_text("# 模块用例\n\n## 套件 SUITE-002: 导出\n" + nested_sources + "> **研发执行计划来源**: "
                               + "、".join(f"⟨PLAN-REF:{req}⟩" for req in nested_reqs) + "\n", encoding="utf-8")
+        # 正式流程先分别保存两个生成结果，围栏只驱动其后三个持久阶段。
+        state_cli = [str(SCRIPTS / "planning_state.py"), "--root", str(root), "--version", "V1.0.0"]
+        (root / "inputs.md").write_text("REQ-101 REQ-104", encoding="utf-8")
+        (root / "generated.json").write_text('{"status":"pass","exit_code":0}', encoding="utf-8")
+        for stage, outputs in (("plan", [plans / "01_研发执行计划.md"]),
+                               ("case", [cases / "02_全量自测用例.md"] + ([nested] if nested_reqs is not None else []))):
+            arguments = ["start", stage, "--input", "inputs.md"]
+            for output in outputs:
+                arguments.extend(["--output", output.relative_to(root).as_posix()])
+            _run(*state_cli, *arguments)
+            _run(*state_cli, "finish", stage, "--result", "generated.json")
         out = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+        results = root / "memory/V1.0.0/.planning-results"
+        codes = []
+        for step in ("map", "ref", "verify"):
+            result_file = results / f"{step}.json"
+            data = json.loads(result_file.read_text()) if result_file.exists() else {}
+            code = data.get("exit_code", "-")
+            if step == "map" and code == 0 and not (root / "memory/V1.0.0/.plan-refs.json").is_file():
+                code = "skipped"
+            codes.append(code)
+        observed = f"export={codes[0]} resolve={codes[1]} upstream={codes[2]}"
         text = (cases / "02_全量自测用例.md").read_text(encoding="utf-8")
         if nested_reqs is not None:
             text += "\n" + nested.read_text(encoding="utf-8")
         shutil.rmtree(root, ignore_errors=True)
-        return out.stdout, text
+        return observed, text
     out, text = run_case(["REQ-101", "REQ-104"])
     check("真实计划样例 → export=0 且 resolve=0", "export=0 resolve=0" in out)
     check("占位符回填为 Sprint + Task 锚点链接（Sprint 号最小、其次 Task 号最小）",
@@ -456,6 +542,10 @@ def test_planning_intent_dispatch():
     if not match:
         return
     with tempfile.TemporaryDirectory(prefix="aidp-plan-intent-") as directory:
+        context_run = _run(str(SCRIPTS / "entry_context.py"), "resolve", "--root", directory,
+                           "--entry", "version", "--version", "V1.0.0", "--json")
+        context = json.loads(context_run.stdout)["execution_context"]
+        _run(str(SCRIPTS / "baseline_edit.py"), "--version", "V1.0.0", "set", "execution_context", context, cwd=directory)
         for force, done, unattended, expected in (
                 (1, 1, 1, "--force-replan --unattended"),
                 (0, 0, 1, "--repair-planning --unattended"),
@@ -468,10 +558,222 @@ def test_planning_intent_dispatch():
             body = match.group(1).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
             result = subprocess.run(["bash", "-c", body], cwd=directory, capture_output=True, text=True)
             check(f"force={force} done={done} unattended={unattended} 参数不丢失",
-                  result.returncode == 0 and result.stdout.strip() == f"/version V1.0.0 {expected}".strip())
+                  result.returncode == 0 and result.stdout.strip().splitlines()[-1]
+                  == f"/version V1.0.0 --execution-context {context} {expected}".strip())
+
+
+def test_repair_scope_and_guard():
+    print("\n[R2] 补件真实写集与只读字节保护")
+    with tempfile.TemporaryDirectory(prefix="aidp-repair-") as directory:
+        root = Path(directory)
+        files = {
+            "docs/requirements/V1.0.0/研发需求/01_研发需求.md": "# 需求\nREQ-101\n",
+            "docs/design/detail/V1.0.0/01_详细设计.md": "# 设计\n保持字节\n",
+            "docs/plans/V1.0.0/01_研发执行计划.md": "# 计划\n",
+            "docs/testing/V1.0.0/研发自测/01_研发自测方案.md": "# 方案\n",
+            "docs/testing/V1.0.0/研发自测/02_全量自测用例.md": "# 用例\n",
+        }
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(text.encode())
+            (path.parent / "00_索引.md").write_text("# 索引\n", encoding="utf-8")
+        cli = [str(SCRIPTS / "planning_state.py"), "--root", str(root), "--version", "V1.0.0"]
+        before = {p: (root / p).read_bytes() for p in files}
+        out = _run(*cli, "begin-repair")
+        scope = json.loads(out.stdout)
+        target = "docs/testing/V1.0.0/研发自测/01_测试环境与账号.md"
+        check("仅缺环境文件时只调 selftest 一个目标", scope["targets"] == {target: "selftest"})
+        check("只有目标族索引可修改", scope["necessary_indexes"] == ["docs/testing/V1.0.0/研发自测/00_索引.md"])
+        (root / target).write_text("# 环境\n本地模拟地址\n", encoding="utf-8")
+        (root / scope["necessary_indexes"][0]).write_text("# 索引\n环境文件已登记\n", encoding="utf-8")
+        verified = json.loads(_run(*cli, "check-repair").stdout)
+        check("真实补件只改目标+necessary index，untouched bytes 完全不变",
+              verified["ok"] and len(verified["redone"]) == 2
+              and all((root / p).read_bytes() == body for p, body in before.items()))
+        changed = next(p for p in files if "/design/" in p)
+        (root / changed).write_text("越权重生成\n", encoding="utf-8")
+        rejected = _run(*cli, "check-repair")
+        check("无关族重写被机器门拒绝", rejected.returncode == 1 and changed in json.loads(rejected.stdout)["unexpected"])
+        check("不能重新 begin-repair 清洗越权改写基线", _run(*cli, "begin-repair").returncode == 2)
+        # 索引本身不能代替缺失的内容。
+        (root / changed).unlink()
+        scope = json.loads(_run(*cli, "scope").stdout)
+        check("只有索引而无详设仍算缺件", changed in scope["targets"])
+
+
+def test_five_stage_recovery():
+    print("\n[R3] 五环节真实脚本恢复与依赖闭包失效")
+    with tempfile.TemporaryDirectory(prefix="aidp-five-stage-") as directory:
+        root = Path(directory)
+        cli = [str(SCRIPTS / "planning_state.py"), "--root", str(root), "--version", "V1.0.0"]
+        plan = "docs/plans/V1.0.0/01_研发执行计划.md"
+        case = "docs/testing/V1.0.0/研发自测/02_全量自测用例.md"
+        for name, text in {"inputs/requirements.md": "REQ-101", "inputs/plan-params.json": "{}",
+                           "inputs/case-params.json": "{}", "inputs/00_索引.md": "# 输入索引\n\n[需求](requirements.md)\n"}.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        plan_text = (REPO / ".aidp/skills/dev-execution-planner/references/iteration-plan-sample.md").read_text(encoding="utf-8")
+        case_text = ("# 用例\n\n## 套件 SUITE-001: 下单\n"
+                     "> **自测方案章节:** [范围](01_研发自测方案.md#范围)\n"
+                     "> **PRD 来源:** [REQ-101 下单](../../../requirements/V1.0.0/研发需求/01_研发需求.md#REQ-101)\n"
+                     "> **详细设计来源:** [下单设计](../../../design/detail/V1.0.0/01_详细设计.md#下单)\n"
+                     "> **研发执行计划来源**: ⟨PLAN-REF:REQ-101⟩\n")
+
+        input_index = root / "inputs/00_索引.md"
+        original_index = input_index.read_bytes()
+        qo = str(REPO / ".aidp/skills/dev-execution-planner/scripts/qr_orchestration.py")
+        _run(qo, "handoff", "--qr-level", "critical", "--write", str(input_index))
+
+        def start(stage):
+            cp = _run(*cli, "start", stage, "--input", "inputs/00_索引.md", "--input", "inputs/requirements.md",
+                      "--input", f"inputs/{stage}-params.json", "--output", plan if stage == "plan" else case)
+            return json.loads(cp.stdout)
+
+        def finish(stage, success=True):
+            result = root / f"{stage}-result.json"
+            result.write_text(json.dumps({"status": "pass" if success else "fail", "exit_code": 0 if success else 1}))
+            return _run(*cli, "finish", stage, "--result", result.name)
+
+        # 两支均先 start，case 失败，plan 成功；恢复不重写成功分支。
+        start("plan")
+        start("case")
+        (root / plan).parent.mkdir(parents=True)
+        (root / plan).write_text(plan_text, encoding="utf-8")
+        (root / case).parent.mkdir(parents=True)
+        finish("plan")
+        finish("case", False)
+        frozen = (root / plan).read_bytes()
+        check("case 单支失败后 plan 返回 reused", start("plan")["action"] == "reused")
+        check("case 单支失败后只重新生成 case", start("case")["action"] == "redone")
+        (root / case).write_text(case_text, encoding="utf-8")
+        finish("case")
+        cp = _run(*cli, "refs")
+        output = json.loads(cp.stdout)
+        check("真实 export/resolve/upstream 三脚本全通过并各自产生持久结果",
+              cp.returncode == 0 and output["redone"] == ["map", "ref", "verify"]
+              and all((root / f"memory/V1.0.0/.planning-results/{s}.json").is_file() for s in ("map", "ref", "verify")))
+        check("回填完成没有 PLAN-REF 占位，plan 字节保持", "⟨PLAN-REF:" not in (root / case).read_text()
+              and (root / plan).read_bytes() == frozen)
+        cp = _run(*cli, "refs")
+        check("同指纹恢复三环节全部 reused", json.loads(cp.stdout)["reused"] == ["map", "ref", "verify"])
+        _run(qo, "handoff", "--qr-level", "full", "--write", str(input_index))
+        status = json.loads(_run(*cli, "status").stdout)
+        check("真实清 handoff 后五环节全部 reused，不自我失效",
+              status["reused"] == ["plan", "case", "map", "ref", "verify"] and input_index.read_bytes() == original_index)
+        input_index.write_bytes(original_index + b"\n[extra](other.md)\n")
+        check("索引真实链接改动仍使依赖两支失效", not json.loads(_run(*cli, "status").stdout)["reused"])
+        input_index.write_bytes(original_index)
+        # 计划参数变化仅失效 plan -> map -> ref -> verify；case 生成仍保留。
+        (root / "inputs/plan-params.json").write_text('{"iteration":2}')
+        status = json.loads(_run(*cli, "status").stdout)
+        check("计划输入变更只失效相关依赖闭包，case 复用", status["reused"] == ["case"])
+        print("  plan-input-changed: " + json.dumps(status, ensure_ascii=False))
+        scope = json.loads(_run(*cli, "scope").stdout)
+        check("repair 自动从持久失效节点扩入 plan 目标与必要 case 回填",
+              scope["targets"].get(plan) == "plan" and case not in scope["targets"]
+              and case in scope["necessary_references"])
+        start("plan")
+        finish("plan", False)
+        check("plan 单支失败后已生成 case 仍复用", start("case")["action"] == "reused")
+        start("plan")
+        (root / plan).write_text(plan_text.replace("Sprint-001", "Sprint-002"), encoding="utf-8")
+        finish("plan")
+        cp = _run(*cli, "refs")
+        check("计划变化从 raw 用例快照重新回填链接、不重新生成 case",
+              cp.returncode == 0 and "[Sprint-002 Task" in (root / case).read_text()
+              and "case" in json.loads(_run(*cli, "status").stdout)["reused"])
+        # 用例参数变化只失效 case/ref/verify，map 不动。
+        (root / "inputs/case-params.json").write_text('{"cap":30}')
+        status = json.loads(_run(*cli, "status").stdout)
+        check("用例输入变化不失效计划和 map", status["reused"] == ["plan", "map"])
+        print("  case-input-changed: " + json.dumps(status, ensure_ascii=False))
+        # 真实 resolve 失败不覆盖任何旧有效用例。
+        start("case")
+        (root / case).write_text(case_text.replace("PLAN-REF:REQ-101", "PLAN-REF:REQ-999"), encoding="utf-8")
+        finish("case")
+        before = (root / case).read_bytes()
+        cp = _run(*cli, "refs")
+        check("ref 失败保持文件字节并保留 map 成功结果", cp.returncode == 1
+              and (root / case).read_bytes() == before
+              and "map" in json.loads(cp.stdout)["reused"])
+        gate = _load_gate()
+        check("占位 ref 连 skip-audit 都不能放行开发", not gate.scan(root, "V1.0.0", skip_audit=True)["ok"])
+
+
+def test_qr_evidence_reuse():
+    print("\n[Q4] artifact/contenthash/dimension/inputs/owner 证据缓存")
+    gate = _load_gate()
+    with tempfile.TemporaryDirectory(prefix="aidp-qr-cache-") as directory:
+        root = Path(directory)
+        artifact = "docs/plans/V1.0.0/01_研发执行计划.md"
+        index = str(Path(artifact).parent / "00_索引.md")
+        for name, text in {artifact: "# 计划\n内容\n", index: "# 索引\n", "inputs/req.md": "需求",
+                           "inputs/design.md": "设计", "audit.md": "逐维度审查内容"}.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        skill = "dev-execution-planner"
+        qo = str(REPO / f".aidp/skills/{skill}/scripts/qr_orchestration.py")
+        _run(qo, "handoff", "--qr-level", "critical", "--write", str(root / index))
+        dims = gate.unsettled_handoffs(root, "V1.0.0")[0]["deferred_dims"]
+        (root / "result.json").write_text(json.dumps({"overall": "pass", "report_path": "audit.md",
+                "dims": [{"id": d, "verdict": "pass"} for d in dims]}))
+        def fingerprint(dim, inputs):
+            return gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dim,
+                                    inputs, ["checklist=v1"])["fingerprint"]
+
+        for dim in dims:
+            inputs = ["inputs/req.md", index] if dim == dims[0] else ["inputs/design.md", index]
+            gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dim, inputs, ["checklist=v1"],
+                             "result.json", "handoff:" + skill, "generator-1", "reviewer-2", fingerprint(dim, inputs))
+        hit = gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dims[0], ["inputs/req.md", index], ["checklist=v1"])
+        check("同 artifact/hash/dimension/inputs 可复用且明确 owner", hit["ok"] and hit["owner"] == "handoff:" + skill)
+        (root / "inputs/req.md").write_text("需求改变")
+        miss = gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dims[0], ["inputs/req.md", index], ["checklist=v1"])
+        kept = gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dims[1], ["inputs/design.md", index], ["checklist=v1"])
+        check("必要 inputs 变化只失效相关维度", not miss["ok"] and kept["ok"])
+        result = gate.settle_handoff(root, "V1.0.0", index, skill, "critical", REPO / ".aidp")
+        check("任一维度失效时不清 handoff，收口失败", not result["ok"] and bool(gate.unsettled_handoffs(root, "V1.0.0")))
+        gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dims[0], ["inputs/req.md", index], ["checklist=v1"],
+                         "result.json", "handoff:" + skill, "generator-1", "reviewer-2", fingerprint(dims[0], ["inputs/req.md", index]))
+        result = gate.settle_handoff(root, "V1.0.0", index, skill, "critical", REPO / ".aidp")
+        check("全部维度可信后调用原 SKILL 协议清 handoff", result["ok"] and not gate.unsettled_handoffs(root, "V1.0.0"))
+        check("QR 必要输入包含自身索引，record→settle 后仍全复用", not gate.stale_settlements(root, "V1.0.0")
+              and all(gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + d,
+                     ["inputs/req.md", index] if d == dims[0] else ["inputs/design.md", index],
+                     ["checklist=v1"])["action"] == "reused" for d in dims))
+        old_fingerprint = fingerprint(dims[0], ["inputs/req.md", index])
+        (root / artifact).write_text("# 计划\n产物内容变化\n", encoding="utf-8")
+        check("清块后产物变化仍能检出过期证据", bool(gate.stale_settlements(root, "V1.0.0")))
+        audit = root / "docs/audit/V1.0.0/version-output-audit-test.md"
+        audit.parent.mkdir(parents=True, exist_ok=True)
+        audit.write_text("".join(f"## {c} 项\nok\n" for c in "ABCDEFGH") + "overall: pass\n" + "说明。\n" * 80)
+        final = gate.scan(root, "V1.0.0")
+        fast = gate.scan(root, "V1.0.0", fast=True)
+        check("--fast 可延期但最终门仍抓到缓存失效欠账", fast["ok"] and not final["ok"]
+              and bool(final["unsettled_handoffs"]) and final["findings"][0]["kind"] == "qr-evidence-stale")
+        try:
+            gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dims[0], ["inputs/req.md", index], ["checklist=v1"],
+                             "result.json", "handoff:" + skill, "generator-1", "reviewer-2", old_fingerprint)
+            changed_during_review = False
+        except ValueError:
+            changed_during_review = True
+        check("审查期间 artifact 变更，旧 fingerprint 禁止登记新内容 pass", changed_during_review)
+        try:
+            gate.qr_evidence(root, "V1.0.0", artifact, skill + ":" + dims[0], ["inputs/req.md", index], ["checklist=v1"],
+                             "result.json", "handoff:" + skill, "same-agent", "same-agent", fingerprint(dims[0], ["inputs/req.md", index]))
+            independent = False
+        except ValueError:
+            independent = True
+        check("生成者不能自签独立移交审查", independent)
 
 
 if __name__ == "__main__":
+    test_repair_scope_and_guard()
+    test_five_stage_recovery()
+    test_qr_evidence_reuse()
     test_planning_intent_dispatch()
     test_sprint_start_gate_scope()
     test_run_metrics_stage_and_render()

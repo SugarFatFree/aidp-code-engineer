@@ -1,11 +1,40 @@
 # /sprint-bugfix — 问题修复（独立可用，支持自动累进）
 
+## 执行身份与授权前置路由（先于本文其余动作）
+
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。按原参数解析父上下文与显式 Sprint；历史计划和 activeContext 不决定本任务身份。
+
+`POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
+
+```bash
+# EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+  [ -z "${EXPLICIT_SPRINT:-}" ] || CONTEXT_ARGS+=(--sprint "$EXPLICIT_SPRINT")
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-bugfix \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bugfix \
+  --execution-context "$EXECUTION_CONTEXT" --phase repair --json
+```
+
+返回 `route=light` → 执行该片的 **repair** 能力，然后 **return**；不进入下文任何 Sprint 取号、卡片、activeContext、started、报告路径或归档步骤。返回 `route=formal` 才执行下文正式身份门；可选动作仍按 actions 筛选，未授权为 NOT_REQUESTED。任何子命令/修复/重试/续跑均保留原参数并显式附 `--execution-context "$EXECUTION_CONTEXT"`；不能只传 `--unattended`/`--from-batch` 而丢身份。
+
+## formal 流程
+
 你正在执行 `/sprint-bugfix` 命令。
 
-**★ 本命令支持三种调用方式**
+**formal 分支支持三种调用方式**（独立普通描述已在 light 路由返回，不执行本段方式 C）
 - **方式 A（被编排器调用）**：`/sprint-full` / `/sprint-batch` 内部的 bugfix 循环调用（执行体复用方式 B 全流程，不新开 Sprint）
-- **方式 B（独立修复已记录的 bug）**：扫描 `docs/bugfix/{version}/` 下待修复的 bug 文件直接修复
-- **方式 C（自动累进新 Sprint）**：用户传入描述，自动累进创建新 Sprint 修复较大的 bug（涉及设计变更），串联 test → 再 bugfix → close
+- **方式 B（独立修复已记录的 bug）**：仅处理本次明确指定的缺陷文件/编号/业务范围；历史待办只作输入，不全部接管
+- **方式 C（formal 自动累进新 Sprint）**：正式父编排明确要求累进，按描述创建新 Sprint 修复涉及设计变更的 bug，串联 test → 再 bugfix → close；普通 light 描述不进入此分支
 
 > 🔀 **术语对照**：本命令的「方式 A/B/C」是**调用方式**分叉，与 `/sprint-dev`「分支 A（按计划）/ B（口述累进）」、`/sprint-full`「模式 A（按计划）/ B（自动累进）」不是同一组；本命令方式 C ≈ 那两者的 B（累进新 Sprint）。
 
@@ -18,10 +47,10 @@
 - 两者分别定位不同：前者是入口，后者是实现细节
 
 参数：$ARGUMENTS
-- `/sprint-bugfix` — 方式 B：修复 `docs/bugfix/{version}/` 下当前用户所有待修复 bug
+- `/sprint-bugfix` — 方式 B：修复本次用户明确的缺陷范围；范围缺失先澄清目标，不扫描接管全部历史缺陷
 - `/sprint-bugfix sprint-001` — 方式 B：只修复归属 Sprint-001 的 bug
 - `/sprint-bugfix bugfix-20260509-alice.md` — 方式 B：仅处理指定文件
-- `/sprint-bugfix "修复批量导入重复校验错误"` — 按**规模语义判定**分流：涉设计变更（新增接口/改表/调架构）→ ★ 方式 C 自动累进新 Sprint；不动设计的零散修复 → 方式 B 就地修
+- `/sprint-bugfix "修复批量导入重复校验错误"` — 独立调用默认 light；只有明确 formal 上下文才按本段方式 B/C 分流，设计变更不自动升级身份
 - `/sprint-bugfix "<描述>" --minor` — 强制方式 B（零散修复，不新开 Sprint）
 - `/sprint-bugfix "<描述>" --accrue` — 强制方式 C（累进新 Sprint，跳过语义判定）
 - `/sprint-bugfix "<描述>" skip-test` — 跳过后续 test/close 串联
@@ -42,6 +71,8 @@
    - `docs/testing/{version}/研发自测/**/*.md`（当前布局主集）/ `docs/testing/{version}/正式用例/**/*.md` / `docs/testing/{version}/研发自测.md`（旧扁平布局兜底）**末尾的「问题汇总清单」表**中状态为「待修复」的行（按 glob 汇总所有分册 + 测试人员用例）。**研发自测 / 测试人员发现的 bug 默认走这条**，不必每个 bug 都另起 bugfix-*.md
    - **★ GitHub Issue 缺陷（可选，仅用户主动提及 GitHub Issue 时，约定 31.3）**：用 `gh issue list` / `gh issue view <编号>` 拉取 → **先预读、理解每条缺陷语义、确认缺陷确实存在/可复现，再进入修复**；缺陷为人工填充不可盲信标题直接改。未安装或未登录 `gh` 时终端提示后跳过。
 
+**授权前置**：本段修复仅适用于 implement 已授权的当前 scope；review/test-only 只回传发现。工具/环境失败保留原分类，不能一概开业务 BUG；重试与预算遵守 `light-context.md`。
+
 ## ★ 缺陷处置默认决策纪律（先于任何"挂起等人"——堵"边界模糊就问人"）
 
 > ⛔ **本段是 `/sprint-bugfix`（及 `/sprint-dev`、`/sprint-autopilot` 修复类改动）"该怎么修"的单一信源**，其他命令引用、不复述（约定 21）。核心：**绝大多数缺陷都有明确最佳实践、默认直接修、不问人**；"询问用户"收窄为「⛔ 统一决策纪律」正向判据（真正的产品取舍 / 对外 tag 承诺 / 高回退成本 / 持久目录）下的**例外**。现有对 Mock（约定 26 P0/P1/P2）、UI 基准（约定 4 情形 A-D）、版本落点（约定 2 三选一）、死代码（约定 29 A/B/C）都给了默认值，唯"缺陷怎么修"缺默认值 → 边界模糊就问人 → 本段补齐。
@@ -53,7 +84,7 @@
 > **「不做这个修复，当前行为是不是错的？」**
 > - **是（当前行为错误）** → 属"写错了"，**当场改、不问**。
 > - **否，只是可以更好** → 纯优化，记录不修理由或后续建议，不为优化阻塞本轮；确需在两个合理行为/产品口径间选择才按下方正向白名单等待裁决。
-> - **拿不准属哪档** → ⚠️ **默认当场改**——"失败被伪装成成功""错误被吞掉"这类缺陷每多存在一天就多误导用户一天；挂起等人的代价是**确定的**（阻塞到人醒），修错的代价**可控**（git 可回退）。
+> - **拿不准属哪档** → 先收集当前 scope 内证据区分工具/环境/业务失败，已证实业务错误且 implement 已授权才改——"失败被伪装成成功""错误被吞掉"这类缺陷每多存在一天就多误导用户一天；挂起等人的代价是**确定的**（阻塞到人醒），修错的代价**可控**（git 可回退）。
 
 ### 缺陷类型 → 默认处置映射表（命中即按默认处置直接修、无需询问）
 
@@ -187,27 +218,29 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 ### Phase 1：开发修复
 
 ```
-执行：/sprint-dev "{描述}" skip-test [--cascade-now] [--from-batch] [--unattended]
+执行：/sprint-dev "{描述}" --execution-context "$EXECUTION_CONTEXT" skip-test [--cascade-now] [--from-batch] [--unattended]
 ```
 
 透传 BUG ID/根因证据与具体修复工作单，由原开发入口编排实现者使用 bugfix SKILL 的根因方法；不让两组 Agent 同时改同一写集。`skip-test` 必传以抑制开发入口自带的后续串联，test/close 由本层接管；`--cascade-now` 仅已有显式要求才传，`--dev-scale` 及实测 required/skip 意图同样透传。M 的 docs 与契约 reviewer 汇合必须通过，skip-test 不省汇合门。
 
 ### Phase 2：测试
 
+先消费 Phase 1 开发入口回传的真实 `{新NNN}` 与子 `execution_context`，将后者作为本轮 `EXECUTION_CONTEXT`；若开发入口从版本父 fork 了子任务，此处不能继续拿父路径测试/关闭，也不能覆盖 autopilot 版本节点的父路径。缺回传即返回未完成。
+
 ```
-执行：/sprint-test {新NNN} [--from-batch] [--unattended]（实测意图同样原样透传；只做一次完整 CVL，原实现者当轮闭环）
+执行：/sprint-test {新NNN} --execution-context "$EXECUTION_CONTEXT" [--from-batch] [--unattended]（实测意图同样原样透传；只做一次完整 CVL，原实现者当轮闭环）
 ```
 
 ### Phase 3：只接管未闭环项
 
-`/sprint-test` 已负责当轮原实现者修复与差量复核。本层不重复完整验收、不重修已闭环 BUG；仅对其返回的可修复残项恢复原实现者，必要时方式 B 接管同一 Sprint/BUG，随后 `/sprint-test {新NNN} --resume-acceptance [--from-batch] [--unattended]` 续接定向复核与最终 Sprint 单测收敛。共用验收的修复轮次，累计连续 5 轮失败即返回未闭环项，不另起五轮完整验收。
+`/sprint-test` 已负责当轮原实现者修复与差量复核。本层不重复完整验收、不重修已闭环 BUG；仅对其返回的可修复残项恢复原实现者，必要时方式 B 接管同一 Sprint/BUG，随后 `/sprint-test {新NNN} --execution-context "$EXECUTION_CONTEXT" --resume-acceptance [--from-batch] [--unattended]` 续接定向复核与最终 Sprint 单测收敛。共用验收的修复轮次，累计连续 5 轮失败即返回未闭环项，不另起五轮完整验收。
 
 产品/版本/破坏性/环境待决保持具体原因并返回上层，不能静默关闭。所有下游继续原样透传 `--unattended` / `--from-batch` 和实测意图；没有可信原始质量证据时回验收补齐，不宣称 CVL 增量模式。
 
 ### Phase 4：关闭
 
 ```
-执行：/sprint-close {新NNN} [--from-batch] [--unattended]（仅验收已闭环、证据可信时；否则返回 closed:false 并保留上下文）
+执行：/sprint-close {新NNN} --execution-context "$EXECUTION_CONTEXT" [--from-batch] [--unattended]（仅验收已闭环、证据可信时；否则返回 closed:false 并保留上下文）
 ```
 
 **跳过串联**：参数含 `skip-test` → 只做 Phase 0C + 开发，不自动 test/close。

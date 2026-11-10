@@ -1,3 +1,5 @@
+> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
+
 # sprint-dev · 开发完成后回写详情（分片 2/3 · Step X.0–X.7）
 
 > **【分片 2/3 · postdev-writeback 二次切分】** 本片是 `/sprint-dev` 命令「开发完成后：自动回写需求 + 设计文档」段的中段，覆盖 **Step X.0（研发需求回写）/ X.2（详细设计）/ X.3（研发执行计划）/ X.4（memory）/ X.5（SQL 脚本）/ X.6（事实清单）/ X.7（配置项清单，约定 25）**。前片 `postdev-writeback-1.md`（Step X.0.0 级联检测），后片 `postdev-writeback-3.md`（Step X.8 部署流程）。进入回写段须按序 Read 全 3 片、以本文件为准逐项执行、不得略过任一 Step。
@@ -6,7 +8,16 @@
 
 #### Step X.0：研发需求回写
 
-> ⛔⛔ **本步（X.0）及 X.2 / X.3 的四级级联【仅在收口点或 `--cascade-now` 下执行】**——
+未在route.authorized_actions中的document记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action document || exit $?
+```
+
+
+> ⛔⛔ **X.0/X.2/X.3级联仅在document已授权且到收口点或显式cascade-now时执行**——
 > 约定 22 默认走**攒批**：`postdev-writeback-1.md` 步骤 3.8 把变更记入
 > **受影响各族的增量册**（四族落点见 `{{AIDP_HOME}}/reference/开发期族增量.md`）后**直接跳到 Step X.4**，本步整段跳过。
 > 判定与收口规则单一信源 = `{{AIDP_HOME}}/reference/开发期族增量.md`。
@@ -28,16 +39,16 @@
 > `--supplement={NN}` 留给 **Phase 0B.1.1 口述累进**与产品侧 PRD/原型变更——那是产品会去读的交付物。
 > 两条路径**不共享 NN 锚定**：本段无需锚定 NN。落盘规则详见 `{{AIDP_HOME}}/reference/开发期族增量.md`「收口执行要点」第 3 条。
 
-3. **自动触发 L1 — 研发需求**：经 `/sprint-requirements {version} --ledger-cascade [--unattended]` 编排（**研发需求唯一入口**，内部以增量 prompt 驱动 `ux-logic-extractor`；★ **不直调 SKILL**——直调会跳过命令端的落盘归一 / 多系统拆分 / 头部元数据表 / AIDP 硬规范回检）→ **就地改** `docs/requirements/{version}/研发需求/01_研发需求.md`
-4. **自动触发 L2 — 详细设计**：`/sprint-design --ledger-cascade [--unattended]`：通过 Step 0.6.4.7 全扫代码现状 + Step 0.3 四象限对比，本批新增项会自动落入象限 ③「代码超前-补写」，由 dev-logic-architect 产出正文 → **就地改** `docs/design/detail/{version}/` 的 `01_详细设计.md`·`02_数据库设计.md`·`03_接口设计.md`（按实际范围）
-5. **自动触发 L3 — 研发执行计划**：`/sprint-plan --ledger-cascade [--unattended]` → **就地改** `docs/plans/{version}/01_研发执行计划.md`（新增任务条目 / 工时调整 / 拆分调整）
-6. **自动触发 L4 — 研发自测用例**：`/sprint-selftest --ledger-cascade [--unattended]`（研发自测唯一入口，内部经 `dev-manual-testcase` 增量）→ **就地改** `docs/testing/{version}/研发自测/` 既有用例册；输入：本轮各族增量 + 既存 `docs/testing/{version}/研发自测/` 下自测方案与用例文件 + `code/` 实际代码；本批新增的"非计划内功能点"必须覆盖到用例
+3. **自动触发 L1 — 研发需求**：经 `/sprint-requirements {version} --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended]` 编排（**研发需求唯一入口**，内部以增量 prompt 驱动 `ux-logic-extractor`；★ **不直调 SKILL**——直调会跳过命令端的落盘归一 / 多系统拆分 / 头部元数据表 / AIDP 硬规范回检）→ **就地改** `docs/requirements/{version}/研发需求/01_研发需求.md`
+4. **自动触发 L2 — 详细设计**：`/sprint-design --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended]`：通过 Step 0.6.4.7 全扫代码现状 + Step 0.3 四象限对比，本批新增项会自动落入象限 ③「代码超前-补写」，由 dev-logic-architect 产出正文 → **就地改** `docs/design/detail/{version}/` 的 `01_详细设计.md`·`02_数据库设计.md`·`03_接口设计.md`（按实际范围）
+5. **自动触发 L3 — 研发执行计划**：`/sprint-plan --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended]` → **就地改** `docs/plans/{version}/01_研发执行计划.md`（新增任务条目 / 工时调整 / 拆分调整）
+6. **自动触发 L4 — 研发自测用例**：`/sprint-selftest --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended]`（研发自测唯一入口，内部经 `dev-manual-testcase` 增量）→ **就地改** `docs/testing/{version}/研发自测/` 既有用例册；输入：本轮各族增量 + 既存 `docs/testing/{version}/研发自测/` 下自测方案与用例文件 + `code/` 实际代码；本批新增的"非计划内功能点"必须覆盖到用例
 
 > 分支 A/B 的分档与成文时机统一见 `incremental-contract.md`：S 契约＋台账，M 契约先行、docs 并行后汇合，L 先完整文档。X.0.0 只收新漂移，不重复已成文内容；正式补充与既有主文档级联分开核落点。
 
-#### Step X.2：调用 dev-logic-architect skill 更新设计（由 Step X.0.0 自动驱动；走 `/sprint-design --ledger-cascade [--unattended]` 编排）
+#### Step X.2：调用 dev-logic-architect skill 更新设计（由 Step X.0.0 自动驱动；走 `/sprint-design --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended]` 编排）
 
-仅当 Step X.0.0 影响清单含「设计层变更」（L2 触发条件）且 L1 未触发（即不需要研发需求补充，仅需设计层补充）时执行：
+仅document已授权且Step X.0.0影响清单含「设计层变更」（L2 触发条件）且 L1 未触发（即不需要研发需求补充，仅需设计层补充）时执行：
 
 ```
 输入：
@@ -51,12 +62,12 @@
 随后自动级联 L3（研发执行计划补充，如任务受影响）+ L4（自测用例补充）。
 ```
 
-#### Step X.3：调用 /sprint-plan --ledger-cascade [--unattended] 更新研发执行计划（由 Step X.0.0 自动驱动）
+#### Step X.3：调用 /sprint-plan --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended] 更新研发执行计划（由 Step X.0.0 自动驱动）
 
-仅当 Step X.0.0 影响清单含「计划层变更」（L3 触发条件）时执行——含 ① L1/L2 触发自动级联到 L3 / ② 仅计划层变更（如 Sprint 拆分调整 / 工时实际偏差 >50%）：
+仅document已授权且Step X.0.0影响清单含「计划层变更」（L3 触发条件）时执行——含 ① L1/L2 触发自动级联到 L3 / ② 仅计划层变更（如 Sprint 拆分调整 / 工时实际偏差 >50%）：
 
 ```
-命令：/sprint-plan --ledger-cascade [--unattended]   # 本命令带 --unattended 时必透传
+命令：/sprint-plan --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended]   # 本命令带 --unattended 时必透传
 
 输入：
 - `01_研发需求.md` 本轮改动处（如 L1 触发）
@@ -83,7 +94,7 @@
 
 如本 Sprint 改动了 `application.yml` / `application.properties` / `vite.config.*` / nginx 等**真实运行时配置**（context-path / 端口 / proxy / API 前缀 / 健康检查路径），必须：
 
-1. 在 `docs/design/detail/{version}/*事实清单.md` 主表对应行更新「新值」列
+1. document已授权时更新事实清单主表；未授权则登记当前事实漂移短行，不新增整册
 2. 在「⚠️ 本次变更」表追加一行（项 / 旧值 / 新值 / 理由 / **已联动消费者点（必填）** / Sprint-{NNN}）
 3. **遍历事实清单「路径消费者点」表**，逐一确认本变更涉及的消费者是否已同步修改：
    - 前端 axios baseURL / URL 守卫 / SSE / WS / dev proxy / .env*（所有 profile）/ router base
@@ -94,6 +105,15 @@
 6. **★ 消费者点集合是"会变大"的、不止 base 改动才动本表**：Phase 1.3 Step 1「请求通道单一判据 + 消费者点登记门」在**新增请求通道**（新 composable / 工具 / `fetch`·`EventSource`·`WebSocket`）时就要往「路径消费者点」表**补登记新行**——本 Step X.6 管的是 base/context-path **改动时的联动**，二者互补。集合悄悄变大而无人登记，会让下次 base 变更漏掉新通道（双前缀 404 温床）。
 
 #### Step X.7：★ 维护配置项清单
+
+未在route.authorized_actions中的document记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action document || exit $?
+```
+
 
 **核心原则（约定 25 配置文件分层落地）**：
 - **真实配置文件是权威**（`code/.../application.yml` / `env/.env` / `nginx.conf` 等），git 跟踪即可，不在 .md 重复
@@ -152,7 +172,7 @@ ec:
 **首次创建 / 增量更新（同一套动作，幂等）**：
 
 0. **先建目录**：`mkdir -p docs/deployment/{version}/配置文件/增量`
-1. 取本 Sprint 的配置变更（`vcs_mode=git` 用 `git diff`；`vcs_mode=none` 从 `memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json` 按上方配置路径过滤，逐条用 `before_sha256` / `after_sha256` 证实新增、修改、删除，再与当前文件内容及开发前快照对应文件的旧内容/本 Sprint 逐文件改动记录核对 key 级增删；快照只有哈希、不含旧内容，无法还原旧 key 时记 `evidence-missing` 并人工核对旧文件或按本版全部配置项保守审计，不得臆造删除项）+ 代码内动态配置注入新增的 key
+1. 取本 Sprint 的配置变更（`vcs_mode=git` 用 `git diff`；`vcs_mode=none` 从 `memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json` 按上方配置路径过滤，逐条用 `before_sha256` / `after_sha256` 证实新增、修改、删除，再与当前文件内容及开发前快照对应文件的旧内容/本 Sprint 逐文件改动记录核对 key 级增删；快照只有哈希、不含旧内容，无法还原旧 key 时记 `evidence-missing` 并在当前scope核对旧文件，不能扩大为本版全部配置审计，不得臆造删除项）+ 代码内动态配置注入新增的 key
 2. 新增项 → 追加进「1. 新增配置」对应分组代码块；删除项 → 追加进「2. 删除配置」，**按上面的缩进粒度写**
 3. nginx/compose/k8s 有改动 → 追加进「3. 运行时配置文件变更」（片段 + 位置 + 生效动作）
 4. **敏感项不另起段**，在新增代码块里对应行标 `# 必填·敏感`（发布期汇总进 `全量/配置说明.md`「换环境必改」）

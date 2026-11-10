@@ -5,12 +5,13 @@
 
 ### 0.2 baseline 读取 + 版本解析（本片覆盖子步骤 1 – 4）
 
-> ⚠️ **本片是 0.2 的前半**：只到上面这段 bash 主体（子步骤 1 版本解析 → 2 去重/冻结 → 2.5/2.5.1 build 与自愈交接判定 → 3 deployment → 4 里程碑通知配置/报告落点）。
+> 本片覆盖版本解析、去重/冻结、build交接判定、deployment与报告落点。固定build漂移时仅有HAS_WAKE_SOURCE才让位；无唤醒源返回未完成，不算测试成功。
 > **0.2 的两段执行铁律**（自愈式交接执行铁律、#0a / 通知配置 / 报告落点归属分工）在 **`phase-0-6b.md`**，`NEED_HANDOFF=1` 时**必须接着 Read 它**再动作。
 
 <!-- dup-check: ignore 分片自包含 -->
 ```bash
 BASELINE_FILE="memory/.sprint-autopilot-baseline.json"
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?从入口派单重绑路径}"
 
 # 1. baseline 文件不存在 → /sprint-autopilot 还没跑过任何版本，命令退出
 [ ! -f "$BASELINE_FILE" ] && echo "⚠️ baseline 文件不存在，请先跑 /sprint-autopilot" && exit 0
@@ -49,8 +50,31 @@ else
 fi
 echo "🎯 测试目标版本：$TARGET_VERSION（来源：${TARGET_FLAG_VALUE:+--target flag 锁定}${TARGET_FLAG_VALUE:-baseline 自动读取「当前开发版本」}）"
 
+# 入口已固定build时，不让后续baseline重选改指；无唤醒源明确返回未完成。
+_pin_build() {
+  [ -n "${EXECUTION_CONTEXT:-}" ] || return 0
+  PIN_RC=0
+  python3 - "$EXECUTION_CONTEXT" "$TARGET_VERSION" "$1" <<'PIN' || PIN_RC=$?
+import sys
+from pathlib import Path
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from entry_context import load_context
+ctx = load_context(Path.cwd(), sys.argv[1])
+if ctx.get("build_id") and (ctx["version"], ctx["build_id"]) != tuple(sys.argv[2:]):
+    print("BUILD_CHANGED: UNVERIFIED，固定测试目标已变化，本次未完成")
+    raise SystemExit(10)
+PIN
+  if [ "$PIN_RC" = 10 ]; then
+    [ "${HAS_WAKE_SOURCE:-0}" = 1 ] && exit 0
+    exit 2
+  fi
+  return "$PIN_RC"
+}
+PIN_CURRENT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get current_build --default '') || exit $?
+_pin_build "$PIN_CURRENT" || exit $?
+
 # ★ 已测去重门（防 /loop 对同一部署重复跑全套用例 + 重刷 #R/#F 里程碑通知）
-#   ⚠️ 三重豁免（缺任一都会误退）：--target / --once / current_build 是新 build。见 rationale。
+# 三重豁免：--target / --once / 新build；见rationale。
 if [ -z "$TARGET_FLAG_VALUE" ] && [ "${HAS_ONCE_FLAG:-0}" != "1" ]; then
   LAST_DEP=$(jq -r ".versions.\"$TARGET_VERSION\".last_deployed_at // \"\"" $BASELINE_FILE)
   LAST_TST=$(jq -r ".versions.\"$TARGET_VERSION\".aiauto_tested_at // \"\"" $BASELINE_FILE)
@@ -75,17 +99,16 @@ if [ -z "$TARGET_FLAG_VALUE" ] && [ "${HAS_ONCE_FLAG:-0}" != "1" ]; then
     echo "⏭️ 无新部署 / 无新 build：本部署（$LAST_DEP）已于 $LAST_TST 测过且已收敛 → 跳过本 tick（等 last_deployed_at 刷新或 autopilot 铸新 build 才重测）"
     exit 0
   fi
-  # ★ 第六个条件：未收敛 + 待自动修复 + 无新部署 → 跳过（见 rationale「未收敛时的重测节流」）
+  # 未收敛且无新部署时按原条件节流。
   AFP=$(jq -r ".versions.\"$TARGET_VERSION\".auto_fixable_pending // false" $BASELINE_FILE 2>/dev/null)
-  # ★ 纯待确认轮同样要节流（AFP 刻意不置真；只判 AFP 会让这类轮次每 5 分钟全量重跑到冻结）。
+  # 纯待确认轮同样节流，不能只判AFP。
   PC=$(jq -r "(.versions.\"$TARGET_VERSION\".pending_clarifications // []) | length" $BASELINE_FILE 2>/dev/null || echo 0)
   if { [ "$AFP" = "true" ] || [ "${PC:-0}" -gt 0 ]; } && [ -n "$LAST_TST" ] && [ -n "$LAST_DEP" ] \
      && [ "$(to_ts "$LAST_DEP")" -le "$(to_ts "$LAST_TST")" ]; then
     echo "⏭️ 本轮未收敛（待自动修复=$AFP / 待人工确认=${PC:-0} 项），但自 $LAST_TST 起无新部署 → 跳过本 tick"
     exit 0
   fi
-  # ★ 第七个条件：开发链路自动修复进行中（派单时写 auto_fix_in_progress_since）且其后尚无新部署 → 跳过，
-  #   不对旧部署重测（重测会再置 AFP、空耗 retest_auto_cap）。
+  # 修复进行中且未重新部署时不测旧代码。
   AFIP=$(jq -r ".versions.\"$TARGET_VERSION\".auto_fix_in_progress_since // \"\"" $BASELINE_FILE 2>/dev/null)
   if [ -n "$AFIP" ] && { [ -z "$LAST_DEP" ] || [ "$(to_ts "$LAST_DEP")" -le "$(to_ts "$AFIP")" ]; }; then
     echo "⏭️ 自动修复进行中（自 $AFIP 起），尚无修复后的新部署 → 跳过本 tick"
@@ -153,8 +176,9 @@ if [ -z "$TARGET_FLAG_VALUE" ]; then
 fi
 
 # 2.5 读 build 号 + 判定「测试报告生成门」（AI测试报告仅在 /sprint-autopilot 流水线驱动时生成）
-# current_build 只由 autopilot 3.1.5 铸造 → 存在 == autopilot 流水线驱动；缺失 == 直接调用（standalone/独立 loop/他命令）
+# BUILD只提供部署身份，不产生授权。
 BUILD=$(jq -r ".versions.\"$TARGET_VERSION\".current_build // empty" $BASELINE_FILE 2>/dev/null)
+_pin_build "$BUILD" || exit $?
 # 2.5.1 先判可写性，再认领驱动/归档待确认项；--once/--target 只豁免去重，不豁免定稿锁。
 NEED_HANDOFF=0
 if [ -n "$BUILD" ]; then

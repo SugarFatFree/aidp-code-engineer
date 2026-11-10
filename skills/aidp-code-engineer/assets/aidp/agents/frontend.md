@@ -15,8 +15,10 @@
 
 **派单入口与共享写入（先于下文角色流程）**：
 
-- 派单准入先按 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 执行。输入包括 `contract_path/contract_revision`、`interface_documents`、`write_set`、`work_order`；前端资产、生成物和测试也须在该写集内。
-- 日常 S/M 显式读取契约卡，核版本/Sprint/开发者身份及 `status=approved`、`approved_revision=contract_revision`，并与派单修订一致。缺卡、未批准、修订失配或依赖未交付时不开始实现，回传具体缺口；实现中发生契约变更先交主流程修订重派，不能自行批准。
+**前端派单准入**：先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 的父策略围栏，默认只实现与静态验证；其它动作据授权启用，formal再核契约。
+
+- **仅 formal**：派单准入先按 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 执行。输入包括 `contract_path/contract_revision`、`interface_documents`、`write_set`、`work_order`；前端资产、生成物和测试也须在该写集内。
+- formal S/M 的契约身份及批准修订校验见 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`；未放行不开始实现。
 - **共享写入统一交主流程**：memory、baseline、四族台账、bugfix 记录、事实清单、设计令牌/原型内容基线、`子Agent必读.md` 只读；本 Agent 在 `work_order` 回传 BUG/来源、偏差、待登记内容与证据。下文“更新/追加/留档”这些共享资产均按此交接，不直接写。独立调用时由本次主会话承担主流程登记，不能把权限扩大给并行 worker。
 - 默认不自行 git add/commit/push，也不自行操作 Git index（含 git rm）或关闭 Sprint；沿用父任务分支。用户显式授权 worker Git 写入时仍须串行交接索引与白名单。新增公共主题/图标索引等先核是否属于本次独占写集，有交集则交主流程串行调度。
 
@@ -48,7 +50,7 @@
 
 | 文件 | 操作类型 | 写入时机 |
 |------|---------|---------|
-| `code/frontend/{子项目}/` 下的前端源代码| 创建/修改 | Sprint 开发阶段 |
+| `code/frontend/{子项目}/` 下的前端源代码| 创建/修改 | 当前任务获准的开发阶段 |
 | 本 Agent 独占的 `work_order` | 创建/更新 | 回传开发证据、BUG 与共享文档待办；由主流程登记 |
 
 > ⚠️ **写码路径铁律（约定 18）**：源码只能落在 `code/frontend/{子项目}/` 下（`src/`、`package.json`、`vite.config.*`… 都在 `{子项目}/` 内）——**严禁**把 `src/` 直接写进 `code/frontend` 根（即便单项目也必须有 `{子项目}` 层）。`{子项目}名` 与目录由 `/sprint-dev` Phase 1.1.5 门确认/创建，本 Agent 只在其下写码。
@@ -60,10 +62,13 @@
 
 > **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
-激活后，先按调用路径选择规格，未读完适用输入不得开始工作：
+激活后，先按执行身份选择规格，未读完适用输入不得开始工作：
 
-- **日常 S/M**：先读已批准 `contract_path` 的当前修订，再读其引用的稳定技术栈、架构、原型/UI 基线与实际 `interface_documents`；M 不读取 docs Agent 尚未交付的正文，不要求固定 `02_数据库设计.md` / `03_接口设计.md`。接口/组件规格可在契约卡或合册中，缺必要规格回传主流程，不能按旧文档猜本轮接口。
-- **普通计划 / L / 独立角色**：保留完整正式规格门，先读 `00_索引.md` 定位详细设计与接口章节；无索引时按真实分册读取，兼容历史裸名。无卡不能自行降为 S/M。
+- **light**：当前任务验收标准＋实际代码＋相关稳定基线；按需读接口/DB/UI事实。缺必要事实回传具体缺口，不强求正式 Sprint 文件。下文 formal 完整规格清单不用于 light。
+
+- **formal S/M**：按契约与工作单读取实际接口/设计输入，不读取 docs Agent 尚未交付的正文。
+  使用 `interface_documents` 指向的真实章节，不要求固定 `02_数据库设计.md` / `03_接口设计.md`。
+- **formal 普通计划 / L**：保留完整正式规格门，先读 `00_索引.md` 定位详细设计与接口章节；无索引时按真实分册读取，兼容历史裸名。无卡不能自行降为 S/M。
 
 下文“设计/API 设计”均指本路径已核实的规格；S/M 包括已批准卡的对应章节，不因正文固定册名再次读取成文中的文件。原型与视觉约束仍须核对，缺基线先回传工作单，由主流程安排 docs/UI 角色补齐，不自行写共享设计。
 
@@ -71,7 +76,7 @@
 必读（每次；日常 S/M 只取卡所引用的稳定基线）：
   1. memory/techContext.md                                      → 技术栈和脚手架结构
   2. memory/systemPatterns.md                                   → 代码规范和禁止事项
-正式规格（普通计划/L/独立路径；S/M 用上述已批准契约）：
+formal 正式规格（普通计划/L；S/M 用上述已批准契约）：
   3. docs/design/detail/{version}/ 的实际详细设计章节 → 模块结构和组件树
   4. interface_documents 指定的实际文件/章节（含合册） → API 契约；无清单时按索引查找
 

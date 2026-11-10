@@ -75,12 +75,18 @@ run() {
   # unittest 形态（脚手架侧）：「Ran N tests」+「OK (skipped=K)」
   line="$(grep -E '^Ran [0-9]+ tests?' "$log" | tail -1)"
   if [ -n "$line" ]; then
-    local n k
+    local n k unittest_summary
     n="$(grep -oE '[0-9]+' <<<"$line" | head -1)"
-    k="$(grep -oE 'skipped=[0-9]+' "$log" | tail -1 | grep -oE '[0-9]+' || true)"
+    # 反例会打印内层 FAILED/skipped；只取最后一次 Ran 对应的外层终态。
+    unittest_summary="$(grep -E '^(Ran [0-9]+ tests?|OK($| \()|FAILED \()' "$log" | tail -1)"
+    case "$unittest_summary" in
+      OK*|FAILED*) ;;
+      *) lost_suites+=("$title（unittest 终态缺失）"); n=0; code=1 ;;
+    esac
+    k="$(grep -oE 'skipped=[0-9]+' <<<"$unittest_summary" | grep -oE '[0-9]+' || true)"
     local uf ue
-    uf="$(grep -oE 'failures=[0-9]+' "$log" | tail -1 | grep -oE '[0-9]+' || true)"
-    ue="$(grep -oE 'errors=[0-9]+' "$log" | tail -1 | grep -oE '[0-9]+' || true)"
+    uf="$(grep -oE 'failures=[0-9]+' <<<"$unittest_summary" | grep -oE '[0-9]+' || true)"
+    ue="$(grep -oE 'errors=[0-9]+' <<<"$unittest_summary" | grep -oE '[0-9]+' || true)"
     total_pass=$((total_pass + n - ${k:-0} - ${uf:-0} - ${ue:-0}))
     total_fail=$((total_fail + ${uf:-0} + ${ue:-0}))
     total_skip=$((total_skip + ${k:-0}))
@@ -97,11 +103,18 @@ run "test_commit_gate.py（提交前门禁 + 提交/推送分类）" python3 .ai
 run "test_alloc_id.py（原子编号分配与作用域）" python3 .aidp/scripts/tests/test_alloc_id.py
 run "test_test_ledger.py（测试复用与审查差量）" python3 .aidp/scripts/tests/test_test_ledger.py
 run "test_test_scope.py（Sprint 单测推导 / run-scope 逐套记账 / worktree 全量复用）" python3 .aidp/scripts/tests/test_test_scope.py
+run "test_entry_context.py（轻量与正式身份继承及完成门）" python3 .aidp/scripts/tests/test_entry_context.py
+run "test_execution_policy.py（动作授权、预算及等价证据边界）" python3 .aidp/scripts/tests/test_execution_policy.py
+run "test_scope_performance.py（范围缓存、共享计划与合批性能）" python3 .aidp/scripts/tests/test_scope_performance.py
+run "test_development_scope.py（开发前后统一风险与成本判据）" python3 .aidp/scripts/tests/test_development_scope.py
+run "test_sprint_discovery.py（Sprint编号、启动和关闭发现一致性）" python3 .aidp/scripts/tests/test_sprint_discovery.py
+run "test_light_task_flow.py（无Sprint命令串联与状态隔离）" python3 .aidp/scripts/tests/test_light_task_flow.py
 run "test_build_unit_test.py（部署提交隔离执行与缓存）" python3 .aidp/scripts/tests/test_build_unit_test.py
 run "test_unit_report.py（双路报告与终态口径）" python3 .aidp/scripts/tests/test_unit_report.py
 run "test_aiauto_test_join.py（两路汇总与失败登记）" python3 .aidp/scripts/tests/test_aiauto_test_join.py
 run "test_aiauto_parallel.py（两路真实并发与报告交接）" python3 .aidp/scripts/tests/test_aiauto_parallel.py
 run "test_notify.py（里程碑通知：渠道渲染 / 签名 / 回落 / 退出码）" python3 .aidp/scripts/tests/test_notify.py
+run "test_delivery_boundaries.py（通知诊断与交付补偿保持报告不可变）" python3 .aidp/scripts/tests/test_delivery_boundaries.py
 run "cicd_watch.py --selftest（CICD 多提供方监听：脚本自带离线自测）" python3 .aidp/scripts/cicd_watch.py --selftest
 run "test_agent_sync.py（多 Agent 装配：agent_env / agent_sync）" python3 .aidp/scripts/tests/test_agent_sync.py
 run "test_guard_scripts.py（确定性护栏全套）" python3 .aidp/scripts/tests/test_guard_scripts.py

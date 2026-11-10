@@ -1,5 +1,7 @@
 # 04 — Agents 详细规范
 
+> 任务身份与轻量能力复用以 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 为准；本指南不额外定义 Sprint 准入流程。
+
 > **文档定位**：本文档是 Agent 角色体系的**总览和索引**。
 > 下游 Agent 指令位于 `{{AIDP_HOME}}/agents/`，AI Agent 运行时从该目录读取（仅 Claude 为 `.claude/`，有 Codex / DSH 为 `.agents/`）。下方链接指向下游已安装的运行目录；模板仓库中的维护源位于 `.aidp/agents/`。
 > 本文档**不再重复** Agent 内部细节，仅提供角色职责、协作关系、调用规则的全局视图。
@@ -19,7 +21,7 @@
 
 ## 1. Agent 角色体系
 
-AIDP 定义了 **7 个业务 Agent + 1 个合规 Agent + 2 个版本规划审计 Agent（共 10 个）**，每个角色专职一类工作，通过文档交接（不靠对话）协作：
+AIDP 定义了 **7 个业务 Agent + 1 个合规 Agent + 2 个版本规划审计 Agent（共 10 个）**，每个角色专职一类工作，formal 通过正式规格交接，light 通过当前任务验收标准、具体写集与机器证据协作：
 
 ```
 PM Agent         需求管理者

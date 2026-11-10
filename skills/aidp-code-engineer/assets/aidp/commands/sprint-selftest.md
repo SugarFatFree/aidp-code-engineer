@@ -1,5 +1,28 @@
 # /sprint-selftest — 研发自测方案 + 自测用例生成
 
+## 执行策略入口
+
+先读 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，按真实来源准备POLICY_ARGS；生成与QR配方执行 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+
+```bash
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-selftest \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
+  --execution-context "$EXECUTION_CONTEXT" --phase route --json || exit $?
+```
+
+只执行本次document范围；light不更新Sprint activeContext。未授权独立docs-audit不派发，生成Skill的最低自检边界按共用配方如实披露。
+
+
 你正在执行 `/sprint-selftest` 命令，为当前版本生成**研发自测方案 + 人工自测用例 + 「测试环境与账号」配置**。
 
 **★ 本命令是 skill 编排器**：调用 `dev-manual-testcase` skill 从研发需求 / 详细设计 / 研发执行计划生成研发自测方案 + 自测用例；并生成 `/sprint-aiauto-test` 用的「测试环境与账号」配置文件。研发自测是版本规划四类产物之一，与其余三类**对称**（研发需求 → `/sprint-requirements`、详细设计 → `/sprint-design`、研发执行计划 → `/sprint-plan`、**研发自测 → 本命令**），由独立命令承载——**是 `dev-manual-testcase` 生成研发自测方案 + 自测用例 + 测试环境与账号的唯一信源入口**（`/version` 与 `/sprint-plan` 不再内嵌研发自测生成，一律委派本命令）。
@@ -14,7 +37,7 @@
 - `--unattended`（可选）：★ **无人值守上下文标记**（由 `/version`·`/sprint-autopilot`·`/sprint-test` 等上游透传）——本命令内**一切 `AskUserQuestion` 与"暂停待用户裁决"一律不弹**，改按下方各门的确定性默认自动推进并留痕；**绝不静默跳过质量门**，只是把"问人"换成"按保守默认走 + 记录"。⛔ 上游传了而本命令不认，flag 会被静默丢弃、在无人值守链里挂死。
   - **★ 本命令是四者中最关键的一个**：它调的 `dev-manual-testcase` 第零步是 **SKILL 级强制询问**（测试方案 8 项 + chrome 连接 5 组信息），无人值守下无人可答即挂死。故命令端**必须在调用 prompt 里显式声明非交互语境 + 给出每项取值来源**：① 方案 8 项 → 走 SKILL 自身的非交互默认分支；② chrome 5 组连接信息 → 依次取 `01_测试环境与账号.md`（约定 38 机器消费权威）→ 上一版本同名文件继承 → PRD `autopilot_decisions` → 仍缺则**按 SKILL 占位规则写 `{待用户填写: <字段中文名>}` 并登记 T-NNN**，产出头部列明缺哪几项（`check_testdata_prereq.py` 只认该格式），⛔ 绝不静默 bake 占位值当成已配置。
   - Step 2 硬门 ❌ 与 Step 3 `--capture` 冲突门 → 无人值守下不弹窗：前者返回失败信号交上游，后者按"追加新行 + 备注来源时间、不动旧行"处置（同约定 38 细则 38.4 无人值守分支）。
-- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `dev-manual-testcase` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/testing/{version}/研发自测/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+- `--qr-level=scripts|critical|full`：由AIDP调用层结合父授权计算有效QR_LEVEL；无docs-audit取scripts。始终向 `dev-manual-testcase` 传有效qr_level，返回后parse-handoff的expect-level保持一致。详见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 - `--prd-presence-table=<路径>`（可选，**只由 `/version` 传**）：传给 SKILL `prd_presence_mode=table` + `prd_presence_table=<路径>`——`[PRD存在性]` 只对表中「未承接」行补用例（表由 `prd_presence_table.py` 从研发需求表 D 生成）。
 - `--module-case-cap=N`（可选，**只由 `/version` 传**，L 档 30）：原样传 `module_case_cap`。
 - `--matrix-scope=p0`（可选，**只由 `/version` 传**，L 档）：原样传 `matrix_scope`。
@@ -48,7 +71,7 @@
 
 - **全量生成**（首次规划 / 主文档重生成）→ prompt 里写 `qr_mode = A`。
 - **增量补充**（`--supplement` 补跑 / `/sprint-dev` 累进）→ 写 `qr_mode = B` + `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
-- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出 Δ 就退回全量并注明，**宁可多算一个专题、绝不漏传播一处语义**。本 SKILL 的**用例生成**本就分全量模式 A / 增量模式 B，`qr_mode` 必须与生成模式**取同一个值**——增量只产 1–2 个套件却按全量 PRD 做覆盖率分母，必然误报覆盖不足。
+- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出Δ如实记录范围未知，在有效QR_LEVEL的必要校验内保守核对，不扩为full或独立docs-audit。本 SKILL 的**用例生成**本就分全量模式 A / 增量模式 B，`qr_mode` 必须与生成模式**取同一个值**——增量只产 1–2 个套件却按全量 PRD 做覆盖率分母，必然误报覆盖不足。
 
 > 关键规则：本步骤是 **skill 编排器**——用 `Skill` 工具调 `dev-manual-testcase`，从研发需求 / 详细设计 / 研发执行计划生成研发自测方案 + 自测用例；SKILL 规则为单一信源（约定 21 不复述、不改判定），命令端只传路径上下文 + 落盘核验归一。**必须先输出 🚀 启动横幅再调 SKILL，横幅后必有 `Skill` 调用，否则视为跳过本步骤（违规）**；调用返回后必须跑 bash 落盘核验 + 研发自测方案归一——**缺任何用例文档 / 缺研发自测方案 = 硬阻断 `exit 1`**。
 
@@ -72,7 +95,7 @@
 >
 > ⚙️ **定位（按约定 21）**：用例的结构 / 格式 / 溯源 / 方案闭环 / 数量基线 / 还原度 / 零残留断言判定**一律以 `dev-manual-testcase` Quality Review 为单一信源**；本门只做两件事——① 派子 Agent 原样跑 SKILL 脚本复核、② 查 SKILL 不管的项目级落盘约定。
 
-**① SKILL 脚本复核（派独立子 Agent）**：按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参如下：
+**① SKILL脚本复核**：先按共用配方复用同hash的最低生成自检证据，只有缺失/失效项才派单；父document动作/agents预算先过围栏，非Critical语义审计不由本步追加。按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参如下：
 - `check_case_stats.py` 显式传 `--scale {档位}`（本命令 `--scale=` 入参 / `/version` Step 2.4.1.5 判档；均无则 L）；收到 `--module-case-cap=N` / `--prd-presence-table=<路径>` 时**同时**传 `--module-case-cap N` / `--prd-presence-table <路径>`（与 SKILL 内判定同口径；对账表有未覆盖行 = exit 1）；
 - `--issue-record` 按序取**上游研发需求** `docs/requirements/{version}/研发需求/01_研发需求.md` → `00_研发需求.md` → 本目录 `99_待澄清问题清单.md`，均无则不传（⛔ 首选不得是本目录自产清单：那是自己查自己）；
 - 收到 `--module-kind=<值>` 时 `check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 传 `--module-kind <值>`（不传则 `[非交互]` 标记不被认可）；
@@ -136,7 +159,7 @@ CROSS_99=$(ls "$TEST_DIR"/99_跨系统验证清单.md 2>/dev/null | wc -l)      
 2. 逐项填"🔍 研发自测用例输出前回检"块
 3. **任一 Fail → 立即停下**，要求 skill 重跑或人工补齐；不得用"基本通过"等模糊措辞绕过
 
-**延期用例收口**：本命令被显式调用即应生成用例，不能因 baseline 中的 `aiauto_test_required=false` 跳过。完成生成、格式/QR 回检并清掉用例增量条目后，读取 `check_case_ledger_pending.py --version {version} --json` 的 `deferred_sprints[]`，对每个编号执行 `python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version {version} --sprint {NNN} --complete --reason "正式用例已生成并通过QR"`；最后复跑读数门。不能清掉未生成的 Sprint 义务，不能直接编辑状态冒充收口。
+**延期用例收口**：本命令被显式调用即应生成用例，不能因 baseline 中的 `aiauto_test_required=false` 跳过。完成生成、格式/QR 回检并清掉用例增量条目后，读取 `check_case_ledger_pending.py --version {version} --json` 的 `deferred_sprints[]`，对每个编号执行 `python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version {version} --sprint {NNN} --complete --reason "正式用例已生成并通过QR"`；对同一读数中的 `deferred_tasks[]`，仅在本次实际生成并通过回检的任务范围内执行 `python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version {version} --task-id <机器任务ID> --complete --reason "正式用例已生成并通过QR"`，不创建或改写 Sprint。最后复跑读数门；未完成的任务或 Sprint 义务均须保留，不能直接编辑状态冒充收口。
 
 ## 输出
 

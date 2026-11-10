@@ -28,10 +28,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import subprocess
+import tempfile
 import re
 import sys
 from pathlib import Path
+
+_script_dir = str(Path(__file__).resolve().parent)
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+from planning_state import content_bytes
 
 REPORT_GLOB = "version-output-audit-*.md"
 # 八项审计的小节标记。报告须命中多数项才算"有内容"，命中少数 = 空壳/半截。
@@ -73,6 +82,148 @@ def unsettled_handoffs(root: Path, version: str) -> list:
             found.append({"file": path.relative_to(root).as_posix(),
                           "skill": block.get("skill", "?"), "deferred_dims": dims})
     return found
+
+
+def _local(root: Path, name: str) -> Path:
+    path = root / name
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"证据路径超出项目: {name}")
+    return path
+
+
+def _hash_files(root: Path, names: list, semantic: bool = False) -> dict:
+    values = {}
+    for name in sorted(set(names)):
+        path = _local(root, name)
+        files = sorted(path.rglob("*")) if path.is_dir() else [path]
+        if not files:
+            values[name + "/"] = "empty-directory"
+        for item in files:
+            if item.is_dir():
+                continue
+            rel = item.relative_to(root).as_posix()
+            _local(root, rel)
+            values[rel] = hashlib.sha256(content_bytes(item, semantic)).hexdigest() if item.is_file() else "missing"
+    return values
+
+
+def qr_key(artifact: str, dimension: str) -> str:
+    return hashlib.sha256((artifact + "\0" + dimension).encode()).hexdigest()
+
+
+def qr_evidence(root: Path, version: str, artifact: str, dimension: str,
+                inputs: list, params: list, result_path: str = "", owner: str = "",
+                producer: str = "", reviewer: str = "", expected: str = "") -> dict:
+    """只消费调用层保存的真实逐维 JSON；存在报告不等于每个维度都审过。"""
+    current = {"artifact": artifact, "dimension": dimension,
+               "content": _hash_files(root, [artifact]), "inputs": _hash_files(root, inputs, semantic=True),
+               "params": sorted(params)}
+    fingerprint = hashlib.sha256(json.dumps(current, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    key = qr_key(artifact, dimension)
+    path = root / "memory" / version / ".planning-qr" / (key + ".json")
+    if not result_path:
+        cached = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        evidence = cached.get("evidence", {})
+        hit = (cached.get("subject") == current and bool(evidence)
+               and evidence == _hash_files(root, list(evidence)))
+        return {"action": "reused" if hit else "missing", "artifact": artifact,
+                "dimension": dimension, "owner": cached.get("owner") if hit else None,
+                "evidence": evidence if hit else {}, "fingerprint": fingerprint, "ok": bool(hit)}
+    if expected != fingerprint:
+        raise ValueError("审查派单时的 fingerprint 缺失或已变化，必须按当前内容/输入重审")
+    if not inputs or not params or any(v in ("missing", "empty-directory") for v in current["content"].values()):
+        raise ValueError("QR 证据必须绑定已有产物、必要 inputs 和判据/调用参数")
+    skill, sep, dim = dimension.partition(":")
+    if not sep or owner not in (f"skill:{skill}", f"handoff:{skill}"):
+        raise ValueError("维度须为 skill:QR-NN，owner 为 skill:<skill> 或 handoff:<skill>")
+    if not producer or not reviewer or (owner.startswith("handoff:") and producer == reviewer):
+        raise ValueError("移交审查必须来自与产物生成者不同的独立 reviewer")
+    result = json.loads(_local(root, result_path).read_text(encoding="utf-8"))
+    dims = result.get("dims", [])
+    matches = [d for d in dims if isinstance(d, dict) and d.get("id") == dim]
+    if result.get("overall") not in ("pass", "warn") or len(matches) != 1 or matches[0].get("verdict") != "pass":
+        raise ValueError("缺少该维度的可信 pass 结果；失败/未核验不能缓存")
+    report = result.get("report_path", "")
+    if not report or not _local(root, report).is_file() or not _local(root, report).read_bytes().strip():
+        raise ValueError("逐维结果必须引用已落盘的非空报告")
+    record = {"subject": current, "owner": owner, "producer": producer, "reviewer": reviewer,
+              "input_paths": inputs, "params": params,
+              "evidence": _hash_files(root, [result_path, report])}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False, encoding="utf-8") as out:
+        json.dump(record, out, ensure_ascii=False, indent=2)
+        temporary = out.name
+    os.replace(temporary, path)
+    return {"action": "redone", "ok": True, "artifact": artifact, "dimension": dimension, "owner": owner}
+
+
+def settle_handoff(root: Path, version: str, index: str, skill: str, level: str, home: Path) -> dict:
+    """调用依赖原协议校验清单，逐 artifact×dimension 命中才允许原工具清块。"""
+    expected = {p.format(v=version) for p in HANDOFF_INDEXES}
+    if index not in expected or skill not in ("ux-logic-extractor", "dev-logic-architect",
+                                             "dev-execution-planner", "dev-manual-testcase"):
+        raise ValueError("非规划 SKILL 或非版本移交索引")
+    tool = home / "skills" / skill / "scripts/qr_orchestration.py"
+    settled = root / "memory" / version / ".planning-qr" / f"settled-{skill}.json"
+    if settled.is_file() and not any(h["file"] == index for h in unsettled_handoffs(root, version)):
+        # 已清块后的新增/失效证据仍按原清单协议补审，不让缺块变成永久豁免。
+        previous = json.loads(settled.read_text(encoding="utf-8"))
+        if previous.get("level", level) != level:
+            raise ValueError("补审必须使用原移交档位")
+        restored = subprocess.run([sys.executable, str(tool), "handoff", "--qr-level", level,
+                                   "--write", str(_local(root, index))], capture_output=True, text=True)
+        if restored.returncode:
+            return {"ok": False, "missing": ["handoff-restore-failed"]}
+    parsed = subprocess.run([sys.executable, str(tool), "parse-handoff", str(_local(root, index)),
+                             "--expect-level", level], capture_output=True, text=True)
+    if parsed.returncode:
+        return {"ok": False, "missing": ["handoff-invalid"], "detail": parsed.stdout + parsed.stderr}
+    handoffs = [h for h in unsettled_handoffs(root, version) if h["file"] == index]
+    if not handoffs:
+        return {"ok": True, "reused": [], "missing": []}
+    if any(h["skill"] != skill for h in handoffs):
+        raise ValueError("清单 SKILL 与请求不一致")
+    artifacts = sorted(p for p in _local(root, index).parent.rglob("*.md") if p.name != "00_索引.md")
+    missing, reused = [], []
+    for artifact in artifacts:
+        rel = artifact.relative_to(root).as_posix()
+        for dim in handoffs[0]["deferred_dims"]:
+            dimension = skill + ":" + dim
+            cached = root / "memory" / version / ".planning-qr" / (qr_key(rel, dimension) + ".json")
+            record = json.loads(cached.read_text(encoding="utf-8")) if cached.is_file() else {}
+            hit = qr_evidence(root, version, rel, dimension, record.get("input_paths", []), record.get("params", []))
+            (reused if hit["ok"] else missing).append({"artifact": rel, "dimension": dimension})
+    if not artifacts or missing:
+        return {"ok": False, "reused": reused, "missing": missing or ["no-artifacts"]}
+    settled.write_text(json.dumps({"index": index, "level": level, "skill": skill,
+                                   "subjects": reused}, ensure_ascii=False), encoding="utf-8")
+    cleared = subprocess.run([sys.executable, str(tool), "handoff", "--qr-level", "full", "--write",
+                              str(_local(root, index))], capture_output=True, text=True)
+    return {"ok": cleared.returncode == 0, "reused": reused, "missing": [],
+            "detail": cleared.stdout + cleared.stderr}
+
+
+def stale_settlements(root: Path, version: str) -> list:
+    stale = []
+    directory = root / "memory" / version / ".planning-qr"
+    for path in directory.glob("settled-*.json"):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        subjects = record["subjects"]
+        origin = {"index": record["index"], "skill": record.get("skill", "cached-evidence"),
+                  "level": record.get("level", "critical")}
+        covered = {s["artifact"] for s in subjects}
+        current = {p.relative_to(root).as_posix() for p in _local(root, record["index"]).parent.rglob("*.md")
+                   if p.name != "00_索引.md"}
+        for added in sorted(current - covered):
+            stale.append({**origin, "artifact": added, "dimension": "unreviewed-artifact"})
+        for subject in subjects:
+            key = qr_key(subject["artifact"], subject["dimension"])
+            evidence = directory / (key + ".json")
+            data = json.loads(evidence.read_text(encoding="utf-8")) if evidence.is_file() else {}
+            if not qr_evidence(root, version, subject["artifact"], subject["dimension"],
+                               data.get("input_paths", []), data.get("params", []))["ok"]:
+                stale.append({**origin, **subject})
+    return stale
 
 
 def _audit_dir(root: Path, version: str) -> Path:
@@ -118,7 +269,21 @@ def scan(root: Path, version: str, skip_audit: bool = False, fast: bool = False)
         "findings": [],
     }
     handoffs = unsettled_handoffs(root, version)
-    result["unsettled_handoffs"] = handoffs
+    stale = stale_settlements(root, version)
+    # 发布旧调用方按未结清份数分流；清块后的过期证据仍作为真实欠账暴露。
+    debts = {}
+    for item in stale:
+        index = item["index"]
+        debt = debts.setdefault(index, {"file": index, "skill": item["skill"], "qr_level": item["level"],
+                                        "deferred_dims": [], "reason": "qr-evidence-stale"})
+        debt["deferred_dims"].append(item["dimension"])
+    result["unsettled_handoffs"] = handoffs + list(debts.values())
+    cases = root / f"docs/testing/{version}/研发自测"
+    unresolved = [p.relative_to(root).as_posix() for p in cases.rglob("*.md")
+                  if "⟨PLAN-REF:" in p.read_text(encoding="utf-8", errors="replace")]
+    if unresolved:
+        result["findings"].append({"kind": "plan-ref-unresolved", "detail": "计划引用尚未回填：" + ", ".join(unresolved)})
+        return result
     if skip_audit:
         result["ok"] = True
         result["findings"].append({
@@ -163,6 +328,10 @@ def scan(root: Path, version: str, skip_audit: bool = False, fast: bool = False)
             })
     result["substantive"] = substantive
     result["ok"] = bool(substantive)
+    if stale:
+        result["findings"].append({"kind": "qr-evidence-stale", "detail": stale})
+        if not fast:
+            result["ok"] = False
     if handoffs:
         result["findings"].append(_handoff_finding(handoffs, fast))
         if not fast:
@@ -236,6 +405,20 @@ def main(argv=None) -> int:
     ap.add_argument("--fast", action="store_true",
                     help="对应 /version --fast：移交维度审计按设计延后，放行但留痕（发布前须结清）")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--qr-action", choices=("get", "put", "settle"))
+    ap.add_argument("--artifact")
+    ap.add_argument("--dimension")
+    ap.add_argument("--input", action="append", default=[])
+    ap.add_argument("--param", action="append", default=[])
+    ap.add_argument("--result", default="")
+    ap.add_argument("--fingerprint", default="", help="QR 派单前 get 返回的指纹，put 时防止审查期间输入变化")
+    ap.add_argument("--owner", default="")
+    ap.add_argument("--producer", default="")
+    ap.add_argument("--reviewer", default="")
+    ap.add_argument("--index")
+    ap.add_argument("--skill")
+    ap.add_argument("--expect-level", choices=("scripts", "critical", "full"), default="critical")
+    ap.add_argument("--aidp-home", default=str(Path(__file__).resolve().parents[1]))
     ap.add_argument("--self-check", action="store_true")
     args = ap.parse_args(argv)
     if args.self_check:
@@ -247,8 +430,26 @@ def main(argv=None) -> int:
     root = Path(args.root).resolve()
     if not root.is_dir():
         ap.error("--root 必须是目录")
-    result = scan(root, args.version, args.skip_audit, args.fast)
-    if args.json:
+    if not re.fullmatch(r"[Vv]\d+(?:\.\d+){0,2}", args.version):
+        ap.error("版本号须为 V主[.次[.补丁]]")
+    try:
+        if args.qr_action == "settle":
+            if not args.index or not args.skill:
+                ap.error("settle 必须提供 --index / --skill")
+            result = settle_handoff(root, args.version, args.index, args.skill, args.expect_level,
+                                    Path(args.aidp_home).resolve())
+        elif args.qr_action:
+            if not args.artifact or not args.dimension or (args.qr_action == "put" and not args.result):
+                ap.error("QR get/put 须提供 --artifact / --dimension；put 另须 --result")
+            result = qr_evidence(root, args.version, args.artifact, args.dimension, args.input, args.param,
+                                 args.result if args.qr_action == "put" else "", args.owner,
+                                 args.producer, args.reviewer, args.fingerprint)
+        else:
+            result = scan(root, args.version, args.skip_audit, args.fast)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    if args.json or args.qr_action:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif result["ok"] and not result["findings"]:
         print(f"[OK] 版本规划产物审计已落地：{'、'.join(result['reports'])}")

@@ -18,11 +18,31 @@
 
 `python3 {{AIDP_HOME}}/scripts/alloc_id.py --kind C --count 5 --owner orchestrator --version V1.0.0 --scope changes --json` 返回 `ids/start/end` 连续号段，锁内同时读取已有定义与 `memory/.aidp/id-alloc.jsonl`。C 四族用 changes，同事件跨族复用；测试缺陷 C 用 bugs；BUG/REQ/Q/D/ADR/TC 也支持，ADR 项目级不带版本。`--prefix REQ-V1.0.0` 或 `TC-模块` 保持项目既有编号形态。`--check --json` 供 commit_gate 与重号复核，实际多定义仍报错、引用与未使用空洞不报错。损坏账本拒绝分配；锁保证同 checkout 原子，不承诺跨 clone 分布式锁。`--self-check` 包含重号阳性与并发锁验证。
 
+## planning_state.py — 补件写集与五阶段恢复
+
+规划补件/恢复协议见 `{{AIDP_HOME}}/flows/version/planning-3b.md`；质量责任与证据复用见 `planning-7b.md`。`scope` 只读输出缺失目标、必要输入/索引/引用及只读边界，`begin-repair` 冻结本轮写集，`check-repair` 拒绝无关产物被重写。`start/finish` 记录计划与用例的真实结果，`refs` 执行映射导出、引用回填与核验，`status` 明确返回 reused/redone/missing；输入变化使依赖节点失效，repair 不代替 force-replan。
+
+`check_version_audit_landed.py --qr-action get|put|settle` 复用既有质量移交：证据绑定产物/维度/必要输入与检查输出，移交 reviewer 不得冒充 producer；缺项或过期继续出现在收口门。版本审计仍直接读产品 PRD 原文，不能以对账表替代。
+
+## entry_context.py — 任务身份与能力路由
+
+最外层 `resolve` 决定 light/formal，`route` 给出当前身份的适用能力；普通自然语言入口默认 light，不因命令名或已有 Sprint 改为 formal。嵌套、修复和续跑使用同一 `--execution-context`。机器状态落本地运行目录，不是人工审批卡。
+
+协议与真实调用见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。正式批量父任务按明确 Sprint `fork`，首次正式取号后 `bind-sprint`；两者都不替原流程取号。轻量 `check/complete` 只核本轮要求的动作及当前任务族义务，不关闭/归档/重置 Sprint。只读检测结束与质量通过分开；提交、推送、部署尚无执行证据时，`complete` 保留待执行动作。复杂度与正式身份独立判断。
+
+## execution_policy.py — 动作授权与共享预算
+
+普通开发默认实现与轻量静态自检；测试、独立审查、完整 CVL、文档审计、全量回归、迁移演练、部署工具开发及 Git/部署动作分别取授权。来源须是本轮真实用户要求、显式命令的公开职责或有用户选择证据的项目策略。子任务只能继承或缩小权限，共享根任务预算；未要求的动作是 NOT_REQUESTED。同根因、同输入的工具错误停止盲目重试，实际执行结果与预算结算分别保留。配置骨架不默认开启额外动作。
+
+## project_inventory.py / development_scope.py / sprint_inventory.py — 共同发现与判据
+
+`project_inventory.py` 统一主仓、子模块、源码与测试根的发现，区分源码、显式真实输入和运行产物；内容变化不能仅凭 mtime 判断。`development_scope.py` 用真实差异区分开发风险与文件成本，缺少可信 SQL 起点时保留 unknown；兼容 ALTER、薄调用文件数量不自动提升为高风险。`sprint_inventory.py` 供规划、开工和关闭检查共享发现结果，计划、启动、验收、归档分别保留证据，未来计划不等于当前在途。
+
 ## test_ledger.py / test_scope.py — Sprint 范围与可追溯复用
 
-Sprint 单测的范围推导、执行、verify 与 record-review 协议唯一信源为 `{{AIDP_HOME}}/commands/sprint-test.md` Step 2.6 / Step 7。范围从 Sprint 起点 commit、实际改动与契约写集确定性生成；执行前重推清单并校验 hash。直接使用任意命令的 sprint PASS 不能冒充带范围证据的验收。失败、未执行不能通过；无对应单测列 Minor，零运行集记 EMPTY。
+轻量 task 单测继承 `--execution-context`，证据与 formal Sprint 隔离，机器验收 JSON 可放上下文本地目录；无需 Sprint 编号或契约卡。正式 Sprint 单测的范围推导、执行、verify 与 record-review 协议唯一信源为 `{{AIDP_HOME}}/commands/sprint-test.md` Step 2.6 / Step 7。范围从 Sprint 起点 commit、实际改动与契约写集确定性生成；执行前核验内容、环境与工具指纹，同一冻结树复用已验证的依赖分析，锁等待后再次核验。直接使用任意命令的 sprint PASS 不能冒充带范围证据的验收。失败、未执行不能通过；无对应单测列 Minor，零运行集记 EMPTY。
 
-`test_ledger.py` 保留 argv/cwd/env_id/inputs 与树证据；未受后续变动影响的结果可显式 CARRIED，保留 source_run_id，不能伪装成当前树重跑。命令、依赖、环境变化使对应证据失效。`--self-check` 可做轻量验证。
+`test_ledger.py` 保留 argv/cwd/env_id/inputs 与树证据；完整 plan/snapshot 单存，run 引用 plan_id/item_id 并在读取时校验。兼容 runner 可在同模块、同环境内合批，普通 Python 脚本不会把后续文件当参数假运行。资源映射与未知依赖须明示覆盖缺口，超预算不自动扩成全仓。未受后续变动影响的结果可显式 CARRIED，保留 source_run_id，不能伪装成当前树重跑。命令、依赖、环境变化使对应证据失效；只追加动作授权不使已有同输入证据失效。工具错误、环境不可用、业务断言失败分别记录。`--self-check` 可做轻量验证。
 
 ## build_unit_test.py / unit_report_merge.py / aiauto_test_join.py — build 两路测试
 
@@ -319,7 +339,15 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 Agent：`AIDP_AGENT` > `memory/aidp-config.yaml` 的 `scheduler.agent`（`auto` 取 `agent_env.py detect` 第一个）；执行模板（`{prompt}` 占位）：`AIDP_AGENT_EXEC` > `scheduler.exec.<agent>` > 内置默认（Claude Code `claude -p --permission-mode acceptEdits {prompt}`、Codex `codex exec --sandbox workspace-write {prompt}`；DeepSeek Harness 无内置默认、须配置，写法以所用版本官方文档为准）。
 
+## 通知诊断与报告补交付
+
+`notify.py --check-config --json` 只做本地字段/环境/可执行条件检查，不发探测消息。通用 schema 齐全、当前本地 ready、实际 delivery 是不同事实；未知私有目标由下游维护，升级不猜测或覆盖自定义渠道。
+
+`emit-report.py delivery-repair` 仅记录既有报告的上传结果或查询交付台账，不改定稿测试事实，不重跑测试。`notify.py --report-kind exec|test` 消费真实交付记录，上传失败回落仓库路径时明确访问限制。完整可执行配方见 `{{AIDP_HOME}}/templates/reports/README.md`；不自动附加 ZIP 或触发真实外发。
+
 ## aidp_scheduler.py — 7×24 操作系统调度装配（开发链路 + 测试链路 + 独立 watchdog）
+
+安装系统任务须用户明确授权，长期运行能力不构成默认安装许可。`agent_loop.sh` 硬时限会终止本轮 Agent 进程（不只是告警），持久阶段/任务证据用于后续轮恢复；用 `aidp_scheduler.py status --json` 查看实际安装周期与心跳，按原入口携带任务上下文续跑。
 
 7×24 的运行载体：为**开发链路**（`sprint-autopilot`）与**测试链路**（`sprint-aiauto-test`）各装一个用户级定时任务，分别调用 `agent_loop.sh --once <命令> --unattended`；第三条独立 watchdog 任务默认每 5 分钟巡检，即使两条链路都从未启动也可在宽限期后告警。平台自动选择：Linux `systemd --user` timer（无 systemd 时 crontab）、macOS launchd、Windows 输出 `schtasks` 命令供手工执行。
 `watchdog --scheduled` 做独立心跳巡检：首次无心跳超过宽限期，或已有心跳超过 `scheduler.stale_cycles × 周期` → 写本地告警台账 `memory/.aidp/alerts.jsonl` 并经 `notify.py --alert` 播报。另判 **`hung`（挂死）**：链路已 stale 但互斥锁仍被持有、且持锁时长超过 `max(stale 阈值, 有效 tick_max_seconds + 180s, 1h)` → 写 `loop-tick-hung` 告警。⛔ 这一档必须有：Agent 进程挂死时锁被永久持有，之后每次调度都被 `agent_loop.sh` 的 `flock -n` 跳过，而 watchdog 只按「持锁 = 正在跑」判 `running` —— 于是永不 stale、零告警、整条链路静默停摆（tick 内部的 stuck 熔断救不了：tick 根本没开始）。手动调用不对尚无心跳的链路倒计时；会话内 `/loop` 仅适合交互式短期使用。

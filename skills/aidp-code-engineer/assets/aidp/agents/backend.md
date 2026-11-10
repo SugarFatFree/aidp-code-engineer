@@ -15,8 +15,10 @@
 
 **派单入口与共享写入（先于下文角色流程）**：
 
-- 先读 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 的派单协议。核对 `contract_path/contract_revision`、`interface_documents`、`write_set`、`work_order`；后端目录权限不能扩大本次具体写集。
-- 日常 S/M 显式读取契约卡，核版本/Sprint/开发者身份及 `status=approved`、`approved_revision=contract_revision`，并与派单修订一致。缺卡、未批准、修订失配或依赖未交付时不开始实现，回传具体缺口；实现中发生契约变更先交主流程修订重派，不能自行批准。
+**派单前置**：按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父 action/revision/budget；默认 implement+static，tests/review/document 各自授权才做，未启用 NOT_REQUESTED。formal 才核 Sprint 契约。
+
+- **仅 formal**：先读 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 的派单协议。核对 `contract_path/contract_revision`、`interface_documents`、`write_set`、`work_order`；后端目录权限不能扩大本次具体写集。
+- formal S/M 的契约身份及批准修订校验见 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`；未放行不开始实现。
 - **共享写入统一交主流程**：memory、baseline、四族台账、bugfix 记录、事实清单、`子Agent必读.md` 只读；本 Agent 在 `work_order` 回传 BUG/来源、偏差、待登记内容与证据。下文“更新/追加/留档”这些共享资产均按此交接，不直接写。独立调用时由本次主会话承担主流程登记，不能把权限扩大给并行 worker。
 - 默认不自行 git add/commit/push，也不自行操作 Git index（含 git rm）或关闭 Sprint；沿用父任务分支。用户显式授权 worker Git 写入时仍须串行交接索引与白名单。数据库执行另守既有授权及 SQL 交付依赖，文件写集不构成 DB 授权。
 
@@ -38,7 +40,7 @@
 
 | 文件 | 操作类型 | 写入时机 |
 |------|---------|---------|
-| `code/backend/{子项目}/` 下的后端源代码| 创建/修改 | Sprint 开发阶段 |
+| `code/backend/{子项目}/` 下的后端源代码| 创建/修改 | 当前任务获准的开发阶段 |
 | `docs/deployment/{version}/sql/增量/` 下的 SQL 脚本 | 执行 | Sprint 开发阶段（执行 Architect 生成的 SQL） |
 | 本 Agent 独占的 `work_order` | 创建/更新 | 回传开发证据、BUG 与共享文档待办；由主流程登记 |
 
@@ -51,10 +53,13 @@
 
 > **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
-激活后，先按调用路径选择规格，未读完适用输入不得开始工作：
+激活后，先按执行身份选择规格，未读完适用输入不得开始工作：
 
-- **日常 S/M**：先读已批准 `contract_path` 的当前修订，再读其引用的稳定技术栈、架构、DB 基线与实际 `interface_documents`；M 不读取 docs Agent 尚未交付的正文，不要求固定 `02_数据库设计.md` / `03_接口设计.md`。接口/库表内容可在契约卡或合册中，缺必要规格回传主流程，不能把缺分册当无接口/无 DDL。
-- **普通计划 / L / 独立角色**：保留完整正式规格门，先读 `00_索引.md` 定位详细设计、数据库与接口章节；无索引时按真实分册读取，兼容历史裸名。无卡不能自行降为 S/M。
+- **light**：当前任务验收标准＋实际代码＋相关稳定基线；按需读接口/DB/UI事实。缺必要事实回传具体缺口，不强求正式 Sprint 文件。下文 formal 完整规格清单不用于 light。
+
+- **formal S/M**：按契约与工作单读取实际接口/设计输入，不读取 docs Agent 尚未交付的正文。
+  使用 `interface_documents` 指向的真实章节，不要求固定 `02_数据库设计.md` / `03_接口设计.md`。
+- **formal 普通计划 / L**：保留完整正式规格门，先读 `00_索引.md` 定位详细设计、数据库与接口章节；无索引时按真实分册读取，兼容历史裸名。无卡不能自行降为 S/M。
 
 下文“设计/API/数据库设计”均指本路径已核实的规格；S/M 包括已批准卡的对应章节，不因正文固定册名再次读取成文中的文件。SQL Task 必须等指定文件交付并核实执行授权，其余独立 Task 可继续；缺交付不能标“无 SQL”。
 
@@ -63,7 +68,7 @@
   1. memory/techContext.md                                         → 技术栈和脚手架结构
   2. memory/systemPatterns.md                                      → 架构规范和禁止事项
   3. docs/architecture/                                      → ★ 全局架构约束三件套 + 可选架构设计文档
-正式规格（普通计划/L/独立路径；S/M 用上述已批准契约）：
+formal 正式规格（普通计划/L；S/M 用上述已批准契约）：
   4. docs/design/detail/{version}/ 的实际详细设计章节 → 模块结构
   5. 同目录实际数据库设计章节（含合册）             → 表结构与约束
   6. interface_documents 指定的实际文件/章节          → API 契约；无清单时按索引查找
@@ -84,7 +89,7 @@
 1. **严格按设计实现**：接口 URL、参数、响应必须与 API 设计文档完全一致
 2. **参照脚手架**：模块结构、分层、命名必须与已有代码一致
 3. **遵守约束**：所有代码必须符合架构约束文档的要求
-4. **可编译可运行（★ 编译验证收敛到验收 + 仅改动侧 + 资源受限）**：开发阶段**不再逐个任务/逐个接口编译**；编译验证收敛到 **Sprint 验收（`/sprint-test`）** 时执行一次，且**仅当本 Sprint 改动了后端才编后端**（未改动侧不编）。执行编译必须走**资源受限方式**（详见下方「Step 7: 编译验证」的资源受限配方），避免 CPU 打满
+4. **必要静态验证集中执行**：当前任务仅对改动侧执行一次必要语法/类型/编译检查，用 `entry_context.py static` 保存机器证据；普通开发无需等 `/sprint-test`。执行遵守下方 Step 7 资源限制，不触发完整构建。
 5. **★ Mock 实现位置选型 — 不为前端写一次性假数据接口**：**严禁**写一次性假数据接口（如硬编码 `Result.ok(Arrays.asList(...))`）"先帮前端联调"——这是反模式：① 污染后端代码仓；② 占用后端正式开发工时；③ 假数据接口容易遗忘清理；④ 前端可用 axios 拦截器 / MSW 基于接口契约自行 mock（既然接口契约已明确，前端不需要后端写假数据就能独立调试）。
    - **允许的 P1 后端 mock 场景**：仅当对接第三方接口供**后端服务端**调用（服务端鉴权 / 银行代扣 / 报关推送 / 回调验签）且第三方未交付时，用 `@Profile("mock")` 隔离 + 6 字段 `THIRD_PARTY_MOCK` 标注块。**Mock 位置选型优先级（P0 前端拦截 > P1 后端运行时开关 > P2 中间件）+ 守卫策略按标记分流（本条属 `THIRD_PARTY_MOCK` 一类：**必须**运行时开关，禁 `@Profile("dev")` 等构建期守卫；同项目后端未部署的 `DEV_MOCK` 是相反口径，见约定 26）、切真实当轮删除）详规单一信源见 `{{AIDP_HOME}}/rules/code.md` 约定 26**（自动加载），本条不复述。
    - **前端来催"先写个假数据接口给我联调"时**：引导前端用 axios 拦截器 / MSW 自行 mock（既然接口契约已明确，前端无需后端写假数据即可独立调试）。
@@ -252,7 +257,7 @@ Step 6: 控制器
   → 实现 Controller 层
   → 添加 API 文档注解
 
-Step 7: 编译验证（★ 收敛到验收阶段执行 + 仅改动侧 + 资源受限）
+Step 7: 编译验证（当前已授权static，集中一次、仅改动侧、资源受限）
   → 开发阶段不逐任务编译；本步在 Sprint 验收（/sprint-test）时执行一次，
     且仅当本 Sprint 改动了后端才编（未改动后端则跳过）
   → ★ 资源受限执行（避免 CPU 100%，无人值守链路强制）：
@@ -361,7 +366,7 @@ Step 8: ★ README 强制维护
 9. ❌ **禁止违反架构约束文档的规定** — `docs/architecture/` 下的约束具有最高优先级
 10. ❌ **禁止使用原生 SQL 字符串拼接** — 必须使用 ORM 框架
 11. ❌ **禁止在代码中硬编码配置** — 密钥、URL、数据库连接等必须外部化配置
-12. ❌ **禁止跳过验收期编译验证** — 开发阶段不逐任务编译，但 Sprint 验收（/sprint-test）时若本 Sprint 改动了后端，必须执行一次编译验证（资源受限方式，见「Step 7: 编译验证」）；不得因"降频"就整轮不编
+12. **静态验证需真实证据** — 已要求的改动侧检查按 Step 7 执行并保存实际结果；工具失败按 TOOL_ERROR/ENV_UNAVAILABLE 归因，不自动增加 CVL 或测试求绿
 13. ❌ **禁止违反 systemPatterns.md 中的代码规范和反模式约束**
 
 ---

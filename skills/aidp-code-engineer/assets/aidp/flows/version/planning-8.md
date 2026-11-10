@@ -1,4 +1,4 @@
-# /version · 版本规划流程详情 — 分片 8/8
+# /version · 版本规划流程详情 — 分片 8/10
 
 > 本片覆盖：**Step 2.5 progress / 2.6 activeContext / 2.7 更新版本 / 2.7.3 同步代码内应用版本号 / 2.7.4 收口上一版本变更台账 / 2.7.5 PRD快照 / 2.8 输出报告**。
 > 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
@@ -9,6 +9,14 @@
 Step 2.4.7 的独立审计是规划产物「经审计才算数」的**唯一**承载者（也是 PRD 条目去处与
 原型覆盖度两个 Critical 硬门的唯一落点）。⛔ 「跑了且通过」与「压根没跑」在终端上
 **长得一模一样**——散文管不住这种形态，故本步以确定性脚本判定：
+
+有 `.planning-state.json` 的首次并行/恢复轮，先核验五环节真实状态；无并行节点的 repair-only 状态返回 `no-parallel-run`，不强加生成步骤：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/planning_state.py --root . --version {version} status
+```
+
+exit 非 0 → 按 `reused/redone/missing` 只恢复失败/失效环节，未完成 verify 不进入开发。repair 另跑 `check-repair`，不得有 missing/unexpected。随后运行原审计门：
 
 ```bash
 python3 {{AIDP_HOME}}/scripts/check_version_audit_landed.py --version {version} --json
@@ -21,6 +29,8 @@ AUDIT_LANDED_EXIT=$?
 - 退出码 `0` 且 findings 为 `audit-skipped-by-flag` → 合规豁免，但 **Step 2.8 报告必须如实写
   「本次规划产物未经独立审计（`--skip-audit`）」**，⛔ 不得写成「审计通过」。
 - 退出码 `0` 且 findings 为 `qr-handoff-deferred-by-fast` → 仅 `--fast` 合规：Step 2.8 报告如实写「移交维度未经统一审计（`--fast`），发布前须结清」。
+- 退出码 `1` 且 finding 为 `plan-ref-unresolved` → 回 Step 2.4.3.5 恢复 map/ref/verify，不回调无关族；`--skip-audit` 也不放行占位引用。
+- finding 为 `qr-evidence-stale` → 依据列出的 artifact/dimension/inputs 补审失效项，原清单已清时由 settle 按原档位恢复后结清；`--fast` 本轮只延期、最终发布门仍算未结清，不能写成 pass。
 - 退出码 `1` 且 finding 为 `qr-handoff-unsettled` → 只回跑 Step 2.4.7 的**移交维度并行审计**（八项审计已落地的不必重跑）。
 - 退出码 `1` → **回跑 Step 2.4.7**（`planning-7.md`）。**交互式**：报出 findings 后停下；
   **无人值守**：按 `planning-7.md` 的 `audit-block` 同款处置交 autopilot 熔断，

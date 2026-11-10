@@ -1,6 +1,35 @@
 # /version — 版本管理命令（★）
 
-你正在执行 `/version` 命令。根据版本号的当前状态自动执行「规划」或「发布」。
+## 执行身份与授权前置路由（先于本文其余动作）
+
+本入口强制 formal，按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 解析并继承身份；脚本不替代原正式门。
+
+`POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
+
+```bash
+# EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+  [ -z "${EXPLICIT_SPRINT:-}" ] || CONTEXT_ARGS+=(--sprint "$EXPLICIT_SPRINT")
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry version \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry version \
+  --execution-context "$EXECUTION_CONTEXT" --phase route --json
+```
+
+确认 `route=formal` 后只执行 `actions` 内的流程步骤；嵌套与重试传回同一 `--execution-context`，不从已有状态猜身份。
+
+## formal 流程
+
+你正在执行 `/version` 命令。显式规划公开document+static+docs-audit；状态只用于选择候选流程，不能自动取得发布/commit/push/deploy授权。已有repair/fast/QR缓存按原机制复用，不增第二清单。
 
 参数：$ARGUMENTS
 - 版本号（**必须**，格式 `V{major}.{minor}.{patch}`，例 `V0.1.0`）
@@ -18,7 +47,7 @@
 | flag | 用途 | 行为锚点 |
 |------|------|---------|
 | `--force-replan` | 强制重新执行规划链，跳过输入未变退出；不授权发布、删除 Sprint 历史或重新编号已启动任务 | Step 1 B-0 + `planning-3.md` |
-| `--repair-planning` | 补齐缺失规划产物，已有主文档只读复用；即使输入快照未变也执行补件 | Step 1 B-0 + `planning-3.md` |
+| `--repair-planning` | 先计算缺失/无效目标、必要已存输入、索引/引用写集，再仅补目标；其余只读，失败保留成功产物与同指纹质量证据 | Step 1 B-0 + `planning-1.md` + `planning-3.md` |
 | `--release` | 强制走版本发布流程（情况 B-3），即使输入未变 | [Step 1 模式决议](#step-1判断执行模式)（情况 B-3）+ [版本发布流程（情况 B-3）](#版本发布流程情况-b-3) |
 | `--skip-audit` | 跳过 Step 2.4.7 版本规划产物全量审计（**唯一允许跳过审计的条件**） | [Step 2.4.7](../flows/version/planning-7.md) |
 | `--no-tag` | 准发布模式：提交 + 推送 commit 但**不打 tag、不建版本分支**（供 `/sprint-autopilot` 调用；tag 与大写版本分支 `V{version}` 都留正式发布） | [Step 3.4 `--no-tag` 准发布模式](../flows/version/release-7.md) |
@@ -55,9 +84,9 @@
   补齐成功即 `release_debt.py resolve --version {version} --step 3.3.7.9` 勾销。
 - **环境确认门**：Step 3.3.7.9 的「全量基线从哪个环境导出」确认门**照常弹**（属发布路径允许交互的
   四处结构化门之一，见 `release-1.md`）；`--unattended` 下按其既定无人值守分支处理。
-- **提交**：自行 `git add docs/deployment/{version}/` + commit（消息 `docs({version}): rebuild-baseline 补齐双轨部署基线`）
-  + push 本分支，**绝不打 tag、不建/不推版本分支**。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
-  > 🔗 约定 24 提交前门禁同其余 commit 路径（`git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet`；单一信源 = 约定 24）。
+- **提交（仅commit已授权）**：先require_action与带execution_context的commit_gate（exit5硬禁止），再 `git add docs/deployment/{version}/` + commit（消息 `docs({version}): rebuild-baseline 补齐双轨部署基线`）
+  + push获授权才推送本分支，**绝不打 tag、不建/不推版本分支**。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
+  > 🔗 约定 24 提交前门禁同其余 commit 路径（`git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"`；单一信源 = 约定 24）。
 - **完成播报**：打印本次产出的全量轨文件数 + 机器门 13 项结果 + 台账剩余未决项。
 
 ## `--finalize-docs` 补跑短路（发布期文档整理）
@@ -68,8 +97,8 @@
 - **★ 已发布版本保护**：`vcs_mode=none` 时，在读取欠账或改写任何文件之前先核对项目记忆中的版本状态与 baseline `internal_released_at`、本地发布台账；任一显示已发布或互相矛盾、缺失而无法核实已发布状态 → fail-closed 退出并报告 `unsupported:vcs-disabled`，不执行五步、不勾销欠账（不能用无 tag 推断未发布）。仅有明确一致的「未发布」本地状态才可做本地文档整理，Git 提交/推送记 skipped。`vcs_mode=git` 时已打 tag 同 `--rebuild-baseline` 的「已发布版本保护」——交互式先过改写授权门、无人值守拒绝执行并登记欠账；获授权后各步以 tag 对应代码为事实源（`git worktree add` 取 tag 工作树）。
 - **只跑五步、按序**：① **Step 3.3.9.5**（收口开发期变更台账 —— ⛔ 必须先于 3.3.10，否则台账内容赶不上主文档合并）② **Step 3.3.7**（部署产物整理完善——A/B/C 三部分，**B/C 独立强制执行**，见其解耦说明）③ **Step 3.3.10**（版本规划文档收敛——历史归一 + 取代链消解 + 族级/项级粒度合并）④ **Step 3.3.11**（全量详细设计重算——**默认变更范围增量**〔只重算动过的专题、其余前滚，见 `release-6.md`〕，可叠 `--full-rebuild` 强制全量；带 `--no-tag` 时同正式发布口径跳过，纯 `--finalize-docs` 视为正式补跑、执行）⑤ **Step 3.3.13**（代码内版本标识对齐复核——补跑场景下**只复核 + 更新台账状态**，不自动改代码〔改代码须回正式发布的交互式确认门〕）。**跳过**其余全部（Step 0 ~ 3.3.5、Step 3.3.8/3.3.9/3.3.12bis、Step 3.4.x 发布提交/打 tag）。
 - **★ 欠账驱动**：开始先读 `docs/audit/{version}/发布欠账.md`（若存在）——**优先补齐其中登记的跳过项**（按「精确定位」逐条处理），补齐成功即 `release_debt.py resolve` 勾销对应步骤；台账不存在则对四步全量重跑一遍（幂等：已整理干净的族/产物 no-op、不重复动）。
-- **提交**：本短路**自行 `git add` 四步产物 + commit**（消息 `docs({version}): finalize-docs 补齐发布期整理`）+ `git push` 本分支，但**绝不打 tag、不推送 tag、不建/不推版本分支**（tag 与大写版本分支都仍由正式 `/version {version}` 管控）。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
-  > 🔗 **约定 24 提交前门禁（本命令所有 commit 路径通用，不复述细节）**：`git commit` 前先跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 → 派台账收口子 Agent；CICD 推送欠账 → 补监听），不是禁止 commit；判定字段与处置**单一信源 = 约定 24**。
+- **提交（仅commit已授权，先require_action与commit_gate；exit5禁止）**：本短路 `git add` 四步产物 + commit（消息 `docs({version}): finalize-docs 补齐发布期整理`）+ push已授权才 `git push` 本分支，但**绝不打 tag、不推送 tag、不建/不推版本分支**（tag 与大写版本分支都仍由正式 `/version {version}` 管控）。⛔ **push 前必挂推送分类**（约定 31.5「推送 ≠ 交付完成」——⛔ 不是只有 autopilot 的 push 点要落实）：提交前存 `BASE_REF`，**`git push` 之【前】**跑 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF"`；**分类缺失 / 命令失败 / `classification_error=true` 一律按正式代码走 CICD 监听（fail-closed）**，纯文档变更才记 `cicd_skipped=true` 并跳过监听。骨架照抄 `release-7.md` **Step 3.4.3**（自动推送 commit + tag + 版本分支，分类在 `git push` 之前）——⛔ 不是 Step 3.4.4，那是失败处置（rebase / 强推 / tag 保护降级），照它抄只会抄到失败分支、抄不到分类与监听。
+  > 🔗 **约定 24 提交前门禁（本命令所有 commit 路径通用，不复述细节）**：`git commit` 前先跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"` 读 JSON；退出码5/NOT_AUTHORIZED禁止提交；3/4 = 已授权范围内本轮结束前有义务未落地（约定22仅真实登记异常修正，成文按document授权；台账积压不自动派收口Agent；CICD 推送欠账 → 补监听），不是禁止 commit；判定字段与处置**单一信源 = 约定 24**。
 - **无人值守**：`--finalize-docs --unattended` 下五步失败兜底走无人值守分支（WARN + 台账登记、不弹窗）。
 - **完成播报**：打印本次补齐结果（收敛 N 族 / 全量重算成功与否 / 部署产物完善项）+ 台账剩余未决项（仍需人工处理的「待人工合并清单」）。
 
@@ -144,7 +173,7 @@ echo "$PROTO_HITS" | while IFS= read -r d; do
 done
 ```
 
-- 移动后随版本规划产物一并 commit（或单独 `chore(归位): 根目录 PRD/原型 → AIDP {version} 目录`）。
+- commit已授权时移动后随版本规划产物一并提交（或单独 `chore(归位): 根目录 PRD/原型 → AIDP {version} 目录`）。
 - **不自动判定的兜底**：根目录若有名字未命中、但含大量 `.html/.vue/.jsx` 的目录（疑似 vibe coding 导出原型），**只在确认问询里列出供用户人工勾选**，不自动归类。
 
 > 📎 **本文档章节体系过渡说明**：`Step N` 连续编号**只覆盖到 Step 1 为止**（Step 0 前置组 → Step 1 判断执行模式，线性必经）。Step 1 决议出分支后，本文档改按**分支流程章节**组织——「版本规划流程（情况 A / B-2）」「版本发布流程（情况 B-3）」「情况 C：版本已发布」；各分支内部的 `Step 2.x` / `Step 3.x` 编号在其**外置分片**（`{{AIDP_HOME}}/flows/version/planning-N.md` / `release-N.md`）内延续，本文档只保留骨架索引表。下方「角色：PM Agent」是贯穿全流程的角色声明，不占 Step 序号。
@@ -167,9 +196,9 @@ done
 
 先剥离所有已登记 flags，再解析版本号和可选描述；flags 不得当成里程碑。规划 flags 与 `--release` / `--no-tag` / `--finalize-docs` / `--rebuild-baseline` 冲突时在任何改写前报参数冲突。已发布状态优先保护：规划 flags 不授权改写已发布产物，返回 `released-version`，不能落入重新发布。
 
-- **情况 B-0：显式规划意图或规划缺件**：目标未发布，`--force-replan` → `replan` 模式；否则 `--repair-planning` 或六类产物缺任一 → `repair` 模式。两者**优先于输入快照未变的 B-1**；六类判据同 `planning-5.md` 三步落盘自检（需求/详设/计划/自测用例/自测方案/测试环境与账号）。无任何内容主文档时转 fresh；部分缺失则按 `planning-3.md` 按族补件；强制重规划跑完整链。输入实际变化且同时缺件时先 repair，再用原快照差异执行 B-2，二者都成功才更新快照。`--release` 的发布决议独立于缺件探测，不被自动改成规划。
+- **情况 B-0：显式规划意图或规划缺件**：目标未发布，`--force-replan` → `replan` 模式；否则 `--repair-planning` 或六类产物缺任一 → `repair` 模式。两者**优先于输入快照未变的 B-1**；六类判据同 `planning-5.md` 三步落盘自检（需求/详设/计划/自测用例/自测方案/测试环境与账号）。无任何内容主文档时转 fresh；部分缺失/无效则先用 `planning_state.py scope` 算目标，按 `planning-3.md` 精确补件；强制重规划跑完整链。存在 `.planning-state.json` 时必须读 `planning_state.py --root . --version {version} status`；五环节未完成/失效，或仍有 QR handoff、计划占位引用时同样进入恢复，不能因六类文件存在走 B-1。恢复只执行失败/失效阶段，成功支输出 `reused`；没有内容补件时只补映射/回填/验证或未结审查。输入实际变化且同时缺件时先 repair，再用原快照差异执行 B-2，二者都成功才更新快照。`--release` 的发布决议独立于缺件探测，不被自动改成规划。
 - **情况 A：目录与历史均不存在** → 执行**版本规划**流程（**fresh 模式** — 全量生成 6 类主文档）
-- **情况 B-1：版本已存在 + 状态「🚧 开发中」 + 输入全部未变**（PRD + 原型 + **代码结构性文件** sha256 三类都与快照全等）且六类产物齐全、无规划 flags、无发布请求 → 提示"输入未变且规划产物齐全；重规划可用 `--force-replan`，补件可用 `--repair-planning`"并退出
+- **情况 B-1：版本已存在 + 状态「🚧 开发中」 + 输入全部未变**（PRD + 原型 + **代码结构性文件** sha256 三类都与快照全等）且六类产物齐全、无未完/失效规划阶段或 QR handoff/占位引用、无规划 flags、无发布请求 → 提示"输入未变且规划产物齐全；重规划可用 `--force-replan`，补件可用 `--repair-planning`"并退出
 - **情况 B-2：版本已存在 + 状态「🚧 开发中」 + PRD 或原型或代码结构已变**（**任一来源 sha256 不等**，或快照不存在但当前已有输入文件 + 至少一份主文档存在）→ 执行**版本规划增量流程（补充模式）**：产出 `NN_<业务主题>.md` 系列增量文档（文件名不带"补充"字眼），并在各目录 `00_索引.md` 登记（类型=补充 + 生成时间）；**绝不覆盖已有主文档**
   - 触发源含**代码变更**（无 PRD/原型变更但 sprint-dev 累进产生的新接口/表/页面）→ 走 sprint-design Step 0.3 四象限「③ 代码超前-补写」路径，dev-logic-architect 把代码现状反向追平为设计补充文档
 - **状态「🟡 已准发布（未打 tag）」**（`--no-tag` 准发布写入）：在 A / B-1 / B-2 / B-3 判定中**与「🚧 开发中」等同**，⛔ 不算已发布、不进情况 C；正式 `/version {version}` 即按 B-3 首次打 tag
@@ -202,7 +231,7 @@ done
 
 ## 版本规划流程（情况 A 全量 / B-2 补充）
 
-> ⛔⛔ **详细步骤已外置为 8 个分片、进入版本规划流程的【第一动作】= 按需加载**：Step 2.0–2.8 的完整步骤外置到 **`{{AIDP_HOME}}/flows/version/planning-1.md` … `planning-8.md`**（每片 ≤20KB）。**按 Step 进度依次 `Read` 对应分片、逐项执行**——下方骨架表的「分片」列给出每组 Step 落在哪一片；**权威判定一律以对应分片正文为准，绝不凭骨架或记忆略过任一子步骤/硬门**。进入本流程先 `Read planning-1.md` 起步，随 Step 推进再 `Read` 后续分片。
+> ⛔⛔ **详细步骤已外置为 10 个分片、进入版本规划流程的【第一动作】= 按需加载**：Step 2.0–2.8 的完整步骤外置到 **`{{AIDP_HOME}}/flows/version/planning-1.md` … `planning-8.md` / `planning-3b.md` / `planning-7b.md`**（每片 ≤20KB）。**按 Step 进度依次 `Read` 对应分片、逐项执行**——下方骨架表的「分片」列给出每组 Step 落在哪一片；**权威判定一律以对应分片正文为准，绝不凭骨架或记忆略过任一子步骤/硬门**。进入本流程先 `Read planning-1.md` 起步，随 Step 推进再 `Read` 后续分片。
 >
 > ⛔ **关键硬门（详见 `planning-7.md`）**：Step 2.4.7「版本规划产物全量审计」是**强制执行铁律**——独立子 Agent 隔离上下文跑 8 项审计（含 Critical 硬门 C-4/C-5/F/G），唯一合法跳过 = `--skip-audit`，且 **Step 2.5.0 有确定性落地门**（`check_version_audit_landed.py`）核验它真的产出过报告；补充模式（B-2）绝不覆盖主文档、只产 `NN_<业务主题>.md` 增量并登记 `00_索引.md`。
 
@@ -220,11 +249,13 @@ done
 | **2.4.0** | 生成输入变更摘要（仅补充模式 B-2） | `planning-2.md` |
 | **2.4.0.8** | ★ 上游契约待确认点前置提取（fresh / 补充**两种模式都执行**；非阻塞）| `planning-2.md` |
 | **2.4.1–2.4.3.5** | 调 /sprint-requirements → /sprint-design → /sprint-plan → /sprint-selftest | `planning-3.md` |
+| **2.4.3.5 生成恢复** | 五阶段持久结果、输入指纹与单支失败恢复 | `planning-3b.md` |
 | **2.4.4** | ★ 产物归一 + `00_索引.md` 维护（约定 15） | `planning-4.md` |
 | **2.4.5 / 2.4.5.5 / 2.4.5.6** | 串联说明 + 索引补充登记 + 结论取代传播（补充模式） | `planning-5.md` |
 | **2.4.6** | ★ 关联文档交叉引用校验 | `planning-6.md` |
 | **2.4.6.5** | ★ 调用前机械预检：`version_preflight.py` 聚合各阶段确定性检查器的真实结果（⛔ 未执行/空扫描/空输出一律不算通过；⛔ 不替代 2.4.7 独立审计）| `planning-7.md` |
 | **2.4.7** | ⛔ ★ 版本规划产物全量审计（独立子 Agent；强制铁律；唯一跳过 `--skip-audit`） | `planning-7.md` |
+| **2.4.7 质量证据** | artifact/维度 owner、同指纹复用、合并移交派单与结清 | `planning-7b.md` |
 | **2.5.0** | ⛔ ★ 审计落地门：`check_version_audit_landed.py` 确定性核验 2.4.7 真的产出过审计报告（⛔ 「跑了」与「没跑」在终端上同形，只能靠机器判）| `planning-8.md` |
 | **2.5 / 2.6** | 初始化 progress.md / activeContext.md | `planning-8.md` |
 | **2.7 / 2.7.3 / 2.7.5** | 更新项目记忆文件当前版本 / ★ 同步代码内本应用版本号（`pom.xml`·`package.json`·`Dockerfile` 等构建描述符随版本号 bump 自动改齐）/ 更新 PRD 快照 | `planning-8.md` |

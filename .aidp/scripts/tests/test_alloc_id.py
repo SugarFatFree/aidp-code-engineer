@@ -21,6 +21,7 @@ class AllocIdTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True)
 
     def put(self, rel, text):
         path = self.root / rel
@@ -191,6 +192,42 @@ class AllocIdTests(unittest.TestCase):
         report = alloc_id.check_ledger(self.root)
         self.assertFalse(report["passed"])
         self.assertEqual(report["errors"][0]["check"], "duplicate-definition")
+
+    def test_retest_status_references_do_not_define_bugs(self):
+        self.put("docs/bugfix/V1/bugs.md", "## BUG-001 登录失败\n")
+        self.put("docs/testing/V1/历史复测报告.md", "| BUG-001 | 已修复复测通过 |\n")
+        self.assertTrue(alloc_id.check_ledger(self.root)["passed"])
+        # 报告里的新发现仍是定义，不能按 testing 或报告文件名整体豁免。
+        self.put("docs/testing/V1/本轮测试报告.md", "## 新发现缺陷\n## BUG-001 导出失败\n")
+        self.assertFalse(alloc_id.check_ledger(self.root)["passed"])
+
+    def test_audit_dimensions_are_not_business_c_definitions(self):
+        self.put("docs/testing/V1/问题清单.md", "| C-004 | 登录缺陷 |\n| C-005 | 导出缺陷 |\n")
+        self.put("docs/testing/V1/审计报告.md", "## C-4 PRD原子覆盖\n## C-5 字段覆盖\n")
+        self.assertTrue(alloc_id.check_ledger(self.root)["passed"])
+        self.put("docs/testing/V1/另一问题清单.md", "## C-004 真重复\n")
+        self.assertFalse(alloc_id.check_ledger(self.root)["passed"])
+
+    def test_audit_default_scope_and_explicit_custom_scope(self):
+        self.put("docs/audit/V1/审计报告.md", "## C-4 PRD原子覆盖\n## C-5 字段覆盖\n")
+        self.put("docs/audit/V1/问题清单.md", "## C-004 缺陷\n## C-005 缺陷\n")
+        self.assertTrue(alloc_id.check_ledger(self.root)["passed"])
+        self.alloc("C", scope="docs/audit/V1")
+        self.assertTrue(alloc_id.check_ledger(self.root)["passed"])
+        self.put("docs/audit/V1/另一问题清单.md", "## C-004 真重复\n")
+        self.assertFalse(alloc_id.check_ledger(self.root)["passed"])
+
+    def test_short_business_id_in_audit_problem_list_remains_a_definition(self):
+        self.put("docs/audit/V1/问题清单.md", "## C-4 登录失败\n## C-004 导出失败\n")
+        self.alloc("C", scope="docs/audit/V1")
+        self.assertFalse(alloc_id.check_ledger(self.root)["passed"])
+
+    def test_reference_table_schema_and_real_resolved_bug(self):
+        self.put("docs/bugfix/V1/bugs.md", "## BUG-001 登录失败\n")
+        self.put("docs/testing/V1/result.md", "| 编号 | 复测结果 |\n| --- | --- |\n| BUG-001 | 通过 |\n")
+        self.assertTrue(alloc_id.check_ledger(self.root)["passed"])
+        self.put("docs/testing/V1/问题清单.md", "| 编号 | 描述 | 复测结果 |\n| --- | --- | --- |\n| BUG-001 | 登录失败 | 已修复 |\n")
+        self.assertFalse(alloc_id.check_ledger(self.root)["passed"])
 
     def test_invalid_args_do_not_create_ledger(self):
         for kw in ({"count": 0}, {"kind": "INVALID"}, {"scope": "../outside"}, {"prefix": "BUG"}):

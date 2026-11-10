@@ -1,5 +1,7 @@
 # AIDP — AI 驱动迭代开发范式
 
+> 任务身份与轻量能力复用以 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 为准；本指南不额外定义 Sprint 准入流程。
+
 **AI-Driven Iterative Development Paradigm for AI Coding Agent Team**
 
 > 适用场景：中大型 Web 项目 | 支持：多版本并行 + 多人协作 + Agent Team 模式 | 兼容 Claude Code / Codex / DeepSeek Harness
@@ -578,11 +580,11 @@ rm -rf memory/V*
 │      批量执行 研发执行计划 中所有 Sprint                               │
 │                                                                       │
 │   ★ 新增功能：        /sprint-dev "<目标描述>"                        │
-│      自动累进新 Sprint + 追加设计 + 完整流程                          │
+│      默认 light：实现 + task 验证 + 受影响族攒批                          │
 │                                                                       │
 │   ★ 修复 bug：       /sprint-bugfix 或 /sprint-bugfix "<描述>"       │
 │      - 无参数：修复已记录的零散 bug（无需新 Sprint）                   │
-│      - 带描述：自动累进新 Sprint + 完整流程（适合较大 bug）            │
+│      - 带描述：默认 light；复杂度不自动创建 Sprint            │
 │                                                                       │
 │   其他入口（按需使用）：                                                │
 │   - /sprint-full {NNN}     按 研发执行计划 跑已规划的 Sprint          │
@@ -605,7 +607,7 @@ rm -rf memory/V*
 | **模式 3：分步** | `/sprint-start` → ... → `/sprint-close` | 需要严格审核每步 | 最多 | ★ |
 | **独立修复** | `/sprint-bugfix` | 零散 bug，不需要新 Sprint | 最少 | ★★★ |
 
-**关于自动累进（模式 2B）**：
+**关于 formal 自动累进（模式 2B）**：
 - ★ **前提：当前版本【未发布】**——自动累进仅在当前版本尚未发布时适用。若当前版本【已发布】（有 release tag / 标「✅ 已发布」），累进前先过「版本落点决策门」三选一（落回已发布版重发 / 新开 patch / 新开 minor），执行体绝不静默往已发布版本累进（单一信源见约定 2 / `/sprint-dev` Phase 0B.0）
 - 自动扫描已有 Sprint，序号取最大值 + 1（如 `sprint-005` 后续累进到 `sprint-006`）
 - 自动产出**增量文档** `NN_<业务主题>.md` 到版本级各目录（研发需求 / 详细设计 / 数据库设计 / 接口设计），并在各目录 `00_索引.md` 登记；⛔ **不改主文档正文**（细则单一信源 = `/sprint-dev` Phase 0B.1.1）
@@ -873,7 +875,7 @@ bugfix-{YYYYMMDD}-{user}.md
 
 | 风险 | 预防措施 |
 |------|---------|
-| AI 忘记项目背景 | 每次会话强制读取项目记忆文件（AGENTS.md / CLAUDE.md）+ activeContext.md |
+| AI 忘记项目背景 | 每次会话先读取项目记忆与执行身份；formal Sprint 再读 activeContext.md |
 | 多人修改同一文件冲突 | L3/L4 memory 按 `{version}/{user}/` 隔离；L1/L2 遵循写权限分工 + 强制 Review |
 | **多版本并行时目录互相覆盖** | ★ 所有迭代产出按版本隔离；仅 bugfix / implementation / memory 三类再叠 `{user}/` 双层（见 06_版本与用户目录约定.md §2.2 / §2.3）|
 | Sprint 范围蔓延 | 01_研发需求.md 有明确"排除项"章节 |
@@ -1016,8 +1018,8 @@ description: {一句话说明本 Skill 做什么 + 在什么场景/关键词下�
 # - 执行 start → dev → test → bugfix → close
 
 # 模式 2C：★ 单独用 /sprint-dev 或 /sprint-bugfix 入口（效果等同）
-/sprint-dev "新增用户导出功能"          # 同 /sprint-full，自动累进
-/sprint-bugfix "修复批量导入逻辑"       # 同 /sprint-full，自动累进
+/sprint-dev "新增用户导出功能"          # 默认 light，不同于正式 /sprint-full
+/sprint-bugfix "修复批量导入逻辑"       # 默认 light，不同于正式 /sprint-full
 
 # 模式 3：分步执行（严格审核每步）
 /sprint-start 001
@@ -1039,7 +1041,7 @@ description: {一句话说明本 Skill 做什么 + 在什么场景/关键词下�
 
 ```bash
 # 每次新会话开始（{version} 和 {user} 按 06_版本与用户目录约定.md 流程解析）
-"请按顺序读取 AGENTS.md、memory/{version}/{user}/activeContext.md、memory/{version}/{user}/progress.md"
+"请读取 AGENTS.md 并继承本任务 execution context；仅 formal Sprint 读取对应 activeContext/progress，普通任务保持 light"
 
 # 完成一个功能后
 /memory-sync

@@ -1,5 +1,34 @@
 # /sprint-batch — 批量执行所有 Sprint
 
+## 执行身份与授权前置路由（先于本文其余动作）
+
+本入口强制 formal，按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 解析并继承身份；脚本不替代原正式门。
+
+`POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
+
+```bash
+# EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+  [ -z "${EXPLICIT_SPRINT:-}" ] || CONTEXT_ARGS+=(--sprint "$EXPLICIT_SPRINT")
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-batch \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-batch \
+  --execution-context "$EXECUTION_CONTEXT" --phase route --json
+```
+
+确认 `route=formal` 后只执行 `actions` 内的流程步骤；嵌套与重试传回同一 `--execution-context`，不从已有状态猜身份。
+
+## formal 流程
+
 你正在执行 `/sprint-batch` 命令，连续执行研发执行计划中的多个 Sprint（计划可拆成多份，全集口径见 Step 1）。
 
 **★**：批量循环调用 `/sprint-full`，适合首次全量跑完整个版本。
@@ -10,7 +39,7 @@
 - 用 `plan_sprints.py` 的执行列表与 Step 3 的逐 Sprint 子 Agent 循环做顶层编排
 - 循环调用 `/sprint-full {NNN} [--unattended]` 执行每个 Sprint（本命令带该 flag 时必透传）
 - 调用 `superpowers:verification-before-completion` 做完成前验证
-- **★ Step 6**：全部 Sprint 完成后**自动询问部署方式并衔接 `/sprint-aiauto-test`** 跑浏览器仿真测试，端到端闭环
+- **Step 6**：仅父deploy/live-tests/full-regression授权支持的环节才执行；默认development组合结束，不自动询问部署/实测。
 
 > ⛔ **零询问连跑铁律（置顶强调 — 下游最易违反）**：本命令一旦启动，**Sprint 循环体（Step 3）内默认直接连跑研发执行计划的全部 Sprint、全程零询问**，把整张计划当**一个不可分割的任务**：
 > - **不问"跑哪个 Sprint"**：无范围参数 = 跑**全部**研发执行计划文件里的未完成 Sprint（首跑 = 001→最后）；只跑一段才显式传 `001-003`。**严禁**启动时 `AskUserQuestion` 让用户选 Sprint。
@@ -36,7 +65,7 @@
 - `--auto-aiauto-test`：Step 6 跳过"是否要跑 AI 自动化测试"询问门，直接走部署确认 + 执行（仍会问 deployment 字段缺失项）
 - `--unattended`：autopilot 无人值守标记（等价环境变量 `LOOP_UNATTENDED=1`）。跳过 Step 0.0 的 INFO 提示，并透传给每个 `/sprint-full → /sprint-dev`；内容决策按 PRD `autopilot_decisions` 或保守默认处理，不弹窗。
 
-**逐 Sprint 用例意图**：若 Step 6 将执行，或父链传 `--aiauto-test-required`，每次 `/sprint-full` 都带 `--aiauto-test-required`；仅父链和本批次均未安排实测时透传 `--skip-aiauto-test`。子批次 skip 只管不在此处启动浏览器，不取消父链已安排的实测。
+**逐 Sprint 用例意图**：若live-tests已授权且Step 6将执行，或父链已授权实测并传 `--aiauto-test-required`，每次 `/sprint-full` 都带 `--aiauto-test-required`；仅父链和本批次均未安排实测时透传 `--skip-aiauto-test`。子批次 skip 只管不在此处启动浏览器，不取消父链已安排的实测。
 
 ## 前置准备（Step 0.0~0.3）
 
@@ -99,7 +128,9 @@
    - 如有进行中的 Sprint：仅当它属于当前版本、当前用户，且落在本批范围内时允许续跑；Step 1 再确认它仍在未关闭列表，Step 3 对该号传 `--resume`，保留已有任务状态。其他活跃 Sprint 或状态矛盾 → 硬失败退出，不为绕过开工门自动关闭。
 3. 读取 `memory/{version}/{user}/progress.md` 的 Sprint 历史
 
-### Step 0.3：测试方案 AI 自动化预检（★ 跑 Sprint 之前就补全 AI 自动化测试信息）
+### Step 0.3：测试方案 AI 自动化预检
+
+先按light-context动作围栏核live-tests；未授权记NOT_REQUESTED并直接Step 1，不做chrome预检、补方案或采集连接信息。
 
 > Step 6 末段会衔接 `/sprint-aiauto-test` 跑浏览器仿真测试。为**尽量减少中途用户介入**，在**跑 Sprint 之前（现在）**就把 chrome-devtools-mcp 所需信息补齐，而不是等 Step 6 才发现缺信息。
 
@@ -108,7 +139,7 @@
 1. 读 `docs/testing/{version}/研发自测/01_测试环境与账号.md`
 2. **前端 web 项目** 且 **缺 chrome-devtools-mcp 段** → 调 `/sprint-selftest` Step 3 模板自动补全该段（含安装 / 本地+远程启动 / 端口转发 / 验证命令）
 3. 核验 chrome-devtools-mcp 正式使用所需信息：① 测试环境访问地址 ② 测试账号密码 ③ 是否跨设备 ④ 跨设备时远程 Chrome 的 IP + 端口
-4. 缺任一项 → **现在（跑 Sprint 前）一次性 `AskUserQuestion` 收集** + 告知安装命令 / 远程端口转发命令 / 先配 mcp 文件后启动铁律 + Write 写回测试方案 + commit
+4. 缺任一项 → **现在（跑 Sprint 前）一次性 `AskUserQuestion` 收集** + 告知安装命令 / 远程端口转发命令 / 先配 mcp 文件后启动铁律 + document已授权才写回测试方案；commit另过授权门
 
 - 命令带 `--skip-aiauto-test` / **非前端 web 项目** / `deployment.mode=none` → 跳过本预检
 - **★ `--unattended` / `/loop` 无人值守（不弹窗铁律，勿只靠顶部 catch-all）**：point 4 的 `AskUserQuestion` 在无人值守下**不弹窗**——按已读到的字段跑、缺项标 `{待用户填写}` 占位交测试链路（与 Step 6.2 / `/sprint-aiauto-test` Phase 0.6 无人值守守卫同口径），绝不因本预检 `AskUserQuestion` 挂起。
@@ -178,11 +209,30 @@ N 个 Sprint 子 Agent 各自重读同一批**本版内完全不变**的文档�
 > ★ **执行形态（本步恒适用，与任何 flag 无关）**：按「**每 Sprint 一个独立子 Agent**」跑（`/sprint-full <NNN> --from-batch` 逐个派），上下文压力由子 Agent 隔离承担、主循环只保留进度与收口。
 > ⛔ **与 `--skip-context-check` 无关**：那个 flag 只关掉 Step 0.0 的一次性 INFO 提示，**不改变本步的执行形态**。⚠️ 上游主链路（`/sprint-autopilot` Phase 3.2 step 2）**恒传**该 flag，若把执行形态只写在 Step 0.0 里，本步就会在最常见的路径上失去它承诺的唯一上下文兜底手段。
 
+**每个Sprint唯一派发点**：仅取父授权与development交集，版本级commit/push/deploy/live/full-regression留父级；共享预算不变。父 `EXECUTION_CONTEXT` 保持 formal 批次身份；选出真实 NNN 后、派发 full 前执行 fork，并消费返回的子路径为 `SPRINT_EXECUTION_CONTEXT`。同父同号重试复用已有子任务，不重取开发起点；所有恢复/降级都传原子路径。
+
+```bash
+SPRINT_ALLOW=$(python3 - "$EXECUTION_CONTEXT" <<'ACTIONS'
+import json, sys
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from execution_policy import BASE_ACTIONS, COMMAND_ACTIONS
+parent = json.load(open(sys.argv[1]))
+development = BASE_ACTIONS | set(COMMAND_ACTIONS["sprint-full"])
+print(*["--allow-action=" + a for a in sorted(development & set(parent["allowed_actions"]))])
+ACTIONS
+) || exit $?
+[ -n "$SPRINT_ALLOW" ] || { printf '%s\n' 'NOT_REQUESTED: 无Sprint开发动作'; exit 0; }
+SPRINT_POLICY_ARGS=(); read -ra SPRINT_POLICY_ARGS <<< "$SPRINT_ALLOW"
+SPRINT_CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork --root . \
+  --execution-context "$EXECUTION_CONTEXT" --sprint "{NNN}" "${SPRINT_POLICY_ARGS[@]}" --json) || exit $?
+SPRINT_EXECUTION_CONTEXT=$(printf '%s' "$SPRINT_CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+```
+
 **循环伪代码**（Claude 必须严格按此执行）：
 
 ```
 for NNN in 执行列表:
-    result = /sprint-full {NNN} --from-batch [--resume] [skip-bugfix] [--cascade-now] [--unattended] [--stop-on-blocker]   # ★ 本命令带 --stop-on-blocker 时必透传（bugfix 超限的停顿判定在 /sprint-full Phase 4 内部，不透传则本 flag 与不带完全等价）；带 --unattended 时必透传，令 Sprint 内部决策门消费 PRD 预声明、不弹窗
+    result = /sprint-full {NNN} --execution-context "$SPRINT_EXECUTION_CONTEXT" --from-batch [--resume] [skip-bugfix] [--cascade-now] [--unattended] [--stop-on-blocker]   # ★ 本命令带 --stop-on-blocker 时必透传（bugfix 超限的停顿判定在 /sprint-full Phase 4 内部，不透传则本 flag 与不带完全等价）；带 --unattended 时必透传，令 Sprint 内部决策门消费 PRD 预声明、不弹窗
     update progress(NNN, result)
     if result.kind == "硬失败" or (带 --stop-on-blocker and result.kind == "软失败"):
         break  # 记账退出；无人值守不得原地等人
@@ -262,6 +312,8 @@ python3 {{AIDP_HOME}}/scripts/check_cascade_landing.py --ledger-closed --version
 Git 下核验未提交级联改动只落既有主文档/索引，台账的条目删除属于合法清理；不在这里再次派收口。`vcs_mode=none` 不运行 Git 落点门，记录 `unsupported:vcs-disabled` 并按本地变更证据核对；台账终态门仍执行。若用例义务未生成，Step 6 的测试前置门负责补齐并阻断假通过。
 
 ### Step 6：浏览器仿真测试链路（★ 编排 `/sprint-aiauto-test`）
+
+先消费 `light-context.md` action围栏：缺live-tests则本步骤NOT_REQUESTED并返回汇总；部署环节另核deploy，full-regression未授权不调用全回归。已获授权则直接执行，不重问是否要跑。嵌套aiauto必须透传execution_context，不能以entry名称取得公开组合。
 
 > ⛔ **本步骤是 sprint-batch 与 sprint-aiauto-test 的衔接桥**：Step 1~5 跑"代码开发 + 单元/集成验证"，Step 6 跑"部署到运行环境后的真人视角浏览器仿真测试"，端到端闭环。按约定 21，**命令端只做编排 + 项目级补充**，不复述 sprint-aiauto-test / dev-manual-testcase 等 SKILL 内部规则。
 >
@@ -378,7 +430,7 @@ AI 自动化测试不询问直接跑：`/sprint-batch --auto-aiauto-test`
 ```bash
 # 场景 1：版本规划刚完成，一键跑完所有 Sprint + 自动询问跑 AI 自动化测试（★ 默认）
 /version V0.1.0 "M1 MVP"         # 生成需求+设计+计划+研发自测方案+自测用例
-/sprint-batch                    # 批量执行 → Step 6 自动询问部署 + 调 /sprint-aiauto-test
+/sprint-batch                    # development组合；Step 6仅按已有授权执行
 # → 全通过 → /version V0.1.0 发布
 # → 有失败 → 失败用例自动回写问题汇总清单 → /sprint-bugfix 拾取并修复 → /sprint-aiauto-test --once 回归
 

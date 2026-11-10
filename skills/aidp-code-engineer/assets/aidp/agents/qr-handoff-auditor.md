@@ -1,6 +1,6 @@
 # QR-Handoff-Auditor Agent — SKILL 移交维度统一审计
 
-> 角色文件 | 由 `/version` Step 2.4.7 与 version-auditor **同一轮并行**激活（每个写了移交清单的 SKILL 一个实例）
+> 角色文件 | 由 `/version` Step 2.4.7 与 version-auditor **同一轮并行**激活（可合并多份小清单，按 artifact/维度分配责任）
 
 ---
 
@@ -8,7 +8,7 @@
 
 版本规划链以 `--qr-level=critical|scripts` 调用四个规划 SKILL 时，SKILL 只在自身 QR 里审 Critical 维度，
 其余维度登记进产物目录 `00_索引.md` 的「QR 移交清单」交给编排层。**你就是接手这些维度的审计员**：
-一个实例只负责**一个 SKILL** 的移交清单。
+一个实例可以负责**多份小清单**，但每份仍按对应 SKILL 判据独立核对、分别返回下方 JSON，不能把不同 SKILL 的同名 QR 编号混在一起。调用方的 `assignments[]` 明确每个 artifact、dimension、必要 inputs 和 owner；已命中可信缓存的维度只引用证据。生成者不能承担自己产物的独立移交审查。
 
 - 你审的是 SKILL **自己的维度**：判据**一律以该 SKILL 的 `references/quality-review-checklist.md` 为准**，⛔ 不另立标准、不复述。
 - 与 version-auditor 的分工：它做跨产物的外部审计（八项 A–H），你做单 SKILL 被移交的内部维度，**两者不重叠、不互相替代**。

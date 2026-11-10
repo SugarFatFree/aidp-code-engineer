@@ -198,6 +198,29 @@ class StuckBoundaryTests(TemporaryProject):
 
 
 class GenerationPolicyTests(TemporaryProject):
+    def test_light_case_debt_is_idempotent_and_does_not_modify_sprints(self):
+        cases.prepare_generation(str(self.root), "V1", "005", "既有正式延期")
+        before = self.read()["versions"]["V1"]["sprints"]
+        cases.record_task_generation(str(self.root), "V1", "task-a", "本次按钮增加状态分支")
+        ledger = self.root / "docs/testing/V1/研发自测/_开发期用例增量.md"
+        first = ledger.read_bytes()
+        cases.record_task_generation(str(self.root), "V1", "task-a", "重试同一变更")
+        self.assertEqual(first, ledger.read_bytes())
+        self.assertEqual(before, self.read()["versions"]["V1"]["sprints"])
+        result = cases.run(str(self.root), "V1")
+        self.assertEqual(result["deferred_tasks"], ["task-a"])
+        self.assertEqual(result["deferred_sprints"], ["005"])
+        self.assertNotIn("Sprint-task-a", ledger.read_text())
+        self.assertEqual(len(list(self.root.glob("docs/**/_开发期*增量.md"))), 1)
+        cases.record_task_generation(str(self.root), "V1", "task-b", "第二次实际影响")
+        ledger.unlink()
+        with self.assertRaises(ValueError):
+            cases.record_task_generation(str(self.root), "V1", "task-a", "缺真实用例", complete=True)
+        (ledger.parent / "02_按钮.md").write_text("### 套件 SUITE-BUTTON\n#### 用例 TC-BUTTON-1 按钮状态\n")
+        cases.record_task_generation(str(self.root), "V1", "task-a", "已生成", complete=True)
+        self.assertEqual(cases.run(str(self.root), "V1")["deferred_tasks"], ["task-b"])
+        self.assertEqual(before, self.read()["versions"]["V1"]["sprints"])
+
     def test_generation_tracks_actual_outer_test_intent(self):
         self.assertFalse(cases.generation_required("direct"))
         self.assertTrue(cases.generation_required("autopilot"))

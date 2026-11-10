@@ -9,18 +9,26 @@
 
 ### ★ 落盘后回检：统一派独立子 Agent 执行（覆盖 Step 1.6 / 1.6.5 / 1.7 / 1.7.5 / 1.8 + SKILL 脚本复核；1.7 起在 `step-1.7-对外接口与溯源回检.md`，同一子 Agent 一并读、隔离上下文不占主对话）
 
-后续 Step 1.6 / 1.6.5 / 1.7 / 1.7.5（读产物文档做静态核验）+ SKILL 脚本复核**全部并入一个 general-purpose 子 Agent 统一执行**，主对话不读产物文档正文 / 不读脚本 stdout，只据子 Agent 回传的紧凑结果决定是否暂停 Step 2~6。
+按 `reference/SKILL编排层接入.md` 复用当前生成证据；必要落盘/路径/Critical核验缺失或失效时，才把对应 Step 1.6/1.6.5/1.7/1.7.5 与脚本复核合入一个general-purpose子Agent，主对话不读产物文档正文 / 不读脚本 stdout，只据子 Agent 回传的紧凑结果决定是否暂停 Step 2~6。
 
-**派单方式**：`Agent` 派 general-purpose 子 Agent（**不用 Explore**，理据见 `rationale.md`），prompt 传：Step 1.6~1.7.5 检查清单原文 + 下方「SKILL 脚本复核」与「需额外入参的补跑项」两段 + `HAS_OPEN_API`/`HAS_THIRD_PARTY_DEP` 信号 + 事实清单路径 + 本轮实际设计/接口文件清单（含合册章节、显式契约卡路径）。子 Agent 一次读完、跑全部回检，只回传紧凑结果：① Pass/Fail 与退出码 ② 含 file:line 的阻塞项 ③ 归一化/补写清单。**M docs 独占写集时回检 Agent 只读**，告警表和修订交原 docs Agent；普通串行路径需代写时也先交接具体文档白名单，不能同时写整份文件。
+**派单方式**：`Agent` 派 general-purpose 子 Agent（**不用 Explore**，理据见 `rationale.md`），prompt 传：Step 1.6~1.7.5 检查清单原文 + 下方「SKILL 脚本复核」与「需额外入参的补跑项」两段 + `HAS_OPEN_API`/`HAS_THIRD_PARTY_DEP` 信号 + 事实清单路径 + 本轮实际设计/接口文件清单（含合册章节、显式契约卡路径）。prompt显式传父context/revision/action/budget/输入hash/有效QR_LEVEL；子Agent只补本次必要且失效的回检，只回传紧凑结果：① Pass/Fail 与退出码 ② 含 file:line 的阻塞项 ③ 归一化/补写清单。**M docs 独占写集时回检 Agent 只读**，告警表和修订交原 docs Agent；普通串行路径需代写时也先交接具体文档白名单，不能同时写整份文件。
 
 - 子 Agent 回传任一**阻塞项** → 按各步原规则**暂停后续 Step 2~6**，等用户裁决；无阻塞项 → 继续。
-- 子 Agent 失败（超时/异常/返回空）→ 命令端内联兜底跑同一组清单 + 脚本（标注"⚠️ 子 Agent 失效兜底"），禁止静默放过。
+- 子Agent工具失败保留原错误；同根因同inputs不变则停止，不自动内联重跑整组。真实变化后按父预算恢复。
 
 #### ★ SKILL 脚本复核（单一信源 = `dev-logic-architect` Quality Review，约定 21）
 
-子 Agent 按 **`{{AIDP_HOME}}/skills/dev-logic-architect/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-logic-architect`，SQL 版本隔离门传 `docs/deployment --version {version}`；`check_permission_constraint.py` 另传 `--requirements docs/requirements/{version}/研发需求`——不传时「PRD 有约束、设计没提」那一半根本没查，`requirements_scanned=false` ⛔ 不能读成通过），各脚本的触发条件、退出码语义、哪些发现等级不占退出码（须读 `--json`）、处置一律以该文件与 `quality-review-checklist.md` 为准，⛔ 命令端不另列清单、不复述判级。只回传各脚本退出码 + `--json` 的 Critical / Important / `skipped` 摘要。
+仅缺失/失效的最低生成自检证据才补跑；不重复可信同hash结果。子Agent按 **`{{AIDP_HOME}}/skills/dev-logic-architect/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-logic-architect`，SQL 版本隔离门传 `docs/deployment --version {version}`；`check_permission_constraint.py` 另传 `--requirements docs/requirements/{version}/研发需求`——不传时「PRD 有约束、设计没提」那一半根本没查，`requirements_scanned=false` ⛔ 不能读成通过），各脚本的触发条件、退出码语义、哪些发现等级不占退出码（须读 `--json`）、处置一律以该文件与 `quality-review-checklist.md` 为准，⛔ 命令端不另列清单、不复述判级。只回传各脚本退出码 + `--json` 的 Critical / Important / `skipped` 摘要。
 
-#### ★ 需额外入参的补跑项（**具备入参时必跑**——SKILL 调度表写明「需 PRD / code_root，调用方具备时自行加跑」）
+#### ★ 需额外入参的补跑项（docs-audit已授权且具备入参时）
+
+没有docs-audit时本组及下方业务计数全库回扫均NOT_REQUESTED，直接进入Step 1.6必要落盘核验；已授权执行以下门后按父预算派发：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?继承生成父任务路径}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action docs-audit || exit $?
+```
 
 > 本组吃**代码现状 / PRD** 而非设计产物，规划期「设计已改、代码未跟上」天然会红——⛔ **一律 report-only（告警档），不做阻断**（理据见 `rationale.md`「代码侧加跑组」）。
 

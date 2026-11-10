@@ -1,15 +1,48 @@
 # /sprint-full — Sprint 一键执行（含自动累进）
 
+## 执行身份与授权前置路由（先于本文其余动作）
+
+本入口强制 formal，按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 解析并继承身份；脚本不替代原正式门。
+
+`POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
+
+```bash
+# EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+  [ -z "${EXPLICIT_SPRINT:-}" ] || CONTEXT_ARGS+=(--sprint "$EXPLICIT_SPRINT")
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-full \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-full \
+  --execution-context "$EXECUTION_CONTEXT" --phase route --json
+```
+
+确认 `route=formal` 后只执行 `actions` 内的流程步骤；嵌套与重试传回同一 `--execution-context`，不从已有状态猜身份。
+
+## formal 流程
+
 你正在执行 `/sprint-full` 命令，完成单个 Sprint 的完整闭环：启动 → 开发 → 测试 → 修复 → 关闭。
 
 > 🔀 **与 `/sprint-batch` 的边界**：本命令跑**单个** Sprint；要连续跑完整个版本的多个 Sprint 用 `/sprint-batch`（它内部循环调用本命令）。
-> 🔀 **与 `/sprint-dev` / `/sprint-bugfix` 的边界（模式 B 累进时）**：三者都能"传一句描述→累进新 Sprint"，区别在**闭环范围与意图**——`/sprint-dev "<新功能>"` = 累进 + 开发，**默认亦串联 test→bugfix→close**（传 `skip-test` 才只开发）；`/sprint-bugfix "<较大 bug>"` = 缺陷意图专用入口（走 bugfix skill + 系统化调试）；**本命令 = 累进 + 完整闭环 start→dev→test→bugfix→close**，适合"要求一次跑到验收关闭"的新功能。**bug 修复优先用 `/sprint-bugfix`**（意图匹配、缺陷登记/复现更完整），不建议用本命令的模式 B 顶替。
+> 🔀 **与 `/sprint-dev` / `/sprint-bugfix` 的边界（模式 B 累进时）**：在 formal 上下文中三者都能"传一句描述→累进新 Sprint"，独立 dev/bugfix 默认 light，不与 full 等同；formal 内的区别在**闭环范围与意图**——`/sprint-dev "<新功能>"` = 累进 + 开发，仅按父授权串联后续，不自动取得full组合；`/sprint-bugfix "<较大 bug>"` = 缺陷意图专用入口（走 bugfix skill + 系统化调试）；**本命令 = 累进 + 完整闭环 start→dev→test→bugfix→close**，适合"要求一次跑到验收关闭"的新功能。**bug 修复优先用 `/sprint-bugfix`**（意图匹配、缺陷登记/复现更完整），不建议用本命令的模式 B 顶替。
+
+**身份传播**：按计划模式核对父 formal 子上下文已绑定本 NNN；父是批次时必须先由父 fork。口述模式只继承无号 formal 上下文，开发入口通过原门取得真实号后 bind-sprint；回传后 Phase 3–5 继续同一路径。不得因为描述参数把 full 内层重新判为 light。
 
 **★ 本命令支持两种模式**：
 - **模式 A（按计划执行）**：`/sprint-full {NNN}` — 执行 `01_研发执行计划.md` 中已规划的 Sprint
 - **模式 B（自动累进新增）**：`/sprint-full "<目标描述>"` — 创建新 Sprint，序号自动累进，用于首轮 Sprint 全部完成后继续迭代
 
-**★ 本命令是编排器**：按顺序调用子命令 `/sprint-start` → `/sprint-dev` → `/sprint-test` → `/sprint-bugfix` → `/sprint-close`。
+**公开职责**：显式命令启用 `light-context.md` development组合；嵌套只继承。commit/push/deploy/live/full-regression未默认启用。
+
+**本命令是编排器**：按授权顺序调用子命令 `/sprint-start` → `/sprint-dev` → `/sprint-test` → `/sprint-bugfix` → `/sprint-close`。
 
 参数：$ARGUMENTS
 - `/sprint-full 001`                        — 模式 A：执行已规划的 Sprint-001
@@ -127,7 +160,7 @@ PY
    [ "$RESUME_RC" -eq 0 ] || exit "$RESUME_RC"
    ```
 
-   成功后读取原 activeContext 的已完成/待办、任务清单和实际代码；**跳过 Phase 1 `/sprint-start`**（它会重置上下文）。进入 Phase 2 `/sprint-dev {NNN} skip-test [--cascade-now] [--unattended]` 并透传原有 flags，以实际文件核实已完成项、补完未完成项，然后照常 Phase 3→4→5；测试必须针对恢复后的代码重跑。任何阶段失败即返回 `closed:false`，不得提前归档。
+   成功后读取原 activeContext 的已完成/待办、任务清单和实际代码；**跳过 Phase 1 `/sprint-start`**（它会重置上下文）。进入 Phase 2 `/sprint-dev --execution-context "$EXECUTION_CONTEXT" {NNN} skip-test [--cascade-now] [--unattended]` 并透传原有 flags，以实际文件核实已完成项、补完未完成项，然后照常 Phase 3→4→5；测试必须针对恢复后的代码重跑。任何阶段失败即返回 `closed:false`，不得提前归档。
    恢复门非零 → 返回 `resume-conflict` 交调用方失败记账，不改上下文、不自动 close。
 3. ★ **未带 `--resume` 才执行约定 9 开工门（确定性判据，⛔ 不读 `activeContext.md` 自行裁量）**：
 
@@ -194,10 +227,10 @@ else:
 
 ### Phase 1：启动 Sprint
 
-模式 B **跳过本阶段**：由 Phase 2 的 `/sprint-dev "{目标描述}" skip-test [--from-batch] [--unattended]` 在契约放行后启动，外层不得先取号/先 start。模式 A 已通过 `--resume` 恢复门时同样跳过本阶段，保留原 activeContext。其余模式 A 按下方启动。
+模式 B **跳过本阶段**：由 Phase 2 的 `/sprint-dev --execution-context "$EXECUTION_CONTEXT" "{目标描述}" skip-test [--from-batch] [--unattended]` 在契约放行后启动，外层不得先取号/先 start。模式 A 已通过 `--resume` 恢复门时同样跳过本阶段，保留原 activeContext。其余模式 A 按下方启动。
 
 ```
-执行：/sprint-start {NNN} [--unattended]（无人值守时透传）
+执行：/sprint-start --execution-context "$EXECUTION_CONTEXT" {NNN} [--unattended]（无人值守时透传）
 ```
 
 子命令读取需求和设计文档（模式 B 读取刚追加的增量章节），更新 activeContext。
@@ -212,15 +245,15 @@ else:
 ### Phase 2：开发
 
 ```
-模式 A：/sprint-dev {NNN} skip-test [--cascade-now] [--from-batch] [--unattended]
-模式 B：/sprint-dev "{目标描述}" skip-test [--cascade-now] [--from-batch] [--unattended]
+模式 A：/sprint-dev --execution-context "$EXECUTION_CONTEXT" {NNN} skip-test [--cascade-now] [--from-batch] [--unattended]
+模式 B：/sprint-dev --execution-context "$EXECUTION_CONTEXT" "{目标描述}" skip-test [--cascade-now] [--from-batch] [--unattended]
 # --cascade-now 仅已有显式参数才传；--dev-scale、实测意图同样原样透传。模式 B 完成后消费真实 {NNN}、契约与汇合证据。
 # ★ 必传 skip-test：本命令是编排器，test/bugfix/close 由下方 Phase 3/4/5 统一负责；
 #   若不传 skip-test，/sprint-dev 会自行串联 test→bugfix→close（其默认行为），与本命令 Phase 3/4/5 重复执行整条链。
 # ★ --unattended（由 /sprint-batch 透传）时必传，令 /sprint-dev 的 UI C/D 门与约定22 级联门消费 PRD autopilot_decisions 预声明、不弹窗（autopilot 7×24 兜底）
 ```
 
-（`/sprint-dev` 按契约分档、写集隔离和 TDD 执行，汇合时只做一次契约一致性 reviewer；完整质量审查在 Phase 3。M 的 docs 未完成/修订不一致、任一汇合证据失败均返回 `closed:false`，不得进入测试。）
+（`/sprint-dev` 按父授权、契约分档和写集执行；已请求docs未完成/修订不一致返回closed:false。Phase 3完整CVL同时提供review证据，不叠完整reviewer；修复只delta。）
 
 ```
 ▶ Phase 2 完成：代码已实现
@@ -231,7 +264,7 @@ else:
 ### Phase 3：测试
 
 ```
-执行：/sprint-test {NNN} [--from-batch] [--unattended]
+执行：/sprint-test --execution-context "$EXECUTION_CONTEXT" {NNN} [--from-batch] [--unattended]
 ```
 
 （`/sprint-test` 内部以仅验收模式使用 `code-verification-loop` + 可选 `api-tester`，本命令不另行调用。）前端浏览器仿真测试在部署后走独立命令 `/sprint-aiauto-test`（chrome-devtools-mcp，默认无头），不在本阶段。
@@ -248,7 +281,7 @@ else:
 Phase 3 已完成当轮原实现者修复、定向测试、reviewer 差量复核与集中 Sprint 单测，本层不重修已闭环项、不重复完整 CVL 或完整 `/sprint-test`。
 
 - 没有未闭环项且验收基线可信 → 进入 Phase 5。
-- 只有可修复残项且允许 bugfix → 保留当前 Sprint 与问题 ID，委派原实现者继续；需要独立修复入口才调用 `/sprint-bugfix sprint-{NNN} [--from-batch] [--unattended]`，仅传未闭环项与证据。随后用 `/sprint-test {NNN} --resume-acceptance [--from-batch] [--unattended]` 续接差量与最终 full，不重跑已完成完整质量审查。
+- 只有可修复残项且允许 bugfix → 保留当前 Sprint 与问题 ID，委派原实现者继续；需要独立修复入口才调用 `/sprint-bugfix --execution-context "$EXECUTION_CONTEXT" sprint-{NNN} [--from-batch] [--unattended]`，仅传未闭环项与证据。随后用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" {NNN} --resume-acceptance [--from-batch] [--unattended]` 续接差量与最终 full，不重跑已完成完整质量审查。
 - 产品/版本/破坏性或环境待决 → 回传具体原因；不让 bugfix 无谓空转。外层和验收共用本次问题的修复轮次，连续 5 轮仍未闭环返回失败，不能外层重置计数再来 5 轮。
 - `skip-bugfix` 只跳过外层补救，不取消验收内部纠错，也不豁免关闭证据。残项未闭环 / `--stop-on-blocker` 命中 → 返回 `closed:false`，保留上下文，不以软失败继续归档。
 
@@ -261,7 +294,7 @@ Phase 3 已完成当轮原实现者修复、定向测试、reviewer 差量复核
 ### Phase 5：关闭 Sprint
 
 ```
-执行：/sprint-close {NNN} [--from-batch] [--unattended]
+执行：/sprint-close --execution-context "$EXECUTION_CONTEXT" {NNN} [--from-batch] [--unattended]
 # ★ `--from-batch` 与 `--stop-on-blocker` 同族，本命令带则**必须原样透传**：
 #   它的语义是「我在批量循环体内、别停下来问人」。少转发这一个参数，
 #   交互式 `/sprint-batch`（常规用法，7×24 才必带 --unattended）跑 N 个 Sprint

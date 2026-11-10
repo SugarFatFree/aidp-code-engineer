@@ -4,7 +4,7 @@
 
 > ★ **新增测试文件必须【同时】登记进 `run.sh` 与下方文件表**：漏登 `run.sh` = 该套件永远绿不了也红不了（`test_guard_scripts.py` 的「run.sh 收录全部 test_* 文件」用例会机器回检）；漏登文件表 = 维护者按表核对时会以为它不存在，改动相关脚本时不会想到要跑它。
 
-一键跑全（仓库根）：`bash .aidp/scripts/tests/run.sh` —— 末尾汇总「套件数 · 断言 passed / failed / skipped」，任一套件失败即非零退出。
+**执行范围以根 `AGENTS.md`「维护验证：默认按影响范围」为准**：日常选择下表中受影响的测试或用例；审计、提交本身不要求全量。需要完整验收时，在仓库根运行 `bash .aidp/scripts/tests/run.sh`，末尾汇总「套件数 · 断言 passed / failed / skipped」，任一套件失败即非零退出。它已包含脚手架侧测试，无需再单独重复跑整个脚手架测试目录。
 
 | 文件 | 覆盖 | 运行 | 依赖 |
 |------|------|------|------|
@@ -16,11 +16,18 @@
 | `test_alloc_id.py` | 原子号段分配：历史取号、作用域交叠、账本损坏、空洞与引用、并发锁 | `python3 .aidp/scripts/tests/test_alloc_id.py` | Python 标准库、POSIX 文件锁 |
 | `test_test_ledger.py` | 真实测试执行与PASS复用：内容树、范围/命令/环境/输入隔离、并发、失败与树漂移、验收快照及差量 | `python3 .aidp/scripts/tests/test_test_ledger.py` | Python 标准库、POSIX 文件锁、Git |
 | `test_test_scope.py` | Sprint 单测确定性推导（按运行器分组、无对应单测、无运行器、不回落全量）+ `run-scope` 逐套记账（PASS 复用/FAIL/EMPTY）+ 全量单测 worktree 账本复用（清理后仍命中） | `python3 .aidp/scripts/tests/test_test_scope.py` | Python 标准库、Git |
+| `test_entry_context.py` | 轻量/正式身份、嵌套续跑、正式子任务、真实完成门及族义务 | `python3 .aidp/scripts/tests/test_entry_context.py` | Python 标准库、Git |
+| `test_execution_policy.py` | 分离动作授权、共享预算、无变化工具失败终止与显式等价证据 | `python3 .aidp/scripts/tests/test_execution_policy.py` | Python 标准库、临时 Git |
+| `test_scope_performance.py` | 同树分析缓存、资源映射、子模块指纹、计划去重与安全合批 | `python3 .aidp/scripts/tests/test_scope_performance.py` | Python 标准库、临时 Git |
+| `test_development_scope.py` | 风险与文件成本分离、真实SQL差异与基线不确定性 | `python3 .aidp/scripts/tests/test_development_scope.py` | Python 标准库、临时 Git |
+| `test_sprint_discovery.py` | 计划分册/启动/归档/关闭共同发现，保留证据分域 | `python3 .aidp/scripts/tests/test_sprint_discovery.py` | Python 标准库、临时 Git |
+| `test_light_task_flow.py` | 执行命令真实入口，验证无Sprint开发/测试/修复/收尾及已有Sprint字节不变 | `python3 .aidp/scripts/tests/test_light_task_flow.py` | Python 标准库、Git |
 | `test_build_unit_test.py` | 部署完整提交隔离执行、并发缓存、超时清理 | `python3 .aidp/scripts/tests/test_build_unit_test.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_unit_report.py` | 全量单测/实测独立展示、缺证据不能通过、旧报告兼容 | `python3 .aidp/scripts/tests/test_unit_report.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_aiauto_test_join.py` | 单测失败幂等登记、未核验不冻结、准发布状态 | `python3 .aidp/scripts/tests/test_aiauto_test_join.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_aiauto_parallel.py` | 真实并行替身、执行器→报告→状态汇总、不同build复跑 | `python3 .aidp/scripts/tests/test_aiauto_parallel.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_notify.py` | `notify.py`（约定 32）：feishu / dingtalk / wecom / lark-cli / command 渠道渲染与发送、飞书 · 钉钉签名、`--auto` 渠道回落、`--sender`、`--print-only` / `--json` 结构、退出码 0/1/2/3、项目名解析与 `--check-name`、发送成功才登记台账 | `python3 .aidp/scripts/tests/test_notify.py` | Python 标准库（本地 127.0.0.1 HTTP 桩 + 假 lark-cli，不联网） |
+| `test_delivery_boundaries.py` | 通知配置本地诊断、受管缺键补齐、上传失败回落与只补交付 | `python3 .aidp/scripts/tests/test_delivery_boundaries.py` | Python 标准库、离线替身 |
 | `cicd_watch.py --selftest`（脚本自带，非本目录文件） | CICD 多提供方监听（`cicd_watch.py` + `cicd_providers.py`）的离线自测，由 `run.sh` 一并调起 | `python3 .aidp/scripts/cicd_watch.py --selftest` | Python 标准库 |
 | `test_agent_sync.py` | `agent_env.py`（detect / memory-file / `--self-check`）+ `agent_sync.py`（临时 git 仓库装配 Claude Code / Codex / DeepSeek Harness、记忆文件搬迁、幂等、`--check` 漂移、copy 模式、清理与合并、`--self-check`） | `python3 .aidp/scripts/tests/test_agent_sync.py` | Python 标准库 + `git` |
 | `test_guard_scripts.py` | 确定性护栏全套（分组清单见下方「test_guard_scripts.py 分组」——**该表是唯一信源**，其它文档只放指针、不复制清单也不复制组数） | `python3 .aidp/scripts/tests/test_guard_scripts.py` | Python 标准库；脚手架内部集成断言默认执行，缺少必要外部工具时按具体用例报告 SKIP |
@@ -50,6 +57,10 @@
 | `sync_group_table.py` | 维护工具：把 `test_guard_scripts.py` 的实跑分组同步进本 README 的分组表 | `python3 .aidp/scripts/tests/sync_group_table.py` | Python 标准库 |
 | `fixtures/*.js` | AI 报告数据缺陷形态的回归样本（脱敏） | — | — |
 | `run.sh` | 一次跑全部 | `bash .aidp/scripts/tests/run.sh` | 同上 |
+
+## 范围测试成本复现（手动）
+
+`benchmark_scope_cost.py` 使用临时 Git 仓库和真实 unittest 比较同一冻结输入下的 derive、依赖分析、内容快照、测试进程、scope/ledger 字节数及耗时。例：`python3 .aidp/scripts/tests/benchmark_scope_cost.py --repo . --out memory/.aidp/scope-cost.json --files 16`。`--files` 支持 1–512；前后比较保持脚本、解释器与文件数一致，只切换 `--repo` 指向的实现。该工具不加入 `run.sh`，避免日常验证重复跑性能夹具；本地进程数据不代表真实容器或下游全量业务测试的耗时。
 
 ## test_guard_scripts.py 分组（单一信源）
 

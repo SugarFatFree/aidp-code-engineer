@@ -42,6 +42,7 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
     台账格式漂移〔`unparsed` 非空〕· 打了归档标记却未删〔`archived_not_deleted`〕·
     🔴 破坏性变更未在「已知失准点」段登记〔`destructive_unregistered`〕· 疑似绕过攒批 ·
     CICD 推送欠账〔`pending_cicd.pending`〕；
+  - **5** 带执行上下文的调用未获 commit 授权，禁止提交；不登记为业务欠账；
   - **4** 阻塞级（保留档位：义务已升级为必须人工介入时使用；当前判据集不产生该值，消费方仍须按阻塞处理）。
   ⚠️ 3/4 的语义是"**本轮结束前有一项义务未落地**"，**不是"现在禁止 commit"**——命令端见 3/4 照常
   commit+push，之后补上义务（派台账收口子 Agent / 补推送分类与监听）；义务落地后退出码自动回 0。
@@ -676,68 +677,31 @@ def pending_cicd(root: str) -> dict:
 
 # ───────────────────────── 约定 41：链外档位 ─────────────────────────
 
-def offchain_budget(root: str, context: str, porcelain: str) -> dict:
-    """约定 41：链外任务的**动作预算 + 规模档位**（每次 commit 前随 gate 一并给出）。
-
-    ⛔ 为什么挂在这里：`commit_gate.py` 是约定 24 规定的**每次 commit 前必跑**的入口，
-    执行体本就要读它的 JSON。把档位放进同一份 JSON，规矩才在**该被想起的那一刻**出现。
-
-    档位判据（与约定 41.3 同表，⛔ 判不准时从严往高一档走）：
-      XS  改动 ≤2 文件 且 无接口/表/口径变更
-      S   ≤5 文件、无 DDL
-      M   含接口变更 / 口径反转 / DDL
-      L   含新表 / 破坏性契约变更 → ⛔ 不在链外做，转正式 /sprint-* 链路
-
-    ⚠️ 本函数只看**改动面**，看不出"口径反转"这种语义性质。故这里给的是**下限**，
-    并明确标注 `semantic_check_required` —— ⛔ 别把"脚本说 XS"当成"可以按 XS 做"的免责。
-    """
+def offchain_budget(root: str, context: str, porcelain: str, execution_context=None) -> dict:
+    """风险与成本只描述事实；动作集合来自父任务授权，不由文件数量推导。"""
+    from development_scope import analyze_changes
     files = _porcelain_paths(porcelain)
-    sql = [f for f in files if f.endswith(".sql")]
-    code = [f for f in files if f.startswith("code/")]
-    ddl = False
-    for f in sql:
-        try:
-            t = open(os.path.join(root, f), encoding="utf-8", errors="replace").read(20000).upper()
-        except OSError:
-            continue
-        if "CREATE TABLE" in t:
-            ddl = "new-table"
-            break
-        if any(k in t for k in ("ALTER TABLE", "DROP ", "ADD COLUMN")):
-            ddl = ddl or "alter"
-    n = len(code) or len(files)
-    if ddl == "new-table":
-        tier = "L"
-    elif ddl:
-        tier = "M"
-    elif n <= 2:
-        tier = "XS"
-    elif n <= 5:
-        tier = "S"
-    else:
-        tier = "M"
-    actions = {
-        "XS": {"unit_test": False, "sprint_archive": False, "deploy": False},
-        "S": {"unit_test": True, "sprint_archive": False, "deploy": False},
-        "M": {"unit_test": True, "sprint_archive": True, "deploy": "ask-user"},
-        "L": {"unit_test": True, "sprint_archive": True, "deploy": "ask-user"},
-    }[tier]
+    evidence = analyze_changes(root, files=files, execution_context=execution_context)
+    allowed = set((execution_context or {}).get("allowed_actions", ("implement", "static")))
+    ddl = ("new-table" if evidence["has_new_table"] else "destructive" if evidence["has_destructive"]
+           else "unknown" if evidence["ddl_unknown"] else "alter" if evidence["has_ddl"] else None)
+    optional = ("related-test", "review", "full-cvl", "docs-audit", "full-regression",
+                "migration-rehearsal", "deployment-tool-development", "commit", "push", "deploy", "live-tests")
     return {
-        "applies": context == "bare-conversation",
-        "tier": tier,
-        "tier_floor_only": True,
-        "semantic_check_required": "口径反转 / 接口契约变更 看不出改动面，须执行体自判后可上调档位",
-        "changed_files": len(files),
-        "code_files": len(code),
-        "ddl": ddl or None,
-        # 恒定禁止项（与档位无关）——约定 41.2
-        "forbidden": ["铸 build", "浏览器实测"],
-        "deploy": actions["deploy"],
-        "actions": actions,
-        "always_required": ["约定22 增量册", "约定24 提交前门禁", "约定31.5 推送分类", "静态验证(约定35)"],
-        "note": ("约定 41：链外任务 ⛔ 不铸 build、⛔ 不跑浏览器实测（归 /sprint-aiauto-test 独立链路）、"
-                 "部署默认否（须用户在本次请求里显式要求）。L 档 ⛔ 不在链外做，转正式 /sprint-* 链路。"
-                 "⛔ 档位只伸缩动作集，不伸缩可追溯性。"),
+        "applies": (execution_context.get("mode") == "light" if execution_context else context == "bare-conversation"),
+        "execution_mode": execution_context.get("mode") if execution_context else None,
+        "tier": evidence["risk_tier"], "risk_tier": evidence["risk_tier"], "cost": evidence["cost"],
+        "risk_authorization_required": evidence["impact_check_required"], "tier_floor_only": True,
+        "semantic_check_required": evidence["semantic_check_required"],
+        "changed_files": len(files), "code_files": evidence["cost"]["code_files"],
+        "ddl": ddl, "sql_evidence": evidence["sql_evidence"],
+        "forbidden": (["铸 build"] if "deploy" not in allowed else []) +
+                     (["浏览器实测"] if "live-tests" not in allowed else []),
+        "deploy": "deploy" in allowed,
+        "actions": {"unit_test": "related-test" in allowed, "sprint_archive": False, "deploy": "deploy" in allowed},
+        "not_requested": [action for action in optional if action not in allowed],
+        "always_required": ["约定22 受影响族增量册", "约定24 已授权提交的必要门禁", "约定31.5 已授权推送的只读核验", "轻量静态验证(约定35)"],
+        "note": "复杂度与文件数量不授予测试、审查或部署权限；未启用项是NOT_REQUESTED，不是通过或欠账。",
     }
 
 
@@ -755,7 +719,12 @@ def id_allocation_status(root):
         return {"applicable": True, "passed": False, "errors": [{"detail": str(exc)}]}
 
 
-def gather(root: str, context: str = "bare-conversation", cascade_now: bool = False) -> dict:
+def gather(root: str, context: str = "bare-conversation", cascade_now: bool = False, execution_context=None) -> dict:
+    if execution_context is not None:
+        from entry_context import load_context, validate_context
+        execution_context = (validate_context(_AidpPath(root).resolve(), execution_context)
+                             if isinstance(execution_context, dict)
+                             else load_context(_AidpPath(root).resolve(), execution_context))
     enabled = commit_gate_enabled(root)
     is_tpl = is_template_project(root)
     today = _date()
@@ -779,7 +748,9 @@ def gather(root: str, context: str = "bare-conversation", cascade_now: bool = Fa
         "suspected_cascade_bypass": bypass,
         "pending_cicd": pending_cicd(root),
         "id_allocation": id_allocation_status(root),
-        "offchain": offchain_budget(root, context, porcelain),
+        "offchain": offchain_budget(root, context, porcelain, execution_context),
+        "execution_context": ({key: execution_context.get(key) for key in ("mode", "task_id", "version", "since")}
+                              if execution_context else None),
         "context": context,
     }
 
@@ -891,6 +862,7 @@ def main(argv=None):
                     choices=["bare-conversation", "aidp-command"],
                     help="调用上下文，仅作留痕与约定 41 档位适用性判定。"
                          "AIDP 命令内的 commit 前判定传 aidp-command；自然语言对话里的直接提交用默认值")
+    ap.add_argument("--execution-context", help="最外层机器执行上下文；轻量任务调用命令后仍沿用 light")
     ap.add_argument("--cascade-now", action="store_true",
                     help="本轮显式当场级联（约定 22 唯一合法例外）→ 抑制 suspected_cascade_bypass 告警")
     ap.add_argument("--allow-path", action="append", default=[],
@@ -905,8 +877,21 @@ def main(argv=None):
         scope = staged_path_scope(args.repo_root, args.allow_path, args.owner)
     except ValueError as exc:
         ap.error(str(exc))
-    info = gather(args.repo_root, context=args.context, cascade_now=args.cascade_now)
+    try:
+        info = gather(args.repo_root, context=args.context, cascade_now=args.cascade_now,
+                      execution_context=args.execution_context)
+    except (ValueError, OSError) as exc:
+        print(json.dumps({"error": str(exc), "passed": False}, ensure_ascii=False))
+        return 2
     info["path_scope"] = scope
+    if args.execution_context:
+        from execution_policy import require_action, PolicyError
+        try:
+            require_action(args.execution_context, "commit")
+        except PolicyError as exc:
+            info.update(status="NOT_AUTHORIZED", action="commit", executed=False, reason=str(exc), debts=[])
+            print(json.dumps(info, ensure_ascii=False))
+            return 5  # 不是债务3/4；调用方不能按“先提交再补欠账”继续。
     if scope["outside"]:
         sys.stderr.write("[WARN] 暂存区包含派发白名单外路径（owner=%s）：%s；提交前由编排者核对归属，禁止带入他人改动。\n"
                          % (args.owner or "未声明", ", ".join(scope["outside"])))

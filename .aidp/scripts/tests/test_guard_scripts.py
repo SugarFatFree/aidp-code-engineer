@@ -1005,7 +1005,7 @@ def _check_prerelease_cross_shell_gate():
     repo = Path(os.path.dirname(os.path.dirname(os.path.dirname(HERE))))
     flow = (repo / ".aidp/flows/sprint-autopilot/phase-2.md").read_text(encoding="utf-8")
     step3 = _re.search(r'3\. \*\*回写 baseline\*\*.*?```bash\n(.*?)\n\s*```', flow, _re.S)
-    step5 = _re.search(r'5\. \*\*★ 本片收尾.*?```bash\n(.*?)\n\s*```', flow, _re.S)
+    step5 = _re.search(r'5\. \*\*收尾必写 `run_state`.*?```bash\n(.*?)\n\s*```', flow, _re.S)
     check("步骤 3/5 有可执行 Bash 围栏", bool(step3 and step5))
     check("门禁与归档判据均由 tick 状态显式写入",
           'set --command autopilot PRERELEASE_ARCHIVE_OK 1' in flow and
@@ -1854,16 +1854,22 @@ def test_freeze_contract():
     tmp = Path(tempfile.mkdtemp())
     shutil.copytree(repo / ".aidp", tmp / ".aidp",
                     ignore=shutil.ignore_patterns("skills", "__pycache__"))
-    f = tmp / ".aidp/flows/sprint-autopilot/phase-3-6.md"
+    # CICD旧站点已收敛进脚本；变异当前真实account-missing写入，不能替换已消失的旧散文。
+    relative = "flows/sprint-autopilot/phase-3-7.md"
+    f = tmp / ".aidp" / relative
     t = f.read_text(encoding="utf-8")
-    t2 = t.replace("`aiauto_frozen_at=@now` + `freeze_reason=cicd-auto-trigger-off`",
-                   "`freeze_reason=cicd-auto-trigger-off`", 1)
-    check("变异夹具已生效（否则本条变异测试是空跑）", t2 != t)
+    marker = "`aiauto_frozen_at=@now` + "
+    t2 = t.replace(marker, "", 1)
+    check("变异夹具已生效（唯一真实冻结时间戳被删除）", t.count(marker) == 1 and t2 != t)
     f.write_text(t2, encoding="utf-8")
     out2 = subprocess.run([sys.executable, str(repo / ".aidp/scripts/check_freeze_contract.py"),
                            "--root", str(tmp), "--json"], capture_output=True, text=True)
-    check("★ 变异：抽掉 aiauto_frozen_at → 被拦（否则该版冻结后永不解冻）",
-          not json.loads(out2.stdout)["passed"])
+    mutated = json.loads(out2.stdout)
+    check("★ 变异：抽掉aiauto_frozen_at必须精确命中该站点，不能借无关ERROR过关",
+          out2.returncode == 1 and not mutated["passed"]
+          and any(finding.get("level") == "ERROR" and finding.get("file") == relative
+                  and "缺 aiauto_frozen_at" in finding.get("detail", "")
+                  for finding in mutated["findings"]))
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -2744,6 +2750,8 @@ def test_plan_sprints_multifile():
 
     for n in ("001", "002"):
         (root / ("memory/V0.1.0/alice/sprints/sprint-%s.md" % n)).write_text("x", encoding="utf-8")
+    (root / "memory/V0.1.0/alice/progress.md").write_text(
+        "Sprint-001 ✅ 已关闭\nSprint-002 ✅ 已关闭\n", encoding="utf-8")
     rc, d = run()
     check("★ M1 全关闭时 M2 仍在剩余集（旧 -print -quit 口径此处会误判完成）",
           d["remain_sprints"] == ["003"] and d["next_sprint"] == "003")
@@ -3814,8 +3822,9 @@ def test_autopilot_deadlocks_and_gate_bypasses():
 
     # H9 通知降级必须落盘（只置 shell 变量跨调用即丢）
     p02 = (fl / "phase-0-2.md").read_text(encoding="utf-8")
-    check("★ H9 通知降级落盘而非只置 shell 变量",
-          "set notify_enabled false" in p02 and "shell state 不跨 Bash 调用" in p02)
+    check("★ H9 用户开关落盘，能力按每次调用重新判定",
+          "set notify_enabled false" in p02 and "用户通知开关" in p02
+          and "tick_flags" in p02 and "本地不可用" in p02)
 
     # H12 cicd_skipped 时游标必须推出 3.2.1-probe
     p37 = (ft.parent / "sprint-autopilot/phase-3-7.md").read_text(encoding="utf-8")
@@ -3867,7 +3876,7 @@ def test_autopilot_deadlocks_and_gate_bypasses():
           '_sig = m.group(2) + (_opt.group(0) if _opt else "")' in cc
           and 'if "--unattended" in ln:' not in cc)
     check("★ G-CHAIN-1 免检认 --no-loop（它同样是 LOOP_UNATTENDED=1 信号，只认前者会假红）",
-          '"--no-loop" in _sig' in cc)
+          'has_unattended(_sig)' in cc and 'unattended|no-loop' in cc)
     check("★ G-CHAIN-1 候选面含纯 flag 调用", "--[a-z][a-z-]*" in cc)
 
     # H7 跨围栏：新判据 + 该分片已合并围栏
@@ -4861,14 +4870,13 @@ def test_suite_has_invoker():
                          and f.suffix in (".py", ".js") and f.name not in readme]
     check("★ tests/README.md 文件表登记全部 test_* 文件%s" % (unlisted or ""), not unlisted)
 
-    # ② 调用方：约定 16 的 commit 前动作清单里必须显式有它
-    #    ⛔ verify.py 刻意不跑它（那是下游也要跑的合规检查，单测是模板项目自有），
-    #    所以「有没有人跑」只能靠约定 16 这份清单来保证。
+    # ② 维护约定必须能发现全量入口；登记入口不等于每次提交都执行全量。
+    #    verify.py 是可下发的合规检查，模板回归按本仓维护验证范围选择。
     cm = (repo / "AGENTS.md").read_text(encoding="utf-8")
-    check("★ 约定 16 的 commit 前动作清单里有 run.sh（否则套件无调用方）",
+    check("★ 维护约定保留按需调用的 run.sh 入口",
           "tests/run.sh" in cm)
-    check("★ 并说明了为什么 verify.py 不承担它",
-          "verify.py 不跑它" in cm or "单测是模板项目自有" in cm or "verify.py 不跑单测" in cm)
+    check("★ 明确 verify.py 不运行回归单测",
+          "verify.py" in cm and "不运行回归单测" in cm)
 
 
 def test_prose_notify_runtime_home_and_negative_promise():
@@ -6703,8 +6711,14 @@ def test_entry_mode_build_scoped():
     check("★ Stop hook 取 entry_mode 时 build 级在前、版本级仅作回退",
           'b.get("entry_mode") or vobj.get("autopilot_entry_mode")' in hook)
 
-    # 写入侧：3.1.5 铸造时落 build 级；复用时只补不覆盖
-    p34 = (repo / ".aidp/flows/sprint-autopilot/phase-3-4.md").read_text(encoding="utf-8")
+    # 写入侧：主片步骤1实际调度R-1子片；铸造时落build级，复用时只补不覆盖。
+    main_p34 = (repo / ".aidp/flows/sprint-autopilot/phase-3-4.md").read_text(encoding="utf-8")
+    mint_step = re.search(r"^1\.\s.*?(?=^2\.\s)", main_p34, re.M | re.S)
+    check("★ 主片步骤1先Read并执行R-1子片，再进入步骤2",
+          mint_step is not None
+          and "Read `{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-4a.md`" in mint_step.group()
+          and "执行" in mint_step.group())
+    p34 = (repo / ".aidp/flows/sprint-autopilot/phase-3-4a.md").read_text(encoding="utf-8")
     check("★ 铸新 build 时把当轮 ENTRY_MODE 落进 builds[].entry_mode",
           'entry["entry_mode"] = os.environ["ENTRY_MODE"]' in p34)
     check("★ 复用既有 build 时只补不覆盖（-z 判空才写）",
@@ -6734,8 +6748,14 @@ def test_dev_scale_and_reversal_gate():
     for name, body in (("命令端 0B.1.1", dev), ("Step X.0.0 步骤 3.5", pw1)):
         check(f"{name}：存在 S 语义子档", "S（语义子档）" in body)
         check(f"{name}：语义子档强制「受影响结论清单」", "受影响结论清单" in body)
-    check("★ 两处语义子档判据一致（均要求 !HAS_API / !HAS_DDL / !HAS_CONFIG）",
-          all(k in pw1 for k in ("HAS_SEMANTIC", "!HAS_API", "!HAS_DDL", "!HAS_CONFIG")))
+    # 分档公式已收敛到共享函数：同时验证引用链和真实语义，不能只因旧宏文本消失就报错。
+    from development_scope import classify_development
+    semantic = {"has_semantic": True, "impact_enumerated": True}
+    check("★ 前后语义子档复用同源判据，API/DDL/config仍使S升M",
+          "incremental-contract.md" in dev and "development_scope.py" in pw1
+          and classify_development(semantic)["risk_tier"] == "S"
+          and all(classify_development(dict(semantic, **{flag: True}))["risk_tier"] == "M"
+                  for flag in ("has_api", "has_ddl", "has_config")))
     # 降档不降级联：清单必须在"档位不影响的东西"清单里
     idx = pw1.find("档位不影响的东西")
     check("★「受影响结论清单」列入档位不可裁剪项",
@@ -6749,15 +6769,26 @@ def test_dev_scale_and_reversal_gate():
           "契约卡＋台账缺一即 Fail" in dev
           and "契约 AC 不能冒充正式实测用例" in protocol
           and "required=true" in protocol)
-    check("★ M 文档汇合是 test 前硬门，skip-test 不免除",
-          "M 必须等 docs 完整成文" in protocol and "不省 M 的文档汇合义务" in protocol
-          and "不能带未完成 docs 进入验收" in ledger)
-    check("★ L 优先判新表/破坏性，兼容 ALTER 可为 M",
-          "档位优先级 L → S → M" in protocol and "兼容 ALTER" in pw1
-          and "新表/破坏性前置安全门" in protocol)
-    check("★ dev_scale 开发前生产、开发后复核并与 sup_scale 同 tier",
-          'stage:\"preflight\"' in protocol and 'stage:\"actual\"' in pw1
-          and "sup_scale.tier" in pw1 and "sup_scale" in protocol)
+    check("★ 已授权M文档仍须汇合，skip-test不免除，未请求文档不升级义务",
+          "document 已授权的 M 才等 docs 成文" in protocol
+          and "`skip-test` 不取消已授权文档义务，未请求文档无需补齐" in protocol
+          and "已要求而未完成时恢复对应任务；未授权 docs/review 为 NOT_REQUESTED" in protocol
+          and "触发入口为document已授权" in ledger)
+    check("★ 共享风险判据保留新表/破坏性L与兼容ALTER的M，文件成本不授予动作",
+          "development_scope.py" in protocol and "兼容 ALTER" in pw1
+          and "不绕过已证实的风险/授权门" in protocol
+          and all(classify_development({flag: True})["risk_tier"] == "L"
+                  for flag in ("has_new_table", "has_destructive", "has_architecture"))
+          and classify_development({"has_ddl": True})["risk_tier"] == "M"
+          and classify_development({"changed_files": 12})["risk_tier"] == "S"
+          and "正式身份和风险档位不授予这些动作" in protocol)
+    check("★ dev_scale前后使用同一冻结上下文，sup_scale消费相同risk_tier",
+          "开发前与开发后都执行下面命令" in protocol and "不复写 since" in protocol
+          and "scripts/development_scope.py --root ." in protocol
+          and '--execution-context "$EXECUTION_CONTEXT"' in protocol
+          and "使用相同冻结 `execution_context`" in pw1 and 'stage:"actual"' in pw1
+          and "`risk_tier` 作为 `dev_scale.tier`" in protocol
+          and "`sup_scale.tier` 同步该值" in protocol and "sup_scale.tier" in pw1)
     check("★ start 能从契约 Task/AC 取范围，仍登记确定性启动证据",
           "契约卡的执行工作单" in start and "--record-start {NNN}" in start)
     check("★ M 合册使用调用层映射，不谎称上游 M 一册",
@@ -6770,9 +6801,11 @@ def test_dev_scale_and_reversal_gate():
     check("★ Sprint 单测范围协议在唯一入口，targeted 与 sprint 互不替代",
           all(x in sprint_test for x in ("test_scope.py", "test_ledger.py verify", "--scope-hash", "--env-id"))
           and "targeted 与 sprint 互不替代" in protocol)
-    check("★ 同轮 test-close 不自动 cascade-now",
-          "本命令自身必须已带 `--cascade-now`" not in dev
-          and "同轮 test→close 不自动置 --cascade-now" in dev)
+    check("★ 同轮test-close不自动cascade，命令引用权威契约与台账边界",
+          "本命令自身必须已带 `--cascade-now`" not in dev and "incremental-contract.md" in dev
+          and "不因同轮 test→close 自动置上" in protocol
+          and "light 完成与 test/close 不是收口点" in ledger
+          and "不因复杂度 M/L 自动成文" in ledger)
 
     # ★ 同版本口径反转清算（约定 34 ⑥）：跨版本机制此时无"历史版本"可检索，完全是盲区
     check("★ 存在 Phase 0B.1.3 口述追加/反转决策门", "Phase 0B.1.3" in dev)
@@ -6945,8 +6978,11 @@ def test_cascade_bypass_and_commit_gate():
     mb = (repo / ".aidp/flows/sprint-bugfix/mode-b2.md").read_text(encoding="utf-8")
     check("★ bugfix Step 5 默认攒批、不当场级联",
           "执行时机 = 攒批" in mb and "本步默认【不当场跑下面的四级级联】" in mb)
-    check("★ bugfix 四级级联降级为 --cascade-now / 收口点才跑",
-          "仅在 `--cascade-now` 或命中收口点时执行" in mb)
+    check("★ bugfix级联须document授权及显式cascade-now/收口点，未请求只记漂移",
+          "仅document已授权且显式cascade-now或命中收口点时执行" in mb
+          and "否则只登记实际漂移并到Step 5.1" in mb
+          and "未在route.authorized_actions中的document记NOT_REQUESTED" in mb
+          and '--action document || exit $?' in mb)
     check("★ bugfix 收口级联落主文档、不新建 NN_ 分册",
           "不新建 `NN_` 分册" in mb and "--ledger-cascade" in mb)
     check("★ bugfix 收口级联补齐 L4 自测用例",
@@ -7080,7 +7116,10 @@ def test_doc_numbering_and_selfcheck():
     except ValueError:
         data = {}
     tally = data.get("tally", {})
-    check("★ 全量自检零 fail（fail=有检查抓不到本该抓到的东西）%s" % tally,
+    failed_probes = [item for item in data.get("results", []) if item.get("status") == "fail"]
+    # 保留具体脚本与双侧退出码，区分依赖/环境未就绪和实际探针失效；两者都不能冒充通过。
+    failure_detail = json.dumps(failed_probes, ensure_ascii=False) if failed_probes else r.stderr.strip()
+    check("★ 全量自检零 fail（含具体失败探针与环境诊断）%s %s" % (tally, failure_detail),
           r.returncode == 0 and not tally.get("fail"))
     check("★ 已登记探针覆盖 ≥ 25 个脚本（当前 %s）" % tally.get("pass"),
           tally.get("pass", 0) >= 25)
@@ -7175,6 +7214,10 @@ def test_deploy_pending_and_frontend_evidence():
 
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         sha = "0123456789abcdef"
+        from entry_context import resolve_context
+        deploy_context = resolve_context(root, 'sprint-dev', version='V0.1',
+            additional_grants=['deploy'], authorization_source={'kind': 'user-text',
+            'request_id': 'offline-cicd-guard', 'text': '离线部署出口测试授权 deploy'})['execution_context']
 
         def run_exit(verdict, wake, commit=sha):
             baseline.write_text(json.dumps({"autopilot": {"target_version": "V0.1", "wake_source_this_tick": wake},
@@ -7188,6 +7231,7 @@ def test_deploy_pending_and_frontend_evidence():
             # 出口判定已收进消费入口；末尾围栏仅读其已落盘游标，不再重放固定 poll.json。
             consumed = subprocess.run([sys.executable, str(repo / ".aidp/scripts/cicd_watch.py"),
                                       "--mode", "consume", "--version", "V0.1", "--root", str(root),
+                                      "--execution-context", deploy_context,
                                       "--result", str(poll), "--result-code", "0"],
                                      cwd=root, capture_output=True, text=True)
             if not c_exit or consumed.returncode not in (0, 2):

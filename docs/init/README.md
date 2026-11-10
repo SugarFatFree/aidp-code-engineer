@@ -1,12 +1,14 @@
 # AIDP 使用指南
 
+> 任务身份与轻量能力复用以 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 为准；本指南不额外定义 Sprint 准入流程。
+
 > AI-Driven Iterative Development Paradigm（AI 驱动的迭代开发范式）
 
 ## 📖 什么是 AIDP？
 
 AIDP 是一套由 **AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）+ Agent Team + Skills 生态** 驱动的结构化迭代开发范式，将传统软件工程的标准流程（需求 → 设计 → 开发 → 测试 → 上线）与 AI 能力结合，通过**结构化文档驱动** + **AI 记忆系统**实现：
 
-- ✅ 每次迭代有完整的输入/输出文档
+- 正式迭代有完整输入/输出文档，日常任务保留机器验证证据与受影响族增量
 - ✅ AI Agent 在每次启动时能读取项目全貌，不丢失上下文
 - ✅ 多人可并行工作，不互相干扰
 - ✅ 项目历史完整可追溯
@@ -22,7 +24,7 @@ AIDP 是一套由 **AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）+
 
 > ℹ️ `aidp-code-engineer` 是可由用户调用的 **SKILL**，而非 `{{AIDP_HOME}}/commands/` 下的 AIDP 命令：Claude Code 可输入 `/aidp-code-engineer init`，Codex 可输入 `$aidp-code-engineer init`，也可用自然语言触发。初始化与改建支持无 Git 项目，不自动 `git init`；非 Git 可规划、开发和本地测试/归档，但不可提交、推送、打 tag 或宣称正式发布成功。
 
-### 2. 首次版本规划
+### 2. 需要正式迭代时规划版本
 
 ```bash
 /version V0.1.0 "MVP 版本"
@@ -33,14 +35,14 @@ AIDP 是一套由 **AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）+
 # - /sprint-selftest      生成研发自测（方案+用例+测试环境）
 ```
 
-### 3. 执行开发
+### 3. 日常开发或正式 Sprint
 
 ```bash
 # ★ 推荐：一条命令批量跑完所有 Sprint
 /sprint-batch
 
 # 或按场景选择：
-/sprint-dev "新增用户导出功能"         # 新增功能（自动累进 Sprint）
+/sprint-dev "新增用户导出功能"         # 日常 light：不创建 Sprint
 /sprint-bugfix                         # 修复已记录的 bug
 /sprint-full 001                       # 按计划跑单个 Sprint
 ```
@@ -130,7 +132,7 @@ project/
 | `/sprint-batch` | 批量执行所有 Sprint |
 | `/sprint-full {NNN}` | 执行单个 Sprint（完整流程） |
 | `/sprint-start` · `/sprint-dev` · `/sprint-test` · `/sprint-close` | 单 Sprint 分步执行 |
-| `/sprint-dev "{desc}"` | 开发新功能（自动累进） |
+| `/sprint-dev "{desc}"` | 开发新功能（默认 light） |
 | `/sprint-bugfix` | 修复 bug |
 | `/sprint-autopilot` | ★ 7×24 全自动开发编排器（操作系统调度 `aidp_scheduler.py` 守护） |
 | `/sprint-aiauto-test` | ★ chrome 浏览器仿真测试（操作系统调度 `aidp_scheduler.py` 守护） |

@@ -87,6 +87,19 @@ ARG_RE = re.compile(r"\{[^}\s]+\}|sprint-\{|--[a-z][a-z-]*|\d{3}"
                     r"|[Vv]\d+\.\d+\.\d+|[Ss]print-\d{3}")
 
 
+# 引号参数是一整个argv值；继续读取其后的flag，但值里的flag字样不算透传。
+QUOTED_ARG_RE = re.compile(r"\"(?:\\.|[^\"\\])*\"|'[^']*'")
+TAIL_ARGS_RE = re.compile(
+    r"\s*(?:(?:\"(?:\\.|[^\"\\])*\"|'[^']*'|\{[^}\s]+\}|sprint-\{[^}]+\}|"
+    r"--[a-z][a-z0-9-]*=(?:\{[^}\s]+\}|[A-Za-z0-9_./:-]+)|"
+    r"[Vv]\d+\.\d+\.\d+|[Ss]print-\d{3}|\d{3}|\[?-{0,2}[a-z][a-z0-9-]*\]?)\s*)+")
+
+
+def has_unattended(args):
+    bare = QUOTED_ARG_RE.sub("", args)
+    return bool(re.search(r"(?:^|\s|\[)--(?:unattended|no-loop)(?=$|\s|\])", bare))
+
+
 def accepting_commands(root: Path):
     """哪些命令**声明了** `--unattended` —— 扫命令文件得到，⛔ 不写死清单。"""
     out = set()
@@ -167,9 +180,9 @@ def collect(root: Path):
                         #    `[--xxx]`，遇到 `[skip-bugfix]` / 裸 `skip-test` 即断 → 整行被判成
                         #    「非调用」冻进 baseline，日后有人把 [--unattended] 删掉守卫仍报绿，
                         #    正是本门设立要抓的那类回归。中文括注首字符 `（` 仍匹配不上，两头不放过。
-                        _opt = re.match(r"\s*(?:\[?-{0,2}[a-z][a-z0-9-]*\]?\s*)+", _tail)
+                        _opt = TAIL_ARGS_RE.match(_tail)
                         _sig = m.group(2) + (_opt.group(0) if _opt else "")
-                        if "--unattended" in _sig or "--no-loop" in _sig:
+                        if has_unattended(_sig):
                             continue
                         if not ARG_RE.search(m.group(2)):
                             continue
@@ -179,9 +192,8 @@ def collect(root: Path):
                     for m in BARE_INV_RE.finditer(ln):
                         if m.group(1) not in accept or m.group(1) == own:
                             continue
-                        _bopt = re.match(r"\s*(?:\[?-{0,2}[a-z][a-z0-9-]*\]?\s*)+", ln[m.end():])
-                        if _bopt and ("--unattended" in _bopt.group(0)
-                                      or "--no-loop" in _bopt.group(0)):
+                        _bopt = TAIL_ARGS_RE.match(ln[m.end():])
+                        if _bopt and has_unattended(_bopt.group(0)):
                             continue                  # 带了信号（含 `[--no-loop]` 条件透传写法）
                         hits.append((rel, "裸委派 " + m.group(1), i, ln.strip()))
     return hits

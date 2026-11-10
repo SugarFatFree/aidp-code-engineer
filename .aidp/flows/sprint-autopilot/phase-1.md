@@ -87,7 +87,7 @@ memory/.sprint-autopilot-baseline.json
 - **★ 顶层前置熔断字段（Phase 0.1 前置失败专用，无版本上下文）**：`preflight_fail_streak`（前置失败连续轮次）/ `preflight_frozen_at`（达阈冻结时刻）/ `preflight_fail_reason`（如 `git-pull-conflict` / `detached-head`）。补 `dev_fail_streak` 在"TARGET_VERSION 尚未解析"阶段的盲区，防 `/loop` 每 tick 刷 #4；前置动作成功一次自动清零，或人工 `--reset-baseline`
 - **远程 Chrome 地址**（不在 baseline）：存项目根 `.mcp.json` 的 `chrome-{git_user}.args[--browser-url]`（按 git 用户名分键、入库共享）；`--reset-chrome-ip` = 删该条目重收
 - `aiauto_test_heartbeat_at`（顶层，测试链路写）：`/sprint-aiauto-test` 每 tick 起始（迁移后、任何 early-exit 之前）写 = 该 tick 时刻，表征"第二条 `/loop 5m /sprint-aiauto-test --unattended` 存活"（与被测版本无关）；autopilot Phase 3.4 ③ 读它（近 `AIAUTO_TEST_HEARTBEAT_TTL_MIN` 分钟（默认 30，> 测试 loop 周期）内有更新即判活跃），区分"loop 已挂但本 build 尚未出报告"与"loop 未挂载"，免误冻结
-- `notify_enabled`（顶层）：里程碑通知开关（派生自 `memory/aidp-config.yaml` 的 `notify.enabled` 且 `notify.channels` 非空，`--no-notify` 可本轮关闭）；两命令共享。渠道地址/密钥不入 baseline（只经 `notify.channels` 引用环境变量）。报告 HTML 只落本地 `docs/reports/{V}/`，通知里的报告链接为仓库相对路径
+- `notify_enabled`（顶层）：用户通知开关（来自 `memory/aidp-config.yaml` 的 `notify.enabled`，`--no-notify` 可本轮关闭）；两命令共享。`notify.py --check-config --json` 独立诊断本地条件，`tick_flags` 还会据 `notify_ready` 关闭本地不可用的本轮 `NOTIFY_ENABLED`；channels 非空不代表迁移完成或真实送达。渠道地址/密钥不入 baseline（只经环境变量引用）。报告 HTML 先落本地 `docs/reports/{V}/`；上传结果与通知结果独立记账，通知从 `--report-kind exec|test` 获取 URL 或带权限说明的仓库路径
 
 ### 1.2 变化检测逻辑（按版本 per-key 检测）
 

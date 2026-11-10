@@ -46,7 +46,6 @@
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-0-5.md	/version {TARGET_VERSION} 正式打	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-0-6b.md	/sprint-full {NNN} --resume	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-0-9.md	裸委派 /sprint-aiauto-test	1
-{{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version --no-tag	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version --no-tag 归档	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version {PRE_RELEASE_VERSION}	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-2.md	/version {PRE_RELEASE_VERSION} 补打	1

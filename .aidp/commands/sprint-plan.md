@@ -1,5 +1,28 @@
 # /sprint-plan — 研发执行计划生成
 
+## 执行策略入口
+
+先读 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，按真实来源准备POLICY_ARGS；生成与QR配方执行 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+
+```bash
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-plan \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
+  --execution-context "$EXECUTION_CONTEXT" --phase route --json || exit $?
+```
+
+只执行本次document范围；light不更新Sprint activeContext。未授权独立docs-audit不派发，生成Skill的最低自检边界按共用配方如实披露。
+
+
 你正在执行 `/sprint-plan` 命令，为当前版本生成迭代执行计划。
 
 **★ 本命令是 skill 编排器**：调用 `dev-execution-planner` skill 从 PRD 需求、原型、详细设计生成研发执行计划。
@@ -12,7 +35,7 @@
 <!-- dup-check: ignore 四个规划子命令各需在自己参数表里声明，刻意的四份、非漂移 -->
 - `--unattended`（可选）：★ **无人值守上下文标记**（由 `/version`·`/sprint-autopilot`·`/sprint-test` 等上游透传）——本命令内**一切 `AskUserQuestion` 与"暂停待用户裁决"一律不弹**，改按下方各门的确定性默认自动推进并留痕；**绝不静默跳过质量门**，只是把"问人"换成"按保守默认走 + 记录"。⛔ 上游传了而本命令不认，flag 会被静默丢弃、在无人值守链里挂死。
   - 本命令的门：Step 1.5 回检 ❌ 时"列 Fail 询问用户"→ 无人值守下**按退出码分流自动处置**（`1`=判违规、暂停并返回失败信号交上游熔断；`2`=入参错，修正路径后重跑一次，仍失败才返回失败信号），⛔ 不得无限重试、也不得当作通过继续。
-- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `dev-execution-planner` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/plans/{version}/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+- `--qr-level=scripts|critical|full`：由AIDP调用层结合父授权计算有效QR_LEVEL；无docs-audit取scripts。始终向 `dev-execution-planner` 传有效qr_level，返回后parse-handoff的expect-level保持一致。详见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 
 ## 前置流程
 
@@ -35,14 +58,14 @@
 
 - **全量生成**（首次规划 / 主文档重生成）→ **不传 `qr_delta_scope`**（SKILL 契约：不传 = 全量）。
 - **增量补充**（`/version` 补充模式〔情况 B-2〕检出 PRD/原型变更后**派发本命令并传入** `--supplement={NN}`；⛔ `/version` 自身没有 `--supplement` flag，别照字面去敲）→ 传 `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
-- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出 Δ 就退回全量并注明，**宁可多算一个专题、绝不漏传播一处语义**。
+- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出Δ如实记录范围未知，在有效QR_LEVEL的必要校验内保守核对，不扩为full或独立docs-audit。
 
-使用 `Skill` 工具调用 `dev-execution-planner`，由 skill 自主完成执行计划生成 + 多维度独立 Agent 检查（详见 SKILL.md）+ 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**（含多用户判定 / AIDP 资源扫描 / 上游引用规则 / 核心原则 / 拆分控制 / 不中断原则 / 金额字段类型守恒等），命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
+使用 `Skill` 工具调用 `dev-execution-planner`，由 skill 自主完成执行计划生成 + 多维度独立 Agent 检查（详见 SKILL.md）+ 有效qr_level内的最低生成质量自检；不另启未授权非Critical语义QR或独立审计。**SKILL 内规则为单一信源**（含多用户判定 / AIDP 资源扫描 / 上游引用规则 / 核心原则 / 拆分控制 / 不中断原则 / 金额字段类型守恒等），命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
 > 详细规则查 `{{AIDP_HOME}}/skills/dev-execution-planner/SKILL.md`；命令端只负责传入路径上下文 + Step 1.5 grep 回检（项目级补充）。
 > **项目级补充**（喂给 SKILL prompt 的本项目上游路径）：PRD=`docs/requirements/{version}/研发需求/`、原型=`docs/prototype/{version}/`、详设=`docs/design/detail/{version}/`。
 
-> ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
+> **每次生成都显式传 `qr_level=$QR_LEVEL`**（先运行共用配方的父策略围栏）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 详细设计三类路径）：
 - **PRD 路径**：`docs/requirements/{version}/研发需求/`（含 `01_研发需求.md`（历史裸 `00_研发需求.md` 兼容）或拆分的 `0?_*.md`）
@@ -94,7 +117,7 @@ SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死列�
 
 > 上游溯源完整性 + 越界判定（Task PRD/原型/详细设计来源、章节+行号精度、禁写 DDL/接口设计）的规则、脚本、退出码与 `--json` 分档口径**单一信源 = `{{AIDP_HOME}}/skills/dev-execution-planner/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」**（由其质量检查子 Agent 步骤 0 强制跑）。命令端**不另列脚本清单、不复述阈值**。
 >
-> 需要复核时（SKILL 报告缺脚本退出码证据 / 产物明显违规）→ **派一个独立子 Agent 按该文件原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-execution-planner`，计划目录 = `docs/plans/{version}/`），只回传各脚本退出码 + `--json` 的必修 / 警告 / `skipped` 摘要；⛔ 不在主对话内联跑。
+> 按共用QR配方复用同revision/inputs真实hash证据；只有缺失/失效的最低生成自检需要复核时（保留原错误与父预算）→ **派一个独立子 Agent 按该文件判据仅补缺失/失效的必要脚本；不追加未授权非Critical语义QR**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-execution-planner`，计划目录 = `docs/plans/{version}/`），只回传各脚本退出码 + `--json` 的必修 / 警告 / `skipped` 摘要；⛔ 不在主对话内联跑。
 
 判违规 → 暂停 Step 2，把退出码 + 报告正文展示给用户，让 SKILL 重写；退出码 `2`（入参错）→ 修参数重跑，不算产物违规。SKILL QR 标记通过但产物明显违规 → 视为 SKILL 缺陷，在模板仓库修 SKILL（约定 16），不在此步绕过。
 

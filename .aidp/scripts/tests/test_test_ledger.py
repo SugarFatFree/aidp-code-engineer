@@ -77,7 +77,9 @@ class TestLedgerTests(unittest.TestCase):
         return ["--cwd", cwd, "--scope-file", rel, "--scope-hash", hash_value], item["argv"]
 
     def scope_for_ids(self, ids):
-        rows = [json.loads(line) for line in self.ledger().read_text().splitlines()] if self.ledger().exists() else []
+        sys.path.insert(0, str(SCRIPT.parent))
+        import test_ledger
+        rows = test_ledger.load(self.root) if self.ledger().exists() else []
         for run_id in ids:
             row = next((r for r in rows if r.get("run_id") == run_id and r["kind"] == "run"), None)
             if row and row.get("scope_binding"):
@@ -852,7 +854,7 @@ class TestLedgerTests(unittest.TestCase):
             "tests/test_b.py": "import unittest\nfrom src.b import value\nclass B(unittest.TestCase):\n def test_b(self): self.assertGreater(value, 0)\n",
         }.items():
             (self.root / name).write_text(text)
-        runners = [{"suffixes": [".py"], "argv": [sys.executable, "-B", "-m", "unittest", "{tests}"]}]
+        runners = [{"suffixes": [".py"], "batch": False, "argv": [sys.executable, "-B", "-m", "unittest", "{tests}"]}]
         plan = test_scope.derive(self.root, self.scope_base, runners)
         rel, _ = self.scope_path(plan)
         command = [sys.executable, str(SCRIPT), "run-scope", "--root", str(self.root),
@@ -892,6 +894,56 @@ class TestLedgerTests(unittest.TestCase):
                     rejected = subprocess.run(args, capture_output=True, text=True)
                     self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
                     self.assertIn("carry-forward", rejected.stdout)
+
+    def test_task_review_schema_rejects_unreviewed_or_unresolved_evidence(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import test_ledger
+        identity = {"mode": "light", "task_id": "fixture", "version": "V1", "root": str(self.root)}
+        report = self.root / "memory/review.json"
+        valid = {"schema": 1, "kind": "code-review", "status": "PASS", "scope_hash": "scope-fixture",
+                 "execution_context": identity, "reviewer": "review-agent", "findings": [],
+                 "checks": [{"kind": "code-review", "status": "PASS", "evidence": ["src/app.py:1 checked"]}]}
+        invalid = [
+            {"kind": "task-run-set"}, {"reviewer": ""}, {"status": "FAIL"}, {"scope_hash": "other"},
+            {"execution_context": dict(identity, task_id="other")},
+            {"checks": []},
+            {"checks": [{"kind": "static", "status": "PASS", "evidence": ["compiler output"]}]},
+            {"checks": [{"kind": "code-review", "status": "PASS", "evidence": []}]},
+            {"checks": [{"kind": "code-review", "status": "UNVERIFIED", "evidence": ["not reviewed"]}]},
+            {"checks": [*valid["checks"], {"kind": "compile", "status": "NA"}]},
+            {"findings": [{"id": "R1", "severity": "Important", "status": "open", "evidence": "src/app.py:1"}]},
+            {"findings": [{"id": "R1", "severity": "Critical", "status": "accepted", "evidence": "src/app.py:1"}]},
+            {"findings": [{"id": "R1", "severity": "Minor", "status": "accepted", "evidence": "src/app.py:1"}]},
+            {"findings": [{"id": "R1", "severity": "Suggestion", "kind": "error", "status": "accepted",
+                           "reason": "low severity", "evidence": "src/app.py:1"}]},
+            {"findings": [{"id": "R1", "severity": "Minor", "kind": "error", "status": "accepted",
+                           "reason": "low severity", "evidence": "src/app.py:1"}]},
+            {"findings": [{"id": "R1", "severity": "Suggestion", "kind": "improvement", "status": "accepted",
+                           "evidence": "src/app.py:1"}]},
+            {"findings": [{"id": "R1", "severity": "Suggestion", "kind": "improvement", "status": "accepted",
+                           "reason": "current approach sufficient", "evidence": [""]}]},
+            {"findings": [{"id": "R1", "severity": "Suggestion", "kind": "error", "status": "open",
+                           "evidence": "src/app.py:1"}]},
+        ]
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                report.write_text(json.dumps(dict(valid, **changes)))
+                with self.assertRaises(test_ledger.LedgerError):
+                    test_ledger.validate_review_report(self.root, "memory/review.json", "scope-fixture", identity)
+        valid["checks"].append({"kind": "compile", "status": "NA", "reason": "Python interpreted source"})
+        for finding in (
+            {"id": "R1", "severity": "Minor", "kind": "improvement", "status": "accepted",
+             "reason": "Existing implementation is sufficient for this task", "evidence": "src/app.py:1"},
+            {"id": "R2", "severity": "Suggestion", "kind": "improvement", "status": "accepted",
+             "reason": "Naming refinement deferred; current name is unambiguous", "evidence": ["src/app.py:1"]},
+            *({"id": "R3", "severity": "Suggestion", "kind": "error", "status": status,
+               "evidence": "src/app.py:1 corrected and checked"} for status in ("fixed", "closed", "resolved")),
+        ):
+            with self.subTest(finding=finding):
+                valid["findings"] = [finding]
+                report.write_text(json.dumps(valid))
+                self.assertEqual(test_ledger.validate_review_report(self.root, "memory/review.json", "scope-fixture", identity),
+                                 test_ledger.file_hash(report))
 
     def test_self_check_has_positive_and_negative_cases(self):
         p = subprocess.run([sys.executable, str(SCRIPT), "--self-check"],

@@ -2,6 +2,10 @@
 
 > 角色文件
 
+先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父 action/revision/budget，执行前过统一围栏。
+
+本角色负责业务目标、验收标准与正式Sprint生命周期；目标明确用户可观察结果，不写成脚本/流程名。light不创建或认领Sprint；formal归档只消费已授权证据，未启用检查NOT_REQUESTED。
+
 ---
 
 ## 一、身份定义
@@ -32,7 +36,7 @@
 
 ## 二、会话启动检查清单
 
-激活后，**必须按以下顺序读取**，未读完不得开始工作：
+formal 激活后按以下顺序读取适用输入；light只读本任务相关事实，不补齐无关Sprint文件：
 
 ```
 必读（每次）：

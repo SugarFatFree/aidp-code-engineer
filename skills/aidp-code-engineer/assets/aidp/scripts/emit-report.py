@@ -16,6 +16,10 @@ emit-report.py — AI执行报告 / AI测试报告 的确定性产出器（防�
 
 用法：
   emit-report.py --kind exec|test --version V0.1.0 --build V0.1.0_build1001 --data result.json
+  emit-report.py delivery-repair --kind exec|test --version V0.1.0 --build V0.1.0_build1001
+      [--upload-status succeeded --url https://reports.example.com/index.html | --upload-status failed --reason TEXT]
+      [--repo-root .] [--baseline memory/.sprint-autopilot-baseline.json] [--json]
+      只查询/补交付元数据，不运行测试/上传/通知，不改报告；FAIL/已 finalized 报告同样可用。
   emit-report.py verify-reports [--repo-root .] [--reports-root docs/reports] [--json]
       批量巡检：扫全仓所有历史 build 的 data/*.js，逐个跑数据契约校验（发现存量白屏根因，
         如 risks 写成分组 dict / passRate 写成百分数）+ 校 `_integrity` checksum（发现手改；
@@ -512,7 +516,85 @@ def scan_stray_markdown(report_dir):
 def delivery_link(reports_root, version, cn_dir, build):
     """→ (delivery, url, detail)。报告只落本地；链接恒带 `#/build/{BUILD}`。"""
     rel = "/".join([reports_root.strip("/").replace(os.sep, "/"), version, cn_dir, "index.html"])
-    return ("local", f"{rel}#/build/{build}", "报告落在仓库内，随提交共享")
+    return ("local", f"{rel}#/build/{build}", "当前提供仓库路径，需要仓库访问权限。")
+
+
+def delivery_snapshot(kind, version, build, reports_root="docs/reports",
+                      baseline_path="memory/.sprint-autopilot-baseline.json"):
+    """只读现有 HTML/事实与交付台账；FAIL 与 PASS 同样可交付，不触发测试或重渲染。"""
+    for value in (version, build):
+        if not value or value in (".", "..") or "/" in value or "\\" in value:
+            raise ValueError("version/build 必须为单个路径组件")
+    cn_dir = KIND_MAP[kind][0]
+    directory = os.path.join(reports_root, version, cn_dir)
+    payload = _extract_payload_from_js(os.path.join(directory, "data", build + ".js"))
+    if payload.get("build") != build or payload.get("version") != version:
+        raise ValueError("报告归属与 version/build 不匹配")
+    integrity = payload.get("_integrity")
+    if not integrity or integrity != _payload_checksum(payload):
+        raise ValueError("报告 integrity 缺失或不匹配；补交付不得重写事实")
+    if not os.path.isfile(os.path.join(directory, "index.html")):
+        raise ValueError("本地 HTML 报告缺失")
+    relative_root = os.path.relpath(os.path.abspath(reports_root), os.getcwd())
+    if relative_root == ".." or relative_root.startswith(".." + os.sep):
+        raise ValueError("报告必须位于仓库内")
+    _, local_url, _ = delivery_link(relative_root, version, cn_dir, build)
+    baseline = _load_json(baseline_path) if os.path.exists(baseline_path) else {}
+    if not isinstance(baseline, dict):
+        raise ValueError("交付 baseline 无法解析；不得丢弃旧交付状态")
+    node = "exec_report" if kind == "exec" else "test_report"
+    entry = baseline.get("report_deliveries", {}).get(build, {}).get(node, {})
+    if entry.get("integrity") and entry["integrity"] != integrity:
+        raise ValueError("交付台账 integrity 与报告不匹配")
+    upload = entry.get("upload") or {"status": "not_requested"}
+    url = upload.get("url") if upload.get("status") == "succeeded" else local_url
+    if upload.get("status") == "succeeded":
+        from urllib.parse import urlsplit
+        parsed = urlsplit(str(url or ""))
+        if parsed.scheme not in ("https", "http") or not parsed.netloc:
+            raise ValueError("已上传报告缺少有效 HTTP(S) URL")
+        detail = "在线报告链接；访问权限由下游托管配置决定。"
+    elif upload.get("status") == "failed":
+        detail = "在线上传失败，当前提供仓库路径，需要仓库访问权限。"
+    else:
+        detail = "当前提供仓库路径，需要仓库访问权限。"
+    return {"local": {"status": "ready", "url": local_url}, "upload": upload,
+            "notification": entry.get("notification") or {"status": "not_attempted"},
+            "access_url": url, "delivery_detail": detail, "integrity": integrity,
+            "ledger_present": bool(entry), "kind": kind, "version": version, "build": build}
+
+
+def repair_delivery(args):
+    """仅登记下游已执行上传的结果；绝不执行上传、通知、测试或写报告。"""
+    snapshot = delivery_snapshot(args.kind, args.version, args.build,
+                                 args.reports_root, args.baseline)
+    patch = {}
+    if args.upload_status:
+        from urllib.parse import urlsplit, urlunsplit
+        upload = {"status": args.upload_status,
+                  "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        url = snapshot["local"]["url"]
+        if args.upload_status == "succeeded":
+            parsed = urlsplit(args.url or "")
+            if parsed.scheme not in ("https", "http") or not parsed.netloc or parsed.username:
+                raise ValueError("上传成功须提供不含凭据的 HTTP(S) --url")
+            if args.reason:
+                raise ValueError("上传成功不接受失败 --reason")
+            url = urlunsplit(parsed._replace(fragment="/build/" + args.build))
+            upload["url"] = url
+        else:
+            if not (args.reason or "").strip() or args.url:
+                raise ValueError("上传失败须提供 --reason，不能提供成功 --url")
+            upload["reason"] = args.reason.strip()
+        patch = {"local": snapshot["local"], "upload": upload,
+                 "delivery": "local", "url": url}
+    elif args.url or args.reason:
+        raise ValueError("--url/--reason 必须与 --upload-status 一起使用")
+    if patch and not record_baseline(args.baseline, args.kind, args.build, args.version,
+                                    "local", snapshot["local"]["url"], snapshot["integrity"],
+                                    delivery_patch=patch, metadata_only=True):
+        raise ValueError("交付台账写入失败；本地报告保留")
+    return delivery_snapshot(args.kind, args.version, args.build, args.reports_root, args.baseline)
 
 
 def derive_test_summary(payload, reports_root, version, build):
@@ -564,7 +646,8 @@ def derive_test_summary(payload, reports_root, version, build):
     return {"from": test_js, "given": given, "derived": derived}
 
 
-def record_baseline(baseline_path, kind, build, version, delivery, url, integrity=None):
+def record_baseline(baseline_path, kind, build, version, delivery, url, integrity=None,
+                    delivery_patch=None, metadata_only=False):
     """把交付结果回写 baseline，供 autopilot-ceremony-gate.py check 确定性校验。
 
     ★ 并发安全（两条 /loop 共享同一 baseline：autopilot 10m 写部署字段、aiauto-test 5m 写测试字段）：
@@ -609,7 +692,25 @@ def record_baseline(baseline_path, kind, build, version, delivery, url, integrit
                                  "⛔ 不以空对象重建（会抹掉 versions / run_state / 冻结字段）\n" % _exc)
                 return False
             deliveries = data.setdefault("report_deliveries", {})
-            deliveries[build] = {**deliveries.get(build, {}), node: entry}
+            previous = deliveries.get(build, {}).get(node, {})
+            if metadata_only:
+                if set(delivery_patch or {}) - {"local", "upload", "notification", "delivery", "url"}:
+                    raise ValueError("补交付仅允许更新交付 metadata")
+                if not previous or previous.get("integrity") != integrity:
+                    raise ValueError("交付台账缺失或 integrity 与报告不符；不能以补交付修订报告事实")
+                merged = {**previous, **(delivery_patch or {})}
+            else:
+                # 同一份事实重记交付不丢上传/通知；事实变化后旧交付不能冒充本次成功。
+                same = previous.get("integrity") == integrity and bool(integrity)
+                merged = {**(previous if same else {}), **entry}
+                merged.setdefault("local", {"status": "ready", "url": url})
+                merged.setdefault("upload", {"status": "not_requested"})
+                merged.setdefault("notification", {"status": "not_attempted"})
+                if same:
+                    merged["delivery"] = previous.get("delivery", delivery)
+                    merged["url"] = previous.get("url", url)
+                merged.update(delivery_patch or {})
+            deliveries[build] = {**deliveries.get(build, {}), node: merged}
             tmp = baseline_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -695,6 +796,28 @@ def verify_reports(reports_root, as_json):
 def main():
     # verify-reports 子命令：批量巡检（不需 emit 的 --kind/--build/--data 必填参数，故前置短路）
     _argv = sys.argv[1:]
+    if _argv and _argv[0] == "delivery-repair":
+        rp = argparse.ArgumentParser(prog="emit-report.py delivery-repair",
+                                     description="只读现有报告，查询或补记交付元数据；不重跑测试、不改报告")
+        rp.add_argument("--kind", required=True, choices=("exec", "test"))
+        rp.add_argument("--version", required=True)
+        rp.add_argument("--build", required=True)
+        rp.add_argument("--repo-root", default=".")
+        rp.add_argument("--reports-root", default="docs/reports")
+        rp.add_argument("--baseline", default="memory/.sprint-autopilot-baseline.json")
+        rp.add_argument("--upload-status", choices=("succeeded", "failed"))
+        rp.add_argument("--url")
+        rp.add_argument("--reason")
+        rp.add_argument("--json", action="store_true")
+        args = rp.parse_args(_argv[1:])
+        try:
+            os.chdir(args.repo_root)
+            result = repair_delivery(args)
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False))
+        return 0
     if _argv and _argv[0] == "verify-reports":
         vp = argparse.ArgumentParser(prog="emit-report.py verify-reports",
                                      description="批量契约校验 + checksum 防篡改巡检所有历史 build 报告")
@@ -892,13 +1015,28 @@ def main():
     delivery, url, detail = delivery_link(args.reports_root, args.version, cn_dir, args.build)
     if args.record_baseline:
         try:
-            record_baseline(args.baseline, args.kind, args.build, args.version, delivery, url,
-                            integrity=(payload or {}).get("_integrity") if isinstance(payload, dict) else None)
+            recorded = record_baseline(args.baseline, args.kind, args.build, args.version, delivery, url,
+                                       integrity=(payload or {}).get("_integrity") if isinstance(payload, dict) else None)
+            out["ledger_recorded"] = recorded
+            if not recorded and os.path.exists(args.baseline):
+                out.setdefault("errors", []).append("交付台账写入失败；本地报告保留")
         except Exception as e:      # noqa: BLE001 — 台账写失败必须让调用方看见
             out.setdefault("errors", []).append(f"交付台账写入失败：{e}")
     out.update({"delivery": delivery, "access_url": url,
                 "report_path": os.path.join(report_dir, "index.html"),
-                "delivery_detail": detail})
+                "delivery_detail": detail,
+                "local": {"status": "ready", "url": url},
+                "upload": {"status": "not_requested"},
+                "notification": {"status": "not_attempted"}})
+    if out.get("ledger_recorded"):
+        node = "exec_report" if args.kind == "exec" else "test_report"
+        entry = (_load_json(args.baseline, {}) or {}).get("report_deliveries", {}).get(args.build, {}).get(node, {})
+        out.update({key: entry[key] for key in ("local", "upload", "notification") if key in entry})
+        out["access_url"] = entry.get("url", url)
+        if out["upload"].get("status") == "succeeded":
+            out["delivery_detail"] = "在线报告链接；访问权限由下游托管配置决定。"
+        elif out["upload"].get("status") == "failed":
+            out["delivery_detail"] = "在线上传失败，当前提供仓库路径，需要仓库访问权限。"
 
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -907,7 +1045,7 @@ def main():
         print(f"   data：{out['data_file']}  注册页：{', '.join(out['registered_pages'])}")
         if out["stray_markdown"]:
             print(f"   ⚠️ 检出违规 markdown（应删，HTML SPA 铁律）：{', '.join(out['stray_markdown'])}")
-        print(f"   🔗 报告链接：{url}  （{detail}）")
+        print(f"   🔗 报告链接：{out['access_url']}  （{out['delivery_detail']}）")
 
     # ★ 成功产出报告后自动清理 --data 输入草稿（它只是喂给本脚本的临时 JSON，HTML 报告已生成即无用）；
     #   best-effort：删不掉不影响本次结果（仅提示），--keep-input 可保留供调试。命令端已把该草稿写到

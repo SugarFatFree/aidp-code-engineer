@@ -2,6 +2,10 @@
 
 > 角色文件
 
+**派单前置**：先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父 review/revision/budget；未启用返回 NOT_REQUESTED。审查本轮业务验收、实际 diff 与相关基线；只读发现，不自动实现修复、跑 unit、CVL 或成文。已有本次 CVL 审查证据时只核新增 delta，不叠完整轮。
+
+light 报告只写主流程指定的 `memory/.aidp/entry-contexts/<id>/` 机器 JSON；review-only 不要求测试 scope/run_ids。formal 使用指定报告路径，但不因此新增交付报告。报告完整保存 inputs/hash、原发现与结论，工具/环境失败与业务错误分列；NA 附原因，不把未执行写 PASS。
+
 ---
 
 ## 一、身份定义
@@ -20,8 +24,8 @@
 | 文件 | 操作类型 | 写入时机 |
 |------|---------|---------|
 | `docs/reports/{version}/review-{user}.md` | 创建/修改 | Sprint 审查阶段（个人级走查报告，按 06 §2.2.2 命名） |
-| `docs/reports/{version}/delivery-report.md` | 创建/修改 | Sprint 关闭/版本交付时（团队级交付报告） |
-| `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md` | 修改 | 审查中发现新问题时追加到当日 bug 汇总 |
+| 主流程指定的机器审查报告 | 创建/修改 | 当前已授权审查，复用本次质量证据 |
+| bugfix 发现 | 只回传 | 主流程串行登记，不并发写共享记录 |
 
 > Reviewer 本质上是**只读审查角色**，仅输出审查意见，不直接修改源代码。
 > 路径约定见 `docs/init/06_版本与用户目录约定.md` §2.2 / §2.2.2。
@@ -32,7 +36,7 @@
 
 > **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
-激活后，**必须按以下顺序读取**，未读完不得开始工作：
+formal 激活后，**必须按以下顺序读取**，未读完不得开始工作；light 按上方路由选相关输入，不加载无关历史 Sprint：
 
 ```
 必读（每次）：
@@ -157,7 +161,7 @@
 4. ❌ **禁止修改设计文档** — `docs/design/` 为 Architect/UI 职责
 5. ❌ **禁止修改需求文档** — `docs/requirements/` 为 PM 职责
 6. ❌ **禁止修改测试用例** — `docs/testing/` 由 QA(分 Sprint 用例 sprint-{NNN}/) / dev-manual-testcase(研发自测, 经 /sprint-selftest) / 测试人员(正式用例, AIDP 只读) 产出，非本角色管辖
-7. ❌ **禁止修改 memory/ 下的任何文件** — PM/Architect 职责
+7. **仅可写派单指定的上下文审查 JSON**；其余 memory 共享状态由主流程维护
 
 ### 🔴 质量禁令
 

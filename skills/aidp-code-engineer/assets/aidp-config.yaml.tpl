@@ -17,6 +17,10 @@ development:
   # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。
   branch_policy: null
 
+# 可选执行策略；null 表示普通任务仅实现与轻量静态检查。
+# 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。
+execution_policy: null
+
 commit_gate:
   # 提交前门禁总开关（约定 24：每次 git commit 前跑 {{AIDP_HOME}}/scripts/commit_gate.py）。
   # 关掉之后：不再检查台账积压 / CICD 推送欠账。
@@ -43,7 +47,7 @@ cicd:
   # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。
   provider: github-actions
   # 无人值守下是否允许自动触发 / 重试流水线。
-  auto_trigger: true
+  auto_trigger: false
   max_retries: 3
   # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；
   # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}

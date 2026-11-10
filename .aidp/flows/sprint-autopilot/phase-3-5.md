@@ -1,4 +1,4 @@
-# sprint-autopilot · Phase 3 详情分片 [5/14]（3.2 批量 Sprint 执行 + 推送 + 出口游标）
+# sprint-autopilot · Phase 3 详情分片 [5/15]（3.2 批量 Sprint 执行 + 推送 + 出口游标）
 <!-- flowvar-check: allow VKEY -->
 
 > 本片覆盖 Phase 3.2：批量 Sprint、推送、部署与出口游标；进入本阶段后按本文逐项执行。
@@ -7,6 +7,8 @@
 ---
 
 ### 3.2 批量 Sprint 执行（里程碑通知 #1c 开发开始 + #2 在循环内 + #1d 部署完成）
+
+**正式身份传播**：本片仅消费当前版本的 formal `EXECUTION_CONTEXT`。普通增量也继承 formal；所有 dev/bugfix/batch 调用附原路径。逐 Sprint 派发使用下面 fork 的子路径，跨 tick 从既有派发状态取回，不按当前命令重新 resolve。
 
 **实测意图下传**：本轮 `SKIP_AIAUTO_TEST!=1` 时，调用 `/sprint-batch`、逐 tick 的 `/sprint-full` 或增量 `/sprint-dev` 均附 `--aiauto-test-required`；本轮显式跳过实测则不附该 flag。批次局部 `--skip-aiauto-test` 只避免重复启动测试链路，不取消该生成义务。
 
@@ -51,8 +53,31 @@
    ```
 
    **② 委派子 Agent 执行该 Sprint（IRON-8）**：派发前重读 `check_open_sprints.py --version {TARGET_VERSION} --scope started --json`。`open=[]` 正常开工；`open` 恰为本轮编号时附 `--resume`（子命令恢复门仍须核对所属用户）；其他在途或读取错误直接按③失败记账，禁止先 close 清场。恢复不得改写已有 build，也不得绕过下一步的实物核验。
+   Sprint子任务只取父授权与开发组合的交集；commit/push/deploy/live/full-regression留版本父级，避免close等待其后的交付。父预算仍共享：
+
+   ```bash
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   SPRINT_NO=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" get run_state.next_sprint --default '') || exit $?
+   : "${SPRINT_NO:?当前派发Sprint游标缺失}"
+   EXECUTION_CONTEXT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get execution_context --default '') || exit $?
+   SPRINT_ALLOW=$(python3 - "$EXECUTION_CONTEXT" <<'ACTIONS'
+import json, sys
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from execution_policy import BASE_ACTIONS, COMMAND_ACTIONS
+parent = json.load(open(sys.argv[1]))
+development = BASE_ACTIONS | set(COMMAND_ACTIONS["sprint-full"])
+print(*["--allow-action=" + a for a in sorted(development & set(parent["allowed_actions"]))])
+ACTIONS
+   ) || exit $?
+   [ -n "$SPRINT_ALLOW" ] || { printf '%s\n' 'NOT_REQUESTED: 无Sprint开发动作'; exit 0; }
+   SPRINT_POLICY_ARGS=(); read -ra SPRINT_POLICY_ARGS <<< "$SPRINT_ALLOW"
+   SPRINT_CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork --root . \
+     --execution-context "${EXECUTION_CONTEXT:?当前版本formal上下文缺失}" --sprint "$SPRINT_NO" "${SPRINT_POLICY_ARGS[@]}" --json) || exit $?
+   SPRINT_EXECUTION_CONTEXT=$(printf '%s' "$SPRINT_CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+   ```
+
    用 `Agent({run_in_background:false})` 派子 Agent 跑
-   `/sprint-full ${SPRINT_NO} --unattended --from-batch [--resume] [--aiauto-test-required]`（正常 start→dev→test→bugfix→close；恢复跳过 start，从 dev 继续），
+   `/sprint-full ${SPRINT_NO} --execution-context "$SPRINT_EXECUTION_CONTEXT" --unattended --from-batch [--resume] [--aiauto-test-required]`（正常 start→dev→test→bugfix→close；恢复跳过 start，从 dev 继续），
    要求它**只回传 compact JSON** `{"sprint":"NNN","closed":true|false,"reason":"..."}`。
    ⛔ **斜杠命令不能写进 bash 围栏**（它不是 shell 命令，在 Bash 工具里必 `127`；见 rationale.md「斜杠命令进围栏」）。
 

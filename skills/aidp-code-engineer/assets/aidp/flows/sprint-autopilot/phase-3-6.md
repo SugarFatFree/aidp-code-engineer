@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [6/14]（3.2.1 CICD Step A0/A/B/C 触发与监听重试）
+# sprint-autopilot · Phase 3 详情分片 [6/15]（3.2.1 CICD Step A0/A/B/C 触发与监听重试）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 6/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 6/15 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：3.2.1（CICD 编排 Step A0/A/B/C：流水线解析 / 防重复触发 / 主动触发 / 监控+失败重试；平台 = `cicd.provider`，默认 GitHub Actions）
 > - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
 >
@@ -16,7 +16,7 @@
 > **★ 进入本 Phase 前置判定**：读取当前 build 的 `change_classification`（由 Phase 3.2 push 前分类写入）。`cicd_skipped=true` 且 `classification_error=false` 时，本 Phase **整段跳过**：push 已成功校验，直接记录 push 完成，不触发/监听远端 CICD、不等待部署、不跑就绪探针，也不读取远端状态反推分类。分类记录缺失、脚本失败或 `classification_error=true` 时一律按正式代码路径进入本 Phase（fail-closed）。
 > **适用条件**：分类允许监听，且项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none`、`cicd.pipelines.<env>` 已配、提供方 CLI/凭据可用）。`cicd-provider` 模式可主动触发（`cicd_watch.py --mode trigger`，要求该流水线在平台侧允许手动/API 触发，如 GitHub Actions 的 `workflow_dispatch`）；`git-push`/`ci-pipeline` 由 push/外部自动触发后只检测并接管运行。两类 trigger 的失败监控、最多 `cicd.max_retries`（默认 3）次重试和就绪探针相同。
 > **不适用（回落轻量路径）**：分类明确跳过，或 `cicd.provider=none`、未配置 `cicd.pipelines`、提供方 CLI/凭据不可用（`cicd_watch.py` 退出码 3）、`manual-script`、`mode=local`、`mode=none`。分类明确跳过按上条直接完成；其余按 Phase 3.2 轻量分支处理。
-> 检测 / 轮询 / 触发 / 重试一律经 `{{AIDP_HOME}}/scripts/cicd_watch.py`（`--mode detect|poll|trigger|retry`，平台差异收在 `cicd_providers.py`，⛔ 命令端不直接调任何平台 CLI）。读模式只给结论（`next_action`），写模式由命令端按结论显式调用；命令端只做编排（何时触发 / 何时重试 / 就绪判定）。
+> 检测 / 轮询 / 触发 / 重试一律经 `{{AIDP_HOME}}/scripts/cicd_watch.py`（`--mode detect|poll|trigger|retry`，平台差异收在 `cicd_providers.py`，⛔ 命令端不直接调任何平台 CLI）。每次调用及 consume 都传 `--execution-context "$EXECUTION_CONTEXT"`，每个独立围栏从当前版本 baseline 的 `execution_context` 重新读取，不能新建上下文或自行补 deploy grant。push 权限只允许必要只读监听；只有真实 deploy 授权才可主动写或交接部署探针。缺上下文/无 deploy 时返回 `NOT_REQUESTED,next_action=none`，保留 `observed_verdict` 与原平台事实，立即结束本部署段：不进入后续 A/B/C/D、不弹授权请求、不冻结、不补欠账。只读观测到真实失败仍 `rc=2,ok=false`，不得改报成功。
 >
 > ⛔ **本片引用的 `GIT_PUSH_COMMIT` / `GIT_PUSH_AT` 一律从 baseline 读，不要当成上一分片传下来的 shell 变量**——它们赋在 `phase-3-5b.md` 的推送围栏里，跨不过 Bash 调用边界；取空会让下面所有 commit 强绑定判据退化成"抓最近一条运行"，而那正是本片反复禁止的事：
 > ```bash
@@ -37,12 +37,13 @@
    B=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" get current_build --default "")
    GIT_PUSH_COMMIT=$([ -n "$B" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$B" get push_commit --default "" || echo "")
    GIT_PUSH_AT=$([ -n "$B" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$B" get push_at --default "" || echo "")
+   EXECUTION_CONTEXT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get execution_context --default '') || exit $?
    CENV="<dev|test|prod>"; mkdir -p memory/.aidp
    DRC=0
-   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "${GIT_PUSH_COMMIT:?}" --push-at "$GIT_PUSH_AT" --env "$CENV" \
+   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --execution-context "$EXECUTION_CONTEXT" --commit "${GIT_PUSH_COMMIT:?}" --push-at "$GIT_PUSH_AT" --env "$CENV" \
      --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json || DRC=$?
    cat memory/.aidp/cicd-detect.json
-   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" \
      --result memory/.aidp/cicd-detect.json --result-code "$DRC" || exit $?
    # consume 已持久化原结果与 rc、校验本 build 推送锚点并写出口。
    # 合法 rc4/probe/degraded → 直接 Read phase-3-7.md 跑 Step D；不再执行 A/B/C。
@@ -69,7 +70,7 @@
 5. **就绪探针用对目标**：Step D 的 `cloud_ready_*` URL 必须指向 `RESOLVED_PIPELINE` 实际部署的那个环境，别探到部署了旧代码的另一环境得出假绿。
 
 > ⛔⛔ **`cicd_watch.py` 调不通时【不得自行实现轮询】**（自写轮询丢掉 `next_action`/`run_id` 判定）：
-> 报修脚本 + 按约定 31.5 最保守口径**直接重试**、⛔ 不查业务代码。详规见 31.5，自检 `--selftest`。
+> 保留原工具错误并停止；修复输入或适配后再运行，不为消耗平台重试配额反复调用，也不查业务代码。详规见 31.5，自检 `--selftest`。
 >
 > ★ 下方 Step A/B/C/D 的所有 CICD 调用**一律锚定 `RESOLVED_PIPELINE` / `RESOLVED_RUN_ID`**（经 `--pipeline "$RESOLVED_PIPELINE"` 传入，不用 `--env <env>` 机械取流水线）。`cicd_env` 仅在对照表无歧义时作默认提示，最终以本 Step A0 的触发分支 + 部署目标核验为准。
 >
@@ -87,10 +88,11 @@
   GIT_PUSH_COMMIT=$($BE --build "${B:?}" get push_commit --default "")
   GIT_PUSH_AT=$($BE --build "$B" get push_at --default "")
   RESOLVED_PIPELINE=$($BE get cicd_run.pipeline --default "")
+  EXECUTION_CONTEXT=$($BE get execution_context --default '') || exit $?
   mkdir -p memory/.aidp; DRC=0
-  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "${GIT_PUSH_COMMIT:?}" --push-at "$GIT_PUSH_AT" \
+  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --execution-context "$EXECUTION_CONTEXT" --commit "${GIT_PUSH_COMMIT:?}" --push-at "$GIT_PUSH_AT" \
     --pipeline "${RESOLVED_PIPELINE:?}" --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json || DRC=$?
-  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+  python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" \
     --result memory/.aidp/cicd-detect.json --result-code "$DRC" || exit $?
   ```
   - **合法降级**（rc4 + probe + degraded，消费通过）→ 直接进 Step D，不触发、不轮询；保留 unknown 和原原因。
@@ -100,8 +102,8 @@
 
 **Step B — 主动触发流水线（未自动触发时）**
 
-- **触发授权 = `cicd.auto_trigger`（默认 true，无需人工 accept；交互式与无人值守一致）**：
-  - **`auto_trigger=true`** → 执行：
+- **触发授权由当前 execution context 的 deploy grant 决定**；`cicd.auto_trigger` 是自动回退配置，缺省 false，旧 true 也不是本轮授权。用户已明确授权 deploy 时直接使用已有 provider；默认或无来源的旧 false 不要求改配置或再确认。有来源的明确项目禁用由脚本报告冲突，不覆盖配置。
+  - **仅脚本输出 `next_action=trigger` 时**执行；写入口会复核真实授权、项目禁用来源与共享预算：
     ```bash
     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
     BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
@@ -110,30 +112,25 @@
     GIT_PUSH_AT=$([ -n "$B" ] && $BE --build "$B" get push_at --default "" || echo "")
     RESOLVED_PIPELINE=$($BE get cicd_run.pipeline --default "")
     DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
-    AUTO=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get cicd.auto_trigger 2>/dev/null); AUTO=${AUTO:-true}
-    if [ "$AUTO" != "true" ]; then
-      python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$TARGET_VERSION" --build "$B" \
-        --freeze-now --phase 3.2.1-deploy --reason cicd-auto-trigger-off \
-        --why "cicd.auto_trigger=false，需人工触发 $RESOLVED_PIPELINE（commit $GIT_PUSH_COMMIT）"
-      exit 3
-    fi
+    EXECUTION_CONTEXT=$($BE get execution_context --default '') || exit $?
+    # 写授权、能力开关、预算统一由 cicd_watch 校验；不能以配置替代本轮 grant。
     mkdir -p memory/.aidp; CJ=memory/.aidp/cicd-trigger.json; CRC=0
-    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --pipeline "${RESOLVED_PIPELINE:?}" --ref "$DEV_BRANCH" \
+    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --execution-context "$EXECUTION_CONTEXT" --pipeline "${RESOLVED_PIPELINE:?}" --ref "$DEV_BRANCH" \
       --commit "${GIT_PUSH_COMMIT:?}" --version "$TARGET_VERSION" --timeout 480 > "$CJ" || CRC=$?
-    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+    python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" \
       --result "$CJ" --result-code "$CRC" || exit $?
     # next_action=detect → 平台不回显 run id，用本 build 的 push_commit 强绑定重新锁定。
     if [ "$(jq -r '.next_action' "$CJ")" = "detect" ]; then
       CJ=memory/.aidp/cicd-detect.json; CRC=0
-      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --commit "$GIT_PUSH_COMMIT" --push-at "$GIT_PUSH_AT" --pipeline "$RESOLVED_PIPELINE" \
+      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --execution-context "$EXECUTION_CONTEXT" --commit "$GIT_PUSH_COMMIT" --push-at "$GIT_PUSH_AT" --pipeline "$RESOLVED_PIPELINE" \
         --version "$TARGET_VERSION" --timeout 480 > "$CJ" || CRC=$?
-      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --version "$TARGET_VERSION" \
+      python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" \
         --result "$CJ" --result-code "$CRC" || exit $?
     fi
     ```
     ⚠️ 按分支触发构建的是**分支当前 HEAD**：受理只代表请求已发送，尚未核验的 `run_commit` 保持空。随后 poll 核对实际 commit 与 `GIT_PUSH_COMMIT`，错绑即冻结，禁止冒充本次提交的部署。
-  - **`auto_trigger=false`** → **不触发**，按「冻结字段写入契约」写齐 `needs_human=true` + `aiauto_frozen_at=@now` + `freeze_reason=cicd-auto-trigger-off` + 顶层 `aiauto_blocked_reason`，发 #4 后冻结本版；`needs_human_reason` 写明「`cicd.auto_trigger=false`，需人工触发部署」+ 已解析的 `pipeline` / 待构建 commit。
-  - 与 Step C 的差别：**重试**（`cicd_watch.py --mode retry`）重跑的是已失败运行的原 commit；**首次触发**跑的是分支 HEAD，二者同受 `cicd.auto_trigger` 控制。
+  - **`NOT_REQUESTED`** → consume 只记录只读观测并清除部署待办，结束本段；不因缺授权冻结或补授权弹窗。**`auto-trigger-off`** 仅表示有来源的明确项目禁用与已请求部署冲突，consume 保留原策略证据并沿用原冻结出口；不能把缺省 false 当作该冲突。
+  - 与 Step C 的差别：**重试**（`cicd_watch.py --mode retry`）重跑已失败运行的原 commit；**首次触发**跑分支 HEAD。二者均需当前 deploy grant，平台 `need_accept` 仍独立保留，不自动接受。
   - 触发被平台拒绝（`--mode trigger` exit 2 / `verdict=trigger-failed`，如 GitHub Actions 未声明 `workflow_dispatch`、Jenkins Job 不允许远程构建）→ 按环境类失败处置：发 #4 说明「流水线不支持手动触发，请配置 push 触发或在平台侧开启手动/API 触发」+ 原样抄录 `reason`，冻结 `freeze_reason=pipeline-unknown`。
 - 触发受理并取得 run id → consume 写 `cicd_run.run_id`，`RUN_TRIGGERED=manual`，进 Step C 核验平台实际 SHA。detect 合法降级 → 已写 `3.2.1-probe`，直接 Step D；锁定未命中且未降级 → 留 `3.2.1-deploy`，下 tick 再 detect。
 

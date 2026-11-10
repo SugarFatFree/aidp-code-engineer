@@ -19,6 +19,7 @@ FLOW = REPO / '.aidp/flows/sprint-autopilot'
 sys.path.insert(0, str(SCRIPTS))
 import cicd_providers as providers
 import cicd_watch as watch
+from entry_context import resolve_context
 
 SHA = '0123456789abcdef0123456789abcdef01234567'
 VERSION = 'V0.1.0'
@@ -40,24 +41,214 @@ class DeploymentTests(unittest.TestCase):
                       'cicd_unreachable_streak': 2, 'cicd_cli_fail_streak': 2}}}))
         self.initial_baseline = self.baseline.read_text()
         self.config(auto=True)
+        self.execution_context = None
 
-    def config(self, auto=True, push_auto=True):
+    def context(self, grants, **kwargs):
+        return resolve_context(self.root, 'sprint-dev', version=VERSION,
+            additional_grants=grants, authorization_source={'kind': 'user-text',
+            'request_id': 'offline-cicd-test', 'text': '本次测试授权动作：' + ', '.join(grants)},
+            **kwargs)['execution_context']
+
+    def config(self, auto=True, push_auto=True, explicit=False):
         (self.root / 'memory/aidp-config.yaml').write_text(
             'cicd:\n  provider: command\n  auto_trigger: ' + str(auto).lower() +
             '\n  push_auto_deploy: ' + str(push_auto).lower() +
             '\n  push_deploy_min_wait_seconds: 0\n  pipelines: {test: web}\n'
-            '  command: {list: list, view: view, trigger: trigger, retry: retry}\n')
+            '  command: {list: list, view: view, trigger: trigger, retry: retry}\n' +
+            ('  auto_trigger_source: {kind: project-policy, user_selected: true, request_id: choice-1, '
+             'text: 禁止自动触发部署}\n' if explicit else ''))
 
     def node(self):
         return json.loads(self.baseline.read_text())['versions'][VERSION]
 
-    def go(self, args, execute=None):
+    def go(self, args, execute=None, context='default'):
+        if context == 'default' and self.execution_context is None:
+            self.execution_context = self.context(['push', 'deploy'])
+        ctx = self.execution_context if context == 'default' else context
+        if ctx:
+            args = args + ['--execution-context', str(ctx)]
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
             with patch.object(providers, 'EXEC', execute or providers.EXEC):
                 rc = watch.run(args + ['--root', str(self.root), '--baseline', str(self.baseline),
                                        '--version', VERSION, '--post-push-wait', '0', '--min-wait', '0'])
         return rc, json.loads(stream.getvalue().splitlines()[-1])
+
+    def test_missing_context_never_writes_with_config_true(self):
+        for mode in ('trigger', 'retry'):
+            with self.subTest(mode=mode):
+                calls = []
+                def execute(command, cwd, timeout, shell=False):
+                    calls.append(command)
+                    return 0, json.dumps({'id': 'r1', 'status': 'failed', 'commit': SHA}), ''
+                rc, result = self.go(['--mode', mode, '--commit', SHA, '--run-id', 'r1'],
+                                     execute, context=None)
+                self.assertEqual(calls, [], '缺上下文不得进入 provider 写路径')
+                self.assertEqual((rc, result['verdict'], result['next_action']),
+                                 (0, 'NOT_REQUESTED', 'none'))
+                self.assertFalse(result['ok'])
+
+    def test_push_only_context_never_writes(self):
+        ctx = self.context(['push'])
+        for mode in ('trigger', 'retry'):
+            with self.subTest(mode=mode):
+                def forbidden(*args, **kwargs):
+                    self.fail('push grant 不得调用 provider 写路径')
+                rc, result = self.go(['--mode', mode, '--commit', SHA, '--run-id', 'r1'], forbidden, ctx)
+                self.assertEqual((rc, result['verdict'], result['next_action']),
+                                 (0, 'NOT_REQUESTED', 'none'))
+
+    def test_readonly_observation_never_suggests_write_or_probe(self):
+        ctx = self.context(['push'])
+        self.config(push_auto=False)
+        cases = [('detect', [], 'not-triggered', 0),
+                 ('poll', {'id': 'r1', 'commit': SHA, 'status': 'success'}, 'success', 0),
+                 ('poll', {'id': 'r1', 'commit': SHA, 'status': 'failed'}, 'failed', 2)]
+        for mode, response, observed, expected_rc in cases:
+            with self.subTest(observed=observed):
+                calls = []
+                def execute(command, cwd, timeout, shell=False):
+                    calls.append(command)
+                    return 0, json.dumps(response), ''
+                rc, result = self.go(['--mode', mode, '--commit', SHA, '--run-id', 'r1'], execute, ctx)
+                self.assertEqual((rc, result['verdict'], result['next_action']),
+                                 (expected_rc, 'NOT_REQUESTED', 'none'))
+                self.assertEqual(result['observed_verdict'], observed)
+                self.assertTrue(result['readonly'])
+                self.assertFalse(result['ok'])
+                self.assertNotIn('trigger_cmd', result)
+                self.assertNotIn('retry_cmd', result)
+                self.assertFalse(set(calls) & {'trigger', 'retry'})
+
+    def test_readonly_provider_accept_request_never_becomes_authorization_prompt(self):
+        ctx = self.context(['push'])
+        def execute(command, cwd, timeout, shell=False):
+            return 4, json.dumps({'need_accept': True, 'reason': 'platform approval needed'}), ''
+        rc, result = self.go(['--mode', 'poll', '--commit', SHA, '--run-id', 'r1'], execute, ctx)
+        self.assertEqual((rc, result['verdict'], result['next_action']), (0, 'NOT_REQUESTED', 'none'))
+        self.assertEqual(result['observed_verdict'], 'need-accept')
+        self.assertIn('platform approval needed', json.dumps(result))
+        self.execution_context = ctx
+        rc, consumed = self.consume(rc, result)
+        self.assertEqual((rc, consumed['next_action']), (0, 'none'))
+        self.assertFalse(self.node().get('needs_human'))
+
+    def test_consume_not_requested_does_not_freeze_or_succeed(self):
+        self.execution_context = self.context(['push'])
+        data = json.loads(self.initial_baseline)
+        data['versions'][VERSION]['run_state'] = {
+            'current_phase': '3.2.1-deploy', 'next_phase': '3.2.1-probe',
+            'status': 'done', 'pending_actions': ['deploy-probe']}
+        self.baseline.write_text(json.dumps(data))
+        rc, result = self.consume(0, self.result(verdict='NOT_REQUESTED', next_action='none',
+            readonly=True, observed_verdict='success', degraded=False))
+        self.assertEqual((rc, result['next_action']), (0, 'none'))
+        node = self.node()
+        self.assertFalse(node.get('needs_human'))
+        self.assertNotEqual(node['cicd_run'].get('status'), 'success')
+        self.assertNotEqual(node['run_state'].get('next_phase'), '3.2.1-probe')
+        self.assertNotIn('cicd-watch', node['run_state'].get('pending_actions', []))
+        self.assertNotIn('deploy-probe', node['run_state'].get('pending_actions', []))
+        self.assertNotIn('last_deployed_at', node)
+        self.assertEqual(node['cicd_unreachable_streak'], 2)
+
+    def test_explicit_deploy_grant_triggers_and_records_budget(self):
+        calls = []
+        def execute(command, cwd, timeout, shell=False):
+            calls.append(command)
+            return 0, json.dumps({'run_id': 'r2'}), ''
+        rc, result = self.go(['--mode', 'trigger', '--commit', SHA, '--ref', 'main'], execute)
+        self.assertEqual((rc, result['verdict']), (0, 'triggered'))
+        self.assertEqual(calls, ['trigger'])
+        budget = json.loads(Path(self.execution_context).with_name('budget.json').read_text())
+        self.assertEqual(budget['used']['processes'], 1)
+        self.assertEqual(budget['outcomes'][-1]['status'], 'PASS')
+
+    def test_same_input_tool_failure_stops_before_second_provider_write(self):
+        calls = []
+        def execute(command, cwd, timeout, shell=False):
+            calls.append(command)
+            return 1, '', 'provider original offline error'
+        args = ['--mode', 'trigger', '--commit', SHA, '--ref', 'main']
+        rc, result = self.go(args, execute)
+        self.assertEqual((rc, result['verdict']), (2, 'trigger-failed'))
+        rc, result = self.go(args, execute)
+        self.assertEqual((rc, result['next_action']), (2, 'abort'))
+        self.assertEqual(result['execution_status'], 'TOOL_ERROR')
+        self.assertIn('provider original offline error', json.dumps(result))
+        self.assertEqual(calls, ['trigger'])
+        budget = json.loads(Path(self.execution_context).with_name('budget.json').read_text())
+        self.assertEqual(budget['used']['processes'], 1)
+        self.assertEqual(budget['outcomes'][-1]['status'], 'TOOL_ERROR')
+
+    def test_deploy_grant_works_with_default_or_legacy_false_capability(self):
+        for omitted in (True, False):
+            with self.subTest(omitted=omitted):
+                self.config(auto=False)
+                path = self.root / 'memory/aidp-config.yaml'
+                if omitted:
+                    path.write_text(path.read_text().replace('  auto_trigger: false\n', ''))
+                before = path.read_text()
+                calls = []
+                def execute(command, cwd, timeout, shell=False):
+                    calls.append(command)
+                    return 0, json.dumps({'run_id': 'r2'}), ''
+                rc, result = self.go(['--mode', 'trigger', '--commit', SHA], execute)
+                self.assertEqual((rc, result['verdict']), (0, 'triggered'))
+                self.assertEqual(calls, ['trigger'])
+                self.assertEqual(path.read_text(), before)
+
+    def test_shared_retry_budget_cannot_be_reset_by_new_run_id(self):
+        ctx = self.context(['deploy'], execution_budget={'retries': 1})
+        calls = []
+        def execute(command, cwd, timeout, shell=False):
+            calls.append(command)
+            return 0, json.dumps({'id': 'r2', 'status': 'failed', 'commit': SHA}), ''
+        rc, result = self.go(['--mode', 'retry', '--commit', SHA, '--run-id', 'r1'], execute, ctx)
+        self.assertEqual((rc, result['verdict']), (0, 'retried'))
+        rc, result = self.go(['--mode', 'retry', '--commit', SHA, '--run-id', 'r2'], execute, ctx)
+        self.assertEqual((rc, result['execution_status']), (2, 'BUDGET_EXCEEDED'))
+        self.assertEqual(calls, ['view', 'retry'])
+        budget = json.loads(Path(ctx).with_name('budget.json').read_text())
+        self.assertEqual(budget['used']['retries'], 1)
+
+    def test_process_budget_stops_before_provider_check(self):
+        ctx = self.context(['deploy'], execution_budget={'processes': 0})
+        cfg = self.root / 'memory/aidp-config.yaml'
+        cfg.write_text(cfg.read_text().replace('list: list', 'check: check, list: list'))
+        def forbidden(*args, **kwargs):
+            self.fail('预算用尽后不得再探 CLI')
+        rc, result = self.go(['--mode', 'trigger', '--commit', SHA], forbidden, ctx)
+        self.assertEqual((rc, result['execution_status']), (2, 'BUDGET_EXCEEDED'))
+
+    def test_retry_requires_known_commit(self):
+        for commit in ('', 'f' * 40):
+            with self.subTest(commit=commit):
+                calls = []
+                def execute(command, cwd, timeout, shell=False):
+                    calls.append(command)
+                    return 0, json.dumps({'id': 'r1', 'status': 'failed', 'commit': commit}), ''
+                rc, result = self.go(['--mode', 'retry', '--commit', SHA, '--run-id', 'r1'], execute)
+                self.assertEqual((rc, result['verdict']), (2, 'commit-mismatch'))
+                self.assertEqual(calls, ['view'])
+
+    def test_consume_does_not_trust_stale_deploy_result_for_push_only_task(self):
+        self.execution_context = self.context(['push'])
+        rc, result = self.consume(0, self.result(verdict='success', next_action='probe',
+                                                run_commit=SHA, degraded=False))
+        self.assertEqual(result['verdict'], 'NOT_REQUESTED')
+        self.assertNotEqual(self.node()['run_state']['next_phase'], '3.2.1-probe')
+        self.assertFalse(self.node().get('needs_human'))
+        self.assertNotEqual(self.node()['cicd_run']['status'], 'success')
+
+    def test_readonly_failed_consumption_preserves_failure_without_freeze(self):
+        self.execution_context = self.context(['push'])
+        rc, result = self.consume(2, self.result(verdict='NOT_REQUESTED', next_action='none',
+                observed_verdict='failed', readonly=True, degraded=False))
+        self.assertEqual((rc, result['observed_verdict']), (2, 'failed'))
+        self.assertFalse(result['ok'])
+        self.assertFalse(self.node().get('needs_human'))
+        self.assertNotIn('cicd_retry_count', self.node()['cicd_run'])
 
     def test_command_need_accept_all_actions(self):
         for action in ('check', 'list', 'view', 'trigger', 'retry'):
@@ -171,7 +362,7 @@ class DeploymentTests(unittest.TestCase):
                                             ('retry', False, 0, 'auto-trigger-off'),
                                             ('retry', True, 3, 'failed')]:
             with self.subTest(mode=mode, auto=auto):
-                self.config(auto=auto)
+                self.config(auto=auto, explicit=not auto)
                 def forbidden(*args, **kwargs):
                     self.fail('未授权或重试满额时不应调用 Command')
                 rc, result = self.go(['--mode', mode, '--commit', SHA, '--run-id', 'r1',
@@ -199,8 +390,13 @@ class DeploymentTests(unittest.TestCase):
                 for b in re.findall(r'^[ \t]*```bash\n(.*?)\n[ \t]*```',
                                     (FLOW / filename).read_text(), re.M | re.S)]
 
-    def fence(self, block, output, code):
+    def fence(self, block, output, code, wake=1):
         """只替换平台 watch 和 tick flags；consume/baseline/fail_handle 均跑生产脚本。"""
+        if self.execution_context is None:
+            self.execution_context = self.context(['push', 'deploy'])
+        data = json.loads(self.baseline.read_text())
+        data['versions'][VERSION]['execution_context'] = self.execution_context
+        self.baseline.write_text(json.dumps(data))
         result_file = self.root / 'fake-result.json'
         result_file.write_text(json.dumps(output))
         prefix = '''python3() {
@@ -213,6 +409,7 @@ class DeploymentTests(unittest.TestCase):
   esac
 }
 '''
+        prefix = prefix.replace('HAS_WAKE_SOURCE=1', 'HAS_WAKE_SOURCE=' + str(wake))
         return subprocess.run(['bash', '-c', prefix + block], cwd=self.root, capture_output=True, text=True,
                               env={**os.environ, 'REAL_PYTHON': sys.executable, 'FAKE_RESULT': str(result_file),
                                    'FAKE_RC': str(code)}, timeout=30)
@@ -243,6 +440,29 @@ class DeploymentTests(unittest.TestCase):
         self.assertFalse(self.node()['cicd_run']['commit_verified'])
         self.assertNotEqual(self.node()['run_state']['next_phase'], '3.2.1-probe')
 
+    def test_readonly_running_fence_without_wake_does_not_freeze_optional_deploy(self):
+        self.execution_context = self.context(['push'])
+        block = next(b for b in self.blocks('phase-3-6b.md') if '--mode poll' in b)
+        output = self.result(verdict='running', next_action='poll', readonly=True, degraded=False)
+        outcome = self.fence(block, output, 0, wake=0)
+        self.assertEqual(outcome.returncode, 0, outcome.stdout + outcome.stderr)
+        self.assertFalse(self.node().get('needs_human'))
+        self.assertNotEqual(self.node()['cicd_run']['status'], 'success')
+
+    def test_not_requested_retry_fence_never_counts_success_or_freezes(self):
+        self.execution_context = self.context(['push'])
+        block = next(b for b in self.blocks('phase-3-6b.md') if '--mode retry' in b)
+        output = self.result(mode='retry', verdict='NOT_REQUESTED', next_action='none',
+                             readonly=True, degraded=False)
+        outcome = self.fence(block, output, 0)
+        self.assertEqual(outcome.returncode, 0, outcome.stdout + outcome.stderr)
+        node = self.node()
+        self.assertNotIn('cicd_retry_count', node['cicd_run'])
+        self.assertFalse(node.get('needs_human'))
+        self.assertNotEqual(node['cicd_run']['status'], 'success')
+        self.assertEqual(node['run_state']['pending_actions'], [])
+        self.assertNotEqual(node['run_state']['next_phase'], '3.2.1-probe')
+
     def test_real_fence_immediate_freeze(self):
         trigger = next(b for b in self.blocks('phase-3-6.md') if '--mode trigger' in b)
         retry = next(b for b in self.blocks('phase-3-6b.md') if '--mode retry' in b)
@@ -257,7 +477,7 @@ class DeploymentTests(unittest.TestCase):
             (retry, 'need-accept', True, 'cicd-auto-trigger-off')):
             with self.subTest(verdict=verdict, auto=auto, retry=block == retry):
                 self.baseline.write_text(self.initial_baseline)
-                self.config(auto=auto)
+                self.config(auto=auto, explicit=not auto)
                 outcome = self.fence(block, self.result(verdict=verdict, next_action='abort', degraded=False),
                                      4 if verdict == 'need-accept' else 2)
                 self.assertNotEqual(outcome.returncode, 0, outcome.stderr)

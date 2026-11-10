@@ -4,6 +4,80 @@
 
 参数：$ARGUMENTS
 
+
+## 执行身份与授权前置路由
+
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，新任务按实际用户来源准备POLICY_ARGS。用户显式本命令公开static+live-tests+full-regression，两条测试职责仍并行；自然浏览器请求只用目标实测能力，不偷取全回归组合。嵌套只能inherit。
+
+```bash
+# OS调度只提供入口标记，不是授权；先只读选择真实部署及其已授权父任务。
+if [ -z "${EXECUTION_CONTEXT:-}" ] && [ "${AIDP_TICK_COMMAND:-}" = sprint-aiauto-test ]; then
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py touch aiauto_test_heartbeat_at || exit $?
+  TEST_VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version --default '') || exit $?
+  [ -n "$TEST_VERSION" ] || { printf '%s\n' 'NO_TARGET: 无已部署待测版本'; exit 0; }
+  BUILD_ID=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TEST_VERSION" get current_build --default '') || exit $?
+  [ -n "$BUILD_ID" ] || { printf '%s\n' 'NO_TARGET: 尚无真实build'; exit 0; }
+  BUILD_COMMIT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TEST_VERSION" --build "$BUILD_ID" get push_commit --default '') || exit $?
+  [ -n "$BUILD_COMMIT" ] || { printf '%s\n' 'NO_TARGET: 缺少本build部署commit'; exit 0; }
+  CURRENT_ROOT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get autopilot.execution_context --default '') || exit $?
+  ROOT_SELECT_ARGS=(--version "$TEST_VERSION" --existing-only)
+  [ -z "$CURRENT_ROOT" ] || ROOT_SELECT_ARGS+=(--execution-context "$CURRENT_ROOT")
+  ROOT_SELECT_RC=0
+  ROOT_SELECT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve-autopilot-root --root . \
+    "${ROOT_SELECT_ARGS[@]}" --json) || ROOT_SELECT_RC=$?
+  if [ "$ROOT_SELECT_RC" != 0 ]; then
+    ROOT_STATUS=$(printf '%s' "$ROOT_SELECT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", "UNVERIFIED"))') || exit 2
+    printf '%s\n' "$ROOT_SELECT"
+    [ "$ROOT_STATUS" != UNAUTHORIZED ] || { printf '%s\n' 'NOT_REQUESTED: 无已有可信测试父任务'; exit 0; }
+    exit "$ROOT_SELECT_RC"
+  fi
+  TEST_PARENT=$(printf '%s' "$ROOT_SELECT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+  PARENT_ROUTE=$(python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --execution-context "$TEST_PARENT" --phase route --json) || exit $?
+  TEST_ALLOWED=$(printf '%s' "$PARENT_ROUTE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d["route"]=="formal" and {"live-tests","full-regression"}<=set(d["authorized_actions"])))') || exit $?
+  [ "$TEST_ALLOWED" = 1 ] || { printf '%s\n' 'NOT_REQUESTED: 父任务未启用双路测试'; exit 0; }
+  TEST_CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
+    --execution-context "$TEST_PARENT" --version "$TEST_VERSION" --build-id "$BUILD_ID" --json) || exit $?
+  EXECUTION_CONTEXT=$(printf '%s' "$TEST_CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+fi
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-aiauto-test \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 独立显式调用或父根直达：已有真实build才固定child，不借light/历史baseline授双测。
+PIN_ROOT_VERSION=$(python3 - "$EXECUTION_CONTEXT" <<'PIN_ROOT'
+import sys
+from pathlib import Path
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from entry_context import load_context
+ctx = load_context(Path.cwd(), sys.argv[1], migrate=False)
+allowed = {"live-tests", "full-regression"} <= set(ctx["allowed_actions"])
+root = ctx["mode"] == "formal" and not ctx.get("parent_task_id")
+print(ctx["version"] if root and allowed and ctx["entry"] in ("sprint-autopilot", "sprint-aiauto-test") else "")
+PIN_ROOT
+) || exit $?
+if [ -n "$PIN_ROOT_VERSION" ]; then
+  PIN_BUILD=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PIN_ROOT_VERSION" get current_build --default '') || exit $?
+  if [ -n "$PIN_BUILD" ]; then
+    PIN_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
+      --execution-context "$EXECUTION_CONTEXT" --version "$PIN_ROOT_VERSION" --build-id "$PIN_BUILD" --json) || exit $?
+    EXECUTION_CONTEXT=$(printf '%s' "$PIN_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+  fi
+fi
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-aiauto-test \
+  --execution-context "$EXECUTION_CONTEXT" --phase test --json || exit $?
+```
+
+调度读取前先写轻量心跳；早退只证明tick活性，业务/工具失败仍按原状态返回，不能冒充测试完成。父根只经resolve-autopilot-root --existing-only选择，不建根/改grant/重置预算；当前同版窄根优先、历史planning不当授权。调度路径按真实version/build幂等fork-test-build，跨tick续用同一任务与根预算，不重新resolve根或从baseline制造grant；NO_TARGET等待下次已有调度，NOT_REQUESTED不进join/finalize。固定build传给后续双路协调，不能重选新build。
+
+消费actions后才派发：live-tests启用目标页面/接口观察，full-regression启用既有全量单测支线；每次派发过统一require_action/reserve_budget，prompt继承父revision/action/budget。light只复用测试内核并保存上下文机器证据后return，不创建Sprint/build/AI仪式产物；formal继续下文已授权报告链。未启用支线NOT_REQUESTED，不计测试失败或欠账，不调用新入口重新grant。
+
 **tick 占位收尾**：Phase 0 begin/parse 的本轮 token 保留在执行上下文。每一次返回前（含无变化、委派返回、配置等待、失败、冻结与 yield），全部工作完成后按 `{{AIDP_HOME}}/reference/agent-tools.md`「tick 占位收尾」执行 `autopilot_tick_flags.py finish --command aiauto-test --lock-token <本轮token>`。token 为 `agent_loop` 或未取得占位时不执行。不得在单个 Bash 结束时提前释放；重新 parse 沿用本轮 token。
 
 **内部缓存身份**：`--preflight-run-id <ID>` 只由上层编排透传，同一次同步委派使用同一身份；独立唤起不传，由 `autopilot_tick_flags.py parse` 自动生成新值。传给测试链路时附 `--preflight-run-id "$PREFLIGHT_RUN_ID"`；异步调度新 tick 不沿用。

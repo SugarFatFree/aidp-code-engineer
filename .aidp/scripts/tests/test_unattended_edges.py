@@ -11,6 +11,59 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class UnattendedEdgeTests(unittest.TestCase):
+    def test_run_summary_counts_only_outer_unittest_result(self):
+        import shlex
+        import sys
+        source = (ROOT / '.aidp/scripts/tests/run.sh').read_text()
+        prefix, marker, _ = source.partition('\nrun "test_report_schema.py')
+        self.assertTrue(marker, '必须运行当前run.sh中的真实汇总函数')
+        cases = [
+            ('Ran 1 test in 0.1s\nFAILED (failures=1, errors=1)\n'
+             'Ran 10 tests in 0.2s\nOK (skipped=2)\n', 0, 'COUNTS:8:0:2'),
+            ('Ran 5 tests in 0.1s\nOK (skipped=5)\n'
+             'Ran 7 tests in 0.2s\nFAILED (failures=1, errors=2, skipped=1)\n', 1, 'COUNTS:3:3:1'),
+            ('Ran 2 tests in 0.1s\nOK (skipped=2)\n'
+             'Ran 3 tests in 0.2s\nOK\n', 0, 'COUNTS:3:0:0'),
+            ('Ran 1 test in 0.1s\nOK\nRan 3 tests in 0.2s\n', 1, 'COUNTS:0:0:0'),
+        ]
+        for output, code, expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                runner = root / '.aidp/scripts/tests/run.sh'
+                runner.parent.mkdir(parents=True)
+                fixture = root / 'fixture.py'
+                fixture.write_text('import sys\nsys.stdout.write(' + repr(output) + ')\nsys.exit(' + str(code) + ')\n')
+                runner.write_text(prefix + '\nrun fixture ' + shlex.quote(sys.executable) + ' ' + shlex.quote(str(fixture)) +
+                                  '\nprintf "COUNTS:%s:%s:%s\\n" "$total_pass" "$total_fail" "$total_skip"\n')
+                result = subprocess.run(['bash', str(runner)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+
+    def test_chain_guard_understands_quoted_context_without_trusting_quoted_flags(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('chain_guard', ROOT / '.aidp/scripts/check_chain_unattended.py')
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            commands = root / '.aidp/commands'
+            commands.mkdir(parents=True)
+            (commands / 'sprint-dev.md').write_text('参数 --unattended\n')
+            caller = commands / 'sprint-full.md'
+            for args, missing in [
+                ('--execution-context "$CTX" {NNN} [--from-batch] [--unattended]', False),
+                ('{NNN} --execution-context "path with spaces" --unattended', False),
+                ('{NNN} --execution-context "$CTX" [--unattended]（其它描述）', False),
+                ('{NNN} --execution-context "$CTX" --scale={档位} [--unattended]', False),
+                ('{NNN} --execution-context "$CTX" --param=--unattended', True),
+                ('{NNN} --execution-context "$CTX"', True),
+                ('{NNN} --description "--unattended"', True),
+                ('{NNN} --execution-context "$CTX"（务必带 --unattended）', True),
+            ]:
+                with self.subTest(args=args):
+                    caller.write_text('执行：/sprint-dev ' + args + '\n')
+                    self.assertEqual(bool(guard.collect(root)), missing)
+
     def test_report_source_check_understands_emitted_json(self):
         text = (ROOT / '.aidp/flows/sprint-aiauto-test/phase-3-2.md').read_text()
         match = re.search(r"<<'REPORT_READY'\n(.*?)\nREPORT_READY", text, re.S)
@@ -81,10 +134,13 @@ class UnattendedEdgeTests(unittest.TestCase):
     def test_actual_dev_templates_carry_required_cases_flag(self):
         flow = ROOT / '.aidp/flows/sprint-autopilot'
         for name, command in (('phase-3-5.md', '/sprint-full ${SPRINT_NO}'),
-                              ('phase-3-5b.md', '/sprint-batch --skip-context-check')):
+                              ('phase-3-5b.md', '/sprint-batch')):
             text = (flow / name).read_text()
-            call = next(line for line in text.splitlines() if command in line)
+            call = next(line for line in text.splitlines() if command in line and '[--aiauto-test-required]' in line)
             self.assertIn('[--aiauto-test-required]', call)
+            self.assertIn('--execution-context', call)
+            if name == 'phase-3-5b.md':
+                self.assertIn('--skip-context-check', call)
             self.assertIn('SKIP_AIAUTO_TEST!=1', text)
 
     def test_dirty_tree_default_does_not_stage_everything(self):

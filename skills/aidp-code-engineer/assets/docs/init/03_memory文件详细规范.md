@@ -1,5 +1,7 @@
 # 03 — Memory Bank 文件详细规范
 
+> 任务身份与轻量能力复用以 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 为准；本指南不额外定义 Sprint 准入流程。
+
 > **文档定位**：本文档提供各 Memory Bank 文件的详细说明和完整模板。
 >
 > **相关文档**：
@@ -374,7 +376,7 @@ cd code/backend/{module-name}
 # 当前活跃上下文
 
 > ⚠️ L3 迭代记忆。路径 `memory/{version}/{user}/activeContext.md`（用户私有，不得跨用户修改）。
-> Sprint 开始时由 /sprint-start 重置，关闭时由 /sprint-close 归档到同级 `sprints/` 目录。
+> 仅 formal Sprint 开始时由 /sprint-start 更新，关闭时由 /sprint-close 归档到同级 `sprints/`；恢复不重置，light 不写本状态。
 > 最后更新：YYYY-MM-DD HH:MM | 更新人：[姓名/Agent]
 
 ## 当前上下文

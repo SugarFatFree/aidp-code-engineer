@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [9/14]（3.4 收尾 Step 4+ 完成核验门与收尾动作）
+# sprint-autopilot · Phase 3 详情分片 [9/15]（3.4 收尾 Step 4+ 完成核验门与收尾动作）
 
-> **第 9/14 片**：3.4 收尾 Step 4+（完成核验门与收尾动作）。按命令主体 Phase 3 骨架表依次 Read，不省略步骤与硬门；理据见 `rationale.md`。
+> **第 9/15 片**：3.4 收尾 Step 4+（完成核验门与收尾动作）。按命令主体 Phase 3 骨架表依次 Read，不省略步骤与硬门；理据见 `rationale.md`。
 
 ---
 
@@ -21,6 +21,14 @@
    # 从 3.4-finish 续跑也要读版本级决定；无 Git 云部署不等待一条根本不会产生的测试交接。
    VCS_MODE=$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from vcs import detect_mode; print(detect_mode(Path.cwd()))') || exit 1
    WILL_BROWSER_TEST=$($BE --version "$V" get will_browser_test --default 0)
+   EXECUTION_CONTEXT=$($BE --version "$V" get execution_context --default "") || exit $?
+   AUTH_ROUTE=$(python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --execution-context "${EXECUTION_CONTEXT:?父上下文缺失}" --phase route --json) || exit $?
+   LIVE_ALLOWED=$(printf '%s' "$AUTH_ROUTE" | python3 -c 'import json,sys; print(int("live-tests" in json.load(sys.stdin)["authorized_actions"]))') || exit $?
+   if [ "$LIVE_ALLOWED" != 1 ]; then
+     WILL_BROWSER_TEST=0
+     $BE --version "$V" set will_browser_test 0
+     echo "NOT_REQUESTED: live-tests；不派发、不累计缺链失败"
+   fi
    DEPLOY_READY=1
    if [ "$VCS_MODE" = none ] && [ "${DEPLOY_MODE:-none}" = cloud ]; then DEPLOY_READY=0; fi
    if [ "$DEPLOY_READY" = 0 ]; then
@@ -33,18 +41,8 @@
 
    # ★★ 强制仪式确定性收尾门（外部脚本 = 权威）：只认文件产物 + 通知台账，缺失且无合法降级 → exit 1。
    GATE="{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py"
-   # ★ stage 分流：skeleton = 本 build 已委派测试链路 **或** 测试链路真活着（谁是 build 关闭方）；
-   #   其余一律 final（理据见 rationale.md，⛔ 别只看 WILL_BROWSER_TEST）。
-   # ⛔ 判据里**不带 LOOP_UNATTENDED**："谁关闭这个 build" 与 "有没有人值守" 是两件事。
-   #   带上它会留下一格空洞：交互式 `--once` 但机器上第二条 loop 正常挂着时，既拿不到 skeleton、
-   #   也触发不了下方的内联补测分诊 —— 于是 final 去校一份要等下个 5min tick 才产的测试交付，
-   #   必 FAIL → bump dev_fail_streak → Stop hook 再判 handback 违规 → 白烧 3 次阻止额度。
+   # 已授权实测且真实委派/测试链存活才选skeleton，其余final；工具错误不当缺链。
    DELEGATED=$($BE --version "$V" --build "$B" get aiauto_delegated_at --default "")
-   # ⛔ TEST_ALIVE 这个条件不可省（根因见 rationale.md「双 loop 下收尾门为何恒判 final」）
-   # ⛔ 别写 `2>/dev/null || echo 0`：`test-loop-alive` 是纯查询、**恒 exit 0**，非零只可能是
-   #   gate 脚本自身故障（缺失/语法错/baseline 不可读）。把它 fail-open 成 0 会走进
-   #   「测试链路未挂载」分支：每 tick bump test_loop_missing_streak、3 tick 后冻结，并写下一条
-   #   **错误诊断**——让人去查一条一直好好挂着的 loop，而真因被 2>/dev/null 一起吞了。
    TEST_ALIVE=$(python3 "$GATE" test-loop-alive --version "$V"); _TLA_RC=$?
    if [ "$_TLA_RC" != "0" ]; then
      echo "⚠️ ceremony-gate test-loop-alive 自身异常（rc=$_TLA_RC）→ 本 tick 不判测试链路存活、"
@@ -124,10 +122,10 @@
       （此时 `WILL_BROWSER_TEST=0`，根因分诊那一支不再命中）。
 
    **★ 交互式补测（`NEED_INLINE_AIAUTO=1` 时执行，⛔ 不得跳过）**：`Agent({run_in_background:false})`
-   派子 Agent 跑 **`/sprint-aiauto-test --once --unattended`**（⛔ 斜杠命令不能进 bash 围栏，必 `127`；
+   派发前执行light-context的live-tests require_action及agents预算围栏；未授权直接NOT_REQUESTED返回收尾，已授权派子Agent跑 **`/sprint-aiauto-test --execution-context "$EXECUTION_CONTEXT" --once --unattended`**（⛔ 斜杠命令不能进 bash 围栏，必 `127`；
    ⛔ `--unattended` 不可省：**子 Agent 答不了 `AskUserQuestion`**，裸 `--once` 会在首个交互门挂死——
    这与"用户在不在场"无关，取决于**谁在执行**），
-   只回传 `{"tested":bool,"pass_rate":N,"reason":"…"}`；回来后**从本门开头复跑一次**。
+   prompt继承父revision/action/budget和真实inputs hash；只回传 `{"tested":bool,"pass_rate":N,"reason":"…"}`；回来后**从本门开头复跑一次**。
    派不出 / `tested:false` → 才降级静态-only 收尾并**把原因打印给用户**（见 rationale.md）。
 
    ```bash
@@ -138,19 +136,17 @@
    V="${TARGET_VERSION}"; B="${BUILD}"; BN="${BUILD_SEQ}"
    # 同一版本级真源；不能在新 Bash 围栏重新拾取旧 tick 的 WILL_BROWSER_TEST=1。
    WILL_BROWSER_TEST=$($BE --version "$V" get will_browser_test --default 0)
+   EXECUTION_CONTEXT=$($BE --version "$V" get execution_context --default "") || exit $?
+   AUTH_ROUTE=$(python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --execution-context "${EXECUTION_CONTEXT:?父上下文缺失}" --phase route --json) || exit $?
+   LIVE_ALLOWED=$(printf '%s' "$AUTH_ROUTE" | python3 -c 'import json,sys; print(int("live-tests" in json.load(sys.stdin)["authorized_actions"]))') || exit $?
+   if [ "$LIVE_ALLOWED" != 1 ]; then
+     WILL_BROWSER_TEST=0
+     $BE --version "$V" set will_browser_test 0
+     echo "NOT_REQUESTED: live-tests；不派发、不累计缺链失败"
+   fi
    GATE="${GATE:-{{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py}"
-   # ⛔⛔ **GATE_STAGE 必须在本围栏【重新推导】**——它在上一个围栏（本片 stage 分流处）赋值，
-   #    而本围栏开头那行注释说得很清楚：新围栏 = 新 Bash 调用、上个围栏的变量一律不存活。
-   #    它也**不在** `autopilot_tick_flags.py --shell` 的供给清单里（实测命中 0）。
-   #    漏取的后果不是"用了个默认值"：`--stage ""` 命中 argparse 的 choices 校验 → **rc=2**（实测），
-   #    下方 `|| { bump dev_fail_streak … }` **每 tick 执行** → 3 tick 达阈 →
-   #    `handoff-exhausted`（`_HUMAN_ONLY`，探针一律不解冻）→ **永久待人工**，
-   #    而日志只会说"收尾门未过"、不会显示真因是参数为空。
+   # 独立Bash重取stage依据，不借上一围栏变量；工具错误保留原因。
    DELEGATED=$($BE --version "$V" --build "$B" get aiauto_delegated_at --default "")
-   # ⛔ 别写 `2>/dev/null || echo 0`：`test-loop-alive` 是纯查询、**恒 exit 0**，非零只可能是
-   #   gate 脚本自身故障（缺失/语法错/baseline 不可读）。把它 fail-open 成 0 会走进
-   #   「测试链路未挂载」分支：每 tick bump test_loop_missing_streak、3 tick 后冻结，并写下一条
-   #   **错误诊断**——让人去查一条一直好好挂着的 loop，而真因被 2>/dev/null 一起吞了。
    TEST_ALIVE=$(python3 "$GATE" test-loop-alive --version "$V"); _TLA_RC=$?
    if [ "$_TLA_RC" != "0" ]; then
      echo "⚠️ ceremony-gate test-loop-alive 自身异常（rc=$_TLA_RC）→ 本 tick 不判测试链路存活、"

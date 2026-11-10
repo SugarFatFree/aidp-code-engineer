@@ -141,10 +141,10 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 
    与 init 的差异：先备份将被触及的文件到 `.aidp-backup-<时间戳>/`；已存在的根 `README.md`、非 AIDP 形态的 `docs/**/README.md` 与 `memory/README.md` 保留原文；`code/` 下已有自定义代码目录时不补建 `code/frontend|backend`；原有 CLAUDE.md / AGENTS.md 的非 AIDP 内容并入新记忆文件「项目自定义」段并进入语义改写队列复核。
 
-4. **处理语义改写队列**（`.aidp-rewrite-queue.txt`，脚本输出 `pending: true` 时必做）。每行 `<目标路径>\t<新版模板路径>\t<入队时目标文件 sha256>`（两个路径都是仓库相对路径），逐条：
-   1. `Read` 目标文件与新版模板（模板占位符按本项目实际值理解）；
-   2. 以模板的结构、术语、路径、命令名为准改写目标文件，保留项目自有内容：已填写的 `{{AIDP_HOME}}/reference/子Agent必读.md` 条目、项目补充进 `docs/**/README.md` / `memory/README.md` 的内容；改建时并入记忆文件「项目自定义」段的原文；
-   3. 「项目自定义」段去重，删掉与 AIDP 正文重复的规则；与 AIDP 约定冲突的项（典型：把完整构建 `pnpm build` / `mvn package` 或启动服务列为开发期常用命令，违反约定 35）用 `AskUserQuestion` 逐项交用户裁决，推荐删除或改为部署期限定；无法提问时保留原文并在输出中列出冲突项；
+4. **处理语义改写队列**（`.aidp-rewrite-queue.txt`，脚本输出 `pending: true` 时必做）。每行前三列为 `<目标路径>\t<新版模板路径>\t<入队时目标文件 sha256>`（两个路径都是仓库相对路径）；可选第四列为 JSON 差异证据，逐条：
+   1. `Read` 目标文件与新版模板（模板占位符按本项目实际值理解）；有差异证据时同时核对 `reason`、`section`、`baseline`、`project`、`incoming`。`missing-baseline` 表示旧基线缺失，不能把段外文字一概当成上游模板删除；
+   2. 以模板的结构、术语、路径、命令名为准改写目标文件，保留项目自有内容：已填写的 `{{AIDP_HOME}}/reference/子Agent必读.md` 条目、项目补充进 `docs/**/README.md` / `memory/README.md` 的内容；主记忆的段外项目注解、额外状态说明，以及改建时并入「项目自定义」段的原文。项目约束须落在后续实际加载的正文或自定义段；只存在于 backup 或队列证据中不算完成保留，不得把整个旧模板复制进自定义段造成双份规则；
+   3. 「项目自定义」段去重，删掉与 AIDP 正文重复的规则；与 AIDP 约定冲突的项（典型：把完整构建 `pnpm build` / `mvn package` 或启动服务列为开发期常用命令，违反约定 35）用 `AskUserQuestion` 逐项交用户裁决，推荐删除或改为部署期限定；无法提问或冲突尚未解决时保留原文，保持 `pending` 并在输出中明确列出冲突项；不得用 `--accept` 绕过未决冲突或宣称升级完成；
    4. `Write` 覆盖。⛔ 不要手工删除队列文件。全部处理完后：
 
    ```bash
@@ -187,7 +187,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    保护规则：
    - **本地改过的契约**：`overwrite` 时按上一版安装的 `CONTRACT_MANIFEST.json` 指纹比对，项目改过又被新版覆盖的文件逐个列在输出 `local_overwritten` 与警告里（附备份目录），向用户转述；
    - **用户填充型契约**（`{{AIDP_HOME}}/reference/子Agent必读.md`）与**结构性 README**（`docs/**/README.md`、`memory/README.md`）：依据 `.aidp-user-fillable.json` 指纹台账判定——未改过则刷新；改过且新版骨架有变化则不覆盖、进入语义改写队列；新版骨架与上次合并的一致则不动；
-   - **项目记忆文件**：`overwrite` 时由脚本按锚点确定性合并——「项目自定义」段之前取新模板正文，「当前状态」段保留项目的版本 / 开发者 / Sprint / 目标 / 进度 / 最后更新等字段值，「项目自定义」段原样保留；不进语义改写队列；
+   - **项目记忆文件**：`overwrite` 前读取已安装模板快照，并用 `.aidp-user-fillable.json` 的模板/合并指纹辨别上游模板与项目内容；「当前状态」固定字段和「项目自定义」段保留，独立状态散文留在状态段，旧模板章节中可确定的独立项目注解迁入自定义正文。模板行的项目修改/删除、规则性追加、同节新旧变更冲突或缺可信旧基线时，原正文不动，具体差异进入现有语义改写队列并保持 `pending`。相同骨架与已合并内容无需改写时不动；重复升级不重复章节/待办，也不通过自动改动待办正文绕过收口。Agent 布局切换时待办跟随最终正文位，保持入队指纹与证据；
    - **项目私有 SKILL**（`{{AIDP_HOME}}/skills/` 下脚手架没有的目录）：不触碰；
    - **孤儿契约**（项目里有、当前脚手架已没有的契约文件）：输出 `orphans` 清单，只报告不删除——向用户列出，确认后再删。
 3. **处理语义改写队列并收口**：同 Mode 2 第 4 步。

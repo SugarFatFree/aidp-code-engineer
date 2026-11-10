@@ -34,11 +34,11 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 
 ### Step 1：调用 ux-logic-extractor skill（模式由 SKILL 按输入自判；本场景含 PRD 通常走融合增强 B，缺 PRD 时 SKILL 自降级 A）
 
-使用 `Skill` 工具调用 `ux-logic-extractor`，由 skill 自主完成 PRD 生成 + 多维度（详见 SKILL.md）独立 Agent 检查 + 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**（含职责边界 / 上游引用规则 / 拆分数量控制 / 不中断原则 / 不臆造兜底 / 数据闭环完整性 / 复用优先维度等），命令端按 CLAUDE.md 约定 21 不复述、不修改，仅做编排和项目级补充。
+使用 `Skill` 工具调用 `ux-logic-extractor`，由 skill 自主完成 PRD 生成 + 多维度（详见 SKILL.md）独立 Agent 检查 + 当前有效qr_level内的最低生成自检，不额外启动未授权语义QR。**SKILL 内规则为单一信源**（含职责边界 / 上游引用规则 / 拆分数量控制 / 不中断原则 / 不臆造兜底 / 数据闭环完整性 / 复用优先维度等），命令端按 CLAUDE.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
 > 详细规则查 `{{AIDP_HOME}}/skills/ux-logic-extractor/SKILL.md`；命令端只负责传参 + 接收输出 + 下方 Step 1.5 的 AIDP 编排后处理。
 
-> ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
+> **调用前执行 `reference/SKILL编排层接入.md` 的document与QR围栏，始终显式传 `qr_level=$QR_LEVEL`**；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
 
 **调用参数**（按 skill 当前接口）：
 - **产品需求文档**：Step 0.1 扫描到的全部 PRD 路径
@@ -123,7 +123,7 @@ ASSERT_RC=$?
 
 > **单一信源 = `{{AIDP_HOME}}/skills/ux-logic-extractor/references/flow-qr-dispatch.md`**（脚本清单、触发条件、退出码、`98_语义变更与需求作废.json` 机读副本产出与 rc 处置全部在那里，由其质量检查子 Agent 步骤 0 强制跑）；命令端**不另列脚本、不复述判级**。
 >
-> 需要复核时（SKILL 报告缺脚本退出码证据 / 产物明显违规）→ **派独立子 Agent 按该文件原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/ux-logic-extractor`，PRD 目录 = `docs/requirements/{version}/研发需求/`，`check_prd_item_coverage.py` 的 `--prd-source` = `docs/requirements/{version}/产品提供/`），只回传各脚本退出码 + 摘要；⛔ 不在主对话内联跑。判违规 → 暂停 Step 2 让 SKILL 重写；退出码 `2` = 入参错，修参数重跑、不算违规；`98_语义变更与需求作废.json` 未落盘按 SKILL 口径阻断（它是 version-auditor 审计 H 的唯一机读信源）。SKILL QR 标记通过但产物明显违规 → 在模板仓库修 SKILL（约定 16），不在此步绕过。
+> 按共用QR配方复用同revision/inputs真实hash证据；只有缺失/失效的最低生成自检需要复核时（保留原错误与父预算）→ **派独立子 Agent 按该文件判据复核：无可复用证据时原样跑全部脚本，部分失效时仅补失效项；不追加未授权非Critical语义QR**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/ux-logic-extractor`，PRD 目录 = `docs/requirements/{version}/研发需求/`，`check_prd_item_coverage.py` 的 `--prd-source` = `docs/requirements/{version}/产品提供/`），只回传各脚本退出码 + 摘要；⛔ 不在主对话内联跑。判违规 → 暂停 Step 2 让 SKILL 重写；退出码 `2` = 入参错，修参数重跑、不算违规；`98_语义变更与需求作废.json` 未落盘按 SKILL 口径阻断（它是 version-auditor 审计 H 的唯一机读信源）。SKILL QR 标记通过但产物明显违规 → 在模板仓库修 SKILL（约定 16），不在此步绕过。
 
 **Q-NNN 优先级汇总**（命令端读取十章节后按 P0/P1/P2 分组，在终端输出给用户）：
 

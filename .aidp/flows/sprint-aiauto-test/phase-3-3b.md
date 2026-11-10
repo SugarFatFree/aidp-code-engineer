@@ -13,6 +13,8 @@
 
 > `python3 {{AIDP_HOME}}/scripts/notify.py --auto` 使用配置渠道，通知含项目名、工作目录、完成时间。`NOTIFY_ENABLED=0` 或退出码 3 时静默跳过，不弹问询。`ROUND` 读 baseline `versions.{V}.aiauto_test_round` 并 +1 回写（一次调用一轮）；公共模板见 sprint-autopilot 0.1bis。
 
+本地/上传/通知独立记账；`--report-kind test` 自动选台账 URL 或附权限说明的仓库路径。仅补交付走 `{{AIDP_HOME}}/templates/reports/README.md`「只补交付」shell（含上传失败措辞）；不重测、不改 frozen 事实、不 ZIP/附件外发，FAIL 亦可交付。
+
 **新双路优先分支**：data 含 `unitTests` 时执行下块，再到 3.5/3.7，跳过历史冻结协议。PASS 绿色、FAIL 红色、UNVERIFIED/TIMEOUT 橙色；RUNNING/缺分类不发完成卡。standalone 同样附报告链接。单测 BUG 已由 3.3 settle 幂等登记；环境/超时不登记 BUG、不累计失败 streak。
 
 ```bash
@@ -39,7 +41,6 @@ if routing["status"] != "COMPLETE":
     raise SystemExit("缺陷待分流，返回 3.3 补齐分类，不发完成卡：" + ", ".join(routing["missing"]))
 status = overall_status(p); unit = p["unitTests"]
 color = "green" if status == "PASS" else "red" if status == "FAIL" else "orange"
-url = f"docs/reports/{v}/AI测试报告/index.html#/build/{b}"
 counts = unit.get("counts") or {}
 unit_counts = " / ".join(f"{k}={counts[k] if counts.get(k) is not None else '未提供'}" for k in ("passed","failed","skipped"))
 section = (f"全量实测：{browser_status(p)}；全量单测：{unit['status']}（{unit_counts}）。"
@@ -54,7 +55,7 @@ if notify == "1":
     for node in ("#R", "#F"):
         rc = subprocess.run([sys.executable,"{{AIDP_HOME}}/scripts/notify.py","--auto","--node",node,
             "--header-color",color,"--title",f"AI 测试汇总：{status}","--version",v,"--build",b,
-            "--section",section,"--link-text","查看双路测试报告","--link-url",url]).returncode
+            "--section",section,"--link-text","查看双路测试报告","--report-kind","test"]).returncode
         if rc not in (0,3): print(f"通知 {node} 未送达，保留待重试记录", file=sys.stderr)
 JOINT_CARDS
   [ "$?" -eq 0 ] || exit 1
@@ -63,7 +64,7 @@ fi
 
 下方 #R/#F、冻结协议和分类追加块**仅供无 unitTests 的历史恢复**。新双路以 3.3 `failureTriage` 为准，settle 已锁内写 AFP / pending_clarifications / environment_unverified；缺分类回 3.3，不能跳过分流。
 
-**#R 每轮测试结束**（每次 /sprint-aiauto-test 跑完都发；header 全绿→蓝、有失败/运行时错误→橙）——除公共字段外含：版本 + 轮次、本轮 通过/失败/阻塞/忽略/**不适用**（⛔ 不并进 pass）、**无依据的 direct pass 条数**（`THIS_ROUND_DIRECT_NOEV`>0 时才出现这一行；⛔ 不得省略——省了就无从区分「跑过且通过」与「跳过后填 pass」）、本轮新发现缺陷数、是否收敛、报告路径。三类结果文案（**首行 = 通知标题 `notify.py --title`，按 0.1bis「通知标题固定前缀」必带项目中文名称**，其余为正文）：
+**#R 每轮测试结束必发**：header 全绿蓝色、有失败/运行时错误橙色。公共字段外须含版本、轮次、通过/失败/阻塞/忽略/**不适用**（不并入 pass）、`THIS_ROUND_DIRECT_NOEV`>0 时的无依据 direct pass 条数、新缺陷数、收敛状态和报告路径。以下首行是 `--title`（按 0.1bis 必带项目中文名），其余为正文：
 
 - 全通过**且无运行时错误**：
   ```

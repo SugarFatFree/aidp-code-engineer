@@ -60,20 +60,78 @@ def run(root, version):
                 "detail": "用例台账不可判读或尚未清理：" + ", ".join(invalid)}
     # 延后生成的 Sprint 记录是第二份防丢证据：台账被误删也不能把未生成读成已生成。
     deferred = []
+    deferred_tasks = []
     path = Path(baseline_path(root))
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         sprints = ((data.get("versions") or {}).get(version) or {}).get("sprints") or {}
         deferred = [n for n, s in sprints.items()
                     if isinstance(s, dict) and s.get("case_generation", {}).get("status") == "deferred"]
+        tasks = ((data.get("versions") or {}).get(version) or {}).get("deferred_tasks") or {}
+        deferred_tasks = [n for n, item in tasks.items() if isinstance(item, dict) and item.get("status") == "deferred"]
     except (OSError, ValueError, AttributeError) as exc:
         return {"ok": False, "passed": False, "pending": None, "detail": str(exc)}
-    total = max(total, len(deferred))
+    total = max(total, len(deferred) + len(deferred_tasks))
     return {
         "ok": True, "version": version, "pending": total,
         "case_ledger": case.get("file"), "case_pending": total, "deferred_sprints": deferred,
+        "deferred_tasks": deferred_tasks,
         "passed": total == 0,
     }
+
+
+def require_generated_cases(root, version):
+    """沿用正式实测用例门，不把台账清空误当成用例已生成。"""
+    from commit_gate import pending_cascade
+    from importlib.util import spec_from_file_location, module_from_spec
+    pc = pending_cascade(root)
+    case = ((pc.get("versions", {}).get(version) or {}).get("families") or {}).get("case") or {}
+    directory = Path(root) / "docs/testing" / version / "研发自测"
+    sources = [p for p in directory.glob("*.md") if p.name != "README.md"
+               and not p.name.startswith(("_", "00_", "99_"))]
+    parser_path = Path(__file__).resolve().parents[1] / "skills/dev-manual-testcase/scripts/check_testcase_format.py"
+    spec = spec_from_file_location("_aidp_case_format", parser_path)
+    parser = module_from_spec(spec)
+    spec.loader.exec_module(parser)
+    has_cases = any(parser.TESTCASE_HEADER.search(p.read_text(encoding="utf-8")) for p in sources)
+    invalid = [p for key in ("unparsed", "archived_not_deleted") for p in pc.get(key, [])
+               if str(p).replace(os.sep, "/").startswith("docs/testing/%s/" % version)]
+    if case.get("total") or invalid or not has_cases:
+        raise ValueError("用例台账尚有待办或正式用例未生成，不得清除欠账")
+
+
+def record_task_generation(root, version, task_id, reason, complete=False):
+    """只登记实际受影响的用例族，不分配或写入任何 Sprint 节点。"""
+    from baseline_edit import LockedBaseline
+    from commit_gate import cascade_ledger_paths
+    from alloc_id import allocate
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", task_id) or not reason.strip():
+        raise ValueError("需要有效的机器任务身份与非空原因")
+    if not re.fullmatch(r"V[0-9]+(?:\.[0-9]+)*", version):
+        raise ValueError("版本格式无效")
+    ledger = next(Path(p) for family, p in cascade_ledger_paths(root, version) if family == "case")
+    with LockedBaseline(baseline_path(root), write=True) as state:
+        node = state.data.setdefault("versions", {}).setdefault(version, {})
+        tasks = node.setdefault("deferred_tasks", {})
+        previous = tasks.get(task_id) or {}
+        if complete:
+            if not previous:
+                raise ValueError("未知轻量任务欠账，不得伪造完成")
+            require_generated_cases(root, version)
+        elif previous.get("status") == "deferred":
+            return previous
+        else:
+            cid = allocate(root, "C", 1, "orchestrator", version=version, scope="changes")["ids"][0]
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            body = ledger.read_text(encoding="utf-8") if ledger.exists() else "# 开发期用例增量\n\n## 待级联\n"
+            clean_reason = " ".join(reason.splitlines())
+            body += "\n- %s · %s · %s · task:%s\n" % (cid, datetime.now().strftime("%m-%d %H:%M"), clean_reason, task_id)
+            temporary = ledger.with_suffix(".md.tmp")
+            temporary.write_text(body, encoding="utf-8")
+            os.replace(temporary, ledger)
+        tasks[task_id] = {"status": "generated" if complete else "deferred", "reason": reason,
+                          "at": datetime.now().astimezone().isoformat()}
+        return tasks[task_id]
 
 
 def record_generation(root, version, sprint, reason, complete=False):
@@ -89,28 +147,13 @@ def record_generation(root, version, sprint, reason, complete=False):
         item = node.setdefault("sprints", {}).setdefault(sprint, {})
         previous = item.get("case_generation") or {}
         if complete:
-            pc = __import__("commit_gate").pending_cascade(root)
-            case = ((pc.get("versions", {}).get(version) or {}).get("families") or {}).get("case") or {}
-            directory = Path(root) / "docs/testing" / version / "研发自测"
-            sources = [p for p in directory.glob("*.md") if p.name != "README.md"
-                       and not p.name.startswith(("_", "00_", "99_"))]
-            from importlib.util import spec_from_file_location, module_from_spec
-            parser_path = Path(__file__).resolve().parents[1] / "skills/dev-manual-testcase/scripts/check_testcase_format.py"
-            spec = spec_from_file_location("_aidp_case_format", parser_path)
-            parser = module_from_spec(spec)
-            spec.loader.exec_module(parser)
-            has_cases = any(parser.TESTCASE_HEADER.search(p.read_text(encoding="utf-8")) for p in sources)
-            invalid = [p for key in ("unparsed", "archived_not_deleted") for p in pc.get(key, [])
-                       if str(p).replace(os.sep, "/").startswith("docs/testing/%s/" % version)]
-            if case.get("total") or invalid or not has_cases:
-                raise ValueError("用例台账尚有待办或正式用例未生成，不得清除欠账")
+            require_generated_cases(root, version)
         elif previous.get("status") == "deferred":
             return previous
         else:
             ledger.parent.mkdir(parents=True, exist_ok=True)
-            texts = [Path(p).read_text(encoding="utf-8") for _, p in cascade_ledger_paths(root, version) if Path(p).exists()]
-            numbers = [int(n) for text in texts for n in re.findall(r"C-(\d+)", text)]
-            cid = "C-%03d" % (max(numbers, default=0) + 1)
+            from alloc_id import allocate
+            cid = allocate(root, "C", 1, "orchestrator", version=version, scope="changes")["ids"][0]
             body = ledger.read_text(encoding="utf-8") if ledger.exists() else "# 开发期用例增量\n\n## 待级联\n"
             clean_reason = " ".join(reason.splitlines())
             body += "\n- %s · %s · 延后生成 Sprint-%s 用例：%s · sprint-%s\n" % (
@@ -160,6 +203,8 @@ def main():
     ap.add_argument("--require", action="store_true", help="外层明确要求实测，用例必须现在生成")
     ap.add_argument("--defer", action="store_true", help="登记暂缓生成和用例族欠账")
     ap.add_argument("--complete", action="store_true", help="正式用例生成且台账收口后清除暂缓标记")
+    ap.add_argument("--execution-context", help="继承轻量任务上下文；不写Sprint状态")
+    ap.add_argument("--task-id", help="正式用例收口时只清此已登记轻量任务欠账")
     ap.add_argument("--sprint", default="")
     ap.add_argument("--reason", default="")
     ap.add_argument("--json", action="store_true")
@@ -182,6 +227,30 @@ def main():
         ap.error("--prepare / --defer / --complete 互斥")
     if args.defer or args.complete or args.prepare:
         try:
+            execution = None
+            if args.execution_context:
+                from entry_context import load_context
+                execution = load_context(Path(root), args.execution_context)
+                if execution["version"] != args.version:
+                    raise ValueError("执行上下文与版本不一致")
+            if execution and execution["mode"] == "light":
+                if args.sprint:
+                    raise ValueError("轻量上下文不得附加Sprint编号")
+                if args.task_id and args.task_id != execution["task_id"]:
+                    raise ValueError("任务身份不一致")
+                if args.prepare:
+                    required = generation_required(args.context, args.skip_aiauto_test, args.require)
+                    result = {"required": required, "mode": "light", "task_id": execution["task_id"],
+                              "status": "required" if required else "not-requested",
+                              "note": "仅实际受影响用例才显式defer；不制造Sprint或强制生成文档"}
+                else:
+                    result = record_task_generation(root, args.version, execution["task_id"], args.reason, args.complete)
+                print(json.dumps(result, ensure_ascii=False)); return 0
+            if args.task_id:
+                if not args.complete or args.sprint:
+                    raise ValueError("--task-id仅用于显式清除已登记任务的用例欠账")
+                result = record_task_generation(root, args.version, args.task_id, args.reason, complete=True)
+                print(json.dumps(result, ensure_ascii=False)); return 0
             result = (prepare_generation(root, args.version, args.sprint, args.reason,
                                          args.context, args.skip_aiauto_test, args.require)
                       if args.prepare else record_generation(root, args.version, args.sprint,

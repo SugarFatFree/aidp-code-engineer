@@ -187,7 +187,7 @@ def test_autopilot_local_archive_contract():
     print("\n[autopilot 无 Git S2 本地归档]")
     flow = (REPO / ".aidp/flows/sprint-autopilot/phase-2.md").read_text(encoding="utf-8")
     check("S2 无 Git 显式走本地文档整理", "vcs_mode=none" in flow and
-          "/version {PRE_RELEASE_VERSION} --finalize-docs --unattended" in flow)
+          bool(re.search(r'/version \{PRE_RELEASE_VERSION\} --execution-context "\$PRERELEASE_EXECUTION_CONTEXT" --finalize-docs --unattended', flow)))
     check("无 Git 不走 --no-tag 发布路径", "无 Git 不走正式发布的 `--no-tag` 路径" in flow)
     check("本地整理失败不写归档成功状态", "internal_released_at" in flow and
           "本地归档失败" in flow and "PRERELEASE_HOLD=1" in flow)
@@ -327,8 +327,13 @@ def test_skill_invocation_contracts():
         t = (REPO / (".aidp/commands/%s.md" % cmd)).read_text(encoding="utf-8")
         if cmd == "sprint-design":
             t = (REPO / ".aidp/flows/sprint-design/step-1.6-落盘后回检.md").read_text(encoding="utf-8")
-        check("★ %s 回检委派 SKILL 派单块、不另列平行清单" % cmd,
-              "flow-qr-dispatch.md" in t and "原样跑全部脚本" in t)
+        if cmd == "sprint-plan":
+            dispatch = all(part in t for part in (
+                "flow-qr-dispatch.md", "不另列脚本清单", "同revision/inputs真实hash证据",
+                "独立子 Agent", "仅补缺失/失效的必要脚本", "不追加未授权非Critical语义QR"))
+        else:
+            dispatch = "flow-qr-dispatch.md" in t and "原样跑全部脚本" in t
+        check("★ %s 回检委派 SKILL 派单块、不另列平行清单" % cmd, dispatch)
 
 
 def test_batch_cascade_and_bugfix_scope_contracts():
@@ -405,7 +410,11 @@ def test_vcs_disabled_downstream_contracts():
     check("finalize-docs 未知发布状态不改写", "--finalize-docs" in version and "无法核实已发布状态" in version)
     check("死代码无 Git 使用文件删除", "vcs_mode=none" in command and "Path.unlink" in command)
     check("开发入口留代码快照", "-local-before.json" in command)
-    check("回写阶段消费本地哈希变更", "-local-before.json" in p1 and "sha256" in p1)
+    scope_contract = flow(dev / "incremental-contract.md")
+    check("回写阶段消费本地哈希变更",
+          all(part in p1 for part in ("development_scope.py", "execution_context", "内容哈希（含新增/删除）", "快照缺失/文件不可读"))
+          and 'development_scope.py --root .' in scope_contract
+          and '--execution-context "$EXECUTION_CONTEXT"' in scope_contract)
     check("配置清单消费本地哈希变更", "-local-before.json" in p2 and "sha256" in p2)
 
 
@@ -413,27 +422,47 @@ def test_local_file_change_evidence():
     print("\n[无 Git 开发前后文件快照实跑]")
     command = (REPO / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
     flow = (REPO / ".aidp/flows/sprint-dev/postdev-writeback-1.md").read_text(encoding="utf-8")
+    contract = (REPO / ".aidp/flows/sprint-dev/incremental-contract.md").read_text(encoding="utf-8")
     capture = re.search(r'```bash\n(SNAP="memory/\{version\}/\{user\}/sprints/sprint-\{NNN\}-local-before\.json".*?\nfi)\n```', command, re.S)
-    compare = re.search(r'```bash\n(SNAP="memory/\{version\}/\{user\}/sprints/sprint-\{NNN\}-local-before\.json".*?\nPY)\n\s*```', flow, re.S)
-    check("快照与比较脚本可提取", bool(capture and compare))
+    compare = next((block for block in re.findall(r'```bash\n(.*?)\n```', contract, re.S)
+                    if 'development_scope.py --root .' in block), None)
+    check("快照与权威比较脚本可提取", bool(capture and compare and
+          'development_scope.py' in flow and 'incremental-contract.md' in flow))
     if not capture or not compare:
         return
+    sys.path.insert(0, str(REPO / '.aidp/scripts'))
+    import entry_context
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / "code").mkdir()
         (root / "code/changed.py").write_text("before", encoding="utf-8")
         (root / "code/removed.py").write_text("remove", encoding="utf-8")
-        for script in (capture.group(1), compare.group(1)):
-            if script == compare.group(1):
-                (root / "code/changed.py").write_text("after", encoding="utf-8")
-                (root / "code/removed.py").unlink()
-                (root / "code/added.py").write_text("add", encoding="utf-8")
-            script = script.replace("{version}", "V1.0.0").replace("{user}", "tester").replace("{NNN}", "001")
-            r = subprocess.run(["bash", "-e", "-c", script], cwd=td, capture_output=True, text=True)
-            check("本地快照脚本可执行" if script.startswith("SNAP=") and "if [ ! -f" in script else "本地差异脚本可执行", r.returncode == 0)
-        out = root / "memory/V1.0.0/tester/sprints/sprint-001-local-changes.json"
-        changes = json.loads(out.read_text(encoding="utf-8")) if out.exists() else []
-        check("新增修改删除均入清单", {x["kind"] for x in changes} == {"added", "modified", "deleted"})
+        script = capture.group(1).replace("{version}", "V1.0.0").replace("{user}", "tester").replace("{NNN}", "001")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=root, capture_output=True, text=True)
+        check("本地快照脚本可执行", result.returncode == 0)
+        snapshot = root / 'memory/V1.0.0/tester/sprints/sprint-001-local-before.json'
+        original = snapshot.read_bytes()
+        context = entry_context.resolve_context(root, 'sprint-dev', version='V1.0.0', sprint='001',
+                                                write_set=['code'])['execution_context']
+        frozen = entry_context.load_context(root, context)
+        (root / "code/changed.py").write_text("after", encoding="utf-8")
+        (root / "code/removed.py").unlink()
+        (root / "code/added.py").write_text("add", encoding="utf-8")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=root, capture_output=True, text=True)
+        check("重入快照不覆盖开发前态", result.returncode == 0 and snapshot.read_bytes() == original)
+        script = compare.replace('{{AIDP_HOME}}', str(REPO / '.aidp'))
+        result = subprocess.run(['bash', '-e', '-c', script], cwd=root, capture_output=True, text=True,
+                                env={**os.environ, 'EXECUTION_CONTEXT': context, 'DEVELOPMENT_FACTS_JSON': '{}'})
+        check("本地差异脚本可执行", result.returncode == 0)
+        payload = json.loads(result.stdout) if result.returncode == 0 else {}
+        changed = payload.get('scope', {}).get('files', [])
+        check("新增修改删除均入清单", set(changed) == {'code/changed.py', 'code/removed.py', 'code/added.py'}
+              and 'code/added.py' not in frozen['initial_files']
+              and 'code/removed.py' in frozen['initial_files'] and not (root / 'code/removed.py').exists()
+              and frozen['initial_files']['code/changed.py'] != entry_context.initial_file_hash(root / 'code/changed.py'))
+        missing = subprocess.run(['bash', '-e', '-c', script], cwd=root, capture_output=True, text=True,
+                                 env={**os.environ, 'EXECUTION_CONTEXT': '', 'DEVELOPMENT_FACTS_JSON': '{}'})
+        check("缺少冻结上下文不能把空 Git diff 当零变化", missing.returncode != 0)
 
 
 def test_deploy_reuse_registration_contract():
@@ -444,7 +473,13 @@ def test_deploy_reuse_registration_contract():
     部署被回滚或时间戳重写时，后者会错误放行、测到旧代码。
     """
     print("\n[test-only 复用部署的两侧契约]")
-    mint = (REPO / ".aidp/flows/sprint-autopilot/phase-3-4.md").read_text(encoding="utf-8")
+    main_flow = (REPO / ".aidp/flows/sprint-autopilot/phase-3-4.md").read_text(encoding="utf-8")
+    mint_step = re.search(r"^1\.\s.*?(?=^2\.\s)", main_flow, re.M | re.S)
+    check("开发侧：主片步骤1先Read并执行R-1子片，再进入步骤2",
+          mint_step is not None
+          and "Read `{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-4a.md`" in mint_step.group()
+          and "执行" in mint_step.group())
+    mint = (REPO / ".aidp/flows/sprint-autopilot/phase-3-4a.md").read_text(encoding="utf-8")
     gate = (REPO / ".aidp/flows/sprint-aiauto-test/phase-0-6.md").read_text(encoding="utf-8")
     check("开发侧：铸 build 时登记 deploy_reuse_of",
           'entry["deploy_reuse_of"]' in mint and 'ENTRY_MODE"' in mint and "test-only" in mint)
@@ -692,8 +727,12 @@ def test_incremental_acceptance_contract():
     bugfix = (REPO / '.aidp/commands/sprint-bugfix.md').read_text(encoding='utf-8')
     check('验收显式消费契约卡和权威汇合流程',
           '_sprint-{NNN}-契约卡.md' in st and 'flows/sprint-dev/incremental-contract.md' in st)
-    check('M 汇合核修订、真实写集、docs 与 reviewer pass',
-          all(x in st for x in ('contract_revision', '实际写集', 'docs路径', 'reviewer=pass')))
+    authority = (REPO / '.aidp/flows/sprint-dev/incremental-contract.md').read_text(encoding='utf-8')
+    check('M 汇合核修订、真实写集、docs 与获授权的真实 review 结果',
+          all(x in st for x in ('contract_revision', '实际写集', 'docs路径', 'docs 完成状态',
+                               '已授权 review 的真实结果', '未授权 review 为 NOT_REQUESTED',
+                               '任一缺失、仍运行、旧修订或路径仅占位'))
+          and '失败、工具不可用、未执行不能算通过' in authority)
     check('S 静态验收不强制补正式用例，required 仍门控',
           'required=false' in st and '四族' in st and 'CASE_REQUIRED' in st)
     check('错误性 Suggestion 同轮归原实现者，等级不变',
@@ -714,7 +753,7 @@ def test_incremental_acceptance_contract():
           and not re.search(r'/sprint-bugfix sprint-.*\n\s*/sprint-test', full + bugfix))
     mode_c = bugfix.split('## 方式 C：', 1)[1].split('## 输出', 1)[0]
     check('bugfix C 委派 sprint-dev 新协议，不重复四层前置',
-          'incremental-contract.md' in mode_c and '/sprint-dev "{描述}" skip-test' in mode_c
+          'incremental-contract.md' in mode_c and '/sprint-dev "{描述}" --execution-context "$EXECUTION_CONTEXT" skip-test' in mode_c
           and '/sprint-requirements {version} --supplement' not in mode_c)
 
 
@@ -799,6 +838,8 @@ def test_acceptance_ledger_command_examples():
                 .replace('{version}', 'V1.0.0').replace('{NNN}', '001')
     if len(snippets) != 3:
         return
+    sys.path.insert(0, str(REPO / '.aidp/scripts'))
+    import entry_context
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
 
@@ -815,8 +856,11 @@ def test_acceptance_ledger_command_examples():
         git('add', '-A')
         git('commit', '-qm', 'base')
         base = git('rev-parse', 'HEAD')
+        context = entry_context.resolve_context(root, 'sprint-dev', version='V1.0.0', sprint='001',
+                                                since=base)['execution_context']
         code.write_text('value = 1\n', encoding='utf-8')  # 本 Sprint 真实改动：推导出 test_app.py
-        runners = root / 'runners.json'
+        # 夹具运行器配置属于工具状态；放根目录会成为真实 JSON 资源覆盖缺口。
+        runners = root / 'memory/.aidp/fixture-runners.json'
         runners.write_text(json.dumps([{'suffixes': ['.py'], 'argv': [
             sys.executable, '-B', '-m', 'unittest', '{tests}']}]), encoding='utf-8')
         contract = root / 'docs/design/detail/V1.0.0/_sprint-001-契约卡.md'
@@ -832,7 +876,8 @@ def test_acceptance_ledger_command_examples():
             prelude = (f'TEST_ENV_ID={env_id}\nSINCE={base}\nWRITE_SET=()\n'
                        f'UNIT_RUNNERS_JSON="$(cat {runners})"\n')
             result = subprocess.run(['bash', '-e', '-c', prelude + snippets[name]],
-                                    cwd=root, capture_output=True, text=True)
+                                    cwd=root, capture_output=True, text=True,
+                                    env={**os.environ, 'EXECUTION_CONTEXT': context})
             return result
 
         def run_set_payload():
@@ -841,6 +886,12 @@ def test_acceptance_ledger_command_examples():
             except (OSError, IndexError, ValueError):
                 return {}
 
+        denied = invoke('acceptance-sprint-unit')
+        check('formal 身份无相关测试授权仍拒绝真实围栏', denied.returncode != 0
+              and 'UNAUTHORIZED' in denied.stdout + denied.stderr and not run_set.exists())
+        entry_context.revise_context(root, context, additional_grants=['related-test'],
+            authorization_source={'kind': 'user-text', 'request_id': 'contract-unit-fixture',
+                                  'text': '执行当前 Sprint 的相关单测'})
         first = invoke('acceptance-sprint-unit')
         payload = run_set_payload()
         check('真实推导并执行 Sprint 单测得到 PASS', first.returncode == 0 and payload.get('status') == 'PASS'
@@ -850,6 +901,12 @@ def test_acceptance_ledger_command_examples():
         check('同树同命令 Sprint 单测复用 PASS', reused.returncode == 0 and again['runs'][0].get('reused') is True)
         missing = invoke('close-review-delta')
         check('只有测试 PASS、未审查登记时 close 拒绝', missing.returncode != 0)
+        denied = invoke('acceptance-record-review')
+        check('测试通过不隐式授予审查登记权限', denied.returncode != 0
+              and 'UNAUTHORIZED' in denied.stdout + denied.stderr)
+        entry_context.revise_context(root, context, additional_grants=['review'],
+            authorization_source={'kind': 'user-text', 'request_id': 'contract-review-fixture',
+                                  'text': '登记已完成的当前 Sprint 审查'})
         recorded = invoke('acceptance-record-review')
         check('真实报告显式登记审查基线', recorded.returncode == 0)
         delta, clean = invoke('close-review-delta'), None
@@ -875,9 +932,16 @@ def test_acceptance_ledger_command_examples():
         failed = invoke('acceptance-sprint-unit')
         check('变更导致 Sprint 单测真实失败，不能复用先前 PASS',
               failed.returncode != 0 and run_set_payload().get('status') == 'FAIL')
+        # 恢复可信基线后分别破坏报告和环境，避免前一条 FAIL 掩盖这两个负例。
+        code.write_text('value = 1\n', encoding='utf-8')
+        recovered = invoke('acceptance-sprint-unit')
+        rerecorded = invoke('acceptance-record-review')
+        check('恢复代码后重新登记可信审查基线', recovered.returncode == 0 and rerecorded.returncode == 0)
+        trusted_report = report.read_bytes()
         report.write_text('篡改验收报告\n', encoding='utf-8')
         invalid = invoke('close-review-delta')
         check('报告变化使 close 拒绝旧基线', invalid.returncode != 0)
+        report.write_bytes(trusted_report)
         wrong_env = invoke('close-review-delta', 'different-env')
         check('环境变化使 close 拒绝旧基线', wrong_env.returncode != 0)
 

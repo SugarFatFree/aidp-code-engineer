@@ -1,5 +1,6 @@
+> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
+
 # sprint-dev · 开发完成后回写详情（分片 3/3 · Step X.8）
-<!-- flowvar-check: allow BASE_REF 本轮开发起始 ref；无注入时按已声明的 HEAD~1 默认值走（安全方向） -->
 
 > **【分片 3/3 · postdev-writeback 二次切分】** 本片是 `/sprint-dev` 命令「开发完成后回写」段的收尾，覆盖 **Step X.8（部署流程 SOP + SQL执行台账，检测驱动、独立于配置变更，约定 25）**。前两片：`postdev-writeback-1.md`（Step X.0.0 级联检测）、`postdev-writeback-2.md`（Step X.0–X.7）。以本文件为准逐项执行、不得略过。
 
@@ -7,7 +8,9 @@
 
 #### Step X.8：★ 部署流程 SOP + SQL执行台账（检测驱动，独立于配置变更）
 
-> `vcs_mode=none` 时下面两处 Git diff 均记 `unsupported:vcs-disabled`，不得把空 diff 当「无变更」；部署变更检测改用本 Sprint `activeContext.md` 涉及文件、SQL 与配置清单，本地规划产物按该清单派增量审计。无法得到可信文件清单时审计按当前版本四类文档收敛，而不是跳过审计。`git` 模式仍按原 diff 范围执行。
+先按 `light-context.md` 核 document 与父 budget；仅有 deploy 时消费现成 SOP、执行必要备份/已授权迁移/就绪，不借本段开发工具。真实不兼容只回传最小变更与成本；没有 deployment-tool-development grant 不新写 controller。
+
+> `vcs_mode=none` 时下面两处 Git diff 均记 `unsupported:vcs-disabled`，不得把空 diff 当「无变更」；部署变更检测改用本 Sprint `activeContext.md` 涉及文件、SQL 与配置清单，本地规划产物按该清单派增量审计。无法得到可信文件清单时返回范围未核验原因，不自动扩大审计。`git` 模式仍按原 diff 范围执行。
 
 > **为何独立成步**：部署流程文档的实际变更源（新增 SQL / 部署后回填接口 / 需重启）**远宽于** Step X.7 的「配置文件被改动」触发面。若嵌套在 X.7 内，则"只加 SQL、零配置改动"时永远不生成（下游 V0.10 根因）。故本步**独立**、**触发源 = 部署侧实质变更检测**（照搬约定 6「检测 `sql/增量/` 下有无脚本即执行、不依赖研发执行计划是否列 SQL 任务」的检测驱动范式），**与是否改配置、研发执行计划是否列了『写部署文档』任务全部无关**。
 
@@ -27,7 +30,7 @@ done
 grep -ql "新增配置\|删除配置\|运行时配置文件变更" docs/deployment/$V/配置文件/增量/配置项清单*.md 2>/dev/null && DEPLOY_CHANGE=1
 # ③ 本 Sprint 代码 diff 含"部署后必须执行"信号：数据初始化/回填接口、数据迁移脚本、定时任务、context-path/启动参数变更、新增中间件/第三方依赖、判定需重启/重新构建
 #    识别信号（按技术栈取等价）：init/rebuild/migrate/backfill 类接口路径、@Scheduled 新增、server.servlet.context-path 变更、新增 pom/package 依赖中间件（redis/mq/es…）
-git diff --name-only HEAD~1 2>/dev/null | grep -qiE 'init|rebuild|migrate|backfill|schedul|context-path' && DEPLOY_CHANGE=1
+# 本任务变化路径取 development_scope.py 的 scope；只核该范围的部署信号，不用 HEAD~1。
 ```
 
 > `DEPLOY_CHANGE=1` = 本版有部署侧变更 → **必须维护** `部署流程.md` + `SQL执行台账.md`；`=0`（纯前端样式/纯逻辑修复、无任何部署侧变更）→ 跳过本步。**检测由命令端做，不依赖研发执行计划是否列任务**。
@@ -71,7 +74,18 @@ PRD 行级原子条目 → 研发需求（C-4）、研发需求字段 → 详细
 
 ### 收口点：本轮正式文档汇合后复用一次增量审计
 
-**先 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`“开发与文档汇合”**。S 仅契约卡/口述原文/族台账时没有正式成文产物，不触发本段；M 等 docs 完成且修订匹配后在汇合点执行，L/显式成文沿用本段。相同契约修订与正式产物内容已有审计证据时复用，不因回写、汇合各跑一次；有新差异只补相关条目。以下审计是既有文档审计，不能替代汇合 reviewer 契约检查或 test 的 CVL，也不新增审计层。
+先消费route结果；docs-audit未授权则NOT_REQUESTED并跳到下一适用步骤，已授权分支执行：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?从父入参重绑}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action docs-audit || exit $?
+```
+
+派发/执行前按light-context预留父预算，prompt带同revision/action/inputs hash，不重新grant。
+
+
+**先核 docs-audit 授权与预算，再 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`“开发与文档汇合”**。S 仅契约卡/口述原文/族台账时没有正式成文产物，不触发本段；M 等 docs 完成且修订匹配后在汇合点执行，L/显式成文沿用本段。相同契约修订、inputs 与真实内容 hash 匹配的已有规划 QR/审计证据可复用，不因回写、汇合各跑一次；有新差异只补相关条目。以下审计是既有文档审计，不能替代汇合 reviewer 契约检查或 test 的 CVL，也不新增审计层。
 
 ```bash
 # ⛔ `VERSION` 在 /sprint-dev 全链路无赋值方：取空后四个 `-- <path>` 退化成整目录比对，
@@ -85,11 +99,12 @@ VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version 2>/dev/
 # CHANGED 由上述核对填本轮正式产物清单；M 未收齐 docs 回传不能填写“无变化”。
 ```
 
-本轮正式产物清单非空且内容发生变化 → 用 `Agent({run_in_background:false})` 派 **version-auditor 子 Agent**
+docs-audit 已授权、预算已预留且本轮正式产物清单非空、内容发生变化 → 用 `Agent({run_in_background:false})` 派 **version-auditor 子 Agent**
 （独立上下文，`{{AIDP_HOME}}/agents/version-auditor.md`），并在派单简报里显式声明：
 
 | 传给它 | 值 |
 | :- | :- |
+| 父执行策略 | `execution_context/revision/action=docs-audit/execution_budget/input_hash`，不能自加任务 |
 | `scope` | `incremental`（⛔ **只审本轮改动涉及的条目**，不重跑全版全量——那会让每次口述累进都付一次规划期审计的成本）|
 | `changed_files` | 主流程核对后的本轮实际正式产物清单（含未提交/未跟踪产物） |
 | `trigger` | **`accretion`（★ 必传）** —— ⛔ 漏传即落回缺省 `version`，而 `version` 下 Agent 按
@@ -98,10 +113,10 @@ VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version 2>/dev/
 | `output_path` | `docs/audit/{version}/incremental-audit-{YYYYMMDD-HHMM}.md`（带时分 → 同日多次累进互不覆盖）|
 | 审计项 | **C-4 / C-5 / F / G / H 五项**（A 存在性、B 边界、D 增量一致性、E 引用链归 `/version` 全量轮；本轮只补"规划期硬门在累进路径上完全缺席"的那五项）|
 
-- **Critical → 回对应 SKILL 补齐后重跑**，与 `/version` Step 2.4.7 同处置。
+- **Critical → 已授权 document 才回原产出者补齐，只重验变化项；同根因同 inputs 无变化停止 retry**，与 `/version` Step 2.4.7 同处置。
 - **⛔ 无人值守不得跳过**：`--unattended` 下 Critical 走 `pending_clarifications` 登记 +
   `needs_human` 上浮，**不是静默放行**（约定 36：审计子 Agent 是命令既定职责的一部分）。
-- **⛔ 无任何跳过路径**：`--skip-audit` 是 `/version` 的内部开关、**本命令根本没有这个 flag**，`trigger=accretion` 下 Agent 侧也不认它（判据见 `agents/version-auditor.md`「唯一跳过…仅当 `trigger=version`」）。口述累进正是「规划期硬门完全缺席」的那条路径，给它开跳过等于本门白设。
+- **未授权为 NOT_REQUESTED，不启动此段也不登记审计欠账；已授权时按原质量门执行**：`--skip-audit` 是 `/version` 的内部开关、**本命令根本没有这个 flag**，`trigger=accretion` 下 Agent 侧也不认它（判据见 `agents/version-auditor.md`「唯一跳过…仅当 `trigger=version`」）。口述累进正是「规划期硬门完全缺席」的那条路径，给它开跳过等于本门白设。
 
 <!-- flowvar-check: allow AUDIT_CRITICAL -->
 <!-- flowvar-check: allow UNATTENDED -->

@@ -1,4 +1,4 @@
-# sprint-autopilot · Phase 3 详情分片 [5b/14]（3.2 步骤 2–4：批量执行 + 推送 + 部署动作 + #2 通知）
+# sprint-autopilot · Phase 3 详情分片 [5b/15]（3.2 步骤 2–4：批量执行 + 推送 + 部署动作 + #2 通知）
 
 > 本文件是 `phase-3-5.md` 的**二次切分**（前片达 20KB 上限）。前片覆盖 3.2 步骤 0–1 与**出口 run-state 写盘**；
 > 本片覆盖 **步骤 2（`/sprint-batch` 执行）/ 步骤 2.5（推送、部署前安全网、部署动作与交接信号、#1d）/ 步骤 3（#2 通知）/ 步骤 4（`--single-sprint`）**。
@@ -7,9 +7,18 @@
 
 ---
 
-2. **跑 `/sprint-batch --skip-context-check --skip-aiauto-test --unattended [--aiauto-test-required]`**（`--batch-one-tick` / 交互式路径；内部按其「零询问连跑铁律」严格 for 循环跑完研发执行计划全部 Sprint）：
-   - `SKIP_AIAUTO_TEST!=1` 时实际调用必须追加 `--aiauto-test-required`，显式跳过实测才不传；批次的 `--skip-aiauto-test` 仅避免重复启动浏览器。
-   - ⛔ 必传 `--unattended`；所有交互门（含未枚举的范围/进度确认）均不得弹出，增量路径调用 `/sprint-dev`/`/sprint-bugfix` 同样必传。`HAS_WAKE_SOURCE=1` 可跨 tick 自动续跑，但不得向人征询。
+进入本片派发前重新读取当前版本父上下文，不依赖上一 Bash 的变量：
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+EXECUTION_CONTEXT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" get execution_context --default '') || exit $?
+python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-batch \
+  --version "$TARGET_VERSION" --execution-context "${EXECUTION_CONTEXT:?当前版本formal上下文缺失}" --json || exit $?
+```
+
+2. **跑 `/sprint-batch --execution-context "$EXECUTION_CONTEXT" --skip-context-check --skip-aiauto-test --unattended [--aiauto-test-required]`**（`--batch-one-tick` / 交互式路径；内部按其「零询问连跑铁律」严格 for 循环跑完研发执行计划全部 Sprint）：
+   - 父live-tests已授权且`SKIP_AIAUTO_TEST!=1`时实际调用才追加 `--aiauto-test-required`，显式跳过实测才不传；批次的 `--skip-aiauto-test` 仅避免重复启动浏览器。
+   - ⛔ 必传 `--unattended`；所有交互门（含未枚举的范围/进度确认）均不得弹出，增量路径调用 `/sprint-dev`/`/sprint-bugfix` 同样必传，并附 `--execution-context "$EXECUTION_CONTEXT"` 继承 formal，不重新解析为 light。`HAS_WAKE_SOURCE=1` 可跨 tick 自动续跑，但不得向人征询。
    - ⛔ 必传 `--skip-context-check --skip-aiauto-test`：前者跳过 compact 询问，后者把部署与浏览器测试留给本命令及独立 `/sprint-aiauto-test`，并保持 AI 执行报告骨架由 autopilot 产出。
    - `/sprint-batch` 连跑全部 Sprint，不问起始 Sprint 或是否继续；`--single-sprint` 仅用于 autopilot 单 Sprint 路径。本片无 `--skip-dev` 分支，`test-only` 已在 `phase-3-2.md` 前置分流。
    - 每个 Sprint：`/sprint-start` → `/sprint-dev` → `/sprint-test`（仅静态扫描）→ `/sprint-bugfix` 循环 → `/sprint-close`；浏览器测试归 `/sprint-aiauto-test`。
@@ -17,12 +26,12 @@
 
 2.5 **★ 部署触发前置 → 部署前安全网 → 部署动作（任何开发路径完成后都从这里执行：`/sprint-batch`、逐 tick 单 Sprint 全部关闭、incremental、自动修复复测轮；⛔ 不属于 `/sprint-batch` 步骤）**
 
-   - **日常累进部署测试门（先于 push 或任何部署触发）**：只消费 `/sprint-test` Step 7 的当前 Sprint 单测证据，按该协议复用或补跑；约定 35 与部署授权不变。
+   - **日常累进部署测试门（先于 push 或任何部署触发）**：只消费 `/sprint-test` Step 7 的当前 Sprint 单测证据，仅related-test已授权才复用/补失效delta；未授权NOT_REQUESTED。仅提交推送部署不追加测试或审计。
 
    > **`vcs_mode=none` 独立出口（优先于下方 Git 推送围栏）**：开发/测试/Sprint 关闭成果仍留在本地。对提交、推送、推送分类、远端 CICD 各节点写当前 build `steps[]` 为 `status=skipped`、`reason=unsupported:vcs-disabled`，baseline 同步保留未推送事实；不执行 `git status/add/commit/push`，不伪造 `push_commit` / `push_at` / `cicd_skipped=true`（该字段只表示 Git push 后按内容分类跳过 CICD）。`mode=local` 不经过 Git/CICD，必须探本地服务真实就绪（启动命令成功不等于就绪）；就绪后按下方「部署完成 → 落盘交接信号」写 `last_deployed_at` + `phase_beta_done_at` 并记录本地探活 URL/结果，未就绪则不得写证据或交接测试；依赖 Git push 的 cloud 路径只记未部署，不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d 部署成功通知，不启动对旧代码的浏览器测试。随后继续 Phase 3.3 本地审计、Phase 3.4 报告和收尾；不得因跳过 Git 节点冻结本地开发。`git` 时执行下方原围栏。
 
-   - **★ 部署触发前置：开发成果提交 + 分类 + 推送（确定性步骤，绝不可省）**：dev 循环 /（incremental）增量改动完成后、执行下方「部署动作」**之前**，必须把本轮改动提交并推到 origin。本步以 `git status --porcelain` 为准兜底，不依赖子命令是否已提交：
-     1. **授权即入口**：用户执行 `/sprint-autopilot` 即授权自动 `git add`+`commit`+`push` 到本轮解析出的 **DEV_BRANCH**。只 push DEV_BRANCH；按 Phase 0.4 的 `PENDING_MERGE_TO` 对齐部署源；绝不打 tag。
+   - **★ 部署触发前置：开发成果提交 + 分类 + 推送（确定性步骤，绝不可省）**：dev 循环 /（incremental）增量改动完成后、执行下方「部署动作」**之前**，分别核commit与push授权后处理本轮改动；未授权动作NOT_REQUESTED。本步以 `git status --porcelain` 为准兜底，不依赖子命令是否已提交：
+     1. **动作授权**：本轮真实explicit-command来源可授公开commit/push/deploy组合，仅entry名称/自然路由/旧配置不授。按 `light-context.md` 各核grant与budget，未请求直接跳过对应环节不弹窗；已授权才操作本轮 **DEV_BRANCH**。只 push DEV_BRANCH；按 Phase 0.4 的 `PENDING_MERGE_TO` 对齐部署源；绝不打 tag。
      2. **确定性提交**：在提交前先确定本次 push 的分类基准并写入当前 build，再决定是否提交：
         ```bash
         eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
@@ -33,9 +42,12 @@
         [ -n "$BASE_REF" ] || BASE_REF=$(git rev-parse HEAD 2>/dev/null || true)
         $BE --version "$TARGET_VERSION" --build "$BUILD" set push_base_ref "$BASE_REF"
         git status --porcelain
-        # porcelain 非空时：git add -A + git commit（消息按 full/incremental 模式生成，末尾带 Co-Authored-By）
+        # porcelain非空且commit已授权才继续git暂存/提交；否则NOT_REQUESTED跳过提交。
+        EXECUTION_CONTEXT=$($BE --version "$TARGET_VERSION" get execution_context --default "") || exit $?
+        python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+          --execution-context "${EXECUTION_CONTEXT:?父上下文缺失}" --action commit || exit $?
         ```
-        commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读完整 JSON：退出码 3/4 是欠账信号，不是禁止 commit。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 推送欠账仍按约定 31.5 补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
+        commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"` 读完整 JSON：退出码3/4是欠账信号，5/NOT_AUTHORIZED硬禁止提交。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 推送欠账仍按约定 31.5 补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
      3. **push 前分类（唯一入口）**：在 `git push` 前执行，始终显式传入提交前保存的 `BASE_REF`（不能在提交后用默认 `HEAD` 推断）：
         ```bash
         eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
@@ -56,16 +68,15 @@
         BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
         DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
         : "${TARGET_VERSION:?}"; : "${BUILD:?}"; : "${DEV_BRANCH:?取不到分支名，拒绝 push}"
-        # ★★ `--skip-deploy` / `deployment.mode=none` 时**只 commit 不 push**（不变式 ②细则的
-        #    唯一免推送口）。漏判的后果是「用户明确说不部署」却照样 push 到部署分支，
-        #    而推送触发型 CICD 会因此真部署 —— 且 Phase 3.2.1 已被跳过、没有人在监听终态。
-        #    `SKIP_DEPLOY` 是**本 tick 变量**（`autopilot_tick_flags.py --shell` 供给），无 baseline 真源。
-        #    ⚠️ `DEPLOY_MODE` 的兜底**不能用 `${DEPLOY_MODE:-none}`**：那是"取值兜底"，
-        #    读空时会被当成 none 从而把正常的 cloud 推送也一并跳过。此处判的是"是否等于 none"。
-        if [ "${SKIP_DEPLOY:-0}" = "1" ] || [ "${DEPLOY_MODE:-}" = "none" ]; then
-          $BE --version "$TARGET_VERSION" --build "$BUILD" set deployment_status "skipped:no-push" || exit 1
-          echo "⏭️ --skip-deploy / mode=none → 只 commit 不 push（开发成果留在本地分支 $DEV_BRANCH）"
+        EXECUTION_CONTEXT=$($BE --version "$TARGET_VERSION" get execution_context --default "") || exit $?
+        POLICY_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
+          --execution-context "${EXECUTION_CONTEXT:?父上下文缺失}" --phase route --json) || exit $?
+        PUSH_ALLOWED=$(printf '%s' "$POLICY_RESULT" | python3 -c 'import json,sys; print(int("push" in json.load(sys.stdin)["authorized_actions"]))') || exit $?
+        if [ "$PUSH_ALLOWED" != 1 ]; then
+          echo "NOT_REQUESTED: push；不触发推送、部署或欠账"
         else
+        python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+          --execution-context "$EXECUTION_CONTEXT" --action push || exit $?
         # ★ 推送失败**不得裸 `exit 1`**：那是"什么都没记账、什么都没通知"的退出，
         #   `/loop` 每 tick 重撞同一个失败直到偶然被别的门冻住，而人全程不知情。
         #   统一走失败处置（记账 → 判阈 → 冻结四件套 → #4 + 本地告警）。
@@ -91,8 +102,8 @@
         fi
         ```
      5. **失败兜底（不静默继续）**：push 失败（无 remote / 认证失效 / 非快进被拒）→ 绝不带着"未推送"继续进部署动作，走「失败处置」#4 通知 @用户介入，暂停本轮。
-   - **★ 部署前安全网（在「部署动作」之前跑，⛔ 不可省）**：按 `{{AIDP_HOME}}/flows/sprint-batch/step-6.md` 的 **Step 6.0.5「SQL 已应用校验」+ 6.0.6「部署流程文档校验」**就地执行同款校验（判据以该文件为单一信源）。根因见 rationale.md「部署前安全网为何要在 autopilot 侧再跑一次」。
-   - **部署动作**仍由本命令完成（按 `autopilot_decisions.deployment` 字段）：
+   - **部署前安全网（仅deploy已授权，使用原工具与已授权迁移）**：按 `{{AIDP_HOME}}/flows/sprint-batch/step-6.md` 的 **Step 6.0.5「SQL 已应用校验」+ 6.0.6「部署流程文档校验」**就地执行同款校验（判据以该文件为单一信源）。根因见 rationale.md「部署前安全网为何要在 autopilot 侧再跑一次」。
+   - **部署动作**：先按light-context核deploy；未请求直接跳过本部署段及交接信号，不进入SQL校验/工具开发/探针。已授权执行 `python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . --execution-context "$EXECUTION_CONTEXT" --action deploy`，成功才按既有 `autopilot_decisions.deployment` 执行：
      - **`--skip-deploy` 分支（用户主动跳过部署阶段）**：跳过部署、不写 `last_deployed_at`、不发 #1d；等效本轮 `mode=none` 行为，仅开发 + 静态自测
      - `mode=local`（★ 无人值守铁律：**后台启动 + 幂等复用**，否则 `/loop` 会挂死或刷屏）：**先探端口/进程 → 已在跑即复用、未跑才后台启动**（启动命令读 PRD `deployment.local_frontend_command`（在 `code/frontend/{子项目}/` 下执行）与 `local_backend_command`（`code/backend/{子项目}/`；留空 = 纯前端不启后端），探活地址读 `local_frontend_url` / `local_backend_url`；`nohup … &` + 写 PID、绝不前台常驻；探活与启动细则见 rationale.md「本地 dev server 幂等复用」）。
      - `mode=cloud`：按 `cloud_deploy_trigger` 触发部署后写 baseline `last_deployed_at`（aiauto-test 读它触发测试）：
@@ -111,6 +122,8 @@
 
      ```bash
      eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+     EXECUTION_CONTEXT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" get execution_context --default "") || exit $?
+     python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . --execution-context "${EXECUTION_CONTEXT:?}" --action deploy || exit $?
      python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" \
        set last_deployed_at @now phase_beta_done_at @now
      # 新部署落地 = 自动修复闭环的「修复 + 重部署」完成 → 清进行中标记，测试链路对新部署复测

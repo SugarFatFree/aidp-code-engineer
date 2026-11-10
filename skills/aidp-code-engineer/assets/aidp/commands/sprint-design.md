@@ -1,5 +1,28 @@
 # /sprint-design — 详细设计生成
 
+## 执行策略入口
+
+先读 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，按真实来源准备POLICY_ARGS；生成与QR配方执行 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+
+```bash
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-design \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
+  --execution-context "$EXECUTION_CONTEXT" --phase route --json || exit $?
+```
+
+只执行本次document范围；light不更新Sprint activeContext。未授权独立docs-audit不派发，生成Skill的最低自检边界按共用配方如实披露。
+
+
 你正在执行 `/sprint-design` 命令，为当前版本生成详细设计文档。
 
 **★ 本命令是 skill 编排器**：调用 `dev-logic-architect` skill 生成详细设计方案（技术架构、接口定义、数据库设计、测试方案）。
@@ -23,7 +46,7 @@
     ⚠️ greenfield 首版必命中：Step 0.6 让事实清单 base 落 `<待确认>`，而任何真实 base 都 ≠ `<待确认>`。
   - **★ Step 1.6.5 联动修改** → 无人值守**自动补齐联动改动并留痕**，不询问。
   - **★ 缓存 / 锁策略两道确认门**（`check_cache_user_confirmed` / `check_lock_strategy`）→ 无人值守**取保守默认**（不启用缓存 / 锁按 SKILL 核心原则 24 落 **P0 进程内锁**）+ **登记进 `99_待澄清问题清单.md`**，不阻塞、不静默采用激进值。⛔ 「保守」不等于「最严格」：P2 数据库级锁是核心原则 24 里**唯一必须人为确认**的一档，无人值守自动选它 = `check_lock_strategy.py` L1 每轮必判 Critical。
-- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `dev-logic-architect` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/design/detail/{version}/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+- `--qr-level=scripts|critical|full`：由AIDP调用层结合父授权计算有效QR_LEVEL；无docs-audit取scripts。始终向 `dev-logic-architect` 传有效qr_level，返回后parse-handoff的expect-level保持一致。详见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 - `--has-open-api`（可选）：强制开启对外开放接口设计（PRD 写法隐晦、机械信号未命中时手动指定）；详见 Step 1.6 前的信号识别段
 
 ## 前置流程
@@ -200,13 +223,13 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 
 - **全量生成**（首次规划 / 主文档重生成）→ **不传 `qr_delta_scope`**（SKILL 契约：不传 = 全量）。
 - **增量补充**（`/version` 补充模式〔情况 B-2〕检出 PRD/原型变更后**派发本命令并传入** `--supplement={NN}`；⛔ `/version` 自身没有 `--supplement` flag，别照字面去敲）→ 传 `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
-- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出 Δ 就退回全量并注明，**宁可多算一个专题、绝不漏传播一处语义**。命中「语义/口径/单位/默认值/状态机/权限范围变更（无新增实体）」或跨版本作废判定的项，其受影响专题**强制并入 Δ**（即便无文件命中）；变更落在跨专题共享单元（公共基础设施 / 基类实体 / 共享 DTO / 全局配置）→ 把所有引用该单元的专题并入 Δ。
+- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出Δ如实记录范围未知，在有效QR_LEVEL的必要校验内保守核对，不扩为full或独立docs-audit。命中「语义/口径/单位/默认值/状态机/权限范围变更（无新增实体）」或跨版本作废判定的项，其受影响专题**强制并入 Δ**（即便无文件命中）；变更落在跨专题共享单元（公共基础设施 / 基类实体 / 共享 DTO / 全局配置）→ 把所有引用该单元的专题并入 Δ。
 
-使用 `Skill` 工具调用 `dev-logic-architect`，由 skill 自主完成详细设计生成 + 内置多维度独立 Agent 检查 + 多轮 Quality Review 阻塞完成判定。**SKILL 内规则为单一信源**，命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
+使用 `Skill` 工具调用 `dev-logic-architect`，由 skill 自主完成详细设计生成 + 内置多维度独立 Agent 检查 + 有效qr_level内的最低生成质量自检；不另启未授权非Critical语义QR或独立审计。**SKILL 内规则为单一信源**，命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
 > 详细规则查 `{{AIDP_HOME}}/skills/dev-logic-architect/SKILL.md`；命令端只负责：① 传参（PRD/原型/前版基线/变更清单/`HAS_OPEN_API`+`HAS_THIRD_PARTY_DEP` 信号）② Step 1.5 落盘文件名 override（项目级中文文件名约定）③ Step 1.6~1.7.5 + SKILL 脚本复核 + 1.8 落盘后回检（统一派子 Agent 执行，脚本清单以 SKILL Quality Review 为单一信源）。
 
-> ★ **带 `--qr-level` 时**：调用参数另加 `qr_level=<档位>`（原样传）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
+> **每次生成都显式传 `qr_level=$QR_LEVEL`**（先运行共用配方的父策略围栏）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 设计上下文路径）：
 > ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`dev-logic-architect` 的**检查项 33**（标题以 SKILL 为准；上游称「检查项 N」，本文档余处简称维度 N）是**入参门控**、
@@ -332,11 +355,11 @@ fi
 
 ### Step 1.6–1.8：★ 落盘后回检 — 统一派独立子 Agent 执行（Step 1.6 / 1.6.5 / 1.7 / 1.7.5 / 1.8 + SKILL 脚本复核）
 
-> ⚠️ 关键规则：Step 1.6~1.7.5 静态核验 + SKILL 脚本复核全部并入**一个 general-purpose 子 Agent 统一执行**（隔离上下文、不占主对话）；子 Agent 回传任一**阻塞项** → 暂停后续 Step 2~6 等用户裁决；子 Agent 失效 → 命令端内联兜底跑同一组清单 + 脚本，**禁止静默放过**。
+> ⚠️ 关键规则：Step1.6~1.7.5最低生成核验先复用同hash证据，仅缺失/失效项合入一个子Agent；额外巡检须docs-audit（隔离上下文、不占主对话）；子 Agent 回传任一**阻塞项** → 暂停后续 Step 2~6 等用户裁决；子 Agent 失效 → 命令端内联兜底跑同一组清单 + 脚本，**禁止静默放过**。
 
 | 检查 | 触发 | 骨架 |
 |------|------|------|
-| SKILL 脚本复核 | 恒跑 | 按 `dev-logic-architect/references/flow-qr-dispatch.md` 落盘后硬核回检原样跑（触发条件 / 判级 / 须读 `--json` 的等级以 SKILL 为单一信源）+ 需代码根 / PRD 的补跑组（report-only）|
+| SKILL 脚本复核 | 仅缺失/失效的最低生成证据 | 按 `dev-logic-architect/references/flow-qr-dispatch.md` 落盘后硬核回检原样跑（触发条件 / 判级 / 须读 `--json` 的等级以 SKILL 为单一信源）+ 需代码根 / PRD 的补跑组（report-only）|
 | Step 1.6 | 无条件 | 路径事实回检（base 强约束 / endpoint 弱约束；base 不匹配暂停）|
 | Step 1.6.5 | 事实清单「⚠️ 本次变更」涉 base | 消费者级联校验（git diff 对账，未联动 P0 暂停）|
 | Step 1.7 | HAS_OPEN_API=true | 对外开放接口 9 项规范回检（2/4/6 项不过必暂停）|

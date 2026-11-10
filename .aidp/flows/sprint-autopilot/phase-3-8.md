@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [8/14]（3.3 终审 + 3.4 收尾 Step 1–3 关闭方判定与发报告）
+# sprint-autopilot · Phase 3 详情分片 [8/15]（3.3 终审 + 3.4 收尾 Step 1–3 关闭方判定与发报告）
 
-> **第 8/14 片**：3.3 终审 + 3.4 收尾 Step 1–3（定稿/报告/#3通知）。按命令主体 Phase 3 骨架表依次 Read，不省略子步骤与硬门；理据见同目录 `rationale.md`。
+> **第 8/15 片**：3.3 终审 + 3.4 收尾 Step 1–3（定稿/报告/#3通知）。按命令主体 Phase 3 骨架表依次 Read，不省略子步骤与硬门；理据见同目录 `rationale.md`。
 
 ---
 
@@ -120,7 +120,7 @@
    # 脚本自动：写 data 结果态 + 注册两页（报告落本地 docs/reports/）→ 回写 baseline report_deliveries.exec_report
    AI_REPORT_URL=$(jq -r '.access_url // .report_path' memory/.aidp/emit-exec-${BUILD}.json)   # 报告仓库内相对路径
    ```
-   - `AI_REPORT_URL` = 报告在仓库内的相对路径（`docs/reports/${TARGET_VERSION}/AI执行报告/index.html#/build/${BUILD}`）；项目配置了 GitHub Pages 等静态托管（由 CI 发布）时可换成对应站点链接，或用 GitHub 文件链接。#3 通知发它。
+   - 本地/上传/通知独立记账；保留下游已授权上传扩展，结果经 `delivery-repair` 登记。#3 的 `--report-kind exec` 自动选 URL/仓库路径并说明权限及上传失败原因。完整 shell 与准确措辞见 `{{AIDP_HOME}}/templates/reports/README.md`「只补交付」；补交付不重测、不改 finalized 事实、不 force-amend、不 ZIP/附件外发。
    - **`WILL_BROWSER_TEST=1` 时本步整段跳过**（exec 报告的定稿 + 交付台账由测试链路在 #F 后经同一 `emit-report.py --kind exec` 执行，见 aiauto-test Phase 3.7）。
 
 2bis. **★【R-4 收尾·必做】把本 build 标为「报告已定稿」**：
@@ -133,7 +133,7 @@
 
    ⛔ 静态-only 由 autopilot 关闭 build，必须写 `ai_report_finalized`；Stop hook 和准发布门均消费该字段。三条终局写入路径的根因见 `rationale.md`。
 
-3. **★【R-4 收尾·仅 `WILL_BROWSER_TEST=0` 时由 autopilot 执行】里程碑通知 #3（AI 执行报告里程碑，绿色 header；完整模板见 0.1bis「#3 AI执行报告通知完整模板」）**——经 `python3 {{AIDP_HOME}}/scripts/notify.py --node '#3' --auto --version "$V" --build "$BUILD" …` 发出——⛔ 不要手工拼发送命令：渠道选择与台账登记已收编进 `--auto`（按 `notify.channels` 依次尝试，见 0.1bis）。退出码 3（未配置任何渠道）= 静默跳过本节点、不算失败。通知正文按该模板填充：执行情况 / 需求功能执行清单 / **测试结论（纯静态：「静态自测、无浏览器测试」+ code-verification-loop 通过率）** / 缺陷统计 / 风险建议 / 下一步导航；「查看完整报告」= `$AI_REPORT_URL`（报告相对路径 / 静态托管链接，直达本次 build 结果页）。**`WILL_BROWSER_TEST=1` 时本步整段跳过** —— #3 改由测试链路在 **#F 之后**发出、且携带**真实浏览器测试结论**（见 aiauto-test Phase 3.7）。
+3. **★【R-4 收尾·仅 `WILL_BROWSER_TEST=0` 时由 autopilot 执行】里程碑通知 #3（AI 执行报告里程碑，绿色 header；完整模板见 0.1bis「#3 AI执行报告通知完整模板」）**——经 `python3 {{AIDP_HOME}}/scripts/notify.py --node '#3' --auto --version "$V" --build "$BUILD" --report-kind exec …` 发出——⛔ 不要手工拼发送命令：渠道选择与台账登记已收编进 `--auto`（按 `notify.channels` 依次尝试，见 0.1bis）。退出码 3（未配置任何渠道）= 静默跳过本节点、不算失败。通知正文按该模板填充：执行情况 / 需求功能执行清单 / **测试结论（纯静态：「静态自测、无浏览器测试」+ code-verification-loop 通过率）** / 缺陷统计 / 风险建议 / 下一步导航；「查看完整报告」= `$AI_REPORT_URL`（报告相对路径 / 静态托管链接，直达本次 build 结果页）。**`WILL_BROWSER_TEST=1` 时本步整段跳过** —— #3 改由测试链路在 **#F 之后**发出、且携带**真实浏览器测试结论**（见 aiauto-test Phase 3.7）。
 
 ---
 

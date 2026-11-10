@@ -21,13 +21,13 @@
 
 ## 判据（⛔ 与 `autopilot-ceremony-gate.py::_open_sprints` 同源，本脚本是其提取）
 
-  · **计划集合** = `docs/plans/{V}/` 下所有 `.md` 里出现的 `Sprint-NNN`
-  · **已关闭集合** = `memory/{V}/*/progress.md` 里**同一行**同时出现 `Sprint-NNN` 与 ✅ 的条目
+  · **计划集合** = `docs/plans/{V}/` 下所有 `*研发执行计划*.md` 里出现的 `Sprint-NNN`
+  · **已关闭集合** = progress 同行 `Sprint-NNN` + ✅ 验收记录 ∩ 非空归档文件
   · `--scope all`（缺省，交付门）未关闭 = 计划集合 ∖ 已关闭集合
   · `--scope started`（开工门）未关闭 = 已启动集合 ∖（已关闭集合 ∩ 已归档集合）；尚未开工的计划不阻断首次启动
   · 已启动集合 = 跨用户启动记录 `memory/{V}/*/sprints/sprint-NNN.started.json`
     + 存量 progress 的进行中/待验收等显式状态 + activeContext 的「当前 Sprint」字段
-  · `/sprint-start` 状态置位后用 `--record-start NNN --user <用户>` 登记启动记录；关闭证据仍以 progress 为准
+  · `/sprint-start` 状态置位后用 `--record-start NNN --user <用户>` 登记启动记录；关闭必须同时有 progress 验收与归档
 
 两点刻意如此，⛔ 别"优化"回去：
 
@@ -58,46 +58,17 @@ import re
 import sys
 from pathlib import Path
 
-SPRINT_RE = re.compile(r"Sprint-(\d{3})")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sprint_inventory import inventory, closure_evidence
 
 
 def planned_sprints(root: Path, version: str) -> set:
-    """研发执行计划里登记的 Sprint 号。计划目录不存在 → 空集（适用范围外）。"""
-    plans = Path(root) / "docs" / "plans" / version
-    if not plans.is_dir():
-        return set()
-    found = set()
-    for path in sorted(plans.iterdir()):
-        if path.suffix != ".md" or not path.is_file():
-            continue
-        try:
-            found |= set(SPRINT_RE.findall(path.read_text(encoding="utf-8", errors="ignore")))
-        except OSError:
-            continue
-    return found
+    return inventory(root, version)[version]["planned"]
 
 
 def closed_sprints(root: Path, version: str) -> set:
-    """已关闭的 Sprint 号：`memory/{V}/*/progress.md` 里同一行同时有 Sprint-NNN 与 ✅。
-
-    ⛔ 必须**同一行**：整份文件里"某处有 ✅、另一处提到 Sprint-003"不构成关闭证据 ——
-    progress.md 里 ✅ 是高频符号（阶段完成、检查项通过都在用）。
-    """
-    closed = set()
-    mem = Path(root) / "memory" / version
-    if not mem.is_dir():
-        return closed
-    for user_dir in sorted(mem.iterdir()):
-        progress = user_dir / "progress.md"
-        if not progress.is_file():
-            continue
-        try:
-            for line in progress.read_text(encoding="utf-8", errors="ignore").splitlines():
-                if "✅" in line:
-                    closed |= set(SPRINT_RE.findall(line))
-        except OSError:
-            continue
-    return closed
+    """验收同行 ✅ 与跨用户归档同时具备才关闭。"""
+    return inventory(root, version)[version]["closed"]
 
 
 def record_start(root: Path, version: str, user: str, sprint: str) -> Path:
@@ -115,63 +86,27 @@ def record_start(root: Path, version: str, user: str, sprint: str) -> Path:
 
 
 def started_sprints(root: Path, version: str) -> set:
-    """只认启动证据，不把计划里尚未开始的轮次当作在途；旧项目补读所有协作者的显式状态。"""
-    started = set()
-    memory = Path(root) / "memory" / version
-    if not memory.is_dir():
-        return started
-    for user in sorted(memory.iterdir()):
-        if not user.is_dir():
-            continue
-        for marker in (user / "sprints").glob("sprint-*.started.json"):
-            match = re.fullmatch(r"sprint-(\d{3})\.started\.json", marker.name)
-            if match and marker.is_file():
-                started.add(match[1])
-        progress = user / "progress.md"
-        if progress.is_file():
-            for line in progress.read_text(encoding="utf-8").splitlines():
-                if re.search(r"未开始|待开始|未启动|待启动", line):
-                    continue
-                if "✅" in line or re.search(r"进行中|开发中|执行中|已启动|已开发|待测试|测试中|待验收|验收中|待归档", line):
-                    started.update(SPRINT_RE.findall(line))
-        active = user / "activeContext.md"
-        if active.is_file():
-            for line in active.read_text(encoding="utf-8").splitlines():
-                plain = line.replace("*", "").replace("`", "")
-                if re.search(r"已关闭|未开始|待开始", plain):
-                    continue
-                match = re.search(r"(?:当前\s*Sprint|Sprint\s*编号)\s*[:：|]\s*Sprint-(\d{3})", plain)
-                if match:
-                    started.add(match[1])
-    return started
+    return inventory(root, version)[version]["started"]
 
 
 def scan(root: Path, version: str, scope: str = "all") -> dict:
-    root = Path(root)
-    planned = planned_sprints(root, version)
+    if scope not in ("all", "started"):
+        raise ValueError("scope 必须为 all 或 started")
+    item = inventory(root, version)[version]
+    planned, started, closed = (item[key] for key in ("planned", "started", "closed"))
+    selected = started if scope == "started" else planned
+    open_ids = sorted(selected - closed)
+    result = {"ok": not open_ids, "version": version, "scope": scope,
+              "started": sorted(f"Sprint-{n}" for n in started),
+              "planned": sorted(f"Sprint-{n}" for n in planned),
+              "closed": sorted(f"Sprint-{n}" for n in closed),
+              "open": [f"Sprint-{n}" for n in open_ids],
+              "evidence": closure_evidence(item, selected),
+              "detail": ("无未关闭 Sprint" if not open_ids else
+                         f"仍有 {len(open_ids)} 个未关闭 Sprint，须先 `/sprint-close` 收口")}
     if not planned and scope == "all":
-        return {"ok": True, "skipped": "no-plan", "version": version, "open": [],
-                "detail": f"docs/plans/{version}/ 无研发执行计划或未登记任何 Sprint —— "
-                          f"适用范围外（⛔ 不等于「已全部关闭」）"}
-    closed = closed_sprints(root, version)
-    if scope == "started":
-        # 只有「验收通过 ✅」还不能开下一轮；约定 9 还要求归档产物真实存在。
-        # 跨用户取档，避免与 plan_sprints 的跨用户归档视角发生分歧。
-        archives = set()
-        for path in (root / "memory" / version).glob("*/sprints/sprint-*.md"):
-            match = re.fullmatch(r"sprint-(\d{3})\.md", path.name)
-            if match and path.is_file():
-                archives.add(match[1])
-        closed &= archives
-    started = started_sprints(root, version) if scope == "started" else set()
-    open_ids = sorted((started if scope == "started" else planned) - closed)
-    return {"ok": not open_ids, "version": version, "scope": scope,
-            "started": sorted(f"Sprint-{n}" for n in started),
-            "planned": sorted(f"Sprint-{n}" for n in planned),
-            "closed": sorted(f"Sprint-{n}" for n in closed),
-            "open": [f"Sprint-{n}" for n in open_ids],
-            "detail": ("无未关闭 Sprint" if not open_ids else
-                       f"仍有 {len(open_ids)} 个未关闭 Sprint，须先 `/sprint-close` 收口")}
+        result.update(skipped="no-plan", detail=f"docs/plans/{version}/ 无研发执行计划或未登记 Sprint；交付范围不适用")
+    return result
 
 
 def self_check() -> bool:
@@ -190,12 +125,16 @@ def self_check() -> bool:
         mem = root / "memory" / "V0.1.0" / "alice"
         mem.mkdir(parents=True)
         mem.joinpath("progress.md").write_text("- Sprint-001 已完成 ✅\n", encoding="utf-8")
+        (mem / "sprints").mkdir()
+        (mem / "sprints/sprint-001.md").write_text("# Sprint-001 归档\n", encoding="utf-8")
         if scan(root, "V0.1.0")["open"] != ["Sprint-002"]:
             return False
         # ★ 跨用户：别人关的也算关 —— 只看本机身份会让这道门恒红
         other = root / "memory" / "V0.1.0" / "bob"
         other.mkdir(parents=True)
         other.joinpath("progress.md").write_text("- Sprint-002 已完成 ✅\n", encoding="utf-8")
+        (other / "sprints").mkdir()
+        (other / "sprints/sprint-002.md").write_text("# Sprint-002 归档\n", encoding="utf-8")
         if scan(root, "V0.1.0")["open"]:
             return False
         # ⛔ 阴性：✅ 与 Sprint 号**不在同一行**不构成关闭证据

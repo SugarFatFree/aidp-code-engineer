@@ -174,14 +174,21 @@ def _seed(root, spec):
 
 
 def _definition_ids(path):
-    """标题及表格首列为定义；链接、普通行内引用、索引、围栏不是定义。
+    """标题及表格首列为候选定义；按可核验上下文排除报告引用与审计维度。
 
-    同文件同时有目录表和标题时以标题为准，表行是导航副本；两个标题/两条正文表行仍报重。
+    复测/验证结果表（不含问题描述列）是引用；报告内仅有复测状态的行也是引用。
+    审计上下文的短号 C-4/C-5 是维度，三位业务号 C-004/C-005 仍是定义。
+    不按 testing/报告目录整体豁免：报告里的新缺陷、真实问题清单照常判重。
+    同文件目录表+标题以标题为准；纯链接、普通引用、注释、围栏过滤保持不变。
     """
     if path.name in ("00_索引.md", "README.md"):
         return []
     heads, rows, bullets = [], [], []
     reference_section = False
+    audit_context = "审计" in path.stem or "audit" in path.parts
+    report_context = bool(re.search(r"报告|复测|回归", path.stem))
+    table_reference = False
+    table_dimension = False
     for n, line in _lines(path):
         stripped = line.strip()
         heading = re.match(r"^#{1,6}\s+(.+)", stripped)
@@ -192,6 +199,20 @@ def _definition_ids(path):
         bullet = re.match(r"^[-*+]\s+(.+)", stripped)
         cells = stripped.strip("|").split("|") if stripped.startswith("|") else []
         cell = cells[0].strip() if len(cells) > 1 else ""
+        if heading:
+            audit_context = audit_context or "审计" in heading.group(1)
+            report_context = report_context or bool(re.search(r"报告|复测|回归", heading.group(1)))
+        if not cells:
+            table_reference = table_dimension = False
+        elif not ID_RE.search(cell) and not re.fullmatch(r"[\s:*-]+", cell):
+            header = "|".join(cells)
+            has_description = any(re.search(r"描述|标题|现象|症状|原因", c)
+                                  or c.strip("*` ") in ("问题", "缺陷", "内容") for c in cells[1:])
+            table_reference = bool(re.search(r"复测结果|回归结果|验证结果|引用来源", header)
+                                   and not has_description)
+            table_dimension = bool(re.search(r"审计项|审计维度|维度编号", header))
+        if table_reference and not (heading or bullet):
+            continue
         if len(cells) > 1 and re.fullmatch(r"\s*\[[^\]]+\]\([^)]+\)\s*", cells[1]):
             continue  # 编号 + 来源链接的导航行，不是第二份正文定义。
         text = heading.group(1) if heading else bullet.group(1) if bullet else cell
@@ -202,6 +223,14 @@ def _definition_ids(path):
         matches = list(ID_RE.finditer(text))
         for m in matches:
             rid = m.group().rstrip(".")
+            payload = text[m.end():] if heading or bullet else " ".join(cells[1:])
+            dimension_name = re.search(r"PRD|原子.*(?:覆盖|核对)|字段.*(?:覆盖|核对|设计)|审计维度", payload, re.I)
+            if rid in ("C-4", "C-5") and (table_dimension or (audit_context and dimension_name)):
+                continue
+            # 仅状态的报告条目是对既有编号的复测引用；有实质问题描述仍参与判重。
+            status = re.sub(r"[\s*`，,。:：|✅]+", "", payload)
+            if report_context and re.fullmatch(r"(?:已修复|已关闭)?(?:复测|回归|验证)(?:已)?(?:通过|失败|未通过)", status):
+                continue
             if not re.search(r"\d", rid):
                 continue
             if m.start() and not (heading and text[m.start() - 1] in "（("):

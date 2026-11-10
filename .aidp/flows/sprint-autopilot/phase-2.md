@@ -1,15 +1,12 @@
 # sprint-autopilot · Phase 2 详情（上版准发布 —— /version --no-tag 归档）
 
-> `/sprint-autopilot` Phase 2 详情：`PRE_RELEASE_VERSION` 非 null 时，按命令主体指针 `Read` 本片。
-> - **本片覆盖**：Phase 2 准发布前置双门（0a 部署就绪 + 0b 测试收敛）+ 步骤 1–5（#pre-start 通知 / `/version --no-tag` / 回写 baseline / #pre-done 通知 / `run_state` 写盘）
->
-> 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
+> `PRE_RELEASE_VERSION` 非 null 时逐项执行：部署/测试双门 → 归档 → 通知与状态回写，不省门。理据见 `rationale.md`。
 
 ---
 
 ## Phase 2：上版准发布（仅当 PRE_RELEASE_VERSION 非 null）
 
-`vcs_mode=git` 跑「`/version <PRE_RELEASE_VERSION> --no-tag`」做准发布归档；`vcs_mode=none` 仅做本地 SQL / 文档 / memory 整理，不调用准发布或正式发布路径。两种模式均须先过下述前置门；本地归档成功不等于 tag、分支或远端发布成功。
+两种 VCS 模式均先过下述门：git 走 `--no-tag` 准发布；none 只整理本地 SQL/文档/memory，不走发布路径或宣称 tag、分支、远端发布成功。
 
 0. **★ 准发布前置门：部署就绪 + 测试收敛双校验**。任一门未过：调用 `autopilot_fail_handle.py` 记账/判阈/告警，置 `PRERELEASE_HOLD=1`，跳过归档并写 `run-state`，继续同 tick 的 Phase 3；不得在这里退出整轮。判据见下方 0a / 0b，跳过门及冻结理由见 `rationale.md`「Phase 2 准发布双门的形态与判据」。
 
@@ -167,9 +164,20 @@ FIN="${FIN:-false}"
    > `prerelease_transitional=true` 时，通知**加一行如实说明**（不得省略、不得说成"已收敛"）：
    > `🔀 中间过渡版本：{NEWER_V} 已开始规划，本版未经部署/测试收敛（{FR}）即归档，不做正式发布`
 
-2. **按 VCS 模式归档**（命令端编排；⛔ `/version` 是**命令**不是 SKILL，`Skill` 工具调不起它、且失败形态静默；两路均始终传 `--unattended`）：
-   - `vcs_mode=git`：跑 `/version {PRE_RELEASE_VERSION} --no-tag --unattended`，维持原 Step 3.1~3.6：跳过 Step 3.4.2 tag，Step 3.4.3 仍 push commit（含 SQL 归档），Step 3.6 输出准发布报告。
-   - `vcs_mode=none`：**无 Git 不走正式发布的 `--no-tag` 路径**。先核对版本记忆、baseline、本地台账均明确未发布；已发布、矛盾或不明则按本地归档失败处置。跑 `/version {PRE_RELEASE_VERSION} --finalize-docs --unattended`，核验 Step 3.3.9.5 → 3.3.7 → 3.3.10 → 3.3.11 → 3.3.13；逐项检查 `docs/deployment/{PRE_RELEASE_VERSION}/sql/`（无 SQL 记不适用）、引用、`memory/{PRE_RELEASE_VERSION}/` Sprint 归档及项目记忆「本地已归档（未发布）」。`--finalize-docs` 仅覆盖文档，不证明 SQL / memory 已完成；欠账须核对。Git commit / push / tag / 分支均记 `unsupported:vcs-disabled`（非 passed）；不得记「✅ 已发布」「🟡 已准发布」或宣布 released。
+每次从本轮真实根fork-version，支持pre-only、同版尾段、上下两版，幂等共享授权/预算并显式传version。根由入口依真实选版与来源建立；不改TARGET或历史前版ctx，不另建预算。
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+ROOT_CTX=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get autopilot.execution_context --default '') || exit $?
+FORK_JSON=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-version --root . \
+  --execution-context "${ROOT_CTX:?缺少真实根任务}" --version "${PRE_RELEASE_VERSION:?}" --json) || exit $?
+PRERELEASE_EXECUTION_CONTEXT=$(printf '%s' "$FORK_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+printf '%s\n' "$PRERELEASE_EXECUTION_CONTEXT"
+```
+
+2. **按 VCS 模式归档**：`/version` 经命令调用，不用 Skill；两路均传 `--unattended`。
+   - `vcs_mode=git`：跑 `/version {PRE_RELEASE_VERSION} --execution-context "$PRERELEASE_EXECUTION_CONTEXT" --no-tag --unattended`，维持原 Step 3.1~3.6：跳过 Step 3.4.2 tag，Step 3.4.3 仍 push commit（含 SQL 归档），Step 3.6 输出准发布报告。
+   - `vcs_mode=none`：**无 Git 不走正式发布的 `--no-tag` 路径**。先核对版本记忆、baseline、本地台账均明确未发布；已发布、矛盾或不明则按本地归档失败处置。跑 `/version {PRE_RELEASE_VERSION} --execution-context "$PRERELEASE_EXECUTION_CONTEXT" --finalize-docs --unattended`，核验 Step 3.3.9.5 → 3.3.7 → 3.3.10 → 3.3.11 → 3.3.13；逐项检查 `docs/deployment/{PRE_RELEASE_VERSION}/sql/`（无 SQL 记不适用）、引用、`memory/{PRE_RELEASE_VERSION}/` Sprint 归档及项目记忆「本地已归档（未发布）」。`--finalize-docs` 仅覆盖文档，不证明 SQL / memory 已完成；欠账须核对。Git commit / push / tag / 分支均记 `unsupported:vcs-disabled`（非 passed）；不得记「✅ 已发布」「🟡 已准发布」或宣布 released。
    - **成功落账**：门禁放行、必需归档步骤成功且逐项核验后才运行；`--finalize-docs` 返回码不等于归档完成：
    ```bash
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
@@ -213,7 +221,7 @@ FIN="${FIN:-false}"
    ```
    > `internal_released_at` 仅是内部选版游标；无 Git 时项目记忆仍记「本地已归档（未发布）」及 `unsupported:vcs-disabled`。
 
-4. **里程碑通知 #pre-done（见 0.1bis）**：重新读本 tick 四信号，且 `internal_released_at` 已写入后才发送；不满足则不发、不宣称成功。**通知失败不得阻塞归档**：`rc=3`（未配置渠道）静默跳过、`rc=1`（全部失败）只补 WARN 且 `notify.py` 已写 `undelivered` 台账；⛔ **不得**置 `PRERELEASE_HOLD=1`（理据见 `rationale.md`「#pre-done 失败不得阻塞归档」）。
+4. **通知 #pre-done（见 0.1bis）**：重读本 tick 四信号，确认 `internal_released_at` 已写后才发。通知失败不阻塞归档、不置 `PRERELEASE_HOLD=1`：rc=3 静默跳过，rc=1 补 WARN，`notify.py` 记录 `undelivered`。
    ```
    ✅ {项目名称} {PRE_RELEASE_VERSION} · 准发布完成
    commit：{hash} | 分支：{branch}
@@ -223,7 +231,7 @@ FIN="${FIN:-false}"
    > `prerelease_transitional=true` 时同样**加一行如实说明**：
    > `🔀 中间过渡版本归档：未经部署/测试收敛（{FR}）；如需转正式发布，请先部署+实测再跑 /version {PRE_RELEASE_VERSION}`
 
-5. **★ 本片收尾必写 `run_state`（分片末尾硬动作，见 `invariants.md`「阶段推进不变式」——漏写即断点续跑失效）**：
+5. **收尾必写 `run_state`**（`invariants.md` 阶段推进不变式）：
    ```bash
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
    # 仅本 tick 双门通过、未让位、已核验归档且步骤 3 实际写入游标才标 done。

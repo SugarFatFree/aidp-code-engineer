@@ -151,7 +151,7 @@ def test_gate_cli_cascade():
                   "has_business_code_change", "is_scaffold_only_change", "today",
                   "pending_cascade", "cascaded_not_cleaned",
                   "suspected_cascade_bypass", "pending_cicd", "offchain", "context", "debts",
-                  "path_scope", "id_allocation"}
+                  "path_scope", "id_allocation", "execution_context"}
         check("JSON 字段集合与契约一致", set(info) == expect)
         check("today 为 YYYY-MM-DD", len(info.get("today") or "") == 10)
         check("context 默认 bare-conversation", info.get("context") == "bare-conversation")
@@ -292,13 +292,15 @@ def test_cascade_bypass():
 def test_offchain():
     print("【commit_gate offchain 档位】")
     with tempfile.TemporaryDirectory() as d:
+        _init_repo(d)
+        _git(d, "commit", "--allow-empty", "-qm", "base")
         b = G.offchain_budget(d, "bare-conversation", " M code/a.vue\n M code/b.ts\n")
-        check("XS：≤2 代码文件", b["tier"] == "XS" and b["deploy"] is False and b["applies"] is True)
+        check("XS：≤2 代码文件", b["risk_tier"] == "S" and b["cost"]["band"] == "XS" and b["deploy"] is False and b["applies"] is True)
         b = G.offchain_budget(d, "aidp-command", " M code/a.ts\n M code/b.ts\n M code/c.ts\n")
         check("S：≤5 文件；aidp-command 下 applies=False", b["tier"] == "S" and b["applies"] is False)
         mkfile(os.path.join(d, "code/sql/1.sql"), "ALTER TABLE t ADD COLUMN c INT;\n")
         b = G.offchain_budget(d, "bare-conversation", " M code/sql/1.sql\n")
-        check("M：ALTER DDL", b["tier"] == "M" and b["ddl"] == "alter" and b["deploy"] == "ask-user")
+        check("M：ALTER DDL", b["tier"] == "M" and b["ddl"] == "alter" and b["deploy"] is False and not b["actions"]["sprint_archive"])
         mkfile(os.path.join(d, "code/sql/2.sql"), "CREATE TABLE t (id INT);\n")
         b = G.offchain_budget(d, "bare-conversation", " A code/sql/2.sql\n")
         check("L：新表", b["tier"] == "L" and b["ddl"] == "new-table")
@@ -681,7 +683,8 @@ def test_autopilot_flow_contracts():
           p.index("--enter") < p.index("**② 委派子 Agent"))
     # ★ 斜杠命令不是 shell 命令，写进 bash 围栏必 127
     check("★ 单 Sprint 执行走子 Agent 委派、不在 bash 围栏内写斜杠命令",
-          "/sprint-full ${SPRINT_NO} --unattended --from-batch" in p
+          "/sprint-full ${SPRINT_NO}" in p and "--execution-context" in p
+          and "--unattended --from-batch" in p
           and "\n   /sprint-start " not in p)
     check("★ 不再 get 零写入方的 baseline 键",
           'get "sprints.remaining"' not in p
@@ -721,8 +724,10 @@ def test_autopilot_flow_contracts():
     check("READY_CFG 取自 tick_flags 的真源派生变量（不读 baseline 空键）",
           'READY_CFG="${CLOUD_READY_URL:-}"' in p)
     check("裸探路与执行入口行为已统一",
-          "裸探路调用默认只跑配置向导" in c
-          and "明确执行意图" in c and "--once" in c)
+          "裸探路调用仅配置向导" in c
+          and "明确执行意图" in c and "--once" in c
+          and "自然语言只取得明确请求的动作" in c
+          and "存在baseline不扩权" in c)
     check("发布期 docs-only 跳过 CICD",
           "docs-only" in r and "不触发 CICD、不监听、不跑就绪探针" in r)
 

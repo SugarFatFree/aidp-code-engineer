@@ -1,10 +1,10 @@
-# sprint-autopilot · Phase 3 详情分片 [4/14]（3.1.5 铸 Build 号 + 写执行数据计划态）
+# sprint-autopilot · Phase 3 详情分片 [4/15]（3.1.5 铸 Build 号 + 写执行数据计划态）
 
 > ★ 铸 build 完成后、开发或测试委派前必须执行 `phase-3-4b.md` 的 3.1.6 阶段收口。
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 4/14 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的**第 4/15 片**（每片 ≤20KB，命令主体按子步进度依次 `Read` 对应分片）。
 > - **本片覆盖**：3.1.5（铸造 Build 号 + 写本 build 执行数据·计划态）
-> - **同 Phase 其它分片**：phase-3-1.md … phase-3-9.md（含 phase-3-3b.md；清单见命令主体 Phase 3 骨架表「所在分片」列）
+> 其它分片见命令主体Phase3索引。
 >
 > 逐项执行本片，步骤与硬门不得省略。随脚手架同步；理据见 `rationale.md`。
 
@@ -16,91 +16,8 @@
 >
 > 📌 **AI执行报告产出归属（产骨架 / finalize 解耦）**：**骨架**（本步写 `data` 计划态 + Phase 3.4 finalize 结果态 + `testSummary` 占位）**只由 `/sprint-autopilot` 流水线产**；**finalize + 报告本体 + #3 通知**由 build 关闭方在 **#F 之后**做（浏览器路径 = 测试链路 Phase 3.7；静态-only = autopilot Phase 3.4 末尾）。本步铸的 `current_build` 即「autopilot 驱动」信号。完整归属矩阵与「无 current_build 时两者都不产」的理由见 rationale.md「AI执行报告的产出归属」。
 
-1. **铸造或复用 build 号**（命令端 Bash，计数器存 baseline `memory/.sprint-autopilot-baseline.json` 该版本字典 `build_seq`，**自增后必须立即 jq 落盘回写**）：
-   ```bash
-   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-   : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"   # ★ 统一变量名 + 兜底默认（未定义时 jq 读 stdin 静默失败）
-   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
-   BV="$TARGET_VERSION"
-   RPT_AI="docs/reports/$BV/AI执行报告"
-   # ★ 复用判定（子流程 R 幂等性 + 报告不可变收紧，item 2）：test-only 入口（Phase 3.0 设 ENTRY_MODE=test-only）
-   #   且已有可复用 current_build（存在 + 其执行数据 data/{build}.js 在）**且该 build 未 finalize、状态未收尾**
-   #   （status ∈ running/dev_done，即非 closed/tested）→ 复用不自增；
-   #   ⛔ 已 finalize（ai_report_finalized=true）/ 已收尾（closed/tested）→ **强制铸新 build 跑新一轮复测**——
-   #   报告不可变铁律：旧 build 报告已冻结、禁覆盖；结论变化一律新 build。
-   CUR=$(jq -r ".versions.\"$BV\".current_build // empty" "$BASELINE_FILE" 2>/dev/null)
-   CUR_SEQ="${CUR##*_build}"
-   CUR_STATUS=$(jq -r ".versions.\"$BV\".builds[]? | select(.build==\"$CUR\") | .status // \"\"" "$BASELINE_FILE" 2>/dev/null | head -1)
-   CUR_FINAL=$(jq -r ".versions.\"$BV\".builds[]? | select(.build==\"$CUR\") | .ai_report_finalized // false" "$BASELINE_FILE" 2>/dev/null | head -1)
-   # ★ 复用判据与 ENTRY_MODE **解耦**：只看"这个 build 还没收口"（执行数据在 + 未 finalize +
-   #   状态未 closed/tested），不看是谁进来的。⛔ 不得绑死 test-only（理据见 rationale.md）。
-   REUSABLE=0
-   if [ -n "$CUR" ] && [ -f "$RPT_AI/data/${CUR}.js" ] \
-      && [ "$CUR_FINAL" != "true" ] && [ "$CUR_STATUS" != "closed" ] && [ "$CUR_STATUS" != "tested" ]; then
-     REUSABLE=1
-   fi
-   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"   # 取回 ENTRY_MODE 等本 tick 变量
-   if [ "$REUSABLE" = "1" ]; then
-     BUILD="$CUR"; BUILD_SEQ="$CUR_SEQ"
-     # ★ entry_mode 落 build 级、复用时只补不覆盖（理由见 rationale.md「entry_mode 粒度」）；兼回填存量 build。
-     [ -n "$ENTRY_MODE" ] && [ -z "$($BE --version "$BV" --build "$BUILD" get entry_mode --default "")" ] \
-       && $BE --version "$BV" --build "$BUILD" set entry_mode "$ENTRY_MODE" >/dev/null || true
-     echo "♻️ 复用现有 build：$BUILD（执行数据在 + 未 finalize/未收尾 → 不自增，入口=$ENTRY_MODE）"
-   else
-     # 复测轮：CUR 已 finalize/收尾 → 记 retest_of + round + 上轮通过率
-     RETEST_OF=""; RETEST_ROUND=0; RETEST_LABEL=""
-     if [ -n "$CUR" ] && { [ "$CUR_FINAL" = "true" ] || [ "$CUR_STATUS" = "closed" ] || [ "$CUR_STATUS" = "tested" ]; }; then
-       RETEST_OF="$CUR"
-       PREV_RATE=$(jq -r ".versions.\"$BV\".builds[]? | select(.build==\"$CUR\") | .pass_rate // \"?\"" "$BASELINE_FILE" 2>/dev/null | head -1)
-       # ⛔ 不按 ai_report_finalized 计（未收敛轮从不 finalize ⇒ 恒"第 1 轮"，见 rationale.md）
-       RETEST_ROUND=$(( $(jq -r "[.versions.\"$BV\".builds[]? | select(.retest_of != null)] | length" "$BASELINE_FILE" 2>/dev/null || echo 0) + 1 ))
-       RETEST_LABEL="第 ${RETEST_ROUND} 轮复测（上轮 ${CUR} 通过率 ${PREV_RATE}）"
-       echo "🔁 上一 build $CUR 已 finalize/收尾 → 铸新 build 跑复测：$RETEST_LABEL"
-     fi
-     # 读上次 build_seq（默认 1000 → 首个 build = 1001），+1
-     LAST=$(jq -r ".versions.\"$BV\".build_seq // 1000" "$BASELINE_FILE" 2>/dev/null)
-     BUILD_SEQ=$((LAST + 1)); [ "$BUILD_SEQ" -lt 1001 ] && BUILD_SEQ=1001
-     BUILD="${BV}_build${BUILD_SEQ}"   # 如 V0.1.0_build1001
-     # ★ 回写 build_seq + current_build；builds[] 是数组追加，故走 LockedBaseline 同一把锁。
-     #   ⛔ 不裸 `jq … > tmp && mv`（见 invariants「baseline 单一写入口不变式」）。
-     $BE --version "$BV" set build_seq "$BUILD_SEQ" current_build "$BUILD"
-     # ★ 新 build = 新一轮，旧轮次的未收敛计数不该继续计入（见 rationale「未收敛计数为何要跨 build 清零」）
-     $BE --version "$BV" del aiauto_test_unconverged_streak 2>/dev/null || true
-     # ★ CICD 重试计数同样跨 build 清零（根因见 rationale「重试配额被当成版本总额」）
-     $BE --version "$BV" del cicd_run.cicd_retry_count 2>/dev/null || true
-     # ★ dev_fail_streak 同理跨 build 清零（契约是「连续失败」，不清即终身累计）
-     $BE --version "$BV" del dev_fail_streak dev_fail_phase 2>/dev/null || true
-     BUILD="$BUILD" BV="$BV" RETEST_OF="$RETEST_OF" RETEST_ROUND="$RETEST_ROUND" \
-     ENTRY_MODE="$ENTRY_MODE" python3 - <<'PY'
-import os, sys
-sys.path.insert(0, "{{AIDP_HOME}}/scripts")
-from baseline_edit import LockedBaseline, now_iso   # 同一把 flock + 锁内重读 + 原子替换
-bv, b = os.environ["BV"], os.environ["BUILD"]
-entry = {"build": b, "started_at": now_iso(), "status": "running"}
-# ★ entry_mode 落【build 级】（勿删，理由见上方复用分支注释）：收尾门与 Stop hook 都优先读这里。
-if os.environ.get("ENTRY_MODE"):
-    entry["entry_mode"] = os.environ["ENTRY_MODE"]
-if os.environ.get("RETEST_OF"):
-    entry["retest_of"] = os.environ["RETEST_OF"]
-    entry["retest_round"] = int(os.environ.get("RETEST_ROUND") or 0)
-with LockedBaseline("memory/.sprint-autopilot-baseline.json", write=True) as bl:
-    ver = bl.data.setdefault("versions", {}).setdefault(bv, {})
-    # ★ test-only 复用部署：登记此刻 last_deployed_at；测试链路仅在它仍等于当前值时豁免归属门。
-    #   为空 = 从没部署过，不登记。理据见同目录 rationale.md。
-    if os.environ.get("ENTRY_MODE") == "test-only":
-        _ld = ver.get("last_deployed_at") or ""
-        if _ld:
-            entry["deploy_reuse_of"] = _ld
-            entry["deploy_reuse_reason"] = "test-only：本轮无新代码变更，复用最近一次部署"
-    # ★ 按 build upsert：`set current_build` 已登记占位行，append 会同号两行
-    builds = ver.get("builds", [])
-    row = {k: v for x in builds + [entry] if x.get("build") == b for k, v in x.items()}
-    ver["builds"] = [x for x in builds if x.get("build") != b] + [row]
-PY
-     echo "🔢 铸造 build 号：$BUILD（已落盘 build_seq=$BUILD_SEQ；下次重跑自增，不停在 1001；不打 git 分支/tag）${RETEST_LABEL:+ · $RETEST_LABEL}"
-   fi
-   # ★ 复测轮标注（$RETEST_LABEL 非空时）：#0 起测通知 / #D 部署通知须在标题或首行带该标注（形如"第 N 轮复测（上轮通过率 X%）"）。
-   ```
+1. **铸造或复用build号**：版本build_seq自增后经baseline_edit/LockedBaseline立即落盘。
+   **第一动作 = Read `{{AIDP_HOME}}/flows/sprint-autopilot/phase-3-4a.md` 并执行唯一R-1围栏**；成功后继续步骤2/3，失败不产新号或进入callback。报告交接的可信部署SHA与mint同事务，普通路径仍按原规则复用/铸号。
 
 2. **确保报告目录骨架存在 + AI执行报告(结果 index.html + 计划 plan.html 两页) + AI测试报告 入口就位 + shell 版本对账刷新**（首个 build 按 `{{AIDP_HOME}}/templates/reports/` 创建；已有 shell 则比对 `report-shell-version`，模板更新则刷新所有页面 + 样式、数据保留）：
    ```bash

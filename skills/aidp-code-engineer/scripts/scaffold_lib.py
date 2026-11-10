@@ -6,6 +6,7 @@
 目录清单、契约目录、忽略集、占位符渲染、gitignore 托管区、备份保留策略都只在这里定义一次。
 """
 import hashlib
+from difflib import SequenceMatcher
 import importlib.util
 import sys
 import json
@@ -433,7 +434,7 @@ def _section_span(lines: list, heading: str):
     return start, end
 
 
-def merge_memory_upgrade(old: str, new_rendered: str) -> str:
+def _merge_memory_sections(old: str, new_rendered: str) -> str:
     """项目记忆文件升级的确定性合并（按锚点，不做语义改写）。
 
     - 「项目自定义」段之前：取新模板正文；
@@ -474,6 +475,98 @@ def merge_memory_upgrade(old: str, new_rendered: str) -> str:
         head = "\n".join(head_lines) + "\n"
     head = head.rstrip("\n") + "\n\n" if tail else head
     return head + tail if tail else head
+
+
+def memory_managed_text(text: str) -> str:
+    """只剥离明确归项目维护的 custom 与固定状态值，其余内容参与差异判断。"""
+    lines = text.split("\n" + CUSTOM_HEADING, 1)[0].splitlines()
+    span = _section_span(lines, STATUS_HEADING)
+    if span:
+        for i in range(span[0] + 1, span[1]):
+            match = _STATUS_LINE_RE.match(lines[i])
+            if match and match.group(1).strip() in STATUS_FIELDS:
+                lines[i] = f"- **{match.group(1).strip()}**：<project-state>"
+    return "\n".join(lines).replace("{{AIDP_HOME}}", ".aidp").replace(
+        ".claude/aidp", ".aidp").replace(".agents/aidp", ".aidp").replace(
+        ".claude/", ".aidp/").replace(".agents/", ".aidp/").strip()
+
+
+def merge_memory_upgrade(old: str, new_rendered: str, previous=None, evidence=None) -> str:
+    """旧模板三方合并；歧义时保持原文，调用方必须入现有改写队列。
+
+    只搬运独立新增段落；模板修改/删除、同节上游变动、缺基线均保守待改写。
+    绝不把整个旧模板塞入 custom。evidence 包含待裁决的实际原文。
+    """
+    evidence = evidence if evidence is not None else []
+    current, incoming = memory_managed_text(old), memory_managed_text(new_rendered)
+    if previous is None:
+        if current != incoming:
+            evidence.append({"reason": "missing-baseline", "project": old, "incoming": new_rendered})
+            return old
+        return _merge_memory_sections(old, new_rendered)
+    before, local = memory_managed_text(previous).splitlines(), current.splitlines()
+    local_raw = old.split("\n" + CUSTOM_HEADING, 1)[0].strip().splitlines()
+    before_raw = previous.split("\n" + CUSTOM_HEADING, 1)[0].strip().splitlines()
+    fresh_raw = new_rendered.split("\n" + CUSTOM_HEADING, 1)[0].strip().splitlines()
+    additions, status_additions = [], []
+
+    def section(lines, index):
+        start = max((i for i in range(min(index + 1, len(lines)))
+                     if lines[i].startswith("## ")), default=0)
+        end = next((i for i in range(start + 1, len(lines))
+                    if lines[i].startswith("## ")), len(lines))
+        return lines[start] if lines else "", "\n".join(lines[start:end]).strip()
+
+    fresh = incoming.splitlines()
+    for op, a, b, c, d in SequenceMatcher(None, before, local, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        fragment = "\n".join(local_raw[c:d]).strip()
+        if not fragment and not "\n".join(before[a:b]).strip():
+            continue
+        heading, baseline_section = section(before, max(a - 1, 0))
+        matches = [i for i, line in enumerate(fresh) if line == heading]
+        new_section = section(fresh, matches[0])[1] if len(matches) == 1 else ""
+        independent = (op == "insert" and fragment
+                       and (c == 0 or not local[c - 1].strip() or not local[c].strip())
+                       and (d == len(local) or not local[d].strip() or not local[d - 1].strip())
+                       and not any(line.startswith(("#", "```", "~~~", "<!--", "|"))
+                                   for line in local[c:d] if line.strip()))
+        if op == "insert" and heading == STATUS_HEADING and fragment:
+            independent = True
+        # 规则性追加即使行级不重叠，也不能证明与新版其他规则相容。
+        if re.search(r"必须|禁止|不|仅|只|需|跳过|允许|应当|优先|覆盖|忽略|约束|约定|规则|默认|要求|"
+                     r"\b(?:must|never|always|skip|override|ignore|only|shall|should|not)\b", fragment, re.I):
+            independent = False
+        if independent and baseline_section == new_section:
+            (status_additions if heading == STATUS_HEADING else additions).append(fragment)
+        else:
+            evidence.append({"reason": "template-project-conflict", "section": heading,
+                             "baseline": "\n".join(before_raw[a:b]), "project": fragment,
+                             "incoming": section(fresh_raw, matches[0])[1]
+                             if len(matches) == 1 else new_rendered})
+    if evidence:
+        return old
+    merged = _merge_memory_sections(old, new_rendered)
+    if status_additions:
+        # 基础合并已保留额外状态键，只补完整散文。
+        lines = merged.splitlines()
+        span = _section_span(lines, STATUS_HEADING)
+        if span:
+            extra = [line for block in status_additions for line in block.splitlines()
+                     if not _STATUS_LINE_RE.match(line)]
+            if any(line.strip() for line in extra):
+                prose = "\n".join(extra).strip().splitlines()
+                end = span[1]
+                while end > span[0] and not lines[end - 1].strip():
+                    end -= 1
+                lines[end:span[1]] = [""] + prose + [""]
+                merged = "\n".join(lines) + "\n"
+    if additions:
+        if "\n" + CUSTOM_HEADING not in merged:
+            merged = merged.rstrip() + "\n\n" + CUSTOM_HEADING + "\n"
+        merged = merged.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
+    return merged
 
 
 # ── gitignore 托管区 ────────────────────────────────────────────────────────
@@ -588,7 +681,8 @@ QUEUE_HEADER = (
     "# 处理方式：逐行 Read 目标文件与新版模板 → 以模板的结构/术语/路径为准、保留项目自有内容改写 → Write。\n"
     "# 模板中的 {{project}} {{user}} {{version}} {{date}} 按本项目实际值替换。\n"
     "# 全部处理完【不要手工删除本文件】：跑 finalize_upgrade.py，它逐条核验目标文件已改写后删除本文件并收口；\n"
-    "# 确认某条无需改动时，用 finalize_upgrade.py --accept <目标路径> 显式标记。\n\n"
+    "# 确认某条无需改动时，用 finalize_upgrade.py --accept <目标路径> 显式标记。\n"
+    "# 可选第四列为 JSON 差异证据；主记忆冲突须对照 baseline/project/incoming，保留项目约束于有效正文后再收口。\n\n"
 )
 # 历史（降层前）的安装位。⛔ 保留只为认出未迁移的存量项目，**不再是当前落点**。
 LEGACY_INSTALLED_SKILL_REL = f".aidp/skills/{SKILL_NAME}"
@@ -629,9 +723,12 @@ def queue_entries(root: Path) -> list:
 
 
 def parse_queue_entry(line: str) -> dict:
-    parts = line.split("\t")
-    return {"target": parts[0], "template": parts[1] if len(parts) > 1 else "",
-            "before": parts[2] if len(parts) > 2 else ""}
+    parts = line.split("\t", 3)
+    entry = {"target": parts[0], "template": parts[1] if len(parts) > 1 else "",
+             "before": parts[2] if len(parts) > 2 else ""}
+    if len(parts) > 3:
+        entry["evidence"] = json.loads(parts[3])
+    return entry
 
 
 def project_template_rel(root: Path, tpl: Path) -> str:
@@ -657,13 +754,16 @@ def ledger_label(target_rel: str) -> str:
     return target_rel[len(".aidp/"):] if target_rel.startswith(".aidp/") else target_rel
 
 
-def enqueue(root: Path, rel: str, tpl: Path):
+def enqueue(root: Path, rel: str, tpl: Path, evidence=None):
     entries = queue_entries(root)
     if any(parse_queue_entry(e)["target"] == rel for e in entries):
         return False
     target = root / rel
     before = sha256(target.read_bytes()) if target.is_file() else ""
-    entries.append(f"{rel}\t{project_template_rel(root, tpl)}\t{before}")
+    line = f"{rel}\t{project_template_rel(root, tpl)}\t{before}"
+    if evidence:
+        line += "\t" + json.dumps(evidence, ensure_ascii=False)
+    entries.append(line)
     write_text_lf(root / REWRITE_QUEUE_FILE, QUEUE_HEADER + "\n".join(entries) + "\n")
     return True
 

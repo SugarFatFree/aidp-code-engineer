@@ -1,17 +1,46 @@
 # /sprint-dev — 开发阶段（独立可用，支持自动累进）
 
+## 执行身份与授权前置路由（先于本文其余动作）
+
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。按原参数解析父上下文与显式 Sprint；历史计划和 activeContext 不决定本任务身份。
+
+`POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
+
+```bash
+# EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+  [ -z "${EXPLICIT_SPRINT:-}" ] || CONTEXT_ARGS+=(--sprint "$EXPLICIT_SPRINT")
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-dev \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-dev \
+  --execution-context "$EXECUTION_CONTEXT" --phase dev --json
+```
+
+返回 `route=light` → 执行该片的 **dev** 能力，然后 **return**；不进入下文任何 Sprint 取号、卡片、activeContext、started、报告路径或归档步骤。返回 `route=formal` 才执行下文正式身份门；可选动作仍按 actions 筛选，未授权为 NOT_REQUESTED。任何子命令/修复/重试/续跑均保留原参数并显式附 `--execution-context "$EXECUTION_CONTEXT"`；不能只传 `--unattended`/`--from-batch` 而丢身份。
+
+## formal 流程
+
 你正在执行 `/sprint-dev` 命令。
 
-**★ 本命令支持两种调用方式**
-- **方式 A（被编排器调用）**：`/sprint-full` / `/sprint-batch` 内部调用，执行当前 Sprint 的开发
-- **方式 B（独立直接调用）**：用户直接调用，自动累进创建新 Sprint 并串联后续 `/sprint-test` → `/sprint-bugfix` → `/sprint-close`
+**formal 分支支持两种调用方式**（light 已在前置路由返回）
+- **方式 A（明确 Sprint）**：`/sprint-full` / `/sprint-batch` 内部调用或用户指定 Sprint，执行该 Sprint 的开发
+- **方式 B（明确正式累进）**：formal 父编排明确要求新 Sprint，完成后仅串联父授权的能力；普通描述直接调用仍为 light
 
-**★ 本命令是编排器**：调用 `superpowers:test-driven-development`（TDD）；实现与适用的文档任务由 AIDP 按具体文件写集隔离派发，汇合一次 reviewer 契约一致性审查，再由 `/sprint-test` 一次 CVL 质量检查；修复后只差量复核，不逐 Task 重复双完整审查。权威协议 = `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。
+**本命令按父授权编排**：默认实现+静态验证；TDD/related-test、review、full-cvl、document/docs-audit 逐项过 `light-context.md` 动作围栏。角色写集隔离，已授权检查复用既有证据，修复只复核 delta。权威协议 = `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。
 
 参数：$ARGUMENTS
-- `/sprint-dev` — 开发当前进行中的 Sprint（从 activeContext 读取）
+- `/sprint-dev` — 有 formal 父上下文时开发其明确 Sprint；独立无上下文时为 light
 - `/sprint-dev 001` — 开发已规划的 Sprint-001（前提：已 /sprint-start）
-- `/sprint-dev "新增用户导出功能"` — ★ 独立使用：自动累进新 Sprint 并执行全流程
+- `/sprint-dev "新增用户导出功能"` — 独立调用为 light；formal 无号父编排内才走新 Sprint 累进
 - `/sprint-dev backend` — 仅后端开发（当前 Sprint）
 - `/sprint-dev frontend` — 仅前端开发（当前 Sprint）
 - `/sprint-dev "<描述>" backend` — 自动累进 + 仅后端
@@ -22,14 +51,14 @@
 - `--dev-scale=S|M|L` — 显式覆盖普通体量档位：S=契约卡＋受影响四族台账；M=契约卡先放行、代码与 docs 按写集并行、test 前完整文档汇合；L=先完整文档后开发。新表/破坏性契约的 L 前置门不能被降档绕过。开发前生产 `dev_scale`，开发后 Step X.0.0 按实际范围复核，`sup_scale` 同步同一 tier。档位只伸缩承载与时机，需求/用例覆盖义务、约定 22/34 及所有适用检查项均保留，详见 `flows/sprint-dev/incremental-contract.md`。
 - `--unattended` — ★ autopilot `/loop` 无人值守标记：Step 0 UI 门（C/D）、**Phase 0A.5 死代码决策门情形 C**、Step X.0.0 约定22 级联门、**约定28 引新库同意门**均**不弹 `AskUserQuestion`**，改**消费 PRD `autopilot_decisions` 预声明**（visual_baseline → A/B/C/D；约定22 默认自动级联；死代码情形 C 默认「① 并存切流量」；需引新库无栈支持 → 转失败处置熔断而非弹窗），避免 7×24 挂死（由 `/sprint-autopilot` → `/sprint-batch` → 本命令透传）
 - `--from-batch` — 批量子任务标志（由 `/sprint-full` 透传）：本命令不弹 `AskUserQuestion`，内容决策门按「⏸ 待裁决」返回上层（语义单一信源 = `/sprint-full` 参数表）
-  - ⛔ **`--unattended` 绝不弹任何交互门（catch-all，覆盖所有未枚举门）**：上面点名的 4 个门只是**举例**，不是穷举白名单。在 `--unattended` 下，**除本命令文档明确写出的「失败/熔断转人工」路径外，严禁 `AskUserQuestion`、严禁以任何形式停下征询用户**。**尤其严禁自发弹出「开发工作量较大 / 如何推进 / 我全自主完成 vs 先做某 Sprint 阶段确认 / 是否继续 / 要不要分阶段」这类范围·进度确认门**——本 Sprint（含累进产生的多个 Sprint）的全部前后端工作是**一个不可分割、必须一次做完的整体**，`--unattended` 本身即「把全部做完」的授权，**不得**以"工作量大 / 稳妥起见"为由降级为分阶段或征询。凡本应由用户拍板处一律走 PRD `autopilot_decisions` 预声明或文档化保守默认；确实无法自动解决的转失败处置（熔断冻结 + 继续/通知，见对应门），**绝不挂起等待用户输入**。
+  - ⛔ **`--unattended` 绝不弹任何交互门（catch-all，覆盖所有未枚举门）**：上面点名的 4 个门只是**举例**，不是穷举白名单。在 `--unattended` 下，**除本命令文档明确写出的「失败/熔断转人工」路径外，严禁 `AskUserQuestion`、严禁以任何形式停下征询用户**。**尤其严禁自发弹出「开发工作量较大 / 如何推进 / 我全自主完成 vs 先做某 Sprint 阶段确认 / 是否继续 / 要不要分阶段」这类范围·进度确认门**——本 Sprint（含累进产生的多个 Sprint）的全部前后端工作是**一个不可分割、必须一次做完的整体**，`--unattended` 只控制交互方式，已授权范围由父策略确定，**不得**以"工作量大 / 稳妥起见"为由降级为分阶段或征询。凡本应由用户拍板处一律走 PRD `autopilot_decisions` 预声明或文档化保守默认；确实无法自动解决的转失败处置（熔断冻结 + 继续/通知，见对应门），**绝不挂起等待用户输入**。
 
 ## ⛔ 统一决策纪律（交互式与 `--unattended` 同为硬约束，最高优先）
 
 > 上一条对"自发范围/进度确认门"的禁止**不限于 `--unattended`**——**交互式（用户在场）下同样是硬约束**。无论哪种模式：
 
 - **所有"文档同步 / 是否继续 / 如何推进"的决策，只能走命令文档明确定义的结构化门**（Step 0 UI 门、Phase 0A.5 死代码门、Phase 0B.1.1 完成硬门、Step X.0.0 级联门的破坏性变更确认等）。这些门要么按规则**默认自动执行不弹窗**，要么在**明确枚举的例外**下用 `AskUserQuestion` 给出**固定选项**。
-- **严禁 agent 自由发挥式反问**——尤其禁止在开发中途或结尾自发抛出「开发工作量较大 / 要不要补设计文档 / 还是先这样 / 是否继续 / 要不要分阶段」等**非结构化、无预定义选项**的征询。本 Sprint 全部工作是一次做完的整体；文档补充是既定动作（Phase 0B.1.1 主路径 + Step X.0.0 兜底），**不是**可反问用户"要不要做"的选择。
+- **严禁 agent 自由发挥式反问**——尤其禁止在开发中途或结尾自发抛出「开发工作量较大 / 要不要补设计文档 / 还是先这样 / 是否继续 / 要不要分阶段」等**非结构化、无预定义选项**的征询。本 Sprint 已授权工作持续完成；document 未授权时跳过成文且不反复询问，已授权则直接完成。
 - **交互式与无人值守的唯一差别**：仅在于**明确枚举的结构化门**（如 UI 的 C/D、死代码情形 C、级联的破坏性变更）交互式弹固定选项、无人值守消费 PRD 预声明；**除此之外，两种模式都不得自发停下征询**。凡文档未定义为"该弹窗"的地方，一律按保守默认自动推进。
 - **★ 边界澄清：哪些"必须设结构化门"、哪些才是"禁止的自发反问"（防本纪律被误读为"一律别问"而省掉该设的门）**：本纪律禁止的是**无持久副作用、选项不可穷举**的进度/范围征询（"是否继续 / 要不要分阶段 / 要不要补文档 / 工作量大要不要我全自主"）——这些一律按保守默认自动推进、不问。但满足下列**正向判据任一**的动作，**必须**设结构化门（用 `AskUserQuestion` 给固定选项让用户拍板，属**合规的门、不受本纪律"禁自发反问"限制**）：
   1. **会产生持久目录结构**（新建 `docs/{version}/`、`memory/{version}/` 等版本级持久目录）；
@@ -194,9 +223,38 @@ NEXT=$(python3 {{AIDP_HOME}}/scripts/check_sprint_numbering.py next)   # 形如 
 > `sprint-001`，bugfix 记录、`docs/testing/{version}/sprint-{NNN}/`、Sprint 归档
 > 全部产生歧义。脚本的 `next` 子命令**跨全部版本**扫描取 MAX+1，回检见 `check` 子命令。
 
+取得原流程真实 Sprint 号后，在任何 start/子命令派发前绑定或派生 formal 上下文。版本/批次父身份不绑定单个 Sprint；单 Sprint 的 full 无号上下文才 bind。绑定/派生不是开工批准，后续契约与 start 门照旧。`NEXT` 必须是上方原取号结果，工具调用不共享 shell 时显式重绑该结果，禁止再取一次号。
+
+```bash
+CONTEXT_ENTRY=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["entry"])' "$EXECUTION_CONTEXT") || exit $?
+case "$CONTEXT_ENTRY" in
+  sprint-autopilot|sprint-batch|version) CONTEXT_OPERATION=fork ;;
+  *) CONTEXT_OPERATION=bind-sprint ;;
+esac
+SPRINT_POLICY_ARGS=()
+if [ "$CONTEXT_OPERATION" = fork ]; then
+  SPRINT_ALLOW=$(python3 - "$EXECUTION_CONTEXT" <<'ACTIONS'
+import json, sys
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from execution_policy import BASE_ACTIONS, COMMAND_ACTIONS
+parent = json.load(open(sys.argv[1]))
+development = BASE_ACTIONS | set(COMMAND_ACTIONS["sprint-full"])
+print(*["--allow-action=" + a for a in sorted(development & set(parent["allowed_actions"]))])
+ACTIONS
+  ) || exit $?
+  [ -n "$SPRINT_ALLOW" ] || { printf '%s\n' 'NOT_REQUESTED: 无Sprint开发动作'; exit 0; }
+  read -ra SPRINT_POLICY_ARGS <<< "$SPRINT_ALLOW"
+fi
+SPRINT_CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py "$CONTEXT_OPERATION" --root . \
+  --execution-context "$EXECUTION_CONTEXT" --sprint "${NEXT:?原流程已分配的Sprint号缺失}" "${SPRINT_POLICY_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$SPRINT_CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+```
+
+完成回传包含真实 Sprint 号与当前子 `execution_context`；外层 bugfix/full 后续 test/close 消费该子路径。autopilot 的版本节点仍保留父路径，不用此子路径覆盖。重试已有子任务直接继承它，不能重新从版本父启动累进取号。
+
 ### Phase 0B.1.1：★ 自动文档增量流
 
-**触发条件**：分支 B 必跑契约放行；`skip-doc-sync` 只影响成文调度，不能跳过规格、反转清算、台账或 M/L 完成门。
+**触发条件**：分支 B 必跑契约放行；以下正式成文配方仅 document 已授权时执行，未授权记 NOT_REQUESTED、保留最小规格与事实登记；`skip-doc-sync` 只影响成文调度，不能跳过规格、反转清算、台账或 M/L 完成门。
 
 **第一动作 = Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`**，按“契约卡放行”先判档、写卡与四族义务，再分流。该片是分档时机与并行汇合的唯一权威；下方步骤 1–6 是**正式成文配方**，不能对所有档位无条件串行执行。
 - **S**：先契约卡＋受影响四族短行，跳过下方完整成文配方进入 Phase 0B.1.3/0B.2；用例按步骤 4 判定并双重登记，required=true 时正式用例必须生成，不能把卡的 AC 当用例。后续完整成文由约定 22 收口或显式 `--cascade-now` 负责。
@@ -351,7 +409,7 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 ### Phase 0B.2：启动新 Sprint
 
 ```
-执行：/sprint-start {新NNN} [--unattended]（无人值守时透传；调用上下文必须附契约卡路径、修订、dev_scale 与放行证据）
+执行：/sprint-start {新NNN} --execution-context "$EXECUTION_CONTEXT" [--unattended]（无人值守时透传；调用上下文必须附契约卡路径、修订、dev_scale 与放行证据）
 ```
 
 ### 转入共用「Phase 1 开发执行」段（本命令核心）
@@ -480,7 +538,7 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 | Step | 作用（一句话） |
 |---|---|
-| **X.0.0** | ★ 上游文档级联同步检测（约定 22 统一入口，4 级触发 + 默认攒批入台账；**仅破坏性变更弹确认门**——普通级联已改为默认自动、无「跳过」口子）|
+| **X.0.0** | ★ 上游文档级联同步检测（约定 22 统一入口，4 级触发 + 默认攒批入台账；**仅破坏性变更弹确认门**——document 已授权才执行成文，未授权保持事实登记）|
 | **X.0** | 研发需求回写（含开发期需求漏项）|
 | **X.2** | 调 dev-logic-architect 更新设计（走 `/sprint-design --ledger-cascade [--unattended]` 编排；⛔ **不是 `--supplement={NN}`** —— 本段是约定 22 收口级联，就地改主文档、不新建分册，落点门会判 exit 1）|
 | **X.3** | 调 `/sprint-plan --ledger-cascade [--unattended]` 更新研发执行计划（⛔ 同上，不是 `--supplement`）|
@@ -489,7 +547,7 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 | **X.6** | ★ 更新 *事实清单.md（配置事实变更时）|
 | **X.7** | ★ 维护配置项清单（约定 25）|
 | **X.8** | ★ 部署流程 SOP + SQL执行台账（约定 25，检测驱动、独立于配置变更）|
-| **X.8 收口** | ★ 累进路径的产物审计（本轮产出四类文档任一份 → 派 version-auditor 子 Agent；⛔ 无人值守不得跳过）|
+| **X.8 收口** | ★ 累进路径的产物审计（docs-audit 已授权且新内容未被同 hash 证据覆盖 → 派 version-auditor）|
 
 > 收口：回写段完成 → 进入下方「完成前验证」。**执行前务必已按序 Read `postdev-writeback-1.md` + `-2.md` + `-3.md` 并按其逐项完成，不能只看本表。**
 
@@ -499,42 +557,26 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 调用 `superpowers:verification-before-completion`：
 - 确认本 Sprint 范围内代码已实现、无遗留 TODO
-- ★ **不在开发阶段逐任务编译/校验**——后端编译 / 前端校验（lint + 类型检查，**不打包**）已收敛到 **Sprint 验收（`/sprint-test`）**，届时**仅处理本 Sprint 改动的一侧**（改前端才校验前端、改后端才编后端）且以**资源受限方式**执行（`nice` + 限并发，避免 CPU 打满），配方见 `agents/backend.md`「Step 7」/ `agents/frontend.md`「Step 4」。前端验收期只做 lint + 类型检查、**不跑完整打包**，部署打包由使用者按需自行执行。分支 A（skip-test 只开发）则编译/校验推迟到后续 `/sprint-test`
+- ★ **不在开发阶段逐任务编译/校验**——后端编译 / 前端校验（lint + 类型检查，**不打包**）已收敛到 **Sprint 验收（`/sprint-test`）**，届时**仅处理本 Sprint 改动的一侧**（改前端才校验前端、改后端才编后端）且以**资源受限方式**执行（`nice` + 限并发，避免 CPU 打满），配方见 `agents/backend.md`「Step 7」/ `agents/frontend.md`「Step 4」。前端验收期只做 lint + 类型检查、**不跑完整打包**，部署打包由使用者按需自行执行。仅开发时仍在本轮完成必要静态检查，用 entry_context static 产证据，不依赖后续 test 才能完成
 
 更新 `memory/{version}/{user}/activeContext.md`：
 - 在「子迭代记录」中追加开发阶段的 Round 记录
 - 在「已完成工作」中追加完成项
 - 更新「当前工作焦点」为"开发完成，等待测试"
 
-> ★ **若本命令触发 `git commit`**：主流程汇合合法写集并集后按 `incremental-contract.md`“写集派发”传 `--owner` 与重复 `--allow-path` 给 `commit_gate.py --quiet`，每次读取完整 JSON；暂存区外路径 WARN 核对归属，不覆盖他人索引。退出码 3/4 是欠账信号、不是禁止 commit；台账结构/清理异常修正复核，实际级联仅由阶段入口或显式 `--cascade-now` 触发，CICD 欠账按约定 31.5 补监听。默认仅主流程写 Git，用户明确授权 worker 时须串行交接索引。
+> ★ **若本命令触发 `git commit`**：主流程汇合合法写集并集后按 `incremental-contract.md`“写集派发”先require_action(commit)，传 `--execution-context`、`--owner` 与重复 `--allow-path` 给 `commit_gate.py --quiet`，每次读取完整 JSON；暂存区外路径 WARN 核对归属，不覆盖他人索引。退出码3/4是欠账信号；5/NOT_AUTHORIZED硬禁止提交，不能按3/4继续；台账结构/清理异常修正复核，实际级联仅由阶段入口或显式 `--cascade-now` 触发，CICD 欠账按约定 31.5 补监听。默认仅主流程写 Git，用户明确授权 worker 时须串行交接索引。
 
-> **日常累进的推送时机**：部署触发前消费 `/sprint-test` Step 7 的当前 Sprint 单测证据；`skip-test` 交父编排完成该门，无父编排则返回“开发完成、尚未可部署”，不新增 push/部署授权。
+> **日常累进的推送时机**：部署触发前只复用已授权验证的当前证据；仅 commit/push/deploy 不追加测试、重回归或审计。未授权测试记 NOT_REQUESTED，不变成部署欠账。
 
-> ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、失败自动重试（`cicd_watch.py --mode retry`）≤3 次并通过就绪探针。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`{{AIDP_HOME}}/flows/sprint-autopilot/invariants.md`）。
+> ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、仅获 deploy grant 且预算允许才主动 retry 和运行就绪探针；push 单独授权只读监听。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`{{AIDP_HOME}}/flows/sprint-autopilot/invariants.md`）。
 
 ---
 
 ### Phase 2-4：自动串联后续（分支 A / B 共用 —— 串联规则单一信源）
 
-**默认行为**（分支 B，或分支 A 不带 `skip-test`）：开发完成后自动执行：
+**串联按父策略选择**：只有 related-test/review/full-cvl 获授权时才调用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]`；原始参数与无人值守标记继续透传。test 子入口继承，不因入口名自行取得公开组合。实现修复需 implement；同根因同 inputs 未变化则停止 retry，报告事实与当前授权范围。
 
-```
-# 先执行 incremental-contract.md“开发与文档汇合”：S 保留四族欠账，M 完整文档必须齐备，L 已有文档照常核对。
-# 同轮 test→close 不自动置 --cascade-now；显式实测要求先补正式用例，契约卡不是用例。
-# 向 test 透传契约卡、修订、改动前基线、原实现/docs Agent 与汇合证据。
-# ⛔ 本命令带 --unattended 时，下面三条【必须逐条透传】——不传则下游各自弹交互门，
-#   无人值守链在此挂死（/sprint-close 的"确认验收"更是只有该 flag 才走机械推导）。
-#   三条缺一不可（`/sprint-full` 同款，两边须同步）。
-1. /sprint-test [--unattended]                    # 测试（含 code-verification-loop）
-
-2. test 当轮把错误性发现交原实现 Agent 修复并差量复核；不重复整段 CVL。
-   当轮仍有未闭环 BUG 时才交 /sprint-bugfix sprint-{NNN} [--unattended]；
-   返回同一验收上下文按问题与修复后 diff 复核，沿用既有最多 5 次失败处置，不另嵌完整 test 循环。
-
-3. /sprint-close {NNN} [--unattended]             # 关闭归档
-```
-
-**跳过串联**：参数含 `skip-test` → 只执行开发，后续步骤由用户手动触发。
+未授权检查为 NOT_REQUESTED，默认开发完成 static 后直接按 `light-context.md` complete。formal 需要关闭时进入 `/sprint-close {NNN} --execution-context "$EXECUTION_CONTEXT" [--unattended]`，只消费已要求的证据并执行原编号/归档门；不因 close 补跑测试或审计。`skip-test` 仍可抑制自动串联，不取消已获授权的交付义务。
 
 ---
 
@@ -547,9 +589,9 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 开发范围：{后端/前端/全部}
 
-后端（TDD 模式）：
+后端（仅获 related-test 授权时执行 TDD）：
 - {列出实现的模块和接口}
-- 单元测试：{N} 个通过
+- 单元测试：{真实结果；未请求为 NOT_REQUESTED}
 - 编译验证：⏭️ 移至验收（/sprint-test 仅改动侧 + 资源受限执行）
 
 前端：
@@ -602,13 +644,13 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 # 场景 2：分步模式下的开发阶段
 /sprint-start 001
-/sprint-dev           # 开发后【自动串联】test→bugfix→close（默认行为）
-# 仅开发、不串联 → 必须显式带 skip-test
+/sprint-dev           # 默认实现+静态；后续仅按当前授权串联
+# 已授权父链中抑制自动串联可带 skip-test
 /sprint-dev 001 skip-test
 
 # 场景 3：★ 独立使用自动累进
 /sprint-dev "新增用户导出功能"
-# 自动：累进 Sprint-006 → 开发 → 测试 → 修复 → 关闭
+# 默认light：实现 → 静态 → 当前任务收尾；不创建Sprint
 
 # 场景 4：只想开发不想自动测试
 /sprint-dev "增加菜单缓存" skip-test

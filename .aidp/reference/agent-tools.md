@@ -18,6 +18,10 @@
 
 模板仓库的 `.aidp` 仅供维护，下游根目录没有该源码目录；以下 `{{AIDP_HOME}}` 是安装后解析的运行目录。**生成入口**由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；⛔ 与运行真源**同址**的那些不算生成入口——运行根降层后 Claude Code 的 `commands/` `skills/` `plugins/` 就是契约本体、必须入库，`agent_sync.py` 判定 identity 后整体跳过它们；命令只在 `{{AIDP_HOME}}/commands/`、公共 SKILL 只在 `{{AIDP_HOME}}/skills/`、插件只在 `{{AIDP_HOME}}/plugins/`。Codex 命令位于官方发现根 `.codex/skills/aidp/`，带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`。该入口**不内联命令正文**，只声明「第一动作 = Read `{{AIDP_HOME}}/commands/<命令>.md`」；正文明确串联 `/foo args` 时同法读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 内联执行；未知命令或无法唯一映射时 fail closed。`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。
 
+## 执行策略
+
+工具可用性不代表任务授权。派发、脚本、Git与部署先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 围栏；子Agent继承父action/budget/真实inputs hash，缺源旧配置不作grant。调度安装另需用户明确授权。
+
 ## 二、工具名
 
 | 文中写法 | 语义 | Codex / DeepSeek Harness 下的做法 |
@@ -26,7 +30,7 @@
 | `Bash` | 执行 shell 命令 | 使用当前 Agent 的 shell 执行工具 |
 | `Skill` 工具调用 `<name>` | 加载并执行一个 SKILL | 按名称调用同名 SKILL；无法调用时直接读 SKILL 目录下的 `SKILL.md` 并按其执行 |
 | `AskUserQuestion` | 向人发起选择题并等待回答 | 以编号选项的形式直接向用户提问并等待回复；**无人值守（`--unattended`）下一律不提问**，按命令文档给出的默认决策继续 |
-| `Agent`（子 Agent，含 `run_in_background`） | 在隔离上下文里执行一段既定工作 | 使用当前 Agent 的子 Agent / 并行任务能力；不支持时在主会话内**按同一份 prompt 顺序执行**，并在完成摘要里说明上下文代价（约定 36 降级阶梯）。⛔ 不支持子 Agent 不是跳过质量门的理由 |
+| `Agent`（子 Agent，含 `run_in_background`） | 在隔离上下文里执行一段既定工作 | 在父action/budget内使用宿主允许的子Agent能力；无法派发时保留原因，可内联同授权工作，不自动增加审查或任务 |
 | `TodoWrite` / 任务清单 | 跟踪多步骤进度 | 使用当前 Agent 的计划/清单能力；没有则在回复里维护一份 Markdown 清单 |
 | `WebFetch` / `WebSearch` | 联网读取 | 使用当前 Agent 的联网能力；不可用时记为「未取到」，⛔ 不编造 |
 | `$ARGUMENTS` | 命令参数 | 调用当前 Agent 的命令入口时附带的文字 |

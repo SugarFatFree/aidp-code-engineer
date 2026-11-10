@@ -1,4 +1,4 @@
-# /version · 版本规划流程详情 — 分片 7/8
+# /version · 版本规划流程详情 — 分片 7/10
 
 > 本片覆盖：**Step 2.4.7 版本规划产物全量审计（独立子 Agent；强制铁律）**。
 > 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
@@ -6,7 +6,7 @@
 <!-- BODY-BELOW -->
 #### Step 2.4.6.5：★ 调用前机械预检（先把确定性检查器跑齐，再谈独立审计）
 
-四族产物落齐后，**先运行各阶段既有确定性检查器**，把每个检查器的
+四族产物落齐后，**先运行各阶段既有确定性检查器**。repair 只重跑新增/修改目标的质量检查和引用依赖的相关一致性检查；未变 artifact、必要 inputs 与维度判据完全同指纹且有真实成功证据时复用。跨族引用路径、编号唯一、索引覆盖这类廉价检查仍全局运行。把每个检查器的
 `source / executed / exit_code / output_present / findings[]` **真实结果**汇总成一份 JSON，
 再用聚合器一次列出全部问题：
 
@@ -146,12 +146,7 @@ PROMPT
 
 详细审计项 + 评级阈值 + 结构化输出格式见 `{{AIDP_HOME}}/agents/version-auditor.md`，命令端不复述。
 
-**★ 移交维度并行审计**（`qr_level ≠ full` 时；`--fast` 不派、清单保留，Step 2.5.0 带 `--fast`）：与上面的 version-auditor **同一条消息**并行派发——
-四个 `00_索引.md` 里**每有一份 QR 移交清单**，就派一个 `{{AIDP_HOME}}/agents/qr-handoff-auditor.md` 子 Agent（入参与报告路径见该文件；
-`skill_params` 与 `upstream_dirs` 读 Step 2.4.3.5 保存的 `memory/{version}/.planning-skill-params.json`，dev-manual-testcase 的规模入参对应 `{selftest_args}`，计划引用按回填后的 `required` 审；其余 SKILL 转发各自实际收到的规模档位与上游目录——这些入参改变移交维度的读法）。
-两类审计**合并处置**：任一方 `block` 即整体 `block`（`fix_actions` 合并后按下方分支回调 SKILL）。
-某 SKILL 的移交审计 `pass`/`warn` 后，**主流程**清掉其清单：`qr_orchestration.py handoff --qr-level full --write <该 00_索引.md>`
-（⛔ 审计员自己不清；清单仍在 = 移交未结清，Step 2.5.0 落地门判不通过）。
+**派审前必读 `{{AIDP_HOME}}/flows/version/planning-7b.md`**：按 artifact/hash/dimension/必要 inputs 分配唯一 owner，合并独立移交派单与缓存复用；version-auditor 仍直接读 PRD 原文做反向覆盖。`--fast` 不派、清单保留，Step 2.5.0 带 `--fast`；最终门必须结清。两类结果合并，任一 block 则按下文处置。
 
 **命令端处置（基于 Agent 返回的 JSON 摘要 `overall` 字段）**：
 

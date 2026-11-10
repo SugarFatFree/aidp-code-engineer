@@ -1,5 +1,28 @@
 # /sprint-requirements — 研发需求生成
 
+## 执行策略入口
+
+先读 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，按真实来源准备POLICY_ARGS；生成与QR配方执行 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+
+```bash
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-requirements \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
+  --execution-context "$EXECUTION_CONTEXT" --phase route --json || exit $?
+```
+
+只执行本次document范围；light不更新Sprint activeContext。未授权独立docs-audit不派发，生成Skill的最低自检边界按共用配方如实披露。
+
+
 你正在执行 `/sprint-requirements` 命令，把**产品提供的需求文档**融合转化为**研发使用的需求文档**。
 
 **★ 本命令是 skill 编排器**：调用 `ux-logic-extractor` skill 生成结构化研发 PRD。
@@ -11,7 +34,7 @@
 <!-- dup-check: ignore 四个规划子命令各需在自己参数表里声明，刻意的四份、非漂移 -->
 - `--unattended`（可选）：★ **无人值守上下文标记**（由 `/version`·`/sprint-autopilot`·`/sprint-test` 等上游透传）——本命令内**一切 `AskUserQuestion` 与"暂停待用户裁决"一律不弹**，改按下方各门的确定性默认自动推进并留痕；**绝不静默跳过质量门**，只是把"问人"换成"按保守默认走 + 记录"。⛔ 上游传了而本命令不认，flag 会被静默丢弃、在无人值守链里挂死。
   - 本命令的门：系统边界 `unsure`（边界不清需列候选让用户选）→ 无人值守下**按 PRD 显式声明的系统归属**判定，仍不确定则归入"未分类"并在产出头部留痕，不阻塞。
-- `--qr-level=scripts|critical|full`（可选，**只由 `/version` 规划链传入**）：调 `ux-logic-extractor` 时原样传 `qr_level`；SKILL 返回后**第一件事**跑 `qr_orchestration.py parse-handoff docs/requirements/{version}/研发需求/00_索引.md --expect-level <档位>`，非 0 = 本步未完成。不带本 flag = 不传入参（SKILL 全量 QR，与接入前相同）。命令端契约见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
+- `--qr-level=scripts|critical|full`：由AIDP调用层结合父授权计算有效QR_LEVEL；无docs-audit取scripts。始终向 `ux-logic-extractor` 传有效qr_level，返回后parse-handoff的expect-level保持一致。详见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`。
 
 ## 前置流程
 
@@ -56,7 +79,7 @@ docs/requirements/
 
 - **全量生成**（首次规划 / 主文档重生成）→ **不传 `qr_delta_scope`**（SKILL 契约：不传 = 全量）。
 - **增量补充**（`/version` 补充模式〔情况 B-2〕检出 PRD/原型变更后**派发本命令并传入** `--supplement={NN}`；⛔ `/version` 自身没有 `--supplement` flag，别照字面去敲）或 `/sprint-dev` 口述累进 → 传 `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
-- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出 Δ 就退回全量并注明，**宁可多算一个专题、绝不漏传播一处语义**。
+- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出Δ如实记录范围未知，在有效QR_LEVEL的必要校验内保守核对，不扩为full或独立docs-audit。
 
 > **关键规则（约定 21）**：本命令是 `ux-logic-extractor` skill 编排器——**SKILL 内规则为单一信源**（模式判定 / 拆分数量 / 不中断原则 / 不臆造兜底 / 上游溯源 / Q-NNN 编号等），命令端只做**传参 + AIDP 编排后处理**，不复述、不修改 SKILL 维度。
 >

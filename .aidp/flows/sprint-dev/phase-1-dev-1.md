@@ -1,3 +1,5 @@
+> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
+
 > **【分片 1/2 · phase-1-dev 二次切分】** 本片覆盖 **Phase 1.0pre（activeContext Sprint 编号置位）/ 1.1（确定开发范围）/ 1.1.5（`code/{side}/{子项目}/` 目录门，约定 18）/ 1.2（后端开发，含 Step 1 开发期 SQL 自动应用，约定 6）**。后片 `phase-1-dev-2.md` 覆盖 Phase 1.3（前端开发）/ 1.4（并行开发）。两片顺序拼合 = 原 `phase-1-dev` 全文，进入 Phase 1 须按序 Read 两片、不得只读单片。
 
 # sprint-dev · Phase 1 开发执行详情（1.0–1.4）
@@ -22,9 +24,8 @@
 > 陈旧编号 = 照着上一个 Sprint 开发。
 
 - **有入参 `{NNN}`**（`/sprint-dev NNN` / batch / full / autopilot 委派）：与 activeContext 现值比对
-  —— 一致则跳过；不一致或缺失则**就地置为入参值**并记一行来源（幂等，重复执行结果相同）。
-- **无入参**（裸 `/sprint-dev` 或自然语言触发）：activeContext 现值即权威；若该值也缺失，
-  取研发执行计划中**最早一个未关闭 Sprint**（口径同 `plan_sprints.py`）置入。
+  —— 一致则跳过；不一致或缺失先回 `/sprint-start` 原开工/恢复门，不能在此覆盖另一在途 Sprint。门通过后只按明确编号置位并记来源，重试不清空既有 Round。
+- **无入参**：只从已验证的 formal 父上下文取明确 Sprint，并核对 activeContext；两者均缺编号则返回目标不明确，由正式编排器选定。裸 `/sprint-dev` 或普通自然语言已在 light 路由 return，不能自动认领 activeContext 或最早未关闭计划。
 - ⛔ **不得静默沿用一个与本次开发范围不符的编号**——校验不通过即置位，置不出来才停。
 
 ### Phase 1.1：确定开发范围
@@ -32,7 +33,7 @@
 根据 $ARGUMENTS 判断：
 - 含 "frontend" → 仅执行前端开发
 - 含 "backend" → 仅执行后端开发
-- 其他（空/"all"）→ 按 Phase 1.4 的写集/依赖派发 backend/frontend，M 日常累进同时派 docs；依赖未交付或写集冲突时串行
+- 其他（空/"all"）→ 按 Phase 1.4 的写集/依赖派发 backend/frontend，document已授权的M日常累进同时派docs；依赖未交付或写集冲突时串行
 
 ### Phase 1.1.5：★ 确认/创建 `code/{side}/{子项目}/` 目录（约定 18 铁律，首次写码前必过）
 
@@ -53,6 +54,15 @@
 > ★ 之后 Phase 1.2/1.3 的**所有**写码、路径、编译、grep 一律在 `code/{side}/{子项目}/` 下进行；backend/frontend Agent 白名单本就是 `code/{side}/{子项目}/`（见 `agents/backend.md`·`frontend.md`）。
 
 ### Phase 1.2：后端开发（如在范围内）
+
+未在route.authorized_actions中的implement记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action implement || exit $?
+```
+
 
 读取 `{{AIDP_HOME}}/agents/backend.md` 获取角色定义，执行"开发顺序"工作流程。
 
@@ -79,8 +89,8 @@
 ```
 Step 0: ★ 读取*事实清单.md（如存在）—— 后续所有路径/端口操作必须与之一致；
         如本 Sprint 主动改 context-path/端口，须在事实清单的「⚠️ 本次变更」表里有声明
-Step 1: ★ 应用数据库 SQL 到开发库（自动执行 · 检测驱动 · 幂等 · 不静默跳过 — 见约定 6）
-        —— 触发：`docs/deployment/{version}/sql/增量/` 下存在 `01_*.sql`~`98_*.sql`（跳过 `99_回滚脚本.sql`）即执行（**兼容 legacy `code/sql/{version}/`**——存量未搬迁项目 grandfather 识别，二者取存在者）；无 SQL 文件则跳过本步。
+Step 1: 已授权开发库SQL应用（目标/写授权按约定38核验；不是implement隐含权限）
+        —— 触发：`docs/deployment/{version}/sql/增量/` 下存在本任务变化的 `01_*.sql`~`98_*.sql`（跳过 `99_回滚脚本.sql`）且目标写授权明确才执行（**兼容 legacy `code/sql/{version}/`**——存量未搬迁项目 grandfather 识别，二者取存在者）；无 SQL 文件则跳过本步。
            ★ **检测驱动、不依赖研发执行计划是否显式列 SQL 任务**（根治「计划没提 SQL → sprint-batch 全量开发没执行 → 部署后表缺失报错」）。
         —— DB 连接来源：读后端 `application.yml`（若指定 profile 则读生效的 `application-{profile}.yml`）的 datasource
            （`spring.datasource.url` → host/port/库名，`username`/`password`；其它技术栈取等价 datasource 配置）解析连接。
@@ -97,10 +107,12 @@ Step 1: ★ 应用数据库 SQL 到开发库（自动执行 · 检测驱动 · �
 Step 2: 创建模块骨架（参照已有模块）
 Step 3: 创建数据模型（Entity/Model/PO）
 Step 4: 创建 DTO（含校验注解）
-Step 5: 使用 TDD 逐个实现 API（superpowers:test-driven-development）
+Step 5: 逐个实现 API；仅related-test已授权时进入TDD分支，未授权则NOT_REQUESTED并继续Step 6。
+        调用TDD前执行：python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . --execution-context "$EXECUTION_CONTEXT" --action related-test
+        非零不得调用；运行测试沿用父上下文与共享预算。
 Step 6: 配置一致性核对（★ 不在此逐任务编译）；grep 本 Sprint 改动的
         application.yml / vite.config / nginx.conf，确认 context-path / 端口 / proxy
-        仍与事实清单一致（无需启动服务）。编译验证已收敛到验收（/sprint-test），
+        仍与事实清单一致（无需启动服务）。必要静态检查在当前任务集中一次，经entry_context static留证据；
         仅改动侧 + 资源受限执行，见 agents/backend.md「Step 7」
 Step 7: ★ DI 依赖可解析性静态门（纯 grep 级、不编译/不打包/不起服务——补「编译查不出、
         启动期才炸」的那一半，见 rules/backend.md）：

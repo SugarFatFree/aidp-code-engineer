@@ -1,5 +1,34 @@
 # /sprint-close — Sprint 关闭与归档
 
+## 执行身份与授权前置路由（先于本文其余动作）
+
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。按原参数解析父上下文与显式 Sprint；历史计划和 activeContext 不决定本任务身份。
+
+`POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
+
+```bash
+# EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+  [ -z "${EXPLICIT_SPRINT:-}" ] || CONTEXT_ARGS+=(--sprint "$EXPLICIT_SPRINT")
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-close \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-close \
+  --execution-context "$EXECUTION_CONTEXT" --phase close --json
+```
+
+返回 `route=light` → 执行该片的 **close** 能力，然后 **return**；不进入下文任何 Sprint 取号、卡片、activeContext、started、报告路径或归档步骤。返回 `route=formal` 才执行下文正式身份门；可选动作仍按 actions 筛选，未授权为 NOT_REQUESTED。任何子命令/修复/重试/续跑均保留原参数并显式附 `--execution-context "$EXECUTION_CONTEXT"`；不能只传 `--unattended`/`--from-batch` 而丢身份。
+
+## formal 流程
+
 你正在执行 `/sprint-close` 命令，关闭并归档当前 Sprint。
 
 参数：$ARGUMENTS（Sprint 编号）
@@ -32,7 +61,7 @@
 - `docs/testing/{version}/sprint-{NNN}/` — 测试结果（如有）
 - `docs/bugfix/{version}/` — Bugfix 记录（如有）
 
-如果用户未提供验收结果，询问每个功能的验收状态：
+先消费当前授权 scope 的机器完成证据；已具备证据不重复询问。只有缺少用户验收口径且确实影响已授权交付时，集中确认具体功能状态：
 - ✅ 验收通过
 - ⚠️ 部分通过（说明原因）
 - ❌ 未通过（说明原因/移入下期）
@@ -52,7 +81,7 @@
 > | ② | 本 Sprint「问题汇总清单」/ `docs/bugfix/{version}/` 未闭环缺陷 | 有未闭环 → ⚠️（附缺陷编号） |
 > | ③ | ①②均无数据 | 返回 `incomplete-sprint`，保留 activeContext，不执行 Step 2–5、不写关闭标记或归档 |
 >
-> **关闭证据前置门**：①②只决定已交付工作的验收等级，不能证明开发完成。先逐项核对本 Sprint 计划任务、activeContext 已完成记录与实际文件；有待开发任务、范围不明或只存在启动记录 → 同样返回 `incomplete-sprint`。还须有**本 Sprint、本轮代码**的测试/静态验证结果（静态-only 可用 `/sprint-test` 的 code-verification-loop 结果，缺陷清单本身不等于验证已执行）；旧报告或空报告不算。资料不全时由调用方恢复 dev→test→bugfix，补齐后再 close。
+> **关闭证据前置门**：①②只决定已交付工作的验收等级，不能证明开发完成。先逐项核对本 Sprint 计划任务、activeContext 已完成记录与实际文件；有待开发任务、范围不明或只存在启动记录 → 同样返回 `incomplete-sprint`。还须有本 Sprint、本轮代码在当前授权范围内的真实证据：static-only 使用 entry_context static/complete，不要求 CVL；related-test/review 仅已授权才验。未请求项 NOT_REQUESTED；旧报告/空报告不算，缺证据仅恢复对应授权动作，不默认 dev→test→bugfix。
 > **⛔ 一律不判 ❌「移入下期」**——那是范围决策、属用户职权；无人值守失败返回调用方记账，不弹窗、不以「部分通过」把未完成开发从待跑集合中扣除。
 
 ## Step 2：记录验收结论（不单独出验收报告文件）
@@ -65,13 +94,13 @@
 
 ## Step 2.5：验收后差量与证据核对
 
-先 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 与本轮契约卡（新协议路径 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md`），消费 `/sprint-test` 的原始完整 CVL、修复差量证据及最终验收结论。**不重复完整审查**，不因进入 close 再跑全 Sprint CVL/reviewer。
+先按 `light-context.md` 用entry_context check检验已授权证据；同时核quality_verdict、ready_for_release与pending_actions。交付动作未完成先按父授权执行并登记回执，static-only质量满足且无pending后继续归档，跳过本段 review-delta。review 获授权时才 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 与本轮契约卡（新协议路径 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md`），消费 `/sprint-test` 的原始完整 CVL、修复差量证据及最终验收结论。**不重复完整审查**，不因进入 close 再跑全 Sprint CVL/reviewer。
 
 `TEST_ENV_ID` 使用验收时同一实际环境值；审查名称与验收完全一致。此门必须在任何关闭标记、归档或上下文重置之前执行：
 
 <!-- close-review-delta -->
 ```bash
-python3 {{AIDP_HOME}}/scripts/test_ledger.py review-delta --root . \
+python3 {{AIDP_HOME}}/scripts/test_ledger.py review-delta --root . --execution-context "$EXECUTION_CONTEXT" \
   --name "{version}-sprint-{NNN}" --env-id "$TEST_ENV_ID"
 ```
 

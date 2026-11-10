@@ -9,6 +9,8 @@
 
 > **本步落实 sprint-autopilot 子流程 R-4 收尾**：委派前的 AI执行报告仅有骨架（计划态 data、两页注册、占位 `testSummary`）。本步用真实测试结论 finalize，再发报告本体和 #3。顺序固定为部署 → 测试 → AI测试报告 + #F → **AI执行报告结果态 + #3**；#3 必须在 #F 之后。
 
+> 仅补交付走 `{{AIDP_HOME}}/templates/reports/README.md`「只补交付」（exec / #3），不重走 emit/settle/测试、不 force-amend；FAIL 亦可交付。
+
 ### 新双路终态收尾（优先于下方历史分支）
 
 本 build 测试 data 含 `unitTests` 时执行下块，然后直接到 Step 4 数据清理判定，**不得再执行下方历史 CONVERGED-only Step 1–3**。两路完成或超时都要交付明确结论；`report_ready` 控制能否收尾，`success_ready` 控制绿灯，`finalize_ready` 单独控制报告不可变冻结。RUNNING 不得进入 final。UNVERIFIED/TIMEOUT 出报告、可发橙色终态通知，但不写 closed/finalized、不冻结、不设 tested_at。真实失败发红色；只有结构化分类确认可自动修复的实测问题和单测 FAIL 交修复新 build。缺分类时返回 3.3 补齐，不等待、不发完成卡、不冻结；环境未核验不冒充代码失败。下块再次幂等 settle，校验报告分类已真实落盘和当前用例/缺陷欠账未变化，不能跳过 3.3 后仅凭报告 FAIL 收尾。
@@ -58,12 +60,11 @@ if official=="1":
         "--version",v,"--build",b,"--stage","final","--will-browser-test",str(int(has_browser)),
         "--notify",notify,"--expect-cards","#D,#R,#F" if has_browser else "#R,#F",
         "--baseline","memory/.sprint-autopilot-baseline.json"],check=True)
-    url=f"docs/reports/{v}/AI执行报告/index.html#/build/{b}"
     if notify=="1":
         rc=subprocess.run([sys.executable,str(script/"notify.py"),"--auto","--node","#3",
             "--header-color",color,"--title",f"AI 执行报告：{status}","--version",v,"--build",b,
             "--section",f"全量实测：{p['summary']['browserStatus']}；全量单测：{p['unitTests']['status']}；总体：{status}。",
-            "--link-text","查看完整报告","--link-url",url]).returncode
+            "--link-text","查看完整报告","--report-kind","exec"]).returncode
         if rc not in (0,3): print("#3 通知未送达，保留通知台账重试",file=sys.stderr)
     executed=read_payload(exec_dir / "data" / (b+".js"))
     if finalize_ready(p) and finalize_ready(executed):
@@ -137,7 +138,7 @@ JOINT_FINAL
    ```
    **这是浏览器路径的唯一 `final` 门**（autopilot Phase 3.4 对浏览器路径只跑 `skeleton`，把交付判定权交到此处，避免"要求尚未产生的交付台账"死结）；未过不发 #3、不收尾。
 
-**Step 2 — 发里程碑通知 #3（AI执行报告里程碑，绿色 header）**：`python3 {{AIDP_HOME}}/scripts/notify.py --auto --node "#3" --header-color green --title … --section … --link-text "查看完整报告" --link-url "$AI_REPORT_URL"`（退出码 3 = 未配置渠道 → 静默跳过；1 = 全部渠道失败 → WARN 不阻塞），正文按 sprint-autopilot 0.1bis「#3 AI执行报告通知完整模板」填充——「测试结论」段填**本 build 真实浏览器测试**（`总数 $TOTAL / 通过 $PASS / 失败 $FAIL / 阻塞 $BLOCK / 忽略 $SKIP / 不适用 $THIS_ROUND_NA / 通过率 N%`（**通过率分母 = 总数−不适用**，与 SKILL `gen_report.py` 同口径））；「查看完整报告」= `$AI_REPORT_URL`（Step 1 emit-report.py 返回，禁止指向 markdown / 手搓通知）。**#3 是本 build 的末尾里程碑**（在 #F 之后），与 #F（测试报告）各司其职：#F = AI测试报告，#3 = AI执行报告（含 dev 全流程 + 真实测试结论）。
+**Step 2 — 发里程碑通知 #3（AI执行报告里程碑，绿色 header）**：`python3 {{AIDP_HOME}}/scripts/notify.py --auto --node "#3" --header-color green --title … --section … --link-text "查看完整报告" --report-kind exec --version "$TARGET_VERSION" --build "$BUILD"`（退出码 3 = 未配置渠道 → 静默跳过；1 = 全部渠道失败 → WARN 不阻塞），正文按 sprint-autopilot 0.1bis「#3 AI执行报告通知完整模板」填充——「测试结论」段填**本 build 真实浏览器测试**（`总数 $TOTAL / 通过 $PASS / 失败 $FAIL / 阻塞 $BLOCK / 忽略 $SKIP / 不适用 $THIS_ROUND_NA / 通过率 N%`（**通过率分母 = 总数−不适用**，与 SKILL `gen_report.py` 同口径））；「查看完整报告」= `$AI_REPORT_URL`（Step 1 emit-report.py 返回，禁止指向 markdown / 手搓通知）。**#3 是本 build 的末尾里程碑**（在 #F 之后），与 #F（测试报告）各司其职：#F = AI测试报告，#3 = AI执行报告（含 dev 全流程 + 真实测试结论）。
 
 **Step 3 — baseline 收尾（★ 报告冻结）** —— ⛔ **必须是可执行语句**（同分片 3.3 的 `tested` 就是围栏；
 `closed` + `finalized` 此前停在句子里，而它有 4 处可执行读侧：准发布 0b 门 / 已测去重门 /

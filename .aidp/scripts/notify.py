@@ -50,6 +50,9 @@
     [--alert]                                             # 告警类：恒写本地告警台账
     [--project-name '<项目中文名>']                       # 不传则自动解析
   notify.py --title ... --section ... --print-only        # 只构造并打印中性 JSON 与各渠道渲染结果
+  notify.py --check-config [--repo-root .] [--json]        # 离线查通用 schema/本地条件，不发送探测
+  notify.py --title ... --section ... --auto --report-kind test --version V0.1 --build V0.1_build1001
+                                                        # 读已有报告和交付台账，URL/回落说明确定性生成
   notify.py --check-name [--json]                         # 只查项目名称解析结果
   notify.py --self-check                                  # 离线自测（本地 HTTP 桩，不发外网）
 
@@ -359,6 +362,9 @@ def _lark_cli_argv(ch, msg):
 
 def send_channel(ch, msg):
     """用一个渠道发送。返回 (ok, diag)；渠道不可用抛 Unavailable。"""
+    ready, detail = channel_ready(ch)
+    if not ready:
+        raise Unavailable(detail + "；修复 memory/aidp-config.yaml 的 notify.channels 后运行 notify.py --check-config --json")
     typ = str(ch.get("type") or "").strip()
     if typ == "feishu":
         url = _env(ch, "webhook_env", True)
@@ -386,36 +392,141 @@ def send_channel(ch, msg):
     raise Unavailable(f"未知渠道类型：{typ or '(空)'}")
 
 
-def channel_ready(ch):
-    """本地判定一个渠道是否具备发送条件 → (ok, detail)。⛔ 不联网、不发消息。
-
-    与 `send_channel` 的 `Unavailable` 判据同源：webhook 类看环境变量、lark-cli 看命令与 chat_id、
-    command 看命令非空。`autopilot_tick_flags` / Stop hook / preflight 统一调它。
-    """
-    typ = str((ch or {}).get("type") or "").strip()
-    if typ in ("feishu", "dingtalk", "wecom"):
-        env = str(ch.get("webhook_env") or "").strip()
-        if not env:
-            return False, "未配置 webhook_env"
-        return (True, f"环境变量 {env} 已设置") if os.environ.get(env, "").strip() \
-            else (False, f"环境变量 {env} 未设置")
-    if typ == "lark-cli":
-        if not str(ch.get("chat_id") or "").strip():
-            return False, "未配置 chat_id"
-        return (True, "lark-cli 可用") if shutil.which(str(ch.get("bin") or "lark-cli")) \
-            else (False, "lark-cli 命令不存在")
+def _channel_config_error(ch):
+    """只检通用 schema；不推断 command 的目标参数，也不把本地能力当迁移证据。"""
+    if not isinstance(ch, dict):
+        return "渠道必须是对象"
+    typ = str(ch.get("type") or "").strip()
+    if typ not in CHANNEL_TYPES:
+        return f"未知渠道类型：{typ or '空'}"
+    required = "webhook_env" if typ in ("feishu", "dingtalk", "wecom") else "chat_id" if typ == "lark-cli" else "command"
+    value = ch.get(required)
+    if not isinstance(value, str) or not value.strip() or value.strip().startswith(("<", "{{")):
+        return f"未配置有效 {required}"
     if typ == "command":
-        return (True, "自定义命令已配置") if str(ch.get("command") or "").strip() \
-            else (False, "command 为空")
-    return False, f"未知渠道类型：{typ or '空'}"
+        try:
+            argv = shlex.split(value)
+        except ValueError:
+            return "command 参数无法解析（检查引号）"
+        if not argv:
+            return "command 为空"
+        if any(re.match(r"^\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[^}]+\})(?:/|$)", arg)
+               or re.fullmatch(r"\{\{[^}]*\}\}|<[^>]+>", arg) for arg in argv):
+            return "command 含未展开的环境变量或模板；命令以 argv 执行，不经过 shell"
+    if typ == "lark-cli" and "args" in ch:
+        if not isinstance(ch["args"], list) or not ch["args"]:
+            return "lark-cli args 必须是非空列表"
+        try:
+            for arg in ch["args"]:
+                str(arg).format(chat_id="", card_json="", markdown="", title="")
+        except (KeyError, ValueError, IndexError):
+            return "lark-cli args 含未知或非法占位符"
+    return ""
+
+
+def channel_ready(ch, root="."):
+    """本地字段、环境变量和可执行文件检查；不联网/运行命令/验证目标或鉴权。"""
+    error = _channel_config_error(ch)
+    if error:
+        return False, error
+    typ = ch["type"].strip()
+    if typ in ("feishu", "dingtalk", "wecom"):
+        env = ch["webhook_env"].strip()
+        if not os.environ.get(env, "").strip():
+            return False, f"环境变量 {env} 未设置"
+        secret = ch.get("secret_env")
+        if secret and not os.environ.get(str(secret), "").strip():
+            return False, f"环境变量 {secret} 未设置"
+        return True, f"环境变量 {env} 已设置；未发送探测"
+    executable = str(ch.get("bin") or "lark-cli") if typ == "lark-cli" else shlex.split(ch["command"])[0]
+    if os.sep in executable and not os.path.isabs(executable):
+        executable = os.path.join(root, executable)
+    if not shutil.which(executable):
+        return False, f"{typ} 可执行程序不存在"
+    return True, f"{typ} 可执行程序存在；目标参数/鉴权/送达需下游确认，未发送探测"
+
+
+def migrate_notify_config(section, root="."):
+    """只补历史通用契约已定义的顶层缺键；原 channels/参数原样保留，不猜私有迁移。"""
+    import copy
+    if not isinstance(section, dict):
+        raise ValueError("notify 必须是配置映射")
+    result = copy.deepcopy(section)
+    defaults = {"enabled": False, "fallback": True, "channel_ready_card": False, "channels": []}
+    added = []
+    for key, value in defaults.items():
+        if key not in result:
+            result[key] = value
+            added.append(key)
+    diagnostics = []
+    channels = result.get("channels")
+    if not isinstance(channels, list):
+        diagnostics.append({"field": "channels", "status": "unavailable", "reason": "channels 必须是列表"})
+        channels = []
+    for index, channel in enumerate(channels):
+        ready, reason = channel_ready(channel, root)
+        diagnostics.append({"field": f"channels[{index}]", "status": "ready" if ready else "unavailable",
+                            "reason": reason,
+                            "repair": f"编辑 memory/aidp-config.yaml 的 notify.channels[{index}]，补齐该 type 所需字段；再运行 notify.py --check-config --json"})
+    invalid_flags = [key for key in ("enabled", "fallback", "channel_ready_card")
+                     if not isinstance(result.get(key), bool)]
+    for key in invalid_flags:
+        diagnostics.append({"field": key, "status": "unavailable", "reason": "必须是布尔值"})
+    available = any(item["status"] == "ready" for item in diagnostics)
+    schema_ok = (not invalid_flags and isinstance(result.get("channels"), list)
+                 and not any(_channel_config_error(channel) for channel in channels))
+    # migration_complete 只说明通用结构已齐全；不能证明旧私有目标已迁移或能发送。
+    report = {"added_fields": added, "channels": diagnostics, "verification": "local-only",
+              "migration_complete": not added and schema_ok,
+              "migration_scope": "generic-schema-only",
+              "delivery_verified": False,
+              "reason": "notify.enabled=false" if result.get("enabled") is False else
+                        "notify.channels 未配置" if not channels else "逐项诊断见 channels；未发送探测",
+              "ready": result.get("enabled") is True and available and not invalid_flags,
+              "status": "ready" if result.get("enabled") is True and available and not invalid_flags else "unavailable",
+              "repair": "编辑 memory/aidp-config.yaml 的 notify 配置；运行 notify.py --check-config --json（不发送探测）"}
+    return result, report
+
+
+def check_notify_config(root="."):
+    import aidp_config
+    data, ok = aidp_config.load(root)
+    if not ok or not isinstance(data, dict):
+        return {"ready": False, "status": "unavailable", "reason": "memory/aidp-config.yaml 无法解析",
+                "repair": "修复 YAML 后运行 notify.py --check-config --json"}
+    try:
+        _, report = migrate_notify_config(data.get("notify", {}), root)
+        return report
+    except ValueError as exc:
+        return {"ready": False, "status": "unavailable", "reason": str(exc),
+                "repair": "修复 memory/aidp-config.yaml 的 notify 映射"}
 
 
 def notify_ready(root="."):
     """里程碑通知是否可用：`notify.enabled` 为真且至少一个渠道本地具备发送条件。"""
-    cfg = _load_notify_config(root)
-    if not cfg.get("enabled"):
+    return check_notify_config(root)["ready"]
+
+
+def _report_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("aidp_emit_report", os.path.join(SCRIPT_DIR, "emit-report.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _record_report_notification(args, snapshot, status, reason=""):
+    """送达只改 delivery metadata；不动报告/冻结事实，不新建 standalone baseline。"""
+    if not snapshot or not snapshot["ledger_present"]:
         return False
-    return any(channel_ready(c)[0] for c in cfg.get("channels") or [])
+    from datetime import datetime, timezone
+    module = _report_module()
+    return module.record_baseline(args.baseline, args.report_kind, args.build, args.version,
+                                  "local", snapshot["local"]["url"], snapshot["integrity"],
+                                  delivery_patch={"notification": {"status": status, "node": args.node,
+                                      "url": snapshot["access_url"], "reason": reason,
+                                      "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}},
+                                  metadata_only=True)
 
 
 def record_alert(repo_root, args, title, delivered, rc, error=""):
@@ -443,7 +554,7 @@ def send_auto(cfg, msg):
         return 3, out
     tried = False
     for ch in chans:
-        typ = str(ch.get("type") or "")
+        typ = str(ch.get("type") or "") if isinstance(ch, dict) else ""
         try:
             ok, diag = send_channel(ch, msg)
         except Unavailable as e:
@@ -641,6 +752,11 @@ def main(argv=None):
                          "⛔ 正文含反引号 / $ / \\ 时务必用本参数，避免 shell 命令替换让正文静默缺失")
     ap.add_argument("--link-text", default="")
     ap.add_argument("--link-url", default="", help="报告链接（仓库内相对路径或仓库文件链接）")
+    ap.add_argument("--report-kind", choices=("exec", "test"),
+                    help="读已有报告与交付台账取得 URL/本地回落措辞；与 --link-url 互斥，不重测、不改报告")
+    ap.add_argument("--reports-root", default="docs/reports")
+    ap.add_argument("--baseline", default="memory/.sprint-autopilot-baseline.json")
+    ap.add_argument("--check-config", action="store_true", help="离线诊断配置/渠道本地条件，不发送探测")
     ap.add_argument("--footer", default="")
     ap.add_argument("--sender", default="",
                     help="自定义发送命令（stdin 收中性 JSON，退出码 0=成功）；与 --auto 互斥")
@@ -671,6 +787,12 @@ def main(argv=None):
         return _self_check()
 
     repo_root = os.path.abspath(args.repo_root)
+
+    if args.check_config:
+        os.chdir(repo_root)
+        report = check_notify_config(repo_root)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0 if report["ready"] else 3
 
     if args.check_name:
         proj, src, ascii_fb = resolve_project_name(repo_root, args.project_name)
@@ -708,6 +830,24 @@ def main(argv=None):
         print("⛔ --sender 与 --auto 互斥", file=sys.stderr)
         return 2
 
+    report_snapshot = None
+    if args.report_kind:
+        if not args.version or not args.build or args.link_url:
+            print("--report-kind 需要 --version/--build，且与 --link-url 互斥", file=sys.stderr)
+            return 2
+        try:
+            report_snapshot = _report_module().delivery_snapshot(
+                args.report_kind, args.version, args.build, args.reports_root, args.baseline)
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            print(f"报告交付读取失败，通知未发送：{exc}", file=sys.stderr)
+            return 2
+        args.link_url = report_snapshot["access_url"]
+        args.section.append(report_snapshot["delivery_detail"])
+        if report_snapshot["upload"].get("status") == "failed":
+            args.section.append("上传失败原因：" + str(report_snapshot["upload"].get("reason") or "未记录"))
+    elif args.link_url and not urllib.parse.urlsplit(args.link_url).scheme:
+        args.section.append("当前提供仓库路径，需要仓库访问权限。")
+
     proj, proj_src, proj_ascii = resolve_project_name(repo_root, args.project_name)
     title, patched = ensure_title_prefix(args.title, proj, args.version)
     if patched:
@@ -739,7 +879,18 @@ def main(argv=None):
     is_alert = args.alert or args.node == "#4"
     gate = args.gate if os.path.isabs(args.gate) else os.path.join(repo_root, args.gate)
 
+    def _delivery_status(status):
+        try:
+            if report_snapshot and report_snapshot["ledger_present"]:
+                out["delivery_recorded"] = _record_report_notification(
+                    args, report_snapshot, status, out.get("error", ""))
+                if not out["delivery_recorded"]:
+                    out["delivery_warning"] = "通知交付台账写入失败；报告事实未改"
+        except (OSError, ValueError) as exc:
+            out["delivery_warning"] = str(exc)
+
     def _undelivered(code):
+        _delivery_status("unavailable" if code == 3 else "failed")
         if is_alert:
             record_alert(repo_root, args, title, False, code, out.get("error", ""))
         if args.node and os.path.isfile(gate):
@@ -780,6 +931,9 @@ def main(argv=None):
         out["channel"] = "sender"
 
     out["ok"] = True
+    _delivery_status("sent")
+    if out.get("delivery_warning"):
+        print(out["delivery_warning"], file=sys.stderr)
     if is_alert:
         record_alert(repo_root, args, title, True, 0)
     if args.node and os.path.isfile(gate):

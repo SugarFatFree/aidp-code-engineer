@@ -1,3 +1,5 @@
+> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
+
 # sprint-dev · Phase 1 开发执行详情（分片 2/2 · Phase 1.3–1.4）
 
 > **【分片 2/2 · phase-1-dev 二次切分】** 本片是 `/sprint-dev` 命令 **Phase 1 开发执行**段的后半，覆盖 **Phase 1.3（前端开发，视觉/内容/操作逻辑三层对齐，约定 4）/ Phase 1.4（并行开发，全栈场景推荐）**。前片 `phase-1-dev-1.md` 覆盖 Phase 1.0pre / 1.1 / 1.1.5 / 1.2（后端开发）。以本文件为准逐项执行、不得略过任一子步骤。
@@ -5,6 +7,15 @@
 ---
 
 ### Phase 1.3：前端开发（如在范围内）
+
+未在route.authorized_actions中的implement记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action implement || exit $?
+```
+
 
 读取 `{{AIDP_HOME}}/agents/frontend.md` 获取角色定义。
 
@@ -63,7 +74,7 @@ Step 2: 页面和组件
   - 视觉：按 Step 0 判定的情形 + L1/L2 分级（L1 严格对齐基准 / L2 用项目组件默认）；情形 A/D → `mockup/` 为基准；情形 B/C → `code/` 原型自身样式为基准
   - 交互：一律按 `code/` 原型
 Step 3: 路由配置
-Step 4: （★ 不在此逐任务校验）前端校验（lint + 类型检查，不打包）已收敛到验收（/sprint-test），
+Step 4: 当前任务集中一次必要前端静态检查（lint/类型，不打包），经entry_context static留证据，
         仅改动侧 + 资源受限执行，见 agents/frontend.md「Step 4」
 Step 4.5: ★ UI 还原度静态门（约定 39 R2/R3/R10；纯静态、不起服务、不打包）：
         执行：python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json
@@ -98,13 +109,28 @@ Step 4.6: ★ 同族增量项静态门（约定 20 姊妹条「同族增量项�
 
 **第一动作 = Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`**；普通计划路径复用既有设计/Task 作为规格，日常 S/M 用契约卡。
 
-1. **派发前核对写集与依赖**：按 Task 列具体 `write_set`（新增、删除、测试、锁文件均含）、`create_dirs`、`dependencies`。写集无交集且依赖已交付才并行；公共配置/共享类型/生成物有交集改为串行，未知冲突按有冲突处理。M 同时派 docs，S 默认无完整 docs 生成任务，L 先文档。
+1. **派发前核对写集与依赖**：按 Task 列具体 `write_set`（新增、删除、测试、锁文件均含）、`create_dirs`、`dependencies`。写集无交集且依赖已交付才并行；公共配置/共享类型/生成物有交集改为串行，未知冲突按有冲突处理。M仅document已授权才派docs，L已授权文档先行；未请求成文NOT_REQUESTED。
 2. **隔离写权限**：docs Agent 独占正式文档写集，开发 Agent 只回各自工作单，不改文档/台账。契约卡、四族台账、memory、baseline、Git index/commit/push 由主流程统一处理；原子编号登记与 Git 交接按协议执行。默认子 Agent 不自行提交或关闭 Sprint；用户明确授权 worker 提交时串行交接索引，不并发 git add/commit。
-3. **汇合一次审查**：删除 Task 级双完整审查，保留实现者自检；主流程收齐实现与适用文档后派一次独立只读 reviewer 对照契约做规范符合性审查，随后 `/sprint-test` 一次 CVL 代码质量审查。原检查项不取消，问题交原实现者修复并差量复核；无法派发时按同 prompt 串行回退并说明，不能跳审。
-4. **Sprint 收口仍归原链路**：主流程执行开发后回写与协议“开发与文档汇合”，M 完整文档未完成不能进入 test；`/sprint-close` 只验收后 diff 与归档，不重审整个 Sprint。
+3. **按授权汇合**：收齐本次实际实现与已请求文档后，review未授权则NOT_REQUESTED并进入收尾；review已授权且无full-cvl时派一次只读reviewer。full-cvl已授权则统一在sprint-test做一次CVL并复用为review证据，不先叠整轮契约reviewer。每次派发先执行下列对应action门，再按light-context预留agents/耗时预算；未启用角色不派空任务。
+
+```bash
+# ACTION按实际分支取implement/document/review；不得据角色名自行新增授权。
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?从父入参重绑}"
+ACTION="${ACTION:?按当前派单职责赋值}"
+INPUT_HASH="${INPUT_HASH:?当前真实输入SHA256}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" || exit $?
+python3 {{AIDP_HOME}}/scripts/execution_policy.py reserve-budget --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" \
+  --resource agents --cost 1 --input-hash "$INPUT_HASH" || exit $?
+```
+
+4. **Sprint收口**：formal身份与归档保留；document已请求才等完整文档，review/tests只验对应证据。close零diff不重跑检查。问题交原实现者只修已授权scope，并复核delta。
+
 
 ```
 派单（每个 Agent 独立白名单 prompt）：
+  execution_context / revision / action / execution_budget / input_hash: 父任务真实值
   owner: backend-dev | frontend-dev | docs
   contract_path / contract_revision: 本轮契约（计划路径给既有规格引用）
   write_set: [具体文件路径；含测试/锁文件/待删除文件]

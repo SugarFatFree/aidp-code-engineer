@@ -35,7 +35,7 @@
 > **刻意排除 `_*`**，而排除的前提是级联真的跑过了。理据见 `rationale.md`。
 >
 > - **exit 0** → 正式用例册即完整用例集，照常进 2.0。
-> - **exit 1** → 先跑 `/sprint-selftest --ledger-cascade [--unattended]`。生成成功、对应条目清理后按该命令的延期收口步骤清除 `deferred_sprints[]`，复跑本门；未通过不得进入用例执行。
+> - **exit 1** → 先跑 `/sprint-selftest --ledger-cascade [--unattended]`。生成成功、对应条目清理后按该命令的延期收口步骤清除本次已生成范围的 `deferred_sprints[]` / `deferred_tasks[]`，复跑本门；未通过不得进入用例执行。
 > - **exit 2** → 台账/状态不可判读，先修复再重跑，不能当作无欠账。
 > - 补不齐时记录 `case_ledger_pending` 和覆盖不完整结论，停止本轮开测；⛔ 不要把增量册塞进用例发现；不得据此判版本通过，也不能让老用例全绿掩盖新增用例未生成。
 >

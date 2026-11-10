@@ -508,6 +508,87 @@ class AtomicInstallTest(RuntimeLayoutTestCase):
                 self.assertEqual(R.normalize_runtime(base / homes[0][1], homes[0][1]),
                                  R.normalize_runtime(base / homes[1][1], homes[1][1]))
 
+    def test_layout_switch_preserves_user_literals_and_only_rewrites_runtime_paths(self):
+        for origin, other in (("claude", "shared"), ("shared", "claude")):
+            with self.subTest(origin=origin), tempfile.TemporaryDirectory() as td:
+                base = Path(td)
+                source = make_source(base)
+                home, other_home = R.RUNTIME_HOME[origin], R.RUNTIME_HOME[other]
+                runtime, target = base / home, base / other_home
+                R.render_runtime(source, runtime, home, "V1.0.0", origin)
+                config = "skills/private-tool/config.json"
+                content = ('{"endpoint":"https://tenant' + home
+                           + '.example/api","literal":"prod' + home + '-token"}\r\n').encode()
+                (runtime / config).parent.mkdir(parents=True)
+                (runtime / config).write_bytes(content)
+                (runtime / config).chmod(0o600)
+                reference = "reference/team-only.md"
+                literals = (f"literal={home}\r\nsettings={home}/settings.json\r\n"
+                            f"user=~/{home}/plugins/cache/tool\r\n"
+                            f"unknown={home}/private-data\r\n"
+                            f"see {home}/reference runtime-path-ignore: literal\r\n").encode()
+                paths = (f"see {home}/reference\r\n"
+                         f"run ./{home}/scripts/tool.py\r\n").encode()
+                (runtime / reference).write_bytes(literals + paths)
+                expected_reference = literals + paths.replace(home.encode(), other_home.encode())
+
+                R.render_runtime(source, target, other_home, "V1.0.1", other)
+                self.assertEqual((target / config).read_bytes(), content)
+                self.assertEqual((target / reference).read_bytes(), expected_reference)
+                self.assertEqual(R._file_mode(target / config), "0600")
+                # 登记前、登记后均须携带；重新启用残留包也用同一归一规则。
+                R.render_runtime(source, runtime, home, "V1.0.1", origin,
+                                 backup_callback=lambda old: shutil.copytree(old, base / "backup"))
+                self.assertEqual((base / "backup" / config).read_bytes(), content)
+                self.assertTrue(R.packages_share_one_source(
+                    [(runtime, home), (target, other_home)], source))
+                R.remove_runtime(runtime, home)
+                R.render_runtime(source, runtime, home, "V1.0.1", origin)
+                self.assertEqual((runtime / config).read_bytes(), content)
+                self.assertEqual((runtime / reference).read_bytes(), literals + paths)
+                R.validate_runtime(runtime, home)
+                R.validate_runtime(target, other_home)
+
+    def test_dual_user_literal_differences_are_not_normalized_away(self):
+        for value in ("https://tenant{home}.example/api", "prod{home}-token", "{home}"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as td:
+                base = Path(td)
+                source = make_source(base)
+                packages = []
+                relative = "skills/private-tool/config.json"
+                for kind, home in R.RUNTIME_HOME.items():
+                    runtime = base / home
+                    R.render_runtime(source, runtime, home, "V1.0.0", kind)
+                    (runtime / relative).parent.mkdir(parents=True, exist_ok=True)
+                    (runtime / relative).write_text(
+                        json.dumps({"value": value.format(home=home)}), encoding="utf-8")
+                    manifest = R.build_runtime_manifest(runtime, "V1.0.0", kind, home)
+                    manifest["user_files"] = [relative]
+                    R._write_manifest(runtime, manifest)
+                    packages.append((runtime, home))
+                self.assertNotEqual(R.normalize_runtime(*packages[0])[relative],
+                                    R.normalize_runtime(*packages[1])[relative])
+                self.assertFalse(R.packages_share_one_source(packages, source))
+                before = [R.tree_digest(runtime) for runtime, _home in packages]
+                with self.assertRaisesRegex(RuntimeError, "双包用户文件冲突"):
+                    R.render_runtime(source, base / ".agents", ".agents", "V1.0.1", "shared")
+                self.assertEqual([R.tree_digest(runtime) for runtime, _home in packages], before)
+
+    def test_user_literal_collision_with_managed_template_is_not_equivalent(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = make_source(base)
+            runtime = base / ".claude"
+            R.render_runtime(source, runtime, ".claude", "V1.0.0", "claude")
+            relative = "reference/private.md"
+            (runtime / relative).write_text("prod.claude-token\n", encoding="utf-8")
+            (source / relative).write_text("prod{{AIDP_HOME}}-token\n", encoding="utf-8")
+            before = R.tree_digest(runtime)
+            with self.assertRaisesRegex(RuntimeError, "私有文件与新受管真源冲突"):
+                R.render_runtime(source, base / ".agents", ".agents", "V1.0.1", "shared")
+            self.assertEqual(R.tree_digest(runtime), before)
+            self.assertFalse((base / ".agents").exists())
+
     def test_user_overlay_requires_full_backup_and_keeps_original_copy(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

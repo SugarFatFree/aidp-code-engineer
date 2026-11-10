@@ -1,10 +1,42 @@
 # /sprint-test — 测试阶段（含验收循环）
 
+## 执行身份与授权前置路由（先于本文其余动作）
+
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。按原参数解析父上下文与显式 Sprint；历史计划和 activeContext 不决定本任务身份。
+
+`POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
+
+```bash
+# EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
+CONTEXT_ARGS=()
+if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+  CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
+else
+  CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
+  for W in "${TASK_WRITE_SET[@]}"; do CONTEXT_ARGS+=(--write-set "$W"); done
+  for AC in "${TASK_ACCEPTANCE[@]}"; do CONTEXT_ARGS+=(--acceptance "$AC"); done
+  [ -z "${EXPLICIT_SPRINT:-}" ] || CONTEXT_ARGS+=(--sprint "$EXPLICIT_SPRINT")
+fi
+CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-test \
+  "${CONTEXT_ARGS[@]}" --json) || exit $?
+EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+# 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
+python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-test \
+  --execution-context "$EXECUTION_CONTEXT" --phase test --json
+```
+
+返回 `route=light` → 执行该片的 **test** 能力，然后 **return**；不进入下文任何 Sprint 取号、卡片、activeContext、started、报告路径或归档步骤。返回 `route=formal` 才执行下文正式身份门；可选动作仍按 actions 筛选，未授权为 NOT_REQUESTED。任何子命令/修复/重试/续跑均保留原参数并显式附 `--execution-context "$EXECUTION_CONTEXT"`；不能只传 `--unattended`/`--from-batch` 而丢身份。
+
+## formal 流程
+
 你正在执行 `/sprint-test` 命令，为当前 Sprint 执行测试和验收检查。
 
-**★ 本命令是验收编排器**：汇合后只调用一次完整 `code-verification-loop`（CVL，`mode=verify-only`，SKILL 自身只验不修），再由调用层把可确定的错误当轮交原实现 Agent 修复、定向测试并交独立 reviewer 差量复核，不新起 `/sprint-bugfix`。完成前使用 `superpowers:verification-before-completion`；正式用例按真实 required 意图经 `/sprint-selftest` 补齐，`api-tester` 仍只提供可选在线观察。
+**公开职责**：用户显式 `/sprint-test` 请求 static+related-test+review+full-cvl；嵌套/自然路由仅继承父授权。review 使用本次 CVL 真实证据，不额外叠完整轮。test-only 不取得 implement/document/live 权限；问题留证据，父已授权实现才交原实现者修复。策略与预算见 `light-context.md`。
 
-参数：$ARGUMENTS（可选，Sprint 编号。如省略，从 activeContext 中读取当前 Sprint）
+**步骤选择表**：Step 1/2.5 只读取已有本任务用例；新用例成文须 document。Step 2 须 full-cvl，只有 review 时直接用 reviewer 能力后返回；Step 2.6/7 的单测围栏须 related-test；Step 3/4 的在线动作须 live-tests。Step 5 自动记录本轮真实结果不代表授权生成整套文档。未启用项写 NOT_REQUESTED，不列欠账或 PASS。
+
+
+参数：$ARGUMENTS（可选，Sprint 编号。如省略，仅继承父上下文；不从 activeContext 认领新任务）
 
 | 参数 | 作用 |
 |------|------|
@@ -26,14 +58,14 @@
 
 第一动作 Read `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`，再显式 Read `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md` 和 `memory/{version}/{user}/activeContext.md`。契约卡不走排除 `_*` 的正式文档 glob；既有计划内 Sprint 无卡时保持完整需求/设计/计划门，不得借缺卡降为 S；采用新累进协议却缺卡 → 返回开发补卡，不猜档位。
 
-- **M**：检查完整需求、设计、计划及适用用例的真实内容与原有回检；汇合证据必须含当前 `contract_revision`、实际写集、docs路径、docs 完成状态与 **reviewer=pass** 的契约一致性结果。任一缺失、仍运行、旧修订或路径仅占位 → 恢复缺失 docs/实现任务，重新汇合通过后才进入 CVL。
+- **M（document 已授权时）**：检查完整需求、设计、计划及适用用例的真实内容与原有回检；汇合证据必须含当前 `contract_revision`、实际写集、docs路径、docs 完成状态与已授权 review 的真实结果；未授权 review 为 NOT_REQUESTED。任一缺失、仍运行、旧修订或路径仅占位 → 恢复缺失 docs/实现任务，重新汇合通过后才进入 CVL。
 - **S**：契约完整、实现与契约一致、受影响四族待成文义务已登记即可进入静态验收；正式正文允许攒批。不得把契约 AC 冒充正式实测用例，不为本次静态验收强启完整文档生成。
 - **L / 旧流程**：保留先完整文档、再代码的原有门；需求按 `docs/requirements/{version}/研发需求/{01_研发需求,00_索引,00_研发需求}.md` 兼容布局读取，设计/计划按索引实际路径读，不能只认裸名或硬编码 `03_接口设计.md`。
-- 新协议各档均核对 reviewer 的当前契约修订与实际写集；变更越过契约/涉及破坏性、版本承诺或部署授权 → 回原安全门，分档不提供豁免。
+- 新协议各档均核当前契约修订与实际写集；review 获授权才核 reviewer 结果；变更越过契约/涉及破坏性、版本承诺或部署授权 → 回原安全门，分档不提供豁免。
 
-**正式用例门独立于静态验收**：消费契约卡中 `check_case_ledger_pending.py --prepare` 的真实 required/deferred 读数及外层实测意图，得到 `CASE_REQUIRED=1|0`。有 `--aiauto-test-required` 时必须 required=true；`--skip-aiauto-test` 不能覆盖 required。缺读数先按原调用上下文执行该脚本 prepare，不默认 false。required=true 且用例缺失/用例族欠账未清 → 经 `/sprint-selftest` 补齐并通过 `python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version {version} --json` 再放行；required=false 可保留 deferred，但报告必须明确实测未完成。Step 1 与 Step 2.5 同样消费该读数。
+**正式用例门独立于静态验收**：消费契约卡中 `check_case_ledger_pending.py --prepare` 的真实 required/deferred 读数及外层实测意图，得到 `CASE_REQUIRED=1|0`。有 `--aiauto-test-required` 时必须 required=true；`--skip-aiauto-test` 不能覆盖 required。缺读数先按原调用上下文执行该脚本 prepare，不默认 false。required=true 且用例缺失/用例族事实义务未清 → document 已授权才经 `/sprint-selftest` 补齐并通过 `python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version {version} --json` 再放行；required=false 可保留 deferred，但报告必须明确实测未完成。Step 1 与 Step 2.5 同样消费该读数。
 
-**测试计划输入**：消费契约卡 `test_plan` 的 `cwd`、`targeted_argv`、`unit_runners`、`env_id`、`inputs` 与授权边界。本 Sprint 单元测试由 `test_scope.py` 从真实改动推导（见 Step 2.6），⛔ 不读取 `full_argv`（它只属于 `/sprint-aiauto-test` 全量单测）；缺运行器先回开发补齐，不用 `true` / `echo` / 空命令冒充测试。旧计划内无卡时据现有项目测试配置记录等价运行器。报告逐套列出实际字段与 run_id。
+**测试计划输入**：消费契约卡 `test_plan` 的 `cwd`、`targeted_argv`、`unit_runners`、`env_id`、`inputs` 与授权边界。本 Sprint 单元测试由 `test_scope.py` 从真实改动推导（见 Step 2.6），⛔ 不读取 `full_argv`（它只属于 `/sprint-aiauto-test` 全量单测）；related-test 已授权但缺运行器则返回 TOOL_ERROR 与配置缺口，不用 `true` / `echo` / 空命令冒充测试。旧计划内无卡时据现有项目测试配置记录等价运行器。报告逐套列出实际字段与 run_id。
 
 **命令测试账本**：所有命令型验证经 `test_ledger.py` 包装，原 argv 原样传入。开发/修复用 `--scope targeted`；本 Sprint 验收的单测由 `test_scope.py` 推导后经 `run-scope` 逐套记账（`--scope sprint`）。同树、命令、scope、环境及 inputs 的 PASS 复用，targeted 与 sprint 互不替代；环境标识 `TEST_ENV_ID` 来自实际工具链/外部状态，变化则换值，不得硬编码假稳定环境。本命令不启动服务、不打包、不做浏览器实测。只要输入变更就重新计算账本，禁止凭上一次文本“通过”跳过。
 
@@ -119,6 +151,17 @@ fi
 **输出**：`docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-testcases.md`（仅含接口/性能/兼容性/对外安全 4 类补充用例 + 人工自测套件清单的链接索引）
 
 ### Step 2：调用 code-verification-loop skill（★ 核心）
+
+先消费route结果；full-cvl未授权则NOT_REQUESTED并跳到下一适用步骤，已授权分支执行：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?从父入参重绑}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action full-cvl || exit $?
+```
+
+派发/执行前按light-context预留父预算，prompt带同revision/action/inputs hash，不重新grant。
+
 
 > ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`code-verification-loop` 的
 > **维度 9**（标题以 SKILL 为准）是**入参门控**、且 SKILL 明令**不自行探测是否启用**——
@@ -262,15 +305,27 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 `test_plan.unit_runners` 是 JSON 数组：每项含项目相对 `cwd`、测试后缀 `suffixes`、原始 `argv` 模板、`env_id` 和 root 相对的 `inputs`。按实际项目配置登记；例如 Python runner 可为 `{"cwd":"code/backend","suffixes":[".py"],"argv":["python3","-m","pytest","{tests}"],"env_id":"python-project","inputs":["code/backend/pyproject.toml"]}`（路径与参数须换为真实项目值）。
 
 - `mode=named` 默认按模块目录及命名映射：改动测试自身、Java `FooTest`、前端 `foo.spec.*` / `foo.test.*`、Python `tests/test_x.py`；argv 必须含独立 `{tests}` 或类名选择器 `{test_classes}`，禁止无选择器的命令。路径转换为 runner 的 cwd 相对路径，同名模块不得串选。
+- `batch` 明确表示运行器能否合批；默认仅已知安全的 pytest/unittest/Jest/Vitest/Maven 选择器合批，`python {tests}` 仍逐文件。`resources` 映射真实资源到 consumer/test（如 `{"config/x.yaml":["src/consumer.py","tests/test_x.py"]}`）；JSON/YAML/SQL 变化不得丢弃。消费 `selection.proven/conservative/unanalysable` 与 dependencies 原因，未分析不冒充覆盖。
 - 项目已使用框架 related 能力时，登记 `mode=related`，通过 `{sources}` 向已有 Jest `--findRelatedTests` / Vitest `related` 命令传入源码范围；实际命令仍来自项目测试配置。
 - 主流程按 Step 7 的 **acceptance-sprint-unit** 围栏推导并执行。`test_scope.py` 输出映射、运行 argv、未匹配项与 `scope_hash`；`run-scope` 从 Git 和写集重新推导核对，不信任手改的清单。测试命令由脚本消费，不让执行体临时挑选。
-- `FAIL`：按真实失败证据登记 BUG，交 Step 6 原实现者。`UNVERIFIED`：工具缺失、超时、输入或运行器缺失逐项记「未执行（原因）」+ Important「本项未核验」，不当代码 BUG、不算通过。
+- `FAIL`：先区分业务断言与工具/运行器失败；仅已证实业务错误登记 BUG，且 implement 已授权才交 Step 6。`UNVERIFIED`：工具缺失、超时、输入或运行器缺失逐项记「未执行（原因）」+ Important「本项未核验」，不当代码 BUG、不算通过。
 - `PARTIAL` / `EMPTY`：部分/全部源码无对应测试，逐个源码列「无对应单测」（Minor），不伪造 PASS/run_id，不以此新增人工确认门；仍完成 CVL 与改动侧编译校验。
-- 同树、命令、环境与输入的 PASS 直接复用。命名映射只是选测种子，不能证明测试独立：跨树继承还须校验本地传递依赖，跨模块共享源码同样参与；动态或无法解析的依赖保守补测并记录原因。未受影响项才可继承原证据，报告标明来源、依赖清单与判据，不冒充本树重新执行。共同输入/环境变化使相关证据失效。
+- 同 revision、同树、命令、环境与 inputs 的真实 hash 匹配才复用 PASS。命名映射只是选测种子，不能证明测试独立：跨树继承还须校验本地传递依赖，跨模块共享源码同样参与；动态或无法解析的依赖保守补测并记录原因。未受影响项才可继承原证据，报告标明来源、依赖清单与判据，不冒充本树重新执行。共同输入/环境变化使相关证据失效。
 
 无 Git / 起点无效时如实记「本项未核验」，延续 Step 2 的基线缺失处置，不构造起点或回落扩大范围。Step 5 报告必须包含每个改动→测试映射、实际 argv/cwd/env_id、通过/失败/未执行及原因、无对应单测清单、范围 hash 与 run_id。
 
 ### Step 3：在线接口附加观察（后端接口自动测试，可选）
+
+先消费route结果；live-tests未授权则NOT_REQUESTED并跳到下一适用步骤，已授权分支执行：
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?从父入参重绑}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action live-tests || exit $?
+```
+
+派发/执行前按light-context预留父预算，prompt带同revision/action/inputs hash，不重新grant。
+
 
 **验收边界**：Step 2 的静态核验、Step 2.6 的 Sprint 单测与 Step 7 的编译/类型检查形成 `/sprint-test` 验收结论；本步的健康探测、`api-tester` 和接口字段级对齐只在已有服务可用时追加运行时观察。在线成功不得覆盖静态失败，在线失败或环境缺席也不得改变静态验收结论、触发本命令的静态 Critical 回修；发现实际运行缺陷时另记待处理问题，由部署/浏览器实测链路复验。
 
@@ -333,9 +388,9 @@ python3 {{AIDP_HOME}}/scripts/check_count_claims.py --project-claims "docs/desig
 
 ### Step 6：原实现者当轮修复与差量复核
 
-1. 按 Step 2 的 BUG ID、根因/复现证据与具体写集，把错误交回**原实现 Agent**；docs 问题交原 docs Agent。先写能复现错误的失败测试，再做最小修复；不新起 `/sprint-bugfix`，不把 CVL 切回 loop。原 Agent 已结束可恢复其上下文；确实不可恢复时主流程记录原因并显式移交原工作单、契约与写集，不能重开 Sprint。契约变更先修订 `contract_revision`，重新过受影响的分档汇合/授权门。
+1. 按 Step 2 的 BUG ID、根因/复现证据与具体写集，把错误交回**原实现 Agent**；docs 问题交原 docs Agent。仅 implement 获授权才修复，related-test 获授权才写/跑复现测试；否则只回传具体发现；不新起 `/sprint-bugfix`，不把 CVL 切回 loop。原 Agent 已结束可恢复其上下文；确实不可恢复时主流程记录原因并显式移交原工作单、契约与写集，不能重开 Sprint。契约变更先修订 `contract_revision`，重新过受影响的分档汇合/授权门。
 2. 修复后重新消费 Step 2.6 的完整范围并执行 Step 7 围栏；脚本只补跑受影响运行项，未变证据可追溯复用。主流程串行回填 BUG 状态、修复文件与实际 `run_id/status/reused`；不能用实现者随意选的 targeted PASS 替代 Sprint 范围证据。
-3. 独立只读 reviewer 复核**原问题 + 修复新增 diff + 受影响契约/调用点**，保留修订、实际写集、复核判据、证据与结论。它是调用层差量复核，不是 CVL 的第二次完整验收。原问题未覆盖、回归失败或新错误 → 返回原实现 Agent；每轮定向验证，不每轮全量。连续 5 轮未闭环或真实授权/环境阻塞 → 返回未闭环项与原因给外层，不能标通过。
+3. 独立只读 reviewer 复核**原问题 + 修复新增 diff + 受影响契约/调用点**，保留修订、实际写集、复核判据、证据与结论。它是调用层差量复核，不是 CVL 的第二次完整验收。原问题未覆盖、回归失败或新错误 → 返回原实现 Agent；每轮定向验证，不每轮全量。同根因同 inputs 无变化立即停止重试；父预算耗尽或真实授权/环境阻塞 → 返回具体事实与已授权 scope，不能标通过。
 4. 全部修复汇合后，Step 7 对全部推导单测重新 `run-scope`（同树复用、树变则补跑）；收敛后再取当前树的结果。原始 CVL、每轮差量结果和最终验收结论分别留存；非阻断 Important 未解决也不得被命令端改成通过。
 5. 来自外部 bugfix 的「已修复」记录及用例清单按复现路径核对 diff；人工/浏览器用例只标「已修复·待人工验证」，真实执行通过后才可标「已验证」，不把静态结果冒充实测。
 
@@ -353,32 +408,40 @@ Step 2.6、修复后、收敛和部署前共用下面围栏。每次依据当前
 
 <!-- acceptance-sprint-unit -->
 ```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?从父入参重绑}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action related-test || exit $?
 # 运行产物落本 Sprint 测试目录（docs/ 不计入账本树指纹），⛔ 不落仓库根：否则输出会改变树指纹，使刚得到的 PASS 立即过期
 RUN_SET_FILE="docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-run-set.json"; mkdir -p "$(dirname "$RUN_SET_FILE")"
 SCOPE_ARGS=(); for W in "${WRITE_SET[@]}"; do SCOPE_ARGS+=(--write-set "$W"); done
-python3 {{AIDP_HOME}}/scripts/test_scope.py --root . --since "$SINCE" \
+python3 {{AIDP_HOME}}/scripts/test_scope.py --root . --execution-context "$EXECUTION_CONTEXT" --since "$SINCE" \
   --runners-json "$UNIT_RUNNERS_JSON" "${SCOPE_ARGS[@]}" --json \
   > "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json" || exit $?
-python3 {{AIDP_HOME}}/scripts/test_ledger.py run-scope --root . \
+python3 {{AIDP_HOME}}/scripts/test_ledger.py run-scope --root . --execution-context "$EXECUTION_CONTEXT" \
   --scope-file "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json" \
   --env-id "$TEST_ENV_ID" --input "docs/design/detail/{version}/_sprint-{NNN}-契约卡.md" \
   > "$RUN_SET_FILE" || exit $?
 SCOPE_HASH=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scope_hash"])' "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json") || exit $?
-RUN_ARGS=(); while IFS= read -r R; do RUN_ARGS+=(--run-id "$R"); done < <(python3 -c 'import json,sys; sys.stdout.write("".join(r+"\n" for r in json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])["run_ids"]))' "$RUN_SET_FILE")
-python3 {{AIDP_HOME}}/scripts/test_ledger.py verify --root . --env-id "$TEST_ENV_ID" "${RUN_ARGS[@]}" \
+RUN_IDS=$(python3 -c 'import json,sys;print(*json.loads(open(sys.argv[1]).readlines()[-1])["run_ids"])' "$RUN_SET_FILE") || exit $?
+RUN_ARGS=()
+for R in $RUN_IDS; do RUN_ARGS+=(--run-id "$R"); done
+python3 {{AIDP_HOME}}/scripts/test_ledger.py verify --root . --execution-context "$EXECUTION_CONTEXT" --env-id "$TEST_ENV_ID" "${RUN_ARGS[@]}" \
   --scope-file "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json" --scope-hash "$SCOPE_HASH"
 ```
 
-`RUN_SET_FILE` 末行给出 `status/scope_hash/run_ids`。`verify` 必须确认当前完整范围证据有效；`EMPTY` 如实记录无对应单测而允许审查登记，`FAIL` 回 Step 6，未执行/超时记 Important「本项未核验」。部署前只执行本协议，不重跑 CVL；若验收后出现语义改动，仍由 reviewer 查新增 diff。
+`RUN_SET_FILE` 末行给出 `status/scope_hash/run_ids`。`verify` 必须确认当前完整范围证据有效；`EMPTY` 如实记录无对应单测而允许审查登记，`FAIL` 回 Step 6，未执行/超时记 Important「本项未核验」。部署前只复用已授权的本协议证据，不新增测试、不重跑 CVL；若验收后出现语义改动，仍由 reviewer 查新增 diff。
 
-**测试 PASS 不代表审查完成**。一次真实完整 CVL 及必要的差量 reviewer 已完成、所有错误闭环、报告非空且结论可进入关闭，才执行下面的显式登记。将全部 run_id 登记到同一审查，逐个 `--run-id` 传入，不能只登记最后一套。报告保留原 CVL 结果、各差量证据与调用层最终结论，不改写原始不通过。
+**测试 PASS 不代表审查完成**。一次真实完整 CVL 及必要的差量 reviewer 已完成、所有错误闭环、报告非空且结论可进入关闭，才执行下面的显式登记；related-test或review未授权时不进入该围栏，按light-context仅消费所需证据。将全部 run_id 登记到同一审查，逐个 `--run-id` 传入，不能只登记最后一套。报告保留原 CVL 结果、各差量证据与调用层最终结论，不改写原始不通过。
 
 <!-- acceptance-record-review -->
 ```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?从父入参重绑}"
+python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action review || exit $?
 RUN_SET_FILE="docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-run-set.json"  # 与上一围栏同一路径（每个围栏独立，须重新定义）
 SCOPE_HASH=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scope_hash"])' "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json") || exit $?
 RUN_ARGS=(); for R in $(python3 -c 'import json,sys; print(" ".join(json.loads(sys.stdin.read().strip().splitlines()[-1])["run_ids"]))' < "$RUN_SET_FILE"); do RUN_ARGS+=(--run-id "$R"); done
-python3 {{AIDP_HOME}}/scripts/test_ledger.py record-review --root . \
+python3 {{AIDP_HOME}}/scripts/test_ledger.py record-review --root . --execution-context "$EXECUTION_CONTEXT" \
   --name "{version}-sprint-{NNN}" --env-id "$TEST_ENV_ID" "${RUN_ARGS[@]}" \
   --scope-file "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json" --scope-hash "$SCOPE_HASH" \
   --report "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md" \

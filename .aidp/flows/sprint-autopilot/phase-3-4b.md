@@ -1,6 +1,6 @@
-# sprint-autopilot · Phase 3 详情分片 [4b/14]（3.1.6 约定 22 阶段级联收口）
+# sprint-autopilot · Phase 3 详情分片 [4b/15]（3.1.6 约定 22 阶段级联收口）
 
-> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的 **第 4b/14 片**。
+> 本文件是 `/sprint-autopilot` 命令 **Phase 3** 详情的 **第 4b/15 片**。
 > - **本片覆盖**：3.1.6（约定 22 攒批级联的**阶段收口** —— autopilot 阶段入口）
 > - **适用条件**：build 已铸（3.1.5 完成）。本片**不**适用于 `ENTRY_MODE=test-only` 且带 `--skip-aiauto-test` 的轮次（两族集合皆空 → 整片跳过、无需 Read）
 > - **同 Phase 其它分片**：`phase-3-1.md` … `phase-3-9b.md`（清单见命令主体 Phase 3 骨架表「所在分片」列）

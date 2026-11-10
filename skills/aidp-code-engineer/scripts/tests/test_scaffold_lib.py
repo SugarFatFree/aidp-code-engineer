@@ -170,18 +170,99 @@ class MemoryMergeTest(unittest.TestCase):
            "## 新正文\n\n新约定\n\n## 项目自定义\n\n<!-- AIDP:PROJECT-CUSTOM x -->\n")
 
     def test_merge_keeps_status_and_custom(self):
-        out = L.merge_memory_upgrade(self.OLD, self.NEW)
+        out = L.merge_memory_upgrade(self.OLD, self.NEW, previous=self.OLD)
         for kept in ("V0.3.0", "bob", "Sprint-007", "登录", "40%", "2026-01-01", "当前 build**：B3", "团队约定 A", "新约定"):
             self.assertIn(kept, out)
         self.assertNotIn("旧约定", out)
         self.assertEqual(out.count("## 项目自定义"), 1)
-        self.assertEqual(L.merge_memory_upgrade(out, self.NEW), out, "幂等")
+        self.assertEqual(L.merge_memory_upgrade(out, self.NEW, previous=self.NEW), out, "幂等")
 
     def test_merge_without_custom_section_uses_template(self):
         old = self.OLD.split("## 项目自定义")[0]
-        out = L.merge_memory_upgrade(old, self.NEW)
+        out = L.merge_memory_upgrade(old, self.NEW, previous=old)
         self.assertIn("<!-- AIDP:PROJECT-CUSTOM", out)
         self.assertIn("V0.3.0", out)
+
+
+class MemoryBaselineMergeTest(unittest.TestCase):
+    BASE = ("# demo\n\n## 当前状态\n\n- **当前版本**：V0.1.0\n\n---\n\n"
+            "## 核心约定\n\n每次发布执行测试。\n\n## 导航\n\n见 memory。\n\n"
+            "## 项目自定义\n\n<!-- AIDP:PROJECT-CUSTOM -->\n")
+
+    def merge(self, old, new=None, previous=None):
+        evidence = []
+        out = L.merge_memory_upgrade(old, new or self.BASE,
+                                     previous=self.BASE if previous is None else previous,
+                                     evidence=evidence)
+        return out, evidence
+
+    def test_normal_custom_and_upstream_change(self):
+        old = self.BASE + "\n项目使用 PostgreSQL。\n"
+        out, evidence = self.merge(old, self.BASE.replace("见 memory。", "见 docs。"))
+        self.assertFalse(evidence)
+        self.assertIn("项目使用 PostgreSQL。", L.custom_section(out))
+        self.assertIn("见 docs。", out)
+        self.assertNotIn("见 memory。", out)
+
+    def test_independent_annotation_relocated_with_paths_intact(self):
+        note = "项目注解：调试示例在 `.agents/examples/team.md`。"
+        old = self.BASE.replace("每次发布执行测试。", "每次发布执行测试。\n\n" + note)
+        out, evidence = self.merge(old, self.BASE.replace("见 memory。", "见 docs。"))
+        self.assertFalse(evidence, evidence)
+        self.assertIn(note, L.custom_section(out))
+        self.assertEqual(out.count(note), 1)
+        self.assertEqual(out.count("每次发布执行测试。"), 1)
+        self.assertEqual(out.count("## 项目自定义"), 1)
+
+    def test_status_prose_and_extra_fields_survive_twice(self):
+        note = "本轮等待客户联调，审批记录保存在 issue-42。"
+        old = self.BASE.replace("V0.1.0\n", "V0.7.0\n- **联调环境**：stage\n\n" + note + "\n")
+        out, evidence = self.merge(old)
+        self.assertFalse(evidence, evidence)
+        self.assertIn(note, out)
+        self.assertIn("联调环境**：stage", out)
+        self.assertIn("V0.7.0", out)
+        again, evidence = self.merge(out)
+        self.assertFalse(evidence, evidence)
+        self.assertEqual(again, out)
+
+    def test_template_edit_conflicts_keep_body_and_evidence(self):
+        old = self.BASE.replace("每次发布执行测试。", "项目仅在周五执行测试。")
+        new = self.BASE.replace("每次发布执行测试。", "每次发布执行全量测试。")
+        out, evidence = self.merge(old, new)
+        self.assertEqual(out, old)
+        self.assertIn("项目仅在周五执行测试。", evidence[0]["project"])
+        self.assertIn("每次发布执行测试。", evidence[0]["baseline"])
+        self.assertIn("每次发布执行全量测试。", evidence[0]["incoming"])
+
+    def test_annotation_in_changed_section_requires_semantic_review(self):
+        old = self.BASE.replace("每次发布执行测试。", "每次发布执行测试。\n\n项目注解：审批在周五。")
+        out, evidence = self.merge(old, self.BASE.replace("每次发布执行测试。", "每日发布。"))
+        self.assertEqual(out, old)
+        self.assertTrue(evidence)
+
+    def test_inserted_override_is_not_treated_as_independent_note(self):
+        for note in ("项目补充：本项目不执行测试。", "项目约束：必须跳过发布审批。"):
+            with self.subTest(note=note):
+                old = self.BASE.replace("每次发布执行测试。", "每次发布执行测试。\n\n" + note)
+                out, evidence = self.merge(old)
+                self.assertEqual(out, old)
+                self.assertIn(note, evidence[0]["project"])
+
+    def test_missing_baseline_does_not_discard_outside_custom(self):
+        old = self.BASE.replace("## 核心约定", "项目约束：外部接口维护中。\n\n## 核心约定")
+        evidence = []
+        out = L.merge_memory_upgrade(old, self.BASE, evidence=evidence)
+        self.assertEqual(out, old)
+        self.assertEqual(evidence[0]["reason"], "missing-baseline")
+        self.assertIn("外部接口维护中", evidence[0]["project"])
+        self.assertEqual(out.count("## 核心约定"), 1)
+
+    def test_no_changes_without_baseline_is_noop(self):
+        old = self.BASE + "\n项目自定义说明。\n"
+        evidence = []
+        self.assertEqual(L.merge_memory_upgrade(old, self.BASE, evidence=evidence), old)
+        self.assertFalse(evidence)
 
 
 class TemplateGitignoreTplTest(unittest.TestCase):

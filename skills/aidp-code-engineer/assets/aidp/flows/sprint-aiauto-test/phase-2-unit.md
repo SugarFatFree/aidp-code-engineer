@@ -6,12 +6,40 @@
 
 ## Phase 2 · 2.0.5u.0 主协调入口：同一 build 的两路独立派发
 
-**触发**：某个已部署 build 开测时执行，适用于用户手动、autopilot `--once`、`/loop` 和 `/sprint-batch`。主协调者先执行 Phase 0.0.0 的 tick begin/parse 并保管 token，再固定 `MAIN_ROOT`、`TARGET_VERSION`、`BUILD`、部署完整 `BUILD_COMMIT`，然后在**同一批 Agent 工具调用中**派出实测与全量单测两个独立子 Agent。不得等待一边完成才启动另一边。
+**触发**：某个已部署 build 开测时执行，适用于用户手动、autopilot `--once`、`/loop` 和 `/sprint-batch`。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 继承父策略；只有真实显式命令/用户grant的支线才进入本节。主协调者先执行 Phase 0.0.0 的 tick begin/parse 并保管 token，再固定 `MAIN_ROOT`、`TARGET_VERSION`、`BUILD`、部署完整 `BUILD_COMMIT`，先冻结本次输入并核动作/预算，再在**同一批Agent调用中**派出所有已授权且尚需执行的worker。显式本命令的实测与全量单测两路仍并行，不等待一边完成才启动另一边；未请求支线NOT_REQUESTED，不派worker、不伪造PASS或pending。
 
 1. 常规 build 从 baseline 的本版本 `builds[]` 中按 `build` 精确定位，读取该条 `push_commit`；不得用 `HEAD`、分支名、缩写 SHA 或相邻 build 代替。可用 `baseline_edit.py --version "$TARGET_VERSION" --build "$BUILD" get push_commit --default ""` 读取。standalone 由主协调者核验实际部署 commit，并把核验依据写进冻结计划的 `deployment`。
 2. 主协调者在浏览器环境、账号、权限、用例清单、已测去重等实测分支前置门之前做双路派发。这些门只约束实测子 Agent；纯后端、无浏览器适用面、无实测用例、实测已完成、浏览器工具不可用、登录失败都不能取消单测子 Agent。
-3. 有部署 baseline 的 build，派发前由主协调者运行 `python3 {{AIDP_HOME}}/scripts/aiauto_test_join.py begin --root . --version "{version}" --build "{BUILD}" --commit "{部署完整SHA}"`，声明两路在途；准发布等待此状态，不用旧的实测 PASS 提前放行。先轻量读取单测 `status`：同 build 的 `RUNNING` 只接续观察，不重复派 worker；已有终态可直接接收。尚未启动时派 unit worker。并发 tick 即使同时派 worker，执行器也只允许一个进入真实执行。
+3. 两路均已授权且有部署baseline的build，派发前由主协调者运行 `python3 {{AIDP_HOME}}/scripts/aiauto_test_join.py begin --root . --version "{version}" --build "{BUILD}" --commit "{部署完整SHA}"`，声明两路在途；准发布等待此状态，不用旧的实测 PASS 提前放行。先轻量读取单测 `status`：同 build 的 `RUNNING` 只接续观察，不重复派 worker；已有终态可直接接收。尚未启动时派 unit worker。并发 tick 即使同时派 worker，执行器也只允许一个进入真实执行。
+仅一路获授权时不调用声明双路pending的begin/settle；按父context记录实际支线证据与另一支NOT_REQUESTED，不伪装完整双路验收。
+
 4. 子 Agent 不递归调用 `/sprint-aiauto-test`，不再各自启动双路协调，不调用 finalize，不发报告通知，不写共享 baseline。主协调者负责两路结果汇总、共享 baseline 串行更新、BUG 登记及 Phase 3 finalize。
+
+**真实派发围栏**：先从route.authorized_actions与实际unit status得出本次需要新派发的 `DISPATCH_ACTIONS`（仅live-tests/full-regression；RUNNING/可信终态不再派；数组为空直接接收既有结果，不运行派发围栏）。各支线的真实inputs清单绑定部署来源、计划、适用配置及上下文；下面在Agent工具调用之前执行，任一预算失败不增加上限、不启动未预留worker。
+
+```bash
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?主仓父任务绝对路径}"
+DISPATCH_INPUTS_JSON="${DISPATCH_INPUTS_JSON:?实际输入文件路径JSON数组}"
+DISPATCH_ACTIONS=("${DISPATCH_ACTIONS[@]}")
+INPUT_HASH=$(printf '%s' "$DISPATCH_INPUTS_JSON" | python3 -c '
+import hashlib, json, sys
+from pathlib import Path
+paths = json.load(sys.stdin)
+if not paths:
+    raise SystemExit("UNVERIFIED: 缺少派发输入")
+inputs = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in sorted(paths)}
+print(hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest())
+') || exit $?
+for ACTION in "${DISPATCH_ACTIONS[@]}"; do
+  python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
+    --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" || exit $?
+  python3 {{AIDP_HOME}}/scripts/execution_policy.py reserve-budget --root . \
+    --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" \
+    --resource agents --cost 1 --input-hash "$INPUT_HASH" || exit $?
+done
+```
+
+派单额外带execution_context、当前revision、各自action、父剩余budget、INPUT_HASH；worker继承，不因进入aiauto重新grant。执行器内部扣进程/耗时等预算，主协调者不重复扣相同执行资源。
 
 | 子 Agent | prompt 必须包含 | 独占写集与返回要求 |
 |---|---|---|
@@ -54,22 +82,24 @@
 
 ## Phase 2 · 2.0.5u.2 确定性执行器 API
 
-在单测子 Agent 中运行（`UNIT_TIMEOUT_SECONDS` 默认 3600，所有套件共享，不能逐套重置）。每个围栏以 `bash -c <围栏正文> -- <派单给定的冻结计划路径>` 调用，`$1` 固定本 build 的计划，不重新读取变化中的 current_build：
+在已授权单测子Agent中运行。UNIT_TIMEOUT_SECONDS取父预算内批准上限（执行器原上限3600），所有套件共享，不能逐套重置。run围栏以 `bash -c <围栏正文> -- <冻结计划路径> <父execution_context绝对路径>` 调用；$1固定计划，$2指向主仓context，不能改指worktree。
 
 ```bash
 UNIT_PLAN="${1:?须传本次派单冻结计划路径}"
+EXECUTION_CONTEXT="${2:?须传主仓父execution_context绝对路径}"
 MAIN_ROOT="$(pwd -P)"
 UNIT_VERSION=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$UNIT_PLAN") || exit 2
 UNIT_BUILD=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["build"])' "$UNIT_PLAN") || exit 2
 UNIT_COMMIT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["commit"])' "$UNIT_PLAN") || exit 2
-AIAUTO_UNIT_TIMEOUT_SECONDS="${AIAUTO_UNIT_TIMEOUT_SECONDS:-3600}"
+AIAUTO_UNIT_TIMEOUT_SECONDS="${AIAUTO_UNIT_TIMEOUT_SECONDS:?读取父预算内实际批准的执行上限}"
 UNIT_TIMEOUT_SECONDS="$AIAUTO_UNIT_TIMEOUT_SECONDS"
 python3 {{AIDP_HOME}}/scripts/build_unit_test.py run \
   --root "$MAIN_ROOT" --version "$UNIT_VERSION" --build "$UNIT_BUILD" \
-  --commit "$UNIT_COMMIT" --plan "$UNIT_PLAN" --timeout "$UNIT_TIMEOUT_SECONDS"
+  --commit "$UNIT_COMMIT" --plan "$UNIT_PLAN" --timeout "$UNIT_TIMEOUT_SECONDS" \
+  --execution-context "$EXECUTION_CONTEXT"
 ```
 
-后续 tick 只读：
+后续tick只读status，不消费执行预算，不要求新增grant：
 
 ```bash
 UNIT_PLAN="${1:?须传本次派单冻结计划路径}"
@@ -79,9 +109,9 @@ python3 {{AIDP_HOME}}/scripts/build_unit_test.py status \
   --root . --version "$UNIT_VERSION" --build "$UNIT_BUILD"
 ```
 
-工具或隔离依赖恢复后，允许主协调者**显式**选择同计划重试 `UNVERIFIED` / `TIMEOUT`，在原 `run` 调用上加 `--retry`。默认不重跑终态；`PASS` 即使传 `--retry` 也不执行，真实 `FAIL` 进入修复/新 build，不以同 build 重试掩盖。commit/计划变更必须使用新 build。重试保留此前 attempt 的结果和日志。
+工具或隔离依赖恢复后，在父full-regression授权、根因/输入已改变且retry预算允许时，主协调者才可选择同计划重试 `UNVERIFIED` / `TIMEOUT`，在原 `run` 调用上加 `--retry`。默认不重跑终态；`PASS` 即使传 `--retry` 也不执行，真实 `FAIL` 进入修复/新 build，不以同 build 重试掩盖。commit/计划变更必须使用新 build。重试保留此前 attempt 的结果和日志。
 
-Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=False)`（plan 为 dict 或 JSON 文件路径）、`read_status(root, version, build)`。执行 API 修改本进程信号/环境/输出 fd，只能在专用执行器进程主线程调用，不嵌入多线程主 tick。
+Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=False, execution_context=None)`，execution_context仅指主仓策略；内部worktree账本不传该context，避免root身份冲突（plan 为 dict 或 JSON 文件路径）、`read_status(root, version, build)`。执行 API 修改本进程信号/环境/输出 fd，只能在专用执行器进程主线程调用，不嵌入多线程主 tick。
 
 **生命周期保证**：
 
@@ -101,6 +131,7 @@ Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=
 
 | status / 条件 | 结论 | 主协调者处置 |
 |---|---|---|
+| `authorization_status=NOT_REQUESTED`、`executed=false` | 执行器二次授权拦截（外层status为UNVERIFIED） | 调用方按未请求处理，不建worktree、不派worker、不记欠账或PASS |
 | `PASS` | 全部套件通过 | 保留所有 run_id，同 build 复用；不得用它代替实测结果 |
 | `FAIL` | 已识别真实测试失败 | 与实测失败同等计入本 build 不通过；由下述 `aiauto_test_join.py settle` 幂等登记单测 BUG 并交 `/sprint-bugfix`，不得重复手工登记；新 build 两路重跑 |
 | `UNVERIFIED` | 本项未核验 | 缺来源/输入/commit、非 Git、baseline 不匹配、退出 127、模块缺失、无用例、损坏报告等；记原因，不登记为产品 BUG，不计通过，不 freeze |
@@ -111,7 +142,7 @@ Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=
 
 ## Phase 2 · 2.0.5u.4 汇总与发布边界
 
-- 主协调者在两路完成或分别超时后，把执行器结果保存/引用为 `memory/{version}/aiauto-unit-{BUILD}.json`。报告 `emit test` 带 `--unit-result <结果路径> --commit <部署完整SHA>` 合并两路结果；纯后端没有浏览器适用面时再带 `--browser-na-reason <明确原因>`，可输出空实测 cases 报告，但单测不可省略。unit worker 只维护其本地独占目录。
+- 以下build双路汇总只适用于两路均已授权；任一NOT_REQUESTED不进入要求双路证据的settle/finalize。主协调者在两路完成或分别超时后，把执行器结果保存/引用为 `memory/{version}/aiauto-unit-{BUILD}.json`。报告 `emit test` 带 `--unit-result <结果路径> --commit <部署完整SHA>` 合并两路结果；纯后端没有浏览器适用面时再带 `--browser-na-reason <明确原因>`，可输出空实测 cases 报告，但单测不可省略。unit worker 只维护其本地独占目录。
 - 主协调者先按 Phase 3.3 的 `failureTriage` 契约完成实测缺陷/产品澄清/环境未核验分类，写 `memory/.aidp/test-triage-${BUILD}.json`；`emit test` 带 `--failure-triage <该文件>`，`REPORT_DATA` 指向该 build 的 `data.js`。主协调者执行 `python3 {{AIDP_HOME}}/scripts/aiauto_test_join.py settle --root "$MAIN_ROOT" --version "$TARGET_VERSION" --build "$BUILD" --report "$REPORT_DATA" --triage "memory/.aidp/test-triage-${BUILD}.json"`（无待分流问题可省略分类文件与参数），由它验证 `unitTests` / `build.commit`，合并 baseline 的 `result` / `overall_status` / `unit_failed`，并幂等登记单测 FAIL 到 `docs/bugfix/{version}/bugfix-unit-{BUILD}.md`。不得再手工分配或登记同一批单测 BUG。
 - 主协调者校验结果的 version/build/commit 与本轮部署一致，再 finalize。尚无结果、RUNNING 或残留异常不能伪装通过；未核验不 freeze、不写 `aiauto_tested_at`。后续发布链路读取 join 的 `release-state`（pending/pass/failed/legacy）处理门禁，不能只看浏览器 PASS。允许跨 tick 接续，无须让一次 tick 等满 3600 秒。
 - 报告 HTML 中「全量实测」与「全量单测」分别列出适用状态；纯后端无浏览器适用面明确 N/A，单测仍展示实际结论。单测列出命令、各 run_id、已知计数/未知标记、失败用例、首要错误和日志证据。通知仅由主协调者一次发出。

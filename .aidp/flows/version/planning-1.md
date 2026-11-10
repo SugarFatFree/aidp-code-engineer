@@ -1,12 +1,12 @@
-# /version · 版本规划流程详情 — 分片 1/8
+# /version · 版本规划流程详情 — 分片 1/10
 
 > 本片覆盖：**头部 + Step 2.0 输入快照 / 2.1 校验参数 / 2.1.5 派生里程碑名**。
 > 完整分片清单见 `{{AIDP_HOME}}/commands/version.md` 的对应骨架表；按 Step 进度依次 `Read` 各分片，权威判定以本片正文为准。
 
 <!-- BODY-BELOW -->
-> （原整段标题「/version · 版本规划流程详情（Step 2.0–2.8，情况 A 全量 / B-2 补充）」—— 该范围现由 1/8…8/8 全部分片共同承载，本片只覆盖上面「本片覆盖」列出的部分）
+> （原整段标题「/version · 版本规划流程详情（Step 2.0–2.8，情况 A 全量 / B-2 补充）」—— 该范围现由 1/10…8/10 全部分片共同承载，本片只覆盖上面「本片覆盖」列出的部分）
 
-> 本文件是 `/version` 命令 **版本规划流程（情况 A 全量 / B-2 补充）** 详情的**第 1/8 片**（⛔ 本片不含 版本规划流程 全部子步——其余在 `-2`…`-8` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段）（Step 2.0–2.8），由命令主体（`{{AIDP_HOME}}/commands/version.md`）在**进入版本规划流程时用 Read 工具按需加载**——把这 1000+ 行从"每次调用整体入上下文"改为"走到规划流程才载"，降低"lost in the middle"式漏步。命令主体只保留本段的**硬门提醒 + Step 2.0–2.8 骨架表 + 指向本文件的指针**。
+> 本文件是 `/version` 命令 **版本规划流程（情况 A 全量 / B-2 补充）** 详情的**第 1/10 片**（⛔ 本片不含 版本规划流程 全部子步——其余在 `-2`…`-8` 与 `-3b` / `-7b` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段）（Step 2.0–2.8），由命令主体（`{{AIDP_HOME}}/commands/version.md`）在**进入版本规划流程时用 Read 工具按需加载**——把这 1000+ 行从"每次调用整体入上下文"改为"走到规划流程才载"，降低"lost in the middle"式漏步。命令主体只保留本段的**硬门提醒 + Step 2.0–2.8 骨架表 + 指向本文件的指针**。
 >
 > ⚠️ **权威性**：进入版本规划流程后，**以本文件为准逐项执行**，不得凭命令主体骨架或记忆略过任一子步骤（尤其 Step 2.4.7 版本规划产物全量审计的强制执行铁律）。
 > ⚠️ **维护**：本文件与命令主体同属 template 自有、随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/version/`。理据/根因见同目录 `rationale.md`。
@@ -98,10 +98,27 @@
 **repair / replan 模式（Step 1 B-0，先于下方快照分流）**：
 
 - 保留原输入快照并计算差异，不能删快照或先把它刷新成当前值来绕过 B-1。模式与缺件清单必须写入每个规划子命令调用上下文，分片/子 Agent 不能自行按「输入未变」退出。
-- `repair`：按 `planning-5.md` 六类判据列出缺件及其生产者，顺序 requirements → design → plan → selftest；已有族只读复用、缺失族走 `planning-3.md` 的 **fresh 调用**（不带 `--supplement`，使用当前全部输入与已有上游）。自测用例/方案/环境任一缺失，都进入 selftest；传清缺失目标与已有文件只读清单，只补缺文件。环境文件仍执行 Step 2.4.1.6。目录中的索引不代替内容主文档。
+- `repair`：先运行下方范围计算，把六类缺失/空产物与预检已证明无效的具体文件组成 `targets`；已有族只读复用，只有目标所属生产者走 `planning-3.md` 的 **fresh 调用**（不带 `--supplement`）。传入缺失/无效目标、`required_inputs`、`necessary_indexes`、必要引用回写和 `readonly`；生产者只补目标，不借 fresh 重生成整族。requirements → design → plan → selftest 的依赖顺序不变，无目标生产者不调用。缺环境文件只做环境继承/校准，不再生成现有方案和用例；索引不代替内容主文档。
 - `replan`：四个生产者全部按 fresh 调用重新规划，基于当前完整输入；本 flag 是重生成规划的明确授权，允许更新未发布规划主文档。已有 Sprint 启动记录、归档、任务编号与完成状态须保留并映射回计划，禁止删历史、把已完成工作重编号后重跑。若重规划无法保持已启动任务的范围/编号，返回 `replan-conflict`，无人值守交调用方记账，不自动关闭或重置在途 Sprint。
 - 两种模式都继续 Step 2.4.4–2.4.7 的归一、自检、交叉引用和审计；repair 的归一仅补缺索引项，不覆盖已有内容主文档。Step 2.5/2.6 只创建缺失 memory，不重置既有 progress、activeContext。
 - repair 若同时检测到输入变化：先补件，再以**原快照差异**走 B-2，已有族只产增量；不因补件先写快照而吞变化。所有生成与审计都成功后才执行 Step 2.7.5 更新快照，`snapshot_run` 记 `repair` / `replan`（再补充则记 `supplement-NN`）。失败保持旧快照，返回具体缺件/失败，不宣称规划完成。
+
+**repair 范围与恢复接口（任何生产动作前执行）**：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/planning_state.py --root . --version {version} scope
+# 把既有机器预检/独立审计指出的无效文件逐个追加 --invalid <文件>；
+# 确有引用依赖需修改时逐个追加 --reference <已存规划文件>，同时传入对应引用原因。
+python3 {{AIDP_HOME}}/scripts/planning_state.py --root . --version {version} begin-repair
+```
+
+两次调用使用相同 `--invalid` / `--reference` 参数。`scope` 只读，`begin-repair` 将写集及原字节 hash 存入 `memory/{version}/.planning-state.json`，不是新审批或项目配置。恢复旧轮时先 `check-repair` 读旧范围结果，再对仍失败/缺失目标建新轮，禁止在越权改写之后重新 begin 来洗掉基线。已有成功产物保留；先修只读越权，再恢复缺失/失效目标。所有子调用继承正式 `--execution-context`。
+
+```bash
+python3 {{AIDP_HOME}}/scripts/planning_state.py --root . --version {version} check-repair
+```
+
+每个生产者返回及 Step 2.4.4 归一后都核验；`unexpected` 非空立即停止，不能宣称补件成功。中间尚有目标未生成时 `missing` 可留给后续生产者，最终必须为空。输出 `reused/redone/missing` 列入恢复摘要，未变正文必须字节一致，不能为统一格式重写。修改只限目标与必要索引/引用；非目标族不生成。新增/修改内容执行必要质量检查，引用依赖执行相关一致性检查；未变且必要 inputs、内容 hash、维度判据一致的可信结果按 Step 2.4.7 复用。跨族廉价引用、编号、索引核验始终全局。
 
 **算法**（fresh / supplement；repair / replan 已在上方分流，不重新推断模式）：
 

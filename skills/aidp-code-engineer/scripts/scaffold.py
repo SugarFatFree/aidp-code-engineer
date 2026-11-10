@@ -986,33 +986,81 @@ def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
         rep.act("create" if have is None else "update", ".gitignore", "AIDP 托管区")
 
 
-def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: bool, rep: Report, bk: "Backup"):
+def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: bool, rep: Report, bk: "Backup",
+                     previous_template=None):
     tpl_path = L.SKILL_DIR / L.MEMORY_TPL_REL
     rendered = L.render(tpl_path.read_text(encoding="utf-8"), ctx)
     home = runtime_home_for(agents)
     rendered = rendered.replace("{{AIDP_HOME}}", home)
+    installed_template = root / home / "skills" / L.SKILL_NAME / L.MEMORY_TPL_REL
     bodies = L.memory_bodies(root)
     target = L.memory_target(root, agents)
     if not bodies:
         L.write_text_lf(root / target, rendered)
         rep.act("create", target, "项目记忆文件")
+        L.uf_record(root, "template:main-memory", tpl_path.read_bytes())
+        L.uf_record(root, "merged:main-memory", L.memory_managed_text(rendered).encode("utf-8"))
         return
     body_file = target if target in bodies else next(iter(bodies))
     is_aidp = L.looks_like_aidp_body(bodies[body_file])
     if is_aidp:
-        # 已是 AIDP 形态：按锚点确定性合并——新模板正文 +「当前状态」字段值 +「项目自定义」段原文
         if was_aidp and decision != "overwrite":
             return
-        merged = L.merge_memory_upgrade(bodies[body_file], rendered)
+        # 先确定最终正文位，避免后续 agent_sync 把待办目标变为薄壳、误判为已改写。
+        source_file = body_file
+        if body_file != target:
+            bk.save(target)
+            L.write_text_lf(root / target, bodies[body_file])
+            bodies[target] = bodies[body_file]
+            body_file = target
+            rep.act("merge", target, f"主记忆从 {source_file} 迁入最终正文位")
+        entries = L.queue_entries(root)
+        updated = []
+        for line in entries:
+            parts = line.split("\t", 3)
+            if parts[0] == source_file:
+                parts[0] = body_file
+                if len(parts) > 1:
+                    parts[1] = installed_template.relative_to(root).as_posix()
+            updated.append("\t".join(parts))
+        if updated != entries:
+            L.write_text_lf(root / L.REWRITE_QUEUE_FILE, L.QUEUE_HEADER + "\n".join(updated) + "\n")
+        # 待改写目标不能被重复升级自动改动，否则 sha256 变化会伪装成已完成语义改写。
+        if any(L.parse_queue_entry(e)["target"] == body_file for e in updated):
+            rep.note(f"{body_file} 已在语义改写队列，保持正文与入队证据")
+            return
+        ledger = L._uf_load(root)
+        template_bytes = tpl_path.read_bytes()
+        managed = L.memory_managed_text(bodies[body_file]).encode("utf-8")
+        if (ledger.get("template:main-memory") == L.sha256(template_bytes)
+                and ledger.get("merged:main-memory") == L.sha256(managed)):
+            return  # 已合并/显式确认过的同一骨架，无改写需求。
+        if previous_template is None:
+            previous_template = _prev_delivered(root, L.MEMORY_TPL_REL)
+        recorded = ledger.get("template:main-memory")
+        if previous_template is None and recorded == L.sha256(template_bytes):
+            previous_template = template_bytes  # 指纹证明当前模板就是已安装基线（含从安装位自执行）。
+        if previous_template is not None and recorded and recorded != L.sha256(previous_template):
+            previous_template = None  # 已安装快照不属于上次合并的模板，不能拿它抹掉项目内容。
+        previous = (L.render(previous_template.decode("utf-8"), ctx).replace("{{AIDP_HOME}}", home)
+                    if previous_template is not None else None)
+        evidence = []
+        merged = L.merge_memory_upgrade(bodies[body_file], rendered, previous, evidence)
+        if evidence:
+            L.enqueue(root, body_file, installed_template, evidence=evidence)
+            rep.act("queue", body_file, "主记忆含模板外修改或缺旧基线；正文保留，差异证据待语义合并")
+            return
         if merged != bodies[body_file]:
             bk.save(body_file)
             L.write_text_lf(root / body_file, merged)
-            rep.act("merge", body_file, "按新版模板合并，保留「当前状态」字段值与「项目自定义」段")
+            rep.act("merge", body_file, "按旧模板合并，保留状态散文、自定义与独立项目补充")
+        L.uf_record(root, "template:main-memory", template_bytes)
+        L.uf_record(root, "merged:main-memory", L.memory_managed_text(merged).encode("utf-8"))
         return
     bk.save(target)
     L.write_text_lf(root / target, migrate.merge_custom(rendered, bodies))
     rep.act("merge", target, "原记忆文件内容并入「项目自定义」段：" + "、".join(sorted(bodies)))
-    L.enqueue(root, target, tpl_path)
+    L.enqueue(root, target, installed_template)
     rep.act("queue", target, "复核「项目自定义」段：去重、与 AIDP 约定冲突项交用户裁决")
     if "claude" not in agents and "CLAUDE.md" in bodies and target != "CLAUDE.md":
         rep.note("CLAUDE.md 原文已并入 AGENTS.md；当前未装配 Claude Code，CLAUDE.md 保留原样")
@@ -1758,6 +1806,28 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
             raise
 
 
+def diagnose_notify_config(root: Path, home: str, rep: Report) -> dict:
+    """升级只做本地字段/可执行条件诊断，不发送消息或猜测私有目标。"""
+    script = root / home / "scripts/notify.py"
+    try:
+        proc = subprocess.run([sys.executable, str(script), "--repo-root", str(root), "--check-config", "--json"],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20,
+                              env=L.child_env(), **L.TEXT_IO)
+        value = json.loads(proc.stdout)
+        if proc.returncode not in (0, 3) or not isinstance(value, dict) or "ready" not in value:
+            raise ValueError("通知诊断未返回可用结构")
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        rep.warn(f"通知配置诊断未完成：{exc}；请运行 notify.py --check-config --json")
+        return {"ready": False, "status": "unavailable", "delivery_verified": False}
+    if value["ready"]:
+        rep.note("通知本地配置条件通过；未发送探测，目标/鉴权/送达仍未验证")
+    elif value.get("reason") in ("notify.enabled=false", "notify.channels 未配置"):
+        rep.note("通知已禁用或未配置；未发送探测，可用 notify.py --check-config --json 诊断")
+    else:
+        rep.warn("通知渠道配置不可用；" + str(value.get("repair") or "运行 notify.py --check-config --json 查看缺失字段"))
+    return value
+
+
 def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                      journal: _NativeInstallJournal, migrate_legacy: bool = False) -> dict:
     rep = Report(journal)
@@ -1852,6 +1922,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     journal.migration_stage = "render-runtime"
     # ⛔ 快照必须在安装前取：`templates/` 是受管契约，安装后模板位已是新版、再比就分不出
     #    「用户改过」与「版本升级」。
+    main_memory_before = _prev_delivered(root, L.MEMORY_TPL_REL)
     optional_rules_before = snapshot_optional_rules(root, [home for _kind, home in specs])
     fillable_before = snapshot_runtime_fillable(root)
     fillable_homes = []
@@ -1949,7 +2020,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     journal.record(L.USER_FILLABLE_BASELINE)
     sync_root_files(root, ctx, agents, rep, bk)
     if decision != "protect":
-        sync_memory_file(root, agents, ctx, decision, bool(previous), rep, bk)
+        sync_memory_file(root, agents, ctx, decision, bool(previous), rep, bk,
+                         previous_template=main_memory_before)
     for rel in (".claude/skills" if "claude" in agents else None,
                 ".agents/skills" if {"codex", "dsh"} & set(agents) else None):
         if rel is not None:
@@ -2059,7 +2131,9 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     if a.adapter_mode == "link":
         rep.actions.append({"op": "normalized", "path": "agent-adapters", "why": "link → managed-copy",
                             "action": "normalized", "from": "link", "to": "managed-copy"})
+    notify_diagnostics = diagnose_notify_config(root, runtime_home_for(agents), rep)
     return {"mode": mode, "project": project, "version": version, "user": user,
+            "notify_diagnostics": notify_diagnostics,
             "vcs_mode": vcs.detect_mode(root), "dsh_extensions": dsh_extensions,
             "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
             "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,

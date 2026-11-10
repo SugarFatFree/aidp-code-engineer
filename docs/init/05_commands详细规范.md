@@ -1,7 +1,9 @@
 # 05 — Commands 详细规范
 
+> 身份、动作授权与调用围栏统一见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。普通开发implement+static，相关测试与review分别按请求启用；formal不增加heavy权限，未请求检查NOT_REQUESTED。
+
 > **文档定位**：本文档是斜杠命令体系的**总览和索引**。
-> 下游命令定义位于 `{{AIDP_HOME}}/commands/`（仅 Claude 为 `.claude/`，有 Codex / DSH 为 `.agents/`），适配入口分别为 `.claude/commands/`、`.codex/skills/aidp/`、`.dsh/commands/`。下方 Markdown 链接指向下游已安装的命令定义；模板仓库中的维护源位于 `.aidp/commands/`。
+> 下游命令定义位于 `{{AIDP_HOME}}/commands/`（仅 Claude 为 `.claude/`，有 Codex / DSH 为 `.agents/`），适配入口分别为 `.claude/commands/`、`.codex/skills/aidp/`、`.dsh/commands/`。下方 Markdown 链接指向下游已安装的命令定义；通用命令行为在模板仓库维护后由脚手架下发。
 > 本文档**不再重复**每个命令的内部细节，仅提供命令层次、执行模式、调用关系的全局视图。
 
 ---
@@ -43,7 +45,7 @@
 │                                                           │
 │   模式 3 分步：                                            │
 │     /sprint-start {NNN}                                   │
-│     /sprint-dev  或  /sprint-dev "<描述>"  （支持独立累进）│
+│     /sprint-dev  或  /sprint-dev "<描述>"  （formal 父上下文内）│
 │     /sprint-test                                          │
 │     /sprint-bugfix  或  /sprint-bugfix "<描述>"           │
 │     /sprint-close {NNN}                                   │
@@ -73,12 +75,12 @@
 | **Sprint 执行** | `/sprint-batch [范围]` | 批量执行多个 Sprint | `superpowers:verification-before-completion`（⛔ 不用 `executing-plans`：它会停下征询，与「零询问连跑」冲突）| [`{{AIDP_HOME}}/commands/sprint-batch.md`](../../{{AIDP_HOME}}/commands/sprint-batch.md) |
 | | `/sprint-full {NNN}\|"<描述>"` | 单 Sprint 一键（支持按计划或自动累进） | 串联下方 5 个 | [`{{AIDP_HOME}}/commands/sprint-full.md`](../../{{AIDP_HOME}}/commands/sprint-full.md) |
 | | `/sprint-start {NNN}` | 启动单个 Sprint | - | [`{{AIDP_HOME}}/commands/sprint-start.md`](../../{{AIDP_HOME}}/commands/sprint-start.md) |
-| | `/sprint-dev [scope\|"描述"]` | 开发阶段（★ 支持独立累进） | `superpowers:test-driven-development`；AIDP 按写集隔离派发，规范审查后做代码质量审查 | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |
-| | `/sprint-test` | 测试阶段（静态扫描 + 可选接口测试；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（+ 外部可选 `api-tester`） | [`{{AIDP_HOME}}/commands/sprint-test.md`](../../{{AIDP_HOME}}/commands/sprint-test.md) |
+| | `/sprint-dev [scope\|"描述"]` | 开发阶段（独立默认 light；formal 支持累进） | 默认实现+静态；TDD/review/CVL按父授权启用 | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |
+| | `/sprint-test` | 显式组合static+related-test+review+full-cvl；自然路由/嵌套只继承 | `code-verification-loop`（+ 外部可选 `api-tester`） | [`{{AIDP_HOME}}/commands/sprint-test.md`](../../{{AIDP_HOME}}/commands/sprint-test.md) |
 | | `/sprint-bugfix [sprint-NNN\|bugfix-*.md\|"描述"]` | 问题修复（★ 支持独立使用 + 自动累进；可按 Sprint / 指定文件名 / 描述累进三种入参） | `bugfix` + `superpowers:systematic-debugging` | [`{{AIDP_HOME}}/commands/sprint-bugfix.md`](../../{{AIDP_HOME}}/commands/sprint-bugfix.md) |
 | | `/sprint-close {NNN}` | Sprint 关闭 | - | [`{{AIDP_HOME}}/commands/sprint-close.md`](../../{{AIDP_HOME}}/commands/sprint-close.md) |
 | **7×24 全自动** ★ | `/sprint-autopilot` | PRD 监听 → 自动开发链路编排（操作系统调度 `aidp_scheduler.py` 守护） | 串联 `/version` + `/sprint-batch` | [`{{AIDP_HOME}}/commands/sprint-autopilot.md`](../../{{AIDP_HOME}}/commands/sprint-autopilot.md) |
-| | `/sprint-aiauto-test` | 部署后 chrome 浏览器仿真测试（操作系统调度 `aidp_scheduler.py` 守护） | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例读已落盘的 `docs/testing/{version}/`（`正式用例/` 为主 + `研发自测/` 查漏补充），不直调用例生成 SKILL | [`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`](../../{{AIDP_HOME}}/commands/sprint-aiauto-test.md) |
+| | `/sprint-aiauto-test` | 显式命令并行live-tests+full-regression；调度安装另授权 | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例读已落盘的 `docs/testing/{version}/`（`正式用例/` 为主 + `研发自测/` 查漏补充），不直调用例生成 SKILL | [`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`](../../{{AIDP_HOME}}/commands/sprint-aiauto-test.md) |
 | **辅助** | `/memory-sync` | 记忆同步 | - | [`{{AIDP_HOME}}/commands/memory-sync.md`](../../{{AIDP_HOME}}/commands/memory-sync.md) |
 | | `/health-check` | 健康检查 | - | [`{{AIDP_HOME}}/commands/health-check.md`](../../{{AIDP_HOME}}/commands/health-check.md) |
 
@@ -101,16 +103,16 @@
 /sprint-full 002
 ```
 
-### 模式 2B：自动累进（★ 推荐新增功能/修复大 bug）
+### 模式 2B：formal 自动累进（明确要求新 Sprint）
 
 ```bash
 /sprint-full "新增用户导出功能"
-# 等效入口：
-/sprint-dev "新增用户导出功能"          # 开发视角
-/sprint-bugfix "修复批量导入需新增接口"  # 修 bug 视角
+# 日常轻量入口（不是上方正式累进的等效入口）：
+/sprint-dev "新增用户导出功能"          # light，无 Sprint
+/sprint-bugfix "修复批量导入需新增接口"  # light，保留接口与风险验证
 
-# 自动：
-# - 扫描已有 Sprint，新编号累进
+# 上方 /sprint-full 的 formal 流程：
+# - 原门通过后分配 Sprint，新编号累进
 # - 产出增量文档 NN_<业务主题>.md 到 研发需求/详细设计/接口设计/数据库设计（不改主文档正文，各目录 00_索引.md 登记）
 # - 按约定 22 级联到 研发执行计划 + 研发自测用例（四级 L1→L2→L3→L4，漏 L4 即违规）
 #   ★ 默认【攒批】：先按族记 _开发期{族}增量.md，由收口点清单批量级联（详见 reference/开发期族增量.md）；
@@ -122,8 +124,8 @@
 
 ```bash
 /sprint-start 001
-/sprint-dev                 # 或 /sprint-dev backend / /sprint-dev frontend
-/sprint-test
+/sprint-dev 001             # 分步明确 Sprint；嵌套必须透传原 execution context
+/sprint-test 001
 /sprint-bugfix sprint-001
 /sprint-close 001
 ```
@@ -132,13 +134,13 @@
 
 ```bash
 # 在 docs/bugfix/{version}/bugfix-{今日}-{user}.md 添加 bug 表格行
-/sprint-bugfix                   # 修复当前用户所有待修复 bug
+/sprint-bugfix                   # 修复本次明确范围；不接管历史待办
 /sprint-bugfix sprint-003        # 按 Sprint 过滤
 ```
 
 ## 4. 统一前置流程
 
-> 除 `/sprint-init*` 和 `/version` 外，所有 Sprint 相关命令执行前都必须走此流程。
+> 各入口先 resolve/route；light 执行轻量协议后 return。下列是 formal Sprint 前置流程，不要求普通自然语言任务先补规划或 Sprint 文件。
 > 详见 `06_版本与用户目录约定.md` 第 4、6 节。
 
 ```
@@ -166,10 +168,10 @@ Step P3: 路径变量展开 → 按 06 文档第 2 节的路径模板使用
 
 ## 6. 命令文件索引
 
-下游命令定义位于 `{{AIDP_HOME}}/commands/` 下，由各 Agent 的命令入口装配；模板维护源结构如下：
+下游命令定义由各 Agent 的入口装配，安装后的目录结构如下：
 
 ```
-.aidp/commands/
+{{AIDP_HOME}}/commands/
 ├── sprint-init.md              项目全量初始化
 ├── sprint-init-design.md       分步初始化前半段
 ├── sprint-init-complete.md     分步初始化后半段
@@ -194,6 +196,6 @@ Step P3: 路径变量展开 → 按 06 文档第 2 节的路径模板使用
 **维护原则**：
 - 本文档只维护全局视图（分层、模式、前置流程、文件索引）
 - 具体命令的执行细节在下游 `{{AIDP_HOME}}/commands/` 中，不在本文档重复
-- 修改通用命令行为时，在模板仓库 `.aidp/commands/` 修改并经脚手架同步，不直接修改下游契约
+- 修改通用命令行为时，在模板仓库的命令维护源修改并经脚手架同步，不直接修改下游契约
 
 ---

@@ -639,11 +639,10 @@ def _p_release_debt(root):
            runtime_text('```bash\npython3 __AIDP_HOME__/scripts/check_zzz.py --version "$V" \\\n  || echo "⚠️ 未过 → 请自行登记欠账"\n```\n', __file__))
 
 
-@probe("check_version_audit_landed.py", args=("--json", "--version", "SELFCHECK"))
+@probe("check_version_audit_landed.py", args=("--json", "--version", "V0.0.0"))
 def _p_version_audit_landed(root):
-    # 造出 SELFCHECK 版本的规划产物、但**不产**审计报告：本门必判「审计没跑过」。
-    # （基线侧没有 docs/requirements/SELFCHECK/ → 适用范围外、N/A 跳过 ⇒ 绿。）
-    _write(root, "docs/requirements/SELFCHECK/01_研发需求.md", "# 研发需求\n\n- F1 登录\n")
+    # 使用合法版本号；阴性无规划产物，阳性有需求却缺审计，不能以入参错误代替命中。
+    _write(root, "docs/requirements/V0.0.0/01_研发需求.md", "# 研发需求\n\n- F1 登录\n")
 
 
 @probe("check_comment_ratio.py")

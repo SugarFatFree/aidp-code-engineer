@@ -59,12 +59,11 @@ import os
 import re
 import sys
 
-# Sprint 归档快照：memory/{version}/{user}/sprints/sprint-{NNN}.md
-SPRINT_FILE_RE = re.compile(r"^sprint-(?:[a-z]+)?(\d{3,})\.md$", re.I)
-# 计划正文里的 Sprint-NNN / sprint-NNN / Sprint NNN
-SPRINT_REF_RE = re.compile(r"\bsprint[-\s]?(\d{3,})\b", re.I)
-# 版本目录名 V{x}.{y}.{z}
-VERSION_DIR_RE = re.compile(r"^[Vv]\d+\.\d+(\.\d+)?$")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sprint_inventory import inventory, SPRINT_FILE_RE, SPRINT_REF_RE, VERSION_RE
+
+VERSION_DIR_RE = VERSION_RE
 # 单端豁免标记（与上游 dev-execution-planner/scripts/check_task_granularity.py 同款词表）
 SINGLE_END_MARK = re.compile(r"单端|仅前端|仅后端|纯前端|纯后端|前端独立|后端独立")
 # 空单元格：-、—、无、/、N/A、空
@@ -87,47 +86,19 @@ def _version_dirs(root, base):
     if not os.path.isdir(d):
         return []
     return sorted(x for x in os.listdir(d)
-                  if VERSION_DIR_RE.match(x) and os.path.isdir(os.path.join(d, x)))
+                  if VERSION_DIR_RE.fullmatch(x) and os.path.isdir(os.path.join(d, x)))
 
 
 def collect_sprints(root):
-    """跨【全部版本】收集 Sprint 编号 → {num: [来源描述, ...]} + {version: set(num)}。
-
-    ★ 关键：扫描面必须是所有版本，不能带 {version} 限定——那正是"新版本又从 001 开始"的成因。
-    两个来源：① memory/{V}/{user}/sprints/sprint-{NNN}.md 归档快照（既成事实）
-             ② docs/plans/{V}/01_研发执行计划.md 的任务分配矩阵（已规划）
-    """
+    """所有版本全部占号证据；计划分册、历史进度、启动记录都不能复用编号。"""
     by_num, by_version = {}, {}
-
-    for v in _version_dirs(root, "memory"):
-        vdir = os.path.join(root, "memory", v)
-        for user in sorted(os.listdir(vdir)):
-            sdir = os.path.join(vdir, user, "sprints")
-            if not os.path.isdir(sdir):
-                continue
-            for fn in sorted(os.listdir(sdir)):
-                m = SPRINT_FILE_RE.match(fn)
-                if not m:
-                    continue
-                n = int(m.group(1))
-                by_num.setdefault(n, []).append(f"memory/{v}/{user}/sprints/{fn}")
-                by_version.setdefault(v, set()).add(n)
-
-    for v in _version_dirs(root, os.path.join("docs", "plans")):
-        pdir = os.path.join(root, "docs", "plans", v)
-        for fn in sorted(os.listdir(pdir)):
-            if fn not in PLAN_GLOB_NAMES and not fn.endswith("研发执行计划.md"):
-                continue
-            text = _read(os.path.join(pdir, fn))
-            if not text:
-                continue
-            for n in {int(x) for x in SPRINT_REF_RE.findall(text)}:
-                src = f"docs/plans/{v}/{fn}"
-                by_num.setdefault(n, [])
-                if src not in by_num[n]:
-                    by_num[n].append(src)
-                by_version.setdefault(v, set()).add(n)
-
+    for version, item in inventory(root).items():
+        for number in sorted(item["occupied"]):
+            n = int(number)
+            # 历史行内引用要保留号，但不声称本版本重新分配了该号。
+            if number in item["planned"] or number in item["started"]:
+                by_version.setdefault(version, set()).add(n)
+            by_num.setdefault(n, []).extend(sorted(item["sources"][number]))
     return by_num, by_version
 
 
@@ -220,7 +191,8 @@ def check(root):
 
     # ── A2 版本内重复 ──
     for n, srcs in sorted(by_num.items()):
-        files = [s for s in srcs if s.startswith("memory/")]
+        files = [s for s in srcs if s.startswith("memory/")
+                 and SPRINT_FILE_RE.fullmatch(Path(s).name)]
         if len(files) > 1:
             per_ver = {}
             for s in files:

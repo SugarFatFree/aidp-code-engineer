@@ -1,20 +1,22 @@
-# /version · 版本规划〔3/8〕
+# /version · 版本规划〔3/10〕
 
 > 覆盖 Step 2.4.1 requirements / 2.4.2 design / 2.4.3 plan / 2.4.3.5 selftest。
 > 按 `{{AIDP_HOME}}/commands/version.md` 骨架表进度 `Read`，以本片为准。
 
 <!-- BODY-BELOW -->
-> **B-0 调度优先**：`repair 模式` 仅给缺失族执行下方 fresh 调用，已有主文档只读；`replan` 四族全部执行 fresh 调用、保留已启动 Sprint 编号与状态。完整缺件/保护/快照规则见 `planning-1.md` Step 2.0，必须传给各子命令；输入未变不取消本次调用。任一族拒绝补件即返回失败，不回落 B-1。
+> **B-0 调度优先**：`repair 模式` 先消费 `planning_state.py scope/begin-repair` 的目标与只读清单，仅给缺失/无效目标所属族执行下方 fresh 调用，已有主文档只读；一个自测文件缺失不授权重生成方案、用例、环境三件套。`replan` 四族全部执行 fresh 调用、保留已启动 Sprint 编号与状态。缺件/保护/快照见 `planning-1.md` Step 2.0，须传给子命令；输入未变不取消本次调用。任一族拒绝补件即失败，不回落 B-1。保留有效产物，重试只调用失败/失效节点，未改变的族及语义维度只读复用。
+>
+> **质量证据**：真实QR结果与parse-handoff共同消费；按planning-7的artifact/hash/dimension/inputs绑定owner。handoff_exit=0不等于全维通过；仅补缺失证据，不重生成。
 
 #### Step 2.4.1：调用 /sprint-requirements
 
-> ★ **`{qr_level}`** = `/version` 的 `--qr-level` 值，**未传为 `critical`**（`--fast` 同样取 `critical`），本 Step 起四个子命令一律原样透传（⛔ 不得因「需求少」自行降档或升档）。
-> 各子命令返回后已自行校验移交清单（`SKILL编排层接入.md` 第三节）；被移交的维度由 Step 2.4.7 统一审计接手。
+> `{qr_level}`原样继承显式version参数；未显式给出时（含fast）取critical。四子命令随后按父授权计算有效档位，不按需求多少擅改。
+> 子命令按共用QR配方核移交清单；已授权移交维度由Step 2.4.7接手。
 
 **fresh 模式**：
 
 ```
-执行：/sprint-requirements {version} --qr-level={qr_level} [--unattended]
+执行：/sprint-requirements {version} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"
 
 该命令会调用 ux-logic-extractor skill 生成需求文档
 输出：docs/requirements/{version}/研发需求/00_索引.md + 01_研发需求.md（命令端 Step 2.4.4 归一 + 生成 00_索引）
@@ -23,7 +25,7 @@
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-requirements {version} --supplement={NN} --qr-level={qr_level} [--unattended]
+执行：/sprint-requirements {version} --supplement={NN} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"
 
 额外 prompt 输入（命令端写入 skill 调用上下文）：
 - 输入变更摘要：docs/requirements/{version}/研发需求/输入变更-{NN}.md（必传，含 PRD 与原型两类变更）
@@ -42,7 +44,7 @@ skill 工作要求（命令端在 prompt 里指明）：
 
 #### Step 2.4.1.5：★ 需求规模档位判定门（P0-5 — 小需求不走大流程，产物按规模伸缩）
 
-**动机**：无论"改一个按钮"还是"新建业务域"，规划期一律产满全套（3~9 册设计 + 全量用例 + 独立分册计划）→ 文档:代码严重失配（实测某版 9.4:1）、规划耗时数小时。故在需求产出后、设计前先判规模档位，把裁剪指令传给后续设计/计划/自测 SKILL。
+**目的**：需求产出后、设计前先判规模，向后续 SKILL 传档位，控制设计分册、计划与用例体量。
 
 **判据（据 Step 2.4.1 产出的研发需求 + 原型 + 需求内 DDL 预判，命令端确定性计算）**：`REQ_COUNT`=研发需求条目数 · `PAGE_COUNT`=涉及页面/原型数 · `HAS_DDL`=是否新建表 · `THIRD_PARTY`=第三方对接**深度**（**四值，⛔ 不是布尔**，取值见下表）。
 
@@ -85,10 +87,7 @@ skill 工作要求（命令端在 prompt 里指明）：
 
 #### Step 2.4.1.6：★ 测试环境与账号前置继承（与 2.4.2/2.4.3 并行，不占串行链）
 
-`01_测试环境与账号.md` 是 `/sprint-aiauto-test` Phase 0.0.5 与 `auto-test-runner` 的
-**机器消费权威**，但它的内容**主体来自"继承上一版 + 本版环境探测"**，与详细设计 / 执行计划的
-产物**零数据依赖**——却被压在串行链最末的 Step 2.4.3.5 里等。代价不是那几分钟，是**测试链路
-在整个规划期内都没有可用的环境信息**：`/sprint-aiauto-test` 此时被唤起只能整批 `block`。
+`01_测试环境与账号.md` 是 `/sprint-aiauto-test` 与 `auto-test-runner` 的机器消费权威。它可先继承历史环境，不必等待详细设计/计划；后续仍由 selftest 校准。
 
 **本步动作（轻量，不调 SKILL）**：
 
@@ -143,7 +142,7 @@ fi
 **fresh 模式**：
 
 ```
-执行：/sprint-design {version} --scale={档位} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
+执行：/sprint-design {version} --scale={档位} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
 
 该命令会调用 dev-logic-architect skill 生成详细设计
 输出（命令端 Step 2.4.4 归一为 00_索引 + 01_/02_/03_）：
@@ -157,7 +156,7 @@ fi
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-design {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
+执行：/sprint-design {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"   # 档位读 baseline versions.{V}.req_scale.tier
 
 额外 prompt 输入：
 - 输入变更摘要（含 PRD + 原型变更）+ 研发需求补充
@@ -185,7 +184,7 @@ fi
 **fresh 模式**：
 
 ```
-执行：/sprint-plan {version} --scale={档位} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
+执行：/sprint-plan {version} --scale={档位} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
 
 该命令会调用 dev-execution-planner skill 生成研发执行计划
 输出：docs/plans/{version}/00_索引.md + 01_研发执行计划.md（命令端 Step 2.4.4 归一 + 生成 00_索引）
@@ -194,7 +193,7 @@ fi
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-plan {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
+执行：/sprint-plan {version} --supplement={NN} --scale={档位} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"   # 档位读 baseline versions.{V}.req_scale.tier
 
 额外 prompt 输入：
 - 输入变更摘要（含 PRD + 原型变更）+ 研发需求补充 + 设计补充（如有）
@@ -224,7 +223,7 @@ python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version}
 **fresh 模式**：
 
 ```
-执行：/sprint-selftest {version} --scale={档位} {selftest_args} --qr-level={qr_level} [--unattended]      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
+执行：/sprint-selftest {version} --scale={档位} {selftest_args} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"      # 档位 = Step 2.4.1.5 判定的 req_scale.tier（S|M|L）
 
 输出：docs/testing/{version}/研发自测/00_索引.md + 01_研发自测方案.md + 02_ 用例…（多用例拆 03_<模块>）+ 01_测试环境与账号.md
 （命令端 Step 2.4.4 对研发自测目录同样 dedup_prefix + gen_index 归一）
@@ -233,32 +232,31 @@ python3 {{AIDP_HOME}}/scripts/prd_presence_table.py --root . --version {version}
 **补充模式**（情况 B-2）：
 
 ```
-执行：/sprint-selftest {version} --supplement={NN} --scale={档位} {selftest_args} --qr-level={qr_level} [--unattended]   # 档位读 baseline versions.{V}.req_scale.tier
+执行：/sprint-selftest {version} --supplement={NN} --scale={档位} {selftest_args} --qr-level={qr_level} [--unattended] --execution-context "$EXECUTION_CONTEXT"   # 档位读 baseline versions.{V}.req_scale.tier
 
 落盘：docs/testing/{version}/研发自测/NN_<业务主题>.md（研发自测用例增量，仅本次变更涉及的功能点；文件名不带“补充”字眼、补充身份记入 00_索引.md）
 ```
 
 **★ 并行编排（仅 fresh 模式）**：自测用例只锚定 REQ，不再等执行计划——
 
-1. **同一条消息**派两个子 Agent，各自读对应命令文件完整执行，只回传紧凑 JSON
-   `{command, status, artifacts, handoff_exit}`（⛔ 不回传产物正文）：
+1. **先登记两个生成节点，再按返回 action 派单**。首次均为 `redone` 时，**同一条消息**派两个子 Agent，各自读对应命令文件完整执行，只回传紧凑 JSON
+   `{command, status, exit_code, artifacts, handoff_exit, qr_result_paths}`（⛔ 不回传产物正文）：
    - 子 Agent ①：`/sprint-plan` 一行同 Step 2.4.3 fresh；
    - 子 Agent ②：`/sprint-selftest` 一行同上方 fresh，`{selftest_args}` **另加 `--plan-ref-mode=deferred`**。
-   `--unattended` 两边都要透传。平台不支持并行子 Agent → 先 2.4.3 后 2.4.3.5 串行，且**不加** `--plan-ref-mode`。
-2. **两边都返回后回填**（全有或全无；计划缺锚点 / Sprint、某条 REQ 没有任何 Task 承接都会拒绝——后者是计划漏任务，正该暴露）：
+   `--unattended`与父execution_context/revision/action/budget两边都透传，子入口不重新grant。平台不支持并行子 Agent → 先 2.4.3 后 2.4.3.5 串行，且**不加** `--plan-ref-mode`。
+   **派单前必读 `{{AIDP_HOME}}/flows/version/planning-3b.md`**：先 start、只派 redone、各支返回即 finish；不能只执行上面的并行调用而漏掉持久生成结果。该片统一定义输入/输出指纹及 force/repair 恢复规则。
+
+2. **两边成功后运行持久回填链**（全有或全无；计划缺锚点 / Sprint、某条 REQ 没有任何 Task 承接都会拒绝——后者是计划漏任务，正该暴露）：
 
    ```bash
-   T_DIR="docs/testing/{version}/研发自测"; MAP="memory/{version}/.plan-refs.json"; EXP="memory/{version}/.plan-refs-export.json"
-   RC2=-; RC3=-; rm -f "$MAP"
-   python3 {{AIDP_HOME}}/skills/dev-execution-planner/scripts/export_plan_refs.py "docs/plans/{version}" --cases-dir "$T_DIR" --out "$MAP" --json >"$EXP"; RC1=$?
-   [ "$RC1" = 0 ] && [ ! -s "$MAP" ] && RC1=skipped   # 一个 Task 都没识别到：exit 0 但不写映射，⚠️ 不是通过
-   if [ "$RC1" = 0 ]; then python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/resolve_plan_refs.py "$T_DIR" --map "$MAP"; RC2=$?; fi
-   if [ "$RC2" = 0 ]; then python3 {{AIDP_HOME}}/skills/dev-manual-testcase/scripts/check_suite_upstream.py "$T_DIR"; RC3=$?; fi
-   echo "plan-refs: export=$RC1 resolve=$RC2 upstream=$RC3（export 明细 $EXP）"
+   T_DIR="docs/testing/{version}/研发自测"
+   python3 {{AIDP_HOME}}/scripts/planning_state.py --root . --version {version} refs --aidp-home {{AIDP_HOME}}
    ```
 
-   三者全 0 才继续（`-` = 前一步没过、本步未跑）。`export≠0`（含 `skipped`）→ 回调 `/sprint-plan` 修计划，
-   把 `$EXP` 的 `issues[]` 原样作为补救要点：fresh 模式的计划是本轮新生成的，不存在「存量计划」，
+
+
+   `refs` exit 0 且 verify pass 才继续。`export≠0`（含 `skipped`）→ 回调 `/sprint-plan` 修计划，
+   把 `.planning-results/map.json` 内原脚本的 `issues[]` 作为补救要点：fresh 模式的计划是本轮新生成的，不存在「存量计划」，
    `severity=Important`（整份分册无锚点）**同样必修**——SKILL 自身 QR 对只有 Important 判通过，不点明就会原样再交一次、回调空转。
    `resolve≠0` → 先看是否计划漏了 REQ 的 Task（回调 `/sprint-plan`），
    否则回调 `/sprint-selftest`；交互式报出后停下，无人值守按 Step 2.4.7 的 block 处置交熔断。⛔ 不得手工改占位符过门。

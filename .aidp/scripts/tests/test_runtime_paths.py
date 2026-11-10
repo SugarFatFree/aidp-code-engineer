@@ -82,6 +82,42 @@ def test_real_source_renders_for_both_runtime_homes():
         shutil.rmtree(base, ignore_errors=True)
 
 
+def test_path_semantics_match_renderer():
+    # 共用边界样本，防止独立分发的守卫与脚手架渲染器再次分叉。
+    tests = REPO / "skills/aidp-code-engineer/scripts/tests"
+    sys.path.insert(0, str(tests))
+    from test_runtime_layout import R, RuntimePathSemanticsTest
+    checker = load_script("check_runtime_paths.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        relative = ".aidp/reference/子Agent必读.md"
+        for text, allowed in [(s, True) for s in RuntimePathSemanticsTest.ALLOWED] + [
+                (s, False) for s in RuntimePathSemanticsTest.REJECTED]:
+            write(root, relative, text)
+            findings = checker.scan(root)
+            check("路径语义一致：" + text.strip(), bool(findings) != allowed
+                  and list(checker.old_runtime_findings(text)) == list(R.old_runtime_findings(text)))
+            if not allowed and findings:
+                hit = findings[0]
+                check("诊断含文件/行号/片段/理由",
+                      hit.get("path") == relative and hit.get("line", 0) > 0
+                      and bool(hit.get("value")) and hit["value"] in text
+                      and bool(hit.get("reason")))
+        write(root, relative, "# 示例\npython3 .aidp/scripts/tool.py\n")
+        proc = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root)],
+                              capture_output=True, text=True)
+        check("普通CLI显示文件、行号、片段及理由",
+              proc.returncode == 1 and relative + ":2" in proc.stdout
+              and ".aidp/scripts/tool.py" in proc.stdout and "旧运行根" in proc.stdout)
+        for nested in (".claude/aidp", ".agents/aidp/scripts/x.py"):
+            write(root, relative, "Read " + nested + "\n")
+            check("保留旧嵌套运行包检测：" + nested,
+                  any(x["kind"] == "stale-nested-runtime-path" for x in checker.scan(root)))
+        for similar in (".claude/aidp-tools/scripts/x.py", ".agents/aidp_cache/x"):
+            write(root, relative, "Read " + similar + "\n")
+            check("嵌套目录按完整边界：" + similar, not checker.scan(root))
+
+
 def test_user_visible_messages(root):
     emit = load_script("emit-report.py")
     try:
@@ -208,6 +244,7 @@ def main():
                                         for x in payload.get("sources", [])))
         shutil.rmtree(root / ".agents")
 
+        test_path_semantics_match_renderer()
         test_user_visible_messages(root)
         test_real_source_renders_for_both_runtime_homes()
 

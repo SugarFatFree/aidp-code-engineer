@@ -7,6 +7,7 @@ import argparse
 import ast
 import json
 import os
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -34,9 +35,58 @@ TEXT_SUFFIXES = {
     ".cfg", ".ini", ".sql", ".vue", ".xml", ".env",
 }
 LEGACY_AIDP_DIR = ".aidp"
-OLD_RUNTIME_RE = re.compile(
-    r"(?<!memory/)(?<![\w{])" + re.escape(LEGACY_AIDP_DIR) + r"/"
-)
+# 与脚手架 runtime_layout.py 保持相同分类；跨分发边界由共用样本回归约束。
+_OLD_RUNTIME_RE = re.compile(
+    r"(?<![\w./~:\\-])(?:[A-Za-z]:)?(?:/?(?:[\w{}<>~.-]+/)*)\.aidp/"
+    r"[^\s`\"'<>()[\]{},;:!?，。；：！？|&]*")
+_HISTORY_RE = re.compile(r"旧路径|历史路径|仅供说明|曾使用")
+_ACTIVE_PATH_RE = re.compile(
+    r"\b(?:read|run|python\d*|bash|sh|source|node|cat|cd|echo|printf|exec|eval)\b|读取|执行|调用|运行",
+    re.IGNORECASE)
+
+
+def old_runtime_findings(text: str):
+    """按完整路径分段识别旧根；历史说明只豁免局部、独立的 inline-code 引用。"""
+    fence = None
+    executable = False
+    for line_no, line in enumerate(text.splitlines(), 1):
+        marker = re.match(r"^\s*(`{3,}|~{3,})(.*)$", line)
+        if marker:
+            delimiter, language = marker.groups()
+            if fence is None:
+                fence = delimiter
+                executable = language.strip().lower() not in {"text", "plain", "markdown", "md"}
+            elif delimiter[0] == fence[0] and len(delimiter) >= len(fence):
+                fence = None
+                executable = False
+            continue
+        for match in _OLD_RUNTIME_RE.finditer(line):
+            value = match.group(0)
+            normalized = posixpath.normpath(value)
+            parts = normalized.split("/")
+            if ".aidp" not in parts:
+                continue
+            index = parts.index(".aidp")
+            child = parts[index + 1] if index + 1 < len(parts) else ""
+            # 先按规范化后的完整目录段确认数据落点，子目录同名不改变其归属。
+            if index > 0 and parts[index - 1] in {"docs", "memory"}:
+                continue
+            # 其他相对嵌入路径只允许非契约数据；不明绝对根仍保守拒绝。
+            if index > 0 and child not in RUNTIME_DIRS and child != "AIDP-AGENTS.md" \
+                    and not re.match(r"(?:/|[A-Za-z]:/)", normalized):
+                continue
+            start, end = match.span()
+            inline = start > 0 and line[start - 1] == "`" and line[end:end + 1] == "`"
+            if inline and not executable:
+                before = re.split(r"[。；;！？!?，,`]|&&|\|\|", line[:start - 1])[-1]
+                after = re.split(r"[。；;！？!?，,`]|&&|\|\|", line[end + 1:])[0]
+                context = before + after
+                if _HISTORY_RE.search(context) and not _ACTIVE_PATH_RE.search(context):
+                    continue
+            yield {"line": line_no, "value": value,
+                   "reason": "引用旧运行根，且不能确认为非执行历史说明；运行契约应使用 AIDP_HOME"}
+
+
 # 运行根降层（`.claude/aidp` → `.claude`、`.agents/aidp` → `.agents`）之后，嵌套形态只剩一个
 # 合法用途：认出**未迁移**存量项目的旧布局（`aidp_runtime.py` 的兼容分支 + 它的回归用例）。
 # 除此之外，任何契约正文或下发文档里再写 `.claude/aidp` / `.agents/aidp` 都是改造残留——
@@ -262,19 +312,15 @@ def scan(root: Path, selected: list[str] | None = None, rendered: bool = False) 
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        rel = path.relative_to(root).as_posix()
+        findings.extend({"kind": "hardcoded-runtime-path", "path": rel, **hit}
+                        for hit in old_runtime_findings(text))
         for lineno, line in enumerate(text.splitlines(), 1):
-            rel = path.relative_to(root).as_posix()
             state_home = STATE_HOME_RE.search(line)
             if state_home:
                 findings.append({
                     "kind": "runtime-state-home-confusion", "path": rel,
                     "line": lineno, "value": state_home.group(0),
-                })
-            old_hits = list(OLD_RUNTIME_RE.finditer(line))
-            if old_hits:
-                findings.append({
-                    "kind": "hardcoded-runtime-path", "path": rel,
-                    "line": lineno, "value": old_hits[0].group(0),
                 })
             nested = NESTED_RUNTIME_RE.search(line)
             if nested:
@@ -376,7 +422,8 @@ def main(argv=None) -> int:
         print(json.dumps({"ok": not findings, "findings": findings}, ensure_ascii=False, indent=2))
     elif findings:
         for item in findings:
-            print(f"[ERROR] {item['kind']} {item['path']}:{item['line']} {item['value']}")
+            reason = f"；{item['reason']}" if item.get("reason") else ""
+            print(f"[ERROR] {item['kind']} {item['path']}:{item['line']} {item['value']}{reason}")
     else:
         print("[OK] 运行路径契约通过")
     return 1 if findings else 0

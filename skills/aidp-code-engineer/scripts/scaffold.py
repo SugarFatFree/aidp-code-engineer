@@ -25,6 +25,8 @@ Agent 判定：项目根已有 `.claude/` `.codex/` `.dsh/` 之一或多者 → 
 退出码：0 完成（可能留有语义改写待办，见输出 `pending`）· 2 参数或环境错误
 """
 import argparse
+import errno
+from contextlib import contextmanager
 import json
 import os
 import re
@@ -116,8 +118,6 @@ class Report:
 
     def act(self, op, path, why=""):
         self.actions.append({"op": op, "path": path, "why": why})
-        if self.journal is not None and op in {"create", "install", "update", "merge", "render"}:
-            self.journal.record(path)
 
     def warn(self, msg):
         self.warnings.append(msg)
@@ -136,16 +136,21 @@ class Report:
 def write_if_diff(dst: Path, data: bytes) -> bool:
     if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == data:
         return False
-    if dst.is_symlink():
-        dst.unlink()
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(data)
-    if dst.suffix in EXEC_SUFFIX:
-        try:
+    with L.file_mutation(dst):
+        if dst.is_symlink():
+            dst.unlink()
+        _mkdir(dst.parent, parents=True, exist_ok=True)
+        dst.write_bytes(data)
+        if dst.suffix in EXEC_SUFFIX:
             dst.chmod(0o755)
-        except OSError:
-            pass
     return True
+
+
+def _mkdir(path: Path, **kwargs):
+    if path.is_dir():
+        return
+    with L.file_mutation(path):
+        path.mkdir(**kwargs)
 
 
 def rel_of(root: Path, p: Path) -> str:
@@ -241,8 +246,11 @@ def detect(root: Path) -> dict:
     env = os.environ.get("AIDP_AGENT", "").strip()
     cfg = read_project_cfg(root)
     policy = aidp_config.branch_policy(root)
+    recovery = native_recovery_evidence(root)
     return {
         "root": str(root),
+        "recovery_required": bool(recovery),
+        "recovery": recovery,
         "mode": mode,
         "reason": reason,
         "project": cfg.get("name") or root.name,
@@ -314,7 +322,7 @@ class Backup:
         dst = self._ensure_dir() / rel
         if dst.exists():
             return
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        _mkdir(dst.parent, parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         if first:
             self.rep.act("backup", self.dir.name, "覆盖前逐文件备份")
@@ -327,7 +335,7 @@ class Backup:
         first = self.dir is None
         dst = self._ensure_dir() / rel
         if not dst.exists():
-            dst.parent.mkdir(parents=True, exist_ok=True)
+            _mkdir(dst.parent, parents=True, exist_ok=True)
             shutil.copytree(src, dst, symlinks=True)
         if first:
             self.rep.act("backup", self.dir.name, "删除前目录备份")
@@ -853,7 +861,7 @@ def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claud
     dst = root / "memory/aidp-config.yaml"
     existed = dst.exists()
     if not existed:
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        _mkdir(dst.parent, parents=True, exist_ok=True)
         L.write_text_lf(dst, tpl)
         rep.act("create", "memory/aidp-config.yaml")
     else:
@@ -885,7 +893,8 @@ def save_branch_policy(root: Path, policy, rep: Report, bk: "Backup", backup=Tru
     if policy is not None and aidp_config.read_branch_policy(root) != policy:
         if backup:
             bk.save("memory/aidp-config.yaml")
-        aidp_config.set_scalar(root, "development.branch_policy", policy)
+        with L.file_mutation(root / "memory/aidp-config.yaml"):
+            aidp_config.set_scalar(root, "development.branch_policy", policy)
         rep.act("update", "memory/aidp-config.yaml", "保存显式开发分支偏好：" + policy)
 
 
@@ -904,7 +913,7 @@ def sync_memory(root: Path, ctx: dict, was_aidp: bool, rep: Report, bk: "Backup"
             previous_template = L.sha256(delivered) if delivered is not None else None
         template_changed = previous_template != L.sha256(template)
         if not dst.exists():
-            dst.parent.mkdir(parents=True, exist_ok=True)
+            _mkdir(dst.parent, parents=True, exist_ok=True)
             L.write_text_lf(dst, fresh)
             L.uf_record(root, rel, dst.read_bytes())
             L.uf_record(root, template_label, template)
@@ -974,8 +983,9 @@ def sync_root_files(root: Path, ctx: dict, agents, rep: Report, bk: "Backup"):
                 rep.act("update", "README.md", "仅归一调度命令与运行目录示例")
     env = root / "env/.env"
     if not env.exists():
-        env.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(L.ASSETS / "root/env.tpl", env)
+        _mkdir(env.parent, parents=True, exist_ok=True)
+        with L.file_mutation(env):
+            shutil.copyfile(L.ASSETS / "root/env.tpl", env)
         rep.act("create", "env/.env")
     gi = root / ".gitignore"
     have = gi.read_text(encoding="utf-8") if gi.exists() else None
@@ -1108,13 +1118,15 @@ def manage_gitkeep(root: Path, dirs, rep: Report):
     for rel in dirs:
         d = root / rel
         if d.is_dir() and not any(d.iterdir()):
-            (d / ".gitkeep").touch()
+            with L.file_mutation(d / ".gitkeep"):
+                (d / ".gitkeep").touch()
     for rel in dirs:
         d = root / rel
         while d != root and d.is_dir():
             gk = d / ".gitkeep"
             if gk.exists() and any(p.name != ".gitkeep" for p in d.iterdir()):
-                gk.unlink()
+                with L.file_mutation(gk):
+                    gk.unlink()
             d = d.parent
 
 
@@ -1133,7 +1145,7 @@ def _dsh_run(command, timeout: int):
     try:
         p = subprocess.run(list(command), capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=timeout,
-                           env=L.child_env(), **L.TEXT_IO)
+                           env=_native_child_env(), **L.TEXT_IO)
     except subprocess.TimeoutExpired as exc:
         return None, "", _bounded_detail(exc.stderr or exc.stdout), f"超时 {timeout} 秒"
     except OSError as exc:
@@ -1277,6 +1289,13 @@ def install_dsh_command_plugin(mode: str, agents, rep: Report):
     return "installed"
 
 
+def _native_child_env():
+    env = L.child_env()
+    # 事务子进程无需留下安装计划之外的字节码；已有业务缓存不参与回退。
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
 def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> dict:
     home = runtime_home_for(agents)
     script = root / home / "scripts/agent_sync.py"
@@ -1289,7 +1308,11 @@ def run_agent_sync(root: Path, agents, mode: str, rep: Report, strict=False) -> 
         rep.warn(message)
         return {}
     cmd = [sys.executable, str(script), "--root", str(root), "--agents", ",".join(agents), "--mode", mode]
-    p = subprocess.run(cmd, capture_output=True, text=True, env=L.child_env(), **L.TEXT_IO)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, env=_native_child_env(), **L.TEXT_IO)
+    finally:
+        if rep.journal is not None:
+            rep.journal.finish(getattr(rep.journal, "adapter_paths", ()))
     try:
         data = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
     except ValueError:
@@ -1548,7 +1571,8 @@ def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
         if os.path.lexists(target) and (target.is_symlink()
                                         or not (marker.is_file() or _is_self_skill_target(target))):
             raise ValueError(f"脚手架 SKILL 目标是用户内容，拒绝覆盖：{target}")
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _mkdir(target.parent, parents=True, exist_ok=True)
+        replace = rep.journal.replace if rep.journal is not None else os.replace
         with tempfile.TemporaryDirectory(prefix=".aidp-skill-stage-", dir=target.parent) as td:
             stage = Path(td) / L.SKILL_NAME
             shutil.copytree(L.SKILL_DIR, stage, symlinks=True,
@@ -1577,21 +1601,14 @@ def _install_native_skill(root: Path, agents: list, rep: Report, bk: Backup):
                 saved = bk.save_tree(f"{rel}/{L.SKILL_NAME}")
                 if saved is None or _skill_tree_state(saved) != existing:
                     raise RuntimeError(f"脚手架 SKILL 完整备份失败：{target}")
-                os.replace(target, previous)
+                replace(target, previous)
             try:
-                os.replace(stage, target)
+                replace(stage, target)
             except Exception:
                 if previous.exists() and not os.path.lexists(target):
-                    os.replace(previous, target)
+                    replace(previous, target)
                 raise
             rep.act("install", f"{rel}/{L.SKILL_NAME}/", "脚手架 SKILL 受管刷新")
-
-
-def _remove_transaction_path(path: Path):
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-    elif path.is_dir():
-        shutil.rmtree(path)
 
 
 def _preflight_native_project_paths(root: Path, version: str, user: str):
@@ -1630,96 +1647,227 @@ def _preflight_native_project_paths(root: Path, version: str, user: str):
 
 
 class _NativeInstallJournal:
+    """仅保护实际写集。目录只记自身；只有整项移动/删除才展开那一项。"""
+
     def __init__(self, root: Path, managed: set):
         self.root, self.managed = root, managed
-        self.initial = self._paths()
-        self.created = set()
+        self.backup = Path(tempfile.mkdtemp(prefix=_recovery_prefix(root), dir=root.parent))
+        self.before, self.after = {}, {}
+        self.observation_errors = []
+        self.replace_error = None
+        (self.backup / "recovery.json").write_text(json.dumps({
+            "root": str(root.resolve()), "status": "in-progress", "recovery_required": True,
+            "unrestored": [], "entries": []}), encoding="utf-8")
         self.migration_evidence = None
         self.migration_stage = "backup"
 
-    def _paths(self):
-        paths = set()
-        for name in self.managed:
-            base = self.root / name
-            if not os.path.lexists(base):
-                continue
-            paths.add(Path(name))
-            if base.is_dir() and not base.is_symlink():
-                paths.update(path.relative_to(self.root) for path in base.rglob("*"))
-        return paths
-
-    def expect(self, path):
-        target = Path(path)
-        if not target.is_absolute():
-            target = self.root / target
+    def _target(self, path):
+        path = Path(path)
+        target = path if path.is_absolute() else self.root / path
         try:
             relative = target.relative_to(self.root)
-        except ValueError as exc:
-            raise ValueError(f"安装动作越出项目根：{target}") from exc
+        except ValueError:
+            return None
         if not relative.parts or relative.parts[0] not in self.managed:
-            return
-        self.created.update(parent for parent in (relative, *relative.parents)
-                            if parent.parts and parent not in self.initial)
+            return None
+        if any(part.startswith(".aidp-skill-stage-") for part in relative.parts):
+            return None
+        return target
 
-    def record(self, path):
-        target = Path(path)
-        if not target.is_absolute():
-            target = self.root / target
-        if os.path.lexists(target):
-            self.expect(target)
+    @staticmethod
+    def state(path):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return None
+        mode = stat.S_IMODE(info.st_mode)
+        if stat.S_ISLNK(info.st_mode):
+            return ("link", mode, os.readlink(path))
+        if stat.S_ISDIR(info.st_mode):
+            return ("dir", mode)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"事务目标不是普通文件：{path}")
+        return ("file", mode, L.sha256(path.read_bytes()))
+
+    def _preflight(self, target):
+        parent = target.parent
+        while not parent.exists():
+            parent = parent.parent
+        if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+            raise PermissionError(f"事务目标父目录不可写：{parent}")
+        if target.is_file() and not target.is_symlink():
+            if target.stat().st_nlink > 1:
+                raise ValueError(f"事务目标是硬链接：{target}")
+            if not os.access(target, os.W_OK):
+                raise PermissionError(f"事务目标不可写：{target}")
+
+    def expect(self, path):
+        target = self._target(path)
+        if target is None:
+            return
+        relative = target.relative_to(self.root)
+        self._preflight(target)
+        # 只沿父链登记缺失目录，不遍历任何业务目录。
+        for parent in reversed(target.parents):
+            if parent == self.root or self.root not in parent.parents:
+                continue
+            if not os.path.lexists(parent):
+                self.before.setdefault(parent.relative_to(self.root), None)
+        if relative in self.before:
+            return
+        previous = self.state(target)
+        if previous is not None and previous[0] != "dir":
+            saved = self.backup / relative
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, saved, follow_symlinks=False)
+        self.before[relative] = previous
 
     def expect_tree(self, destination: Path, source: Path, include=None):
-        """按源树推算「本次会创建哪些路径」，供失败时整体回滚。
-
-        ⛔ 必须与写入端同一套命名：源若是脚手架 bundle，里面的 `SKILL.md` 是遮名的 `SKILL.md.in`，
-        而 `runtime_layout.render_tree` 落盘时会还原成 `SKILL.md`。这里不还原就会登记一个**不存在的**
-        路径、同时漏掉真正被创建的那个 —— 回滚时它留在原地，失败后的运行包**删不干净**
-        （回归 `test_downstream_portability::test_failure_during_atomic_replace_rolls_back_completely`）。
-        """
         self.expect(destination)
         for path in source.rglob("*"):
             relative = path.relative_to(source)
             if include is None or include(relative):
                 self.expect(destination / L.bundle_unmask(relative.as_posix()))
 
-    def rollback_created(self):
-        for relative in sorted(self.created, key=lambda path: len(path.parts), reverse=True):
-            path = self.root / relative
-            if path.is_symlink() or path.is_file():
-                path.unlink()
-            elif path.is_dir():
-                try:
-                    path.rmdir()
-                except OSError:
-                    pass  # 并发加入的用户文件仍在该目录中。
+    def capture_tree(self, target):
+        self.expect(target)
+        if target.is_dir() and not target.is_symlink():
+            for path in target.rglob("*"):
+                self.expect(path)
+
+    def finish(self, paths):
+        for relative in paths:
+            try:
+                self.after[relative] = self.state(self.root / relative)
+            except Exception as exc:
+                self.after[relative] = ("unreadable",)
+                self.observation_errors.append({"path": relative.as_posix(), "error": str(exc)})
+
+    @contextmanager
+    def mutation(self, path):
+        target = self._target(path)
+        if target is None:
+            yield
+            return
+        self.expect(target)
+        relative = target.relative_to(self.root)
+        paths = {relative, *(p for p in relative.parents if p in self.before)}
+        try:
+            yield
+        finally:
+            self.finish(paths)
+
+    def replace(self, source, destination):
+        source, destination = Path(source), Path(destination)
+        touched = set()
+        for path in (source, destination):
+            if self._target(path) is not None:
+                self.capture_tree(path)
+                relative = path.relative_to(self.root)
+                touched.update(p for p in self.before if p == relative or relative in p.parents
+                               or p in relative.parents)
+        if self._target(destination) is not None and source.is_dir():
+            self.expect_tree(destination, source)
+            relative = destination.relative_to(self.root)
+            touched.update(p for p in self.before if p == relative or relative in p.parents)
+        try:
+            os.replace(source, destination)
+        except BaseException as exc:
+            if self.replace_error is None:
+                self.replace_error = exc
+            raise
+        finally:
+            self.finish(touched)
+
+    def remove(self, target, operation):
+        self.capture_tree(target)
+        relative = target.relative_to(self.root)
+        paths = {p for p in self.before if p == relative or relative in p.parents}
+        try:
+            operation(target)
+        finally:
+            self.finish(paths)
+
+    def rollback(self, original_error, secondary_error=None):
+        result = {"status": "rolled-back", "root": str(self.root.resolve()),
+                  "recovery_required": False, "original_error": str(original_error),
+                  "restored": [], "unrestored": [], "preserved": [], "failures": [],
+                  "snapshot": str(self.backup),
+                  "secondary_errors": [str(secondary_error)] if secondary_error is not None else []}
+        # 缺失的原目录先建；其余按深度回退，新目录最后 rmdir，绝不递归删除并发文件。
+        def restore_order(path):
+            previous = self.before[path]
+            if previous is not None and previous[0] == "dir":
+                return (0, len(path.parts))
+            return (2 if previous is None else 1, -len(path.parts))
+
+        order = sorted(self.after, key=restore_order)
+        for relative in order:
+            target, before, after = self.root / relative, self.before[relative], self.after[relative]
+            label = relative.as_posix()
+            try:
+                current = self.state(target)
+                if current == before:
+                    continue
+                if current != after:
+                    raise RuntimeError("事务写入后发生并发修改，保留当前内容")
+                if before is None:
+                    if current is not None and current[0] == "dir":
+                        try:
+                            target.rmdir()
+                        except OSError as exc:
+                            if exc.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                                raise
+                            result["preserved"].append(label)
+                            continue
+                    elif current is not None:
+                        target.unlink()
+                elif before[0] == "dir":
+                    target.mkdir(parents=True, exist_ok=True)
+                    if stat.S_IMODE(target.stat().st_mode) != before[1]:
+                        target.chmod(before[1])
+                else:
+                    _restore_native_snapshot(self.backup / relative, target)
+                result["restored"].append(label)
+            except Exception as exc:
+                result["unrestored"].append(label)
+                result["failures"].append({"path": label, "error": str(exc)})
+        if result["failures"]:
+            result["status"] = "rollback-incomplete"
+            result["recovery_required"] = True
+            result["entries"] = [{"path": p.as_posix(), "before": self.before[p], "after": self.after[p]}
+                                 for p in self.after]
+            try:
+                pending = self.backup / "recovery.json.tmp"
+                pending.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                os.replace(pending, self.backup / "recovery.json")
+            except OSError as exc:
+                result["failures"].append({"path": "recovery.json", "error": str(exc)})
+        else:
+            try:
+                shutil.rmtree(self.backup)
+                result["snapshot"] = None
+            except OSError as exc:
+                result["failures"].append({"path": str(self.backup), "error": str(exc)})
+        return result
 
 
 def _restore_native_snapshot(original: Path, target: Path):
-    if original.is_symlink() or original.is_file():
-        if os.path.lexists(target):
-            _remove_transaction_path(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(original, target, follow_symlinks=False)
-        return
-    if os.path.lexists(target) and (not target.is_dir() or target.is_symlink()):
-        _remove_transaction_path(target)
-    target.mkdir(parents=True, exist_ok=True)
-    directories = [original] + [path for path in original.rglob("*")
-                                if path.is_dir() and not path.is_symlink()]
-    for directory in sorted(directories, key=lambda path: len(path.parts)):
-        destination = target / directory.relative_to(original)
-        if os.path.lexists(destination) and (not destination.is_dir() or destination.is_symlink()):
-            _remove_transaction_path(destination)
-        destination.mkdir(parents=True, exist_ok=True)
-    for source in original.rglob("*"):
-        if source.is_dir() and not source.is_symlink():
-            continue
-        destination = target / source.relative_to(original)
-        if os.path.lexists(destination):
-            _remove_transaction_path(destination)
-        shutil.copy2(source, destination, follow_symlinks=False)
-    for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
-        shutil.copystat(directory, target / directory.relative_to(original))
+    """单文件恢复先写同目录临时文件，再替换；失败不预删目标。"""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".aidp-restore-", dir=target.parent)
+    os.close(fd)
+    staged = Path(name)
+    try:
+        if original.is_symlink():
+            staged.unlink()
+            staged.symlink_to(os.readlink(original))
+        else:
+            shutil.copy2(original, staged)
+        os.replace(staged, target)
+    finally:
+        if os.path.lexists(staged):
+            staged.unlink()
 
 
 def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, agents: list):
@@ -1727,18 +1875,21 @@ def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, age
     cmd = [sys.executable, str(root / home / "scripts/agent_sync.py"), "--root", str(root),
            "--agents", ",".join(agents), "--mode", "copy", "--check"]
     process = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                             env=L.child_env(), **L.TEXT_IO)
+                             env=_native_child_env(), **L.TEXT_IO)
     try:
         planned = json.loads(process.stdout.strip().splitlines()[-1])
     except (IndexError, ValueError) as exc:
         raise RuntimeError(f"Agent 入口预登记失败：{process.stderr.strip()}") from exc
     if process.returncode not in (0, 1):
         raise RuntimeError(f"Agent 入口预登记失败：{planned.get('error') or process.stderr.strip()}")
+    journal.adapter_paths = set()
+    destinations = []
     for action in planned.get("actions", []):
-        if action.get("op") not in {"copy", "write"} or not action.get("path"):
+        if action.get("op") not in {"copy", "write", "remove"} or not action.get("path"):
             continue
         destination = root / action["path"]
-        journal.expect(destination)
+        destinations.append(destination.relative_to(root))
+        journal.capture_tree(destination)
         if action["op"] != "copy":
             continue
         source_name = action.get("from", "")
@@ -1754,10 +1905,57 @@ def _expect_agent_adapter_writes(journal: _NativeInstallJournal, root: Path, age
             journal.expect_tree(destination, source, include=lambda path:
                                 "__pycache__" not in path.parts and path.suffix != ".pyc")
             journal.expect(destination / agent_adapter.GENERATED_FILE)
+    journal.adapter_paths = {p for p in journal.before for destination in destinations
+                             if p == destination or destination in p.parents or p in destination.parents}
+
+
+def _recovery_prefix(root: Path) -> str:
+    identity = L.sha256(os.fsencode(root.resolve()))[:16]
+    return f"aidp-native-recovery-{identity}-"
+
+
+def native_recovery_evidence(root: Path) -> list:
+    """只读查询本项目未恢复项；按写前指纹验证手工恢复，不要求删除快照。"""
+    root = Path(root).resolve()
+    evidence = []
+    for directory in root.parent.glob(_recovery_prefix(root) + "*"):
+        manifest = directory / "recovery.json"
+        try:
+            value = json.loads(manifest.read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or value.get("root") != str(root):
+                raise ValueError("恢复清单项目标识不匹配")
+            if not value.get("recovery_required"):
+                continue
+            if value.get("status") != "rollback-incomplete":
+                evidence.append({**value, "manifest": str(manifest)})
+                continue
+            originals = {entry["path"]: entry["before"] for entry in value.get("entries", [])}
+            unresolved = []
+            for relative in value["unrestored"]:
+                path = Path(relative)
+                if path.is_absolute() or ".." in path.parts:
+                    raise ValueError("恢复路径越出项目")
+                current = _NativeInstallJournal.state(root / path)
+                if relative not in originals or (list(current) if current is not None else None) != originals[relative]:
+                    unresolved.append(relative)
+            if unresolved:
+                evidence.append({**value, "manifest": str(manifest), "unrestored": unresolved})
+        except FileNotFoundError:
+            # 尚在执行的事务还没有失败清单。
+            continue
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            evidence.append({"manifest": str(manifest), "root": str(root),
+                             "status": "recovery-evidence-unreadable", "recovery_required": True,
+                             "unrestored": [], "error": str(exc)})
+    return evidence
 
 
 def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
                 migrate_legacy: bool = False) -> dict:
+    recovery = native_recovery_evidence(root)
+    if recovery:
+        return {"status": "blocked", "reason": "recovery-required", "recovery_required": True,
+                "recovery": recovery}
     _native_namespaces(root, agents)
     if migrate_legacy and os.path.lexists(root / MIGRATION_FAILURE_LEDGER) \
             and migration_failure_evidence(root) is None:
@@ -1774,36 +1972,34 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
     managed.update(Path(rel).parts[0] for rel in L.skeleton_dirs(root, version, user)
                    if rel and not rel.startswith(".aidp/"))
     journal = _NativeInstallJournal(root, managed)
-    with tempfile.TemporaryDirectory(prefix="aidp-native-rollback-", dir=root.parent) as temp:
-        backup = Path(temp)
-        saved = set()
-        for name in managed:
-            original = root / name
-            if not os.path.lexists(original):
-                continue
-            if original.is_dir() and not original.is_symlink():
-                shutil.copytree(original, backup / name, symlinks=True)
-            elif original.is_symlink():
-                (backup / name).symlink_to(os.readlink(original))
-            else:
-                shutil.copy2(original, backup / name)
-            saved.add(name)
-        try:
-            return _run_native_impl(root, a, mode, agents, agent_source, journal,
-                                    migrate_legacy=migrate_legacy)
-        except BaseException as exc:
-            journal.rollback_created()
-            for name in saved:
-                if name == LEGACY_AIDP_DIR and isinstance(exc, LegacyChangedDuringMigration):
-                    continue
-                _restore_native_snapshot(backup / name, root / name)
-            if (migrate_legacy and journal.migration_evidence is not None
-                    and not isinstance(exc, LegacyChangedDuringMigration)
-                    and isinstance(exc, Exception)):
-                evidence = journal.migration_evidence
+    token = L.FILE_MUTATION.set(journal.mutation)
+    try:
+        result = _run_native_impl(root, a, mode, agents, agent_source, journal,
+                                  migrate_legacy=migrate_legacy)
+        if journal.observation_errors:
+            raise RuntimeError("安装写入后无法确认状态：" + str(journal.observation_errors))
+    except BaseException as failure:
+        L.FILE_MUTATION.reset(token)
+        exc = journal.replace_error if journal.replace_error is not None else failure
+        recovery = journal.rollback(exc, failure if failure is not exc else None)
+        exc.rollback = recovery
+        if (migrate_legacy and journal.migration_evidence is not None
+                and not isinstance(exc, LegacyChangedDuringMigration)
+                and isinstance(exc, Exception)):
+            evidence = journal.migration_evidence
+            try:
                 if _legacy_state_digest(root / LEGACY_AIDP_DIR) == evidence["legacy_digest"]:
                     _write_migration_failure(root, evidence, journal.migration_stage, exc)
-            raise
+            except Exception as ledger_error:
+                recovery["failures"].append({"path": MIGRATION_FAILURE_LEDGER,
+                                             "error": str(ledger_error)})
+        if exc is not failure:
+            raise exc from failure
+        raise
+    else:
+        L.FILE_MUTATION.reset(token)
+        shutil.rmtree(journal.backup)
+        return result
 
 
 def diagnose_notify_config(root: Path, home: str, rep: Report) -> dict:
@@ -1812,7 +2008,7 @@ def diagnose_notify_config(root: Path, home: str, rep: Report) -> dict:
     try:
         proc = subprocess.run([sys.executable, str(script), "--repo-root", str(root), "--check-config", "--json"],
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20,
-                              env=L.child_env(), **L.TEXT_IO)
+                              env=_native_child_env(), **L.TEXT_IO)
         value = json.loads(proc.stdout)
         if proc.returncode not in (0, 3) or not isinstance(value, dict) or "ready" not in value:
             raise ValueError("通知诊断未返回可用结构")
@@ -1836,7 +2032,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     if legacy.is_symlink():
         if legacy.exists():
             raise ValueError(f"旧运行目录是 symlink，拒绝跟随：{legacy}")
-        legacy.unlink()
+        with L.file_mutation(legacy):
+            legacy.unlink()
         rep.act("remove", ".aidp", "清理悬空旧链接")
     version = a.version or guess_version(root) or "V0.1.0"
     user = a.user or vcs.developer_identity(root)
@@ -1916,9 +2113,6 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 raise RuntimeError(f"双包用户文件冲突: {relative}")
         if overlays[first] != overlays[second]:
             overlay_updates.update((first, second))
-            for home in (first, second):
-                for relative in overlays[first].keys() | overlays[second].keys():
-                    journal.expect(root / home / relative)
     journal.migration_stage = "render-runtime"
     # ⛔ 快照必须在安装前取：`templates/` 是受管契约，安装后模板位已是新版、再比就分不出
     #    「用户改过」与「版本升级」。
@@ -1947,11 +2141,6 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                         continue
                     rep.note(f"{home}：同版本下 {len(stale)} 个脚本与 bundle 不同，按字节覆盖下发"
                              f"（{', '.join(stale[:5])}{' …' if len(stale) > 5 else ''}）")
-        journal.expect_tree(dest, source, include=lambda path:
-                            path.parts[0] in runtime_layout.RUNTIME_DIRS
-                            and not runtime_layout._excluded(path.as_posix()))
-        journal.expect(dest / runtime_layout.RUNTIME_MANIFEST)
-        journal.expect(dest.parent / ".aidp-runtime.lock")
         def backup_runtime(_destination, runtime_home=home):
             saved = bk.save_tree(runtime_home)
             if saved is not None:
@@ -1983,8 +2172,12 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 if _now != _sha:
                     rep.note_overwrite(_rel)
 
+        for directory in (dest, *(dest / name for name in runtime_layout.RUNTIME_DIRS)):
+            if not directory.exists():
+                journal.expect(directory)
         runtime_layout.render_runtime(source, dest, home, scaffold_raw, kind,
-                                      backup_callback=backup_runtime, preserve_gated=preserve_gated)
+                                      backup_callback=backup_runtime, preserve_gated=preserve_gated,
+                                      replace_func=journal.replace)
         rep.act("install", home + "/", "Agent 原生运行包")
         if not preserve_gated:
             fillable_homes.append(home)
@@ -2007,49 +2200,30 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     for ag in agents:
         marker = root / MARKER_DIRS[ag]
         if not marker.is_dir():
-            marker.mkdir(parents=True)
+            _mkdir(marker, parents=True)
             rep.act("create", MARKER_DIRS[ag] + "/", "Agent 标记目录")
     dirs = [d for d in L.skeleton_dirs(root, version, user) if not d.startswith(".aidp/")]
     for rel in dirs:
-        (root / rel).mkdir(parents=True, exist_ok=True)
-        journal.record(rel)
+        _mkdir(root / rel, parents=True, exist_ok=True)
     sync_docs(root, bool(previous), rep, bk, agents)
-    journal.record(L.USER_FILLABLE_BASELINE)
     sync_config(root, ctx, rep, bk, agents, branch_policy=getattr(a, "branch_policy", None))
     sync_memory(root, ctx, bool(previous), rep, bk, agents)
-    journal.record(L.USER_FILLABLE_BASELINE)
     sync_root_files(root, ctx, agents, rep, bk)
     if decision != "protect":
         sync_memory_file(root, agents, ctx, decision, bool(previous), rep, bk,
                          previous_template=main_memory_before)
-    for rel in (".claude/skills" if "claude" in agents else None,
-                ".agents/skills" if {"codex", "dsh"} & set(agents) else None):
-        if rel is not None:
-            destination = root / rel / L.SKILL_NAME
-            journal.expect_tree(destination, L.SKILL_DIR, include=lambda path:
-                                "__pycache__" not in path.parts
-                                and "sources" not in path.parts
-                                and "tests" not in path.parts
-                                and path.suffix != ".pyc")
-            journal.expect(destination / ".aidp-scaffold-generated")
     _install_native_skill(root, agents, rep, bk)
-    journal.expect(L.REWRITE_QUEUE_FILE)
     sync_runtime_fillable(root, fillable_homes, fillable_before, rep)
-    journal.record(L.USER_FILLABLE_BASELINE)
     manage_gitkeep(root, dirs, rep)
-    for rel in dirs:
-        journal.record(root / rel / ".gitkeep")
     ensure_nav_readmes(root, rep)
     manage_gitkeep(root, dirs, rep)
-    for rel in dirs:
-        journal.record(root / rel / ".gitkeep")
     queue = L.queue_entries(root)
     if scaffold_raw and decision != "protect":
-        if queue:
-            scaffold_marker.write_pending(root, scaffold_raw)
-        else:
-            scaffold_marker.write_version(root, scaffold_raw)
-        journal.record(scaffold_marker.CONFIG_REL)
+        with L.file_mutation(root / scaffold_marker.CONFIG_REL):
+            if queue:
+                scaffold_marker.write_pending(root, scaffold_raw)
+            else:
+                scaffold_marker.write_version(root, scaffold_raw)
     dsh_extensions = install_dsh_command_plugin(mode, agents, rep)
     if not a.no_agent_sync:
         journal.migration_stage = "agent-adapters"
@@ -2072,7 +2246,35 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             saved = bk.save_tree(home)
             if saved is None or _complete_tree_state(saved) != old_state:
                 raise RuntimeError(f"不再启用的运行包备份失败：{destination}")
-        runtime_layout.remove_runtime(destination, home)
+        removed_manifest = runtime_layout._read_manifest(destination)
+        retained = runtime_layout._manifest_user_files(removed_manifest)
+        removal_paths = [destination / runtime_layout.RUNTIME_MANIFEST]
+        for relative, metadata in removed_manifest["files"].items():
+            path = destination / relative
+            if relative in retained or (relative in L.USER_FILLABLE_CONTRACTS
+                                        and path.is_file()
+                                        and runtime_layout._file_metadata(path) != metadata):
+                continue
+            removal_paths.append(path)
+            if path.suffix == ".py":
+                removal_paths.extend(path.parent.glob(f"__pycache__/{path.stem}.*.pyc"))
+        removal_paths.extend(path for _relative, path in runtime_layout.owned_entries(destination)
+                             if path.is_dir() and (path / runtime_layout.ADAPTER_MARKER).is_file())
+        affected = set()
+        for path in removal_paths:
+            runtime_layout._assert_contained(path, destination)
+            journal.capture_tree(path)
+            relative = path.relative_to(root)
+            affected.update(p for p in journal.before if p == relative or relative in p.parents)
+            for parent in path.parents:
+                if parent == destination:
+                    break
+                journal.expect(parent)
+                affected.add(parent.relative_to(root))
+        try:
+            runtime_layout.remove_runtime(destination, home)
+        finally:
+            journal.finish(affected)
         rep.act("remove", home + "/", "移除停用 Agent 的受管运行包，保留用户内容")
     for agent in KNOWN_AGENTS:
         marker_dir = root / MARKER_DIRS[agent]
@@ -2084,10 +2286,10 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             raise ValueError(f"Agent 禁用标记含用户内容，拒绝修改：{disabled}")
         if agent in agents:
             if disabled.is_file():
-                disabled.unlink()
+                with L.file_mutation(disabled):
+                    disabled.unlink()
                 rep.act("remove", rel_of(root, disabled), "Agent 重新启用")
         elif not disabled.is_file():
-            journal.expect(disabled)
             L.write_text_lf(disabled, "disabled\n")
             rep.act("create", rel_of(root, disabled), "Agent 已切换为停用")
     for agent, rel in (("claude", ".claude/skills"), ("shared", ".agents/skills")):
@@ -2105,7 +2307,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         saved = bk.save_tree(f"{rel}/{L.SKILL_NAME}")
         if saved is None or _complete_tree_state(saved) != old_state:
             raise RuntimeError(f"脚手架 SKILL 清理前备份失败：{target}")
-        shutil.rmtree(target)
+        journal.remove(target, shutil.rmtree)
         rep.act("remove", f"{rel}/{L.SKILL_NAME}/", "Agent 集合不再启用")
     for _kind, home in specs:
         runtime_layout.validate_runtime(root / home, expected_home=home)
@@ -2115,18 +2317,19 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             [sys.executable, str(root / adapter_home / "scripts/agent_sync.py"),
              "--root", str(root), "--agents", ",".join(agents), "--mode", "copy", "--check"],
             stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            env=L.child_env(), **L.TEXT_IO)
+            env=_native_child_env(), **L.TEXT_IO)
         if check.returncode != 0:
             raise RuntimeError(f"原生 Agent 入口校验失败：{(check.stdout or check.stderr).strip()[:300]}")
     if migrate_legacy:
         journal.migration_stage = "remove-legacy"
         if _complete_tree_state(legacy) != original:
             raise LegacyChangedDuringMigration("旧运行目录在备份后发生变化，拒绝删除并保留最新修改")
-        shutil.rmtree(legacy)
+        journal.remove(legacy, shutil.rmtree)
         rep.act("remove", LEGACY_AIDP_DIR + "/", "Agent 原生运行包已校验并安装")
         record = root / MIGRATION_FAILURE_LEDGER
         if record.is_file() and not record.is_symlink():
-            record.unlink()
+            with L.file_mutation(record):
+                record.unlink()
             rep.act("remove", MIGRATION_FAILURE_LEDGER, "旧运行目录迁移已完成")
     if a.adapter_mode == "link":
         rep.actions.append({"op": "normalized", "path": "agent-adapters", "why": "link → managed-copy",
@@ -2166,6 +2369,11 @@ def run(root: Path, a) -> dict:
 
 
 def print_human(res: dict):
+    if res.get("recovery_required"):
+        print("[scaffold] 回退尚未完成，升级已阻断；请按恢复清单处理：")
+        for record in res.get("recovery", []):
+            print(f"  {record['manifest']}")
+        return
     print(f"[scaffold] 模式 {res['mode']} · 项目 {res['project']} · 版本 {res['version']} · 用户 {res['user']}")
     print(f"[scaffold] Agent {','.join(res['agents'])}（来源 {res['agent_source']}）· 适配层 {res['adapter_mode']}")
     print(f"[scaffold] 脚手架 {res['previous_scaffold_version'] or '未建立'} → {res['scaffold_version']}"
@@ -2262,8 +2470,18 @@ def main(argv=None) -> int:
         return 2
     try:
         res = run(root, a)
-    except (ValueError, RuntimeError) as e:
-        print(f"{MARKS['block']} {e}", file=sys.stderr)
+    except Exception as e:
+        rollback = getattr(e, "rollback", None)
+        if a.json:
+            result = {"status": rollback["status"] if rollback else "failed",
+                      "error_type": type(e).__name__, "error": str(e)}
+            if rollback is not None:
+                result.update(rollback=rollback, recovery_required=rollback["recovery_required"])
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(f"{MARKS['block']} {e}", file=sys.stderr)
+            if rollback is not None:
+                print(json.dumps(rollback, ensure_ascii=False, indent=2), file=sys.stderr)
         return 2
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))

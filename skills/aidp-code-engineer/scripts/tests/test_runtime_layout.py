@@ -194,6 +194,93 @@ class RenderContractTest(RuntimeLayoutTestCase):
             self.assertEqual((target / "scripts/blob.bin").read_bytes(), b"\xff\x00{{AIDP_HOME}}")
 
 
+class RuntimePathSemanticsTest(RuntimeLayoutTestCase):
+    ALLOWED = (
+        "证据：`docs/.aidp/evidence/check.json`\n",
+        "状态：`memory/.aidp/state.json`\n",
+        "证据：`packages/demo/docs/.aidp/evidence/check.json`\n",
+        "状态：`packages/demo/memory/.aidp/state.json`\n",
+        "证据：`packages/demo/.aidp/evidence/check.json`\n",
+        "证据：`./docs/.aidp/evidence/check.json`\n",
+        "旧路径：`.aidp/scripts/tool.py`（仅供说明）。\n",
+        "历史路径 `.aidp/agents/reviewer.md` 已停用。\n",
+        "相似目录 `docs/.aidp-cache/scripts/tool.py`\n",
+        "历史路径 `.aidp/` 已停用。\n",
+        "证据：`artifacts/.aidp/results/check.json`\n",
+        "证据：`/workspace/demo/docs/.aidp/evidence/check.json`\n",
+        "证据：`docs/.aidp/scripts/repro.py`\n",
+        "状态：`memory/.aidp/commands/result.json`\n",
+        "证据：`packages/demo/docs/.aidp/agents/reviewer.md`\n",
+        "状态：`/workspace/demo/memory/.aidp/scripts/result.json`\n",
+        "证据：`C:/project/docs/.aidp/scripts/repro.py`\n",
+        "状态：`C:/project/memory/.aidp/commands/result.json`\n",
+    )
+    REJECTED = (
+        ".aidp/scripts/tool.py\n",
+        "python3 ./.aidp/scripts/tool.py\n",
+        "Read .aidp/agents/reviewer.md\n",
+        "python3 docs/../.aidp/scripts/tool.py\n",
+        "Read memory/../.aidp/commands/tool.md\n",
+        "python3 /workspace/demo/.aidp/scripts/tool.py\n",
+        "python3 C:/project/.aidp/scripts/x.py\n",
+        "Read C:/project/.aidp/x\n",
+        "python3 C:/project/docs/../.aidp/scripts/x.py\n",
+        "python3 docs-copy/.aidp/scripts/tool.py\n",
+        "Read amemory/.aidp/agents/reviewer.md\n",
+        "python3 .aidp/scripts/tool.py # 历史问题\n",
+        "历史兼容：Read `.aidp/agents/reviewer.md`\n",
+        "历史路径 `.aidp/scripts/old.py`；现在执行 python3 .aidp/scripts/tool.py\n",
+        "```bash\n# 历史路径 `.aidp/scripts/tool.py` 仅供说明\npython3 .aidp/scripts/tool.py\n```\n",
+        "python3 .aidp/scripts/tool.py # runtime-path-ignore: 历史\n",
+        "cd .aidp/\n",
+        "echo 旧路径 `.aidp/scripts/tool.py`\n",
+        "历史路径 `.aidp/scripts/old.py`；Read `.aidp/agents/current.md`\n",
+    )
+
+    def test_render_and_validate_classify_paths_consistently(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td)
+            for dirname in L.RUNTIME_DIRS:
+                (runtime / dirname).mkdir()
+            relative = "reference/子Agent必读.md"
+            for content, allowed in [(s, True) for s in self.ALLOWED] + [
+                    (s, False) for s in self.REJECTED]:
+                with self.subTest(content=content):
+                    (runtime / relative).write_text(content, encoding="utf-8")
+                    manifest = R.build_runtime_manifest(runtime, "V1.2.2", "claude", ".claude")
+                    manifest["user_files"] = [relative]
+                    R._write_manifest(runtime, manifest)
+                    if allowed:
+                        self.assertEqual(R.render_text(content, ".claude"), content)
+                        R.validate_runtime(runtime, ".claude")
+                    else:
+                        with self.assertRaises(ValueError):
+                            R.render_text(content, ".claude")
+                        with self.assertRaises(ValueError):
+                            R.validate_runtime(runtime, ".claude")
+
+    def test_path_diagnostics_include_file_line_fragment_and_reason(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = make_source(Path(td))
+            relative = "reference/子Agent必读.md"
+            content = "# 使用说明\npython3 .aidp/scripts/tool.py\n"
+            (source / relative).write_text(content, encoding="utf-8")
+            with self.assertRaises(ValueError) as rendered:
+                R.render_tree(source, Path(td) / "output", ".claude")
+            # 其他样本含未渲染 token，直接构建最小已安装运行包。
+            for _relative, path in R._runtime_files(source):
+                if path.suffix != ".bin" and _relative != relative:
+                    path.write_text("ok\n", encoding="utf-8")
+            R._write_manifest(source, R.build_runtime_manifest(source, "V1.2.2", "claude", ".claude"))
+            with self.assertRaises(ValueError) as validated:
+                R.validate_runtime(source, ".claude")
+            for error in (rendered.exception, validated.exception):
+                self.assertIn(relative, str(error))
+                self.assertIn("第 2 行", str(error))
+                self.assertIn(".aidp/scripts/tool.py", str(error))
+                self.assertIn("旧运行根", str(error))
+
+
 class ManifestContractTest(RuntimeLayoutTestCase):
     def test_manifest_is_deterministic_sorted_and_excludes_itself(self):
         with tempfile.TemporaryDirectory() as td:

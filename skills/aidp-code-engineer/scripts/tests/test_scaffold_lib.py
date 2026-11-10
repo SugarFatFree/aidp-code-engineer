@@ -161,6 +161,107 @@ class MarkerAndFinalizeTest(unittest.TestCase):
                              "收口时台账推进到新骨架")
 
 
+class NativeRecoveryConsumerTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "project"
+        self.root.mkdir()
+        scaffold_marker.write_version(self.root, "V1.0.0")
+        scaffold_marker.write_pending(self.root, "V1.1.0")
+        queue = self.root / L.REWRITE_QUEUE_FILE
+        queue.parent.mkdir(parents=True, exist_ok=True)
+        queue.write_text("")
+        self.target = self.root / "README.md"
+        self.target.write_text("original\n")
+        before = scaffold._NativeInstallJournal.state(self.target)
+        self.target.write_text("partial upgrade\n")
+        recovery = self.root.parent / (scaffold._recovery_prefix(self.root) + "fixture")
+        recovery.mkdir()
+        self.manifest = recovery / "recovery.json"
+        self.manifest.write_text(json.dumps({
+            "root": str(self.root.resolve()), "status": "rollback-incomplete",
+            "recovery_required": True, "original_error": "injected contract write failure",
+            "unrestored": ["README.md"],
+            "entries": [{"path": "README.md", "before": before}],
+        }))
+
+    def _finalize(self, *args):
+        import contextlib
+        import io
+        from unittest import mock
+        import finalize_upgrade
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch.object(L, "configure_console"):
+            code = finalize_upgrade.main(["--root", str(self.root), "--json", *args])
+        return code, json.loads(output.getvalue())
+
+    def test_finalize_cannot_promote_or_report_ready_with_unrestored_files(self):
+        for args in ((), ("--status",)):
+            with self.subTest(args=args):
+                code, payload = self._finalize(*args)
+                self.assertEqual(code, 1, payload)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["state"], "rollback-incomplete")
+                self.assertTrue(payload["recovery_required"])
+                self.assertEqual(payload["recovery"][0]["manifest"], str(self.manifest))
+                self.assertEqual(scaffold_marker.read_version(self.root), "V1.0.0")
+                self.assertEqual(scaffold_marker.read_pending(self.root), "V1.1.0")
+                self.assertTrue((self.root / L.REWRITE_QUEUE_FILE).exists())
+                self.assertEqual(self.target.read_text(), "partial upgrade\n")
+
+    def test_verify_blocks_before_attempting_repairs(self):
+        import contextlib
+        import io
+        from unittest import mock
+        import verify
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch.object(verify, "check_directories", side_effect=AssertionError("待恢复时不得补建目录")):
+            code = verify.main([str(self.root), "V0.1.0", "tester", "--json", "--no-guards"])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 1, payload)
+        self.assertEqual(payload["scope"], "recovery-blocked")
+        self.assertTrue(payload["recovery_required"])
+        self.assertIn(str(self.manifest), json.dumps(payload))
+        self.assertEqual(before, {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+
+    def test_restoring_content_unblocks_without_deleting_recovery_evidence(self):
+        self.target.write_text("original\n")
+        self.assertEqual(scaffold.native_recovery_evidence(self.root), [])
+        code, payload = self._finalize()
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["state"], "finalized")
+        self.assertTrue(self.manifest.exists())
+
+    def test_cli_retains_unexpected_original_error_and_rollback_details(self):
+        import contextlib
+        import io
+        from unittest import mock
+        failure = KeyError("original upgrade error")
+        failure.rollback = {"status": "rollback-incomplete", "recovery_required": True,
+                            "original_error": str(failure), "restored": ["CLAUDE.md"],
+                            "unrestored": ["README.md"], "snapshot": str(self.manifest.parent),
+                            "failures": [{"path": "README.md", "error": "permission denied"}]}
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch.object(scaffold, "run", side_effect=failure):
+            code = scaffold.main([str(self.root), "--mode", "upgrade", "--agent", "claude",
+                                  "--user", "tester", "--json"])
+        payload = json.loads(output.getvalue())
+        self.assertNotEqual(code, 0)
+        self.assertEqual(payload["error_type"], "KeyError")
+        self.assertIn("original upgrade error", payload["error"])
+        self.assertEqual(payload["rollback"], failure.rollback)
+        self.assertTrue(payload["recovery_required"])
+
+    def test_unreadable_recovery_record_never_reports_nothing_pending(self):
+        self.manifest.write_text("{invalid json")
+        code, payload = self._finalize("--status")
+        self.assertEqual(code, 1, payload)
+        self.assertTrue(payload["recovery_required"])
+        self.assertEqual(payload["recovery"][0]["status"], "recovery-evidence-unreadable")
+
+
 class MemoryMergeTest(unittest.TestCase):
     OLD = ("# p\n\n## 当前状态\n\n- **当前版本**：V0.3.0\n- **当前开发者**：bob\n- **当前 Sprint**：Sprint-007\n"
            "- **Sprint 目标**：登录\n- **整体进度**：40%\n- **最后更新**：2026-01-01\n- **当前 build**：B3\n\n---\n\n"

@@ -166,7 +166,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 
 ### Mode 3：upgrade（本脚手架旧版本项目升级）
 
-1. **读取状态**：Phase 0 的 `scaffold.project_version`、`scaffold.pending`、`scaffold.rewrite_queue`。上一轮队列未清空时，先完成 Mode 2 第 4 步再升级。
+1. **读取状态**：Phase 0 的 `scaffold.project_version`、`scaffold.pending`、`scaffold.rewrite_queue` 及 `recovery_required`。存在未恢复事务时先按下方「升级失败与恢复」处理，不能跳到收尾；上一轮语义队列未清空时，先完成 Mode 2 第 4 步再升级。
 2. **执行脚手架**：
 
    ```bash
@@ -193,6 +193,13 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
 3. **处理语义改写队列并收口**：同 Mode 2 第 4 步。
 4. **备份清理**：脚本按「最近 1 个 ∪ 7 天内」保留 `.aidp-backup-*`（`--keep-backups N` / `--keep-days N` 调整，`--keep-backups 0` 不清理）；输出里超出阈值会提示手工删除。
 5. 执行「验证」章节。
+
+### 升级失败与恢复（init / migrate 同样适用）
+
+- 脚手架只按实际文件写入、搬移或删除登记外层事务；目录骨架不构成递归备份、恢复整个业务代码树的理由。运行包本身的原子替换仍保留其完整备份要求，不等于备份所有业务目录。
+- 非零退出即本次安装未成功。`--json` 的 `error_type/error` 保留原始异常，`rollback` 分别列出 `restored`、`unrestored`、`preserved`、`failures`；`rolled-back` 只表示自身更改已回退，不能当成升级完成。
+- `rollback-incomplete` / `recovery_required=true` 时，必要快照与 `rollback.snapshot` 下的 `recovery.json` 会保留；后续状态查询可从 `recovery[].manifest` 定位。该恢复依据不受普通 `.aidp-backup-*` 的保留数量清理。逐项处理未恢复范围，不继续升级或强行 finalize；`verify.py` 与 `finalize_upgrade.py` 都会阻断假完成。实际内容恢复到写前指纹后可解除阻断，无需删快照或修改标记。
+- 不通过删除业务缓存、提权、递归改权限或删除恢复记录绕过错误；升级未触及的文件保持不动。`docs/.aidp/`、`memory/.aidp/` 等证据和状态目录属于合法数据路径，不能为通过校验而删改用户有效记录；真正旧运行契约引用仍按文件、行号、片段和理由报错。
 
 ## 多 Agent 说明
 

@@ -6,6 +6,8 @@
 目录清单、契约目录、忽略集、占位符渲染、gitignore 托管区、备份保留策略都只在这里定义一次。
 """
 import hashlib
+from contextlib import nullcontext
+from contextvars import ContextVar
 from difflib import SequenceMatcher
 import importlib.util
 import sys
@@ -158,6 +160,15 @@ def sha256(data: bytes) -> str:
 
 
 # ── 确定性写入与控制台 ──────────────────────────────────────────────────────
+# 安装事务按实际写入口取快照；其他脚本无需知道事务，也不改变 pathlib 全局行为。
+FILE_MUTATION = ContextVar("scaffold_file_mutation", default=None)
+
+
+def file_mutation(path: Path):
+    observer = FILE_MUTATION.get()
+    return observer(Path(path)) if observer is not None else nullcontext()
+
+
 def write_text_lf(path: Path, text: str) -> None:
     r"""确定性写文本：恒为 UTF-8 + LF。
 
@@ -165,7 +176,8 @@ def write_text_lf(path: Path, text: str) -> None:
     `\r\n`，写出的字节与 LF 真源逐字不等 —— 运行包 manifest、bundle 比对、agent_sync 漂移
     检测都会整片假红（一个 262 行的 flow 分片会凭空胖 262 字节，还能顶穿分片体积上限）。
     """
-    Path(path).write_bytes(text.encode("utf-8"))
+    with file_mutation(path):
+        Path(path).write_bytes(text.encode("utf-8"))
 
 
 _CONSOLE_MARKS = {"ok": "✅", "error": "❌", "warn": "⚠️", "info": "ℹ️",

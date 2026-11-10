@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -70,7 +71,62 @@ def owned_entries(root: Path):
 _TOKEN_RE = re.compile(r"\{\{AIDP_[A-Z0-9_]+\}\}")
 _VERSION_RE = re.compile(r"^V\d+\.\d+\.\d+$")
 _IGNORE_PATH_RE = re.compile(r"runtime-path-ignore:\s*\S+")
-_OLD_RUNTIME_RE = re.compile(r"(?<!memory/)(?<![\w{])\.aidp/")
+# 与下发 check_runtime_paths.py 保持相同分类；跨分发边界由共用样本回归约束。
+_OLD_RUNTIME_RE = re.compile(
+    r"(?<![\w./~:\\-])(?:[A-Za-z]:)?(?:/?(?:[\w{}<>~.-]+/)*)\.aidp/"
+    r"[^\s`\"'<>()[\]{},;:!?，。；：！？|&]*")
+_HISTORY_RE = re.compile(r"旧路径|历史路径|仅供说明|曾使用")
+_ACTIVE_PATH_RE = re.compile(
+    r"\b(?:read|run|python\d*|bash|sh|source|node|cat|cd|echo|printf|exec|eval)\b|读取|执行|调用|运行",
+    re.IGNORECASE)
+
+
+def old_runtime_findings(text: str):
+    """按完整路径分段识别旧根；历史说明只豁免局部、独立的 inline-code 引用。"""
+    fence = None
+    executable = False
+    for line_no, line in enumerate(text.splitlines(), 1):
+        marker = re.match(r"^\s*(`{3,}|~{3,})(.*)$", line)
+        if marker:
+            delimiter, language = marker.groups()
+            if fence is None:
+                fence = delimiter
+                executable = language.strip().lower() not in {"text", "plain", "markdown", "md"}
+            elif delimiter[0] == fence[0] and len(delimiter) >= len(fence):
+                fence = None
+                executable = False
+            continue
+        for match in _OLD_RUNTIME_RE.finditer(line):
+            value = match.group(0)
+            normalized = posixpath.normpath(value)
+            parts = normalized.split("/")
+            if ".aidp" not in parts:
+                continue
+            index = parts.index(".aidp")
+            child = parts[index + 1] if index + 1 < len(parts) else ""
+            # 先按规范化后的完整目录段确认数据落点，子目录同名不改变其归属。
+            if index > 0 and parts[index - 1] in {"docs", "memory"}:
+                continue
+            # 其他相对嵌入路径只允许非契约数据；不明绝对根仍保守拒绝。
+            if index > 0 and child not in RUNTIME_DIRS and child != "AIDP-AGENTS.md" \
+                    and not re.match(r"(?:/|[A-Za-z]:/)", normalized):
+                continue
+            start, end = match.span()
+            inline = start > 0 and line[start - 1] == "`" and line[end:end + 1] == "`"
+            if inline and not executable:
+                before = re.split(r"[。；;！？!?，,`]|&&|\|\|", line[:start - 1])[-1]
+                after = re.split(r"[。；;！？!?，,`]|&&|\|\|", line[end + 1:])[0]
+                context = before + after
+                if _HISTORY_RE.search(context) and not _ACTIVE_PATH_RE.search(context):
+                    continue
+            yield {"line": line_no, "value": value,
+                   "reason": "引用旧运行根，且不能确认为非执行历史说明；运行契约应使用 AIDP_HOME"}
+
+
+def _reject_old_runtime_paths(text: str, source_path: object = "<text>") -> None:
+    for finding in old_runtime_findings(text):
+        raise ValueError(
+            f"{source_path}（第 {finding['line']} 行）：{finding['value']}；{finding['reason']}")
 
 
 def _lexical(path: Path) -> Path:
@@ -174,7 +230,8 @@ def _reject_hardcoded_home(text: str, home: str) -> None:
                     index = line.find(needle, index + 1)
 
 
-def render_text(text: str, home: str, template_root: object = None) -> str:
+def render_text(text: str, home: str, template_root: object = None,
+                source_path: object = "<text>") -> str:
     """渲染 UTF-8 契约，并拒绝 token、旧路径和模板绝对路径泄露。"""
     if home not in RUNTIME_HOME.values():
         raise ValueError(f"未知 AIDP_HOME: {home}")
@@ -183,9 +240,8 @@ def render_text(text: str, home: str, template_root: object = None) -> str:
     unknown = sorted(set(_TOKEN_RE.findall(rendered)))
     if unknown:
         raise ValueError(f"存在未解析运行占位符: {', '.join(unknown)}")
+    _reject_old_runtime_paths(rendered, source_path)
     for line_no, line in enumerate(rendered.splitlines(), 1):
-        if _OLD_RUNTIME_RE.search(line):
-            raise ValueError(f"存在旧运行路径 .aidp/（第 {line_no} 行）")
         if _template_path_leaks(line, template_root) and not _IGNORE_PATH_RE.search(line):
             raise ValueError(f"存在模板根绝对路径泄露（第 {line_no} 行）")
     return rendered
@@ -236,7 +292,7 @@ def _render_file(source: Path, target: Path, home: str, source_root: Path) -> No
     data = source.read_bytes()
     if _is_text(data):
         L.write_text_lf(target, render_text(data.decode("utf-8"), home,
-                                          template_root=source_root))
+                                          template_root=source_root, source_path=source))
         shutil.copymode(source, target)
     else:
         shutil.copy2(source, target)
@@ -487,9 +543,7 @@ def validate_runtime(runtime: Path, expected_home: Optional[str] = None,
         text = data.decode("utf-8")
         if _TOKEN_RE.search(text):
             raise ValueError(f"运行包含未解析占位符: {relative}")
-        for line in text.splitlines():
-            if _OLD_RUNTIME_RE.search(line):
-                raise ValueError(f"运行包含旧路径: {relative}")
+        _reject_old_runtime_paths(text, path)
         if "{{AIDP_HOME}}" in text:
             raise ValueError(f"运行包含未解析 AIDP_HOME: {relative}")
         # 与 `_reject_hardcoded_home` 同一口径：只查「别的 Agent 的运行根 + 受管目录」，
@@ -578,7 +632,7 @@ def rendered_from_source(source_root: Path, home: str) -> Dict[str, dict]:
         data = path.read_bytes()
         if _is_text(data):
             data = render_text(data.decode("utf-8"), home,
-                               template_root=source_root).encode("utf-8")
+                               template_root=source_root, source_path=path).encode("utf-8")
         expected[relative] = {"content": data, "mode": _file_mode(path)}
     return expected
 

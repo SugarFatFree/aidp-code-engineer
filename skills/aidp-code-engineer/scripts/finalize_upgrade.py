@@ -115,6 +115,28 @@ def main(argv=None) -> int:
     if not root.is_dir():
         print(f"项目根不存在：{root}", file=sys.stderr)
         return 2
+    from scaffold import native_recovery_evidence
+    try:
+        recovery = native_recovery_evidence(root)
+    except (OSError, ValueError) as exc:
+        recovery = [{"status": "recovery-evidence-unreadable", "root": str(root),
+                     "recovery_required": True, "unrestored": [], "error": str(exc)}]
+    if recovery:
+        state = ("recovery-evidence-unreadable" if any(
+            item.get("status") == "recovery-evidence-unreadable" for item in recovery)
+                 else "rollback-incomplete")
+        message = "升级事务仍需恢复或恢复证据不可读；先按恢复清单处理，不能收口版本。"
+        if a.json:
+            print(json.dumps({"ok": False, "state": state, "message": message,
+                              "current_version": None, "pending_version": None,
+                              "entries": [], "unconsumed": [], "recovery_required": True,
+                              "recovery": recovery}, ensure_ascii=False, indent=2))
+        else:
+            print(message)
+            for item in recovery:
+                print(f"   - {item.get('manifest', root)}；未恢复：{item.get('unrestored', [])}"
+                      + (f"；{item['error']}" if item.get("error") else ""))
+        return 1
     queue = root / QUEUE
     pending = scaffold_marker.read_pending(root) or ""
     current = scaffold_marker.read_version(root) or ""

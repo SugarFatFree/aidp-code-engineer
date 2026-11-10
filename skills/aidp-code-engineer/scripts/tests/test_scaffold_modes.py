@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """scaffold.py 三模式端到端：init 冒烟（三种 Agent 组合）、upgrade 覆盖与用户填充型保护、migrate 保留用户内容。"""
+import io
 import json
+from contextlib import redirect_stdout
 import os
 import shutil
 import subprocess
@@ -20,6 +22,269 @@ import runtime_layout
 import verify as V
 
 BUNDLE_VERSION = L.bundle_version()
+
+
+class NativeTransactionBoundaryTest(unittest.TestCase):
+    """事务操作数由实际写集决定；业务树、并发写与失败证据均受保护。"""
+
+    def options(self):
+        return Namespace(version="V0.1.0", user="alice", force=False)
+
+    def run_transaction(self, root, implementation):
+        with mock.patch.object(S, "_native_namespaces"), \
+                mock.patch.object(S, "_preflight_native_project_paths"), \
+                mock.patch.object(S, "_preflight_native_entries"), \
+                mock.patch.object(S, "_preflight_native_adapter"), \
+                mock.patch.object(S, "_run_native_impl", side_effect=implementation):
+            return S._run_native(root, self.options(), "upgrade", ["claude"], "argument")
+
+    def test_unwritable_unrelated_cache_is_never_copied_or_restored(self):
+        with H.TempRepo() as root:
+            cache = root / "code/backend/service/.cache/data"
+            cache.parent.mkdir(parents=True)
+            cache.write_bytes(b"business cache")
+            cache.chmod(0o400)
+            before = cache.stat()
+            copy = shutil.copy2
+
+            def guarded_copy(source, destination, *args, **kwargs):
+                if "code" in Path(source).parts or "code" in Path(destination).parts:
+                    raise PermissionError("unrelated business cache was touched")
+                return copy(source, destination, *args, **kwargs)
+
+            def fail(*args, **kwargs):
+                S.write_if_diff(root / "README.md", b"new contract")
+                raise OSError("contract write failed")
+
+            try:
+                with mock.patch.object(S.shutil, "copy2", side_effect=guarded_copy):
+                    with self.assertRaisesRegex(OSError, "contract write failed"):
+                        self.run_transaction(root, fail)
+                after = cache.stat()
+                self.assertEqual((before.st_ino, before.st_mode, before.st_mtime_ns),
+                                 (after.st_ino, after.st_mode, after.st_mtime_ns))
+                self.assertFalse((root / "README.md").exists())
+            finally:
+                cache.chmod(0o600)
+
+    def test_rollback_preserves_unrelated_modified_file_and_new_file(self):
+        with H.TempRepo() as root:
+            private = root / "docs/private.txt"
+            private.parent.mkdir()
+            private.write_bytes(b"before")
+            target = root / "README.md"
+            target.write_bytes(b"original uncommitted text")
+
+            def fail(*args, **kwargs):
+                S.write_if_diff(target, b"installed")
+                private.write_bytes(b"concurrent edit")
+                (private.parent / "new.txt").write_bytes(b"concurrent new")
+                raise OSError("contract write failed")
+
+            with self.assertRaisesRegex(OSError, "contract write failed"):
+                self.run_transaction(root, fail)
+            self.assertEqual(target.read_bytes(), b"original uncommitted text")
+            self.assertEqual(private.read_bytes(), b"concurrent edit")
+            self.assertEqual((private.parent / "new.txt").read_bytes(), b"concurrent new")
+
+    def test_one_restore_failure_does_not_stop_other_restores_and_keeps_snapshot(self):
+        with H.TempRepo() as root:
+            first, second = root / "README.md", root / "AGENTS.md"
+            first.write_bytes(b"first original")
+            second.write_bytes(b"second original")
+            restore = S._restore_native_snapshot
+
+            def fail_restore(original, target):
+                if target == second:
+                    raise PermissionError("restore denied")
+                return restore(original, target)
+
+            def fail(*args, **kwargs):
+                S.write_if_diff(first, b"first installed")
+                S.write_if_diff(second, b"second installed")
+                raise OSError("contract write failed")
+
+            with mock.patch.object(S, "_restore_native_snapshot", side_effect=fail_restore):
+                with self.assertRaisesRegex(OSError, "contract write failed") as caught:
+                    self.run_transaction(root, fail)
+            self.assertEqual(first.read_bytes(), b"first original")
+            recovery = caught.exception.rollback
+            self.assertEqual(recovery["status"], "rollback-incomplete")
+            self.assertIn("README.md", recovery["restored"])
+            self.assertIn("AGENTS.md", recovery["unrestored"])
+            saved = Path(recovery["snapshot"])
+            self.assertEqual((saved / "AGENTS.md").read_bytes(), b"second original")
+            manifest = json.loads((saved / "recovery.json").read_text())
+            self.assertIn("contract write failed", manifest["original_error"])
+            self.assertIn("restore denied", manifest["failures"][0]["error"])
+
+    def test_concurrent_edit_of_written_target_is_retained_with_recovery_evidence(self):
+        with H.TempRepo() as root:
+            target = root / "README.md"
+            target.write_bytes(b"original")
+
+            def fail(*args, **kwargs):
+                S.write_if_diff(target, b"installed")
+                target.write_bytes(b"concurrent edit")
+                raise OSError("contract write failed")
+
+            with self.assertRaisesRegex(OSError, "contract write failed") as caught:
+                self.run_transaction(root, fail)
+            self.assertEqual(target.read_bytes(), b"concurrent edit")
+            recovery = caught.exception.rollback
+            self.assertIn("README.md", recovery["unrestored"])
+
+    def test_snapshot_work_does_not_scale_with_business_tree(self):
+        with H.TempRepo() as root:
+            work = root / "code/backend/module"
+            work.mkdir(parents=True)
+            (work / ".git").write_text("gitdir: ../../../.git/modules/module\n")
+            for size in (1, 80):
+                for number in range(size):
+                    (work / f"file-{number}").write_bytes(b"dirty business data")
+                target = root / "README.md"
+                target.write_bytes(b"original")
+
+                def fail(*args, **kwargs):
+                    S.write_if_diff(target, b"installed")
+                    raise OSError("contract write failed")
+
+                with mock.patch.object(S.shutil, "copy2", wraps=shutil.copy2) as copies:
+                    with self.assertRaisesRegex(OSError, "contract write failed"):
+                        self.run_transaction(root, fail)
+                self.assertLessEqual(copies.call_count, 3)
+                self.assertEqual(target.read_bytes(), b"original")
+                self.assertEqual((work / "file-0").read_bytes(), b"dirty business data")
+
+
+    def test_actual_upgrade_and_retry_preserve_user_reference_and_cache(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            reference = root / ".claude/reference/子Agent必读.md"
+            annotated = reference.read_text(encoding="utf-8") + "\n项目说明：证据落子仓 docs/.aidp/，状态 memory/.aidp/。\n"
+            reference.write_text(annotated, encoding="utf-8")
+            cache = root / "code/backend/component/.cache/entry"
+            cache.parent.mkdir(parents=True)
+            cache.write_bytes(b"private cache")
+            cache.chmod(0o400)
+            before = cache.stat()
+            options = Namespace(mode="upgrade", agent="claude", user="alice", json=True,
+                                version="V0.1.0", name_cn=None, force=False,
+                                adapter_mode="copy", no_agent_sync=False,
+                                keep_backups=5, keep_days=30)
+            scaffold_marker.write_version(root, "V0.0.1")
+            old_marker = (root / scaffold_marker.CONFIG_REL).read_bytes()
+            try:
+                with mock.patch.object(S, "_install_native_skill", side_effect=OSError("contract write failed")):
+                    with self.assertRaisesRegex(OSError, "contract write failed"):
+                        S.run(root, options)
+                self.assertEqual(reference.read_text(encoding="utf-8"), annotated)
+                self.assertEqual((root / scaffold_marker.CONFIG_REL).read_bytes(), old_marker)
+                result = S.run(root, options)
+                again = S.run(root, options)
+                self.assertEqual(reference.read_text(encoding="utf-8"), annotated)
+                self.assertEqual(again["rewrite_queue"], result["rewrite_queue"])
+                self.assertEqual(again["pending"], result["pending"])
+                self.assertFalse([a for a in again["actions"] if a["op"] in ("install", "update", "merge")])
+                after = cache.stat()
+                self.assertEqual((before.st_ino, before.st_mode, before.st_mtime_ns),
+                                 (after.st_ino, after.st_mode, after.st_mtime_ns))
+            finally:
+                cache.chmod(0o600)
+
+    def test_marker_restore_failure_blocks_completion_until_manual_recovery(self):
+        with H.TempRepo() as root:
+            marker = root / scaffold_marker.CONFIG_REL
+            marker.parent.mkdir()
+            original = b"scaffold:\n  version: V0.0.1\n  pending: null\n"
+            marker.write_bytes(original)
+
+            def fail(*args, **kwargs):
+                S.write_if_diff(marker, b"scaffold:\n  version: V9.0.0\n  pending: null\n")
+                raise OSError("contract write failed")
+
+            with mock.patch.object(S, "_restore_native_snapshot", side_effect=PermissionError("restore denied")):
+                with self.assertRaisesRegex(OSError, "contract write failed") as caught:
+                    self.run_transaction(root, fail)
+            record = caught.exception.rollback
+            self.assertTrue(record["recovery_required"])
+            self.assertIn(scaffold_marker.CONFIG_REL, record["unrestored"])
+            blocked = self.run_transaction(root, mock.Mock(side_effect=AssertionError("must not execute")))
+            self.assertEqual(blocked["reason"], "recovery-required")
+            output = io.StringIO()
+            with mock.patch.object(S, "run", side_effect=caught.exception), redirect_stdout(output):
+                exit_code = S.main([str(root), "--user", "alice", "--json"])
+            result = json.loads(output.getvalue())
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(result["error"], "contract write failed")
+            self.assertEqual(result["status"], "rollback-incomplete")
+            self.assertTrue(result["recovery_required"])
+            marker.write_bytes(original)
+            self.assertEqual(S.native_recovery_evidence(root), [])
+            self.assertTrue(Path(record["snapshot"]).is_dir())
+
+    def test_target_permission_is_checked_before_write(self):
+        with H.TempRepo() as root:
+            target = root / "README.md"
+            target.write_bytes(b"original")
+            before = target.stat()
+            access = os.access
+
+            def denied(path, mode):
+                return False if Path(path) == target else access(path, mode)
+
+            def attempt(*args, **kwargs):
+                S.write_if_diff(target, b"installed")
+
+            with mock.patch.object(S.os, "access", side_effect=denied):
+                with self.assertRaisesRegex(PermissionError, "不可写"):
+                    self.run_transaction(root, attempt)
+            self.assertEqual(target.read_bytes(), b"original")
+            self.assertEqual(target.stat().st_ino, before.st_ino)
+
+    def test_submodule_dirty_worktree_is_preserved(self):
+        with H.TempRepo() as root, H.TempRepo("module") as upstream:
+            (upstream / "module.py").write_text("original\n")
+            subprocess.run(["git", "-C", str(upstream), "add", "module.py"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(upstream), "commit", "-qm", "fixture"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(root), "-c", "protocol.file.allow=always",
+                            "submodule", "add", str(upstream), "code/backend/module"], check=True, capture_output=True)
+            module = root / "code/backend/module"
+            (module / "module.py").write_text("uncommitted\n")
+            (module / "private.txt").write_text("private\n")
+            gitfile = (module / ".git").read_bytes()
+            inode = (module / "module.py").stat().st_ino
+
+            def fail(*args, **kwargs):
+                S.write_if_diff(root / "README.md", b"installed")
+                raise OSError("contract write failed")
+
+            with self.assertRaisesRegex(OSError, "contract write failed"):
+                self.run_transaction(root, fail)
+            self.assertEqual((module / ".git").read_bytes(), gitfile)
+            self.assertEqual((module / "module.py").read_text(), "uncommitted\n")
+            self.assertEqual((module / "private.txt").read_text(), "private\n")
+            self.assertEqual((module / "module.py").stat().st_ino, inode)
+            status = subprocess.run(["git", "-C", str(module), "status", "--porcelain"],
+                                    check=True, capture_output=True, text=True).stdout
+            self.assertIn(" M module.py", status)
+            self.assertIn("?? private.txt", status)
+
+    def test_transaction_without_git(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "plain"
+            root.mkdir()
+            target = root / "README.md"
+            target.write_bytes(b"original")
+
+            def fail(*args, **kwargs):
+                S.write_if_diff(target, b"installed")
+                raise OSError("contract write failed")
+
+            with self.assertRaisesRegex(OSError, "contract write failed"):
+                self.run_transaction(root, fail)
+            self.assertEqual(target.read_bytes(), b"original")
+            self.assertFalse((root / ".git").exists())
 
 
 class NotificationConfigDiagnosticsTest(unittest.TestCase):

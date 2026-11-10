@@ -1306,6 +1306,25 @@ def main(argv=None) -> int:
     if not template:
         _say(f"[verify] 版本: {version}, 用户: {user}")
     r = VerifyResult()
+    if not template:
+        try:
+            recovery = scaffold_engine.native_recovery_evidence(root)
+        except (OSError, ValueError) as exc:
+            recovery = [{"status": "recovery-evidence-unreadable", "root": str(root),
+                         "recovery_required": True, "unrestored": [], "error": str(exc)}]
+        if recovery:
+            for item in recovery:
+                r.error(f"升级回退尚未核验恢复：{item.get('manifest', root)}；"
+                        f"未恢复：{item.get('unrestored', [])}"
+                        + (f"；{item['error']}" if item.get("error") else ""))
+            r.summary(quiet=json_out)
+            if json_out:
+                print(json.dumps({"errors": len(r.errors), "warnings": 0, "info": 0,
+                                  "no_guards": no_guards, "scope": "recovery-blocked",
+                                  "guard_timeout": GUARD_TIMEOUT, "total_timeout": TOTAL_TIMEOUT,
+                                  "guards": [], "recovery_required": True, "recovery": recovery},
+                                 ensure_ascii=False, indent=2))
+            return 1
     vcs_mode = _vcs_mode(root)
     _say(f"[verify] vcs_mode={vcs_mode}")
     if vcs_mode == "none":

@@ -1280,8 +1280,9 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 
 ## aidp_config.py — 人维护配置（`memory/aidp-config.yaml`）
 
-项目标识（`project.name` 英文应用编码 / `project.name_cn` 中文名称）/ 提交前门禁（`commit_gate.enabled`）/ 里程碑通知（`notify.enabled` / `fallback` / `channels`）/ CICD（`cicd.provider` / `auto_trigger` / `max_retries` / `pipelines`）/ 7×24 调度（`scheduler.agent` / `dev_interval` / `test_interval` / `stale_cycles` / `exec`）/ Stop 护栏开关、脚手架版本戳、autopilot 决策兜底。
-读取 API：`project_config()` / `sql_dialect()`（`project.sql_dialect`，可空通用键，null = 通用；非空原样透传给 SKILL 脚本 `--db` / `--sql-db`，不枚举库名、不推断；命令端取值 `aidp_config.py get project.sql_dialect`）/ `commit_gate_enabled()` / `notify_config()` / `cicd_config()` / `scheduler_config()` / `stop_guard_enabled()` / `scaffold_version()` / `scaffold_pending()` / `is_downstream()`；单行流式写法（`- {type: feishu, webhook_env: …}`、`pipelines: {dev: deploy-dev.yml}`）解析时展开。
+**键以模板 `memory/aidp-config.yaml` 为准（该文件逐键带注释），不在此重复枚举**；段落索引：`project`（`name` / `name_cn` / `sql_dialect`）· `development.branch_policy` · `execution_policy` · `commit_gate.enabled` · `notify`（`enabled` / `fallback` / `channel_ready_card` / `channels`）· `cicd`（`provider` / `auto_trigger` + `auto_trigger_source` / `max_retries` / `pipelines` / 各提供方专属段 / `push_auto_deploy` / `push_deploy_min_wait_seconds`）· `deployment.backup` · `stop_guard.enabled` · `scheduler`（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `tick_max_seconds` / `exec`）· `scaffold`（`version` / `pending`）· `autopilot_decisions` 兜底段。
+读取 API：`project_config()` / `sql_dialect()`（`project.sql_dialect` 原样读，可空通用键）/ `sql_db_flag()`（**传给 SKILL 脚本 `--db` / `--sql-db` 的唯一取值**：`dm`/`dameng`/`达梦*` → `dameng`，其余为空 = 不传；SKILL 脚本只有 dameng 有专项规则、传 mysql 等会 argparse 退出 2；命令端 `aidp_config.py sql-db-flag`）/ `commit_gate_enabled()` / `notify_config()` / `cicd_config()` / `cicd_push_auto_deploy()` / `cicd_push_deploy_min_wait()` / `scheduler_config()` / `stop_guard_enabled()` / `read_branch_policy()` / `branch_policy()` / `read_execution_policy()` / `scaffold_version()` / `scaffold_pending()` / `is_downstream()`；单行流式写法（`- {type: feishu, webhook_env: …}`、`pipelines: {dev: deploy-dev.yml}`）解析时展开。布尔开关按 YAML 1.1 解析（`true/yes/on/1`、`false/no/off/0`），无法识别的值读取侧按缺省处理、`show` 的 `warnings` 列出。
+CLI：`get <段.键>`（空白 / `null` / 占位值输出空，与读取 API 同口径）· `set <段.键> <值>`（有确定值域的键写前校验：布尔 / 整数下限 / `cicd.provider` 枚举 / `scheduler.agent` ∈ auto|claude|codex|dsh / 调度周期；含 `: ` ` #` 的字符串自动加引号，含换行的值拒绝；非法 rc=2 不写盘）· `show`（含 `sql_db_flag`、`warnings`）· `ensure` · `sql-db-flag` · `branch-policy`。
 写入是**逐行外科手术**而非重新序列化 —— 这份文件一半的价值在注释（每个开关旁写着
 关掉之后会发生什么），`yaml.dump()` 一次就把它退化成无注释的 json。
 读取顺序恒为「本文件 → 内置缺省」。
@@ -1297,8 +1298,13 @@ PRD 未声明时兜底。挑兜底文件的判据是「**有没有声明**」而
 
 ## autopilot_tech_boundary.py — 无人值守「技术边界预确认」判定
 
-`dev-logic-architect` Phase 1 技术边界确认是强交互闸门（数据库必确认、严禁推断），无人值守下子 Agent 无人可问。本脚本只**机械读取用户已落盘的声明**：PRD `autopilot_decisions.tech_boundary`（经 `autopilot_decisions_merge.py` 双信源合并）> `docs/architecture/技术选型.md`「技术栈总览」已填行；最低要求 `backend` + `database`（无则显式写 `none`）。不推断；`--summary` 输出可直接并入 `/sprint-design` 上下文的「确认汇总」，`--json` 带 `db_dialect`（达梦 → `dameng`）。
-用法：`python3 {{AIDP_HOME}}/scripts/autopilot_tech_boundary.py --version <V> [--root .] [--prd-root docs/requirements] [--json|--summary]`。退出码：`0`=已预确认 · `1`=缺失（Phase 0.6 第 2bis 步据此冻结 `prd-missing`）· `2`=用法错。调用方：`flows/sprint-autopilot/phase-0-8.md`、`commands/sprint-design.md`；回归 `tests/test_unattended_recovery.py`。
+`dev-logic-architect` Phase 1 技术边界确认是强交互闸门（数据库必确认、严禁推断），无人值守下子 Agent 无人可问。本脚本只**机械读取用户已落盘的声明**：PRD `autopilot_decisions.tech_boundary`（经 `autopilot_decisions_merge.py` 双信源合并）；PRD 缺的维度由 `docs/architecture/技术选型.md`「技术栈总览」已填行**按维度**补（按表头列名取值，兼容 7 列总览表与 `/sprint-init` 的 `层级｜技术｜版本` 表，`主数据库` 计入 database；编码异常按 replace 读取）；最低要求 `backend` + `database`（无则显式写 `none`）。不推断；`--summary` 输出 SKILL 入参 `tech_boundary_preconfirmed`（含 `db_dialect`）清单，`--json` 带 `db_dialect`（达梦 → `dameng`，未识别 → `unknown`；SKILL 脚本 `--db` / `--sql-db` 的取值**不取自这里**，走 `aidp_config.py sql-db-flag`）。`--write-dialect`：已预确认且为达梦、`project.sql_dialect` 为空时回写 `dameng`（幂等，不覆盖已有值）。
+用法：`python3 {{AIDP_HOME}}/scripts/autopilot_tech_boundary.py --version <V> [--root .] [--prd-root docs/requirements] [--json|--summary] [--write-dialect]`。退出码：`0`=已预确认 · `1`=缺失（Phase 0.6 第 2bis 步据此冻结 `prd-missing`）· `2`=用法错或脚本自身故障（⛔ 不当缺失冻结）。调用方：`flows/sprint-autopilot/phase-0-8.md`、`commands/sprint-design.md`；回归 `tests/test_unattended_recovery.py`。
+
+## autopilot_design_placeholders.py — 详细设计「清单外维度占位」扫描门（只读）
+
+扫 `docs/design/detail/{V}/**/*.md` 里的 `{待用户填写: <维度>}`（`dev-logic-architect` 预确认分支对清单外栈维度不自编默认值时留下，`dev-execution-planner` 再把依赖它们的 Task 标「⚠️ 设计待澄清」）。无人值守链路上无人消费这些占位，本脚本给确定性出口。
+用法：`python3 {{AIDP_HOME}}/scripts/autopilot_design_placeholders.py --version <V> [--root .] [--json] [--self-check]`。退出码：`0`=无占位 · `1`=有占位（列维度与文件）· `2`=用法错。调用方：`flows/sprint-autopilot/phase-3-3.md` 3.1ter（无人值守命中 → 冻结 `prd-missing`）、`commands/sprint-plan.md` Step 1（只告知、不阻断）；回归 `tests/test_unattended_recovery.py`。
 
 ## baseline_archive.py — baseline 历史版本节点归档
 
@@ -1359,6 +1365,11 @@ Sprint 内按守护面裁剪是合法的，发布前必须全跑一次，否则�
 
 `/sprint-plan` 4b 的机器一侧：扫计划表（表头含 `Task` 与 `验收标准`）里空白 / 占位 / 纯套话（「完成开发」「功能正常」「按设计实现」）/ 过短且无可核验落点（无链接、无反引号命令、无 `§` 锚点）的单元格。只做形式判定，**通过不等于可验收**，语义判据仍归 `dev-execution-planner` 的 QR。
 用法：`python3 {{AIDP_HOME}}/scripts/check_plan_ac.py <计划.md>... [--json] [--count] [--strict]`。退出码：`0` 通过（命中默认只 WARN）/ `1` `--strict` 且有命中 / `2` 文件不存在。调用方 = `commands/sprint-plan.md` 回检块（`AC_HITS`）；回归见 `tests/test_plan_ac.py`。
+
+## bugfix_scope.py — bugfix 台账按列解析与未闭环缺陷判定（确定性）
+
+解析 `docs/bugfix/{version}/bugfix-*.md` 里表头含「编号 / 严重 / 状态」的表，逐数据行按列取严重度（`P0~P3`，无 P 编号但含「阻塞」= P0）与状态（Open / In-Progress / Reopened = 未闭环；Fixed / Verified / Closed 及已修 / 已验证 / 已关闭 = 已闭环），供 `release-1.md` / `sprint-close.md` 判定 `OPEN_P0`（按列取值，不被表头列名「严重」干扰）。认不出的行进 `unparsed_rows`，**不静默当已闭环**。
+用法：`python3 {{AIDP_HOME}}/scripts/bugfix_scope.py --root . --version <V> [--sprint NNN] [--file X.md] [--severity P0] [--status open|closed|all] [--json | --count]`。退出码：`0` 解析成功（无台账 / 无命中也是 0）/ `1` 有无法识别的数据行（调用方转人工）/ `2` 用法错。调用方 = `flows/version/release-1.md` Step 2「P0 闭环自动判定」；回归见 `tests/test_bugfix_scope.py`。
 
 ## check_version_audit_landed.py — 版本规划产物审计「真的跑过」（确定性，**ERROR 级**）
 

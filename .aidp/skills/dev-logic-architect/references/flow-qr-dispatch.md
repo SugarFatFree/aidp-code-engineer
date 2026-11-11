@@ -115,7 +115,7 @@ python3 <SKILL_DIR>/scripts/check_metric_spec.py \
 #     表名/字段名一律不加引号、同名只有一种拼写、不用保留字。⚠️ 传设计文档**目录**(拼写漂移是跨文件聚合判定)。
 python3 <SKILL_DIR>/scripts/check_sql_identifiers.py \
   <设计文档目录> --json
-# 目标库为达梦时加 --db dameng(Q5:建表/改表标识符必须全大写;dm 标签围栏自动视为达梦)
+# 目标库为达梦时加 --db dameng(调用方传 db_dialect=dameng 或预确认清单声明达梦即视为达梦;Q5:建表/改表标识符必须全大写;dm 标签围栏自动视为达梦)
 # 退出码 0 = 通过或 skipped(无 SQL 围栏——⚠️ skipped 不等于通过) / 1 = Critical(Q1 标识符被引号包裹 / Q2 同一表名多种拼写 / Q5 达梦标识符非全大写) /
 #   2 = 入参错。另出 Q3 字段名拼写漂移 / Q4 保留字作标识符两类 Important,不占退出码,须读 --json 并入检查项 18
 

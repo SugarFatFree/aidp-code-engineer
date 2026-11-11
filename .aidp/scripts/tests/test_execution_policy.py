@@ -1669,6 +1669,25 @@ class BudgetExhaustionDisposalTests(unittest.TestCase):
         self.assertEqual(st["budget"][0]["max_resource"], "retries")
         self.assertIn("有限硬顶", st["budget_note"])
 
+    def test_near_exhaustion_warning_rearms_after_renewal(self):
+        """W4 B-04：续额使占用回落到首档以下后，80% / 95% 预警必须重新生效（去重记录随之清除）。"""
+        self.make_root()
+        import aidp_scheduler as sched
+        state = {"pct": 85}
+        real = sched._budget_headroom
+        sched._budget_headroom = lambda root: [{
+            "version": self.VERSION, "frozen": False, "max_pct": state["pct"], "max_resource": "retries",
+            "resources": {"retries": {"used": state["pct"], "limit": 100, "pct": state["pct"]}}}]
+        try:
+            seq = []
+            for pct in (85, 85, 97, 20, 85, 97, 97):
+                state["pct"] = pct
+                seq.append(bool(sched._warn_budget_near_exhaustion(str(self.root))))
+        finally:
+            sched._budget_headroom = real
+        self.assertEqual(seq, [True, False, True, False, True, True, False],
+                         "首次 80 / 95 各一次；回落到 20% 后再越线必须重新告警；同档位不重复")
+
     def test_manual_unfreeze_refuses_and_never_resets_root_budget(self):
         self.make_root()
         self.exhaust_retries()

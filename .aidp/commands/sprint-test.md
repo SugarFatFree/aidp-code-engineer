@@ -105,7 +105,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 **调用参数**（按 SKILL 输入要求传入）：
 - **运行模式**：`mode=verify-only`——任务描述写明「代码与文档已按档位汇合；只验收、不修复，单轮完整问题清单交调用方」。CVL **不支持 delta 参数**，不构造 `mode=delta` 或虚构开关。只做这一次完整质量审查；修复后由调用层 reviewer 查问题与新增 diff，**不得宣称 CVL 二次完整通过**。其命令型检查同样经测试账本复用，不能用账本替代语义质量审查。
 - **代码路径（`scope_files`）**：当前 task/单 Sprint 写集及必要依赖的精确文件清单，不传 `code/`、项目根或全版本目录；`scope_ids` 同步传本任务需求/接口/页面/用例 ID。
-- **目标库方言**：`python3 {{AIDP_HOME}}/scripts/aidp_config.py get project.sql_dialect`，非空时在 prompt 写明原样传 `--sql-db <值>`（CVL「SQL 标识符通用性」扫描），空 = 通用、不传；只透传，判据以 SKILL 为准。
+- **目标库方言**：`python3 {{AIDP_HOME}}/scripts/aidp_config.py sql-db-flag`（输出 `dameng` 或空串），非空时在 prompt 写明原样传 `--sql-db <输出值>`（CVL「SQL 标识符通用性」扫描），空 = 通用、不传 `--sql-db`；只透传，判据以 SKILL 为准。
 - **DDL 并入范围**：本 Sprint 有 DDL / 初始化数据变更时，把对应 `docs/deployment/{version}/sql/增量/*.sql` 并入 `scope_files`（该目录不在 `code/` 下，不显式并入则 `sql-identifier-case` 扫不到实际交付的 `.sql`）。
 - **设计文档路径**：`docs/design/detail/{version}/` 下真实正式产物，并显式附 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md` 与 `contract_revision`。S 未成文部分以契约卡为本轮规格、四族台账为待成文义务，明确告诉 CVL 不把预期延期误报成“正式文档已齐备”；SKILL 自身判据和原结论保持原样。
 - **接口文档路径**：按契约卡 docs路径/`00_索引.md` 指向的真实接口章节；M 合册直接传合册与契约接口章节，不传不存在的 `03_接口设计.md`。旧布局兼容 `03_接口设计.md` / `接口设计.md`，多分册则传目录与明确文件清单。
@@ -125,7 +125,8 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
     ```
     `--sprint-uncommitted` 仅当本 Sprint 改动全部仍在工作区未提交时加（脚本另验工作区确有未提交改动）。脚本按「契约卡 → 上游透传 → 工作区未提交取 `HEAD` → `merge-base`（仅 ≠ `HEAD` 有效）」取到即停，每个候选校验为 `HEAD` 祖先；输出 `baseline_ref`（commit 或 `none`）与 `unverified_label`，退出码 3 = 取不到。⛔ 不得用 `HEAD~1` 顶替、⛔ 不得凭感觉挑一个 commit。
   - `vcs_mode=none`：无可检出的改动前代码（`sprint-{NNN}-local-before.json` 只有 sha256、不含旧内容，跑不了改动前的类型检查）→ 一律按「取不到」处置（脚本同样返回 `none` + `unsupported:vcs-disabled`）。
-  - **取不到时**：传 `baseline_ref=none`（SKILL 的显式「无改动前基线」入参）：依赖基线的项落「**基线无效，本项未核验**」（`未核验（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`），不回落 `merge-base`，也不以本轮首跑错误数作基线。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**无人值守 / 编排调用必须向上游返回「存在未核验维度 / 不通过」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
+  - **取不到时**：传 `baseline_ref=none`（SKILL 的显式「无改动前基线」入参）：依赖基线的项落「**基线无效，本项未核验**」（`未核验（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`），不回落 `merge-base`，也不以本轮首跑错误数作基线。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**`git` 模式的无人值守 / 编排调用必须向上游返回「存在未核验维度 / 不通过」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
+  - **`vcs_mode=none` 的无人值守 / 编排口径（降级放行，与「非 Git 可规划 / 开发 / 本地测试」一致）**：基线缺失是环境能力缺口而非代码缺陷，熔断只会让非 Git 项目的每个 Sprint 都在此失败。故**仅当**未核验项全部是「依赖改动前基线的项（`unsupported:vcs-disabled`）」且无其它失败 / 未核验维度时：向上游返回**成功**信号并附 `unsupported:vcs-disabled` 降级项清单，测试报告如实列出这些项（⛔ 不折算为通过、不改写 SKILL 结论文字），并经 `python3 {{AIDP_HOME}}/scripts/notify.py --auto --title "vcs-disabled 降级放行"` 通知**一次**（同一版本已通知过则不重发；退出码 3 = 未配渠道 → 静默跳过）。含其它未核验 / 失败时仍按上一条向上游返回失败信号。
 
 **额外提示**（命令端补充给 skill 的上下文）：
 - 任务描述：本次验收的 Sprint 编号 + 功能范围（来自 `01_研发执行计划.md` 中 Sprint-{NNN} 行）

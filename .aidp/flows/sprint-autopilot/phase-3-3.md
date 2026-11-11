@@ -156,7 +156,26 @@ python3 {{AIDP_HOME}}/scripts/check_testdata_prereq.py --version "$TARGET_VERSIO
 - `exit 0` → 通过，继续 3.1.5。
 - `exit 1`（`gaps`）→ **口径与 0.6bis 完全一致、不另立一套**：交互式在**此刻**一次性 `AskUserQuestion` 问清并写回 `01_测试环境与账号.md` + 同步 `01_研发自测方案.md` §3 + commit；无人值守留占位 + WARN 继续。⛔ 无论哪条路径，**此后都不得以"缺前置数据/账号"为由暂停**（`phase-3-1.md` 非法跳过借口清单）。
 
+### 3.1ter ★ 设计占位扫描门（清单外栈维度的 `{待用户填写}`，规划之后、出口写盘之前；规划被跳过时同样执行）
+
+`dev-logic-architect` 对 `tech_boundary` 清单外的栈维度**不得自编默认值**，设计正文留 `{待用户填写: <维度>}` 并登记 D-NNN；下游 planner 对它们标「⚠️ 设计待澄清」暂停实施——无人接手 = 空转到 stuck-phase 熔断，或开发 Agent 自行补栈。故在此确定性扫一遍（唯一实现 `autopilot_design_placeholders.py`，缘由见 `rationale.md`「设计占位扫描门」）：
+
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+PH=$(python3 {{AIDP_HOME}}/scripts/autopilot_design_placeholders.py --version "${TARGET_VERSION:?}"); PH_RC=$?
+if [ "$PH_RC" = 1 ]; then
+  echo "$PH"
+  if [ "${LOOP_UNATTENDED:-0}" = 1 ]; then   # 交互式只告警：用户在场，可当场回答 D-NNN
+    python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" --phase 3.1-design-placeholder \
+      --reason prd-missing --freeze-now \
+      --why "详细设计含清单外维度占位 {待用户填写}：二选一 ① 补 PRD tech_boundary 或 docs/architecture/技术选型.md 后加 --force-replan 重新生成设计；② 直接在设计正文与 99_待澄清问题清单.md 把占位替换为已确认取值。保存后自动解冻"
+    exit 0
+  fi
+fi
+```
+
 ---
+
 
 ## ⛳ 本 Phase 出口：`run_state` 写盘（**硬动作，不可跳过**）
 

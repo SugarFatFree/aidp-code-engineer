@@ -78,7 +78,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-clo
 > | 序 | 数据源 | 推导 |
 > |---|---|---|
 > | ① | 当前 execution context 的最终机器证据 + 已授权的 CVL/差量复核 + 单 Sprint 测试证据 | 全部闭环 → ✅；有失败/未核验 → ⚠️，不得仅看原首轮结论或单条测试 PASS |
-> | ② | 本 Sprint「问题汇总清单」/ `docs/bugfix/{version}/` 未闭环缺陷 | 有未闭环 → ⚠️（附缺陷编号） |
+> | ② | 本 Sprint「问题汇总清单」/ `docs/bugfix/{version}/` 未闭环缺陷（台账按列解析：`python3 {{AIDP_HOME}}/scripts/bugfix_scope.py --root . --version {version} --sprint {NNN} --status open`，退出码 1 = 有认不出的行、转人工）| 有未闭环 → ⚠️（附缺陷编号） |
 > | ③ | ①②均无数据 | 返回 `incomplete-sprint`，保留 activeContext，不执行 Step 2–5、不写关闭标记或归档 |
 >
 > **关闭证据前置门**：①②只决定已交付工作的验收等级，不能证明开发完成。先逐项核对本 Sprint 计划任务、activeContext 已完成记录与实际文件；有待开发任务、范围不明或只存在启动记录 → 同样返回 `incomplete-sprint`。还须有本 Sprint、本轮代码在当前授权范围内的真实证据：默认开发须 static+related-test 的有效证据，真实失败修复复验。review/CVL仅已授权才验；显式受限请求仅LIMITED，不能关闭为开发通过。无测试/工具缺失为未核验，纯文档不适用须具体依据；旧报告/空报告不算。
@@ -135,7 +135,7 @@ python3 {{AIDP_HOME}}/scripts/test_ledger.py review-delta --root . --execution-c
 
 ```bash
 python3 {{AIDP_HOME}}/scripts/check_cascade_obligation.py --version {version} --sprint {NNN}
-# 0 通过 / 2 有未登记义务 / 1 fail-closed
+# 0 通过 / 2 有未登记义务 / 1 fail-closed；★ 非 0 = 门未过：先按下方「门失败时的处置」补登记并重跑本门，通过前不得进入后续 Step（不得带着未登记义务继续关闭）
 ```
 
 **为什么必须有这一步**：约定 22 的**机器可扫载体**是四族 `_开发期{族}增量.md`，

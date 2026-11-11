@@ -258,6 +258,18 @@ class UnitReportEmitTests(unittest.TestCase):
                                 str(self.payload_path().parent.parent), BUILD], text=True, capture_output=True)
         self.assertEqual(smoke.returncode, 0, smoke.stdout + smoke.stderr)
 
+    def test_browser_na_with_cases_is_rejected(self):
+        """C-03：浏览器 N/A 时不再整段跳过校验，N/A 与残留实测 cases[] 并存必须报错。"""
+        payload = {"build": BUILD, "version": "V0.1.0", "commit": COMMIT,
+                   "browserTests": {"status": "N/A", "reason": "纯后端"},
+                   "summary": {"total": 1, "pass": 1, "fail": 0, "block": 0, "skip": 0, "na": 0, "passRate": 1},
+                   "cases": [{"id": "TC-1", "status": "pass"}]}
+        with self.assertRaisesRegex(ValueError, "N/A"):
+            merge.merge_unit_tests(payload, unit(), BUILD, COMMIT)
+        clean = dict(payload, cases=[], summary={"total": 0, "pass": 0, "fail": 0, "block": 0, "skip": 0, "na": 0, "passRate": None})
+        report = merge.merge_unit_tests(clean, unit(), BUILD, COMMIT)
+        self.assertEqual(merge.validate_report_scope(report), [])
+
     def test_cli_explicit_missing_result_is_unverified(self):
         proc, result = self.emit(browser_payload())
         self.assertEqual(proc.returncode, 0, proc.stdout)

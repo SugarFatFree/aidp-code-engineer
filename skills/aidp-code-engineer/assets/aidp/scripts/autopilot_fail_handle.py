@@ -104,7 +104,14 @@ def _recovery_hint(reason, version):
                 "覆盖耗尽项后下个 tick 自动解冻。" % (_UNFREEZE, version, _UNFREEZE, version))
     if reason == "manifest-missing":
         return ("恢复：待测版本无可信测试委派/清单缺失。让开发链路重新产出并交接测试清单（manifest）；"
-                "委派可核验后下个 tick 自动解冻，需立即放行可运行 `%s --manual %s`。" % (_UNFREEZE, version))
+                "当前 build 未定稿且委派可核验时下个 tick 自动解冻。⚠️ 若该 build 已按「静态-only 收尾」定稿，"
+                "探针不会重放旧交接（`测试委派 build 已定稿`），此时须人工放行：`%s --manual %s`。" % (_UNFREEZE, version))
+    if reason == "prd-missing":
+        return ("恢复：补齐可供无人值守读取的声明，保存后下个 tick 自动解冻——① PRD 头部 autopilot_decisions"
+                "（含 tech_boundary 的 backend+database，无则写 none）；② docs/architecture/技术选型.md 已填行；"
+                "③ memory/aidp-config.yaml 的 autopilot_decisions 兜底段；若是设计含「{待用户填写}」占位，则在设计正文与 "
+                "99_待澄清问题清单.md 替换为已确认取值，或补声明后加 --force-replan 重生成设计。"
+                "需立即放行可运行 `%s --manual %s`。" % (_UNFREEZE, version))
     if reason in human:
         return ("恢复：人工处理根因后运行 `%s --manual %s`，下个 tick 自动继续。" % (_UNFREEZE, version))
     if reason in env:

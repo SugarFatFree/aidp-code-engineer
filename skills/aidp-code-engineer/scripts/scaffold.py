@@ -1358,21 +1358,41 @@ def runtime_home_for(agents) -> str:
     return runtime_layout.RUNTIME_HOME[key]
 
 
-def _ungated_stale(source: Path, dest: Path, home: str) -> list:
-    """不受版本门控目录（`scripts/`）里，bundle 渲染结果与已装字节不同的文件（相对运行根）。"""
+def _stale_files(source: Path, dest: Path, home: str, gated: bool) -> list:
+    """bundle 渲染结果与已装字节不同的文件（相对运行根）。
+
+    gated=False：不受版本门控目录（`scripts/`），含已装缺失者；
+    gated=True：受版本门控目录，只列**已装存在**且字节不同者（缺失者属 unregistered_gated_additions），
+    不含用户可填骨架（USER_FILLABLE_CONTRACTS）。
+    """
     stale = []
     for relative, path in runtime_layout._source_contract_files(source):
-        if Path(relative).parts[0] not in L.UNGATED_DIRS:
+        is_ungated = Path(relative).parts[0] in L.UNGATED_DIRS
+        if gated == is_ungated:
+            continue
+        if gated and (Path(relative).parts[0] not in L.GATED_DIRS or relative in L.USER_FILLABLE_CONTRACTS):
+            continue
+        have = dest / relative
+        if gated and not have.is_file():
             continue
         data = path.read_bytes()
         if runtime_layout._is_text(data):
             data = runtime_layout.render_text(data.decode("utf-8"), home,
                                               template_root=source).encode("utf-8")
-        have = dest / relative
         if not have.is_file() or have.read_bytes() != data \
                 or runtime_layout._file_mode(have) != runtime_layout._file_mode(path):
             stale.append(relative)
     return sorted(stale)
+
+
+def _ungated_stale(source: Path, dest: Path, home: str) -> list:
+    """不受版本门控目录（`scripts/`）里，bundle 渲染结果与已装字节不同的文件（相对运行根）。"""
+    return _stale_files(source, dest, home, gated=False)
+
+
+def _gated_stale(source: Path, dest: Path, home: str) -> list:
+    """受版本门控目录里，已装字节与 bundle 渲染结果不同的文件（同版本 fill 不会覆盖它们）。"""
+    return _stale_files(source, dest, home, gated=True)
 
 
 def _unregistered_gated_additions(source: Path, dest: Path, manifest: dict) -> list:
@@ -2173,6 +2193,15 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                              f"（{', '.join(_added[:5])}{' …' if len(_added) > 5 else ''}），"
                              "scripts/ 已按字节覆盖，运行包处于新旧混合态；"
                              f"整体对齐请加 --force 重跑 upgrade（先整包备份再覆盖，本地改动见 local_overwritten）")
+            if preserve_gated:
+                # D-02：同版本 fill 保留门控契约、却按字节覆盖 scripts/ → 两者可能新旧混装，必须明说。
+                _gated_diff = _gated_stale(source, dest, home)
+                if _gated_diff and _ungated_stale(source, dest, home):
+                    rep.warn(f"{home}：同版本升级不覆盖门控契约，但 scripts/ 将按字节覆盖；"
+                             f"{len(_gated_diff)} 个契约文件与 bundle 不同（旧版或本地改动，"
+                             f"{', '.join(_gated_diff[:5])}{' …' if len(_gated_diff) > 5 else ''}），"
+                             "脚本与流程文本可能不匹配；整体对齐请加 --force 重跑 upgrade"
+                             "（先整包备份再覆盖，本地改动见 local_overwritten）")
             if preserve_gated and home not in overlay_updates:
                 try:
                     runtime_layout.validate_runtime(dest, expected_home=home)

@@ -28,12 +28,15 @@ autopilot_decisions:
   on_decision_conflict: pause-notify       # 决策冲突时：pause-notify（暂停并发 #4 通知） | continue-with-default
 
   # === ⑧ 技术边界预确认（★ 无人值守生成设计时的唯一供给；dev-logic-architect Phase 1 是强交互闸门、严禁推断）===
-  # 本版需生成设计时必填 backend + database（纯前端 / 无库项目显式写 none，none 是声明不是缺失）；其余维度可选、写了即原样进「确认汇总」。
-  # 也可不在 PRD 写，改由 `docs/architecture/技术选型.md`「技术栈总览」已填行供给（PRD 优先）。两源皆无 → Phase 0.6 第 2bis 步冻结待人，⛔ 不推断。
+  # 本版需生成设计时必填 backend + database（纯前端 / 无库项目显式写 none，none 是声明不是缺失）；其余维度可选、写了即原样进 `tech_boundary_preconfirmed` 清单。
+  # 也可不在 PRD 写，改由 `docs/architecture/技术选型.md`「技术栈总览」已填行**按维度**补（PRD 同名维度优先）。两源皆无 → Phase 0.6 第 2bis 步冻结待人，⛔ 不推断。
+  # ★ 清单外的栈维度 dev-logic-architect 不推断、设计里留 `{待用户填写: <维度>}`（Phase 3.1ter 扫到即冻结），故**建议一并补全**下列可选键，减少占位：
+  #   frontend / ui / orm / connection_pool / cache / serialization / realtime / http_client / message_queue / auth / build / middleware
   tech_boundary:
     backend: "Spring Boot 3 + MyBatis-Plus"  # 后端栈（含 ORM）；纯前端写 none
-    database: "达梦 DM8"                      # 数据库（决定 --sql-db 方言，达梦 → dameng）；无库写 none
+    database: "达梦 DM8"                      # 数据库（达梦 → db_dialect=dameng，仅达梦会传给 SKILL 脚本 --db/--sql-db）；无库写 none
     frontend: "Vue 3 + Element Plus"         # 可选
+    orm: "MyBatis-Plus"                      # 可选（以下同）：connection_pool: HikariCP / serialization: Jackson / realtime: none …
 
   # === ★ 部署 + 测试环境 ===
   deployment:
@@ -149,7 +152,7 @@ autopilot_decisions:
   | 脏树处置（working tree 非空） | 按前置门尝试 `pull --rebase --autostash`；失败以 `dirty-tree` 记账熔断，不擅自暂存他人修改 | Phase 0.1（`phase-0-3.md`） |
   | 上版收口（存在未 close 的上个 Sprint/版本残留） | 按既有归档流程自动收口，不问 | Phase 3.x |
   | 模块边界确认 | 取 PRD 预声明；无则按项目既有目录约定确定性推断（约定 18/28） | PRD `autopilot_decisions` + 约定 28 |
-  | **技术边界确认**（`dev-logic-architect` Phase 1，数据库必确认、严禁推断） | **⛔ 不推断**：只取 PRD `tech_boundary`，其次 `docs/architecture/技术选型.md` 已填行（唯一实现 `autopilot_tech_boundary.py`），已预确认则作为「确认汇总」传给 `/sprint-design`；两源皆无 → Phase 0.6 第 2bis 步冻结待人补声明 | PRD ⑧ + `reference/SKILL编排层接入.md` §四 |
+  | **技术边界确认**（`dev-logic-architect` Phase 1，数据库必确认、严禁推断） | **⛔ 不推断**：只取 PRD `tech_boundary`，其次 `docs/architecture/技术选型.md` 已填行（唯一实现 `autopilot_tech_boundary.py`），已预确认则作为 `tech_boundary_preconfirmed` 清单传给 `/sprint-design`；两源皆无 → Phase 0.6 第 2bis 步冻结待人补声明 | PRD ⑧ + `reference/SKILL编排层接入.md` §六 |
   | test-intent 流程裁剪 | 保守默认 full、不裁剪（除非显式 `--skip-dev`） | Phase 0.1 |
 - **仍需人工的两类（收敛后的白名单 · 两种模式共用，见 D5）**：① 本轮必需的外部写动作所依赖的凭据失效且无降级路径（如部署脚本凭据过期）② 部署目标完全无法推断（`deployment.mode` / 部署源分支无上下文可推）**且** PRD `deployment` 段未预声明。**除这两类之外**：无人值守零 `AskUserQuestion`；交互式单次同样不得询问，一律取确定性默认继续 + 留痕。⛔ **「缺前置数据 / 缺测试账号」不在白名单内**——它由 Phase 0「用例前置资源对账门」（`phase-0-9.md` 0.6bis）在 Phase 0 一次性问清，此后以此为由暂停即违规（见 `phase-3-1.md` 非法跳过借口清单）。
 

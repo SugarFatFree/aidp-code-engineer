@@ -12,9 +12,10 @@ project:
   # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。
   name: {{project}}
   name_cn: "{{project_cn}}"
-  # 目标数据库方言（可空，通用键）。null = 通用，不启用任何库专项规则；非空时原样透传给
-  # SKILL 脚本的 --db / --sql-db 参数（可取值以 SKILL 当前识别的为准，本文件不枚举）。
-  # 由用户在技术选型确认数据库后记录，Agent 不自行推断。
+  # 目标数据库方言（可空，通用键）。null = 通用，不启用任何库专项规则。目前 SKILL 脚本
+  # （--db / --sql-db）只有 dameng 有专项规则：dm / dameng / 达梦* 经 `aidp_config.py sql-db-flag`
+  # 映射为 dameng 后才传，其余值（mysql 等）不传。由用户在技术选型确认数据库后记录
+  # （无人值守下达梦由技术边界判定回写，仅在本键为空时），Agent 不自行推断。
   sql_dialect: null
 
 development:

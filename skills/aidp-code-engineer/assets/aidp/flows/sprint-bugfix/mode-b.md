@@ -115,7 +115,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 ```
 
 
-部署上下文下，修复 push 前先保存 `BASE_REF`，调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF"`（链外无 build → `--standalone`）。无正式代码变更且无分类错误 → 仍校验 push 成功、记 `cicd_skipped=true`，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误 → 走 `cicd_watch.py --mode watch --commit <sha> --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；主动retry另须deploy grant与变化证据/预算，不以push授权扩权）+ `autopilot-deploy-watch.py` 就绪探针。⛔ 不得以远端状态反推分类。
+部署上下文下，修复 push 前先保存 `BASE_REF`，调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF"`（链外无 build → `--standalone`）。无正式代码变更且无分类错误 → 仍校验 push 成功、记 `cicd_skipped=true`，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误 → 走 `cicd_watch.py --mode watch --commit <sha> --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；主动retry另须deploy grant与变化证据/预算，不以push授权扩权）+ `autopilot-deploy-watch.py` 就绪探针；监听结束后 `classify_push.py --version "$VERSION" --record-terminal success|failed|unknown:<原因>` 记部署终态（约定 31.5）。⛔ 不得以远端状态反推分类。
 
 #### Step 3：回填状态与报告链接
 

@@ -112,6 +112,7 @@ run "test_development_scope.py（开发前后统一风险与成本判据）" pyt
 run "test_sprint_baseline.py（baseline_ref 确定性解析）" python3 .aidp/scripts/tests/test_sprint_baseline.py
 run "test_audit_carryover.py（version-auditor 结转与升级计算）" python3 .aidp/scripts/tests/test_audit_carryover.py
 run "test_plan_ac.py（计划验收标准形式初筛）" python3 .aidp/scripts/tests/test_plan_ac.py
+run "test_bugfix_scope.py（bugfix 台账按列解析）" python3 .aidp/scripts/tests/test_bugfix_scope.py
 run "test_sql_reorg.py（SQL 整理语句守恒校验）" python3 .aidp/scripts/tests/test_sql_reorg.py
 run "test_sprint_discovery.py（Sprint编号、启动和关闭发现一致性）" python3 .aidp/scripts/tests/test_sprint_discovery.py
 run "test_light_task_flow.py（无Sprint命令串联与状态隔离）" python3 .aidp/scripts/tests/test_light_task_flow.py

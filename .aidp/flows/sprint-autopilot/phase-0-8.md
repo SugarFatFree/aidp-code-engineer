@@ -60,10 +60,7 @@
 >       | awk '/^\{/,0' | python3 -c "import json,sys;print(json.load(sys.stdin).get('category',''))" 2>/dev/null)
 > [ -n "$CAT" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py set chrome_preflight "$CAT"
 > # test_strategy：真源在 PRD autopilot_decisions；PRD 大目录取 baseline prd_root（可被项目覆盖）
-> # ⛔ 检索面必须限定到**本轮目标版本**：对整个 prd_root 递归 grep + head -1 会按文件系统序
-> #    取到**别的版本**的值（多版本共存是常态），而写入的又是 baseline **顶层**键 —— 于是
-> #    「上一版写 static-only、本版要 chrome-mcp」会让 0.7 钢门的 chrome 必需项恒假、
-> #    0.5.5 的 chrome 预检整段按 static-only 跳过，直到测试链路才发现驱动没装。
+> # ⛔ 检索面必须限定到**本轮目标版本**（别的版本的值会写进 baseline 顶层键，致 chrome 预检误判跳过；详见 `rationale.md`「test_strategy 检索面」）
 > PRD_ROOT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get prd_root --default "docs/requirements")
 > TS=$(grep -rhoE '^[[:space:]]*test_strategy:[[:space:]]*[a-z-]+' \
 >        "$PRD_ROOT/$TARGET_VERSION" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//')
@@ -72,13 +69,13 @@
 
 ### 0.6 字段缺失统一在 Phase 0 收集（★ 铁律：禁止执行主流程（Phase 2/3）中途阻塞）
 
-★ **核心原则**：所有"可能中途阻塞执行主流程（Phase 2/3）"的决策必须在 Phase 0 全部收齐。绝不允许命令跑到 Phase 3.2 才弹 `AskUserQuestion` 问"你的部署 URL 是什么"——长时间运行被半路打断对 7×24 是致命缺陷。
+★ **核心原则**：所有"可能中途阻塞执行主流程（Phase 2/3）"的决策必须在 Phase 0 全部收齐。绝不允许跑到 Phase 3.2 才问"你的部署 URL 是什么"（半路打断对 7×24 致命）。
 
 ★ **零交互覆盖清单（不只"字段缺失"，连"自动判定 / 自动降级"也算 Phase 0 责任）**：以下**会中途阻塞**的决策全部前置为 Phase 0 自动判定或自动降级，**Phase 2/3 中途一律不得再就它们弹 `AskUserQuestion`**——① **ENTRY_MODE**：`--skip-dev` → `test-only`（显式、零交互）；`full`↔`incremental` 由 3.1.0 `PLANNING_DONE` 硬判据自动裁定（非弹窗）；**唯一需交互的是"命中 test-intent 关键词但未带 `--skip-dev`"这一裁剪歧义**：**交互式在 Phase 0 `AskUserQuestion` 问「全流程 / 仅测试」（P0-0）、`/loop` 无人值守保守默认 full 不弹窗**；② **远程 chrome 不可达**由测试链路 `/sprint-aiauto-test` Phase 0.1.5 A0 **自动降级本机无头 cli**（非强制远程 + 本机可用时），不弹"retry / 换IP / abort"；③ 其余决策字段按下表一次性收齐（清单见 `phase-0-7.md`）。⛔ **`/loop` 无人值守：主流程任何 `AskUserQuestion` 视为规范违规**（恒走保守默认）。
 
-★ **Phase 0 必问白名单（"零弹窗"的显式例外）**：test-intent 裁剪歧义（P0-0）、0.6 决策字段缺失、0.6bis 用例前置资源缺口属于**一次性前置配置收集**，**不受**上面「零弹窗 / 禁止中途阻塞」约束——那些约束针对**执行主流程（Phase 2/3）中途**阻塞，**不是** Phase 0 前置一次性收集。即：**交互式调用（用户在场）下必须在 Phase 0 `AskUserQuestion` 问一次**；**仅 `/loop` 无人值守**（无人可问）才走保守默认 + WARN。
+★ **Phase 0 必问白名单（"零弹窗"的显式例外）**：test-intent 裁剪歧义（P0-0）、0.6 决策字段缺失、0.6bis 用例前置资源缺口属于**一次性前置配置收集**，**不受**上面「零弹窗」约束（该约束只针对 Phase 2/3 中途阻塞）。即：**交互式调用（用户在场）下必须在 Phase 0 `AskUserQuestion` 问一次**；**仅 `/loop` 无人值守**（无人可问）才走保守默认 + WARN。
 
-★ **Agent 执行铁律**：① 部署 URL / 访问地址类字段缺失时，**严禁**用 spec 默认值 / 外部 config / 历史 memory **"推导"出部署地址蒙混过关**——交互式必须 `AskUserQuestion` 问，`/loop` 无人值守缺则 `deployment.mode=none`，绝不拼一个会 404 的链接；② **不得自创 spec 之外的里程碑通知**（如部署链接发错后补的"🔗 链接更正"通知）——真正的修复永远是"Phase 0 一开始就问对 / 输对"，而非事后补发。
+★ **Agent 执行铁律**：① 部署 URL / 访问地址类字段缺失时，**严禁**用 spec 默认值 / 外部 config / 历史 memory **"推导"部署地址**——交互式必须 `AskUserQuestion` 问，`/loop` 无人值守缺则 `deployment.mode=none`，绝不拼一个会 404 的链接；② **不得自创 spec 之外的里程碑通知**（如事后补发"🔗 链接更正"）——修复在于 Phase 0 一开始就问对 / 输对。
 
 **收集机制**（默认行为，可加 `--strict-prd` 改为缺失直接退出）：
 
@@ -87,39 +84,49 @@
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # 取回 TARGET_VERSION（分片间 shell 变量不持久）
 PRD_ROOT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get prd_root --default "docs/requirements")
+# TARGET_VERSION 空是 7×24 稳态（仅准发布 / 空闲 tick）：无目标版本则跳过，⛔ 不拼出 `--version --prd-root`
+if [ -n "${TARGET_VERSION:-}" ]; then
 DM="python3 {{AIDP_HOME}}/scripts/autopilot_decisions_merge.py --version $TARGET_VERSION --prd-root $PRD_ROOT"
 $DM --json   # 合并结果 = 第 2 步字段比对的唯一输入；冲突告警走 stderr、恒可见
-# 兜底副本与 PRD 有冲突字段 → exit 1 + 可直接执行的清理建议；⛔ 不阻塞本轮
+# 兜底副本与 PRD 冲突 → exit 1 + 清理建议；⛔ 不阻塞本轮
 $DM --check || echo "⚠️ 兜底段 memory/aidp-config.yaml autopilot_decisions 与 PRD 冲突：本轮按 PRD 跑，按上面建议清理"
+fi
 ```
 2. 与必填决策字段清单对比（单一信源 = `phase-0-7.md` 的字段定义块），得出**完整缺失字段清单**
-2bis. **★ 技术边界预确认门（仅无人值守）**：本版需生成设计（`docs/design/detail/$TARGET_VERSION/` 不存在，或带 `--force-replan`）时，须有用户落盘的技术边界：PRD `autopilot_decisions.tech_boundary`（`phase-0-7.md` ⑧）> `docs/architecture/技术选型.md`；唯一实现 = `autopilot_tech_boundary.py`，⛔ 不推断。皆无 → 冻结（`prd-missing`，补 PRD 后自动解冻）+ #4，**不进入 `/sprint-design`**（缘由见 `rationale.md`「技术边界预确认门」）：
+2bis. **★ 技术边界预确认门（仅无人值守）**：本 tick **会调用 `/sprint-design`**（有 `TARGET_VERSION`、无 `--skip-dev` / `--no-planning`，且设计目录无任何 `.md` 或带 `--force-replan`）时，须有用户落盘的技术边界（PRD ⑧ `tech_boundary` > `技术选型.md`，唯一实现 `autopilot_tech_boundary.py`，⛔ 不推断）。rc=1 → 冻结 `prd-missing` + #4、不进 `/sprint-design`；rc≥2 = 脚本故障，⛔ 不当缺失冻结。缘由见 `rationale.md`「技术边界预确认门」：
 
    ```bash
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-   if [ "${LOOP_UNATTENDED:-0}" = 1 ] && { [ ! -d "docs/design/detail/${TARGET_VERSION:?}" ] || [ "${FORCE_REPLAN:-0}" = 1 ]; }; then
-     python3 {{AIDP_HOME}}/scripts/autopilot_tech_boundary.py --version "$TARGET_VERSION" >/dev/null 2>&1 || {
+   PRD_ROOT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get prd_root --default "docs/requirements")
+   if [ -n "${TARGET_VERSION:-}" ] && [ "${LOOP_UNATTENDED:-0}" = 1 ] && [ "${SKIP_DEV:-0}" != 1 ] && [ "${NO_PLANNING:-0}" != 1 ] \
+      && { ! ls "docs/design/detail/$TARGET_VERSION/"*.md >/dev/null 2>&1 || [ "${FORCE_REPLAN:-0}" = 1 ]; }; then
+     TB_RC=0
+     python3 {{AIDP_HOME}}/scripts/autopilot_tech_boundary.py --version "$TARGET_VERSION" --prd-root "$PRD_ROOT" >/dev/null || TB_RC=$?
+     if [ "$TB_RC" = 1 ]; then
        python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" --phase 0.6-tech-boundary \
          --reason prd-missing --freeze-now \
-         --why "无可用技术边界：请补 PRD 头部 autopilot_decisions.tech_boundary（至少 backend+database，无则写 none）"
-       exit 0; }
+         --why "无可用技术边界：请在 PRD autopilot_decisions.tech_boundary、技术选型.md 或 aidp-config 兜底段补 backend+database（无则写 none），保存后自动解冻"
+       exit 0
+     elif [ "$TB_RC" -ge 2 ]; then
+       echo "⚠️ autopilot_tech_boundary.py 自身故障（rc=$TB_RC），不当缺失冻结，请排查"
+     fi
    fi
    ```
 
 3. 缺失字段为空 → 直接进入 Phase 1
 4. 缺失字段非空 → **按上下文分流**（堵住"7×24 中途新增一份缺字段 PRD 就弹窗死锁"缺口）：
    - **交互式（用户在场）**：命令端**一次性弹 AskUserQuestion 系列收集**，按下方批次分批问（每批最多 4 题）。
-   - **★ 无人值守（无人可问，`LOOP_UNATTENDED=1`）**：**绝不弹窗**——对缺失字段套用「无人值守保守默认表」自动填 + 终端 `WARN 本版 N 个决策字段缺失，按保守默认跑（见下表），建议补 PRD 后 --force-replan` + 在 #1b/#4 里程碑通知留一句同款提示（可见不静默）；`--strict-prd` 仍强制记入缺失清单退出（不套默认）。**保守默认表**（只给"能安全兜底"的决策字段；**部署/URL 类字段一律 `deployment.mode=none`——绝不猜 URL**，本版退化为纯开发 + 静态验收、跳过自动部署与浏览器实测，留人工补 PRD 后重规划）：
+   - **★ 无人值守（无人可问，`LOOP_UNATTENDED=1`）**：**绝不弹窗**——对缺失字段套用「无人值守保守默认表」自动填 + 终端 `WARN 本版 N 个决策字段缺失，按保守默认跑（见下表），建议补 PRD 后 --force-replan` + 在 #1b/#4 里程碑通知留一句同款提示（可见不静默）；`--strict-prd` 仍强制记入缺失清单退出（不套默认）。**保守默认表**（仅能安全兜底的字段；**部署/URL 类字段一律 `deployment.mode=none`——绝不猜 URL**，本版退化为纯开发 + 静态验收，留人工补 PRD 后重规划）：
 
      | 缺失字段 | 无人值守保守默认 | 理由 |
      |---------|----------------|------|
      | `visual_baseline` | `prototype-only` | 有原型按原型对齐、无则纯功能，不臆造视觉基准 |
      | `cache_strategy` | `disabled` | 不启用缓存最安全，避免脏读 |
      | `mock_position` | `frontend` | 约定 26 P0 首选（前端拦截） |
-     | `on_decision_conflict` | `continue-with-default` | 无人可拍板，冲突用默认 + 留档、不死等（口径见 `/sprint-dev` 决策门）|
+     | `on_decision_conflict` | `continue-with-default` | 无人可拍板，冲突用默认 + 留档、不死等|
      | `test_strategy` | `static-only` | 无实测账号/环境时只做静态验收，不空等 chrome |
      | `third_party_mocked` | `[]`（空） | 无声明按无第三方未交付处理，真有会在开发中暴露 |
-     | `deployment.mode` / 各部署 URL | `none` | ⛔ 绝不猜部署地址（见上方 Agent 执行铁律）；退化为纯开发、跳过部署+实测，补 PRD 后 `--force-replan`。**★ 命中即落 `degraded_reason="deployment-undeclared"`** + #3 **标题**带「（未部署·静态-only）」——本降级属「不挂起但活没干」：仪式齐全、门全绿，比挂起更难发现 |
+     | `deployment.mode` / 各部署 URL | `none` | ⛔ 绝不猜部署地址；退化为纯开发、跳过部署+实测，补 PRD 后 `--force-replan`。**★ 命中即落 `degraded_reason="deployment-undeclared"`** + #3 **标题**带「（未部署·静态-only）」——本降级属「不挂起但活没干」：仪式齐全、门全绿，比挂起更难发现 |
 
    分批问的批次表（**仅交互式路径用**；`/loop` 走上方保守默认表）：
 

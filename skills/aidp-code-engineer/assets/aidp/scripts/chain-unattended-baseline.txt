@@ -35,11 +35,8 @@
 {{AIDP_HOME}}/commands/sprint-plan.md	/sprint-selftest {version}	1
 {{AIDP_HOME}}/commands/sprint-plan.md	/sprint-selftest {version} --supplement={NN}	1
 {{AIDP_HOME}}/commands/sprint-plan.md	/sprint-start 001	1
-{{AIDP_HOME}}/commands/sprint-test.md	/sprint-aiauto-test --once	1
 {{AIDP_HOME}}/commands/sprint-test.md	/sprint-autopilot --skip-dev	1
-{{AIDP_HOME}}/commands/sprint-test.md	/sprint-bugfix sprint-{NNN}	1
 {{AIDP_HOME}}/commands/sprint-test.md	/sprint-close {NNN}	1
-{{AIDP_HOME}}/commands/sprint-test.md	/sprint-selftest {version}	3
 {{AIDP_HOME}}/flows/sprint-aiauto-test/phase-3-3b.md	/sprint-autopilot --once	1
 {{AIDP_HOME}}/flows/sprint-autopilot/output-examples.md	/version V0.1.0 完成	1
 {{AIDP_HOME}}/flows/sprint-autopilot/phase-0-3.md	/sprint-aiauto-test --reset-chrome-ip	1

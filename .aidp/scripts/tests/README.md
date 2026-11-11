@@ -25,6 +25,7 @@
 | `test_sprint_baseline.py` | `baseline_ref` 解析：契约卡/透传/工作区未提交/merge-base≠HEAD/none，非祖先与选项形态拒绝，无 Git 标注 | `python3 .aidp/scripts/tests/test_sprint_baseline.py` | Python 标准库、临时 Git |
 | `test_audit_carryover.py` | version-auditor 结转：轮次 +1、Important 连续 3 轮升级 Critical、Warning 不升级、回检轮次与升级标记、零重合 WARN | `python3 .aidp/scripts/tests/test_audit_carryover.py` | Python 标准库 |
 | `test_plan_ac.py` | 计划验收标准形式初筛：空白/占位/套话/过短无落点命中、链接与反引号命令放行、随附样例零命中 | `python3 .aidp/scripts/tests/test_plan_ac.py` | Python 标准库 |
+| `test_bugfix_scope.py` | bugfix 台账按列解析：全闭环不误判 P0、未闭环 P0 计数、Sprint 过滤、认不出的行 exit 1、旧整行 grep 误判复现 | `python3 .aidp/scripts/tests/test_bugfix_scope.py` | Python 标准库 |
 | `test_sql_reorg.py` | SQL 整理语句守恒：多重集合比对、0 条与空侧 fail-closed、回滚脚本排除 | `python3 .aidp/scripts/tests/test_sql_reorg.py` | Python 标准库 |
 | `test_sprint_discovery.py` | 计划分册/启动/归档/关闭共同发现，保留证据分域 | `python3 .aidp/scripts/tests/test_sprint_discovery.py` | Python 标准库、临时 Git |
 | `test_light_task_flow.py` | 默认开发/修复的相关单测闭环、断言修改必实跑、明确跳过的受限结论；临时 Git/离线部署复用测试证据，重复收尾不重放，已有 Sprint 字节不变 | `python3 .aidp/scripts/tests/test_light_task_flow.py` | Python 标准库、Git、离线部署替身 |

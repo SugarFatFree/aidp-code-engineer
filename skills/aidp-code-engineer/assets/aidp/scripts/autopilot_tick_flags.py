@@ -807,9 +807,8 @@ def _cicd_max_retries(cur: dict | None = None) -> str:
         return v
     try:
         import aidp_config
-        c = aidp_config.get(".", "cicd.max_retries")
-        if str(c).strip().isdigit():
-            return str(c).strip()
+        # 与 cicd_config() 同口径（负数 / 非法值回落 3），避免两条读取路径对同一配置给出不同上限
+        return str(aidp_config.cicd_config(".")["max_retries"])
     except Exception:  # noqa: BLE001
         pass
     return "3"

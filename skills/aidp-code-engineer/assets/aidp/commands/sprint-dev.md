@@ -438,6 +438,8 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 
 **显式延期**：`skip-doc-sync` 下仍须记录口述、完成契约卡与反转门，主流程原子取号后把本轮口述变更写进受影响各族台账（见 `{{AIDP_HOME}}/reference/开发期族增量.md`）。S 可以带已登记成文义务继续；M 必须在汇合时补齐、L 必须开发前补齐，不能用该参数宣告缺件通过。台账与工作单是后续可发现的输入，终端 WARN 不能替代落盘。
 
+> 编号说明：Phase 0B.1.2 为退役编号、不使用（保留以免改动他处对 0B.1.3 的直引）。
+
 ### Phase 0B.1.3：★ 开发期口述追加 / 口径反转的处理（约定 34 ⑥ 决策门）
 
 > ★ **单一信源，`/sprint-full` 模式 B Phase 0B.3 同用**（它只做编排触发、不复述本处判定）。
@@ -572,7 +574,7 @@ python3 {{AIDP_HOME}}/scripts/check_case_ledger_pending.py --version "{version}"
 
 > **日常累进的推送时机**：部署触发前只复用已授权验证的当前证据；仅 commit/push/deploy 不追加测试、重回归或审计。未授权测试记 NOT_REQUESTED，不变成部署欠账。
 
-> ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、仅获 deploy grant 且预算允许才主动 retry 和运行就绪探针；push 单独授权只读监听。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`{{AIDP_HOME}}/flows/sprint-autopilot/invariants.md`）。
+> ★ **推送分类与监听（约定 31.5，独立跑本命令时同样适用）**：本命令 push 前先调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"]` 并写入当前 build（⛔ 别写成 `classify_commit_change.py`：那个只出分类、无 `--version`/`--build`、不落盘）。无正式代码变更且分类无错误时，仍校验 push 成功并记录 `cicd_skipped=true`，不触发/监听远端 CICD、不跑就绪探针；正式代码变更或分类错误时，若项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none` 且 `cicd.pipelines` 已配，默认 GitHub Actions），则经 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode watch --commit <sha> --env <env>` 监听本次推送触发的运行至终态、仅获 deploy grant 且预算允许才主动 retry 和运行就绪探针；push 单独授权只读监听。★ 监听结束后必须 `python3 {{AIDP_HOME}}/scripts/classify_push.py --version "$VERSION" --record-terminal success|failed|unknown:<原因>` 记部署终态（约定 31.5；漏记 1 小时后 `commit_gate` 报 `pending_cicd`）。分类结果缺失、调用失败或无法落盘时按正式代码路径 fail-closed。规则单一信源 = 约定 31.5 +「推送分类与监听不变式」（`{{AIDP_HOME}}/flows/sprint-autopilot/invariants.md`）。
 
 ---
 

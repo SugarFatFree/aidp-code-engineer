@@ -3145,6 +3145,25 @@ class UpgradeReportTest(unittest.TestCase):
             self.assertIn(rel, text)
             self.assertIn("--force", text)
 
+    def test_same_version_fill_warns_when_gated_contracts_differ_from_bundle(self):
+        """D-02：同版本 fill 不覆盖门控契约，但 scripts/ 按字节覆盖 → 新旧混装必须有明确提示。"""
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            runtime = root / ".claude"
+            rel, script = "commands/sprint-test.md", "scripts/aidp_config.py"
+            (runtime / rel).write_text((runtime / rel).read_text(encoding="utf-8") + "\n旧版残留\n", encoding="utf-8")
+            (runtime / script).write_text((runtime / script).read_text(encoding="utf-8") + "\n# stale\n", encoding="utf-8")
+            old = json.loads((runtime / runtime_layout.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            fresh = runtime_layout.build_runtime_manifest(runtime, old["version"], old["source"], ".claude")
+            runtime_layout._write_manifest(runtime, fresh)
+            res = S.run(root, self._options())
+            self.assertEqual(res["contract_decision"], "fill")
+            self.assertIn("旧版残留", (runtime / rel).read_text(encoding="utf-8"), "同版本不覆盖门控契约")
+            self.assertNotIn("# stale", (runtime / script).read_text(encoding="utf-8"), "scripts 按字节覆盖")
+            text = "\n".join(res["warnings"])
+            self.assertIn(rel, text)
+            self.assertIn("--force", text)
+
     def test_overwrite_upgrade_reports_removed_contracts_and_modified(self):
         with H.TempRepo() as root:
             scaffold(root, "--agent", "claude", "--user", "alice")

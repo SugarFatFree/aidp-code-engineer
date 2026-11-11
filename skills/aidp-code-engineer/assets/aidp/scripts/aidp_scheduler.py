@@ -487,6 +487,12 @@ def install_preflight(root, agent, plat):
     ⛔ 装上一个注定跑不起来的定时任务比不装更糟：每轮都失败、而失败只落在没人看的日志里。
     """
     errors, warns = [], []
+    # ★ 枚举校验：scheduler.agent 写错（如 foo）此前只在每轮 tick 才暴露，装上即注定每轮失败。
+    from aidp_config import SCHEDULER_AGENTS
+    bad = [x.strip() for x in str(agent or "auto").split(",") if x.strip() and x.strip() not in SCHEDULER_AGENTS]
+    if bad:
+        errors.append("scheduler.agent / --agent 含未知取值 %s（可选：%s，可用逗号给出备选顺序）"
+                      % ("/".join(bad), "/".join(SCHEDULER_AGENTS)))
     if plat in ("systemd", "cron", "launchd"):
         if not shutil.which("flock"):
             try:
@@ -1237,14 +1243,28 @@ def _warn_budget_near_exhaustion(root, command="sprint-autopilot"):
     """
     fired = []
     for row in _budget_headroom(root):
-        if row["frozen"] or row["max_pct"] < BUDGET_WARN_PCTS[0]:
+        key = f"{row['version']}"
+        if row["frozen"]:
+            continue
+        if row["max_pct"] < BUDGET_WARN_PCTS[0]:
+            # 占用回落到首档以下（典型：用户续额抬高了上限）→ 清该版去重记录，
+            # 否则续额后 80% / 95% 预警永久失声，第二次耗尽只剩冻结时那一条。
+            def reset(data, key=key):
+                seen = data.get("budget_warned")
+                if isinstance(seen, dict) and key in seen:
+                    del seen[key]
+                    return True
+                return False
+            _gap_update(root, reset)
             continue
         level = max(p for p in BUDGET_WARN_PCTS if row["max_pct"] >= p)
-        key = f"{row['version']}"
 
         def mutate(data, key=key, level=level):
             seen = data.setdefault("budget_warned", {})
-            if int(seen.get(key) or 0) >= level:
+            prev = int(seen.get(key) or 0)
+            if prev >= level:
+                if prev > level:   # 部分续额后档位下降：只下调记录（锁内改写即落盘），不重复发本档告警
+                    seen[key] = level
                 return False
             seen[key] = level
             return True
@@ -1394,7 +1414,9 @@ def _freeze_timeout_stuck(root, count, a):
     from aidp_paths import baseline
     try:
         state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
-        version = ((state.get("autopilot") or {}).get("target_version") or "").strip()
+        ap = state.get("autopilot") or {}
+        # 无目标版本时（仅跑准发布的稳态 tick）回落到准发布版：否则该稳态下 tick 每次超时也永不熔断
+        version = (ap.get("target_version") or ap.get("pre_release_version") or "").strip()
         node = (state.get("versions") or {}).get(version) or {}
     except (OSError, ValueError, AttributeError):
         return ""

@@ -30,7 +30,7 @@ python3 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_sql_style_consist
 4. 本版无 DDL/DML 变更 → 不产空占位文件（N3 空占位判违规）；全量建库脚本属约定 37 全量轨，由 `/version` 发布期产出，⛔ 不在本步生成。
 5. **DDL 幂等性硬要求**：所有 CREATE/ALTER 包含 `IF NOT EXISTS` / `IF EXISTS` 判断（SKILL「Module D 版本归档完整性」维度内置核验）。
 
-**所有 .sql 文件统一要求**：建表语句完整可执行 / 索引齐全 / 初始化数据（如有）独立成块 / 兼容项目实际使用的数据库（MySQL/PostgreSQL/达梦 等）。标识符（表名 / 字段名）规则以 `dev-logic-architect` 核心原则 12 / 检查项 18 为准，本处不复述；目标库方言取 `python3 {{AIDP_HOME}}/scripts/aidp_config.py get project.sql_dialect`，非空时原样作为 `--db <值>` 随 SKILL 调用 prompt 传给子 Agent（空 = 通用，不传）；`run_qr_checks.py` 不透传 `--db`，prompt 须写明由 QR 子 Agent 对 `check_sql_identifiers.py` 另行带 `--db <值>`。
+**所有 .sql 文件统一要求**：建表语句完整可执行 / 索引齐全 / 初始化数据（如有）独立成块 / 兼容项目实际使用的数据库（MySQL/PostgreSQL/达梦 等）。标识符（表名 / 字段名）规则以 `dev-logic-architect` 核心原则 12 / 检查项 18 为准，本处不复述；目标库方言取 `python3 {{AIDP_HOME}}/scripts/aidp_config.py sql-db-flag`（仅 `dameng` 有专项规则；其余库输出空），非空时作为 `--db <值>` 随 SKILL 调用 prompt 传给子 Agent（空 = 通用，不传）；`run_qr_checks.py` 不透传 `--db`，prompt 须写明由 QR 子 Agent 对 `check_sql_identifiers.py` 另行带 `--db <值>`。
 
 **★ Step 3.2：SQL 落位到 `docs/deployment/{version}/sql/增量/` + 版本落位一致性防护（两阶段：SKILL 暂存 → 命令端归位；堵"补充/增量 SQL 落错版本目录、文件头版本≠目录版本"）**：
 
@@ -95,7 +95,7 @@ python3 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_sql_style_consist
 3. **④ 回写设计文档 SQL 引用路径（搬迁配套）**：SKILL 生成的详细设计/数据库设计正文（Module D 交付物清单、数据表来源 SQL 路径等）里若引用了暂存位 SQL 路径（`code/sql/v{版本号}/*.sql` 带 v 前缀，或历史无 v 的 `code/sql/{version}/*.sql`），命令端**同步 Edit 回写为最终位置 `docs/deployment/{version}/sql/增量/*.sql`**，避免"SQL 已搬走、设计文档仍指暂存位"的断链。
    ```bash
    # ⑤ 交付 .sql 的标识符机检（采集器退出码恒 0 → ⛔ 必须读命中清单，exit 0 不构成通过证据）
-   SQL_DB=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get project.sql_dialect)   # 空 = 通用，不带 --sql-db
+   SQL_DB=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py sql-db-flag)   # 仅 dameng 有专项规则；空 = 通用，不带 --sql-db
    python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/scan_code_conventions.py "docs/deployment/{version}/sql/增量" --checks sql-identifier-case ${SQL_DB:+--sql-db "$SQL_DB"} --json
    ```
    判据与历史库既有加引号表的登记沿用口径以 SKILL 为准；有命中 → 回 SKILL 同口径修正 `.sql` 后重跑（设计 `.md` 里的 SQL 围栏由 SKILL 的 `check_sql_identifiers.py` 管，实际交付的 `.sql` 只有本步覆盖）。

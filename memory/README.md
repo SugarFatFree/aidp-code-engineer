@@ -35,7 +35,7 @@
 
 | 文件 | 内容 |
 |------|------|
-| `aidp-config.yaml` | 项目级开关与集成配置：目标数据库方言 `project.sql_dialect`（可空通用键，null = 通用；非空时原样透传给 SKILL 脚本的 `--db` / `--sql-db`，由用户在技术选型确认后记录）、工作分支偏好 `development.branch_policy`（null 首次询问 / current 当前分支 / new 每个独立任务一次新分支；升级保留）、提交前门禁 `commit_gate`、里程碑通知 `notify`、CICD `cicd`（提供方 `provider`，默认 GitHub Actions + 环境→流水线映射 `pipelines`）、7×24 调度 `scheduler`（`aidp_scheduler.py` 读取）、Stop 护栏 `stop_guard`、脚手架版本 `scaffold`、autopilot 决策兜底 `autopilot_decisions`、部署备份策略 `deployment`（含 `deployment.backup`，默认 null 不授权备份，见 `{{AIDP_HOME}}/reference/部署操作约定.md`）、可选执行策略 `execution_policy`（null = 默认实现 + 静态 + 相关单测；仅用户明确选择的项目策略才放宽，来源键由 Agent 记录、勿手填）。团队共享、随 git 提交；⛔ 密钥只经环境变量引用，不明文入库 |
+| `aidp-config.yaml` | 项目级开关与集成配置：目标数据库方言 `project.sql_dialect`（可空通用键，null = 通用；SKILL 脚本 `--db` / `--sql-db` 目前只有 `dameng` 有专项规则：`dm` / `dameng` / `达梦*` 经 `aidp_config.py sql-db-flag` 映射为 `dameng` 才传，其余值不传；由用户在技术选型确认后记录，无人值守下达梦由技术边界判定在其为空时回写）、工作分支偏好 `development.branch_policy`（null 首次询问 / current 当前分支 / new 每个独立任务一次新分支；升级保留）、提交前门禁 `commit_gate`、里程碑通知 `notify`、CICD `cicd`（提供方 `provider`，默认 GitHub Actions + 环境→流水线映射 `pipelines`，另有 `max_retries` / `push_auto_deploy` / `push_deploy_min_wait_seconds`）、7×24 调度 `scheduler`（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `tick_max_seconds` / `exec`，`aidp_scheduler.py` 读取）、Stop 护栏 `stop_guard`、脚手架版本 `scaffold`、autopilot 决策兜底 `autopilot_decisions`、部署备份策略 `deployment`（含 `deployment.backup`，默认 null 不授权备份，见 `{{AIDP_HOME}}/reference/部署操作约定.md`）、可选执行策略 `execution_policy`（null = 默认实现 + 静态 + 相关单测；仅用户明确选择的项目策略才放宽，来源键由 Agent 记录、勿手填）。团队共享、随 git 提交；⛔ 密钥只经环境变量引用，不明文入库 |
 
 ### 运行时状态文件（点号开头，项目级）
 

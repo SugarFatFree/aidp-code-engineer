@@ -996,4 +996,16 @@ Phase 3.2 的单 Sprint 分支由子 Agent Read 分片执行，**它没见过 Ph
 
 ## 技术边界预确认门（phase-0-8 2bis）
 
-`dev-logic-architect` Phase 1「技术边界确认」是强交互闸门（数据库必确认、严禁从框架/原型推断），无人值守下子 Agent 无人可问：无供给时要么在无人可答处结束本轮（既不失败也不推进，只会拖到 stuck-phase 熔断），要么违反铁律自行补栈。故在进入 `/sprint-design` 前确定性检查声明是否存在，并且不套「保守默认」——数据库没有安全默认。通过时 `/sprint-design` 的无人值守上下文由 `autopilot_tech_boundary.py --summary` 供给，契约见 `reference/SKILL编排层接入.md` §四。
+`dev-logic-architect` Phase 1「技术边界确认」是强交互闸门（数据库必确认、严禁从框架/原型推断），无人值守下子 Agent 无人可问：无供给时要么在无人可答处结束本轮（既不失败也不推进，只会拖到 stuck-phase 熔断），要么违反铁律自行补栈。故在进入 `/sprint-design` 前确定性检查声明是否存在，并且不套「保守默认」——数据库没有安全默认。通过时 `/sprint-design` 的无人值守上下文由 `autopilot_tech_boundary.py --summary` 供给，契约见 `reference/SKILL编排层接入.md` §六。
+
+**触发条件必须与「本 tick 会不会真调 `/sprint-design`」同口径**：`--skip-dev`（`ENTRY_MODE=test-only`，整段跳过 3.1 规划）与 `--no-planning`（`/version` 整步不调）不会走到 `/sprint-design`，不得为它们冻结；设计目录判据用 `ls docs/design/detail/$V/*.md`，与 3.1.0 `PLANNING_DONE` 的 `DESIGN_OK` 一致（目录在而无 `.md`，例如被超时杀掉的上一 tick 留下的空目录，规划会重跑 `/sprint-design`，门必须同样拦）。`TARGET_VERSION` 空（仅准发布 / 空闲）是 7×24 稳态，门整段跳过，⛔ 不得用 `${TARGET_VERSION:?}` 中止 shell（会把 Phase 0.6 连同准发布归档一并卡死）。脚本退出码：1 = 缺失才冻结；≥2 = 脚本故障（如 `技术选型.md` 编码异常）只告警，不指引用户去补 PRD。`autopilot_tech_boundary.py` 自 `--prd-root` 取 baseline 的 `prd_root`，⛔ 不得省略（默认 `docs/requirements` 会把自定义 prd_root 项目误冻）。
+
+`prd-missing` 的解冻证据 = PRD 目录（baseline `prd_root`，递归）、`docs/architecture/技术选型.md`、`memory/aidp-config.yaml`、本版设计目录任一在冻结之后被改动（与 2bis 接受的三类供给源及 3.1ter 的「就地替换占位」对称）。
+
+## 设计占位扫描门（phase-3-3 3.1ter）
+
+`dev-logic-architect` 对 `tech_boundary` 清单外的栈维度不得自编默认值，设计里留 `{待用户填写: <维度>}` + `99_待澄清问题清单.md` D-NNN「⏳ 待确认」；`dev-execution-planner` 再把依赖它们的 Task 标「⚠️ 设计待澄清」并暂停实施。无人值守链路上没有消费方：暂停无人接，要么拖到 stuck-phase 熔断，要么开发 Agent 自行补栈。取舍：**冻结 `prd-missing`**（而非「对该维度 Task 标 skipped」）——skipped 会让功能静默缺失，且没有可机检的「Task 依赖哪个维度」映射；冻结只在用户补声明前发生一次，补完靠 mtime 证据自动解冻，不空转。扫描在规划之后、出口写盘之前执行（规划被跳过时同样要扫，设计可能由交互式生成）。交互式只告警，用户在场可当场回答 D-NNN。补 PRD `tech_boundary` 后须 `--force-replan` 才会重生成设计；也可直接把占位在设计正文与 99 清单里替换为已确认取值。`tech_boundary` 的可选维度键清单见 `phase-0-7.md` ⑧。
+
+## test_strategy 检索面（phase-0-8 0.5 落盘）
+
+对整个 `prd_root` 递归 grep + `head -1` 会按文件系统序取到**别的版本**的值（多版本共存是常态），而写入的又是 baseline **顶层**键：「上一版写 static-only、本版要 chrome-mcp」会让 0.7 钢门的 chrome 必需项恒假、0.5.5 的 chrome 预检整段按 static-only 跳过，直到测试链路才发现驱动没装。故检索面限定到本轮目标版本目录。

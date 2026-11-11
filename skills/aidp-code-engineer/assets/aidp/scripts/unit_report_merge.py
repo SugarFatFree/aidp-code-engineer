@@ -265,6 +265,10 @@ def validate_report_scope(payload):
         actual = [case.get("id") for case in cases if isinstance(case, dict)]
         if set(actual) != set(ids) or len(set(actual)) != len(actual):
             errors.append("实测报告用例与本版本完整正式清单不一致")
+    elif payload.get("cases"):
+        # 浏览器 N/A = 声明无浏览器实测；此时 cases[] 若仍有条目即自相矛盾（C-03：不再整段跳过校验）。
+        # 注：冻结清单逐条归类（哪些由单测覆盖）尚无 schema 字段，属已知设计取舍，需另行定 schema 后再收紧。
+        errors.append("browserTests 为 N/A 但报告仍带实测用例 cases[]，二者矛盾")
     return errors
 
 

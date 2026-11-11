@@ -693,9 +693,206 @@ def test_tech_boundary_preconfirmation():
         check("PRD tech_boundary 优先，显式 none 是声明而非缺失", res["status"] == "confirmed"
               and res["source"].startswith("prd:") and res["db_dialect"] == "none")
         out = run("--summary").stdout
-        check("--summary 输出『确认汇总』并禁止推断未列维度", "确认汇总" in out and "不得推断" in out)
+        check("--summary 输出 tech_boundary_preconfirmed / db_dialect 入参块，清单外维度走 D-NNN 占位不推断",
+              "tech_boundary_preconfirmed" in out and "db_dialect" in out and "{待用户填写:" in out and "不推断" in out)
     finally:
         shutil.rmtree(root)
+
+
+def test_tech_boundary_robustness():
+    """W4：B-03 表头列名定位 / 主数据库、B-05 惰性求值 + 编码容错 + rc=2、B-10 逐维度合并、A-03 回写方言幂等。"""
+    print("▶ 技术边界：init 模板列结构、编码容错、逐维度合并、方言回写")
+    import importlib
+    import autopilot_tech_boundary as TBM
+    importlib.reload(TBM)
+    TB = str(SCRIPTS / "autopilot_tech_boundary.py")
+    root = Path(tempfile.mkdtemp(prefix="aidp-techb2-"))
+    try:
+        def run(*a):
+            return subprocess.run([sys.executable, TB, "--root", str(root), "--version", "V1.0.0", *a],
+                                  capture_output=True, text=True)
+        arch = root / "docs/architecture"
+        arch.mkdir(parents=True)
+        # B-03：/sprint-init 自带模板（层级|技术|版本|…，「主数据库」行）
+        (arch / "技术选型.md").write_text(
+            "## 技术栈总览\n\n| 层级 | 技术 | 版本 | 选型理由 | 关联 Sprint |\n|------|------|------|---------|-----|\n"
+            "| 前端框架 | Vue 3 | 3.4 | x | S1 |\n| 后端框架 | Spring Boot | 3.2.1 | x | S1 |\n"
+            "| 主数据库 | 达梦 DM8 | 8 | x | S1 |\n", encoding="utf-8")
+        res = json.loads(run("--json").stdout)
+        check("★ init 模板填写 → confirmed，取「技术」列而不是「版本」列，主数据库被识别",
+              res["status"] == "confirmed" and res["dimensions"].get("backend") == "Spring Boot"
+              and res["dimensions"].get("database") == "达梦 DM8" and res["db_dialect"] == "dameng")
+        # 开发语言 行不得抢在后端框架之前，也不得把前端语言当 backend
+        (arch / "技术选型.md").write_text(
+            "| 分类 | 项目 | 技术选型 | 版本 |\n|--|--|--|--|\n| 开发语言 | 前端 | TypeScript | 5 |\n"
+            "| 开发语言 | 后端 | Java 17 | 17 |\n| 数据库 | 主库 | MySQL | 8 |\n", encoding="utf-8")
+        res = json.loads(run("--json").stdout)
+        check("★ 开发语言·前端行不被当成 backend（first-wins 误判）",
+              res["dimensions"].get("backend") == "Java 17" and res["db_dialect"] == "mysql")
+        # B-05：GBK 文档 + 合法 PRD → 仍 rc=0（不因文档编码崩溃）
+        prd = root / "docs/requirements/V1.0.0/产品提供"
+        prd.mkdir(parents=True)
+        (prd / "prd.md").write_text("---\nautopilot_decisions:\n  tech_boundary:\n    backend: Go\n"
+                                    "    database: PostgreSQL\n---\n# PRD\n", encoding="utf-8")
+        (arch / "技术选型.md").write_bytes("| 分类 | 项目 | 技术选型 |\n|--|--|--|\n| 数据库 | 主库 | 达梦 |\n".encode("gbk"))
+        cp = run("--json")
+        check("★ GBK 编码的技术选型.md + 合法 PRD → rc=0（PRD 满足即不读文档）",
+              cp.returncode == 0 and json.loads(cp.stdout)["source"].startswith("prd:"))
+        (prd / "prd.md").unlink()
+        cp = run("--json")
+        check("GBK 文档且无 PRD → rc=1 缺失（读取不崩溃）", cp.returncode == 1 and json.loads(cp.stdout)["status"] == "missing")
+        # B-10：逐维度合并
+        (prd / "prd.md").write_text("---\nautopilot_decisions:\n  tech_boundary:\n    backend: Go\n---\n", encoding="utf-8")
+        (arch / "技术选型.md").write_text("| 分类 | 项目 | 技术选型 |\n|--|--|--|\n| 数据库 | 主库 | 达梦 DM8 |\n"
+                                          "| 后端框架 | - | Spring Boot |\n", encoding="utf-8")
+        res = json.loads(run("--json").stdout)
+        check("★ PRD 只写 backend、技术选型.md 补 database → 逐维度合并 confirmed，PRD 的 backend 优先",
+              res["status"] == "confirmed" and res["dimensions"]["backend"] == "Go"
+              and res["dimensions"]["database"] == "达梦 DM8" and "+" in res["source"])
+        # rc=2：未预期故障不等于缺失
+        real = TBM.resolve_boundary
+        TBM.resolve_boundary = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            rc = TBM.main(["--version", "V1.0.0", "--root", str(root)])
+        finally:
+            TBM.resolve_boundary = real
+        check("★ 未预期异常 → rc=2（⛔ 不与「缺失 rc=1」撞车而被冻结 prd-missing）", rc == 2)
+        # A-03：回写方言（空且达梦才写；幂等；已有值不覆盖）
+        cfgp = root / "memory/aidp-config.yaml"
+        check("回写前 project.sql_dialect 未配置", not cfgp.exists() or "sql_dialect: dameng" not in cfgp.read_text(encoding="utf-8"))
+        cp = run("--write-dialect")
+        text = cfgp.read_text(encoding="utf-8")
+        check("★ --write-dialect：达梦 + 配置为空 → 写入 sql_dialect: dameng", cp.returncode == 0 and "sql_dialect: dameng" in text)
+        run("--write-dialect")
+        skill = (REPO / ".aidp/skills/dev-logic-architect/SKILL.md").read_text(encoding="utf-8")
+        flow = (REPO / ".aidp/skills/dev-logic-architect/references/flow-execution.md").read_text(encoding="utf-8")
+        check("★ B-08 防静默退化：dev-logic-architect 仍识别入参 tech_boundary_preconfirmed / db_dialect"
+              "（上游同步覆盖掉本地改动时此处报红，而不是无人值守下 Phase 1 悄悄回到逐步提问）",
+              "tech_boundary_preconfirmed" in skill and "tech_boundary_preconfirmed" in flow and "db_dialect" in skill)
+        check("★ 幂等：重复执行不重复写、文件字节不变", cfgp.read_text(encoding="utf-8") == text)
+        subprocess.run([sys.executable, str(SCRIPTS / "aidp_config.py"), "--root", str(root), "set",
+                        "project.sql_dialect", "mysql"], capture_output=True, text=True)
+        run("--write-dialect")
+        check("★ 已有取值（mysql）不被覆盖", "sql_dialect: mysql" in cfgp.read_text(encoding="utf-8"))
+        (arch / "技术选型.md").write_text("| 分类 | 项目 | 技术选型 |\n|--|--|--|\n| 数据库 | 主库 | MySQL |\n", encoding="utf-8")
+        subprocess.run([sys.executable, str(SCRIPTS / "aidp_config.py"), "--root", str(root), "set",
+                        "project.sql_dialect", "null"], capture_output=True, text=True)
+        run("--write-dialect")
+        check("非达梦（MySQL）不回写", "sql_dialect: null" in cfgp.read_text(encoding="utf-8"))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_prd_missing_unfreeze_sources_and_design_placeholders():
+    """W4：prd-missing 解冻证据覆盖 prd_root / 技术选型.md / aidp-config / 设计目录；设计占位扫描门；恢复提示专用文案。"""
+    print("▶ prd-missing 解冻证据对称 + 设计占位扫描门")
+    import autopilot_fail_handle as FHM
+    old = "2026-09-03T10:00:00+08:00"
+    root = Path(tempfile.mkdtemp(prefix="aidp-prdmiss-"))
+    try:
+        (root / "memory").mkdir()
+        bl = root / "memory/.sprint-autopilot-baseline.json"
+        bl.write_text(json.dumps({"prd_root": "prd2", "versions": {"V1.0.0": {
+            "freeze_reason": "prd-missing", "aiauto_frozen_at": "2099-01-01T00:00:00+00:00"}}}), encoding="utf-8")
+        check("冻结之后无任何改动 → 不解冻", U.aiauto_probe(str(root), "V1.0.0")["unfreeze"] is False)
+        data = json.loads(bl.read_text(encoding="utf-8"))
+        data["versions"]["V1.0.0"]["aiauto_frozen_at"] = old
+        bl.write_text(json.dumps(data), encoding="utf-8")
+        check("★ 技术选型.md 被补（晚于冻结戳）→ 解冻（原先只认 docs/requirements/产品提供）",
+              (root / "docs/architecture").mkdir(parents=True) is None
+              and (root / "docs/architecture/技术选型.md").write_text("x", encoding="utf-8") is not None
+              and U.aiauto_probe(str(root), "V1.0.0")["unfreeze"] is True)
+        (root / "docs/architecture/技术选型.md").unlink()
+        check("无证据 → 不解冻", U.aiauto_probe(str(root), "V1.0.0")["unfreeze"] is False)
+        sub = root / "prd2/V1.0.0/子目录"
+        sub.mkdir(parents=True)
+        (sub / "a.md").write_text("x", encoding="utf-8")
+        check("★ 自定义 prd_root（prd2）且在子目录里改 PRD → 解冻", U.aiauto_probe(str(root), "V1.0.0")["unfreeze"] is True)
+        shutil.rmtree(root / "prd2")
+        (root / "memory/aidp-config.yaml").write_text("autopilot_decisions: {}\n", encoding="utf-8")
+        check("★ aidp-config.yaml 兜底段被补 → 解冻", U.aiauto_probe(str(root), "V1.0.0")["unfreeze"] is True)
+        (root / "memory/aidp-config.yaml").unlink()
+        d = root / "docs/design/detail/V1.0.0"
+        d.mkdir(parents=True)
+        (d / "99_待澄清问题清单.md").write_text("x", encoding="utf-8")
+        check("★ 设计目录里占位被就地替换（99 清单改动）→ 解冻", U.aiauto_probe(str(root), "V1.0.0")["unfreeze"] is True)
+        hint = FHM._recovery_hint("prd-missing", "V1.0.0")
+        check("★ prd-missing 恢复提示列出三处可补位置与 --force-replan，不再是通用文案",
+              "技术选型.md" in hint and "aidp-config" in hint and "--force-replan" in hint)
+        # 设计占位扫描门
+        PH = str(SCRIPTS / "autopilot_design_placeholders.py")
+
+        def ph(*a):
+            return subprocess.run([sys.executable, PH, "--root", str(root), "--version", "V1.0.0", *a],
+                                  capture_output=True, text=True)
+        (d / "03_架构.md").write_text("ORM：{待用户填写: ORM}\n", encoding="utf-8")
+        cp = ph("--json")
+        check("★ 设计含 {待用户填写: ORM} → rc=1 且列出维度与文件",
+              cp.returncode == 1 and json.loads(cp.stdout)["dimensions"][0]["dimension"] == "ORM")
+        (d / "03_架构.md").write_text("ORM：MyBatis-Plus\n", encoding="utf-8")
+        (d / "99_待澄清问题清单.md").unlink()
+        check("占位被替换后 → rc=0", ph().returncode == 0)
+        check("脚本自带阳性/阴性对照（--self-check）",
+              subprocess.run([sys.executable, PH, "--self-check"], capture_output=True, text=True).returncode == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_phase_0_8_tech_boundary_fence_conditions():
+    """W4 B-01/B-02/A-08：2bis 围栏只在「本 tick 会调 /sprint-design」时判；TARGET 空不中止；传 --prd-root；rc≥2 不冻结。"""
+    print("▶ Phase 0.6 第 2bis 步围栏：触发条件 / 空 TARGET / rc 分流")
+    t = (REPO / ".aidp/flows/sprint-autopilot/phase-0-8.md").read_text(encoding="utf-8")
+    a = t.index("2bis. ")
+    start = t.index("   ```bash\n", a) + len("   ```bash\n")
+    end = t.index("   ```", start)
+    body = "\n".join(l[3:] if l.startswith("   ") else l for l in t[start:end].splitlines())
+    check("围栏显式传 --prd-root \"$PRD_ROOT\"（自定义 prd_root 不再被误冻）", '--prd-root "$PRD_ROOT"' in body)
+
+    def run(env_vars, design_files=(), tb_rc=1):
+        root = Path(tempfile.mkdtemp(prefix="aidp-2bis-"))
+        try:
+            stub = root / "stub"
+            (stub / "scripts").mkdir(parents=True)
+            exports = "".join('%s=%s\n' % (k, v) for k, v in env_vars.items())
+            (stub / "scripts/autopilot_tick_flags.py").write_text("print(%r)\n" % exports)
+            (stub / "scripts/baseline_edit.py").write_text("print('docs/requirements')\n")
+            (stub / "scripts/autopilot_tech_boundary.py").write_text(
+                "import sys\nopen(%r,'a').write(' '.join(sys.argv[1:])+'\\n')\nsys.exit(%d)\n" % (str(root / "tbargs"), tb_rc))
+            (stub / "scripts/autopilot_fail_handle.py").write_text(
+                "import sys\nopen(%r,'w').write(' '.join(sys.argv[1:]))\n" % str(root / "frozen"))
+            (root / "work").mkdir()
+            for rel in design_files:
+                f = root / "work" / rel
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text("x")
+            script = body.replace("{{AIDP_HOME}}", str(stub)) + "\necho REACHED_END\n"
+            cp = subprocess.run(["bash", "-c", script], cwd=root / "work", capture_output=True, text=True)
+            return cp, (root / "frozen").exists(), (root / "tbargs").read_text() if (root / "tbargs").exists() else ""
+        finally:
+            shutil.rmtree(root)
+
+    base = {"LOOP_UNATTENDED": "1", "TARGET_VERSION": "V1.0.0", "SKIP_DEV": "0", "NO_PLANNING": "0", "FORCE_REPLAN": "0"}
+    cp, frozen, args = run(base)
+    check("无设计 + 无边界(rc=1) → 冻结 prd-missing 且不继续", frozen and "REACHED_END" not in cp.stdout
+          and "--prd-root docs/requirements" in args)
+    cp, frozen, _ = run(dict(base, TARGET_VERSION=""))
+    check("★ TARGET_VERSION 空 → 围栏整段跳过、不中止（原先 ${TARGET_VERSION:?} 使 shell rc=1）",
+          not frozen and "REACHED_END" in cp.stdout and cp.returncode == 0)
+    cp, frozen, _ = run(dict(base, SKIP_DEV="1"))
+    check("★ --skip-dev（不会调 /sprint-design）不冻结", not frozen and "REACHED_END" in cp.stdout)
+    cp, frozen, _ = run(dict(base, NO_PLANNING="1"))
+    check("★ --no-planning 不冻结", not frozen and "REACHED_END" in cp.stdout)
+    cp, frozen, _ = run(base, design_files=("docs/design/detail/V1.0.0/01.md",))
+    check("设计 .md 已存在 → 不判", not frozen and "REACHED_END" in cp.stdout)
+    cp, frozen, _ = run(base, design_files=("docs/design/detail/V1.0.0/.keep",))
+    check("★ 设计目录在但无 .md（与 PLANNING_DONE 的 DESIGN_OK 同口径）→ 仍判并冻结", frozen)
+    cp, frozen, _ = run(dict(base, FORCE_REPLAN="1"), design_files=("docs/design/detail/V1.0.0/01.md",))
+    check("--force-replan 即使设计在也判", frozen)
+    cp, frozen, _ = run(base, tb_rc=2)
+    check("★ 脚本自身故障(rc=2) → 只告警、不冻结 prd-missing", not frozen and "自身故障" in cp.stdout
+          and "REACHED_END" in cp.stdout)
+    cp, frozen, _ = run(dict(base, LOOP_UNATTENDED="0"))
+    check("交互式不判", not frozen and "REACHED_END" in cp.stdout)
 
 
 if __name__ == "__main__":
@@ -714,5 +911,8 @@ if __name__ == "__main__":
     test_push_fence_merge_to_deploy_source()
     test_dev_branch_registered_in_tick_flags()
     test_tech_boundary_preconfirmation()
+    test_tech_boundary_robustness()
+    test_prd_missing_unfreeze_sources_and_design_placeholders()
+    test_phase_0_8_tech_boundary_fence_conditions()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

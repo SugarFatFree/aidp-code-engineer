@@ -72,7 +72,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy
 
 ## 三、7×24 无人值守（操作系统调度为主）
 
-**非 Git 能力矩阵**：`vcs_mode=none` 可安装、规划、开发、本地测试和本地归档；Git diff / commit / push / tag、基于 commit SHA 的 CICD 监听及正式发布不可用。不可用步骤标记 `unsupported:vcs-disabled` 或明确阻断，不得报告为通过或宣布已发布；脚手架不自动 `git init`。
+**非 Git 能力矩阵**：`vcs_mode=none` 可安装、规划、开发、本地测试和本地归档；Git diff / commit / push / tag、基于 commit SHA 的 CICD 监听及正式发布不可用。不可用步骤标记 `unsupported:vcs-disabled` 或明确阻断，不得报告为通过或宣布已发布；脚手架不自动 `git init`。`/sprint-test` 的 CVL 改动前基线（`baseline_ref=none`）在非 Git 下无法取得：无人值守仅「基线依赖项」未核验时按 `unsupported:vcs-disabled` 降级放行并通知一次、不计失败，口径见 `commands/sprint-test.md`。
 
 两条链路（开发链路 `sprint-autopilot` + 测试链路 `sprint-aiauto-test`）必须**同时**运行才是完整的开发 + 测试闭环；二者通过 `memory/.sprint-autopilot-baseline.json` 交接，与使用哪个 Agent 无关。
 

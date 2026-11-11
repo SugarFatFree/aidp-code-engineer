@@ -669,7 +669,7 @@ Sprint-001（执行期）
 | | `/sprint-test` | 测试阶段（静态验证 + 当前 task / Sprint 相关单测；不启服务、不完整构建；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（`api-tester` 为可选外部能力） |
 | | `/sprint-bugfix` | 问题修复（独立可用，默认 light；formal 经 `/sprint-full` 累进） | `bugfix` skill + `superpowers:systematic-debugging` |
 | | `/sprint-close` | Sprint 关闭 | - |
-| | `/sprint-autopilot` | ★ 7×24 全自动开发编排器（操作系统调度 `aidp_scheduler.py` 守护） | 串联 `/version` + `/sprint-batch` |
+| **7×24 全自动** | `/sprint-autopilot` | ★ 7×24 全自动开发编排器（操作系统调度 `aidp_scheduler.py` 守护） | 串联 `/version` + `/sprint-batch` |
 | | `/sprint-aiauto-test` | ★ AI 自动化测试（当前工具 chrome-devtools-mcp；操作系统调度 `aidp_scheduler.py` 守护） | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例读已落盘的 `docs/testing/{version}/`，不直调用例生成 SKILL |
 | **辅助** | `/memory-sync` | 记忆同步 | - |
 | | `/health-check` | 健康检查 | - |

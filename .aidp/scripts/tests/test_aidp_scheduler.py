@@ -1160,6 +1160,20 @@ def test_repeated_timeout_freezes_version():
         check("未到阈值次数前不冻结", not any(o.get("frozen") for o in outs[:-1]))
         check("连续超时达阈 → needs_human + freeze_reason=stuck-phase",
               node.get("needs_human") and node.get("freeze_reason") == "stuck-phase" and outs[-1].get("frozen") == "V1.0.0")
+        # 仅准发布稳态（target_version 为空）下同样熔断
+        shutil.rmtree(os.path.join(root, "memory", ".aidp"), ignore_errors=True)
+        with open(bl, "w", encoding="utf-8") as fh:
+            json.dump({"autopilot": {"target_version": "", "pre_release_version": "V0.9.0"},
+                       "versions": {"V0.9.0": {}}}, fh)
+        last = {}
+        for _ in range(S.TICK_TIMEOUT_FREEZE_AFTER):
+            r = subprocess.run([sys.executable, SCHED, "tick-result", "--root", root, "--command", "sprint-autopilot",
+                                "--rc", "124", "--tick-max", "7200", "--json"], cwd=root, env=env,
+                               capture_output=True, text=True, timeout=120)
+            last = json.loads(r.stdout or "{}")
+        node = json.load(open(bl, encoding="utf-8"))["versions"]["V0.9.0"]
+        check("★ TARGET 空、只有准发布版时连续超时同样冻结（原先返回空串永不熔断）",
+              node.get("needs_human") and last.get("frozen") == "V0.9.0")
     finally:
         shutil.rmtree(root, ignore_errors=True)
         shutil.rmtree(home, ignore_errors=True)

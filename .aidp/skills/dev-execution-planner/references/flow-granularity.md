@@ -59,7 +59,7 @@
   包含字段：id(BIGINT 主键), order_no(VARCHAR(32) 唯一), enterprise_id(BIGINT), title(VARCHAR(255))...
   索引：order_no 唯一索引、enterprise_id 普通索引...
   ```sql
-  CREATE TABLE biz_work_order (
+  CREATE TABLE BIZ_WORK_ORDER (
       id BIGINT NOT NULL IDENTITY(1, 1),
       ...50行SQL...
   );
@@ -72,11 +72,11 @@
 ### Task 1.3: 创建工单数据库表
 
 > **优先级**: P0 | **依赖**: Task 1.1 | **Sprint**: Sprint-001
-> **设计来源：** `<设计文档路径>` > `A.3 数据定义` > `biz_work_order 表(L150-L230)`
+> **设计来源：** `<设计文档路径>` > `A.3 数据定义` > `BIZ_WORK_ORDER 表(L150-L230)`
 
 **目标**：创建工单上下文的数据库表。
 
-**严格依据**：本任务必须严格按照详细设计 `A.3 > biz_work_order 表(L150-L230)` 实施,**字段、类型、长度、NOT NULL、DEFAULT、索引、注释全部以设计文档为准,本 Task 不在此处复述**。
+**严格依据**：本任务必须严格按照详细设计 `A.3 > BIZ_WORK_ORDER 表(L150-L230)` 实施,**字段、类型、长度、NOT NULL、DEFAULT、索引、注释全部以设计文档为准,本 Task 不在此处复述**。
 
 **AI 执行指令**（将整个代码块复制到 Claude Code 等 AI 工具中执行）：
 
@@ -85,13 +85,13 @@
 
 请完成 Task 1.3: 创建工单数据库表。
 
-设计来源: <设计文档路径> > A.3 数据定义 > biz_work_order 表(L150-L230)
+设计来源: <设计文档路径> > A.3 数据定义 > BIZ_WORK_ORDER 表(L150-L230)
 数据库: 达梦 DM8
 依赖: Task 1.1(工程骨架)
 
 要求:
 1. 先读取上述设计章节,载入完整字段清单、索引定义、约束要求;
-2. 生成 biz_work_order 的 DDL,字段名/类型/长度/NOT NULL/DEFAULT/索引/注释严格以设计为准,不得增删字段或修改类型;
+2. 生成 BIZ_WORK_ORDER 的 DDL,字段名/类型/长度/NOT NULL/DEFAULT/索引/注释严格以设计为准,不得增删字段或修改类型;
 3. 使用达梦 DM8 语法,BIGINT 自增主键;
 4. 输出 DDL 到 `{SQL脚本目录}/v{版本号}/{两位序号}_工单表DDL.sql`(SQL脚本目录自适应项目现有目录,详见详细设计 Module D > D.1;中文命名 + 序号前缀,`99_` 保留给回滚脚本),并在达梦 DM8 执行验证;
 5. 完成后对照设计 A.3 逐字段、逐索引、逐约束核对一致性。
@@ -108,9 +108,9 @@
 - `{SQL脚本目录}/v{版本号}/{两位序号}_工单表DDL.sql`
 
 **验收标准**:
-- [ ] DDL 字段清单、类型、约束、索引与设计 `A.3 > biz_work_order 表(L150-L230)` 完全一致(字段/索引/约束不在此列出,以设计文档为准)
+- [ ] DDL 字段清单、类型、约束、索引与设计 `A.3 > BIZ_WORK_ORDER 表(L150-L230)` 完全一致(字段/索引/约束不在此列出,以设计文档为准)
 - [ ] DDL 在达梦 DM8 执行成功
-- [ ] 执行 `python3 <SKILL_DIR>/scripts/check_ddl_consistency.py <DDL文件路径> <设计文档路径> --table biz_work_order` 通过(脚本第二参数为设计文档**文件路径**,用 `--table` 锁定表名;勿在路径后拼 `#A.3` 锚点)
+- [ ] 执行 `python3 <SKILL_DIR>/scripts/check_ddl_consistency.py <DDL文件路径> <设计文档路径> --table BIZ_WORK_ORDER` 通过(脚本第二参数为设计文档**文件路径**,用 `--table` 锁定表名;勿在路径后拼 `#A.3` 锚点)
 ```
 
 **前端任务示例（存在接口文档时）✅**（零冗余 + AI 执行指令版）：

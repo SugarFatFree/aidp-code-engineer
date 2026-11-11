@@ -33,6 +33,7 @@ if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_text
 import os
+import re
 import sys
 
 CONFIG_REL = os.path.join("memory", "aidp-config.yaml")
@@ -40,7 +41,7 @@ CONFIG_REL = os.path.join("memory", "aidp-config.yaml")
 # Stop 护栏的盲打逃生舱（`touch` 即关，优先级高于 yaml 键）
 STOP_GUARD_OFF_REL = os.path.join("memory", ".autopilot-stop-guard-off")
 
-TEMPLATE = runtime_text("# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n# 例外：scheduler.dev_interval / test_interval（调度周期）已写进操作系统定时任务，改后须重跑\n# aidp_scheduler.py install 才生效（watchdog / status 优先读上次安装快照）。\n\nproject:\n  # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，\n  # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。\n  name: null\n  name_cn: null\n  # 目标数据库方言（可空，通用键）。null = 通用，不启用任何库专项规则；非空时原样透传给\n  # SKILL 脚本的 --db / --sql-db 参数（可取值以 SKILL 当前识别的为准，本文件不枚举）。\n  # 由用户在技术选型确认数据库后记录，Agent 不自行推断。\n  sql_dialect: null\n\ndevelopment:\n  # 首次修改需求或修复漏洞前由用户选择，之后在本项目沿用。\n  # null = 尚未选择；current = 直接在当前分支修改；new = 每次独立任务新建分支。\n  # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。\n  branch_policy: null\n\n# 可选执行策略；null 表示普通开发/修复默认实现、必要静态检查及本任务相关单测。\n# 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。\n# 来源键 authorization_source 由 Agent 在用户明确选择后记录，不要自行手填；形如：\n#   execution_policy: {authorization_source: {kind: project-policy, user_selected: true, request_id: <请求标识>, text: <用户原话>}}\nexecution_policy: null\n\ncommit_gate:\n  # 提交前门禁总开关（约定 24：每次 git commit 前跑 __AIDP_HOME__/scripts/commit_gate.py）。\n  # 关掉之后：不再检查台账积压 / CICD 推送欠账。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32：__AIDP_HOME__/scripts/notify.py）。\n  # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。\n  enabled: false\n  # 一个渠道失败时是否尝试下一个\n  fallback: true\n  # autopilot 启动时是否发 #0a「渠道已连通」通知（默认不发，避免噪音）\n  channel_ready_card: false\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只经环境变量引用，不明文入库。\n  channels: []\n  # 例：\n  #   - {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #   - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #   - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #   - {type: lark-cli, chat_id: \"<chat id>\"}\n  #   - {type: command, command: \"<读 stdin JSON 的发送命令>\"}\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 兼容旧键（默认值 false，不表达禁令）：单独设 true 或 false 都不改变行为（旧布尔不是授权，是否触发以当次 deploy 授权为准）。\n  # 只有同时存在用户明确选择的禁用来源 auto_trigger_source（kind: project-policy，结构同\n  # execution_policy.authorization_source，由 Agent 在用户明确要求禁止自动触发后记录，不要手填）\n  # 且 auto_trigger: false，才拦截自动触发 / 重试。\n  auto_trigger: false\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: \"...\", view: \"...\", trigger: \"...\", retry: \"...\", check: \"...\"}\n  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。\n  # 只记事实、不改 CICD 配置。由 `__AIDP_HOME__/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。\n  push_auto_deploy: false\n  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4\n  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻\n  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。\n  push_deploy_min_wait_seconds: 300\n\ndeployment:\n  # 备份策略沿项目既有设置；null 不授权备份，也不假定当天零次。\n  # 接入字段与真实记录格式见 __AIDP_HOME__/reference/部署操作约定.md。\n  # DB/完整冷备/迁移快照共用 record_file、max_per_day、timezone。\n  # commands 仅填既有 argv，skip_args 仅填现有部署脚本实际支持的参数。\n  # 可选 timeout_seconds：项目备份命令的超时秒数（缺省 3600）。\n  backup: null\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（python3 __AIDP_HOME__/scripts/aidp_scheduler.py install）：\n  # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知\n  stale_cycles: 3\n  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久\n  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。\n  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；\n  # watchdog 用 max(stale 阈值, 本值 + 180s 收尾宽限, 1h) 作「持锁超期 = 挂死」的判据（环境变量覆盖后同样生效）。\n  # 0 = 不设上限（不推荐）。\n  tick_max_seconds: 7200\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: \"codex exec --sandbox workspace-write {prompt}\"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n", __file__)
+TEMPLATE = runtime_text("# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n# 例外：scheduler.dev_interval / test_interval（调度周期）已写进操作系统定时任务，改后须重跑\n# aidp_scheduler.py install 才生效（watchdog / status 优先读上次安装快照）。\n\nproject:\n  # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，\n  # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。\n  name: null\n  name_cn: null\n  # 目标数据库方言（可空，通用键）。null = 通用，不启用任何库专项规则。目前 SKILL 脚本\n  # （--db / --sql-db）只有 dameng 有专项规则：dm / dameng / 达梦* 经 `aidp_config.py sql-db-flag`\n  # 映射为 dameng 后才传，其余值（mysql 等）不传。由用户在技术选型确认数据库后记录\n  # （无人值守下达梦由技术边界判定回写，仅在本键为空时），Agent 不自行推断。\n  sql_dialect: null\n\ndevelopment:\n  # 首次修改需求或修复漏洞前由用户选择，之后在本项目沿用。\n  # null = 尚未选择；current = 直接在当前分支修改；new = 每次独立任务新建分支。\n  # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。\n  branch_policy: null\n\n# 可选执行策略；null 表示普通开发/修复默认实现、必要静态检查及本任务相关单测。\n# 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。\n# 来源键 authorization_source 由 Agent 在用户明确选择后记录，不要自行手填；形如：\n#   execution_policy: {authorization_source: {kind: project-policy, user_selected: true, request_id: <请求标识>, text: <用户原话>}}\nexecution_policy: null\n\ncommit_gate:\n  # 提交前门禁总开关（约定 24：每次 git commit 前跑 __AIDP_HOME__/scripts/commit_gate.py）。\n  # 关掉之后：不再检查台账积压 / CICD 推送欠账。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32：__AIDP_HOME__/scripts/notify.py）。\n  # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。\n  enabled: false\n  # 一个渠道失败时是否尝试下一个\n  fallback: true\n  # autopilot 启动时是否发 #0a「渠道已连通」通知（默认不发，避免噪音）\n  channel_ready_card: false\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只经环境变量引用，不明文入库。\n  channels: []\n  # 例：\n  #   - {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #   - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #   - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #   - {type: lark-cli, chat_id: \"<chat id>\"}\n  #   - {type: command, command: \"<读 stdin JSON 的发送命令>\"}\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 兼容旧键（默认值 false，不表达禁令）：单独设 true 或 false 都不改变行为（旧布尔不是授权，是否触发以当次 deploy 授权为准）。\n  # 只有同时存在用户明确选择的禁用来源 auto_trigger_source（kind: project-policy，结构同\n  # execution_policy.authorization_source，由 Agent 在用户明确要求禁止自动触发后记录，不要手填）\n  # 且 auto_trigger: false，才拦截自动触发 / 重试。\n  auto_trigger: false\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: \"...\", view: \"...\", trigger: \"...\", retry: \"...\", check: \"...\"}\n  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。\n  # 只记事实、不改 CICD 配置。由 `__AIDP_HOME__/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。\n  push_auto_deploy: false\n  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4\n  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻\n  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。\n  push_deploy_min_wait_seconds: 300\n\ndeployment:\n  # 备份策略沿项目既有设置；null 不授权备份，也不假定当天零次。\n  # 接入字段与真实记录格式见 __AIDP_HOME__/reference/部署操作约定.md。\n  # DB/完整冷备/迁移快照共用 record_file、max_per_day、timezone。\n  # commands 仅填既有 argv，skip_args 仅填现有部署脚本实际支持的参数。\n  # 可选 timeout_seconds：项目备份命令的超时秒数（缺省 3600）。\n  backup: null\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（python3 __AIDP_HOME__/scripts/aidp_scheduler.py install）：\n  # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知\n  stale_cycles: 3\n  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久\n  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。\n  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；\n  # watchdog 用 max(stale 阈值, 本值 + 180s 收尾宽限, 1h) 作「持锁超期 = 挂死」的判据（环境变量覆盖后同样生效）。\n  # 0 = 不设上限（不推荐）。\n  tick_max_seconds: 7200\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: \"codex exec --sandbox workspace-write {prompt}\"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n", __file__)
 
 
 # ───────────────────────── 读 ─────────────────────────
@@ -179,11 +180,31 @@ def get(root, dotted, default=None):
 def get_bool(root, dotted, default=True):
     """开关类读取：本文件 → 缺省。"""
     v = get(root, dotted)
+    parsed = _bool_value(v)
+    return default if parsed is None else parsed
+
+
+_TRUE_WORDS = ("true", "yes", "on", "1")
+_FALSE_WORDS = ("false", "no", "off", "0")
+
+
+def _bool_value(v):
+    """YAML 1.1 布尔写法（true/yes/on/1、false/no/off/0）→ bool；无法识别 → None。
+
+    ⛔ 此前只认 true/false：`enabled: yes` 被静默当缺省，`commit_gate.enabled: no` 反而保持开启，
+       用户意图被反向执行且无任何提示。
+    """
     if isinstance(v, bool):
         return v
-    if isinstance(v, str) and v.strip().lower() in ("true", "false"):
-        return v.strip().lower() == "true"
-    return default
+    if isinstance(v, int) and v in (0, 1):
+        return bool(v)
+    if isinstance(v, str):
+        t = v.strip().lower()
+        if t in _TRUE_WORDS:
+            return True
+        if t in _FALSE_WORDS:
+            return False
+    return None
 
 
 def _str_or_none(v):
@@ -209,10 +230,25 @@ def sql_dialect(root="."):
     """目标数据库方言（`project.sql_dialect`）→ 非空字符串 | None（None = 通用，不透传）。
 
     只做原样读取，不枚举库名、不推断；空串 / `null` / 模板占位一律视为未配置。
+    传给 SKILL 脚本的取值**不要**直接用本值，走 `sql_db_flag()`（只有 dameng 有专项规则）。
     """
     data, _ = load(root)
     sec = _dig(data, "project")
     return _str_or_none(sec.get("sql_dialect")) if isinstance(sec, dict) else None
+
+
+_DAMENG_RE = re.compile(r"^(dm\d*|dameng.*|达梦.*)$", re.IGNORECASE)
+
+
+def sql_db_flag(root="."):
+    """SKILL 脚本 `--db` / `--sql-db` 的实际取值 → "dameng" | ""（"" = 不传该参数）。
+
+    SKILL 脚本（check_sql_identifiers.py / scan_code_conventions.py）的 choices 只有 `''`/`dameng`，
+    传 mysql 等其它值会让 argparse 退出码 2。故本函数是**所有消费点的唯一映射**：
+    `dm` / `dm8` / `dameng` / `达梦*`（大小写不敏感）→ `dameng`；其余（含 mysql / 未识别值 / 占位）→ 空、不传。
+    """
+    v = sql_dialect(root)
+    return "dameng" if v and _DAMENG_RE.match(v.strip()) else ""
 
 
 def validate_branch_policy(value):
@@ -312,6 +348,9 @@ def cicd_config(root="."):
         retries = int(sec.get("max_retries", 3))
     except (TypeError, ValueError):
         retries = 3
+    # 负数按非法落回缺省：-2 会让 `retried >= max_retries` 恒真 = 实际零重试，
+    # 且与 autopilot_tick_flags 的纯数字判据（-2 → 3）给出不同上限。
+    retries = retries if retries >= 0 else 3
     try:
         min_wait = int(sec.get("push_deploy_min_wait_seconds", 300))
     except (TypeError, ValueError):
@@ -460,6 +499,99 @@ def _fmt(value):
     return str(value)
 
 
+_NEEDS_QUOTE_RE = re.compile(r"(: )|( #)|(:$)|^[-?:,\[\]{}#&*!|>'\"%@`]")
+_RESERVED_SCALARS = ("true", "false", "null", "~", "yes", "no", "on", "off")
+
+
+def _fmt_scalar(value):
+    """写入用的标量格式化：字符串含 `: ` / ` #` / 首尾空白 / 流式符号 / 保留字 / 纯数字时加引号。
+
+    ⛔ 原样写入会往返失真：`A: b # c` 读回成 `A: b`；值含换行还会向文件注入新行。
+    本仓解析器的引号不处理转义，故优先单引号，含单引号才用双引号，两者皆含则拒绝。
+    """
+    if not isinstance(value, str):
+        return _fmt(value)
+    if "\n" in value or "\r" in value:
+        raise ValueError("配置值不得含换行")
+    plain_numeric = re.fullmatch(r"-?\d+(\.\d+)?", value) is not None
+    if (value == "" or value != value.strip() or _NEEDS_QUOTE_RE.search(value)
+            or value.lower() in _RESERVED_SCALARS or plain_numeric):
+        if "'" not in value:
+            return "'%s'" % value
+        if '"' not in value:
+            return '"%s"' % value
+        raise ValueError("配置值同时含单、双引号，无法安全写入")
+    return value
+
+
+# ★ set 的键校验表（只收有确定值域的键；其余键仍是自由字符串）。
+_BOOL_KEYS = frozenset({"commit_gate.enabled", "notify.enabled", "notify.fallback", "notify.channel_ready_card",
+                        "cicd.auto_trigger", "cicd.push_auto_deploy", "stop_guard.enabled"})
+_INT_KEYS = {"cicd.max_retries": 0, "cicd.push_deploy_min_wait_seconds": 1,
+             "scheduler.stale_cycles": 1, "scheduler.tick_max_seconds": 0}
+_INTERVAL_KEYS = frozenset({"scheduler.dev_interval", "scheduler.test_interval"})
+SCHEDULER_AGENTS = ("auto", "claude", "codex", "dsh")
+
+
+def coerce_value(key, raw):
+    """CLI `set` 的字符串 → 带类型值，并按键校验（非法 → ValueError，调用方 rc=2）。"""
+    if raw == "null":
+        return None
+    if key in _BOOL_KEYS:
+        b = _bool_value(raw)
+        if b is None:
+            raise ValueError("%s 必须是布尔（true/false/yes/no/on/off/1/0）：%r" % (key, raw))
+        return b
+    if key in _INT_KEYS:
+        try:
+            n = int(str(raw).strip())
+        except ValueError:
+            raise ValueError("%s 必须是整数：%r" % (key, raw)) from None
+        if n < _INT_KEYS[key]:
+            raise ValueError("%s 必须 >= %d：%r" % (key, _INT_KEYS[key], raw))
+        return n
+    if key == "cicd.provider":
+        from cicd_providers import PROVIDERS
+        if raw not in PROVIDERS:
+            raise ValueError("cicd.provider 必须是 %s：%r" % ("/".join(PROVIDERS), raw))
+    elif key == "scheduler.agent":
+        if raw not in SCHEDULER_AGENTS:
+            raise ValueError("scheduler.agent 必须是 %s：%r" % ("/".join(SCHEDULER_AGENTS), raw))
+    elif key in _INTERVAL_KEYS:
+        from aidp_scheduler import parse_interval
+        if parse_interval(raw) is None:
+            raise ValueError("%s 非法（形如 5m / 10m / 1h，最小 1 分钟）：%r" % (key, raw))
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    return raw
+
+
+def config_warnings(root="."):
+    """配置里已存在但无法识别 / 越界的值 → 警告列表（show 输出；读取侧仍按缺省处理，不抛错）。"""
+    data, _ = load(root)
+    out = []
+    for key in sorted(_BOOL_KEYS):
+        v = _dig(data, key)
+        if v is not None and _bool_value(v) is None:
+            out.append("%s=%r 不是布尔值，已按缺省处理" % (key, v))
+    for key, lo in sorted(_INT_KEYS.items()):
+        v = _dig(data, key)
+        if v is None:
+            continue
+        try:
+            ok = int(v) >= lo and not isinstance(v, bool)
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            out.append("%s=%r 非法（须为整数且 >= %d），已按缺省处理" % (key, v, lo))
+    ag = _dig(data, "scheduler.agent")
+    if ag is not None and str(ag) not in SCHEDULER_AGENTS:
+        out.append("scheduler.agent=%r 不在 %s 内（install 会拒绝）" % (ag, "/".join(SCHEDULER_AGENTS)))
+    return out
+
+
 def _set_inline_branch_policy(line, value):
     """仅处理 development 内联映射；按原始跨度替换，保留额外键与注释。"""
     from autopilot_decisions_merge import _strip_comment
@@ -504,6 +636,8 @@ def set_scalar(root, dotted, value):
     sec, key = parts
     if dotted == "development.branch_policy":
         validate_branch_policy(value)
+    else:
+        _fmt_scalar(value)  # 含换行 / 引号冲突的值在写盘前拒绝
     p = ensure(root)
     lines = _AidpPath(p).read_text(encoding="utf-8").splitlines()
 
@@ -513,7 +647,7 @@ def set_scalar(root, dotted, value):
             sec_at = i
             break
     if sec_at is None:
-        lines += ["", "%s:" % sec, "  %s: %s" % (key, _fmt(value))]
+        lines += ["", "%s:" % sec, "  %s: %s" % (key, _fmt_scalar(value))]
         _AidpPath(p).write_text("\n".join(lines) + "\n", encoding="utf-8")
         return p
 
@@ -534,14 +668,14 @@ def set_scalar(root, dotted, value):
         st = lines[j].strip()
         if st.startswith(key + ":"):
             indent = lines[j][:len(lines[j]) - len(lines[j].lstrip())]
-            lines[j] = "%s%s: %s" % (indent, key, _fmt(value))
+            lines[j] = "%s%s: %s" % (indent, key, _fmt_scalar(value))
             _AidpPath(p).write_text("\n".join(lines) + "\n", encoding="utf-8")
             return p
     # 段内无该键：插在段末最后一行非空之后
     ins = end
     while ins > sec_at + 1 and not lines[ins - 1].strip():
         ins -= 1
-    lines.insert(ins, "  %s: %s" % (key, _fmt(value)))
+    lines.insert(ins, "  %s: %s" % (key, _fmt_scalar(value)))
     _AidpPath(p).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return p
 
@@ -582,6 +716,20 @@ def _self_check():
         ok.append(("模板缺省 sql_dialect 为空（通用）", sql_dialect(d) is None))
         set_scalar(d, "project.sql_dialect", "x-db")
         ok.append(("project.sql_dialect 写入后原样可读", sql_dialect(d) == "x-db"))
+        for raw, want in (("dm8", "dameng"), ("DaMeng", "dameng"), ("达梦 DM8", "dameng"),
+                          ("mysql", ""), ("<待填>", ""), ("人大金仓", "")):
+            set_scalar(d, "project.sql_dialect", raw)
+            ok.append(("sql_db_flag(%r) → %r" % (raw, want), sql_db_flag(d) == want))
+        set_scalar(d, "project.name_cn", "A: b # c")
+        ok.append(("★ 含 `: ` / ` #` 的值加引号后往返不失真", project_config(d)["name_cn"] == "A: b # c"))
+        try:
+            set_scalar(d, "project.name_cn", "x\ny: 1")
+            ok.append(("★ 含换行的值被拒绝", False))
+        except ValueError:
+            ok.append(("★ 含换行的值被拒绝", True))
+        ok.append(("YAML 1.1 布尔：yes/off/1/0",
+                   _bool_value("yes") is True and _bool_value("off") is False
+                   and _bool_value(1) is True and _bool_value(0) is False and _bool_value("maybe") is None))
         ok.append(("模板缺省 cicd 配置可读",
                    cicd_config(d)["provider"] == "github-actions"
                    and cicd_config(d)["pipelines"] == {}))
@@ -655,10 +803,15 @@ def main(argv=None):
     sub.add_parser("ensure").add_argument("--root", default=argparse.SUPPRESS)
     sub.add_parser("branch-policy", help="只读查询开发分支偏好与首次选择状态").add_argument(
         "--root", default=argparse.SUPPRESS)
+    sub.add_parser("sql-db-flag", help="输出 SKILL 脚本 --db/--sql-db 的取值（dameng 或空 = 不传）").add_argument(
+        "--root", default=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     if a.self_check:
         return _self_check()
     root = a.root
+    if a.cmd == "sql-db-flag":
+        print(sql_db_flag(root))
+        return 0
     if a.cmd == "branch-policy":
         try:
             result = branch_policy(root)
@@ -672,14 +825,14 @@ def main(argv=None):
         return 3 if result["needs_choice"] else 0
     if a.cmd == "get":
         v = get(root, a.key)
+        if isinstance(v, str) and _str_or_none(v) is None:
+            v = None  # 空白 / null / 占位（<…> / {{…}}）与读取 API 同口径：一律视为未配置
         print("" if v is None else _fmt(v))
         return 0
     if a.cmd == "set":
         raw = a.value
-        val = True if raw == "true" else False if raw == "false" else raw
-        if a.key == "development.branch_policy" and raw == "null":
-            val = None
         try:
+            val = coerce_value(a.key, raw)
             set_scalar(root, a.key, val)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
@@ -692,6 +845,8 @@ def main(argv=None):
     print(json.dumps({"path": config_path(root), "parse_ok": okp,
                       "project": project_config(root),
                       "sql_dialect": sql_dialect(root),
+                      "sql_db_flag": sql_db_flag(root),
+                      "warnings": config_warnings(root),
                       "commit_gate_enabled": commit_gate_enabled(root),
                       "notify": notify_config(root),
                       "cicd": cicd_config(root),

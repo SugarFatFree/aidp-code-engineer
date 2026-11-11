@@ -345,16 +345,16 @@ class Example(unittest.TestCase):
 
     def test_total_budget_shared_across_suites(self):
         (self.root / "test_sample.py").write_text(PASS_TEST.replace("self.assertEqual(2 + 2, 4)",
-                                                                 "__import__('time').sleep(.35)"))
+                                                                 "__import__('time').sleep(.9)"))
         for name in ('first', 'second'):
             (self.root / name / 'tests').mkdir(parents=True)
             (self.root / name / 'tests' / 'test_sample.py').write_text((self.root / 'test_sample.py').read_text())
         plan = self.freeze([self.suite(cwd='first'), self.suite(cwd='second')],
                            tests=['first/tests/test_sample.py', 'second/tests/test_sample.py'])
         started = time.monotonic()
-        result = self.run_plan(plan, timeout=.95)
+        result = self.run_plan(plan, timeout=1.6)
         self.assertEqual(result["status"], "TIMEOUT", result)
-        self.assertLess(time.monotonic() - started, 2)
+        self.assertLess(time.monotonic() - started, 2.8)
         self.assertEqual(result["runs"][0]["status"], "PASS", result)
         self.assertLess(len(result["runs"]), 3)
         self.assert_cleaned()

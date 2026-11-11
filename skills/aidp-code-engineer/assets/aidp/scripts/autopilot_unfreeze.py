@@ -234,12 +234,20 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
             return {"unfreeze": True, "reason": fr, "evidence": "根任务预算已经用户续额，覆盖原耗尽项"}
         return {"unfreeze": False, "reason": fr, "note": "预算仍耗尽：需用户 `--renew-budget` 明确续额，--manual 不会重置预算"}
     elif fr in _UNFREEZE_BY_PRD:
-        import glob
-        for f in glob.glob(os.path.join(root, "docs/requirements", version, "产品提供", "*")):
+        # 供给源与写冻结侧（2bis 技术边界门 / 3.1ter 设计占位门 / 测试链路 PRD 缺失）三类对称：
+        # PRD 目录（按 baseline prd_root、递归）、技术选型.md、aidp-config.yaml、本版设计目录。
+        prd_root = str(data.get("prd_root") or "docs/requirements")
+        cands = []
+        for base in (os.path.join(root, prd_root, version), os.path.join(root, "docs", "design", "detail", version)):
+            for cur, _dirs, files in os.walk(base):
+                cands += [os.path.join(cur, fn) for fn in files]
+        cands += [os.path.join(root, "docs", "architecture", "技术选型.md"),
+                  os.path.join(root, "memory", "aidp-config.yaml")]
+        for f in cands:
             try:
                 if os.path.getmtime(f) > fzt:
                     return {"unfreeze": True, "reason": fr,
-                            "evidence": f"PRD 目录已更新（{os.path.relpath(f, root)}）"}
+                            "evidence": f"PRD / 技术选型 / 配置 / 设计已更新（{os.path.relpath(f, root)}）"}
             except OSError:
                 continue
     elif fr in _UNFREEZE_BY_DEPLOY:

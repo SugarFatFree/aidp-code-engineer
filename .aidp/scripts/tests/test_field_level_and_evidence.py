@@ -467,6 +467,56 @@ def test_runtime_dir_bootstrap():
         check(f"{f} 覆盖本地运行时目录 memory/.aidp/", "memory/.aidp/" in fp.read_text(encoding="utf-8"))
 
 
+def test_config_cli_sql_db_flag_bool_and_set_validation():
+    """W4：sql-db-flag 映射、YAML 1.1 布尔、set 校验/转义、get 占位归一、scheduler.agent 枚举。"""
+    print("▶ aidp_config：sql-db-flag / 布尔 / set 校验与转义")
+    cli = str(REPO / ".aidp/scripts/aidp_config.py")
+    cfg = _load("cfg_w4", cli)
+    d = Path(tempfile.mkdtemp())
+
+    def run(*a):
+        return subprocess.run([sys.executable, cli, "--root", str(d), *a], capture_output=True, text=True)
+
+    try:
+        run("ensure")
+        check("缺省 sql-db-flag 为空且 rc=0", run("sql-db-flag").stdout.strip() == "" and run("sql-db-flag").returncode == 0)
+        for raw, want in (("dm", "dameng"), ("DM8", "dameng"), ("dameng", "dameng"), ("达梦 DM8", "dameng"),
+                          ("mysql", ""), ("postgresql", ""), ("<待填>", "")):
+            run("set", "project.sql_dialect", raw)
+            check("★ sql-db-flag(%s) -> %r（只有 dameng 会传，mysql 不再让 SKILL 脚本 argparse 退出 2）" % (raw, want),
+                  run("sql-db-flag").stdout.strip() == want)
+        run("set", "project.sql_dialect", "<待填>")
+        check("★ get project.sql_dialect 对占位值与 sql_dialect() 同口径（输出空，不是 <待填>）",
+              run("get", "project.sql_dialect").stdout.strip() == "")
+        # 布尔 yes/no/on/off
+        run("set", "notify.enabled", "yes")
+        check("★ set notify.enabled yes 写成 true 且通知被开启", cfg.notify_config(str(d))["enabled"] is True)
+        (d / "memory/aidp-config.yaml").write_text("commit_gate:\n  enabled: no\nstop_guard:\n  enabled: off\n"
+                                                    "notify:\n  enabled: yes\n  fallback: 0\n", encoding="utf-8")
+        check("★ 手写 yes/no/off/0 按 YAML 1.1 解析而不是静默回落缺省",
+              cfg.commit_gate_enabled(str(d)) is False and cfg.stop_guard_enabled(str(d)) is False
+              and cfg.notify_config(str(d))["enabled"] is True and cfg.notify_config(str(d))["fallback"] is False)
+        (d / "memory/aidp-config.yaml").write_text("notify:\n  enabled: maybe\ncicd:\n  max_retries: -2\n", encoding="utf-8")
+        shown = json.loads(run("show").stdout)
+        check("★ 非法布尔 / 负数 max_retries 在 show.warnings 里可见，且负数不再让重试上限变负",
+              any("notify.enabled" in w for w in shown["warnings"]) and any("cicd.max_retries" in w for w in shown["warnings"])
+              and cfg.cicd_config(str(d))["max_retries"] == 3)
+        # set 校验
+        for key, bad in (("notify.enabled", "maybe"), ("cicd.max_retries", "abc"), ("cicd.provider", "bogus"),
+                         ("scheduler.agent", "foo"), ("scheduler.dev_interval", "5x"), ("scheduler.stale_cycles", "0")):
+            check("★ set %s %s 被拒（rc=2）" % (key, bad), run("set", key, bad).returncode == 2)
+        check("合法值照常写入（cicd.provider jenkins）", run("set", "cicd.provider", "jenkins").returncode == 0)
+        # 转义 / 注入
+        run("set", "project.name_cn", "A: b # c")
+        check("★ 含 `: ` 与 ` #` 的值往返不失真", cfg.project_config(str(d))["name_cn"] == "A: b # c")
+        before = (d / "memory/aidp-config.yaml").read_text(encoding="utf-8")
+        cp = run("set", "project.name_cn", "x\ny: 1")
+        check("★ 含换行的值被拒且不写盘（不向文件注入新行）",
+              cp.returncode == 2 and (d / "memory/aidp-config.yaml").read_text(encoding="utf-8") == before)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     test_decidable_skips_levels()
     test_memory_protection_covers_claude_md()
@@ -477,6 +527,7 @@ def main():
     test_branch_policy_config()
     test_inline_branch_policy_write()
     test_runtime_dir_bootstrap()
+    test_config_cli_sql_db_flag_bool_and_set_validation()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed / {_skipped} skipped ══")
     return 1 if _failed else 0
 

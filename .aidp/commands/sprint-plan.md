@@ -56,6 +56,8 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
 
 **★ 传参接线（别漏）**：本命令同样先跑 `check_client_mcp.py --version "{version}" --detect --json`，`enabled: true` 才传 `client_mcp`；Task 层拆分全靠命令端传，不传 = 永不启用。QR 裁剪与传参表见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 第四、五节，Δ = 本轮 `NN_<业务主题>.md` 的专题名 / 章节清单。
 
+**★ 设计占位预扫（调 skill 前）**：跑 `python3 {{AIDP_HOME}}/scripts/autopilot_design_placeholders.py --version "{version}"`；rc=1（详设含清单外维度的 `{待用户填写: <维度>}` 占位）→ 把维度清单写进本命令输出与 Task 的「⚠️ 设计待澄清」标注依据，⛔ 不自编该维度取值；交互式提示用户先回答 `99_待澄清问题清单.md` 的对应 D-NNN。**本命令不据此阻断**（无人值守冻结由 `/sprint-autopilot` Phase 3.1ter 负责，缘由见其 `rationale.md`「设计占位扫描门」）。
+
 使用 `Skill` 工具调用 `dev-execution-planner`，由 skill 自主完成执行计划生成 + 多维度独立 Agent 检查（详见 SKILL.md）+ 有效qr_level内的最低生成质量自检；不另启未授权非Critical语义QR或独立审计。**SKILL 内规则为单一信源**（含多用户判定 / AIDP 资源扫描 / 上游引用规则 / 核心原则 / 拆分控制 / 不中断原则 / 金额字段类型守恒等），命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
 > 详细规则查 `{{AIDP_HOME}}/skills/dev-execution-planner/SKILL.md`；命令端只负责传入路径上下文 + Step 1.5 grep 回检（项目级补充）。

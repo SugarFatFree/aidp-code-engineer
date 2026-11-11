@@ -51,6 +51,8 @@ import sys
 
 EXCLUDE_DIRS = {".git", "node_modules", "__pycache__", ".venv", "assets", "dist", "build"}
 EXCLUDE_DIR_PREFIXES = (".aidp-backup",)
+# 本地运行态（gitignore）：旧审计/验证快照里是历史版本的整份文档副本，不是仓库文档；精确按相对路径排除。
+EXCLUDE_REL_DIRS = {"memory/.aidp"}
 IGNORE_RE = re.compile(r"cli-check:\s*ignore\s*\S")
 INVOKE_RE = re.compile(r"(?<![\w-])python3?\s+(?:-u\s+)?([^\s`'\"|;&()]+\.py)\b([^`\n]*)")
 STOP_TOKENS = {"|", "||", "&&", ";", ">", ">>", "<", "2>&1", "&", ")", "then", "do"}
@@ -61,8 +63,10 @@ SKILL_DIR_RE = re.compile(runtime_text('\\__AIDP_HOME__/skills/([^/]+)/', __file
 
 def _walk(root):
     for dirpath, dirnames, filenames in os.walk(root):
+        rel = os.path.relpath(dirpath, root).replace(os.sep, "/")
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDE_DIRS
-                             and not d.startswith(EXCLUDE_DIR_PREFIXES))
+                             and not d.startswith(EXCLUDE_DIR_PREFIXES)
+                             and ((rel + "/" + d) if rel != "." else d) not in EXCLUDE_REL_DIRS)
         for fn in sorted(filenames):
             yield os.path.join(dirpath, fn)
 

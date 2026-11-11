@@ -51,7 +51,7 @@
 
 ## 二、会话启动检查清单
 
-> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
+> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `python3 {{AIDP_HOME}}/scripts/vcs.py user`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
 激活后，先按执行身份选择规格，未读完适用输入不得开始工作：
 
@@ -221,12 +221,12 @@ formal 正式规格（普通计划/L；S/M 用上述已批准契约）：
 14. **★ 审计字段操作人溯源与自动填充（详见 `dev-logic-architect` SKILL 核心原则 22 /「审计字段操作人溯源与逻辑删除同步」维度 / `code-verification-loop` SKILL 「代码质量」维度子项「审计字段填充溯源」）**：写业务实体表的增删改代码时，审计字段（`create_by`/`create_time`/`update_by`/`update_time`）**必须取当前登录操作人 + 当前时间**（优先框架级自动填充，如 MyBatis-Plus `MetaObjectHandler` / JPA Auditing 从登录态取操作人），**严禁把 `create_by`/`update_by` 写死为字符串字面量**（`"system"`/`"admin"` 等）作通用默认。
     - **逻辑删除同步修改人（高频坑）**：逻辑删除本质是 `UPDATE ... SET is_deleted=1`，**必须同时** `SET update_by=当前操作人, update_time=当前时间`；注意自定义 SQL / `@TableLogic` 默认删除会**绕过** ORM 的 `updateFill` 自动填充，需在删除逻辑显式补写或确认拦截器覆盖删除路径
     - **`"system"` 兜底显式化**：仅定时任务 / 数据初始化 / 无登录态场景可用固定系统账号，且须在对应位置显式标注场景与取值来源，不得当作所有写操作的静默默认
-    - **回检**：`/sprint-test` `code-verification-loop` 「代码质量」维度子项「审计字段填充溯源」+ `scan_code_conventions.py code/backend --checks audit-fill --json`（⛔ `code_dir` 是必填位置参数，漏了直接 argparse exit 2） 拦截写死 `"system"` 与逻辑删除漏更新修改人（Critical）；详规以上述 SKILL 为单一信源，本条不复述
+    - **回检**：`/sprint-test` `code-verification-loop` 「代码质量」维度子项「审计字段填充溯源」+ `scan_code_conventions.py code/backend --checks audit-fill --json` 拦截写死 `"system"` 与逻辑删除漏更新修改人（Critical）；详规以上述 SKILL 为单一信源，本条不复述
 
 15. **★ 用户自我保护后端强校验（Critical，仅系统含用户管理时；详见 `dev-logic-architect` SKILL 核心原则 22 同源身份约束 / 检查项 1「业务逻辑一致性核验」的用户自我保护铁律子项 / `code-verification-loop` SKILL 维度 4「用户自我保护校验」）**：系统含用户管理（用户 CRUD / 启停 / 角色权限分配）时，用户删除 / 禁用 / 角色撤销接口**必须以当前登录态身份（JWT `sub` / `SecurityContext`，不取前端传入的「当前用户 id」）为基准**、后端强校验，拦截「目标 id == 当前操作人」的三类自伤操作：① 删除自己 ② 禁用 / 锁定 / 冻结自己 ③ 撤销 / 降级自己赖以管理的角色 / 权限（尤其最后一个管理员）——**前端按钮置灰仅辅助、不可替代后端校验**。与 item 14 同属 `dev-logic-architect` 核心原则 22 同源身份约束；回检由 `code-verification-loop` 维度 4 拦截（命中「能删除/禁用/降权自己」= Critical），详规以上述 SKILL 为单一信源、本条不复述。
 
 16. **★ 上游/第三方接口调用日志（约定 40）**：调用**进程外**依赖（第三方 HTTP API / 微服务 RPC·Feign / 对象存储 / 短信邮件消息网关 / 支付鉴权中心；**不含**本地 DB 与本地缓存）时，**成功路径也必须打 INFO**——请求侧「完整 URL（含 query）+ method + 入参」、响应侧「status + 上游业务 code + 出参 + 耗时」，两行带 traceId/序号**可配对**。⛔ 成功不得降级为 DEBUG（生产默认 INFO，需要看日志的时刻永远在生产）。二进制流只打元信息（文件名/大小/contentType），超阈值文本截断须标注原始长度；**凭据字段必须同时脱敏**（保留首尾各 3 位、中间 `***`）。**实现一律走拦截器/过滤器，⛔ 禁止每个 client 各写各的**。
-    - **回检**：`python3 {{AIDP_HOME}}/scripts/check_upstream_call_log.py --json`（C1 零日志 / C2 成功路径不可见 = Critical；I1 无 URL / I2 只有 debug / I3 疑似凭据明文 = Important，`upstream-log-ignore:` 可豁免但原因必须写）；由 `/sprint-dev` Phase 1 Step 8 直接调用。详规单一信源 = `{{AIDP_HOME}}/rules/code.md` 约定 40 + `{{AIDP_HOME}}/rules/backend.md` 实现侧（含「挂了拦截器业务侧读不到响应体」的坑），本条不复述。
+    - **回检**：`python3 {{AIDP_HOME}}/scripts/check_upstream_call_log.py --json`（判级与 `upstream-log-ignore:` 豁免写法以脚本 `--json` 与 `rules/code.md` 约定 40 为准）；由 `/sprint-dev` Phase 1 Step 8 直接调用。详规单一信源 = `{{AIDP_HOME}}/rules/code.md` 约定 40 + `{{AIDP_HOME}}/rules/backend.md` 实现侧（含「挂了拦截器业务侧读不到响应体」的坑），本条不复述。
 
 17. **★ 通用还原度后端侧（约定 39）**：① **R10 导出必须导全量**——导出接口方法体**禁止透传** `pageNo`/`pageSize`/`PageHelper`/`Pageable`（判 **Critical、⛔ 零豁免**：页面看到 1 万条、导出只出当前页 20 条，用户无从察觉）；② **R9 存量数据兼容性必须显式验证**——改结构 / 加必填 / 收窄取值域时，须对老数据跑一遍真实验证，不得只测新建路径；③ **R12 同一指标跨页面必须同源**——多处取数走同一权威口径（基准 = 详设「统计指标口径表」第 8 列）。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 39，机器门 `python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json`。
 

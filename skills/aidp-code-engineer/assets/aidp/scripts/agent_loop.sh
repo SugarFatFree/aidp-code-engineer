@@ -242,35 +242,40 @@ PY
       loop_alert loop-lock-error "${cmd} 锁记录不可读，本轮拒绝执行"
       exit 3
     fi
+    # 本轮令牌先于准入生成：既是 lock 记录的 token，也是无头授权来源的 request_id。
+    export AIDP_TICK_TOKEN
+    AIDP_TICK_TOKEN=$(python3 -c 'import uuid; print(uuid.uuid4().hex)' 9>&-)
     # 只有取得链路锁且无直接 tick 占位才消费退避轮；跳过不是执行成功或失败。
+    # tick-check 是唯一准入判据：退避、测试委派核验（独立测试进程只继承具体父子委派，不靠命令名获得权限）、
+    # autopilot 的授权来源与预算耗尽处置都在其中完成，本脚本只消费其 JSON，不再重算而漂移。
     admission=0
-    python3 "$AIDP_HOME/scripts/aidp_scheduler.py" tick-check --root "$root" --command "$cmd" \
-      --quiet 9>&- >>"$log" 2>&1 || admission=$?
-    if [ "$admission" = 4 ]; then
-      echo "[agent_loop] $(date '+%F %T') ${cmd} 失败退避，跳过本轮" >>"$log"
+    admission_out=$(python3 "$AIDP_HOME/scripts/aidp_scheduler.py" tick-check --root "$root" --command "$cmd" \
+      --token "$AIDP_TICK_TOKEN" --tick-args="$args" --json 9>&- 2>>"$log") || admission=$?
+    printf '%s\n' "$admission_out" >>"$log"
+    admission_get() {
+      printf '%s' "$admission_out" | python3 -c 'import json,sys; v=json.load(sys.stdin).get(sys.argv[1]); print(v if isinstance(v,str) else "")' "$1" 9>&- 2>/dev/null || true
+    }
+    if [ "$admission" = 4 ] || [ "$admission" = 5 ]; then
+      # 4 = 退避 / 待测版本无可信委派；5 = 无授权来源。后两者已由 tick-check 写本地告警并刷新心跳。
+      echo "[agent_loop] $(date '+%F %T') ${cmd} 跳过本轮（原因：$(admission_get reason)）" >>"$log"
       exit 0
     elif [ "$admission" != 0 ]; then
       loop_alert loop-state-error "${cmd} 读取退避状态失败（rc=${admission}），本轮拒绝执行"
       exit "$admission"
     fi
-    # 独立测试进程必须再核验并继承具体父子委派，不能靠命令名获得全量权限。
+    AIDP_EXECUTION_CONTEXT=""
     if [ "$cmd" = sprint-aiauto-test ]; then
-      # 无已部署待测版本时不需要委派（入口自己输出 NO_TARGET 并保持心跳）；有目标却无可信委派才拒绝。
-      AIDP_EXECUTION_CONTEXT=$(python3 - "$SCRIPT_DIR" "$root" <<'PY' 9>&-
-import sys
-sys.path.insert(0, sys.argv[1])
-from aidp_scheduler import test_handoff_context, _has_pending_test_target
-try:
-    print(test_handoff_context(sys.argv[2])[0])
-except (OSError, ValueError, KeyError, TypeError):
-    if _has_pending_test_target(sys.argv[2]):
-        raise
-PY
-      ) || exit 2
+      AIDP_EXECUTION_CONTEXT="$(admission_get execution_context)"
       export AIDP_EXECUTION_CONTEXT
+    elif [ "$cmd" = sprint-autopilot ]; then
+      # 授权来源只来自用户 install 时记录的持续指令（kind=explicit-command、request_id=本轮令牌）；
+      # 已有根带持续来源 / 用户已选 project-policy 时无需供给。
+      auth_json="$(admission_get authorization_source)"
+      if [ -n "$auth_json" ]; then
+        AUTHORIZATION_SOURCE_JSON="$auth_json"
+        export AUTHORIZATION_SOURCE_JSON
+      fi
     fi
-    export AIDP_TICK_TOKEN
-    AIDP_TICK_TOKEN=$(python3 -c 'import uuid; print(uuid.uuid4().hex)' 9>&-)
     # ★ 取得锁之后才写本轮起点（锁文件以 `>>` 打开、不截断）：aidp_scheduler watchdog 据此算持锁时长。
     #   ⛔ 旧写法 `9>"$lock"` 在 flock 之前就截断文件 —— 每次「跳过」都刷新 mtime，
     #   用 mtime 估 tick 起点的挂死判定因此永不触发。

@@ -16,7 +16,7 @@ docs/
 ├── references/{version}/         ★ 版本级：本版「提给第三方的需求」+ 本版对方资料（/sprint-design 落盘；引用链强制）
 ├── prototype/{version}/          原型资源 code + mockup
 ├── deployment/
-│   ├── {version}/                部署产物（版本级）：README.md + sql/{增量,全量}/ + 部署流程/ + 配置文件/{增量,全量}/
+│   ├── {version}/                部署产物（版本级）：README.md（唯一操作入口）+ sql/{增量,全量}/ + 配置文件/{增量,全量}/（部署流程/ 仅确需时）
 │   └── tools/                    ★ 非版本隔离：跨版本运维 / 一次性工具归档（项目级特例）
 ├── requirements/
 │   └── {version}/研发需求/00_索引.md + 01_研发需求.md  AIDP 版本需求基线（由 /version 生成）
@@ -46,7 +46,7 @@ docs/
 | `prototype/{version}/mockup/` | 高保真原型（视觉最高优先级） | 人工提供 或 UI Agent 自动生成 |
 | `requirements/{version}/` | AIDP 版本需求基线 | `/sprint-requirements` |
 | `design/detail/{version}/` | 详细设计、API、数据库 | `/sprint-design` |
-| `deployment/{version}/` | 部署产物双轨（约定 37）：`sql/增量/` + `sql/全量/`、`配置文件/增量/配置项清单.md` + `配置文件/全量/`（nginx / compose / k8s / 配置中心），另有 `00_索引.md` + `部署流程/` | `/sprint-design`（增量 SQL）+ `/sprint-dev` Step X.7/X.8（增量配置 + 部署流程）+ `/version` Step 3.3.7.9（全量两轨） |
+| `deployment/{version}/` | 部署产物双轨（约定 37）：`sql/增量/` + `sql/全量/`、`配置文件/增量/配置项清单.md` + `配置文件/全量/`（nginx / compose / k8s / 配置中心），版本根 `README.md` 为唯一操作入口（`部署流程/` 仅确需时存在，不设 `00_索引.md`） | `/sprint-design`（增量 SQL）+ `/sprint-dev` Step X.7（增量配置；部署操作变化只登记待同步）+ 版本规划 / 正式发布集中校准+ `/version` Step 3.3.7.9（全量两轨） |
 | `deployment/tools/` | ★ **非版本隔离**（项目级特例）：跨版本运维脚本 / 一次性迁移工具归档 | 各角色按需（详见 [`init/06_版本与用户目录约定.md`](init/06_版本与用户目录约定.md) §2.5.4.1）|
 | `testing/{version}/` | 测试文档（研发自测/ 正式用例/ sprint-NNN/） | `/sprint-selftest`+`/sprint-test`+`/sprint-aiauto-test` |
 | `plans/{version}/` | 研发执行计划 | `/sprint-plan` |
@@ -59,6 +59,8 @@ docs/
 
 > `superpowers/`（plans / specs）是**模板仓库自身维护期**的规格与计划留档，**不属于下游文档体系**，
 > 故不在上表内，也不进文档导航（`verify.py::NAV_SCAN_EXCLUDED` 已登记）。
+
+> 本目录各 README 中形如 `../../{{AIDP_HOME}}/...` 的链接指向**下游安装后的运行目录**（`{{AIDP_HOME}}` 在下游渲染为 `.claude` 或 `.agents`）；在模板仓库里直接点击会断，属设计内。
 
 ## 文件命名规范
 

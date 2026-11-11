@@ -857,6 +857,83 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
         self.assertIn('NO_TARGET', output)
         self.assertEqual(before, set((self.root / 'memory/.aidp/entry-contexts').glob('*/context.json')))
 
+    def edit_baseline(self, version='V1.1.0', **fields):
+        path = self.root / 'memory/.sprint-autopilot-baseline.json'
+        baseline = json.loads(path.read_text())
+        baseline['versions'][version].update(fields)
+        path.write_text(json.dumps(baseline))
+        return baseline
+
+    def set_build_finalized(self, finalized=True):
+        path = self.root / 'memory/.sprint-autopilot-baseline.json'
+        baseline = json.loads(path.read_text())
+        baseline['versions']['V1.1.0']['builds'][0]['ai_report_finalized'] = finalized
+        path.write_text(json.dumps(baseline))
+
+    def test_finalized_build_is_not_a_test_target_and_stale_delegation_is_empty(self):
+        # 已测完未发布的窗口：baseline 仍留着旧委派，入口必须按 NO_TARGET 短路，而不是继续 resolve 重开测试。
+        self.prepare_build()
+        self.set_build_finalized()
+        before = set((self.root / 'memory/.aidp/entry-contexts').glob('*/context.json'))
+        self.assertIn('NO_TARGET', self.run_scheduled_entry())
+        self.assertEqual(before, set((self.root / 'memory/.aidp/entry-contexts').glob('*/context.json')))
+        sys.path.insert(0, str(SCRIPTS))
+        import aidp_scheduler
+        self.assertEqual(aidp_scheduler._test_target_state(str(self.root)), 'none')
+
+    def test_tested_after_deploy_window_and_released_version_are_not_targets(self):
+        import aidp_scheduler
+        self.prepare_build()
+        self.edit_baseline(aiauto_tested_at='2026-01-02T00:00:00Z')      # 晚于 last_deployed_at：测试已完成
+        self.assertEqual(aidp_scheduler._test_target_state(str(self.root)), 'none')
+        self.edit_baseline(aiauto_tested_at='2025-12-31T00:00:00Z')      # 早于最近部署：新部署仍需测试
+        self.assertEqual(aidp_scheduler._test_target_state(str(self.root)), 'target')
+        self.edit_baseline(internal_released_at='2026-01-03T00:00:00Z')  # 已内部发布：旧委派不再有效
+        self.assertIn('NO_TARGET', self.run_scheduled_entry())
+
+    def run_phase2_gate(self):
+        """真实执行 Phase 2 的准发布门围栏（0a/0b），返回 (进程, 围栏结束后的 tick 变量)。"""
+        text = (SCRIPTS.parent / 'flows/sprint-autopilot/phase-2.md').read_text()
+        blocks = re.findall(r'^[ \t]*```bash\n(.*?)\n[ \t]*```[ \t]*$', text, re.S | re.M)
+        block = next(b for b in blocks if 'live-allowed' in b).replace('{{AIDP_HOME}}', str(SCRIPTS.parent))
+        flags = [sys.executable, str(SCRIPTS / 'autopilot_tick_flags.py'), '--command', 'autopilot']
+        subprocess.run([*flags, 'set', 'PRE_RELEASE_VERSION', 'V1.1.0'], cwd=self.root, check=True, capture_output=True)
+        proc = subprocess.run(['bash', '-c', block], cwd=self.root, capture_output=True, text=True, timeout=120)
+        shell = subprocess.run([*flags, '--shell'], cwd=self.root, capture_output=True, text=True).stdout
+        return proc, shell
+
+    def test_prerelease_gate_accepts_explicit_skip_as_static_only(self):
+        # --skip-aiauto-test：根授权无 live-tests，0b 只需静态-only 报告 finalize，不永远等 aiauto_tested_at 后冻结转人工。
+        self.prepare_build(skip=True)
+        self.set_build_finalized()
+        proc, shell = self.run_phase2_gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn('NOT_REQUESTED: live-tests', proc.stdout)
+        self.assertIn('PRERELEASE_GATE_OK=1', shell)
+        baseline = json.loads((self.root / 'memory/.sprint-autopilot-baseline.json').read_text())
+        self.assertFalse(baseline['versions']['V1.1.0'].get('needs_human'))
+
+    def test_prerelease_gate_skip_waits_for_static_report_without_counting_failure(self):
+        self.prepare_build(skip=True)
+        self.set_build_finalized(False)
+        proc, shell = self.run_phase2_gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn('静态-only 报告未 finalize', proc.stdout)
+        self.assertNotIn('PRERELEASE_GATE_OK=1', shell)
+        node = json.loads((self.root / 'memory/.sprint-autopilot-baseline.json').read_text())['versions']['V1.1.0']
+        self.assertFalse(node.get('needs_human'))
+        self.assertNotIn('test_loop_missing_streak', node)
+        self.assertNotIn('prerelease_test_hold_streak', node)
+
+    def test_prerelease_gate_still_waits_for_tests_when_live_tests_authorized(self):
+        # 对照：授权含 live-tests 时 finalize 不够，仍须 aiauto_tested_at；缺它就暂缓（不能被 skip 分支放行）。
+        self.prepare_build()
+        self.set_build_finalized()
+        proc, shell = self.run_phase2_gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn('NOT_REQUESTED: live-tests', proc.stdout)
+        self.assertNotIn('PRERELEASE_GATE_OK=1', shell)
+
     def test_actual_scheduler_explicit_skip_cannot_gain_test_bundle(self):
         self.prepare_build(skip=True)
         before = set((self.root / 'memory/.aidp/entry-contexts').glob('*/context.json'))

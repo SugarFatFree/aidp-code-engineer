@@ -69,7 +69,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-sta
    > 未开始的计划不阻断开工；交付收尾仍按全部计划检查。⛔ 不改回执行体只看自己 activeContext 的临场判断。
 2. **确认需求文档已存在**：`ls docs/requirements/{version}/研发需求/{01_研发需求,00_索引,00_研发需求}.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——multi 模式按系统拆分时 `01_研发需求.md` 本就不存在，硬判会把合规项目误判缺失而**错误停止执行**；口径同 `/sprint-design` 前置门）
    - 若不存在 → **停止执行**，提示"需求文档不存在，请先执行 /version 进行版本规划"
-3. **确认研发执行计划已存在**：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/0[0-9]_M*研发执行计划.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——`/sprint-plan` 对多用户产 `NN_研发执行计划-{开发者}.md`、里程碑 ≥3 产 `0N_M{N}研发执行计划.md`，硬判会把这两类合规产出误判缺失而**错误停止执行**）
+3. **确认研发执行计划已存在**：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——`/sprint-plan` 对多用户产 `NN_研发执行计划-{开发者}.md`、按内容量拆分产 `02_` 起分册，硬判会把这两类合规产出误判缺失而**错误停止执行**）
    - 若不存在 → **停止执行**，提示"研发执行计划不存在，请先执行 /sprint-plan 或 /version"
 4. **确认设计文档已存在**：`docs/design/detail/{version}/`
    - 若不存在 → **停止执行**，提示"设计文档不存在，请先执行 /version 进行版本规划"

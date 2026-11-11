@@ -200,8 +200,8 @@ VID_EXIT=$?
 - 🤖 7×24 全自动开发+测试（开发链路 + 测试链路双 /loop 并行；代码提交推送后远程 CI/CD（`cicd.provider`，默认 GitHub Actions）部署约 5 min → 部署完成自动跑 AI 自动化测试；全过程与结果按 `memory/aidp-config.yaml` 的 `notify` 配置发里程碑通知）：
     /sprint-autopilot                 # 首次直接调用 = 配置向导：检查里程碑通知渠道（notify.channels）+ 部署模式/CICD 等待时长，写入 baseline（两链路共享）
     # 配置完成后挂双 /loop 守护：
-    /loop 10m /sprint-autopilot --unattended    # 开发链路：自动 /version + /sprint-batch + 提交推送触发 CICD 部署
-    /loop 5m  /sprint-aiauto-test --unattended  # 测试链路：探测部署完成（约 5 min）→ AI 自动化测试 → 报告 + 里程碑通知
+    /loop 10m /sprint-autopilot --unattended --no-loop # 开发链路：自动 /version + /sprint-batch + 提交推送触发 CICD 部署
+    /loop 5m /sprint-aiauto-test --unattended --no-loop # 测试链路：探测部署完成（约 5 min）→ AI 自动化测试 → 报告 + 里程碑通知
     # 或一句话口述交给 autopilot（首次会据此走配置向导确认通知渠道 / 部署模式后再挂 /loop 守护）：
     /sprint-autopilot {version} 版本规划已执行（文件均已生成），请你帮我自动执行后续的开发测试流程；当代码提交并推送后远程会自动执行 CICD 部署流程，大概需要 5 分钟部署完成；部署完成后再去执行 AI 自动化测试流程；任务执行的过程与结果通过里程碑通知推送。
 ```
@@ -245,8 +245,8 @@ VID_EXIT=$?
    - 全量开发：/sprint-batch（一键跑完研发执行计划所有 Sprint〔含本轮增量〕+ 末段 AI 自动化测试）
    - 🤖 7×24 全自动开发+测试（**推荐**；开发链路 + 测试链路双 /loop 并行，代码推送后远程 CI/CD（`cicd.provider`，默认 GitHub Actions）部署→自动跑 AI 自动化测试→里程碑通知）：
        /sprint-autopilot                 # 首次直接调用 = 配置向导（确认通知渠道 + 部署模式/CICD 等待时长，写 baseline）
-       /loop 10m /sprint-autopilot --unattended    # 配置完成后挂开发链路守护
-       /loop 5m  /sprint-aiauto-test --unattended  # 并行挂测试链路守护
+       /loop 10m /sprint-autopilot --unattended --no-loop # 配置完成后挂开发链路守护
+       /loop 5m /sprint-aiauto-test --unattended --no-loop # 并行挂测试链路守护
        # 或一句话口述交给 autopilot（首次据此走配置向导）：
        /sprint-autopilot {version} 版本规划已执行（含本轮补充），请帮我自动执行后续开发测试流程；代码推送后远程 CI/CD（`cicd.provider`，默认 GitHub Actions）部署约 5 分钟；部署完成后跑 AI 自动化测试；过程与结果通过里程碑通知推送。
 ```

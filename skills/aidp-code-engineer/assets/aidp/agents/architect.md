@@ -22,7 +22,7 @@
   - 章节含**数值展示**（统计卡片 / 指标 / 图表 / 金额 / 计数）→ 就地产出 8 列「**统计指标口径表**」（约定 39-R11）；
   - 章节含**列表页**→ 附「**数据量级与分页策略**」子表，量级须是可核对的数字或数量级，⛔ 不写"较多/视业务而定"（约定 39-R13）；
   - 章节含**进程外上游调用**（第三方 HTTP / RPC / 对象存储 / 短信邮件网关）→ 就地产出 6 列「**上游调用日志与脱敏声明表**」（约定 40）。
-  - ⛔ **列名 / 列序以 `dev-logic-architect` 检查项 34（R11）/ 检查项 5（R13）/ 检查项 35（约定 40）为单一信源，本处不复制**（复制过就会在上游调列名时静默漂移）；硬门 `check_metric_spec.py`（R11）/ **`check_list_page_scale.py`（R13）** / `check_upstream_call_log_spec.py`（约定 40）。⛔ 后两者的「缺表」判 Important、**不占退出码**，只看 `$?` 会把「整张表都没有」读成通过——必须读 `--json`；三者**都要传目录、不传单文件**（缺表类判据是跨文件聚合的）。
+  - ⛔ **列名 / 列序以 `dev-logic-architect` 检查项 34（R11）/ 检查项 5（R13）/ 检查项 35（约定 40）为单一信源，本处不复制**（复制过就会在上游调列名时静默漂移）；硬门 `check_metric_spec.py`（R11）/ **`check_list_page_scale.py`（R13）** / `check_upstream_call_log_spec.py`（约定 40）。⛔ 三者都传目录、读 `--json`，不能只看退出码（缺表类判 Important、不占退出码；规则见 `dev-logic-architect` SKILL 对应核心原则）。
 
 **你管辖的文件（写权限白名单）：**
 
@@ -47,7 +47,7 @@ formal 激活后按以下顺序读取适用输入；light只读本任务相关�
 
 ```
 前置（目录约定，权威来源 `06_版本与用户目录约定.md`）：
-  0. 解析当前上下文：{version} ← `AGENTS.md`「当前状态」；{user} ← `git config user.name`
+  0. 解析当前上下文：{version} ← `AGENTS.md`「当前状态」；{user} ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`
      详见 `docs/init/06_版本与用户目录约定.md` 第 4 节
 
 必读（每次）：

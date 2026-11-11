@@ -3,6 +3,8 @@
 > 模板仓库 `.aidp` 中的 scripts 只作维护源；本目录由脚手架 `aidp-code-engineer` 下发到当前 Agent 的 `{{AIDP_HOME}}/scripts/`，供命令端 / CI / 开发者调用（使用安装后的路径 `python3 {{AIDP_HOME}}/scripts/<脚本>`）。非 Git 项目不会自动 `git init`；脚本的 Git 专属能力不适用时须显式记录，不得视为发布成功。
 > 脚本是**脚手架契约**（随版本升级覆盖更新），请勿在下游项目内手改；需变更回到模板仓库修改后升级下发（约定 16）。
 
+> 结构提示：前段（`alloc_id.py` … `vcs.py`）是跨命令共享的判据与入口脚本，其后按功能域排列，`tests/` 回归单测节在文末。
+
 > ⚡ **不确定某个脚本怎么调？别猜、别翻文档**——本目录与各 SKILL `scripts/` 下的脚本 CLI 形态
 > **互不统一**（位置子命令 / `--paths` / 单个位置路径 / 多个位置参数都有），猜错只会拿到一行
 > argparse 原文报错。直接问它自己：
@@ -713,11 +715,11 @@ SKILL 名 713 字符，那不是归属是噪音（窗口调小到 120 会漏掉�
 ★ **零误报的主力是「旗标归属（owner）」判定，不是白名单**：每处提及按 `| ; && || $( ` 切段后归属到段首命令 token——owner 是 AIDP 斜杠命令或本仓脚本 → 受管；是 `git`/`npx`/`claude`/skill 自带 CLI → 不受管；无 owner（表格里孤零零一个 `` `--x` ``）→ 受管。`\` 续行继承上一行 owner。这样"新写一条 `git xxx --yyy`"永远不会制造误报，白名单不必追着外部工具跑；`THIRD_PARTY_FLAG_WHITELIST` 只兜**散文里无命令可归属的裸提及**（CICD 流水线参数 / chrome / claude CLI / git 等，逐组注明豁免理由），`IGNORED_FLAG_PREFIXES` 兜 CSS 自定义属性（`--el-color-*` 等）。教学示例/反面教材用 `<!-- flag-check: ignore -->`（另有 `ignore-file` / `ignore-begin`…`ignore-end`）。
 用法：`python3 {{AIDP_HOME}}/scripts/check_ghost_flags.py [--root <仓库根>] [--path <相对路径>] [--show-orphans] [--json]`。退出码：`0`=无未定义旗标 / `1`=检出 / `2`=用法错。`--show-orphans` 额外列「定义了但引用面无人提及」的可能废弃 flag（**INFO，不影响退出码**）。`tests/test_guard_scripts.py` 有正反两类用例。
 
-## check_loop_examples.py — `/loop` 示例必带 `--unattended`（确定性）
+## check_loop_examples.py — `/loop` 示例必带 `--unattended --no-loop`（确定性）
 
-7×24 的两条链路示例（`/loop 10m /sprint-autopilot --unattended` + `/loop 5m /sprint-aiauto-test --unattended`）里，`--unattended` 不是装饰：**首个 tick** 上 baseline 持久化标志尚未落盘，无人值守判据实际只剩"prompt 里有没有 `/loop` 字样"一个信号，某些 runtime 唤起时不含该字样 → 首 tick 误判交互式 → 撞第一个 `AskUserQuestion` 就挂起等人。文档自己写着这条，散落各处的示例照样反复漏写（一次审计查出多处）。
-判据：全仓 `.md`（默认不下钻 `{{AIDP_HOME}}/skills/`——SKILL 本体 + bundle 镜像，由 `mirror_to_bundle.py` 同步）里匹配 `/loop [间隔] /sprint-autopilot|aiauto-test`（间隔可缺省），**逐"出现"判而非逐行判**（本次出现 → 下次出现/行尾之间必须含 `--unattended`，故"一行两条 loop 只给一条加 flag"同样被抓）。
-豁免只认写在文件里的显式标记 `<!-- loop-check: ignore -->` / `ignore-file` / `ignore-begin`…`ignore-end`（对比反例、讲"去掉该 flag 才保留交互式判据"的段落用）——**绝不硬编码文件名白名单**：那种豁免会随文件改名/拆分静默失效，且下一个人根本不知道某文件为何被放过。
+7×24 的两条链路示例（`/loop 10m /sprint-autopilot --unattended --no-loop` + `/loop 5m /sprint-aiauto-test --unattended --no-loop`）里，`--unattended` 不是装饰（`--no-loop` 声明外部有唤醒源，现行标准示例必带，口径见 `flows/sprint-autopilot/usage-guard.md`，**本脚本同样机检**：缺 `--no-loop` 会令 `HAS_WAKE_SOURCE=0` → 逐 tick 单 Sprint 关闭、瞬态失败当场冻结）：**首个 tick** 上 baseline 持久化标志尚未落盘，无人值守判据实际只剩"prompt 里有没有 `/loop` 字样"一个信号，某些 runtime 唤起时不含该字样 → 首 tick 误判交互式 → 撞第一个 `AskUserQuestion` 就挂起等人。文档自己写着这条，散落各处的示例照样反复漏写（一次审计查出多处）。
+判据：全仓 `.md`（默认不下钻 `{{AIDP_HOME}}/skills/`——SKILL 本体 + bundle 镜像，由 `mirror_to_bundle.py` 同步）里匹配 `/loop [间隔] /sprint-autopilot|aiauto-test`（间隔可缺省），**逐"出现"判而非逐行判**（本次出现 → 下次出现/行尾之间必须含 `--unattended` 与 `--no-loop`，故"一行两条 loop 只给一条加 flag"同样被抓）。
+豁免只认写在文件里的显式标记 `<!-- loop-check: ignore -->` / `ignore-file` / `ignore-begin`…`ignore-end`（对比反例、讲"去掉该 flag 才保留交互式判据"的段落用）；仅想豁免 `--no-loop` 要求（历史对照）→ 同行 `<!-- loop-example-ignore: 理由 -->`（不豁免 `--unattended`）；`memory/.aidp/` 运行态副本不巡检——**绝不硬编码文件名白名单**：那种豁免会随文件改名/拆分静默失效，且下一个人根本不知道某文件为何被放过。
 用法：`python3 {{AIDP_HOME}}/scripts/check_loop_examples.py [--root <仓库根>] [--path <相对路径>] [--json]`。退出码：`0`=全部合规 / `1`=检出漏写 / `2`=用法错。
 
 ## check_flow_var_refs.py — flow 分片里「读了但没人写」的变量（确定性，**ERROR 级**）
@@ -785,12 +787,12 @@ SKILL 名 713 字符，那不是归属是噪音（窗口调小到 120 会漏掉�
 ——"取值域全集 14 项"是合法留存、"恰 14 行"是必须改的断言，脚本只负责把候选列全。
 表不存在即整段跳过，不影响原有三类检查。散落面列写正则，`\|` 等 markdown 表格转义会自动还原。
 
-## check_cascade_obligation.py
+## check_cascade_obligation.py — 约定 22 义务登记门
 
 约定 22 义务登记门：Sprint 归档里写下的「须按约定 22 回灌」必须同轮落进对应族的 `_开发期{族}增量.md`。
 接线 = `/sprint-close` Step 3.5。只断言载体存在、不做逐条映射（逐条必产假阳性）。
 
-## check_cascade_residue.py
+## check_cascade_residue.py — 约定 22 口径级联残留门
 
 约定 22 口径级联残留门：旧口径是否仍作为**生效规则**残留在四族文档里。
 把命中分「真残留 / 订正留痕」两类，上下文扫描遇标题即止。接线 = `version-auditor` 审计 G 前置。
@@ -820,7 +822,7 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 ⛔ 刻意不返回"空集 + exit 0"，空集会被调用方读成「全部已关闭」）/ `2`=用法错。
 接线 = `flows/sprint-autopilot/phase-3-5.md`（三处）+ `phase-3-4.md` 铸 build 出口游标。
 
-## check_design_anchor.py
+## check_design_anchor.py — 实现偏离设计门
 
 实现偏离设计门：详细设计点名过的字段/常量到源码里找落点，抓「换了数据来源却编译过、
 界面完整、不报错」那类偏离。Important 级。接线 = `/sprint-close` Step 2.5.1 +
@@ -886,23 +888,6 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 3.3.11 的「变更范围增量」原只到**专题层**：进了 Δ 就整册从零合成，内容上一分没省。下游实测 6342 行里 **5245 行（83%）被重算**，该步占发布关键路径 **72%**——而"多域并行的正常版本"Δ 几乎必然全覆盖，这不是特例。
 两个子命令：`scope` 出**覆盖率报告**（⛔ 必须在重算**开工前**打印，≥70% 时告警——否则要等四十分钟才发现"这次其实接近全量"）；`rollforward` 以**旧分册为底本**只替换点名的 H2 章节、其余原样保留（按 `^## ` H2 切段）。**哪些章节要重写是语义判断，脚本不猜**——由执行体按 Δ 映射传入，脚本只保证"没点名的一字节不动"，并对点名却在新内容里缺失的章节**报错而非静默丢弃**。
 用法：`design_full_rollforward.py scope --full-dir <全量目录> --delta <专题名,...>` / `design_full_rollforward.py rollforward --old <旧分册> --new <staging 分册> --sections "<H2,...>" --out <目标>`。
-
-## tests/ — 上述确定性脚本的回归单测
-
-一键跑全部：`bash {{AIDP_HOME}}/scripts/tests/run.sh`。
-
-| 文件 | 覆盖 | 运行 |
-|------|------|------|
-| `test_report_schema.py` | `emit-report.py` 数据契约校验（`validate_payload`）+ `buildNo` 派生 + 示例文件自校验（示例即契约）| `python3 {{AIDP_HOME}}/scripts/tests/test_report_schema.py` |
-| `test_report_render.js` | 渲染口径（`pct` 0.84→84%、100.0→100% 不出 10000%）+ 坏数据健壮性（不白屏 / 无 undefined / 无 `#undefined`）| `node {{AIDP_HOME}}/scripts/tests/test_report_render.js` |
-| `test_guard_scripts.py` | 确定性护栏全套（`check_convention_dup` / `check_version_identifier` / `baseline_edit` / 里程碑通知门 / `release_baseline_check` / `autopilot_stuck_check` / `check_md_anchors` / `check_ghost_flags` / `check_loop_examples` / `check_line_refs` 等）。**分组清单见 [`tests/README.md`](./tests/README.md)**（组数只能现算、不写死；机器回检 `check_count_claims.py` 同时统计 `【…】` 与 `[NN]` 两种标题形态）| `python3 {{AIDP_HOME}}/scripts/tests/test_guard_scripts.py` |
-| 其余套件 | 提交前门禁、通知、多 Agent 装配与路由、7×24 调度、无人值守恢复、命令 ↔ SKILL 契约、发布域、报告不可变、文档引用与开源卫生三道门等，逐文件覆盖面见 [`tests/README.md`](./tests/README.md) | 见 `run.sh` |
-| `fixtures/*.js` | 报告链路问题数据的回归样本（脱敏）| —（被上面两份消费）|
-| `run.sh` | 一次跑全部；★ **新增测试文件必须登记进来**（漏收 = 该套件永远绿不了也红不了）| `bash {{AIDP_HOME}}/scripts/tests/run.sh` |
-
-> 详见 `{{AIDP_HOME}}/scripts/tests/README.md`。
-
----
 
 ## check_skill_gate_list.py — 命令端写死「SKILL 阻断名单」的棘轮门（确定性）
 
@@ -1127,11 +1112,31 @@ python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$V" --command 
 写方按一个身份建目录、读方按另一个身份找，于是「SQL 已应用清单」永远读不到（部署前安全网恒判未应用）、
 `progress.md` 扫错目录（Sprint 关闭状态误判）。⛔ 这类缺陷**不报错**，两侧单独看都正常。
 
-判据：`{{AIDP_HOME}}/{commands,flows,rules,reference}` 与 `AIDP-AGENTS.md` 里出现 `git config user.name` 即 ERROR。
+判据：`{{AIDP_HOME}}/{commands,flows,rules,reference,agents}`、`AIDP-AGENTS.md` 与项目根 `docs/init/` 里出现 `git config user.name` 即 ERROR（`agents/` 与 `docs/init/` 为后补的扫描面：Agent 前置说明同样会被照做）。
 放行：`chrome-<git_user>` 的 MCP 服务名（要的就是**本机 Git 身份本身**，换机器本就该换实例）、
 **反向教导句**（「⛔ 别自己拼 …」正是在劝人别这么写）、行内 `identity-ignore: <原因>`。
 用法：`python3 {{AIDP_HOME}}/scripts/check_identity_source.py [--root .] [--json]`；`--self-check`。
 退出码：`0`=干净 / `1`=有分叉解析。调用方 = 脚手架 `verify.py` 的 `GUARDS` 表（名称「{user} 解析单一信源」）+ `selfcheck.py` 探针。
+
+## check_readme_registry.py — 目录里的文件必须在同目录 README 登记（ERROR 级，仅模板仓库）
+
+`reference/README.md` 等自述「新增文件须登记」，可没有任何东西在新增文件时检查它——`部署操作约定.md` 落地后一度是该目录唯一未登记的文件。
+判据：`{{AIDP_HOME}}/*/README.md` 与 `docs/**/README.md`（版本目录 `V<数字>…` 不下钻）所在目录的**直接子项**（文件与子目录），basename 必须在该 README 正文出现（ASCII 边界匹配）；范围写法 `约定细则-1.md ~ 约定细则-5.md` / `约定细则-1 ~ 5` 视为逐一登记；排除 README、隐藏项、`__pycache__`、`tests`。
+豁免：该 README 里写 `<!-- registry-ignore: 文件名 理由 -->`（理由必填；豁免标记自带的文件名不算登记）。仅模板仓库适用（根有 `版本变更历史.md`），否则输出 `applicable: false`。
+用法：`python3 {{AIDP_HOME}}/scripts/check_readme_registry.py [--root .] [--json]`；`--self-check`。调用方 = 脚手架 `verify.py` 的 `GUARDS` 表（「目录文件 README 登记」）+ `selfcheck.py` 探针；回归见 `tests/test_doc_reference_guards.py`。
+
+## check_cn_count_claims.py — 中文数字写的自称计数必须与实数一致（ERROR 级，仅模板仓库）
+
+`check_count_claims.py` 只认阿拉伯数字，本脚本负责中文数字写法（如「本目录下的九份角色指令」「## 九份角色与归属」），与目录实数不符即报。  <!-- countclaim-check: ignore 举例：被检的写法，非现行声明 -->
+判据：`N 份角色|Agent`（N≥2）、`共 N 个 角色|Agent`、`N 个 Agent 指令` 对照 `{{AIDP_HOME}}/agents/*.md`（不含 README）数；`N 项|条 核心约定`、`核心约定 1–N` 对照核心约定最大号；中文数字支持到百位。⛔ 刻意不碰「N 个命令 / N 个 SKILL」：这类中文数字几乎全是子集表述，强判必误报。
+豁免沿用 `countclaim-check:` 标记；扫描面同 `check_count_claims.py`（不下钻 `skills/`、`.aidp-backup-*`，另不扫 `memory/.aidp/`）。非模板仓库输出 `applicable: false`。
+用法：`python3 {{AIDP_HOME}}/scripts/check_cn_count_claims.py [--root .] [--json]`；`--self-check`。调用方 = `verify.py` 的 `GUARDS` 表（「中文数字自称计数」）+ `selfcheck.py` 探针。
+
+## check_stale_phrases.py + stale-phrases.txt — 陈旧短语黑名单棘轮（ERROR 级，仅模板仓库）
+
+描述面（README / 范式文档 / 命令说明）里的过时句子与现行口径并存时无结构性冲突，计数 / 引用 / 编号类检查都抓不到，故用黑名单机检。数据文件 `stale-phrases.txt` 每行 `正则 | 作用域 glob | 现行替代说明 | 引入版本`（正则内 `|` 前后不得带空格；作用域 `;` 分多个、`{{AIDP_HOME}}` 展开为运行包根）；初始 0 命中，**此后每次行为变更的提交，往表里登记被取代的说法**（与约定 30「只陈述最终行为」配套）。
+误报控制：命中行带 `stale-ignore: 理由`（理由必填）才放行；全局排除 `rationale.md`、`版本变更历史.md`、`设计目标.md`、`docs/superpowers/`、`memory/.aidp/`、`skills/`、`.aidp-backup*`；坏条目（字段不足 / 正则不合法 / 版本格式错）报 `bad-entry`，不静默跳过。非模板仓库或无数据文件 → `applicable: false`。
+用法：`python3 {{AIDP_HOME}}/scripts/check_stale_phrases.py [--root .] [--json] [--phrases 文件]`；`--self-check`。调用方 = `verify.py` 的 `GUARDS` 表（「陈旧短语黑名单」）+ `selfcheck.py` 探针。
 
 ## check_python_floor.py — 声明的最低 Python 版本上必须真能导入（ERROR 级）
 
@@ -1356,3 +1361,9 @@ Sprint 内按守护面裁剪是合法的，发布前必须全跑一次，否则�
 模板仓库公开分发，示例、事故叙述、占位值最容易夹带真实环境信息。本脚本**只按模式识别、不内置任何真实私有名单**（名单写进仓库等于再泄露一次）。
 判据：P1 RFC 1918 / CGNAT / 链路本地 IPv4（示例一律用 RFC 5737 文档地址段 `192.0.2.x` / `198.51.100.x` / `203.0.113.x`）· P2 URL 或 `host:port` 中以 `.local` `.lan` `.internal` `.intranet` `.intra` `.corp` `.localdomain` 结尾的主机 · P3 非占位、非公共服务（`chrome-devtools*` / `chrome-<用户>` / `context7` 等）的 `mcp__<名字>__` · P4 事故叙述里点名下游项目（「下游 `xxx` 实测/实证/事故…」）· P5 前缀不在示例白名单的 `<前缀>-backend` / `<前缀>-frontend` · P6 `--denylist <本地文件>`（不入库，也可用环境变量 `AIDP_PRIVATE_DENYLIST`）逐行子串匹配。扫描面含脚手架 bundle。
 豁免：行内 `private-marker-ignore: <原因>`。用法：`python3 {{AIDP_HOME}}/scripts/check_private_markers.py [--root <仓库根>] [--path <相对路径>] [--denylist <文件>] [--json]`；`--self-check`。退出码：`0`=无命中 / `1`=有命中 / `2`=用法错。CI 必跑（模板仓库专用，不挂进 `verify.py`：下游项目自己的内网地址是合法内容）。
+
+---
+
+## tests/ — 上述确定性脚本的回归单测
+
+一键跑全部：`bash {{AIDP_HOME}}/scripts/tests/run.sh`（模板仓库维护验证默认按影响范围选测，见根 `AGENTS.md`）。测试文件清单、覆盖说明与运行方式的**单一信源**是 `{{AIDP_HOME}}/scripts/tests/README.md`，本文不再复述文件表；新增测试文件须同时登记进 `run.sh` 与该 README 的文件表。

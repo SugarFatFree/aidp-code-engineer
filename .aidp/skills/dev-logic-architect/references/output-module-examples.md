@@ -936,15 +936,15 @@ com.{company}.{project}
 
 ```
 ❌ 错误做法：直接设为 NOT NULL
-CREATE TABLE `user` (
-  `real_name` VARCHAR(150) NOT NULL COMMENT '真实姓名(前端限制 50 字符,DB 冗余 3×,PRD 必填)',
+CREATE TABLE sys_user (
+  real_name VARCHAR(150) NOT NULL COMMENT '真实姓名(前端限制 50 字符,DB 冗余 3×,PRD 必填)',
   ...
 );
 问题：数据导入、第三方同步、历史数据迁移时可能没有真实姓名，导致插入失败
 
 ✅ 正确做法：数据库允许 NULL，代码层校验
-CREATE TABLE `user` (
-  `real_name` VARCHAR(150) DEFAULT NULL COMMENT '真实姓名(前端限制 50 字符,DB 冗余 3×,前端注册时必填,代码层校验)',
+CREATE TABLE sys_user (
+  real_name VARCHAR(150) DEFAULT NULL COMMENT '真实姓名(前端限制 50 字符,DB 冗余 3×,前端注册时必填,代码层校验)',
   ...
 );
 
@@ -1005,28 +1005,28 @@ public class UserRegisterDTO {
 **示例：**
 
 ```sql
-CREATE TABLE `sys_user` (
-  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `username` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '用户名(登录账号,前端限制 20 字符,DB 冗余 3×,应用层必填)',
-  `nickname` VARCHAR(150) NULL DEFAULT NULL COMMENT '昵称(前端限制 50 字符,DB 冗余 3×)',
-  `email` VARCHAR(128) NULL DEFAULT NULL COMMENT '邮箱(强格式,精确长度,后续可加唯一约束)',
-  `phone` VARCHAR(20) NULL DEFAULT NULL COMMENT '手机号(强格式,精确长度)',
-  `avatar` VARCHAR(512) NULL DEFAULT NULL COMMENT '头像 URL(强格式,精确长度)',
-  `gender` TINYINT NULL DEFAULT NULL COMMENT '性别:0-未知 1-男 2-女(参考 A.4 GenderEnum)',
-  `birthday` DATE NULL DEFAULT NULL COMMENT '生日(可选)',
-  `department_id` BIGINT NOT NULL DEFAULT 0 COMMENT '部门ID(关联 sys_department.id,索引列,0=未分配)',
-  `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态:0-禁用 1-启用(参考 A.4 UserStatusEnum)',
-  `remark` VARCHAR(600) NULL DEFAULT NULL COMMENT '备注(前端限制 200 字符,DB 冗余 3×)',
-  `created_by` BIGINT NULL DEFAULT NULL COMMENT '创建人ID(系统操作时可为空)',
-  `created_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `updated_by` BIGINT NULL DEFAULT NULL COMMENT '更新人ID(系统操作时可为空)',
-  `updated_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除:0-未删除 1-已删除',
-  PRIMARY KEY (`id`),
-  UNIQUE INDEX `uk_username` (`username`),
-  INDEX `idx_department_id` (`department_id`),
-  INDEX `idx_status` (`status`),
-  INDEX `idx_created_time` (`created_time`)
+CREATE TABLE sys_user (
+  id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  username VARCHAR(64) NOT NULL DEFAULT '' COMMENT '用户名(登录账号,前端限制 20 字符,DB 冗余 3×,应用层必填)',
+  nickname VARCHAR(150) NULL DEFAULT NULL COMMENT '昵称(前端限制 50 字符,DB 冗余 3×)',
+  email VARCHAR(128) NULL DEFAULT NULL COMMENT '邮箱(强格式,精确长度,后续可加唯一约束)',
+  phone VARCHAR(20) NULL DEFAULT NULL COMMENT '手机号(强格式,精确长度)',
+  avatar VARCHAR(512) NULL DEFAULT NULL COMMENT '头像 URL(强格式,精确长度)',
+  gender TINYINT NULL DEFAULT NULL COMMENT '性别:0-未知 1-男 2-女(参考 A.4 GenderEnum)',
+  birthday DATE NULL DEFAULT NULL COMMENT '生日(可选)',
+  department_id BIGINT NOT NULL DEFAULT 0 COMMENT '部门ID(关联 sys_department.id,索引列,0=未分配)',
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '状态:0-禁用 1-启用(参考 A.4 UserStatusEnum)',
+  remark VARCHAR(600) NULL DEFAULT NULL COMMENT '备注(前端限制 200 字符,DB 冗余 3×)',
+  created_by BIGINT NULL DEFAULT NULL COMMENT '创建人ID(系统操作时可为空)',
+  created_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_by BIGINT NULL DEFAULT NULL COMMENT '更新人ID(系统操作时可为空)',
+  updated_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  deleted TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除:0-未删除 1-已删除',
+  PRIMARY KEY (id),
+  UNIQUE INDEX uk_username (username),
+  INDEX idx_department_id (department_id),
+  INDEX idx_status (status),
+  INDEX idx_created_time (created_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
 -- NOT NULL 字段初始化说明：

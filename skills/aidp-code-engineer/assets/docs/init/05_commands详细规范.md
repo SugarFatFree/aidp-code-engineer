@@ -145,7 +145,7 @@
 
 ```
 Step P0: 读取 AGENTS.md「当前状态」 → 得到 {version}
-Step P1: git config user.name                → 得到 {user}
+Step P1: python3 {{AIDP_HOME}}/scripts/vcs.py user → 得到 {user}
 Step P2: 缺失/非法 → 按 06 文档第 6 节话术向用户追问
 Step P3: 路径变量展开 → 按 06 文档第 2 节的路径模板使用
 ```

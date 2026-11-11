@@ -26,7 +26,7 @@
 
 ## 二、会话启动检查清单
 
-> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。本 Agent 由 skill 自动激活时，参数会通过激活 prompt 显式传入；手动激活时从 `AGENTS.md`「当前状态」读取 `{version}`，从 `git config user.name` 读取 `{user}`。
+> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。本 Agent 由 skill 自动激活时，参数会通过激活 prompt 显式传入；手动激活时从 `AGENTS.md`「当前状态」读取 `{version}`，从 `python3 {{AIDP_HOME}}/scripts/vcs.py user` 读取 `{user}`。
 
 激活后，**必须按以下顺序读取**，未读完不得开始检查：
 

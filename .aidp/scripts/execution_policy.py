@@ -359,7 +359,24 @@ def test_manifest_binding(root, version, build, manifest):
     if not baseline_path.is_file() or hashlib.sha256(baseline_path.read_bytes()).hexdigest() != baseline["sha256"]:
         raise PolicyError("UNAUTHORIZED", "验收基线文件不存在或已改变")
     tests, dependencies = plan.get("acceptance_tests"), plan.get("dependencies")
-    if (not isinstance(tests, list) or not tests or not isinstance(dependencies, list)
+    if plan.get("unit_applicability") is not None:
+        # 单测不适用：仅当声明精确匹配且验收基线事实上全部正式用例 browser_only、无任何测试文件映射。
+        data = json.loads(baseline_path.read_text(encoding="utf-8"))
+        cases = data.get("cases") if isinstance(data, dict) else None
+        ids = [c.get("id") for c in cases if isinstance(c, dict)] if isinstance(cases, list) else []
+        browser = data.get("browser_only") if isinstance(data, dict) else None
+        claim = plan["unit_applicability"]
+        evidence = claim.get("evidence") if isinstance(claim, dict) else None
+        if (not isinstance(claim, dict) or {k: claim.get(k) for k in ("status", "reason")} !=
+                {"status": "NOT_APPLICABLE", "reason": "all-cases-browser-only"}
+                or not (isinstance(evidence, dict) and evidence.get("status") == "none-found" and evidence.get("files") == 0
+                        and isinstance(evidence.get("checked"), list) and evidence["checked"])
+                or tests != [] or plan.get("suites") != [] or not isinstance(dependencies, list) or not ids
+                or len(ids) != len(cases) or not isinstance(browser, list) or sorted(browser) != sorted(ids)
+                or len(set(ids)) != len(ids) or any(c.get("test_files") for c in cases)
+                or data.get("acceptance_tests") != []):
+            raise PolicyError("UNAUTHORIZED", "unit_applicability 与验收基线事实不符：须全部正式用例 browser_only 且无测试文件映射")
+    elif (not isinstance(tests, list) or not tests or not isinstance(dependencies, list)
             or any(not _text(item) for item in tests + dependencies) or not plan.get("suites")):
         raise PolicyError("UNAUTHORIZED", "版本全量必须列明正式用例及必要依赖，不能扫描系统补全")
     for item in tests + dependencies:
@@ -425,6 +442,46 @@ def _budget_state(root, owner):
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise PolicyError("UNVERIFIED", f"预算记录不可读取：{exc}") from exc
     return path, state
+
+
+def _mark_exhausted(root, budget_path, items):
+    """记录一次预算耗尽事实（resource + 继续所需的最小限额），供 budget_exhaustion 处置。
+
+    ⛔ 写独立的 exhausted.json，不动 budget.json：拒绝不得改变预算账本（原子拒绝语义）。
+    """
+    from entry_context import _atomic_json
+    try:
+        _atomic_json(root, budget_path.with_name("exhausted.json"), {"at": time.time(), "items": [
+            {"resource": resource, "required": required} for resource, required in items]})
+    except OSError:
+        pass  # 记录是处置旁路，不能盖住真正的 BUDGET_EXCEEDED
+
+
+def budget_exhaustion(root, execution_context):
+    """只读：根任务预算的耗尽处置状态 -> (state, items)。
+
+    state：exhausted = 记录过耗尽且当前根限额仍不足以放行；renewed = 记录过耗尽但限额已续到足够；
+    none = 从未耗尽 / 上下文不是可读根。续额只能经 entry_context revise 的真实用户来源，不在此重置 used。
+    """
+    from entry_context import load_context
+    root = Path(root).resolve()
+    try:
+        ctx = load_context(root, execution_context)
+        owner = _budget_owner(root, ctx)
+        budget_path, _ = _budget_state(root, owner)
+    except (ValueError, OSError, KeyError, TypeError):
+        return "none", []
+    try:
+        mark = json.loads(budget_path.with_name("exhausted.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "none", []
+    items = mark.get("items") if isinstance(mark, dict) else None
+    if not isinstance(items, list) or not items:
+        return "none", []
+    limits = owner["execution_budget"]
+    short = [row for row in items if isinstance(row, dict) and row.get("resource") in limits
+             and limits[row["resource"]] < row.get("required", 0)]
+    return ("exhausted" if short else "renewed"), (short or items)
 
 
 def _check_failed_input(state, input_hash, action):
@@ -496,6 +553,7 @@ def reserve_validation(root, ctx, stages, input_hash, *, action, defer_input=Fal
                   for key in DEFAULT_BUDGET}
         diagnostic = _budget_diagnostic(state, limits, stages)
         if any(diagnostic["shortfall"].values()):
+            _mark_exhausted(root, path, [(key, limits[key] + short) for key, short in diagnostic["shortfall"].items() if short])
             raise PolicyError("BUDGET_EXCEEDED", "余额不足以完成整个验证闭环，执行前拒绝", **diagnostic)
         totals = diagnostic["expected"]
         row = {"reservation_id": str(uuid.uuid4()), "kind": "validation", "task_id": current["task_id"],
@@ -597,6 +655,8 @@ def _update_validation(root, ctx, reservation, actual_stages, *, final=False, ca
                       for key in DEFAULT_BUDGET}
             row["over_budget"] = {key: state["used"][key] - limit for key, limit in limits.items()
                                   if state["used"][key] > limit}
+            if row["over_budget"]:
+                _mark_exhausted(root, path, [(key, state["used"][key]) for key in row["over_budget"]])
             if final:
                 row.update(settlement=copy.deepcopy(settlement), settled_at=time.time(),
                            status="UNVERIFIED" if row["over_budget"] or cancelled or unbound_execution else status)
@@ -663,6 +723,7 @@ def reserve_budget(root, ctx, resource, cost=1, input_hash=None, *, action=None)
         # 子任务可以缩小上限，但任何子任务的消耗仍计入父任务总额。
         limit = min(locked["execution_budget"][resource], current["execution_budget"][resource])
         if used + cost > limit:
+            _mark_exhausted(root, path, [(resource, used + cost)])
             raise PolicyError("BUDGET_EXCEEDED", f"{resource}: {used} + {cost} > {limit}",
                               resource=resource, used=used, cost=cost, limit=limit)
         state["used"][resource] += cost
@@ -695,6 +756,8 @@ def settle_elapsed(root, ctx, reservation, elapsed_seconds):
             return dict(row)
         state["used"]["elapsed_seconds"] += elapsed_seconds - row["cost"]
         row["actual_cost"] = elapsed_seconds
+        if state["used"]["elapsed_seconds"] > locked["execution_budget"]["elapsed_seconds"]:
+            _mark_exhausted(root, path, [("elapsed_seconds", state["used"]["elapsed_seconds"])])
         _atomic_json(root, path, state)
         if state["used"]["elapsed_seconds"] > locked["execution_budget"]["elapsed_seconds"]:
             raise PolicyError("BUDGET_EXCEEDED", "实际执行耗时超限", used=state["used"]["elapsed_seconds"])

@@ -341,6 +341,30 @@ class JoinTests(unittest.TestCase):
         self.assertTrue(out['converged'])
         self.assertEqual(self.node()['aiauto_test_result']['browser_status'], 'N/A')
 
+    def not_applicable(self, browser=True):
+        payload = self.payload(browser=browser)
+        unit = payload['unitTests']
+        scope = dict(unit['testScope'], acceptance_tests=[], unit_applicability={
+            'status': 'NOT_APPLICABLE', 'reason': 'all-cases-browser-only', 'browser_only': ['TC-1'],
+            'evidence': {'status': 'none-found', 'files': 0, 'checked': ['git-tracked-and-untracked-files']}})
+        unit.update(status='NOT_APPLICABLE', reason='all-cases-browser-only', runs=[], counts=None,
+                    failed_cases=[], primary_error=None, testScope=scope)
+        payload['testScope'] = scope
+        return payload
+
+    def test_unit_not_applicable_converges_only_with_real_browser_pass(self):
+        out = self.settle(self.not_applicable())
+        self.assertTrue(out['converged'])
+        self.assertEqual((out['unit_status'], out['overall_status']), ('NOT_APPLICABLE', 'PASS'))
+        self.assertEqual(self.node()['builds'][0]['unit_tests_status'], 'NOT_APPLICABLE')
+
+    def test_unit_not_applicable_without_browser_result_is_never_pass(self):
+        out = self.settle(self.not_applicable(browser=False))
+        self.assertFalse(out['converged'])
+        self.assertEqual((out['overall_status'], out['unverified'], out['next_action']), ('UNVERIFIED', True, 'verify'))
+        self.assertNotEqual(self.node().get('aiauto_tested_at'), 'now')
+        self.assertNotEqual(join.release_state(self.root, self.version), 'pass')
+
     def test_running_never_writes_completion(self):
         before = self.baseline.read_bytes()
         with self.assertRaises(ValueError):

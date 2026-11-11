@@ -40,7 +40,7 @@ formal 激活后按以下顺序读取适用输入；light只读本任务相关�
 
 ```
 必读（每次）：
-  0. 先解析上下文：{version} ← `AGENTS.md`「当前状态」；{user} ← `git config user.name`
+  0. 先解析上下文：{version} ← `AGENTS.md`「当前状态」；{user} ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`
      详见 `docs/init/06_版本与用户目录约定.md` 第 4 节
   1. memory/{version}/{user}/activeContext.md       → 当前 Sprint 状态
   2. memory/{version}/{user}/progress.md            → 整体进度（该版本该用户视角）

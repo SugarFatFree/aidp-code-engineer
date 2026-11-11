@@ -1,5 +1,7 @@
 # 报告契约加固 Implementation Plan
 
+> **状态：已落地 / 历史存档。** 本文是当时的设计 / 实施记录，仅供追溯；现行行为以 `.aidp/` 与 `docs/init/` 为准，不再据此文改动实现。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把上游报告模板修复中适用于本仓库的 19 条契约问题落到 `emit-report.py`、离线报告渲染器、版本测试报告和示例数据，消除 fail-open、`na` 丢失、待实测误报已测、步骤分母错误及新增页面无人冒烟覆盖。

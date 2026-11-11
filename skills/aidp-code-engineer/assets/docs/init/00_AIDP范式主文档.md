@@ -70,7 +70,7 @@ AIDP 将传统软件工程的标准流程（需求 → 设计 → 开发 → 测
 
 > 本节给出目录骨架总览。完整的路径规则、命名规范、路径解析算法见 `06_版本与用户目录约定.md`。
 >
-> `{version}` 示例 `V0.1.0`，来自 `git tag` 或 PM 指定；`{user}` 来自 `git config user.name`。
+> `{version}` 示例 `V0.1.0`，来自 AGENTS.md「当前状态」或 PM 指定（有 Git 时可对照 tag）；`{user}` 由 `python3 {{AIDP_HOME}}/scripts/vcs.py user` 解析。
 
 ```
 project-root/
@@ -107,7 +107,7 @@ project-root/
 │   ├── reference/                        # ★ 按需 Read 的查阅分片（命令速查 / skills 用途 / 约定细则 / 文档索引）
 │   ├── scripts/                          # ★ 确定性校验与判定脚本（如 commit_gate.py、cicd_watch.py、notify.py）
 │   ├── hooks/                            # ★ 钩子脚本（autopilot Stop 护栏）
-│   ├── templates/deployment/             # ★ 部署流程 + SQL执行台账 模板（/sprint-dev Step X.8 复制填充）
+│   ├── templates/deployment/             # ★ 部署操作说明模板（仅版本规划 / 正式发布按实际需要取用）
 │   ├── templates/reports/                # ★ AI 全自动报告模板（AI执行报告 + AI测试报告 + AI数据清理 + 版本测试报告 + README）
 │   └── templates/optional-rules/         # ★ 按需安装的可选规则（如 WebMCP 详规；未启用即不装进 rules/）
 │
@@ -133,7 +133,7 @@ project-root/
 │   │   ├── sql/                          # ⛔ 根下不直放 .sql，只允许 增量/ 与 全量/（约定 37 双轨，见 06 §2.5.4）
 │   │   │   ├── 增量/                     # 【增量轨】本版 NN_中文名.sql + 99_回滚脚本.sql（上游暂存 code/sql/ → /sprint-design Step 3.2 搬迁至此）
 │   │   │   └── 全量/                     # 【全量轨】发布期产出：建表说明.md + NN_建表-<业务域>.sql + NN_初始化数据.sql，不含任何 ALTER
-│   │   ├── 部署流程/                     # 部署 SOP + SQL执行台账（精炼版，/sprint-dev Step X.8 检测驱动维护）
+│   │   ├── 部署流程/                     # 部署操作说明（版本根 README 为唯一入口；部署流程.md / SQL执行台账.md 仅确需时存在）
 │   │   └── 配置文件/                     # ⛔ 根下不直放配置产物，只允许 增量/ 与 全量/
 │   │       ├── 增量/                     # 【增量轨】配置项清单.md（/sprint-dev Step X.7 维护）
 │   │       └── 全量/                     # 【全量轨】发布期产出：配置说明.md + 引导层环境文件 + nginx/compose/k8s 完整份 + <配置中心>/*.yml
@@ -225,7 +225,7 @@ project-root/
 | `docs/architecture/` | 架构约束三件套 + 可选架构设计文档（单/多文档，兼容识别） | 项目初始化前由人提供 |
 | `docs/bugfix/{version}/` | 测试或使用中发现的问题记录（版本级单层，发现人在文件名） | 迭代过程中由该用户记录 |
 | `docs/implementation/{version}/{user}/` | 个人实施过程记录、踩坑笔记 | 迭代过程中 |
-| `docs/deployment/{version}/` | 部署产物：双轨 SQL（增量/全量）+ 配置文件 + 部署流程 + checklist（约定 37）；**`docs/deployment/tools/` 跨版本、不按版本隔离** | `/sprint-dev` X.7/X.8 · `/version` 3.3.7 |
+| `docs/deployment/{version}/` | 部署产物：双轨 SQL（增量/全量）+ 配置文件 + 版本根 README 唯一操作入口（部署流程.md / SQL执行台账.md / checklist 仅确需时存在，约定 37）；**`docs/deployment/tools/` 跨版本、不按版本隔离** | `/sprint-dev` X.7（增量配置）· 仅版本规划 / `/version` 3.3.7 集中校准 |
 | `docs/references/{version}/` | 提给第三方的对外需求 / 接口对接资料（版本专属；另有跨版本「通用区」）| `/sprint-design` · `/version` 3.3.9 |
 | `docs/prompts/{version}/` | 本版沉淀的提示词模板（供复用，不参与发布收敛）| 人工 / 各命令按需 |
 
@@ -274,14 +274,15 @@ project-root/
 
 ```
 先解析上下文（由命令/项目记忆文件触发）：
-  · git config user.name                 → 当前 {user}
+  · python3 {{AIDP_HOME}}/scripts/vcs.py user → 当前 {user}（唯一解析实现）
   · AGENTS.md（Claude Code 下为 CLAUDE.md）的"当前状态"区域 → 当前 {version}
   · 读不到时询问用户（话术见 06_版本与用户目录约定.md 第 6 节）
 
-必读（每次都要）：
-  1. AGENTS.md                             → 项目概况和当前状态
-  2. memory/{version}/{user}/activeContext.md      → 当前 Sprint 状态
-  3. memory/{version}/{user}/progress.md           → 该版本该用户的进度
+先定执行身份（light / formal，见 AGENTS.md 会话流程），再读：
+  1. AGENTS.md                             → 项目概况和当前状态（每次都读）
+  2. memory/{version}/{user}/activeContext.md      → 仅 formal Sprint 读：当前 Sprint 状态
+  3. memory/{version}/{user}/progress.md           → 仅 formal Sprint 读：该版本该用户的进度
+  （light 任务不读 2/3，只读本任务相关的项目级 memory 与受影响基线）
 
 按需读取（根据任务类型）：
   4. memory/systemPatterns.md     → 做技术决策前必读（项目级）
@@ -660,12 +661,12 @@ Sprint-001（执行期）
 | | `/sprint-design` | 生成详细设计文档 | `dev-logic-architect` |
 | | `/sprint-plan` | 生成研发执行计划 | `dev-execution-planner` |
 | | `/sprint-selftest` | 生成研发自测（方案+用例+测试环境） | `dev-manual-testcase` |
-| **Sprint 执行** | `/sprint-batch` | 批量执行多个 Sprint（主体为循环 `/sprint-full`，末段 Step 6 触发部署 + AI 自动化测试） | `superpowers:verification-before-completion`（输出前硬门；⛔ 顶层循环**不用** `executing-plans`——它会停下征询，与「零询问连跑」冲突）|
+| **Sprint 执行** | `/sprint-batch` | 批量执行多个 Sprint（主体为循环 `/sprint-full`，末段 Step 6 仅在父级部署 / 实测授权时衔接部署与 AI 自动化测试） | `superpowers:verification-before-completion`（输出前硬门；⛔ 顶层循环**不用** `executing-plans`——它会停下征询，与「零询问连跑」冲突）|
 | | `/sprint-full` | 单 Sprint 一键执行 | - |
 | | `/sprint-start` | 启动 Sprint | - |
-| | `/sprint-dev` | 开发阶段（支持独立使用 + 自动累进） | `superpowers:test-driven-development`；AIDP 按写集隔离派发，规范审查后做代码质量审查 |
-| | `/sprint-test` | 测试阶段（静态扫描 + 可选接口测试；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（`api-tester` 为可选外部能力） |
-| | `/sprint-bugfix` | 问题修复（独立可用 + 自动累进） | `bugfix` skill + `superpowers:systematic-debugging` |
+| | `/sprint-dev` | 开发阶段（独立使用默认 light；formal 经 `/sprint-full` 累进） | `superpowers:test-driven-development`；AIDP 按写集隔离派发，规范审查后做代码质量审查 |
+| | `/sprint-test` | 测试阶段（静态验证 + 当前 task / Sprint 相关单测；不启服务、不完整构建；**前端浏览器仿真不在本命令内**，走 `/sprint-aiauto-test`） | `code-verification-loop`（`api-tester` 为可选外部能力） |
+| | `/sprint-bugfix` | 问题修复（独立可用，默认 light；formal 经 `/sprint-full` 累进） | `bugfix` skill + `superpowers:systematic-debugging` |
 | | `/sprint-close` | Sprint 关闭 | - |
 | | `/sprint-autopilot` | ★ 7×24 全自动开发编排器（操作系统调度 `aidp_scheduler.py` 守护） | 串联 `/version` + `/sprint-batch` |
 | | `/sprint-aiauto-test` | ★ AI 自动化测试（当前工具 chrome-devtools-mcp；操作系统调度 `aidp_scheduler.py` 守护） | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例读已落盘的 `docs/testing/{version}/`，不直调用例生成 SKILL |
@@ -862,7 +863,7 @@ bugfix-{YYYYMMDD}-{user}.md
 
 ### 9.1 会话开始标准提示词
 
-每次启动 AI Agent 会话，第一条消息固定发送：
+启动 formal Sprint 会话时，第一条消息可发送（light 任务无需此提示词，只读本任务相关上下文）：
 
 ```
 请按顺序读取以下文件，然后告诉我当前项目状态和建议的下一步行动：
@@ -898,6 +899,7 @@ bugfix-{YYYYMMDD}-{user}.md
 4. techContext.md 启动命令是否仍然有效
 5. 技术债务总数是否超过警戒线
 6. bugfix 记录是否全部归档闭环
+7. 另含文件完整性、目录层级合规、脚手架漂移比对（仅 AIDP 脚手架项目）、已发布 AI 报告完整性巡检、项目级事实索引新鲜度与老版本产物体量（共 10 项 + 9bis，完整清单以 `{{AIDP_HOME}}/commands/health-check.md` 为准）
 
 ---
 
@@ -965,7 +967,7 @@ description: {一句话说明本 Skill 做什么 + 在什么场景/关键词下�
 | | `/sprint-full {NNN}` | 单 Sprint 一键（start→dev→test→bugfix→close） |
 | | `/sprint-start {NNN}` | 启动单个 Sprint |
 | | `/sprint-dev [backend\|frontend]` | 开发阶段（TDD + 并行） |
-| | `/sprint-test` | 测试阶段（code-verification-loop） |
+| | `/sprint-test` | 测试阶段（静态 + 相关单测；已授权时 code-verification-loop） |
 | | `/sprint-bugfix [sprint-NNN]` | 修复 bug（systematic-debugging） |
 | | `/sprint-close {NNN}` | 关闭归档 |
 | **7×24 全自动** | `/sprint-autopilot` | ★ 开发链路编排器（操作系统调度 `aidp_scheduler.py`，默认每 10m 一轮） |
@@ -1017,8 +1019,8 @@ description: {一句话说明本 Skill 做什么 + 在什么场景/关键词下�
 # - 追加到 研发执行计划
 # - 执行 start → dev → test → bugfix → close
 
-# 模式 2C：★ 单独用 /sprint-dev 或 /sprint-bugfix 入口（效果等同）
-/sprint-dev "新增用户导出功能"          # 默认 light，不同于正式 /sprint-full
+# 模式 2C：单独用 /sprint-dev 或 /sprint-bugfix 入口（light，不累进 Sprint）
+/sprint-dev "新增用户导出功能"          # 默认 light：不建 Sprint，累进只属 /sprint-full
 /sprint-bugfix "修复批量导入逻辑"       # 默认 light，不同于正式 /sprint-full
 
 # 模式 3：分步执行（严格审核每步）

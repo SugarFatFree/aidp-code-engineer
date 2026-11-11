@@ -254,6 +254,6 @@ echo "✅ 目录骨架核验通过（由 Phase 0 脚手架产出）"
 
 然后即可使用三个★常用入口：
 - /sprint-batch                       批量执行所有 Sprint
-- /sprint-dev "<新功能描述>"          自动累进新 Sprint
+- /sprint-dev "<新功能描述>"          默认 light 小任务（不建 Sprint；累进新 Sprint 走 /sprint-full "<描述>"）
 - /sprint-bugfix                       修复已记录的 bug
 ```

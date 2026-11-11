@@ -1,7 +1,7 @@
 <!-- 本文件是 `/version` 发布路径 Step 3.4.4「失败处置」的执行分片，由 `release-7.md` 指向。 -->
 
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/version/release-7c.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 # /version 发布路径 · Step 3.4.4 失败处置
 

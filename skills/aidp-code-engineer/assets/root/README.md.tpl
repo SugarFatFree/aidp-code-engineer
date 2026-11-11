@@ -112,11 +112,13 @@ chore: 构建/工具链相关
 ★ 7×24 全自动（开发链路 + 测试链路两条同时运行；操作系统调度，Claude Code / Codex / DeepSeek Harness 通用）：
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 开发链路（10m）+ 测试链路（5m）+ 独立 watchdog 巡检（5m）
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install --authorization-text "<你要求持续运行的原话>"   # 开发链路（10m）+ 测试链路（5m）+ 独立 watchdog 巡检（5m）
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 三条定时任务 + 两条链路心跳；告警见 memory/.aidp/alerts.jsonl
 ```
 
-Claude Code 会话内短期使用：`/loop 10m /sprint-autopilot --unattended` 与 `/loop 5m /sprint-aiauto-test --unattended`（会话级，关闭即停）。
+`--authorization-text` 是一次性的持续运行授权：调度器无人值守时没有人可问，需你给出“持续运行”的真实指令；缺则 autopilot tick 告警停下，绝不代你编造授权。
+
+Claude Code 会话内短期使用：`/loop 10m /sprint-autopilot --unattended --no-loop` 与 `/loop 5m /sprint-aiauto-test --unattended --no-loop`（会话级，关闭即停）。
 
 详见 [docs/init/README.md](docs/init/README.md)。
 

@@ -1,0 +1,14 @@
+# 陈旧短语黑名单（check_stale_phrases.py 的数据文件；模板维护用，口径见该脚本 docstring）
+# 格式：正则 | 作用域 glob（; 分多个，{{AIDP_HOME}} = 运行包根） | 现行替代说明 | 引入版本
+# 正则内部的 | 前后不得带空格（用 (?:a|b)）。每次改变行为的提交，往本表加一条被取代的旧口径；初始必须 0 命中。
+# 说明性引用（「旧版曾……」）不要放宽正则：命中行加 `stale-ignore: 理由` 放行。
+部署 SOP | **/*.md | 版本根 README 为唯一部署操作入口；部署流程.md / SQL执行台账.md 仅确需时按模板取用，不每次生成 | V1.2.3
+X\.8[^\n|。]{0,40}(?:复制填充|检测驱动) | **/*.md | X.8 仅登记「部署操作变化待同步」机器待办；部署模板只在版本规划 / 正式发布按需填充 | V1.2.3
+只做静态与文档层|开发期只做静态验证 | **/*.md | 默认静态验证 + 当前任务相关单测（related-test）；禁止启服务 / 完整构建 | V1.2.3
+每次(?:启动|都要)?[^\n]{0,12}必读[^\n]{0,40}(?:activeContext|progress)|(?:activeContext|progress)[^\n]{0,30}每次(?:启动)?必读 | **/*.md | 先定执行身份；仅 formal Sprint 读 activeContext/progress，light 只读本任务相关 | V1.2.3
+/sprint-(?:dev|bugfix)\s+"[^"\n]*"[^\n]{0,40}自动累进新 Sprint|自动累进 Sprint 时 | **/*.md | /sprint-dev、/sprint-bugfix 默认 light、不建 Sprint；累进新 Sprint 只属 /sprint-full "<描述>" formal | V1.2.3
+(?<!不要求)每个 Sprint (?:在独立分支|新建(?:独立)?分支) | **/*.md | 分支策略由 branch_policy 决定（默认当前分支，不要求每个 Sprint 新建分支） | V1.2.3
+Step 6[^\n|]{0,20}询问部署 | **/*.md | Step 6 仅在父 deploy/live-tests/full-regression 授权时执行，缺授权即 NOT_REQUESTED，已授权不重问 | V1.2.3
+implement \+ static(?!\s*\+\s*related-test) | **/*.md | 普通开发/修复默认 implement + static + related-test | V1.2.3
+未执行（原因） | **/*.md | CVL 未授权项状态用 NOT_REQUESTED（未授权），不再用「未执行（原因）」 | V1.2.3
+/sprint-aiauto-test[^\n]{0,60}--grant[ =]full-regression|独立 ?aiauto(?:-test)?[^\n。；|]{0,20}可(?:以)?(?:跑|执行|做)?(?:版本)?全量 | **/*.md | 独立 aiauto 只接受明确验收目标；版本全量只经真实 autopilot 委派 | V1.2.3

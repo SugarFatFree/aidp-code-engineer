@@ -13,6 +13,11 @@ docs/audit/
     ├── version-output-audit-补丁-NN.md              # 补充模式（B-2）审计报告，NN 与同轮 NN_<业务主题>.md 增量共用编号
     ├── version-output-audit-{version}_build{N}.md   # /sprint-autopilot Phase 3.3 build 终审（强制仪式，命名必须带 build——
     │                                                #   不带 build 时本终审可被上游遗留文件静默满足）
+    ├── PRD行对账表.md                                # prd_presence_table.py 由研发需求「表 D」生成（研发自测与审计 C-4 用，按需）
+    ├── 规划耗时.md                                   # /version 规划各 SKILL 阶段计量渲染（定位瓶颈）
+    ├── metrics-{RUN_ID}.json                         # 规划阶段计量事件（不写 autopilot baseline）
+    ├── qr-handoff-{skill}-*.md                       # QR-Handoff-Auditor 对规划 SKILL 移交维度的审查报告
+    ├── incremental-audit-{YYYYMMDD-HHMM}.md          # 开发期口述累进路径（trigger=accretion）审计，带时分、同日多次互不覆盖
     ├── 发布欠账.md                                   # 发布流程未尽事项登记（补跑命令 `/version {version} --finalize-docs`）
     └── 全量设计差异-YYYY-MM-DD.md                    # 全量详细设计重算守恒未过时的差集报告
 ```

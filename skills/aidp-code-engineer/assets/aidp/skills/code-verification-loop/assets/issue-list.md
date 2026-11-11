@@ -24,7 +24,7 @@ Important 总数 = 阻断 Important + 非阻断 Important；loop 阻断项总数
 | :- | :- | :- | :- | :- | :- | :- |
 | {维度编号} | {Pass / Fail / 不适用 / 未核验（原因）} | {C} | {Ib} | {In} | {S} | {问题编号或核验依据} |
 
-逐维度填完（留行规则同 SKILL）：已执行维度存在 Critical 或 Important（含非阻断）即 Fail，只有 Suggestion 可记 Pass；未执行不计 Pass/Fail，并按 SKILL 登记 Important「本项未核验」。不适用写原因，不能用来隐藏 L2。
+逐维度填完（留行规则同 SKILL）：已执行维度存在 Critical 或 Important（含非阻断）即 Fail，只有 Suggestion 可记 Pass；未核验不计 Pass/Fail，并按 SKILL 登记 Important「本项未核验」。不适用写原因，不能用来隐藏 L2。
 
 **总体结论：不通过。** 无 Critical 且无 Important 才通过（含非阻断 Important）；仅 L2 也不能判通过。
 **本轮原因：** {对应问题编号、严重度和数量；未核验项写原因}。

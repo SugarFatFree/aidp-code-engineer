@@ -273,8 +273,17 @@
     if (!b.unitTests) return;
     var u = b.unitTests, ts = b.testSummary || {}, status = u.status;
     var valid = u.schema === 1 && u.build === b.build && b.commit && u.commit === b.commit &&
-      ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"].indexOf(status) >= 0 && Array.isArray(u.runs);
-    if (status === "PASS" && (!valid || !u.runs.length || u.runs.some(function (r) {
+      ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING", "NOT_APPLICABLE"].indexOf(status) >= 0 && Array.isArray(u.runs);
+    var unitNa = status === "NOT_APPLICABLE";
+    if (unitNa) {
+      // 单测不适用只认冻结 testScope 的依据：无 run、无单测清单、全部正式用例 browser_only。
+      var sc = u.testScope || {}, ap = sc.unit_applicability || {}, ids = Array.isArray(sc.case_ids) ? sc.case_ids.slice().sort() : [];
+      if (!valid || u.runs.length || u.reason !== "all-cases-browser-only" || ap.status !== "NOT_APPLICABLE" ||
+          ap.reason !== "all-cases-browser-only" || !ap.evidence || ap.evidence.status !== "none-found" || ap.evidence.files !== 0 || !Array.isArray(sc.acceptance_tests) || sc.acceptance_tests.length ||
+          !ids.length || JSON.stringify((ap.browser_only || []).slice().sort()) !== JSON.stringify(ids)) valid = false;
+      else status = "PASS";
+    }
+    if (status === "PASS" && !unitNa && (!valid || !u.runs.length || u.runs.some(function (r) {
       return !r || r.status !== "PASS" || !r.run_id || !r.command || !r.cwd || !r.env_id ||
         (r.counts && r.counts.failed > 0) || (r.failed_cases || []).length;
     }) || (u.counts && u.counts.failed > 0) || (u.failed_cases || []).length)) valid = false;
@@ -293,6 +302,7 @@
       var na = b.browserTests && b.browserTests.status === "N/A" && b.browserTests.reason;
       var total = (ts.total || 0) - (ts.na || 0);
       if (ts.pendingBrowserTest || ts.block > 0 || ts.skip > 0 ||
+          (unitNa && (na || (ts.total > 0 && ts.total === ts.na))) || // 单测不适用时不能零实测通过
           (!na && !(ts.total > 0 && ts.total === ts.na) && !(total > 0 && ts.pass === total && ts.browserTested !== false))) status = "UNVERIFIED";
     }
     ts.overallStatus = status;
@@ -307,7 +317,9 @@
     if (!b.unitTests) return "";
     var status = b.testSummary.overallStatus;
     var text = { PASS: "通过", FAIL: "失败", UNVERIFIED: "未核验，不能通过", TIMEOUT: "超时，不能通过", RUNNING: "运行中，不能收尾" };
-    return '<div class="card"><h2>总体结论：' + esc(status) + ' · ' + esc(text[status]) + '</h2><p>全量实测与全量单测共同判定，实测通过率不代表单测结果。</p></div>';
+    var naEv = b.unitTests.status === "NOT_APPLICABLE" && ((b.unitTests.testScope || {}).unit_applicability || {}).evidence;
+    var naNote = naEv ? '<p style="font-weight:700;color:#b45309">单测不适用：未发现测试运行器/测试文件（依据：已检查 ' + esc((naEv.checked || []).join("、")) + '，发现文件 ' + esc(naEv.files) + ' 个）；总体结论仅由全量实测给出。</p>' : '';
+    return '<div class="card"><h2>总体结论：' + esc(status) + ' · ' + esc(text[status]) + '</h2><p>全量实测与全量单测共同判定，实测通过率不代表单测结果。</p>' + naNote + '</div>';
   }
   function renderOverview() {
     var root = $("#view-overview");
@@ -581,7 +593,7 @@
           + '</pre><p>首要错误</p><pre>' + esc(item.primary_error || "未提供") + '</pre>'
           + (i ? '<p>日志：<code>' + esc(item.log || "未提供") + '</code></p>' : '') + '</article>';
       }).join("");
-      html += chap(++n, "全量单测", ts.overallStatus === "PASS" ? "通过" : "总体不能通过", unitHtml);
+      html += chap(++n, "全量单测", u.status === "NOT_APPLICABLE" ? "不适用（全部用例仅浏览器实测）" : ts.overallStatus === "PASS" ? "通过" : "总体不能通过", unitHtml);
     }
     html += chap(++n, "步骤执行", (b.steps || []).length + " 步"
       + (dist.plan ? " · " + dist.plan + " 步未回填实际状态" : "")

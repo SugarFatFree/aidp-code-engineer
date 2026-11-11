@@ -82,15 +82,25 @@
       && [ "${HAS_WAKE:-0}" = "1" ] \
       && ! { [ -f "$RPT_TEST/index.html" ] && [ -f "$RPT_TEST/data/${B}.js" ]; }; then
      TLM=$($BE --version "$V" bump test_loop_missing_streak)
-     echo "⚠️ 本版需浏览器实测但**未检测到测试链路活跃**（连续 ${TLM} tick）——浏览器实测 + AI测试报告 + #F 不会自动发生！"
-     echo "   · 7×24 标准挂法：python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install（开发 + 测试两个定时任务）"
-     echo "   · 交互式会话：再挂一条 「/loop 5m /sprint-aiauto-test --unattended」"
+     # 调度 tick-check 在「待测版本无可信委派」时标 manifest-missing@V：真因是清单缺失而非链路未挂，不得误导去重装调度。
+     MM=0; [ "$($BE get aiauto_blocked_reason --default "")" = "manifest-missing@$V" ] && MM=1
+     echo "⚠️ 本版需浏览器实测但**未检测到可用测试链路**（连续 ${TLM} tick）——浏览器实测 + AI测试报告 + #F 不会自动发生！"
+     if [ "$MM" = 1 ]; then echo "   · 真因：待测版本无可信委派/清单缺失（链路已挂，勿重装调度）"
+     else echo "   · 7×24 标准挂法：python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install；交互式再挂「/loop 5m /sprint-aiauto-test --unattended --no-loop」"; fi
      if [ "$TLM" -ge "${TEST_LOOP_MISSING_THRESHOLD:-3}" ]; then
-       echo "⛔ 连续 ${TLM} tick 测试链路缺失（≥ 阈值 ${TEST_LOOP_MISSING_THRESHOLD:-3}）→ 本 build 按【静态-only 收尾 + 如实标注『浏览器实测未执行(测试链路未挂载)』】关闭，置 needs_human 冻结止损；补挂第二条 loop 后自动解冻重测"
-       # 冻结四件套 + #4 + 本地告警台账一次做完（真因是测试链路没挂；测试链路心跳恢复即自动解冻）
-       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$B" \
-         --freeze-now --phase 3.4-testloop --reason config-missing \
-         --why "测试链路连续 ${TLM} tick 未活跃（未装 aidp_scheduler 测试任务 / 未挂 /loop 5m /sprint-aiauto-test --unattended），本 build 静态-only 收尾、浏览器实测未执行"
+       echo "⛔ 连续 ${TLM} tick 测试链路不可用（≥ 阈值 ${TEST_LOOP_MISSING_THRESHOLD:-3}）→ 本 build 按【静态-only 收尾 + 如实标注浏览器实测未执行】关闭，置 needs_human 冻结止损"
+       # 冻结四件套 + #4 + 本地告警台账一次做完；按真因选 reason（分流，不统称未挂载）
+       if [ "$MM" = 1 ]; then
+         echo "STATIC_ONLY_NOTE=待测版本无可信委派/清单缺失"
+         python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$B" \
+           --freeze-now --phase 3.4-testloop --reason manifest-missing \
+           --why "测试链路存活但待测版本无可信委派（测试清单缺失，见 manifest-missing 告警），本 build 静态-only 收尾、浏览器实测未执行"
+       else
+         echo "STATIC_ONLY_NOTE=测试链路未挂载"
+         python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$B" \
+           --freeze-now --phase 3.4-testloop --reason config-missing \
+           --why "测试链路连续 ${TLM} tick 未活跃（未装 aidp_scheduler 测试任务 / 未挂 /loop 5m /sprint-aiauto-test --unattended --no-loop），本 build 静态-only 收尾、浏览器实测未执行"
+       fi
        # ★ 达阈 → 由本围栏之后的「静态-only 收尾」步骤接手（⛔ 不在此 exit，见下）
        python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot \
          WILL_BROWSER_TEST 0 >/dev/null 2>&1 || true
@@ -116,7 +126,7 @@
 
    1. 按 `phase-3-8.md`「收尾 Step 1.1 → 2 → 3」**实跑**（单一信源在那边）——finalize
       `data/${BUILD}.js` 的 `testSummary` + 定稿报告与交付登记 + 发 #3。
-   2. `testSummary` 须**如实**标『浏览器实测未执行(测试链路未挂载)』，
+   2. `testSummary` 须**如实**标『浏览器实测未执行(<上面 `STATIC_ONLY_NOTE`：测试链路未挂载 | 待测版本无可信委派/清单缺失>)』，
       ⛔ 不填 `0/0/0`、⛔ 不标「已测 / 通过」（「不适用→通过」是本仓明令禁止的伪装形态）。
    3. `WILL_BROWSER_TEST` 已在上面落盘为 0；收尾完成后**从本门开头复跑一次**成闭环
       （此时 `WILL_BROWSER_TEST=0`，根因分诊那一支不再命中）。

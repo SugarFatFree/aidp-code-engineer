@@ -3,7 +3,7 @@
 > 本文件是 `phase-3-5.md` 的**二次切分**（前片达 20KB 上限）。前片覆盖 3.2 步骤 0–1 与**出口 run-state 写盘**；
 > 本片覆盖 **步骤 2（`/sprint-batch` 执行）/ 步骤 2.5（推送、部署前安全网、部署动作与交接信号、#1d）/ 步骤 3（#2 通知）/ 步骤 4（`--single-sprint`）**。
 > ⚠️ **权威性**：与前片同级，不得因它是续片而略过任一项；本片执行完回 `phase-3-5.md` 执行出口。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-3-5b.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ---
 
@@ -21,7 +21,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
    - ⛔ 必传 `--unattended`；所有交互门（含未枚举的范围/进度确认）均不得弹出，增量路径调用 `/sprint-dev`/`/sprint-bugfix` 同样必传，并附 `--execution-context "$EXECUTION_CONTEXT"` 继承 formal，不重新解析为 light。`HAS_WAKE_SOURCE=1` 可跨 tick 自动续跑，但不得向人征询。
    - ⛔ 必传 `--skip-context-check --skip-aiauto-test`：前者跳过 compact 询问，后者把部署与浏览器测试留给本命令及独立 `/sprint-aiauto-test`，并保持 AI 执行报告骨架由 autopilot 产出。
    - `/sprint-batch` 连跑全部 Sprint，不问起始 Sprint 或是否继续；`--single-sprint` 仅用于 autopilot 单 Sprint 路径。本片无 `--skip-dev` 分支，`test-only` 已在 `phase-3-2.md` 前置分流。
-   - 每个 Sprint：`/sprint-start` → `/sprint-dev` → `/sprint-test`（仅静态扫描）→ `/sprint-bugfix` 循环 → `/sprint-close`；浏览器测试归 `/sprint-aiauto-test`。
+   - 每个 Sprint：`/sprint-start` → `/sprint-dev` → `/sprint-test`（静态 + 相关单测）→ `/sprint-bugfix` 循环 → `/sprint-close`；浏览器测试归 `/sprint-aiauto-test`。
 
 
 2.5 **★ 部署触发前置 → 部署前安全网 → 部署动作（任何开发路径完成后都从这里执行：`/sprint-batch`、逐 tick 单 Sprint 全部关闭、incremental、自动修复复测轮；⛔ 不属于 `/sprint-batch` 步骤）**
@@ -46,8 +46,10 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
         EXECUTION_CONTEXT=$($BE --version "$TARGET_VERSION" get execution_context --default "") || exit $?
         python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
           --execution-context "${EXECUTION_CONTEXT:?父上下文缺失}" --action commit || exit $?
+        # 测试计划草稿：不存在才一次性发现并生成 docs/testing/$TARGET_VERSION/test-plan.json，已存在复用不覆盖；随本步提交，不新开提交循环
+        python3 {{AIDP_HOME}}/scripts/build_unit_test.py plan-init --root . --version "$TARGET_VERSION" || exit $?
         ```
-        commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"` 读完整 JSON：退出码3/4是欠账信号，5/NOT_AUTHORIZED硬禁止提交。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 推送欠账仍按约定 31.5 补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
+        plan-init 后以 `git status --porcelain` 重新判定可提交改动（草稿须进入本次提交，即部署 commit）。commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"` 读完整 JSON：退出码3/4是欠账信号，5/NOT_AUTHORIZED硬禁止提交。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 推送欠账仍按约定 31.5 补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
      3. **push 前分类（唯一入口）**：在 `git push` 前执行，始终显式传入提交前保存的 `BASE_REF`（不能在提交后用默认 `HEAD` 推断）：
         ```bash
         eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"

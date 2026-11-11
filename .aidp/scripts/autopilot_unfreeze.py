@@ -112,8 +112,9 @@ _UNFREEZE_BY_DEPLOY = {"probe-timeout", "deploy-unreachable",
                        "unconverged", "pipeline-unknown", "cicd-run-vanished",
                        "cicd-unreachable", "cicd-cli-unavailable"}
 _UNFREEZE_BY_CONFIG = {"account-missing", "account-invalid", "testplan-incomplete"}
-# `cicd-auto-trigger-off`：无人值守下 `cicd.auto_trigger=false` 不许自动触发 / 重试 CICD 流水线。
-#   真实修复动作就是改 `memory/aidp-config.yaml`（打开 auto_trigger / 调整 provider·pipelines），
+# `cicd-auto-trigger-off`：存在用户明确选择的禁用来源（`cicd.auto_trigger_source`，kind=project-policy）且
+#   `cicd.auto_trigger=false` 时，无人值守不许自动触发 / 重试 CICD 流水线；单独的 auto_trigger 布尔既不是授权也不形成禁令。
+#   真实修复动作就是改 `memory/aidp-config.yaml`（移除或更新禁用来源 / 调整 provider·pipelines），
 #   故只认该文件 mtime —— ⛔ 不并入 `_UNFREEZE_BY_CONFIG`：测试方案 / 账号文件的改动与它不同域，
 #   混用会让「补了个测试账号」把 CICD 配置类冻结一并解掉。
 _UNFREEZE_BY_AIDP_CONFIG = {"cicd-auto-trigger-off"}
@@ -127,6 +128,12 @@ _UNFREEZE_BY_HEARTBEAT = {"config-missing"}
 #    显式清除。认「测试链路心跳」会让第二条链路每个周期刷心跳就把它误解冻，而前置配置一个字节没变。
 _UNFREEZE_BY_GATE = {"preflight-incomplete"}
 _UNFREEZE_BY_PRD = {"prd-missing"}
+# `manifest-missing`：待测版本无可信测试委派/清单缺失。恢复证据只有一个——委派重新可核验
+#   （开发链路产出并交接了清单）；认心跳会被测试链路自己刷的心跳立刻解冻，认 mtime 与清单无关。
+_UNFREEZE_BY_DELEGATION = {"manifest-missing"}
+# `budget-exhausted`：根任务执行预算耗尽。恢复证据只有一个——用户经 `--renew-budget` 真实续额后
+#   根限额已覆盖原耗尽项；`--manual` / 心跳 / 新部署都不能代替（预算不会因此变多）。
+_UNFREEZE_BY_BUDGET = {"budget-exhausted"}
 # ⛔ `unconverged` 虽在 _UNFREEZE_BY_DEPLOY 里，但**自动解冻自我封闭**：冻结后该版本即被
 #   剔出部署候选（`/loop` 跳过该版本），于是"新部署"这条证据永远不会出现。而它的真实恢复
 #   信号本就不是部署、是**有人推了修复代码**。故补一条 HEAD 变更判据：当前 HEAD ≠ 冻结时
@@ -207,6 +214,25 @@ def aiauto_probe(root, version, baseline="memory/.sprint-autopilot-baseline.json
         ttl = os.environ.get("AIAUTO_TEST_HEARTBEAT_TTL_MIN", "30")
         if fzt > 0 and _ts(hb) > fzt and test_loop_alive(live, version, ttl):
             return {"unfreeze": True, "reason": fr, "evidence": f"测试链路活性已恢复（{hb}，无有效阻塞）"}
+    elif fr in _UNFREEZE_BY_DELEGATION:
+        try:
+            from aidp_scheduler import test_handoff_context
+            test_handoff_context(root)
+            return {"unfreeze": True, "reason": fr, "evidence": "测试委派已可核验（清单已交接，当前 build 未定稿）"}
+        except Exception as exc:  # noqa: BLE001 —— 任一核验失败都是“尚无证据”，不能放行
+            return {"unfreeze": False, "reason": fr, "note": "尚无恢复证据：%s" % str(exc)[:120]}
+    elif fr in _UNFREEZE_BY_BUDGET:
+        path = vn.get("autopilot_root_context") or (data.get("autopilot") or {}).get("execution_context")
+        status = "none"
+        if path:
+            try:
+                from execution_policy import budget_exhaustion
+                status, _items = budget_exhaustion(root, path)
+            except Exception:  # noqa: BLE001
+                pass
+        if status == "renewed":
+            return {"unfreeze": True, "reason": fr, "evidence": "根任务预算已经用户续额，覆盖原耗尽项"}
+        return {"unfreeze": False, "reason": fr, "note": "预算仍耗尽：需用户 `--renew-budget` 明确续额，--manual 不会重置预算"}
     elif fr in _UNFREEZE_BY_PRD:
         import glob
         for f in glob.glob(os.path.join(root, "docs/requirements", version, "产品提供", "*")):
@@ -536,11 +562,56 @@ def clear_if_reason(root, version, reason):
     return {"cleared": not failed, "reason": reason, "errors": failed}
 
 
+def _budget_root_path(root, version):
+    data = _load_baseline(root) or {}
+    vn = (data.get("versions") or {}).get(version) or {}
+    return vn.get("autopilot_root_context") or (data.get("autopilot") or {}).get("execution_context")
+
+
+def renew_budget(root, version, budget, source):
+    """用户续额根任务预算：沿 entry_context revise 的真实用户来源，不新造授权模型，不清零已用量。
+
+    source 必须是用户真实请求（kind=user-text，保留 request_id 与原文）；预算值是新的绝对上限，
+    未列出的资源保持原限额。续额后覆盖原耗尽项即自动解冻 budget-exhausted。
+    """
+    if not isinstance(source, dict) or source.get("kind") != "user-text":
+        return {"renewed": False, "error": "续额必须有用户真实来源：--authorization-source 须为 kind=user-text 且含 request_id 与原话"}
+    if not isinstance(budget, dict) or not budget:
+        return {"renewed": False, "error": "--budget-json 必须是非空对象（资源名 -> 新的绝对上限）"}
+    path = _budget_root_path(root, version)
+    if not path:
+        return {"renewed": False, "error": "baseline 无 %s 的根任务上下文，无法续额" % version}
+    try:
+        from entry_context import revise_context
+        revise_context(root, path, authorization_source=source, execution_budget=budget)
+        from execution_policy import budget_exhaustion
+        status, items = budget_exhaustion(root, path)
+    except (ValueError, OSError) as exc:
+        return {"renewed": False, "error": "%s: %s" % (getattr(exc, "status", type(exc).__name__), exc)}
+    out = {"renewed": True, "version": version, "budget_state": status, "unmet": items if status == "exhausted" else []}
+    if status == "renewed":
+        out["unfreeze"] = clear_if_reason(root, version, "budget-exhausted")
+    return out
+
+
 def manual_unfreeze(root, version):
     """人工解冻：清冻结四件套、复测上限冻结字段、顶层阻塞原因与该版全部失败计数。"""
     vn = ((_load_baseline(root) or {}).get("versions") or {}).get(version)
     if vn is None:
         return {"cleared": False, "note": "baseline 无版本 %s" % version}
+    if vn.get("freeze_reason") == "budget-exhausted":
+        path = _budget_root_path(root, version)
+        status = "none"
+        if path:
+            try:
+                from execution_policy import budget_exhaustion
+                status, _ = budget_exhaustion(root, path)
+            except (ValueError, OSError):
+                pass
+        if status == "exhausted":
+            return {"cleared": False, "refused": True, "version": version,
+                    "note": "预算仍耗尽，--manual 不会重置根预算（解冻后下个 tick 会立即再次冻结）；"
+                            "请用户明确续额：--renew-budget %s --budget-json '{...}' --authorization-source '{\"kind\":\"user-text\",...}'" % version}
     failed = _clear_version(root, version, extra_fields=["needs_human_kind", "retest_cap_frozen_at",
                                                          *STREAK_FIELDS])
     return {"cleared": not failed, "version": version, "was": vn.get("freeze_reason")
@@ -566,9 +637,19 @@ def main():
     ap.add_argument("--reason", dest="clear_reason", default="", help="与 --clear 连用")
     ap.add_argument("--manual", metavar="VERSION", default=None,
                     help="人工解冻：清该版冻结字段、复测上限冻结与全部失败计数")
+    ap.add_argument("--renew-budget", metavar="VERSION", default=None,
+                    help="用户续额该版根任务预算（须配 --budget-json 与 user-text 的 --authorization-source；不清零已用量）")
+    ap.add_argument("--budget-json", type=json.loads, default=None, help="与 --renew-budget 连用：新的绝对上限，如 {\"elapsed_seconds\":14400}")
+    ap.add_argument("--authorization-source", type=json.loads, default=None, help="与 --renew-budget 连用：用户真实请求来源")
     ap.add_argument("--root", default=".")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
+    if args.renew_budget:
+        r = renew_budget(args.root, args.renew_budget, args.budget_json, args.authorization_source)
+        print(json.dumps(r, ensure_ascii=False) if args.json else
+              ("💳 %s 根预算已续额（%s）" % (args.renew_budget, r["budget_state"]) if r.get("renewed")
+               else "⛔ %s" % r.get("error")))
+        return 0 if r.get("renewed") else 2
     if args.env_reprobe:
         r = env_reprobe(args.root, args.env_reprobe, apply=args.apply)
         print(json.dumps(r, ensure_ascii=False) if args.json else
@@ -597,6 +678,8 @@ def main():
         print(json.dumps(r, ensure_ascii=False) if args.json else
               ("🔓 %s 已人工解冻（原冻结：%s）" % (args.manual, r.get("was") or "无") if r.get("cleared")
                else "⛔ %s" % (r.get("note") or r.get("errors"))))
+        if r.get("refused"):
+            return 2
         return 0 if r.get("cleared") or r.get("note") else 1
     if args.notify_reprobe:
         r = notify_reprobe(args.root)

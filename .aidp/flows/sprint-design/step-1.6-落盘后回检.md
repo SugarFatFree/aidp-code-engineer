@@ -40,7 +40,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 | `check_sql_style_consistency.py . <设计目录>` | 仓库根 + 设计目录 | 有历史 SQL 时（脚本自判无历史即跳过） |
 | `validate_coverage.py <PRD文件> <单个设计.md>` | PRD 文件 + **单个 `.md`**（多册逐册循环） | 有 PRD 原文时；`--json.skipped:true` = 未核验，⛔ 不得当通过 |
 
-> 接口字段级契约对齐 `check_api_contract_alignment.py` 需已部署后端，规划期不具备 → 本段不跑；测试期消费者 = `/sprint-test` Step 3（探活成功即跑）。
+> 接口字段级契约对齐 `check_api_contract_alignment.py` 需已部署后端，规划期不具备 → 本段不跑（`/sprint-test` 不调用在线接口，本仓无命令调用它；由 SKILL 质量检查按其入参要求自行处置）。
 > 处置：读各脚本 `--json` 的发现项，**汇总进 QR 报告的「待澄清 / 建议」段**（不进阻断清单）；确属设计缺陷的（如设计声称"沿用已有"但代码里根本没有那个能力）→ 按普通违规交还 skill 补正。
 
 #### ★ 业务计数声明表的全库回扫（项目级，非 SKILL 脚本）

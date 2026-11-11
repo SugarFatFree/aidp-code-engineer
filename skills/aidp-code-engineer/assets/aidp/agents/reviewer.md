@@ -37,7 +37,7 @@ light 报告只写主流程指定的 `memory/.aidp/entry-contexts/<id>/` 机器 
 
 ## 二、会话启动检查清单
 
-> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
+> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `python3 {{AIDP_HOME}}/scripts/vcs.py user`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
 formal 激活后，**必须按以下顺序读取**，未读完不得开始工作；light 按上方路由选相关输入，不加载无关历史 Sprint：
 

@@ -78,6 +78,8 @@ memory/.sprint-autopilot-credentials.json
 memory/.autopilot-ceremony-ledger.json
 # 本地运行态目录（锁文件、提交前门禁台账等）
 memory/.aidp/
+# 任意层级的同名运行态目录（如测试夹具在 tests/ 下误写的 memory/.aidp/）同样不入库
+**/memory/.aidp/
 # 运行包互斥锁（0 字节载体，按设计释放后保留供下次复用；运行根降层后落在项目根）
 .aidp-runtime.lock
 # baseline 的 flock 锁载体（0 字节，纯本地）

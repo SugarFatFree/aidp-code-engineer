@@ -92,6 +92,12 @@ ASSIGN_RES = [
     #   语义相反）：它会真的把值写进 VAR。惯用法 `: "${VAR:=$(…)}"` 正是"没取到就现算一个"，
     #   漏认会把这种合法赋值报成"从未赋值"。
     re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?=", re.M),
+    # ★ jq 程序的内部变量不是 shell 变量：`jq --arg x "$X" --argjson p "$P" '… $x … $p …'` 里的 `$x`/`$p`
+    #   写在单引号内，由 jq 自己绑定；`.c as $c | …` 的 `$c` 同理。漏认会把它们报成“从未赋值”。
+    #   （`as $NAME` 只在 jq 语法里出现，shell 没有这种写法，所以不会放过真正漏赋值的 shell 变量。）
+    re.compile(r"\bjq\b[^\n]*?--(?:arg|argjson|slurpfile|rawfile)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+    re.compile(r"--(?:arg|argjson|slurpfile|rawfile)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+    re.compile(r"\bas\s+\$([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
 ]
 
 # ★ 声明语句专项：一条 `local A="1" B="2" C="3"` 可声明多个变量，逐条正则只会捕获第一个，

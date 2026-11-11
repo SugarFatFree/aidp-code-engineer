@@ -97,6 +97,14 @@ def _recovery_hint(reason, version):
         human = _u._HUMAN_ONLY
     except Exception:  # noqa: BLE001
         env, human = set(), set()
+    if reason == "budget-exhausted":
+        return ("恢复：根任务执行预算已耗尽，子任务不得自行扩预算，`%s --manual %s` 也不会重置预算（会立即再次冻结）。"
+                "须用户明确续额：`%s --renew-budget %s --budget-json '{\"elapsed_seconds\":<新上限>}' "
+                "--authorization-source '{\"kind\":\"user-text\",\"request_id\":\"<请求标识>\",\"text\":\"<用户原话>\"}'`，"
+                "覆盖耗尽项后下个 tick 自动解冻。" % (_UNFREEZE, version, _UNFREEZE, version))
+    if reason == "manifest-missing":
+        return ("恢复：待测版本无可信测试委派/清单缺失。让开发链路重新产出并交接测试清单（manifest）；"
+                "委派可核验后下个 tick 自动解冻，需立即放行可运行 `%s --manual %s`。" % (_UNFREEZE, version))
     if reason in human:
         return ("恢复：人工处理根因后运行 `%s --manual %s`，下个 tick 自动继续。" % (_UNFREEZE, version))
     if reason in env:

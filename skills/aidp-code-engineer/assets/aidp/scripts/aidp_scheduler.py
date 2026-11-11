@@ -16,11 +16,14 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
 ## 子命令
 
     install    [--agent A] [--dev-interval 10m] [--test-interval 5m] [--platform P] [--dry-run] [--json]
+               [--authorization-text "<用户原话>" [--authorization-request-id ID]]
     uninstall  [--platform P] [--dry-run] [--json]
     status     [--platform P] [--json]
     watchdog   [--quiet] [--json]          # 心跳巡检：定时唤醒时无心跳从首次巡检起计时，超时告警
     tick-result --command C --rc N [--tick-max S] [--log P] [--log-offset N]  # 所有失败归因、计数与告警
-    tick-check  --command C [--json]       # 持链路锁后消费退避：rc=4 跳过，不能调用 tick-result
+    tick-check  --command C [--token T] [--tick-args "<参数串>"] [--json]
+                                           # 持链路锁后的唯一准入判据：退避 / 测试委派 / 授权来源 / 预算耗尽；
+                                           # rc=4 跳过，rc=5 无授权来源（已告警）；不能调用 tick-result
     --self-check
 
 平台（`--platform` 缺省自动判定）：
@@ -36,12 +39,29 @@ status 的 installation 返回上次成功装配快照，config 返回当前配�
 不承诺回滚已执行的系统命令；dry-run 和 schtasks 仅输出命令，不写安装态。
 心跳：开发链路 `autopilot_loop_heartbeat_at`、测试链路 `aiauto_test_heartbeat_at`（baseline 顶层）。
 
+## 无头 tick 的授权来源（绝不伪造）
+
+调度唤起的 autopilot tick 没有“本轮用户消息”。授权来源只有两种真实出处：用户在 `install --authorization-text`
+给出的持续执行原话（落盘 `memory/.aidp/scheduler-authorization.json`，卸载即撤销），或用户在
+`memory/aidp-config.yaml` 明确选择的 `execution_policy.authorization_source`（project-policy）。
+tick-check 仅在“已有根不带持续来源”时据前者生成 `explicit-command` 来源（request_id=本轮令牌、persistent=true、
+options=被调度命令原始参数），由 agent_loop 以 `AUTHORIZATION_SOURCE_JSON` 交给执行 LLM；两者都没有则
+写 `loop-no-authorization` 告警（UNVERIFIED，去重）并停止本轮，而不是让执行 LLM 自编来源。模板默认/配置存在不是授权。
+
+## 其他确定性处置（均在 tick-check）
+
+  · 测试链路：待测版本无可信委派 → 刷新测试心跳 + 告警（按 version+build 去重，连续 3 轮）+ 标 `manifest-missing@V`，
+    开发链路据此以 reason=manifest-missing 收尾，不再误称“测试链路未挂载”。
+  · 开发链路：根预算耗尽（budget.json 旁的 exhausted.json 事实且限额未续）→ 以 reason=budget-exhausted 冻结；
+    续额只能 `autopilot_unfreeze.py --renew-budget`（user-text 真实来源 + 新绝对上限），`--manual` 不重置预算。
+
 ## 退出码
 
   0 = 成功（watchdog：无陈旧链路）
   2 = 用法错 / 平台不支持 / 装配命令执行失败
   3 = watchdog 检出故障链路 / tick-result 连续失败达阈（本地告警可见）
-  4 = tick-check 本轮退避跳过（未执行，不记成功或失败）
+  4 = tick-check 本轮跳过（退避 / 待测版本无可信委派；未执行，不记成功或失败）
+  5 = tick-check 无授权来源（已写 loop-no-authorization 告警，本轮不执行）
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
@@ -82,6 +102,12 @@ try:
     TICK_TIMEOUT_ALERT_AFTER = max(1, int(os.environ.get("AIDP_TICK_TIMEOUT_ALERT_AFTER", "3") or 3))
 except ValueError:
     TICK_TIMEOUT_ALERT_AFTER = 3
+# 用户在 install 时明确给出的持续执行指令（无头 tick 的授权来源，缺失即停并告警，绝不伪造）。
+AUTHORIZATION_STATE_REL = os.path.join("memory", ".aidp", "scheduler-authorization.json")
+# 调度侧诊断去重状态（委派缺口 / 无授权告警），与失败退避状态分文件。
+GAP_STATE_REL = os.path.join("memory", ".aidp", "scheduler-gaps.json")
+DELEGATION_GAP_ALERT_AFTER = 3     # 待测版本连续多少轮无可信委派才升级为告警 + 阻塞标记
+AUTH_ALERT_EVERY_SECONDS = 6 * 3600
 TIMEOUT_RCS = (124, 137)
 CRON_MARK = "# AIDP-SCHEDULER"
 GRACE_SECONDS = 300
@@ -163,7 +189,8 @@ def scheduler_config(root):
         import aidp_config
         return aidp_config.scheduler_config(root)
     except Exception:  # noqa: BLE001
-        return {"dev_interval": "10m", "test_interval": "5m", "agent": "auto", "stale_cycles": 3, "exec": {}}
+        return {"dev_interval": "10m", "test_interval": "5m", "agent": "auto", "stale_cycles": 3,
+                "tick_max_seconds": 7200, "exec": {}}
 
 
 def detect_platform():
@@ -481,6 +508,17 @@ def do_install(root, a):
     if errs:
         res["error"] = "；".join(errs)
         return 2, res
+    auth_text = (getattr(a, "authorization_text", None) or "").strip()
+    if auth_text:
+        from execution_policy import _text
+        if not _text(auth_text):
+            res["error"] = "--authorization-text 必须是用户真实的持续执行指令原文，不接受模板/占位值"
+            return 2, res
+    elif not authorization_available(root, "sprint-autopilot"):
+        res["warnings"].append(
+            "未记录用户持续执行指令：无头 autopilot tick 没有可追溯的授权来源，每轮将以 UNVERIFIED 写告警并停止"
+            "（kind=loop-no-authorization）。请在用户明确要求持续运行后用 `install --authorization-text \"<用户原话>\"` 重装；"
+            "模板默认或配置存在不构成授权。")
     if plat == "systemd":
         files = render_systemd(root, agent, intervals)
         res["files"] = files
@@ -498,6 +536,8 @@ def do_install(root, a):
     elif plat == "schtasks":
         res["commands"] = render_schtasks(root, agent, intervals)
         res["notes"].append("Windows 计划任务需手工在管理员终端执行上述 schtasks 命令（需可运行 bash 的环境）")
+        if auth_text and not a.dry_run:
+            res["authorization"] = record_authorization(root, auth_text, getattr(a, "authorization_request_id", None))
         return 0, res
     else:
         res["error"] = f"不支持的平台：{plat}"
@@ -531,7 +571,96 @@ def do_install(root, a):
         locked.data = {"platform": plat, "intervals": intervals,
                        "installed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         locked.write = True
+    if auth_text:
+        res["authorization"] = record_authorization(root, auth_text, getattr(a, "authorization_request_id", None))
     return 0, res
+
+
+def record_authorization(root, text, request_id=None):
+    """落盘用户在 install 时明确给出的持续执行指令；之后每个 autopilot tick 据此生成确定性授权来源。"""
+    import uuid
+    rec = {"kind": "explicit-command", "persistent": True, "text": text.strip(),
+           "install_request_id": (request_id or "").strip() or "scheduler-install-" + uuid.uuid4().hex,
+           "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    _write_json(os.path.join(root, AUTHORIZATION_STATE_REL), rec)
+    return {k: rec[k] for k in ("install_request_id", "recorded_at")}
+
+
+def load_authorization(root):
+    """读 install 时记录的持续指令；缺失或字段不合法返回 None（不补默认、不从配置推断）。"""
+    from execution_policy import _text
+    try:
+        with open(os.path.join(root, AUTHORIZATION_STATE_REL), encoding="utf-8") as fh:
+            rec = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if (not isinstance(rec, dict) or rec.get("persistent") is not True or not _text(rec.get("text"))
+            or not _text(rec.get("install_request_id"))):
+        return None
+    return rec
+
+
+def _root_has_persistent_source(root, command):
+    """与 entry_context._pipeline_source(persistent=True) 同判据：已有根上是否带可持续的命令来源。
+
+    返回 True/False；上下文不可读返回 None（由调用方按需处理，不当作有来源）。
+    """
+    from aidp_paths import baseline
+    try:
+        state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+        path = (state.get("autopilot") or {}).get("execution_context")
+        if not isinstance(path, str) or not path:
+            return False
+        from entry_context import load_context
+        ctx = load_context(root, path)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    for src in ctx.get("authorization_source") or []:
+        if not isinstance(src, dict) or str(src.get("command", "")).lstrip("/") != command:
+            continue
+        if src.get("kind") == "project-policy" or (src.get("kind") == "explicit-command"
+                                                    and src.get("persistent") is True):
+            return True
+    return False
+
+
+def _chosen_project_policy(root, command):
+    """用户在配置里明确选择的持续执行策略（execution_policy.authorization_source，须指向本命令）。"""
+    try:
+        from aidp_config import read_execution_policy
+        policy = read_execution_policy(root)
+    except (OSError, ValueError, ImportError):
+        return False
+    source = (policy or {}).get("authorization_source") or {}
+    return str(source.get("command", "")).lstrip("/") == command
+
+
+def authorization_available(root, command):
+    return load_authorization(root) is not None or _chosen_project_policy(root, command)
+
+
+def tick_authorization(root, command, token, args_text):
+    """无头 autopilot tick 的授权来源 -> (status, source|None, info)。
+
+    not-needed：已有根带持续来源或用户已选 project-policy；supplied：用 install 时记录的用户指令确定性生成；
+    missing：需要来源却没有用户指令（调用方必须告警并停止，不能让执行 LLM 自编来源）。
+    """
+    if command != "sprint-autopilot":
+        return "not-needed", None, {}
+    has = _root_has_persistent_source(root, command)
+    if has or _chosen_project_policy(root, command):
+        return "not-needed", None, {}
+    rec = load_authorization(root)
+    if rec is None:
+        return "missing", None, {"detail": "既无已有根的持续来源，也无 install 时记录的用户持续指令"}
+    try:
+        options = shlex.split(args_text or "")
+    except ValueError:
+        options = (args_text or "").split()
+    source = {"kind": "explicit-command", "request_id": token, "command": "/" + command,
+              "persistent": True, "text": rec["text"], "options": [o for o in options if o.startswith("--")],
+              "install_request_id": rec["install_request_id"]}
+    return "supplied", source, {}
 
 
 def do_uninstall(root, a):
@@ -591,6 +720,10 @@ def do_uninstall(root, a):
             # 空记录表示无已知安装；保留锁 inode，不能删锁文件制造第二把锁。
             locked.data = {}
             locked.write = True
+    try:
+        os.remove(os.path.join(root, AUTHORIZATION_STATE_REL))   # 卸载即撤销 install 时的持续指令
+    except FileNotFoundError:
+        pass
     return 0, res
 
 
@@ -891,29 +1024,56 @@ def test_handoff_context(root, execution_context=None):
     node = (state.get("versions") or {}).get(context["version"]) or {}
     if node.get("current_build") != context.get("build_id"):
         raise ValueError("测试委派不是当前版本当前 build，拒绝历史 build")
+    if node.get("internal_released_at"):
+        raise ValueError("测试委派所属版本已内部发布，不能重放旧交接")
     row = next((item for item in node.get("builds", []) if item.get("build") == context["build_id"]), {})
     if row.get("ai_report_finalized"):
         raise ValueError("测试委派 build 已定稿，不能重放旧交接")
     return path, context
 
 
-def _test_target_state(root):
-    """返回 target（有待测版本且根允许测试）/ skipped（有待测版本但根已显式跳过测试）/ none。
+def _pending_test_nodes(root):
+    """已部署、未内部发布、且当前 build 仍需测试的版本 -> [(version, build)]。
 
-    与命令入口同一判据：已部署（phase_beta_done_at）且尚未内部发布的版本才算待测版本。
-    根已失去 live-tests/full-regression 时是用户明确不要测试，应报 NOT_REQUESTED，
-    不能说成“无目标”，也不能当作“应有委派却缺失”而报警。
+    “需测试”= 当前 build 未定稿，且尚无晚于最近部署的测试完成时刻。已测完未发布的窗口
+    （aiauto_tested_at ≥ last_deployed_at 或 build 已 finalized）不再算待测目标，
+    否则会被当成“有待测却无委派”而无故跳过、停刷心跳。
     """
     from aidp_paths import baseline
     try:
         state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return "none"
+        return []
     if not isinstance(state, dict):
+        return []
+    out = []
+    for version, node in sorted((state.get("versions") or {}).items()):
+        if not (isinstance(node, dict) and node.get("phase_beta_done_at") and not node.get("internal_released_at")):
+            continue
+        build = node.get("current_build") or ""
+        row = next((b for b in node.get("builds") or [] if isinstance(b, dict) and b.get("build") == build), {})
+        if row.get("ai_report_finalized"):
+            continue
+        tested, deployed = _parse_ts(node.get("aiauto_tested_at")), _parse_ts(node.get("last_deployed_at"))
+        if tested and (not deployed or tested >= deployed):
+            continue
+        out.append((version, build))
+    return out
+
+
+def _test_target_state(root):
+    """返回 target（有待测版本且根允许测试）/ skipped（有待测版本但根已显式跳过测试）/ none。
+
+    与命令入口同一判据：已部署（phase_beta_done_at）且尚未内部发布、当前 build 仍需测试的版本才算待测版本。
+    根已失去 live-tests/full-regression 时是用户明确不要测试，应报 NOT_REQUESTED，
+    不能说成“无目标”，也不能当作“应有委派却缺失”而报警。
+    """
+    from aidp_paths import baseline
+    if not _pending_test_nodes(root):
         return "none"
-    versions = state.get("versions") or {}
-    if not any(isinstance(node, dict) and node.get("phase_beta_done_at") and not node.get("internal_released_at")
-               for node in versions.values()):
+    try:
+        state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return "none"
     root_path = (state.get("autopilot") or {}).get("execution_context")
     if isinstance(root_path, str) and root_path:
@@ -931,21 +1091,174 @@ def _has_pending_test_target(root):
     return _test_target_state(root) == "target"
 
 
+def _gap_update(root, mutate):
+    """锁内读改写调度诊断状态；返回 mutate 的结果。状态不可写时退化为不去重，不阻断 tick。"""
+    from baseline_edit import LockedBaseline
+    try:
+        with LockedBaseline(os.path.join(root, GAP_STATE_REL), write=True) as locked:
+            if not isinstance(locked.data, dict):
+                locked.data = {}
+            return mutate(locked.data)
+    except (OSError, SystemExit):
+        return mutate({})
+
+
+def _refresh_heartbeat(root, chain):
+    """链路确实存活但本轮被确定性拦下：刷新该链路心跳，让 watchdog 看到的是具体告警而非“无心跳”。"""
+    from baseline_edit import LockedBaseline
+    try:
+        with LockedBaseline(os.path.join(root, BASELINE_REL), write=True) as locked:
+            if isinstance(locked.data, dict):
+                locked.data[CHAINS[chain]["heartbeat"]] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    except (OSError, SystemExit):
+        pass
+
+
+def _set_blocked_marker(root, value, only_if=None):
+    """写/清顶层 aiauto_blocked_reason；清除只在当前值恰为本模块所写的标记时发生。"""
+    from baseline_edit import LockedBaseline
+    try:
+        with LockedBaseline(os.path.join(root, BASELINE_REL), write=True) as locked:
+            if not isinstance(locked.data, dict):
+                return
+            cur = str(locked.data.get("aiauto_blocked_reason") or "")
+            if value is None:
+                if cur.startswith("manifest-missing@") and (only_if is None or cur == only_if):
+                    locked.data.pop("aiauto_blocked_reason", None)
+            elif not cur:
+                locked.data["aiauto_blocked_reason"] = value
+    except (OSError, SystemExit):
+        pass
+
+
+def _note_delegation_gap(root, exc):
+    """待测版本无可信委派：刷新测试链路心跳；连续达阈按 version+build 去重写一次告警并标记阻塞原因。"""
+    nodes = _pending_test_nodes(root)
+    version, build = nodes[0] if nodes else ("", "")
+    key = f"{version}|{build}"
+    reason = "待测版本无可信委派/清单缺失"
+    _refresh_heartbeat(root, "test")
+
+    def mutate(data):
+        gap = data.get("delegation") if isinstance(data.get("delegation"), dict) else {}
+        if gap.get("key") != key:
+            gap = {"key": key, "streak": 0, "alerted": False}
+        gap["streak"] += 1
+        due = gap["streak"] >= DELEGATION_GAP_ALERT_AFTER and not gap["alerted"]
+        if due:
+            gap["alerted"] = True
+        data["delegation"] = gap
+        return gap["streak"], due
+
+    streak, due = _gap_update(root, mutate)
+    out = {"gap_streak": streak, "gap_reason": reason, "version": version, "build": build, "alerted": False}
+    if due:
+        msg = (f"{reason}：{version}（{build}）已部署待测，但没有可核验的测试委派（{exc}）；测试链路保持存活但不会执行测试。"
+               "请检查开发链路是否已产出并交接测试清单（manifest），补齐前测试不会启动")
+        out["alerted"] = bool(_append_alert(root, {
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": "agent_loop",
+            "kind": "test-delegation-unverified", "command": "sprint-aiauto-test", "version": version,
+            "build": build, "streak": streak, "message": msg}))
+        sys.stderr.write(f"[AIDP-ALERT] {msg}\n")
+        _set_blocked_marker(root, f"manifest-missing@{version}")
+    return out
+
+
+def _clear_delegation_gap(root):
+    """委派恢复（或不再有待测目标）：清去重状态与本模块写的阻塞标记。"""
+    if not os.path.exists(os.path.join(root, GAP_STATE_REL)):
+        return   # 健康 tick 不制造状态文件
+    def mutate(data):
+        gap = data.pop("delegation", None)
+        return gap if isinstance(gap, dict) else None
+    gap = _gap_update(root, mutate)
+    if gap and gap.get("alerted") and gap.get("key"):
+        _set_blocked_marker(root, None, only_if=f"manifest-missing@{gap['key'].split('|', 1)[0]}")
+
+
+def _run_script(root, name, *argv):
+    """以项目根为 cwd 调同目录脚本（失败处置等），返回退出码；超时/缺失按失败 2。"""
+    try:
+        return subprocess.run([sys.executable, os.path.join(HERE, name), *argv], cwd=root,
+                              capture_output=True, text=True, timeout=120).returncode
+    except (OSError, subprocess.SubprocessError):
+        return 2
+
+
+def _freeze_exhausted_budgets(root):
+    """根任务预算耗尽且未续额：按 budget-exhausted 冻结该版（幂等；不清零任何预算）。返回已冻结版本。"""
+    from aidp_paths import baseline
+    try:
+        state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(state, dict):
+        return []
+    roots = {}
+    for version, node in (state.get("versions") or {}).items():
+        if isinstance(node, dict) and not node.get("needs_human") and node.get("autopilot_root_context"):
+            roots[version] = node["autopilot_root_context"]
+    frozen = []
+    try:
+        from execution_policy import budget_exhaustion
+    except ImportError:
+        return []
+    for version, path in sorted(roots.items()):
+        status, items = budget_exhaustion(root, path)
+        if status != "exhausted":
+            continue
+        need = ",".join(f"{row['resource']}>={row['required']}" for row in items)
+        rc = _run_script(root, "autopilot_fail_handle.py", "--version", version, "--phase", "budget-exhausted",
+                         "--reason", "budget-exhausted", "--freeze-now", "--extra", f"budget_exhausted_need={need}",
+                         "--why", f"根任务执行预算已耗尽（{need}），子任务不得自行扩预算；需用户明确续额")
+        if rc in (0, 3):
+            frozen.append(version)
+    return frozen
+
+
 def do_tick_check(root, a):
-    """一次调度唤醒消费一个退避轮；调用方应先取得链路锁。跳过不写 tick-result。"""
+    """一次调度唤醒消费一个退避轮；调用方应先取得链路锁。跳过不写 tick-result。
+
+    也是 wrapper 的唯一准入判据：测试链路的委派核验、autopilot 的授权来源与预算耗尽处置都在此一处完成，
+    结果经 JSON 的 execution_context / authorization_source 交给 agent_loop，不再各处重算而漂移。
+    """
     from baseline_edit import LockedBaseline
     context_path = None
+    extra = {}
     if a.command == "sprint-aiauto-test":
         try:
             context_path, _ = test_handoff_context(root, getattr(a, "execution_context", None))
+            _clear_delegation_gap(root)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             # 没有已部署待测版本时无需委派：放行让命令入口自己输出 NO_TARGET 并保持心跳，
             # 否则空转 tick 被吞，watchdog 会把正常空闲误判成链路失联。
             if not _has_pending_test_target(root):
                 context_path = None
+                _clear_delegation_gap(root)
             else:
                 return 4, {"action": "tick-check", "command": a.command, "skip": True,
-                           "reason": "test-delegation-unverified", "error": str(exc)}
+                           "reason": "test-delegation-unverified", "error": str(exc),
+                           **_note_delegation_gap(root, exc)}
+    elif a.command == "sprint-autopilot":
+        extra["budget_frozen"] = _freeze_exhausted_budgets(root)
+        token = getattr(a, "token", None) or __import__("uuid").uuid4().hex
+        status, source, info = tick_authorization(root, a.command, token, getattr(a, "tick_args", "") or "")
+        extra["authorization"] = status
+        if status == "missing":
+            _refresh_heartbeat(root, "dev")
+            first = _auth_alert_due(root)
+            msg = ("UNVERIFIED：无头 autopilot tick 没有可追溯的用户授权来源——" + info["detail"]
+                   + "；已停止本轮（不由执行 LLM 自编来源）。用户明确要求持续运行后请 "
+                   "`aidp_scheduler.py install --authorization-text \"<用户原话>\"` 重装，"
+                   "或在 memory/aidp-config.yaml 记录用户选择的 execution_policy.authorization_source。")
+            if first:
+                _append_alert(root, {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                     "source": "agent_loop", "kind": "loop-no-authorization",
+                                     "command": a.command, "message": msg})
+                sys.stderr.write(f"[AIDP-ALERT] {msg}\n")
+            return 5, dict(extra, action="tick-check", command=a.command, skip=True,
+                           reason="authorization-unverified", error=msg, alerted=first)
+        extra["authorization_source"] = json.dumps(source, ensure_ascii=False) if source else None
     with LockedBaseline(os.path.join(root, TICK_TIMEOUT_STATE_REL), write=True) as locked:
         if not isinstance(locked.data, dict):
             raise ValueError("tick 状态必须是 JSON 对象")
@@ -953,10 +1266,23 @@ def do_tick_check(root, a):
         remaining = max(0, int(cur.get("skip_remaining") or 0))
         if remaining:
             cur["skip_remaining"] = remaining - 1
-        return (4 if remaining else 0), {"action": "tick-check", "command": a.command,
+        return (4 if remaining else 0), dict({"action": "tick-check", "command": a.command,
                                         "skip": bool(remaining), "skip_remaining": max(0, remaining - 1),
-                                        "streak": int(cur.get("streak") or 0),
-                                        "execution_context": context_path}
+                                        "streak": int(cur.get("streak") or 0), "reason": "backoff" if remaining else "ok",
+                                        "execution_context": context_path}, **extra)
+
+
+def _auth_alert_due(root):
+    """无授权告警按时间去重：每 AUTH_ALERT_EVERY_SECONDS 秒最多一条，恢复（有来源）后下次缺失立即再响。"""
+    now = time.time()
+
+    def mutate(data):
+        last = data.get("authorization_alerted_at")
+        if isinstance(last, (int, float)) and now - last < AUTH_ALERT_EVERY_SECONDS:
+            return False
+        data["authorization_alerted_at"] = now
+        return True
+    return _gap_update(root, mutate)
 
 
 def do_tick_result(root, a, send_notify=True):
@@ -1155,6 +1481,12 @@ def main(argv=None):
     ap.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--command", default=None, help="tick-result：链路命令名（如 sprint-autopilot）")
     ap.add_argument("--execution-context", help="测试 tick 明确继承的 autopilot 子任务；默认只读 aiauto.execution_context")
+    ap.add_argument("--token", default=None, help="tick-check：本轮 tick 令牌（作为授权来源的 request_id）")
+    ap.add_argument("--tick-args", dest="tick_args", default="", help="tick-check：被调度命令的原始参数串（写入来源 options）")
+    ap.add_argument("--authorization-text", dest="authorization_text", default=None,
+                    help="install：用户明确要求持续运行的原话，记录为无头 tick 的授权来源")
+    ap.add_argument("--authorization-request-id", dest="authorization_request_id", default=None,
+                    help="install：该用户请求的标识（缺省自动生成）")
     ap.add_argument("--rc", type=int, default=None, help="tick-result：本轮 tick 退出码")
     ap.add_argument("--tick-max", dest="tick_max", default="", help="tick-result：本轮硬超时秒数（仅用于告警文案）")
     ap.add_argument("--log", default="", help="tick-result：本轮日志路径（读取尾部作失败归因）")

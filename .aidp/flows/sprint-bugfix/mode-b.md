@@ -86,9 +86,9 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 **派单前对账**：用实际将传的 Sprint/文件过滤逐条核本次待修 BUG ID，保证 Step 0 范围内的导入项均可被 SKILL 读到；遗漏或归属不明返回 `scope-conflict`，不静默跳项。**不得通过删掉 Sprint 参数扩大修复范围**，也不得改写其他 Sprint 的归属来凑匹配。把已核实 BUG ID 与来源回链一并交给执行方。
 
-**外层边界**：`bugfix` SKILL 是本项目自有，按 `report_mode` 区分产出：light 日常任务传 `report_mode=evidence-only`，不写 `bugfix-*-report.md`，根因/证据取其结构化返回写原 execution context JSON，终端给实际范围与状态；formal Sprint 保留默认 `file`，沿用原规格与归档。两种模式修复范围都只由本次核实的 BUG 清单决定；若内核不能遵守范围/产物边界，停在具体阻塞，不扩任务。
+**外层边界**：`bugfix` SKILL 是本项目自有，参数 / 范围 / `report_mode` 的调用约定见 `{{AIDP_HOME}}/reference/skills.md`「bugfix SKILL 调用约定」（light / formal 共用）。本片为 formal，传默认 `file` 沿用原规格与归档；范围只由本次核实的 BUG 清单决定，空参数不得变成全版本扫描；若内核不能遵守范围/产物边界，停在具体阻塞，不扩任务。
 
-使用 `Skill` 工具调用 `bugfix` skill，参数 = 调用方给定的 `sprint-{NNN}` / 文件名（light 另加 `report_mode=evidence-only`），**都没有则用本次核实的BUG清单限定输入，不让空参数变成全版本扫描**。修复流程（归因拆分 → 根因定位〔方法论 `superpowers:systematic-debugging`，⛔ 根因证据确认前不改代码〕→ 修复 → 逐项验证 → 当前任务机器证据）以 SKILL 为单一信源，命令端不复述、不另行调用 systematic-debugging（约定 21）。
+使用 `Skill` 工具调用 `bugfix` skill，参数 = 调用方给定的 `sprint-{NNN}` / 文件名，并在 prompt 中给出本次核实的 BUG ID 清单与来源回链。修复流程以 SKILL 为单一信源，命令端不复述（约定 21）。
 
 来自验收的调用只接管尚未闭环 BUG，保留原严重度（包括错误性 Suggestion）、原证据、契约修订、具体写集和原始 CVL 报告回链。related-test已授权才生成/执行失败测试并经test_ledger定向验证；否则只实现修复+static，不把未测写PASS；SKILL 不得另起完整 CVL。Git index/commit/push 与共享文档由主流程独占，显式授权另行串行交接。纯优化写不修理由，真实产品/版本/破坏性或部署授权问题按原门，不因进入修复自动获得授权。
 
@@ -119,13 +119,13 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 #### Step 3：回填状态与报告链接
 
-> **★ 契约边界（约定 21，与 SKILL 5.3 对齐）**：根因 / 证据 / 修复方案的**权威落点 = 当前 execution context 机器证据JSON**；日常不执行SKILL自动Markdown报告步骤；问题记录与来源清单只就地回填状态、Commit 与报告链接，⛔ 不复写根因。
+> **★ 契约边界（约定 21，与 SKILL 5.3 对齐）**：根因 / 证据 / 修复方案的权威落点随 `report_mode` 而定——`file`（本片 formal 默认）= SKILL 生成的 `bugfix-*-report.md`；`evidence-only`（light，及被日常验收会话以此模式调用时）= 当前 execution context 机器证据 JSON，不执行 SKILL 自动 Markdown 报告步骤。问题记录与来源清单只就地回填状态、Commit 与证据 / 报告链接，⛔ 不复写根因。
 
-**bugfix 记录（`bugfix-*-{user}.md`）**——表格行「状态」改 `已修复`；已提交的「Commit」填真实修复 SHA，尚未提交写“尚未提交 + 账本 after_hash”，不得伪造提交或用旧 HEAD 代替；详情章节追加一行 `修复证据：<JSON相对路径> / <问题ID>`，以及**部署提醒**（前端/后端/DB/Redis 是否需要重启或变更，报告未覆盖时）。
+**bugfix 记录（`bugfix-*-{user}.md`）**——表格行「状态」改 `已修复`；已提交的「Commit」填真实修复 SHA，尚未提交写“尚未提交 + 账本 after_hash”，不得伪造提交或用旧 HEAD 代替；详情章节追加一行证据链接（`file` → `报告：<report 相对路径>`；`evidence-only` → `修复证据：<JSON相对路径> / <问题ID>`），以及**部署提醒**（前端/后端/DB/Redis 是否需要重启或变更，报告未覆盖时）。
 
 **来源 B 清单行**（由 Step 0 回链定位；**不改 template 表结构**，6 列保持原状）：
 1. 「状态」列从 `待修复` 改为 `已修复`
-2. 「复现步骤」列末尾**追加内嵌 HTML**（保持列数不变）：`<br><sub>✅ 已修复 / commit: <hash> / 报告: <report 相对路径></sub>`
+2. 「复现步骤」列末尾**追加内嵌 HTML**（保持列数不变）：`<br><sub>✅ 已修复 / commit: <hash> / 报告或证据: <report 或 JSON 相对路径></sub>`
 3. **不要删行** — 未提交时第 2 条的 commit 字段同样改写为“尚未提交 + after_hash”。静态复核仅标「已修复·待人工验证」，真实用例执行通过后才改「已验证」。已修、挂起原因、不修理由分别回传，不能删除未核验项。
 
 #### Step 4：编译（后端）/ 前端校验（★ 仅改动侧 + 资源受限 + 前端不打包）

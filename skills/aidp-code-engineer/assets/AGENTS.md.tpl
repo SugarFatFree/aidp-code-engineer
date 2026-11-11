@@ -70,8 +70,8 @@
   python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 操作系统调度：开发 10m + 测试 5m + 独立 watchdog 5m（三种 Agent 通用）
   python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务 + 两条链路心跳
   # Claude Code 会话内交互式短期用法（会话级、7 天过期、空闲才触发、同会话两条串行）：
-  /loop 10m /sprint-autopilot --unattended
-  /loop 5m  /sprint-aiauto-test --unattended
+  /loop 10m /sprint-autopilot --unattended --no-loop
+  /loop 5m  /sprint-aiauto-test --unattended --no-loop
   ```
   > ⚠️ 只跑开发链路 → 浏览器实测永不自动开始（约 3 tick 后静态-only finalize + 冻结待人）。**headless 裸 `--once` 须叠 `--unattended`**（否则首个 AskUserQuestion 无人可答挂起；`agent_loop.sh` 已自动补齐）。冻结 / 告警恒写本地告警台账 `memory/.aidp/alerts.jsonl`。前置（`notify` 通知渠道 / chrome-mcp / PRD `autopilot_decisions` / CICD `cicd.provider` + `cicd.pipelines` 等）详见 `{{AIDP_HOME}}/reference/命令速查.md`。
 
@@ -95,7 +95,7 @@
 | `/sprint-bugfix` | Bug 修复（默认 light；formal 按明确 Sprint 范围修复）| 测试发现或独立修复 |
 | `/sprint-close` | 收束任务；formal 才关闭并归档 Sprint | 验收通过后 |
 | `/sprint-full` | 单 Sprint 完整闭环：start→dev→test→bugfix→close | 一键跑完单 Sprint |
-| `/sprint-batch` | 批量执行研发执行计划的多个 Sprint；末段 Step 6 询问部署 + 调 `/sprint-aiauto-test --once`，失败用例回写「问题汇总清单」交 `/sprint-bugfix` | 跑完所有 Sprint |
+| `/sprint-batch` | 批量执行研发执行计划的多个 Sprint；末段 Step 6 仅在父级部署 / 实测授权时才衔接 `/sprint-aiauto-test --once`（缺授权不询问），失败用例回写「问题汇总清单」交 `/sprint-bugfix` | 跑完所有 Sprint |
 | `/sprint-autopilot` ★ | **开发链路编排器**：扫 `docs/requirements/` 识别最近一对，分别串 `/version --no-tag` 和 `/version + /sprint-batch`；触发部署但不跑 chrome（**例外 P0-4**：交互式【单次】调用没有第二条 loop 承担时，autopilot 自跑一次 `/sprint-aiauto-test --once --unattended`）；经 `notify.py` 发里程碑通知 | 7×24 用 `/loop 10m`；直接调用走配置向导 |
 | `/sprint-aiauto-test` ★ | **AI 自动化测试链路**（浏览器端：默认本地 CLI，显式声明才走远程 MCP）：独立仅明确目标实测；仅真实 autopilot 委派且 version/build/验收基线/完整用例清单齐备才当前版本全量；共享 baseline | 7×24 用 `/loop 5m`；单次 `--once`（不传版本号）；兜底 `--target V0.X.X` |
 
@@ -190,7 +190,7 @@
 
 ## 核心约定（必须遵守）
 
-> 约定编号 1–41 为稳定锚点（命令/Agent/SKILL/记忆全靠「约定 N」引用），不得重排或合并。**本段每条只做「决策要点 + 详规指向」索引**；详细规则在其**单一信源**处（随脚手架下发，可查）——工作流约定指向所指 SKILL/agent/命令，**代码向约定（4/17/18/19/20/23/26/27/28/29/35/39/40）指向 `{{AIDP_HOME}}/rules/*.md`**（`frontend.md`→`code/frontend/**`、`backend.md`→`code/backend/**`、`code.md`→`code/**`，带 `paths:` frontmatter，**编辑对应代码时才自动加载**，不占常驻上下文）。「见约定 N」始终解析到本段索引摘要 + 其单一信源详规。 **★ 每条的完整细则/Why/示例/实现子项已外置为按需 Read 的分片（本目录总览见 `{{AIDP_HOME}}/reference/README.md`），映射如下——约定 1·2·6·9·11·13·14·15·16·21 → `{{AIDP_HOME}}/reference/约定细则-1.md`；约定 22·24·30 → `{{AIDP_HOME}}/reference/约定细则-2.md`；约定 31·32·33 → `{{AIDP_HOME}}/reference/约定细则-3.md`；约定 34·35·36 → `{{AIDP_HOME}}/reference/约定细则-4.md`；约定 37·38·41 → `{{AIDP_HOME}}/reference/约定细则-5.md`（其余约定为一行、无外置细则）。★ 分片内只放该条的子项/Why/示例，**决策要点主行以本段为唯一权威、分片不复制**（避免双写漂移）。**
+> 约定编号 1–41 为稳定锚点（命令/Agent/SKILL/记忆全靠「约定 N」引用），不得重排或合并。**本段每条只做「决策要点 + 详规指向」索引**；详细规则在其**单一信源**处（随脚手架下发，可查）——工作流约定指向所指 SKILL/agent/命令，**代码向约定（4/17/18/19/20/23/26/27/28/29/35/39/40）指向 `{{AIDP_HOME}}/rules/*.md`**（`frontend.md`→`code/frontend/**`、`backend.md`→`code/backend/**`、`code.md`→`code/**`，带 `paths:` frontmatter，**Claude Code 下编辑对应代码时才自动加载**、不占常驻上下文；Codex / DeepSeek Harness 无此机制，须编辑前显式 Read，见 `{{AIDP_HOME}}/reference/agent-tools.md`）。「见约定 N」始终解析到本段索引摘要 + 其单一信源详规。 **★ 每条的完整细则/Why/示例/实现子项已外置为按需 Read 的分片（本目录总览见 `{{AIDP_HOME}}/reference/README.md`），映射如下——约定 1·2·6·9·11·13·14·15·16·21 → `{{AIDP_HOME}}/reference/约定细则-1.md`；约定 22·24·30 → `{{AIDP_HOME}}/reference/约定细则-2.md`；约定 31·32·33 → `{{AIDP_HOME}}/reference/约定细则-3.md`；约定 34·35·36 → `{{AIDP_HOME}}/reference/约定细则-4.md`；约定 37·38·41 → `{{AIDP_HOME}}/reference/约定细则-5.md`（其余约定为一行、无外置细则）。★ 分片内只放该条的子项/Why/示例，**决策要点主行以本段为唯一权威、分片不复制**（避免双写漂移）。**
 >
 > ⚙️ **技术栈中立**：下文出现的具体技术（`@RefreshScope`/`@Profile`/`el-*`/`@Size`/`VITE_USE_MOCK`/MyBatis 等）一律为**示例**，请按本项目实际编程语言与技术选型对应等价机制；纯属某技术栈的约定（如约定 27 仅配置中心项目适用）不适用时直接忽略。AIDP 范式的角色技术细则（`agents/backend.md` / `frontend.md`）默认以 Java Spring Boot + Vue 为例，下游可按需替换。
 

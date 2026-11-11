@@ -531,8 +531,13 @@ def _scan_evidence_directory(evidence_dir):
 
 
 def _check_artifact_contract(data, name, result_path, issues, artifact_index=None,
-                             artifact_owners=None):
-    """校验 artifact 的本轮归属、格式、唯一性、文件头与实际存在性。"""
+                             artifact_owners=None, artifact_sink=None):
+    """校验 artifact 的本轮归属、格式、唯一性、文件头与实际存在性。
+
+    `artifact_sink`(list | None):传入时,把**已解析、已确认落在本轮 evidence 内的实际文件**逐条追加进去,
+    供编排层直接消费(`--json` 的 `artifacts`),替代外层自己遍历 evidence/ 按扩展名过滤。
+    ⚠️ 入选只表示路径已解析且归属本轮;契约是否合格仍以 issues / 退出码为准(退出码≠0 时不应消费)。
+    """
     screenshot_stems = {}
     actual_screenshots = []
     if artifact_owners is None:
@@ -664,6 +669,18 @@ def _check_artifact_contract(data, name, result_path, issues, artifact_index=Non
             else:
                 seen_actual_artifacts.add(resolved)
             registered_lexical_paths.add(existing.absolute())
+            if artifact_sink is not None:
+                ext = suffix.lstrip('.')
+                step_val = item.get('step') if isinstance(item, dict) else None
+                artifact_sink.append({
+                    'case_id': str(data.get('case_id') or ''),
+                    'source': field,
+                    'step': None if step_val is None else str(step_val),
+                    'artifact': artifact,
+                    'path': str(resolved),
+                    'ext': ext,
+                    'kind': 'screenshot' if suffix in SCREENSHOT_EXTENSIONS else 'other',
+                })
             if suffix in SCREENSHOT_EXTENSIONS:
                 case_id = str(data.get('case_id') or '')
                 file_stem = existing.stem
@@ -961,7 +978,7 @@ def _mcp_fact(value):
 
 
 def check_one(data, name, result_path=None, artifact_index=None, artifact_owners=None,
-              require_preflight=False, webmcp_enabled=False):
+              require_preflight=False, webmcp_enabled=False, artifact_sink=None):
     """校验单条结果对象,返回 issues 列表。"""
     issues = []
     if not isinstance(data, dict):
@@ -1026,7 +1043,8 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
                 _issue(issues, 'Critical', 'bad_array_item',
                        f'{name}: `{field}[{i}]` 形状不合契约({type(item).__name__})')
 
-    _check_artifact_contract(data, name, result_path, issues, artifact_index, artifact_owners)
+    _check_artifact_contract(data, name, result_path, issues, artifact_index, artifact_owners,
+                             artifact_sink)
 
     # na 是永久不适用,必须有理由;缺省 na=0 由聚合器兼容,不影响旧结果。
     if status == 'na':
@@ -1440,6 +1458,7 @@ def main():
     elapsed_by_round = {}
     artifact_indexes = {}
     artifact_owners = {}
+    artifacts = []
     # 部分 target 收不到文件 → 出声,别让「少校验一整轮」冒充通过
     for t in empty_targets:
         _issue(all_issues, 'Important', 'empty_target',
@@ -1482,7 +1501,7 @@ def main():
         all_issues.extend(check_one(
             data, name, f, artifact_indexes[evidence_dir], artifact_owners,
             require_preflight=args.require_runtime_preflight,
-            webmcp_enabled=args.webmcp_enabled))
+            webmcp_enabled=args.webmcp_enabled, artifact_sink=artifacts))
         el = data.get('elapsed_ms')
         if isinstance(el, (int, float)) and not isinstance(el, bool):
             elapsed_by_round.setdefault(round_dir, []).append({
@@ -1506,6 +1525,7 @@ def main():
     if args.json:
         print(json.dumps({'files': len(files), 'passed': passed,
                           'critical': len(crit), 'important': len(imp),
+                          'artifacts': artifacts,
                           'issues': all_issues}, ensure_ascii=False, indent=2))
     else:
         print(f'校验 {len(files)} 份结果 JSON:Critical {len(crit)} / Important {len(imp)}')

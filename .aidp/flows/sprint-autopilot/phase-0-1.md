@@ -5,7 +5,7 @@
 > - **同 Phase 其它分片**：phase-0-1.md … phase-0-9.md（含 phase-0-6b.md）（清单见命令主体 Phase 0 骨架表「所在分片」列）
 >
 > ⚠️ **权威性**：进入 Phase 0 后以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤/硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-0-1.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ---
 
@@ -104,7 +104,7 @@ if [ "$HAS_UNATTENDED_FLAG" = "1" ] && [ "$HAS_WAKE_SOURCE" = "0" ]; then
   echo "⚠️ 本轮判为【无唤醒源的无人值守】（裸 --unattended / --once --unattended）：" >&2
   echo "   · 本轮内连跑到全部 Sprint 关闭为止，绝不 UNATTENDED_YIELD（上下文可能很长）" >&2
   echo "   · 任何一次失败**当场冻结**本版（无下一 tick 可叠 streak），不消耗重试配额" >&2
-  echo "   若你其实是 \`/loop 10m /sprint-autopilot --unattended\` 挂着的，说明上面的 IS_LOOP_CONTEXT 漏改成 1 了。" >&2
+  echo "   若你其实是 \`/loop 10m /sprint-autopilot --unattended --no-loop\` 挂着的，说明上面的 IS_LOOP_CONTEXT 漏改成 1 了。" >&2
 fi
 ```
 

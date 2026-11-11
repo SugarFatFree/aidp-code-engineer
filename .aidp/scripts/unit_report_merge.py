@@ -29,7 +29,8 @@ def read_payload(path):
         raise ValueError("报告数据必须是对象")
     return value
 
-UNIT_STATES = ("PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING")
+UNIT_STATES = ("PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING", "NOT_APPLICABLE")
+UNIT_NA_REASON = "all-cases-browser-only"
 BROWSER_STATES = ("N/A", "UNVERIFIED", "TIMEOUT", "RUNNING")
 
 
@@ -94,6 +95,14 @@ def validate_unit_tests(unit, build, commit):
                     errors.append(f"{where}.{key} 必须为非空字符串")
             if item.get("log") is not None and not isinstance(item["log"], str):
                 errors.append(f"{where}.log 必须为字符串或 null")
+    if unit.get("status") == "NOT_APPLICABLE":
+        applicability = (unit.get("testScope") or {}).get("unit_applicability") or {}
+        if (runs or unit.get("reason") != UNIT_NA_REASON or applicability.get("status") != "NOT_APPLICABLE"
+                or applicability.get("reason") != UNIT_NA_REASON or (unit.get("testScope") or {}).get("acceptance_tests") != []
+                or (applicability.get("evidence") or {}).get("status") != "none-found"
+                or (applicability.get("evidence") or {}).get("files") != 0
+                or sorted(applicability.get("browser_only") or []) != sorted((unit.get("testScope") or {}).get("case_ids") or [None])):
+            errors.append("unitTests NOT_APPLICABLE 必须无 runs，且 testScope 声明全部正式用例 browser_only 及“发现过程已执行且为空”(evidence none-found) 的依据")
     if unit.get("status") == "PASS" and (not runs or any(
             not isinstance(run, dict) or run.get("status") != "PASS" for run in runs)):
         errors.append("unitTests PASS 必须有 runs 且全部 PASS")
@@ -244,7 +253,9 @@ def validate_report_scope(payload):
             errors.append(f"testScope.{key} 与报告身份不一致")
     if not re.fullmatch(r"[0-9a-f]{64}", scope.get("manifest_hash", "")):
         errors.append("testScope 缺冻结 manifest_hash")
-    if not scope.get("acceptance_baseline") or not scope.get("acceptance_tests") or not isinstance(scope.get("dependencies"), list):
+    unit_na = unit.get("status") == "NOT_APPLICABLE"
+    if (not scope.get("acceptance_baseline") or not isinstance(scope.get("dependencies"), list)
+            or not (scope.get("acceptance_tests") or unit_na and scope.get("acceptance_tests") == [])):
         errors.append("testScope 缺验收基线、正式测试清单或依赖清单")
     ids = scope.get("case_ids")
     if not isinstance(ids, list) or not ids or len(set(ids)) != len(ids):
@@ -272,6 +283,8 @@ def overall_status(payload):
             return pending
     if triage_targets(payload):
         return "UNVERIFIED"  # 明细里的未完成问题也不能被 PASS 统计覆盖。
+    if status == "NOT_APPLICABLE":
+        return "PASS" if browser == "PASS" else "UNVERIFIED"  # 单测不适用时必须有真实浏览器实测，不能零实测通过。
     return "PASS" if browser in ("PASS", "N/A") else "UNVERIFIED"
 
 
@@ -300,7 +313,8 @@ def finalize_ready(payload):
             and not triage_state(payload)["environment"]
             and (payload.get("browserTests") or {}).get("status") not in ("UNVERIFIED", "TIMEOUT", "RUNNING")
             and browser_status(payload) in ("PASS", "FAIL", "N/A")
-            and unit.get("status") in ("PASS", "FAIL")
+            and unit.get("status") in ("PASS", "FAIL", "NOT_APPLICABLE")
+            and not (unit.get("status") == "NOT_APPLICABLE" and browser_status(payload) == "N/A")
             and all(run.get("status") in ("PASS", "FAIL") for run in unit.get("runs", [])))
 
 

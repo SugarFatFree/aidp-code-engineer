@@ -1,5 +1,5 @@
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-1.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 # sprint-aiauto-test · Phase 1 详情（部署完成探测 1.1–1.3）
 

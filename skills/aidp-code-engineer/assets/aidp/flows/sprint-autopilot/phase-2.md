@@ -11,8 +11,8 @@
 0. **★ 准发布前置门：部署就绪 + 测试收敛双校验**。任一门未过：调用 `autopilot_fail_handle.py` 记账/判阈/告警，置 `PRERELEASE_HOLD=1`，跳过归档并写 `run-state`，继续同 tick 的 Phase 3；不得在这里退出整轮。判据见下方 0a / 0b，跳过门及冻结理由见 `rationale.md`「Phase 2 准发布双门的形态与判据」。
 
    ```bash
-   : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"   # ★ 统一变量名 + 兜底默认（未定义时 jq 会读 stdin 静默失败，streak 永不落盘）
-   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"                   # ★ baseline 唯一加锁写入口（见 invariants「baseline 单一写入口不变式」）
+   : "${BASELINE_FILE:=memory/.sprint-autopilot-baseline.json}"   # 兜底默认：未定义时 jq 读 stdin 静默失败
+   BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"                   # baseline 唯一加锁写入口（见 invariants）
    # 时间用 epoch 比较；PRE_RELEASE_VERSION 跨围栏从 tick 状态读回（理据见 rationale.md）。
    to_ts() { $BE epoch "$1" 2>/dev/null || echo 0; }   # 跨平台
    eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
@@ -22,7 +22,6 @@
    $TF PRERELEASE_HOLD 1 || exit 1
    DEP_MODE=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".deployment_mode // \"\"" "$BASELINE_FILE")
    LAST_DEP=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".last_deployed_at // \"\"" "$BASELINE_FILE")
-   # 部署意图（mode≠none = 本应部署 + 需浏览器实测）
    DEPLOY_EXPECTED=1
    [ "$DEP_MODE" = "none" ] && DEPLOY_EXPECTED=0
    if [ -z "$DEP_MODE" ]; then   # deployment_mode 空的歧义态（就绪超时可能未写）→ 读 PRD 意图兜底：mode:none 才放行
@@ -37,15 +36,15 @@
    PRE_AFIP=$($BE --version "$PRE_RELEASE_VERSION" get auto_fix_in_progress_since --default "")
    case "$PRE_NP" in 3.2.1-*|3.3*|3.4*) PRERELEASE_YIELD=1;; esac
    { [ "$PRE_AFP" = "true" ] || [ -n "$PRE_AFIP" ]; } && PRERELEASE_YIELD=1
-   [ "$PRERELEASE_YIELD" = "1" ] && echo "↪️ 0y $PRE_RELEASE_VERSION 尾段/自动修复进行中（next_phase=${PRE_NP:-空} AFP=$PRE_AFP）→ Phase 2 让位，本 tick 不判双门、不归档"
+   [ "$PRERELEASE_YIELD" = "1" ] && echo "↪️ 0y $PRE_RELEASE_VERSION 尾段/自动修复进行中（next_phase=${PRE_NP:-空} AFP=$PRE_AFP）→ 让位，本 tick 不判双门、不归档"
 
    # ── 0a 部署就绪校验 ──（本应部署却无 last_deployed_at = 部署失败/就绪探针从未通过）
    if [ "$PRERELEASE_YIELD" = "1" ]; then
      :
    elif [ "$DEPLOY_EXPECTED" = "1" ] && [ -z "$LAST_DEP" ]; then
      echo "⛔ 0a 部署就绪未过：$PRE_RELEASE_VERSION 部署模式=${DEP_MODE:-<未写,PRD意图非none>} 但 last_deployed_at 为空 → 本 tick 不归档"
-     echo "   → 需经 Phase 3.2.1 重新部署；--target $PRE_RELEASE_VERSION 可人工点名重跑部署"
-     # 记账→判阈→冻结四件套→发 #4 一次做完（⛔ 「发 #4」写成注释 = 停得住但停不响）
+     echo "   → 需经 Phase 3.2.1 重新部署；可 --target $PRE_RELEASE_VERSION 点名重跑"
+     # 记账→判阈→冻结→发 #4 一次做完
      python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
        --phase 2-prerelease-deploy --reason deploy-unreachable \
        --streak-key prerelease_deploy_block_streak \
@@ -60,15 +59,20 @@
    if [ "$PRERELEASE_YIELD" = "0" ] && [ "$PRERELEASE_HOLD" = "0" ] && [ "$DEPLOY_EXPECTED" = "1" ] && [ -n "$LAST_DEP" ]; then
      AT=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".aiauto_tested_at // \"\"" "$BASELINE_FILE")
      UNC=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".aiauto_test_unconverged_streak // 0" "$BASELINE_FILE")
-     # 收敛须同时满足 tested_at、streak、build 级 finalized 和部署时间；理据见 rationale.md。
 PRE_CUR_BUILD=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".current_build // empty" "$BASELINE_FILE")
-# build 插值写法同 phase-3-4.md；原因见 rationale.md。
 FIN=$(jq -r ".versions.\"$PRE_RELEASE_VERSION\".builds[]? | select(.build==\"$PRE_CUR_BUILD\") | .ai_report_finalized // false" "$BASELINE_FILE" | head -1)
 FIN="${FIN:-false}"
+     # 根授权无 live-tests（如 --skip-aiauto-test）= 静态-only，只验 finalize；读不到按已授权
+     LIVE_OK=$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py live-allowed --version "$PRE_RELEASE_VERSION") || LIVE_OK=1
      JOIN_STATE=$($BE --version "$PRE_RELEASE_VERSION" --build "$PRE_CUR_BUILD" get test_join.overall_status --default "")
      if [ "$JOIN_STATE" = "RUNNING" ] || [ "$JOIN_STATE" = "UNVERIFIED" ] || [ "$JOIN_STATE" = "TIMEOUT" ]; then
        echo "ℹ️ 本 build 测试状态 $JOIN_STATE，准发布暂缓；等待/未核验不递增失败计数、不冻结"
        PRERELEASE_HOLD=1
+     elif [ "$LIVE_OK" = "0" ]; then
+       if [ "$FIN" = "true" ]; then
+         $BE --version "$PRE_RELEASE_VERSION" del test_loop_missing_streak prerelease_test_hold_streak || true
+         echo "✅ 0b NOT_REQUESTED: live-tests；静态-only 报告已 finalize → 允许准发布归档"
+       else echo "ℹ️ 0b NOT_REQUESTED: live-tests；静态-only 报告未 finalize，暂缓（不计失败）"; PRERELEASE_HOLD=1; fi
      elif [ -n "$AT" ] && [ "$UNC" = "0" ] && [ "$FIN" = "true" ] && [ "$(to_ts "$LAST_DEP")" -le "$(to_ts "$AT")" ]; then
        $BE --version "$PRE_RELEASE_VERSION" del test_loop_missing_streak prerelease_test_hold_streak || true
        echo "✅ 0b 测试收敛：本 build 已于 $AT 测过、已收敛、报告已 finalize → 允许准发布归档"
@@ -91,9 +95,9 @@ FIN="${FIN:-false}"
            --extra "unconverged_frozen_head=$FROZEN_HEAD" \
            --why "测试链路存活但连续多 tick 未收敛，准发布长期挂起，请人工看测试结果/环境"
        else
-         TLM=$($BE --version "$PRE_RELEASE_VERSION" get test_loop_missing_streak --default 0)   # ⛔ 只读不 bump：记账唯一落点在下方 fail_handle，两处都记会让阈值提前一半到达
+         TLM=$($BE --version "$PRE_RELEASE_VERSION" get test_loop_missing_streak --default 0)   # 只读不 bump：记账只在下方 fail_handle
          BLOCKED=$(jq -r '.aiauto_blocked_reason // ""' "$BASELINE_FILE")
-         echo "⚠️ 0b 本版需浏览器实测但**测试链路不可用**（${BLOCKED:+测试侧已阻塞：$BLOCKED；}${BLOCKED:-无近期 aiauto_test_heartbeat_at}，连续 ${TLM} tick）→ 准发布暂缓；请挂第二条 loop 「/loop 5m /sprint-aiauto-test --unattended」或先解掉测试侧阻塞"
+         echo "⚠️ 0b 本版需浏览器实测但**测试链路不可用**（${BLOCKED:+测试侧已阻塞：$BLOCKED；}${BLOCKED:-无近期 aiauto_test_heartbeat_at}，连续 ${TLM} tick）→ 准发布暂缓；请挂第二条 loop 「/loop 5m /sprint-aiauto-test --unattended --no-loop」或先解掉测试侧阻塞"
          python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "${PRE_RELEASE_VERSION:?}" \
            --phase 2-prerelease-testloop --reason config-missing \
            --streak-key test_loop_missing_streak \

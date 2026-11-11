@@ -3,7 +3,7 @@
 > 本文件是 `/sprint-autopilot` 命令 **Phase 1（PRD 变化检测 —— 监听核心，仍属准备阶段）** 的完整详细步骤，由命令主体在**进入 Phase 1 时用 `Read` 工具按需加载**。命令主体只保留骨架 + 指针。
 >
 > ⚠️ **权威性**：进入 Phase 1 后以本文件为准逐项执行。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-1.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ---
 
@@ -86,7 +86,7 @@ memory/.sprint-autopilot-baseline.json
 - **★ 两个 tick 级 streak**：`test_loop_missing_streak`（Phase 3.4 dev 完成 tick 首 ++、Phase 2 0b 每 tick 续 ++，权威累加在 Phase 2；达 `TEST_LOOP_MISSING_THRESHOLD`（默认 3）→ 本 build 实跑静态-only finalize + 置 `needs_human`「测试链路未挂载」止损）/ `prerelease_deploy_block_streak`（Phase 2 写：S2 版本本应部署（`deployment_mode`≠none 或 PRD `mode`≠none）却 `last_deployed_at` 为空的连续 tick 数；达 `PRERELEASE_DEPLOY_BLOCK_THRESHOLD`（默认 3）→ 冻结，拒绝把从未就绪/从未实测的部署静默归档为准发布；就绪或无需部署即清零）。
 - **★ 顶层前置熔断字段（Phase 0.1 前置失败专用，无版本上下文）**：`preflight_fail_streak`（前置失败连续轮次）/ `preflight_frozen_at`（达阈冻结时刻）/ `preflight_fail_reason`（如 `git-pull-conflict` / `detached-head`）。补 `dev_fail_streak` 在"TARGET_VERSION 尚未解析"阶段的盲区，防 `/loop` 每 tick 刷 #4；前置动作成功一次自动清零，或人工 `--reset-baseline`
 - **远程 Chrome 地址**（不在 baseline）：存项目根 `.mcp.json` 的 `chrome-{git_user}.args[--browser-url]`（按 git 用户名分键、入库共享）；`--reset-chrome-ip` = 删该条目重收
-- `aiauto_test_heartbeat_at`（顶层，测试链路写）：`/sprint-aiauto-test` 每 tick 起始（迁移后、任何 early-exit 之前）写 = 该 tick 时刻，表征"第二条 `/loop 5m /sprint-aiauto-test --unattended` 存活"（与被测版本无关）；autopilot Phase 3.4 ③ 读它（近 `AIAUTO_TEST_HEARTBEAT_TTL_MIN` 分钟（默认 30，> 测试 loop 周期）内有更新即判活跃），区分"loop 已挂但本 build 尚未出报告"与"loop 未挂载"，免误冻结
+- `aiauto_test_heartbeat_at`（顶层，测试链路写）：`/sprint-aiauto-test` 每 tick 起始（迁移后、任何 early-exit 之前）写 = 该 tick 时刻，表征"第二条 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 存活"（与被测版本无关）；autopilot Phase 3.4 ③ 读它（近 `AIAUTO_TEST_HEARTBEAT_TTL_MIN` 分钟（默认 30，> 测试 loop 周期）内有更新即判活跃），区分"loop 已挂但本 build 尚未出报告"与"loop 未挂载"，免误冻结
 - `notify_enabled`（顶层）：用户通知开关（来自 `memory/aidp-config.yaml` 的 `notify.enabled`，`--no-notify` 可本轮关闭）；两命令共享。`notify.py --check-config --json` 独立诊断本地条件，`tick_flags` 还会据 `notify_ready` 关闭本地不可用的本轮 `NOTIFY_ENABLED`；channels 非空不代表迁移完成或真实送达。渠道地址/密钥不入 baseline（只经环境变量引用）。报告 HTML 先落本地 `docs/reports/{V}/`；上传结果与通知结果独立记账，通知从 `--report-kind exec|test` 获取 URL 或带权限说明的仓库路径
 
 ### 1.2 变化检测逻辑（按版本 per-key 检测）

@@ -2,7 +2,7 @@
 # /version · 执行分片（Step 3.5 更新项目记忆文件 / 3.6 输出发布报告）
 
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/version/release-7b.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 > 本文件由 `release-7.md` 超 20480B 上限二次切分而来（同 `phase-0-6b.md` 惯例）。
 > 进入 Step 3.5 前先 Read 本片，逐项执行、不凭骨架或记忆略过。理据见同目录 `rationale.md`。
@@ -71,8 +71,8 @@ fi
 📝 版本更新日志.md：已追加 [{version}] 条目（版本概览表 + 详情区块均倒叙置顶；新增 {N1} 条 / 修复 {N2} 条）
 📦 部署产物整理（docs/deployment/{version}/ + 跨版本 docs/deployment/tools/）：
    • SQL 归档：原 {N1} 个文件整合为 {N2} 个文件（守恒校验 ✓），按 NN_ 前缀 + DDL/DML 拆分，99_回滚脚本.sql 保留
-   • 部署流程.md：占位符已实值化 / 关键项表已核对 / SQL 引用已对齐整理后文件名
-   • 配置项清单.md：敏感 checklist 已核对 · deployment-checklist：{已核对/已生成骨架/无} · 跨文档一致性 ✓
+   • 唯一操作说明：关键项已核对 / SQL 引用已对齐整理后文件名
+   • 配置项清单.md：敏感 checklist 已核对 · checklist：{已核对既有/无} · 跨文档一致性 ✓
 📊 版本测试报告：docs/reports/{version}/版本测试报告/{version}-测试报告.html（单文件，合并 {N} 个 build；per-build 历史见同级 AI测试报告/index.html；若未跑 /sprint-aiauto-test 则自动跳过）
 
 📌 下一步：

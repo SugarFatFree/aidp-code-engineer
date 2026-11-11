@@ -885,10 +885,20 @@ def derive_suite(root, runners, manifest, execution_context=None):
     if not isinstance(baseline, dict):
         raise ScopeError("版本范围缺少正式验收 acceptance_baseline")
     path = relative_path(root, baseline.get("path"))
-    if not path.startswith(f"docs/testing/{version}/") or not path.endswith(".json"):
-        raise ScopeError("验收基线必须归属本版本 docs/testing/<version>/ 下 JSON")
+    frozen_baseline = path.startswith(f"memory/.aidp/version-freeze/{version}/")
+    if not (path.startswith(f"docs/testing/{version}/") or frozen_baseline) or not path.endswith(".json"):
+        raise ScopeError("验收基线必须归属本版本 docs/testing/<version>/ 或 freeze 运行态目录下 JSON")
+    base = root
+    if frozen_baseline:
+        # freeze 产物只在主仓运行态目录（不入 Git）；主仓由已校验的 execution-context 给出，并由 manifest 摘要固定。
+        try:
+            raw = execution_context if isinstance(execution_context, dict) else json.loads(Path(execution_context).read_text(encoding="utf-8"))
+            base = Path(raw["root"]).resolve()
+            relative_path(base, path)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ScopeError("freeze 验收基线须由 execution-context 指向主仓读取") from exc
     try:
-        content = (root / path).read_bytes()
+        content = (base / path).read_bytes()
         data = json.loads(content)
     except (OSError, ValueError) as exc:
         raise ScopeError("正式版本验收基线不可读") from exc
@@ -910,15 +920,18 @@ def derive_suite(root, runners, manifest, execution_context=None):
     if not all(is_test(p) for p in acceptance):
         raise ScopeError("acceptance_tests 必须是明确测试文件")
     cases = data.get("cases")
-    if (not isinstance(cases, list) or not cases or any(not isinstance(c, dict) or not isinstance(c.get("id"), str)
-            or not isinstance(c.get("test_files"), list) or not c["test_files"]
-            or not all(isinstance(p, str) for p in c["test_files"]) for c in cases)
-            or len({c["id"] for c in cases}) != len(cases)
-            or {p for c in cases for p in c["test_files"]} != set(acceptance)):
-        raise ScopeError("正式验收用例 cases 必须完整且唯一映射 acceptance_tests")
+    browser_only = data.get("browser_only", [])
+    # test_files 为空当且仅当该用例显式列入 browser_only；其余用例必须映射测试文件，防止悄悄漏测。
+    if (not isinstance(browser_only, list) or not all(isinstance(i, str) for i in browser_only)
+            or not isinstance(cases, list) or not cases or any(not isinstance(c, dict) or not isinstance(c.get("id"), str)
+            or not isinstance(c.get("test_files"), list) or not all(isinstance(p, str) for p in c["test_files"])
+            or bool(c["test_files"]) == (c["id"] in browser_only) for c in cases)
+            or len({c["id"] for c in cases}) != len(cases) or not set(browser_only) <= {c["id"] for c in cases}
+            or not {p for c in cases for p in c["test_files"]} <= set(acceptance)):
+        raise ScopeError("正式验收用例 cases 映射的测试文件须属于 acceptance_tests（无单测对应的用例须显式 browser_only 且无测试文件）")
     try:
         from build_unit_test import validate_case_index
-        validate_case_index(root, manifest)
+        validate_case_index(root, manifest, baseline_root=base)
     except (ValueError, OSError) as exc:
         raise ScopeError(f"正式用例索引未完整覆盖：{exc}") from exc
     loaded = version_context(root, execution_context, manifest)
@@ -932,7 +945,7 @@ def derive_suite(root, runners, manifest, execution_context=None):
     from test_ledger import tree_snapshot, snapshot_changed
     index = data.get("case_index", {}).get("path")
     index = relative_path(root, index)
-    inputs = sorted({path, index, *(p for r in runners for p in r["inputs"])})
+    inputs = sorted({*(() if frozen_baseline else (path,)), index, *(p for r in runners for p in r["inputs"])})
     before = tree_snapshot(root, inputs, paths=files)
     analysis = dependency_analysis(root, files, modules, runners, frozen_files=before["files"],
                                    frozen_tokens=before["tokens"], candidates=tests)

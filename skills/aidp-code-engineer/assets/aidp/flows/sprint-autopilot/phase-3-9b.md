@@ -3,7 +3,6 @@
 > 本文件是 `phase-3-9.md` 的**二次切分**（前片达 20KB 上限）。前片覆盖「完成核验检测」的
 > 根因分诊 + ceremony 闸调用；本片覆盖其后的**内联校验 ① ~ ④** 与收尾动作。
 > ⚠️ **权威性**：与前片同级，不得因它是续片而略过任一项。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-3-9b.md`。
 
 ---
 
@@ -64,7 +63,7 @@ RPT_URL=$($BE get "report_deliveries.\"$B\".exec_report.url" --default "")
      #    在这里清零 = 只要该 tick 有开发产出，计数就被抹回 0、3-tick 阈值**永远达不到**，
      #    于是「挂了 autopilot 却没挂测试 loop」这个 usage-guard 反复警告的场景**永无告警**。
      #    清零只属于「报告确已生成」那一支（上面 if 分支）。
-     echo "  ℹ️ 测试报告未生成 — 由 /sprint-aiauto-test 异步产出；如尚未挂 /loop 5m /sprint-aiauto-test --unattended 请挂起（#1d 通知已提示）"
+     echo "  ℹ️ 测试报告未生成 — 由 /sprint-aiauto-test 异步产出；如尚未挂 /loop 5m /sprint-aiauto-test --unattended --no-loop 请挂起（#1d 通知已提示）"
    fi
    echo "── ④ 强制仪式合法性自检（非法精简借口 = 违规，见 Phase 3「强制仪式不可精简硬门」）──"
    # 里程碑通知唯一合法降级 = NOTIFY_ENABLED=0（未配置 notify.channels / notify.enabled=false / --no-notify）；否则应发通知集（0.1bis 矩阵）必须已发

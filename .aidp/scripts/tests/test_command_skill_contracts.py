@@ -362,9 +362,18 @@ def test_batch_cascade_and_bugfix_scope_contracts():
           '派单前对账' in mb and '不得通过删掉 Sprint 参数扩大修复范围' in mb)
     check('无 Sprint 的零散入口仍可导入留空归属',
           '无 Sprint 过滤' in mb and '可留空' in mb)
-    check('bugfix 默认仍产报告文件，light 日常可切 evidence-only 且不写报告',
+    conv = (REPO / '.aidp/reference/skills.md').read_text(encoding='utf-8')
+    light = (REPO / '.aidp/flows/sprint-dev/light-context.md').read_text(encoding='utf-8')
+    check('bugfix 默认仍产报告文件，light 日常可切 evidence-only 且不写报告（约定集中在 skills.md，两侧只引用）',
           '`file`（默认）' in skill and '`evidence-only`' in skill and '**不写任何 `*-report.md`**' in skill
-          and 'report_mode=evidence-only' in mb and '不能遵守范围/产物边界' in mb)
+          and 'bugfix SKILL 调用约定' in conv and 'report_mode=evidence-only' in conv
+          and 'bugfix SKILL 调用约定' in mb and 'reference/skills.md' in light
+          and 'report_mode=evidence-only' in light and '不能遵守范围/产物边界' in mb)
+    check('bugfix 空参数不等于全扫：SKILL 与命令同口径（澄清 / 返回缺口，清单限定范围）',
+          '空参数不等于全扫' in skill and '缺少修复范围' in skill and '空参数不等于全扫' in conv
+          and '不扫描接管全部历史待修' in (REPO / '.aidp/commands/sprint-bugfix.md').read_text(encoding='utf-8')
+          and '修复所有待修复 bug' not in (REPO / '.aidp/commands/sprint-bugfix.md').read_text(encoding='utf-8')
+          and '处理全部待修复条目' not in skill)
     check('evidence-only 不得越出调用方给定的问题清单范围',
           '内核不得自行扩大到其他问题记录、其他 Sprint 或其他版本' in skill)
 
@@ -546,39 +555,92 @@ def test_skill_ref_freshness_delegation():
         check("★ 委派后派单块内脚本视为接线、块外脚本仍报", after == {"check_b.py"})
 
 
-def test_aiauto_screenshot_collection():
-    """实跑 flow 里的归集段：四种格式、数字轮次、格式变更与旧 tick 残图。"""
-    print("\n[aiauto 截图归集实跑]")
+def _collection_script():
     flow = (REPO / ".aidp/flows/sprint-aiauto-test/phase-3-1.md").read_text(encoding="utf-8")
-    script = flow.split("# ① 归集：", 1)[1].split("\nSHOTS", 1)[0] + "\nSHOTS\n"
-    script = ("# ① 归集：" + script).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
+    block = re.search(r"python3 - \"\$SHOT_DIR\" \"\$\{SHAPE_BAD:-0\}\" <<'SHOTS'\n(.*?)\nSHOTS\n", flow, re.S)
+    return block.group(1)
+
+
+def _valid_png(tag=255):
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        body = struct.pack(">I", len(data)) + kind + data
+        return body + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\x00" + bytes([tag, tag, tag]))) + chunk(b"IEND", b""))
+
+
+def test_aiauto_screenshot_collection():
+    """归集段消费 check_result --json 的 artifacts：扩展名分类归上游，顺序/覆盖/去旧图/不动门归本段。"""
+    print("\n[aiauto 截图归集实跑]")
+    code = _collection_script()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        btr = root / "report with spaces"
-        shot = btr / "screenshots/B1"
+        shot = root / "report with spaces/screenshots/B1"
         shot.mkdir(parents=True)
+
+        def collect(artifacts, shape_bad="0"):
+            payload = json.dumps({"artifacts": artifacts})
+            return subprocess.run([sys.executable, "-c", code, str(shot), shape_bad], cwd=root,
+                                  capture_output=True, text=True, env={**os.environ, "CR_JSON": payload})
+
+        def item(rnd, name, kind="screenshot"):
+            path = root / f"build-B1/round-{rnd}/evidence/{name}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"r{rnd}:{name}".encode())
+            return {"case_id": name.split("-step")[0], "path": str(path), "ext": path.suffix.lstrip("."), "kind": kind}
+
         (shot / "TC-1-step1.JPG").write_bytes(b"stale")
-        for rnd, files in ((2, {"TC-1-step1.png": b"old", "TC-2-step1.jpeg": b"jpeg"}),
-                           (10, {"TC-1-step1.webp": b"new", "TC-3-step1.jpg": b"jpg",
-                                 "TC-4-step1.PNG": b"png"})):
-            ev = btr / f"build-B1/round-{rnd}/evidence"
-            ev.mkdir(parents=True)
-            for name, data in files.items():
-                (ev / name).write_bytes(data)
-        r = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True,
-                           env={**os.environ, "BTR": str(btr), "BUILD": "B1", "SHOT_DIR": str(shot)})
+        arts = [item(10, "TC-1-step1.webp"), item(2, "TC-1-step1.png"), item(2, "TC-2-step1.jpeg"),
+                item(10, "TC-3-step1.jpg"), item(10, "TC-4-step1.PNG"), item(2, "notes.txt", kind="other")]
+        r = collect(arts)  # 故意把 round-10 排在 round-2 前：上游 artifacts 就是字符串序
         check("归集代码可执行", r.returncode == 0)
-        check("四种截图扩展名均归集", {p.suffix.lower() for p in shot.iterdir()} ==
-              {".webp", ".png", ".jpg", ".jpeg"})
-        check("round-10 覆盖 round-2（不是字符串排序）",
-              (shot / "TC-1-step1.webp").read_bytes() == b"new")
-        check("同主干格式变更不留旧图（含大写扩展名）",
-              len(list(shot.glob("TC-1-step1.*"))) == 1)
-        for p in (btr / "build-B1").glob("round-*/evidence/*"):
-            p.unlink()
-        r = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True,
-                           env={**os.environ, "BTR": str(btr), "BUILD": "B1", "SHOT_DIR": str(shot)})
+        check("四种截图扩展名均归集，非截图（kind=other）不归集",
+              {p.suffix.lower() for p in shot.iterdir()} == {".webp", ".png", ".jpg", ".jpeg"}
+              and not (shot / "notes.txt").exists())
+        check("round-10 覆盖 round-2（按数字序重排，不依赖 artifacts 顺序）",
+              (shot / "TC-1-step1.webp").read_bytes() == b"r10:TC-1-step1.webp")
+        check("同主干格式变更不留旧图（含大写扩展名）", len(list(shot.glob("TC-1-step1.*"))) == 1)
+        check("未被结果 JSON 引用的孤儿图不归集（artifacts 之外的文件不进报告）",
+              not (shot / "orphan.png").exists())
+        r = collect([])
         check("本 tick 无新证据时旧目录不能替它过截图门", r.returncode == 0 and not list(shot.iterdir()))
+        (shot / "keep.png").write_bytes(b"x")
+        r = collect([item(1, "TC-9-step1.png")], shape_bad="1")
+        check("结果契约不合（SHAPE_BAD=1）不消费 artifacts，也不动已有目录，缺图交非空核验门",
+              r.returncode == 0 and [p.name for p in shot.iterdir()] == ["keep.png"])
+        r = subprocess.run([sys.executable, "-c", code, str(shot), "0"], cwd=root, capture_output=True, text=True,
+                           env={**os.environ, "CR_JSON": "not json"})
+        check("CR_JSON 损坏按无证据处理且不抛异常", r.returncode == 0)
+
+    # 集成：真实 check_result.py 的 --json 输出（含合法 PNG）喂给同一段归集代码
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        for rnd, tag in ((2, 20), (10, 100)):
+            evidence = root / f"build-B1/round-{rnd}/evidence"
+            results = root / f"build-B1/round-{rnd}/results"
+            evidence.mkdir(parents=True)
+            results.mkdir(parents=True)
+            (evidence / "TC-1-step1.png").write_bytes(_valid_png(tag))
+            (results / "TC-1.json").write_text(json.dumps({
+                "case_id": "TC-1", "title": "t", "status": "pass", "runtimeErrors": [],
+                "evidence": [{"step": 1, "artifact": "evidence/TC-1-step1.png", "type": "screenshot", "note": "ok"}]}))
+        (root / "build-B1/round-10/evidence/orphan.png").write_bytes(_valid_png(7))
+        script = REPO / ".aidp/skills/auto-test-runner/scripts/check_result.py"
+        done = subprocess.run([sys.executable, "-I", str(script), "--json", "build-B1/round-2/results/",
+                               "build-B1/round-10/results/"], cwd=root, capture_output=True, text=True)
+        data = json.loads(done.stdout) if done.stdout.strip() else {}
+        check("真实 check_result 输出 artifacts 且无 Critical（夹具合法）",
+              data.get("artifacts") and not [i for i in data.get("issues", []) if i.get("level") == "Critical"])
+        shot = root / "shots"
+        shot.mkdir()
+        r = subprocess.run([sys.executable, "-c", code, str(shot), "0"], cwd=root, capture_output=True, text=True,
+                           env={**os.environ, "CR_JSON": done.stdout})
+        check("真实输出驱动归集：留下最新 round-10 的图，孤儿图不归集",
+              r.returncode == 0 and [p.name for p in shot.iterdir()] == ["TC-1-step1.png"]
+              and (shot / "TC-1-step1.png").read_bytes() == _valid_png(100))
 
 
 def test_aiauto_convergence_aggregation():
@@ -702,6 +764,21 @@ def test_cvl_callsite_contract_details():
     print("\n[CVL 调用边界回归]")
     st = (REPO / ".aidp/commands/sprint-test.md").read_text(encoding="utf-8")
     check("调用方保留检测器 enabled:true 门控字段", "保留 `enabled`" in st)
+    check("record-review 证据必填机器证据，不再默认指向日常不生成的 test-report.md",
+          "REVIEW_EVIDENCE:?" in st and "REVIEW_EVIDENCE:-" not in st and "sprint-{NNN}-test-report.md}\"" not in st)
+    ref = (REPO / ".aidp/reference/SKILL编排层接入.md").read_text(encoding="utf-8")
+    sec5 = ref.split("## 五、客户端应用 MCP", 1)[1]
+    check("client_mcp 判定配方单一落点：两级判定 + 不传即不启用 + 非 Web 不传 webmcp_*",
+          "check_client_mcp.py --version" in sec5 and "check_webmcp.py --version" in sec5
+          and "不传 = 该维度" in sec5 and "非 Web **不传 `webmcp_*`**" in sec5 and "保留 `enabled`" in sec5)
+    for cmd in ("sprint-requirements", "sprint-plan", "sprint-design", "sprint-selftest", "sprint-test"):
+        t = (REPO / f".aidp/commands/{cmd}.md").read_text(encoding="utf-8")
+        check(f"{cmd} 接入 client_mcp 检测并引用共用配方", "check_client_mcp.py --version" in t
+              and "SKILL编排层接入.md" in t and "enabled: true" in t)
+    sec4 = ref.split("## 四、QR 变更范围裁剪", 1)[1].split("## 五、", 1)[0]
+    check("qr_delta_scope 协议单一落点，三个规划命令只引用", "不得自造 `qr_mode`" in sec4
+          and all("SKILL编排层接入.md" in (REPO / f".aidp/commands/{c}.md").read_text(encoding="utf-8")
+                  for c in ("sprint-requirements", "sprint-design", "sprint-plan")))
     check("全部 Important 登记并保留 loop 推进标记，不沿用已解决的上游冲突说明",
           "Critical 与 Important 一律" in st and "登记 bug 与是否阻断是两件事" in st
           and "`loop 推进`" in st and "上游判据冲突，待澄清" not in st)
@@ -712,11 +789,17 @@ def test_cvl_callsite_contract_details():
     check("终端模板不把未核验一律导向代码修复",
           "未核验（原因）" in st[st.index("code-verification-loop 验收结果："):]
           and "总体结论：{通过 / 不通过" in st and "❌ 需修复" not in st)
-    check("起点 commit 不回落本轮错误数，无 Git 明记未核验", "本 Sprint 起点 commit" in st
-          and "⛔ 不得回落 merge-base / 本轮首跑错误数" in st and "unsupported:vcs-disabled" in st)
+    check("基线经 SKILL 正式入参 baseline_ref 传递：有起点传 commit，取不到传 none，不回落本轮错误数，无 Git 明记未核验",
+          "baseline_ref=<本 Sprint 起点 commit>" in st and "baseline_ref=none" in st
+          and "不回落 `merge-base`" in st and "本轮首跑错误数作基线" in st and "unsupported:vcs-disabled" in st
+          and "不得回落 merge-base / 本轮首跑错误数" not in st  # 命令端不再把自己的 prompt 约束说成 SKILL 契约
+          and "SKILL 目前没有显式的「无基线」入参" not in st)  # 上游已提供该入参，过期变通不得残留
     check("CVL 以 scope_files 限定当前 task/Sprint，范围无法收窄记未核验且不回退全项目，未核验不得写全部通过",
-          "scope_files" in st and "scope-unsupported" in st and "存在未核验维度" in st
+          "scope_files" in st and "SKILL 范围模式规则" in st and "存在未核验维度" in st
           and "未核验" in st and "不转" in st)
+    check("命令端不预判外部脚本维度能否按文件清单运行（能力以脚本与 SKILL 为准）",
+          "不支持文件级范围" not in st and "命令端不预判脚本能力" in st
+          and "--third-party-mode" not in st.replace("命令端不传 `--third-party-mode`", ""))
     check("移除失效 dimension 链接与首轮错误数作基线的旧指令", "references/dimension-" not in st
           and "首轮记录存量错误数作基线" not in st)
     recheck = st[st.index("## Step 7"):st.index("## 输出")]
@@ -884,7 +967,8 @@ def test_acceptance_ledger_command_examples():
 
         def invoke(name, env_id='fixture-static'):
             prelude = (f'TEST_ENV_ID={env_id}\nSINCE={base}\nWRITE_SET=()\n'
-                       f'UNIT_RUNNERS_JSON="$(cat {runners})"\n')
+                       f'UNIT_RUNNERS_JSON="$(cat {runners})"\n'
+                       f'REVIEW_EVIDENCE={report.relative_to(root)}\n')
             result = subprocess.run(['bash', '-e', '-c', prelude + snippets[name]],
                                     cwd=root, capture_output=True, text=True,
                                     env={**os.environ, 'EXECUTION_CONTEXT': context})

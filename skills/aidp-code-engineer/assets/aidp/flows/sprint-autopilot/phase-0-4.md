@@ -5,7 +5,7 @@
 > - **同 Phase 其它分片**：phase-0-1.md … phase-0-9.md（含 phase-0-6b.md）（清单见命令主体 Phase 0 骨架表「所在分片」列）
 >
 > ⚠️ **权威性**：进入 Phase 0 后以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤/硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-0-4.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ---
 
@@ -79,7 +79,7 @@
 | #1b 规划完成 | Phase 3.1 `/version` 后（**总是发**，含复用已有规划）| autopilot | 蓝 | {版本规划完成 \| 复用已有版本规划}；将执行 N 个 Sprint + 研发需求/设计/执行计划 产物路径 |
 | #1c 开发开始 | Phase 3.2 `/sprint-batch` 执行**前**（**总是发**）| autopilot | 蓝 | 开始开发 `<V>`，共 N 个 Sprint（逐个 start→dev→test→bugfix→close）+ 分支 / 部署模式(local/cloud/none) |
 | #2 Sprint | Phase 3.2 每个 Sprint 关闭 | autopilot | 蓝 | Sprint-NNN 关闭（i/N）+ 标题 |
-| **#1d 部署完成-代码已推送** ★ | Phase 3.2 部署动作完成后（`deployment.mode != none` 且未带 `--skip-deploy`；**总是发**）| autopilot | 蓝 | 版本、部署模式(local/cloud)、访问 URL、代码已推 origin/`<branch>` + **★ 接力强提示**：测试链路独立，**如尚未挂 `/loop 5m /sprint-aiauto-test --unattended` 则后续 AI 自动化测试不会自动开始**——请立即并行挂起（详见模板「#1d 部署完成通知模板」）|
+| **#1d 部署完成-代码已推送** ★ | Phase 3.2 部署动作完成后（`deployment.mode != none` 且未带 `--skip-deploy`；**总是发**）| autopilot | 蓝 | 版本、部署模式(local/cloud)、访问 URL、代码已推 origin/`<branch>` + **★ 接力强提示**：测试链路独立，**如尚未挂 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 则后续 AI 自动化测试不会自动开始**——请立即并行挂起（详见模板「#1d 部署完成通知模板」）|
 | **#3 AI执行报告** ★ | **#F 之后**（build 关闭方 finalize 后发：有浏览器测试=测试链路在 #F 后发；静态-only=autopilot Phase 3.4 发）| **aiauto-test**（静态-only=autopilot）| **绿** | **完整模板见 `phase-0-5.md`「#3 AI执行报告通知完整模板」**：任务包 build / 执行情况 / 需求功能执行清单 / 测试结论（**真实浏览器测试结论**，来自本 build #F；静态-only=静态自测无浏览器）/ 缺陷统计 / 风险建议 / 查看完整报告（→ `$AI_REPORT_URL`：仓库内报告相对路径 / GitHub 文件链接）+ 下一步导航 |
 | **#D 部署完成-开始测试** ★ | aiauto-test Phase 1 部署就绪 | aiauto-test | 蓝 | 版本号、部署模式(local/cloud)、访问 URL、渲染模式 + 驱动(cli/mcp)、测试范围（按★测试范围标注规则，`正式用例/` 优先）|
 | **#R 每轮测试结束** ★ | aiauto-test 每轮末 | aiauto-test | 蓝/橙 | 版本+轮次、本轮 通过/失败/阻塞/忽略/**不适用**（⛔ 不并进 pass）、本轮新发现缺陷数、是否收敛、报告路径 |

@@ -18,11 +18,23 @@
 
 模板仓库的 `.aidp` 仅供维护，下游根目录没有该源码目录；以下 `{{AIDP_HOME}}` 是安装后解析的运行目录。**生成入口**由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；⛔ 与运行真源**同址**的那些不算生成入口——运行根降层后 Claude Code 的 `commands/` `skills/` `plugins/` 就是契约本体、必须入库，`agent_sync.py` 判定 identity 后整体跳过它们；命令只在 `{{AIDP_HOME}}/commands/`、公共 SKILL 只在 `{{AIDP_HOME}}/skills/`、插件只在 `{{AIDP_HOME}}/plugins/`。Codex 命令位于官方发现根 `.codex/skills/aidp/`，带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`。该入口**不内联命令正文**，只声明「第一动作 = Read `{{AIDP_HOME}}/commands/<命令>.md`」；正文明确串联 `/foo args` 时同法读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 内联执行；未知命令或无法唯一映射时 fail closed。`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。
 
-## 执行策略
+### 执行策略
 
 工具可用性不代表任务授权。派发、脚本、Git与部署先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 围栏；子Agent继承父action/budget/真实inputs hash，缺源旧配置不作grant。调度安装另需用户明确授权。
 
-## 二、工具名
+### rules 路径限定加载：仅 Claude Code 原生成立
+
+`{{AIDP_HOME}}/rules/*.md` 顶部的 `paths:` frontmatter 由 **Claude Code** 原生解释：编辑匹配路径的文件时才把该规则全文装入上下文。**Codex / DeepSeek Harness 没有对应的路径触发加载机制**，`agent_sync.py` 也不为 rules 生成指针或加载器（它只生成命令入口、SKILL / 插件装配与 Stop hook），规则文件仅作为共享运行包里的普通文件存在。因此在这两类 Agent 下，**执行体须在编辑对应路径的代码前显式 Read 对应规则**（语义不变，只换成手动触发）：
+
+| 将要编辑的路径 | 先 Read |
+|---|---|
+| `code/frontend/**`、`code/web/**`、`web/**` | `{{AIDP_HOME}}/rules/frontend.md` + `{{AIDP_HOME}}/rules/code.md` |
+| `code/backend/**`、`code/server/**`、`server/**` | `{{AIDP_HOME}}/rules/backend.md` + `{{AIDP_HOME}}/rules/code.md` |
+| 其余 `code/**` | `{{AIDP_HOME}}/rules/code.md` |
+
+已启用的可选规则（如 `client-mcp.md`、`webmcp.md`）同理按其 frontmatter 的 `paths:` 手动 Read。派发子 Agent 编码时，派单简报同样要求其先读上表对应规则。
+
+## 二、工具名与工作分支偏好
 
 | 文中写法 | 语义 | Codex / DeepSeek Harness 下的做法 |
 |---------|------|-----------------------------------|
@@ -122,5 +134,5 @@ $PY = if (Get-Command python -EA SilentlyContinue) { "python" } else { "py -3" }
 
 然后把文档里的 `python3 …` 读作 `$PY …`。
 
-- ⛔ **不要去改文档里的 `python3` 字面量**：它同时是 `check_cli_invocation.py` 的识别形状（现巡检 1100+ 处调用），改写等于把那道门连根拔掉。
+- ⛔ **不要去改文档里的 `python3` 字面量**：它同时是 `check_cli_invocation.py` 的识别形状（现巡检数千处调用），改写等于把那道门连根拔掉。
 - ✅ **脚本内部起子进程一律用 `sys.executable`**，不受本节影响——当前实现已全部如此，`aidp_scheduler.py` 生成的 systemd / cron / launchd / schtasks 四类定时任务也都由它派生。

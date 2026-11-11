@@ -5,7 +5,7 @@
 > - **同 Phase 其它分片**：phase-0-1.md … phase-0-9.md（含 phase-0-6b.md）（清单见命令主体 Phase 0 骨架表「所在分片」列）
 >
 > ⚠️ **权威性**：进入 Phase 0 后以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤/硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-0-5.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ---
 
@@ -61,7 +61,7 @@
 📦 任务包：{项目名称}{TARGET_VERSION}_build{N}                  （{BUILD}）
 
 📊 执行情况
-{✅ 执行完成 | ⚠️ 部分完成} | {done}/{N} 功能完成 | {pend}待处理 | 测试通过率 {静态自测通过率}%
+{✅ 执行完成 | ⚠️ 部分完成} | {done}/{N} 功能完成 | {pend}待处理 | 测试通过率 {静态自测通过率}%{静态自测存在未核验维度时追加「（存在未核验维度）」}
 ⏱️  执行时间：{build started_at} - {finished_at}（{总耗时}）
 
 📋 需求功能执行清单                                              （每 Sprint 一行，来自 01_研发执行计划.md 标题 + close 状态）
@@ -71,7 +71,7 @@
 📊 小计：{done}/{N} 个 Sprint 完成 | {pend}个待处理
 🎯 需求功能点覆盖：{doneFP}/{totalFP} 个功能点已完成（{完成率}%）          （来自 data `features` 逐条对照 01_研发需求.md，plan.html 功能点比对页可视化；逐条明细见完整报告）
 
-🧪 测试结论                                                     （★ 真实浏览器测试结论 = 本 build #F 的 testSummary；静态-only 无浏览器测试时 = code-verification-loop 静态自测结果，并注明「静态自测、无浏览器测试」）
+🧪 测试结论                                                     （★ 真实浏览器测试结论 = 本 build #F 的 testSummary；静态-only 无浏览器测试时 = code-verification-loop 静态自测结果〔维度口径：「用例总数」读作适用维度数，「阻塞」处读作未核验、「不适用」读作不适用维度，未核验不计通过；存在未核验维度须如实写出〕，并注明「静态自测、无浏览器测试」）
 📊 测试执行统计
 • 用例总数：{TOTAL}个
 • 通过：{PASS}个 | 失败：{FAIL}个 | 阻塞：{BLOCK}个 | 不适用：{NA}个
@@ -97,7 +97,7 @@
 📌 下一步                                                       （#3 在 #F 之后发，本 build 测试已闭环）
 1. 你 review + merge PR（代码已推 origin/{branch}）
 2. 运维跑 /version {TARGET_VERSION} 正式打 tag + 取最终验收 build 生成版本测试报告
-（静态-only 由 autopilot 发本通知时：本 build 无浏览器测试；如该版本后续部署可访问，再挂 /loop 5m /sprint-aiauto-test --unattended 补跑实测）
+（静态-only 由 autopilot 发本通知时：本 build 无浏览器测试；如该版本后续部署可访问，再挂 /loop 5m /sprint-aiauto-test --unattended --no-loop 补跑实测）
 ```
 
 > ★ **#3 时序（#F 之后发，携带真实测试结论）**：#3 由 build 关闭方在 **#F 之后**发出——有浏览器测试时由测试链路 `/sprint-aiauto-test` 在 finalize AI执行结果 testSummary 后发（「测试结论」段 = **真实浏览器测试** 通过/失败/阻塞/忽略/不适用 + 通过率（分母 = 总数−不适用），见其 Phase 3.7）；纯静态（`deployment.mode=none`）无浏览器测试时由 autopilot Phase 3.4 末尾发（「测试结论」段 = code-verification-loop 静态自测结果，注明「静态自测、无浏览器测试」）。**不在开发完成时早发、不标「待 #F 回填」**——开发完成的里程碑由 **#1d 部署通知**承担。计数口径（用例数 / 缺陷数）按真实点算，不臆造（与 0.1bis 对称计数铁律一致）。
@@ -129,7 +129,7 @@ AI 自动化测试由**独立测试链路** /sprint-aiauto-test 承担（与本�
 >           # 1) 安装 Chrome / Chromium 浏览器（按本机 OS 装，无 GUI 也能跑无头）
 >           # 2) 全局安装 chrome-devtools-mcp（含本地 CLI chrome-devtools-cli + 远程 MCP 服务）
 >           npm i chrome-devtools-mcp@latest -g
->           # 3) 走本机无头 cli 无需注册 MCP、无需重启；即可挂 /loop 5m /sprint-aiauto-test --unattended
->       【B 走远程】重启 Claude Code 加载远程 .mcp.json 后挂 /loop 5m /sprint-aiauto-test --unattended，或换一台有 chrome 的机器跑测试。
+>           # 3) 走本机无头 cli 无需注册 MCP、无需重启；即可挂 /loop 5m /sprint-aiauto-test --unattended --no-loop
+>       【B 走远程】重启 Claude Code 加载远程 .mcp.json 后挂 /loop 5m /sprint-aiauto-test --unattended --no-loop，或换一台有 chrome 的机器跑测试。
 >
 > ③ **不 invoke `/sprint-aiauto-test`、不空等、不反复提示重启**，autopilot **正常收尾退出**（开发成果已交付、原因 + 安装解法已播报）。其余四类预判（`local-cli-ready` / `remote-ready` / `needs-restart-has-fallback` / `local-chrome-no-cli`）**不触发本终止**，照常委派测试链路（`needs-restart-has-fallback` 的 3 分钟窗口 + cli 兜底、`local-chrome-no-cli` 的 cli 修复回落或 `mcp-plugin-fallback` 显式降级均由 `/sprint-aiauto-test` 承担）。仅 `blocked-no-fallback`（本机无 chrome 且远程不可用）才触发本终止。

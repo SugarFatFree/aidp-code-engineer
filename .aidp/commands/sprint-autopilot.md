@@ -96,8 +96,8 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-aut
 
 ## formal 流程
 
-> ⚠️⚠️ **本命令不会自己创建定时器（务必看清）**：`/sprint-autopilot` 是**被反复唤起的被调用方**、它自身**不自举定时循环**。**直接调用 `/sprint-autopilot` 默认只跑配置向导**；只有 `/loop`、明确执行意图、`--once` 或其他执行 flag 才跑一轮。**执行一轮 = 完成这一对版本内已授权的业务范围**，development组合覆盖计划中全部Sprint；部署和AI测试消费本轮真实explicit-command公开授权或另有来源的grant；**⛔ 无外部调度（操作系统定时任务 / `/loop`）时禁止中途 `UNATTENDED_YIELD`**（`HAS_WAKE_SOURCE=0`，见 Phase 0.0.0 派生 + Phase 3.2 执行粒度）——yield 了没有下一 tick 来接，就是把没干完的活儿丢回给人。要 **7×24 无人值守持续运行，由操作系统调度两条链路**：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install`——为开发链路（本命令，默认 10m）与测试链路（`/sprint-aiauto-test`，默认 5m）各装一个独立定时任务，每轮经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once` 以 `--unattended --no-loop` 唤起；另装第三条独立 watchdog 定时任务巡检两条链路心跳（含从未启动）。Claude Code 会话内的 `/loop 10m /sprint-autopilot --unattended` + `/loop 5m /sprint-aiauto-test --unattended` 只作交互式短期用法（会话级、定时任务 7 天过期、只在会话空闲时触发、同会话两条串行）。文中「7×24 全自动」指的是"装上外部调度后"的能力，**不是** autopilot 会自己起循环。
-> - **可选·调度自举（有持久副作用、必经确认门）**：直接调用（非调度上下文）且你表达了"持续运行 / 挂着自动跑 / 7×24"意图时，命令端**可用 `AskUserQuestion` 询问是否代你安装调度**——确认后执行 `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install`（先 `--dry-run` 展示将写入的定时任务）；**绝不静默创建**（定时任务是持久副作用）。不确认则按"只跑一轮"执行并在收尾提示上述挂载方式。
+> ⚠️⚠️ **本命令不会自己创建定时器（务必看清）**：`/sprint-autopilot` 是**被反复唤起的被调用方**、它自身**不自举定时循环**。**直接调用 `/sprint-autopilot` 默认只跑配置向导**；只有 `/loop`、明确执行意图、`--once` 或其他执行 flag 才跑一轮。**执行一轮 = 完成这一对版本内已授权的业务范围**，development组合覆盖计划中全部Sprint；部署和AI测试消费本轮真实explicit-command公开授权或另有来源的grant；**⛔ 无外部调度（操作系统定时任务 / `/loop`）时禁止中途 `UNATTENDED_YIELD`**（`HAS_WAKE_SOURCE=0`，见 Phase 0.0.0 派生 + Phase 3.2 执行粒度）——yield 了没有下一 tick 来接，就是把没干完的活儿丢回给人。要 **7×24 无人值守持续运行，由操作系统调度两条链路**：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install`——为开发链路（本命令，默认 10m）与测试链路（`/sprint-aiauto-test`，默认 5m）各装一个独立定时任务，每轮经 `{{AIDP_HOME}}/scripts/agent_loop.sh --once` 以 `--unattended --no-loop` 唤起；另装第三条独立 watchdog 定时任务巡检两条链路心跳（含从未启动）。Claude Code 会话内的 `/loop 10m /sprint-autopilot --unattended --no-loop` + `/loop 5m /sprint-aiauto-test --unattended --no-loop` 只作交互式短期用法（会话级、定时任务 7 天过期、只在会话空闲时触发、同会话两条串行）。文中「7×24 全自动」指的是"装上外部调度后"的能力，**不是** autopilot 会自己起循环。
+> - **可选·调度自举（有持久副作用、必经确认门）**：直接调用（非调度上下文）且你表达了"持续运行 / 挂着自动跑 / 7×24"意图时，命令端**可用 `AskUserQuestion` 询问是否代你安装调度**——确认后执行 `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install --authorization-text "<用户本轮持续运行的原话>"`（先 `--dry-run` 展示将写入的定时任务；原话取自用户请求，⛔ 不得代拟或改写，缺则不安装并请用户给出）；**绝不静默创建**（定时任务是持久副作用）。不确认则按"只跑一轮"执行并在收尾提示上述挂载方式。
 
 你正在执行 `/sprint-autopilot` 命令，启动从「产品在需求大目录下创建版本子目录 + 上传 PRD」到「等 review/merge PR + 等正式打 tag」全链路无人值守开发。
 
@@ -134,7 +134,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-aut
 /sprint-autopilot [PRD_root] [flags]
 
 # ★ 标准用法（生产 7×24）：操作系统调度两条链路，缺一不成完整闭环 ★★
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 开发（10m）+ 测试（5m）+ 独立 watchdog（5m）三条任务
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install --authorization-text "<你要求持续运行的原话>"   # 开发（10m）+ 测试（5m）+ 独立 watchdog（5m）三条任务；缺授权原话则 autopilot tick 告警停下，不代编授权
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 + 两条链路心跳
 # 交互式短期用法（Claude Code 会话内；会话级、7 天过期、空闲才触发、同会话两条串行）：
 /loop 10m /sprint-autopilot --unattended --no-loop    # 开发链路：扫 docs/requirements/ → /version → /sprint-batch → 触发部署（不跑浏览器）
@@ -154,7 +154,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务在位 +
 | 参数 / Flag | 默认 | 说明 |
 |------------|------|------|
 | `[PRD_root]` | `docs/requirements/` | PRD 需求大目录，命令在此目录下扫描 `V*.*.*` 子目录 |
-| **（无 flag）** | — | **默认 = 配置向导**：扫描版本 → 识别最近一对 → Phase 0 配置补全 → 提示挂载方式（`aidp_scheduler.py install`，或会话内 `/loop 10m /sprint-autopilot --unattended`）+ 退出，**不跑 Phase 2/3**。**例外**：用户**明确表达执行意图**（"开发并测试 / 跑完后续流程 / 帮我自动执行"等）→ **按已明确动作范围执行一轮**、不停在向导态（见上方「交互式全量执行语义」）|
+| **（无 flag）** | — | **默认 = 配置向导**：扫描版本 → 识别最近一对 → Phase 0 配置补全 → 提示挂载方式（`aidp_scheduler.py install`，或会话内 `/loop 10m /sprint-autopilot --unattended --no-loop`）+ 退出，**不跑 Phase 2/3**。**例外**：用户**明确表达执行意图**（"开发并测试 / 跑完后续流程 / 帮我自动执行"等）→ **按已明确动作范围执行一轮**、不停在向导态（见上方「交互式全量执行语义」）|
 | `--no-loop` ★ | 关 | 单次 baseline 检查 + 跑最近一对（Phase 2 上版准发布 + Phase 3 下版全流程）/ 退出；适合操作系统调度（`agent_loop.sh --once` 自动补齐）或 `/loop` 包装内周期触发 |
 | `--once` | 关 | 强制立即跑最近一对（不查 baseline；PRD 已就绪场景）。**默认交互式**（用户在场、保留弹窗）；如需无头单发跑一轮请配 `--unattended`（见下）|
 | `--unattended` ★ | 关（由本轮 `/loop` 上下文 / `--no-loop` 自动推导） | **显式声明无人值守**——最可靠的 `LOOP_UNATTENDED=1` 信号，**不依赖 prompt 的 `/loop` 字符串探测**（0.0.0 的 3 个本轮信号之一）。用于 ① 官方 `/loop` runtime 偶发未把 `/loop` 放进 prompt 上下文时兜底 ② `--once --unattended` 无头跑一轮。★ 判定**只看本轮信号**：本轮既无 `/loop` 上下文也无 `--unattended`/`--no-loop` → 一律按交互式（保留交互式配置确认门）；baseline `autopilot.unattended_confirmed` 仅作诊断留痕、**不参与判定** |
@@ -361,12 +361,12 @@ Phase 0 begin/parse 的本轮 token 必须保留在执行上下文；整轮所�
    - `✅ 通知渠道就绪 channels=<..>` 或 `⚠️ 降级：未配置任何通知渠道 / NOTIFY_ENABLED=0，本轮不发通知`；
    （避免像下游反馈那样"通道明明配好却整程零推送、也无任何告警"。）
 2. **② 无条件 ceremony 校验**：跑 `python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check --stage <skeleton|final>`——逐项校 **build 号是否铸造 / `docs/reports/{version}/AI执行报告/` SPA 是否产出并注册两页 / 应发通知台账是否登记**。**这道 check 不因"没走进 Phase 3.4"而免跑**——它就是命令收尾的固定动作。
-   > ⛔ **`--stage` 选择必须证据化，绝不凭"我以为已委派"选 skeleton（本次反馈根因）**：`skeleton` 是"把 #F/#3 与交付台账的校验延后交给一条**真实存在且在跑**的测试链路"，**唯一合法用它的场景 = `/loop` 无人值守（`LOOP_UNATTENDED=1`）且本 build 已落 `aiauto_delegated_at`（确已 invoke，见子流程 R 委派证据标记）**——此时第二条 `/loop 5m /sprint-aiauto-test --unattended` 会异步跑 `--stage final` 收口。**其余一律用 `final`**：静态-only（`deployment.mode=none`）、**交互式单次调用（`LOOP_UNATTENDED=0`，无第二条 loop 兜底）**、以及**任何"本 build 无 `aiauto_delegated_at` 委派证据"的浏览器测试轮**——因为此时 autopilot 就是 build 关闭方，收尾必须自己跑 `final`（它会连带校 AI测试报告 SPA / #F 通知 / 交付台账，把"内联驱动 chrome 却从未真委派、测试链路 final 门永不执行"的真空当场判 `exit 1`）。判据一句话：**「有真实测试链路会替我跑 final」才 skeleton，否则 final**——绝不因 test-only / 交互单次而降级成永不校验的 skeleton。
+   > ⛔ **`--stage` 选择必须证据化，绝不凭"我以为已委派"选 skeleton（本次反馈根因）**：`skeleton` 是"把 #F/#3 与交付台账的校验延后交给一条**真实存在且在跑**的测试链路"，**唯一合法用它的场景 = `/loop` 无人值守（`LOOP_UNATTENDED=1`）且本 build 已落 `aiauto_delegated_at`（确已 invoke，见子流程 R 委派证据标记）**——此时第二条 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 会异步跑 `--stage final` 收口。**其余一律用 `final`**：静态-only（`deployment.mode=none`）、**交互式单次调用（`LOOP_UNATTENDED=0`，无第二条 loop 兜底）**、以及**任何"本 build 无 `aiauto_delegated_at` 委派证据"的浏览器测试轮**——因为此时 autopilot 就是 build 关闭方，收尾必须自己跑 `final`（它会连带校 AI测试报告 SPA / #F 通知 / 交付台账，把"内联驱动 chrome 却从未真委派、测试链路 final 门永不执行"的真空当场判 `exit 1`）。判据一句话：**「有真实测试链路会替我跑 final」才 skeleton，否则 final**——绝不因 test-only / 交互单次而降级成永不校验的 skeleton。
 3. **③ 缺失即补产、补不齐不静默收尾**：ceremony check `exit 1`（有缺失）→ **逐项打印「缺什么 + 为什么缺 + 补产命令」**（build 缺 → `emit-report.py --kind exec` 铸造 + 写骨架；SPA 缺 → 补 `emit-report.py`；通知台账缺（渠道可用）→ 补发对应里程碑通知 + `autopilot-ceremony-gate.py record-card` 登记）→ 在当前授权和预算内补产并复核；同根因同输入未变立即返回原失败；结构性不可自愈（脚本/模板缺失）→ 归口「失败处置」熔断（同 Phase 3.4 step4 兜底），**绝不静默 exit 让用户误以为产物已生成**。
 4. **④ 双链路收口（P0-4：交互单次【自跑】AI 测试 / 无人值守提醒挂第二条 loop）**：本轮live-tests已授权、有开发/部署产出且本版需浏览器测试（`deployment.mode != none` 且未 `--skip-deploy`、**未带 `--skip-aiauto-test`**）却**检测不到测试链路已真正承接**——判据 = baseline 顶层 `aiauto_test_heartbeat_at` 缺失/陈旧（无近 30min 心跳）**且** 本 build 未落 `aiauto_delegated_at`（子流程 R 委派证据标记未写 = 从未真 invoke 过测试链路）——时，**按上下文分流收口**：
    > ⛔⛔ **本收口【必须覆盖 `test-only`】，绝不再以"test-only 已在子流程 R 委派浏览器实测"为由排除它（本次反馈根因）**：那句是**假设**不是**证据**——autopilot 完全可能在自身上下文里内联驱动 chrome-devtools-cli 跑完测试而**从未真正 invoke `/sprint-aiauto-test`**（`aiauto_delegated_at` 就没写），此时既无测试链路 final 门、也无 #F/#3，却被旧排除条件放行成"静默全绿"。判据改用**客观委派证据（`aiauto_delegated_at` + 心跳）**，`full` / `incremental` / **`test-only` 一视同仁**：只要"该有浏览器测试、却查不到真委派证据"就触发本收口。
    - **★ 无唤醒源的单次调用（`HAS_WAKE_SOURCE=0`——⛔ 判据是它、**不是** `LOOP_UNATTENDED=0`：`--once --unattended` 两者取值相反，按后者判会让这一档既不内联跑测试、又没有下一 tick 和第二条 loop，当场破掉「一次下达全程跑完」；权威实现见 `phase-3-9.md`）→ autopilot 自己 invoke 一次 `/sprint-aiauto-test --once --unattended` 跑浏览器实测**（Phase 0 full 模式已收集 chrome 配置；这是 P0-4 修复"交互单次浏览器测试 100% 缺席"的闭环——命令自我描述含测试、用户预期的"全链路"就该含测试，不能靠"连续 3 tick 熔断"这种单次永远累积不到的兜底）。**invoke 时按子流程 R 委派证据标记落 `aiauto_delegated_at`**；跑完由 `/sprint-aiauto-test` 产 AI测试报告 + #F/#3 + finalize AI执行报告 + 跑 `--stage final` 收口。**★ 若 chrome 确实不可用/自调用未能产出 #F**（best-effort 失败）→ **不静默放行**：autopilot 收尾自跑一次 `--stage final`（它会因 AI测试报告 SPA / #F 缺失判 `exit 1`）→ 走 ③ 补产逻辑逐项报「缺 #F/#3 通知台账 + AI测试报告」，绝不带缺失全绿收尾（对齐验收标准 1）。chrome-devtools-mcp 不可用/未就绪时它自身 Phase 0.1.5 A0 优雅降级/打印引导，autopilot **不硬失败**（best-effort），但**缺失事实必须经 `--stage final` 显式暴露**。**未获live-tests授权或用户显式skip均不启动本环节**（P0-0 唯一授权原则）。
-   - **有唤醒源（`HAS_WAKE_SOURCE=1`，即操作系统调度 / `/loop` 会再叫醒）→ 不内联跑**（浏览器实测归测试链路（`aidp_scheduler.py` 装的测试链路定时任务，或会话内 `/loop 5m /sprint-aiauto-test --unattended`）异步承担，避免与其重复触发）；仅当检测不到其心跳 → **收尾强提示**：`⚠️ AI测试报告 + 测试通知(#D/#R/#F) 由 /sprint-aiauto-test 产，测试链路未运行 → 测试半环产物缺失；请用 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install 装齐两条链路（或会话内并挂 /loop 5m /sprint-aiauto-test --unattended）`。把"测试报告为何没有"讲清楚，而非静默缺失。
+   - **有唤醒源（`HAS_WAKE_SOURCE=1`，即操作系统调度 / `/loop` 会再叫醒）→ 不内联跑**（浏览器实测归测试链路（`aidp_scheduler.py` 装的测试链路定时任务，或会话内 `/loop 5m /sprint-aiauto-test --unattended --no-loop`）异步承担，避免与其重复触发）；仅当检测不到其心跳 → **收尾强提示**：`⚠️ AI测试报告 + 测试通知(#D/#R/#F) 由 /sprint-aiauto-test 产，测试链路未运行 → 测试半环产物缺失；请用 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install 装齐两条链路（或会话内并挂 /loop 5m /sprint-aiauto-test --unattended --no-loop）`。把"测试报告为何没有"讲清楚，而非静默缺失。
 5. **⑤ 产物清单收尾打印**：无论过没过，收尾打印本轮**应产 vs 实产**的仪式产物逐项状态（build 号 / AI执行报告 HTML+注册 / 报告本地路径 / 各里程碑通知 / 测试报告归属），缺失项标原因 + 补产命令，**禁止静默收尾**。
 
 > **★ 与 Phase 3.4 step 4 的关系**：Phase 3.4 step 4 是"走到那一步时"的门；本节是"无论走没走到那一步、命令返回前"的**入口级兜底门**。二者用同一个幂等 `autopilot-ceremony-gate.py check`——走过 Phase 3.4 已过门 → 本节复校即刻通过、零额外成本；没走到（手动完成开发/测试）→ 本节是唯一拦截点，把漏产的仪式产物在收尾补齐。这正是下游反馈「强制性只是自律级、不是结构级」的结构级修复。
@@ -393,7 +393,7 @@ Phase 0 begin/parse 的本轮 token 必须保留在执行上下文；整轮所�
 3bis. **★ 人工修复完成检测 → 自动解冻复测（用户"手动修复后自动再跑 AI 测试"的落地闭环）**：被 `retest-cap` 冻结的版本，autopilot **每 tick 在 Phase 0.3.4 剔除候选【之前】先探人工修复信号**——`needs_human_kind=="retest-cap"` 且满足任一：① `git rev-parse HEAD` ≠ `retest_frozen_head` **且** ≠ 顶层 `last_autopilot_head`（★ 双重不等才算"人工新提交"——排除 autopilot 自己冻结后在同一分支为**其它版本**推进的提交造成的假信号；仅当 HEAD 是"既非冻结锚点、也非 autopilot 最后自推"的第三种提交才判人工）② `last_deployed_at` 晚于 `retest_cap_frozen_at`（人工已重新部署）→ 判定「人工修复完成」→ **自动解冻**：清 `needs_human` / `needs_human_kind` / `retest_cap_frozen_at` / `retest_frozen_head` + **一并清冻结契约三件套 `aiauto_frozen_at` / `freeze_reason` / 顶层 `aiauto_blocked_reason`**（写时成套、清时同样成套，残留会让测试链路继续当冻结态）+ **`auto_retest_streak` 归零**（重新授予下一个 3 轮自动复测配额）→ 该版本重回正常候选 → 进 Phase 3 **重部署（如需）→ Phase 3.1.5 铸新 build → 触发测试链路 AI 自动化测试**（`auto_fixable_pending` 由测试链路按新一轮实测结果重新置真）。新一轮若又连吃 3 轮自动修复仍不收敛 → 再次 step 3 冻结转人工，如此"自动 3 轮 ⇄ 人工修复"往复循环，**既永不无限自动烧，也永不把人工修好的代码晾着不复测**。一行日志「🔧 检测到人工修复（新提交/新部署）→ 解冻 <V>、重置自动复测计数、铸新 build 复测」。**★ 无人值守铁律**：本检测与解冻**全自动、不弹 `AskUserQuestion`**（`/loop` 与交互式单次调用下都自动执行）；用户唯一的动作就是"在本地把 bug 修掉并提交/部署"，其余（发现修复→解冻→铸 build→复测→出报告→发通知）全由 autopilot 自动完成。
    > 📌 **信号鲁棒性（已知窄窗 + 兜底）**：条件①（HEAD 双重不等）在**多版本共用同一分支**时有窄漏检窗——若人工对本冻结版本提交后、autopilot 在本次 3bis 探测【之前】又为**另一版本**在同分支自推并把 `last_autopilot_head` 刷成新 HEAD，则当前 HEAD == `last_autopilot_head`、①被掩盖。**条件②（`last_deployed_at` 晚于 `retest_cap_frozen_at`，即人工重新部署）是鲁棒兜底、不受该窗影响**——故 #4 通知明确引导用户"提交并**重新部署**"，只要人工重新部署即必被②命中解冻；即使只提交未部署，下一次人工动作/部署仍会命中，**不致永冻**（自恢复）。**规避建议**：每版本用独立 dev 分支即无此窗。
 4. **需人工确认类不进本闭环**：`pending_clarifications[]` 里的产品语义/范围问题**不自动修**——它们在测试链路已"本轮照常 finalize、#F 列出待确认项"（旧 build 报告保留），等用户裁决后由用户 `/sprint-autopilot --once` 铸新 build 复测。autopilot 每 tick 若发现某版**仅剩 `pending_clarifications[]`、无 `auto_fixable_pending`** → 不自动动作（等人），但在 #4 / 终端提示"有 N 项待产品确认，确认后 `--once` 复测"。
-5. **standalone / 未挂测试 loop**：本闭环依赖测试链路写 `auto_fixable_pending`；若测试链路未运行（未装调度 / 未挂 `/loop 5m /sprint-aiauto-test --unattended`），`test_loop_missing_streak` 熔断（见 baseline schema）照常兜底，不会空转。
+5. **standalone / 未挂测试 loop**：本闭环依赖测试链路写 `auto_fixable_pending`；若测试链路未运行（未装调度 / 未挂 `/loop 5m /sprint-aiauto-test --unattended --no-loop`），`test_loop_missing_streak` 熔断（见 baseline schema）照常兜底，不会空转。
 
 ## ★ 子 Agent 派发失败的分层重试与降级（P0-3）
 
@@ -449,7 +449,7 @@ Phase 0 begin/parse 的本轮 token 必须保留在执行上下文；整轮所�
 
 > **★ 完整守护挂载用法**（操作系统调度 · 会话内 `/loop` · 单次/临时模式 · 用法对比表 · 权限前置）**+ 输出示例**见 **`{{AIDP_HOME}}/flows/sprint-autopilot/usage-guard.md`**（按需 `Read`）。标准挂法（★ 双链路缺一不可）：
 > ```bash
-> python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 开发链路 + 测试链路（漏掉测试链路则浏览器实测/AI测试报告/#F 永不触发）
+> python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install --authorization-text "<你要求持续运行的原话>"   # 开发链路 + 测试链路（漏掉测试链路则浏览器实测/AI测试报告/#F 永不触发）
 > ```
 
 ## 停止机制 / 与其他命令的关系 / 注意事项

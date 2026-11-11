@@ -60,7 +60,7 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-t
 # 当前版本全量只能来自真实autopilot委派的冻结manifest。
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须继承真实委派child}"
 PRIMARY_CASES=$(python3 - "$EXECUTION_CONTEXT" "$TARGET_VERSION" "$BUILD" <<'VERSION_CASES'
-import importlib.util, json, sys
+import json, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from entry_context import load_context
@@ -72,11 +72,12 @@ validate_test_binding(root, ctx, sys.argv[2], sys.argv[3])
 plan = json.loads(Path(ctx["test_manifest"]["path"]).read_text())
 load_plan(root, sys.argv[2], sys.argv[3], plan["commit"], plan)
 ids = set(validate_case_index(root, plan))
-spec = importlib.util.spec_from_file_location("case_parser", "{{AIDP_HOME}}/skills/auto-test-runner/scripts/tasks_state.py")
-parser = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(parser)
+TS = "{{AIDP_HOME}}/skills/auto-test-runner/scripts/tasks_state.py"
+def book_ids(book):  # tasks_state.py ids：只读列出册内用例 ID，不建 tasks.md、不构成执行范围
+    out = subprocess.run([sys.executable, TS, "ids", str(book), "--json"], check=True, capture_output=True, text=True)
+    return {item["id"] for item in json.loads(out.stdout)["cases"]}
 for path in formal_case_books(root, sys.argv[2]):  # 与 validate_case_index 共用同一排除规则
-    selected = {m[1] for m in parser.CASE_RE.finditer(path.read_text())}
+    selected = book_ids(path)
     if selected & ids:
         if not selected <= ids:
             raise SystemExit("UNVERIFIED: 用例册含未授权ID")
@@ -118,30 +119,14 @@ python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test 
 
 > ★ 报告写法（Phase 3）：主集与补集**分两段**呈现 — 「① 主集用例（来源：测试人员）」+ 「② 补集用例（来源：研发自测查漏）」；执行顺序为主集 → 补集；若主集 = 研发自测唯一来源，则只输出单段。**仅 `DRIVER=mcp-remote` 远程无头模式下，被 E 段拆出的「必须有头」用例不计入本轮主/补集执行，仅在 Phase 3.5「待覆盖」段列出；`DRIVER=cli` 本地则全部计入本轮（含必须有头）。**
 
-### 2.0.7 ★ 前置数据体检门（P0-6 — 跑用例【前】批量探测前置数据，缺则整批 block，不逐条跑到一半才发现）
+### 2.0.7 ★ 前置数据体检门（P0-6 — 前置数据缺则整批 block，不逐条跑到一半才发现）
 
-**动机**：用例集选定后直接逐条执行、前置数据是否具备全无前置校验。实测某轮 47 条阻塞绝大多数是同一根因（测试企业只有 1 名员工、每规格只有 1 张订单），却分散在 3 小时里被逐条发现——用 2 次 API 调用在开跑前就能查出。故在用例集确定（2.0）后、委派执行（2.1）前插入本门。
+**动机**：实测某轮 47 条阻塞绝大多数是同一根因（测试企业只有 1 名员工、每规格只有 1 张订单），却分散在 3 小时里被逐条发现。探测与归因由 `auto-test-runner` 在**开跑前的前置阶段**一次性完成（`references/execution-methodology.md`「一·补」，按 `ED-NNN` 归组），命令端**只传前置项、消费回传、打印**，⛔ 不自建探测、不批量调 API/DB、不做三态归因（约定 21）。
 
-**步骤（命令端只做汇总 + 打印 + 落 run-context；探测执行归 SKILL）**：
-1. **汇总前置数据需求**：扫本轮用例集每条的「前置数据编排」段 + `docs/testing/{version}/研发自测/01_研发自测方案.md` §3.3「前置数据准备」，汇总出本轮全部前置数据项（如：≥2 张同规格订单 / ≥5 名员工 / 已过期订单 / 第二企业账号…），每项关联「依赖它的用例集合」。
-2. **最少调用批量探测**：对每一项用**最少的 API/DB 调用**探测是否具备（同类合并、能一次查全不拆多次；"员工数"一次列表接口即得、"某规格订单数"一次查询即得）。探测走已登录会话的项目自身接口 / run-context `datasource`（datasource 须先过归属校验，见上游 `references/execution-methodology.md`「十一、数据源归属校验」）。
-3. **判定与落 block 归 SKILL 执行内核**（约定 21）：`auto-test-runner` 已把「前置数据面探测」
-   收进**方法论层第二步前置阶段**（`references/execution-methodology.md`「一·补」），命令端
-   **只把前置项与数据面入口作为 run-context 传下去**，⛔ 不自建探测执行与三态归因。
-   三态口径（满足 → 进浏览器 / 满足但数据不足 → `block(precondition-unmet)` / 探测本身失败 →
-   `block(network-error|env-unavailable)`）以 SKILL 为单一信源；**⛔ 探测失败绝不得转写成
-   "0 条"或前置不满足**——上游硬门 `check_result.py` 的 **C13 `probe_error_disguised_as_unmet`
-   判 Critical**，会经 Phase 3.1 的形状硬门把整份报告标为证据不合契约。
-   ⚠️ 用例侧须有结构化 `ED-NNN` 前置探测声明才走本阶段；只有自然语言前置的用例按旧流程
-   由浏览器内感知处理，**SKILL 明令不得据自然语言擅自猜测探测式**。
+**步骤**：
+1. **汇总前置数据需求并交 run-context**：扫本轮用例集每条的「前置数据编排」段 + `docs/testing/{version}/研发自测/01_研发自测方案.md` §3.3「前置数据准备」，汇总出本轮全部前置数据项（如：≥2 张同规格订单 / ≥5 名员工 / 第二企业账号…）及其依赖用例集合，连同数据面入口（run-context `datasource`，须先过归属校验，见上游 `references/execution-methodology.md`「十一、数据源归属校验」）一并写入 run-context。用例侧须有结构化 `ED-NNN` 前置探测声明才走 SKILL 前置阶段；只有自然语言前置的用例按旧流程由浏览器内感知处理，**SKILL 明令不得据自然语言擅自猜测探测式**。
+2. **判定与落 block 归 SKILL**：三态口径（满足 → 进浏览器 / 满足但数据不足 → `block(precondition-unmet)` / 探测本身失败 → `block(network-error|env-unavailable)`）以 SKILL 为单一信源；**⛔ 探测失败绝不得转写成「0 条」或前置不足**——上游硬门 `check_result.py` 的 C13 `probe_error_disguised_as_unmet` 判 Critical，会经 Phase 3.1 形状硬门把整份报告标为证据不合契约。
+3. **消费 SKILL 回传后打印体检表**：前置阶段结果落在各 `results/*.json` 的 `precondition_probe.status`（`satisfied` / `unmet` / `probe-error`）与 `block_reason`；命令端只读这些回传字段汇总打印（可执行 / 前置不足 / 探测失败各计数 + 缺失前置清单及受阻用例数），`probe-error` 单列、不计入前置不足。首批结果落盘即可打印，让人在测试早期就知道要补什么数据。
+4. **落 run-context + 报告**：体检结果写 run-context「前置数据体检」区；Phase 3 报告「测试概况」引用（各计数 + 缺失清单），#F 通知阻塞数附体检缺失摘要。
 
-4. **先打印体检表**：委派执行前终端先打印，让人在**测试开始时**就知道要补什么数据、而非 3 小时后：
-   ```
-   🩺 前置数据体检（本轮 109 条）：可执行 62 / 前置不足 47
-      缺失前置：① 同规格第 2 张订单（阻塞 SUITE-ORDER 的 23 条）② 第 5 名员工（阻塞 SUITE-STAFF 的 18 条）③ 已过期订单（阻塞 6 条）
-      → 补齐上述数据后重跑可解除阻塞；本轮先跑 62 条可执行用例
-   ```
-5. **落 run-context + 报告**：体检结果写 run-context「前置数据体检」区；Phase 3 报告「测试概况」引用（可执行 / 前置不足计数 + 缺失清单），#F 通知阻塞数附体检缺失摘要。
-
-**边界**：本门**只探测、不造数**（造数是「前置数据编排」段 `SQL造删数` 的职责，且受运行时验证纪律约束）；探测失败的归因**以 SKILL 三态为准**（`block(network-error|env-unavailable)`，⛔ 不得写成 `precondition-unmet`），不因探测失败中断整轮。无人值守下全自动、不弹窗。
-
+**边界**：本门**只传递与消费、不探测、不造数**（造数是「前置数据编排」段 `SQL造删数` 的职责，且受运行时验证纪律约束）；探测失败的归因**以 SKILL 三态为准**，不因探测失败中断整轮。无人值守下全自动、不弹窗。

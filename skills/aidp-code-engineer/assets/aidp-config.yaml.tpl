@@ -19,6 +19,8 @@ development:
 
 # 可选执行策略；null 表示普通开发/修复默认实现、必要静态检查及本任务相关单测。
 # 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。
+# 来源键 authorization_source 由 Agent 在用户明确选择后记录，不要自行手填；形如：
+#   execution_policy: {authorization_source: {kind: project-policy, user_selected: true, request_id: <请求标识>, text: <用户原话>}}
 execution_policy: null
 
 commit_gate:
@@ -46,7 +48,10 @@ notify:
 cicd:
   # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。
   provider: github-actions
-  # 无人值守下是否允许自动触发 / 重试流水线。
+  # 兼容旧键：单独设 true 或 false 都不改变行为（旧布尔不是授权，是否触发以当次 deploy 授权为准）。
+  # 只有同时存在用户明确选择的禁用来源 auto_trigger_source（kind: project-policy，结构同
+  # execution_policy.authorization_source，由 Agent 在用户明确要求禁止自动触发后记录，不要手填）
+  # 且 auto_trigger: false，才拦截自动触发 / 重试。
   auto_trigger: false
   max_retries: 3
   # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；
@@ -69,6 +74,7 @@ deployment:
   # 接入字段与真实记录格式见 {{AIDP_HOME}}/reference/部署操作约定.md。
   # DB/完整冷备/迁移快照共用 record_file、max_per_day、timezone。
   # commands 仅填既有 argv，skip_args 仅填现有部署脚本实际支持的参数。
+  # 可选 timeout_seconds：项目备份命令的超时秒数（缺省 3600）。
   backup: null
 
 stop_guard:

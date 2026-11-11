@@ -960,6 +960,24 @@ def cmd_shell(a) -> int:
     return 0
 
 
+def cmd_live_allowed(a) -> int:
+    """版本根授权是否含 live-tests（Phase 2 准发布门 0b 据此识别用户显式跳过实测）。
+
+    输出 1/0；读不到版本根上下文 / 路由失败 → rc=1 且无输出，调用方按保守的“已授权”处理，不放宽任何门。
+    """
+    r = _be(["--version", a.version, "get", "execution_context", "--default", ""])
+    path = (r.stdout or "").strip()
+    if r.returncode or not path:
+        return 1
+    try:
+        from entry_context import route_context
+        actions = route_context(".", path, "route")["authorized_actions"]
+    except Exception:  # noqa: BLE001 —— 任何失败都不能当作“用户跳过”
+        return 1
+    print(int("live-tests" in actions))
+    return 0
+
+
 def main(argv) -> int:
     ap = argparse.ArgumentParser(description="autopilot/aiauto-test 本 tick 变量解析·落盘·读回")
     ap.add_argument("--shell", action="store_true", help="输出可 eval 的赋值行（读回）")
@@ -992,6 +1010,8 @@ def main(argv) -> int:
     s.add_argument("value")
 
     _with_command(sub.add_parser("list", help="列出已登记的变量名（供排查拼写）"))
+    la = _with_command(sub.add_parser("live-allowed", help="版本根授权是否含 live-tests（1/0；失败 rc=1 无输出）"))
+    la.add_argument("--version", required=True)
 
     a = ap.parse_args(_normalize_argv(argv))
     if a.shell and not a.op:
@@ -1024,6 +1044,8 @@ def main(argv) -> int:
     if a.op == "list":
         print("\n".join(ALL_VARS))
         return 0
+    if a.op == "live-allowed":
+        return cmd_live_allowed(a)
     ap.print_help()
     return 2
 

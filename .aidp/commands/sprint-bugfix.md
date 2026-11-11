@@ -1,4 +1,4 @@
-# /sprint-bugfix — 问题修复（独立可用，支持自动累进）
+# /sprint-bugfix — 问题修复（独立可用；默认 light，formal 父编排才累进）
 
 ## 执行身份与授权前置路由（先于本文其余动作）
 
@@ -38,9 +38,9 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bug
 - **方式 B（独立修复已记录的 bug）**：仅处理本次明确指定的缺陷文件/编号/业务范围；历史待办只作输入，不全部接管
 - **方式 C（formal 自动累进新 Sprint）**：正式父编排明确要求累进，按描述创建新 Sprint 修复涉及设计变更的 bug，串联 test → 再 bugfix → close；普通 light 描述不进入此分支
 
-> 🔀 **术语对照**：本命令的「方式 A/B/C」是**调用方式**分叉，与 `/sprint-dev`「分支 A（按计划）/ B（口述累进）」、`/sprint-full`「模式 A（按计划）/ B（自动累进）」不是同一组；本命令方式 C ≈ 那两者的 B（累进新 Sprint）。
+> 🔀 **术语对照**：本命令的「方式 A/B/C」是**调用方式**分叉（A 被编排器调用 / B 独立修复已记录 bug / C formal 累进新 Sprint），Phase 0C.* 是方式 C 的前置层（对应 `/sprint-dev` 分支 B 的 Phase 0B.*）。累进新 Sprint 这一概念在三个命令里各有命名：本命令方式 C ≈ `/sprint-dev` 分支 B ≈ `/sprint-full` 模式 B；各命令内部命名自洽，勿跨命令按字母对号入座（本命令方式 A/B 与它们的 A/B 含义不同）。
 
-**★ 本命令是编排器**：调用 `bugfix` skill（其根因定位方法论为 `superpowers:systematic-debugging`，由 SKILL 内部使用）；涉及完整流程时串联 `/sprint-start` / `/sprint-test` / `/sprint-close`。
+**★ 本命令是编排器**：调用 `bugfix` skill（调用约定见 `{{AIDP_HOME}}/reference/skills.md`「bugfix SKILL 调用约定」）；涉及完整流程时串联 `/sprint-start` / `/sprint-test` / `/sprint-close`。
 
 ## 与 skill 的关系
 
@@ -129,7 +129,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bug
 
 ```
 判断参数第一项（★ 先判调用来源：由 /sprint-full · /sprint-batch 内部 bugfix 循环调起 → 方式 A）：
-  - 空                              → 方式 B：修复所有待修复 bug
+  - 空                              → 方式 B：先澄清本次目标；有核实清单（BUG ID / 文件）才按清单修，⛔ 不扫描接管全部历史待修
   - sprint-{NNN}                     → 方式 B：按 Sprint 过滤
   - bugfix-*.md                      → 方式 B：指定文件
   - 字符串（"xxx"）                   → 先做**规模语义判定**（见下），再定 方式 B / 方式 C
@@ -173,9 +173,9 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bug
 |------|--------|---------|
 | 前置准备 | 读 systemPatterns/techContext/architecture + 详细设计/事实清单/对外开放接口 | bug 涉路径/URL/404 必精读「路径消费者点」表；对外接口修复红线禁引 Session/Cookie/JWT |
 | Step 0 | ⛔ 口述 bug + 来源 B 清单待修行先落 `bugfix-{date}-{user}.md` 条目（带来源回链），**不得跳过直接改代码** | 去重仅回链 / exact match，不做语义模糊判断 |
-| Step 1 | 调 `bugfix` skill（参数 `sprint-{NNN}` / 文件名 / 空=零散模式），prompt 附路径/URL/proxy + 配置 + 部署台账专项 | 路径类修完单点须巡检同表其他消费者点 |
+| Step 1 | 调 `bugfix` skill（参数 `sprint-{NNN}` / 文件名，prompt 带本次核实的 BUG ID 清单；空参数无清单 → 澄清 / 返回缺口），附路径/URL/proxy + 配置 + 部署台账专项 | 路径类修完单点须巡检同表其他消费者点 |
 | Step 2 | 推送分类与监听（约定 31.5） | 正式代码变更 push 后必走 CICD 监听 + 就绪探针 |
-| Step 3 | 回填状态 / Commit / 机器修复证据链接（bugfix 记录 + 来源 B 清单行，不删行） | 根因权威落点 = 当前execution context JSON，日常不写报告Markdown |
+| Step 3 | 回填状态 / Commit / 证据或报告链接（bugfix 记录 + 来源 B 清单行，不删行） | 根因权威落点随 `report_mode`：formal 默认 `file` = SKILL 报告；`evidence-only` = 当前 execution context JSON |
 | Step 4 | 编译（后端）/ 前端校验（lint+类型检查不打包） | 仅改动侧 + 资源受限 |
 | Step 5 | 自动回写设计文档（约定 22 级联；经 `--ledger-cascade` **就地改内容主文档正文**，⛔ 不新建 `NN_` 分册） | 纯逻辑修复不触发 |
 | Step 5.1 | ★ 累进产物审计（Step 5 产出四类文档任一份 → 派 version-auditor 子 Agent，⛔ 不得省）| `scope=incremental`，审 C-4/C-5/F/G/H 五项 |
@@ -223,7 +223,7 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 执行：/sprint-dev "{描述}" --execution-context "$EXECUTION_CONTEXT" skip-test [--cascade-now] [--from-batch] [--unattended]
 ```
 
-透传 BUG ID/根因证据与具体修复工作单，由原开发入口编排实现者使用 bugfix SKILL 的根因方法；不让两组 Agent 同时改同一写集。`skip-test` 必传以抑制开发入口自带的后续串联，test/close 由本层接管；`--cascade-now` 仅已有显式要求才传，`--dev-scale` 及实测 required/skip 意图同样透传。M 的 docs 与契约 reviewer 汇合必须通过，skip-test 不省汇合门。
+透传 BUG ID/根因证据与具体修复工作单，由原开发入口编排实现者在新 Sprint 内完成修复；**不整体调用 bugfix SKILL**（其流程会自行修码并写报告，与开发入口双写同一写集），只沿用其根因纪律——先定根因再改码、证据未确认不动代码（SKILL Step 2.2b / Step 3）；不让两组 Agent 同时改同一写集。`skip-test` 必传以抑制开发入口自带的后续串联，test/close 由本层接管；`--cascade-now` 仅已有显式要求才传，`--dev-scale` 及实测 required/skip 意图同样透传。M 的 docs 与契约 reviewer 汇合必须通过，skip-test 不省汇合门。
 
 ### Phase 2：测试
 
@@ -235,7 +235,7 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 
 ### Phase 3：只接管未闭环项
 
-`/sprint-test` 已负责当轮原实现者修复与差量复核。本层不重复完整验收、不重修已闭环 BUG；仅对其返回的可修复残项恢复原实现者，必要时方式 B 接管同一 Sprint/BUG，随后 `/sprint-test {新NNN} --execution-context "$EXECUTION_CONTEXT" --resume-acceptance [--from-batch] [--unattended]` 续接定向复核与最终 Sprint 单测收敛。共用验收的修复轮次，累计连续 5 轮失败即返回未闭环项，不另起五轮完整验收。
+`/sprint-test` 已负责当轮原实现者修复与差量复核。本层不重复完整验收、不重修已闭环 BUG；仅对其返回的可修复残项恢复原实现者，必要时方式 B 接管同一 Sprint/BUG，随后 `/sprint-test {新NNN} --execution-context "$EXECUTION_CONTEXT" --resume-acceptance [--from-batch] [--unattended]` 续接定向复核与最终 Sprint 单测收敛。共用验收的修复轮次，累计连续 5 轮失败即返回未闭环项（本命令层自设上限，与 CVL `mode=loop` 的轮次无关），不另起五轮完整验收。
 
 产品/版本/破坏性/环境待决保持具体原因并返回上层，不能静默关闭。所有下游继续原样透传 `--unattended` / `--from-batch` 和实测意图；没有可信原始质量证据时回验收补齐，不宣称 CVL 增量模式。
 
@@ -274,7 +274,7 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 ### 方式 C 输出
 
 ```
-🎉 /sprint-bugfix "{描述}" 完成（自动累进 Sprint-{新NNN}）
+🎉 /sprint-bugfix "{描述}" 完成（formal 累进 Sprint-{新NNN}）
 
 📋 本轮产物（按 S/M/L 实际状态列出，不把延期写成已完成）：
 - BUG 记录与来源回链
@@ -306,7 +306,7 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 
 # 场景 2：★ 独立修复已记录的零散 bug（最常用）
 # 先在 docs/bugfix/V0.1.0/bugfix-20260509-alice.md 添加 bug 表格行
-/sprint-bugfix                            # 修复所有待修复 bug
+/sprint-bugfix                            # 空参数：先澄清要修哪些 bug（或由调用方 / 核实清单限定），不自动全扫
 
 # 场景 3：按 Sprint 过滤
 /sprint-bugfix sprint-003                 # 只修 Sprint-003 相关的 bug
@@ -316,7 +316,7 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 
 # 场景 5：★ 较大 bug，需要新 Sprint + 设计变更
 /sprint-bugfix "修复批量导入重复校验逻辑，需新增唯一约束和查重接口"
-# 自动：累进 Sprint-007 → 追加设计 → 开发 → 测试 → 关闭
+# 仅 formal 父编排下：累进 Sprint-007 → 追加设计 → 开发 → 测试 → 关闭（独立无上下文的描述为 light，不新开 Sprint）
 
 # 场景 6：方式 C + 跳过后续串联
 /sprint-bugfix "重构认证模块修复会话泄漏" skip-test

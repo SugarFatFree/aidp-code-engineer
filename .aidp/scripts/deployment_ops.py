@@ -51,7 +51,8 @@ def target_id(value):
 
 def backup(root, kind, targets):
     config, ok = load(str(root))
-    policy = config.get("deployment", {}).get("backup") if ok else None
+    section = config.get("deployment") if ok and isinstance(config, dict) else None
+    policy = section.get("backup") if isinstance(section, dict) else None
     if not isinstance(policy, dict):
         raise PrerequisiteError("缺少可解析的项目 deployment.backup 策略")
     limit = policy.get("max_per_day")
@@ -62,7 +63,10 @@ def backup(root, kind, targets):
     # 项目须接入唯一真实记录路径；禁止按 kind/env/version 拆开额度。
     if not record.is_file():
         raise PrerequisiteError("真实备份记录缺失；先核对项目历史，不能假定零次或已保护")
-    import fcntl  # 锁不可用即失败，不能降级为无锁执行。
+    try:
+        import fcntl  # 仅 POSIX；锁不可用即失败，不能降级为无锁执行。
+    except ImportError:
+        raise PrerequisiteError("当前平台没有 fcntl 文件锁，限频备份不可用；请改用项目既有统一备份接口") from None
     with record.with_name(record.name + ".lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         ledger = json.loads(record.read_text(encoding="utf-8"))

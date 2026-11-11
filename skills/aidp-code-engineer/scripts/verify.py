@@ -116,7 +116,9 @@ def check_native_runtime(root: Path, r):
                            - set(manifest.get("user_files", [])))
             if missing or extra:
                 r.error(f"Agent 原生运行包 {relative} 文件清单与当前脚手架 {current_version} 不一致："
-                        f"缺失 {_head(missing)}；多出 {_head(extra)}")
+                        f"缺失 {_head(missing)}；多出 {_head(extra)}"
+                        + ("（同版本升级不补门控新增文件 → 重跑 `scaffold.py <项目> --mode upgrade --force`，先整包备份再对齐）"
+                           if missing else ""))
             # 逐字比较前先按本运行包的 AIDP_HOME 渲染真源（单一信源 = runtime_layout.render_text），
             # 所以 `{{AIDP_HOME}}` 占位符本身不会造成不一致；真正的全片漂移只可能来自写入口径
             # （曾经的 CRLF 文本写入）。⛔ 不要在这里再抽一层渲染 API。
@@ -1001,7 +1003,13 @@ GUARDS = (
     ("check_ghost_flags", "check_ghost_flags", "幽灵旗标", ("undefined",), "ERROR", None, None),
     # 「护栏必须有调用方」：没有调用方的确定性脚本等于不存在（本仓铁律）。
     ("check_script_callers", "check_script_callers", "脚本无调用方", ("findings",), "ERROR", None, "applicable"),
-    ("check_loop_examples", "check_loop_examples", "/loop 示例 --unattended", ("violations",), "ERROR", None, None),
+    ("check_loop_examples", "check_loop_examples", "/loop 示例 --unattended --no-loop", ("violations",), "ERROR", None, None),
+    # ★ 以下三道为「模板仓库维护」门：非模板仓库（根无 `版本变更历史.md`）脚本自报 applicable=false → N/A。
+    #   README 登记 / 中文数字计数 / 陈旧短语黑名单，都是「改了主路径、描述面没跟着改」类缺陷，
+    #   既有的计数 / 引用 / 编号检查结构上抓不到（见各脚本 docstring）。
+    ("check_readme_registry", "check_readme_registry", "目录文件 README 登记", ("findings",), "ERROR", None, None),
+    ("check_cn_count_claims", "check_cn_count_claims", "中文数字自称计数", ("violations",), "ERROR", None, None),
+    ("check_stale_phrases", "check_stale_phrases", "陈旧短语黑名单", ("findings",), "ERROR", None, None),
     ("check_line_refs", "check_line_refs", "硬编码行号引用", ("findings",), "WARN", None, None),
     ("check_shard_counts", "check_shard_counts", "分片计数声明", ("findings",), "ERROR", None, None),
     ("check_flow_var_refs", "check_flow_var_refs", "flow 跨分片变量", ("findings",), "ERROR", ["--strict"], None),
@@ -1154,6 +1162,8 @@ def check_template_bundle(root: Path, r: VerifyResult):
                 f" → 跑 mirror_to_bundle.py")
     else:
         r.note(f"范式版本一致：{cv}")
+        if not L.changelog_has_entry(root, cv):
+            r.error(f"{L.CHANGELOG} 缺少当前范式版本 {cv} 的变更记录条目（`### {cv}（日期）`）→ 人工补一条 ≤100 字摘要")
 
 
 # 根 .gitignore 里只服务模板仓库自身、不下发的规则

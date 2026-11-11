@@ -5,7 +5,7 @@
 > - **同 Phase 其它分片**：phase-0-1.md … phase-0-9.md（含 phase-0-6b.md）（清单见命令主体 Phase 0 骨架表「所在分片」列）
 >
 > ⚠️ **权威性**：本片是该闭环 step 1/2 的**执行落点**。闭环三步（step 1/2 与 step 3bis）**必须同片承载**——只要有一步只留在命令主体正文里而没有分片落点，就是一半落地一半没落地。叠加「无人值守下 Phase 2/3 由独立子 Agent 逐片 `Read` 执行」这一事实，子 Agent 根本看不到命令正文那两段：测试链路辛苦写下的 `auto_fixable_pending=true` **无人消费**，缺陷永远停在「问题汇总清单」里，版本永不收敛，最终按 `prerelease_test_hold_streak` 12 tick 误冻结成「未收敛」。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-0-6b.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ---
 

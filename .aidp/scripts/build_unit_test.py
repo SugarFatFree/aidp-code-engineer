@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """在部署 commit 的 detached worktree 内执行 build 全量单测（无网络安装/部署）。
 
+plan-init --root ROOT --version VERSION [--out PATH] [--force]   项目侧一次性发现测试文件，写 test-plan.json 草稿（提交后冻结；运行期不全仓发现）
+freeze --root ROOT --version VERSION --build BUILD --commit SHA [--source PATH] [--out DIR]
 run --root ROOT --version VERSION --build BUILD --commit SHA --plan JSON [--timeout 3600]
 status --root ROOT --version VERSION --build BUILD
 --self-check  用真实临时 Git 仓库和标准库 unittest 验证隔离、缓存及失败分类。
@@ -35,7 +37,7 @@ from aidp_paths import baseline, runtime_dir
 from baseline_edit import load_archived_node
 
 SCHEMA = 1
-STATUSES = {"PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"}
+STATUSES = {"PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING", "NOT_APPLICABLE"}
 NULL_COUNTS = {"passed": None, "failed": None, "skipped": None}
 MISSING = re.compile(
     r"ModuleNotFoundError|ImportError:|No module named|Cannot find module|ERR_MODULE_NOT_FOUND|"
@@ -134,6 +136,33 @@ def relative(value, allow_dot=False):
     return str(path)
 
 
+UNIT_NA = {"status": "NOT_APPLICABLE", "reason": "all-cases-browser-only"}
+
+
+def none_found(evidence):
+    """“发现过程执行了且结果为空”的机器证据（plan-init 写入）；手写空清单不算。"""
+    return (isinstance(evidence, dict) and evidence.get("status") == "none-found" and evidence.get("files") == 0
+            and isinstance(evidence.get("checked"), list) and bool(evidence["checked"]))
+FREEZE_DIR = "version-freeze"
+
+
+def read_plan_config(source_path, payload):
+    """解析部署 commit 内的测试计划来源（JSON，或契约卡内唯一 aidp-test-plan 围栏块）；load_plan/freeze 共用。"""
+    if source_path.lower().endswith(".json"):
+        config = json.loads(payload)
+    else:
+        blocks = re.findall(r"^```aidp-test-plan[ \t]*\n(.*?)^```[ \t]*$",
+                            payload.decode("utf-8"), re.M | re.S)
+        if len(blocks) != 1:
+            raise BuildError("契约卡须有且仅有一个 fenced aidp-test-plan JSON 块")
+        config = json.loads(blocks[0])
+        if not isinstance(config, dict) or config.get("schema") != SCHEMA:
+            raise BuildError("aidp-test-plan 块的 schema 必须是 1")
+    if not isinstance(config, dict) or not isinstance(config.get("test_plan", config), dict):
+        raise BuildError("项目测试配置必须是 JSON 对象")
+    return config
+
+
 def load_plan(root, version, build, commit, plan):
     if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit or ""):
         raise BuildError("commit 必须是完整小写 Git SHA，禁止 HEAD/分支/缩写")
@@ -179,21 +208,17 @@ def load_plan(root, version, build, commit, plan):
     payload = git(root, "show", f"{commit}:{source_path}")
     if source.get("sha256") != hashlib.sha256(payload).hexdigest():
         raise BuildError("计划来源 SHA256 与部署 commit 内文件不符")
-    if source_path.lower().endswith(".json"):
-        config = json.loads(payload)
-    else:
-        blocks = re.findall(r"^```aidp-test-plan[ \t]*\n(.*?)^```[ \t]*$",
-                            payload.decode("utf-8"), re.M | re.S)
-        if len(blocks) != 1:
-            raise BuildError("契约卡须有且仅有一个 fenced aidp-test-plan JSON 块")
-        config = json.loads(blocks[0])
-        if not isinstance(config, dict) or config.get("schema") != SCHEMA:
-            raise BuildError("aidp-test-plan 块的 schema 必须是 1")
-    if not isinstance(config, dict) or not isinstance(config.get("test_plan", config), dict):
-        raise BuildError("项目测试配置必须是 JSON 对象")
+    config = read_plan_config(source_path, payload)
     suites = plan.get("suites")
     # 只读取部署 commit 中的配置；不读取主工作区相同路径。
     configured = config.get("test_plan", config).get("suites")
+    if plan.get("unit_applicability") is not None:
+        # 单测不适用（全部 browser_only）：无 runner 可冻结；来源不得另含 suites，防止“声明不适用却有单测”。
+        applicability = plan["unit_applicability"]
+        if (not isinstance(applicability, dict) or {k: applicability.get(k) for k in UNIT_NA} != UNIT_NA
+                or not none_found(applicability.get("evidence")) or suites != [] or configured not in (None, [])):
+            raise BuildError("unit_applicability 只能与空 suites 同时出现，且来源不得含 suites")
+        return plan
     if not isinstance(suites, list) or not suites or suites != configured:
         raise BuildError("冻结 suites 必须与部署 commit 内项目测试配置完全一致且非空")
     identities = set()
@@ -277,11 +302,49 @@ def formal_case_books(root, version):
     return books
 
 
-def validate_case_index(root, plan):
-    """把验收映射与本版本正式用例标题核对；不扫描仓库测试代码。"""
+def case_parser():
+    """正式用例标题的唯一解析器（tasks_state.CASE_RE）。"""
     import importlib.util
+    spec = importlib.util.spec_from_file_location("_aidp_formal_cases", Path(__file__).resolve().parent.parent /
+                                                 "skills/auto-test-runner/scripts/tasks_state.py")
+    parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(parser)
+    return parser
+
+
+def baseline_file(root, version, rel, baseline_root=None):
+    """验收基线只有两个合法落点：本版本 docs/testing/<v>/ 下 JSON（读 root），或 freeze 写入主仓运行态目录
+    memory/.aidp/version-freeze/<v>/ 下 JSON（读 baseline_root，默认 root）；后者由 manifest 摘要固定，不入 Git。"""
+    rel = relative(rel)
+    if not rel.endswith(".json"):
+        raise BuildError("验收基线必须是 JSON")
+    if rel.startswith(f"docs/testing/{component(version)}/"):
+        base = Path(root).resolve()
+    elif rel.startswith(f"memory/.aidp/{FREEZE_DIR}/{component(version)}/"):
+        base = Path(baseline_root or root).resolve()
+    else:
+        raise BuildError("验收基线必须归属本版本 docs/testing/<version>/ 或 freeze 运行态目录")
+    path = (base / rel).resolve()
+    if not path.is_relative_to(base):
+        raise BuildError("验收基线路径逃出 root")
+    return path
+
+
+def unit_not_applicable(acceptance):
+    """全部正式用例都显式 browser_only 且无任何测试文件映射。仅基于验收基线事实判定，不由缺 runner/空 suites 推出。"""
+    cases = acceptance.get("cases") or []
+    ids = {case.get("id") for case in cases if isinstance(case, dict)}
+    browser = acceptance.get("browser_only")
+    return (bool(ids) and isinstance(browser, list) and set(browser) == ids and len(browser) == len(ids)
+            and not any(case.get("test_files") for case in cases) and not acceptance.get("acceptance_tests"))
+
+
+def validate_case_index(root, plan, baseline_root=None):
+    """把验收映射与本版本正式用例标题核对；不扫描仓库测试代码。
+
+    每个正式用例 ID 必须恰好出现一次，并且要么映射 ≥1 个测试文件，要么显式列入 browser_only（此时无测试文件）。"""
     root = Path(root).resolve()
-    baseline_path = root / relative(plan["acceptance_baseline"]["path"])
+    baseline_path = baseline_file(root, plan["version"], plan["acceptance_baseline"]["path"], baseline_root)
     acceptance = json.loads(baseline_path.read_text(encoding="utf-8"))
     index = acceptance.get("case_index") or {}
     index_path = (root / relative(index.get("path"))).resolve()
@@ -290,17 +353,259 @@ def validate_case_index(root, plan):
         raise BuildError("验收基线 case_index 必须指向本版本正式用例索引")
     if hashlib.sha256(index_path.read_bytes()).hexdigest() != index.get("sha256"):
         raise BuildError("正式用例索引 SHA256 不匹配")
-    spec = importlib.util.spec_from_file_location("_aidp_formal_cases", Path(__file__).resolve().parent.parent /
-                                                 "skills/auto-test-runner/scripts/tasks_state.py")
-    parser = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(parser)
+    parser = case_parser()
     actual = []
     for path in formal_case_books(root, plan["version"]):
         actual.extend(match[1] for match in parser.CASE_RE.finditer(path.read_text(encoding="utf-8")))
-    mapped = [case.get("id") for case in acceptance.get("cases", [])]
+    cases = acceptance.get("cases", [])
+    mapped = [case.get("id") for case in cases]
     if not actual or len(set(actual)) != len(actual) or set(mapped) != set(actual) or len(set(mapped)) != len(mapped):
         raise BuildError("验收基线 cases 与本版本完整正式用例清单不一致（缺失、历史用例或重复 ID）")
+    browser = acceptance.get("browser_only", [])
+    if (not isinstance(browser, list) or any(not isinstance(item, str) for item in browser)
+            or len(set(browser)) != len(browser) or not set(browser) <= set(actual)):
+        raise BuildError("browser_only 必须是正式用例 ID 的无重复字符串数组")
+    for case in cases:
+        files = case.get("test_files")
+        if not isinstance(files, list) or any(not isinstance(item, str) for item in files):
+            raise BuildError(f"用例 {case.get('id')} 的 test_files 必须是字符串数组")
+        if not files and case["id"] not in browser:
+            raise BuildError(f"用例 {case['id']} 既无测试文件映射也未声明 browser_only")
+        if files and case["id"] in browser:
+            raise BuildError(f"用例 {case['id']} 不能同时映射测试文件并声明 browser_only")
     return sorted(actual)
+
+
+def git_exists(root, commit, path):
+    try:
+        git(root, "cat-file", "-e", f"{commit}:{path}")
+        return True
+    except BuildError:
+        return False
+
+
+class FreezeBlock(Exception):
+    def __init__(self, reason, hint, gaps=None):
+        super().__init__(reason)
+        self.reason, self.hint, self.gaps = reason, hint, list(gaps or [])
+
+
+def canonical(value):
+    return (json.dumps(value, ensure_ascii=True, sort_keys=True) + "\n").encode()
+
+
+def freeze(root, version, build, commit, source=None, out=None):
+    """确定性冻结版本全量清单：只读部署 commit，写 acceptance.json 与 manifest 到运行态目录。
+
+    来源 `unit_tests`（必填，可显式 []）= 本版本单测文件清单，决定 acceptance_tests；`case_tests` 可选，仅记录确有对应单测的
+    用例；未出现在 case_tests 的正式用例默认归浏览器实测路（browser_only）。显式 `"unit_tests": []` 才可 NOT_APPLICABLE。"""
+    root = Path(root).resolve()
+    summary = {"cases": 0, "mapped": 0, "browser_only": 0, "acceptance_tests": 0, "gaps": []}
+    try:
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit or ""):
+            raise FreezeBlock("invalid-commit", "--commit 必须是部署完整小写 Git SHA")
+        if git(root, "rev-parse", "--verify", commit + "^{commit}").decode().strip() != commit:
+            raise FreezeBlock("invalid-commit", "--commit 不是可核验的 commit 对象")
+        component(version), component(build)
+        candidates = [f"docs/testing/{version}/test-plan.json", "docs/testing/test-plan.json"]
+        where = ("在部署 commit 提交 " + candidates[0] + "（可先运行 build_unit_test.py plan-init 生成草稿；JSON，根含 suites[每套含 runners]、"
+                 "unit_tests:[本版本单测文件]（无单测须显式写 []）；可选 case_tests:{TC-ID:[测试文件]}、dependencies:[文件]），"
+                 "或用 --source 指向含唯一 ```aidp-test-plan 围栏 JSON 的契约卡")
+        if source:
+            source_path = relative(source)
+            found = [source_path] if git_exists(root, commit, source_path) else []
+        else:
+            found = [item for item in candidates if git_exists(root, commit, item)]
+        if not found:
+            raise FreezeBlock("test-plan-source-missing", "部署 commit 内没有测试计划来源；" + where)
+        if len(found) > 1:
+            raise FreezeBlock("test-plan-source-ambiguous", "部署 commit 内同时存在多个来源，请用 --source 指定其一：" + ", ".join(found))
+        source_path = found[0]
+        payload = git(root, "show", f"{commit}:{source_path}")
+        try:
+            config = read_plan_config(source_path, payload)
+        except (ValueError, UnicodeDecodeError, BuildError) as exc:
+            raise FreezeBlock("test-plan-source-invalid", f"{source_path} 无法解析：{exc}；{where}")
+        plan_cfg = config.get("test_plan", config)
+        case_tests, browser_only = plan_cfg.get("case_tests", {}), plan_cfg.get("browser_only", [])
+        dependencies, unit_tests = plan_cfg.get("dependencies", []), plan_cfg.get("unit_tests")
+        if plan_cfg.get("needs_review"):
+            raise FreezeBlock("test-plan-needs-review", f"{source_path} 仍标 needs_review（plan-init 草稿未经确认）；"
+                              "核对 suites/unit_tests 后删除该字段再提交。无单测也须人工确认后保留 \"unit_tests\": []")
+        if unit_tests is None:
+            raise FreezeBlock("unit-tests-undeclared", f"{source_path} 未声明 unit_tests：写本版本单测文件清单；"
+                              "确无单测则显式写 \"unit_tests\": []（不声明不会被当作不适用）。可先运行 build_unit_test.py plan-init")
+        if (not isinstance(unit_tests, list) or any(not isinstance(i, str) for i in unit_tests)
+                or len(set(unit_tests)) != len(unit_tests)):
+            raise FreezeBlock("test-plan-source-invalid", f"{source_path} 的 unit_tests 须为无重复的文件路径字符串数组")
+        discovery = plan_cfg.get("unit_discovery")
+        if not unit_tests and not none_found(discovery):
+            raise FreezeBlock("unit-tests-empty-no-evidence", f"{source_path} 的 unit_tests 为空但没有 unit_discovery 证据（可能是忘写）："
+                              "运行 build_unit_test.py plan-init --force 重新发现（确无测试会自动写 unit_discovery.status=none-found），"
+                              "或补写本版本单测文件清单")
+        if (not isinstance(case_tests, dict) or any(not isinstance(k, str) or not isinstance(v, list) or not v
+                or any(not isinstance(i, str) for i in v) for k, v in case_tests.items())
+                or not isinstance(browser_only, list) or any(not isinstance(i, str) for i in browser_only)
+                or not isinstance(dependencies, list) or any(not isinstance(i, str) for i in dependencies)):
+            raise FreezeBlock("test-plan-source-invalid", f"{source_path} 的 case_tests 须为 {{TC-ID:[文件…]}}（非空数组），"
+                              "browser_only/dependencies 须为字符串数组")
+        # 正式用例：只扫部署 commit 的本版本册，沿用 is_case_book 单一排除规则。
+        formal = f"docs/testing/{version}/正式用例/"
+        listed = [os.fsdecode(name) for name in git(root, "ls-tree", "-r", "-z", "--name-only", commit, "--", formal).split(b"\0") if name]
+        parser, ids = case_parser(), []
+        for name in sorted(listed):
+            if name.endswith(".md") and is_case_book(PurePosixPath(name).name):
+                ids.extend(m[1] for m in parser.CASE_RE.finditer(git(root, "show", f"{commit}:{name}").decode("utf-8")))
+        if not ids:
+            raise FreezeBlock("formal-cases-missing", f"部署 commit 的 {formal} 下没有带 TC-ID 标题的正式用例册")
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            raise FreezeBlock("formal-case-duplicate", "正式用例 ID 重复：" + ", ".join(dup), dup)
+        indexes = [n for n in listed if PurePosixPath(n).parent == PurePosixPath(formal.rstrip("/"))
+                   and PurePosixPath(n).name.startswith("00_") and "索引" in PurePosixPath(n).name]
+        if len(indexes) != 1:
+            raise FreezeBlock("case-index-missing", f"{formal} 下须有且仅有一个 00_*索引*.md 正式用例索引（现有 {len(indexes)} 个）")
+        known, gaps = set(ids), []
+        gaps += [f"{i}: case_tests/browser_only 引用了不存在的正式用例" for i in sorted((set(case_tests) | set(browser_only)) - known)]
+        gaps += [f"{i}: 同时出现在 case_tests 与 browser_only" for i in sorted(set(case_tests) & set(browser_only))]
+        gaps += [f"{i}: browser_only 重复" for i in sorted({i for i in browser_only if browser_only.count(i) > 1})]
+        from test_scope import is_test
+        files = sorted(unit_tests)
+        for item in sorted(set(files) | {f for v in case_tests.values() for f in v}):
+            relative(item)
+            if not is_test(item) or not git_exists(root, commit, item):
+                gaps.append(f"{item}: 不是部署 commit 内的明确测试文件")
+        gaps += [f"{i}: case_tests 引用的 {f} 不在 unit_tests 清单内" for i, v in sorted(case_tests.items()) for f in v if f not in unit_tests]
+        # 默认归实测路：未出现在 case_tests 的正式用例（含显式 browser_only）。
+        default_browser = sorted(known - set(case_tests))
+        for item in dependencies:
+            relative(item)
+            if not git_exists(root, commit, item):
+                gaps.append(f"{item}: dependencies 文件不在部署 commit 内")
+        summary.update(cases=len(known), mapped=len(known & set(case_tests)), browser_only=len(default_browser),
+                       explicit_browser_only=len(set(browser_only) & known), default_browser=len(default_browser),
+                       default_browser_ids=default_browser, acceptance_tests=len(files), gaps=gaps)
+        if gaps:
+            raise FreezeBlock("coverage-gaps", f"修正 {source_path}：unit_tests/case_tests 须引用部署 commit 内的测试文件，case_tests 文件须在 unit_tests 内，"
+                              "browser_only 不得与 case_tests 重叠或引用不存在的用例", gaps)
+        suites = plan_cfg.get("suites")
+        not_applicable = not files
+        if not_applicable and suites not in (None, []):
+            raise FreezeBlock("unit-source-inconsistent", f"{source_path} 全部用例为 browser_only 时不得再含 suites；请移除 suites 或为用例补 case_tests")
+        if not not_applicable and (not isinstance(suites, list) or not suites):
+            raise FreezeBlock("test-plan-suites-missing", f"{source_path} 缺 suites（非空，每套含 runners）；" + where)
+        if not not_applicable:
+            for item in files:  # 静态检查：每个单测文件至少被某个 runner 的 suffixes 与 cwd 命中。
+                if not any(isinstance(r, dict) and PurePosixPath(item).suffix in (r.get("suffixes") or [])
+                           and (r.get("cwd", ".") in (".", "") or item.startswith(r["cwd"].rstrip("/") + "/"))
+                           for suite in suites if isinstance(suite, dict) for r in (suite.get("runners") or [])):
+                    gaps.append(f"{item}: 没有任何 runner 的 suffixes/cwd 命中该单测文件")
+            if gaps:
+                raise FreezeBlock("unit-test-no-runner", f"在 {source_path} 的 suites.runners 补能运行这些文件的 runner", gaps)
+        freeze_root = (Path(runtime_dir(root)) / FREEZE_DIR / version).resolve()
+        directory = Path(out).resolve() if out else freeze_root / build
+        if not directory.is_relative_to(freeze_root):
+            raise FreezeBlock("invalid-out", f"--out 必须位于 memory/.aidp/{FREEZE_DIR}/{version}/ 下，验收基线读取受此限制")
+        acceptance = {"version": version, "acceptance_tests": files, "dependencies": sorted(set(dependencies)),
+                      "browser_only": default_browser,
+                      "cases": [{"id": i, "test_files": sorted(case_tests.get(i, []))} for i in sorted(known)],
+                      "case_index": {"path": indexes[0],
+                                     "sha256": hashlib.sha256(git(root, "show", f"{commit}:{indexes[0]}")).hexdigest()}}
+        acceptance_path, manifest_path = directory / "acceptance.json", directory / "manifest.json"
+        manifest = {"schema": SCHEMA, "version": version, "build": build, "commit": commit,
+                    "source": {"path": source_path, "sha256": hashlib.sha256(payload).hexdigest()},
+                    "suites": [] if not_applicable else suites,
+                    "acceptance_tests": files, "dependencies": acceptance["dependencies"],
+                    "acceptance_baseline": {"path": acceptance_path.relative_to(root).as_posix(),
+                                            "sha256": hashlib.sha256(canonical(acceptance)).hexdigest()}}
+        if not_applicable:
+            manifest["unit_applicability"] = dict(UNIT_NA, evidence=discovery)
+        if manifest_path.exists():
+            if manifest_path.read_bytes() != canonical(manifest):
+                raise FreezeBlock("manifest-conflict", "同 build 已冻结不同清单；不得覆盖原证据，须使用新 build")
+        else:
+            atomic_json(acceptance_path, acceptance)
+            atomic_json(manifest_path, manifest)
+        return {"schema": SCHEMA, "status": "FROZEN", "reason": "unit-not-applicable" if not_applicable else "frozen",
+                "version": version, "build": build, "commit": commit, "manifest": str(manifest_path),
+                "acceptance": str(acceptance_path), "unit_applicability": manifest.get("unit_applicability"),
+                "summary": summary}
+    except FreezeBlock as exc:
+        return {"schema": SCHEMA, "status": "UNVERIFIED", "reason": exc.reason, "hint": exc.hint,
+                "version": version, "build": build, "commit": commit, "summary": summary}
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        return {"schema": SCHEMA, "status": "UNVERIFIED", "reason": "freeze-error", "hint": str(exc),
+                "version": version, "build": build, "commit": commit, "summary": summary}
+
+
+def plan_init(root, version, out=None, force=False):
+    """项目侧一次性写计划：只读发现项目实际测试文件与运行器，写 test-plan.json 草稿。
+
+    ⚠️ 这是“写计划时”的一次性发现，结果经 git 提交后冻结；运行期（freeze/run）绝不全仓发现。
+    已存在则不覆盖（--force 才覆盖）。发现结果为空时写 unit_tests:[] + unit_discovery(none-found) 机器证据；发现了测试文件却无可用运行器则标 needs_review。"""
+    root = Path(root).resolve()
+    component(version)
+    rel = relative(out) if out else f"docs/testing/{version}/test-plan.json"
+    target = (root / rel).resolve()
+    if not target.is_relative_to(root):
+        raise BuildError("--out 不可逃出项目")
+    if target.exists() and not force:
+        return {"schema": SCHEMA, "status": "EXISTS", "path": rel,
+                "note": "计划已存在，复用不覆盖（需重新生成请 --force）"}
+    from test_scope import is_test
+    names = git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0")
+    tests = sorted({os.fsdecode(n) for n in names if n and is_test(os.fsdecode(n))
+                    and "node_modules/" not in os.fsdecode(n)
+                    and not os.fsdecode(n).startswith(("memory/", "docs/"))})
+
+    def text(name):
+        path = root / name
+        return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+
+    pytest_cfg = any((root / n).is_file() for n in ("pytest.ini", ".pytest.ini")) or any(
+        marker in text(n) for n, marker in (("pyproject.toml", "[tool.pytest"), ("setup.cfg", "[tool:pytest"), ("tox.ini", "[pytest"))
+    )
+    package = text("package.json")
+    candidates = {
+        ".py": ("pytest" if pytest_cfg else "unittest",
+                ["python3", "-m", "pytest", "-q", "{tests}"] if pytest_cfg else ["python3", "-m", "unittest", "-v", "{tests}"]),
+        ".java": ("maven", ["mvn", "-q", "test", "-Dtest={test_classes}"]) if (root / "pom.xml").is_file() else None,
+    }
+    js = ("vitest", ["npx", "vitest", "run", "{tests}"]) if "vitest" in package else (
+        ("jest", ["npx", "jest", "{tests}"]) if "jest" in package else None)
+    for suffix in (".ts", ".tsx", ".js", ".jsx"):
+        candidates[suffix] = js
+    checked = [n for n in ("pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "package.json", "pom.xml") if (root / n).is_file()]
+    checked = checked or ["git-tracked-and-untracked-files"]  # 没有任何运行器配置时，检查对象是文件清单本身
+    suites, grouped, notes, listed = {}, {}, [], []
+    for test in tests:
+        suffix = PurePosixPath(test).suffix
+        choice = candidates.get(suffix)
+        if choice is None:
+            notes.append(f"{test}: 未识别到对应测试运行器（只识别 pytest/unittest、vitest/jest、maven），未列入 unit_tests")
+            continue
+        grouped.setdefault(choice[0], (choice[1], set()))[1].add(suffix)
+        listed.append(test)
+    for name, (argv, suffixes) in sorted(grouped.items()):
+        env_id = f"plan-init-{name}"
+        suites[name] = {"cwd": ".", "env_id": env_id, "inputs": [], "external_dependencies": "none",
+                        "runners": [{"suffixes": sorted(suffixes), "argv": argv, "cwd": ".", "env_id": env_id}]}
+    if not tests:
+        notes.append("未发现任何测试文件：写 unit_tests=[] 与 unit_discovery.status=none-found 机器证据，freeze 将按单测不适用处理并在报告醒目显示")
+    if suites:
+        notes.append("external_dependencies 默认写 none、cwd 默认 '.'；有数据库/子目录工程请人工修正")
+    draft = {"schema": SCHEMA, "version": version, "suites": [suites[k] for k in sorted(suites)],
+             "unit_tests": sorted(listed), "case_tests": {}, "dependencies": [],
+             "unit_discovery": {"status": "none-found" if not tests else "found", "files": len(tests), "checked": checked,
+                                "runners": sorted(grouped)},
+             # 发现了测试文件却没有可用运行器 = 需人决定怎么跑；没有任何测试文件则是确定的“不适用”证据，不卡 freeze。
+             "needs_review": bool(tests) and len(listed) != len(tests), "review_notes": notes}
+    if not draft["needs_review"]:
+        del draft["needs_review"]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    atomic_json(target, draft)
+    return {"schema": SCHEMA, "status": "CREATED", "path": rel, "unit_tests": len(listed),
+            "needs_review": bool(draft.get("needs_review")), "review_notes": notes}
 
 
 def assert_worktree_inputs(worktree, suite):
@@ -579,6 +884,21 @@ def execute(root, directory, result, plan, timeout, execution_context, retry=Fal
         owned = True
         git(root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", str(worktree), result["commit"],
             timeout=max(0.001, deadline - time.monotonic()))
+        if plan.get("unit_applicability") is not None:
+            # 先过正式用例索引/映射核验，再由验收基线事实判定；不得由缺 runner/空 suites 推出。
+            case_ids = validate_case_index(worktree, plan, baseline_root=root)
+            acceptance = json.loads(baseline_file(worktree, result["version"], plan["acceptance_baseline"]["path"], root)
+                                    .read_text(encoding="utf-8"))
+            if not unit_not_applicable(acceptance) or plan["acceptance_tests"]:
+                raise BuildError("manifest 声明 unit_applicability，但验收基线并非全部用例 browser_only")
+            atomic_json(directory / "plan.json", plan)
+            result["testScope"] = {"kind": "version", "version": result["version"], "build": result["build"],
+                                   "manifest_hash": digest(plan), "acceptance_baseline": plan["acceptance_baseline"],
+                                   "acceptance_tests": [], "dependencies": plan["dependencies"], "case_ids": case_ids,
+                                   "unit_applicability": dict(plan["unit_applicability"], browser_only=case_ids)}
+            result.update(status="NOT_APPLICABLE", reason=UNIT_NA["reason"], execution_context=str(execution_context),
+                          primary_error=None)
+            return result
         from test_scope import derive_suite
         runners = [runner for suite in plan["suites"] for runner in suite["runners"]]
         # 推导与账本复核必须在同一隔离环境（如 PYTHONPATH 已清除）下进行，否则依赖分析不可复现。
@@ -586,7 +906,7 @@ def execute(root, directory, result, plan, timeout, execution_context, retry=Fal
             scope_plan = derive_suite(worktree, runners, plan, execution_context=execution_context)
         if scope_plan.get("unrunnable") or not scope_plan.get("runs"):
             raise BuildError("版本清单存在不可执行项或没有实际测试目标")
-        case_ids = validate_case_index(worktree, plan)
+        case_ids = validate_case_index(worktree, plan, baseline_root=root)
         atomic_json(directory / "plan.json", plan)
         result["testScope"] = {"kind": "version", "version": result["version"],
                                "build": result["build"], "manifest_hash": digest(plan),
@@ -747,11 +1067,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--self-check", action="store_true")
     sub = parser.add_subparsers(dest="action")
-    for action in ("run", "status"):
-        child = sub.add_parser(action)
+    for action in ("plan-init", "freeze", "run", "status"):
+        child = sub.add_parser(action, help="项目侧一次性只读发现测试文件/运行器并写 test-plan.json 草稿；结果经 git 提交后冻结，"
+                               "不是运行期全仓发现；已存在不覆盖" if action == "plan-init" else None,
+                               description="项目侧一次性只读发现：写计划时扫描项目实际测试文件与运行器，写 docs/testing/{version}/test-plan.json 草稿；"
+                               "结果由 git 提交后冻结，不是运行期全仓发现（freeze/run 不发现）。已存在不覆盖，--force 才覆盖。"
+                               if action == "plan-init" else None)
         child.add_argument("--root", required=True)
         child.add_argument("--version", required=True)
+        if action == "plan-init":
+            child.add_argument("--out", help="默认 docs/testing/{version}/test-plan.json")
+            child.add_argument("--force", action="store_true", help="覆盖已存在的计划")
+            continue
         child.add_argument("--build", required=True)
+        if action == "freeze":
+            child.add_argument("--commit", required=True)
+            child.add_argument("--source", help="部署 commit 内测试计划来源（JSON 或含 aidp-test-plan 围栏的契约卡）；缺省仅查约定位置")
+            child.add_argument("--out", help="输出目录，须在 memory/.aidp/version-freeze/{version}/ 下")
         if action == "run":
             child.add_argument("--execution-context", help="继承父任务授权与预算；status只读不消费预算")
             child.add_argument("--commit", required=True)
@@ -766,6 +1098,12 @@ def main(argv=None):
         elif args.action == "run":
             result = run_build(args.root, args.version, args.build, args.commit, args.plan, args.timeout, args.retry, args.execution_context)
             code = 0  # 业务结论只由 JSON 表达，FAIL/TIMEOUT 不终止实测链路。
+        elif args.action == "plan-init":
+            result = plan_init(args.root, args.version, args.out, args.force)
+            code = 0
+        elif args.action == "freeze":
+            result = freeze(args.root, args.version, args.build, args.commit, args.source, args.out)
+            code = 0 if result["status"] == "FROZEN" else 3  # 冻结失败须让围栏记账，不能静默继续委派。
         elif args.action == "status":
             result = read_status(args.root, args.version, args.build)
             code = 0
@@ -774,7 +1112,7 @@ def main(argv=None):
     except (OSError, ValueError, TypeError, KeyError) as exc:
         result = {"schema": SCHEMA, "status": "UNVERIFIED", "reason": str(exc), "reused": False}
         code = 0
-    print(json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
+    print(json.dumps(result, ensure_ascii=args.action not in ("freeze", "plan-init"), sort_keys=True), flush=True)
     return code
 
 

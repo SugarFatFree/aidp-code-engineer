@@ -132,6 +132,24 @@ print(json.dumps({"backed_up_at": datetime.datetime.now(datetime.timezone.utc).i
         self.assertEqual(self.backup()[0], 2)
         self.assertEqual(self.calls(), 1)
 
+    def test_empty_or_non_mapping_deployment_section_is_structured_prerequisite_gap(self):
+        for text in ("deployment:\n", "deployment: ''\n", "deployment: [1]\n", "deployment:\n  backup: 3\n"):
+            with self.subTest(text=text):
+                (self.root / "memory/aidp-config.yaml").write_text(text)
+                code, out = self.backup()
+                self.assertEqual(code, 2)
+                self.assertEqual(out["status"], "prerequisite-missing")
+        self.assertEqual(self.calls(), 0)
+
+    def test_missing_fcntl_reports_structured_unavailable_without_running_command(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import deployment_ops as ops
+        from unittest import mock
+        with mock.patch.dict(sys.modules, {"fcntl": None}):
+            with self.assertRaisesRegex(ops.PrerequisiteError, "fcntl"):
+                ops.backup(self.root, "database", ["dev/db"])
+        self.assertEqual(self.calls(), 0)
+
     def test_failed_command_is_visible_and_consumes_quota(self):
         self.fake.write_text('import sys\nfrom pathlib import Path\nPath("calls").write_text("call\\n")\nsys.exit(9)\n')
         rc, result = self.backup()

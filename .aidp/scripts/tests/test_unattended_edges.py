@@ -131,6 +131,27 @@ class UnattendedEdgeTests(unittest.TestCase):
             handler.write_text(constants + "def _preflight(a):\n _be(['bump', k_streak])\n")
             self.assertIn('preflight_test_streak', guard._python_streak_writers(str(root)))
 
+    def test_jq_program_variables_are_not_reported_as_unassigned_shell_variables(self):
+        """jq 的 --arg/--argjson 与 `as $x` 是 jq 程序内部变量，不是 shell 变量，不能报“从未赋值”。"""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('flowvar_guard', ROOT / '.aidp/scripts/check_flow_var_refs.py')
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        def refs(text):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                flow = root / '.aidp/flows/demo'
+                flow.mkdir(parents=True)
+                (flow / 'phase-1.md').write_text(text)
+                result = guard.run(str(root), strict=True)
+                return sorted({f['var'] for f in result['findings']})
+        declared = ("```bash\nJ='{}'\nPEND='[]'\n"
+                    "OUT=$(echo \"$J\" | jq -r --arg who \"$USER\" --argjson p \"$PEND\" "
+                    "'[.d[]? | select(.n==$who and (.c as $c | $p | index($c) != null))]')\n```\n")
+        self.assertEqual(refs(declared), [])
+        undeclared = declared.replace("--arg who \"$USER\" ", "")
+        self.assertIn('who', refs(undeclared))
+
     def test_actual_dev_templates_carry_required_cases_flag(self):
         flow = ROOT / '.aidp/flows/sprint-autopilot'
         for name, command in (('phase-3-5.md', '/sprint-full ${SPRINT_NO}'),

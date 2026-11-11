@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -671,6 +672,469 @@ time.sleep(60)
     def test_self_check_real_git(self):
         result = build_unit.self_check()
         self.assertTrue(result["ok"], result)
+
+
+class FreezeTests(unittest.TestCase):
+    """freeze：从部署 commit 确定性生成冻结 manifest 与验收基线，并贯通 fork-test-build / run_build。"""
+
+    version = "V1.0.0"
+    build = "V1.0.0_build1"
+    SOURCE = "docs/testing/V1.0.0/test-plan.json"
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="aidp-freeze-test-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "repo"
+        self.root.mkdir()
+        self.git("init", "-q")
+        self.git("config", "user.email", "fixture@example.invalid")
+        self.git("config", "user.name", "Fixture")
+        (self.root / ".gitignore").write_text("memory/\n__pycache__/\n")
+
+    def git(self, *args):
+        return build_unit.git(self.root, *args).decode().strip()
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def suites(self):
+        return [{"runners": [{"suffixes": [".py"], "argv": [sys.executable, "-m", "unittest", "-v", "{tests}"],
+                              "cwd": ".", "env_id": "stdlib"}],
+                 "cwd": ".", "env_id": "stdlib", "inputs": [], "external_dependencies": "none"}]
+
+    def commit_repo(self, plan=None, source=None, cases=("TC-ONE", "TC-TWO"), markdown=False, index=True):
+        self.write("test_sample.py", PASS_TEST)
+        formal = f"docs/testing/{self.version}/正式用例/"
+        if index:
+            self.write(formal + "00_索引.md", "# 索引\n" + "\n".join(cases) + "\n")
+        self.write(formal + "03_cases.md", "".join(f"#### 用例 {c}: x\n" for c in cases))
+        self.write(formal + "_sprint-001-增量.md", "#### 用例 TC-INCREMENTAL: 开发期增量册不入\n")
+        self.write("docs/testing/V0.9.0/正式用例/03_old.md", "#### 用例 TC-OLD: 历史版本不入\n")
+        if plan is not None:
+            path = source or self.SOURCE
+            text = json.dumps(plan)
+            if markdown:
+                text = "# 契约卡\n\n```aidp-test-plan\n" + text + "\n```\n"
+            self.write(path, text)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "deploy")
+        self.commit = self.git("rev-parse", "HEAD")
+        return self.commit
+
+    def mixed_plan(self, **extra):
+        plan = {"schema": 1, "suites": self.suites(), "unit_tests": ["test_sample.py"],
+                "case_tests": {"TC-ONE": ["test_sample.py"]}, "browser_only": ["TC-TWO"]}
+        plan.update(extra)
+        return plan
+
+    def freeze(self, **kwargs):
+        return build_unit.freeze(self.root, self.version, self.build, self.commit, **kwargs)
+
+    def baseline(self):
+        path = Path(build_unit.baseline(self.root))
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"versions": {self.version: {"builds": [
+            {"build": self.build, "push_commit": self.commit}]}}}))
+
+    def delegate(self, manifest):
+        from entry_context import resolve_autopilot_root, fork_test_build
+        parent = resolve_autopilot_root(self.root, self.version, authorization_source={
+            "kind": "explicit-command", "command": "sprint-autopilot", "request_id": "freeze-fixture",
+            "options": ["--skip-dev"]})["execution_context"]
+        return fork_test_build(self.root, parent, self.version, self.build, manifest=manifest)["execution_context"]
+
+    def test_freeze_fork_and_run_full_chain_with_browser_only_case(self):
+        self.commit_repo(self.mixed_plan())
+        self.baseline()
+        # 脏工作区改来源/测试均不得影响冻结结果。
+        self.write(self.SOURCE, json.dumps({"schema": 1, "suites": [], "browser_only": ["TC-ONE", "TC-TWO"]}))
+        self.write("test_sample.py", "raise RuntimeError('dirty')\n")
+        result = self.freeze()
+        self.assertEqual(result["status"], "FROZEN", result)
+        self.assertEqual(result["summary"], {"cases": 2, "mapped": 1, "browser_only": 1, "explicit_browser_only": 1,
+                                             "default_browser": 1, "default_browser_ids": ["TC-TWO"],
+                                             "acceptance_tests": 1, "gaps": []})
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        acceptance_path = self.root / manifest["acceptance_baseline"]["path"]
+        acceptance = json.loads(acceptance_path.read_text())
+        self.assertEqual(acceptance["cases"], [{"id": "TC-ONE", "test_files": ["test_sample.py"]},
+                                               {"id": "TC-TWO", "test_files": []}])
+        self.assertEqual(acceptance["browser_only"], ["TC-TWO"])
+        self.assertEqual(manifest["acceptance_baseline"]["sha256"], hashlib.sha256(acceptance_path.read_bytes()).hexdigest())
+        self.assertEqual(manifest["source"]["sha256"],
+                         hashlib.sha256(self.git("show", f"{self.commit}:{self.SOURCE}").encode()).hexdigest())
+        self.assertNotIn("unit_applicability", manifest)
+        self.assertEqual(manifest["acceptance_tests"], ["test_sample.py"])
+        context = self.delegate(result["manifest"])
+        ran = build_unit.run_build(self.root, self.version, self.build, self.commit, result["manifest"], execution_context=context)
+        self.assertEqual(ran["status"], "PASS", ran)
+        self.assertEqual(ran["testScope"]["case_ids"], ["TC-ONE", "TC-TWO"])
+        self.assertEqual(ran["counts"]["passed"], 1)
+        # 同 build 重复冻结幂等。
+        self.assertEqual(self.freeze()["manifest"], result["manifest"])
+
+    def test_cli_freeze_prints_manifest_and_summary(self):
+        self.commit_repo(self.mixed_plan())
+        done = subprocess.run([sys.executable, str(SCRIPT), "freeze", "--root", str(self.root), "--version", self.version,
+                               "--build", self.build, "--commit", self.commit, "--source", self.SOURCE],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        payload = json.loads(done.stdout)
+        self.assertTrue(Path(payload["manifest"]).is_file())
+        self.assertEqual(payload["summary"]["cases"], 2)
+        bad = subprocess.run([sys.executable, str(SCRIPT), "freeze", "--root", str(self.root), "--version", self.version,
+                              "--build", self.build, "--commit", self.commit, "--source", "docs/nope.json"],
+                             capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 3)
+        self.assertEqual(json.loads(bad.stdout)["status"], "UNVERIFIED")
+
+    def test_markdown_contract_card_source(self):
+        self.commit_repo(self.mixed_plan(), source="docs/design/契约卡.md", markdown=True)
+        result = self.freeze(source="docs/design/契约卡.md")
+        self.assertEqual(result["status"], "FROZEN", result)
+
+    def test_missing_source_is_unverified_with_actionable_hint(self):
+        self.commit_repo()
+        result = self.freeze()
+        self.assertEqual(result["status"], "UNVERIFIED")
+        self.assertEqual(result["reason"], "test-plan-source-missing")
+        for needle in (self.SOURCE, "suites", "case_tests", "unit_tests", "plan-init", "aidp-test-plan"):
+            self.assertIn(needle, result["hint"])
+        self.assertNotIn("manifest", result)
+        self.assertFalse((Path(build_unit.runtime_dir(self.root)) / "version-freeze").exists())
+
+    def test_uncommitted_source_is_not_read(self):
+        self.commit_repo()
+        self.write(self.SOURCE, json.dumps(self.mixed_plan()))  # 只在脏工作区
+        self.assertEqual(self.freeze()["reason"], "test-plan-source-missing")
+
+    def test_unmapped_cases_default_to_browser_path_and_are_listed(self):
+        plan = self.mixed_plan()
+        del plan["browser_only"]
+        self.commit_repo(plan)
+        result = self.freeze()
+        self.assertEqual(result["status"], "FROZEN", result)
+        self.assertEqual(result["summary"]["default_browser_ids"], ["TC-TWO"])
+        self.assertEqual(result["summary"]["default_browser"], 1)
+        acceptance = json.loads((self.root / json.loads(Path(result["manifest"]).read_text())
+                                 ["acceptance_baseline"]["path"]).read_text())
+        self.assertEqual(acceptance["browser_only"], ["TC-TWO"])
+
+    def test_unit_tests_decides_acceptance_tests_independent_of_case_mapping(self):
+        self.write("tests/test_extra.py", PASS_TEST)
+        plan = self.mixed_plan(unit_tests=["test_sample.py", "tests/test_extra.py"])
+        self.commit_repo(plan)
+        result = self.freeze()
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        self.assertEqual(manifest["acceptance_tests"], ["test_sample.py", "tests/test_extra.py"])
+        self.baseline()
+        context = self.delegate(result["manifest"])
+        ran = build_unit.run_build(self.root, self.version, self.build, self.commit, result["manifest"], execution_context=context)
+        self.assertEqual(ran["status"], "PASS", ran)
+
+    def test_undeclared_unit_tests_is_unverified_not_inferred_not_applicable(self):
+        plan = self.mixed_plan()
+        del plan["unit_tests"], plan["case_tests"], plan["browser_only"]
+        self.commit_repo(plan)
+        result = self.freeze()
+        self.assertEqual((result["status"], result["reason"]), ("UNVERIFIED", "unit-tests-undeclared"))
+        self.assertIn('"unit_tests": []', result["hint"])
+
+    def test_explicit_empty_unit_tests_is_not_applicable_and_needs_review_blocks(self):
+        self.commit_repo({"schema": 1, "unit_tests": [], "unit_discovery": {"status": "none-found", "files": 0, "checked": ["git-tracked-and-untracked-files"]}})
+        result = self.freeze()
+        self.assertEqual((result["status"], result["reason"]), ("FROZEN", "unit-not-applicable"))
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        self.assertEqual(manifest["unit_applicability"]["evidence"]["status"], "none-found")
+        self.assertEqual(result["summary"]["default_browser_ids"], ["TC-ONE", "TC-TWO"])
+        self.write(self.SOURCE, json.dumps({"schema": 1, "unit_tests": [], "unit_discovery": {"status": "none-found", "files": 0, "checked": ["git-tracked-and-untracked-files"]}, "needs_review": True}))
+        self.git("add", "-A")
+        self.git("commit", "-qm", "draft")
+        self.commit = self.git("rev-parse", "HEAD")
+        self.assertEqual(self.freeze()["reason"], "test-plan-needs-review")
+
+    def test_handwritten_empty_unit_tests_without_discovery_evidence_is_unverified(self):
+        for extra in ({}, {"unit_discovery": {"status": "found", "files": 2, "checked": ["pytest.ini"]}},
+                      {"unit_discovery": {"status": "none-found", "files": 0, "checked": []}}):
+            self.setUp()
+            self.commit_repo(dict({"schema": 1, "unit_tests": []}, **extra))
+            result = self.freeze()
+            self.assertEqual((result["status"], result["reason"]), ("UNVERIFIED", "unit-tests-empty-no-evidence"), extra)
+            self.assertIn("plan-init", result["hint"])
+
+    def test_not_applicable_run_carries_evidence_into_test_scope(self):
+        self.commit_repo({"schema": 1, "unit_tests": [], "unit_discovery": {"status": "none-found", "files": 0, "checked": ["git-tracked-and-untracked-files"]}})
+        self.baseline()
+        result = self.freeze()
+        ran = build_unit.run_build(self.root, self.version, self.build, self.commit, result["manifest"],
+                                   execution_context=self.delegate(result["manifest"]))
+        self.assertEqual(ran["status"], "NOT_APPLICABLE", ran)
+        self.assertEqual(ran["testScope"]["unit_applicability"]["evidence"]["status"], "none-found")
+
+    def test_unit_tests_must_exist_be_tests_and_match_a_runner(self):
+        for tests, reason_part in ((["missing_test.py"], "missing_test.py"), (["README.md"], "README.md")):
+            self.setUp()
+            self.commit_repo(self.mixed_plan(unit_tests=tests, case_tests={}, browser_only=[]))
+            result = self.freeze()
+            self.assertEqual(result["status"], "UNVERIFIED", tests)
+            self.assertTrue(any(reason_part in gap for gap in result["summary"]["gaps"]), result)
+        self.setUp()
+        plan = self.mixed_plan()
+        plan["suites"][0]["runners"][0]["suffixes"] = [".ts"]
+        self.commit_repo(plan)
+        result = self.freeze()
+        self.assertEqual(result["reason"], "unit-test-no-runner")
+        self.assertTrue(any("test_sample.py" in gap for gap in result["summary"]["gaps"]))
+
+    def test_case_tests_files_must_be_in_unit_tests(self):
+        self.write("tests/test_other.py", PASS_TEST)
+        self.commit_repo(self.mixed_plan(unit_tests=["tests/test_other.py"], case_tests={"TC-ONE": ["test_sample.py"]}, browser_only=[]))
+        result = self.freeze()
+        self.assertEqual(result["status"], "UNVERIFIED")
+        self.assertTrue(any("不在 unit_tests" in gap for gap in result["summary"]["gaps"]))
+
+    def test_plan_init_writes_draft_once_and_force_overwrites(self):
+        self.write("test_sample.py", PASS_TEST)
+        self.write("tests/test_other.py", PASS_TEST)
+        self.write("web/a.spec.ts", "test('a', () => {})\n")  # 无 jest/vitest 配置：不识别
+        self.git("add", "-A")
+        first = build_unit.plan_init(self.root, self.version)
+        self.assertEqual((first["status"], first["unit_tests"]), ("CREATED", 2))
+        self.assertTrue(first["needs_review"])  # a.spec.ts 未被识别，需人工确认
+        path = self.root / first["path"]
+        draft = json.loads(path.read_text())
+        self.assertEqual(draft["unit_tests"], ["test_sample.py", "tests/test_other.py"])
+        self.assertEqual(draft["case_tests"], {})
+        self.assertEqual(draft["suites"][0]["runners"][0]["suffixes"], [".py"])
+        self.assertIn("{tests}", draft["suites"][0]["runners"][0]["argv"])
+        path.write_text(json.dumps({"hand": "edited"}))
+        self.assertEqual(build_unit.plan_init(self.root, self.version)["status"], "EXISTS")
+        self.assertEqual(json.loads(path.read_text()), {"hand": "edited"})
+        self.assertEqual(build_unit.plan_init(self.root, self.version, force=True)["status"], "CREATED")
+
+    def test_plan_init_clean_draft_freezes_without_edit(self):
+        self.write("test_sample.py", PASS_TEST)
+        self.git("add", "-A")
+        init = build_unit.plan_init(self.root, self.version)
+        self.assertFalse(init["needs_review"], init)
+        self.commit_repo()  # 提交测试/用例册与草稿
+        self.assertEqual(self.freeze()["status"], "FROZEN")
+
+    def test_plan_init_without_any_tests_writes_machine_evidence_and_freezes_not_applicable(self):
+        self.write("README.md", "x\n")
+        self.git("add", "-A")
+        init = build_unit.plan_init(self.root, self.version)
+        draft = json.loads((self.root / init["path"]).read_text())
+        self.assertEqual(draft["unit_tests"], [])
+        self.assertNotIn("needs_review", draft)
+        self.assertEqual((draft["unit_discovery"]["status"], draft["unit_discovery"]["files"]), ("none-found", 0))
+        self.assertTrue(draft["unit_discovery"]["checked"])
+        self.commit_repo()
+        frozen = self.freeze()
+        self.assertEqual((frozen["status"], frozen["reason"]), ("FROZEN", "unit-not-applicable"), frozen)
+
+    def test_plan_init_tests_found_but_no_runner_needs_review_and_freeze_refuses(self):
+        self.write("web/a.spec.ts", "test('a', () => {})\n")  # 有测试文件，但无 jest/vitest 配置
+        self.git("add", "-A")
+        init = build_unit.plan_init(self.root, self.version)
+        draft = json.loads((self.root / init["path"]).read_text())
+        self.assertEqual((draft["unit_tests"], draft["needs_review"]), ([], True))
+        self.assertEqual(draft["unit_discovery"]["status"], "found")
+        self.commit_repo()
+        result = self.freeze()
+        self.assertEqual(result["reason"], "test-plan-needs-review")
+        self.assertIn("unit_tests", result["hint"])
+
+    def test_cli_plan_init(self):
+        self.write("test_sample.py", PASS_TEST)
+        done = subprocess.run([sys.executable, str(SCRIPT), "plan-init", "--root", str(self.root), "--version", self.version],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["status"], "CREATED")
+
+    def test_unknown_conflicting_and_non_test_mappings_are_gaps(self):
+        plan = self.mixed_plan(case_tests={"TC-ONE": ["test_sample.py"], "TC-GHOST": ["test_sample.py"],
+                                           "TC-TWO": ["README.md"]})
+        self.commit_repo(plan)
+        gaps = "\n".join(self.freeze()["summary"]["gaps"])
+        self.assertIn("TC-GHOST", gaps)
+        self.assertIn("TC-TWO: 同时出现在 case_tests 与 browser_only", gaps)
+        self.assertIn("README.md", gaps)
+
+    def test_history_and_incremental_books_never_enter(self):
+        self.commit_repo(self.mixed_plan())
+        result = self.freeze()
+        acceptance = json.loads((self.root / json.loads(Path(result["manifest"]).read_text())
+                                 ["acceptance_baseline"]["path"]).read_text())
+        ids = [case["id"] for case in acceptance["cases"]]
+        self.assertEqual(ids, ["TC-ONE", "TC-TWO"])
+        self.assertNotIn("TC-OLD", ids)
+        self.assertNotIn("TC-INCREMENTAL", ids)
+
+    def test_missing_index_and_missing_suites_are_unverified(self):
+        self.commit_repo(self.mixed_plan(), index=False)
+        self.assertEqual(self.freeze()["reason"], "case-index-missing")
+
+    def test_missing_suites_with_unit_mapping_is_unverified(self):
+        plan = self.mixed_plan()
+        del plan["suites"]
+        self.commit_repo(plan)
+        self.assertEqual(self.freeze()["reason"], "test-plan-suites-missing")
+
+    def test_changed_freeze_for_same_build_is_refused(self):
+        self.commit_repo(self.mixed_plan())
+        self.assertEqual(self.freeze()["status"], "FROZEN")
+        self.write(self.SOURCE, json.dumps(self.mixed_plan(dependencies=["test_sample.py"])))
+        self.git("add", "-A")
+        self.git("commit", "-qm", "changed")
+        self.commit = self.git("rev-parse", "HEAD")
+        self.assertEqual(self.freeze()["reason"], "manifest-conflict")
+
+    def test_out_must_stay_in_freeze_directory(self):
+        self.commit_repo(self.mixed_plan())
+        self.assertEqual(self.freeze(out=str(self.root / "elsewhere"))["reason"], "invalid-out")
+
+    def test_browser_only_requires_explicit_listing_in_validation(self):
+        self.commit_repo(self.mixed_plan())
+        self.baseline()
+        result = self.freeze()
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        path = self.root / manifest["acceptance_baseline"]["path"]
+        acceptance = json.loads(path.read_text())
+        acceptance["browser_only"] = []
+        path.write_text(json.dumps(acceptance))
+        with self.assertRaises(build_unit.BuildError):
+            build_unit.validate_case_index(self.root, manifest)
+        acceptance["browser_only"] = ["TC-TWO", "TC-ONE"]  # 有映射文件的用例不能同时声明 browser_only
+        path.write_text(json.dumps(acceptance))
+        with self.assertRaises(build_unit.BuildError):
+            build_unit.validate_case_index(self.root, manifest)
+
+    def test_tampered_source_or_index_or_baseline_is_rejected(self):
+        self.commit_repo(self.mixed_plan())
+        self.baseline()
+        result = self.freeze()
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        context = self.delegate(result["manifest"])
+        for key, mutate in (("source", lambda m: m["source"].update(sha256="0" * 64)),):
+            bad = json.loads(json.dumps(manifest))
+            mutate(bad)
+            ran = build_unit.run_build(self.root, self.version, self.build, self.commit, bad, execution_context=context)
+            self.assertEqual(ran["status"], "UNVERIFIED", key)
+        acceptance_path = self.root / manifest["acceptance_baseline"]["path"]
+        acceptance = json.loads(acceptance_path.read_text())
+        acceptance["case_index"]["sha256"] = "0" * 64
+        acceptance_path.write_text(json.dumps(acceptance))
+        ran = build_unit.run_build(self.root, self.version, self.build, self.commit, manifest, execution_context=context)
+        self.assertEqual(ran["status"], "UNVERIFIED")
+        self.assertIn("已改变", ran["primary_error"])
+
+    def delegation_fence(self, execution_context):
+        """真实围栏 phase-0-6b.md 的 version-test-delegation；仅去掉与本夹具无关的 tick flags eval 行。"""
+        repo = Path(__file__).resolve().parents[3]
+        text = (repo / ".aidp/flows/sprint-aiauto-test/phase-0-6b.md").read_text(encoding="utf-8")
+        block = re.search(r"<!-- version-test-delegation -->\n```bash\n(.*?)^```", text, re.S | re.M)[1]
+        block = "\n".join(line for line in block.splitlines() if not line.startswith("eval "))
+        env = dict(os.environ, EXECUTION_CONTEXT=execution_context, TARGET_VERSION=self.version, BUILD=self.build)
+        env.pop("TEST_PLAN_SOURCE", None)
+        return subprocess.run(["bash", "-c", block.replace("{{AIDP_HOME}}", str(repo / ".aidp"))],
+                              cwd=self.root, env=env, capture_output=True, text=True, timeout=120)
+
+    def parent_context(self):
+        from entry_context import resolve_autopilot_root
+        return resolve_autopilot_root(self.root, self.version, authorization_source={
+            "kind": "explicit-command", "command": "sprint-autopilot", "request_id": "fence-fixture",
+            "options": ["--skip-dev"]})["execution_context"]
+
+    def test_real_delegation_fence_freezes_then_forks_and_unit_runs(self):
+        self.commit_repo(self.mixed_plan())
+        self.baseline()
+        done = self.delegation_fence(self.parent_context())
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("测试委派上下文：", done.stdout)
+        manifest = Path(build_unit.runtime_dir(self.root)) / "version-freeze" / self.version / self.build / "manifest.json"
+        self.assertTrue(manifest.is_file())
+
+    def test_real_delegation_fence_reports_missing_source_and_does_not_delegate(self):
+        self.commit_repo()
+        self.baseline()
+        done = self.delegation_fence(self.parent_context())
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("test-plan-source-missing", done.stdout)
+        self.assertNotIn("测试委派上下文", done.stdout)
+        # 具体补法进入输出，且未生成 manifest。
+        self.assertIn("test-plan.json", done.stdout)
+        self.assertFalse((Path(build_unit.runtime_dir(self.root)) / "version-freeze").exists())
+
+    def test_forged_index_digest_with_consistent_manifest_is_rejected_by_run(self):
+        self.commit_repo(self.mixed_plan())
+        self.baseline()
+        manifest = json.loads(Path(self.freeze()["manifest"]).read_text())
+        path = self.root / manifest["acceptance_baseline"]["path"]
+        acceptance = json.loads(path.read_text())
+        acceptance["case_index"]["sha256"] = "0" * 64
+        path.write_text(json.dumps(acceptance))
+        manifest["acceptance_baseline"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        forged = self.root / "memory/forged-manifest.json"
+        forged.write_text(json.dumps(manifest))
+        ran = build_unit.run_build(self.root, self.version, self.build, self.commit, str(forged),
+                                   execution_context=self.delegate(forged))
+        self.assertEqual(ran["status"], "UNVERIFIED")
+        self.assertIn("索引 SHA256", ran["primary_error"])
+        self.assert_no_worktree()
+
+    def assert_no_worktree(self):
+        self.assertFalse((build_unit.build_dir(self.root, self.version, self.build) / "worktree").exists())
+
+    def test_all_browser_only_unit_branch_is_not_applicable(self):
+        plan = {"schema": 1, "unit_tests": [], "unit_discovery": {"status": "none-found", "files": 0, "checked": ["git-tracked-and-untracked-files"]}}
+        self.commit_repo(plan)
+        self.baseline()
+        result = self.freeze()
+        self.assertEqual(result["status"], "FROZEN", result)
+        self.assertEqual(result["reason"], "unit-not-applicable")
+        self.assertEqual(result["summary"]["acceptance_tests"], 0)
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        self.assertEqual({k: manifest["unit_applicability"][k] for k in ("status", "reason")},
+                         {"status": "NOT_APPLICABLE", "reason": "all-cases-browser-only"})
+        self.assertEqual(manifest["unit_applicability"]["evidence"]["status"], "none-found")
+        self.assertEqual((manifest["acceptance_tests"], manifest["suites"]), ([], []))
+        context = self.delegate(result["manifest"])
+        ran = build_unit.run_build(self.root, self.version, self.build, self.commit, result["manifest"], execution_context=context)
+        self.assertEqual(ran["status"], "NOT_APPLICABLE", ran)
+        self.assertEqual(ran["reason"], "all-cases-browser-only")
+        self.assertEqual(ran["runs"], [])
+        self.assertEqual(ran["testScope"]["acceptance_tests"], [])
+        self.assertEqual(ran["testScope"]["unit_applicability"]["browser_only"], ["TC-ONE", "TC-TWO"])
+        again = build_unit.run_build(self.root, self.version, self.build, self.commit, result["manifest"], execution_context=context)
+        self.assertEqual((again["status"], again["reused"]), ("NOT_APPLICABLE", True))
+        self.assertFalse((build_unit.build_dir(self.root, self.version, self.build) / "worktree").exists())
+        self.assertEqual(build_unit.read_status(self.root, self.version, self.build)["status"], "NOT_APPLICABLE")
+
+    def test_not_applicable_cannot_come_from_missing_runner_or_tampered_claim(self):
+        from execution_policy import PolicyError
+        self.commit_repo(self.mixed_plan())
+        result = self.freeze()
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        # 空 suites/空清单但无 unit_applicability：不是 NOT_APPLICABLE，仍被拒绝。
+        bare = dict(manifest, suites=[], acceptance_tests=[])
+        path = self.root / "memory/bare-manifest.json"
+        path.write_text(json.dumps(bare))
+        with self.assertRaises(PolicyError):
+            self.delegate(path)
+        # 篡改声明：基线并非全 browser_only。
+        forged = dict(manifest, suites=[], acceptance_tests=[],
+                      unit_applicability={"status": "NOT_APPLICABLE", "reason": "all-cases-browser-only", "evidence": {"status": "none-found", "files": 0, "checked": ["x"]}})
+        path.write_text(json.dumps(forged))
+        with self.assertRaises(PolicyError):
+            self.delegate(path)
+        # 声明不适用却保留 suites：直接拒绝。
+        forged = dict(manifest, unit_applicability={"status": "NOT_APPLICABLE", "reason": "all-cases-browser-only", "evidence": {"status": "none-found", "files": 0, "checked": ["x"]}})
+        path.write_text(json.dumps(forged))
+        with self.assertRaises(PolicyError):
+            self.delegate(path)
 
 
 if __name__ == "__main__":

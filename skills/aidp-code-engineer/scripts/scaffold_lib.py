@@ -45,7 +45,8 @@ def template_root():
     return aidp.parent if aidp else None
 
 # ── 契约目录 ────────────────────────────────────────────────────────────────
-# 受版本门控：项目版本 < 脚手架版本才覆盖已有文件；同版本只补缺失文件。
+# 受版本门控：项目版本 < 脚手架版本才整体覆盖到新版；同版本保留既有契约正文，只恢复
+# 旧 manifest 已登记但被删的文件（bundle 同版本新增的门控文件不补，升级报告会列出）。
 GATED_DIRS = ("agents", "commands", "rules", "flows", "reference", "hooks", "templates", "skills", "plugins")
 # 不受版本门控：字节不同即覆盖。
 UNGATED_DIRS = ("scripts",)
@@ -289,6 +290,15 @@ def bundle_version(skill_dir: Path = SKILL_DIR):
         return p.read_text(encoding="utf-8").strip() or None
     except OSError:
         return None
+
+
+def changelog_has_entry(root: Path, version: str) -> bool:
+    """`版本变更历史.md`「变更记录」里是否有 `### <version>` 条目（bump 只改版本号，条目靠人补）。"""
+    try:
+        text = (root / CHANGELOG).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return re.search(rf"^###\s+{re.escape(version)}(?:[\s（(]|$)", text, re.M) is not None
 
 
 def changelog_version(root: Path):

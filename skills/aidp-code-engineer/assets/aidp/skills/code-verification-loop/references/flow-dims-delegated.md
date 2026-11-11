@@ -212,6 +212,15 @@ python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --jso
 # 退出码 0=未发现未落点锚点 / 1=发现需交代的未落点锚点 / 2=入参或环境错
 ```
 
+**范围模式（传了 `scope_files`）下的调用**：先跑 `--help`，脚本列有 `--paths <文件...>`（文件清单）或 `--changed-only`（只核验改动文件涉及的锚点）时，带上它们照常核验：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --paths <scope_files...> --json
+python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --changed-only --json
+```
+
+两者都没有 → `未核验（scope-unsupported）`，⛔ 不得回退成整版本扫描；任务 / Sprint 级调用不强制「验收版本号」，脚本仍要求 `--version` 而调用方没传时记 `未核验（缺 --version 值）`。以脚本 `--help` 实际输出为准，本节只给选用规则。
+
 > ⚠️ **本维度比维度 10 / 维度 12 多一个必填参数 `--version`，且它是「带值」参数、不是查版本号的开关。**
 > `check_ui_fidelity.py`（维度 10）与 `check_upstream_call_log.py`（维度 12）都只需 `--json`，
 > 按那两个的经验照搬就会写出 `check_design_anchor.py --version`（缺值）或 `--json <路径>`（缺 `--version`）。

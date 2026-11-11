@@ -54,11 +54,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
 
 ### Step 1：调用 dev-execution-planner skill
 
-**★ QR 变更范围裁剪协议接线（必须传，别让增量迭代付全量 QR 的代价）**：`dev-execution-planner` 的质量检查支持按本轮变更范围裁剪，**唯一入参 = `qr_delta_scope`（可选，不传 = 全量）**。⛔ 命令端**不得自造 `qr_mode`**——该 SKILL 从未定义它（`qr_mode` 是 `dev-manual-testcase` 独有概念），凭空传等于修改 SKILL 契约（违反约定 21）且被静默忽略。命令端按下面两条传：
-
-- **全量生成**（首次规划 / 主文档重生成）→ **不传 `qr_delta_scope`**（SKILL 契约：不传 = 全量）。
-- **增量补充**（`/version` 补充模式〔情况 B-2〕检出 PRD/原型变更后**派发本命令并传入** `--supplement={NN}`；⛔ `/version` 自身没有 `--supplement` flag，别照字面去敲）→ 传 `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
-- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出Δ如实记录范围未知，在有效QR_LEVEL的必要校验内保守核对，不扩为full或独立docs-audit。
+**★ 传参接线（别漏）**：本命令同样先跑 `check_client_mcp.py --version "{version}" --detect --json`，`enabled: true` 才传 `client_mcp`；Task 层拆分全靠命令端传，不传 = 永不启用。QR 裁剪与传参表见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 第四、五节，Δ = 本轮 `NN_<业务主题>.md` 的专题名 / 章节清单。
 
 使用 `Skill` 工具调用 `dev-execution-planner`，由 skill 自主完成执行计划生成 + 多维度独立 Agent 检查（详见 SKILL.md）+ 有效qr_level内的最低生成质量自检；不另启未授权非Critical语义QR或独立审计。**SKILL 内规则为单一信源**（含多用户判定 / AIDP 资源扫描 / 上游引用规则 / 核心原则 / 拆分控制 / 不中断原则 / 金额字段类型守恒等），命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
@@ -79,7 +75,7 @@ SKILL 的 `references/task-templates.md` Task 1.2「第三方中间件配置」�
 
 - **验收动作不得含「启动服务 / 完整构建」**（约定 35）：**SKILL 侧已自禁且判据更细**——`task-templates.md` 的验收标准把后端编译命令**转授权**给 `references/stack-java-spring.md`「二、开发期轻量验证」（该节是其 Java 编译命令唯一信源：默认 `mvn -q compiler:compile` 直调 goal 不走 lifecycle，⛔ 明令不得直接写 `mvn compile`），另有「严禁启动被测服务」铁律与「⛔ 不含『启动应用连接成功』」。与约定 35 **一致，无需命令端覆盖**；prompt 里不必重述（约定 21）。⚠️ 仅在上游回退该铁律时才需恢复覆盖——真实连通性验证一律挪到部署后的 `/sprint-aiauto-test`。
 - **不产出 `.env.example`**（约定 25，**声明选择、非覆盖冲突**）：SKILL 已把该文件明确为**可选形态、由调用方规范决定**，本项目按约定 25 选「运行时配置文件即权威、不维护示例副本」。**替换落点** = `docs/deployment/{version}/配置文件/增量/配置项清单.md`。prompt 里声明本项目的选择即可，不必再写覆盖理由。
-- 连带：`check_env_config.py` **先判形态再决定跑不跑**——项目无 `.env`/`.env.example` 且配置文件不用 `${}` 环境变量引用时，它返回 `skipped=true` + `total_checks=0` + `checks=[]` + **exit 0**，即**整份 N/A**。⛔ **读 `--json` 时必须先看 `skipped`**：`skipped=true` 时 `failed_critical=0` / `all_passed=true` 只是"没跑"，**不是"跑过且通过"**——把 N/A 读成通过正是脚本自身注释点名要防的假绿。`skipped=false` 时才逐项读其检查结果（`.gitignore` 排除 `.env`、配置文件 `${}` 引用等）；其中「`.env.example` 文件存在」为 `Important`，采用「运行时配置文件即权威、不维护示例副本」形态时属正常，不构成阻断。
+- 连带：`check_env_config.py` 退出码 `2`（入参错）不计违规；`--json` 的 `skipped` / N/A 读法以 SKILL QR checklist 为准，命令端不复述。采用「运行时配置文件即权威、不维护示例副本」形态时「`.env.example` 文件存在」（`Important`）不满足属正常，不构成阻断。
 
 **额外提示**（命令端在调用 prompt 中补充，让 skill 的资源扫描覆盖本项目）：
 - 让 skill 扫描 `{{AIDP_HOME}}/commands/` 作为 L2 层可用命令
@@ -100,8 +96,6 @@ SKILL 的 `references/task-templates.md` Task 1.2「第三方中间件配置」�
 - 原型代码：docs/prototype/{version}/code/（含 .jsx/.vue/.html 等）
 - 高保真原型：docs/prototype/{version}/mockup/（如存在）
 
-【信号】上游齐全 → 请走严格模式（不走"独立使用上游不全时"的宽松判定）。
-
 SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死列数/阈值）：任务表结构 + 行级三锚点（REQ / 设计 / 原型）+ 粒度/EPIC 完整性，均由 SKILL 内置硬核回检 + `scripts/check_task_granularity.py` 把关（详见 SKILL.md）。命令端仅传参 + 编排。
 ```
 
@@ -109,7 +103,7 @@ SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死列�
 
 **输出**：skill 生成执行计划内容。命令端按 AIDP 落盘到 `docs/plans/{version}/01_研发执行计划.md`（内容主文档从 `01_` 起 + 专职 `00_索引.md`，约定 15）。**dev-execution-planner SKILL 原生只产**：单用户 `00_索引.md` + `01_研发执行计划.md`；多用户 `00_索引.md` + `NN_研发执行计划-{开发者姓名}.md`。**拆分阈值与拆分维度以 `dev-execution-planner` SKILL 为单一信源**（约定 21），⛔ 命令端不另立数值阈值、不另立拆分维度——SKILL 按内容量拆（>800 行/60KB、Task>40、单 Phase Task>15）且维度是 **Phase**，命令端另立「按里程碑拆」会同时造成两种错：Task 少却跨 3 里程碑时被强拆成撞 SKILL「严禁 <150 行碎片」的分册（`check_doc_split.py` 恒红），以及真正该拆的（单 Phase Task>15）因里程碑只有 1 个而不拆。`00_` 槽位恒归专职索引 `00_索引.md`，内容主文档从 `01_` 起。
 
-> ★ **归一边界**：`00_索引.md` + `01_` 序号态由 SKILL 原生产出（里程碑分册 `0N_M{N}研发执行计划.md` 属命令级拆分产物，仍占 `01_` 起序号、`00_索引.md` 照常由 SKILL 维护）；`/version` 串联场景下最终由其 Step 2.4.4 统一幂等归一/校验，本命令**单独调用**时在此就地生成兜底（幂等，已合规则不动）。
+> ★ **归一边界**：`00_索引.md` + `01_` 序号态由 SKILL 原生产出（拆分维度是 Phase，SKILL 无「里程碑拆分」概念；`00_索引.md` 恒由 SKILL 维护）；`/version` 串联场景下最终由其 Step 2.4.4 统一幂等归一/校验，本命令**单独调用**时在此就地生成兜底（幂等，已合规则不动）。
 
 > skill 自带的"AI 执行指令"会引用本项目 L1/L2 层命令（`/sprint-dev` 等）+ L3 superpowers + L4 工具——命令不需要重复约定。
 
@@ -190,25 +184,7 @@ echo "✅ 研发执行计划 SQL 路径已回写到最终部署位置 docs/deplo
 
 > **必须**：每行的「对应需求章节」「对应设计章节」要给出**可点击的 anchor 链接**（指向 `01_研发需求.md` 与 `01_详细设计.md` / `03_接口设计.md` 等的具体小节）；这是把计划与上游需求/设计绑死的关键。
 
-## Sprint 文件级冲突矩阵（★ 并行可行性的唯一判据，必须规划期产出）
-
-> **为什么必须在规划期产出、不能执行期临时判断**：并行执行的两个 Sprint 若触碰同一文件，
-> 会**互相覆盖且不报错**——没有任何机制会告诉你结果被吞了。而执行期才判断时，
-> 各 Sprint 的实际改动面尚未确定，判据不可靠。故冲突面**只能**在规划期按 Task 的
-> 「涉及文件」清单静态求交集得出。
->
-> **列什么**：逐对列出触碰同一文件的 Sprint（含具体冲突文件），无交集的显式标注"无冲突"。
-> 文件粒度到具体路径，**不要写目录**（`src/views/` 这种粒度会把本可并行的判成冲突）。
-
-| Sprint 对 | 冲突文件 | 结论 |
-|----------|---------|------|
-| Sprint-001 × Sprint-002 | `src/api/user.ts` | ❌ 有冲突，必须串行 |
-| Sprint-001 × Sprint-003 | — | ✅ 无冲突，可并行 |
-
-> ⚠️ **"可并行"只表示【文件级无覆盖风险】，不等于"应该并行"**：还需满足①无业务依赖（后端接口须先于前端联调）
-> ②各自可独立验收。当前 `/sprint-batch` 与 autopilot **默认仍严格串行**——本矩阵先把"哪些本可并行"
-> 变成规划期的显式结论（下游实测：某 Sprint 与前三个文件级零重叠、规划文档里都写了"可并行"，
-> 仍排队等了 27 分钟），供人工决定是否分批分人并行推进。
+> **并行可行性**：由 `dev-execution-planner` SKILL 固定产出的 `## Sprint 并行分组` 表承载（四列、文件级冲突矩阵的机器可读投影，格式以其 `references/output-format.md` 为准），命令端不另立同义矩阵。该表只表示【文件级无覆盖风险】，不等于"应该并行"；当前 `/sprint-batch` 与 autopilot 默认仍严格串行、暂未消费它，缺表时下游默认全串行且不报错。
 
 ## 依赖关系
 
@@ -264,13 +240,12 @@ echo "✅ 研发执行计划 SQL 路径已回写到最终部署位置 docs/deplo
 
 ```bash
 # ⛔ 不得硬编码单一文件名：本命令自己规定多用户产物为 `NN_研发执行计划-{姓名}.md`（没有 01_ 那份），
-#    拆分态另有 `0N_M{N}研发执行计划.md`——硬判 `01_` 会让合规产出被判缺失：
+#    按内容量拆分另有 `02_`…分册——硬判 `01_` 会让合规产出被判缺失：
 #    check_task_granularity.py 对不存在的路径返回 exit 2（入参错、按判定表不计 Fail ⇒ 既不核验也不判失败），
 #    同时 `head -20 $FILE` 得 0 ⇒ L1 头部假 Fail。三个下游命令（sprint-start/batch/full）都已用
 #    5 模式并集并加粗警告禁止硬判，唯产出方自己没跟上。
 FILES=$(ls docs/plans/{version}/01_研发执行计划.md \
            docs/plans/{version}/00_研发执行计划.md \
-           docs/plans/{version}/0[0-9]_M*研发执行计划.md \
            docs/plans/{version}/[0-9][0-9]_研发执行计划-*.md 2>/dev/null)
 [ -n "$FILES" ] || { echo "❌ docs/plans/{version}/ 下无任何研发执行计划内容主文档"; exit 1; }
 # L1 头部 / 越界检测：逐份取、合并判定

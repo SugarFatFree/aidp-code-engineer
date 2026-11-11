@@ -1,5 +1,7 @@
 # 多 Agent 原生命令适配设计
 
+> **状态：已落地 / 历史存档。** 本文是当时的设计 / 实施记录，仅供追溯；现行行为以 `.aidp/` 与 `docs/init/` 为准，不再据此文改动实现。
+
 ## 1. 背景与目标
 
 AIDP 当前以 `.aidp/commands/` 保存命令正文，以 `.aidp/skills/` 保存公共 SKILL。Claude Code 使用 `.claude/commands/` 原生命令；Codex 与 DeepSeek Harness（DSH）则共同依赖 `aidp-cmd` 路由 SKILL，把命令名和参数转发到 `.aidp/commands/<command>.md`。

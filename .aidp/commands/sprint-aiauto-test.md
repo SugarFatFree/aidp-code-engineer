@@ -14,7 +14,10 @@
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:-${AIDP_EXECUTION_CONTEXT:-}}"
 if [ -z "$EXECUTION_CONTEXT" ] && [ "${AIDP_TICK_COMMAND:-}" = sprint-aiauto-test ]; then
   python3 {{AIDP_HOME}}/scripts/baseline_edit.py touch aiauto_test_heartbeat_at || exit $?
-  EXECUTION_CONTEXT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get aiauto.execution_context --default '') || exit $?
+  # baseline 里的委派须仍是当前版本当前未定稿 build 的有效交接；陈旧（旧版本/旧 build/已定稿）视为空，才能走下面的 NO_TARGET / NOT_REQUESTED。
+  EXECUTION_CONTEXT=$(python3 -c 'import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from aidp_scheduler import test_handoff_context
+try: print(test_handoff_context(".")[0])
+except (OSError, ValueError, KeyError, TypeError): pass') || exit $?
   if [ -z "$EXECUTION_CONTEXT" ]; then
     # 判据与调度器同源：已部署且未内部发布的版本才算待测目标；无目标只是空转tick。
     TARGET_STATE=$(python3 -c 'import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from aidp_scheduler import _test_target_state; print(_test_target_state("."))') || exit $?
@@ -124,8 +127,8 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 | 本轮信号 | 行为 |
 |---|---|
 | `--once` | 强制立即跑一次完整测试 |
-| **`LOOP_UNATTENDED=1`（`/loop` 上下文 / `--no-loop` / 含裸 `--unattended`）★** | **照常进 Phase 1/2/3 跑测**。⛔ **绝不落到下面的"默认"行**——`--unattended` 的语义就是"没人在场、别打印引导等人"；落默认行会让 `/loop 5m /sprint-aiauto-test --unattended` 每 tick 跑完 Phase 0（**心跳照刷、`aiauto_blocked_reason` 照清**）就打印引导退出，**一条用例都不跑**。二次伤害更隐蔽：开发链路 Phase 2 0b 读到"新鲜心跳 + 空 blocked_reason"判 `TEST_LOOP_ALIVE=1` → 走"暂缓"而非熔断 → 12 tick 后按 `unconverged` 冻结，告警文案写"测试链路存活但未收敛，请人工看测试结果/环境"，而真相是测试链路一次都没启动。与 `/sprint-autopilot` Phase 1.3 决策表同款分流。 |
-| 默认（无 flag + 非 `/loop` 上下文 + `LOOP_UNATTENDED=0`）| 完成 Phase 0 后**输出引导**「7×24 请用 `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install` 装齐开发 + 测试两条链路（会话内临时可用 `/loop 5m /sprint-aiauto-test --unattended`）」+ 退出，**不跑测试**；避免误以为单次直接调用就实现了持续测试。 |
+| **`LOOP_UNATTENDED=1`（`/loop` 上下文 / `--no-loop` / 含裸 `--unattended`）★** | **照常进 Phase 1/2/3 跑测**。⛔ **绝不落到下面的"默认"行**——`--unattended` 的语义就是"没人在场、别打印引导等人"；落默认行会让 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 每 tick 跑完 Phase 0（**心跳照刷、`aiauto_blocked_reason` 照清**）就打印引导退出，**一条用例都不跑**。二次伤害更隐蔽：开发链路 Phase 2 0b 读到"新鲜心跳 + 空 blocked_reason"判 `TEST_LOOP_ALIVE=1` → 走"暂缓"而非熔断 → 12 tick 后按 `unconverged` 冻结，告警文案写"测试链路存活但未收敛，请人工看测试结果/环境"，而真相是测试链路一次都没启动。与 `/sprint-autopilot` Phase 1.3 决策表同款分流。 |
+| 默认（无 flag + 非 `/loop` 上下文 + `LOOP_UNATTENDED=0`）| 完成 Phase 0 后**输出引导**「7×24 请用 `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install` 装齐开发 + 测试两条链路（会话内临时可用 `/loop 5m /sprint-aiauto-test --unattended --no-loop`）」+ 退出，**不跑测试**；避免误以为单次直接调用就实现了持续测试。 |
 
 | 参数 / Flag | 默认 | 说明 |
 |------------|------|------|

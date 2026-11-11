@@ -54,7 +54,7 @@
 | `test_preflight_cache.py` | 前置检查成功结论按 run_id + 输入指纹缓存，失败不缓存、跨 tick 不复用 | `python3 .aidp/scripts/tests/test_preflight_cache.py` | Python 标准库 |
 | `test_ceremony_cards.py` | full / incremental / test-only 的部署与静态分支期望通知集 | `python3 .aidp/scripts/tests/test_ceremony_cards.py` | Python 标准库 |
 | `test_execution_contract_lite.py` | 精简执行契约 ↔ 权威枚举的三方对账：`auto-test-runner/references/execution-contract-lite.md`（执行子 Agent 默认只读这一份）把 `status` / `block_reason` / `execution_mode` / `mechanism` / `entry_kind` 五组枚举**抄了一遍**，本套件逐组比对它与 `scripts/check_result.py` 常量、`assets/result-schema.json` 的 `$field_notes`。⛔ 每个用例先断言「解析到的枚举值个数 > 0」——本门的失效形态与通过同形（正则认不出写法 ⇒ 空集合相等 ⇒ 绿） | `python3 .aidp/scripts/tests/test_execution_contract_lite.py` | Python 标准库 |
-| `test_doc_reference_guards.py` | 文档引用与开源卫生三道门：`check_code_symbol_refs.py`（`脚本::符号` 存在性）/ `check_cli_invocation.py`（子命令与 flag 归属）/ `check_private_markers.py`（内网地址 / 主机名 / MCP 服务名 / 下游项目名 / 示例子项目名 / 本地名单）双侧对照 + `--self-check` | `python3 .aidp/scripts/tests/test_doc_reference_guards.py` | Python 标准库 |
+| `test_doc_reference_guards.py` | 文档引用与开源卫生三道门，及后补四道文档描述面守卫（`check_readme_registry.py` README 登记 / `check_cn_count_claims.py` 中文数字计数 / `check_stale_phrases.py` 陈旧短语黑名单 / `check_identity_source.py` 扫描面扩到 `agents/` 与 `docs/init/`，另 `check_loop_examples.py` 的 `--no-loop` 判据在 `test_guard_scripts.py`）：`check_code_symbol_refs.py`（`脚本::符号` 存在性）/ `check_cli_invocation.py`（子命令与 flag 归属）/ `check_private_markers.py`（内网地址 / 主机名 / MCP 服务名 / 下游项目名 / 示例子项目名 / 本地名单）双侧对照 + `--self-check` | `python3 .aidp/scripts/tests/test_doc_reference_guards.py` | Python 标准库 |
 | **脚手架侧（不在本目录、由 `run.sh` 一并调起）** | `skills/aidp-code-engineer/scripts/tests/` 下的 `test_mirror.py` / `test_scaffold_lib.py` / `test_runtime_layout.py` / `test_installed_init_docs.py` / `test_scaffold_modes.py` / `test_verify_guard_observability.py` / `test_bundle_skill_mask.py` / `test_sync_memory_md.py` / `test_downstream_portability.py` / `test_dsh_plugin_state.py` | 见 `run.sh`「脚手架 skill 侧」段 | Python 标准库 |
 | `sync_group_table.py` | 维护工具：把 `test_guard_scripts.py` 的实跑分组同步进本 README 的分组表 | `python3 .aidp/scripts/tests/sync_group_table.py` | Python 标准库 |
 | `fixtures/*.js` | AI 报告数据缺陷形态的回归样本（脱敏） | — | — |
@@ -123,7 +123,7 @@
 | 44 | `check_version_identifier 多层反应堆 parent 同步` | — |
 | 45 | `check_md_anchors 站内锚点死链` | 站内 `#锚点` 死链检出 |
 | 46 | `check_ghost_flags 幽灵旗标 / 零误报` | 检出幽灵旗标 + 四类零误报（owner 判定 / 续行继承 / CSS 变量 / 假定义防护） |
-| 47 | `check_loop_examples /loop 示例必带 --unattended` | 漏写检出 + 逐"出现"判 + 显式豁免 |
+| 47 | `check_loop_examples /loop 示例必带 --unattended --no-loop` | 漏写检出 + 逐"出现"判 + 显式豁免（含 loop-example-ignore 仅豁免 --no-loop）|
 | 48 | `check_line_refs 硬编码行号引用` | 四种行号写法 + `L1-L3` 层级不误报 + 目标可解析性分组 |
 | 49 | `check_shard_counts 分片自称片数 / 范围记法` | 片数少算检出 + 范围记法漏 `b` 分片检出 + 三类零误报（显式列出 / 序数「第 N 片」/ 跨命令同名前缀） |
 | 50 | `check_sprint_numbering Sprint 编号跨版本 + 划分粒度` | 跨版本重号检出 + 同功能前后端被拆成两 Sprint 检出 |

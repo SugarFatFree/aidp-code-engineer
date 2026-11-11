@@ -121,8 +121,8 @@ FAIL/TOOL_ERROR/ENV_UNAVAILABLE/UNVERIFIED/NOT_REQUESTED分别保留，不把sco
 ## prepare / dev / repair
 
 1. prepare 读用户需求、相关代码和既有基线；light 不认领已有 Sprint、不重置 activeContext/progress、不写 started，准备完返回。
-2. dev/repair 按实际范围复用 backend/frontend 与 rules，完成实现、必要静态检查后自动调用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]`，执行本片 test 能力；真实失败交原实现者修复并复验，随后 close 终端收口。保留同 task/起点/写集；无需单测确认，不借子入口加 review/CVL/文档。review-only/test-only 只回传发现。
-3. 规模预判与完成复核使用同一 `development_scope.py`、同一冻结上下文；risk/complexity/cost 独立，文件数只表示成本，不能以 >10 files 判 L。风险提示不授予迁移、文档或 heavy 检查：
+2. dev/repair 按实际范围复用 backend/frontend 与 rules，完成实现、必要静态检查后自动调用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]`，执行本片 test 能力；真实失败交原实现者修复并复验（调 `bugfix` SKILL 传 `report_mode=evidence-only`，见 `reference/skills.md`），随后 close 终端收口。保留同 task/起点/写集；不借子入口加 review/CVL/文档，无需单测确认；review/test-only 只回传发现。
+3. 规模预判与完成复核使用同一 `development_scope.py`、同一冻结上下文；risk/complexity/cost 独立，文件数只表示成本、不判 L。风险提示不授予迁移、文档或 heavy 检查：
 
 ```bash
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须继承冻结任务路径}"
@@ -131,9 +131,9 @@ python3 {{AIDP_HOME}}/scripts/development_scope.py --root . \
   --execution-context "$EXECUTION_CONTEXT" --facts-json "$DEVELOPMENT_FACTS_JSON" --json
 ```
 
-`DEVELOPMENT_FACTS_JSON` 是真实 REQ/PAGE/API、语义、配置、架构及破坏性事实；pre 用预计事实，post 用实际事实。消费 `risk_tier/complexity/cost/has_ddl/has_new_table/has_destructive/ddl_unknown/sql_evidence/impact_check_required/scope`。缺基线或 SQL unknown 记需影响核查，不推断无 DDL、不自动转 L 全流程。formal 具体承载见 `incremental-contract.md`。
+`DEVELOPMENT_FACTS_JSON` 是真实 REQ/PAGE/API、语义、配置、架构及破坏性事实；pre 预计、post 实际。消费 `risk_tier/complexity/cost/has_ddl/has_new_table/has_destructive/ddl_unknown/sql_evidence/impact_check_required/scope`。缺基线或 SQL unknown 记需影响核查，不推断无 DDL、不自动转 L。formal 见 `incremental-contract.md`。
 
-4. 仅主流程给实际受影响的族经 `alloc_id.py --kind C --count {真实条数} --owner orchestrator --version {version} --scope changes` 取号并串行登记短行，跨族复用 C 号、light 行尾带真实 task_id。无影响不建空册，未要求 tests/review 不登记流程欠账。已确认文档事实漂移可攒批，不因 test/close 开启整套级联；正式成文须 `document`，审计须 `docs-audit`。
+4. 仅主流程给实际受影响的族经 `alloc_id.py --kind C --count {真实条数} --owner orchestrator --version {version} --scope changes` 取号并串行登记短行，跨族复用 C 号、light 行尾带真实 task_id。无影响不建空册，未要求 tests/review 不登记流程欠账。已确认文档漂移可攒批，不因 test/close 开整套级联；正式成文须 `document`，审计须 `docs-audit`。
 5. 用例族实际受影响且未安排实测时，调用 `check_case_ledger_pending.py --root . --version "{version}" --execution-context "$EXECUTION_CONTEXT" --defer --reason "{实际原因}" --json` 保留事实义务；无影响不默认 defer。已授权 live 的正式用例准备经既有入口、受父策略限制；静态 PASS 不冒充用例生成或实测。light 不铸 build、默认不部署。
 
 ## static：按项目工具链验证

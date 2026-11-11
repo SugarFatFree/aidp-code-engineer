@@ -75,11 +75,7 @@ docs/requirements/
 
 ## 执行步骤
 
-**★ QR 变更范围裁剪协议接线（必须传，别让增量迭代付全量 QR 的代价）**：`ux-logic-extractor` 的质量检查支持按本轮变更范围裁剪，**唯一入参 = `qr_delta_scope`（可选，不传 = 全量）**。⛔ 命令端**不得自造 `qr_mode`**——该 SKILL 从未定义它（`qr_mode` 是 `dev-manual-testcase` 独有概念），凭空传等于修改 SKILL 契约（违反约定 21）且被静默忽略。命令端按下面两条传：
-
-- **全量生成**（首次规划 / 主文档重生成）→ **不传 `qr_delta_scope`**（SKILL 契约：不传 = 全量）。
-- **增量补充**（`/version` 补充模式〔情况 B-2〕检出 PRD/原型变更后**派发本命令并传入** `--supplement={NN}`；⛔ `/version` 自身没有 `--supplement` flag，别照字面去敲）或 `/sprint-dev` 口述累进 → 传 `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
-- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出Δ如实记录范围未知，在有效QR_LEVEL的必要校验内保守核对，不扩为full或独立docs-audit。
+**★ 传参接线（别漏）**：先 `check_client_mcp.py --version "{version}" --detect --json`，`enabled: true` 才随 prompt 传 `client_mcp`（保留 `enabled`）；PRD 层登记全靠命令端传，不传 = 永不启用。QR 裁剪的全量 / 增量取舍、⛔ 不自造 `qr_mode` 等规则见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 第四、五节。增量来源为 `--supplement={NN}` 或 `/sprint-dev` 口述累进，Δ = 本轮 `NN_<业务主题>.md` 的专题名 / 章节清单。
 
 > **关键规则（约定 21）**：本命令是 `ux-logic-extractor` skill 编排器——**SKILL 内规则为单一信源**（模式判定 / 拆分数量 / 不中断原则 / 不臆造兜底 / 上游溯源 / Q-NNN 编号等），命令端只做**传参 + AIDP 编排后处理**，不复述、不修改 SKILL 维度。
 >
@@ -88,7 +84,7 @@ docs/requirements/
 | Step | 职责（骨架，详情见 flow 文件） |
 |------|-------------------------------|
 | Step 0 | 输入扫描（产品提供/ 优先、PRD-*.md 兜底）+ 多系统智能判断（single / multi / unsure）|
-| Step 1 | 调 `ux-logic-extractor` skill 生成融合研发 PRD；传严格模式信号（上游齐全）+ 输出路径约定（`00_索引.md` + `01_研发需求.md`）|
+| Step 1 | 调 `ux-logic-extractor` skill 生成融合研发 PRD；传上游来源清单 + 输出路径约定（`00_索引.md` + `01_研发需求.md`）|
 | Step 1.5 | 命令级后处理 (a)~(e)：多系统拆分 / 多 PRD 冲突 / 待澄清标注 / 裁剪 / SKILL 脚本复核（派子 Agent，清单以 SKILL 为准） |
 | Step 2 | 补充元数据章节（PM Agent）：关联文档 / 源 PRD 清单 / 冲突项 / 待澄清导览 / 已裁剪 |
 | Step 3 | 更新 `memory/{version}/{user}/activeContext.md` |

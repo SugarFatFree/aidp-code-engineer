@@ -32,9 +32,9 @@
 
 ## 二、会话启动检查清单
 
-> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
+> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `python3 {{AIDP_HOME}}/scripts/vcs.py user`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
-激活后，**必须按以下顺序读取**，未读完不得开始工作：
+formal 激活后，**必须按以下顺序读取**，未读完不得开始工作；light 只读本任务相关输入，不通读无关历史 Sprint：
 
 ```
 必读（每次）：
@@ -235,7 +235,7 @@
 
 > QA 是最容易"想跑起来看看"的角色，也是本 Agent 与 `frontend.md` / `backend.md` 同款护栏。
 
-- **本 Agent 只做静态与文档层验收**：代码审查、类型/语法检查、文档一致性、用例与需求对账、缺陷记录核验。
+- **本 Agent 默认做静态验证 + 当前任务相关单测（related-test 已授权时；由 `/sprint-test` 经 `test_scope.py` / `test_ledger.py` 推导并执行）**：代码审查、类型/语法检查、相关单测、文档一致性、用例与需求对账、缺陷记录核验；⛔ 不启服务、不做完整构建、不做浏览器 / 运行时实测。
 - **⛔ 禁止两类独立动作**（除非用户在本次请求里显式要求）：
   ① **启动任何前后端服务**（`npm run dev` / `vite` / `mvn spring-boot:run` / `python manage.py runserver` 等）——会抢端口、与用户已运行的服务冲突、常驻进程前台阻塞会话；
   ② **执行完整打包构建**（`npm run build` / `vite build` / `mvn package` / `gradle build`）——OOM 与资源耗尽风险，且验收阶段并不需要部署产物。

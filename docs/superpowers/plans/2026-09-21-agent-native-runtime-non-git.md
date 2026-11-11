@@ -1,5 +1,7 @@
 # Agent Native Runtime and Non-Git Implementation Plan
 
+> **状态：已落地 / 历史存档。** 本文是当时的设计 / 实施记录，仅供追溯；现行行为以 `.aidp/` 与 `docs/init/` 为准，不再据此文改动实现。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 下游项目不再保留根 `.aidp/`，按 Agent 生成 `.claude/aidp` 或 `.agents/aidp` 运行包，并让 init/migrate/upgrade/verify 与非 Git 开发链在 `vcs_mode=none` 下可用。

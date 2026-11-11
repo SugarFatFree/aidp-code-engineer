@@ -39,7 +39,7 @@
 | 15 | 上游引用完整性·三层追溯 | 兼有 | `check_upstream_reference.py` | ✅ | **基线缩放** | Critical | 部分 |
 | 16 | 待澄清问题清单完整性 | 语义 | — | — | **全量** | Critical | 否 |
 | 17 | 货币金额字段整数化 | 兼有 | `check_money_field.py` | ✅ | Δ | Critical | 部分 |
-| 18 | 历史 SQL 风格沿用 | 兼有 | `check_sql_style_consistency.py` | ❌ 需额外入参 | Δ | Critical | 部分 |
+| 18 | 历史 SQL 风格沿用 + 标识符不加引号 | 兼有 | `check_sql_style_consistency.py`（需额外入参）+ `check_sql_identifiers.py` | 后者 ✅ | Δ（拼写漂移判据**全量**） | Critical | 部分 |
 | 19 | 不臆造兜底 | 兼有 | `check_no_fabricated_fallback.py` | ✅ | Δ | Critical | 部分 |
 | 20 | ER 关系图与外键约束 | 兼有 | `check_er_and_fk.py` | ✅ | **全量** | Critical | 部分 |
 | 21 | 索引列 NOT NULL 强制 | 兼有 | `check_index_not_null.py` | ✅ | Δ | Critical | 部分 |
@@ -1318,6 +1318,15 @@ CREATE TABLE orderItem (              -- ❌ 驼峰 vs 历史 snake_case
   createdAt DATETIME,                   -- ❌ createdAt vs 历史 create_time
   updatedAt DATETIME                    -- ❌ updatedAt vs 历史 update_time
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;  -- ❌ utf8 vs 历史 utf8mb4
+```
+
+**标识符通用性（本检查项子项·Critical）:** 设计文档里的 SQL（DDL 与 DML）**一律不给表名、字段名加引号**（双引号、反引号都不行），同一个名字全设计**只有一种拼写**（推荐小写蛇形，DDL / DML / Mapper 逐字一致），且不用保留字作标识符（不加引号就无法规避，须改名，如 `user_level`、`order_no`）。依据：达梦 / Oracle 对未加引号的标识符折成大写、加引号则保留原样，PostgreSQL 反向折成小写，MySQL 表名是否区分大小写取决于 `lower_case_table_names`——「小写加引号建表、不加引号查询」在达梦上查不到，不加引号建表则大小写写法都能查到；加引号 = 把标识符绑死在某个库的折叠规则上，换库即坏。判据由 `scripts/check_sql_identifiers.py` 机检：Q1 标识符被引号包裹 / Q2 同一表名多种拼写 = Critical；Q3 字段名拼写漂移 / Q4 保留字作标识符 = Important。⚠️ `skipped` 不等于通过；⚠️ 含 ❌ / 反例 / 禁止 字样的行视为「写出反模式本身以便禁止它」，整行跳过。**达梦专项（Q5·Critical）:** 目标库为达梦时，DDL（`CREATE TABLE` / `ALTER TABLE ... ADD`）与 SQL 引用的表名、字段名必须**全大写且不加引号**（`T_ORDER`、`ORDER_NO`）：达梦把未加引号的标识符折成大写，按大写建表后大小写写法都能查到，而小写建表在部分旧版本上连小写查询都失败。脚本以 `--db dameng` 或围栏标签 ` ```dm ` / ` ```dameng ` 触发；设计选型为达梦时 QR 派发须带 `--db dameng`。
+
+历史库既有加引号表的情形：设计须沿用历史写法并在「历史 SQL 风格沿用说明」里显式登记，不算新违规。
+
+```bash
+python3 <SKILL_DIR>/scripts/check_sql_identifiers.py <设计文档目录> --json            # 通用
+python3 <SKILL_DIR>/scripts/check_sql_identifiers.py <设计文档目录> --db dameng --json  # 目标库为达梦
 ```
 
 **自动化辅助:** `scripts/check_sql_style_consistency.py` 扫描项目中历史 SQL 与本次设计文档,自动归纳历史 8 维度风格并核验本次设计的一致性。支持 `--json` 输出供 Agent 解析。

@@ -2,7 +2,7 @@
 
 # sprint-aiauto-test · 执行分片 [3/6]（3.2.7 AI 执行报告完成核验门 / 3.2.8 环境探针档案 / 3.3 baseline 回写）
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-3-3.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ### 3.2.7 ★ AI执行报告完成核验门（入口无关，下沉到测试链路）
 
@@ -146,23 +146,12 @@ for f in bad[:5]: print('   ⛔', '[%s] %s' % (f.get('level') or '?', str(f.get(
 >   THIS_ROUND_FAIL_COUNT=$(echo "$J"|jq -r '.counts.fail // empty'); THIS_ROUND_NA=$(echo "$J"|jq -r '.counts.na // 0')
 >   THIS_ROUND_DIRECT_NOEV=$(echo "$J"|jq -r '(.direct_pass_without_evidence // []) | length')
 >   THIS_ROUND_BLOCK=$(echo "$J"|jq -r '.counts.block // 0'); }
-> EXCLUDED_BLOCK=$(python3 - "$RD" "$TARGET_VERSION" <<'PY' 2>/dev/null || echo 0
-> import json, sys, glob, os
-> sys.path.insert(0, "{{AIDP_HOME}}/skills/auto-test-runner/scripts")
-> from gen_report import load_results, is_env_issue, split_entries
-> rd, v = sys.argv[1], sys.argv[2]
-> try:
->     bl = json.load(open("memory/.sprint-autopilot-baseline.json", encoding="utf-8"))
-> except Exception:
->     bl = {}
-> pend = {c for it in ((bl.get("versions") or {}).get(v) or {}).get("pending_clarifications") or []
->         for c in (it.get("affected_cases") or [])}
-> cases, _scans = split_entries(load_results(rd))
-> n = sum(1 for r in cases if r.get("status") == "block" and (
->     (is_env_issue(r) and r.get("block_reason") != "precondition-unmet") or r.get("case_id") in pend))
-> print(n)
-> PY
-> )
+> # 只消费 gen_report.py --json 的公开字段（defects[].status/block_reason/is_environment_issue），不 import SKILL 内部函数
+> PEND_CASES=$(python3 -c 'import json,sys
+> try: bl = json.load(open("memory/.sprint-autopilot-baseline.json", encoding="utf-8"))
+> except Exception: bl = {}
+> print(json.dumps(sorted({c for it in ((bl.get("versions") or {}).get(sys.argv[1]) or {}).get("pending_clarifications") or [] for c in (it.get("affected_cases") or [])})))' "$TARGET_VERSION" 2>/dev/null || echo '[]')
+> EXCLUDED_BLOCK=$(echo "$J" | jq -r --argjson p "$PEND_CASES" '[.defects[]? | select(.kind=="case" and .status=="block" and (((.is_environment_issue==true) and (.block_reason!="precondition-unmet")) or (.case_id as $c | $p | index($c) != null)))] | length' 2>/dev/null || echo 0)
 > CASE_LEDGER_PENDING=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" get case_ledger_pending --default 0)
 > if [ -z "${THIS_ROUND_FAIL_COUNT+x}" ] || [ -z "${THIS_ROUND_FAIL_COUNT}" ]; then echo "⛔ 未从 gen_report.py 聚合到 fail 数 → fail-closed 判未收敛"; CONVERGED=0
 > elif [ "${GR_UNTRUSTED:-0}" = "1" ]; then echo "⛔ gen_report.py 非 0 退出或 read_errors 非空 → 统计不可信，不收敛"; CONVERGED=0

@@ -50,7 +50,7 @@
    fi
    ```
 2. **调用** `/sprint-aiauto-test --once [--unattended] [--role <role>]`：⛔ `[--unattended]` **按 `/sprint-batch` 自身是否无人值守条件透传**——被调侧「显式 `--once` 未带 `--unattended` 恒交互式」（`sprint-aiauto-test/phase-0-1.md`），漏传会在 `/sprint-batch --unattended`（未带 `--skip-aiauto-test`）这条路径上弹出无人可答的 `AskUserQuestion`。autopilot 编排链恒带 `--skip-aiauto-test`、不到本步，但那不覆盖用户手动跑 `--unattended` 的情形。
-   - 用例集由 aiauto-test Phase 2.0「用例来源优先级解析」自行确定（正式用例主集 + 研发自测补集），sprint-batch 不干预选集（约定 21）
+   - **用例集由 sprint-batch 显式给定，aiauto 不自决全集**：把本批次各 Sprint 登记的用例 ID 清单（及来源文件）经 `TASK_ACCEPTANCE`（aiauto 入口的 `--acceptance`）明确传入；本批次无可汇总的用例 ID 清单时不调用，返回缺口「无明确用例 ID，未执行实测」并记入待补清单（约定 21）
    - 不传 `--target`（让 aiauto-test 自动从 baseline 读，避免参数双写）
 3. **aiauto-test 内部自己处理**（按约定 21，sprint-batch 不重复其内部行为 — chrome 检测 / credentials 收集 / 部署探测 / 仿真测试主循环 / baseline 写 / 里程碑通知等，详见 `/sprint-aiauto-test` 文档）
 

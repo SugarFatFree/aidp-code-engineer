@@ -60,7 +60,7 @@
 
 ## 二、会话启动检查清单
 
-> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `git config user.name`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
+> **前置说明**：`{version}` 和 `{user}` 的解析规则见 [`docs/init/06_版本与用户目录约定.md`](../../docs/init/06_版本与用户目录约定.md) 第 4 节。下文所有路径中的 `{version}` 从 `AGENTS.md`「当前状态」读取；`{user}` 来自 `python3 {{AIDP_HOME}}/scripts/vcs.py user`。  <!-- dup-check: ignore 每份 Agent/分片都可能被单独 Read，前置说明必须自包含；这是有意的每文件样板，不是双写 -->
 
 激活后，先按执行身份选择规格，未读完适用输入不得开始工作：
 
@@ -311,7 +311,7 @@ Step 4: 前端验收校验（★ 收敛到验收阶段执行 + 仅改动侧 + �
   → ⚠️ **上面所有 `npx` 都必须带 `--no-install`**（npm 7+ 亦可 `npx --no`，或直接用 `./node_modules/.bin/<tool>`）：
     裸 `npx` 的语义是「Run a command from a local **or remote** npm package」——包不在本地时它会**去 registry 下载**，
     且非 TTY 环境（Agent 的 bash 正是）**不弹确认、直接装**。那样下面这条兜底降级分支**永远走不到**
-    （工具"缺失"时不会失败、而是被悄悄装上），联网装包本身也越过了开发期只做静态验证的边界。
+    （工具"缺失"时不会失败、而是被悄悄装上），联网装包本身也越过了开发期默认「静态验证 + 当前任务相关单测」的边界。
   → ★ 兜底降级（项目未装 vue-tsc/tsc 时；`--no-install` 下会直接失败，降级分支由此才可达）：降级为 **esbuild 转译式语法检查**
     （`npx --no-install esbuild <改动文件> --bundle=false '--loader:.ts=ts'` 或等价，仅抓语法/转译错误）
     + 终端明确告知「本次为 esbuild 语法检查、**不含 TS 类型检查**」——**绝不因缺 vue-tsc 就升级成全量 build**。

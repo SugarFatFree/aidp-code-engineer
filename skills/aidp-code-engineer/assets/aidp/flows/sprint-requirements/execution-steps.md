@@ -50,7 +50,7 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 **输出路径约定**（命令端通过 prompt 显式告诉 skill，覆盖 skill 默认 `docs/product/{项目名}/`）：
 - **目标目录**：`docs/requirements/{version}/研发需求/`
 - **专职索引名**：`00_索引.md`（**SKILL 原生产出的专职索引**，恒有；记文件清单 + 生成时间 + 主/补充标识，约定 15）
-- **单文件内容主文档名**：`01_研发需求.md`（内容主文档从 `01_` 起，约定 14/15。**SKILL 原生产出 `01_PRD-{项目名}.md`**，命令端仅把内容主文档名**映射**为 `01_研发需求.md`）
+- **单文件内容主文档名**：`01_研发需求.md`（内容主文档从 `01_` 起，约定 14/15。SKILL 默认名 `01_PRD-{项目名}.md`，由本段 prompt **直接指定产出名**覆盖，不另做事后改名映射）
 - **子文档命名**：`01_<业务域>.md` / `02_<业务域>.md` / ...（skill 自带 约定 15 兼容编号；中文自描述）
 
 > **项目级补充（不属于 SKILL 范畴，命令端负责）**：
@@ -60,8 +60,6 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 
 **★ 项目级补充 — 信号传递（精简，按约定 21）**：
 
-> 设计意图见同目录 `rationale.md`。
-
 ```
 【项目级 prompt 增强 — 信号传递】
 
@@ -69,8 +67,6 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 - 产品 PRD：docs/requirements/{version}/产品提供/*.md（必读，Step 0.1 已扫描）
 - 原型代码：docs/prototype/{version}/code/（必读，含 .jsx/.vue/.html 等）
 - 高保真原型：docs/prototype/{version}/mockup/（如存在则必读）
-
-【信号】上游齐全 → 请走严格模式（不走"独立使用上游不全时"的宽松判定）。
 
 SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行数/阈值）：REQ 段头部上游溯源 + 引用密度覆盖率，均由 SKILL 内置硬核回检 + 脚本 `{{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py` 把关（具体头部行数 / 覆盖率阈值详见 SKILL.md）。
 ```

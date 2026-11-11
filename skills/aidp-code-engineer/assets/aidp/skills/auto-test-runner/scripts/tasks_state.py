@@ -180,7 +180,54 @@ def _resolve_input(args, name, usage):
     return val
 
 
-ID_TOKEN_RE = re.compile(r'TC-[\w\-]+')
+def _is_case_src(name):
+    """目录模式下哪些 .md 是用例册(init / ids 共用,口径单一)。"""
+    if name.startswith(('00_', '98_', '99_')):
+        return False
+    if '研发自测方案' in name or '测试环境与账号' in name or '总览' in name:
+        return False
+    return True
+
+
+def _case_files(src):
+    """用例册文件清单:单文件永远解析;目录按 `_is_case_src` 过滤。"""
+    return [src] if src.is_file() else sorted(
+        f for f in src.rglob('*.md') if _is_case_src(f.name))
+
+
+def cmd_ids(args):
+    """只读列出用例册内的用例 ID,⛔ 不建 tasks.md、不进入执行范围(仅供编排层挑选清单)。"""
+    source = _resolve_input(args, 'source', 'tasks_state.py ids <用例册文件或目录> [--json]')
+    if not source:
+        return 2
+    src = Path(source)
+    if not src.exists():
+        return _err(args, f'用例源不存在:{src}')
+    cases, seen = [], set()
+    for f in _case_files(src):
+        try:
+            text = f.read_text(encoding='utf-8', errors='replace')
+        except OSError as exc:
+            return _err(args, f'用例册读取失败:{f}({exc})')
+        for m in CASE_RE.finditer(text):
+            cid = m.group(1)
+            if cid in seen:
+                continue
+            seen.add(cid)
+            cases.append({'id': cid, 'name': m.group(2).strip(), 'file': str(f)})
+    if not cases:
+        return _err(args, f'未在用例源中解析到任何用例 ID:{src}')
+    if args.json:
+        print(json.dumps({'count': len(cases), 'cases': cases, 'scope': 'listing-only',
+                          'note': '仅列出,不构成执行范围;执行范围由调用方用 init --ids/--manifest 指定'},
+                         ensure_ascii=False, indent=2))
+    else:
+        for c in cases:
+            print(c['id'])
+    return 0
+
+
+ID_TOKEN_RE = re.compile(r'TC-[\w\-]+', re.IGNORECASE)
 
 
 def _collect_scope_ids(args):
@@ -196,7 +243,7 @@ def _collect_scope_ids(args):
     ids = []
     if ids_arg is not None:
         for raw in ids_arg:
-            ids += ID_TOKEN_RE.findall(raw)
+            ids += [t.upper() for t in ID_TOKEN_RE.findall(raw)]
     if manifest is not None:
         try:
             mtext = Path(manifest).read_text(encoding='utf-8')
@@ -204,7 +251,7 @@ def _collect_scope_ids(args):
             return None, f'用例清单读取失败:{manifest}({exc})'
         for line in mtext.splitlines():
             line = line.split('#', 1)[0]
-            ids += ID_TOKEN_RE.findall(line)
+            ids += [t.upper() for t in ID_TOKEN_RE.findall(line)]
     seen, ordered = set(), []
     for i in ids:
         if i not in seen:
@@ -239,14 +286,7 @@ def cmd_init(args):
     # (兼容历史旧锚:旧布局 00_=研发自测方案 也以 00_ 前缀被跳过。)
     # ⚠️ 排除口径对齐上游 5 个脚本的同名契约;CASE_RE 放宽后(「用例」二字与冒号均可省)
     # 容错余量变小,口径分歧更易变成实害。仅作用于**目录**模式,直接传单文件永远解析。
-    def _is_case_src(name):
-        if name.startswith(('00_', '98_', '99_')):
-            return False
-        if '研发自测方案' in name or '测试环境与账号' in name or '总览' in name:
-            return False
-        return True
-    files = [src] if src.is_file() else sorted(
-        f for f in src.rglob('*.md') if _is_case_src(f.name))
+    files = _case_files(src)
     for f in files:
         texts.append(f.read_text(encoding='utf-8', errors='replace'))
     text = '\n'.join(texts)
@@ -350,6 +390,8 @@ def cmd_init(args):
                 extra = f'(选集 {select},已过滤 {skipped} 条'
                 extra += f';{unlabeled_kept} 条未标注优先级已保留)' if unlabeled_kept else ')'
             print(f'✅ 生成 {args.output}:{result["suites"]} 模块 / {total} 用例{extra}')
+        if missing_ids:
+            print(f'⚠️ 清单中未找到 {len(missing_ids)} 条:{", ".join(missing_ids)}')
         else:
             # 选集摘要打 **stderr**:stdout 是 tasks.md 正文(可能被重定向进文件),
             # 摘要混进去会污染产物;但静默又会让「跑的是子集」这件事在 stdout 模式下完全看不见。
@@ -593,6 +635,14 @@ def main():
                         + ';'.join(f'{k}={v}' for k, v in SELECT_MODES.items()))
     p.set_defaults(func=cmd_init)
 
+    p = sub.add_parser('ids', parents=[common],
+                       help='只读列出用例册内的用例 ID(含册路径);不建 tasks.md、不构成执行范围',
+                       description='只读列出用例文件/目录内的全部用例 ID,供编排层挑选清单。'
+                                   '仅列出、不进入执行范围——执行范围必须由调用方用 init --ids/--manifest 显式给出。')
+    p.add_argument('source', nargs='?', help='用例册文件或目录(位置参数;亦可用 --source)')
+    p.add_argument('--source', dest='source_opt', help='与位置参数 source 等价的具名写法')
+    p.set_defaults(func=cmd_ids)
+
     p = sub.add_parser('update', parents=[common],
                        help='改某些用例状态(--id ... --state ...)',
                        description='把指定 TC-ID 的条目状态改为 todo/running/done/block。')
@@ -614,7 +664,7 @@ def main():
                        help='列出所有待续跑项([ ] 与 [>]),供【同一 build 内】断点续跑',
                        description='列出所有 [ ]/[>] 待续跑项,已 [√] 跳过,不从头重来。'
                                    '作用域仅限「同一 build 内」中断恢复;勿用 resume 跨 build 沿用旧 build 的 [√],'
-                                   '跨 build 的新回归轮请用 init 重建 tasks.md 全量重跑。')
+                                   '跨 build 的新回归轮请用 init 重建 tasks.md 并按调用方清单重跑。')
     p.add_argument('tasks', nargs='?', help='tasks.md 路径(位置参数;亦可用 --tasks)')
     p.add_argument('--tasks', dest='tasks_opt', help='与位置参数 tasks 等价的具名写法')
     p.set_defaults(func=cmd_resume)

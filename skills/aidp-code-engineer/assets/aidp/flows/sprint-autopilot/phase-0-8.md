@@ -5,7 +5,7 @@
 > - **同 Phase 其它分片**：phase-0-1.md … phase-0-9.md（含 phase-0-6b.md）（清单见命令主体 Phase 0 骨架表「所在分片」列）
 >
 > ⚠️ **权威性**：进入 Phase 0 后以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤/硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-autopilot/phase-0-8.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ---
 
@@ -28,7 +28,7 @@
 
 > 🔧 **chrome-devtools-mcp 安装预检（测试方案声明用 chrome-mcp 时执行，不阻塞开发链路）**：当下版**测试方案明确使用 chrome-devtools-mcp**（`autopilot_decisions.test_strategy=chrome-mcp`，即前端 web 项目走浏览器实测）时，本步**核验驱动就绪**——**委派 `python3 {{AIDP_HOME}}/scripts/chrome-mcp-doctor.py check-cli --json`**（检测单一信源，两命令共用；★ 它探**真实 cli 命令 `chrome-devtools`**（非 `chrome-devtools-cli`——那只是技能名）+ 四独立信号 `CLI_OK/NPM_PKG_OK/CHROME_BIN_OK/REMOTE`，**不再把"npm 包在"当"cli 可用"等价**，正是本次下游"包在但探错名 → 误判 cli 不可用 → 静默降级 MCP"的根因修复）：
 >   - ✅ 已安装 → 仅记一行 INFO，继续。
->   - ❌ 未安装 → **就地打印安装引导**（让用户在挂 `/loop 5m /sprint-aiauto-test --unattended` 前装好，否则测试链路会卡在其 Phase 0.1 安装门）：
+>   - ❌ 未安装 → **就地打印安装引导**（让用户在挂 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 前装好，否则测试链路会卡在其 Phase 0.1 安装门）：
 >     ```
 >     ⚠️ 测试方案声明使用 chrome-devtools-mcp，但未检测到该工具 —— 请安装：
 >        # 全局安装（含本地 CLI chrome-devtools-cli + 远程 MCP 服务）

@@ -455,7 +455,7 @@
     function nonempty(v){ return typeof v === "string" && v.trim().length > 0; }
     function count(v){ return Number.isInteger(v) && v >= 0; }
     function state(v){ return typeof v === "string" ? v.toUpperCase() : ""; }
-    var STATES = ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"];
+    var STATES = ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING", "NOT_APPLICABLE"];
     var unit = obj(FINAL.unitTests), browser = obj(FINAL.browserTests), runs = list(unit.runs);
     var joint = Object.prototype.hasOwnProperty.call(FINAL, "unitTests") ||
       Object.prototype.hasOwnProperty.call(FINAL, "browserTests") ||
@@ -511,6 +511,13 @@
       }
     });
     if(unit.status === "PASS" && (!runs.length || runs.some(function(r){ return !r || r.status !== "PASS"; }))) unitValid = false;
+    if(unit.status === "NOT_APPLICABLE"){
+      // 单测不适用只认冻结 testScope 的依据：无 run、无单测清单、全部正式用例 browser_only。
+      var naScope = obj(unit.testScope), naInfo = obj(naScope.unit_applicability), naIds = list(naScope.case_ids).slice().sort();
+      if(runs.length || unit.reason !== "all-cases-browser-only" || naInfo.status !== "NOT_APPLICABLE" ||
+        naInfo.reason !== "all-cases-browser-only" || obj(naInfo.evidence).status !== "none-found" || obj(naInfo.evidence).files !== 0 || !Array.isArray(naScope.acceptance_tests) || naScope.acceptance_tests.length ||
+        !naIds.length || JSON.stringify(list(naInfo.browser_only).slice().sort()) !== JSON.stringify(naIds)) unitValid = false;
+    }
     var unitState = unitValid ? unit.status : "UNVERIFIED";
     // 已失败的 run 与后续超时/运行中并存：保留失败事实，也显式保留尚未完成状态。
     var pendingState = ["RUNNING", "TIMEOUT", "UNVERIFIED"].find(function(s){
@@ -520,7 +527,8 @@
       summary.browserStatus, browser.status].some(function(s){ return state(s) === "RUNNING"; }) ||
       unitItems.some(function(r){ return r && state(r.status) === "RUNNING"; });
     var overall = browserFailed || unitFailed ? "FAIL" : pendingState ||
-      (unitState === "PASS" && ["PASS", "N/A"].indexOf(browserState) >= 0 ? "PASS" : "UNVERIFIED");
+      (unitState === "PASS" && ["PASS", "N/A"].indexOf(browserState) >= 0 ? "PASS"
+        : unitState === "NOT_APPLICABLE" && browserState === "PASS" ? "PASS" : "UNVERIFIED"); // 单测不适用必须有真实实测
     var mismatch = [["unitStatus", unit.status], ["browserStatus", browserState], ["overallStatus", overall]].some(function(pair){
       return summary[pair[0]] != null && summary[pair[0]] !== pair[1];
     });
@@ -568,7 +576,7 @@
       + '</div></div></section>';
 
     /* ---- 两路证据独立展示：未知计数与命令绝不补成零或伪造命令 ---- */
-    var STATUS_TEXT = { PASS:"通过", FAIL:"失败", UNVERIFIED:"未核验", TIMEOUT:"超时", RUNNING:"运行中", "N/A":"不适用" };
+    var STATUS_TEXT = { PASS:"通过", FAIL:"失败", UNVERIFIED:"未核验", TIMEOUT:"超时", RUNNING:"运行中", "N/A":"不适用", NOT_APPLICABLE:"单测不适用（全部用例仅浏览器实测）" };
     function statusText(s){ return s + " · " + (STATUS_TEXT[s] || "未核验"); }
     function provided(v){ return v == null || v === "" ? "未提供" : typeof v === "object" ? JSON.stringify(v) : String(v); }
     function countsText(c){
@@ -590,7 +598,9 @@
         + infoItem("总体结论", statusText(overall)) + infoItem("全量实测", statusText(browserState))
         + infoItem("全量单测", statusText(unitState)) + infoItem("验收 build", provided(FINAL.build))
         + infoItem("代码 commit", provided(FINAL.commit)) + infoItem("实测说明", provided(browser.reason))
-        + infoItem("单测说明", provided(unit.reason)) + infoItem("单测计数", countsText(unit.counts))
+        + infoItem("单测说明", unit.status === "NOT_APPLICABLE" && unitValid
+          ? "单测不适用：未发现测试运行器/测试文件（依据：已检查 " + list(obj(obj(unit.testScope).unit_applicability).evidence && obj(obj(unit.testScope).unit_applicability).evidence.checked).join("、") + "，发现文件 0 个）"
+          : provided(unit.reason)) + infoItem("单测计数", countsText(unit.counts))
         + infoItem("失败用例", failureText(unit)) + infoItem("首要错误", provided(unit.primary_error))
         + '</div><p>'+esc(jointNote)+'</p><div class="table-wrap"><table class="report-table"><thead><tr>'
         + '<th>run_id</th><th>单测状态</th><th>命令（原始 argv）</th><th>cwd / env_id</th><th>计数</th><th>失败用例</th><th>首要错误</th>'

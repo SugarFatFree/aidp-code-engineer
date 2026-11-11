@@ -46,7 +46,8 @@ def check(name, cond):
         print(f"  ❌ FAIL: {name}")
 
 
-def _mkproj(config=""):
+def _mkproj(config="", authorized=True):
+    """authorized=True 时按 install --authorization-text 的真实落点记录用户持续指令（无头 autopilot tick 的前提）。"""
     d = tempfile.mkdtemp(prefix="aidp-sched-")
     subprocess.run(["git", "init", "-q", d], check=True)
     os.makedirs(os.path.join(d, ".aidp"))
@@ -62,6 +63,8 @@ def _mkproj(config=""):
     if config:
         with open(os.path.join(d, "memory", "aidp-config.yaml"), "w", encoding="utf-8") as fh:
             fh.write(config)
+    if authorized:
+        S.record_authorization(d, "请 7x24 持续运行 /sprint-autopilot，直到所有版本完成")
     return d
 
 
@@ -844,6 +847,162 @@ def test_cicd_retry_priority_and_poll():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _baseline(root):
+    with open(os.path.join(root, S.BASELINE_REL), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_delegation_gap_signals():
+    print("【待测版本无可信委派：告警 + 心跳 + 去重 + 真因分流】")
+    home = tempfile.mkdtemp()
+    root = _mkproj()
+    try:
+        started = os.path.join(root, "started.txt")
+        env = {"HOME": home, "AIDP_AGENT": "claude", "AIDP_AGENT_EXEC": "touch " + started}
+        _deploy_pending_test_target(root)
+        rcs = [_loop(root, ["--once", "sprint-aiauto-test"], env).returncode for _ in range(4)]
+        log = open(os.path.join(root, "memory", ".aidp", "logs", "sprint-aiauto-test.log"), encoding="utf-8").read()
+        check("无委派的待测 tick 不启动 Agent 且 wrapper 正常退出", not os.path.exists(started) and rcs == [0, 0, 0, 0])
+        check("日志写明真因 test-delegation-unverified，不再称“失败退避”",
+              "test-delegation-unverified" in log and "失败退避" not in log)
+        hb = _baseline(root).get("aiauto_test_heartbeat_at")
+        check("无委派时测试链路心跳被刷新（链路存活，诊断交给告警）", bool(hb) and S._parse_ts(hb) is not None
+              and S.heartbeat_report(root)["test"]["state"] == "fresh")
+        gap = [x for x in _alerts(root) if x.get("kind") == "test-delegation-unverified"]
+        check("连续 4 轮仅按 version+build 告警一次", len(gap) == 1 and gap[0]["version"] == "V1.0.0"
+              and gap[0]["build"] == "V1.0.0_build1001")
+        check("告警写清“待测版本无可信委派/清单缺失”", gap and "无可信委派/清单缺失" in gap[0]["message"])
+        check("达阈后顶层标 manifest-missing@V（开发链路据此分流 reason）",
+              _baseline(root).get("aiauto_blocked_reason") == "manifest-missing@V1.0.0")
+        # 版本已内部发布 → 不再是待测目标：入口照常空转，阻塞标记与去重状态被清除。
+        bl = _baseline(root)
+        bl["versions"]["V1.0.0"]["internal_released_at"] = "2026-01-02T00:00:00Z"
+        with open(os.path.join(root, S.BASELINE_REL), "w", encoding="utf-8") as fh:
+            json.dump(bl, fh)
+        r = _loop(root, ["--once", "sprint-aiauto-test"], env)
+        check("目标消失后 Agent 照常启动", r.returncode == 0 and os.path.exists(started))
+        check("目标消失后清除 manifest-missing 标记", "aiauto_blocked_reason" not in _baseline(root))
+        check("wrapper 不再有第二套委派核验分支（单一判据在 tick-check）",
+              "test_handoff_context" not in open(LOOP, encoding="utf-8").read()
+              and "_has_pending_test_target" not in open(LOOP, encoding="utf-8").read())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_headless_autopilot_authorization():
+    print("【无头 autopilot tick 的授权来源：确定性生产者 / 缺失即停并告警】")
+    home = tempfile.mkdtemp()
+    root = _mkproj(authorized=False)
+    try:
+        started = os.path.join(root, "started.txt")
+        env = {"HOME": home, "AIDP_AGENT": "claude", "AIDP_AGENT_EXEC": "touch " + started}
+        rcs = [_loop(root, ["--once", "sprint-autopilot"], env).returncode for _ in range(2)]
+        auth = [x for x in _alerts(root) if x.get("kind") == "loop-no-authorization"]
+        check("无用户持续指令：不启动 Agent、不让执行 LLM 自编来源", not os.path.exists(started) and rcs == [0, 0])
+        check("缺失授权以 UNVERIFIED 告警且去重", len(auth) == 1 and "UNVERIFIED" in auth[0]["message"]
+              and "--authorization-text" in auth[0]["message"])
+        check("缺失授权时刷新开发链路心跳（具体告警而非“无心跳”）",
+              bool(_baseline(root).get("autopilot_loop_heartbeat_at")))
+        log = open(os.path.join(root, "memory", ".aidp", "logs", "sprint-autopilot.log"), encoding="utf-8").read()
+        check("日志写明 authorization-unverified", "authorization-unverified" in log)
+        check("模板默认配置不构成授权", not S.authorization_available(root, "sprint-autopilot"))
+
+        # 用户经 install 记录持续指令后：每轮生成确定性来源（request_id = 本轮令牌）。
+        text = "请 7x24 持续运行 /sprint-autopilot 完成全部版本"
+        S.record_authorization(root, text)
+        envf, tokf = os.path.join(root, "env.txt"), os.path.join(root, "tok.txt")
+        tpl = ("printf '%s' \"$AUTHORIZATION_SOURCE_JSON\" > " + envf + " && printf '%s' \"$AIDP_TICK_TOKEN\" > " + tokf)
+        r = _loop(root, ["--once", "sprint-autopilot", "--skip-aiauto-test"], dict(env, AIDP_AGENT_EXEC=tpl))
+        check("记录指令后 tick 启动", r.returncode == 0 and os.path.isfile(envf))
+        src = json.loads(open(envf, encoding="utf-8").read())
+        import execution_policy as policy
+        check("来源 = explicit-command、persistent、取自 install 记录的用户原话、request_id=本轮令牌",
+              src["kind"] == "explicit-command" and src["persistent"] is True and src["text"] == text
+              and src["command"] == "/sprint-autopilot" and src["request_id"] == open(tokf).read())
+        check("来源保留真实选项（--skip-aiauto-test 会据此减权）",
+              "--skip-aiauto-test" in src["options"] and "--unattended" in src["options"]
+              and "live-tests" not in policy.command_grants(src))
+        check("来源通过授权校验", policy.validate_source(src)["request_id"] == src["request_id"])
+
+        # 用户在配置里明确选择的 project-policy 同样是真实来源：无需供给，也不告警。
+        root2 = _mkproj(authorized=False, config=(
+            "execution_policy:\n  authorization_source:\n    kind: project-policy\n    user_selected: true\n"
+            "    command: /sprint-autopilot\n    request_id: chosen-1\n    text: 用户选择持续运行 autopilot\n"))
+        try:
+            r = _loop(root2, ["--once", "sprint-autopilot"], env)
+            check("用户已选 project-policy：直接启动，不供给也不告警",
+                  os.path.exists(started) and not [x for x in _alerts(root2) if x.get("kind") == "loop-no-authorization"])
+        finally:
+            shutil.rmtree(root2, ignore_errors=True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_install_records_user_instruction():
+    print("【install 记录用户持续指令 / 缺失提示 / uninstall 撤销】")
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    home = tempfile.mkdtemp()
+    root = _mkproj(authorized=False)
+    try:
+        auth = os.path.join(root, S.AUTHORIZATION_STATE_REL)
+        r = _sched(["install", "--platform", "schtasks", "--json"], root, home)
+        res = json.loads(r.stdout)
+        check("未给用户指令的 install 提示将告警停止，且不落盘伪造来源",
+              r.returncode == 0 and any("未记录用户持续执行指令" in w for w in res["warnings"]) and not os.path.exists(auth))
+        r = _sched(["install", "--platform", "schtasks", "--authorization-text", "<用户原话>"], root, home)
+        check("占位文本不被当作授权", r.returncode == 2 and not os.path.exists(auth))
+        r = _sched(["install", "--platform", "schtasks", "--dry-run", "--authorization-text", "请持续运行 autopilot"], root, home)
+        check("dry-run 不落盘", r.returncode == 0 and not os.path.exists(auth))
+        r = _sched(["install", "--platform", "schtasks", "--authorization-text", "请持续运行 autopilot",
+                    "--authorization-request-id", "req-42", "--json"], root, home)
+        rec = S.load_authorization(root)
+        check("给出用户原话的 install 落盘 persistent 指令", r.returncode == 0 and rec
+              and rec["text"] == "请持续运行 autopilot" and rec["install_request_id"] == "req-42")
+        r = _sched(["install", "--platform", "schtasks", "--json"], root, home)
+        check("已有记录后不再提示缺失", not any("未记录用户持续执行指令" in w for w in json.loads(r.stdout)["warnings"]))
+        with patch.object(S, "_read_crontab", return_value=[]), patch.object(S, "_write_crontab", return_value=(0, "")):
+            rc, _ = S.do_uninstall(root, SimpleNamespace(platform="cron", dry_run=False))
+        check("uninstall 撤销 install 时的持续指令", rc == 0 and not os.path.exists(auth))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_authorization_not_needed_with_existing_persistent_root():
+    print("【已有根带持续来源时不再供给来源（避免每 tick 修订授权）】")
+    import entry_context as E
+    root = _mkproj()
+    try:
+        for args in (("config", "user.name", "t"), ("config", "user.email", "t@example.invalid")):
+            subprocess.run(["git", "-C", root, *args], check=True)
+        open(os.path.join(root, "a.txt"), "w").write("x")
+        subprocess.run(["git", "-C", root, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", root, "commit", "-qm", "base"], check=True, capture_output=True)
+        text = "请 7x24 持续运行 autopilot"
+        status, source, _ = S.tick_authorization(root, "sprint-autopilot", "tok-1", "--unattended --no-loop")
+        check("尚无根：供给确定性来源", status == "supplied" and source["request_id"] == "tok-1")
+        res = E.resolve_autopilot_root(root, "V1.0.0", authorization_source=source)
+        os.makedirs(os.path.join(root, "memory"), exist_ok=True)
+        with open(os.path.join(root, S.BASELINE_REL), "w", encoding="utf-8") as fh:
+            json.dump({"autopilot": {"execution_context": res["execution_context"]}, "versions": {}}, fh)
+        status, source, _ = S.tick_authorization(root, "sprint-autopilot", "tok-2", "--unattended --no-loop")
+        check("根已带持续来源：not-needed，不再供给", status == "not-needed" and source is None)
+        check("非 autopilot 链路不供给来源", S.tick_authorization(root, "sprint-aiauto-test", "t", "")[0] == "not-needed")
+        os.remove(os.path.join(root, S.AUTHORIZATION_STATE_REL))
+        # 历史一次性（非持续）来源建立的根不能代表持续授权：缺用户指令时必须判 missing。
+        once = E.resolve_autopilot_root(root, "V2.0.0", authorization_source={
+            "kind": "explicit-command", "request_id": "once-1", "command": "/sprint-autopilot"})
+        with open(os.path.join(root, S.BASELINE_REL), "w", encoding="utf-8") as fh:
+            json.dump({"autopilot": {"execution_context": once["execution_context"]}, "versions": {}}, fh)
+        check("非持续的历史来源 + 无用户指令：missing", S.tick_authorization(
+            root, "sprint-autopilot", "tok-3", "")[0] == "missing")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_authorization_take():
     print("【强推授权原子消费】")
     root = _mkproj()
@@ -1092,6 +1251,10 @@ if __name__ == "__main__":
     test_session_reservation_lifecycle()
     test_fallback_lock_lifetime()
     test_cicd_retry_priority_and_poll()
+    test_delegation_gap_signals()
+    test_headless_autopilot_authorization()
+    test_install_records_user_instruction()
+    test_authorization_not_needed_with_existing_persistent_root()
     test_authorization_take()
     test_baseline_epoch()
     test_self_check()

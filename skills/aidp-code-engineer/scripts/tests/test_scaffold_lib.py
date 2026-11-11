@@ -575,5 +575,23 @@ class HelpTest(unittest.TestCase):
             self.assertNotIn("不存在", p.stdout, name)
 
 
+class ChangelogEntryTest(unittest.TestCase):
+    def test_current_version_requires_matching_entry(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / L.CHANGELOG).write_text(
+                "**AIDP V1.2.3**\n\n### V1.2.2（2026-11-10）\n\n- x\n", encoding="utf-8")
+            self.assertEqual(L.changelog_version(root), "V1.2.3")
+            self.assertFalse(L.changelog_has_entry(root, "V1.2.3"))
+            self.assertTrue(L.changelog_has_entry(root, "V1.2.2"))
+            self.assertFalse(L.changelog_has_entry(root, "V1.2"))
+
+    def test_repo_changelog_has_current_entry_and_v100_is_short(self):
+        self.assertTrue(L.changelog_has_entry(H.REPO, L.changelog_version(H.REPO)))
+        text = (H.REPO / L.CHANGELOG).read_text(encoding="utf-8")
+        body = text.split("### V1.0.0", 1)[1].split("\n- ", 1)[1].strip()
+        self.assertLessEqual(len(body), 100)
+
+
 if __name__ == "__main__":
     unittest.main()

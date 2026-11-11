@@ -117,43 +117,39 @@ print('--webmcp-enabled' if d.get('declared') is True and d.get('client_type')==
     "${BTR}/build-${BUILD}"/round-*/results/ --require-runtime-preflight ${CR_WEBMCP} --json 2>/dev/null); CR_EXIT=$?
   CR_BLOCKING=$(printf '%s' "$CR_JSON" | python3 -c "import json,sys
 d=json.load(sys.stdin)
-B={'evidence_string_item','runtime_error_incomplete','bad_env_flag','empty_target'}  # 兼容旧名，新契约一律靠下面的 level
-print(len([i for i in (d.get('issues') or []) if i.get('level')=='Critical' or i.get('rule') in B]))" 2>/dev/null || echo -1)
+print(len([i for i in (d.get('issues') or []) if i.get('level')=='Critical']))" 2>/dev/null || echo -1)   # 阻断只看 level=='Critical'（SKILL 单一信源）
   if [ "$CR_EXIT" -ge 2 ] || [ "${CR_BLOCKING:-0}" != "0" ]; then
-      echo "❌ 执行结果不合 auto-test-runner 结果契约（阻断项 ${CR_BLOCKING} 条）→ 在报告标「证据形状不合契约」并跳过 artifact 兜底分支"
+      echo "❌ 执行结果不合 auto-test-runner 结果契约（阻断项 ${CR_BLOCKING} 条）→ 在报告标「证据形状不合契约」"
       SHAPE_BAD=1
   fi
 fi
 
-# ① 归集：按轮次与真实证据路径复制截图
-python3 - "$BTR" "$BUILD" "$SHOT_DIR" "${SHAPE_BAD:-0}" <<'SHOTS'
-import json, re, shutil, sys
+# ① 归集：消费 check_result.py --json 的 artifacts（已解析且确认归属本轮 evidence；退出码≠0 不消费，改由下方非空核验门拦截）
+CR_JSON="${CR_JSON:-}" python3 - "$SHOT_DIR" "${SHAPE_BAD:-0}" <<'SHOTS'
+import json, os, re, shutil, sys
 from pathlib import Path
-sys.path.insert(0, "{{AIDP_HOME}}/skills/auto-test-runner/scripts")
-from check_result import SCREENSHOT_EXTENSIONS, _artifact_candidates
-btr, build, dest, shape_bad = sys.argv[1:]
-dest = Path(dest)
+dest, shape_bad = Path(sys.argv[1]), sys.argv[2] == "1"
+if shape_bad:
+    sys.exit(0)   # 结果契约不合：上游明确不应消费 artifacts，缺图交给非空核验门判定
+EXTS = {".webp", ".png", ".jpg", ".jpeg"}
+try:
+    shots = [a for a in (json.loads(os.environ.get("CR_JSON") or "{}").get("artifacts") or []) if a.get("kind") == "screenshot"]
+except ValueError:
+    shots = []
+def round_no(item):   # artifacts 按 round-* 目录的字符串序给出（round-10 在 round-2 前），必须按数字序重排，保证新轮覆盖旧轮
+    found = re.search(r"/round-(\d+)/", item.get("path", "").replace(os.sep, "/"))
+    return int(found.group(1)) if found else -1
 for old in dest.iterdir():
-    if old.is_file() and old.suffix.lower() in SCREENSHOT_EXTENSIONS:
+    if old.is_file() and old.suffix.lower() in EXTS:
         old.unlink()
-rounds = [p for p in (Path(btr) / ("build-" + build)).glob("round-*")
-          if p.is_dir() and re.fullmatch(r"round-\d+", p.name)]
-for rd in sorted(rounds, key=lambda p: int(p.name.split("-")[-1])):
-    sources = sorted(p for p in (rd / "evidence").rglob("*") if p.is_file())
-    if shape_bad != "1":
-        for result in sorted((rd / "results").glob("*.json")):
-            data = json.loads(result.read_text(encoding="utf-8"))
-            for item in data.get("evidence") or []:
-                artifact = item.get("artifact") if isinstance(item, dict) else None
-                if isinstance(artifact, str) and artifact.strip():
-                    sources.extend(p for p in _artifact_candidates(artifact, result) if p.is_file())
-    for source in sources:
-        if source.suffix.lower() not in SCREENSHOT_EXTENSIONS:
-            continue
-        for old in dest.iterdir():
-            if old.stem == source.stem and old.suffix.lower() in SCREENSHOT_EXTENSIONS:
-                old.unlink()
-        shutil.copy2(source, dest / source.name)
+for item in sorted(shots, key=round_no):
+    source = Path(item["path"])
+    if not source.is_file():
+        continue
+    for old in dest.iterdir():
+        if old.stem == source.stem and old.suffix.lower() in EXTS:
+            old.unlink()   # 同主干格式变更不留旧图
+    shutil.copy2(source, dest / source.name)
 SHOTS
 
 python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del shot_gate_fail_streak || true

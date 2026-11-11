@@ -148,7 +148,7 @@ PROTO_HITS=$(find . -maxdepth 1 -type d \
 
 - `PRD_HITS` 与 `PROTO_HITS` 均空 → **跳过本步**，直接进 Step 1。
 - 有命中 + **交互式** → 用 `AskUserQuestion` 列出命中清单 + 目标路径（PRD→`docs/requirements/{version}/产品提供/`；原型→`docs/prototype/{version}/code/` 或 `mockup/`），让用户选 **移动 / 复制 / 跳过**（默认**移动**；命中清单逐项可剔除误判）。
-- 有命中 + **无人值守**（`--unattended` / `--no-tag` / `LOOP_UNATTENDED`）→ ⛔ **绝不弹 `AskUserQuestion`**：按默认动作**直接移动**、打印归位清单、并在 Step 2.8 报告「产品输入归位」段逐条留痕（含误判可回退的原路径）。**Why**：产品把 PRD/原型丢在仓库根正是本步存在的理由、也是 autopilot 场景的典型动作；这里裸露一个问询会让 `/loop 10m /sprint-autopilot --unattended` 的**首个 tick** 就停在无人可答处——而本步排在 Step 1 模式决议之前，规划/发布两条路径必经。
+- 有命中 + **无人值守**（`--unattended` / `--no-tag` / `LOOP_UNATTENDED`）→ ⛔ **绝不弹 `AskUserQuestion`**：按默认动作**直接移动**、打印归位清单、并在 Step 2.8 报告「产品输入归位」段逐条留痕（含误判可回退的原路径）。**Why**：产品把 PRD/原型丢在仓库根正是本步存在的理由、也是 autopilot 场景的典型动作；这里裸露一个问询会让 `/loop 10m /sprint-autopilot --unattended --no-loop` 的**首个 tick** 就停在无人可答处——而本步排在 Step 1 模式决议之前，规划/发布两条路径必经。
 - 用户确认 **移动** 后执行（`git mv` 优先保历史、失败回退 `mv`；目标已存在则跳过不覆盖；选「复制」则把 `git mv ... || mv` 换 `cp -r`、根目录保留原件）：
 
 ```bash

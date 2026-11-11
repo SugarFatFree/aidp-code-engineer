@@ -108,7 +108,7 @@ python3 {{AIDP_HOME}}/scripts/test_ledger.py review-delta --root . --execution-c
 - 成功且 `added/changed/removed` 均为空、`code_changed=false` → **零 diff**，只引用既有报告与 run_id，直接继续归档，不再派 reviewer、不重复设计锚点机器门。
 - 有差异 → 以三份路径列表为实际范围；`code_changed` 是账本总输入树变化信号，包含显式绑定的契约/docs，不能据它断言“只有代码变化”。读取 `{{AIDP_HOME}}/agents/reviewer.md`，只审**验收后的 diff 及受影响证据/调用点**，结论写到当前 execution context 的差量审查 JSON，不改写已绑定的原始测试报告。
 - 差异涉及契约/需求/接口/DDL → 先回原实现/docs Agent 修订契约与四族义务，重过受影响汇合/破坏性安全门。确定错误当轮原实现者修复、原子登记 BUG、定向测试与 reviewer 差量复核；测试完整性由 `/sprint-test {NNN} --resume-acceptance [--from-batch] [--unattended]` 集中 Sprint 单测（`run-scope`）收敛，不能在 close 放过失效测试证据。无新代码仅证据变化也须写清差异处置依据，不能把文件存在等同已核验。
-- 设计锚点受差异影响时，只复核当前 task/单 Sprint 变化锚点；脚本不支持文件级范围时记「未核验（scope-unsupported）」，不执行全版本扫描；保留 Important 的改代码/改设计并级联/有理由豁免三选一。已经覆盖且输入未变则复用，不能每次 close 全量重跑。缺失的必需设计证据仍退回验收，不把脚本 SKIP 当通过。
+- 设计锚点受差异影响时，只复核当前 task/单 Sprint 变化锚点；范围模式按 SKILL 范围规则处理（命令端不预判脚本能力、不执行全版本扫描）；保留 Important 的改代码/改设计并级联/有理由豁免三选一。已经覆盖且输入未变则复用，不能每次 close 全量重跑。缺失的必需设计证据仍退回验收，不把脚本 SKIP 当通过。
 
 **归档写入不抹旧证据**：后续 docs/memory 归档、义务台账、ADR 更新与原验收报告分开。账本默认忽略 docs/memory，真实契约、设计和规则输入已由验收 `--input` 显式绑定；归档后若修改了这些输入，再检查差量并复核关联影响，完成前不重置 activeContext。不能为追求零 diff 覆盖旧 baseline 或清除账本。约定 9、`cascade_obligation`、版本/破坏性/部署授权继续适用，close 不获得部署或自动升级授权。
 

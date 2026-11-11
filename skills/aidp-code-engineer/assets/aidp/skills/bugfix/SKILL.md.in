@@ -15,9 +15,10 @@ allowed-tools: Read, Write, Edit, Bash, Agent, Glob, Grep, AskUserQuestion, Todo
 ## 输入
 
 - `$ARGUMENTS`：Sprint 编号（可选）和问题文件名（可选）
-  - 示例：（空）— **零散模式**：处理 `docs/bugfix/{version}/` 下全部「待修复」条目，不按 Sprint 过滤（约定 3 的零散 bug 没有 Sprint 编号）
+  - 示例：（空）— **零散模式**（不按 Sprint 过滤，约定 3 的零散 bug 没有 Sprint 编号）：⛔ 空参数不等于全扫——调用方须同时给出本次待修 BUG 清单（ID / 文件名）限定输入；没有清单时，交互式先向用户澄清范围，编排 / 无人值守调用则返回缺口「缺少修复范围」，不接管 `docs/bugfix/{version}/` 下全部历史待修条目
   - 示例：`sprint-001` — 只处理 Sprint 列标注为 Sprint-001 的待修复条目
   - 示例：`sprint-001 bugfix-20260304-alice.md` / `bugfix-20260304-alice.md` — 仅处理指定问题文件
+- 本次待修 BUG 清单（调用方在 prompt 中给出的 BUG ID / 来源回链，可选）：给了即为范围上限；`$ARGUMENTS` 为空时必须有它（见上）。
 - 问题记录文件为 `docs/bugfix/{version}/` 下（含子目录）的 `bugfix-{YYYYMMDD}-{user}.md`。**这是本 SKILL 唯一的输入面**：其他来源（测试问题汇总清单、AI 测试失败清单、Issue 等）由调用方先落成这里的条目（带来源回链）再调用，本 SKILL 不扫其他目录。
 
 ## 前置条件
@@ -55,7 +56,7 @@ memory/systemPatterns.md                  → 技术决策与架构约束（项�
 docs/bugfix/{version}/
 ```
 
-在该目录下（含子目录）glob 筛选所有 `bugfix-*.md` 问题记录文件（排除 `*-report.md`）。`$ARGUMENTS` 指定了具体文件名 → 仅处理该文件；给了 Sprint 编号 → 仅处理 Sprint 列匹配的条目；都没给 → 零散模式，处理全部待修复条目。
+在该目录下（含子目录）glob 筛选所有 `bugfix-*.md` 问题记录文件（排除 `*-report.md`）。`$ARGUMENTS` 指定了具体文件名 → 仅处理该文件；给了 Sprint 编号 → 仅处理 Sprint 列匹配的条目；都没给 → 零散模式：仅处理调用方给出的本次待修 BUG 清单；清单也没有则按上方「输入」处置（澄清 / 返回缺口），不扫描全部待修条目。给了 BUG 清单时，Sprint 编号 / 文件名只是进一步过滤，清单之外的条目一律不处理。
 
 **2.2 解析每条问题记录**
 

@@ -364,7 +364,7 @@ cd code/backend/{module-name}
 
 **路径**：`memory/{version}/{user}/activeContext.md`（按版本 + git 用户隔离，见 `06_版本与用户目录约定.md`）
 
-**用途**：当前版本 × 当前开发者视角下的 Sprint 实时状态文件，是 AI Agent 每次启动必读的最重要文件。
+**用途**：当前版本 × 当前开发者视角下的 Sprint 实时状态文件，是 formal Sprint 启动时必读的最重要文件（light 任务只读本任务相关，不强制读它）。
 
 **更新频率**：实时更新（功能完成时、遇到阻塞时、每天结束时）。
 

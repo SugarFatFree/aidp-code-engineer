@@ -141,7 +141,7 @@ run "test_ceremony_cards.py（里程碑通知矩阵）" python3 .aidp/scripts/te
 run "test_preflight_cache.py（同 tick 前置检查缓存）" python3 .aidp/scripts/tests/test_preflight_cache.py
 run "test_batch_probe.py（批量阳性对照与快照还原）" python3 .aidp/scripts/tests/test_batch_probe.py
 run "test_remaining_tools.py（上游工具真实调用边界）" python3 .aidp/scripts/tests/test_remaining_tools.py
-run "test_doc_reference_guards.py（符号引用 / CLI 归属 / 私有痕迹 三道门）" python3 .aidp/scripts/tests/test_doc_reference_guards.py
+run "test_doc_reference_guards.py（符号引用 / CLI 归属 / 私有痕迹 / README 登记 / 中文计数 / 陈旧短语 / user 来源）" python3 .aidp/scripts/tests/test_doc_reference_guards.py
 
 # ── 脚手架 skill 侧（skills/aidp-code-engineer/scripts/tests/）──
 run "test_mirror.py（脚手架侧：本体→bundle 镜像）" python3 skills/aidp-code-engineer/scripts/tests/test_mirror.py

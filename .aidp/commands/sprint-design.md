@@ -219,11 +219,7 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 
 ⚠️ **该表本身是「语义·口径变更」的典型载体**，它变了要按约定 22 级联。
 
-**★ QR 变更范围裁剪协议接线（必须传，别让增量迭代付全量 QR 的代价）**：`dev-logic-architect` 的质量检查支持按本轮变更范围裁剪，**唯一入参 = `qr_delta_scope`（可选，不传 = 全量）**。⛔ 命令端**不得自造 `qr_mode`**——该 SKILL 从未定义它（`qr_mode` 是 `dev-manual-testcase` 独有概念），凭空传等于修改 SKILL 契约（违反约定 21）且被静默忽略。命令端按下面两条传：
-
-- **全量生成**（首次规划 / 主文档重生成）→ **不传 `qr_delta_scope`**（SKILL 契约：不传 = 全量）。
-- **增量补充**（`/version` 补充模式〔情况 B-2〕检出 PRD/原型变更后**派发本命令并传入** `--supplement={NN}`；⛔ `/version` 自身没有 `--supplement` flag，别照字面去敲）→ 传 `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
-- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文，标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出Δ如实记录范围未知，在有效QR_LEVEL的必要校验内保守核对，不扩为full或独立docs-audit。命中「语义/口径/单位/默认值/状态机/权限范围变更（无新增实体）」或跨版本作废判定的项，其受影响专题**强制并入 Δ**（即便无文件命中）；变更落在跨专题共享单元（公共基础设施 / 基类实体 / 共享 DTO / 全局配置）→ 把所有引用该单元的专题并入 Δ。
+**★ QR 变更范围裁剪协议接线（必须传，别让增量迭代付全量 QR 的代价）**：全量不传 `qr_delta_scope`、增量（`/version` 补充模式派发本命令并传入 `--supplement={NN}`）传本轮 `NN_<业务主题>.md` 的专题名 / 章节清单，⛔ 不自造 `qr_mode`；协议与「语义变更强制并入 Δ」规则见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 第四节。
 
 使用 `Skill` 工具调用 `dev-logic-architect`，由 skill 自主完成详细设计生成 + 内置多维度独立 Agent 检查 + 有效qr_level内的最低生成质量自检；不另启未授权非Critical语义QR或独立审计。**SKILL 内规则为单一信源**，命令端按 AGENTS.md 约定 21 不复述、不修改，仅做编排和项目级补充。
 
@@ -232,25 +228,7 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 > **每次生成都显式传 `qr_level=$QR_LEVEL`**（先运行共用配方的父策略围栏）；SKILL 返回后先跑 `parse-handoff` 校验移交清单，再做本命令其余回检（见参数说明与 `{{AIDP_HOME}}/reference/SKILL编排层接入.md`）。
 
 **调用参数**（按 SKILL 输入要求传入 PRD / 原型 / 设计上下文路径）：
-> ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`dev-logic-architect` 的**检查项 33**（标题以 SKILL 为准；上游称「检查项 N」，本文档余处简称维度 N）是**入参门控**、
-> 且 SKILL 明令**不自行探测是否启用**——**命令端不传 = 该维度永不启用**，启用了该能力的项目会
-> 静默漏掉这一层质量门。故调 SKILL 前先取判定（启用判定的唯一实现，⛔ 不要自己 grep PRD）：
->
-> ⚠️ 该能力**是跨端的**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**——
-> 只按 `check_webmcp.py` 判，非 Web 项目恒得 `enabled: false`，通用半场永不执行，**失效方向是全绿**。
-> 故先跑**跨端判定唯一实现** `python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json`
-> （→ `enabled` / `declared` / `capability_state` / `client_type` / `implementation`），`enabled: true` 即随 prompt 原样传整个
-> `client_mcp` 对象（保留 `enabled`，它与 `declared` 同值）；**仅当** `client_type=web` 且 `implementation=webmcp` 时**再**补跑 `check_webmcp.py --version "{version}" --detect --json`
-> 取 Web 叶子专有入参。⛔ 非 Web 不传 `webmcp_*`（它们只是 Web 适配输入，不为非 Web 创建入口；
-> 新旧声明冲突时 SKILL 侧须报错、不静默覆盖）。
->
-> ```bash
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json    # 仅 Web 叶子 → enabled / entry_symbols / launch_command
-> ```
->
-> Web 叶子 `enabled: true` → 另传 `webmcp_enabled: true` + `webmcp_entry_symbols: <脚本返回的数组原样>` + `webmcp_launch_command: <脚本返回的原样>`（⛔ 三个 SKILL 都明写「不要自拟」）
-> （⚠️ 后两者**不可省略也不可写死**：挂载位置已迁移过一次、规范仍在演进，上游缺该入参会直接报错而非猜默认值）；
-> 两级均未声明 → **什么都不传**，不提、不留位置。
+> ★ **客户端应用 MCP 条件启用入参**（默认不传）：`dev-logic-architect` 的**检查项 33** 是入参门控、SKILL 不自行探测——先判定再传，**不传 = 该检查项永不启用**；先跑 `check_client_mcp.py --version "{version}" --detect --json`，`enabled: true` 才随 prompt 传整个 `client_mcp` 对象（保留 `enabled`）；完整配方与 Web 叶子入参（`webmcp_enabled` / `webmcp_entry_symbols` / `webmcp_launch_command`）见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 第五节。
 
 - **PRD 路径**：`docs/requirements/{version}/研发需求/`（含 `01_研发需求.md`（历史裸 `00_研发需求.md` 兼容）或拆分的 `0?_*.md`）
 - **原型路径**：
@@ -278,15 +256,7 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
   - ① **我方内部对接设计**（如何调用对方已交付能力）→ `docs/design/detail/{version}/集成对接.md`（与其他详设同目录）；
   - ② ★ **「提给第三方的需求」**（请对方新建/补充接口的**对外业务诉求**）→ **`docs/references/{version}/`**（版本专属对外需求目录，与内部详设分离；结构与生命周期见 `06_版本与用户目录约定.md` §2.6）。该对外需求文档是 `01_研发需求.md` + 详设的**上游约束**，**必须**被二者「关联文档」引用（`/version` Step 2.4.6 引用链强制、`version-auditor` E 审计，缺失阻塞）。
 
-**★ SKILL 路径占位符显式传参**：SKILL「路径占位符实施指南」会自动扫描项目目录，但首版/空项目场景可能扫描不到匹配目录而降级到 SKILL 通用默认值（`db/migrations/` 等）。命令端**显式传**以下 5 个占位符的 AIDP 实际路径，**禁止 SKILL 自动推断**——映射表权威在 `docs/init/06_版本与用户目录约定.md` §2.5.7：
-
-| SKILL 占位符 | 显式传值 |
-|--------------|---------|
-| `{SQL脚本目录}` | `code/sql/`（**暂存位**——SKILL 原生生成到 **`code/sql/v{版本号}/{NN}_<中文名>.sql`（★ 带 `v` 前缀，dev-logic-architect SKILL 硬约定，见其「SQL 版本严格隔离铁律」）**，命令端 Step 3.2 按源文件跟踪状态搬迁到**最终位置** `docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql`）|
-| `{文档目录}` | `docs/design/detail/`（详细设计本身的落盘目录就是 `{version}/` 子目录下）|
-| `{API文档目录}` | `docs/design/detail/`（AIDP 合并到设计目录，体现为 `接口设计.md` + `对外开放接口.md`）|
-| `{测试文档目录}` | `docs/testing/`（Sprint 粒度按 `{version}/sprint-{NNN}/` 组织）|
-| `{配置目录}` | `env/` + `docs/deployment/{version}/`（真实运行时 + 文档化清单分层；详见 AGENTS.md 约定 25）|
+**★ SKILL 路径占位符显式传参**：SKILL「路径占位符实施指南」会自动扫描项目目录，但首版/空项目可能扫不到匹配目录而降级到通用默认值。命令端**显式传** 5 个占位符（`{SQL脚本目录}` / `{文档目录}` / `{API文档目录}` / `{测试文档目录}` / `{配置目录}`）的 AIDP 实际路径，**禁止 SKILL 自动推断**——映射表权威 = `docs/init/06_版本与用户目录约定.md` §2.5.7。⚠️ `{SQL脚本目录}=code/sql/` 是**暂存位**：SKILL 原生生成到 `code/sql/v{版本号}/{NN}_<中文名>.sql`（带 `v` 前缀，见其「SQL 版本严格隔离铁律」），命令端 Step 3.2 按源文件跟踪状态搬迁到最终位置 `docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql`。
 
 > SKILL.md 是单一信源（含「🔗 上游引用规则 L1-L3」/「拆分数量控制」/「字典/枚举三件套」/「不中断原则」/「对外接口文档强制要求」/「第三方接口职责边界」/「Mermaid ER + 禁 FK」/「货币金额整数化」/「历史 SQL 风格沿用」/「不臆造兜底」等所有规则）；命令端按 AGENTS.md 约定 21 不复述、不修改，仅传信号 + 路径 override + Step 1.6~1.7.5 +「SKILL 脚本兜底清单」 + 1.8 落盘后兜底回检。
 
@@ -302,8 +272,6 @@ Step 5 之后只做 **UI 规范其余部分**（流程 A 的 Step 2~3）+ 对本
 - 原型代码：docs/prototype/{version}/code/（必读，含 .jsx/.vue/.html 等）
 - 高保真原型：docs/prototype/{version}/mockup/（如存在则必读）
 - 事实清单（如 code/ 已存在）：docs/design/detail/{version}/*事实清单.md
-
-【信号】上游齐全 → 请走严格模式（不走"独立使用上游不全时"的宽松判定）。
 
 SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行数/维度名）：三类元素段头部上游引用 + 上游溯源完备性，均由 SKILL 内置 QR 硬核回检 + 命令端 Step 1.8 兜底 bash grep（具体头部行数详见 SKILL.md）。
 ```

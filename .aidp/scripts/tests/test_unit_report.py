@@ -36,6 +36,15 @@ def unit(status="PASS"):
             "counts": counts, "failed_cases": failed, "primary_error": error, "reused": False}
 
 
+def unit_not_applicable():
+    result = unit("PASS")
+    result.update(status="NOT_APPLICABLE", reason="all-cases-browser-only", runs=[], counts=None)
+    result["testScope"] = dict(result["testScope"], acceptance_tests=[], unit_applicability={
+        "status": "NOT_APPLICABLE", "reason": "all-cases-browser-only", "browser_only": ["TC-1"],
+        "evidence": {"status": "none-found", "files": 0, "checked": ["git-tracked-and-untracked-files"]}})
+    return result
+
+
 def browser_payload():
     return {"build": BUILD, "version": "V0.1.0", "buildNo": 123, "commit": COMMIT,
             "summary": {"total": 1, "pass": 1, "fail": 0, "block": 0, "skip": 0, "na": 0, "passRate": 1},
@@ -62,6 +71,40 @@ class UnitReportContractTests(unittest.TestCase):
                 self.assertTrue(merge.report_ready(report))
                 self.assertFalse(merge.finalize_ready(report))
                 self.assertFalse(merge.success_ready(report))
+
+    def test_unit_not_applicable_needs_real_browser_pass(self):
+        result = unit_not_applicable()
+        report = merge.merge_unit_tests(browser_payload(), result, BUILD, COMMIT)
+        self.assertEqual(report["summary"]["overallStatus"], "PASS")
+        self.assertEqual(report["summary"]["unitStatus"], "NOT_APPLICABLE")
+        self.assertTrue(merge.success_ready(report))
+        self.assertTrue(merge.finalize_ready(report))
+        self.assertEqual(emitter.validate_payload("test", report), [])
+        # 浏览器 N/A 或无实测：不能零实测通过。
+        for browser in ({"build": BUILD, "version": "V0.1.0", "commit": COMMIT},
+                        {"build": BUILD, "version": "V0.1.0", "commit": COMMIT,
+                         "browserTests": {"status": "N/A", "reason": "无浏览器适用面"},
+                         "summary": {"total": 0, "pass": 0, "fail": 0, "block": 0, "skip": 0, "na": 0, "passRate": None}, "cases": []}):
+            payload = merge.merge_unit_tests(browser, result, BUILD, COMMIT) if browser.get("browserTests") else None
+            if payload is None:
+                payload = dict(browser, summary={"total": 0, "pass": 0, "fail": 0, "block": 0, "skip": 0, "na": 0}, cases=[],
+                               unitTests=result)
+            self.assertEqual(merge.overall_status(payload), "UNVERIFIED")
+            self.assertFalse(merge.success_ready(payload))
+            self.assertFalse(merge.finalize_ready(payload))
+
+    def test_unit_not_applicable_requires_frozen_all_browser_only_evidence(self):
+        for mutate in (lambda u: u["runs"].append(unit()["runs"][0]),
+                       lambda u: u["testScope"]["unit_applicability"].update(browser_only=[]),
+                       lambda u: u["testScope"].update(acceptance_tests=["test_sample.py"]),
+                       lambda u: u.update(reason="no-runner"),
+                       lambda u: u["testScope"]["unit_applicability"].pop("evidence"),
+                       lambda u: u["testScope"]["unit_applicability"]["evidence"].update(files=3),
+                       lambda u: u["testScope"].pop("unit_applicability")):
+            result = unit_not_applicable()
+            mutate(result)
+            with self.assertRaises(ValueError):
+                merge.merge_unit_tests(browser_payload(), result, BUILD, COMMIT)
 
     def test_running_cannot_finalize(self):
         report = merge.merge_unit_tests(browser_payload(), unit("RUNNING"), BUILD, COMMIT)

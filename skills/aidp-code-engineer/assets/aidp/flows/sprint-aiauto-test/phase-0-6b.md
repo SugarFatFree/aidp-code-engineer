@@ -1,11 +1,12 @@
 <!-- 二次切分 · phase-0 片6b/9：0.2 自愈交接 / 通知与报告归属 -->
+<!-- flowvar-check: allow TEST_PLAN_SOURCE 可选的测试计划来源路径，由调用方环境注入；缺省 freeze 只查约定位置 -->
 # sprint-aiauto-test · 执行分片 [6b/9]（0.2 交接与归属）
 
 > 先执行 `phase-0-6.md`。本片逐项执行，不得省略硬门；随脚手架同步。
 
 ### 当前版本测试真实委派（autopilot 唯一调用点）
 
-autopilot Phase 3.4 的报告骨架与真实部署就绪后，在让位测试链/同步委派前执行本围栏。`VERSION_MANIFEST` 是按 `phase-2-unit.md` 从真实当前版本验收基线、正式用例索引与部署 commit 测试配置冻结的既有机器 JSON；不得临时发现全仓测试补全集。完整清单无法形成则返回具体阻塞，不能跳过本门而委派。父为真实 autopilot 根，同版本、原预算；test-only根不含 implement/commit/push/deploy。
+autopilot Phase 3.4 的报告骨架与真实部署就绪后，在让位测试链/同步委派前执行本围栏。`VERSION_MANIFEST` 由围栏内 `build_unit_test.py freeze` 从部署 commit 的测试计划来源与正式用例确定性生成（规则见 `phase-2-unit.md` 2.0.5u.1）；`TEST_PLAN_SOURCE` 可选，缺省只查约定位置，不得临时发现全仓测试补全集。清单无法形成则打印原因/缺口并经围栏内失败处置记账，不能跳过本门而委派。父为真实 autopilot 根，同版本、原预算；test-only根不含 implement/commit/push/deploy。
 
 <!-- version-test-delegation -->
 ```bash
@@ -13,7 +14,19 @@ eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilo
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?真实autopilot父上下文}"
 TARGET_VERSION="${TARGET_VERSION:?当前版本}"
 BUILD="${BUILD:?当前真实build}"
-VERSION_MANIFEST="${VERSION_MANIFEST:?当前版本完整验收冻结清单路径}"
+BUILD_COMMIT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$BUILD" get push_commit --default '') || exit $?
+[ -n "$BUILD_COMMIT" ] || { echo "UNVERIFIED: 本build缺部署push_commit，不能冻结版本清单"; exit 2; }
+FREEZE_RESULT=$(python3 {{AIDP_HOME}}/scripts/build_unit_test.py freeze --root . --version "$TARGET_VERSION" \
+  --build "$BUILD" --commit "$BUILD_COMMIT" ${TEST_PLAN_SOURCE:+--source "$TEST_PLAN_SOURCE"}); FREEZE_CODE=$?
+printf '%s\n' "$FREEZE_RESULT"
+if [ "$FREEZE_CODE" != 0 ]; then
+  FREEZE_WHY=$(printf '%s' "$FREEZE_RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason","")+": "+d.get("hint","")+" "+"; ".join(d["summary"]["gaps"]))') || FREEZE_WHY=freeze-error
+  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$TARGET_VERSION" --build "$BUILD" \
+    --phase 3.4-version-freeze --reason handoff-exhausted --streak-key handoff_fail_streak \
+    --threshold "${HANDOFF_FAIL_THRESHOLD:-3}" --why "版本全量冻结清单未形成：$FREEZE_WHY"
+  [ "$?" = 3 ] && exit 3; exit 2
+fi
+VERSION_MANIFEST=$(printf '%s' "$FREEZE_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])') || exit $?
 TEST_CHILD_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
   --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" --build-id "$BUILD" \
   --manifest "$VERSION_MANIFEST" --json) || exit $?
@@ -180,10 +193,14 @@ fi
 if [ "$HANDOFF_TARGET_ONLY" = true ]; then
   HANDOFF_REBOUND_CONTEXT="$HANDOFF_FROM_CONTEXT"
 else
-  VERSION_MANIFEST="${1:?回调围栏argv[1]传新build冻结清单路径}"
+  TO_COMMIT=$($BE --build "$HANDOFF_TO_BUILD" get push_commit --default '') || exit $?
+  FREEZE_RESULT=$(python3 {{AIDP_HOME}}/scripts/build_unit_test.py freeze --root . --version "$TARGET_VERSION" \
+    --build "$HANDOFF_TO_BUILD" --commit "${TO_COMMIT:?新build缺push_commit}" ${TEST_PLAN_SOURCE:+--source "$TEST_PLAN_SOURCE"}) \
+    || { printf '%s\n' "$FREEZE_RESULT"; exit 2; }
+  VERSION_MANIFEST=$(printf '%s' "$FREEZE_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])') || exit $?
   REBIND_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
     --execution-context "$HANDOFF_ROOT_CONTEXT" --version "$TARGET_VERSION" --build-id "$HANDOFF_TO_BUILD" \
-    --manifest "${VERSION_MANIFEST:?按新build真实冻结验收清单，不能改写旧manifest}" --json) || exit $?
+    --manifest "$VERSION_MANIFEST" --json) || exit $?
   HANDOFF_REBOUND_CONTEXT=$(printf '%s' "$REBIND_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
   python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto.execution_context "$HANDOFF_REBOUND_CONTEXT" || exit $?
 fi

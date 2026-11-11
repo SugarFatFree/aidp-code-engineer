@@ -91,7 +91,7 @@ NAV_PURPOSES = {
     "mockup": "高保真原型（图片 / PDF / 设计源文件）",
     "sql": "SQL 脚本（增量轨 / 全量轨）",
     "配置文件": "配置产物（增量轨 / 全量轨）",
-    "部署流程": "部署 SOP 与 SQL 执行台账",
+    "部署流程": "操作说明（仅确需时）",
     "增量": "增量轨：已有环境升级所需的变更",
     "全量": "全量轨：从零搭建所需的完整产物",
     "研发自测": "研发自测方案与用例（dev-manual-testcase 生成）",
@@ -115,6 +115,12 @@ class Report:
         self.local_overwritten = []
         # 孤儿契约（项目里有、当前脚手架已不提供）：只报告不删除。
         self.orphans = []
+        # 覆盖升级整包替换时被一并删掉的旧契约（上一版 manifest 有、新版没有）：
+        # removed_contracts = 用户没改过；removed_modified = 用户改过（原文只在备份里）。
+        self.removed_contracts = []
+        self.removed_modified = []
+        # 同版本（fill）升级时，bundle 里有、已装 manifest 未登记的门控契约（按设计不补）。
+        self.unregistered_gated_additions = []
 
     def act(self, op, path, why=""):
         self.actions.append({"op": op, "path": path, "why": why})
@@ -1369,6 +1375,15 @@ def _ungated_stale(source: Path, dest: Path, home: str) -> list:
     return sorted(stale)
 
 
+def _unregistered_gated_additions(source: Path, dest: Path, manifest: dict) -> list:
+    """bundle 里有、已装运行包 manifest 未登记、且项目中不存在的门控契约（相对运行根）。"""
+    registered = set(manifest.get("files", {})) | set(manifest.get("user_files", []))
+    return sorted(relative for relative, _path in runtime_layout._source_contract_files(source)
+                  if Path(relative).parts[0] in L.GATED_DIRS
+                  and relative not in registered
+                  and not os.path.lexists(dest / relative))
+
+
 def _runtime_source() -> Path:
     return L.template_aidp() or L.BUNDLE_AIDP
 
@@ -2059,7 +2074,9 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
                 "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
                 "contract_decision": decision, "pending": False, "rewrite_queue": [],
-                "orphans": rep.orphans, "local_overwritten": rep.local_overwritten,
+                "orphans": rep.orphans, "removed_contracts": rep.removed_contracts,
+            "removed_modified": rep.removed_modified,
+            "unregistered_gated_additions": rep.unregistered_gated_additions, "local_overwritten": rep.local_overwritten,
                 "backup": preference_backup.dir.name if preference_backup.dir else None,
                 "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     if migrate_legacy and a.no_agent_sync:
@@ -2070,7 +2087,9 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
                 "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
                 "contract_decision": decision, "pending": False, "rewrite_queue": [],
-                "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": None,
+                "orphans": rep.orphans, "removed_contracts": rep.removed_contracts,
+            "removed_modified": rep.removed_modified,
+            "unregistered_gated_additions": rep.unregistered_gated_additions, "local_overwritten": rep.local_overwritten, "backup": None,
                 "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     bk = Backup(root, rep)
     legacy_backup_files = []
@@ -2095,7 +2114,9 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                     "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
                     "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
                     "contract_decision": decision, "pending": False, "rewrite_queue": [],
-                    "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": bk.dir.name if bk.dir else None,
+                    "orphans": rep.orphans, "removed_contracts": rep.removed_contracts,
+            "removed_modified": rep.removed_modified,
+            "unregistered_gated_additions": rep.unregistered_gated_additions, "local_overwritten": rep.local_overwritten, "backup": bk.dir.name if bk.dir else None,
                     "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
     specs = []
     if "claude" in agents:
@@ -2132,6 +2153,16 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             current = dest / runtime_layout.RUNTIME_MANIFEST
             manifest = json.loads(current.read_text(encoding="utf-8"))
             preserve_gated = decision == "fill" and manifest.get("version") == scaffold_raw and not a.force
+            if preserve_gated:
+                _added = _unregistered_gated_additions(source, dest, manifest)
+                if _added:
+                    for _r in _added:
+                        if _r not in rep.unregistered_gated_additions:
+                            rep.unregistered_gated_additions.append(_r)
+                    rep.warn(f"{home}：同版本升级不新增门控契约，脚手架已有 {len(_added)} 个新增契约文件未下发"
+                             f"（{', '.join(_added[:5])}{' …' if len(_added) > 5 else ''}），"
+                             "scripts/ 已按字节覆盖，运行包处于新旧混合态；"
+                             f"整体对齐请加 --force 重跑 upgrade（先整包备份再覆盖，本地改动见 local_overwritten）")
             if preserve_gated and home not in overlay_updates:
                 try:
                     runtime_layout.validate_runtime(dest, expected_home=home)
@@ -2175,6 +2206,23 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                     continue
                 if _now != _sha:
                     rep.note_overwrite(_rel)
+
+        # ★ 覆盖升级整包替换：「旧 manifest 有、新 source 无」的文件替换后即消失，
+        #   事后的 orphans 判据（安装后仍存在）永远不成立，必须在替换前算。
+        if not preserve_gated and isinstance(_prev_manifest, dict):
+            _new_src = {rel for rel, _p in runtime_layout._runtime_files(Path(source))}
+            _user_owned = set(manifest.get("user_files", [])) if manifest is not None else set()
+            for _rel in sorted(set(_prev_manifest) - _new_src - _user_owned):
+                _live = dest / _rel
+                if not _live.is_file() or _live.is_symlink() or runtime_layout._adapter_generated(dest, _rel):
+                    continue
+                try:
+                    _changed = L.sha256(_live.read_bytes()) != _prev_manifest[_rel]
+                except OSError:
+                    continue
+                _bucket = rep.removed_modified if _changed else rep.removed_contracts
+                if _rel not in _bucket:
+                    _bucket.append(_rel)
 
         for directory in (dest, *(dest / name for name in runtime_layout.RUNTIME_DIRS)):
             if not directory.exists():
@@ -2345,7 +2393,9 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             "agents": agents, "agent_source": agent_source, "adapter_mode": "copy",
             "scaffold_version": scaffold_raw, "previous_scaffold_version": previous,
             "contract_decision": decision, "pending": bool(queue), "rewrite_queue": queue,
-            "orphans": rep.orphans, "local_overwritten": rep.local_overwritten, "backup": bk.dir.name if bk.dir else None,
+            "orphans": rep.orphans, "removed_contracts": rep.removed_contracts,
+            "removed_modified": rep.removed_modified,
+            "unregistered_gated_additions": rep.unregistered_gated_additions, "local_overwritten": rep.local_overwritten, "backup": bk.dir.name if bk.dir else None,
             "legacy_backup_files": legacy_backup_files,
             "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
 
@@ -2407,6 +2457,15 @@ def print_human(res: dict):
               f"（原文件在备份 {res.get('backup') or '见 .aidp-backup-*'} 内可取回）：")
         for rel in overwritten:
             print(f"    · {rel}")
+    removed = res.get("removed_contracts") or []
+    removed_mod = res.get("removed_modified") or []
+    if removed or removed_mod:
+        print(f"[scaffold] {MARKS['warn']} 新版已不提供的旧契约 {len(removed) + len(removed_mod)} 份，覆盖升级时已随整包替换删除"
+              f"（原文件在备份 {res.get('backup') or '见 .aidp-backup-*'} 内可取回）：")
+        for rel in removed:
+            print(f"    · {rel}")
+        for rel in removed_mod:
+            print(f"    · {rel}（本地改过，请核对备份中的改动是否需要迁移）")
     # 孤儿契约：项目里有、当前脚手架已没有 —— 只报告不删除。
     orphans = res.get("orphans") or []
     if orphans:

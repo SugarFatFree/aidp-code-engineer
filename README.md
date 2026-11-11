@@ -106,7 +106,7 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-eng
 | | `/sprint-full NNN` | 单 Sprint 一条龙 |
 | | `/sprint-start` · `/sprint-dev` · `/sprint-test` · `/sprint-close` | 分步执行 |
 | 增量 | `/sprint-dev "<描述>"` · `/sprint-bugfix ["<描述>"]` | 新增功能 / 修复缺陷 |
-| 7×24 | `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install`（调度 `/sprint-autopilot` + `/sprint-aiauto-test`）| 全自动开发链路 / 全自动测试链路 |
+| 7×24 | `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install --authorization-text "<持续运行的原话>"`（调度 `/sprint-autopilot` + `/sprint-aiauto-test`）| 全自动开发链路 / 全自动测试链路 |
 | 辅助 | `/memory-sync` · `/health-check` | 记忆同步 / 项目体检 |
 
 > 下表以 Claude Code / DeepSeek Harness 的 `/命令` 写法展示；Codex 使用同名 `$命令`（例如 `$sprint-dev`）。完整用法见 [docs/init/05_commands详细规范.md](docs/init/05_commands详细规范.md)。
@@ -118,11 +118,12 @@ mkdir -p .dsh .agents/skills && cp -r ../aidp-code-engineer/skills/aidp-code-eng
 **推荐：操作系统调度**（Claude Code / Codex / DeepSeek Harness 通用）：
 
 ```bash
-python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install [--agent claude|codex|dsh]   # 两条链路（10m / 5m）+ 独立 watchdog 巡检（5m）
+python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install --authorization-text "<你要求持续运行的原话>" [--agent claude|codex|dsh]   # 两条链路（10m / 5m）+ 独立 watchdog 巡检（5m）
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status                               # 三条定时任务 + 两条链路心跳
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall
 ```
 
+- `--authorization-text` 是**一次性**的持续运行授权：调度器无人值守时没有人可问，需要你给出“持续运行”的真实指令，调度器据此为每个 tick 生成授权来源；缺则 autopilot tick 告警停下（`loop-no-authorization`），绝不代你编造授权。
 - Linux 用 systemd --user timer（无 systemd 时 crontab）、macOS 用 launchd、Windows 输出 `schtasks` 命令；开发和测试任务调用 `{{AIDP_HOME}}/scripts/agent_loop.sh --once <命令> --unattended`，第三条独立 watchdog 任务定期检查两条链路（包括都尚未启动的情形）。Agent 任务自动补 `--no-loop`、flock 互斥，日志落 `memory/.aidp/logs/`。
 - Codex 以 `$sprint-autopilot …` 调用命令，DeepSeek Harness 以 `/sprint-autopilot …` 调用；DeepSeek Harness 的非交互执行命令需在 `memory/aidp-config.yaml` 的 `scheduler.exec.dsh` 配置。
 - 任一链路心跳中断、任何冻结都会写本地告警台账 `memory/.aidp/alerts.jsonl`，配置了通知渠道时同时推送。
@@ -131,8 +132,8 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py uninstall
 **Claude Code 会话内短期使用**（会话级：关闭即停、7 天过期、空闲才触发、同会话两条串行）：
 
 ```text
-/loop 10m /sprint-autopilot --unattended
-/loop 5m  /sprint-aiauto-test --unattended
+/loop 10m /sprint-autopilot --unattended --no-loop
+/loop 5m  /sprint-aiauto-test --unattended --no-loop
 ```
 
 ## 🔔 通知渠道

@@ -1,6 +1,6 @@
 # {{AIDP_HOME}}/agents/ — AIDP 角色指令文件（**不是** Claude Code 原生 subagent 注册目录）
 
-> ⚠️ **先读这一条，能省掉一整轮误解**：本目录下的 9 份角色指令 `.md`（另本 README）是**角色指令文件**，
+> ⚠️ **先读这一条，能省掉一整轮误解**：本目录下的 10 份角色指令 `.md`（另本 README）是**角色指令文件**，
 > 由执行体用 **`Read` 工具**加载后自己扮演该角色，或写进派发给子 Agent 的 prompt 里。
 > 它们**没有 YAML frontmatter**，因此**不会**出现在 `/agents` 列表、也**不能**用
 > `Agent({subagent_type: "backend"})` 这种注册式类型名调起。
@@ -18,20 +18,24 @@
 但**在「派了一个没读角色文件的通用子 Agent」这种半对的情形下完全静默**：子 Agent 照样跑、
 照样回结果，只是那份角色文件里的红线、写权限白名单、完成标准一条都没生效。
 
-## 九份角色与归属
+## 十份角色与归属
 
 | 文件 | 角色 | 谁激活 |
 |------|------|--------|
 | `pm.md` | 产品经理 | `/sprint-requirements`、`/sprint-plan`（Step 2）、`/version`、`/sprint-init`、`/sprint-close` |
 | `architect.md` | 架构师 | `/sprint-design`、`/sprint-init` |
-| `ui.md` | UI / 原型 | `/sprint-design` Step 5.2（原型内容基线 / 设计令牌） |
+| `ui.md` | UI / 原型 | `/sprint-design` Step 0.7（原型内容基线 / 设计令牌前置产出）与 Step 5.0（回填校正）；Step 5.1 / 5.2 的 UI 规范同归它 |
 | `frontend.md` | 前端开发 | `/sprint-dev` Phase 1.3 |
 | `backend.md` | 后端开发 | `/sprint-dev` Phase 1.2 |
-| `qa.md` | 测试验收 | `/sprint-test`（⛔ 只做静态与文档层验收，运行时归 `/sprint-aiauto-test`） |
+| `qa.md` | 测试验收 | `/sprint-test`（默认静态验证 + 当前任务相关单测；⛔ 不启服务 / 不做完整构建 / 不做浏览器实测，运行时归 `/sprint-aiauto-test`） |
 | `reviewer.md` | 代码审查 | `/sprint-close` Step 2.5 |
 | `aidp-compliance.md` | 范式合规 | 脚手架 init / migrate / upgrade 末尾 |
 | `version-auditor.md` | 版本规划产物审计 | `/version` Step 2.4.7、autopilot Phase 3.3 build 终审 |
 | `qr-handoff-auditor.md` | SKILL 移交维度统一审计（每个写了移交清单的 SKILL 一个实例）| `/version` Step 2.4.7（与 version-auditor 同轮并行） |
+
+## 会话启动清单（各角色文件统一口径）
+
+各角色文件的「会话启动检查清单」按同一口径执行：**formal 激活后**按清单顺序读取，读完再开工；**light** 只读与本任务相关的项，不为凑清单通读全部。清单只是读取范围，不改变角色红线与写权限白名单。
 
 ## 写权限边界
 

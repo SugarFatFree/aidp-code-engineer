@@ -1,5 +1,7 @@
 # {{AIDP_HOME}}/rules/ — 路径限定规则（Path-Scoped Rules）
 
+> ⚠️ **路径触发自动加载只在 Claude Code 下成立**：Codex / DeepSeek Harness 无对应机制（`agent_sync.py` 不为 rules 生成加载器或指针），须在编辑匹配路径的代码前**显式 Read** 对应规则文件，映射表见 `{{AIDP_HOME}}/reference/agent-tools.md`「rules 路径限定加载：仅 Claude Code 原生成立」。
+>
 > 本目录承载 AIDP **代码向核心约定的详规**。每个 `*.md` 文件顶部用 YAML frontmatter 声明 `paths:` glob；**当 Claude Code 编辑的文件路径匹配任一 glob 时，该规则文件全文才进入上下文，不匹配则完全不加载**——把"只在写某类代码时才需要的规则"从每会话常驻的项目记忆文件（AGENTS.md / CLAUDE.md）里挪出来，既不丢功能又省常驻上下文。
 
 ## 文件与承载约定

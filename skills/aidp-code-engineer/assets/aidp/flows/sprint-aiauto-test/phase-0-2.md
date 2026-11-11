@@ -3,7 +3,7 @@
 # sprint-aiauto-test · 执行分片 [2/9]（0.0.6 AI 自动化段预检 + 补全 / 0.0.7 连接模式判定护栏）
 
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-0-2.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 > ⚠️ **本片【不是】Phase 0.2**：`phase-0-N.md` 的 N 是**切片序号**、不是 Phase 号（本片装 0.0.6 / 0.0.7；Phase 0.2 在 `phase-0-6.md` + `phase-0-6b.md`）。按文件名直觉去 Read 会取错片——权威映射见 `{{AIDP_HOME}}/commands/sprint-aiauto-test.md` 的分片对照表。
 ### 0.0.6 ★ 测试方案 AI 自动化段预检 + 自动补全 + 信息收集（单一信源，供 /sprint-autopilot /sprint-batch 提前调用）

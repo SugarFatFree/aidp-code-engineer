@@ -1,3 +1,5 @@
+# SKILL 用途速查
+
 > AIDP 查阅型资料分片（非 @import、不常驻、按需 Read）；总纲见项目记忆文件 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`）的同名段。
 
 ## 本项目使用的 Skills
@@ -21,6 +23,12 @@
 执行身份由 AIDP 调用层的 `entry_context.py` 固定；普通自然语言默认 light，复用命令、角色或 CVL 适用能力不升级为 Sprint。light 的范围、真实审查与完成门见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，报告是任务目录机器 JSON，不要求契约卡或 docs Markdown。formal 的契约、完整 CVL 和 Sprint 归档门保持。
 
 依赖 SKILL 正文与方法论保持原样。调用层只选适用能力、提供本次范围/实际基线与输出位置；不虚构 SKILL 的 light/delta 参数，不用测试 PASS 代替质量审查，也不复制一套上游步骤。依赖要求完整正式输入而 light 不具备时，复用已有角色和可独立执行的检查能力，缺项如实记录，不为迎合依赖强造 Sprint 文档。
+
+### bugfix SKILL 调用约定（light / formal 共用，各调用方只引用本节）
+
+- **范围**：参数 = 调用方给定的 `sprint-{NNN}` / 文件名，范围上限 = 本次核实的 BUG 清单（BUG ID + 来源回链），由调用方写进 prompt。⛔ 空参数不等于全扫：既无参数又无清单时，交互式先澄清目标，编排 / 无人值守返回缺口「缺少修复范围」（与 SKILL「输入」段同口径）。
+- **`report_mode`**：light 日常任务传 `report_mode=evidence-only`（不写 `bugfix-*-report.md`，根因 / 证据取其结构化返回写原 execution context 机器 JSON）；formal Sprint 保留默认 `file`（SKILL 报告即根因 / 证据权威落点，沿用原规格与归档）。两种模式修复范围都只由清单决定。
+- 根因方法论（含 `superpowers:systematic-debugging`）与修复流程归 SKILL 单一信源，调用方不复述、不另行调用。
 
 ### 编号与执行证据的调用层协议
 
@@ -73,4 +81,4 @@
 | `superpowers:systematic-debugging` | 系统化调试 | `bugfix` SKILL 根因定位（经 `/sprint-bugfix`）| 按 `bugfix` SKILL Step 3 手工定位：复现 → 根因 → 最小修复 → 回归 |
 | `superpowers:verification-before-completion` | 完成前验证 | `/sprint-dev`、`/sprint-test`、`/sprint-batch`、`/sprint-bugfix` 方式 B | 走该命令自身的输出前硬门 |
 
-> **外部市场可选 Skills**（非自带，未装则跳过）：`api-tester`（Spring Boot 后端接口测试，由 `/sprint-test` / `/sprint-full` 在"环境可用"前提下条件调用）等；命令端以"可选/且可用"保护调用，缺失即跳过。
+> **外部市场可选 Skills**（非自带，未装则跳过）：如 `api-tester`（Spring Boot 后端接口测试）等；当前没有命令调用它（`/sprint-test` 明确不调用、不发在线测试请求），命令端若将来接入须以"可选/且可用"保护，缺失即跳过。

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""文档引用与开源卫生三道门的回归：
+"""文档引用与开源卫生三道门，及后补的 README 登记 / 中文数字计数 / 陈旧短语 / `{user}` 扫描面扩展的回归：
 
 · `check_code_symbol_refs.py`：`脚本.py::符号` 指向的文件 / 函数 / 登记表键必须存在；
 · `check_cli_invocation.py`：文档里的子命令与 flag 必须属于被调用的那个脚本；
@@ -110,6 +110,20 @@ def test_cli_invocation():
           [w["kind"] for w in d.get("warns", [])] == ["non-argparse"])
     shutil.rmtree(root, ignore_errors=True)
 
+    # memory/.aidp 是本地运行态（gitignore）：旧审计快照里的过期调用不是仓库文档，不能让检查变红。
+    root = _mkroot()
+    _w(root, ".aidp/scripts/tool_sub.py",
+       "import argparse\nap = argparse.ArgumentParser()\nsub = ap.add_subparsers(dest='cmd')\n"
+       "sub.add_parser('add')\n")
+    _w(root, "docs/ok.md", "```bash\npython3 .aidp/scripts/tool_sub.py add\n```\n")
+    _w(root, "memory/.aidp/snapshot/old.md", "```bash\npython3 .aidp/scripts/tool_sub.py removed-subcommand\n```\n")
+    rc, d = _run("check_cli_invocation.py", root)
+    check("阴性：memory/.aidp 运行态快照里的过期调用不被扫描", rc == 0 and d.get("ok"))
+    _w(root, "docs/elsewhere/memory/.aidp-notes.md", "```bash\npython3 .aidp/scripts/tool_sub.py removed-subcommand\n```\n")
+    rc, d = _run("check_cli_invocation.py", root)
+    check("★ 阳性：只排除精确的 memory/.aidp，其他同名片段的错误调用仍报", rc == 1 and not d.get("ok"))
+    shutil.rmtree(root, ignore_errors=True)
+
 
 def test_private_markers():
     print("\n[P] check_private_markers.py")
@@ -144,11 +158,147 @@ def test_private_markers():
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_identity_scope_agents_and_init():
+    print("\n[I] check_identity_source.py 扫描面扩到 agents/ 与 docs/init/")
+    root = _mkroot()
+    _w(root, ".aidp/agents/bad.md", "> `{user}` 来自 `git config user.name`。\n")
+    _w(root, ".aidp/agents/good.md",
+       "> `{user}` ← `python3 {{AIDP_HOME}}/scripts/vcs.py user`\n"
+       "> 豁免写法 `git config user.name` <!-- identity-ignore: 取本机 Git 身份本身 -->\n")
+    _w(root, "docs/init/06_x.md",
+       "- {user} ← `git config user.name`\n"
+       "> ⛔ **不要退回 `git config user.name`**：无 Git 的项目上会分叉。\n"
+       "- ⛔ 命令 / 流程里不再各自写 `git config user.name`\n")
+    rc, d = _run("check_identity_source.py", root)
+    paths = sorted((f["path"], f["line"]) for f in d.get("findings", []))
+    check("阳性：agents/ 下旧写法被抓", ("agents/bad.md", 1) in paths)
+    check("阳性：docs/init 下旧写法被抓（路径相对项目根）", ("docs/init/06_x.md", 1) in paths)
+    check("阴性：反面说明（不要退回 / 不再各自写）与 identity-ignore / vcs.py 口径不误报",
+          len(paths) == 2 and rc == 1)
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_readme_registry():
+    print("\n[R] check_readme_registry.py：目录内文件必须在同目录 README 登记")
+    root = _mkroot()
+    _w(root, "版本变更历史.md", "# x\n")
+    _w(root, ".aidp/reference/README.md",
+       "| `a.md` | x |\n| `约定细则-1.md` ~ `约定细则-3.md` | 范围 |\n"
+       "<!-- registry-ignore: legacy.md 历史遗留，仅内部引用 -->\n")
+    for n in ("a.md", "约定细则-1.md", "约定细则-2.md", "约定细则-3.md", "legacy.md", "orphan.md", ".hidden.md"):
+        _w(root, f".aidp/reference/{n}", "x\n")
+    _w(root, ".aidp/reference/tests/t.py", "x\n")
+    _w(root, ".aidp/reference/__pycache__/c.pyc", "x\n")
+    _w(root, ".aidp/flows/README.md", "`sprint-x/` 一个命令一个子目录\n")
+    _w(root, ".aidp/flows/sprint-x/phase-1.md", "x\n")
+    _w(root, ".aidp/flows/sprint-y/phase-1.md", "x\n")      # 子目录未登记
+    _w(root, "docs/plans/README.md", "见 `00_索引.md`\n")
+    _w(root, "docs/plans/00_索引.md", "x\n")
+    _w(root, "docs/plans/V1.0.0/01.md", "x\n")               # 版本目录不要求登记
+    _w(root, "docs/plans/extra.md", "x\n")                   # 未登记
+    rc, d = _run("check_readme_registry.py", root)
+    miss = sorted(f["file"] for f in d.get("findings", []))
+    check("阳性：未登记文件 / 子目录被抓",
+          miss == [".aidp/flows/sprint-y", ".aidp/reference/orphan.md", "docs/plans/extra.md"] and rc == 1)
+    check("阴性：范围写法 / registry-ignore / 隐藏 / tests / __pycache__ / 版本目录不误报",
+          all("约定细则" not in m and "legacy" not in m and "hidden" not in m and "V1.0.0" not in m for m in miss))
+    check("findings 带所属 README", all(f.get("readme", "").endswith("README.md") for f in d["findings"]))
+    _w(root, ".aidp/reference/README.md", "`a.md` `约定细则-1.md` ~ `约定细则-3.md` `orphan.md` "
+       "<!-- registry-ignore: legacy.md -->\n")
+    rc, d = _run("check_readme_registry.py", root)
+    check("registry-ignore 缺理由不生效（legacy.md 重新被抓）",
+          any(f["file"].endswith("legacy.md") for f in d["findings"]))
+    (root / "版本变更历史.md").unlink()
+    rc, d = _run("check_readme_registry.py", root)
+    check("非模板仓库（无版本变更历史.md）→ N/A 不报", rc == 0 and d.get("applicable") is False and d["findings"] == [])
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_cn_count_claims():
+    print("\n[C] check_cn_count_claims.py：中文数字自称计数 vs 目录实数")
+    root = _mkroot()
+    _w(root, "版本变更历史.md", "x\n")
+    for i in range(3):
+        _w(root, f".aidp/agents/r{i}.md", "x\n")
+    _w(root, ".aidp/agents/README.md", "x\n")
+    _w(root, ".aidp/AIDP-AGENTS.md", "## 核心约定\n\n1. **甲**\n2. **乙**\n3. **丙**\n")
+    _w(root, "a.md", "本目录下的九份角色指令\n## 九份角色与归属\n")
+    _w(root, "b.md", "共十二个 Agent 角色\n")
+    _w(root, "c.md", "三份角色指令；共三个 Agent；三个 Agent 角色指令\n")
+    _w(root, "d.md", "共五条核心约定；四条核心约定；核心约定 1–三\n")
+    _w(root, "e.md", "派三个 Agent 并行；一份角色指令；每个角色一份\n")           # 局部数量 / 单数 → 不是总数
+    _w(root, "f.md", "九份角色 <!-- countclaim-check: ignore 历史 -->\n")
+    _w(root, "g.md", "二十一世纪；十条规则；共十个命令\n")                  # 无关量词 / 未覆盖对象
+    _w(root, ".aidp/skills/x/SKILL.md", "九份角色\n")                      # skills 本体不扫
+    rc, d = _run("check_cn_count_claims.py", root)
+    got = sorted((v["file"], v["declared"]) for v in d.get("violations", []))
+    check("阳性：九份角色 ×2（a.md）、共十二个 Agent（b.md）被抓",
+          got.count(("a.md", 9)) == 2 and ("b.md", 12) in got)
+    check("阳性：核心约定中文计数被抓（五条 / 四条）；与真值一致的 1–三 不报",
+          sorted(x[1] for x in got if x[0] == "d.md") == [4, 5])
+    check("阴性：与真值一致（三份/三个 Agent）不报", not [x for x in got if x[0] == "c.md"])
+    check("阴性：局部数量 / 单数 / 豁免 / skills 本体 / 未覆盖对象不报",
+          not [x for x in got if x[0] in ("e.md", "f.md", "g.md") or "skills" in x[0]])
+    check("退出码 1 且 truths 带出", rc == 1 and d["truths"]["agent"] == 3 and d["truths"]["convention"] == 3)
+    p = SCRIPTS
+    sys.path.insert(0, str(p))
+    import check_cn_count_claims as CN
+    (root / "版本变更历史.md").unlink()
+    rc2, d2 = _run("check_cn_count_claims.py", root)
+    check("非模板仓库 → N/A 不报", rc2 == 0 and d2.get("applicable") is False and d2["violations"] == [])
+    check("中文数字解析：十 / 十二 / 二十 / 四十一 / 九", [CN.cn2int(x) for x in ("十", "十二", "二十", "四十一", "九", "一百零五")] == [10, 12, 20, 41, 9, 105])
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_stale_phrases():
+    print("\n[T] check_stale_phrases.py：陈旧短语黑名单棘轮")
+    root = _mkroot()
+    _w(root, "版本变更历史.md", "x\n")
+    data = root / "phrases.txt"
+    data.write_text(
+        "# 注释行与空行忽略\n\n"
+        r"部署 SOP | {{AIDP_HOME}}/**/*.md;docs/**/*.md | 版本根 README 为唯一入口 | V1.2.2" "\n"
+        r"(?<!不要求)每个 Sprint (?:在独立分支|新建分支) | **/*.md | branch_policy 决定 | V1.2.2" "\n"
+        r"implement \+ static(?!\s*\+\s*related-test) | docs/**/*.md | 带 related-test | V1.2.2" "\n",
+        encoding="utf-8")
+    _w(root, ".aidp/commands/a.md", "生成部署 SOP\n默认 `implement + static`\n")           # 命中 1；implement 不在 docs 作用域
+    _w(root, "docs/b.md", "默认 `implement + static`\n"                                    # 命中（作用域内）
+                          "默认 `implement + static + related-test`\n"                      # 阴性（现行写法）
+                          "不要求每个 Sprint 新建分支\n"                                    # 阴性（反面说明）
+                          "每个 Sprint 新建分支 <!-- stale-ignore: 历史说明，已改为 branch_policy -->\n"   # 豁免
+                          "每个 Sprint 新建分支 <!-- stale-ignore: -->\n")                 # 缺理由 → 仍报
+    _w(root, ".aidp/flows/sprint-autopilot/rationale.md", "部署 SOP\n")                    # 全局排除
+    _w(root, "docs/superpowers/p.md", "部署 SOP\n")                                        # 全局排除
+    _w(root, "memory/.aidp/x/a.md", "部署 SOP\n")                                           # 运行态副本排除
+    _w(root, "docs/c.txt", "部署 SOP\n")                                                    # 非 .md 不在 glob
+    rc, d = _run("check_stale_phrases.py", root, "--phrases", str(data))
+    got = sorted((f["file"], f["line"]) for f in d.get("findings", []))
+    check("阳性：作用域内旧口径命中（含无豁免理由的 ignore）",
+          got == [(".aidp/commands/a.md", 1), ("docs/b.md", 1), ("docs/b.md", 5)] and rc == 1)
+    check("阴性：现行写法 / 反面说明 / 行内 stale-ignore / 排除面 / 非 .md 不误报",
+          not any(f["file"] in ("docs/c.txt",) or "rationale" in f["file"] or "superpowers" in f["file"]
+                  or f["file"].startswith("memory/") for f in d["findings"]))
+    check("findings 带现行替代说明与引入版本",
+          all(f.get("replacement") and f.get("since") == "V1.2.2" for f in d["findings"]))
+    data.write_text("坏条目只有两段 | **/*.md\n[unclosed | **/*.md | x | V1.2.2\n", encoding="utf-8")
+    rc, d = _run("check_stale_phrases.py", root, "--phrases", str(data))
+    check("坏条目（字段不足 / 正则不合法）报 bad-entry，不静默跳过",
+          rc == 1 and sorted(f["kind"] for f in d["findings"]) == ["bad-entry", "bad-entry"])
+    (root / "版本变更历史.md").unlink()
+    rc, d = _run("check_stale_phrases.py", root, "--phrases", str(data))
+    check("非模板仓库 → N/A", rc == 0 and d.get("applicable") is False)
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def test_self_checks():
     print("\n[X] 三个脚本的 --self-check")
     for s in ("check_code_symbol_refs.py", "check_cli_invocation.py", "check_private_markers.py"):
         p = subprocess.run([sys.executable, str(SCRIPTS / s), "--self-check"], capture_output=True, text=True)
         check(f"{s} --self-check 通过", p.returncode == 0 and "[PASS]" in p.stdout)
+    for s in ("check_readme_registry.py", "check_cn_count_claims.py", "check_stale_phrases.py",
+              "check_identity_source.py"):
+        p = subprocess.run([sys.executable, str(SCRIPTS / s), "--self-check"], capture_output=True, text=True)
+        check(f"{s} --self-check 通过", p.returncode == 0 and '"pass"' in p.stdout)
 
 
 def test_convention_main_line_length():
@@ -178,6 +328,10 @@ if __name__ == "__main__":
     test_cli_invocation()
     test_private_markers()
     test_convention_main_line_length()
+    test_identity_scope_agents_and_init()
+    test_readme_registry()
+    test_cn_count_claims()
+    test_stale_phrases()
     test_self_checks()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

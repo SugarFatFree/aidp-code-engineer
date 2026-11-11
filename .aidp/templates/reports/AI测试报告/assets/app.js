@@ -78,7 +78,13 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
     var u = b.unitTests;
     if (u == null) return null;
     if (!u || u.schema !== 1 || u.build !== b.build || !b.commit || u.commit !== b.commit ||
-        ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"].indexOf(u.status) < 0 || !Array.isArray(u.runs)) return "UNVERIFIED";
+        ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING", "NOT_APPLICABLE"].indexOf(u.status) < 0 || !Array.isArray(u.runs)) return "UNVERIFIED";
+    if (u.status === "NOT_APPLICABLE") {
+      var sc = u.testScope || {}, ap = sc.unit_applicability || {}, ids = Array.isArray(sc.case_ids) ? sc.case_ids.slice().sort() : [];
+      return !u.runs.length && u.reason === "all-cases-browser-only" && ap.status === "NOT_APPLICABLE" && ap.reason === "all-cases-browser-only" && ap.evidence && ap.evidence.status === "none-found" && ap.evidence.files === 0 &&
+        Array.isArray(sc.acceptance_tests) && !sc.acceptance_tests.length && ids.length &&
+        JSON.stringify((ap.browser_only || []).slice().sort()) === JSON.stringify(ids) ? "NOT_APPLICABLE" : "UNVERIFIED";
+    }
     if (u.status === "PASS" && (!u.runs.length || u.runs.some(function (r) {
       return !r || r.status !== "PASS" || !r.run_id || !r.command || !r.cwd || !r.env_id ||
         (r.counts && r.counts.failed > 0) || (r.failed_cases || []).length;
@@ -99,10 +105,10 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
     if (bs === "UNVERIFIED" || u === "UNVERIFIED" || s.pendingCases > 0) return "UNVERIFIED";
     if (s.block > 0 || s.skip > 0) return "UNVERIFIED";
     var na = bs === "N/A";
-    if (na || (s.total > 0 && s.na === s.total)) return u ? "PASS" : "N/A";
+    if (na || (s.total > 0 && s.na === s.total)) return u === "NOT_APPLICABLE" ? "UNVERIFIED" : u ? "PASS" : "N/A"; // 单测不适用 + 无实测 = 未核验
     return passDenom(s) > 0 && s.pass === passDenom(s) && s.browserTested !== false ? "PASS" : "UNVERIFIED";
   }
-  var UNIT_TEXT = { PASS: "通过", FAIL: "失败", UNVERIFIED: "未核验，不能通过", TIMEOUT: "超时，不能通过", RUNNING: "运行中，不能收尾" };
+  var UNIT_TEXT = { NOT_APPLICABLE: "单测不适用（全部用例仅浏览器实测）", PASS: "通过", FAIL: "失败", UNVERIFIED: "未核验，不能通过", TIMEOUT: "超时，不能通过", RUNNING: "运行中，不能收尾" };
   function testConclusion(b) {
     if (!b.unitTests) return ""; // 历史报告不追溯补造单测结论。
     var status = testVerdict(b);
@@ -127,7 +133,10 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
     if (!u) return '<section class="section card"><h2>全量单测</h2><p>历史报告未记录单测结果。</p></section>';
     var status = unitStatus(b);
     var runs = Array.isArray(u.runs) ? u.runs : [];
-    return '<section class="section card"><h2>全量单测</h2><p><b>' + esc(status) + ' · ' + esc(UNIT_TEXT[status]) + '</b> · ' + esc(u.reason || "未提供原因") + '</p>'
+    var naEv = u.status === "NOT_APPLICABLE" && ((u.testScope || {}).unit_applicability || {}).evidence;
+    return '<section class="section card"><h2>全量单测</h2>'
+      + (naEv ? '<p style="font-weight:700;color:#b45309">单测不适用：未发现测试运行器/测试文件（依据：已检查 ' + esc((naEv.checked || []).join("、")) + '，发现文件 ' + esc(naEv.files) + ' 个）</p>' : '')
+      + '<p><b>' + esc(status) + ' · ' + esc(UNIT_TEXT[status]) + '</b> · ' + esc(u.reason || "未提供原因") + '</p>'
       + (unitHasFailure(u) && status !== "FAIL" ? '<p>已发现失败，验证尚未完成。</p>' : '')
       + '<p>commit：<code>' + esc(u.commit) + '</code> · 复用结果：' + (u.reused ? "是" : "否") + '</p>' + unitDetails(u)
       + runs.map(function (r) { return '<article><h3>run_id：<code>' + esc(r.run_id) + '</code> · 状态：' + esc(r.status) + '</h3>'

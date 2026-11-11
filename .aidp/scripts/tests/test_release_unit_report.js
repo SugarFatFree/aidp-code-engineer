@@ -174,4 +174,29 @@ test("发布内联与 HTML 渲染双层转义：命令、run_id、失败用例�
   const r = render([payload]); notGreen(r); assert(!r.html.includes("<img"));
   assert(r.html.includes("&lt;/script&gt;&lt;img") && r.html.includes("&amp;"));
 });
+function unitNa() {
+  const p = fixture("NOT_APPLICABLE");
+  Object.assign(p.summary, { overallStatus: "PASS", browserStatus: "PASS" });
+  p.unitTests.runs = []; p.unitTests.reason = "all-cases-browser-only";
+  p.unitTests.testScope = { kind: "version", acceptance_tests: [], case_ids: ["TC-1"],
+    unit_applicability: { status: "NOT_APPLICABLE", reason: "all-cases-browser-only", browser_only: ["TC-1"],
+      evidence: { status: "none-found", files: 0, checked: ["git-tracked-and-untracked-files"] } } };
+  return p;
+}
+test("单测 NOT_APPLICABLE + 真实浏览器 PASS：显示不适用与依据，不显示单测通过", () => {
+  const r = render([unitNa()]); green(r);
+  assert(r.html.includes("单测不适用：未发现测试运行器/测试文件") && r.html.includes("git-tracked-and-untracked-files"));
+  assert(!r.html.includes("全量单测</div><div class=\"info-value\">PASS"));
+});
+test("单测 NOT_APPLICABLE + 浏览器 N/A 或无依据：不能通过", () => {
+  const backendNa = unitNa(); backendNa.browserTests = { status: "N/A", reason: "无浏览器" };
+  Object.assign(backendNa.summary, { total: 0, pass: 0, passRate: 0, browserStatus: "N/A", overallStatus: "UNVERIFIED" }); backendNa.cases = [];
+  notGreen(render([backendNa]));
+  const forged = unitNa(); forged.unitTests.testScope.unit_applicability.browser_only = [];
+  notGreen(render([forged]));
+  const noEvidence = unitNa(); delete noEvidence.unitTests.testScope.unit_applicability.evidence;
+  notGreen(render([noEvidence]));
+  const withRun = unitNa(); withRun.unitTests.runs = [{ run_id: "r", status: "PASS", command: ["x"], cwd: ".", env_id: "e", counts: null, failed_cases: [], primary_error: null }];
+  notGreen(render([withRun]));
+});
 console.log(passed + " passed, 0 failed");

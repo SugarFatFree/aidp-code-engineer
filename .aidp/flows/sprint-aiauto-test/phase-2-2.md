@@ -39,7 +39,6 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 | 执行选集 `SELECT_MODE` | `--select` 给出则该值，否则 `all`；**仅真实当前版本全量委派使用 `all`，且只覆盖冻结清单；无人值守标志不扩范围**（见命令主体注意事项 6bis）| 本命令 flag |
 | ★ DB 连接（约定 33 缺口 3）| 「测试环境与账号」§五 DB 连接段的 datasource / DB MCP 名 **+ `environment`（SKILL 明令必填、禁留空；缺则填 `{待用户填写}` 并在报告点名）**——⛔ 漏传不报错，只让归属落 `unverified`、`[双源对账]` 用例整批降级 （缺则回退后端 `application.yml` 生效 profile）| Phase 0.0.5 读配置 |
 | ★ 跨系统前置数据（约定 33 缺口 4）| 「测试环境与账号」§三/§四的**联动系统**入口 + 账号 + §五对应 DB | Phase 0.0.5 读配置 |
-| 存活心跳 `heartbeat_cmd` | `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now` | ★ 长批次续写测试链路心跳（开发链路据此判「测试链路存活」）；主 Agent 每收回一个执行子 Agent 也执行一次 |
 | 单步等待上限 | 每步 `${OP_TIMEOUT}s` / 首开 `${NAV_TIMEOUT}s` | Phase 0.0.6 用户确认 / 无人值守默认值（见 2.2.1）|
 | 测试产物目录 | `docs/reports/${TARGET_VERSION}/AI测试报告/` | skill 在此下按其契约自建 `build-${BUILD}/round-{M}/`（含 tasks.md / results/ / evidence/）；BUILD 由 Phase 0.2 读 |
 | 证据归档目录 | **不覆盖，由 skill 按契约派生** = `build-${BUILD}/round-{M}/evidence/{TC-ID}-step{N}.{ext}`（`ext` 由驱动适配器决定：Web 默认 `.webp`、回退 `.png`，兼容 `.jpg/.jpeg`；命令端不猜扩展名）| ★ 尊重 auto-test-runner 落盘契约（约定 21，命令端不强加扁平/role 路径）；命令端 Phase 3.2.5 再从此处**消费/归集** skill 截图到报告 `screenshots/${BUILD}/` 供 SPA 渲染 |
@@ -47,7 +46,7 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 
 > ★ **约定 33 配套边界（约定 21）**：命令端只负责把「DB 连接 / 跨系统前置数据」作为 run-context 参数**交给** auto-test-runner；**用起来**（DB 断言、前置段执行）以 auto-test-runner SKILL 为单一信源（`result-schema` 的 `db_assertion` 字段），命令端不复述、不实现。
 
-派单后（主 Agent **每收回一个执行子 Agent 即执行一次 `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now`**，长批次期间心跳不陈旧）各执行子 Agent 按 auto-test-runner 执行流程（第零步~第四步）分模块批量跑完、断点可续、实时打印进度（见 2.2.2），产出每条用例 `results/{TC-ID}.json`（`status`=pass/fail/block/**na** + `evidence` 截图摘要+路径）+ `tasks.md` 进度 + 固定结构报告。本分支跑完只返回结果；命令端等两路终态后按 `phase-2-unit.md` 汇合，再进 Phase 3。
+派单后（主 Agent **每收回一个执行子 Agent 即执行一次 `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now`**，长批次期间心跳不陈旧，开发链路据此判「测试链路存活」；这是主 Agent 自己的动作，不是 run-context 字段）各执行子 Agent 按 auto-test-runner 执行流程（第零步~第四步）分模块批量跑完、断点可续、实时打印进度（见 2.2.2），产出每条用例 `results/{TC-ID}.json`（`status`=pass/fail/block/**na** + `evidence` 截图摘要+路径）+ `tasks.md` 进度 + 固定结构报告。本分支跑完只返回结果；命令端等两路终态后按 `phase-2-unit.md` 汇合，再进 Phase 3。
 
 > ★ **无人值守一致**：auto-test-runner 执行不中途等人、阻塞标 block 继续；run-context 缺失项由 Phase 0 一次性收全（0.0.6），委派时不再追问。
 > ✅ **运行时错误对接已就绪**：`result-schema.json` 的 `runtimeErrors[]` 必填 `type`/`message`/`severity`，命令端只消费、不重算。字段全表见 `rationale.md`「运行时错误对接」。

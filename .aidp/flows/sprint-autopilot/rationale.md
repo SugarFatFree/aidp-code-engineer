@@ -17,7 +17,7 @@
 - **0.6 收完即禁中途阻塞**——根因：字段缺失若拖到 Phase 2/3 中途才 `AskUserQuestion`，无人值守下挂死。故一切交互前置到 Phase 0 一次性收齐。
 - **0.2 test-intent 专项防绕过**——根因："识别到只做测试 → 静默跳过 Phase 0 配置收集与通道就绪打印"正是"通知渠道全就绪却整次零推送"的根因。
 
-- **`config-missing` 必须按心跳解冻（双侧死锁）**——根因：该冻结由 Phase 3.9 / Phase 2 在「本版需实测但测试链路无心跳」达阈时写入，其 `#4` 通知明写「补挂 `/loop 5m /sprint-aiauto-test --unattended` 后自动解冻重测」。但两条既有解冻路径都够不着它：① autopilot 已把该版剔出候选 → **永不再为它部署**，"新部署"路径不可达；② 测试链路侧的配置类解冻只认 `docs/testing/**/*.md` 与 `skills/*/config.json` 的 **mtime**，而"挂 loop"这两者都不变。于是用户照着通知提示补挂了 loop 也解不开，只能人工清 baseline。
+- **`config-missing` 必须按心跳解冻（双侧死锁）**——根因：该冻结由 Phase 3.9 / Phase 2 在「本版需实测但测试链路无心跳」达阈时写入，其 `#4` 通知明写「补挂 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 后自动解冻重测」。但两条既有解冻路径都够不着它：① autopilot 已把该版剔出候选 → **永不再为它部署**，"新部署"路径不可达；② 测试链路侧的配置类解冻只认 `docs/testing/**/*.md` 与 `skills/*/config.json` 的 **mtime**，而"挂 loop"这两者都不变。于是用户照着通知提示补挂了 loop 也解不开，只能人工清 baseline。
 
 ### 入口分流的 AskUserQuestion 为何只能有「开发范围」一个维度
 
@@ -559,7 +559,7 @@ test-only 轮次恒索要 `#1c`/`#1d`/`#2` 三条本轮压根没发生的通知 
 ### `--stage` 选择必须证据化（收尾门）
 
 `skeleton` 的语义是「把 #F/#3 与交付台账的校验**延后**交给一条**真实存在且在跑**的测试链路」。
-所以它合法的前提是那条链路确实存在：① 本轮是 `/loop` 无人值守（另一条 `/loop 5m /sprint-aiauto-test --unattended`
+所以它合法的前提是那条链路确实存在：① 本轮是 `/loop` 无人值守（另一条 `/loop 5m /sprint-aiauto-test --unattended --no-loop`
 在跑）**且** ② 本 build 已落 `aiauto_delegated_at`（确已 invoke 过、不是"我以为已委派"）。
 
 分片一度只按 `WILL_BROWSER_TEST` 分流，与命令主体的这条判据**直接相反**：
@@ -587,7 +587,7 @@ Phase 3 了"，但 `3.0-route` 是**另一个版本（TARGET_VERSION）**要跑�
 
 ### 双 loop 下收尾门为何恒判 final（GATE_STAGE 的第二个 skeleton 条件）
 
-标准挂法是两条 loop：`/loop 10m /sprint-autopilot --unattended` + `/loop 5m /sprint-aiauto-test --unattended`。
+标准挂法是两条 loop：`/loop 10m /sprint-autopilot --unattended --no-loop` + `/loop 5m /sprint-aiauto-test --unattended --no-loop`。
 这个形态下 **autopilot 从不 invoke 测试链路**——`aiauto_delegated_at` 只在 test-only 子流程 R
 （`phase-3-2.md`）写，full 路径压根不走那条分支，于是 `DELEGATED` 恒空、`GATE_STAGE` 恒判 `final`。
 
@@ -812,7 +812,7 @@ Step C 判 ③失败重试 / ④ CICD 平台不可达（提供方凭据失效 / 
 
 - **未接入 CICD**（`memory/aidp-config.yaml` 的 `cicd.provider=none` / 无 `cicd.pipelines.<env>`，或 `cicd_watch.py` 退出码 3：提供方 CLI/凭据不可用）→ 无远端流水线可监控/重试；但**部署就绪仍应把关，别让测试链路对没起来的环境空跑**：若已配就绪探针字段（`cloud_ready_api_url` 等）→ push 后走 **Phase 3.2.1 Step D 部署就绪探针**（HTTP 登录后自身接口连续 2 次取数，**不依赖 CICD**）通过**才**写 `last_deployed_at`；未配就绪字段 → 保持轻量（push 后直接写 `last_deployed_at`、就绪探测留给 aiauto-test）。两种情况都在 #1d / 终端 WARN「未接入 CICD 流水线监听，部署失败不会自动重试，请自行确认部署已成功」。
 
-- **★ 里程碑通知 #1d 部署完成-代码已推送（见 0.1bis「#1d 部署完成通知模板」）**——`deployment.mode != none` 且未带 `--skip-deploy` 时，部署动作完成（`last_deployed_at` 写入）后**立即经 `notify.py --auto` 发通知**（未配置任何渠道 = 退出码 3，静默跳过）：播报版本 / 部署模式 / 访问 URL / 代码已推 origin/`{branch}` + **接力强提示**「如未挂 `/loop 5m /sprint-aiauto-test --unattended` 则后续 AI 测试不会自动开始」。这是开发链路对测试链路的交接点，补齐部署阶段的里程碑播报。`mode=none` / `--skip-deploy` → 不发（接力提示由 Phase 3.4 #3 通知导航兜底）。
+- **★ 里程碑通知 #1d 部署完成-代码已推送（见 0.1bis「#1d 部署完成通知模板」）**——`deployment.mode != none` 且未带 `--skip-deploy` 时，部署动作完成（`last_deployed_at` 写入）后**立即经 `notify.py --auto` 发通知**（未配置任何渠道 = 退出码 3，静默跳过）：播报版本 / 部署模式 / 访问 URL / 代码已推 origin/`{branch}` + **接力强提示**「如未挂 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 则后续 AI 测试不会自动开始」。这是开发链路对测试链路的交接点，补齐部署阶段的里程碑播报。`mode=none` / `--skip-deploy` → 不发（接力提示由 Phase 3.4 #3 通知导航兜底）。
 
 ### 写本 build 执行数据文件的注册细则（phase-3-4.md 的外置正文）
 

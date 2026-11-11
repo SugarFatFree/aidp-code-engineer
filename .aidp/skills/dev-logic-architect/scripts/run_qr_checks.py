@@ -37,6 +37,7 @@ CHECKS = (
     ("check_metric_spec.py", (), False),
     ("check_list_page_scale.py", (), False),
     ("check_text_field_length.py", (), False),
+    ("check_sql_identifiers.py", (), False),
     ("check_no_fabricated_fallback.py", (), False),
     ("check_upstream_call_log_spec.py", (), False),
     ("check_count_claim_table.py", (), False),

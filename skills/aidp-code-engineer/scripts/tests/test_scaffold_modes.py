@@ -3118,5 +3118,62 @@ class MigrateTest(unittest.TestCase):
         self.assertEqual(p.returncode, 2)
 
 
+class UpgradeReportTest(unittest.TestCase):
+    """升级报告必须如实说出：同版本门控新增未补齐、覆盖升级删掉的旧契约。"""
+
+    def _options(self):
+        return Namespace(mode="upgrade", agent="claude", user="alice", json=True,
+                         version="V0.1.0", name_cn=None, force=False,
+                         adapter_mode="copy", no_agent_sync=False,
+                         keep_backups=5, keep_days=30)
+
+    def test_same_version_upgrade_reports_unregistered_gated_additions(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            runtime = root / ".claude"
+            rel = "flows/sprint-dev/verification-inputs.md"
+            self.assertTrue((runtime / rel).is_file())
+            (runtime / rel).unlink()
+            manifest = json.loads((runtime / runtime_layout.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            del manifest["files"][rel]
+            runtime_layout._write_manifest(runtime, manifest)
+            res = S.run(root, self._options())
+            self.assertEqual(res["contract_decision"], "fill")
+            self.assertFalse((runtime / rel).exists(), "同版本不覆盖/不新增门控契约")
+            self.assertEqual(res["unregistered_gated_additions"], [rel])
+            text = "\n".join(res["warnings"] + res["notes"])
+            self.assertIn(rel, text)
+            self.assertIn("--force", text)
+
+    def test_overwrite_upgrade_reports_removed_contracts_and_modified(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude", "--user", "alice")
+            runtime = root / ".claude"
+            keep, mod = "skills/legacy-gone/a.md", "skills/legacy-gone/b.md"
+            for rel in (keep, mod):
+                (runtime / rel).parent.mkdir(parents=True, exist_ok=True)
+                (runtime / rel).write_text("old\n", encoding="utf-8")
+            old = json.loads((runtime / runtime_layout.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+            fresh = runtime_layout.build_runtime_manifest(runtime, old["version"], old["source"], ".claude")
+            runtime_layout._write_manifest(runtime, fresh)
+            (runtime / mod).write_text("user edit\n", encoding="utf-8")
+            scaffold_marker.write_version(root, "V0.0.1")
+            res = S.run(root, self._options())
+            self.assertEqual(res["contract_decision"], "overwrite")
+            self.assertIn(keep, res["removed_contracts"])
+            self.assertNotIn(mod, res["removed_contracts"])
+            self.assertIn(mod, res["removed_modified"])
+            self.assertTrue(res["backup"])
+            self.assertEqual((root / res["backup"] / ".claude" / mod).read_text(encoding="utf-8"), "user edit\n")
+            self.assertFalse((runtime / mod).exists())
+            self.assertEqual(res["orphans"], [])
+
+
+class TemplateOnlyHelpersTest(unittest.TestCase):
+    def test_nav_purpose_deployment_is_not_sop_ledger(self):
+        self.assertNotIn("SOP", S.NAV_PURPOSES["部署流程"])
+        self.assertIn("仅确需时", S.NAV_PURPOSES["部署流程"])
+
+
 if __name__ == "__main__":
     unittest.main()

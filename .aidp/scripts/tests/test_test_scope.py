@@ -1021,6 +1021,46 @@ class VersionManifestTests(ScopeFixture):
         self.assertEqual(plan["runs"][0]["argv"][-1], "tests/test_calc.py")
         self.assertNotIn("tests/test_other.py", json.dumps(plan["runs"]))
 
+    def browser_manifest(self, cases, browser_only):
+        import hashlib
+        self.write("docs/testing/V1/正式用例/用例.md", "### TC-001 计算\n### TC-002 浏览器\n")
+        index = self.root / "docs/testing/V1/正式用例/用例.md"
+        baseline = {"version": "V1", "acceptance_tests": ["tests/test_calc.py"],
+                    "dependencies": ["src/calc.py", "tests/__init__.py"], "browser_only": browser_only,
+                    "cases": cases, "case_index": {"path": "docs/testing/V1/正式用例/用例.md",
+                                                   "sha256": hashlib.sha256(index.read_bytes()).hexdigest()}}
+        self.write("docs/testing/V1/验收/acceptance.json", json.dumps(baseline))
+        content = (self.root / "docs/testing/V1/验收/acceptance.json").read_bytes()
+        return {"version": "V1", "build": "b1", "commit": self.base,
+                "acceptance_baseline": {"path": "docs/testing/V1/验收/acceptance.json",
+                                        "sha256": hashlib.sha256(content).hexdigest()},
+                "acceptance_tests": ["tests/test_calc.py"], "dependencies": ["src/calc.py", "tests/__init__.py"]}
+
+    def test_browser_only_case_may_have_no_test_files_but_only_when_explicit(self):
+        import test_scope
+        mapped = {"id": "TC-001", "test_files": ["tests/test_calc.py"]}
+        plan = test_scope.derive_suite(self.root, self.runners, self.browser_manifest(
+            [mapped, {"id": "TC-002", "test_files": []}], ["TC-002"]))
+        self.assertEqual(plan["tests"], ["tests/test_calc.py"])
+        # 既无映射又未声明 browser_only：不能悄悄漏测。
+        with self.assertRaises(test_scope.ScopeError):
+            test_scope.derive_suite(self.root, self.runners, self.browser_manifest(
+                [mapped, {"id": "TC-002", "test_files": []}], []))
+        # 声明 browser_only 却又映射了文件、或声明了不存在的用例：同样拒绝。
+        with self.assertRaises(test_scope.ScopeError):
+            test_scope.derive_suite(self.root, self.runners, self.browser_manifest(
+                [mapped, {"id": "TC-002", "test_files": ["tests/test_calc.py"]}], ["TC-002"]))
+        with self.assertRaises(test_scope.ScopeError):
+            test_scope.derive_suite(self.root, self.runners, self.browser_manifest(
+                [mapped, {"id": "TC-002", "test_files": []}], ["TC-002", "TC-999"]))
+
+    def test_frozen_runtime_baseline_requires_main_root_via_execution_context(self):
+        import test_scope
+        manifest = self.manifest()
+        manifest["acceptance_baseline"]["path"] = "memory/.aidp/version-freeze/V1/b1/acceptance.json"
+        with self.assertRaises(test_scope.ScopeError):
+            test_scope.derive_suite(self.root, self.runners, manifest)
+
     def test_partial_foreign_or_unclosed_manifest_is_rejected(self):
         import hashlib
         import test_scope

@@ -69,7 +69,7 @@ project/
 │   ├── reference/              # 按需 Read 的查阅分片（命令速查 / skills 用途 / 约定细则 / 文档索引）
 │   ├── scripts/                # 确定性校验与判定脚本
 │   ├── hooks/                  # 钩子脚本（autopilot Stop 护栏）
-│   ├── templates/deployment/   # 部署流程 + SQL执行台账 模板
+│   ├── templates/deployment/   # 部署操作说明模板（仅确需时取用）
 │   ├── templates/reports/      # AI 全自动报告模板
 │   └── templates/optional-rules/  # ★ 按需安装的可选规则（如 WebMCP；未启用不装进 rules/）
 ├── code/                       # 源代码
@@ -232,8 +232,7 @@ project/
 ### 5. 代码提交
 
 - 遵循 Conventional Commits 规范
-- 每个 Sprint 在独立分支开发
-- Sprint 完成后合并到主分支
+- 分支策略由 `branch_policy` 决定（默认在当前分支开发，不要求每个 Sprint 新建分支；首次由脚手架询问并保存）
 
 ## 🔍 常见问题
 
@@ -296,7 +295,7 @@ AIDP 范式提供了完整的理论层文档（位于 `docs/init/`），包含�
 ├── rules/      → 路径限定规则（`paths:` glob 匹配到才加载）：代码向核心约定详规
 ├── flows/      → 长命令的 Phase 分片（命令本体留骨架，Phase 正文按需 Read）
 ├── reference/  → 按需 Read 的查阅分片（命令速查 / skills 用途 / 约定细则 / 初始化与文档索引）
-├── templates/  → deployment（部署流程+SQL执行台账）/ reports（AI 报告）/ optional-rules（按需安装的可选规则）
+├── templates/  → deployment（部署操作说明模板，仅确需时取用）/ reports（AI 报告）/ optional-rules（按需安装的可选规则）
 │                + `_开发期族增量.md` 四族共用模板
 ├── scripts/    → 确定性校验与判定脚本
 └── hooks/      → 钩子脚本

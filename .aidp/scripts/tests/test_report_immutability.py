@@ -242,15 +242,14 @@ def _frozen_manifest(root, version, build, *, tests=None, commit=None, suites=No
 
 
 def _manifest_for(root, version, build, deployed_commit=None):
-    """部署提交场景：契约 source/suites/tests 取自该提交里真实的 unit-plan.json，与单测实际运行一致。"""
+    """部署提交场景：由生产 freeze 从该提交内真实的 unit-plan.json 与正式用例生成；与围栏内 freeze 同字节。"""
     if not deployed_commit:
         return _frozen_manifest(root, version, build)
-    import hashlib
-    raw = subprocess.run(["git", "-C", str(root), "show", deployed_commit + ":unit-plan.json"],
-                         capture_output=True, check=True).stdout
-    return _frozen_manifest(root, version, build, tests=["test_deployed.py"], dependencies=["app.py"], commit=deployed_commit,
-                            suites=json.loads(raw)["suites"],
-                            source={"path": "unit-plan.json", "sha256": hashlib.sha256(raw).hexdigest()})
+    sys.path.insert(0, str(REPO / ".aidp/scripts"))
+    import build_unit_test
+    frozen = build_unit_test.freeze(root, version, build, deployed_commit, source="unit-plan.json")
+    assert frozen["status"] == "FROZEN", frozen
+    return Path(frozen["manifest"])
 
 
 def _retest_scene(root, *, once=False, target=False, finalized=True, build=True, skeleton=True,
@@ -307,7 +306,9 @@ def _retest_scene(root, *, once=False, target=False, finalized=True, build=True,
 
 def _fixture_environment(root, execution_context=None):
     fixture = json.loads((root / 'memory/.aidp/report-fixture-context.json').read_text(encoding='utf-8'))
-    return {**os.environ, 'EXECUTION_CONTEXT': execution_context or fixture['execution_context']}
+    # TEST_PLAN_SOURCE：围栏内 freeze 读取部署 commit 内的这份测试计划来源。
+    return {**os.environ, 'EXECUTION_CONTEXT': execution_context or fixture['execution_context'],
+            'TEST_PLAN_SOURCE': 'unit-plan.json'}
 
 
 def _test_entry_flow(root, execution_context=None):
@@ -456,7 +457,8 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
                         'cwd': '.', 'env_id': 'deployed-stdlib-fixture', 'inputs': [], 'external_dependencies': 'none',
                         'runners': [{'suffixes': ['.py'], 'cwd': '.', 'env_id': 'deployed-stdlib-fixture',
                                      'argv': [sys.executable, '-m', 'unittest', '-v', '{tests}']}]}]
-        unit_source = json.dumps({'schema': 1, 'suites': unit_suites}).encode('utf-8')
+        unit_source = json.dumps({'schema': 1, 'suites': unit_suites, 'dependencies': ['app.py'], 'unit_tests': ['test_deployed.py'],
+                                  'case_tests': {'TC-ONE': ['test_deployed.py']}}).encode('utf-8')
         (root / 'unit-plan.json').write_bytes(unit_source)
         fixture_git('add', '-A'); fixture_git('commit', '-qm', 'deployed-code')
         deployed_commit = fixture_git('rev-parse', 'HEAD')

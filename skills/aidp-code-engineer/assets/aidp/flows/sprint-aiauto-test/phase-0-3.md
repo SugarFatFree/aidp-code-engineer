@@ -2,7 +2,7 @@
 # sprint-aiauto-test · 执行分片 [3/9]（0.1 chrome检测启动 · 0.1.1 驱动安装检查 / 0.1.1.4 远程.mcp.json约定）
 
 > ⚠️ **权威性**：以本文件为准逐项执行，不得凭命令主体骨架或记忆略过任一子步骤 / 硬门。
-> ⚠️ **维护**：随脚手架下发；改动后同步 bundle 副本 `assets/aidp/flows/sprint-aiauto-test/phase-0-3.md`。理据见同目录 `rationale.md`。
+> ⚠️ **理据**：见同目录 `rationale.md`。
 
 ### 0.1 chrome-devtools-mcp 检测 + 智能启动
 

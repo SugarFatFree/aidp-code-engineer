@@ -1,5 +1,7 @@
 # Native Agent Command Adapters Implementation Plan
 
+> **状态：已落地 / 历史存档。** 本文是当时的设计 / 实施记录，仅供追溯；现行行为以 `.aidp/` 与 `docs/init/` 为准，不再据此文改动实现。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让 Claude Code、Codex、DeepSeek Harness 分别通过原生命令入口执行同一份 `.aidp/commands/` 契约，并彻底退役 `aidp-cmd` 路由。

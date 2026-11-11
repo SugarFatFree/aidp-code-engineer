@@ -47,7 +47,7 @@ docs/bugfix/
 
 - `/sprint-bugfix` — 修复已记录的 bug（独立可用，无需 Sprint）
 - `/sprint-bugfix sprint-001` — 按 Sprint 过滤
-- `/sprint-bugfix "<描述>"` — 自动累进新 Sprint（适合较大 bug）
+- `/sprint-bugfix "<描述>"` — 默认 light 修复（不建 Sprint）；较大 bug 要累进 Sprint 走 `/sprint-full "<描述>"`
 
 ## 跨用户约束
 

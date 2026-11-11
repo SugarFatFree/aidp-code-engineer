@@ -98,6 +98,7 @@
 - `scripts/check_enum_contract.py` — A.4 字典/枚举代码契约 8 项必填字段合规扫描 + A.3 枚举字段 COMMENT 反向引用核验(对应自检 12 = 维度 11，两套编号不可换算)
 - `scripts/check_money_field.py` — 货币金额字段整数化合规扫描(DDL + Markdown 表格双模式,对应自检 16 / 维度 17)
 - `scripts/check_sql_style_consistency.py` — 历史 SQL 风格扫描与本次设计沿用一致性核验(对应自检 17 / 维度 18)
+- `scripts/check_sql_identifiers.py` — SQL 标识符通用性:表名/字段名不加引号、同名单一拼写、不用保留字(对应自检 17 / 维度 18 的子项,QR 步骤 0 调用)
 - `scripts/check_no_fabricated_fallback.py` — 不臆造兜底扫描:识别设计文档中的兜底关键词并输出疑似清单供人工溯源(对应自检 18 / 维度 19)
 - `scripts/check_er_and_fk.py` — ER 图存在性 + DDL 中无 FOREIGN KEY/REFERENCES + 关联字段 COMMENT 完整性扫描(对应自检 19 / 维度 20)
 - `scripts/check_index_not_null.py` — 索引列 NOT NULL + DEFAULT 哨兵值核验,联合索引整组核验,唯一索引零容忍 NULL(对应自检 20 / 维度 21)

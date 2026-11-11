@@ -30,9 +30,9 @@ python3 {{AIDP_HOME}}/scripts/deployment_ops.py pending --version {version}
 **输出摘要**：
 ```
 📦 部署产物完善（{version}）：
-   • 部署流程.md：占位符已实值化 / 关键项表 {填齐N项、置"无"M项} / SQL 引用已对齐整理后文件名
+   • 唯一操作说明（版本根 README 或既有部署流程.md）：关键项已核对 / SQL 引用已对齐整理后文件名
    • 配置项清单.md：3 段（新增·删除·运行时文件变更）已终检（必改项归 `配置文件/全量/配置说明.md`，约定 25/37）
-   • deployment-checklist.md：{已核对 / 已生成骨架 / 无}
+   • checklist：{已核对既有 / 无（不新增）}
    • 跨文档一致性：✓（SQL 文件名 / 配置项 / 初始化接口 四文档互引一致）
 ```
 

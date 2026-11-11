@@ -19,7 +19,9 @@ Sprint 关闭状态误判。⛔ 这类缺陷**不会报错**，两侧单独看�
 
 ## 判据
 
-扫 `{{AIDP_HOME}}/{commands,flows,rules,reference}/**` 与 `AIDP-AGENTS.md`，命中
+扫 `{{AIDP_HOME}}/{commands,flows,rules,reference,agents}/**`、`AIDP-AGENTS.md` 与项目根的
+`docs/init/**`（Agent 角色指令的「前置说明」与范式文档同样会被执行体照做；此前扫描面只含前四类，
+`agents/` 里 9 份旧写法与 `docs/init` 同类残留全程逃检），命中
 `git config user.name` / `git config --get user.name` 即 ERROR。
 
 **豁免**（下列位置写它是正确的，不是解析 `{user}`）：
@@ -47,7 +49,9 @@ if _scripts not in sys.path:
 from aidp_runtime import runtime_relpath
 
 RUNTIME_REL = runtime_relpath("", __file__)
-SCAN_DIRS = ("commands", "flows", "rules", "reference")
+SCAN_DIRS = ("commands", "flows", "rules", "reference", "agents")
+# 项目根下的范式文档（相对项目根，不在运行包内）
+ROOT_SCAN_DIRS = ("docs/init",)
 SCAN_FILES = ("AIDP-AGENTS.md",)
 TEXT_SUFFIXES = {".md", ".py", ".sh", ".js", ".json", ".yaml", ".yml", ".tpl"}
 
@@ -75,6 +79,17 @@ def _iter_targets(root: Path):
             yield p
     for sub in SCAN_DIRS:
         base = aidp / sub
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*")):
+            if p.is_file() and not p.is_symlink() and p.suffix.lower() in TEXT_SUFFIXES:
+                try:
+                    if p.stat().st_size <= MAX_BYTES:
+                        yield p
+                except OSError:
+                    continue
+    for sub in ROOT_SCAN_DIRS:
+        base = root / sub
         if not base.is_dir():
             continue
         for p in sorted(base.rglob("*")):

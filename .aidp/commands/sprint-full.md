@@ -86,7 +86,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-ful
    - `ls docs/requirements/{version}/研发需求/{01_研发需求,00_索引,00_研发需求}.md 2>/dev/null` 任一命中即可（**不硬编码裸名**——multi 模式按系统拆分时 `01_研发需求.md` 本就不存在，硬判会把合规项目误判缺失而错误停止）
    - **详细设计**：`ls docs/design/detail/{version}/*.md` 有内容主文档即可（★ **用 glob 探测、兼容约定 14 三态**——拆分态 `00_索引.md`+`01_详细设计.md`… / 单份态 `00_详细设计.md` / 历史存量裸名 `详细设计.md`；**不硬编码裸名**，否则拆分态项目会被误判缺失而错误停止）
    <!-- dup-check: ignore 前置检查清单需各命令自包含，读者不应为一行 glob 跳转 -->
-   - 研发执行计划：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/0[0-9]_M*研发执行计划.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**，理由同上一行研发需求；合法布局见 `/sprint-plan` Step 1「输出」）
+   - 研发执行计划：`ls docs/plans/{version}/{01_研发执行计划,00_索引,00_研发执行计划}.md docs/plans/{version}/NN_研发执行计划-*.md 2>/dev/null` 任一命中即可（**不硬编码裸名**，理由同上一行研发需求；合法布局见 `/sprint-plan` Step 1「输出」）
    - 任一缺失 → **停止执行**，提示先执行 `/version {version} "{里程碑}"`
 2. **带 `--resume` 时先执行恢复门，成功即替代下方开工门**（先按参数解析归一 `{NNN}` 为三位数字；自然语言模式 B 不允许 resume；调用方版本必须与前置流程解析的当前版本一致）：
 
@@ -270,12 +270,12 @@ else:
 执行：/sprint-test --execution-context "$EXECUTION_CONTEXT" {NNN} [--from-batch] [--unattended]
 ```
 
-（`/sprint-test` 内部以仅验收模式使用 `code-verification-loop` + 可选 `api-tester`，本命令不另行调用。）前端浏览器仿真测试在部署后走独立命令 `/sprint-aiauto-test`（chrome-devtools-mcp，默认无头），不在本阶段。
+（`/sprint-test` 内部以仅验收模式使用 `code-verification-loop`，本命令不另行调用。）前端浏览器仿真测试在部署后走独立命令 `/sprint-aiauto-test`（chrome-devtools-mcp，默认无头），不在本阶段。
 发现的 bug 写入 `docs/bugfix/{version}/bugfix-{今日}-{user}.md`。
 
 ```
 ▶ Phase 3 完成：测试已执行
-  - code-verification-loop：各维度 Pass/Fail + Critical {N} / Important {N}
+  - code-verification-loop：Pass {N} / Fail {N} / 不适用 {N} / 未核验 {N}（存在未核验维度须如实写出）+ Critical {N} / Important {N}
   - 新增 bug：{N} 个
 ```
 
@@ -285,7 +285,7 @@ Phase 3 已完成当轮原实现者修复、定向测试、reviewer 差量复核
 
 - 没有未闭环项且验收基线可信 → 进入 Phase 5。
 - 只有可修复残项且允许 bugfix → 保留当前 Sprint 与问题 ID，委派原实现者继续；需要独立修复入口才调用 `/sprint-bugfix --execution-context "$EXECUTION_CONTEXT" sprint-{NNN} [--from-batch] [--unattended]`，仅传未闭环项与证据。随后用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" {NNN} --resume-acceptance [--from-batch] [--unattended]` 续接差量与最终 full，不重跑已完成完整质量审查。
-- 产品/版本/破坏性或环境待决 → 回传具体原因；不让 bugfix 无谓空转。外层和验收共用本次问题的修复轮次，连续 5 轮仍未闭环返回失败，不能外层重置计数再来 5 轮。
+- 产品/版本/破坏性或环境待决 → 回传具体原因；不让 bugfix 无谓空转。外层和验收共用本次问题的修复轮次，连续 5 轮仍未闭环返回失败（本命令层自设上限，不是 CVL 轮次），不能外层重置计数再来 5 轮。
 - `skip-bugfix` 只跳过外层补救，不取消验收内部纠错，也不豁免关闭证据。残项未闭环 / `--stop-on-blocker` 命中 → 返回 `closed:false`，保留上下文，不以软失败继续归档。
 
 ```

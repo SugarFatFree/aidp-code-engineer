@@ -72,7 +72,7 @@ Reviewer Agent   代码审查
 | `/sprint-dev` | Backend + Frontend（并行） |
 | `/sprint-test` | QA |
 | `/sprint-bugfix` | Backend / Frontend（按归属） |
-| `/sprint-close` | PM |
+| `/sprint-close` | PM；Step 2.5 验收后差量核对激活 Reviewer |
 | `aidp-code-engineer` skill（init / migrate / upgrade 末尾） | AIDP-Compliance |
 
 ### 3.2 手动激活
@@ -89,13 +89,13 @@ Reviewer Agent   代码审查
 多 Agent 并行时，用 **`Agent` 工具**派独立子 Agent（每个子 Agent 自行 Read 对应角色文件），用 **`TodoWrite`** 维护任务与依赖。⛔ **没有 `TeamCreate` / `TaskCreate` 这类工具**，别照字面找：
 
 ```
-创建 Agent Team sprint-001，角色包括：
+由主流程按依赖顺序派发 sprint-001 的子 Agent（子 Agent 之间没有互相通知的通道，下一环由主流程在上一环返回后派出）：
 - architect：负责详细设计
 - backend-dev：后端实现（读取 {{AIDP_HOME}}/agents/backend.md）
 - frontend-dev：前端实现（读取 {{AIDP_HOME}}/agents/frontend.md）
 - qa-validator：集成验收
 
-任务依赖：backend-dev + frontend-dev 并行 → qa-validator
+任务依赖：backend-dev + frontend-dev 写集隔离后并行 → 均返回后主流程再派 qa-validator
 ```
 
 ## 4. Agent 协作流程

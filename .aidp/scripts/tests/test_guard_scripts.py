@@ -1322,13 +1322,13 @@ def test_loop_examples():
     check("正向：带行号", [v["line"] for v in r["violations"]] == [2, 3])
 
     # ② 负向：带了 flag 不报（含多余空格 / 行尾注释）
-    root = _mkdocs({"README.md": "```bash\n/loop 10m /sprint-autopilot --unattended   # 开发链路\n"
-                                 "/loop 5m  /sprint-aiauto-test --unattended  # 测试链路\n```\n"})
+    root = _mkdocs({"README.md": "```bash\n/loop 10m /sprint-autopilot --unattended --no-loop   # 开发链路\n"
+                                 "/loop 5m  /sprint-aiauto-test --unattended --no-loop  # 测试链路\n```\n"})
     check("负向：带 --unattended 不报", LE.run(str(root))["violations"] == [])
 
     # ③ ★ 逐"出现"判而非逐行判：一行两条 loop、只有一条带 flag → 另一条必须被抓
-    root = _mkdocs({"a.md": "完整 7×24 = `/loop 10m /sprint-autopilot --unattended` + "
-                            "`/loop 5m /sprint-aiauto-test` 两条并行\n"})
+    root = _mkdocs({"a.md": "完整 7×24 = `/loop 10m /sprint-autopilot --unattended --no-loop` + "
+                            "`/loop 5m /sprint-aiauto-test --unattended` 两条并行\n"})
     r = LE.run(str(root))
     check("同一行只给一条加 flag → 另一条仍被抓", len(r["violations"]) == 1)
     check("抓的是漏写的那条", "aiauto-test" in r["violations"][0]["snippet"])
@@ -1357,7 +1357,7 @@ def test_loop_examples():
     #    （下游实测 313 处命中全在备份目录、活跃文件 0 处）。模板项目自身没有备份目录，
     #    所以这类缺陷只在下游显形 —— 必须由测试兜住。
     root = _mkdocs({".aidp-backup-20260810123517/commands/old.md": "/loop 10m /sprint-autopilot\n",
-                    ".aidp/commands/live.md": "/loop 10m /sprint-autopilot --unattended\n"})
+                    ".aidp/commands/live.md": "/loop 10m /sprint-autopilot --unattended --no-loop\n"})
     r = LE.run(str(root))
     check("备份目录 .aidp-backup-* 不参与巡检", r["violations"] == [] and r["scanned"] == 1)
     # 反向：别把排除写宽了，活跃目录里的同样违规仍须抓
@@ -1367,6 +1367,27 @@ def test_loop_examples():
 
 
 # ─────────────────────────────────────────────────────────────
+
+    # ⑧ ★ `--no-loop` 同样必带（D-03）：只带 --unattended 的 `/loop` 示例 → HAS_WAKE_SOURCE=0，
+    #    逐 tick 单 Sprint 关闭、瞬态失败当场冻结。入口文档教不带的写法时旧门不报警。
+    root = _mkdocs({"a.md": "```bash\n/loop 10m /sprint-autopilot --unattended\n"
+                            "/loop 5m /sprint-aiauto-test --unattended --no-loop\n```\n"})
+    r = LE.run(str(root))
+    check("只带 --unattended 缺 --no-loop → 报且指明缺的 flag",
+          len(r["violations"]) == 1 and r["violations"][0]["line"] == 2
+          and "--no-loop" in r["violations"][0]["detail"] and "--unattended" not in r["violations"][0]["detail"].split("缺")[1])
+    root = _mkdocs({"a.md": "/loop 10m /sprint-autopilot --no-loop\n"})
+    r = LE.run(str(root))
+    check("缺 --unattended 的旧判据保持（detail 点名它）",
+          len(r["violations"]) == 1 and "--unattended" in r["violations"][0]["detail"])
+    root = _mkdocs({"a.md": "历史写法：`/loop 10m /sprint-autopilot --unattended` <!-- loop-example-ignore: 历史对照 -->\n"})
+    check("loop-example-ignore 只豁免 --no-loop 要求", LE.run(str(root))["violations"] == [])
+    root = _mkdocs({"a.md": "历史写法：`/loop 10m /sprint-autopilot` <!-- loop-example-ignore: 历史对照 -->\n"})
+    check("loop-example-ignore 不豁免 --unattended", len(LE.run(str(root))["violations"]) == 1)
+    root = _mkdocs({"memory/.aidp/verification-x/repo/a.md": "/loop 10m /sprint-autopilot --unattended\n"})
+    check("memory/.aidp 运行态副本不参与巡检", LE.run(str(root))["violations"] == [])
+
+
 # check_line_refs.py — 跨文件引用里的硬编码行号（WARN）
 # ─────────────────────────────────────────────────────────────
 def test_line_refs():
@@ -1469,8 +1490,10 @@ def test_autopilot_stuck_check():
     #   （曾经无条件 frozen=True：写失败也报"已冻结"→ 调用方以为收口了，下 tick 判据未变、每 tick 重发 #4）
     bl = mk(**{"V1": {"run_state": {"current_phase": "3.2-dev", "phase_enter_count": 9,
                                     "phase_first_entered_at": old}}})
+    # ★ cwd 必须隔离到临时项目：真写盘会发 #4 并把告警台账写到 `<cwd>/memory/.aidp/alerts.jsonl`，
+    #   不隔离就污染 tests/ 目录（曾被误提交）。
     p = subprocess.run([sys.executable, S, "--baseline", bl, "--version", "V1", "--json"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, cwd=os.path.dirname(bl))
     out = _json.loads(p.stdout or "{}")
     node = (_json.load(open(bl)).get("versions") or {}).get("V1") or {}
     check("真判 stuck → 退出码 1", p.returncode == 1)
@@ -7672,10 +7695,16 @@ def test_mock_guard_split_by_marker():
           "构建期裁掉" in code and "合规形态" in code)
 
     # 入参门控：漏传 --third-party-mode 的失效方向是**假红**（合规代码被判 Critical + exit 1）
-    check("★ /sprint-test 交代了 --third-party-mode 何时传（入参门控，漏传即假红）",
-          "--third-party-mode" in st and "假红" in st)
-    check("★ 并写明豁免要字段完整才买得到（否则裸标记 = 关掉 2A 的后门）",
-          "字段完整" in st)
+    # 现行口径：`--third-party-mode` 是验收 Agent 在 SKILL Step 0 自判后加给 scan_mock_data.py 的旗标，
+    # 不是命令端入参——命令端只交代「由 SKILL Step 0 自判、不传不复述」，判据与「字段完整才买得到豁免」归 SKILL。
+    cvl = repo / ".aidp/skills/code-verification-loop"
+    skill_txt = (cvl / "SKILL.md").read_text(encoding="utf-8") + (cvl / "references/flow-dims-core.md").read_text(encoding="utf-8")
+    check("★ /sprint-test 把 Mock 协议判定交给 SKILL Step 0 自判，不把 --third-party-mode 写成命令端入参",
+          "THIRD_PARTY_MOCK" in st and "DEV_MOCK" in st and "SKILL Step 0 自判" in st
+          and "--third-party-mode" not in st)
+    check("★ SKILL 侧仍保有该旗标的门控（漏传即假红）与「字段完整才买得到豁免」口径",
+          "--third-party-mode" in skill_txt and "必须加" in skill_txt
+          and "只有字段完整" in skill_txt and "后门" in skill_txt)
 
     # 上游脚本的真实行为对照 —— ⛔ 不只读散文：口径写对了而脚本不这么判，等于没改
     scan = repo / ".aidp/skills/code-verification-loop/scripts/scan_third_party_mock_antipatterns.py"

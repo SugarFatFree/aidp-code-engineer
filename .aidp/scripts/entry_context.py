@@ -1827,6 +1827,11 @@ def verify_full_evidence(root, ctx, filename, env_id):
     from test_scope import is_test
     policy.require_action(ctx, "full-regression")
     manifest = policy.test_manifest_binding(root, ctx["version"], ctx["build_id"], ctx["test_manifest"]["path"])[1]
+    if manifest.get("unit_applicability") is not None:
+        # 全部正式用例 browser_only：无单测 suite 可核；test_manifest_binding 已按验收基线事实验证该声明。
+        return {"kind": "full-verification", "status": "NOT_APPLICABLE", "execution_context": evidence_identity(ctx),
+                "applicability": dict(manifest["unit_applicability"], paths=[manifest["acceptance_baseline"]["path"]]),
+                "run_ids": [], "tests": [], "unmapped": [], "unrunnable": [], "minor": False}
     report = _read_evidence(root, ctx, filename, "full-regression")
     discovered = sorted(set(manifest["acceptance_tests"]) | {path for path in manifest["dependencies"] if is_test(path)})
     if sorted(report.get("tests", [])) != discovered:
@@ -2012,11 +2017,13 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
             checks["static"] = static_status if static_status in ("PASS", "FAIL") else "UNVERIFIED"
         verification = None
         if "full-regression" in allowed:
-            if not full_evidence:
+            frozen = ctx.get("test_manifest")
+            if not full_evidence and not (isinstance(frozen, dict) and ctx.get("build_id") and policy.test_manifest_binding(
+                    root, ctx["version"], ctx["build_id"], frozen["path"])[1].get("unit_applicability") is not None):
                 raise ContextError("全量回归需要 --full-evidence 的真实 suite/run-id 清单")
             full = verify_full_evidence(root, ctx, full_evidence, env_id)
             result["full_regression"] = full
-            checks["full-regression"] = "PASS"
+            checks["full-regression"] = full["status"]
         if "related-test" in allowed:
             from test_ledger import verify_scope, read_scope
             if not scope_file or not scope_hash or not env_id:
@@ -2127,6 +2134,8 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
         if identity_hash(load_context(root, execution_context)) != identity_hash(ctx):
             raise ContextError("核验期间策略 revision 已变化，请读取当前上下文")
         verdict = verification["status"] if verification else "PASS"
+        if verdict == "PASS" and checks.get("full-regression") == "NOT_APPLICABLE":
+            verdict = "NOT_APPLICABLE"  # 版本单测不适用（全 browser_only）不能显示为单测通过。
         if "FAIL" in checks.values():
             verdict = "FAIL"
         if diagnostic_only and "UNVERIFIED" in checks.values():

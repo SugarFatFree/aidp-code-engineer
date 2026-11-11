@@ -59,7 +59,7 @@ function scanPage(htmlSrc) {
 /** 单测报告的前端消费契约；旧报告缺 unitTests 保持兼容。 */
 function validateUnitReport(b, build) {
   if (!Object.prototype.hasOwnProperty.call(b, "unitTests")) return;
-  const u = b.unitTests, states = ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING"];
+  const u = b.unitTests, states = ["PASS", "FAIL", "UNVERIFIED", "TIMEOUT", "RUNNING", "NOT_APPLICABLE"];
   function requireFact(ok, message) { if (!ok) throw new Error("unitTests 契约：" + message); }
   requireFact(u && u.schema === 1 && b.build === build && u.build === build && typeof b.commit === "string" && b.commit.trim() && u.commit === b.commit, "build/commit/schema 不匹配");
   requireFact(states.includes(u.status) && typeof u.reason === "string" && typeof u.reused === "boolean" && Array.isArray(u.runs), "status/reason/reused/runs 非法");
@@ -81,6 +81,12 @@ function validateUnitReport(b, build) {
     }
   });
   if (u.status === "PASS") requireFact(u.runs.length && u.runs.every((r) => r.status === "PASS"), "PASS 但无完成 run");
+  if (u.status === "NOT_APPLICABLE") {
+    const scope = u.testScope || {}, info = scope.unit_applicability || {}, ids = (scope.case_ids || []).slice().sort();
+    requireFact(!u.runs.length && u.reason === "all-cases-browser-only" && info.status === "NOT_APPLICABLE" && info.reason === "all-cases-browser-only" && info.evidence && info.evidence.status === "none-found" && info.evidence.files === 0
+      && Array.isArray(scope.acceptance_tests) && !scope.acceptance_tests.length && ids.length
+      && JSON.stringify((info.browser_only || []).slice().sort()) === JSON.stringify(ids), "NOT_APPLICABLE 缺全部用例 browser_only 的冻结依据");
+  }
   if (["PASS", "FAIL"].includes(u.status)) requireFact(u.runs.every((r) => r.status !== "RUNNING"), "已完成状态仍有 RUNNING run");
   if (b.browserTests != null) requireFact(["N/A", "UNVERIFIED", "TIMEOUT", "RUNNING"].includes(b.browserTests.status) && typeof b.browserTests.reason === "string" && b.browserTests.reason.trim(), "browserTests 状态非法或缺理由");
   const s = b.summary || b.testSummary || {};
@@ -95,7 +101,7 @@ function validateUnitReport(b, build) {
   }
   const pending = ["RUNNING", "TIMEOUT", "UNVERIFIED"].find((s) => [browser, u.status].includes(s));
   const unitFailed = [u].concat(u.runs).some((r) => r.status === "FAIL" || r.failed_cases.length || r.counts && r.counts.failed > 0);
-  const overall = browser === "FAIL" || unitFailed ? "FAIL" : pending || (["PASS", "N/A"].includes(browser) ? "PASS" : "UNVERIFIED");
+  const overall = browser === "FAIL" || unitFailed ? "FAIL" : pending || (u.status === "NOT_APPLICABLE" ? (browser === "PASS" ? "PASS" : "UNVERIFIED") : ["PASS", "N/A"].includes(browser) ? "PASS" : "UNVERIFIED");
   requireFact(s.overallStatus === overall && s.unitStatus === u.status && s.browserStatus === browser, "summary 总结论与单测/实测不一致");
   if (b.overview && overall !== "PASS") requireFact(b.overview.statusKind !== "done", "执行报告误标完成");
 }

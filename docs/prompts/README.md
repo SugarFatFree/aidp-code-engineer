@@ -9,7 +9,7 @@ docs/prompts/
 └── {version}/
     ├── {module}-prompt.md              # 按模块组织的 Prompt 模板
     ├── {task}-prompt.md                # 按任务组织
-    └── agent-team-sprint-{NNN}.md      # 特定 Agent Team 的 Prompt
+    └── agent-team-sprint-{NNN}.md      # 特定多 Agent 编排的 Prompt（主流程按依赖顺序派发）
 ```
 
 ## 用途

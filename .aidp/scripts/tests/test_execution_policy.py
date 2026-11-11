@@ -995,6 +995,58 @@ class ExecutionPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             entry.verify_full_evidence(self.root, first["context"], str(path), "policy-env")
 
+    def browser_only_manifest(self, all_browser_only=True):
+        import hashlib
+        path, manifest = self.version_manifest()
+        baseline = self.root / manifest["acceptance_baseline"]["path"]
+        data = json.loads(baseline.read_text())
+        if all_browser_only:
+            data.update(acceptance_tests=[], browser_only=["TC-ONE"])
+            data["cases"] = [{"id": "TC-ONE", "test_files": []}]
+        else:  # 篡改：基线仍映射测试文件，却声明单测不适用
+            data["browser_only"] = []
+        baseline.write_text(json.dumps(data))
+        manifest.update(acceptance_tests=[], suites=[], unit_applicability={
+            "status": "NOT_APPLICABLE", "reason": "all-cases-browser-only",
+            "evidence": {"status": "none-found", "files": 0, "checked": ["git-tracked-and-untracked-files"]}})
+        manifest["acceptance_baseline"]["sha256"] = hashlib.sha256(baseline.read_bytes()).hexdigest()
+        path.write_text(json.dumps(manifest))
+        return path, manifest
+
+    def test_unit_not_applicable_manifest_only_when_baseline_is_all_browser_only(self):
+        import execution_policy as policy
+        path, manifest = self.browser_only_manifest()
+        parent = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
+            "command": "/sprint-autopilot", "request_id": "version-full-na", "options": ["--skip-dev"]})
+        child = entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=path)
+        evidence = entry.verify_full_evidence(self.root, child["context"], str(self.root / "unused.json"), "policy-env")
+        self.assertEqual(evidence["status"], "NOT_APPLICABLE")
+        self.assertEqual(evidence["applicability"]["reason"], "all-cases-browser-only")
+        self.assertEqual((evidence["run_ids"], evidence["tests"]), ([], []))
+
+    def test_unit_not_applicable_claim_with_mapped_baseline_or_missing_claim_is_refused(self):
+        import execution_policy as policy
+        path, manifest = self.browser_only_manifest(all_browser_only=False)
+        parent = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
+            "command": "/sprint-autopilot", "request_id": "version-full-forged", "options": ["--skip-dev"]})
+        with self.assertRaises(policy.PolicyError):
+            entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=path)
+        # 空 suites/空测试清单但没有 unit_applicability 声明：不由缺清单推出 NOT_APPLICABLE。
+        manifest.pop("unit_applicability")
+        path.write_text(json.dumps(manifest))
+        with self.assertRaises(policy.PolicyError):
+            entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=path)
+
+    def test_unit_not_applicable_without_empty_discovery_evidence_is_refused(self):
+        import execution_policy as policy
+        path, manifest = self.browser_only_manifest()
+        manifest["unit_applicability"].pop("evidence")  # 手写空清单、没有“发现为空”机器证据
+        path.write_text(json.dumps(manifest))
+        parent = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
+            "command": "/sprint-autopilot", "request_id": "version-full-noevidence", "options": ["--skip-dev"]})
+        with self.assertRaises(policy.PolicyError):
+            entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=path)
+
     def test_equivalent_single_scope_completes_without_erasing_original_error(self):
         from unittest import mock
         import test_ledger as ledger
@@ -1525,6 +1577,132 @@ class ExecutionPolicyTests(unittest.TestCase):
         with self.assertRaises(policy.PolicyError) as denied:
             policy.reserve_budget(self.root, parent["context"], "processes", 1, "b" * 64)
         self.assertEqual(denied.exception.status, "BUDGET_EXCEEDED")
+
+
+class BudgetExhaustionDisposalTests(unittest.TestCase):
+    """根任务预算跨 tick 耗尽：冻结、告警文案、受控续额，且 --manual 不得代为清零预算。"""
+
+    setUp = ExecutionPolicyTests.setUp
+    git = ExecutionPolicyTests.git
+    VERSION = "V1.0.0"
+
+    def make_root(self):
+        import execution_policy as policy
+        self.policy = policy
+        source = {"kind": "explicit-command", "request_id": "cron-install-1", "command": "/sprint-autopilot",
+                  "persistent": True, "text": "请持续无人值守运行 autopilot 到全部版本完成"}
+        path = entry.resolve_autopilot_root(self.root, self.VERSION, authorization_source=source)["execution_context"]
+        baseline = self.root / "memory/.sprint-autopilot-baseline.json"
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_text(json.dumps({"autopilot": {"execution_context": path},
+                                        "versions": {self.VERSION: {"autopilot_root_context": path}}}))
+        self.path, self.baseline = path, baseline
+        return path
+
+    def exhaust_retries(self):
+        policy = self.policy
+        policy.reserve_budget(self.root, self.path, "retries", 5, "a" * 64)
+        with self.assertRaises(policy.PolicyError) as denied:
+            policy.reserve_budget(self.root, self.path, "retries", 8, "b" * 64)
+        self.assertEqual(denied.exception.status, "BUDGET_EXCEEDED")
+
+    def node(self):
+        return json.loads(self.baseline.read_text())["versions"][self.VERSION]
+
+    def tick_check(self):
+        import aidp_scheduler as sched
+        from types import SimpleNamespace
+        return sched.do_tick_check(str(self.root), SimpleNamespace(command="sprint-autopilot", token="tick-1",
+                                                                    tick_args="--unattended --no-loop"))
+
+    def unfreeze(self, *args):
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "autopilot_unfreeze.py"), "--root", str(self.root), "--json", *args],
+                              capture_output=True, text=True, cwd=self.root)
+        return proc.returncode, proc.stdout + proc.stderr
+
+    USER = json.dumps({"kind": "user-text", "request_id": "user-req-9", "text": "同意把重试预算提到 20，继续跑完该版本"},
+                      ensure_ascii=False)
+
+    def test_exhaustion_is_recorded_without_touching_the_budget_ledger(self):
+        self.make_root()
+        self.assertEqual(self.policy.budget_exhaustion(self.root, self.path), ("none", []))
+        self.exhaust_retries()
+        state, items = self.policy.budget_exhaustion(self.root, self.path)
+        self.assertEqual((state, items), ("exhausted", [{"resource": "retries", "required": 13}]))
+        ledger = json.loads(Path(self.path).with_name("budget.json").read_text())
+        self.assertEqual(ledger["used"]["retries"], 5)
+
+    def test_tick_check_freezes_exhausted_version_once_with_budget_reason(self):
+        self.make_root()
+        self.exhaust_retries()
+        rc, res = self.tick_check()
+        self.assertEqual((rc, res["budget_frozen"]), (0, [self.VERSION]))
+        node = self.node()
+        self.assertTrue(node["needs_human"])
+        self.assertEqual(node["freeze_reason"], "budget-exhausted")
+        self.assertEqual(json.loads(self.baseline.read_text())["aiauto_blocked_reason"],
+                         "frozen:budget-exhausted@" + self.VERSION)
+        frozen_at = node["aiauto_frozen_at"]
+        _, again = self.tick_check()
+        self.assertEqual(again["budget_frozen"], [])
+        self.assertEqual(self.node()["aiauto_frozen_at"], frozen_at)
+
+    def test_manual_unfreeze_refuses_and_never_resets_root_budget(self):
+        self.make_root()
+        self.exhaust_retries()
+        self.tick_check()
+        before = Path(self.path).read_text()
+        ledger = Path(self.path).with_name("budget.json").read_text()
+        code, out = self.unfreeze("--manual", self.VERSION)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--renew-budget", out)
+        self.assertTrue(self.node()["needs_human"])
+        self.assertEqual(Path(self.path).read_text(), before)
+        self.assertEqual(Path(self.path).with_name("budget.json").read_text(), ledger)
+
+    def test_renewal_needs_real_user_source_then_unfreezes_and_keeps_used(self):
+        self.make_root()
+        self.exhaust_retries()
+        self.tick_check()
+        forged = json.dumps({"kind": "explicit-command", "request_id": "x", "command": "/sprint-autopilot"})
+        for source in (forged, json.dumps({"kind": "user-text", "request_id": "no-text"})):
+            code, out = self.unfreeze("--renew-budget", self.VERSION, "--budget-json", '{"retries": 20}',
+                                      "--authorization-source", source)
+            self.assertEqual(code, 2, out)
+        self.assertEqual(self.policy.budget_exhaustion(self.root, self.path)[0], "exhausted")
+        code, out = self.unfreeze("--renew-budget", self.VERSION, "--budget-json", '{"retries": 11}',
+                                  "--authorization-source", self.USER)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.node()["needs_human"], "限额 11 仍低于所需 13，不得解冻")
+        code, out = self.unfreeze("--renew-budget", self.VERSION, "--budget-json", '{"retries": 20}',
+                                  "--authorization-source", self.USER.replace("user-req-9", "user-req-10"))
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.node().get("needs_human"))
+        root_ctx = json.loads(Path(self.path).read_text())
+        self.assertEqual(root_ctx["execution_budget"]["retries"], 20)
+        self.assertEqual(root_ctx["authorization_source"][-1]["kind"], "user-text")
+        self.assertEqual(json.loads(Path(self.path).with_name("budget.json").read_text())["used"]["retries"], 5)
+        self.assertEqual(self.policy.budget_exhaustion(self.root, self.path)[0], "renewed")
+        self.policy.reserve_budget(self.root, self.path, "retries", 8, "c" * 64)   # 续额后可继续
+        self.assertEqual(self.tick_check()[1]["budget_frozen"], [])
+
+    def test_probe_only_unfreezes_after_limit_covers_exhaustion(self):
+        import autopilot_unfreeze as unfreeze
+        self.make_root()
+        self.exhaust_retries()
+        self.tick_check()
+        self.assertFalse(unfreeze.aiauto_probe(str(self.root), self.VERSION)["unfreeze"])
+        entry.revise_context(self.root, self.path, authorization_source=json.loads(self.USER),
+                             execution_budget={"retries": 20})
+        probe = unfreeze.aiauto_probe(str(self.root), self.VERSION)
+        self.assertTrue(probe["unfreeze"], probe)
+
+    def test_recovery_hint_names_renewal_not_manual(self):
+        import autopilot_fail_handle as fail_handle
+        hint = fail_handle._recovery_hint("budget-exhausted", self.VERSION)
+        self.assertIn("--renew-budget", hint)
+        self.assertIn("user-text", hint)
+        self.assertIn("不会重置预算", hint)
 
 
 if __name__ == "__main__":

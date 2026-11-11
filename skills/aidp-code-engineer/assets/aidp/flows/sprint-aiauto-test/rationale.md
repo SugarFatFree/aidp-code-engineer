@@ -506,6 +506,8 @@ Phase 3.3 才写 `aiauto_tested_at`。位于它**之前**的门若裸 `exit 1`�
 | `cicd-auto-trigger-off` | 配置类 | `memory/aidp-config.yaml` mtime（开启 `cicd.auto_trigger` / 调整 `cicd.provider`·`cicd.pipelines`）|
 | `prd-missing` | 配置类 | **PRD 目录 mtime**：`docs/requirements/{V}/产品提供/` 晚于冻结时刻。⛔ 与 `config-missing` 分开：后者认心跳，而心跳是本链路每 tick 无条件先写的，自己写的冻结会被自己刚刷的心跳立刻解冻 |
 | `config-missing` | 配置类 | 冻结后出现新鲜心跳且测试真实阻塞已解除；复用 `autopilot_unfreeze.py::test_loop_alive`，仅剔除自身冻结标记，不能用心跳掩盖其它阻塞 |
+| `manifest-missing` | 配置类 | 待测版本无可信测试委派/清单缺失（`aidp_scheduler.py` 的 tick-check 标记 `aiauto_blocked_reason=manifest-missing@V`，开发链路达阈冻结）。恢复证据 = 测试委派重新可核验（`test_handoff_context` 通过）。⛔ 不认心跳（测试链路每 tick 都刷）也不认 mtime |
+| `budget-exhausted` | 交接类 | 根任务执行预算耗尽（`budget.json` 的 `exhausted` 事实经 tick-check 冻结）。仅用户经 `autopilot_unfreeze.py --renew-budget`（user-text 真实来源 + 新绝对上限）续额且覆盖耗尽项后自动解冻；⛔ `--manual` 不重置预算，探针也不认心跳/新部署 |
 | `unconverged` | 收敛类 | 新部署 或 人工 |
 | `plan-transient` | 收敛类 | **HEAD 变更**（有人推了新提交 ⇒ 具备重试价值）或 人工。`/version` 规划因**派发失败 / 网络抖动 / 超时**等瞬态原因未走完时用它，⛔ 别再回落 `release-blocked`——那是交接类、仅人工，把一次重试就能过去的事钉成必须人来救，而 `needs_human_reason` 还会把人指向一份根本没有 Critical 的审计报告 |
 | `release-blocked` | 交接类 | **仅人工**（发布期验收阻塞，须人清 P0 后重跑发布）|

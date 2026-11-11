@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check_loop_examples.py — `/loop` 示例必带 `--unattended` 护栏（脚手架契约脚本）。
+"""check_loop_examples.py — `/loop` 示例必带 `--unattended --no-loop` 护栏（脚手架契约脚本）。
 
 ## 为什么需要本脚本
 
 7×24 无人值守要挂两条 loop：
 
-    /loop 10m /sprint-autopilot --unattended     # 开发链路
-    /loop 5m  /sprint-aiauto-test --unattended   # 测试链路
+    /loop 10m /sprint-autopilot --unattended --no-loop     # 开发链路
+    /loop 5m  /sprint-aiauto-test --unattended --no-loop   # 测试链路
 
 `--unattended` **不是可选的装饰**：两命令的 `LOOP_UNATTENDED` 由 4 信号 OR 派生，而**首个
 tick** 上 baseline 持久化标志尚未落盘，实际只剩"prompt 里有没有 `/loop` 字样"这一个信号；
@@ -19,6 +19,14 @@ tick** 上 baseline 持久化标志尚未落盘，实际只剩"prompt 里有没�
 有退出码的硬门 —— 凡是文档里出现"可被用户直接复制粘贴执行"的 `/loop … /sprint-*` 写法，
 同一处就必须带 `--unattended`。
 
+## `--no-loop` 同样必带
+
+标准挂法是 `/loop 10m /sprint-autopilot --unattended --no-loop`：只带 `--unattended` 而漏 `--no-loop`
+时，runtime 唤起的 prompt 若不含 `/loop` 字样则 `HAS_WAKE_SOURCE=0` → 逐 tick 单 Sprint 关闭、瞬态失败
+当场冻结（见 `flows/sprint-autopilot/usage-guard.md`）。入口文档教不带的写法时，旧门只查 `--unattended`
+而无报警，故两个 flag 同时要求。仅想豁免 `--no-loop` 要求（历史对照 / 反例说明）→ 同行写
+`<!-- loop-example-ignore: 理由 -->`；它**不**豁免 `--unattended`。
+
 ## 判定口径
 
 1. 全仓 `.md`（默认排除 `AIDP_HOME/skills/`：那是 SKILL 本体 + 脚手架 bundle 镜像，
@@ -26,7 +34,7 @@ tick** 上 baseline 持久化标志尚未落盘，实际只剩"prompt 里有没�
 2. 匹配 `/loop [间隔] /sprint-autopilot` 与 `/loop [间隔] /sprint-aiauto-test`
    （间隔如 `10m` / `5m` / `30s`，允许缺省）；
 3. **按出现逐个判**，不按行判：取本次出现到**下一次出现（或行尾）**之间的片段，片段内
-   必须含 `--unattended`。一行里并排写两条 loop、只给其中一条加 flag 的写法同样被抓到。
+   必须含 `--unattended` 与 `--no-loop`。一行里并排写两条 loop、只给其中一条加 flag 的写法同样被抓到。
 
 ## 豁免（显式标记，不硬编码文件名）
 
@@ -66,10 +74,14 @@ EXCLUDE_DIRS = {
 #   等于把这道守卫在所有下游一次性废掉。备份是冻结的历史副本，按定义不该参与巡检。
 EXCLUDE_DIR_PREFIXES = (".aidp-backup",)
 REQUIRED_FLAG = "--unattended"
+NO_LOOP_FLAG = "--no-loop"
+# 运行态副本（验证沙箱 / 日志）不是契约正文，不参与巡检
+EXCLUDE_REL_PREFIXES = ("memory/.aidp/",)
 # `/loop 10m /sprint-autopilot` / `/loop /sprint-aiauto-test`（间隔可缺省）
 LOOP_RE = re.compile(r"/loop(?:\s+\d+\s*[smhd])?\s+/sprint-(?:autopilot|aiauto-test)\b")
 
 IGNORE_LINE_RE = re.compile(r"<!--\s*loop-check:\s*ignore\s*(?:-->|\s)")
+NO_LOOP_IGNORE_RE = re.compile(r"loop-example-ignore:\s*\S")
 IGNORE_FILE_RE = re.compile(r"<!--\s*loop-check:\s*ignore-file")
 IGNORE_BEGIN_RE = re.compile(r"<!--\s*loop-check:\s*ignore-begin")
 IGNORE_END_RE = re.compile(r"<!--\s*loop-check:\s*ignore-end")
@@ -99,8 +111,8 @@ def _walk(base):
                 yield os.path.join(dirpath, fn)
 
 
-def scan_line(line):
-    """返回本行缺 `--unattended` 的出现列表 [(片段文本, 列号)]。
+def scan_line(line, need_no_loop=True):
+    """返回本行缺 flag 的出现列表 [(片段文本, 列号, 缺的 flag 列表)]。
 
     逐"出现"切片：本次匹配起点 → 下次匹配起点（或行尾）。按行判会漏掉
     "一行两条 loop、只有一条带 flag" 的情况。
@@ -110,8 +122,10 @@ def scan_line(line):
     for idx, m in enumerate(hits):
         end = hits[idx + 1].start() if idx + 1 < len(hits) else len(line)
         segment = line[m.start():end]
-        if REQUIRED_FLAG not in segment:
-            bad.append((segment.strip(), m.start() + 1))
+        missing = [f for f in ((REQUIRED_FLAG, NO_LOOP_FLAG) if need_no_loop else (REQUIRED_FLAG,))
+                   if f not in segment]
+        if missing:
+            bad.append((segment.strip(), m.start() + 1, missing))
     return bad
 
 
@@ -119,6 +133,8 @@ def run(root, paths=None):
     violations, scanned, total_hits = [], 0, 0
     for path in sorted(set(iter_md(root, paths))):
         rel = os.path.relpath(path, root)
+        if rel.replace(os.sep, "/").startswith(EXCLUDE_REL_PREFIXES):
+            continue
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -138,11 +154,16 @@ def run(root, paths=None):
             if in_ignore or IGNORE_LINE_RE.search(line):
                 continue
             total_hits += len(LOOP_RE.findall(line))
-            for snippet, col in scan_line(line):
+            for snippet, col, missing in scan_line(line, not NO_LOOP_IGNORE_RE.search(line)):
+                why = []
+                if REQUIRED_FLAG in missing:
+                    why.append("无人值守首个 tick 会被判交互式而挂起等人")
+                if NO_LOOP_FLAG in missing:
+                    why.append("无唤醒源判据：HAS_WAKE_SOURCE=0 → 逐 tick 单 Sprint 关闭、瞬态失败当场冻结")
                 violations.append({
                     "file": rel, "line": i, "col": col,
                     "snippet": snippet[:120],
-                    "detail": f"缺 {REQUIRED_FLAG}：无人值守首个 tick 会被判交互式而挂起等人",
+                    "detail": f"缺 {' '.join(missing)}：" + "；".join(why),
                 })
     return {"scanned": scanned, "loop_examples": total_hits, "violations": violations}
 
@@ -174,16 +195,17 @@ def main():
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif not res["violations"]:
-        print(f"[OK] `/loop` 示例全部带 {REQUIRED_FLAG}"
+        print(f"[OK] `/loop` 示例全部带 {REQUIRED_FLAG} {NO_LOOP_FLAG}"
               f"（巡检 {res['scanned']} 份 .md，命中 {res['loop_examples']} 处示例）")
     else:
-        print(f"[FAIL] 检出 {len(res['violations'])} 处 `/loop` 示例漏写 {REQUIRED_FLAG}"
+        print(f"[FAIL] 检出 {len(res['violations'])} 处 `/loop` 示例漏写 flag"
               f"（巡检 {res['scanned']} 份 .md，命中 {res['loop_examples']} 处示例）：")
         for v in res["violations"]:
             print(f"  · {v['file']}:{v['line']}:{v['col']}  {v['snippet']}")
-        print(f"  修复：补成 `/loop 10m /sprint-autopilot {REQUIRED_FLAG}` / "
-              f"`/loop 5m /sprint-aiauto-test {REQUIRED_FLAG}`；"
-              f"确属「对比反例 / 讲去掉该 flag 的语义」→ 加 `<!-- loop-check: ignore -->` 豁免。")
+        print(f"  修复：补成 `/loop 10m /sprint-autopilot {REQUIRED_FLAG} {NO_LOOP_FLAG}` / "
+              f"`/loop 5m /sprint-aiauto-test {REQUIRED_FLAG} {NO_LOOP_FLAG}`；"
+              f"确属「对比反例 / 讲去掉该 flag 的语义」→ 加 `<!-- loop-check: ignore -->` 豁免"
+              f"（仅豁免 {NO_LOOP_FLAG} → `<!-- loop-example-ignore: 理由 -->`）。")
     return 1 if res["violations"] else 0
 
 

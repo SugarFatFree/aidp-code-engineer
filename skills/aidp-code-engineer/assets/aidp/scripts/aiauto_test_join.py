@@ -100,6 +100,7 @@ def settle(root, version, build, payload, standalone=False, triage=None):
     complete = routing['status'] == 'COMPLETE'
     auto_fixable = unit_has_failure(unit) or routing['auto_fixable']
     unverified = (unit['status'] in ('UNVERIFIED', 'TIMEOUT')
+                  or (unit['status'] == 'NOT_APPLICABLE' and browser != 'PASS')  # 单测不适用必须有真实实测
                   or browser in ('UNVERIFIED', 'TIMEOUT') or bool(routing['environment'])
                   or (payload.get('browserTests') or {}).get('status') in ('UNVERIFIED', 'TIMEOUT'))
     now = datetime.now(timezone.utc).isoformat()

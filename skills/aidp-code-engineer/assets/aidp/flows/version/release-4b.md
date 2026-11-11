@@ -96,6 +96,6 @@ function releaseBuildScript(builds) {
 📊 版本测试报告已生成（{version}）：
    docs/reports/{version}/版本测试报告/{version}-测试报告.html（单文件，双击即看）
    共 {DATA_COUNT} 个 build，最新验收 build {build} / commit {commit}
-   总体 {overallStatus} / 全量实测 {browserStatus} / 全量单测 {unitStatus}（历史无单测则注明未提供）
+   总体 {overallStatus} / 全量实测 {browserStatus} / 全量单测 {unitStatus}（历史无单测则注明未提供；`NOT_APPLICABLE` = 版本验收用例全部为浏览器实测，单测不适用，须带依据，不等于缺失）
    per-build 历史：docs/reports/{version}/AI测试报告/index.html
 ```

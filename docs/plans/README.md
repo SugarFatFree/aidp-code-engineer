@@ -13,7 +13,7 @@ docs/plans/
 └── {version}/
     ├── 00_索引.md              # ★ 恒有：专职索引（文件清单 + 每文件生成时间 + 主/补充标识，约定 14/15）
     ├── 01_研发执行计划.md      # 内容主文档（必需）：Sprint 拆分 + 任务分配（历史裸 `研发执行计划.md`/`00_研发执行计划.md` 兼容）
-    ├── plan-{user}.md          # 可选：某人承担的任务细化（⚠️ 示例文件名，{user} = git user.name）
+    ├── plan-{user}.md          # 可选：某人承担的任务细化（⚠️ 示例文件名，{user} 由 `vcs.py user` 解析）
     └── plan-{user2}.md         # 可选：多人分工时一人一份
 ```
 
@@ -46,8 +46,8 @@ docs/plans/
 |------|------|
 | `/sprint-plan` | 生成 `00_索引.md` + `01_研发执行计划.md` + 按需生成 `plan-{user}.md` |
 | `/version` | 内部调用 `/sprint-plan` |
-| `/sprint-dev "<描述>"` | 自动累进 Sprint 时追加行到 `01_研发执行计划.md`，并刷新 `00_索引.md` 生成时间 |
-| `/sprint-bugfix "<描述>"` | 自动累进 Sprint 时追加行到 `01_研发执行计划.md`，并刷新 `00_索引.md` 生成时间 |
+| `/sprint-dev "<描述>"` | 默认 light，不改本目录；累进 Sprint 属 `/sprint-full "<描述>"`，其追加行到 `01_研发执行计划.md` 并刷新 `00_索引.md` 生成时间 |
+| `/sprint-bugfix "<描述>"` | 默认 light，不改本目录；formal 累进同上由 `/sprint-full` 承担 |
 
 ## 相关文档
 

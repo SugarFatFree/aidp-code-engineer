@@ -81,3 +81,41 @@ printf 'qr_level=%s\n' "$QR_LEVEL"
 4. **移交的维度不是「审过了」**：仅docs-audit已授权时由 `/version` Step 2.4.7 的 qr-handoff-auditor 接手，与 version-auditor 并行；
    审计通过后由主流程清掉清单块（见 `{{AIDP_HOME}}/agents/qr-handoff-auditor.md`）。子命令**单独**带 `--qr-level` 调用时，
    清单保留真实未审事实；本轮未授权审计记NOT_REQUESTED，不能推成本轮待办。已授权的fast延期仍为待统一审计，不得手工删除冒充通过。
+
+## 四、QR 变更范围裁剪（`qr_delta_scope`）接线（`/sprint-requirements` · `/sprint-design` · `/sprint-plan` 共用）
+
+> 三个命令各自只留一行引用本节；`/sprint-selftest` 的 `dev-manual-testcase` 有自己的 `qr_mode`（见其命令 Step 1），不适用本节。
+
+`ux-logic-extractor` / `dev-logic-architect` / `dev-execution-planner` 的质量检查按本轮变更范围裁剪，**唯一入参 = `qr_delta_scope`（可选，不传 = 全量）**。⛔ 命令端**不得自造 `qr_mode`**——这三个 SKILL 从未定义它（`qr_mode` 是 `dev-manual-testcase` 独有概念），凭空传等于修改 SKILL 契约（约定 21）且被静默忽略。
+
+- **全量生成**（首次规划 / 主文档重生成）→ **不传 `qr_delta_scope`**。
+- **增量补充**（`--supplement={NN}`，或 `/sprint-dev` 口述累进经本命令补充；⛔ `/version` 自身没有 `--supplement` flag，是它检出 PRD/原型变更后派发本命令并传入）→ 传 `qr_delta_scope = <本轮 NN_<业务主题>.md 的专题名 / 章节清单>`。
+- ⛔ **只裁「语义核对」的范围，机器门一律全量跑**（SKILL 明文：标「全量」档的维度不接受裁剪——它们的失效形态正是「新增这一处与旧的那些不一致」，只看增量内部一个都发现不了）。算不出 Δ 如实记录范围未知，在有效 `QR_LEVEL` 的必要校验内保守核对，不扩为 full 或独立 docs-audit。
+- `/sprint-design` 另有一条：命中「语义/口径/单位/默认值/状态机/权限范围变更（无新增实体）」或跨版本作废判定的项，其受影响专题**强制并入 Δ**（即便无文件命中）；变更落在跨专题共享单元（公共基础设施 / 基类实体 / 共享 DTO / 全局配置）→ 把所有引用该单元的专题并入 Δ。
+
+## 五、客户端应用 MCP（`client_mcp`）判定与传参（各命令只留一行引用本节）
+
+> **为什么必须由命令端传**：下表各 SKILL 对该能力是**入参门控**，且 SKILL 明令**不自行探测是否启用**——**命令端不传 = 该维度 / 用例族永不启用**，启用了该能力的项目静默漏掉这一层，没有任何报错。
+> 能力**跨端**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是 Web 端实现**：只按 `check_webmcp.py` 判，非 Web 项目恒得 `enabled: false`，SKILL 侧「非 Web 已声明即通用半场照跑」那一半永不执行——**失效方向是全绿**。故一律取**两级**判定：
+
+```bash
+python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json   # ① 跨端判定唯一实现（⛔ 不自己 grep PRD）
+#   → enabled / declared / capability_state / client_type / implementation / source
+python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json       # ② 仅 client_type=web 且 implementation=webmcp 时才跑
+#   → enabled / entry_symbols / launch_command（Web 叶子专有事实）
+```
+
+1. ① `enabled: true` → 随 prompt **原样**传整个 `client_mcp` 对象（保留 `enabled`，它与 `declared` 同值，以及 `client_type` / `implementation` / `capability_state` / `source` 等检测事实）。两级均未声明 → **什么都不传**，不提、不留位置。
+2. `declared-unimplemented` → 报告列前置缺失，⛔ 不伪造 `enabled: true`；检测退出 2（声明冲突 / 非法值）→ 先修正声明，⛔ 不冒充未启用（无人值守返回失败信号）。
+3. 仅当 `client_type=web` 且 `implementation=webmcp` 才跑 ② 并补传下表「Web 叶子入参」；⛔ 非 Web **不传 `webmcp_*`**——它们只是 Web 适配输入，传过去不会为非 Web 创建入口，只会让 SKILL 把客户端判成 web（新旧声明冲突 SKILL 侧须报错，⛔ 不静默覆盖）。`webmcp_entry_symbols` / `webmcp_launch_command` **不可省略也不可写死、不要自拟**：挂载位置已迁移过一次、规范仍在演进，缺该入参 SKILL 直接报错而非猜默认值。
+
+| 命令 → SKILL | 门控处 | 传 `client_mcp` | Web 叶子另传 |
+| :- | :- | :-: | :- |
+| `/sprint-requirements` → `ux-logic-extractor` | PRD 层「客户端 MCP 业务能力」登记与 QR | ✅ | 不传（`webmcp_*` 只交 Web 适配层，ux 不消费） |
+| `/sprint-plan` → `dev-execution-planner` | Task 层按已证实应用自有工具拆必要 Task | ✅ | 不传（同上） |
+| `/sprint-design` → `dev-logic-architect` | 检查项 33 | ✅ | `webmcp_enabled: true` + `webmcp_entry_symbols` + `webmcp_launch_command` |
+| `/sprint-selftest` → `dev-manual-testcase` | 通用 `[应用MCP]` 用例族 / 维度 20 | ✅ | `webmcp_enabled: true` + `webmcp_launch_command` + `webmcp_entry_symbols`（另生成 Web 双窗口两类套件，未启用态套件优先级不低于已启用态） |
+| `/sprint-test` → `code-verification-loop` | 维度 9（标题以 SKILL 为准） | ✅ | `webmcp_enabled: true` + `webmcp_entry_symbols` |
+| `/sprint-aiauto-test` → `auto-test-runner` | 经 run-context，不随 prompt | 见 `flows/sprint-aiauto-test/phase-0-8.md` | 同该片（本表不复述） |
+
+> 新增调用方入参名以**目标 SKILL 的输入表**为准；本表与 SKILL 不一致时以 SKILL 为准并回改本表。上游 PRD 头部的声明位置与旧别名归一规则归 `check_client_mcp.py` 文档头与 `{{AIDP_HOME}}/templates/optional-rules/` 下的可选详规，本节不复述。

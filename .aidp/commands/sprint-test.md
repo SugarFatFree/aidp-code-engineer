@@ -90,52 +90,9 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 派发/执行前按light-context预留父预算，prompt带同revision/action/inputs hash，不重新grant。
 
 
-> ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`code-verification-loop` 的
-> **维度 9**（标题以 SKILL 为准）是**入参门控**、且 SKILL 明令**不自行探测是否启用**——
-> **命令端不传 = 该维度永不启用**，启用了该能力的项目会静默漏掉这一层质量门。
-> ⚠️ 该能力**是跨端的**（Web / 小程序 / 移动 / 桌面），**WebMCP 只是它的 Web 端实现**：
-> 只按 WebMCP 判，非 Web 项目恒得 `enabled: false`，而 SKILL 侧「非 Web 已声明即通用半场照跑」
-> 那一半就永远不会执行——**失效方向是全绿**。故调 SKILL 前取**两级**判定：
->
-> ```bash
-> python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "{version}" --detect --json  # 跨端判定唯一实现
-> #   → declared / capability_state / client_type / implementation
-> python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --json      # 仅 Web 叶子的专有事实
-> #   → enabled / entry_symbols（client_type=web 且 implementation=webmcp 时才需要）
-> ```
->
-> ★ **临时 Mock 协议入参（`--third-party-mode`，同属入参门控，⛔ 别漏）**：维度 2A 的
-> `scan_mock_data.py` 默认对**一切 mock 零容忍**；只有加上 `--third-party-mode`，带
-> `THIRD_PARTY_MOCK` **或 `DEV_MOCK`** 标注块的代码才会从 2A 豁免、转交维度 2B 做协议核验。
->
-> **⛔ 漏传的失效方向是【假红】**：合规写法（按 `dev-execution-planner` 情况 1 写的 dev 拦截器 /
-> MSW）会被 2A 判 Critical + exit 1，而作者**无从修**——照报错去掉守卫就等于把 dev mock 打进生产包。
-> 实测：同一份合规 `DEV_MOCK` 文件，不带旗标 1 命中、带旗标 0 命中。
->
-> **何时传**：项目存在**第三方平台接口对接**，**或**前端用了 `DEV_MOCK` 拦截 —— 两者任一即传。
-> 判定不必猜，扫一眼就有答案：
->
-> ```bash
-> grep -rlE 'THIRD_PARTY_MOCK|DEV_MOCK' code/ 2>/dev/null | head -1   # 有输出即需要传
-> ```
->
-> ⚠️ **豁免要"买"得到**：只有**字段完整**的标注块才享受 2A 豁免（`THIRD_PARTY_MOCK` 六字段 /
-> `DEV_MOCK` 三字段 `since`·`owner`·`REMOVE_WHEN`）；缺字段由 2B 判 Critical，⛔ 不存在
-> "写个裸标记就能关掉 2A"这条后门。判据与字段集以 `code-verification-loop` SKILL 为单一信源，本处不复制。
+> ★ **客户端应用 MCP 条件启用入参**（默认不传；绝大多数项目无此段）：`code-verification-loop` 的**维度 9**（标题以 SKILL 为准）是入参门控、SKILL 不自行探测——命令端不传 = 该维度永不启用。先跑 `check_client_mcp.py --version "{version}" --detect --json`，`enabled: true` 才随 prompt 传整个 `client_mcp` 对象（保留 `enabled`）；完整配方与 Web 叶子入参（`webmcp_enabled` / `webmcp_entry_symbols`）见 `{{AIDP_HOME}}/reference/SKILL编排层接入.md` 第五节。临时 Mock 协议（`THIRD_PARTY_MOCK` / `DEV_MOCK`）由 SKILL Step 0 自判，命令端不传、不复述其判据与字段集。
 
-> `check_client_mcp.py` 的 `enabled: true` → 随 prompt 原样传 **`client_mcp`** 对象：
-> **保留 `enabled`**（SKILL 门控读此键，检测器保证它与 `declared` 同值），以及
-> `client_type` / `implementation` / `capability_state` / `source` 等检测事实；
-> `declared-unimplemented` → 报告列前置缺失，不伪造 `enabled: true`；检测退出 2（声明冲突/非法值）须先修正声明，⛔ 不冒充未启用；
-> **另**当 `client_type=web` 且 `implementation=webmcp` 时**再加**传 `webmcp_enabled: true`
-> + `webmcp_entry_symbols: <check_webmcp.py 返回的数组原样>`（⚠️ 后者**不可省略也不可写死**：挂载位置已迁移过一次、
-> 规范仍在演进，上游缺该入参会直接报错而非猜默认值）。
-> 两者均未声明 → **什么都不传**，不提、不留位置。
-> ⛔ **非 Web 项目不要传 `webmcp_*`**：它们只是 Web 适配输入，传过去不会为非 Web 创建入口，
-> 只会让 SKILL 把客户端判成 web（新旧声明冲突时 SKILL 侧须报错，⛔ 不静默覆盖）。
-
-
-> ★ **独立子 Agent 派发（隔离上下文，不占 /sprint-test 主对话）**：`code-verification-loop` SKILL 已声明「作为更大编排流程的一环被调用时，应把**整个验收循环**作为一个独立子 Agent 派发」——其扫描脚本（`scan_mock_data.py` / `scan_third_party_mock_antipatterns.py` 等）+ 多维度核验都在验收子 Agent 自身上下文内跑，主流程**只接收精简结构化报告**（各维度 Pass / Fail / 不适用 / 未核验（原因）+ 全部发现的唯一问题编号、严重度、`loop 推进`、file:line、证据与修复建议；不得只回传阻塞项或过滤非阻断 Important），脚本 stdout 不污染主上下文。因此本步**不在主对话直接用 `Skill` 工具调**，而是用 `Agent` 工具派一个子 Agent，prompt 为「用 Skill 工具调 `code-verification-loop`，**把下方『调用参数』与『额外提示』两段的全部内容逐项传全**，跑完只回传精简验收结论」。⛔ **别把模板句写成「传入代码/设计/接口路径」**：那会漏掉同步骤要求的 `--third-party-mode` 门控旗标、`webmcp_enabled`/`webmcp_entry_symbols`、`scope_files`/`scope_ids`、被测项目根——漏传的失效方向全是「维度静默落不适用」或「合规代码被判假红」，而不是报错。与 `/sprint-design` Step 1.6 子 Agent 派发同款。
+> ★ **独立子 Agent 派发（隔离上下文，不占 /sprint-test 主对话）**：`code-verification-loop` SKILL 已声明「作为更大编排流程的一环被调用时，应把**整个验收循环**作为一个独立子 Agent 派发」——其扫描脚本（`scan_mock_data.py` / `scan_third_party_mock_antipatterns.py` 等）+ 多维度核验都在验收子 Agent 自身上下文内跑，主流程**只接收精简结构化报告**（各维度 Pass / Fail / 不适用 / 未核验（原因）+ 全部发现的唯一问题编号、严重度、`loop 推进`、file:line、证据与修复建议；不得只回传阻塞项或过滤非阻断 Important），脚本 stdout 不污染主上下文。因此本步**不在主对话直接用 `Skill` 工具调**，而是用 `Agent` 工具派一个子 Agent，prompt 为「用 Skill 工具调 `code-verification-loop`，**把下方『调用参数』与『额外提示』两段的全部内容逐项传全**，跑完只回传精简验收结论」。⛔ **别把模板句写成「传入代码/设计/接口路径」**：那会漏掉同步骤要求的 `client_mcp`/`webmcp_*` 门控入参、`scope_files`/`scope_ids`、被测项目根——漏传的失效方向是「维度静默落不适用」，而不是报错。与 `/sprint-design` Step 1.6 子 Agent 派发同款。
 
 > ⛔ **`--unattended` / `--from-batch` 时 prompt 显式带上非交互上下文**（「任何需要用户裁决的节点一律不询问：记录结论 + 标注待人工确认后返回」）——子 Agent 里无人可答，主流程只会看到「子 Agent 未返回」。
 
@@ -143,14 +100,14 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 > 开发期更早的"复杂度+复用"自检由 Frontend Agent Step 4.5 / Backend Agent Step 7.5 承担（作为更早的自检关口，不取代 SKILL 兜底）。
 
-**作用域硬门**：full/batch/autopilot 调用也只当前 task/单 Sprint，CVL 一律走**范围模式**：必传 `scope_files`（当前 task/Sprint 的精确文件清单，相对代码仓库根，含必要依赖）与 `scope_ids`（本任务 REQ/API/PAGE/用例 ID），额外设计/PRD 路径仅作关联证据。范围模式下所有维度只覆盖清单；外部脚本维度 10/12/13/15 不支持文件级范围，上游返回 `未核验（scope-unsupported）`，脚本未下发返回 `未核验（工具缺失）`，均不回退全项目扫描。不启动浏览器、不全量回归；范围模式只返回结构化结果，不落盘 CVL 报告。
+**作用域硬门**：full/batch/autopilot 调用也只当前 task/单 Sprint，CVL 一律走**范围模式**：必传 `scope_files`（当前 task/Sprint 的精确文件清单，相对代码仓库根，含必要依赖）与 `scope_ids`（本任务 REQ/API/PAGE/用例 ID），额外设计/PRD 路径仅作关联证据。范围模式下所有维度只覆盖清单，外部脚本维度能否按文件清单运行、不能时如何标注，一律按 SKILL 范围模式规则处理（命令端不预判脚本能力，不回退全项目扫描）。不启动浏览器、不全量回归；范围模式只返回结构化结果，不落盘 CVL 报告。
 
 **调用参数**（按 SKILL 输入要求传入）：
 - **运行模式**：`mode=verify-only`——任务描述写明「代码与文档已按档位汇合；只验收、不修复，单轮完整问题清单交调用方」。CVL **不支持 delta 参数**，不构造 `mode=delta` 或虚构开关。只做这一次完整质量审查；修复后由调用层 reviewer 查问题与新增 diff，**不得宣称 CVL 二次完整通过**。其命令型检查同样经测试账本复用，不能用账本替代语义质量审查。
 - **代码路径（`scope_files`）**：当前 task/单 Sprint 写集及必要依赖的精确文件清单，不传 `code/`、项目根或全版本目录；`scope_ids` 同步传本任务需求/接口/页面/用例 ID。
 - **设计文档路径**：`docs/design/detail/{version}/` 下真实正式产物，并显式附 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md` 与 `contract_revision`。S 未成文部分以契约卡为本轮规格、四族台账为待成文义务，明确告诉 CVL 不把预期延期误报成“正式文档已齐备”；SKILL 自身判据和原结论保持原样。
 - **接口文档路径**：按契约卡 docs路径/`00_索引.md` 指向的真实接口章节；M 合册直接传合册与契约接口章节，不传不存在的 `03_接口设计.md`。旧布局兼容 `03_接口设计.md` / `接口设计.md`，多分册则传目录与明确文件清单。
-- **被测项目根**：仓库根（`.`），仅用于定位 `{{AIDP_HOME}}/scripts/` 下四个外部脚本维度（10 `check_ui_fidelity.py` / 12 `check_upstream_call_log.py` / 13 `check_design_anchor.py` / 15 `check_sibling_family.py`）。范围模式下这些维度按上游规则落「未核验（scope-unsupported / 工具缺失）」，不扫全项目，不是代码缺陷；真正适用的机器半场由调用层按任务文件清单另行只读核对并留证据。
+- **被测项目根**：仓库根（`.`），仅用于定位 `{{AIDP_HOME}}/scripts/` 下四个外部脚本维度（10 `check_ui_fidelity.py` / 12 `check_upstream_call_log.py` / 13 `check_design_anchor.py` / 15 `check_sibling_family.py`）。范围模式下这些维度按 SKILL 范围模式规则处理（不扫全项目）；SKILL 标注的「未核验」不是代码缺陷，调用层可按任务文件清单另行只读核对并留证据，不改写 SKILL 结论。
   - **维度 10「UI 还原度确定性检查」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_ui_fidelity.py`
   - **维度 12「上游调用日志可见性与脱敏」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_upstream_call_log.py`
   - **维度 13「实现偏离设计」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py`
@@ -159,26 +116,26 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 - **被验收版本号**：仅**版本级**调用（不传 `scope_files`）的维度 13 才必需传 `{version}`；本命令的范围模式不要求，仍把 `{version}` 写进任务描述便于回链。
 
 
-- **改动前基线 ref**（SKILL `verify-only` 输出契约明令：维度 0 类型检查的存量基线及维度 4 / 7 / 8 / 14 的一切基线对照**一律取改动前**；未给时 SKILL 回落 `git merge-base HEAD <主干分支>`——**主干开发时 merge-base 就是 `HEAD`**，本次改动被整批吞成「存量」，方向是假绿。故本参数**必须显式传**，⛔ 不得省略交给 SKILL 回落）：
-  - `vcs_mode=git`：传**本 Sprint 起点 commit**（`/sprint-dev` 动手前的 HEAD，与 `flows/sprint-dev/postdev-writeback-1.md` X.0.0 变更检测用的 `{sprint-start-sha}` 同一值）。先读取契约卡保存的改动前基线 ref，验证它确为本 Sprint 起点；旧流程无卡时按序解析、取到即停：① 上游编排（`/sprint-full` 等）显式透传的起点 commit；② 本 Sprint 改动全部仍在工作区未提交（本 Sprint 无已提交 commit）→ `HEAD`；③ 当前在特性分支 → `git merge-base HEAD <主干分支>`，**仅当结果 ≠ `HEAD` 才有效**；④ 以上皆不成立 → 按下方「取不到」处置。⛔ 不得用 `HEAD~1` 顶替（多 commit 的 Sprint 会漏掉前面的改动）、⛔ 不得凭感觉挑一个 commit。
+- **改动前基线 `baseline_ref`**（SKILL 入参；维度 0 类型检查的存量基线及维度 4 / 7 / 8 / 14 的一切基线对照**一律取改动前**；未传时 SKILL 回落 `git merge-base HEAD <主干分支>`——**主干开发时 merge-base 就是 `HEAD`**，本次改动被整批吞成「存量」，方向是假绿。故本参数**必须显式传**，⛔ 不得省略交给 SKILL 回落）：
+  - `vcs_mode=git`：传 `baseline_ref=<本 Sprint 起点 commit>`（`/sprint-dev` 动手前的 HEAD，与 `flows/sprint-dev/postdev-writeback-1.md` X.0.0 变更检测用的 `{sprint-start-sha}` 同一值）。先读取契约卡保存的改动前基线 ref，验证它确为本 Sprint 起点；旧流程无卡时按序解析、取到即停：① 上游编排（`/sprint-full` 等）显式透传的起点 commit；② 本 Sprint 改动全部仍在工作区未提交（本 Sprint 无已提交 commit）→ `HEAD`；③ 当前在特性分支 → `git merge-base HEAD <主干分支>`，**仅当结果 ≠ `HEAD` 才有效**；④ 以上皆不成立 → 按下方「取不到」处置。⛔ 不得用 `HEAD~1` 顶替（多 commit 的 Sprint 会漏掉前面的改动）、⛔ 不得凭感觉挑一个 commit。
   - `vcs_mode=none`：无可检出的改动前代码（`sprint-{NNN}-local-before.json` 只有 sha256、不含旧内容，跑不了改动前的类型检查）→ 一律按「取不到」处置。
-  - **取不到时**：prompt 里显式写「改动前基线 ref：无（取不到；⛔ 不得回落 merge-base / 本轮首跑错误数）」，由 SKILL 按其契约把依赖基线的项落「**基线无效，本项未核验**」（`未核验（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`）。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**无人值守 / 编排调用必须向上游返回「存在未核验维度 / 不通过」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
+  - **取不到时**：传 `baseline_ref=none`（SKILL 的显式「无改动前基线」入参）：依赖基线的项落「**基线无效，本项未核验**」（`未核验（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`），不回落 `merge-base`，也不以本轮首跑错误数作基线。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**无人值守 / 编排调用必须向上游返回「存在未核验维度 / 不通过」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
 
 **额外提示**（命令端补充给 skill 的上下文）：
 - 任务描述：本次验收的 Sprint 编号 + 功能范围（来自 `01_研发执行计划.md` 中 Sprint-{NNN} 行）
 - 推荐附加输入：
   - PRD（用于三方冲突裁决的样式/文案/业务规则裁决）：`docs/requirements/{version}/研发需求/`
   - 迭代执行计划（任务清单）：`docs/plans/{version}/01_研发执行计划.md`
-  - **同族增量项声明表**（`dev-logic-architect` 检查项 41 的 5 列表，在 `docs/design/detail/{version}/` 内）：维度 15 的基准表——第 2 列即 F1/F4 的比对对象、第 4~5 列即 F2/F3 的比对对象；上游没产出时 SKILL 侧回退纯代码判断并报 🟡「设计缺声明表」，⛔ 不静默放过
+  - **同族增量项声明表**（`dev-logic-architect` 检查项 41 的 5 列表，在 `docs/design/detail/{version}/` 内）：供 SKILL 维度 15 消费；上游没产出时的回退与告警归 SKILL
 - **★ 规划期基线类文档（约定 33 强制传入，供 SKILL「PRD↔实现」直接比对 + 视觉还原 L1 + 内容完整性核对消费）**——把下列路径显式作输入传给 SKILL，笼统标注"以这些基线为准回检实现有无漏项/漏列/偏离"（约定 21 只传路径、不复述 SKILL 维度）：
   - **PRD 原文（产品提供）**：`docs/requirements/{version}/产品提供/*.md`（作**独立比对基准**，供「PRD↔实现」直接比对维度回检"实现里到底有没有这个按钮/这一列"，绕过设计文档同源污染）
   - **原型内容基线**：`docs/design/detail/{version}/NN_原型内容基线.md`（内容完整性逐页核对：原型有/实现无或行为不符/未标处置 → Critical）
   - **设计令牌**：`docs/design/detail/{version}/NN_设计令牌.md`（如存在，视觉还原 L1 强校验基准）
   - **字段处置对照表**：研发需求内「原型字段 → 处置」对照表（字段/列对账：漏列/未确认增列均违规）
-  - **表 E 语义变更→派生展示物影响清单 / 表 F 历史需求作废清单**：研发需求内（约定 22 第三类 / 约定 34）——供 SKILL 维度 4「代码质量检查」的「文案与数据口径一致性」子行以表 E「变更前语义」为旧口径字样清单 grep 残留、以表 F「作废」项的 REQ 编号扫失效注释是否已标注
+  - **表 E 语义变更→派生展示物影响清单 / 表 F 历史需求作废清单**：研发需求内（约定 22 第三类 / 约定 34），供 SKILL 维度 4「文案与数据口径一致性」子行消费
   - **文案落点表**：`docs/design/detail/{version}/` 详细设计内——供上述维度定位改了口径的说明文案落点、缩小旧口径残留核对范围
-  - **统计指标口径表**：`docs/design/detail/{version}/` 详细设计内（`dev-logic-architect` 核心原则 25 / 检查项 34 产出的 8 列表）——供 SKILL **维度 11 / 约定39-R12「同一指标跨页面必须同源」**以其第 8 列「权威取数口径」为基准逐指标核对实现取数点；缺表时 SKILL 回退纯结构判断并把「设计缺口径表」报 Important，**不静默放过**
-  - **上游调用日志与脱敏声明表**：`docs/design/detail/{version}/` 详细设计内（`dev-logic-architect` 检查项 35 产出的 6 列表；⛔ **本处不复制列定义**——列名以 SKILL + 其硬门 `check_upstream_call_log_spec.py::REQUIRED_COLUMNS` 为准，复制过一次就会在上游调整列名时静默漂移）——供 SKILL **维度 12「上游调用日志可见性与脱敏」**：12.1 以其第 5 列「脱敏字段清单」为基准、12.2 以第 6 列「二进制/大对象降级说明」为基准**逐行核对**；缺表时 SKILL 回退纯代码判断（只能靠命名特征猜哪些字段算敏感）并把「设计缺声明表」报 Important，**不静默放过**（约定 40）
+  - **统计指标口径表**：`docs/design/detail/{version}/` 详细设计内（`dev-logic-architect` 核心原则 25 / 检查项 34 产出的 8 列表），供 SKILL 维度 11 / 约定39-R12 消费；缺表回退归 SKILL，不静默放过
+  - **上游调用日志与脱敏声明表**：`docs/design/detail/{version}/` 详细设计内（`dev-logic-architect` 检查项 35 产出；⛔ 本处不复制列定义，列名以 SKILL + `check_upstream_call_log_spec.py::REQUIRED_COLUMNS` 为准），供 SKILL 维度 12 消费（约定 40）；缺表回退归 SKILL，不静默放过
   - > 上述消费机制以 `code-verification-loop` SKILL 为单一信源；命令端只保证把基线路径交出去（约定 33 命令层责任），由 SKILL 的「产品 PRD 原文 ⟷ 实现 条目对账」+ 维度 4「代码质量检查」的「文案与数据口径一致性」子行消费（已落地，见其 SKILL.md）。
   - **★ 维度 4「代码质量检查」之「文案与数据口径一致性」子行的作用域（约定 34 ⑤ 边界，dev/test 期铁律）**：只核**当前 task/单 Sprint 交付物及必要依赖**——当前写集中的代码/设计章节/页面文案 + 与该任务相关的表 E 条目；**绝不扫 `docs/design/detail/全量/`（`/version` 正式发布产物）与 `{prev-version}` 历史全量设计**。dev/test 期这些全量/历史文档仍是"上一次正式发布"的旧口径 = **预期正常态**（发布期 Step 3.3.11 重算），**不报缺陷、不提议处理、不主动询问"全量旧口径要不要处理"**（那是越界，留发布期）。
 
@@ -285,13 +242,13 @@ RUN_ARGS=(); for R in $(python3 -c 'import json,sys; print(" ".join(json.loads(s
 python3 {{AIDP_HOME}}/scripts/test_ledger.py record-review --root . --execution-context "$EXECUTION_CONTEXT" \
   --name "{version}-sprint-{NNN}" --env-id "$TEST_ENV_ID" "${RUN_ARGS[@]}" \
   --scope-file "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json" --scope-hash "$SCOPE_HASH" \
-  --report "${REVIEW_EVIDENCE:-docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md}" \
+  --report "${REVIEW_EVIDENCE:?指向本轮 execution context 内的机器审查证据 JSON}" \
   --input "docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-unit-scope.json" \
   --input "docs/design/detail/{version}/_sprint-{NNN}-契约卡.md" \
   --input "docs/design/detail/{version}/"
 ```
 
-`REVIEW_EVIDENCE` 指向本轮真实审查证据（日常为 execution context 内机器 JSON；仅用户要求时才为 Markdown 报告），默认路径只是兼容占位，不要求日常生成该 Markdown。登记前按实际审查范围追加需求/计划/受影响四族台账等 `--input`。报告中真实修复 SHA / 尚未提交 after_hash、各套运行器与 run_id 填完、最终落盘后才 record-review；之后不得为补 SHA 改写已绑定报告。登记失败保留旧证据、返回验收未完成，不交 close。
+`REVIEW_EVIDENCE` 必填，指向本轮真实审查证据（日常为 execution context 内机器 JSON；仅用户明确要求报告时才为 Markdown 报告），无默认路径、不要求日常生成 Markdown。登记前按实际审查范围追加需求/计划/受影响四族台账等 `--input`。报告中真实修复 SHA / 尚未提交 after_hash、各套运行器与 run_id 填完、最终落盘后才 record-review；之后不得为补 SHA 改写已绑定报告。登记失败保留旧证据、返回验收未完成，不交 close。
 
 
 ### Step 8：更新状态

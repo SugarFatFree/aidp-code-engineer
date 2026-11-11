@@ -179,7 +179,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    |---|---|
    | 缺失，或低于脚手架版本，或 `--force` | `overwrite`：先备份，受版本门控目录（`scaffold_lib.py::GATED_DIRS`）全部覆盖到新版 |
    | 相等，且有 pending 或未清空队列 | `overwrite`：重跑完整同步 |
-   | 相等 | `fill`：只补缺失文件，不改已有正文 |
+   | 相等 | `fill`：保留既有契约正文，仅恢复旧 manifest 已登记但被删的文件；bundle 同版本新增的门控文件不补（升级输出 `unregistered_gated_additions` 与警告会列出，要对齐加 `--force`） |
    | 高于脚手架版本 | `protect`：不动契约，提示换用新版脚手架 |
 
    任何处置下都执行：`{{AIDP_HOME}}/scripts/` 字节不同即覆盖；脚手架自身重新安装；`docs/init` 刷新；`memory/aidp-config.yaml` 只补缺失配置段；项目级 memory 与 `docs/architecture/` 三份约束骨架：装上后从没填过的（指纹台账 `.aidp-user-fillable.json` 与现文件一致）直接刷新为新版骨架，填过的只替换残留占位符、新版骨架变了才进语义改写队列；`.gitignore` 托管区（`# >>> AIDP-GITIGNORE-MANAGED` 标记之间）整块刷新、区外规则不动；`agent_sync.py` 重新装配。覆盖任何已有文件前都先备份到 `.aidp-backup-<时间戳>/`（输出 `backup`）。
@@ -189,7 +189,8 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    - **用户填充型契约**（`{{AIDP_HOME}}/reference/子Agent必读.md`）与**结构性 README**（`docs/**/README.md`、`memory/README.md`）：依据 `.aidp-user-fillable.json` 指纹台账判定——未改过则刷新；改过且新版骨架有变化则不覆盖、进入语义改写队列；新版骨架与上次合并的一致则不动；
    - **项目记忆文件**：`overwrite` 前读取已安装模板快照，并用 `.aidp-user-fillable.json` 的模板/合并指纹辨别上游模板与项目内容；「当前状态」固定字段和「项目自定义」段保留，独立状态散文留在状态段，旧模板章节中可确定的独立项目注解迁入自定义正文。模板行的项目修改/删除、规则性追加、同节新旧变更冲突或缺可信旧基线时，原正文不动，具体差异进入现有语义改写队列并保持 `pending`。相同骨架与已合并内容无需改写时不动；重复升级不重复章节/待办，也不通过自动改动待办正文绕过收口。Agent 布局切换时待办跟随最终正文位，保持入队指纹与证据；
    - **项目私有 SKILL**（`{{AIDP_HOME}}/skills/` 下脚手架没有的目录）：不触碰；
-   - **孤儿契约**（项目里有、当前脚手架已没有的契约文件）：输出 `orphans` 清单，只报告不删除——向用户列出，确认后再删。
+   - **旧契约被删**：`overwrite` 是整包替换，上一版 manifest 有、新版没有的契约会随之删除（不再留孤儿）。替换前按旧 manifest 指纹算出并输出 `removed_contracts`（未改过）与 `removed_modified`（本地改过，原文只在备份内），向用户转述并指明备份目录；
+  - **孤儿契约**（仅 `fill` 保留旧文件时出现：旧 manifest 有、新版没有、项目里仍在）：输出 `orphans` 清单，只报告不删除——向用户列出，确认后再删。
 3. **处理语义改写队列并收口**：同 Mode 2 第 4 步。
 4. **备份清理**：脚本按「最近 1 个 ∪ 7 天内」保留 `.aidp-backup-*`（`--keep-backups N` / `--keep-days N` 调整，`--keep-backups 0` 不清理）；输出里超出阈值会提示手工删除。
 5. 执行「验证」章节。
@@ -257,7 +258,7 @@ python3 {SKILL_DIR}/scripts/verify.py <项目根> {version} {user} --read-only
 1. **已有代码不动**：脚本从不移动代码；迁入 `code/frontend|backend/{子项目}` 只在用户确认后由 Agent 执行（有 Git 时用 `git mv`，无 Git 时用普通文件操作）。
 2. **内容零丢失**：已有记忆文件并入「项目自定义」段；memory 与 `docs/architecture` 已有真实内容不覆盖；覆盖任何已有文件前自动备份到 `.aidp-backup-*`。
 3. **队列必须收口**：`.aidp-rewrite-queue.txt` 入库、团队可见（路径均为仓库相对路径）；未收口时 `verify.py` 报 ERROR、下次运行会重做完整同步；收口只走 `finalize_upgrade.py`。
-4. **幂等**：同版本重复执行只补缺失文件，不产生多余改动。
+4. **幂等**：同版本重复执行保留既有契约、仅恢复被删的已登记文件（scripts 按字节覆盖），不产生多余改动。
 5. **结束必须提示重启 Agent**：命令、SKILL、hook 只在会话启动时加载。
 6. **下游不改契约**：`{{AIDP_HOME}}/` 契约文件由本脚手架维护，项目特有规则写在项目记忆文件「项目自定义」段或 `code/{子项目}/` 下的项目说明（约定 16）。
 

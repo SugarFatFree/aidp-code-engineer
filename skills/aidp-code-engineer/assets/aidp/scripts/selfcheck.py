@@ -350,6 +350,27 @@ def _p_loop(root):
             "\n\n```bash\n/loop 10m /sprint-autopilot\n```\n")
 
 
+@probe("check_readme_registry.py")
+def _p_readme_registry(root):
+    """阳性注入：往 reference/ 放一个 README 没登记的文件 → 必须报 unregistered。
+
+    阴性侧由种子树自带（现仓每个 README 已登记齐全）。
+    """
+    _write(root, runtime_text('__AIDP_HOME__/reference/_probe_unregistered.md', __file__), "# 探针\n")
+
+
+@probe("check_cn_count_claims.py")
+def _p_cn_count_claims(root):
+    # 真值现算（agents/ 下 ≠7 份）；「七」故意取一个必然过期的中文数字
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__), "\n\n探针：本目录下的七份角色指令\n")
+
+
+@probe("check_stale_phrases.py")
+def _p_stale_phrases(root):
+    # 命中黑名单「每个 Sprint 在独立分支」条目；种子树 0 命中（阴性侧）
+    _append(root, runtime_text('__AIDP_HOME__/reference/命令速查.md', __file__), "\n\n探针：每个 Sprint 在独立分支开发\n")
+
+
 @probe("check_flow_shell_escapes.py")
 def _p_shell_escapes(root):
     # ⚠️ 要注入的是**两个反斜杠**：`\\n` 才是被禁的双重转义，

@@ -1,5 +1,8 @@
 # /sprint-full — Sprint 一键执行（含自动累进）
 
+开发子任务的 `/sprint-test` 始终仅当前task/单Sprint，静态/审查/CVL若执行也同范围及必要依赖；不得随带浏览器/全版本。父内部skip-test只移交测试，不取消默认相关单测。日常只终端与机器证据，formal保原规格归档。
+
+
 ## 执行身份与授权前置路由（先于本文其余动作）
 
 本入口强制 formal，按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 解析并继承身份；脚本不替代原正式门。

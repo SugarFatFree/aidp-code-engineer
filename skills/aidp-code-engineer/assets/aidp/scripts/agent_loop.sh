@@ -253,6 +253,22 @@ PY
       loop_alert loop-state-error "${cmd} 读取退避状态失败（rc=${admission}），本轮拒绝执行"
       exit "$admission"
     fi
+    # 独立测试进程必须再核验并继承具体父子委派，不能靠命令名获得全量权限。
+    if [ "$cmd" = sprint-aiauto-test ]; then
+      # 无已部署待测版本时不需要委派（入口自己输出 NO_TARGET 并保持心跳）；有目标却无可信委派才拒绝。
+      AIDP_EXECUTION_CONTEXT=$(python3 - "$SCRIPT_DIR" "$root" <<'PY' 9>&-
+import sys
+sys.path.insert(0, sys.argv[1])
+from aidp_scheduler import test_handoff_context, _has_pending_test_target
+try:
+    print(test_handoff_context(sys.argv[2])[0])
+except (OSError, ValueError, KeyError, TypeError):
+    if _has_pending_test_target(sys.argv[2]):
+        raise
+PY
+      ) || exit 2
+      export AIDP_EXECUTION_CONTEXT
+    fi
     export AIDP_TICK_TOKEN
     AIDP_TICK_TOKEN=$(python3 -c 'import uuid; print(uuid.uuid4().hex)' 9>&-)
     # ★ 取得锁之后才写本轮起点（锁文件以 `>>` 打开、不截断）：aidp_scheduler watchdog 据此算持锁时长。
@@ -267,6 +283,10 @@ PY
       python3 "$AIDP_HOME/scripts/aidp_scheduler.py" tick-result --root "$root" --command "$cmd" \
         --rc "$rc" --log "$log" --log-offset "$log_offset" --quiet 9>&- >>"$log" 2>&1 || true
       exit "$rc"
+    fi
+    # 提示词由 configure_agent 生成，委派上下文必须在其后追加；变量只来自上面已验真的交接。
+    if [ -n "${AIDP_EXECUTION_CONTEXT:-}" ] && [ "$cmd" = sprint-aiauto-test ]; then
+      prompt="$prompt --execution-context $(printf '%q' "$AIDP_EXECUTION_CONTEXT")"
     fi
     quoted=$(printf '%q' "$prompt")
     echo "[agent_loop] $(date '+%F %T') 开始 agent=$agent prompt=$prompt" >>"$log"

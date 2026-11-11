@@ -207,6 +207,18 @@ def _baseline_version(baseline, version):
     return ((data.get("versions") or {}).get(version) or {}).get("cicd_run") or {}
 
 
+def unconfigured_cicd(cfg, explicit_pipeline=None):
+    """本地配置明确未接入时直接降级；不构造 provider、不读旧运行补配置。"""
+    if str(cfg.get('provider', '')).strip().lower() == 'none':
+        return 'disabled', 'cicd.provider=none（未接入 CICD）'
+    if isinstance(explicit_pipeline, str) and explicit_pipeline.strip():
+        return None
+    pipelines = cfg.get('pipelines') or {}
+    if not isinstance(pipelines, dict) or not any(isinstance(v, str) and v.strip() for v in pipelines.values()):
+        return 'not-configured', 'cicd.pipelines 未配置有效流水线；不调用 provider，部署状态未核验'
+    return None
+
+
 def resolve_pipeline(cfg, provider, env, pipeline, baseline_pipeline=None):
     """定位流水线：显式 --pipeline > cicd.pipelines[env] > baseline cicd_run.pipeline > 唯一一条时自动取。
 
@@ -428,6 +440,20 @@ def consume_result(a, root):
              'cicd_run.status', 'unknown', 'cicd_run.degraded', 'false', 'cicd_run.commit_verified', 'false')
         edit('del', 'cicd_run.degraded_reason')
         ctx, authorization_reason = deployment_context(root, a.execution_context, a.version)
+        # 明确未接入的本地降级不轮询、不冻结，也不把旧 pipeline 当当前配置。
+        if result.get('configuration_degraded') is True:
+            current = unconfigured_cicd(load_cicd_config(root), result.get('explicit_pipeline'))
+            if (rc != 3 or action != 'none' or not current or verdict != current[0]
+                    or result.get('expected_commit') != push
+                    or result.get('mode') not in ('detect', 'watch', 'poll', 'trigger', 'retry')):
+                return done(2, 'abort', '配置降级证据过期或未绑定本 build')
+            status = 'unverified' if ctx else 'not_requested'
+            edit('set', 'cicd_run.status', status, 'cicd_run.degraded', 'true',
+                 'cicd_run.degraded_reason', str(reason))
+            edit('run-state', '3.2.1-deploy', '3.3-audit', 'done', '--pending', '',
+                 '--summary', '未接入 CICD：结束本段，部署状态未核验')
+            return done(0, 'none', reason, ok=False, verdict=verdict,
+                        execution_status=status.upper(), configuration_degraded=True)
         # 未授权可选部署只记观测。旧结果不能把新任务的 push 权限升级为部署权限。
         if verdict == 'NOT_REQUESTED' or (ctx is None and action != 'poll'):
             bound = (result.get('mode') in ('detect', 'watch', 'poll', 'trigger', 'retry') and
@@ -640,6 +666,14 @@ def _run(argv, root_override=None):
 
     try:
         cfg = load_cicd_config(root)
+        out["provider"] = cfg.get("provider")
+        unavailable = unconfigured_cicd(cfg, a.pipeline)
+        if unavailable:
+            verdict, reason = unavailable
+            return emit(3, verdict=verdict, next_action='none', reason=reason,
+                        configuration_degraded=True, degraded=True, commit_verified=False,
+                        explicit_pipeline=a.pipeline,
+                        execution_status='UNVERIFIED' if ctx else 'NOT_REQUESTED')
         provider = cp.get_provider(str(root), cfg)
     except Exception as e:  # noqa: BLE001
         return emit(3, verdict="not-configured", next_action="abort", reason=f"CICD 配置无效：{e}")
@@ -946,8 +980,12 @@ def selftest():
         case("[gitlab] trigger 返回新 pipeline id → next_action=poll",
              code == 0 and o["run_id"] == "901" and o["next_action"] == "poll")
         write_cfg("cicd:\n  provider: gitlab-ci\n  gitlab-ci:\n    project: group/demo\n    token_env: AIDP_T_GL\n")
+        previous_http_count = len(sc.get("http", []))
         code, o = go(["--mode", "detect", "--commit", sha, "--env", "test"])
-        case("[gitlab] 未配 pipelines 也可按提交探测", code == 0 and o["run_id"] == "900")
+        case("[gitlab] 未配 pipelines 不探测，保持未核验", code == 3 and o["next_action"] == "none"
+             and o["execution_status"] == "UNVERIFIED" and len(sc.get("http", [])) == previous_http_count)
+        code, o = go(["--mode", "detect", "--commit", sha, "--pipeline", "main"])
+        case("[gitlab] 显式 pipeline 仍按提交探测", code == 0 and o["run_id"] == "900")
 
         # jenkins
         write_cfg("cicd:\n  provider: jenkins\n  pipelines: {test: team/deploy-test}\n  jenkins:\n"

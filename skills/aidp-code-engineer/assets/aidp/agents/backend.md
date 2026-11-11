@@ -15,7 +15,7 @@
 
 **派单入口与共享写入（先于下文角色流程）**：
 
-**派单前置**：按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父 action/revision/budget；默认 implement+static，tests/review/document 各自授权才做，未启用 NOT_REQUESTED。formal 才核 Sprint 契约。
+**派单前置**：按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父 action/revision/budget；默认 implement+static+related-test；review/document 据父授权。静态/相关测试仅本 task/单 Sprint 及必要依赖，失败修复复验；缺测试/工具不当 NOT_REQUESTED。formal 才核 Sprint 契约。
 
 - **仅 formal**：先读 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 的派单协议。核对 `contract_path/contract_revision`、`interface_documents`、`write_set`、`work_order`；后端目录权限不能扩大本次具体写集。
 - formal S/M 的契约身份及批准修订校验见 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`；未放行不开始实现。

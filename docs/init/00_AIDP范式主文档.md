@@ -1,6 +1,6 @@
 # AIDP — AI 驱动迭代开发范式
 
-> 任务身份与轻量能力复用以 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 为准；本指南不额外定义 Sprint 准入流程。
+> 任务身份与轻量能力复用以 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 为准；普通开发/修复默认实现+静态+相关单测，自动测试、必要修复复验后终端收口，不另问单测；light不建Sprint/卡片/成套文档，formal保规格归档。本指南不额外定义准入流程。
 
 **AI-Driven Iterative Development Paradigm for AI Coding Agent Team**
 
@@ -34,7 +34,7 @@
 
 AIDP 将传统软件工程的标准流程（需求 → 设计 → 开发 → 测试 → 上线）与 AI 编码 Agent 的 Agent Team 模式相结合，通过**结构化文档驱动**和**AI 记忆系统**，确保：
 
-- 每次迭代都有完整的输入/输出文档
+- formal迭代保留规格与归档；light日常任务保留机器证据与终端结果，不生成报告Markdown
 - AI Agent 在每次启动时能读取项目全貌，不丢失上下文
 - 多人可并行工作，不互相干扰
 - 项目历史完整可追溯
@@ -315,7 +315,7 @@ project-root/
 | UI Agent | 界面规范、原型分析、设计映射 | PRD、UI 原型代码、UI 规范约束 | UI 规范文档、组件映射清单 | `{{AIDP_HOME}}/agents/ui.md` |
 | Frontend Agent | 前端代码实现 | 详细设计、UI 规范、原型代码、前端脚手架 | 前端页面代码 | `{{AIDP_HOME}}/agents/frontend.md` |
 | Backend Agent | 后端代码实现、API、数据库 | API 设计、DB 设计、后端脚手架 | 后端接口代码 | `{{AIDP_HOME}}/agents/backend.md` |
-| QA Agent | 测试用例设计与执行、问题修复验证 | 研发需求、验收标准、bugfix 记录 | 测试用例、测试报告 | `{{AIDP_HOME}}/agents/qa.md` |
+| QA Agent | 测试用例设计与执行、问题修复验证 | 研发需求、验收标准、bugfix 记录 | 当前范围测试证据、终端结论 | `{{AIDP_HOME}}/agents/qa.md` |
 | Reviewer Agent | 代码审查、质量把关 | PR 代码、设计文档 | 审查意见、合并决策 | `{{AIDP_HOME}}/agents/reviewer.md` |
 | **AIDP-Compliance Agent** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留 / 事实清单 ↔ 代码 / 引用三角 / 目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py 输出、memory/、项目记忆文件、code/、事实清单 | 合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | `{{AIDP_HOME}}/agents/aidp-compliance.md` |
 | **Version-Auditor Agent** ★ | 版本规划产物全量审计（A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34） 共 8 项）| 版本规划产物（requirements / design / plans / testing 等）| 审计报告 `docs/audit/{version}/version-output-audit-*.md` | `{{AIDP_HOME}}/agents/version-auditor.md` |
@@ -678,7 +678,7 @@ Sprint-001（执行期）
 |------|------|-----------|------|------|
 | 启动 | `/sprint-start` | PM | 版本规划文档（01_研发需求.md / 01_详细设计.md / 01_研发执行计划.md） | 更新 activeContext |
 | 开发 | `/sprint-dev` | Backend + Frontend | 详细设计、API 设计、DB 设计、UI 原型、脚手架 | 源代码（含公共组件）、编译/构建通过 |
-| 测试 | `/sprint-test` | QA | 需求文档、代码 | 测试用例、测试报告、bug 记录 |
+| 测试 | `/sprint-test` | QA | 需求文档、代码 | 当前范围测试证据、终端结论、bug记录 |
 | 修复 | `/sprint-bugfix` | Backend / Frontend | bug 记录文件 | 修复代码、回填 bug 文件 |
 | 关闭 | `/sprint-close` | PM | 测试结果、验收确认 | 验收结论记录、memory 归档、progress 更新 |
 

@@ -23,6 +23,31 @@ def _pick(facts, primary, legacy):
     return facts[primary] if primary in facts else facts.get(legacy)
 
 
+def validate_test_request(root, execution_context, version, build=None, cases=None):
+    """版本全量核真实委派；独立实测核明确验收目标，不自动选择版本全量。"""
+    from execution_policy import require_action, validate_test_binding
+    context = require_action(execution_context, "live-tests")
+    if Path(context["root"]).resolve() != Path(root).resolve() or context.get("version") != version:
+        raise ValueError("测试上下文 root/version 与请求不一致")
+    if context.get("test_manifest"):
+        validate_test_binding(root, context, version, build)
+        manifest = json.loads(Path(context["test_manifest"]["path"]).read_text(encoding="utf-8"))
+        from build_unit_test import validate_case_index
+        ids = validate_case_index(root, manifest)
+        if cases is not None and ({case["id"] for case in cases} != set(ids) or len(cases) != len(ids)):
+            raise ValueError("实测 cases 与当前版本完整正式用例清单不一致")
+        return context
+    scope = context.get("task_scope") or {}
+    targets = scope.get("acceptance") or []
+    if not targets or any(str(target).strip().lower() in {"all", "full", "全量", "*", ".", "system-wide", "project-wide"} for target in targets):
+        raise ValueError("独立 aiauto-test 只接受明确验收目标；全量请求须交接 autopilot 测试编排")
+    if set(context.get("allowed_actions", [])) & {"implement", "commit", "push", "deploy", "full-regression"}:
+        raise ValueError("独立实测上下文必须仅含测试动作")
+    if cases is not None and any(case.get("id") not in targets and case.get("source") not in targets for case in cases):
+        raise ValueError("独立实测 cases 超出明确验收目标")
+    return context
+
+
 def assess(facts, cases):
     if not isinstance(facts, dict) or not isinstance(cases, list):
         raise ValueError("facts 必须为对象，cases 必须为数组")
@@ -92,9 +117,14 @@ def assess(facts, cases):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True)
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--execution-context", required=True)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--build")
     args = parser.parse_args()
     try:
         data = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        validate_test_request(args.root, args.execution_context, args.version, args.build, data["cases"])
         output = assess(data["facts"], data["cases"])
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"[aiauto_readiness] {exc}", file=sys.stderr)

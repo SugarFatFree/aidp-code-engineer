@@ -310,7 +310,7 @@ PROJECT_DIRS = (
     ".aidp/agents", ".aidp/commands", ".aidp/rules", ".aidp/flows", ".aidp/reference",
     ".aidp/scripts", ".aidp/hooks", ".aidp/templates", ".aidp/skills",
     "code",
-    "docs/init", "docs/architecture", "docs/references", "docs/audit", "docs/deployment/tools",
+    "docs/init", "docs/architecture", "docs/references", "docs/audit", "docs/deployment",
     "docs/bugfix", "docs/design/detail", "docs/implementation", "docs/plans", "docs/prompts",
     "docs/prototype", "docs/reports", "docs/requirements", "docs/testing",
     "memory", "env",

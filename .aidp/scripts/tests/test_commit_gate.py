@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 from datetime import date, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -151,7 +152,7 @@ def test_gate_cli_cascade():
                   "has_business_code_change", "is_scaffold_only_change", "today",
                   "pending_cascade", "cascaded_not_cleaned",
                   "suspected_cascade_bypass", "pending_cicd", "offchain", "context", "debts",
-                  "path_scope", "id_allocation", "execution_context"}
+                  "path_scope", "id_allocation", "execution_context", "cache"}
         check("JSON 字段集合与契约一致", set(info) == expect)
         check("today 为 YYYY-MM-DD", len(info.get("today") or "") == 10)
         check("context 默认 bare-conversation", info.get("context") == "bare-conversation")
@@ -330,7 +331,10 @@ def test_pending_cicd():
         mkfile(os.path.join(d, "memory/aidp-config.yaml"), "cicd:\n  provider: none\n")
         check("cicd.provider=none → 不适用", G.pending_cicd(d)["applicable"] is False)
         os.remove(os.path.join(d, "memory/aidp-config.yaml"))
-        check("★ 默认 provider（未跑过 autopilot、无 baseline）→ 适用", G.pending_cicd(d)["applicable"] is True)
+        check("未配置流水线 → 配置降级、不制造监听欠账", G.pending_cicd(d)["configuration_degraded"] is True
+              and G.pending_cicd(d)["pending"] is False)
+        mkfile(os.path.join(d, "memory/aidp-config.yaml"), "cicd:\n  pipelines: {test: deploy-test.yml}\n")
+        check("★ 默认 provider + 有效流水线（无 baseline）→ 适用", G.pending_cicd(d)["applicable"] is True)
         check("HEAD 无正式代码变更 → 不报", G.pending_cicd(d)["pending"] is False)
 
         mkfile(os.path.join(d, "src/App.ts"), "export {}\n")
@@ -847,7 +851,309 @@ def test_id_allocation_gate():
               and "id-allocation-invalid" in info.get("debts", []) and "编号" in cp.stderr)
 
 
+class IncrementalGateTests(unittest.TestCase):
+    def setUp(self):
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory(prefix='aidp-gate-cache-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        _init_repo(str(self.root))
+        mkfile(str(self.root / '.gitignore'), 'memory/.aidp/\n')
+        mkfile(str(self.root / 'app.py'), 'value = 1\n')
+        mkfile(str(self.root / 'memory/aidp-config.yaml'), 'cicd:\n  provider: none\n')
+        _git(str(self.root), 'add', '.')
+        _git(str(self.root), 'commit', '-qm', 'base')
+
+    def context(self):
+        import entry_context as entry
+        return entry.resolve_context(self.root, 'sprint-dev', version='V1', write_set=['app.py'],
+            additional_grants=['commit'], authorization_source={
+                'kind': 'user-text', 'request_id': 'gate-user', 'text': '开发并提交'})
+
+    def test_fingerprint_phase_reads_mount_metadata_once_and_refreshes_next_phase(self):
+        from unittest import mock
+        import project_inventory as inventory
+        paths = [self.root / 'app.py', self.root / 'memory/aidp-config.yaml']
+        cache = G._GateCache(self.root)
+        with mock.patch.object(inventory, 'fingerprint_metadata', wraps=inventory.fingerprint_metadata) as metadata:
+            before = cache.fingerprints(paths)
+            self.assertEqual(metadata.call_count, 1)
+            after = cache.fingerprints(paths)
+            self.assertEqual(metadata.call_count, 2)
+            self.assertEqual(before, after)
+        # 元数据不可用时也只尝试一次，传空映射让各文件保守重读内容。
+        reads = cache.stats['content_reads']
+        with mock.patch.object(inventory, 'fingerprint_metadata', return_value=None) as metadata:
+            fallback = cache.fingerprints(paths)
+            self.assertEqual(metadata.call_count, 1)
+        self.assertEqual(fallback, before)
+        self.assertEqual(cache.stats['content_reads'], reads + len(paths))
+
+    def test_development_gate_defaults_to_related_tests_and_respects_explicit_skip(self):
+        import entry_context as entry
+        (self.root / 'app.py').write_text('value = 2\n')
+        default = G.offchain_budget(str(self.root), 'bare-conversation', ' M app.py\n')
+        self.assertTrue(default['actions']['unit_test'])
+        self.assertIn('full-regression', default['not_requested'])
+        self.assertFalse(default['deploy'])
+        limited = entry.resolve_context(self.root, 'sprint-dev', version='V1', write_set=['app.py'],
+            authorization_source={'kind':'user-text', 'request_id':'skip-unit-explicit',
+                                  'text':'本次修改跳过单测', 'skip_actions':['related-test']})
+        facts = G.gather(str(self.root), execution_context=limited['execution_context'])
+        self.assertFalse(facts['offchain']['actions']['unit_test'])
+        self.assertFalse(facts['offchain']['deploy'])
+
+    def test_same_inputs_skip_checkers_and_content_reads(self):
+        from unittest import mock
+        import development_scope
+        (self.root / 'app.py').write_text('value = 2\n')
+        with mock.patch.object(G, 'pending_cascade', wraps=G.pending_cascade) as cascade, \
+             mock.patch.object(G, 'pending_cicd', wraps=G.pending_cicd) as cicd, \
+             mock.patch.object(development_scope, 'analyze_changes', wraps=development_scope.analyze_changes) as analyze:
+            first = G.gather(str(self.root))
+            before = (cascade.call_count, cicd.call_count, analyze.call_count)
+            second = G.gather(str(self.root))
+            self.assertEqual(before, (cascade.call_count, cicd.call_count, analyze.call_count))
+        self.assertGreater(first['cache']['content_reads'], 0)
+        self.assertEqual(second['cache']['content_reads'], 0)
+        self.assertTrue(all(item['hit'] for item in second['cache']['checks'].values()))
+
+    def test_cli_reuses_persisted_checks_across_processes(self):
+        first_process, first = _run_gate(str(self.root), '--quiet')
+        second_process, second = _run_gate(str(self.root), '--quiet')
+        self.assertEqual(first_process.returncode, 0, first_process.stdout + first_process.stderr)
+        self.assertEqual(second_process.returncode, 0, second_process.stdout + second_process.stderr)
+        self.assertGreater(first['cache']['content_reads'], 0)
+        self.assertEqual(second['cache']['content_reads'], 0)
+        self.assertTrue(all(row['hit'] for row in second['cache']['checks'].values()))
+        self.assertTrue(all(row['checker_elapsed_seconds'] == 0 for row in second['cache']['checks'].values()))
+
+    def test_same_mtime_content_change_and_config_change_invalidate_only_dependents(self):
+        (self.root / 'app.py').write_text('value = 2\n')
+        G.gather(str(self.root))
+        info = (self.root / 'app.py').stat()
+        (self.root / 'app.py').write_text('value = 3\n')
+        os.utime(self.root / 'app.py', ns=(info.st_atime_ns, info.st_mtime_ns))
+        changed = G.gather(str(self.root))
+        self.assertFalse(changed['cache']['checks']['offchain']['hit'])
+        self.assertTrue(changed['cache']['checks']['pending_cascade']['hit'])
+        config = self.root / 'memory/aidp-config.yaml'
+        config.write_text('cicd:\n  provider: none\ncommit_gate:\n  enabled: false\n')
+        changed = G.gather(str(self.root))
+        self.assertFalse(changed['commit_gate_enabled'])
+        self.assertFalse(changed['cache']['checks']['config']['hit'])
+        self.assertTrue(changed['cache']['checks']['pending_cascade']['hit'])
+        self.assertTrue(changed['cache']['checks']['offchain']['hit'])
+
+    def test_head_change_does_not_invalidate_unrelated_checkers(self):
+        G.gather(str(self.root))
+        _git(str(self.root), 'commit', '--allow-empty', '-qm', 'metadata-only head')
+        result = G.gather(str(self.root))
+        for name in ('config', 'template', 'pending_cascade', 'id_allocation'):
+            self.assertTrue(result['cache']['checks'][name]['hit'], name)
+
+    def test_authorization_revision_refreshes_live_actions_without_rechecking_code(self):
+        from unittest import mock
+        import entry_context as entry
+        import development_scope
+        first = self.context()
+        (self.root / 'app.py').write_text('value = 2\n')
+        with mock.patch.object(development_scope, 'analyze_changes', wraps=development_scope.analyze_changes) as analyze:
+            G.gather(str(self.root), execution_context=first['execution_context'])
+            before = analyze.call_count
+            revised = entry.revise_context(self.root, first['execution_context'], additional_grants=['deploy'],
+                authorization_source={'kind': 'user-text', 'request_id': 'deploy-grant', 'text': '也允许部署'})
+            data = G.gather(str(self.root), execution_context=revised['execution_context'])
+            self.assertEqual(analyze.call_count, before)
+            self.assertTrue(data['offchain']['deploy'])
+        with self.assertRaises(ValueError):
+            G.gather(str(self.root), execution_context=first['context'])
+        plain = entry.resolve_context(self.root, 'sprint-dev', version='V1', write_set=['app.py'])
+        readonly = G.gather(str(self.root), execution_context=plain['execution_context'])
+        self.assertIn('commit', readonly['offchain']['not_requested'])
+        process, denied = _run_gate(str(self.root), '--execution-context', plain['execution_context'], '--quiet')
+        self.assertEqual(process.returncode, 5, process.stdout + process.stderr)
+        self.assertEqual(denied['status'], 'NOT_AUTHORIZED')
+        self.assertFalse(denied['executed'])
+
+    def test_plain_implementation_reads_gate_without_commit_but_still_needs_tests(self):
+        import entry_context as entry
+        plain = entry.resolve_context(self.root, 'sprint-dev', version='V1', write_set=['app.py'])
+        (self.root / 'app.py').write_text('value = 2\n')
+        facts = G.gather(str(self.root), execution_context=plain['execution_context'])
+        self.assertIn('commit', facts['offchain']['not_requested'])
+        static = entry.run_static(self.root, plain['execution_context'],
+            [sys.executable, '-B', '-c', "import ast; ast.parse(open('app.py').read())"], inputs=['app.py'])
+        completed = entry.complete_context(self.root, plain['execution_context'], static_evidence=static['evidence_file'])
+        self.assertFalse(completed['completed'], completed)
+        self.assertEqual(completed['checks']['commit'], 'NOT_REQUESTED')
+        self.assertNotEqual(completed['checks']['related-test'], 'NOT_REQUESTED')
+
+    def test_historical_debt_outside_task_does_not_block_current_gate(self):
+        old = self.root / 'docs/design/detail/V0/_开发期设计增量.md'
+        current = self.root / 'docs/design/detail/V1/_开发期设计增量.md'
+        for path in (old, current):
+            mkfile(str(path), '## 待级联\nmalformed historical line\nsecond historical line\n')
+        _git(str(self.root), 'add', 'docs')
+        _git(str(self.root), 'commit', '-qm', 'historical ledgers')
+        task = self.context()
+        (self.root / 'app.py').write_text('value = 2\n')
+        result = G.gather(str(self.root), execution_context=task['execution_context'])
+        self.assertNotIn('cascade-unparsed', G.debt_items(result))
+        self.assertEqual(result['pending_cascade']['files'], [])
+        self.assertTrue(result['pending_cascade']['diagnostics'])
+        # 裸对话也只检查实际变动版本，不强制清理历史。
+        self.assertNotIn('cascade-unparsed', G.debt_items(G.gather(str(self.root))))
+
+    def test_pushed_commit_without_pipeline_has_no_cicd_debt_or_provider_probe(self):
+        from unittest import mock
+        import cicd_providers
+        with tempfile.TemporaryDirectory(prefix='aidp-gate-remote-') as remote:
+            subprocess.run(['git', 'init', '--bare', '-q', remote], check=True, capture_output=True)
+            _git(str(self.root), 'remote', 'add', 'origin', remote)
+            (self.root / 'app.py').write_text('value = 2\n')
+            _git(str(self.root), 'add', 'app.py')
+            _git(str(self.root), 'commit', '-qm', 'business change')
+            branch = _git(str(self.root), 'symbolic-ref', '--short', 'HEAD').stdout.strip()
+            pushed = _git(str(self.root), 'push', '-u', 'origin', branch)
+            self.assertEqual(pushed.returncode, 0, pushed.stderr)
+            config = self.root / 'memory/aidp-config.yaml'
+            for pipelines in ('{}', '{test: ""}', '{test: "   "}', '{test: null}'):
+                with self.subTest(pipelines=pipelines):
+                    config.write_text('cicd:\n  provider: github-actions\n  pipelines: ' + pipelines + '\n')
+                    with (mock.patch.object(cicd_providers, 'get_provider', side_effect=AssertionError('provider probe')),
+                          mock.patch.object(G, '_head_has_formal_change', side_effect=AssertionError('unnecessary classification'))):
+                        result = G.pending_cicd(str(self.root))
+                    self.assertFalse(result['applicable'])
+                    self.assertFalse(result['pending'])
+                    self.assertTrue(result['configuration_degraded'])
+                    self.assertFalse(result['deployment_verified'])
+                    self.assertNotEqual(result['status'], 'PASS')
+            import entry_context as entry
+            config.write_text('cicd:\n  provider: github-actions\n  pipelines: {}\n')
+            task = entry.resolve_context(self.root, 'sprint-dev', version='V1', write_set=['app.py'],
+                additional_grants=['deploy'], authorization_source={
+                    'kind': 'user-text', 'request_id': 'explicit-deploy', 'text': '部署并核验真实回执'})
+            gate = G.gather(str(self.root), execution_context=task['execution_context'])
+            self.assertTrue(gate['offchain']['deploy'])
+            self.assertFalse(gate['pending_cicd']['pending'])
+            static = entry.run_static(self.root, task['execution_context'],
+                [sys.executable, '-B', '-c', "import ast; ast.parse(open('app.py').read())"], inputs=['app.py'])
+            # 默认 related-test 是完成门的一部分：先拿到真实相关测试 PASS，才能验证 deploy 回执门本身。
+            blocked = entry.complete_context(self.root, task['execution_context'], static_evidence=static['evidence_file'])
+            self.assertFalse(blocked['completed'])
+            self.assertNotIn('deploy', blocked.get('pending_actions', []))
+            (self.root / 'test_app_unit.py').write_text(
+                'import unittest\nclass T(unittest.TestCase):\n def test_v(self):\n  self.assertIn("value", open("app.py").read())\n')
+            import json as _json, subprocess as _sp
+            scripts = os.path.dirname(os.path.abspath(G.__file__))
+            runners = _json.dumps([{'cwd': '.', 'suffixes': ['.py'], 'argv': [sys.executable, '-B', '{tests}']}])
+            scope_json = _sp.run([sys.executable, os.path.join(scripts, 'test_scope.py'), '--root', str(self.root),
+                '--execution-context', task['execution_context'], '--runners-json', runners, '--json'],
+                capture_output=True, text=True, check=True).stdout
+            scope = _json.loads(scope_json.strip().splitlines()[-1])
+            scope_path = os.path.join(os.path.dirname(task['execution_context']), 'scope.json')
+            with open(scope_path, 'w') as handle:
+                handle.write(_json.dumps(scope))
+            ran = _sp.run([sys.executable, os.path.join(scripts, 'test_ledger.py'), 'run-scope', '--root', str(self.root),
+                '--execution-context', task['execution_context'], '--scope-file', scope_path, '--env-id', 'fixture'],
+                capture_output=True, text=True)
+            self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+            run = _json.loads(ran.stdout.strip().splitlines()[-1])
+            completion = entry.complete_context(self.root, task['execution_context'],
+                static_evidence=static['evidence_file'], scope_file=scope_path,
+                scope_hash=scope['scope_hash'], env_id='fixture', run_ids=run['run_ids'])
+            self.assertFalse(completion['completed'])
+            self.assertIn('deploy', completion['pending_actions'])
+            config.write_text('cicd:\n  provider: github-actions\n  pipelines: {test: deploy-test.yml}\n')
+            with mock.patch.object(G, '_head_has_formal_change', return_value=True):
+                configured = G.pending_cicd(str(self.root))
+            self.assertTrue(configured['applicable'])
+            self.assertTrue(configured['pending'])
+            self.assertIn('cicd-push-pending', G.debt_items({'pending_cicd': configured}))
+
+    def test_cicd_expiry_and_deploy_record_invalidate_only_cicd(self):
+        from unittest import mock
+        from datetime import datetime
+        (self.root / 'memory/aidp-config.yaml').write_text(
+            'cicd:\n  provider: github-actions\n  pipelines: {test: deploy-test.yml}\n')
+        _git(str(self.root), 'branch', 'upstream-fixture', 'HEAD')
+        branch = _git(str(self.root), 'symbolic-ref', '--short', 'HEAD').stdout.strip()
+        _git(str(self.root), 'config', f'branch.{branch}.remote', '.')
+        _git(str(self.root), 'config', f'branch.{branch}.merge', 'refs/heads/upstream-fixture')
+        head = _git(str(self.root), 'rev-parse', 'HEAD').stdout.strip()
+        stamp = 1800000000
+        record = {'commit': head, 'classified_at': datetime.fromtimestamp(stamp).isoformat(),
+                  'formal_code_change': True}
+        baseline = self.root / 'memory/.sprint-autopilot-baseline.json'
+        baseline.write_text(json.dumps({'versions': {'V1': {'standalone_pushes': [record]}}}))
+        with mock.patch('time.time', return_value=stamp + 1):
+            first = G.gather(str(self.root))
+            same = G.gather(str(self.root))
+        self.assertFalse(first['pending_cicd']['pending'])
+        self.assertTrue(same['cache']['checks']['pending_cicd']['hit'])
+        with mock.patch('time.time', return_value=stamp + G.TERMINAL_GRACE_SECONDS):
+            expired = G.gather(str(self.root))
+        self.assertTrue(expired['pending_cicd']['pending'])
+        self.assertFalse(expired['cache']['checks']['pending_cicd']['hit'])
+        self.assertTrue(expired['cache']['checks']['pending_cascade']['hit'])
+        record['deploy_terminal'] = 'success'
+        baseline.write_text(json.dumps({'versions': {'V1': {'standalone_pushes': [record]}}}))
+        delivered = G.gather(str(self.root))
+        self.assertFalse(delivered['pending_cicd']['pending'])
+        self.assertFalse(delivered['cache']['checks']['pending_cicd']['hit'])
+        self.assertTrue(delivered['cache']['checks']['pending_cascade']['hit'])
+        self.assertTrue(delivered['cache']['checks']['offchain']['hit'])
+        self.assertTrue(delivered['cache']['checks']['cascade_bypass']['hit'])
+
+    def test_new_definition_file_invalidates_allocation_but_historical_duplicates_are_diagnostic(self):
+        from alloc_id import allocate
+        old = self.root / 'docs/requirements/V0/old.md'
+        mkfile(str(old), '# REQ-001 old\n# REQ-001 duplicate\n')
+        _git(str(self.root), 'add', 'docs')
+        _git(str(self.root), 'commit', '-qm', 'historical duplicate')
+        allocate(self.root, 'REQ', 1, 'fixture', version='V1')
+        first = G.gather(str(self.root))
+        self.assertNotIn('id-allocation-invalid', G.debt_items(first))
+        self.assertTrue(first['id_allocation']['diagnostics'])
+        self.assertTrue(G.gather(str(self.root))['cache']['checks']['id_allocation']['hit'])
+        added = self.root / 'docs/requirements/V1/new.md'
+        mkfile(str(added), '# REQ-002 new\n# REQ-002 duplicate\n')
+        changed = G.gather(str(self.root))
+        self.assertFalse(changed['cache']['checks']['id_allocation']['hit'])
+        self.assertIn('id-allocation-invalid', G.debt_items(changed))
+        added.unlink()
+        self.assertNotIn('id-allocation-invalid', G.debt_items(G.gather(str(self.root))))
+
+    def test_input_change_during_checker_is_not_cached_as_pass(self):
+        from unittest import mock
+        ledger = self.root / 'docs/design/detail/V1/_开发期设计增量.md'
+        mkfile(str(ledger), '## 待级联\n')
+        original = G.pending_cascade
+        def mutate(*args, **kwargs):
+            result = original(*args, **kwargs)
+            ledger.write_text('## 待级联\nbroken\nanother broken\n')
+            return result
+        with mock.patch.object(G, 'pending_cascade', side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, 'TREE_CHANGED'):
+                G.gather(str(self.root))
+        self.assertIn('cascade-unparsed', G.debt_items(G.gather(str(self.root))))
+
+    def test_parent_permission_is_checked_even_when_all_inputs_cached(self):
+        import entry_context as entry
+        parent = entry.resolve_context(self.root, 'sprint-autopilot', version='V1', write_set=['app.py'],
+            authorization_source={'kind': 'explicit-command', 'command': '/sprint-autopilot', 'request_id': 'wide'})
+        child = entry.fork_context(self.root, parent['execution_context'], '001')
+        G.gather(str(self.root), execution_context=child['execution_context'])
+        entry.resolve_autopilot_root(self.root, 'V1', execution_context=parent['execution_context'],
+            authorization_source={'kind': 'explicit-command', 'command': '/sprint-autopilot',
+                                  'request_id': 'narrow', 'options': ['--skip-dev']})
+        with self.assertRaises(ValueError):
+            G.gather(str(self.root), execution_context=child['execution_context'])
+
+
 def main():
+    incremental = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(IncrementalGateTests))
     test_staged_path_allowlist()
     test_id_allocation_gate()
     test_non_git_boundaries()
@@ -863,7 +1169,7 @@ def main():
     test_standalone_release_pending_base()
     test_autopilot_flow_contracts()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed / {_skipped} skipped ══")
-    return 1 if _failed else 0
+    return 1 if _failed or not incremental.wasSuccessful() else 0
 
 
 if __name__ == "__main__":

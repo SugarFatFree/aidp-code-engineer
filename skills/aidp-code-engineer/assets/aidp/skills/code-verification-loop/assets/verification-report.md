@@ -24,7 +24,7 @@ Important 总数 = 阻断 Important + 非阻断 Important；loop 阻断项总数
 
 | 维度 | 结论 | Critical | Important（阻断） | Important（非阻断） | Suggestion | 问题编号/依据 |
 | :- | :- | :- | :- | :- | :- | :- |
-| {维度编号} | {Pass / Fail / 不适用 / 未执行（原因）} | {C} | {Ib} | {In} | {S} | {问题编号或核验依据} |
+| {维度编号} | {Pass / Fail / 不适用 / 未核验（原因）} | {C} | {Ib} | {In} | {S} | {问题编号或核验依据} |
 
 逐维度填完并遵守门控留行规则；存在 Critical 或 Important（含非阻断）即 Fail，只有 Suggestion 可记 Pass。未执行不计 Pass/Fail，按 SKILL 登记 Important「本项未核验」。下方各检查项状态必须与本汇总一致，不能保留模板默认的全绿。
 
@@ -35,14 +35,14 @@ Important 总数 = 阻断 Important + 非阻断 Important；loop 阻断项总数
 > 非零退出先按维度 0 判据分类，⛔ 不得仅凭非零退出一律判 Critical：
 > - 确认的增量代码错误按对应级别登记（新增类型错误 / 改动文件 eslint error = 🔴 Critical）：`mode=loop` 时直接回 Agent1 修复、不往下走 15 维度；`mode=verify-only` 时登记后**仍跑完其余维度**（单轮交付完整清单）；
 > - 改动前基线已有的错误记存量，不计本轮；
-> - 工具不可用或基线无效：记「未执行（原因）」+ Important「本项未核验」，结论不通过；这不是代码缺陷，不派修复，两种 mode 都**不短路、仍跑完其余维度**。⛔ 不得写成「跳过」或「不适用」（`不适用` 只用于项目本无 TS/Vue 或无 eslint 配置）。
+> - 工具不可用或基线无效：记「未核验（原因）」+ Important「本项未核验」，结论不通过；这不是代码缺陷，不派修复，两种 mode 都**不短路、仍跑完其余维度**。⛔ 不得写成「跳过」或「不适用」（`不适用` 只用于项目本无 TS/Vue 或无 eslint 配置）。
 >
 > **不得**改用会联网安装的裸 `npx`，也不得升级为全量 build。
 
 | 项 | 命令 | 结果 |
 | :- | :- | :- |
-| 类型检查 | `npx --no-install vue-tsc --noEmit` / `tsc --noEmit` | ✅ 无增量错误 / 🔴 增量 N 处 / 未执行（工具不可用：…）/ 未执行（基线无效） / 不适用（无 TS/Vue） |
-| lint（本次改动文件） | `npx --no-install eslint <改动文件>` | ✅ 无 error / 🟡 N 个 warning（不阻断） / 🔴 N 个 error / 未执行（工具不可用：…） / 不适用（无 eslint 配置） |
+| 类型检查 | `npx --no-install vue-tsc --noEmit` / `tsc --noEmit` | ✅ 无增量错误 / 🔴 增量 N 处 / 未核验（工具不可用：…）/ 未核验（基线无效） / 不适用（无 TS/Vue） |
+| lint（本次改动文件） | `npx --no-install eslint <改动文件>` | ✅ 无 error / 🟡 N 个 warning（不阻断） / 🔴 N 个 error / 未核验（工具不可用：…） / 不适用（无 eslint 配置） |
 | Java / Spring | 本档不做（`mvn compile` 有 lifecycle 副作用，见 SKILL.md 维度 0） | ⏭️ N/A |
 
 **存量基线（取自改动前）：** 类型错误存量 __ 处（基线 ref：__）—— 本轮只对**增量**判 Critical；取不到改动前基线时本项写「基线无效，本项未核验」，并登记 Important。
@@ -114,19 +114,19 @@ Important 总数 = 阻断 Important + 非阻断 Important；loop 阻断项总数
 
 ---
 
-## 4b. 实现偏离设计（维度 13·外部脚本门控；被测项目无 `{{AIDP_HOME}}/scripts/check_design_anchor.py` 或未取到「验收版本号」时标「不适用」跳过、**仍留行**）
+## 4b. 实现偏离设计（维度 13·外部脚本门控；被测项目无 `{{AIDP_HOME}}/scripts/check_design_anchor.py` 或未取到「验收版本号」时标「未核验」、**仍留行**）
 
 > 回检脚本（**在被测项目侧、不在本 SKILL**）：
 > `python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version <版本号> --json`
 > `{{AIDP_HOME}}` 由安装方渲染、相对被测项目根（命令在被测项目根下执行），见 [`../SKILL.md`](../SKILL.md)「运行路径约定」；下同
 > ⚠️ **`--version` 是必填的带值参数**，与维度 10/12 的「只要 `--json`」不同；漏传会落 `exit 2`（入参错），
 > 而 `exit 2` 会被当成「修正参数后重跑」，这一档就**既不算过也不算不过**。⛔ 不得自拟版本号把脚本跑绿。
-> **本行不得删除。** 未下发脚本 / 未取到版本号时，把状态栏填成「⏭️ 不适用（未下发 `check_design_anchor.py`）」
+> **本行不得删除。** 未下发脚本 / 未取到版本号时，把状态栏填成「⏭️ 未核验（工具缺失：未下发 `check_design_anchor.py`）」
 > 或「⏭️ 不适用（未取到 `--version` 值，已在报告结论段向调用方点名索要）」，**不是**留空、更**不是**整节删掉。
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
-| 设计字段/常量落点 | ✅ 无未落点锚点 / 🟡 {N} 项已交代 / ⏭️ 不适用（{原因}） | {`check_design_anchor.py --version {版本号} --json` 结果；每个未落点锚点须写明处置：①补齐实现 ②改设计并按约定 22 级联更新 ③行内 `design-anchor-ignore: <理由>` 显式豁免} |
+| 设计字段/常量落点 | ✅ 无未落点锚点 / 🟡 {N} 项已交代 / ⏭️ 未核验（{原因}） | {`check_design_anchor.py --version {版本号} --json` 结果；每个未落点锚点须写明处置：①补齐实现 ②改设计并按约定 22 级联更新 ③行内 `design-anchor-ignore: <理由>` 显式豁免} |
 
 ---
 
@@ -165,7 +165,7 @@ python3 <SKILL_DIR>/scripts/check_vue_style_preprocessor.py <改动的 .vue 列�
 
 ---
 
-## 6b. 样式重构编译等价性对照（维度 14·改动了样式时才触发；未改样式 / 预处理器未安装时标「不适用」跳过、**仍留行**）
+## 6b. 样式重构编译等价性对照（维度 14·改动了样式时才触发；未改样式 / 预处理器未安装时标「未核验」、**仍留行**）
 
 > ⚠️ **编号是 `6b` 而不是往后顺延**——刻意不动 7~14 的既有编号（引用方按编号引用本模板，顺延会让每一条引用整体位移）。**本行不得删除**：维度 14 在 SKILL.md 里要求「报告仍留行」，删掉这一节等于那句承诺无处落地。
 >
@@ -181,7 +181,7 @@ python3 <SKILL_DIR>/scripts/check_css_equivalence.py /tmp/old.css /tmp/new.css -
 
 | 检查项 | 结果 | 说明 |
 | :- | :-: | :- |
-| 基线有效（非空、无「未执行」信号） | ⬜ | 无效 = `exit 2` **拒绝比较**；报告写「基线无效，本项未核验」，**不是通过** |
+| 基线有效（非空、无「未核验」信号） | ⬜ | 无效 = `exit 2` **拒绝比较**；报告写「基线无效，本项未核验」，**不是通过** |
 | 编译产物零差异 | ⬜ | 有差异 = 🔴 Critical，除非**逐条**由本次改动意图解释并写进下方说明 |
 | 仅顺序变化 | ⬜ | 🟡 Important——CSS 有**层叠**语义，需逐条确认这些块之间没有覆盖关系 |
 | 公共样式文件的文档注释用 `//` 而非 `/* */` | ⬜ | 块注释**会被编译进产物**（实测污染 29 行）；机器信号 = `--json` 的 `comments_added: true`（产物注释块数增多，🟡 Important、占 exit 1） |
@@ -221,11 +221,11 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --change
 
 ---
 
-## 8. UI 还原度确定性检查（维度 10·约定39-R2/R3/R10；被测项目无 `{{AIDP_HOME}}/scripts/check_ui_fidelity.py` 时标「不适用」跳过、**仍留行**）
+## 8. UI 还原度确定性检查（维度 10·约定39-R2/R3/R10；被测项目无 `{{AIDP_HOME}}/scripts/check_ui_fidelity.py` 时标「未核验」、**仍留行**）
 
 > ⛔ **本 SKILL 不得自带同判据实现**——脚本由 AIDP 脚手架下发到被测项目侧。退出码 `2` 是入参/环境错、
-> **不是维度违规**（重跑仍失败记「未执行（原因）」）。`fidelity-ignore` 豁免只对 R2/R3 有效，**R10 零豁免**；只写规则号不写原因的豁免须报 Important。
-> 判「未下发」须附解析后的绝对路径与 `ls` 证据；**未下发时 R10 行仍须填人工 grep 兜底结果**（导出方法体内 `pageNo`/`pageSize`/`PageHelper`/`Pageable`/`limit`），R2/R3 填「⏭️ 不适用（未下发）」。
+> **不是维度违规**（重跑仍失败记「未核验（原因）」）。`fidelity-ignore` 豁免只对 R2/R3 有效，**R10 零豁免**；只写规则号不写原因的豁免须报 Important。
+> 判「未下发」须附解析后的绝对路径与 `ls` 证据；**未下发时 R10 行仍须填人工 grep 兜底结果**（导出方法体内 `pageNo`/`pageSize`/`PageHelper`/`Pageable`/`limit`），R2/R3 填「⏭️ 未核验（工具缺失）」。
 
 | 规则 | 状态 | 说明 |
 |--------|------|------|
@@ -256,9 +256,9 @@ python3 <SKILL_DIR>/scripts/check_request_channel_url.py <前端目录> --change
 > **⚠️ 全程静态**：本节查的是**代码里有没有打日志的语句、打了什么、脱敏在哪一层**，
 > ⛔ 不是把服务跑起来看日志输出（跑起来读实际日志归 `/sprint-aiauto-test`）。
 >
-> **双重门控，两种情形都标「⏭️ 不适用 + 原因」并保留本节**：① 被测项目未随脚手架下发
-> `{{AIDP_HOME}}/scripts/check_upstream_call_log.py`；② 非 JVM 栈（脚本只扫 `.java`/`.kt`，
-> `outbound_files: 0`）。**不得整节删掉**——那是维度 9 的待遇，本节留行才能让阅读者知道
+> **双重门控，两种情形都保留本节**：① 被测项目未随脚手架下发
+> `{{AIDP_HOME}}/scripts/check_upstream_call_log.py`（标「⏭️ 未核验（工具缺失）」）；② 非 JVM 栈（脚本只扫 `.java`/`.kt`，
+> `outbound_files: 0`，标「⏭️ 不适用 + 原因」）。**不得整节删掉**——那是维度 9 的待遇，本节留行才能让阅读者知道
 > "这一档没跑过"。**退出码 2 是入参/环境错，不是维度违规。**
 
 ```bash
@@ -284,8 +284,8 @@ python3 {{AIDP_HOME}}/scripts/check_upstream_call_log.py --json
 
 > ⚠️ **编号是 `10b` 而不是往后顺延**——刻意不动 11~14 的既有编号（引用方按编号引用本模板，顺延会让每一条引用整体位移，与 `4b` / `6b` 同款处置）。**本行不得删除**：维度 15 在 SKILL.md 里要求「报告仍留行」，删掉这一节等于那句承诺无处落地。
 >
-> **两种跳过情形都标「⏭️ 不适用 + 原因」并保留本节**：① 被测项目未随脚手架下发
-> `{{AIDP_HOME}}/scripts/check_sibling_family.py`；② 本轮确实没有任何同族增量项。
+> **两种跳过情形都保留本节**：① 被测项目未随脚手架下发
+> `{{AIDP_HOME}}/scripts/check_sibling_family.py`（机器半场标「⏭️ 未核验（工具缺失）」）；② 本轮确实没有任何同族增量项（标「⏭️ 不适用 + 原因」）。
 > ⚠️ **情形 ① 只关掉机器半场（F0~F4），15.1~15.3 的语义核对照跑**——它们不依赖脚本。
 > **退出码 2 是入参/环境错，不是维度违规。**
 

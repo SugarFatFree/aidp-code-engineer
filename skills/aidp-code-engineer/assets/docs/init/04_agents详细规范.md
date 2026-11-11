@@ -51,7 +51,7 @@ Reviewer Agent   代码审查
 | **UI** | 视觉规范、高保真原型生成、组件映射 | PRD、UI 原型代码、UI 规范约束 | UI 规范、组件映射、`docs/prototype/{version}/mockup/` 原型 | [`ui.md`](../../{{AIDP_HOME}}/agents/ui.md) |
 | **Frontend** | 前端代码实现、公共组件、API 调用层 | 详细设计、UI 规范、高保真原型、脚手架 | 前端代码（TDD + 复用公共组件） | [`frontend.md`](../../{{AIDP_HOME}}/agents/frontend.md) |
 | **Backend** | 后端代码实现、API、数据库 | API 设计、DB 设计、脚手架 | 后端代码（TDD + 分层结构） | [`backend.md`](../../{{AIDP_HOME}}/agents/backend.md) |
-| **QA** | 测试用例设计与执行、Bugfix 验证、回归测试 | 需求、验收标准、代码、bugfix 记录 | 测试用例、测试报告、bug 记录 | [`qa.md`](../../{{AIDP_HOME}}/agents/qa.md) |
+| **QA** | 测试用例设计与执行、Bugfix 验证、回归测试 | 需求、验收标准、代码、bugfix 记录 | 当前范围测试证据、终端结论、bug记录 | [`qa.md`](../../{{AIDP_HOME}}/agents/qa.md) |
 | **Reviewer** | 代码质量审查、安全性、规范性、UI 一致性 | 代码、设计文档、约束文档 | 审查报告、合并决策 | [`reviewer.md`](../../{{AIDP_HOME}}/agents/reviewer.md) |
 | **AIDP-Compliance** ★ | 范式合规检查（包住 verify.py 全部脚本 + 4 个语义维度：模板残留、事实清单 ↔ 代码、引用三角、目标 ↔ 实现背离〔仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过〕） | verify.py stdout、memory/、项目记忆文件（AGENTS.md / CLAUDE.md）、code/ 配置、事实清单 | 统一合规报告（终端 + 必要时 `docs/audit/合规检查-{YYYYMMDD}.md`） | [`aidp-compliance.md`](../../{{AIDP_HOME}}/agents/aidp-compliance.md) |
 | **Version-Auditor** ★ | 版本规划产物全量审计（8 项：A 存在性 / B 边界 / C 覆盖完整性 / D 增量一致性 / E 引用链 / F 原型覆盖度（Critical 硬门）/ G 语义变更派生完整性（约定 22 第三类，Critical 硬门）/ H 跨版本需求作废完整性（约定 34）） | 版本规划产物（requirements / design / plans / testing 等） | 审计报告 `docs/audit/{version}/version-output-audit-*.md` | [`version-auditor.md`](../../{{AIDP_HOME}}/agents/version-auditor.md) |
@@ -112,7 +112,7 @@ UI（生成 UI 规范 + 高保真原型）
 Backend + Frontend（并行实现代码）
   ↓ 交接物：代码 + 单元测试
 QA（设计测试用例 + 执行 + 发现 bug）
-  ↓ 交接物：测试报告 + bug 记录
+  ↓ 交接物：当前范围机器测试证据 + bug记录
 Backend / Frontend（修复 bug）
   ↓ 交接物：修复代码
 QA（回归验证）

@@ -49,7 +49,10 @@ class ScopePerformanceTests(unittest.TestCase):
         return target
 
     def plan(self, runners=None, context=None):
-        plan = scope.derive(self.root, '' if context else self.base, runners or self.runners,
+        owned = [] if context else [p for p in scope.git_paths(self.root, 'diff', '--name-only', '--no-renames', '-z', self.base)
+                                     + scope.git_paths(self.root, 'ls-files', '--others', '--exclude-standard', '-z')
+                                     if not p.startswith('memory/')]
+        plan = scope.derive(self.root, '' if context else self.base, runners or self.runners, owned,
                             execution_context=context)
         path = self.write('memory/.aidp/scope.json', json.dumps(plan))
         return path, plan
@@ -72,6 +75,63 @@ class ScopePerformanceTests(unittest.TestCase):
         git(self.root, 'commit', '-qam', 'add-module')
         self.base = git(self.root, 'rev-parse', 'HEAD')
         return self.root / 'backend'
+
+    def test_trusted_fingerprint_reuses_reads_and_detects_metadata_adversaries(self):
+        import project_inventory as inventory
+        self.assertTrue(hasattr(inventory, 'fingerprint_file'), '共享可信内容指纹接口尚未提供')
+        source = self.root / 'src/app.py'
+        with patch.object(ledger, 'file_hash', wraps=ledger.file_hash) as reader:
+            first = inventory.fingerprint_file(source, reader=ledger.file_hash)
+            second = inventory.fingerprint_file(source, previous=first, reader=ledger.file_hash)
+            self.assertEqual(reader.call_count, 1)
+            self.assertFalse(second['read'])
+            before = source.stat()
+            source.write_text('value = 2\n')
+            os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+            changed = inventory.fingerprint_file(source, previous=first, reader=ledger.file_hash)
+            self.assertNotEqual(changed['hash'], first['hash'])
+            replacement = self.write('src/replacement', 'value = 3\n')
+            os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+            replacement.replace(source)
+            replaced = inventory.fingerprint_file(source, previous=changed, reader=ledger.file_hash)
+            self.assertNotEqual(replaced['hash'], changed['hash'])
+            source.unlink()
+            self.assertIsNone(inventory.fingerprint_file(source, previous=replaced)['hash'])
+            source.write_text('value = 4\n')
+            self.assertNotEqual(inventory.fingerprint_file(source, previous=replaced)['hash'], replaced['hash'])
+
+    def test_fingerprint_symlink_target_aba_and_unreliable_filesystem(self):
+        import project_inventory as inventory
+        self.assertTrue(hasattr(inventory, 'fingerprint_file'), '共享可信内容指纹接口尚未提供')
+        source = self.root / 'src/app.py'
+        link = self.root / 'link.py'
+        link.symlink_to(source)
+        first = inventory.fingerprint_file(link)
+        source.write_text('value = 8\n')
+        self.assertNotEqual(first['hash'], inventory.fingerprint_file(link, previous=first)['hash'])
+        def aba(path):
+            original = path.read_bytes()
+            path.write_text('value = 9\n')
+            result = ledger.file_hash(path)
+            path.write_bytes(original)
+            return result
+        with self.assertRaisesRegex(inventory.InventoryError, '变化|CHANGED'):
+            inventory.fingerprint_file(source, reader=aba)
+        with patch.object(inventory, 'fingerprint_token', return_value=None), patch.object(ledger, 'file_hash', wraps=ledger.file_hash) as reader:
+            first = inventory.fingerprint_file(source, reader=ledger.file_hash)
+            inventory.fingerprint_file(source, previous=first, reader=ledger.file_hash)
+            self.assertEqual(reader.call_count, 2, '不可靠文件系统必须回退实际内容读取')
+
+    def test_installed_skill_detection_requires_known_install_root_and_marker(self):
+        import project_inventory as inventory
+        self.assertTrue(hasattr(inventory, 'installed_skill_package'))
+        self.write('skills/helper/SKILL.md', '# helper\n')
+        self.write('src/skills/helper/SKILL.md', '# business\n')
+        self.write('.agents/skills/checker/SKILL.md', '# checker\n')
+        self.assertEqual(inventory.installed_skill_package(self.root, 'skills/helper/main.py'), 'skills/helper')
+        self.assertEqual(inventory.installed_skill_package(self.root, '.agents/skills/checker/main.py'), '.agents/skills/checker')
+        self.assertIsNone(inventory.installed_skill_package(self.root, 'src/skills/helper/main.py'))
+        self.assertIsNone(inventory.installed_skill_package(self.root, 'skills/unmarked/main.py'))
 
     def test_batch_and_frozen_analysis_have_bounded_calls(self):
         for i in range(12):
@@ -125,11 +185,12 @@ class ScopePerformanceTests(unittest.TestCase):
         self.assertIn('config/unmapped.json', plan['changed'])
         self.assertNotIn('config/settings.yaml', plan['unmapped'])
 
-    def test_unmapped_resource_has_empty_minor_not_pass(self):
+    def test_unmapped_resource_is_unverified_gap_not_pass(self):
         self.write('config/only.json', '{}\n')
         path, plan = self.plan()
         out, code = ledger.run_scope(self.root, path, 'resource')
-        self.assertEqual(out['status'], 'EMPTY'); self.assertTrue(out['minor'])
+        self.assertEqual(out['status'], 'UNVERIFIED'); self.assertEqual(code, 2)
+        self.assertEqual(out['unmapped'], ['config/only.json'])
         self.assertEqual(out['run_ids'], []); self.assertEqual(plan['runs'], [])
 
     def test_submodule_formal_discovery_head_dirty_runtime_and_inputs(self):
@@ -150,7 +211,11 @@ class ScopePerformanceTests(unittest.TestCase):
         self.write('backend/src/memory/value.json', '{}\n')
         self.assertNotEqual(changed['hash'], ledger.tree_snapshot(self.root)['hash'])
         git(child, '-c', 'user.name=test', '-c', 'user.email=t@example.invalid', 'commit', '--allow-empty', '-qm', 'head-only')
-        self.assertNotEqual(ledger.tree_snapshot(self.root)['files']['backend/@gitlink'], changed['files']['backend/@gitlink'])
+        after_commit = ledger.tree_snapshot(self.root)
+        self.assertEqual(after_commit['files']['backend/@gitlink'], changed['files']['backend/@gitlink'],
+                         '仅提交SHA变化不使相同内容证据失效')
+        self.assertNotEqual(after_commit['gitlinks']['backend']['head'], changed['gitlinks']['backend']['head'],
+                            '真实Git HEAD变化仍作为旁路事实保留')
 
     def test_nested_gitlink_and_missing_checkout_are_fail_closed(self):
         child = self.module()
@@ -226,14 +291,16 @@ print(json.dumps(out)); sys.exit(status)
             location.write_text(''.join(json.dumps(r)+'\n' for r in broken))
             with self.assertRaises(ledger.LedgerError): ledger.load(self.root)
 
-    def test_static_default_cannot_execute_even_direct_run(self):
+    def test_default_development_runs_related_tests_but_never_full(self):
         context = self.context(grants=())
         self.write('src/app.py', 'value = 2\n')
         path, _ = self.plan(context=context)
+        # 开发默认允许本任务相关单测；full-regression 仍不在默认授权内。
+        out, code = ledger.run_scope(self.root, path, 'fixture', execution_context=context)
+        self.assertEqual((out['status'], code), ('PASS', 0))
         from execution_policy import PolicyError
-        with self.assertRaises(PolicyError): ledger.run_scope(self.root, path, 'fixture', execution_context=context)
-        with self.assertRaises(PolicyError): ledger.run(self.root, '.', 'targeted', 'fixture', [sys.executable, '-c', 'pass'], execution_context=context)
-        self.assertFalse(Path(ledger.ledger_path(self.root)).exists())
+        with self.assertRaises((PolicyError, ledger.LedgerError)):
+            ledger.run(self.root, '.', 'full', 'fixture', [sys.executable, '-c', 'pass'], execution_context=context)
 
     def test_selection_and_process_budgets_block_whole_batch(self):
         from execution_policy import PolicyError
@@ -403,23 +470,16 @@ print(json.dumps(out)); sys.exit(status)
         self.assertEqual(second['run_ids'], first['run_ids'])
         self.assertTrue(second['runs'][0]['reused'])
 
-    def test_explicit_full_grant_allows_light_full_with_separate_build_ledger(self):
-        from execution_policy import PolicyError
-        context = self.context(grants=('full-regression',))
+    def test_light_full_is_rejected_even_with_full_grant_and_separate_ledger(self):
+        # 授权层：用户文本/--grant 直接要全量在 resolve 阶段即被拒；账本层仍须独立拒绝无边界 full。
+        with self.assertRaisesRegex(Exception, 'autopilot'):
+            self.context(grants=('full-regression',))
+        context = self.context()
         build = Path(self.tmp.name) / 'build-ledger'
-        result, code = ledger.run(self.root, '.', 'full', 'build', [sys.executable, '-B', '-c', 'pass'],
-                                  ledger_root=build, execution_context=context)
-        self.assertEqual(code, 0); self.assertEqual(result['status'], 'PASS')
-        self.assertEqual(result['scope'], 'full')
-        self.assertEqual(result['execution_context']['mode'], 'light')
-        self.assertFalse(Path(ledger.ledger_path(self.root)).exists())
-        self.assertEqual(ledger.load(self.root, build)[0]['run_id'], result['run_id'])
-        denied = self.context(grants=('related-test',))
-        with self.assertRaises(PolicyError):
+        with self.assertRaisesRegex(ledger.LedgerError, '无版本边界 full 已禁用'):
             ledger.run(self.root, '.', 'full', 'build', [sys.executable, '-B', '-c', 'pass'],
-                       ledger_root=build, execution_context=denied)
-        with self.assertRaises(ledger.LedgerError):
-            ledger.run(self.root, '.', 'sprint', 'build', [sys.executable, '-B', '-c', 'pass'], execution_context=denied)
+                       ledger_root=build, execution_context=context)
+        self.assertFalse(Path(ledger.ledger_path(self.root)).exists())
 
     def test_aba_analysis_read_is_rejected_even_with_equal_tree_hashes(self):
         self.write('src/app.py', 'value = 2\n')
@@ -478,11 +538,12 @@ print(json.dumps(out)); sys.exit(status)
         frozen = entry_context.load_context(self.root, context)
         self.assertTrue(frozen['initial_git_files'])
         self.write('src/app.py', 'value = 2\n')
-        with patch.object(entry_context, 'initial_hash', wraps=entry_context.initial_hash) as initial:
+        original = entry_context._FingerprintSession.initial
+        with patch.object(entry_context._FingerprintSession, 'initial', autospec=True, side_effect=original) as initial:
             _, plan = self.plan(context=context)
         self.assertEqual(plan['changed'], ['src/app.py'])
         self.assertEqual(plan['tests'], ['tests/test_app.py'])
-        self.assertEqual({call.args[2] for call in initial.call_args_list}, {'src/app.py'})
+        self.assertEqual({call.args[1] for call in initial.call_args_list}, {'src/app.py'})
         self.assertEqual(initial.call_count, 1, '干净源码不得逐文件读取冻结Git blob')
 
     def test_light_lazy_baseline_detects_committed_submodule_head_change(self):
@@ -574,30 +635,6 @@ print(json.dumps(out)); sys.exit(status)
         self.assertEqual(row['exit_code'], 1)
         self.assertEqual(row['status'], 'FAIL')
         self.assertEqual(row['failure_kind'], 'TEST_FAILURE')
-
-    def test_full_default_uses_shared_hour_budget_and_reuses_after_settlement(self):
-        import entry_context
-        from execution_policy import reserve_budget
-        context = self.context(grants=('full-regression',), budget={'elapsed_seconds': 7200})
-        frozen = entry_context.load_context(self.root, context)
-        reserve_budget(self.root, frozen, 'elapsed_seconds', 3600, action='full-regression')
-        build = Path(self.tmp.name) / 'hour-build-ledger'
-        command = [sys.executable, '-B', '-c', 'pass']
-        first, code = ledger.run(self.root, '.', 'full', 'hour-build', command,
-                                 ledger_root=build, execution_context=context)
-        self.assertEqual(code, 0)
-        self.assertGreater(first['execution_timeout'], 3500)
-        self.assertLessEqual(first['execution_timeout'], 3600)
-        second, code = ledger.run(self.root, '.', 'full', 'hour-build', command,
-                                  ledger_root=build, execution_context=context)
-        self.assertEqual(code, 0)
-        self.assertEqual(first['run_id'], second['run_id'])
-        self.assertTrue(second['reused'], '剩余时间预算变化不能迫使同树已通过证据重跑')
-        explicit, code = ledger.run(self.root, '.', 'full', 'hour-build', command, timeout=5,
-                                    ledger_root=build, execution_context=context)
-        self.assertEqual(code, 0)
-        self.assertEqual(explicit['execution_timeout'], 5)
-
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

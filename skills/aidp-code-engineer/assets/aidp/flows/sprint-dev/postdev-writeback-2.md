@@ -104,86 +104,15 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 5. 漏改的消费者点常导致下次"双前缀 404 / SSE 走错地址 / nginx 反代失效"等级联事故 —— `vcs_mode=git` 提交前用 `git diff --name-only`；`vcs_mode=none` 用 X.0.0 的本地 sha256 变更清单与事实清单「路径消费者点」表对账，缺项要么补改要么注明"无需联动"
 6. **★ 消费者点集合是"会变大"的、不止 base 改动才动本表**：Phase 1.3 Step 1「请求通道单一判据 + 消费者点登记门」在**新增请求通道**（新 composable / 工具 / `fetch`·`EventSource`·`WebSocket`）时就要往「路径消费者点」表**补登记新行**——本 Step X.6 管的是 base/context-path **改动时的联动**，二者互补。集合悄悄变大而无人登记，会让下次 base 变更漏掉新通道（双前缀 404 温床）。
 
-#### Step X.7：★ 维护配置项清单
+#### Step X.7：配置操作变化登记
 
-未在route.authorized_actions中的document记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+运行时配置原文件是权威，不复抄完整配置、不创建示例副本。日常 dev / bugfix 不生成部署 Markdown；本任务涉及配置文件或代码内动态配置注入时，把改动文件引用交 Step X.8 记入既有 `deployment_doc_pending`。变化来源：`vcs_mode=git` 取 git diff；`vcs_mode=none` 用 `sprint-{NNN}-local-before.json` 与 X.0.0 的 `sprint-{NNN}-local-changes.json` 逐文件 `sha256` 前后态判定增删改，快照缺失记 `evidence-missing`，⛔ 不得把空 Git diff 当作「无配置变更」。核对范围只取当前任务的实际变化；无可信前态就注明缺口，不扩大成全版配置审计。
 
-```bash
-EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
-python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
-  --execution-context "$EXECUTION_CONTEXT" --action document || exit $?
-```
+版本规划/正式发布集中校准时，按 `{{AIDP_HOME}}/reference/部署操作约定.md` 合并到 `docs/deployment/{version}/配置文件/增量/配置项清单.md`（配置中心变体沿现有文件）：
 
-
-**核心原则（约定 25 配置文件分层落地）**：
-- **真实配置文件是权威**（`code/.../application.yml` / `env/.env` / `nginx.conf` 等），git 跟踪即可，不在 .md 重复
-- **★ 配置项清单.md 是【增量轨】文档，只回答一件事：本版新增了什么配置、删除了什么配置**（约定 37.2）。**判定依据 / 背景论述 / 各环境对照 / 执行建议 / 风险评估一律不进本文件**——判定依据归 git 提交记录，各环境差异归 `全量/配置说明.md`（约定 25 不双写）。
-  - **⛔ 只用代码块，不做「代码块 + 下方表格」两处对照**：同一条变更写两遍必然漂移，且真正要看的被淹没。**注释直接写进代码块**（YAML 用 `#`、properties 用 `#`、conf 按各自语法），**行内注释 ≤20 字符**。
-  - **⛔ 文件清单 / 换环境必改 这类常驻信息不由本文件承载**——它们不是本版增量，开发期手工维护必然落后。由发布期约定 37 的 `全量/配置说明.md` 从**真实环境只读采集**重建。本版新增的敏感项在增量代码块里用 `# 必填·敏感` 标一下即可，发布期自动汇总。
-  - 实测收益（下游回流）：6 份增量文档 414 行 → 168 行（-59%），信息零丢失。
-- **禁止**：① 在 .md 复抄整个配置文件（再大也别贴）；② 维护 key → 示例值的全量大表（已被代码文件本身覆盖）；③ 创建 `.env.example` / `application.example.yml` 等示例副本文件（真实文件 + 差异片段已足够，示例副本会双信源歧义）
-- **★ 分层也约束两份 .md 之间（部署流程 vs 配置项清单，Step X.8 联动）**：约定 25「同一份信息只在一处维护」不仅管"配置文件 vs .md"，也管 `部署流程/部署流程.md` 与 `配置文件/增量/配置项清单.md` **两份 .md 之间不得双写配置项内容**——**配置项明细/后果/敏感项加固归本清单**；**部署流程只声明"是否需要改 + 指向本清单"**（全部有默认值 → 一句"默认即可，见清单"；确有必填 → 只列 key 名、后果归清单）。分工口诀：**流程文档讲怎么做，清单讲配什么**。
-
-**触发条件**：本 Sprint 改动了任一配置文件（`vcs_mode=git` 据 git diff；`vcs_mode=none` 据 `sprint-dev.md` 开发前 `sprint-{NNN}-local-before.json` 与 X.0.0 的 `sprint-{NNN}-local-changes.json` 逐文件 sha256 前后态，按 `path` 过滤以下模式，含新增/删除）**或新增/修改了代码内动态配置注入**。无 Git 时清单缺失是 `evidence-missing`，不得将空 Git diff 解释为「无需更新配置项清单」：
-- 后端 Spring：`code/**/application*.{yml,yaml,properties}` / `code/**/bootstrap*.{yml,yaml,properties}`
-- 后端其他：`code/**/{config,settings}.{json,toml,ini,py}`
-- 前端：`code/**/.env*` / `code/**/vite.config.*` 中可配置常量段
-- 全局：`env/.env*`
-- 部署：`docs/deployment/{version}/**/*.{conf,yaml,yml}`（nginx / docker-compose / k8s 等）
-- **★ 代码内动态配置注入（不改配置文件也触发 — 堵"@Value 默认值内联在注解里、application.yml 不动就漏登记"的口子）**：本 Sprint 的代码 diff 新增/修改了**由配置中心（Nacos/Apollo/…）或环境注入的可配置属性**，即使 `application.yml`/`.env` 未变也触发。识别信号（按项目技术栈取等价）：
-  - Spring：`@Value("${xxx:默认值}")` / `@ConfigurationProperties(prefix=...)` 绑定类的新字段 / `@Scheduled(cron="${xxx}")`（**可配置定时器**：cron 表达式、`enabled` 开关、jitter 等由 `${}` 注入的属性都算）/ `@RefreshScope` 标注的可变配置 Bean（约定 27 联动）
-  - 其他栈等价：从环境变量 / 配置服务读取的运行时可配置项（`os.getenv` / `config.get` / `process.env` 注入且有默认值的键）
-  - **★ 约定 27 ⟷ 约定 25 联动**：`code-verification-loop` 维度 4 / 本步识别到"注入配置中心可变 key"（约定 27 热刷新回检面）后，**必须同步把该 key 登记进配置项清单**（约定 25），二者是同一份可变配置的"代码热刷新能力"与"运维登记"两面，不得只做其一。登记内容含：key 名 / 默认值 / 配置中心 data-id（如有）/ **是否需重启生效**（如 `@Scheduled` 的 cron 改动通常需重启或依赖 `@RefreshScope`+任务重注册，务必标注）/ 承载方式。
-
-**输出文件**：`docs/deployment/{version}/配置文件/增量/配置项清单.md`（迁配置中心后变体名 `配置项清单-{中心}.md`）。配置文件类（清单 + nginx/docker-compose/k8s 等真实部署配置文件）统一归 `配置文件/` 子目录，`docs/deployment/{version}/` 根留给其他部署信息（上线步骤 / URL 指南 / 发布说明等）。
-
-**首版判定**（用通配兼容已迁配置中心的变体名）：
-
-```bash
-ls docs/deployment/{version}/配置文件/增量/配置项清单*.md 2>/dev/null
-```
-
-无匹配 → 首次创建；有匹配 → 增量更新。
-
-> ★ **部署流程 SOP + SQL执行台账独立为 Step X.8（检测驱动，不受本 Step X.7「配置文件被改动」触发门约束）**——⛔ 部署流程维护**不得**嵌在本步内：那样"只新增 SQL / 只加部署后回填接口 / 只需重启、零配置文件改动"时本步不进入，部署流程首版判定永远够不到（典型形态：「多个 SQL + 重启 + 回填接口、零配置改动」的版本零产出）。故独立为 **Step X.8**、触发源为**部署侧实质变更检测**（照搬约定 6 SQL 自动应用的检测驱动范式），见 `postdev-writeback-3.md` Step X.8。
-
-**文件结构（3 段，落 `docs/deployment/{version}/配置文件/增量/配置项清单.md`）**：
-
-| # | 章节 | 内容 |
-|---|------|------|
-| 1 | 新增配置 | 按 dataId / 文件分组的代码块，**只列本版新增的项**；行内 `#` 注释 ≤20 字符（写"是什么/必配可选"，不写论证）|
-| 2 | 删除配置 | 同为代码块，**用缩进表达删除粒度**（整段删 / 单键删 / 整棵子树删）+ ≤20 字符理由 |
-| 3 | 运行时配置文件变更 | nginx / docker-compose / k8s 的**改动片段**（约定 37.2）：片段代码块 + 插在哪个 server/location 块 + 生效动作（`nginx -s reload` / 重启）。**绝不放整份文件** |
-
-> 文件头两行导览：「本文件只讲本版**改了什么**；各环境差异与换环境必改项见 `../全量/配置说明.md`」。**每段为空也要留标题写"无"**（零变更是合法结论，但要显式成文）。
-
-**★ 删除段的缩进粒度示例**（平铺成表格会丢掉这层信息）：
-
-```yaml
-auth:                   # 整段删 · 无消费
-sso:
-  platform-org-id:      # 单键删 · 无消费
-ec:
-  v06-ops:              # 整棵子树删 · Mock 残留
-```
-
-> `sso.platform-org-id` 只删一个键，**绝不能把整个 `sso` 段删掉**（那段全是认证必配项）——这正是缩进不可省的原因。共享 dataId 的删除需与其它系统会签，用 `# 需会签` 标注。
-
-**首次创建 / 增量更新（同一套动作，幂等）**：
-
-0. **先建目录**：`mkdir -p docs/deployment/{version}/配置文件/增量`
-1. 取本 Sprint 的配置变更（`vcs_mode=git` 用 `git diff`；`vcs_mode=none` 从 `memory/{version}/{user}/sprints/sprint-{NNN}-local-changes.json` 按上方配置路径过滤，逐条用 `before_sha256` / `after_sha256` 证实新增、修改、删除，再与当前文件内容及开发前快照对应文件的旧内容/本 Sprint 逐文件改动记录核对 key 级增删；快照只有哈希、不含旧内容，无法还原旧 key 时记 `evidence-missing` 并在当前scope核对旧文件，不能扩大为本版全部配置审计，不得臆造删除项）+ 代码内动态配置注入新增的 key
-2. 新增项 → 追加进「1. 新增配置」对应分组代码块；删除项 → 追加进「2. 删除配置」，**按上面的缩进粒度写**
-3. nginx/compose/k8s 有改动 → 追加进「3. 运行时配置文件变更」（片段 + 位置 + 生效动作）
-4. **敏感项不另起段**，在新增代码块里对应行标 `# 必填·敏感`（发布期汇总进 `全量/配置说明.md`「换环境必改」）
-5. **⛔ 不要把判定依据 / 为什么改 / 各环境值对照写进来**——判定依据归 git 提交记录、各环境差异归 `全量/配置说明.md`；本文件只需 key 名 + 归属 + ≤20 字符注释
-6. 如本变化也在 Step X.6 事实清单（路径/端口类）记录过 → 事实清单是设计/开发视角、本清单是运维视角，**两者并存不去重**（各记各的，不互相复述内容）
-
-**配置中心迁移操作**（用户手动触发，**不由命令自动判断**）：
-1. 将 `docs/deployment/{version}/配置文件/增量/配置项清单.md` 改名为 `配置项清单-{中心}.md`（如 `配置项清单-nacos.md`）：已跟踪源用 `git mv`，未跟踪或 `vcs_mode=none` 用普通 `mv`；目标已存在则拒绝覆盖。
-2. 该迁移属**约定 37 全量轨**的承载变化：下次发布期按 `{{AIDP_HOME}}/reference/约定细则-5.md` 重建 `配置文件/全量/配置说明.md` 的文件清单。
-   ⛔ **不要**在本文件产出的「配置项清单」里补承载方式 / 文件索引 / 历史迁移这类段落 —— 上方 3 段结构里根本没有它们，
-   照做会凭空造回已移除的结构。
-3. 本文件的「配置项清单」只需按增量轨口径记录本版改了什么（纯代码块 + 行内注释），路径写成新的承载形态。
-4. 下次 /sprint-dev Step X.7 「首版判定」用通配 `ls 配置项清单*.md` 已自动适配新文件名，无需改命令本身
+- 只列本版新增、修改、删除配置，按权威文件/dataId 给出必要片段和短注释；无变更在既有操作说明简注，不造空清单。
+- nginx/compose/k8s 只给改动片段、插入位置与生效命令，不贴整份文件。
+- 动态注入 key 同样纳入本次变化（如 `@Value` / 配置绑定 / 可配置定时器）；给出必配与是否需重启，不补历史欠项。
+- 删除按原缩进粒度标明单 key/整段，不能误删父配置块；秘密值不进 Markdown。
+- 部署流程只引用该清单，不双写配置内容；发布期真实配置全量文件仍按约定 37 维护。
 

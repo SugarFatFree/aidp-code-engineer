@@ -4620,7 +4620,18 @@ def test_family_ledgers_split():
                 "flows/sprint-batch/step-6.md",
                 "commands/sprint-test.md"):
         body = (repo / ".aidp" / rel).read_text(encoding="utf-8")
-        check("★ %s 的用例发现 glob 排除 `_*`" % rel, '-not -name "_*"' in body)
+        if rel.endswith("phase-2-1.md"):
+            # 版本用例只从冻结清单对应的正式用例册读取；下划线开头的增量册不是用例。
+            # 排除规则是 build_unit_test 的单一来源；围栏必须调用它，且该规则含 `_` 增量册。
+            bu = (repo / ".aidp/scripts/build_unit_test.py").read_text(encoding="utf-8")
+            check("★ %s 读取正式用例册时经共用规则排除 `_*` 增量册" % rel,
+                  "formal_case_books" in body and 'NON_CASE_BOOK_PREFIXES = ("_"' in bu)
+        elif rel.endswith("sprint-test.md"):
+            # sprint-test 不做用例发现：只按本 Sprint 的需求/接口/页面/用例 ID 精确裁切，不扫全版本或历史全集。
+            check("★ %s 不做全版本/历史用例发现，仅按 ID 精确裁切" % rel,
+                  "精确裁切" in body and "不发现或执行全版本、历史回归全集" in body)
+        else:
+            check("★ %s 的用例发现 glob 排除 `_*`" % rel, '-not -name "_*"' in body)
 
     # ⑫ 「带着未级联的用例增量去实测」门 —— 增量册不是用例，级联才是把线索变用例的那一步
     clp = repo / ".aidp/scripts/check_case_ledger_pending.py"
@@ -4728,8 +4739,8 @@ def test_family_ledgers_split():
           "def enrich_incremental" in er and "enrich_incremental(payload" in er)
     p21b = (repo / ".aidp/flows/sprint-aiauto-test/phase-2-1.md").read_text(encoding="utf-8")
     check("★ Phase 2.0.0bis 已接线", "incremental_cases.py" in p21b)
-    check("★ 明写执行仍全量、不按增量裁剪",
-          "执行仍全量" in p21b and "不按增量裁剪" in p21b)
+    check("★ 增量用例只影响报告、不改变当前版本冻结清单的执行范围",
+          "只给报告用，不改执行范围" in p21b and "当前版本冻结验收清单" in p21b)
 
     # ⑨ 绕过判据认全部五个基名（漏登记任一 = 真收口被误报成"绕过"）
     hg_src = (repo / ".aidp/scripts/commit_gate.py").read_text(encoding="utf-8")
@@ -4745,85 +4756,44 @@ def test_family_ledgers_split():
 
 
 def test_ddl_comment_and_release_order():
-    """DDL 列注释实查门 + 发布顺序铁律（实际项目 V0.14.0 事故）。
-
-    事故形态：SQL 脚本里**写了** `COMMENT ON COLUMN`，手工执行只跑了 `ALTER TABLE ADD`
-    那段循环、注释语句整段漏掉，实查 `ALL_COL_COMMENTS` 新增 10 列 10/10 无注释——
-    **而没有任何一步会发现**。故本门校的是"有没有真去查过库"，不是"脚本里写没写"。
-    """
-    print("\n=== DDL 注释实查 + 发布顺序 ===")
+    """真实运行发布 SQL 实查守卫；部署操作表不再携带核验报告。"""
+    import hashlib
+    from datetime import datetime, timezone
+    print("\n=== DDL 注释实查机器记录 ===")
     repo = Path(HERE).parent.parent.parent
     sc = repo / ".aidp/scripts/check_sql_ledger_comment.py"
-    tpl = repo / ".aidp/templates/deployment/SQL执行台账.md"
-    check("★ 注释实查门脚本存在", sc.is_file())
-    check("★ 台账模板存在", tpl.is_file())
-    if not (sc.is_file() and tpl.is_file()):
-        return
-
-    def _mk(sql_body=None, ledger=None):
-        root = Path(tempfile.mkdtemp())
-        d = root / "docs/deployment/V1/sql/增量"
-        d.mkdir(parents=True)
-        if sql_body is not None:
-            (d / "01_x.sql").write_text(sql_body, encoding="utf-8")
-        if ledger is not None:
-            (root / "docs/deployment/V1/SQL执行台账.md").write_text(ledger, encoding="utf-8")
-        return root
-
-    def _run(root):
-        r = subprocess.run([sys.executable, str(sc), "--root", str(root),
-                            "--version", "V1", "--json"], capture_output=True, text=True)
-        try:
-            return r.returncode, json.loads(r.stdout)
-        except ValueError:
-            return r.returncode, {}
-
-    TPL = tpl.read_text(encoding="utf-8")
-
-    # 阴性对照：本版无 ADD COLUMN → 不适用、放行（⛔ 恒红的门没有判别力）
-    rc, j = _run(_mk("CREATE TABLE IF NOT EXISTS T_X (ID INT);\n"))
-    check("★ 无 ADD COLUMN → 不适用放行", rc == 0 and j.get("status") == "no-add-column")
-
-    # 反向用例 B（下游点名的那条）：有新增列却没台账 → 红
-    rc, j = _run(_mk("ALTER TABLE T_E ADD COLUMN STATUS INT;\n"
-                     "COMMENT ON COLUMN T_E.STATUS IS '状态';\n"))
-    check("★ 有新增列却无台账 → FAIL", rc == 1 and j.get("status") == "ledger-missing")
-    check("★ 即便脚本里写了 COMMENT 也照样红（校库不校脚本）", rc == 1)
-
-    # ⛔ 达梦/Oracle 方言 `ADD (` 必须认——只认 ADD COLUMN 会在国产库上静默失效
-    rc, j = _run(_mk("ALTER TABLE T_E ADD (ADMIN_USER_ID VARCHAR(64));\n"))
-    check("★ 达梦/Oracle 的 `ADD (` 方言也识别", rc == 1 and j.get("add_column_files"))
-
-    # 拷了模板但没填 → 红（模板占位不算实查）
-    rc, j = _run(_mk("ALTER TABLE T_E ADD COLUMN STATUS INT;\n", TPL))
-    check("★ 台账仅拷模板未填 → FAIL（占位不算实查）",
-          rc == 1 and j.get("status") == "dev-row-unfilled")
-
-    # 填实 → 绿
-    filled = TPL.replace(
-        "| 开发库 | {如 `T_ENTERPRISE.STATUS`、`T_ENTERPRISE.ADMIN_USER_ID`} | {2/2} | {无} | {YYYY-MM-DD HH:MM} |",
-        "| 开发库 | `T_E.STATUS` | 1/1 | 无 | 2026-09-08 16:20 |")
-    rc, j = _run(_mk("ALTER TABLE T_E ADD COLUMN STATUS INT;\n", filled))
-    check("★ 填实查结果 → PASS", rc == 0 and j.get("status") == "ok")
-
-    # 已并进约定 37 机器门（release-4 无条件调它 → 忘不掉）
-    rbc = (repo / ".aidp/scripts/release_baseline_check.py").read_text(encoding="utf-8")
-    check("★ 已并入 release_baseline_check 第 12 项",
-          "check_ddl_comment_verified" in rbc and "13 项确定性校验" in rbc)
-    check("★ 委派单一实现、不重写方言识别",
-          "check_sql_ledger_comment.py" in rbc)
-
-    # 门 4：发布顺序铁律有落点（部署流程模板 + 约定 37 细则）
-    dep = (repo / ".aidp/templates/deployment/部署流程.md").read_text(encoding="utf-8")
-    d5 = (repo / ".aidp/reference/约定细则-5.md").read_text(encoding="utf-8")
-    check("★ 部署流程写明加列/删列顺序",
-          "加列：先跑 DDL，再发代码" in dep and "删列：先发代码，再跑 DDL" in dep)
-    check("★ 判据是「代码引用列集 ⊆ 库中实际列集」", "⊆" in dep and "⊆" in d5)
-    check("★ 点明 ORM 整表查询全挂、非单点失效", "整表查询全部报错" in dep)
-    check("★ 覆盖滚动发布混合实例期", "混合实例期" in dep and "混合实例期" in d5)
-    check("★ 约定 37.5bis 已立", "37.5bis" in d5)
-    check("★ 台账模板带实查 SQL 与覆盖率表", "ALL_COL_COMMENTS" in TPL and "三之二" in TPL)
-    check("★ 存量无注释列只报告不阻塞", "不该拦住本版" in TPL)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        sql = root / "docs/deployment/V1/sql/增量/01_x.sql"
+        sql.parent.mkdir(parents=True)
+        sql.write_text("CREATE TABLE T_E (ID INT);\n")
+        def run():
+            cp = subprocess.run([sys.executable, str(sc), "--root", str(root),
+                                 "--version", "V1", "--json"], capture_output=True, text=True)
+            return cp.returncode, json.loads(cp.stdout)
+        rc, result = run()
+        check("无新增列不强加查库", rc == 0 and result["status"] == "no-add-column")
+        sql.write_text("ALTER TABLE T_E ADD COLUMN STATUS INT;\nCOMMENT ON COLUMN T_E.STATUS IS '状态';\n")
+        rc, result = run()
+        check("SQL 带 COMMENT 不冒充实际查库", rc == 1 and result["status"] == "evidence-missing")
+        state = root / "memory/.sprint-autopilot-baseline.json"
+        state.parent.mkdir()
+        entry = {"script": sql.relative_to(root).as_posix(), "sha256": hashlib.sha256(sql.read_bytes()).hexdigest(),
+                 "database": "dev/app", "checked_at": datetime.now(timezone.utc).isoformat(),
+                 "columns": [{"name": "T_E.STATUS", "comment": "状态"}]}
+        def save():
+            state.write_text(json.dumps({"deployment_sql_checks": {"V1": [entry]}}))
+        save()
+        rc, result = run()
+        check("有效机器实查记录通过且不要求 Markdown", rc == 0 and result["status"] == "ok")
+        check("未创建运维 SQL 台账或核验 Markdown", not list(root.glob("docs/**/*.md")))
+        entry["columns"][0]["comment"] = ""
+        save()
+        check("真实查库列缺注释拒绝通过", run()[0] == 1)
+        entry["columns"][0]["comment"] = "状态"
+        save()
+        sql.write_text("ALTER TABLE T_E ADD (NEW_STATUS INT);\n")
+        check("Oracle ADD 与修改后旧实查证据失效", run()[0] == 1)
 
 
 def test_suite_has_invoker():
@@ -7035,8 +7005,8 @@ def test_cascade_bypass_and_commit_gate():
     check("★ 约定 31.5 欠账有信号（裸对话推送此前零 CICD 信号）",
           "def pending_cicd(" in hg2 and "🚄 本次推送未经推送分类器" in hg2)
     check("★ 31.5 欠账计入退出码", '(info.get("pending_cicd") or {}).get("pending")' in hg2)
-    check("★ 31.5 适用条件 = cicd.provider != none（按项目配置，不看是否跑过 autopilot）",
-          'provider == "none"' in hg2)
+    check("★ 31.5 适用条件按项目配置（provider 与有效 pipelines），不看是否跑过 autopilot；未配置只降级",
+          "unconfigured_cicd(aidp_config.cicd_config(root))" in hg2 and "configuration_degraded" in hg2)
     c3 = (repo / ".aidp/reference/约定细则-3.md").read_text(encoding="utf-8")
     check("★ 31.5 作用域补齐「与命令入口无关 / 裸对话同样适用」",
           "代码推送这一事实" in c3 and "裸对话路径" in c3)

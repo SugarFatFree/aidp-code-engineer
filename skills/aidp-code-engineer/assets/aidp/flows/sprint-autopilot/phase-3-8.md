@@ -78,6 +78,8 @@
      ```
      任一缺失 → **必须就地补建**，不得跳过 AI 执行报告骨架直接进后续。
 
+   **委派前置**：本轮若交接版本测试，先 Read 并执行 `flows/sprint-aiauto-test/phase-0-6b.md`「当前版本测试真实委派」围栏，冻结完整验收 manifest 并写入 child；缺清单/真实父链即阻塞，不委派、不标版本通过。
+
    **1.6 ★ 关闭方判定 + R-4 分流（「产出骨架」与「finalize + 发送」解耦的核心）**：
    ```bash
    # 从 baseline 读回 DEPLOY_MODE/SKIP_DEPLOY；不得用跨 Bash 调用的裸变量决定关闭方。

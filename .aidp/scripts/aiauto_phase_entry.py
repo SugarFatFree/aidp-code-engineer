@@ -50,6 +50,7 @@ def _call(cmd, root):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--version", required=True)
+    ap.add_argument("--execution-context", required=True, help="明确继承的测试上下文，不读取 activeContext")
     ap.add_argument("--phase", required=True, choices=PHASES[:-1])
     ap.add_argument("--next-phase", required=True, choices=PHASES)
     ap.add_argument("--build", default="standalone")
@@ -62,6 +63,13 @@ def main(argv=None):
     bp = baseline_file(args.baseline)
     root = bp.parent.parent if bp.parent.name == "memory" else bp.parent
     try:
+        from aiauto_readiness import validate_test_request
+        context = validate_test_request(root, args.execution_context, args.version, args.build)
+        if args.complete and args.next_phase == "done" and context.get("test_manifest"):
+            from unit_report_merge import read_payload, validate_report_scope, finalize_ready
+            report = read_payload(root / "docs/reports" / args.version / "AI测试报告/data" / (args.build + ".js"))
+            if validate_report_scope(report) or not finalize_ready(report):
+                raise ValueError("当前版本测试范围尚未完整核验，不得推进 done")
         data = json.loads(bp.read_text(encoding="utf-8"))
         node = (data.get("versions") or {}).get(args.version) or {}
         old = node.get("aiauto_run_state") or {}

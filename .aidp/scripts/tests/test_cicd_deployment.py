@@ -74,6 +74,71 @@ class DeploymentTests(unittest.TestCase):
                                        '--version', VERSION, '--post-push-wait', '0', '--min-wait', '0'])
         return rc, json.loads(stream.getvalue().splitlines()[-1])
 
+    def test_unconfigured_modes_never_construct_or_call_provider(self):
+        for provider, pipelines in (('none', '{test: web}'), ('github-actions', '{}'),
+                                    ('gitlab-ci', '{}'), ('command', '{test: "  "}')):
+            (self.root / 'memory/aidp-config.yaml').write_text(
+                f'cicd:\n  provider: {provider}\n  pipelines: {pipelines}\n')
+            for mode in ('detect', 'watch', 'poll', 'trigger', 'retry'):
+                with self.subTest(provider=provider, mode=mode):
+                    with patch.object(providers, 'get_provider') as factory:
+                        rc, result = self.go(['--mode', mode, '--commit', SHA, '--run-id', 'r1'])
+                        factory.assert_not_called()
+                    self.assertEqual((rc, result['next_action']), (3, 'none'))
+                    self.assertFalse(result['ok'])
+                    self.assertFalse(result['commit_verified'])
+                    self.assertEqual(result['execution_status'], 'UNVERIFIED')
+                    self.assertTrue(result['configuration_degraded'])
+                    self.assertNotIn('run_id', result)
+            # 既有 baseline 中的旧 pipeline=web 不能绕过未配置判定。
+            self.assertEqual(self.node()['cicd_run']['pipeline'], 'web')
+
+    def test_config_degrade_consumes_once_without_probe_freeze_or_success(self):
+        for grants in (['push', 'deploy'], ['push']):
+            self.baseline.write_text(self.initial_baseline)
+            self.execution_context = self.context(grants)
+            (self.root / 'memory/aidp-config.yaml').write_text('cicd:\n  provider: command\n  pipelines: {}\n')
+            rc, result = self.go(['--mode', 'detect', '--commit', SHA])
+            consumed_rc, consumed = self.consume(rc, result)
+            self.assertEqual((consumed_rc, consumed['next_action']), (0, 'none'))
+            self.assertFalse(consumed['ok'])
+            node = self.node()
+            self.assertEqual(node['run_state']['next_phase'], '3.3-audit')
+            self.assertEqual(node['cicd_run']['status'], 'unverified' if 'deploy' in grants else 'not_requested')
+            self.assertFalse(node.get('last_deployed_at'))
+            self.assertFalse(node.get('phase_beta_done_at'))
+            self.assertFalse(node.get('needs_human'))
+            self.assertEqual(node['cicd_unreachable_streak'], 2)
+            self.assertEqual(node['cicd_cli_fail_streak'], 2)
+
+    def test_explicit_pipeline_works_without_environment_mapping(self):
+        (self.root / 'memory/aidp-config.yaml').write_text(
+            'cicd:\n  provider: command\n  pipelines: {}\n  command: {list: list, view: view}\n')
+        calls = []
+        def execute(command, cwd, timeout, shell=False):
+            calls.append(command)
+            return 0, json.dumps([{'id': 'r1', 'status': 'running', 'commit': SHA}]), ''
+        rc, result = self.go(['--mode', 'detect', '--commit', SHA, '--pipeline', 'web'], execute)
+        self.assertEqual((rc, result['next_action'], result['pipeline']), (0, 'poll', 'web'))
+        self.assertIn('list', calls)
+        self.assertNotIn('configuration_degraded', result)
+        (self.root / 'memory/aidp-config.yaml').write_text('cicd:\n  provider: none\n')
+        with patch.object(providers, 'get_provider') as factory:
+            rc, result = self.go(['--mode', 'detect', '--commit', SHA, '--pipeline', 'web'])
+            factory.assert_not_called()
+        self.assertEqual((rc, result['verdict']), (3, 'disabled'))
+
+    def test_configuration_degrade_rejected_if_config_or_commit_changed(self):
+        (self.root / 'memory/aidp-config.yaml').write_text('cicd:\n  provider: command\n  pipelines: {}\n')
+        rc, result = self.go(['--mode', 'detect', '--commit', SHA])
+        result['expected_commit'] = 'f' * 40
+        self.assertEqual(self.consume(rc, result)[0], 2)
+        result['expected_commit'] = SHA
+        self.config()
+        self.assertEqual(self.consume(rc, result)[0], 2)
+        self.assertFalse(self.node().get('needs_human'))
+        self.assertFalse(self.node().get('last_deployed_at'))
+
     def test_missing_context_never_writes_with_config_true(self):
         for mode in ('trigger', 'retry'):
             with self.subTest(mode=mode):

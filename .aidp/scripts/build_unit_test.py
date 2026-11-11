@@ -196,10 +196,26 @@ def load_plan(root, version, build, commit, plan):
     configured = config.get("test_plan", config).get("suites")
     if not isinstance(suites, list) or not suites or suites != configured:
         raise BuildError("冻结 suites 必须与部署 commit 内项目测试配置完全一致且非空")
+    identities = set()
     for suite in suites:
         if not isinstance(suite, dict):
             raise BuildError("suite 必须是对象")
-        command = suite.get("full_argv")
+        identity = (suite.get("cwd"), suite.get("env_id"))
+        if identity in identities:
+            raise BuildError("每个 suite 的 cwd/env_id 必须唯一")
+        identities.add(identity)
+        runners = suite.get("runners")
+        if not isinstance(runners, list) or not runners:
+            raise BuildError("suite 缺显式文件目标 runners；禁止回退 full_argv / 全仓发现")
+        for runner in runners:
+            argv = runner.get("argv", [])
+            if (any(arg in {"-k", "--grep", "-g", "--testNamePattern", "--testPathIgnorePatterns", "--exclude", "--ignore"}
+                    or arg.startswith(("--grep=", "--testNamePattern=", "--ignore=", "--exclude=")) for arg in argv[1:])
+                    or "pytest" in argv and "-m" in argv[argv.index("pytest") + 1:]):
+                raise BuildError("版本测试运行器含过滤参数，无法证明完整用例覆盖")
+            if runner.get("cwd", ".") != suite.get("cwd") or runner.get("env_id", "default") != suite.get("env_id"):
+                raise BuildError("runner cwd/env_id 必须与所属 suite 一致")
+        command = suite.get("full_argv", runners[0].get("argv"))
         if (not isinstance(command, list) or not command
                 or any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in command)):
             raise BuildError("full_argv 必须是真实非空字符串数组")
@@ -240,6 +256,53 @@ def load_plan(root, version, build, commit, plan):
     return plan
 
 
+NON_CASE_BOOK_PREFIXES = ("_", "00_", "98_", "99_")
+NON_CASE_BOOK_TOKENS = ("研发自测方案", "测试环境与账号", "总览")
+
+
+def is_case_book(name):
+    """正式用例册判定的唯一规则：排除开发期增量册(_)、索引/跨系统/待澄清册及方案、账号、总览文档。"""
+    return not (name.startswith(NON_CASE_BOOK_PREFIXES) or any(token in name for token in NON_CASE_BOOK_TOKENS))
+
+
+def formal_case_books(root, version):
+    formal = (Path(root) / "docs/testing" / component(version) / "正式用例").resolve()
+    books = []
+    for path in sorted(formal.rglob("*.md")):
+        if not is_case_book(path.name):
+            continue
+        if not path.resolve().is_relative_to(formal):
+            raise BuildError("正式用例路径逃出本版本")
+        books.append(path)
+    return books
+
+
+def validate_case_index(root, plan):
+    """把验收映射与本版本正式用例标题核对；不扫描仓库测试代码。"""
+    import importlib.util
+    root = Path(root).resolve()
+    baseline_path = root / relative(plan["acceptance_baseline"]["path"])
+    acceptance = json.loads(baseline_path.read_text(encoding="utf-8"))
+    index = acceptance.get("case_index") or {}
+    index_path = (root / relative(index.get("path"))).resolve()
+    formal = root / "docs/testing" / component(plan["version"]) / "正式用例"
+    if not index_path.is_relative_to(formal.resolve()) or not index_path.is_file():
+        raise BuildError("验收基线 case_index 必须指向本版本正式用例索引")
+    if hashlib.sha256(index_path.read_bytes()).hexdigest() != index.get("sha256"):
+        raise BuildError("正式用例索引 SHA256 不匹配")
+    spec = importlib.util.spec_from_file_location("_aidp_formal_cases", Path(__file__).resolve().parent.parent /
+                                                 "skills/auto-test-runner/scripts/tasks_state.py")
+    parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(parser)
+    actual = []
+    for path in formal_case_books(root, plan["version"]):
+        actual.extend(match[1] for match in parser.CASE_RE.finditer(path.read_text(encoding="utf-8")))
+    mapped = [case.get("id") for case in acceptance.get("cases", [])]
+    if not actual or len(set(actual)) != len(actual) or set(mapped) != set(actual) or len(set(mapped)) != len(mapped):
+        raise BuildError("验收基线 cases 与本版本完整正式用例清单不一致（缺失、历史用例或重复 ID）")
+    return sorted(actual)
+
+
 def assert_worktree_inputs(worktree, suite):
     cwd = (worktree / suite["cwd"]).resolve()
     if not cwd.is_relative_to(worktree) or not cwd.is_dir():
@@ -269,8 +332,9 @@ def assert_worktree_inputs(worktree, suite):
 @contextmanager
 def isolated_environment(directory, suite):
     # 不继承部署连接串、PYTHONPATH、NODE_OPTIONS、用户 site 等隐式配置。
-    home = directory / "home"
-    temporary = directory / "tmp"
+    # HOME/TMPDIR 进入环境身份；同版本共享目录才能让同内容证据跨 build 可信复用。
+    home = directory.parent / "home"
+    temporary = directory.parent / "tmp"
     home.mkdir(exist_ok=True)
     temporary.mkdir(exist_ok=True)
     env = {"PATH": os.defpath, "HOME": str(home), "TMPDIR": str(temporary),
@@ -365,6 +429,8 @@ def classify(row, code, text, counts):
     if counts["passed"] is not None and sum(counts.values()) == 0:
         return "UNVERIFIED", "no-tests-executed"
     if row["status"] == "PASS" and code == 0:
+        if counts["passed"] is None:
+            return "UNVERIFIED", "test-coverage-unverified"
         if counts["failed"]:
             return "FAIL", "test-cases-failed"
         return "PASS", "tests-passed"
@@ -412,15 +478,20 @@ def run_build(root, version, build, commit, plan, timeout=3600, retry=False, exe
     """plan 可为字典或 JSON 文件路径；只在独立子进程主线程调用（信号/环境/fd 隔离）。"""
     root = Path(root).resolve()
     result = blank(version, build, commit)
-    if execution_context is not None:
-        from execution_policy import require_action, PolicyError
-        try:
-            require_action(execution_context, "full-regression")
-        except PolicyError as exc:
-            result.update(status="UNVERIFIED", reason="action-not-requested" if exc.status == "UNAUTHORIZED" else "policy-unverified",
-                          authorization_status="NOT_REQUESTED" if exc.status == "UNAUTHORIZED" else exc.status,
-                          executed=False, primary_error=str(exc))
-            return result
+    from execution_policy import require_action, PolicyError, validate_test_binding
+    try:
+        if execution_context is None:
+            raise BuildError("版本全量缺可追溯 autopilot 测试委派 execution_context")
+        if not isinstance(plan, dict):
+            plan = json.loads(Path(plan).read_text(encoding="utf-8"))
+        require_action(execution_context, "full-regression")
+        validate_test_binding(root, execution_context, version, build, plan)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        status = getattr(exc, "status", "UNVERIFIED")
+        result.update(status="UNVERIFIED", reason="action-not-requested" if status == "UNAUTHORIZED" else "policy-unverified",
+                      authorization_status="NOT_REQUESTED" if status == "UNAUTHORIZED" else status,
+                      executed=False, primary_error=str(exc))
+        return result
     try:
         directory = build_dir(root, version, build)
         directory.mkdir(parents=True, exist_ok=True)
@@ -469,7 +540,7 @@ def run_build(root, version, build, commit, plan, timeout=3600, retry=False, exe
                           started_at=time.time(), deadline_at=time.time() + timeout, pid=os.getpid())
             save_result(directory, result)
             started = time.monotonic()
-            completed = execute(root, directory, result, plan, timeout)
+            completed = execute(root, directory, result, plan, timeout, execution_context, retry)
             if reservation is not None:
                 try:
                     settle_elapsed(root, execution_context, reservation, time.monotonic() - started)
@@ -485,7 +556,7 @@ def run_build(root, version, build, commit, plan, timeout=3600, retry=False, exe
         return result
 
 
-def execute(root, directory, result, plan, timeout):
+def execute(root, directory, result, plan, timeout, execution_context, retry=False):
     worktree = directory / "worktree"
     owned = False
     deadline = time.monotonic() + timeout
@@ -508,11 +579,27 @@ def execute(root, directory, result, plan, timeout):
         owned = True
         git(root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", str(worktree), result["commit"],
             timeout=max(0.001, deadline - time.monotonic()))
+        from test_scope import derive_suite
+        runners = [runner for suite in plan["suites"] for runner in suite["runners"]]
+        # 推导与账本复核必须在同一隔离环境（如 PYTHONPATH 已清除）下进行，否则依赖分析不可复现。
+        with isolated_environment(directory, plan["suites"][0]):
+            scope_plan = derive_suite(worktree, runners, plan, execution_context=execution_context)
+        if scope_plan.get("unrunnable") or not scope_plan.get("runs"):
+            raise BuildError("版本清单存在不可执行项或没有实际测试目标")
+        case_ids = validate_case_index(worktree, plan)
         atomic_json(directory / "plan.json", plan)
+        result["testScope"] = {"kind": "version", "version": result["version"],
+                               "build": result["build"], "manifest_hash": digest(plan),
+                               "acceptance_baseline": plan["acceptance_baseline"],
+                               "acceptance_tests": plan["acceptance_tests"],
+                               "dependencies": plan["dependencies"], "case_ids": case_ids}
+        result["execution_context"] = str(execution_context)
         result["reason"] = "executing"
         result["worktree"] = str(worktree)
         save_result(directory, result)
-        for index, suite in enumerate(plan["suites"]):
+        suites = {(suite["cwd"], suite["env_id"]): suite for suite in plan["suites"]}
+        for index, run in enumerate(scope_plan["runs"]):
+            suite = suites[(run["cwd"], run["env_id"])]
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise BudgetExpired()
@@ -520,11 +607,31 @@ def execute(root, directory, result, plan, timeout):
             log = directory / f"suite-{result['attempt']}-{index + 1}.log"
             row, code = None, None
             with isolated_environment(directory, suite), capture(log):
-                row, code = test_ledger.run(root=worktree, cwd=suite["cwd"], scope="full",
-                                            env_id=suite["env_id"], command=suite["full_argv"],
-                                            inputs=suite["inputs"], force=True,
+                row, code = test_ledger.run(root=worktree, cwd=run["cwd"], scope="version",
+                                            env_id=run["env_id"], command=run["argv"],
+                                            inputs=scope_plan["tests"] + plan["dependencies"], force=bool(retry),
                                             timeout=max(0.001, deadline - time.monotonic()),
-                                            ledger_root=directory / "ledger")
+                                            ledger_root=directory.parent / "ledger", scope_plan=scope_plan,
+                                            execution_context=execution_context)
+            if row.get("status") == "CARRIED" or row.get("reused") and row.get("status") == "PASS":
+                source_id = row.get("source_run_id", row["run_id"])
+                source = None
+                for candidate in directory.parent.glob("*/result.json"):
+                    previous = load_result(candidate.parent)
+                    if previous and previous.get("version") == result["version"]:
+                        found = next((item for item in previous.get("runs", []) if item.get("run_id") == source_id
+                                      and item.get("status") == "PASS"), None)
+                        if found:
+                            source = dict(found, source_build=previous["build"])
+                            break
+                if source is None:
+                    raise BuildError("可信复用账本缺原始同版本测试计数与日志，不能假定通过")
+                source.update(run_id=row["run_id"], source_run_id=source_id, reused=True,
+                              evidence_status=row["status"], reason="unchanged-version-evidence")
+                result["runs"].append(source)
+                summarize(result)
+                save_result(directory, result)
+                continue
             text = log.read_text(encoding="utf-8", errors="replace")
             junit = worktree / suite["junit_xml"] if "junit_xml" in suite else None
             counts, failures, error = dict(NULL_COUNTS), [], None
@@ -539,8 +646,9 @@ def execute(root, directory, result, plan, timeout):
             if expired or time.monotonic() >= deadline:
                 status, reason = "TIMEOUT", "total-budget-exhausted"
             result["runs"].append({"run_id": row["run_id"], "status": status, "reason": reason,
-                                   "command": suite["full_argv"], "cwd": suite["cwd"],
-                                   "env_id": suite["env_id"], "inputs": suite["inputs"],
+                                   "command": run["argv"], "cwd": run["cwd"],
+                                   "env_id": run["env_id"], "inputs": scope_plan["tests"] + plan["dependencies"],
+                                   "tests": run["tests"],
                                    "counts": counts, "failed_cases": failures,
                                    "primary_error": error or row.get("error"), "log": str(log),
                                    "exit_code": code})
@@ -588,7 +696,19 @@ def self_check():
         git(root, "config", "user.name", "Self check")
         (root / ".gitignore").write_text("memory/\n__pycache__/\n")
         (root / "test_sample.py").write_text("import unittest\nclass Sample(unittest.TestCase):\n def test_ok(self): self.assertEqual(2+2,4)\n")
-        suites = [{"full_argv": [sys.executable, "-m", "unittest", "-v", "test_sample"],
+        formal = root / 'docs/testing/V1/正式用例'
+        formal.mkdir(parents=True)
+        index = formal / '00_索引.md'
+        index.write_text('TC-SAMPLE\n')
+        (formal / '03_cases.md').write_text('#### 用例 TC-SAMPLE: sample\n')
+        acceptance = {'version': 'V1', 'acceptance_tests': ['test_sample.py'], 'dependencies': [],
+                      'cases': [{'id': 'TC-SAMPLE', 'test_files': ['test_sample.py']}],
+                      'case_index': {'path': index.relative_to(root).as_posix(),
+                                     'sha256': hashlib.sha256(index.read_bytes()).hexdigest()}}
+        acceptance_path = formal.parent / 'acceptance.json'
+        acceptance_path.write_text(json.dumps(acceptance))
+        suites = [{"runners": [{'suffixes': ['.py'], 'argv': [sys.executable, '-m', 'unittest', '-v', '{tests}'],
+                               'cwd': '.', 'env_id': 'stdlib'}],
                    "cwd": ".", "env_id": "stdlib", "inputs": [], "external_dependencies": "none"}]
         config = json.dumps({"suites": suites}).encode()
         (root / "unit-plan.json").write_bytes(config)
@@ -597,12 +717,25 @@ def self_check():
         commit = git(root, "rev-parse", "HEAD").decode().strip()
         plan = {"schema": 1, "version": "V1", "build": "build1", "commit": commit,
                 "standalone": True, "deployment": {"commit": commit, "verified": True, "evidence": "self-check fixture"},
-                "source": {"path": "unit-plan.json", "sha256": hashlib.sha256(config).hexdigest()}, "suites": suites}
+                "source": {"path": "unit-plan.json", "sha256": hashlib.sha256(config).hexdigest()}, "suites": suites,
+                'acceptance_baseline': {'path': acceptance_path.relative_to(root).as_posix(),
+                                        'sha256': hashlib.sha256(acceptance_path.read_bytes()).hexdigest()},
+                'acceptance_tests': ['test_sample.py'], 'dependencies': []}
+        from entry_context import resolve_autopilot_root, fork_test_build
+        parent = resolve_autopilot_root(root, 'V1', authorization_source={
+            'kind': 'explicit-command', 'command': 'sprint-autopilot', 'request_id': 'self-check',
+            'options': ['--skip-dev']})['execution_context']
+        manifest = root / 'memory/build1-plan.json'
+        atomic_json(manifest, plan)
+        child = fork_test_build(root, parent, 'V1', 'build1', manifest=manifest)['execution_context']
         (root / "test_sample.py").write_text("raise RuntimeError('dirty main must never run')\n")
-        first = run_build(root, "V1", "build1", commit, plan)
-        second = run_build(root, "V1", "build1", commit, plan)
+        first = run_build(root, "V1", "build1", commit, plan, execution_context=child)
+        second = run_build(root, "V1", "build1", commit, plan, execution_context=child)
         plan["build"] = "build2"
-        third = run_build(root, "V1", "build2", commit, plan)
+        manifest = root / 'memory/build2-plan.json'
+        atomic_json(manifest, plan)
+        child = fork_test_build(root, parent, 'V1', 'build2', manifest=manifest)['execution_context']
+        third = run_build(root, "V1", "build2", commit, plan, execution_context=child)
         checks = [first["status"] == "PASS", first["counts"] == {"passed": 1, "failed": 0, "skipped": 0},
                   second["reused"], first["runs"] == second["runs"], third["status"] == "PASS",
                   first["runs"][0]["run_id"] != third["runs"][0]["run_id"],

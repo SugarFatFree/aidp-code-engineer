@@ -35,6 +35,7 @@ import tempfile
 SCHEMA = 2
 RESOURCE_EXTS = frozenset((".json", ".yaml", ".yml", ".sql"))
 _ANALYSIS_CACHE = {}
+_ANALYSIS_EXTRA = {}
 CODE_EXTS = frozenset((".java", ".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go",
                        ".rs", ".kt", ".kts", ".cs", ".rb", ".php", ".c", ".h", ".cpp", ".swift",
                        ".scala", ".sc", ".m", ".mm", ".dart", ".ex", ".exs", ".erl", ".clj", ".sh", ".sql"))
@@ -93,14 +94,15 @@ def resolve_since(root, since):
     return os.fsdecode(git_output(root, "rev-parse", "--verify", f"{since}^{{commit}}")).strip()
 
 
-def changed_files(root, since, write_set, execution_context=None, files=None, inventory=None):
+def changed_files(root, since, write_set, execution_context=None, files=None, inventory=None, current_files=None, baseline_reader=None):
     since = resolve_since(root, since)
     names = set(git_paths(root, "diff", "--name-only", "--no-renames", "-z", since, "--"))
     names.update(git_paths(root, "ls-files", "--others", "--exclude-standard", "-z"))
     if files is None:
         files = repository_files(root, execution_context)
-    if execution_context is not None and execution_context["mode"] == "light":
+    if execution_context is not None:
         from entry_context import initial_file_hash, initial_hash
+        baseline_reader = baseline_reader or (lambda p: initial_hash(root, execution_context, p))
         from project_inventory import git_worktree_inventory, default_excluded
         observed = inventory if inventory is not None else git_worktree_inventory(root, since=since)
         # 父仓 diff 只给 gitlink 目录；递归 pin 差异给出候选，初始 dirty 还覆盖恢复为 Git 基线。
@@ -119,14 +121,31 @@ def changed_files(root, since, write_set, execution_context=None, files=None, in
             else:
                 if current_mode != baseline["mode"]:
                     candidates.add(path)
-        names.update(p for p in candidates
-                     if not default_excluded(p, observed["repositories"])
-                     and PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS
-                     and initial_file_hash(root / p) != initial_hash(root, execution_context, p))
+        names = set(p for p in candidates
+                     if not (root / p).is_dir() and not default_excluded(p, observed["repositories"])
+                     and (PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS or is_configuration(p))
+                     and (current_files[p] if current_files is not None and p in current_files else initial_file_hash(root / p))
+                     != baseline_reader(p))
+    else:
+        # 无冻结上下文无法区分他人未提交改动：只有已提交差异和显式写集内的脏文件归属本任务。
+        dirty = set(git_paths(root, "diff", "--name-only", "--no-renames", "-z", "HEAD", "--"))
+        dirty.update(git_paths(root, "ls-files", "--others", "--exclude-standard", "-z"))
+        from project_inventory import default_excluded, git_worktree_inventory
+        observed = inventory if inventory is not None else git_worktree_inventory(root, since=since)
+        # 子模块内部脏文件只在递归清单中可见；仍按同一写集归属，不能整仓混入。
+        committed = set(git_paths(root, "diff", "--name-only", "--no-renames", "-z", since, "HEAD", "--"))
+        dirty |= set(observed["preexisting_dirty"]) - committed
+        behavior = lambda p: (not default_excluded(p, observed["repositories"])
+                              and (PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS or is_configuration(p)))
+        if not write_set and any(behavior(p) for p in dirty if not (root / p).is_dir()):
+            raise ScopeError("工作区存在未归属改动；必须提供 execution-context 或明确 write-set，禁止全工作区选测")
+        names = (names | {p for p in dirty if not (root / p).is_dir()}) - {
+            p for p in dirty if not any(within(p, value) for value in write_set)}
     for value in write_set:
         rel = relative_path(root, value)
         if (root / rel).is_dir():
-            names.update(p for p in files if within(p, rel))
+            candidates = (names | set((inventory or {}).get("preexisting_dirty", ())) if execution_context is not None else files)
+            names.update(p for p in candidates if within(p, rel))
         else:
             names.add(rel)
     return sorted(names)
@@ -219,6 +238,14 @@ def validate_runners(runners, root=None):
     return normalized
 
 
+def is_configuration(path):
+    name = PurePosixPath(path).name
+    return (name in MODULE_MARKERS | {".gitignore", ".gitmodules", "pytest.ini", "tox.ini", "Makefile",
+            "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "Pipfile", "Pipfile.lock", "go.sum", "Cargo.lock"}
+            or name.startswith((".env", "requirements")) or "config" in name.lower()
+            or name.endswith((".toml", ".cfg", ".ini")))
+
+
 def module_roots(files, runners):
     return sorted({".", *(r["cwd"] for r in runners),
                    *(PurePosixPath(p).parent.as_posix() for p in files if PurePosixPath(p).name in MODULE_MARKERS)},
@@ -258,10 +285,16 @@ def mapped_tests(rel, files, modules):
 DEPENDENCY_POLICY = "python-import-closure-v1"
 
 
-def read_frozen_source(root, path, frozen_files=None):
+def read_frozen_source(root, path, frozen_files=None, observer=None, frozen_tokens=None, metadata=None):
     """解析只使用已与冻结快照核对的同一字节缓冲，拒绝读入 A→B→A 中间态 B。"""
     target = root / path
+    from project_inventory import fingerprint_token, fingerprint_metadata, _stat_identity
+    if metadata is None:
+        metadata = fingerprint_metadata() or {}
+    token, observation = fingerprint_token(target, metadata=metadata), _stat_identity(target)
     try:
+        if observer:
+            observer({"content_reads": 1, "metadata_entries": 1, "cache_hits": 0}, {str(target)})
         content = target.read_bytes()
         mode = target.lstat().st_mode
         link = os.readlink(target) if stat.S_ISLNK(mode) else None
@@ -271,18 +304,27 @@ def read_frozen_source(root, path, frozen_files=None):
         raise ScopeError(f"UNVERIFIED：无法读取冻结分析输入 {path}：{exc}") from exc
     if frozen_files is not None:
         observed = digest({"sha256": hashlib.sha256(content).hexdigest(), "mode": stat.S_IMODE(mode), "link": link})
-        if observed != frozen_files.get(path):
+        if path not in frozen_files and frozen_tokens is not None:
+            # 未展开包中的真实 import 仍是输入；以本次实际解析字节补入冻结证明。
+            frozen_files[path] = observed
+            frozen_tokens[path] = {"token": token, "observation": observation}
+        elif observed != frozen_files.get(path):
             raise ScopeError(f"TREE_CHANGED：实际解析字节与冻结快照不一致：{path}")
+    if token != fingerprint_token(target, metadata=metadata) or observation != _stat_identity(target):
+        raise ScopeError(f"TREE_CHANGED：解析期间文件变化：{path}")
     return content
 
 
-def dependency_analysis(root, files, modules, runners, deadline=None, repositories=(".",), frozen_files=None):
+def dependency_analysis(root, files, modules, runners, deadline=None, repositories=(".",), frozen_files=None,
+                        observer=None, candidates=None, frozen_tokens=None, metadata=None):
     """解析本地 Python 导入闭包；命名映射只增加依赖，绝不证明独立。
 
     不执行项目代码。缺失/外部导入、动态加载及无法解析的文件均显式标记 unknown。
     闭包随 scope_hash 入账，历史复验不需要从当前工作树猜测旧文件内容。
     """
-    from project_inventory import default_excluded
+    from project_inventory import default_excluded, fingerprint_metadata
+    if metadata is None:
+        metadata = fingerprint_metadata() or {}
     files = set(files)
     python_files = {p for p in files if p.endswith(".py")}
     directories = {str(parent) for p in python_files for parent in PurePosixPath(p).parents}
@@ -291,7 +333,7 @@ def dependency_analysis(root, files, modules, runners, deadline=None, repositori
     def parse(path):
         if path not in parsed:
             try:
-                content = read_frozen_source(root, path, frozen_files)
+                content = read_frozen_source(root, path, frozen_files, observer, frozen_tokens, metadata)
                 # ast.parse(bytes) 保留 Python 源码编码声明/BOM 的处理，且不再次打开源码。
                 parsed[path] = ast.parse(content, filename=path)
             except (OSError, UnicodeError, SyntaxError) as exc:
@@ -322,7 +364,7 @@ def dependency_analysis(root, files, modules, runners, deadline=None, repositori
             for test in mapped_tests(source, files, modules):
                 named_sources.setdefault(test, set()).add(source)
     analysis = {}
-    for test in sorted(p for p in files if is_test(p)):
+    for test in sorted(p for p in (files if candidates is None else candidates) if is_test(p)):
         matching = [r for r in runners if within(test, r["cwd"]) and PurePosixPath(test).suffix in r["suffixes"]]
         runner = max(matching, key=lambda r: len(PurePosixPath(r["cwd"]).parts), default=None)
         cwd = runner["cwd"] if runner else module_for(test, modules)
@@ -441,16 +483,19 @@ def dependency_impact(proof, changes, include_runner=True):
     return ""
 
 
-def render_argv(argv, tests, root=None, cwd=".", sources=(), frozen_files=None):
+def render_argv(argv, tests, root=None, cwd=".", sources=(), frozen_files=None, observer=None, metadata=None):
     relative_tests = [PurePosixPath(t).relative_to(cwd).as_posix() for t in tests]
     relative_sources = [PurePosixPath(t).relative_to(cwd).as_posix() for t in sources]
     classes = []
+    if metadata is None:
+        from project_inventory import fingerprint_metadata
+        metadata = fingerprint_metadata() or {}
     for test in tests:
         package = None
         if any("{test_classes}" in a for a in argv) and not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", PurePosixPath(test).stem):
             raise ScopeError(f"测试类名不是精确 Java 标识符：{test}")
         if root is not None and PurePosixPath(test).suffix == ".java":
-            package = re.search(r"^\s*package\s+([\w.]+)\s*;", read_frozen_source(root, test, frozen_files).decode("utf-8"), re.MULTILINE)
+            package = re.search(r"^\s*package\s+([\w.]+)\s*;", read_frozen_source(root, test, frozen_files, observer, metadata=metadata).decode("utf-8"), re.MULTILINE)
         classes.append((package.group(1) + "." if package else "") + PurePosixPath(test).stem)
     rendered = []
     for item in argv:
@@ -483,7 +528,50 @@ def context_identity(root, context):
     return entry_identity(context)
 
 
+def analysis_paths(root, inventory, context, write_set):
+    """light 默认不展开未修改的安装技能包；导入到它们的真实依赖仍可懒读取。"""
+    if context is None or context["mode"] != "light":
+        return None
+    from project_inventory import default_excluded, fingerprint_token
+    from test_ledger import _FingerprintCache
+    cache = _FingerprintCache(root)
+    from project_inventory import installed_skill_package
+    def package(path):
+        return installed_skill_package(root, path)
+    active = {package(path) for path in write_set if package(path)}
+    for path, baseline in context.get("initial_git_files", {}).items():
+        owner = package(path)
+        if owner is not None and (baseline.get("token") is None
+                or fingerprint_token(root / path, metadata=cache.metadata) != baseline["token"]):
+            active.add(owner)
+    for path in inventory["preexisting_dirty"]:
+        owner = package(path)
+        if owner is None:
+            continue
+        if path not in context["preexisting_dirty"]:
+            active.add(owner)
+            continue
+        record = cache.files.get(str(root / path), {})
+        token = fingerprint_token(root / path, metadata=cache.metadata)
+        if (token is None or token != record.get("token")
+                or record.get("hash") != context["initial_files"].get(path)):
+            active.add(owner)
+    return [path for path in inventory["files"]
+            if not default_excluded(path, inventory["repositories"])
+            and (PurePosixPath(path).suffix in CODE_EXTS | RESOURCE_EXTS or is_configuration(path))
+            and (package(path) is None or package(path) in active)]
+
+
 def derive(root, since, runners, write_set=(), execution_context=None):
+    owned = []
+    try:
+        return _derive(root, since, runners, write_set, execution_context, owned)
+    finally:
+        for progress in owned:
+            progress.finish()
+
+
+def _derive(root, since, runners, write_set=(), execution_context=None, _owned=None):
     root = Path(root).resolve()
     execution_context = execution_context_data(root, execution_context)
     identity = context_identity(root, execution_context)
@@ -497,61 +585,104 @@ def derive(root, since, runners, write_set=(), execution_context=None):
     runners = validate_runners(runners, root)
     write_set = sorted(set(relative_path(root, p) for p in write_set))
     from project_inventory import git_worktree_inventory, default_excluded
-    from test_ledger import tree_snapshot, environment_hash
+    from test_ledger import tree_snapshot, environment_hash, snapshot_estimate, _ValidationProgress, _FingerprintCache
     started = time.monotonic()
     scan_seconds = min(10, execution_context["execution_budget"]["elapsed_seconds"]) if execution_context else 300
     deadline = started + scan_seconds
-    if execution_context:
-        from execution_policy import reserve_budget, PolicyError
-        if scan_seconds <= 0:
-            raise PolicyError("BUDGET_EXCEEDED", "没有可用于静态扫描的时间预算")
-        scan_reservation = reserve_budget(root, execution_context, "elapsed_seconds", scan_seconds, action="static")
-    limit = execution_context.get("execution_budget", {}).get("scanned_files") if execution_context else None
-    inventory = git_worktree_inventory(root, since=since, max_files=limit)
+    if execution_context and scan_seconds <= 0:
+        raise ScopeError("BUDGET_EXCEEDED：没有可用于静态扫描的时间预算")
+    inventory = git_worktree_inventory(root, since=since)
     repository = inventory["files"]
+    explicit_inputs = [path for runner in runners for path in runner["inputs"]]
+    document_inputs = [p for p in write_set if (root / p).is_file()
+                       and PurePosixPath(p).suffix in {".md", ".rst", ".txt"}]
+    explicit_inputs = sorted(set(explicit_inputs) | set(document_inputs))
+    for runner in runners:
+        runner["inputs"] = sorted(set(runner["inputs"]) | set(document_inputs))
+    analysis_inputs = analysis_paths(root, inventory, execution_context, [*write_set, *explicit_inputs])
+    progress, observer = None, None
     if execution_context:
-        from execution_policy import reserve_budget
-        reserve_budget(root, execution_context, "scanned_files", len(repository), action="static")
-    snapshot = tree_snapshot(root, [path for runner in runners for path in runner["inputs"]])
-    changes = [p for p in changed_files(root, since, write_set, execution_context, repository, inventory)
-               if not p.startswith(NON_CODE_ROOTS) and PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS]
-    changes = sorted(set(changes) | {p for p in inventory["preexisting_dirty"]
-                    if PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS})
+        estimate = snapshot_estimate(root, explicit_inputs, analysis_inputs)
+        parsable = sum(p.endswith((".py", ".java")) and not default_excluded(p, inventory["repositories"])
+                       for p in (repository if analysis_inputs is None else analysis_inputs))
+        baseline_reads = len(set(inventory["preexisting_dirty"]) & set(execution_context.get("initial_git_files", {})))
+        stages = {"pre_evidence": {"scanned_files": estimate["content_reads"] + parsable + baseline_reads + 3,
+                                   "elapsed_seconds": scan_seconds},
+                  "command": {}, "post_evidence": {"scanned_files": estimate["objects"]}, "cleanup": {}}
+        progress = _ValidationProgress(root, execution_context, stages,
+            digest([identity, runners, write_set, estimate["hash"]]), "static", defer_input=True)
+        _owned.append(progress)
+        observer = progress.observe("pre_evidence")
+    snapshot = tree_snapshot(root, explicit_inputs, paths=analysis_inputs, inventory=inventory, observer=observer)
+    baseline_session = None
+    if execution_context is not None:
+        from entry_context import _FingerprintSession
+        baseline_session = _FingerprintSession(root, execution_context, charge=False)
+    def baseline_reader(path):
+        before_reads, before_hits = baseline_session.reads, baseline_session.hits
+        try:
+            return baseline_session.initial(path)
+        finally:
+            reads, hits = baseline_session.reads - before_reads, baseline_session.hits - before_hits
+            if observer:
+                observer({"content_reads": reads, "metadata_entries": 0, "cache_hits": hits},
+                         {str(root / path)} if reads else set())
+            if reads:
+                baseline_session.save()
+    raw_changes = changed_files(root, since, write_set, execution_context, repository, inventory,
+                                snapshot["files"], baseline_reader if baseline_session else None)
     resource_paths = {p for r in runners for p in r["resources"]}
-    changes = [p for p in changes if p in resource_paths or not default_excluded(p, inventory["repositories"])]
-    if execution_context is not None and identity["mode"] == "light":
-        from entry_context import initial_file_hash, initial_hash
-        dirty = set(execution_context["preexisting_dirty"])
-        # 把初始脏文件恢复为 Git 基线也是本任务改动，虽然 git diff 已不再列出它。
-        candidates = set(changes) | {p for p in dirty if not p.startswith(NON_CODE_ROOTS)
-                                     and PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS}
-        changes = sorted(p for p in candidates if p not in dirty
-                         or any(within(p, declared) for declared in write_set)
-                         or initial_file_hash(root / p) != initial_hash(root, execution_context, p))
+    changes = [p for p in raw_changes if p in resource_paths or
+               (not p.startswith(NON_CODE_ROOTS) and (PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS or is_configuration(p)))]
+    changes = sorted(p for p in set(changes) if p in resource_paths or not default_excluded(p, inventory["repositories"]))
+    if analysis_inputs is not None:
+        changes = [p for p in changes if p in analysis_inputs or not (root / p).exists()]
     files = [p for p in repository if not default_excluded(p, inventory["repositories"]) and (root / p).is_file()]
     modules = module_roots(files, runners)
-    tool_hash = digest([hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                        hashlib.sha256(Path(__file__).with_name("project_inventory.py").read_bytes()).hexdigest(),
-                        hashlib.sha256(Path(__file__).with_name("test_ledger.py").read_bytes()).hexdigest()])
+    cache = _FingerprintCache(root)
+    tool_files = [Path(__file__), Path(__file__).with_name("project_inventory.py"), Path(__file__).with_name("test_ledger.py")]
+    tools = []
+    try:
+        for tool in tool_files:
+            record = cache.read(tool)
+            tools.append(record["hash"])
+            if observer:
+                observer({"content_reads": int(record["read"]), "metadata_entries": 1,
+                          "cache_hits": int(not record["read"])}, {str(tool)} if record["read"] else set())
+    finally:
+        cache.save()
+    tool_hash = digest(tools)
     analysis_key = digest([str(root), snapshot["hash"], environment_hash(), tool_hash, files, modules, runners])
+    initial_snapshot_paths = set(snapshot["files"])
     analysis = _ANALYSIS_CACHE.get(analysis_key)
+    extra_files = _ANALYSIS_EXTRA.get(analysis_key, {})
     pending_analysis = None
+    from aidp_paths import ensure_runtime_dir
+    cache_file = Path(ensure_runtime_dir(root)) / "scope-analysis" / (analysis_key + ".json")
     if analysis is None:
-        from aidp_paths import ensure_runtime_dir
-        cache_file = Path(ensure_runtime_dir(root)) / "scope-analysis" / (analysis_key + ".json")
         try:
             record = json.loads(cache_file.read_text(encoding="utf-8"))
-            candidate = record["analysis"]
-            if (record.get("key") == analysis_key and record.get("checksum") == digest(candidate)
+            candidate, extra = record["analysis"], record.get("extra_files", {})
+            if (record.get("key") == analysis_key and record.get("checksum") == digest([candidate, extra])
                     and candidate.get("policy") == DEPENDENCY_POLICY and isinstance(candidate.get("tests"), dict)
+                    and isinstance(extra, dict)
                     and all(isinstance(v, dict) and isinstance(v.get("files"), list) and isinstance(v.get("unknown"), list)
                             for v in candidate["tests"].values())):
-                analysis = candidate
+                analysis, extra_files = candidate, extra
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             pass
-        if analysis is None:
-            analysis = dependency_analysis(root, files, modules, runners, deadline=deadline, repositories=inventory["repositories"], frozen_files=snapshot["files"])
-            pending_analysis = analysis
+    if analysis is not None and extra_files:
+        extra = tree_snapshot(root, paths=list(extra_files), observer=observer)
+        observed = {path: extra["files"].get(path) for path in extra_files}
+        snapshot["files"].update({p: value for p, value in observed.items() if value is not None})
+        snapshot["tokens"].update(extra["tokens"])
+        if observed != extra_files:
+            analysis = None
+    if analysis is None:
+        analysis = dependency_analysis(root, files, modules, runners, deadline=deadline, repositories=inventory["repositories"],
+                                       frozen_files=snapshot["files"], observer=observer, candidates=analysis_inputs,
+                                       frozen_tokens=snapshot["tokens"], metadata=cache.metadata)
+        pending_analysis = analysis
     dependencies = copy.deepcopy(analysis)
     # 显式资源依赖进入传递闭包，既用于选测，也用于跨树证据判断。
     for runner in runners:
@@ -569,8 +700,11 @@ def derive(root, since, runners, write_set=(), execution_context=None):
             unknown.add(test)
     proven_tests, conservative_tests = set(), set()
 
+    criteria = execution_context.get("acceptance", []) if execution_context else []
+    acceptance_paths = sorted(p for p in files if any(
+        p == criterion or f"`{p}`" in criterion for criterion in criteria))
     mapping, unmapped, tests, related = [], [], set(), []
-    for rel in changes:
+    for rel in sorted(set(changes) | set(acceptance_paths)):
         matching = [r for r in runners if r["mode"] == "related" and within(rel, r["cwd"])
                     and PurePosixPath(rel).suffix in r["suffixes"] and (root / rel).is_file()]
         if matching:
@@ -582,6 +716,9 @@ def derive(root, since, runners, write_set=(), execution_context=None):
             mapping.append({"change": rel, "tests": [rel] if is_test(rel) else [], "reason": "framework related"})
             continue
         found = set(mapped_tests(rel, files, modules)) | reverse.get(rel, set())
+        if is_configuration(rel):
+            base = PurePosixPath(rel).parent.as_posix()
+            found.update(test for test in dependencies["tests"] if within(test, base))
         proven = set(found)
         proven_tests.update(proven)
         if rel.endswith(".py"):
@@ -622,40 +759,213 @@ def derive(root, since, runners, write_set=(), execution_context=None):
                      "tests": [p for p in selected if is_test(p)], "sources": selected,
                      "module": module_for(selected[0], modules), "mode": "related",
                      "env_id": runner["env_id"], "inputs": runner["inputs"],
-                     "argv": render_argv(runner["argv"], [], root, runner["cwd"], selected, frozen_files=snapshot["files"])})
+                     "argv": render_argv(runner["argv"], [], root, runner["cwd"], selected, frozen_files=snapshot["files"], observer=observer, metadata=cache.metadata)})
     for runner, selected in groups.values():
         runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"], "tests": selected, "sources": [],
                      "module": module_for(selected[0], modules), "mode": "named",
                      "env_id": runner["env_id"], "inputs": runner["inputs"],
-                     "argv": render_argv(runner["argv"], selected, root, runner["cwd"], frozen_files=snapshot["files"])})
-    # 分析期间的并发修改不得形成混合树证明。
-    if tree_snapshot(root, [path for runner in runners for path in runner["inputs"]])["hash"] != snapshot["hash"]:
+                     "argv": render_argv(runner["argv"], selected, root, runner["cwd"], frozen_files=snapshot["files"], observer=observer, metadata=cache.metadata)})
+    # 分析期间内容及元数据前后都要稳定，A→B→A 也不能发布依赖证明。
+    from test_ledger import snapshot_changed
+    if analysis_inputs is not None:
+        missing = {path for proof in dependencies["tests"].values() for path in proof["files"]
+                   if path not in snapshot["files"] and (root / path).is_file()}
+        if missing:
+            extra = tree_snapshot(root, paths=sorted(missing), observer=observer)
+            snapshot["files"].update(extra["files"])
+            snapshot["tokens"].update(extra["tokens"])
+        analysis_inputs = sorted(set(analysis_inputs) | {p for p in snapshot["files"]
+                                                       if not p.endswith(("/", "/@gitlink"))})
+    if analysis_inputs is not None:
+        from test_ledger import inventory_membership
+        snapshot["files"]["@inventory"] = inventory_membership(root, inventory, analysis_inputs)
+    snapshot["hash"] = digest({"files": snapshot["files"], "vcs_mode": snapshot["vcs_mode"]})
+    after = tree_snapshot(root, explicit_inputs, paths=analysis_inputs,
+                          observer=progress.observe("post_evidence") if progress else None)
+    if snapshot_changed(snapshot, after):
         raise ScopeError("TREE_CHANGED：范围推导期间输入变化，请重新推导")
     if time.monotonic() > deadline:
         raise ScopeError("BUDGET_EXCEEDED：范围扫描时间超出预算")
-    if execution_context:
-        from execution_policy import settle_elapsed
-        settle_elapsed(root, execution_context, scan_reservation, time.monotonic() - started)
+    if progress:
+        progress.actual["pre_evidence"]["elapsed_seconds"] = time.monotonic() - started
+        progress.flush()
+        progress.bind(digest([identity, runners, write_set, snapshot["hash"]]))
+        progress.finish("PASS")
     # 只有前后内容一致才发布分析缓存，失效/混合树的分析不能污染后续恢复的原树。
     if len(_ANALYSIS_CACHE) >= 8:
         _ANALYSIS_CACHE.clear()
+        _ANALYSIS_EXTRA.clear()
+    extra_files = {p: value for p, value in snapshot["files"].items() if p not in initial_snapshot_paths}
     _ANALYSIS_CACHE[analysis_key] = analysis
+    _ANALYSIS_EXTRA[analysis_key] = extra_files
     if pending_analysis is not None:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", dir=cache_file.parent, delete=False) as stream:
-            json.dump({"key": analysis_key, "analysis": analysis, "checksum": digest(analysis)}, stream)
+            json.dump({"key": analysis_key, "analysis": analysis, "extra_files": extra_files,
+                       "checksum": digest([analysis, extra_files])}, stream)
             temporary = stream.name
         os.replace(temporary, cache_file)
     dependencies["tests"] = {test: dependencies["tests"][test] for test in sorted(tests)}
+    validation_files = None
+    if identity is not None and identity["mode"] == "light":
+        relevant = set(changes) | tests
+        for proof in dependencies["tests"].values():
+            relevant.update(proof["files"])
+            if proof["unknown"] or proof.get("runner_unknown"):
+                # 未知加载不能靠窄集合伪造独立；对应运行模块内的源码/配置仍为真实输入。
+                roots = {item["cwd"] for item in runs if set(item["tests"]) & tests}
+                relevant.update(path for path in snapshot["files"] if any(within(path, base) for base in roots))
+        if related:
+            relevant.update(path for path in snapshot["files"] if any(within(path, runner["cwd"]) for _, runner in related))
+        relevant.update(path for path in snapshot["files"] if is_configuration(path))
+        validation_files = sorted(p for p in relevant if p != "@inventory" and not p.endswith(("/", "/@gitlink")))
+        visible = {path: value for path, value in snapshot["files"].items()
+                   if path in relevant or path.endswith("/@gitlink")
+                   or any(within(path, declared) for declared in explicit_inputs)}
+        from test_ledger import inventory_membership
+        visible["@inventory"] = inventory_membership(root, inventory, validation_files)
+        snapshot = dict(snapshot, files=visible, hash=digest({"files": visible, "vcs_mode": snapshot["vcs_mode"]}))
+    documented = sorted(p for p in raw_changes if PurePosixPath(p).suffix in {".md", ".rst", ".txt"}
+                        and (p.startswith("docs/") or PurePosixPath(p).name.lower().startswith(("readme", "changelog"))))
+    unknown_changes = sorted(set(raw_changes) - set(changes) - set(documented))
+    applicability = {"status": "REQUIRED", "reason": "本任务源码、测试、配置资源或验收规则需要行为验证", "paths": changes}
+    if not changes and not acceptance_paths:
+        if documented and not unknown_changes and all(p in document_inputs for p in documented):
+            applicability = {"status": "NOT_APPLICABLE", "reason": "仅说明文档变更，未命中源码、测试、配置、资源声明或验收测试；无可执行行为变更",
+                             "paths": documented, "content_hashes": {p: snapshot["files"].get(p) for p in documented}}
+        else:
+            applicability = {"status": "UNVERIFIED", "reason": "没有可证明不适用的本任务行为范围或存在无法分类的改动", "paths": unknown_changes}
     result = {"schema": SCHEMA, "since": since, "write_set": write_set, "runners": runners,
+              "acceptance_paths": acceptance_paths, "applicability": applicability,
               "changed": changes, "tests": sorted(tests), "runs": runs,
-              "unrunnable": sorted(tests - claimed), "mapping": mapping, "unmapped": unmapped,
+              "unrunnable": sorted(tests - claimed) or ([p for p in changes if is_configuration(p)] if not runs else []),
+              "mapping": mapping, "unmapped": unmapped,
               "modules": modules, "dependencies": dependencies, "tree_hash": snapshot["hash"],
               "analysis_version": tool_hash,
               "selection": {"proven": sorted(proven_tests), "conservative": sorted(conservative_tests),
                             "unanalysable": sorted(unmapped), "reason": "unknown dependency candidates require bounded execution"}}
     if identity is not None:
         result["execution_context"] = identity
+    if validation_files is not None:
+        result["validation_files"] = validation_files
+    result["scope_hash"] = digest(result)
+    return result
+
+
+def version_context(root, context, manifest):
+    """版本执行沿既有父上下文核真；唯一跨 root 场景是同仓固定提交 worktree。"""
+    if context is None:
+        return None
+    try:
+        raw = context if isinstance(context, dict) else json.loads(Path(context).read_text(encoding="utf-8"))
+        owner = Path(raw["root"]).resolve()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ScopeError("版本 execution-context 不可读") from exc
+    loaded = execution_context_data(owner, context)
+    from execution_policy import validate_test_binding
+    validate_test_binding(owner, loaded, manifest.get("version"), manifest.get("build"), manifest)
+    root = Path(root).resolve()
+    def common(path):
+        value = os.fsdecode(git_output(path, "rev-parse", "--git-common-dir")).strip()
+        return (path / value).resolve()
+    if common(root) != common(owner) or resolve_since(root, "HEAD") != manifest.get("commit"):
+        raise ScopeError("版本执行必须使用同仓 manifest.commit 固定的 worktree")
+    return loaded
+
+
+def derive_suite(root, runners, manifest, execution_context=None):
+    """只把已冻结版本验收清单编译为现有 scope；绝不自动发现全仓测试。"""
+    root = Path(root).resolve()
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("version"), str):
+        raise ScopeError("版本范围必须提供明确 manifest/version")
+    version = manifest["version"]
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", version):
+        raise ScopeError("版本标识无效")
+    baseline = manifest.get("acceptance_baseline")
+    if not isinstance(baseline, dict):
+        raise ScopeError("版本范围缺少正式验收 acceptance_baseline")
+    path = relative_path(root, baseline.get("path"))
+    if not path.startswith(f"docs/testing/{version}/") or not path.endswith(".json"):
+        raise ScopeError("验收基线必须归属本版本 docs/testing/<version>/ 下 JSON")
+    try:
+        content = (root / path).read_bytes()
+        data = json.loads(content)
+    except (OSError, ValueError) as exc:
+        raise ScopeError("正式版本验收基线不可读") from exc
+    if hashlib.sha256(content).hexdigest() != baseline.get("sha256") or data.get("version") != version:
+        raise ScopeError("验收基线 hash/version 不一致")
+    def paths(key, required=False):
+        values = manifest.get(key)
+        if (not isinstance(values, list) or required and not values
+                or not all(isinstance(p, str) for p in values) or len(values) != len(set(values))):
+            raise ScopeError(f"manifest.{key} 必须是明确且无重复的文件清单")
+        selected = sorted(relative_path(root, p) for p in values)
+        if sorted(data.get(key, [])) != selected:
+            raise ScopeError(f"manifest.{key} 未完整覆盖冻结验收基线")
+        if any(not (root / p).is_file() for p in selected):
+            raise ScopeError(f"manifest.{key} 只能列出现有文件，禁止目录/通配发现")
+        return selected
+    acceptance = paths("acceptance_tests", True)
+    declared_dependencies = paths("dependencies")
+    if not all(is_test(p) for p in acceptance):
+        raise ScopeError("acceptance_tests 必须是明确测试文件")
+    cases = data.get("cases")
+    if (not isinstance(cases, list) or not cases or any(not isinstance(c, dict) or not isinstance(c.get("id"), str)
+            or not isinstance(c.get("test_files"), list) or not c["test_files"]
+            or not all(isinstance(p, str) for p in c["test_files"]) for c in cases)
+            or len({c["id"] for c in cases}) != len(cases)
+            or {p for c in cases for p in c["test_files"]} != set(acceptance)):
+        raise ScopeError("正式验收用例 cases 必须完整且唯一映射 acceptance_tests")
+    try:
+        from build_unit_test import validate_case_index
+        validate_case_index(root, manifest)
+    except (ValueError, OSError) as exc:
+        raise ScopeError(f"正式用例索引未完整覆盖：{exc}") from exc
+    loaded = version_context(root, execution_context, manifest)
+    identity = context_identity(Path(loaded["root"]), loaded) if loaded else None
+    runners = validate_runners(runners, root)
+    if any(r["mode"] != "named" for r in runners):
+        raise ScopeError("版本验收必须显式选择测试文件，禁止 related 自动扩展")
+    files = sorted(set(acceptance) | set(declared_dependencies))
+    tests = sorted(p for p in files if is_test(p))
+    modules = module_roots(files, runners)
+    from test_ledger import tree_snapshot, snapshot_changed
+    index = data.get("case_index", {}).get("path")
+    index = relative_path(root, index)
+    inputs = sorted({path, index, *(p for r in runners for p in r["inputs"])})
+    before = tree_snapshot(root, inputs, paths=files)
+    analysis = dependency_analysis(root, files, modules, runners, frozen_files=before["files"],
+                                   frozen_tokens=before["tokens"], candidates=tests)
+    declared = set(files)
+    for test, proof in analysis["tests"].items():
+        missing = set(proof["files"]) - declared
+        if missing:
+            raise ScopeError(f"版本清单遗漏必要依赖：{test}: {sorted(missing)}")
+        # 显式文件清单无法证明动态/缺失本地导入完整；调用方必须补齐清单或提供可解析依赖。
+        if any("未解析导入" in reason for reason in proof["unknown"]):
+            raise ScopeError(f"版本清单依赖未闭合：{test}: {proof['unknown']}")
+    groups = {}
+    for test in tests:
+        owners = [r for r in runners if within(test, r["cwd"]) and PurePosixPath(test).suffix in r["suffixes"]]
+        depth = max((len(PurePosixPath(r["cwd"]).parts) for r in owners), default=-1)
+        owners = [r for r in owners if len(PurePosixPath(r["cwd"]).parts) == depth]
+        if len(owners) != 1:
+            raise ScopeError(f"版本测试必须唯一归属一个运行器：{test}")
+        runner = owners[0]
+        key = digest(runner) if runner["batch"] else digest([runner, test])
+        groups.setdefault(key, (runner, []))[1].append(test)
+    runs = [{"suffixes": runner["suffixes"], "cwd": runner["cwd"], "tests": selected, "sources": [],
+             "module": module_for(selected[0], modules), "mode": "named", "env_id": runner["env_id"],
+             "inputs": sorted(set(inputs) | set(runner["inputs"])),
+             "argv": render_argv(runner["argv"], selected, root, runner["cwd"], frozen_files=before["files"])}
+            for runner, selected in groups.values()]
+    if snapshot_changed(before, tree_snapshot(root, inputs, paths=files)):
+        raise ScopeError("TREE_CHANGED：版本范围推导期间输入变化")
+    result = {"schema": SCHEMA, "kind": "version", "manifest": manifest, "since": manifest.get("commit"),
+              "write_set": files, "runners": runners, "changed": files, "tests": tests, "runs": runs,
+              "unrunnable": [], "unmapped": [], "mapping": [], "modules": modules,
+              "dependencies": analysis, "tree_hash": before["hash"], "validation_files": files,
+              "execution_context": identity, "applicability": {"status": "REQUIRED", "reason": "冻结版本正式验收清单", "paths": tests}}
     result["scope_hash"] = digest(result)
     return result
 
@@ -666,6 +976,11 @@ def validate_scope(root, scope, execution_context=None):
     unsigned = {k: v for k, v in scope.items() if k != "scope_hash"}
     if scope.get("scope_hash") != digest(unsigned):
         raise ScopeError("scope_hash 与范围内容不匹配")
+    if scope.get("kind") == "version":
+        current = derive_suite(root, scope.get("runners"), scope.get("manifest"), execution_context)
+        if current != scope:
+            raise ScopeError("版本范围与当前输入或正式验收清单不一致")
+        return current
     if scope.get("execution_context") != context_identity(root, execution_context):
         raise ScopeError("范围 execution-context 与当前任务不一致；不能跨任务或 Sprint 使用")
     current = derive(root, scope.get("since"), scope.get("runners"), scope.get("write_set", []),
@@ -719,6 +1034,8 @@ def main(argv=None):
         code = 0 if out.get("ok", True) else 1
     except (OSError, ValueError, TypeError) as exc:
         out, code = {"kind": "error", "status": getattr(exc, "status", "UNVERIFIED"), "error": str(exc)}, 2
+        if getattr(exc, "details", None):
+            out["details"] = exc.details
     print(json.dumps(out, ensure_ascii=True, sort_keys=True, indent=None if args.json else 2))
     return code
 

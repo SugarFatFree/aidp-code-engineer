@@ -77,8 +77,15 @@ def context_identity(ctx):
     identity["initial_gitlinks_hash"] = _digest(ctx.get("initial_gitlinks", {}))
     if ctx.get("initial_git_files"):
         identity["initial_git_files_hash"] = _digest(ctx["initial_git_files"])
+    if "verification_inputs" in ctx:
+        identity["verification_inputs"] = ctx["verification_inputs"]
+    if "authorization_scope" in ctx:
+        identity['authorization_scope'] = ctx['authorization_scope']
+        identity['scope_history_hash'] = _digest(ctx.get('scope_history', []))
     if "build_id" in ctx:
         identity["build_id"] = ctx["build_id"]
+    if "test_manifest" in ctx:
+        identity["test_manifest"] = ctx["test_manifest"]
     if ctx["mode"] == "formal":
         identity["sprint"] = ctx["sprint"]
     if "parent_task_id" in ctx:
@@ -94,7 +101,8 @@ def evidence_identity(ctx):
     identity = context_identity(ctx)
     identity["revision"] = ctx["scope_revision"]
     for field in ("authorization_revision", "authorization_source", "execution_budget",
-                  "allowed_actions", "verification_level", "parent_identity_hash", "inherit_action_limit"):
+                  "allowed_actions", "verification_level", "parent_identity_hash", "inherit_action_limit",
+                  "authorization_scope", "scope_history_hash"):
         identity.pop(field, None)
     return identity
 
@@ -222,6 +230,17 @@ def _validate(root, ctx):
         raise ContextError("正式入口不能伪装为轻量上下文")
     if not isinstance(ctx.get("write_set"), list) or _write_set(root, ctx["write_set"]) != ctx["write_set"]:
         raise ContextError("上下文 write_set 非规范路径列表")
+    if 'authorization_scope' in ctx:
+        authorized = ctx['authorization_scope']
+        if (not isinstance(authorized, list) or _write_set(root, authorized) != authorized
+                or not isinstance(ctx.get('scope_history', []), list)):
+            raise ContextError('授权范围/细化历史格式无效')
+    if "verification_inputs" in ctx:
+        selected = ctx["verification_inputs"]
+        if (not isinstance(selected, list) or not selected or _write_set(root, selected) != selected
+                or not all(any(path == allowed or path.startswith(allowed + "/")
+                               for allowed in ctx["write_set"]) for path in selected)):
+            raise ContextError("verification_inputs 必须是授权 write_set 内的非空规范路径列表")
     if _acceptance(ctx.get("acceptance")) != ctx["acceptance"]:
         raise ContextError("上下文 acceptance 非规范文本列表")
     files = ctx.get("initial_files")
@@ -241,7 +260,7 @@ def _validate(root, ctx):
         raise ContextError("延迟 Git 基线必须为映射")
     for path, item in lazy.items():
         if (path not in files or files[path] is not None or not isinstance(item, dict) or
-                set(item) != {"repo", "revision", "path", "mode"} or
+                set(item) not in ({"repo", "revision", "path", "mode"}, {"repo", "revision", "path", "mode", "token"}) or
                 not isinstance(item["mode"], int) or not 0 <= item["mode"] <= 0o7777 or
                 not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", str(item["revision"]))):
             raise ContextError("延迟 Git 基线格式无效")
@@ -423,6 +442,10 @@ def snapshot_worktree(root, max_files=None):
 
 
 def _initial_snapshot(root, since, max_files=None, write_set=()):
+    from project_inventory import generated_excluded, installed_skill_package
+    def excluded(relative):
+        return generated_excluded(relative) and not any(relative == declared or
+            (generated_excluded(declared) and relative.startswith(declared + '/')) for declared in write_set)
     try:
         probe = _git(root, "rev-parse", "--show-toplevel")
     except FileNotFoundError:
@@ -451,9 +474,17 @@ def _initial_snapshot(root, since, max_files=None, write_set=()):
         repositories = sorted(inventory["repositories"], key=len, reverse=True)
         frozen_head = head.stdout.decode().strip() if head.returncode == 0 else None
         materialized = 0
+        from project_inventory import fingerprint_token, fingerprint_metadata
+        metadata = fingerprint_metadata() or {}
         for relative in inventory["files"]:
+            if excluded(relative):
+                dirty.discard(relative)
+                continue
             path = root / relative
             selected = any(relative == value or relative.startswith(value.rstrip("/") + "/") for value in write_set)
+            package = installed_skill_package(root, relative)
+            if package and not any(value == package or value.startswith(package + '/') for value in write_set):
+                selected = False  # 宽授权不物化未改安装包，Git历史仍保留删除/显式激活基线。
             if selected or relative in dirty or path.is_symlink() or not path.exists() or frozen_head is None:
                 materialized += 1
                 if max_files is not None and materialized > max_files:
@@ -465,6 +496,8 @@ def _initial_snapshot(root, since, max_files=None, write_set=()):
             local = relative[len(repo) + 1:] if repo != "." else relative
             lazy[relative] = {"repo": repo, "revision": revision, "path": local,
                               "mode": stat.S_IMODE(path.stat().st_mode)}
+            if package:
+                lazy[relative]['token'] = fingerprint_token(path, metadata=metadata)
             files[relative] = None
         return start, "supported" if start else "unsupported", files, sorted(dirty), inventory["gitlinks"], lazy
     else:
@@ -474,9 +507,14 @@ def _initial_snapshot(root, since, max_files=None, write_set=()):
             raise exc
         for parent, dirs, files in os.walk(root, followlinks=False, onerror=onerror):
             base = Path(parent)
-            dirs[:] = [d for d in dirs if d != ".git" and base / d != Path(runtime_dir(root))]
+            dirs[:] = [d for d in dirs if d != ".git" and base / d != Path(runtime_dir(root))
+                       and (not excluded((base / d).relative_to(root).as_posix()) or
+                            any(p.startswith((base / d).relative_to(root).as_posix() + "/") for p in write_set))]
             for name in [*files, *(d for d in dirs if (base / d).is_symlink())]:
-                names.add((base / name).relative_to(root).as_posix())
+                relative = (base / name).relative_to(root).as_posix()
+                if excluded(relative):
+                    continue
+                names.add(relative)
                 if max_files is not None and len(names) > max_files:
                     raise policy.PolicyError("BUDGET_EXCEEDED", "初始文件清单超过扫描预算")
         dirty.update(names)
@@ -536,7 +574,7 @@ def resolve_context(root, entry, version=None, sprint=None, execution_context=No
         paths, criteria = _write_set(root, write_set), _acceptance(acceptance or [])
         _context_base(root)  # 在任何目录创建之前检查运行目录没有链接逃逸。
         execution = policy.policy_fields(root, paths, criteria, additional_grants=additional_grants,
-            authorization_source=authorization_source, execution_budget=execution_budget, task_scope=task_scope)
+            authorization_source=authorization_source, execution_budget=execution_budget, task_scope=task_scope, entry_name=entry)
         if authorization_source and authorization_source.get("kind") in ("explicit-command", "project-policy") and authorization_source.get("command"):
             if _entry(authorization_source["command"].lstrip("/")) != entry:
                 raise ContextError("显式命令来源与入口不一致")
@@ -718,6 +756,8 @@ def route_context(root, execution_context, phase="route", entry=None, action=Non
             actions.append(candidate)
     if phase in ("dev", "test", "repair", "close"):
         actions.extend(a for a in ctx["allowed_actions"] if a not in actions)
+    if _entry(entry or ctx["entry"]) == "test":
+        actions = [candidate for candidate in actions if candidate != "full-regression"]
     if ctx["mode"] == "formal" and ctx["sprint"] is None and phase == "prepare":
         actions.append("allocate-sprint")
     not_requested = sorted(policy.OPTIONAL_ACTIONS - set(ctx["allowed_actions"]))
@@ -738,17 +778,44 @@ def route_context(root, execution_context, phase="route", entry=None, action=Non
 
 
 def revise_context(root, execution_context, write_set=None, *, additional_grants=None,
-                   authorization_source=None, execution_budget=None):
+                   authorization_source=None, execution_budget=None, verification_inputs=None,
+                   replace_write_set=False):
     root = _root(root)
+    observed, changed = None, set()
+    if replace_write_set:
+        if write_set is None:
+            raise ContextError('替换写集必须明确提供 write_set')
+        observed = load_context(root, execution_context)
+        session = _FingerprintSession(root, observed)
+        try:
+            changed = _scope_changes(root, observed, session) | _pending_static_inputs(root, observed)
+        finally:
+            session.save()
     with _task_lock(root, execution_context) as ctx:
+        if observed is not None and identity_hash(observed) != identity_hash(ctx):
+            raise ContextError('细化期间任务身份已变化，请重新读取当前上下文')
         before = identity_hash(ctx)
-        expanded = sorted(set(ctx["write_set"]) | set(_write_set(root, write_set)))
+        old_paths = list(ctx['write_set'])
+        old_verification = ctx.get('verification_inputs')
+        requested = _write_set(root, write_set)
+        expanded = sorted(set(requested) | changed) if replace_write_set else sorted(set(old_paths) | set(requested))
+        if replace_write_set or 'authorization_scope' in ctx:
+            ctx['authorization_scope'] = sorted(set(ctx.get('authorization_scope', old_paths)) | set(requested))
+        if replace_write_set:
+            ctx.pop('verification_inputs', None)
+        if verification_inputs is not None:
+            ctx['verification_inputs'] = _write_set(root, verification_inputs)
+        verification_changed = old_verification != ctx.get('verification_inputs')
+        if expanded != old_paths or verification_changed:
+            ctx.setdefault('scope_history', []).append({'revision': ctx['revision'], 'write_set': old_paths,
+                'requested': requested, 'replace': bool(replace_write_set), 'retained_changes': sorted(changed)})
         if "parent_task_id" in ctx and (additional_grants or authorization_source or execution_budget is not None):
             raise ContextError("子任务不得修订父任务授权或扩大预算；必须由根任务接收新用户请求")
         if additional_grants or authorization_source or execution_budget is not None:
             source = policy.validate_source(authorization_source)
             _check_source_version(source, ctx["version"])
             grants = policy._actions(additional_grants or [])
+            policy.reject_direct_full(grants, source)
             if source["kind"] == "explicit-command":
                 public = policy.command_grants(source)
                 if grants - public:
@@ -759,10 +826,7 @@ def revise_context(root, execution_context, write_set=None, *, additional_grants
                 preset = policy.COMMAND_BUDGETS.get(source["command"].lstrip("/"), {})
                 default_budget = {key: max(value, preset.get(key, value)) for key, value in default_budget.items()}
             budget = policy.normalize_budget(execution_budget, default_budget)
-            removed = set()
-            if source["kind"] in ("explicit-command", "project-policy"):
-                for option in source.get("options", []):
-                    removed.update(policy.COMMAND_OPTION_REMOVALS.get(source.get("command", "").lstrip("/"), {}).get(option, ()))
+            removed = policy.source_removals(source)
             next_actions = (set(ctx["allowed_actions"]) | grants) - removed
             record = dict(source, actions=sorted(grants))
             if execution_budget is not None:
@@ -771,12 +835,12 @@ def revise_context(root, execution_context, write_set=None, *, additional_grants
             if prior is not None and prior != record:
                 raise ContextError("同一 request_id 的授权重放内容不一致")
             if prior is None and (next_actions != set(ctx["allowed_actions"]) or budget != ctx["execution_budget"]
-                                  or source["kind"] in ("explicit-command", "project-policy")):
+                                  or source["kind"] in ("explicit-command", "project-policy") or removed):
                 ctx["authorization_source"].append(record)
                 ctx["allowed_actions"] = sorted(next_actions)
                 ctx["execution_budget"] = budget
                 ctx["verification_level"] = policy.verification_level(ctx["allowed_actions"])
-        if expanded != ctx["write_set"]:
+        if expanded != ctx["write_set"] or verification_changed:
             ctx["scope_revision"] += 1
         elif identity_hash(ctx) != before:
             ctx["authorization_revision"] += 1
@@ -920,37 +984,36 @@ def fork_version(root, execution_context, version):
         return dict(_result(root, child), context=child)
 
 
-def fork_test_build(root, execution_context, version, build_id):
+def fork_test_build(root, execution_context, version, build_id, *, manifest=None):
     """真实部署 build 的受限测试身份；选择/部署证明仍由原 build 消费者核验。"""
     root = _root(root)
     if not re.fullmatch(r"V[0-9][A-Za-z0-9._-]*", str(version)):
         raise ContextError("测试版本号必须以 V 和数字开头")
     if not isinstance(build_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", build_id):
         raise ContextError("build-id 必须是已选真实 build 的非空标识")
-    def order(value):
-        numbers = re.match(r"V([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?", value)
-        return tuple(int(part or 0) for part in numbers.groups())
+    binding, _ = policy.test_manifest_binding(root, version, build_id, manifest)
     with _task_lock(root, execution_context) as parent:
+        _pipeline_source(parent, "sprint-autopilot")
         if parent["mode"] != "formal" or "parent_task_id" in parent:
-            raise policy.PolicyError("UNAUTHORIZED", "测试 build 必须继承已有真实 formal 根任务")
+            raise policy.PolicyError("UNAUTHORIZED", "测试 build 必须继承已有真实 autopilot 根任务")
         if not {"live-tests", "full-regression"} <= set(parent["allowed_actions"]):
             raise policy.PolicyError("UNAUTHORIZED", "父任务未授权双路测试；baseline 不能生成授权")
-        if order(version) > order(parent["version"]):
-            raise ContextError("不能借测试子任务扩展到父目标之后的版本")
+        if version != parent["version"]:
+            raise ContextError("测试 build 只能绑定 autopilot 根的当前版本")
         limit = ["full-regression", "live-tests", "static"]
         child_id = str(uuid.uuid5(uuid.UUID(parent["task_id"]), "test-build:" + version + ":" + build_id))
         candidate = _context_path(root, child_id)
         if candidate.exists():
             with _task_lock(root, candidate) as child:
                 if (child.get("parent_task_id") != parent["task_id"] or child["version"] != version
-                        or child.get("build_id") != build_id):
-                    raise ContextError("测试 build 子任务归属不一致")
+                        or child.get("build_id") != build_id or child.get("test_manifest") != binding):
+                    raise ContextError("测试 build 子任务归属或冻结 manifest 不一致")
                 child = _refresh_child(root, parent, child, limit)
                 return dict(_result(root, child), context=child)
         child = json.loads(json.dumps(parent))
         actions = sorted(set(parent["allowed_actions"]) & set(limit))
         child.update(task_id=child_id, parent_task_id=parent["task_id"], parent_identity_hash=identity_hash(parent),
-                     entry="sprint-aiauto-test", version=version, build_id=build_id, sprint=None,
+                     entry="sprint-aiauto-test", version=version, build_id=build_id, test_manifest=binding, sprint=None,
                      revision=1, scope_revision=1, authorization_revision=parent["authorization_revision"],
                      write_set=[], acceptance=[], task_scope={"kind": "test", "paths": [], "acceptance": []},
                      allowed_actions=actions, verification_level=policy.verification_level(actions),
@@ -1019,174 +1082,625 @@ def completion_obligations(root, execution_context):
             "version_obligations": {"version": ctx["version"], "cascade": current}}
 
 
-def _input_files(root, ctx, inputs):
-    """将目录展开为真实文件，并以起点成员的删除墓碑绑定目录增删。"""
-    declared = _write_set(root, inputs)
-    if not declared:
-        raise ContextError("证据 inputs 必须非空且覆盖任务 write_set")
-    runtime = Path(runtime_dir(root))
-    cache = {}
+class _FingerprintSession:
+    """任务现有运行目录中的内容缓存；只有可信 token 命中才免实际读取/计费。"""
+    def __init__(self, root, ctx, *, charge=True, action=None):
+        self.root, self.ctx, self.charge, self.action = root, ctx, charge, action
+        from project_inventory import fingerprint_metadata
+        self.mount_metadata = fingerprint_metadata() or {}
+        self.path = Path(runtime_dir(root)) / 'content-fingerprints.json'
+        _safe_inside(root, self.path)
+        self.cache = {}
+        try:
+            data = json.loads(self.path.read_text())
+            if (isinstance(data, dict) and isinstance(data.get('files'), dict)
+                    and data.get('checksum') == _digest(data['files'])):
+                self.cache = data['files']
+        except (OSError, ValueError, TypeError):
+            pass
+        self.reads = self.hits = self.metadata = 0
+        self.text_requests = self.text_bytes = 0
+        self.text_cache = {}  # 正文仅留在当前会话；持久缓存只有摘要和token。
+        self.observed = set()
 
-    def members(relative):
-        if relative in cache:
-            return cache[relative]
+    def get(self, path):
+        from project_inventory import fingerprint_file
+        key = str(path.absolute())
+        self.metadata += 1
+        def reader(target):
+            if self.charge:
+                policy.reserve_budget(self.root, self.ctx, 'scanned_files', 1, action=self.action)
+            self.reads += 1  # 读取失败仍是真实消耗。
+            return initial_file_hash(target)
+        record = fingerprint_file(path, self.cache.get(key), reader=reader, metadata=self.mount_metadata)
+        self.cache[key] = record
+        if record['hash'] is not None:
+            self.observed.add(key)
+        self.hits += int(not record['read'] and record['hash'] is not None)
+        return record
+
+    def read_text(self, path):
+        from project_inventory import fingerprint_file, fingerprint_token
+        path = Path(path).absolute()
+        key = str(path)
+        self.text_requests += 1
+        token = fingerprint_token(path, metadata=self.mount_metadata)
+        if token is not None and key in self.text_cache and self.text_cache[key][0] == token:
+            self.hits += 1
+            return self.text_cache[key][1]
+        content = []
+        def reader(target):
+            if self.charge:
+                policy.reserve_budget(self.root, self.ctx, 'scanned_files', 1, action=self.action)
+            self.reads += 1
+            data = target.read_bytes()
+            self.text_bytes += len(data)
+            content.append(data)
+            mode = target.stat().st_mode
+            if not stat.S_ISREG(mode):
+                raise ContextError('选择输入不是普通文件：' + str(target))
+            return _digest({'sha256': hashlib.sha256(data).hexdigest(), 'mode': stat.S_IMODE(mode),
+                            'link': os.readlink(target) if target.is_symlink() else None})
+        record = fingerprint_file(path, reader=reader, metadata=self.mount_metadata)
+        if not content:
+            raise ContextError('选择输入不存在：' + str(path))
+        text = content[0].decode('utf-8')
+        self.cache[key] = record
+        self.text_cache[key] = (record['token'], text)
+        self.observed.add(key)
+        self.metadata += 1
+        return text
+
+    def initial(self, relative):
+        lazy = self.ctx.get('initial_git_files', {}).get(relative)
+        if lazy is None:
+            return self.ctx['initial_files'].get(relative)
+        identity = {name: lazy[name] for name in ('repo', 'revision', 'path', 'mode')}
+        key = 'git:' + _digest([str(self.root), identity])
+        prior = self.cache.get(key)
+        if isinstance(prior, dict) and prior.get('token') == identity and prior.get('hash'):
+            self.hits += 1
+            return prior['hash']
+        if self.charge:
+            policy.reserve_budget(self.root, self.ctx, 'scanned_files', 1, action=self.action)
+        self.reads += 1
+        self.observed.add(str(self.root / relative))
+        # 历史Git对象由完整SHA寻址；持久复用不依赖工作树mtime，也不重复计进程内LRU命中。
+        value = _committed_file_hash.__wrapped__(str(self.root), lazy['repo'], lazy['revision'], lazy['path'], lazy['mode'])
+        self.cache[key] = {'hash': value, 'token': identity, 'read': True}
+        return value
+
+    def save(self):
+        _atomic_json(self.root, self.path, {'files': self.cache, 'checksum': _digest(self.cache)})
+
+
+def _expand_inputs(root, ctx, inputs):
+    """默认排除缓存/产物；明确点名文件或工具目录才覆盖默认排除。"""
+    from project_inventory import generated_excluded, runtime_excluded, installed_skill_package
+    declared = _write_set(root, inputs)
+    explicit_packages = {installed_skill_package(root, name) for name in declared}
+    active_packages = None
+    def package_active(package):
+        nonlocal active_packages
+        if package in explicit_packages or ctx['git_status'] != 'supported':
+            return True
+        if active_packages is None:
+            inventory = git_worktree_inventory(root)
+            changed = set(inventory['preexisting_dirty']) | set(ctx['preexisting_dirty'])
+            delta = _git(root, 'diff', '--name-only', '--no-renames', '-z', ctx['since'], '--')
+            if delta.returncode:
+                raise ContextError('无法确认安装包真实改动，停止范围细化')
+            changed.update(os.fsdecode(path) for path in delta.stdout.split(b'\0') if path)
+            # Git不报告的链接目标/非常规权限不据此省略，留给真实内容指纹核验。
+            changed.update(path for path in inventory['files'] if (root / path).is_symlink() or
+                ((root / path).exists() and (stat.S_IMODE((root / path).stat().st_mode) not in (0o644, 0o664, 0o755, 0o775)
+                  or path in ctx.get('initial_git_files', {}) and
+                     stat.S_IMODE((root / path).stat().st_mode) != ctx['initial_git_files'][path]['mode'])))
+            from project_inventory import fingerprint_token, fingerprint_metadata
+            metadata = fingerprint_metadata() or {}
+            for name, baseline in ctx.get('initial_git_files', {}).items():
+                if installed_skill_package(root, name) is not None:
+                    token = baseline.get('token')
+                    if token is None or fingerprint_token(root / name, metadata=metadata) != token:
+                        changed.add(name)
+            active_packages = {installed_skill_package(root, name) for name in changed if not generated_excluded(name)}
+        return package in active_packages
+    found = set()
+    for relative in declared:
         target = _safe_inside(root, root / relative)
-        previous = {name for name in ctx["initial_files"] if name.startswith(relative + "/")}
+        explicit_generated = generated_excluded(relative)
+        def included(name):
+            package = installed_skill_package(root, name)
+            return (not runtime_excluded(name) and (explicit_generated or not generated_excluded(name))
+                    and (package is None or package_active(package)))
+        previous = {name for name in ctx['initial_files'] if name.startswith(relative + '/') and included(name)}
         directory = target.is_dir() or bool(previous)
-        found = set(previous)
+        found.update(previous)
         if target.is_dir():
             def onerror(exc):
                 raise exc
             for parent, dirs, files in os.walk(target, followlinks=False, onerror=onerror):
                 base = Path(parent)
-                kept = []
+                dirs[:] = [name for name in dirs if included((base / name).relative_to(root).as_posix())]
                 for name in dirs:
-                    path = base / name
-                    if name == ".git" or path == runtime:
-                        continue
-                    _safe_inside(root, path)  # 目录链接不得藏掉真实成员或穿越 root。
-                    kept.append(name)
-                dirs[:] = kept
+                    _safe_inside(root, base / name)
                 for name in files:
-                    path = base / name
-                    if name == ".git" or path == runtime or runtime in path.parents:
-                        continue
-                    found.add(_relative_path(root, path.relative_to(root).as_posix()))
+                    path = (base / name).relative_to(root).as_posix()
+                    if included(path):
+                        found.add(_relative_path(root, path))
         elif target.exists() or not directory:
             found.add(relative)
-        if directory and not found:
-            raise ContextError(f"目录写集没有可核验的真实文件：{relative}")
-        cache[relative] = found
-        return found
+        if directory and not any(path.startswith(relative + '/') for path in found):
+            raise ContextError(f'目录写集没有可核验的真实文件：{relative}')
+    return found
 
-    paths = set().union(*(members(relative) for relative in declared))
-    required = set().union(*(members(relative) for relative in ctx["write_set"])) if ctx["write_set"] else set()
+
+def _scope_changes(root, ctx, session):
+    """授权历史内的实际内容变化独立计算，细化不会丢失删除、改名或已改文件。"""
+    authorized = ctx.get('authorization_scope', ctx['write_set'])
+    if authorized:
+        paths = _expand_inputs(root, ctx, authorized)
+    elif ctx['git_status'] == 'supported':
+        from project_inventory import generated_excluded
+        inventory = git_worktree_inventory(root)
+        paths = set(inventory['preexisting_dirty']) | set(ctx['preexisting_dirty'])
+        delta = _git(root, 'diff', '--name-only', '--no-renames', '-z', ctx['since'], '--')
+        if delta.returncode:
+            raise ContextError('细化时无法读取任务实际变化')
+        paths.update(os.fsdecode(path) for path in delta.stdout.split(b'\0') if path)
+        paths = {path for path in paths if not generated_excluded(path)}
+    else:
+        paths = set(ctx['initial_files'])
+    changed = set()
+    for relative in sorted(paths):
+        current = session.get(root / relative)['hash']
+        if current != session.initial(relative):
+            changed.add(relative)
+    return changed
+
+
+def _pending_static_failures(root, ctx):
+    latest = {}
+    for _, row in _static_rows(root, ctx):
+        latest[_digest(row.get('argv'))] = row
+    return [row for row in latest.values() if row.get('status') != 'PASS' or row.get('policy_notice')]
+
+
+def _pending_static_inputs(root, ctx):
+    """同一检查的后续成功才能解决失败，换成AST不能掩盖原工具失败。"""
+    return {path for row in _pending_static_failures(root, ctx) for path in row.get('inputs', {})}
+
+
+def _input_paths(root, ctx, inputs, session):
+    declared = _write_set(root, inputs)
+    if not declared:
+        raise ContextError('证据 inputs 必须非空')
+    paths = _expand_inputs(root, ctx, declared)
+    required = _expand_inputs(root, ctx, ctx.get('verification_inputs', ctx['write_set']))
+    if 'verification_inputs' in ctx or 'authorization_scope' in ctx:
+        required.update(_scope_changes(root, ctx, session))
+    required.update(_pending_static_inputs(root, ctx))
     if not paths or not required <= paths:
-        raise ContextError("证据 inputs 必须覆盖任务 write_set 的全部真实文件及删除成员")
+        raise ContextError('证据 inputs 必须覆盖当前验证范围、实际改动及尚未覆盖的失败项：' + ', '.join(sorted(required - paths)))
     for relative in paths:
         _safe_inside(root, root / relative)
-        if not (root / relative).exists() and relative not in ctx["initial_files"]:
-            raise ContextError(f"输入不存在且没有冻结删除基线：{relative}")
-    policy.reserve_budget(root, ctx, "scanned_files", len(paths))
-    return {relative: initial_file_hash(root / relative) for relative in sorted(paths)}
+        if not (root / relative).exists() and relative not in ctx['initial_files']:
+            raise ContextError(f'输入不存在且没有冻结删除基线：{relative}')
+    return sorted(paths)
 
 
-def _validate_static_command(root, argv):
-    """有限静态执行器，拒绝已知重流程和未知包装脚本；不解释 shell 语言。"""
-    import ast
+def _input_snapshot(root, ctx, inputs, session):
+    paths = _input_paths(root, ctx, inputs, session)
+    records = {relative: session.get(root / relative) for relative in paths}
+    return {'files': {name: record['hash'] for name, record in records.items()},
+            'tokens': {name: {'token': record['token'], 'observation': record.get('observation')}
+                       for name, record in records.items()}}
+
+
+def _input_files(root, ctx, inputs):
+    session = _FingerprintSession(root, ctx)
+    try:
+        return _input_snapshot(root, ctx, inputs, session)['files']
+    finally:
+        session.save()
+
+
+def _validate_static_command(root, argv, ctx=None, inputs=(), read_text=None):
+    """只读分类来自共享工具模块，不以 static 标签放行测试或未知包装脚本。"""
+    from verification_tools import inspect_command
+    inspected = inspect_command(root, argv, allowed_actions=(ctx or {}).get('allowed_actions', ['static']),
+                                scope_paths=inputs, read_text=read_text)
+    if inspected['status'] not in ('READY', 'ENV_UNAVAILABLE'):
+        raise policy.PolicyError(inspected['status'], inspected['reason'], inspection=inspected)
+    if (inspected.get('required_action') != 'static' or inspected['status'] == 'READY'
+            and inspected.get('category') not in ('syntax', 'lint', 'typecheck', 'compile')):
+        raise policy.PolicyError('UNAUTHORIZED', '测试必须使用对应真实测试执行器，不能以 static 登记')
+    return inspected
+
+
+def _environment_paths(root, argv, inspection=None):
     import shutil
-    name = Path(argv[0]).name.lower()
-    args = list(argv[1:])
-    if any(token in ("--fix", "--write", "--watch", "-w") for token in args):
-        raise policy.PolicyError("UNAUTHORIZED", "static 只接受只读检查选项")
-    if name.startswith(("python", "pypy")):
-        args = [arg for arg in args if arg not in ("-B", "-I", "-S")]
-        if args[:1] == ["-m"] and len(args) >= 2:
-            if args[1] in ("py_compile", "compileall"):
-                return
-            if args[1] in ("ruff", "mypy", "flake8", "pylint"):
-                return _validate_static_command(root, args[1:])
-            raise policy.PolicyError("UNAUTHORIZED", "Python 测试/未知模块不能作为 static 执行")
-        if args[:1] == ["-c"] and len(args) == 2:
-            tree = ast.parse(args[1])
-            allowed_modules = {"ast", "pathlib", "tokenize"}
-            allowed_calls = {"compile", "open", "print", "len", "str", "Path"}
-            allowed_methods = {"parse", "read", "read_text", "read_bytes", "open", "is_file", "exists"}
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import) and any(alias.name not in allowed_modules for alias in node.names):
-                    raise policy.PolicyError("UNAUTHORIZED", "内联 static 只支持语法读取模块")
-                if isinstance(node, ast.ImportFrom) and node.module not in allowed_modules:
-                    raise policy.PolicyError("UNAUTHORIZED", "内联 static 导入了未知执行模块")
-                if isinstance(node, ast.Call):
-                    target = node.func
-                    if ((isinstance(target, ast.Name) and target.id not in allowed_calls) or
-                        (isinstance(target, ast.Attribute) and target.attr not in allowed_methods) or
-                            not isinstance(target, (ast.Name, ast.Attribute))):
-                        raise policy.PolicyError("UNAUTHORIZED", "内联 static 含非语法检查调用")
-            if not any(isinstance(node, ast.Call) and
-                       ((isinstance(node.func, ast.Name) and node.func.id == "compile") or
-                        (isinstance(node.func, ast.Attribute) and node.func.attr == "parse"))
-                       for node in ast.walk(tree)):
-                raise policy.PolicyError("UNAUTHORIZED", "内联 static 必须包含实际语法检查")
-            return
-        raise policy.PolicyError("UNAUTHORIZED", "未知 Python 包装脚本不能以 static 标签执行")
-    if name == "git" and args[:1] == ["diff"] and "--check" in args:
-        return
-    if name in ("flake8", "pylint", "mypy", "pyright", "shellcheck", "yamllint", "eslint"):
-        return
-    if name == "ruff" and (args[:1] == ["check"] or (args[:1] == ["format"] and "--check" in args)):
-        return
-    if name == "tsc" and "--noEmit" in args:
-        return
-    if name in ("black", "isort") and any(arg in args for arg in ("--check", "--check-only")):
-        return
-    if name in ("pytest", "unittest", "mvn", "mvnw", "gradle", "gradlew", "npm", "pnpm", "yarn",
-                "npx", "make", "docker", "kubectl", "helm", "sh", "bash", "node", "java", "go", "cargo"):
-        raise policy.PolicyError("UNAUTHORIZED", "测试、构建、服务或部署命令不能标为 static")
-    # 缺失工具只能留下 ENV_UNAVAILABLE，不能自动安装或找替代脚本。
-    if shutil.which(argv[0]) is None and not (root / argv[0]).exists():
-        return
-    raise policy.PolicyError("UNAUTHORIZED", "未知静态包装命令未经显式检查来源确认，停止执行")
-
-
-def _static_environment(root, argv):
-    import shutil
+    import verification_tools
+    import project_inventory
     executable = shutil.which(argv[0])
     if executable is None and (root / argv[0]).is_file():
         executable = str(root / argv[0])
-    target = Path(executable).resolve() if executable else None
-    return {"path": os.environ.get("PATH", ""), "python": sys.version,
-            "executable": str(target) if target else None,
-            "executable_hash": initial_file_hash(target) if target and target.is_file() else None}
+    paths = {Path(executable).absolute()} if executable else set()
+    paths.update((Path(__file__).resolve(), Path(verification_tools.__file__).resolve(),
+                  Path(project_inventory.__file__).resolve()))
+    for path in (inspection or {}).get('environment', {}).get('dependency_files', []):
+        paths.add(Path(path).absolute())
+    return sorted(paths)
+
+
+def _configuration_paths(root, inputs, inspection=None):
+    from verification_tools import CONFIG_NAMES
+    names = set(CONFIG_NAMES) | {'requirements.txt', 'requirements-dev.txt', 'uv.lock', 'poetry.lock',
+        'Pipfile', 'Pipfile.lock', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '.python-version'}
+    directories = {root}
+    for relative in inputs:
+        path = root / relative
+        directory = path if path.is_dir() else path.parent
+        directories.update(parent for parent in (directory, *directory.parents) if parent.is_relative_to(root))
+    # 不存在的配置也绑定，执行后新增配置不能继续沿用旧结果。
+    paths = {directory / name for directory in directories for name in names}
+    paths.update(path for directory in directories for path in directory.glob('requirements*.txt') if path.is_file())
+    paths.update(root / name for name in (inspection or {}).get('config_dependencies', []))
+    return sorted(paths)
+
+
+def _selection_membership(root, inspection):
+    """不重读配置即可核对模块型工具的新增/删除成员；正文仍由既有指纹绑定。"""
+    from project_inventory import generated_excluded, runtime_excluded
+    suffixes = inspection.get('checked_suffixes')
+    result = {}
+    for relative in inspection.get('selection_roots', []):
+        base = _safe_inside(root, root / relative)
+        members = []
+        def onerror(exc):
+            raise exc
+        for parent, dirs, names in os.walk(base, followlinks=False, onerror=onerror):
+            directory = Path(parent)
+            dirs[:] = [name for name in dirs if not runtime_excluded((directory / name).relative_to(root).as_posix())
+                       and not generated_excluded((directory / name).relative_to(root).as_posix())]
+            for name in dirs:
+                _safe_inside(root, directory / name)
+            for name in names:
+                path = directory / name
+                rel = path.relative_to(root).as_posix()
+                if not runtime_excluded(rel) and not generated_excluded(rel) and (suffixes is None or path.suffix in suffixes):
+                    members.append(rel)
+        result[relative] = sorted(members)
+    return result
+
+
+def _static_environment(root, argv, session=None, inspection=None, inputs=()):
+    from test_ledger import environment_hash
+    paths = _environment_paths(root, argv, inspection)
+    paths.extend(_configuration_paths(root, inputs, inspection))
+    records = {str(path): (session.get(path) if session else {'hash': initial_file_hash(path), 'token': None})
+               for path in sorted(set(paths))}
+    membership = _selection_membership(root, inspection or {})
+    if session is not None:
+        session.metadata += sum(len(names) + 1 for names in membership.values())
+    return {'environment_hash': environment_hash(), 'python': sys.version, 'selection_membership': membership,
+            'files': {name: row['hash'] for name, row in records.items()},
+            'tokens': {name: {'token': row['token'], 'observation': row.get('observation')}
+                       for name, row in records.items()},
+            'tool': (inspection or {}).get('environment', {})}
+
+
+def plan_validation(root, execution_context, inputs=()):
+    """只读候选规划：展示实际工具/必要输入/成本，不运行检查或补充授权。"""
+    from verification_tools import discover_checks
+    root = _root(root)
+    ctx = load_context(root, execution_context, migrate=False)
+    selected = _write_set(root, inputs or ctx.get('verification_inputs', ctx['write_set']))
+    paths = _expand_inputs(root, ctx, selected)
+    selection_cost = {}
+    session = _FingerprintSession(root, ctx)
+    started = time.monotonic()
+    limit = min(10, ctx['execution_budget']['elapsed_seconds'])
+    if limit <= 0:
+        raise policy.PolicyError('BUDGET_EXCEEDED', '没有候选规划读取时间预算')
+    reservation = policy.reserve_budget(root, ctx, 'elapsed_seconds', limit)
+    def reader(path):
+        if time.monotonic() - started > limit:
+            raise policy.PolicyError('BUDGET_EXCEEDED', '候选规划读取超过时间预算')
+        return session.read_text(path)
+    try:
+        candidates = discover_checks(root, allowed_actions=ctx['allowed_actions'], scope_paths=selected,
+                                     read_text=reader, read_cost=selection_cost)
+    finally:
+        session.save()
+        policy.settle_elapsed(root, ctx, reservation, time.monotonic() - started)
+    selection_cost.update(content_reads=session.reads, bytes_read=session.text_bytes,
+                          physical_cost_owner='entry-context', elapsed_seconds=time.monotonic() - started)
+    fields = ('argv', 'cwd', 'category', 'required_action', 'status', 'reason', 'checked_files',
+              'checked_file_count', 'config_dependencies', 'expanded_scope_reason', 'syntax_only',
+              'available', 'command_sources', 'side_effects')
+    count = len(paths)
+    return {'task_id': ctx['task_id'], 'write_set': ctx['write_set'], 'inputs': selected,
+            'executed': False, 'unit_tests_executed': False,
+            'fingerprint_input_count': count, 'selection_read_cost': selection_cost,
+            'candidates': [{key: candidate.get(key) for key in fields} for candidate in candidates],
+            'budget_estimate': {'pre_evidence': {'scanned_files': count},
+                'command': {'processes': 1, 'elapsed_seconds': 30},
+                'post_evidence': {'scanned_files': count}, 'cleanup': {'scanned_files': count}},
+            'estimate_note': '目录元数据枚举；实际执行前按选中工具/配置/依赖重新预留闭环，缓存命中按真实读取结算'}
+
+
+def _static_rows(root, ctx):
+    rows = []
+    for path in _context_path(root, ctx['task_id']).parent.glob('static-*.json'):
+        row = json.loads(path.read_text())
+        if row.get('checksum') != _digest({key: value for key, value in row.items() if key != 'checksum'}):
+            raise ContextError('静态证据历史损坏')
+        rows.append((path, row))
+    return sorted(rows, key=lambda item: item[1].get('finished_at', 0))
+
+
+def _static_result(row, path, *, reused=False):
+    return {'status': row.get('policy_notice', {}).get('status', row['status']),
+            'process_status': row.get('process_status', row['status']), 'evidence_file': str(path),
+            'inputs_ref': {'evidence_file': str(path), 'checksum': row['checksum']},
+            'input_hash': row['input_hash'], 'execution_context': row['execution_context'],
+            'result': row['result'], 'executed': row.get('executed', True), 'reused': reused,
+            'finalization_status': row.get('finalization_status', 'COMPLETE'),
+            'elapsed_seconds': row.get('elapsed_seconds', 0),
+            'checked_file_count': row.get('checked_file_count'), 'fingerprint_input_count': len(row['inputs']),
+            'syntax_only': row.get('inspection', {}).get('syntax_only', False),
+            'unit_tests_executed': False, 'verification_kind': row.get('inspection', {}).get('category'),
+            'read_cost': row.get('read_cost', {}), 'selection_read_cost': row.get('selection_read_cost', {})}
 
 
 def run_static(root, execution_context, argv, inputs=(), timeout=30):
-    """执行真实静态命令并生成绑定当前任务/代码的 JSON；缺工具只记未核验。"""
+    """先预留完整取证闭环，再执行；执行事实与取证/收尾状态分别保存。"""
+    from project_inventory import fingerprint_token, fingerprint_metadata
     root = _root(root)
-    ctx = policy.require_action(load_context(root, execution_context), "static")
-    if (not isinstance(argv, (list, tuple)) or not argv or
-            any(not isinstance(arg, str) or not arg for arg in argv)):
-        raise ContextError("static 必须提供实际命令 argv")
-    _validate_static_command(root, argv)
+    ctx = policy.require_action(load_context(root, execution_context), 'static')
     if not isinstance(timeout, (int, float)) or timeout <= 0:
-        raise ContextError("static timeout 必须为正数")
-    fingerprints = _input_files(root, ctx, inputs)
-    binding = {"identity_hash": _digest(evidence_identity(ctx)), "action": "static", "argv": list(argv),
-               "cwd": ".", "inputs": fingerprints, "environment": _static_environment(root, argv)}
-    input_hash = _digest(binding)
-    policy.reserve_budget(root, ctx, "processes", 1, input_hash, action="static")
-    reservation = policy.reserve_budget(root, ctx, "elapsed_seconds", timeout, input_hash, action="static")
+        raise ContextError('static timeout 必须为正数')
+    if not isinstance(argv, (list, tuple)) or not argv or any(not isinstance(arg, str) or not arg for arg in argv):
+        raise ContextError('static 必须提供实际命令 argv')
+    # 已验证的同命令收尾先走只读取证，不为不存在的新进程预留/消耗额度。
+    reuse_read_cost = {}
+    prior = next(((path, row) for path, row in reversed(_static_rows(root, ctx))
+                  if row.get('argv') == list(argv)), None)
+    if (prior and prior[1].get('status') == 'PASS'
+            and not prior[1].get('inspection', {}).get('environment_probe_results')):
+        try:
+            read_cost = reuse_read_cost
+            _read_evidence(root, ctx, prior[0], 'static', read_cost=read_cost)
+            requested = _expand_inputs(root, ctx, inputs)
+            if requested <= set(prior[1]['inputs']):
+                return dict(_static_result(prior[1], prior[0], reused=True), read_cost=read_cost,
+                            selection_read_cost={'content_reads': 0, 'read_requests': 0, 'reused': True})
+        except policy.PolicyError as exc:
+            if exc.status == 'BUDGET_EXCEEDED':
+                raise
+        except (ValueError, OSError):
+            pass
+    session = _FingerprintSession(root, ctx, action='static')
+    selection_started = time.monotonic()
+    selection_limit = min(10, ctx['execution_budget']['elapsed_seconds'])
+    if selection_limit <= 0:
+        raise policy.PolicyError('BUDGET_EXCEEDED', '没有工具选择读取预算')
+    selection_reservation = policy.reserve_budget(root, ctx, 'elapsed_seconds', selection_limit, action='static')
+    def selection_reader(path):
+        if time.monotonic() - selection_started > selection_limit:
+            raise policy.PolicyError('BUDGET_EXCEEDED', '工具选择读取超过时间预算')
+        return session.read_text(path)
+    try:
+        inspection = _validate_static_command(root, argv, ctx, inputs, read_text=selection_reader)
+    finally:
+        session.save()
+        policy.settle_elapsed(root, ctx, selection_reservation, time.monotonic() - selection_started)
+    selection_reads = session.reads
+    selection_cost = {**inspection.get('selection_read_cost', {}), 'content_reads': selection_reads,
+                      'bytes_read': session.text_bytes, 'read_requests': session.text_requests,
+                      'elapsed_seconds': time.monotonic() - selection_started, 'physical_cost_owner': 'entry-context'}
+    inspection['selection_read_cost'] = selection_cost
+    selection_files = {key: {name: session.cache[key].get(name) for name in ('hash', 'token', 'observation')}
+                       for key in session.text_cache}
+    declared = _write_set(root, inputs)
+    # 实际对象和工具配置作为依赖输入，不伪称它们全部都是语法检查对象。
+    declared = sorted(set(declared) | set(inspection.get('checked_files', [])) |
+                      set(inspection.get('config_dependencies', [])) |
+                      {Path(path).relative_to(root).as_posix() for path in selection_files if Path(path).is_relative_to(root)})
+    input_candidates = _expand_inputs(root, ctx, declared)
+    authorized_candidates = _expand_inputs(root, ctx, ctx.get('authorization_scope', ctx['write_set']))
+    candidate_paths = input_candidates | authorized_candidates | _pending_static_inputs(root, ctx)
+    environment_paths = _environment_paths(root, argv, inspection) + _configuration_paths(root, declared, inspection)
+    all_paths = {root / name for name in candidate_paths} | set(environment_paths)
+    # 缺失配置只统计元数据，不算内容读取。未知FS每段都按真实读取上限预留。
+    scope_reads = authorized_candidates if 'verification_inputs' in ctx or 'authorization_scope' in ctx else set()
+    # 不可靠FS不跨重复调用免读：按各读取点的多重集合上界预留，而非只数唯一文件。
+    count = sum(path.exists() or path.is_symlink() for path in
+                [*(root / name for name in input_candidates), *(root / name for name in scope_reads),
+                 *set(environment_paths)])
+    count += len(set(scope_reads) & set(ctx.get('initial_git_files', {}))) + len(selection_files)
+    probes = inspection.get('environment_probes', [])
+    mount_metadata = fingerprint_metadata() or {}
+    request_hash = _digest({'task': evidence_identity(ctx), 'argv': list(argv),
+        'environment': dict(os.environ), 'observations': {
+            str(path): fingerprint_token(path, metadata=mount_metadata) for path in sorted(all_paths)}})
+    stages = {'pre_evidence': {'scanned_files': count, 'processes': len(probes), 'elapsed_seconds': 10 + timeout * len(probes)},
+              'command': {'processes': 1, 'elapsed_seconds': timeout},
+              'post_evidence': {'scanned_files': count, 'elapsed_seconds': 10},
+              'cleanup': {'scanned_files': count, 'elapsed_seconds': 10}}
+    ticket = policy.reserve_validation(root, ctx, stages, request_hash, action='static', defer_input=True)
+    session.charge = False
+    session.mount_metadata = fingerprint_metadata() or {}
+    actual = {}
     started = time.monotonic()
-    row = {"schema": 1, "kind": "command-evidence", "execution_context": evidence_identity(ctx),
-           **binding, "input_hash": input_hash, "started_at": time.time()}
+    phase_started, phase_reads = started, selection_reads
+    probe_processes = 0
+    def finish_phase(name, processes=0):
+        nonlocal phase_started, phase_reads
+        now = time.monotonic()
+        actual[name] = {'scanned_files': session.reads - phase_reads,
+                        'elapsed_seconds': now - phase_started, 'processes': processes}
+        policy.record_validation_usage(root, ctx, ticket, actual)
+        phase_started, phase_reads = now, session.reads
+        from project_inventory import fingerprint_metadata
+        session.mount_metadata = fingerprint_metadata() or {}
+    def execute(command):
+        try:
+            proc = subprocess.run(command, cwd=root, capture_output=True, text=True, errors='replace', timeout=timeout)
+            return {'returncode': proc.returncode, 'stdout': proc.stdout, 'stderr': proc.stderr, 'executed': True}
+        except FileNotFoundError as exc:
+            return {'returncode': None, 'stdout': '', 'stderr': str(exc), 'executed': False}
+        except subprocess.TimeoutExpired as exc:
+            def text(value):
+                return value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+            return {'returncode': None, 'stdout': text(exc.stdout), 'stderr': text(exc.stderr) or str(exc), 'executed': True}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {'returncode': None, 'stdout': '', 'stderr': str(exc), 'executed': False}
     try:
-        proc = subprocess.run(list(argv), cwd=root, capture_output=True, text=True, errors="replace", timeout=timeout)
-        status = "PASS" if proc.returncode == 0 else "FAIL"
-        output = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
-    except FileNotFoundError as exc:
-        status, output = "ENV_UNAVAILABLE", {"returncode": None, "stdout": "", "stderr": str(exc)}
-    except (OSError, subprocess.SubprocessError) as exc:
-        status, output = "TOOL_ERROR", {"returncode": None, "stdout": "", "stderr": str(exc)}
-    elapsed = time.monotonic() - started
-    row.update(status=status, result=output, finished_at=time.time(), elapsed_seconds=elapsed)
-    # 静态命令不能边改输入边把旧指纹的成功结果当成核验。
-    if _input_files(root, ctx, inputs) != fingerprints:
-        row.update(status="UNVERIFIED", error="静态命令执行期间输入变化")
-    try:
-        policy.record_outcome(root, ctx, "static", row["status"], input_hash,
-                              root_cause=output["stderr"] if status != "PASS" else None, evidence=output)
-        policy.settle_elapsed(root, ctx, reservation, elapsed)
+        if probes:
+            from verification_tools import bind_environment
+            results = [dict(execute(probe['argv']), argv=probe['argv']) for probe in probes]
+            probe_processes = sum(bool(result['executed']) for result in results)
+            inspection = bind_environment(inspection, results)
+        snapshot = _input_snapshot(root, ctx, declared, session)
+        environment = _static_environment(root, argv, session, inspection, declared)
+        for path, frozen in selection_files.items():
+            current = session.get(Path(path))
+            if {name: current.get(name) for name in frozen} != frozen:
+                raise ContextError('工具选择读取后的配置/依赖已变化，拒绝启动基于旧配置分类的命令')
+        binding = {'identity_hash': _digest(evidence_identity(ctx)), 'action': 'static', 'argv': list(argv),
+                   'cwd': '.', 'inputs': snapshot['files'],
+                   'environment': {key: value for key, value in environment.items() if key != 'tokens'}}
+        input_hash = _digest(binding)
+        finish_phase('pre_evidence', probe_processes)
+        ticket = policy.bind_validation_input(root, ctx, ticket, input_hash)
+        prior = next(((path, row) for path, row in reversed(_static_rows(root, ctx))
+                      if row.get('argv') == list(argv)), None)
+        if (prior and prior[1].get('status') == 'PASS' and not prior[1].get('policy_notice')
+                and prior[1].get('input_hash') == input_hash and prior[1].get('input_tokens') == snapshot['tokens']
+                and prior[1].get('environment_tokens') == environment['tokens']):
+            policy.settle_validation(root, ctx, ticket, actual, status='PASS', evidence={'reused_evidence': str(prior[0])})
+            session.save()
+            result = _static_result(prior[1], prior[0], reused=True)
+            result['read_cost'] = {'content_reads': session.reads + reuse_read_cost.get('content_reads', 0),
+                                   'cache_hits': session.hits, 'metadata_entries': session.metadata}
+            result['selection_read_cost'] = selection_cost
+            return result
     except (ValueError, OSError) as exc:
-        row["policy_notice"] = {"status": getattr(exc, "status", "UNVERIFIED"), "error": str(exc)}
-    row["checksum"] = _digest(row)
-    path = _context_path(root, ctx["task_id"]).with_name("static-" + str(uuid.uuid4()) + ".json")
+        actual['pre_evidence'] = {'scanned_files': session.reads - selection_reads, 'elapsed_seconds': time.monotonic() - started,
+                                  'processes': probe_processes}
+        policy.cancel_validation(root, ctx, ticket, actual_stages=actual, root_cause=str(exc))
+        session.save()
+        raise
+    row = {'schema': 1, 'kind': 'command-evidence', 'execution_context': evidence_identity(ctx),
+           **binding, 'input_hash': input_hash, 'input_tokens': snapshot['tokens'],
+           'environment_tokens': environment['tokens'], 'declared_inputs': declared,
+           'inspection': inspection, 'selection_read_cost': selection_cost,
+           'checked_file_count': inspection.get('checked_file_count'),
+           'budget_reservation': ticket, 'started_at': time.time()}
+    output = execute(inspection.get('execution_argv', list(argv))) if inspection['status'] == 'READY' else {
+        'returncode': None, 'stdout': '', 'stderr': inspection.get('reason', ''), 'executed': False}
+    process_status = 'PASS' if output['returncode'] == 0 else ('FAIL' if output['returncode'] is not None else
+        'TOOL_ERROR' if output['executed'] else 'ENV_UNAVAILABLE')
+    if inspection.get('environment', {}).get('container') and output['returncode'] in (125, 126, 127):
+        process_status = 'ENV_UNAVAILABLE'
+    row.update(status=process_status, process_status=process_status, result=output, executed=output['executed'],
+               execution_argv=inspection.get('execution_argv', list(argv)), finalization_status='COMPLETE')
+    phase = 'command'
+    try:
+        finish_phase('command', int(output['executed']))
+        phase = 'post_evidence'
+        after = _input_snapshot(root, ctx, declared, session)
+        after_environment = _static_environment(root, argv, session, inspection, declared)
+        if after != snapshot or after_environment != environment:
+            raise ContextError('静态命令执行期间输入/环境变化（包括ABA），旧PASS不可复用')
+        finish_phase('post_evidence')
+        phase = 'cleanup'
+        final = _input_snapshot(root, ctx, declared, session)
+        if final != after or _static_environment(root, argv, session, inspection, declared) != after_environment:
+            raise ContextError('静态取证收尾期间输入/环境变化')
+        finish_phase('cleanup')
+    except (ValueError, OSError) as exc:
+        actual[phase] = {'scanned_files': session.reads - phase_reads, 'elapsed_seconds': time.monotonic() - phase_started,
+                         'processes': int(phase == 'command' and output['executed'])}
+        row.update(status='UNVERIFIED', finalization_status='UNVERIFIED', evidence_missing_reason=str(exc))
+    row.update(finished_at=time.time(), elapsed_seconds=time.monotonic() - started,
+               read_cost={'content_reads': session.reads + reuse_read_cost.get('content_reads', 0),
+                          'cache_hits': session.hits, 'metadata_entries': session.metadata,
+                          'unique_files': len(session.observed), 'external_tool_io': 'unknown'})
+    try:
+        session.save()
+    except (ValueError, OSError) as exc:
+        row.update(status='UNVERIFIED', finalization_status='UNVERIFIED', evidence_missing_reason=str(exc))
+    try:
+        policy.settle_validation(root, ctx, ticket, actual, status=row['status'],
+            root_cause=row.get('evidence_missing_reason') or (output['stderr'] if process_status != 'PASS' else None),
+            evidence={'result': output, 'executed': output['executed'], 'process_status': process_status,
+                      'finalization_status': row['finalization_status'], 'external_tool_io': 'unknown'},
+            observations={'unique_files': len(session.observed), 'metadata_entries': session.metadata,
+                          'cache_hits': session.hits, 'tool_objects': inspection.get('checked_file_count') or 0})
+    except (ValueError, OSError) as exc:
+        row['policy_notice'] = {'status': getattr(exc, 'status', 'UNVERIFIED'), 'error': str(exc)}
+        row['finalization_status'] = 'UNVERIFIED'
+    row['checksum'] = _digest(row)
+    path = _context_path(root, ctx['task_id']).with_name('static-' + str(uuid.uuid4()) + '.json')
     _atomic_json(root, path, row)
-    return {"status": row.get("policy_notice", {}).get("status", row["status"]),
-            "process_status": row["status"], "evidence_file": str(path), "input_hash": input_hash,
-            "execution_context": evidence_identity(ctx), "result": output, "elapsed_seconds": elapsed}
+    return _static_result(row, path)
 
 
-def _read_evidence(root, ctx, filename, action, allow_failure=False):
+def _referenced_inputs(root, ctx, report):
+    """动作回执引用已有静态输入事实；禁止递归引用、跨任务或缺少校验和。"""
+    reference = report.get('inputs_ref')
+    if reference is None:
+        return report.get('inputs'), report.get('declared_inputs')
+    if not isinstance(reference, dict) or set(reference) != {'evidence_file', 'checksum'}:
+        raise ContextError('inputs_ref 必须给出 evidence_file/checksum')
+    path = Path(reference['evidence_file'])
+    path = path if path.is_absolute() else root / path
+    _safe_inside(root, path)
+    source = json.loads(path.read_text())
+    checksum = _digest({key: value for key, value in source.items() if key != 'checksum'})
+    if (source.get('checksum') != reference['checksum'] or source.get('checksum') != checksum
+            or source.get('execution_context') != evidence_identity(ctx)
+            or source.get('kind') != 'command-evidence' or not isinstance(source.get('inputs'), dict)):
+        raise ContextError('inputs_ref 来源不是本任务可信的输入快照')
+    if report.get('inputs') is not None and report['inputs'] != source['inputs']:
+        raise ContextError('inputs_ref 与重复 inputs 不一致')
+    return source['inputs'], source.get('declared_inputs', list(source['inputs']))
+
+
+def _delivery_facts(root, ctx, supplied):
+    """交付事实与当前取证是否完成分开；仅消费回执，不再次执行动作。"""
+    facts = {}
+    for action in ('commit', 'push', 'deploy'):
+        if action not in supplied:
+            continue
+        try:
+            path = Path(supplied[action])
+            path = path if path.is_absolute() else root / path
+            _safe_inside(root, path)
+            report = json.loads(path.read_text())
+            if (report.get('execution_context', {}).get('task_id') != ctx['task_id']
+                    or report.get('action', action) != action or report.get('status') != 'PASS'):
+                continue
+            if report.get('checksum') and report['checksum'] != _digest({k: v for k, v in report.items() if k != 'checksum'}):
+                continue
+            result, receipt = report.get('result', {}), report.get('receipt', {})
+            process_ok = (isinstance(report.get('argv'), list) and bool(report['argv']) and
+                type(result.get('returncode')) is int and result['returncode'] == 0 and
+                isinstance(result.get('stdout'), str) and isinstance(result.get('stderr'), str))
+            provider_ok = (receipt.get('status') in ('success', 'successful', 'succeeded', 'passed', 'deployed', 'committed', 'pushed')
+                and any(isinstance(receipt.get(key), str) and receipt[key].strip() for key in ('id', 'url', 'sha', 'run_id')))
+            if process_ok or provider_ok:
+                facts[action] = {'delivered': True, 'evidence_file': str(path), 'receipt': receipt,
+                                 'returncode': result.get('returncode'), 'finalization_status': 'UNVERIFIED'}
+        except (OSError, ValueError, TypeError):
+            continue
+    return facts
+
+
+def _read_evidence(root, ctx, filename, action, allow_failure=False, read_cost=None):
     path = Path(filename)
     if not path.is_absolute():
         path = root / path
@@ -1196,9 +1710,30 @@ def _read_evidence(root, ctx, filename, action, allow_failure=False):
         raise ContextError(f"{action} 证据不属于当前任务 revision")
     if report.get("action", action) != action:
         raise ContextError("证据动作与授权检查不一致")
-    inputs = report.get("inputs")
-    if not isinstance(inputs, dict) or _input_files(root, ctx, list(inputs)) != inputs:
-        raise ContextError(f"{action} 证据缺少真实 inputs 或代码已经变化")
+    inputs, declared_inputs = _referenced_inputs(root, ctx, report)
+    if not isinstance(inputs, dict):
+        raise ContextError(f'{action} 证据缺少真实 inputs')
+    session = _FingerprintSession(root, ctx, action=action)
+    try:
+        current = _input_snapshot(root, ctx, declared_inputs or list(inputs), session)
+        if current['files'] != inputs:
+            raise ContextError(f'{action} 证据缺少真实 inputs 或代码已经变化')
+        if action == 'static':
+            if report.get('input_tokens') is not None and current['tokens'] != report['input_tokens']:
+                raise ContextError('静态检查后文件身份已变化，旧PASS不可复用')
+            actual_environment = _static_environment(root, report['argv'], session, report.get('inspection'),
+                                                     report.get('declared_inputs', list(inputs)))
+            if 'environment_tokens' in report:
+                if report['environment_tokens'] != actual_environment['tokens']:
+                    raise ContextError('静态检查后工具/配置文件身份已变化，旧PASS不可复用')
+                actual_environment = {key: value for key, value in actual_environment.items() if key != 'tokens'}
+            if report.get('environment') != actual_environment:
+                raise ContextError('静态检查工具/环境/配置/依赖已变化，旧证据不可冒充当前执行')
+    finally:
+        session.save()
+        if read_cost is not None:
+            read_cost.update(content_reads=session.reads, cache_hits=session.hits,
+                             metadata_entries=session.metadata, unique_files=len(session.observed))
     if action == "static":
         if (report.get("kind") != "command-evidence" or not report.get("argv") or
                 report.get("checksum") != _digest({k: v for k, v in report.items() if k != "checksum"})):
@@ -1206,8 +1741,9 @@ def _read_evidence(root, ctx, filename, action, allow_failure=False):
         if report.get("policy_notice"):
             raise policy.PolicyError(report["policy_notice"]["status"], "静态进程结果已保留，但策略/预算尚未核验", original_error=report)
         binding = {key: report.get(key) for key in ("identity_hash", "action", "argv", "cwd", "inputs", "environment")}
-        if report.get("environment") != _static_environment(root, report["argv"]):
-            raise ContextError("静态检查工具/环境已变化，旧证据不可冒充当前执行")
+        latest = next((row for _, row in reversed(_static_rows(root, ctx)) if row.get('argv') == report['argv']), None)
+        if latest and latest.get('input_hash') == report.get('input_hash') and latest.get('status') != report.get('status'):
+            raise ContextError('同命令已有较新的失败，不能复用旧PASS')
         if report.get("input_hash") != _digest(binding) or report.get("identity_hash") != _digest(evidence_identity(ctx)):
             raise ContextError("静态证据实际命令/输入摘要不一致")
         result = report.get("result", {})
@@ -1216,7 +1752,10 @@ def _read_evidence(root, ctx, filename, action, allow_failure=False):
         status, returncode = report.get("status"), result.get("returncode")
         successful = status == "PASS" and type(returncode) is int and returncode == 0
         failed = status == "FAIL" and type(returncode) is int and returncode != 0
-        unavailable = status in ("TOOL_ERROR", "ENV_UNAVAILABLE") and returncode is None
+        unavailable = status in ("TOOL_ERROR", "ENV_UNAVAILABLE") and (returncode is None or type(returncode) is int)
+        if successful and _pending_static_failures(root, ctx):
+            raise policy.PolicyError('UNVERIFIED', '仍有未解决的静态检查失败，不能以另一命令PASS隐藏',
+                                     original_errors=_pending_static_failures(root, ctx))
         if not successful and not failed and not unavailable:
             raise ContextError("静态证据缺少已结束的真实结果，或结论与退出码不一致")
         if not successful and not allow_failure:
@@ -1286,14 +1825,12 @@ def verify_full_evidence(root, ctx, filename, env_id):
     """全量以实际 suite 清单及 full 账本验真，不把 targeted scope 改名为 full。"""
     from test_ledger import stable_pass, tree_snapshot
     from test_scope import is_test
-    from project_inventory import default_excluded
+    policy.require_action(ctx, "full-regression")
+    manifest = policy.test_manifest_binding(root, ctx["version"], ctx["build_id"], ctx["test_manifest"]["path"])[1]
     report = _read_evidence(root, ctx, filename, "full-regression")
-    inventory = git_worktree_inventory(root, max_files=ctx["execution_budget"]["scanned_files"])
-    policy.reserve_budget(root, ctx, "scanned_files", len(inventory["files"]), action="full-regression")
-    discovered = sorted(path for path in inventory["files"]
-                        if is_test(path) and not default_excluded(path, inventory["repositories"]))
+    discovered = sorted(set(manifest["acceptance_tests"]) | {path for path in manifest["dependencies"] if is_test(path)})
     if sorted(report.get("tests", [])) != discovered:
-        raise ContextError("full 清单没有精确列出当前全部已发现测试")
+        raise ContextError("版本全量清单必须精确覆盖冻结验收用例及必要测试依赖")
     suites = report.get("suites")
     if not isinstance(suites, list) or not suites:
         raise ContextError("全量证据缺少完整 suite/run-id 清单")
@@ -1304,19 +1841,22 @@ def verify_full_evidence(root, ctx, filename, env_id):
             raise ContextError("full suite 名称必须非空且唯一")
         names.add(suite["name"])
         row = _ledger_run(root, ctx, suite.get("run_id"), env_id, report.get("ledger_root"))
-        if row["run_id"] in ids or row.get("scope") != "full" or not stable_pass(row):
-            raise ContextError("full 要求每套最新真实 PASS，不接受 CARRIED/ERROR/重复 run")
+        if row["run_id"] in ids or row.get("scope") != "version" or not stable_pass(row):
+            raise ContextError("版本全量要求每套最新真实 PASS，不接受系统 full/CARRIED/ERROR/重复 run")
+        binding = row.get("scope_binding", {}).get("plan", {})
+        if binding.get("kind") != "version" or binding.get("manifest") != manifest:
+            raise ContextError("版本全量实跑账本未绑定当前冻结验收清单")
         if row.get("command") != suite.get("command"):
             raise ContextError("suite 命令与实跑 argv 不一致")
         actual_cwd = row.get("context", {}).get("cwd")
         declared_cwd = suite.get("cwd", ".")
         if actual_cwd not in (declared_cwd, str((root / declared_cwd).resolve())):
             raise ContextError("suite cwd 与实跑目录不一致")
-        key = tuple(row["inputs"])
+        key = (tuple(row["inputs"]), tuple(binding.get("validation_files", [])))
         if key not in snapshots:
-            snapshots[key] = tree_snapshot(root, row["inputs"])
+            snapshots[key] = tree_snapshot(root, row["inputs"], paths=binding.get("validation_files"))
         if snapshots[key]["hash"] != row.get("after_hash"):
-            raise ContextError("full 实跑后的代码/资源/显式输入已经变化")
+            raise ContextError("版本全量实跑后的代码/资源/显式输入已经变化")
         tests = suite.get("tests")
         if not isinstance(tests, list) or any(path not in discovered for path in tests):
             raise ContextError("suite tests 不属于真实测试清单")
@@ -1338,7 +1878,8 @@ def _equivalent_inputs(root, ctx, run_id, env_id, review_evidence, ledger_root=N
     if (row.get("status") != "ERROR" or row.get("exit_code") != 0 or
             row.get("failure_kind") not in ("TOOL_ERROR", "TREE_CHANGED", "ENV_UNAVAILABLE")):
         raise ContextError("等价路径仅接受实跑 exit0 的原工具错误，业务 FAIL 不可替代")
-    snapshot = tree_snapshot(root, row["inputs"])
+    selection_plan = (row.get('scope_binding') or {}).get('plan', {})
+    snapshot = tree_snapshot(root, row["inputs"], paths=selection_plan.get('validation_files'))
     if snapshot["hash"] != row.get("before_hash") or snapshot["files"] != row.get("files"):
         raise ContextError("等价证据要求当前代码/资源/显式输入与原实跑完全一致")
     review = _read_evidence(root, ctx, review_evidence, "review")
@@ -1405,7 +1946,7 @@ def _finished_test_runs(root, ctx, plan, run_ids, env_id):
             raise ContextError("测试尚未结束，不能登记动作完成")
         key = tuple(row["inputs"])
         if key not in snapshots:
-            snapshots[key] = tree_snapshot(root, row["inputs"])
+            snapshots[key] = tree_snapshot(root, row["inputs"], paths=plan.get('validation_files'))
         expected_hash = evidence_hash(row) if row["status"] in ("PASS", "CARRIED") else row.get("after_hash") or row["before_hash"]
         if snapshots[key]["hash"] != expected_hash:
             raise ContextError("测试结束后源码/输入已变化，检测结论须保留原范围不能冒充当前结果")
@@ -1429,15 +1970,32 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
     root = _root(root)
     ctx = load_context(root, execution_context)
     allowed = set(ctx["allowed_actions"])
+    restricted = policy.completion_restrictions(ctx)
     diagnostic_only = ctx["task_scope"]["kind"] in ("review", "test") and "implement" not in allowed
+    development = ctx["task_scope"]["kind"] == "development" and "implement" in allowed
+    expected_actions = set(policy.SCOPE_ACTIONS[ctx["task_scope"]["kind"]])
+    command_name = next((name for name, alias in ALIASES.items() if alias == ctx["entry"]), ctx["entry"])
+    expected_actions.update(policy.COMMAND_ACTIONS.get(command_name, ()))
+    limited = bool(restricted & expected_actions)
     checks = {action: ("AUTHORIZED" if action in {"document", "commit", "push", "deploy", "equivalent-evidence"}
-                       else "UNVERIFIED") if action in allowed else "NOT_REQUESTED"
+                       else "UNVERIFIED") if action in allowed else
+                       ("SKIPPED_BY_REQUEST" if action in restricted else "NOT_REQUESTED")
               for action in policy.OPTIONAL_ACTIONS | {"static"}}
     result = dict(_result(root, ctx), completed=False, ready=False, action_completed=False,
                   quality_verdict="UNVERIFIED", quality_status="UNVERIFIED", status="UNVERIFIED", checks=checks,
-                  not_requested_actions=sorted(policy.OPTIONAL_ACTIONS - allowed))
+                  development_completed=False, ready_for_release=False,
+                  completion_kind="limited" if limited else ("diagnostic" if diagnostic_only else "development"),
+                  skipped_actions=sorted(restricted - allowed),
+                  not_requested_actions=sorted(policy.OPTIONAL_ACTIONS - allowed - restricted))
     supplied = {policy.canonical_action(key): value for key, value in (action_evidence or {}).items()}
+    result['delivery_facts'] = _delivery_facts(root, ctx, supplied)
+    result['evidence_files'] = {**supplied, **({'static': str(static_evidence)} if static_evidence else {}),
+                                **({'review': str(review_evidence)} if review_evidence else {})}
+    result['finalization_status'] = 'UNVERIFIED'
     try:
+        required = policy.SCOPE_ACTIONS["development"] - restricted if development else set()
+        if not required <= allowed:
+            raise ContextError("开发完成必须保留 implement/static/related-test；减权须有真实用户例外来源")
         # 可选流程的未授权提示不阻止普通任务收口；已授权动作自身等待才是阻塞。
         pending = [item for item in pending_authorizations if policy.canonical_action(item) in allowed]
         if pending:
@@ -1447,6 +2005,10 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
                 raise ContextError("完成需要 --static-evidence 的实际静态命令证据")
             result["static"] = _read_evidence(root, ctx, static_evidence, "static", allow_failure=diagnostic_only)
             static_status = result["static"]["status"]
+            result['static_syntax_only'] = result['static'].get('inspection', {}).get('syntax_only', False)
+            result['checked_file_count'] = result['static'].get('checked_file_count')
+            result['fingerprint_input_count'] = len(result['static'].get('inputs', {}))
+            result['unit_tests_executed'] = False
             checks["static"] = static_status if static_status in ("PASS", "FAIL") else "UNVERIFIED"
         verification = None
         if "full-regression" in allowed:
@@ -1460,6 +2022,8 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
             if not scope_file or not scope_hash or not env_id:
                 raise ContextError("已授权测试需要 scope-file/scope-hash/env-id 与当前全部 run-id")
             plan = read_scope(root, scope_file, scope_hash, execution_context)
+            result.update(unmapped=plan.get("unmapped", []), unrunnable=plan.get("unrunnable", []),
+                          scope_hash=scope_hash, run_ids=list(run_ids), env_id=env_id)
             try:
                 verification = verify_scope(root, scope_file, scope_hash, list(run_ids), env_id,
                                             execution_context=execution_context)
@@ -1479,7 +2043,17 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
                     verification = ended
             if verification.get("execution_context") != evidence_identity(ctx):
                 raise ContextError("测试证据不属于当前任务范围/核验策略")
-            accepted = {"PASS", "CARRIED", "EMPTY", "PARTIAL", "EQUIVALENT"}
+            result.update(verification=verification, unmapped=verification.get("unmapped", []),
+                          run_ids=verification.get("run_ids", []), scope_hash=scope_hash, env_id=env_id)
+            checks["related-test"] = verification.get("status", "UNVERIFIED")
+            accepted = {"PASS", "CARRIED", "EQUIVALENT"}
+            if verification.get("status") == "NOT_APPLICABLE":
+                applicability = verification.get("applicability", {})
+                if (applicability.get("status") != "NOT_APPLICABLE" or not policy._text(applicability.get("reason"))
+                        or not isinstance(applicability.get("paths"), list) or not applicability["paths"]):
+                    raise ContextError("测试不适用必须给出当前路径及无可测试行为的具体依据")
+                accepted.add("NOT_APPLICABLE")
+                result["applicability"] = applicability
             if diagnostic_only and verification.get("action_completed"):
                 accepted.update(("FAIL", "UNVERIFIED"))
             if verification.get("status") not in accepted or verification.get("unrunnable"):
@@ -1490,6 +2064,7 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
                 checks["equivalent-evidence"] = "EQUIVALENT"
             if "related-test" in allowed:
                 checks["related-test"] = verification["status"]
+            result['unit_tests_executed'] = bool(verification.get('run_ids'))
             result.update(verification=verification, minor=bool(verification.get("minor")),
                           unmapped=verification.get("unmapped", []), scope_hash=scope_hash,
                           run_ids=verification["run_ids"], env_id=env_id)
@@ -1540,6 +2115,8 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
                 raise ContextError(f"{action} 需要实际工具结果/提供方 receipt，AUTHORIZED 不等于已执行")
             result[action] = receipt
             checks[action] = "PASS"
+            if action in result['delivery_facts']:
+                result['delivery_facts'][action]['finalization_status'] = 'COMPLETE'
         result["pending_actions"] = pending_actions
         if "implement" in allowed or "document" in allowed:
             result.update(completion_obligations(root, execution_context))
@@ -1554,14 +2131,25 @@ def check_completion(root, execution_context, scope_file=None, scope_hash=None, 
             verdict = "FAIL"
         if diagnostic_only and "UNVERIFIED" in checks.values():
             verdict = "UNVERIFIED"
-        return dict(result, ready=True, ready_for_release=verdict not in ("FAIL", "UNVERIFIED"),
+        if limited and verdict not in ("FAIL", "UNVERIFIED"):
+            verdict = "LIMITED"
+        quality_complete = verdict in ("PASS", "CARRIED", "EQUIVALENT", "NOT_APPLICABLE") and not limited
+        return dict(result, ready=True, ready_for_release=quality_complete and not diagnostic_only,
+                    development_completed=development and quality_complete and not pending_actions,
                     status=verdict, action_completed=not pending_actions, terminal=not pending_actions,
                     action_status="PENDING_ACTIONS" if pending_actions else
                         ("TERMINATED" if verdict == "UNVERIFIED" else "COMPLETED"),
-                    quality_verdict=verdict, quality_status=verdict)
+                    quality_verdict=verdict, quality_status=verdict,
+                    finalization_status='PENDING_ACTIONS' if pending_actions else 'COMPLETE')
     except (ValueError, OSError) as exc:
-        return dict(result, error=str(exc), status=getattr(exc, "status", "UNVERIFIED"),
-                    quality_verdict=getattr(exc, "status", "UNVERIFIED"), quality_status=getattr(exc, "status", "UNVERIFIED"),
+        status = getattr(exc, 'status', 'UNVERIFIED')
+        if development and status in ("FAIL", "UNVERIFIED", "ENV_UNAVAILABLE", "TOOL_ERROR"):
+            result["next_actions"] = ["repair", "related-test"] if status == "FAIL" else ["resolve-verification", "related-test"]
+            result["retry_scope"] = {"execution_context": str(execution_context), "task_id": ctx["task_id"],
+                                     "write_set": ctx["write_set"], "scope_file": scope_file, "scope_hash": scope_hash}
+        return dict(result, error=str(exc), status=status,
+                    quality_verdict=status, quality_status=status,
+                    finalization_status='BLOCKED_QUALITY' if status == 'FAIL' else 'UNVERIFIED',
                     diagnostic=getattr(exc, "details", {}))
 
 
@@ -1596,7 +2184,7 @@ def complete_context(root, execution_context, **evidence):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("resolve", "route", "revise", "fork", "bind-sprint", "fork-version", "fork-test-build", "resolve-autopilot-root", "resolve-test-root", "static", "equivalent", "check", "complete"):
+    for command in ("resolve", "route", "revise", "fork", "bind-sprint", "fork-version", "fork-test-build", "resolve-autopilot-root", "resolve-test-root", "plan-validation", "static", "equivalent", "check", "complete"):
         item = sub.add_parser(command)
         item.add_argument("--root", default=".")
         item.add_argument("--json", action="store_true")
@@ -1614,6 +2202,9 @@ def main(argv=None):
             item.add_argument("--grant", action="append", default=[])
             item.add_argument("--authorization-source", type=json.loads)
             item.add_argument("--execution-budget", type=json.loads)
+        if command == 'revise':
+            item.add_argument('--verification-input', action='append')
+            item.add_argument('--replace-write-set', action='store_true')
         if command in ("fork", "bind-sprint"):
             item.add_argument("--sprint", required=True)
             item.add_argument("--since")
@@ -1627,9 +2218,12 @@ def main(argv=None):
             item.add_argument("--version", required=True)
         if command == "fork-test-build":
             item.add_argument("--build-id", required=True)
+            item.add_argument("--manifest", required=True)
         if command == "route":
             item.add_argument("--phase", choices=tuple(LIGHT_ACTIONS), default="route")
             item.add_argument("--action")
+        if command == 'plan-validation':
+            item.add_argument('--input', action='append', default=[])
         if command == "static":
             item.add_argument("--input", action="append", required=True)
             item.add_argument("--timeout", type=float, default=30)
@@ -1667,7 +2261,8 @@ def main(argv=None):
         elif args.command == "revise":
             result = revise_context(args.root, args.execution_context, args.write_set,
                 additional_grants=args.grant, authorization_source=args.authorization_source,
-                execution_budget=args.execution_budget)
+                execution_budget=args.execution_budget, verification_inputs=args.verification_input,
+                replace_write_set=args.replace_write_set)
         elif args.command in ("fork", "bind-sprint"):
             operation = fork_context if args.command == "fork" else bind_sprint
             if args.command == "fork":
@@ -1677,10 +2272,12 @@ def main(argv=None):
         elif args.command == "fork-version":
             result = fork_version(args.root, args.execution_context, args.version)
         elif args.command == "fork-test-build":
-            result = fork_test_build(args.root, args.execution_context, args.version, args.build_id)
+            result = fork_test_build(args.root, args.execution_context, args.version, args.build_id, manifest=args.manifest)
         elif args.command == "equivalent":
             result = record_equivalent(args.root, args.execution_context, args.original_run_id,
                                        args.env_id, args.review_evidence, args.ledger_root)
+        elif args.command == 'plan-validation':
+            result = plan_validation(args.root, args.execution_context, args.input)
         elif args.command == "static":
             argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             result = run_static(args.root, args.execution_context, argv, args.input, args.timeout)
@@ -1703,6 +2300,21 @@ def main(argv=None):
         result, code = {"status": getattr(exc, "status", "ERROR"), "error": str(exc),
                         "details": getattr(exc, "details", {}), "completed": False}, 2
     result.pop("context", None)  # CLI 只返路径/身份摘要，初始全清单留在 context.json。
+    if args.command in ('static', 'check', 'complete'):
+        # 完整事实在已有证据/完成报告内；默认终端只给结论、计数及引用。
+        for key in ('identity', 'authorization_identity', 'identity_hash', 'input_hash', 'authorization_source'):
+            result.pop(key, None)
+        if isinstance(result.get('execution_context'), dict):
+            result.pop('execution_context')
+        for action in policy.ACTIONS:
+            if isinstance(result.get(action), dict):
+                value = result[action]
+                result[action] = {key: value[key] for key in ('status', 'kind', 'finalization_status') if key in value}
+        if isinstance(result.get('result'), dict):
+            result['result'] = {key: result['result'][key] for key in ('returncode', 'executed') if key in result['result']}
+        if isinstance(result.get('verification'), dict):
+            result['verification'] = {key: value for key, value in result['verification'].items()
+                                      if key not in ('execution_context', 'original_runs', 'original_error')}
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return code
 

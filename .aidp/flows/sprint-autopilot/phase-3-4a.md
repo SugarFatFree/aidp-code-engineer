@@ -35,7 +35,10 @@
        [ "$CUR" = "$HANDOFF_FROM" ] || exit 2
      fi
      python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . --execution-context "$EXECUTION_CONTEXT" --action live-tests || exit $?
-     python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . --execution-context "$EXECUTION_CONTEXT" --action full-regression || exit $?
+     HANDOFF_TARGET_ONLY=$($BE --version "$BV" get aiauto_handoff_target_only --default false) || exit $?
+     if [ "$HANDOFF_TARGET_ONLY" != true ]; then
+       python3 {{AIDP_HOME}}/scripts/execution_policy.py require-delegable --root . --execution-context "$EXECUTION_CONTEXT" --action full-regression || exit $?
+     fi
      HANDOFF_ACTIVE=1
    fi
    if [ "$HANDOFF_ACTIVE" = 1 ]; then
@@ -46,12 +49,11 @@ from pathlib import Path
 sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from baseline_edit import LockedBaseline, now_iso
 from entry_context import load_context
-from execution_policy import require_action
+from execution_policy import require_action, require_delegable
 root = Path.cwd()
 version, parent_path, run_id = sys.argv[1:]
 parent = load_context(root, parent_path, migrate=False)
 require_action(parent, "live-tests")
-require_action(parent, "full-regression")
 def need(condition, reason):
     if not condition:
         raise SystemExit("UNVERIFIED: " + reason)
@@ -61,7 +63,13 @@ with LockedBaseline("memory/.sprint-autopilot-baseline.json", write=True) as loc
     need(ver.get("aiauto_handoff_root_context") == str(Path(parent_path).resolve()), "handoff根变化")
     before = ver.get("aiauto_handoff_from_build")
     old = load_context(root, ver.get("aiauto_handoff_from_context", ""), migrate=False)
-    need((old.get("parent_task_id"), old["version"], old.get("build_id")) == (parent["task_id"], version, before), "fixed来源不匹配")
+    if ver.get("aiauto_handoff_target_only") is True:
+        need(old["version"] == version and old["task_scope"].get("acceptance") and
+             not (set(old["allowed_actions"]) - {"static", "live-tests"}), "目标来源/权限变化")
+        require_action(old, "live-tests")
+    else:
+        require_delegable(parent, "full-regression")
+        need((old.get("parent_task_id"), old["version"], old.get("build_id")) == (parent["task_id"], version, before), "fixed来源不匹配")
     rows = ver.get("builds", [])
     need(isinstance(rows, list), "builds格式错误")
     def row(build):

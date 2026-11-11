@@ -23,6 +23,34 @@ def reserve_worker(root, context):
         return exc.status
 
 
+def validation_worker(root, context):
+    import execution_policy as policy
+    stages = {stage: {} for stage in policy.VALIDATION_STAGES}
+    stages["command"] = {"processes": 1}
+    stages["pre_evidence"] = {"scanned_files": 1}
+    stages["post_evidence"] = {"scanned_files": 1}
+    try:
+        ticket = policy.reserve_validation(root, context, stages, "a" * 64, action="static")
+        return ticket
+    except policy.PolicyError as exc:
+        return exc.status
+
+
+def bind_validation_worker(root, context, ticket, input_hash):
+    import execution_policy as policy
+    try:
+        return policy.bind_validation_input(root, context, ticket, input_hash)['input_hash']
+    except policy.PolicyError as exc:
+        return exc.status
+
+
+def settle_validation_worker(root, context, ticket):
+    import execution_policy as policy
+    return policy.settle_validation(root, context, ticket,
+        {"pre_evidence": {"scanned_files": 2}, "command": {"processes": 1, "elapsed_seconds": .25}},
+        evidence={"returncode": 0, "external_tool_io": "unknown"})
+
+
 class ExecutionPolicyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="aidp-policy-")
@@ -47,6 +75,11 @@ class ExecutionPolicyTests(unittest.TestCase):
     def source(self, text="跑相关测试", request_id="request-2"):
         return {"kind": "user-text", "request_id": request_id, "text": text}
 
+    def resolve_static_only(self, **kwargs):
+        kwargs.setdefault("authorization_source", {"kind": "user-text", "request_id": "explicit-static-only",
+            "text": "本任务只实现并检查语法，明确跳过相关测试", "skip_actions": ["related-test"]})
+        return self.resolve(**kwargs)
+
     def grant(self, result, actions, **kwargs):
         return entry.revise_context(self.root, result["execution_context"],
                                     additional_grants=actions, authorization_source=self.source(), **kwargs)
@@ -56,26 +89,131 @@ class ExecutionPolicyTests(unittest.TestCase):
             argv or [sys.executable, "-B", "-c", "import ast; ast.parse(open('app.py').read())"],
             inputs=["app.py"])
 
-    def test_natural_request_only_implement_static_even_with_formal_identity(self):
-        for options in ({}, {"sprint": "007"}, {"entry": "sprint-full"}):
+    def test_natural_request_implements_static_and_related_tests_for_every_identity(self):
+        for options in ({}, {"sprint": "007"}, {"entry": "sprint-full"}, {"entry": "sprint-bugfix"}):
             result = self.resolve(**options)
-            self.assertEqual(result["context"].get("allowed_actions"), ["implement", "static"])
+            self.assertEqual(result["context"].get("allowed_actions"), ["implement", "related-test", "static"])
             route = entry.route_context(self.root, result["execution_context"], "close")
-            self.assertNotIn("related-test", route["actions"])
+            self.assertIn("related-test", route["actions"])
             self.assertNotIn("review", route["actions"])
             self.assertIn("full-regression", route["not_requested_actions"])
+
+    def test_default_development_requires_real_related_tests(self):
+        for command in (None, "sprint-dev", "sprint-bugfix"):
+            with self.subTest(command=command):
+                (self.root / "app.py").write_text("value = 1\n")
+                source = ({"kind": "explicit-command", "request_id": "explicit-" + command,
+                           "command": "/" + command} if command else self.source("修复 app.py 的值"))
+                first = self.resolve(entry=command or "sprint-dev", authorization_source=source)
+                (self.root / "app.py").write_text("value = 2\n")
+                static = self.static(first)
+                blocked = entry.complete_context(self.root, first["execution_context"], static_evidence=static["evidence_file"])
+                self.assertFalse(blocked["completed"])
+                self.assertEqual(blocked["checks"]["related-test"], "UNVERIFIED")
+                related = self.run_related_test(first)
+                done = entry.complete_context(self.root, first["execution_context"], static_evidence=static["evidence_file"], **related)
+                self.assertTrue(done["completed"], done)
+                self.assertTrue(done["development_completed"])
+                self.assertEqual(done["quality_verdict"], "PASS")
+                self.assertEqual(done["task_id"], first["task_id"])
+                self.assertFalse((self.root / "memory/activeContext.md").exists())
+
+    def test_explicit_restrictions_keep_original_source_and_never_claim_quality_pass(self):
+        import execution_policy as policy
+        for restriction in ("analysis-only", "modify-only", "skip-verification"):
+            with self.subTest(restriction=restriction):
+                source = dict(self.source("本轮用户明确限制 " + restriction), restriction=restriction)
+                result = self.resolve(authorization_source=source)
+                nested = entry.resolve_context(self.root, "bugfix", execution_context=result["execution_context"])
+                self.assertEqual(result["identity_hash"], nested["identity_hash"])
+                self.assertEqual(nested["context"]["authorization_source"][0]["text"], source["text"])
+                done = entry.complete_context(self.root, result["execution_context"])
+                self.assertTrue(done["completed"], done)
+                self.assertEqual(done["status"], "LIMITED")
+                self.assertFalse(done["development_completed"])
+                self.assertFalse(done["ready_for_release"])
+                if restriction == "analysis-only":
+                    with self.assertRaises(policy.PolicyError):
+                        policy.require_action(nested["context"], "implement")
+                else:
+                    policy.require_action(nested["context"], "implement")
+        for source in ({"kind": "explicit-command", "request_id": "fake-exception", "command": "/sprint-dev",
+                        "skip_actions": ["related-test"]}, dict(self.source(), skip_actions=["deploy"])):
+            with self.assertRaises(policy.PolicyError):
+                self.resolve(authorization_source=source)
+
+    def test_full_regression_only_via_autopilot_fork_never_grant_or_text(self):
+        import execution_policy as policy
+        forged = self.source("对当前版本做全量测试", "ask-full")
+        with self.assertRaises(policy.PolicyError) as denied:
+            self.resolve(entry="sprint-aiauto-test", task_scope="test",
+                         additional_grants=["full-regression"], authorization_source=forged)
+        self.assertEqual(denied.exception.status, "UNAUTHORIZED")
+        self.assertIn("autopilot", str(denied.exception))
+        text_only = self.resolve(entry="sprint-aiauto-test", task_scope="test", authorization_source=forged)
+        self.assertNotIn("full-regression", text_only["context"]["allowed_actions"])
+        self.assertLessEqual(set(text_only["context"]["allowed_actions"]), {"static", "live-tests"})
+        self.assertNotEqual(text_only["context"]["verification_level"], "full")
+        explicit = self.resolve(entry="sprint-aiauto-test", task_scope="test", additional_grants=["live-tests"],
+            authorization_source={"kind": "explicit-command", "command": "/sprint-aiauto-test", "request_id": "aiauto"})
+        self.assertNotIn("full-regression", explicit["context"]["allowed_actions"])
+        with self.assertRaises(policy.PolicyError):
+            entry.revise_context(self.root, text_only["execution_context"], additional_grants=["full-regression"],
+                                 authorization_source=self.source("再要全量", "ask-full-2"))
+        manifest_path, _ = self.version_manifest()
+        parent = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
+            "command": "/sprint-autopilot", "request_id": "delegate", "options": ["--skip-dev"]})
+        child = entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=manifest_path)
+        self.assertIn("full-regression", child["context"]["allowed_actions"])
+        self.assertEqual(child["context"]["verification_level"], "full")
+        policy.require_action(child["context"], "full-regression")
+
+    def test_root_may_delegate_full_but_never_execute_it(self):
+        import execution_policy as policy
+        manifest_path, _ = self.version_manifest()
+        root = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
+            "command": "/sprint-autopilot", "request_id": "root-delegate", "options": ["--skip-dev"]})
+        policy.require_delegable(root["context"], "full-regression")
+        with self.assertRaises(policy.PolicyError):
+            policy.require_action(root["context"], "full-regression")
+        with self.assertRaises(policy.PolicyError):
+            policy.require_delegable(root["context"], "deploy")
+        standalone = self.resolve(entry="sprint-aiauto-test", task_scope="test", authorization_source={
+            "kind": "explicit-command", "command": "/sprint-aiauto-test", "request_id": "solo"})
+        text = self.resolve(entry="sprint-aiauto-test", task_scope="test", authorization_source=self.source("全量", "txt"))
+        for ctx in (standalone, text):
+            with self.assertRaises(policy.PolicyError):
+                policy.require_delegable(ctx["context"], "full-regression")
+        child = entry.fork_test_build(self.root, root["execution_context"], "V1", "build-007", manifest=manifest_path)
+        policy.require_action(child["context"], "full-regression")
+
+    def test_test_entry_is_readonly_kind_and_child_keeps_restriction(self):
+        import execution_policy as policy
+        standalone = self.resolve(entry="test")
+        self.assertEqual(standalone["context"]["task_scope"]["kind"], "test")
+        self.assertNotIn("implement", standalone["context"]["allowed_actions"])
+        self.assertNotIn("full-regression", entry.route_context(self.root, standalone["execution_context"], "test")["actions"])
+        parent = self.resolve(entry="sprint-batch", authorization_source=dict(
+            self.source("只修改代码，不运行任何验证"), restriction="skip-verification"))
+        child = entry.fork_context(self.root, parent["execution_context"], "001")
+        self.assertEqual(child["context"]["allowed_actions"], ["implement"])
+        with self.assertRaises(policy.PolicyError):
+            policy.require_action(child["context"], "related-test")
+        done = entry.check_completion(self.root, child["execution_context"])
+        self.assertEqual(done["checks"]["related-test"], "SKIPPED_BY_REQUEST")
+        self.assertFalse(done["development_completed"])
 
     def test_nested_test_entry_does_not_grant_or_change_identity(self):
         first = self.resolve()
         nested = entry.resolve_context(self.root, "sprint-test", execution_context=first["execution_context"])
         self.assertEqual(first["identity_hash"], nested["identity_hash"])
-        self.assertEqual(nested["context"].get("allowed_actions"), ["implement", "static"])
+        self.assertEqual(nested["context"].get("allowed_actions"), ["implement", "related-test", "static"])
         with self.assertRaises(ValueError):
             entry.resolve_context(self.root, "sprint-test", execution_context=first["execution_context"],
                 authorization_source={"kind": "explicit-command", "command": "/sprint-test", "request_id": "child"})
 
     def test_grant_preserves_task_and_start_and_invalidates_old_identity(self):
-        first = self.resolve()
+        first = self.resolve_static_only()
         revised = self.grant(first, ["related-test"])
         self.assertEqual(first["task_id"], revised["task_id"])
         self.assertEqual(first["since"], revised["since"])
@@ -99,18 +237,18 @@ class ExecutionPolicyTests(unittest.TestCase):
         config.parent.mkdir(exist_ok=True)
         config.write_text("execution_policy:\n  allowed_actions: [full-regression, deploy]\n"
                           "cicd:\n  auto_trigger: true\nautopilot_decisions:\n  tests: auto\n")
-        self.assertEqual(self.resolve()["context"]["allowed_actions"], ["implement", "static"])
+        self.assertEqual(self.resolve()["context"]["allowed_actions"], ["implement", "related-test", "static"])
 
     def test_explicit_command_combination_and_browser_grant_stay_distinct(self):
         explicit = self.resolve(entry="sprint-aiauto-test", authorization_source={
             "kind": "explicit-command", "command": "/sprint-aiauto-test", "request_id": "request-1"})
         self.assertIn("live-tests", explicit["context"]["allowed_actions"])
-        self.assertIn("full-regression", explicit["context"]["allowed_actions"])
+        self.assertNotIn("full-regression", explicit["context"]["allowed_actions"])
         natural = self.resolve(additional_grants=["live-tests"], authorization_source=self.source("浏览器测试"))
         self.assertNotIn("full-regression", natural["context"]["allowed_actions"])
 
     def test_release_grants_do_not_imply_extra_verification(self):
-        first = self.resolve()
+        first = self.resolve_static_only()
         release = self.grant(first, ["commit", "push", "deploy"])
         self.assertEqual(set(release["context"]["allowed_actions"]),
                          {"implement", "static", "commit", "push", "deploy"})
@@ -120,14 +258,17 @@ class ExecutionPolicyTests(unittest.TestCase):
         gate = entry.check_completion(self.root, release["execution_context"], static_evidence=static["evidence_file"])
         self.assertEqual(gate["pending_actions"], ["commit", "push", "deploy"])
 
-    def test_static_real_evidence_can_complete_without_test_or_review(self):
-        first = self.resolve()
+    def test_explicit_static_only_completes_limited_without_test_or_review(self):
+        first = self.resolve_static_only()
         (self.root / "app.py").write_text("value = 2\n")
         static = self.static(first)
         self.assertEqual(static["status"], "PASS")
         result = entry.complete_context(self.root, first["execution_context"], static_evidence=static["evidence_file"])
         self.assertTrue(result["completed"], result)
-        self.assertEqual(result["checks"]["related-test"], "NOT_REQUESTED")
+        self.assertEqual(result["checks"]["related-test"], "SKIPPED_BY_REQUEST")
+        self.assertEqual(result["status"], "LIMITED")
+        self.assertFalse(result["development_completed"])
+        self.assertFalse(result["ready_for_release"])
         self.assertEqual(result["checks"]["review"], "NOT_REQUESTED")
         self.assertFalse((self.root / "docs").exists())
 
@@ -251,13 +392,28 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertFalse(done["ready_for_release"])
         self.assertEqual(done["verification"]["original_runs"][0]["failure_kind"], "ENV_UNAVAILABLE")
 
+    def run_related_test(self, result):
+        import test_ledger as ledger
+        from test_scope import derive
+        (self.root / "tests").mkdir(exist_ok=True)
+        (self.root / "tests/test_app.py").write_text("import runpy\nassert runpy.run_path('app.py')['value'] == 2\n")
+        plan = derive(self.root, None, [{"cwd": ".", "suffixes": [".py"],
+            "argv": [sys.executable, "-B", "{tests}"]}], execution_context=result["execution_context"])
+        scope = Path(result["execution_context"]).with_name("scope.json")
+        scope.write_text(json.dumps(plan))
+        runs, code = ledger.run_scope(self.root, str(scope), "policy-env", execution_context=result["context"])
+        self.assertEqual(code, 0, runs)
+        return {"scope_file": str(scope), "scope_hash": plan["scope_hash"],
+                "run_ids": runs["run_ids"], "env_id": "policy-env"}
+
     def test_commit_grant_is_release_readiness_not_completed_execution(self):
         result = self.resolve(additional_grants=["commit"], authorization_source=self.source("完成后提交"))
         (self.root / "app.py").write_text("value = 2\n")
+        related = self.run_related_test(result)
         static = self.static(result)
-        ready = entry.check_completion(self.root, result["execution_context"], static_evidence=static["evidence_file"])
+        ready = entry.check_completion(self.root, result["execution_context"], static_evidence=static["evidence_file"], **related)
         self.assertTrue(ready["ready_for_release"], ready)
-        pending = entry.complete_context(self.root, result["execution_context"], static_evidence=static["evidence_file"])
+        pending = entry.complete_context(self.root, result["execution_context"], static_evidence=static["evidence_file"], **related)
         self.assertFalse(pending["completed"], pending)
         self.assertEqual(pending["status"], "PENDING_ACTIONS")
         self.assertEqual(pending["pending_actions"], ["commit"])
@@ -270,7 +426,7 @@ class ExecutionPolicyTests(unittest.TestCase):
             "result": {"returncode": 0, "stdout": output, "stderr": ""},
             "checks": [{"kind": "tool-receipt", "status": "PASS", "evidence": [self.git("rev-parse", "HEAD").strip()]}]}))
         done = entry.complete_context(self.root, result["execution_context"], static_evidence=static["evidence_file"],
-                                     action_evidence={"commit": str(receipt)})
+                                     action_evidence={"commit": str(receipt)}, **related)
         self.assertTrue(done["completed"], done)
         self.assertEqual(done["checks"]["commit"], "PASS")
 
@@ -291,7 +447,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertFalse(result["ready"])
 
     def test_optional_pending_authorization_does_not_block_static_completion(self):
-        first = self.resolve()
+        first = self.resolve_static_only()
         static = self.static(first)
         result = entry.complete_context(self.root, first["execution_context"],
             static_evidence=static["evidence_file"], pending_authorizations=["deploy"])
@@ -339,6 +495,311 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertEqual(statuses.count("reserved"), 3, statuses)
         self.assertEqual(statuses.count("BUDGET_EXCEEDED"), 9, statuses)
 
+    def validation_stages(self, scans=2, processes=1):
+        return {"pre_evidence": {"scanned_files": scans},
+                "command": {"processes": processes, "elapsed_seconds": 10},
+                "post_evidence": {"scanned_files": scans}, "cleanup": {"scanned_files": 1}}
+
+    def budget_state(self, result):
+        return json.loads(Path(result["execution_context"]).with_name("budget.json").read_text())
+
+    def test_validation_rejects_all_resources_atomically_with_complete_diagnostic(self):
+        import execution_policy as policy
+        first = self.resolve(execution_budget={"scanned_files": 5, "processes": 0})
+        before = self.budget_state(first)
+        with self.assertRaises(policy.PolicyError) as denied:
+            policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        self.assertEqual(denied.exception.status, "BUDGET_EXCEEDED")
+        details = denied.exception.details
+        self.assertEqual(details["expected"]["scanned_files"], 5)
+        self.assertEqual(details["shortfall"]["processes"], 1)
+        self.assertEqual(details["stages"]["post_evidence"]["scanned_files"], 2)
+        self.assertIn("basis", details["recommendation"])
+        self.assertEqual(before, self.budget_state(first))
+
+    def test_validation_real_process_concurrency_shares_root_and_rejects_without_charge(self):
+        import execution_policy as policy
+        parent = self.resolve(entry="sprint-batch", execution_budget={"processes": 3})
+        child = entry.fork_context(self.root, parent["execution_context"], "001")
+        before = self.budget_state(parent)["used"]
+        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(validation_worker, [str(self.root)] * 12,
+                                    [parent["execution_context"], child["execution_context"]] * 6))
+        tickets = [row for row in results if isinstance(row, dict)]
+        self.assertEqual(len(tickets), 3, results)
+        self.assertEqual(results.count("BUDGET_EXCEEDED"), 9, results)
+        state = self.budget_state(parent)
+        self.assertEqual(state["used"]["processes"], 3)
+        self.assertEqual(state["used"]["scanned_files"], before["scanned_files"] + 6)
+        with self.assertRaises(policy.PolicyError):
+            policy.reserve_budget(self.root, child["context"], "processes", 1)
+
+    def test_validation_cancel_retains_recorded_reads_and_only_refunds_unused(self):
+        import execution_policy as policy
+        first = self.resolve()
+        initial = self.budget_state(first)["used"]
+        ticket = policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        actual = {"pre_evidence": {"scanned_files": 2}}
+        policy.record_validation_usage(self.root, first["context"], ticket, actual,
+            observations={"unique_files": 1, "metadata_entries": 9, "cache_hits": 3})
+        cancelled = policy.cancel_validation(self.root, first["context"], ticket, root_cause="cancel before command")
+        self.assertEqual(cancelled["status"], "UNVERIFIED")
+        state = self.budget_state(first)
+        self.assertEqual(state["used"]["scanned_files"], initial["scanned_files"] + 2)
+        self.assertEqual(state["used"]["processes"], 0)
+        self.assertEqual(state["used"]["elapsed_seconds"], 0)
+        self.assertEqual(cancelled["observations"]["unique_files"], 1)
+        self.assertEqual(policy.cancel_validation(self.root, first["context"], ticket,
+                          root_cause="cancel before command"), cancelled)
+        self.assertEqual(len(state["outcomes"]), 1)
+        with self.assertRaises(policy.PolicyError):
+            policy.settle_validation(self.root, first["context"], ticket, actual, status="PASS")
+        with self.assertRaises(policy.PolicyError):
+            policy.record_validation_usage(self.root, first["context"], ticket, {})
+
+    def test_validation_unused_cancel_refunds_every_resource_and_rejects_foreign_task(self):
+        import execution_policy as policy
+        parent = self.resolve(entry="sprint-batch")
+        child = entry.fork_context(self.root, parent["execution_context"], "001")
+        before = self.budget_state(parent)["used"]
+        ticket = policy.reserve_validation(self.root, parent["context"], self.validation_stages(), "a" * 64, action="static")
+        with self.assertRaises(policy.PolicyError):
+            policy.cancel_validation(self.root, child["context"], ticket)
+        policy.cancel_validation(self.root, parent["context"], ticket)
+        self.assertEqual(self.budget_state(parent)["used"], before)
+        with self.assertRaises(policy.PolicyError):
+            policy.settle_elapsed(self.root, parent["context"], ticket, 0)
+
+    def test_validation_partial_execution_records_original_failure_and_elapsed(self):
+        import execution_policy as policy
+        first = self.resolve()
+        before = self.budget_state(first)["used"]
+        ticket = policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        actual = {"pre_evidence": {"scanned_files": 2},
+                  "command": {"processes": 1, "elapsed_seconds": .125},
+                  "post_evidence": {"scanned_files": 1}}
+        result = policy.settle_validation(self.root, first["context"], ticket, actual,
+            root_cause="post evidence interrupted", evidence={"returncode": 0, "stderr": "original output"})
+        self.assertEqual(result["status"], "UNVERIFIED")
+        state = self.budget_state(first)
+        self.assertEqual(state["used"]["scanned_files"], before["scanned_files"] + 3)
+        self.assertEqual(state["used"]["processes"], 1)
+        self.assertEqual(state["used"]["elapsed_seconds"], .125)
+        self.assertEqual(state["outcomes"][-1]["evidence"]["returncode"], 0)
+        self.assertEqual(policy.settle_validation(self.root, first["context"], ticket, actual,
+            root_cause="post evidence interrupted", evidence={"returncode": 0, "stderr": "original output"}), result)
+        self.assertEqual(state, self.budget_state(first))
+        with self.assertRaises(policy.PolicyError):
+            policy.settle_validation(self.root, first["context"], ticket, actual, root_cause="changed")
+
+    def test_validation_deferred_input_binds_real_content_without_changing_cost(self):
+        import execution_policy as policy
+        first = self.resolve()
+        ticket = policy.reserve_validation(self.root, first['context'], self.validation_stages(),
+                                           'a' * 64, action='static', defer_input=True)
+        self.assertIsNone(ticket['input_hash'])
+        self.assertFalse(ticket['input_bound'])
+        actual = {'pre_evidence': {'scanned_files': 2}}
+        policy.record_validation_usage(self.root, first['context'], ticket, actual)
+        before = self.budget_state(first)['used']
+        bound = policy.bind_validation_input(self.root, first['context'], ticket, 'b' * 64)
+        self.assertEqual(bound['input_hash'], 'b' * 64)
+        self.assertTrue(bound['input_bound'])
+        self.assertEqual(self.budget_state(first)['used'], before)
+        self.assertEqual(policy.bind_validation_input(self.root, first['context'], ticket, 'b' * 64), bound)
+        with self.assertRaises(policy.PolicyError):
+            policy.bind_validation_input(self.root, first['context'], ticket, 'c' * 64)
+        actual['command'] = {'processes': 1, 'elapsed_seconds': .2}
+        result = policy.settle_validation(self.root, first['context'], ticket, actual, status='PASS')
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(self.budget_state(first)['outcomes'][-1]['input_hash'], 'b' * 64)
+
+    def test_validation_binding_concurrency_accepts_only_one_actual_input(self):
+        import execution_policy as policy
+        first = self.resolve()
+        ticket = policy.reserve_validation(self.root, first['context'], self.validation_stages(),
+                                           'a' * 64, action='static', defer_input=True)
+        before = self.budget_state(first)['used']
+        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(bind_validation_worker, [str(self.root)] * 12,
+                [first['execution_context']] * 12, [ticket] * 12, ['b' * 64, 'c' * 64] * 6))
+        accepted = {value for value in results if value != 'UNVERIFIED'}
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(results.count('UNVERIFIED'), 6)
+        self.assertEqual(self.budget_state(first)['used'], before)
+
+    def test_validation_pending_input_rejects_pass_but_preserves_pre_reads_on_cancel(self):
+        import execution_policy as policy
+        first = self.resolve(entry='sprint-batch')
+        child = entry.fork_context(self.root, first['execution_context'], '001')
+        ticket = policy.reserve_validation(self.root, first['context'], self.validation_stages(),
+                                           'a' * 64, action='static', defer_input=True)
+        for operation in (
+            lambda: policy.bind_validation_input(self.root, child['context'], ticket, 'b' * 64),
+            lambda: policy.settle_validation(self.root, first['context'], ticket, {}, status='PASS')):
+            with self.assertRaises(policy.PolicyError):
+                operation()
+        initial = self.budget_state(first)['used']['scanned_files'] - ticket['costs']['scanned_files']
+        policy.record_validation_usage(self.root, first['context'], ticket, {'pre_evidence': {'scanned_files': 2}})
+        cancelled = policy.cancel_validation(self.root, first['context'], ticket, root_cause='pre-evidence interrupted')
+        self.assertEqual(cancelled['status'], 'UNVERIFIED')
+        self.assertEqual(self.budget_state(first)['used']['scanned_files'], initial + 2)
+        self.assertIsNone(self.budget_state(first)['outcomes'][-1]['input_hash'])
+        with self.assertRaises(policy.PolicyError):
+            policy.bind_validation_input(self.root, first['context'], ticket, 'b' * 64)
+
+    def test_validation_unbound_real_execution_is_accounted_as_unverified(self):
+        import execution_policy as policy
+        first = self.resolve()
+        ticket = policy.reserve_validation(self.root, first['context'], self.validation_stages(),
+                                           'a' * 64, action='static', defer_input=True)
+        actual = {'command': {'processes': 1, 'elapsed_seconds': .25}}
+        with self.assertRaises(policy.PolicyError) as recorded:
+            policy.record_validation_usage(self.root, first['context'], ticket, actual)
+        self.assertEqual(recorded.exception.status, 'UNVERIFIED')
+        self.assertTrue(recorded.exception.details['reservation']['unbound_execution'])
+        with self.assertRaises(policy.PolicyError):
+            policy.bind_validation_input(self.root, first['context'], ticket, 'b' * 64)
+        with self.assertRaises(policy.PolicyError):
+            policy.settle_validation(self.root, first['context'], ticket, actual, status='PASS', evidence={'returncode': 0})
+        state = self.budget_state(first)
+        self.assertEqual(state['used']['processes'], 1)
+        self.assertEqual(state['used']['elapsed_seconds'], .25)
+        self.assertEqual(state['outcomes'][-1]['status'], 'UNVERIFIED')
+        self.assertEqual(state['outcomes'][-1]['evidence']['returncode'], 0)
+
+    def test_validation_deferred_negative_cache_checks_actual_not_plan_hash(self):
+        import execution_policy as policy
+        first = self.resolve()
+        policy.record_outcome(self.root, first['context'], 'static', 'TOOL_ERROR', 'a' * 64,
+                              root_cause='previous actual input failed')
+        ticket = policy.reserve_validation(self.root, first['context'], self.validation_stages(),
+                                           'a' * 64, action='static', defer_input=True)
+        before = self.budget_state(first)
+        with self.assertRaises(policy.PolicyError) as denied:
+            policy.bind_validation_input(self.root, first['context'], ticket, 'a' * 64)
+        self.assertEqual(denied.exception.status, 'TOOL_ERROR')
+        self.assertEqual(self.budget_state(first), before)
+        policy.bind_validation_input(self.root, first['context'], ticket, 'b' * 64)
+        policy.cancel_validation(self.root, first['context'], ticket)
+
+    def test_validation_cleanup_failure_preserves_successful_delivery_receipt(self):
+        import execution_policy as policy
+        first = self.resolve(additional_grants=["deploy"], authorization_source=self.source("部署后核验回执"))
+        before = self.budget_state(first)["used"]
+        ticket = policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="deploy")
+        actual = {"command": {"processes": 1, "elapsed_seconds": .5}, "cleanup": {"scanned_files": 1}}
+        evidence = {"delivery": {"status": "PASS", "returncode": 0, "receipt": "release-42"},
+                    "cleanup": {"status": "UNVERIFIED", "error": "receipt index unavailable"},
+                    "external_tool_io": "unknown"}
+        result = policy.settle_validation(self.root, first["context"], ticket, actual,
+            root_cause="machine final verification failed", evidence=evidence)
+        self.assertEqual(result["status"], "UNVERIFIED")
+        state = self.budget_state(first)
+        self.assertEqual(state["outcomes"][-1]["evidence"], evidence)
+        self.assertEqual(state["used"]["scanned_files"], before["scanned_files"] + 1)
+        self.assertEqual(state["used"]["processes"], before["processes"] + 1)
+        self.assertEqual(state["used"]["elapsed_seconds"], before["elapsed_seconds"] + .5)
+        replay = policy.settle_validation(self.root, first["context"], ticket, actual,
+            root_cause="machine final verification failed", evidence=evidence)
+        self.assertEqual(result, replay)
+        self.assertEqual(state, self.budget_state(first))
+
+    def test_validation_explicit_budget_revision_keeps_usage_and_applies_current_limit(self):
+        import execution_policy as policy
+        first = self.resolve(execution_budget={'elapsed_seconds': 10})
+        ticket = policy.reserve_validation(self.root, first['context'], self.validation_stages(), 'a' * 64, action='static')
+        revised = entry.revise_context(self.root, first['execution_context'], execution_budget={'elapsed_seconds': 20},
+            authorization_source=self.source('增加本任务时间预算到20秒'))
+        actual = {'command': {'processes': 1, 'elapsed_seconds': 12}}
+        result = policy.settle_validation(self.root, revised['context'], ticket, actual, status='PASS')
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(self.budget_state(first)['used']['elapsed_seconds'], 12)
+        self.assertEqual(policy.reserve_budget(self.root, revised['context'], 'elapsed_seconds', 8)['remaining'], 0)
+
+    def test_validation_overrun_is_recorded_before_error_and_cannot_be_refunded(self):
+        import execution_policy as policy
+        first = self.resolve(execution_budget={"processes": 1, "elapsed_seconds": 10})
+        ticket = policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        actual = {"command": {"processes": 2, "elapsed_seconds": 12}}
+        with self.assertRaises(policy.PolicyError) as overrun:
+            policy.record_validation_usage(self.root, first["context"], ticket, actual)
+        self.assertEqual(overrun.exception.status, "BUDGET_EXCEEDED")
+        self.assertEqual(self.budget_state(first)["used"]["processes"], 2)
+        with self.assertRaises(policy.PolicyError):
+            policy.cancel_validation(self.root, first["context"], ticket, {"command": {"processes": 1}})
+        with self.assertRaises(policy.PolicyError) as settled:
+            policy.settle_validation(self.root, first["context"], ticket, actual, status="PASS", evidence={"returncode": 0})
+        self.assertEqual(settled.exception.status, "BUDGET_EXCEEDED")
+        state = self.budget_state(first)
+        self.assertEqual(state["used"]["elapsed_seconds"], 12)
+        self.assertEqual(state["outcomes"][-1]["status"], "UNVERIFIED")
+        self.assertEqual(state["outcomes"][-1]["evidence"]["returncode"], 0)
+        with self.assertRaises(policy.PolicyError):
+            policy.settle_validation(self.root, first["context"], ticket, actual, status="PASS", evidence={"returncode": 0})
+        self.assertEqual(state, self.budget_state(first))
+
+    def test_validation_concurrent_settlement_is_idempotent_and_resume_keeps_used(self):
+        import execution_policy as policy
+        first = entry.resolve_autopilot_root(self.root, "V1", authorization_source={"kind": "explicit-command",
+            "command": "/sprint-autopilot", "request_id": "one-loop", "options": ["--once"]})
+        policy.reserve_budget(self.root, first["context"], "scanned_files", 854)
+        before = self.budget_state(first)["used"]["scanned_files"]
+        ticket = policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(settle_validation_worker, [str(self.root)] * 12,
+                                    [first["execution_context"]] * 12, [ticket] * 12))
+        self.assertTrue(all(row == results[0] for row in results))
+        state = self.budget_state(first)
+        self.assertEqual(state["used"]["scanned_files"], before + 2)
+        self.assertEqual(state["used"]["processes"], 1)
+        self.assertEqual(len(state["outcomes"]), 1)
+        resumed = entry.resolve_autopilot_root(self.root, "V1", execution_context=first["execution_context"])
+        self.assertEqual(first["task_id"], resumed["task_id"])
+        self.assertEqual(state, self.budget_state(resumed))
+        self.assertEqual(policy.reserve_budget(self.root, resumed["context"], "processes", 1)["used"], 2)
+
+    def test_validation_progress_replay_and_invalid_values_do_not_change_usage(self):
+        import execution_policy as policy
+        first = self.resolve()
+        ticket = policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        actual = {"pre_evidence": {"scanned_files": 2}}
+        observations = {"unique_files": 1, "metadata_entries": 10, "cache_hits": 3, "tool_objects": 29}
+        policy.record_validation_usage(self.root, first["context"], ticket, actual, observations=observations)
+        before = self.budget_state(first)
+        policy.record_validation_usage(self.root, first["context"], ticket, actual, observations=observations)
+        self.assertEqual(before, self.budget_state(first))
+        for bad in (True, -1, float("nan"), 1.5):
+            with self.assertRaises(policy.PolicyError):
+                policy.record_validation_usage(self.root, first["context"], ticket, {"pre_evidence": {"scanned_files": bad}})
+        with self.assertRaises(policy.PolicyError):
+            policy.record_validation_usage(self.root, first["context"], ticket, {}, observations=observations)
+        with self.assertRaises(policy.PolicyError):
+            policy.record_validation_usage(self.root, first["context"], ticket, actual, observations={"unique_files": 0})
+        self.assertEqual(before, self.budget_state(first))
+        cancelled = policy.cancel_validation(self.root, first["context"], ticket)
+        self.assertEqual(cancelled["held"]["scanned_files"], 2)
+        self.assertEqual(cancelled["observations"]["unique_files"], 1)
+        self.assertEqual(cancelled["observations"]["tool_objects"], 29)
+
+    def test_validation_reservation_respects_actions_retry_and_complete_stages(self):
+        import execution_policy as policy
+        first = self.resolve()
+        for stages, action in ((self.validation_stages(), "full-regression"), ({"command": {}}, "static")):
+            before = self.budget_state(first)
+            with self.assertRaises(policy.PolicyError):
+                policy.reserve_validation(self.root, first["context"], stages, "a" * 64, action=action)
+            self.assertEqual(before, self.budget_state(first))
+        ticket = policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        policy.settle_validation(self.root, first["context"], ticket, {"command": {"processes": 1}},
+                                 status="TOOL_ERROR", root_cause="bad option")
+        before = self.budget_state(first)
+        with self.assertRaises(policy.PolicyError) as failure:
+            policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+        self.assertEqual(failure.exception.status, "TOOL_ERROR")
+        self.assertEqual(before, self.budget_state(first))
+        policy.reserve_validation(self.root, first["context"], self.validation_stages(), "b" * 64, action="static")
+
     def test_failure_retry_is_blocked_for_same_inputs_but_fixed_inputs_can_run(self):
         import execution_policy as policy
         first = self.resolve()
@@ -353,7 +814,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         policy.reserve_budget(self.root, first["context"], "processes", 1, "c" * 64, action="static")
 
     def test_release_or_review_grant_keeps_existing_code_evidence(self):
-        first = self.resolve()
+        first = self.resolve_static_only()
         static = self.static(first)
         revised = self.grant(first, ["commit", "push", "deploy"])
         self.assertEqual(entry.evidence_identity(first["context"]), entry.evidence_identity(revised["context"]))
@@ -404,7 +865,7 @@ class ExecutionPolicyTests(unittest.TestCase):
             "    kind: project-policy\n    user_selected: true\n    request_id: choice-1\n    text: 以后执行代码审查\n")
         result = self.resolve()
         self.assertIn("review", result["context"]["allowed_actions"])
-        self.assertNotIn("related-test", result["context"]["allowed_actions"])
+        self.assertIn("related-test", result["context"]["allowed_actions"])
 
     def test_grant_replay_is_idempotent_and_budget_usage_survives_revision(self):
         import execution_policy as policy
@@ -431,7 +892,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         ledger = self.root / "docs/design/detail/V1/_开发期设计增量.md"
         ledger.parent.mkdir(parents=True)
         ledger.write_text("## 待级联\nold unrecognized line\nanother old line\n")
-        first = self.resolve()
+        first = self.resolve_static_only()
         static = self.static(first)
         done = entry.complete_context(self.root, first["execution_context"], static_evidence=static["evidence_file"])
         self.assertTrue(done["completed"], done)
@@ -475,30 +936,64 @@ class ExecutionPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             entry.record_equivalent(self.root, first["execution_context"], run["run_id"], "policy-env", None)
 
+    def version_manifest(self, build="build-007"):
+        import hashlib
+        cases = self.root / "docs/testing/V1/正式用例"
+        cases.mkdir(parents=True, exist_ok=True)
+        index = cases / "00_索引.md"
+        index.write_text("TC-ONE 本版本的值验收\n")
+        (cases / "03_cases.md").write_text("#### 用例 TC-ONE: value correctness\n")
+        (self.root / "tests").mkdir(exist_ok=True)
+        test = self.root / "tests/test_app.py"
+        test.write_text("import unittest\nclass T(unittest.TestCase):\n def test_value(self): self.assertEqual(1 + 1, 2)\n")
+        baseline = self.root / "docs/testing/V1/acceptance.json"
+        baseline.write_text(json.dumps({"version": "V1", "acceptance_tests": ["tests/test_app.py"], "dependencies": [],
+            "cases": [{"id": "TC-ONE", "test_files": ["tests/test_app.py"]}],
+            "case_index": {"path": index.relative_to(self.root).as_posix(), "sha256": hashlib.sha256(index.read_bytes()).hexdigest()}}))
+        self.git("add", "docs", "tests")
+        self.git("commit", "-qm", "freeze version acceptance")
+        manifest = {"schema": 1, "version": "V1", "build": build, "commit": self.git("rev-parse", "HEAD").strip(),
+            "source": "version-acceptance", "acceptance_baseline": {"path": baseline.relative_to(self.root).as_posix(),
+                "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest()},
+            "acceptance_tests": ["tests/test_app.py"], "dependencies": [],
+            "suites": [{"cwd": ".", "env_id": "policy-env", "inputs": [], "external_dependencies": "none",
+                "runners": [{"cwd": ".", "env_id": "policy-env", "suffixes": [".py"],
+                    "argv": [sys.executable, "-B", "-m", "unittest", "-v", "{tests}"]}]}]}
+        path = self.root / "memory/.aidp/test-manifest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(manifest))
+        return path, manifest
+
     def test_full_manifest_checks_real_suite_and_rejects_missing_discovered_tests(self):
         import test_ledger as ledger
-        (self.root / "tests").mkdir()
-        (self.root / "tests/test_app.py").write_text("import unittest\nclass T(unittest.TestCase):\n def test_value(self): self.assertEqual(1+1,2)\n")
-        first = self.resolve(additional_grants=["full-regression"], authorization_source=self.source("跑全量单测"))
-        command = [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests"]
-        run, code = ledger.run(self.root, ".", "full", "policy-env", command, execution_context=first["context"])
-        self.assertEqual(code, 0)
+        import execution_policy as policy
+        from test_scope import derive_suite
+        manifest_path, manifest = self.version_manifest()
+        standalone = self.resolve(authorization_source=self.source("跑全量单测"))
+        with self.assertRaises(policy.PolicyError):
+            policy.require_action(standalone["context"], "full-regression")
+        parent = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
+            "command": "/sprint-autopilot", "request_id": "version-full", "options": ["--skip-dev"]})
+        first = entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=manifest_path)
+        plan = derive_suite(self.root, manifest["suites"][0]["runners"], manifest, first["context"])
+        item = plan["runs"][0]
+        command = item["argv"]
+        run, code = ledger.run(self.root, ".", "version", "policy-env", command,
+            inputs=item["inputs"], execution_context=first["context"], scope_plan=plan)
+        self.assertEqual(code, 0, run)
         report = {"action": "full-regression", "status": "PASS", "execution_context": first["identity"],
             "inputs": {name: entry.initial_file_hash(self.root / name) for name in ("app.py", "tests/test_app.py")},
-            "checks": [{"kind": "suite-inventory", "status": "PASS", "evidence": ["unittest discovery tests directory"]}],
+            "checks": [{"kind": "suite-inventory", "status": "PASS", "evidence": ["frozen version acceptance tests"]}],
             "ledger_root": str(self.root), "tests": ["tests/test_app.py"],
             "suites": [{"name": "python", "run_id": run["run_id"], "command": command, "cwd": ".", "tests": ["tests/test_app.py"]}]}
         path = Path(first["execution_context"]).with_name("full.json")
         path.write_text(json.dumps(report))
-        static = self.static(first)
-        result = entry.check_completion(self.root, first["execution_context"], static_evidence=static["evidence_file"],
-                                        full_evidence=str(path), env_id="policy-env")
-        self.assertTrue(result["ready"], result)
+        verified = entry.verify_full_evidence(self.root, first["context"], str(path), "policy-env")
+        self.assertEqual(verified["status"], "PASS", verified)
         report["tests"] = []
         path.write_text(json.dumps(report))
-        result = entry.check_completion(self.root, first["execution_context"], static_evidence=static["evidence_file"],
-                                        full_evidence=str(path), env_id="policy-env")
-        self.assertFalse(result["ready"])
+        with self.assertRaises(ValueError):
+            entry.verify_full_evidence(self.root, first["context"], str(path), "policy-env")
 
     def test_equivalent_single_scope_completes_without_erasing_original_error(self):
         from unittest import mock
@@ -541,7 +1036,7 @@ class ExecutionPolicyTests(unittest.TestCase):
 
     def test_refork_refreshes_parent_grants_budget_and_preserves_same_scope_evidence(self):
         import execution_policy as policy
-        parent = self.resolve(entry="sprint-batch", execution_budget={"processes": 3})
+        parent = self.resolve_static_only(entry="sprint-batch", execution_budget={"processes": 3})
         child = entry.fork_context(self.root, parent["execution_context"], "001")
         static = self.static(child)
         revised = entry.revise_context(self.root, parent["execution_context"], additional_grants=["commit"],
@@ -593,7 +1088,8 @@ class ExecutionPolicyTests(unittest.TestCase):
         source = self.root / "src"
         source.mkdir()
         (source / "app.py").write_text("value = 2\n")
-        result = entry.resolve_context(self.root, "sprint-dev", version="V1", write_set=["src"])
+        result = entry.resolve_context(self.root, "sprint-dev", version="V1", write_set=["src"],
+            authorization_source=dict(self.source("仅语法验证，跳过相关测试"), skip_actions=["related-test"]))
         static = entry.run_static(self.root, result["execution_context"],
             [sys.executable, "-B", "-c", "import ast; ast.parse(open('src/app.py').read())"], ["src/app.py"])
         self.assertEqual(static["status"], "PASS")
@@ -650,7 +1146,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertNotIn("deploy", self.resolve()["context"]["allowed_actions"])
 
     def test_other_task_new_same_version_ledger_issue_is_diagnostic_not_blocking(self):
-        first = self.resolve()
+        first = self.resolve_static_only()
         ledger = self.root / "docs/design/detail/V1/_开发期设计增量.md"
         ledger.parent.mkdir(parents=True)
         ledger.write_text("## 待级联\nother task malformed line\nanother unrelated line\n")
@@ -859,37 +1355,43 @@ class ExecutionPolicyTests(unittest.TestCase):
 
     def test_test_build_child_is_deterministic_restricted_and_shares_refreshed_budget(self):
         import execution_policy as policy
+        manifest_path, manifest = self.version_manifest()
         parent = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
             "request_id": "scheduled-tests", "command": "/sprint-autopilot"}, execution_budget={"processes": 2})
-        child = entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007")
+        child = entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=manifest_path)
         self.assertEqual(child["context"]["mode"], "formal")
         self.assertEqual(child["context"]["allowed_actions"], ["full-regression", "live-tests", "static"])
         self.assertEqual(child["context"]["build_id"], "build-007")
         policy.reserve_budget(self.root, child["context"], "processes", 1, "a" * 64)
-        repeat = entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007")
+        repeat = entry.fork_test_build(self.root, parent["execution_context"], "V1", "build-007", manifest=manifest_path)
         self.assertEqual(repeat["identity_hash"], child["identity_hash"])
         self.assertEqual(policy.reserve_budget(self.root, repeat["context"], "processes", 1, "b" * 64)["used"], 2)
         revised = entry.revise_context(self.root, parent["execution_context"], execution_budget={"processes": 3},
                                         authorization_source=self.source("增加本任务预算"))
-        refreshed = entry.fork_test_build(self.root, revised["execution_context"], "V1", "build-007")
+        refreshed = entry.fork_test_build(self.root, revised["execution_context"], "V1", "build-007", manifest=manifest_path)
         self.assertEqual(refreshed["identity"], child["identity"])
         self.assertEqual(policy.reserve_budget(self.root, refreshed["context"], "processes", 1, "c" * 64)["used"], 3)
         with self.assertRaises(ValueError):
             policy.require_action(child["context"], "static")
-        for version, build in (("V2", "build-008"), ("V1", ""), ("V1", "../escape")):
+        for version, build in (("V0", "build-007"), ("V2", "build-008"), ("V1", ""), ("V1", "../escape")):
             with self.assertRaises(ValueError):
-                entry.fork_test_build(self.root, revised["execution_context"], version, build)
+                entry.fork_test_build(self.root, revised["execution_context"], version, build, manifest=manifest_path)
         light = self.resolve(additional_grants=["live-tests"], authorization_source=self.source("浏览器测试"))
         with self.assertRaises(ValueError):
-            entry.fork_test_build(self.root, light["execution_context"], "V1", "build-007")
+            entry.fork_test_build(self.root, light["execution_context"], "V1", "build-007", manifest=manifest_path)
         formal_without_grant = self.resolve(entry="sprint-autopilot")
         with self.assertRaises(ValueError):
-            entry.fork_test_build(self.root, formal_without_grant["execution_context"], "V1", "build-007")
+            entry.fork_test_build(self.root, formal_without_grant["execution_context"], "V1", "build-007", manifest=manifest_path)
         standalone = self.resolve(entry="sprint-aiauto-test", authorization_source={"kind": "explicit-command",
             "request_id": "standalone-tests", "command": "/sprint-aiauto-test"})
         self.assertEqual(standalone["context"]["mode"], "formal")
-        standalone_child = entry.fork_test_build(self.root, standalone["execution_context"], "V1", "build-007")
-        self.assertIn("full-regression", standalone_child["context"]["allowed_actions"])
+        with self.assertRaises(ValueError):
+            entry.fork_test_build(self.root, standalone["execution_context"], "V1", "build-007", manifest=manifest_path)
+        policy.require_action(refreshed["context"], "full-regression")
+        manifest["acceptance_tests"] = []
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaises(ValueError):
+            policy.require_action(refreshed["context"], "full-regression")
 
     def test_cli_fork_development_subset_defers_version_delivery_to_parent(self):
         parent = self.resolve(entry="sprint-autopilot", authorization_source={"kind": "explicit-command",
@@ -964,7 +1466,7 @@ class ExecutionPolicyTests(unittest.TestCase):
                               options=["--skip-deploy", "--skip-aiauto-test"]))
         self.assertFalse({"deploy", "live-tests", "full-regression"} & set(skipped["context"]["allowed_actions"]))
         natural = self.resolve(entry="sprint-autopilot")
-        self.assertEqual(natural["context"]["allowed_actions"], ["implement", "static"])
+        self.assertEqual(natural["context"]["allowed_actions"], ["implement", "related-test", "static"])
         test_only = self.resolve(entry="sprint-autopilot", authorization_source=dict(source, options=["--skip-dev"]))
         self.assertNotIn("implement", test_only["context"]["allowed_actions"])
         self.assertNotIn("install", full["context"]["allowed_actions"])
@@ -980,7 +1482,8 @@ class ExecutionPolicyTests(unittest.TestCase):
             if command == "sprint-aiauto-test":
                 self.assertEqual(result["context"]["execution_budget"]["elapsed_seconds"], 7200)
                 import execution_policy as policy
-                policy.reserve_budget(self.root, result["context"], "elapsed_seconds", 3600, "a" * 64, action="full-regression")
+                with self.assertRaises(policy.PolicyError):
+                    policy.reserve_budget(self.root, result["context"], "elapsed_seconds", 3600, "a" * 64, action="full-regression")
                 policy.reserve_budget(self.root, result["context"], "elapsed_seconds", 3600, "b" * 64, action="live-tests")
         self.assertEqual(self.resolve()["context"]["execution_budget"]["agents"], 2)
 

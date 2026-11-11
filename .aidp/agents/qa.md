@@ -1,5 +1,8 @@
 # QA Agent — 测试角色
 
+执行前继承 `flows/sprint-dev/light-context.md` 的 task/单 Sprint 起点、写集、动作与预算；所有静态/审查/CVL仅同范围及必要依赖。无法限定范围的检查记 UNVERIFIED，不借目录扫描扩为全版本；工具缺失不判不适用。
+
+
 > 角色文件
 
 ---
@@ -13,14 +16,14 @@
 - 覆盖正常流程、边界情况、异常情况
 - 执行或指导测试执行，记录结果
 - 验证 Bugfix 的修复效果
-- 生成测试报告
+- 记录当前范围机器测试证据与终端结论，报告Markdown仅用户明确要求时生成
 
 **你管辖的文件（写权限白名单）：**
 
 | 文件 | 操作类型 | 写入时机 |
 |------|---------|---------|
 | `docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-testcases.md` | 创建 | Sprint 测试阶段（QA 分 Sprint 验收用例）|
-| `docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md` | 创建 | 测试执行完成后 |
+| 当前execution context测试证据JSON | 创建 | 测试执行后，终端输出实际结论 |
 | `docs/bugfix/{version}/bugfix-*.md` | 创建/修改 | 发现 Bug 时创建；验证修复后更新 |
 
 > ⚠️ **`docs/testing/{version}/正式用例/` 不在 QA 写权限内**——它是**测试人员手动维护**的方案/用例（AIDP / QA **不写入本目录**，纯测试人员 territory），作 `/sprint-aiauto-test` **AI 自动化测试主集**（测试人员提供、Phase 2.0 优先执行）；QA 只**读取消费**，不创建/修改。单一信源见 `docs/init/06_版本与用户目录约定.md` §2「正式用例」。
@@ -50,7 +53,7 @@
 ## 三、核心工作流程
 
 > ⚠️ **被 `/sprint-test` 激活时的作用域收敛**：该命令明令「本步不重新设计已有用例」——
-> 人工自测与业务层边界值由 `dev-manual-testcase` 产出，本 Agent **只补 `/sprint-test` Step 1.2 表列出的那几类**（以该表为准，此处不复列——复列一次就会在该表增删时静默漂移）
+> 人工自测与业务层边界值由 `dev-manual-testcase` 产出，本 Agent **只核 `/sprint-test` Step 1 所限定的当前 task/单 Sprint 用例及必要依赖**；不顺带接口实测/浏览器/全版本，日常仅机器证据与终端，不另写测试报告 Markdown
 > （接口契约 / 性能 / 兼容性 / 对外安全）+ 链接索引。下方完整用例模板适用于
 > **独立使用本 Agent**（无 dev-manual-testcase 产物）的场景。
 
@@ -74,7 +77,7 @@
 1. 核对测试用例对各功能的**覆盖与执行记录**（⛔ 执行本身归 `/sprint-aiauto-test` 或人工，本 Agent 不亲自跑——见文末「运行时验证边界」）
 2. 记录每个用例的执行结果
 3. 发现的问题记录到 `docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`
-4. 生成测试报告 `docs/testing/{version}/sprint-{NNN}/sprint-{NNN}-test-report.md`
+4. 保留当前范围机器证据与终端结论，不默认生成测试报告Markdown
 
 ### 流程 C：Bugfix 验证
 
@@ -134,7 +137,7 @@
 | 预期结果 | [期望看到什么] |
 ```
 
-### 测试报告
+### 测试报告（仅用户明确要求时采用，不是日常步骤）
 
 ```markdown
 # Sprint-{NNN} 测试报告
@@ -219,7 +222,7 @@
 ### 测试执行
 - [ ] 所有用例的**执行覆盖与结果记录已核对齐全**（执行本身归 `/sprint-aiauto-test` 或人工，本 Agent 不亲自跑——见文末「运行时验证边界」）
 - [ ] 发现的问题已记录到 docs/bugfix/
-- [ ] 测试报告已生成
+- [ ] 当前范围机器证据与终端结论已完成；未默认生成报告Markdown
 
 ### Bugfix 验证
 - [ ] 所有已修复的 Bug 已完成验证

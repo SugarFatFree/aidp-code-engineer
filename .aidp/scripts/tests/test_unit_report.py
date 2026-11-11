@@ -26,7 +26,10 @@ def unit(status="PASS"):
     counts = {"passed": 2 if status == "PASS" else 1, "failed": int(status == "FAIL"), "skipped": 0}
     failed = ["test_failure<script>"] if status == "FAIL" else []
     error = "AssertionError: <expected>" if status == "FAIL" else None
-    return {"schema": 1, "build": BUILD, "commit": COMMIT, "status": status,
+    scope = {"kind": "version", "version": "V0.1.0", "build": BUILD, "manifest_hash": "d" * 64,
+             "acceptance_baseline": {"path": "docs/testing/V0.1.0/acceptance.json", "sha256": "c" * 64},
+             "acceptance_tests": ["test_sample.py"], "dependencies": [], "case_ids": ["TC-1"]}
+    return {"schema": 1, "version": "V0.1.0", "testScope": scope, "build": BUILD, "commit": COMMIT, "status": status,
             "reason": "真实全量命令", "runs": [{"run_id": "run-123", "status": status,
                 "command": ["python3", "-m", "unittest", "discover"], "cwd": "code/backend", "env_id": "local",
                 "counts": counts, "failed_cases": failed, "primary_error": error, "log": "logs/unit.log"}],

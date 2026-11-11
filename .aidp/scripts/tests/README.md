@@ -19,9 +19,11 @@
 | `test_entry_context.py` | 轻量/正式身份、嵌套续跑、正式子任务、真实完成门及族义务 | `python3 .aidp/scripts/tests/test_entry_context.py` | Python 标准库、Git |
 | `test_execution_policy.py` | 分离动作授权、共享预算、无变化工具失败终止与显式等价证据 | `python3 .aidp/scripts/tests/test_execution_policy.py` | Python 标准库、临时 Git |
 | `test_scope_performance.py` | 同树分析缓存、资源映射、子模块指纹、计划去重与安全合批 | `python3 .aidp/scripts/tests/test_scope_performance.py` | Python 标准库、临时 Git |
+| `test_verification_tools.py` | 项目配置与 CI 验证命令选择、语法/lint/类型/编译/单测分类、只读 shell/容器边界 | `python3 .aidp/scripts/tests/test_verification_tools.py` | Python 标准库、离线工具替身 |
+| `test_deployment_ops.py` | 备份频率与真实回执、跨类型并发限额、待同步操作指引和精简 SQL 台账 | `python3 .aidp/scripts/tests/test_deployment_ops.py` | Python 标准库、临时 Git、离线命令替身 |
 | `test_development_scope.py` | 风险与文件成本分离、真实SQL差异与基线不确定性 | `python3 .aidp/scripts/tests/test_development_scope.py` | Python 标准库、临时 Git |
 | `test_sprint_discovery.py` | 计划分册/启动/归档/关闭共同发现，保留证据分域 | `python3 .aidp/scripts/tests/test_sprint_discovery.py` | Python 标准库、临时 Git |
-| `test_light_task_flow.py` | 执行命令真实入口，验证无Sprint开发/测试/修复/收尾及已有Sprint字节不变 | `python3 .aidp/scripts/tests/test_light_task_flow.py` | Python 标准库、Git |
+| `test_light_task_flow.py` | 默认开发/修复的相关单测闭环、断言修改必实跑、明确跳过的受限结论；临时 Git/离线部署复用测试证据，重复收尾不重放，已有 Sprint 字节不变 | `python3 .aidp/scripts/tests/test_light_task_flow.py` | Python 标准库、Git、离线部署替身 |
 | `test_build_unit_test.py` | 部署完整提交隔离执行、并发缓存、超时清理 | `python3 .aidp/scripts/tests/test_build_unit_test.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_unit_report.py` | 全量单测/实测独立展示、缺证据不能通过、旧报告兼容 | `python3 .aidp/scripts/tests/test_unit_report.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_aiauto_test_join.py` | 单测失败幂等登记、未核验不冻结、准发布状态 | `python3 .aidp/scripts/tests/test_aiauto_test_join.py` | Python 标准库、Git、Node（报告渲染） |

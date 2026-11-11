@@ -37,8 +37,10 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import select
+import shutil
 import stat
 import subprocess
 import sys
@@ -112,15 +114,58 @@ def file_hash(path):
     return digest({"sha256": content.hexdigest(), "mode": stat.S_IMODE(mode), "link": link})
 
 
-def tree_snapshot(root, inputs=()):
-    """返回可供 review diff 使用的文件内容清单和整体指纹。"""
+class _FingerprintCache:
+    """共享入口内容缓存；只保存可信 token→内容 hash，缓存损坏仅触发重读。"""
+    def __init__(self, root):
+        self.path = Path(ensure_runtime_dir(root)) / "content-fingerprints.json"
+        self.files = {}
+        try:
+            record = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(record.get("files"), dict) and record.get("checksum") == digest(record["files"]):
+                self.files = record["files"]
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        from project_inventory import fingerprint_metadata
+        self.metadata = fingerprint_metadata() or {}
+        self.changed = False
+
+    def read(self, path, on_read=None):
+        from project_inventory import fingerprint_file
+        key = str(path)
+        def reader(target):
+            if on_read:
+                on_read(target)
+            return file_hash(target)
+        value = fingerprint_file(path, previous=self.files.get(key), reader=reader, metadata=self.metadata)
+        if self.files.get(key) != value:
+            self.files[key] = value
+            self.changed = True
+        return value
+
+    def save(self):
+        if not self.changed:
+            return
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent, delete=False) as stream:
+                temporary = stream.name
+                json.dump({"files": self.files, "checksum": digest(self.files)}, stream, sort_keys=True)
+            os.replace(temporary, self.path)
+            temporary = None
+        finally:
+            if temporary:
+                Path(temporary).unlink(missing_ok=True)
+
+
+def snapshot_paths(root, inputs=(), paths=None, inventory=None):
+    """仅枚举与 stat，不读源码；供闭环预估和实际取证使用。"""
     root = Path(root).resolve()
-    from project_inventory import git_worktree_inventory, default_excluded, runtime_excluded
+    from project_inventory import git_worktree_inventory, default_excluded, runtime_excluded, generated_excluded
     mode = detect_mode(root)
     if mode != "git" and os.path.lexists(root / ".git"):
         raise LedgerError("存在 .git 但无法读取工作树；拒绝降级复用")
-    paths, directory_inputs = set(), {}
-    inventory = git_worktree_inventory(root) if mode == "git" else {"repositories": ["."], "gitlinks": {}}
+    selected, paths, directory_inputs = paths, set(), {}
+    inventory = inventory or (git_worktree_inventory(root) if mode == "git" else {"repositories": ["."], "gitlinks": {}})
 
     def walk(base, fallback=False):
         def onerror(exc):
@@ -130,7 +175,7 @@ def tree_snapshot(root, inputs=()):
             kept = []
             for name in dirs:
                 path = parent / name
-                if runtime_excluded(path.relative_to(root).as_posix()) or (fallback and name in SKIP_DIR_NAMES):
+                if runtime_excluded(path.relative_to(root).as_posix()) or (fallback and (name in SKIP_DIR_NAMES or generated_excluded(path.relative_to(root).as_posix()))):
                     continue
                 if path.is_symlink():
                     raise LedgerError(f"目录符号链接无法完整指纹：{path}")
@@ -139,7 +184,11 @@ def tree_snapshot(root, inputs=()):
             paths.update(parent / name for name in names
                          if not runtime_excluded((parent / name).relative_to(root).as_posix()))
 
-    if mode == "git":
+    if selected is not None:
+        paths.update(project_path(root, rel) for rel in selected
+                     if not runtime_excluded(rel) and not rel.endswith("/@gitlink")
+                     and ((root / rel).exists() or (root / rel).is_symlink()))
+    elif mode == "git":
         paths.update(root / rel for rel in inventory["files"]
                      if not default_excluded(rel, inventory["repositories"])
                      and ((root / rel).exists() or (root / rel).is_symlink()))
@@ -161,14 +210,88 @@ def tree_snapshot(root, inputs=()):
             walk(path)
         else:
             paths.add(path)
-    files = {p.relative_to(root).as_posix(): file_hash(p) for p in sorted(paths)}
-    files.update(directory_inputs)
-    # Gitlink pin 和真实 HEAD 是输入；dirty 由递归逐文件内容表达，避免运行时状态污染。
-    files.update({rel + "/@gitlink": digest(pins) for rel, pins in inventory["gitlinks"].items()})
+    return {"paths": sorted(paths), "directory_inputs": directory_inputs, "normalized": normalized,
+            "inventory": inventory, "vcs_mode": mode}
+
+
+def inventory_membership(root, inventory, paths):
+    """目录成员仅算元数据；窄快照也必须感知新增/删除/重命名的解析候选。"""
+    from project_inventory import default_excluded, installed_skill_package
+    active = {None, *(installed_skill_package(root, path) for path in paths)}
+    return digest(sorted(path for path in inventory.get("files", ())
+                         if not default_excluded(path, inventory["repositories"])
+                         and installed_skill_package(root, path) in active
+                         and os.path.lexists(root / path)))
+
+
+def snapshot_estimate(root, inputs=(), paths=None):
+    """估算目前缓存未命中的内容读取；后置预算仍预留所有输入各读一次。"""
+    from project_inventory import fingerprint_token
+    plan = snapshot_paths(root, inputs, paths)
+    cache = _FingerprintCache(root)
+    misses, files = 0, dict(plan["directory_inputs"])
+    for path in plan["paths"]:
+        token = fingerprint_token(path, metadata=cache.metadata)
+        cached = cache.files.get(str(path), {})
+        if token is None or cached.get("token") != token:
+            misses += 1
+        else:
+            files[path.relative_to(root).as_posix()] = cached["hash"]
+    files.update({rel + "/@gitlink": digest({"kind": "gitlink", "path": rel, "indexed": pins.get("index") is not None})
+                  for rel, pins in plan["inventory"]["gitlinks"].items()})
+    if paths is not None:
+        files["@inventory"] = inventory_membership(root, plan["inventory"], paths)
+    return {"content_reads": misses, "objects": len(plan["paths"]), "files": files,
+            "hash": digest({"files": files, "vcs_mode": plan["vcs_mode"]}) if not misses else None}
+
+
+def tree_snapshot(root, inputs=(), *, paths=None, inventory=None, observer=None):
+    """内容 hash 不含 token；token 只用于减少读取和检测执行窗口 A→B→A。"""
+    root = Path(root).resolve()
+    plan = snapshot_paths(root, inputs, paths, inventory)
+    cache = _FingerprintCache(root)
+    files, tokens, read_paths = {}, {}, set()
+    io = {"objects": len(plan["paths"]), "content_reads": 0, "unique_files": 0,
+          "metadata_entries": len(plan["inventory"].get("files", plan["paths"])), "cache_hits": 0,
+          "tool_io": "unknown"}
+    try:
+        for path in plan["paths"]:
+            # 在实际 reader 上计次，避免 stat 后竞态导致估计命中、实际读取却漏计。
+            def observed_read(target):
+                io["content_reads"] += 1
+                read_paths.add(str(target))
+            value = cache.read(path, observed_read)
+            if not value["read"]:
+                io["cache_hits"] += 1
+            rel = path.relative_to(root).as_posix()
+            if value["hash"] is not None:
+                files[rel], tokens[rel] = value["hash"], {"token": value["token"], "observation": value.get("observation")}
+    finally:
+        io["unique_files"] = len(read_paths)
+        if observer is not None:
+            observer(io, read_paths)
+        cache.save()
+    files.update(plan["directory_inputs"])
+    # Gitlink 结构是输入；提交 pin/HEAD 是事实，内容相同的提交不使测试失效。
+    gitlinks = plan["inventory"]["gitlinks"]
+    files.update({rel + "/@gitlink": digest({"kind": "gitlink", "path": rel, "indexed": pins.get("index") is not None})
+                  for rel, pins in gitlinks.items()})
+    if paths is not None:
+        files["@inventory"] = inventory_membership(root, plan["inventory"], paths)
+    normalized = plan["normalized"]
     categories = {p: ("input" if any(p == x or p.startswith(x + "/") for x in normalized) else "source")
                   for p in files}
-    return {"files": files, "vcs_mode": mode, "categories": categories,
-            "hash": digest({"files": files, "vcs_mode": mode})}
+    return {"files": files, "tokens": tokens, "gitlinks": gitlinks, "io": io,
+            "vcs_mode": plan["vcs_mode"], "categories": categories,
+            "hash": digest({"files": files, "vcs_mode": plan["vcs_mode"]})}
+
+
+def snapshot_changed(before, after):
+    if before["hash"] != after["hash"]:
+        return True
+    # 未知 token 的平台仍实读内容，但不声称具备可信执行窗口证据。
+    return any(value is not None and after.get("tokens", {}).get(path) != value
+               for path, value in before.get("tokens", {}).items())
 
 
 @contextmanager
@@ -197,9 +320,11 @@ def load(root, ledger=None):
             if not isinstance(row, dict) or row.get("schema") != SCHEMA:
                 raise LedgerError("账本记录结构/版本不正确")
             unsigned = {key: value for key, value in row.items() if key != "checksum"}
-            external_full = (ledger is not None and Path(ledger).resolve() != root and row.get("scope") == "full"
+            external_full = (ledger is not None and Path(ledger).resolve() != root and row.get("scope") in ("full", "version")
                              and row.get("ledger_root") == str(Path(ledger).resolve()))
-            if row.get("checksum") != digest(unsigned) or (row.get("root") != str(root) and not external_full):
+            external_record = (ledger is not None and row.get("kind") in {"plan", "snapshot"}
+                               and row.get("root") == str(Path(ledger).resolve()))
+            if row.get("checksum") != digest(unsigned) or (row.get("root") != str(root) and not external_full and not external_record):
                 raise LedgerError("账本校验和或项目 root 不匹配")
             if row.get("kind") == "plan":
                 plan = row["plan"]
@@ -250,7 +375,7 @@ def load(root, ledger=None):
                         verified_plans.add(id(plan))
                     if (row.get("scope_hash") != plan["scope_hash"] or binding["item"] not in plan["runs"]
                             or row["context"].get("selection") != binding["item"]
-                            or row["context"].get("execution_context") != plan.get("execution_context")
+                            or (plan.get("kind") != "version" and row["context"].get("execution_context") != plan.get("execution_context"))
                             or row.get("execution_context") != plan.get("execution_context")):
                         raise LedgerError("Sprint 范围绑定损坏")
                 if row["status"] == "CARRIED":
@@ -295,12 +420,12 @@ def save(root, rows, ledger=None):
                     plan, item = binding["plan"], binding["item"]
                     plan_id = plan["scope_hash"]
                     if plan_id not in plans:
-                        emit({"schema": SCHEMA, "kind": "plan", "root": str(root), "plan_id": plan_id, "plan": plan})
+                        emit({"schema": SCHEMA, "kind": "plan", "root": str(Path(ledger or root).resolve()), "plan_id": plan_id, "plan": plan})
                         plans.add(plan_id)
                     row["scope_binding"] = {"plan_id": plan_id, "item_id": digest(item)}
                     snapshot_id = digest({"files": row["files"], "vcs_mode": row["vcs_mode"]})
                     if snapshot_id not in snapshots:
-                        emit({"schema": SCHEMA, "kind": "snapshot", "root": str(root), "snapshot_id": snapshot_id,
+                        emit({"schema": SCHEMA, "kind": "snapshot", "root": str(Path(ledger or root).resolve()), "snapshot_id": snapshot_id,
                               "files": row["files"], "vcs_mode": row["vcs_mode"]})
                         snapshots.add(snapshot_id)
                     row["snapshot_id"] = snapshot_id
@@ -318,6 +443,16 @@ def save(root, rows, ledger=None):
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)
+
+
+def persist_run(root, ledger, row):
+    with lock(ledger, "write"):
+        rows = load(root, ledger)
+        index = next((i for i, value in enumerate(rows) if value.get("run_id") == row["run_id"] and value["kind"] == "run"), None)
+        if index is None:
+            raise LedgerError("执行中的账本记录丢失，拒绝出具 PASS")
+        rows[index] = row
+        save(root, rows, ledger)
 
 
 def stable_pass(row):
@@ -340,6 +475,11 @@ def snapshot_delta(old, new):
     return sorted(p for p in old.keys() | new.keys() if old.get(p) != new.get(p))
 
 
+def version_content_identity(plan):
+    manifest = plan.get("manifest", {})
+    return {key: manifest.get(key) for key in ("version", "acceptance_baseline", "acceptance_tests", "dependencies")}
+
+
 def can_carry(previous, current, binding, inputs):
     """执行与历史加载共用同一闭包判据；旧命名映射不构成独立证据。"""
     from test_scope import DEPENDENCY_POLICY, dependency_impact, within
@@ -347,7 +487,11 @@ def can_carry(previous, current, binding, inputs):
     if not stable_evidence(previous) or not old_binding or not binding or previous["inputs"] != list(inputs):
         return False
     old_plan, plan = old_binding["plan"], binding["plan"]
-    if (old_plan.get("execution_context") != plan.get("execution_context")
+    if plan.get("kind") == "version" or old_plan.get("kind") == "version":
+        if (plan.get("kind") != old_plan.get("kind") or version_content_identity(old_plan) != version_content_identity(plan)
+                or old_plan["modules"] != plan["modules"]):
+            return False
+    elif (old_plan.get("execution_context") != plan.get("execution_context")
             or any(old_plan[k] != plan[k] for k in ("since", "modules"))):
         return False
     if old_binding["item"] != binding["item"]:
@@ -380,7 +524,7 @@ def can_carry(previous, current, binding, inputs):
 def result(row, reused=False):
     # 文件清单只在账本存储，CLI 回包保持小而可读。
     return {key: value for key, value in dict(row, reused=reused).items()
-            if key not in ("files", "checksum", "context", "scope_binding", "snapshot_id")}
+            if key not in ("files", "tokens", "checksum", "context", "scope_binding", "snapshot_id")}
 
 
 def python_runner_module(command):
@@ -412,13 +556,106 @@ def missing_python_runner(command, stderr):
     return False
 
 
+class _ValidationProgress:
+    """现有预算票据的累计观测适配器；资源状态仅由 execution_policy 保存。"""
+    def __init__(self, root, context, stages, input_hash, action, *, defer_input=False):
+        from execution_policy import reserve_validation
+        self.root, self.context = root, context
+        self.actual = {name: {} for name in stages}
+        self.paths, self.selected, self.run_ids = set(), set(), []
+        self.observations = {"unique_files": 0, "metadata_entries": 0, "cache_hits": 0, "tool_objects": 0}
+        options = {"defer_input": True} if defer_input else {}
+        self.ticket = reserve_validation(root, context, stages, input_hash, action=action, **options)
+        self.finished = False
+
+    def bind(self, input_hash):
+        if self.ticket.get("input_bound") is False:
+            from execution_policy import bind_validation_input
+            self.ticket = bind_validation_input(self.root, self.context, self.ticket, input_hash)
+        elif self.ticket.get("input_hash") != input_hash:
+            raise LedgerError("TREE_CHANGED：预算预估后真实验证输入已变化，请重新预留")
+
+    def observe(self, stage):
+        def record(io, paths):
+            values = self.actual[stage]
+            values["scanned_files"] = values.get("scanned_files", 0) + io["content_reads"]
+            self.paths.update(paths)
+            self.observations["unique_files"] = len(self.paths)
+            self.observations["metadata_entries"] += io["metadata_entries"]
+            self.observations["cache_hits"] += io["cache_hits"]
+        return record
+
+    def command(self, row, selected):
+        values = self.actual["command"]
+        values["processes"] = values.get("processes", 0) + int(row.get("process_started", False))
+        values["elapsed_seconds"] = values.get("elapsed_seconds", 0) + row["duration_seconds"]
+        if row.get("process_started"):
+            self.selected.update(selected)
+        values["selected_tests"] = len(self.selected)
+        self.observations["tool_objects"] = len(self.selected)
+        self.run_ids.append(row["run_id"])
+        self.flush()
+
+    def flush(self):
+        from execution_policy import record_validation_usage
+        record_validation_usage(self.root, self.context, self.ticket, self.actual, observations=self.observations)
+
+    def summary(self):
+        return {"evidence_content_reads": sum(stage.get("scanned_files", 0) for stage in self.actual.values()),
+                "distinct_content_files": len(self.paths), "selected_objects": len(self.selected),
+                "metadata_entries": self.observations["metadata_entries"], "cache_hits": self.observations["cache_hits"],
+                "external_tool_io": "unknown", "stages": self.actual}
+
+    def finish(self, status="UNVERIFIED", reason=None):
+        if self.finished:
+            return
+        from execution_policy import settle_validation
+        # 超额结算先落账再抛；不能随后改参数重复结算。
+        self.finished = True
+        settle_validation(self.root, self.context, self.ticket, self.actual, status=status,
+                          root_cause=reason, evidence={"run_ids": self.run_ids, "tool_io": "unknown"},
+                          observations=self.observations)
+
+
+def validation_stages(reads, objects, processes, selected, timeout):
+    return {"pre_evidence": {"scanned_files": reads},
+            "command": {"processes": processes, "selected_tests": selected,
+                        "elapsed_seconds": (timeout or 0) * processes},
+            "post_evidence": {"scanned_files": objects}, "cleanup": {}}
+
+
+@contextmanager
+def evidence_budget(root, execution_context, requests, *, extra_reads=0, action="static"):
+    """没有命令的验真/审查也按实读取证计费，复用命中不虚扣对象数。"""
+    if execution_context is None:
+        yield None
+        return
+    from test_scope import execution_context_data
+    context = execution_context_data(root, execution_context)
+    estimates = [snapshot_estimate(root, inputs, paths) for inputs, paths in requests]
+    reads = sum(item["content_reads"] for item in estimates) + extra_reads
+    progress = _ValidationProgress(root, context,
+        validation_stages(reads, 0, 0, 0, 0), digest([action, estimates]), action)
+    successful = False
+    try:
+        yield progress
+        successful = True
+    finally:
+        progress.finish("PASS" if successful else "UNVERIFIED")
+
+
 class _BatchProof:
     """仅当前 run_scope 持有的冻结证明，不接受来自 JSON 的快捷验真标志。"""
     def __init__(self, root, plan, env_id):
         self.root, self.plan_hash = root, digest(plan)
         self.environment = environment_hash()
-        self.inputs = sorted({p for r in plan["runners"] for p in r["inputs"]})
+        self.inputs = sorted({p for r in [*plan["runners"], *plan["runs"]] for p in r["inputs"]})
         self.tree_hash = plan["tree_hash"]
+        from project_inventory import fingerprint_token, fingerprint_metadata, _stat_identity
+        metadata = fingerprint_metadata() or {}
+        paths = snapshot_paths(root, self.inputs, plan.get("validation_files"))["paths"]
+        self.tokens = {path.relative_to(root).as_posix(): {"token": fingerprint_token(path, metadata=metadata),
+                                                       "observation": _stat_identity(path)} for path in paths}
         self.input_hash = digest([self.tree_hash, env_id, self.environment, plan["runners"]])
         self.reserved_keys = set()
 
@@ -428,16 +665,46 @@ class _BatchProof:
 
 
 def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None, ledger_root=None,
-        scope_binding=None, execution_context=None, _batch=None):
+        scope_binding=None, execution_context=None, _batch=None, scope_plan=None):
+    owned = []
+    try:
+        return _run(root, cwd, scope, env_id, command, inputs, force, timeout, ledger_root,
+                    scope_binding, execution_context, _batch, owned, scope_plan)
+    finally:
+        for progress in owned:
+            progress.finish()
+
+
+def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None, ledger_root=None,
+         scope_binding=None, execution_context=None, _batch=None, _owned=None, scope_plan=None):
     root = Path(root).resolve()
     if not root.is_dir() or not isinstance(env_id, str) or not env_id.strip():
         raise LedgerError("root 必须存在，env-id 不能为空")
     if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
         raise LedgerError("timeout 必须为正有限秒数")
     from test_scope import context_identity, execution_context_data
+    if scope == "full":
+        raise LedgerError("无版本边界 full 已禁用；须使用 version + 冻结验收 manifest + autopilot 测试委派")
+    version_identity = None
+    if scope == "version":
+        from test_scope import validate_scope
+        if execution_context is None or not isinstance(scope_plan, dict) or scope_plan.get("kind") != "version":
+            raise LedgerError("version 必须绑定冻结 scope_plan 与真实 autopilot 测试委派上下文")
+        plan = validate_scope(root, scope_plan, execution_context)
+        matches = [item for item in plan["runs"] if item["argv"] == list(command) and item["cwd"] == cwd
+                   and item["env_id"] == env_id]
+        if len(matches) != 1:
+            raise LedgerError("版本命令/cwd/env-id 不唯一对应 manifest 运行项")
+        scope_binding = {"plan": plan, "item": matches[0]}
+        _batch = _BatchProof(root, plan, env_id)
+        version_identity = plan["execution_context"]
+        # 真实父预算由 build_unit_test 覆盖 worktree 创建、执行与收尾；这里不重复扣费。
+        execution_context = None
+    elif scope_plan is not None:
+        raise LedgerError("scope_plan 仅用于版本验收；日常任务沿既有 scope_binding")
     execution_context = execution_context_data(root, execution_context)
-    identity = context_identity(root, execution_context)
-    action = "full-regression" if scope == "full" else "related-test"
+    identity = version_identity or context_identity(root, execution_context)
+    action = "full-regression" if scope == "version" else "related-test"
     if execution_context is not None:
         from execution_policy import require_action
         require_action(execution_context, action)
@@ -448,7 +715,7 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
         resolve_since(root, identity.get("since"))
     if identity and identity["mode"] == "light" and scope not in ("task", "targeted", "full"):
         raise LedgerError("light execution-context 不能升级为 sprint；full 必须另有显式 full-regression 授权")
-    if scope not in ("targeted", "sprint", "full", "task"):
+    if scope not in ("targeted", "sprint", "version", "task"):
         raise LedgerError(f"未知 scope：{scope}")
     ledger = Path(ledger_root).resolve() if ledger_root else root
     if scope_binding is not None:
@@ -459,7 +726,8 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
         else:
             plan = validate_scope(root, scope_binding["plan"], execution_context)
             _batch = _BatchProof(root, plan, env_id)
-        if scope != ("task" if identity and identity["mode"] == "light" else "sprint") or scope_binding["item"] not in plan["runs"]:
+        expected_scope = "version" if plan.get("kind") == "version" else ("task" if identity and identity["mode"] == "light" else "sprint")
+        if scope != expected_scope or scope_binding["item"] not in plan["runs"]:
             raise LedgerError("运行项不属于已验证 Sprint 范围")
         if list(command) != scope_binding["item"]["argv"] or cwd != scope_binding["item"]["cwd"]:
             raise LedgerError("命令/cwd 与范围运行项不一致")
@@ -472,7 +740,7 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
     inputs = normalize_inputs(root, inputs)
     requested_timeout = timeout
     if execution_context is not None:
-        if scope == "full" and timeout is None:
+        if scope == "version" and timeout is None:
             from execution_policy import reserve_budget
             available = reserve_budget(root, execution_context, "elapsed_seconds", 0, action=action)["remaining"]
             timeout = min(3600, available)
@@ -481,10 +749,13 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
     context = {"root": str(root), "cwd": str(cwd), "scope": scope, "env_id": env_id,
                "environment_hash": environment_hash(), "command": list(command),
                # full 默认剩余预算随结算变化，不能让同树已通过证据因此失效。
-               "inputs": inputs, "timeout": requested_timeout if scope == "full" else timeout}
-    if identity is not None:
+               "inputs": inputs, "timeout": requested_timeout if scope == "version" else timeout}
+    if scope == "version":
+        context["version_content"] = version_content_identity(scope_binding["plan"])
+        context["timeout"] = None
+    elif identity is not None:
         context["execution_context"] = identity
-    if scope == "full" and ledger != root:
+    if scope == "version" and ledger != root:
         # 每 build 独占账本；执行 worktree 可重建在不同临时路径。root 保留实际执行路径。
         proc = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-common-dir"],
                               capture_output=True, text=True, timeout=30)
@@ -495,25 +766,58 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
     if scope_binding is not None:
         context["selection"] = scope_binding["item"]
     key = digest(context)
+    selected_paths = scope_binding["plan"].get("validation_files") if scope_binding else None
+    progress = getattr(_batch, "progress", None)
     with lock(ledger, key) as command_lock:
-        before = tree_snapshot(root, inputs)
+        if execution_context is not None and progress is None:
+            estimate = snapshot_estimate(root, inputs, selected_paths)
+            with lock(ledger, "write"):
+                previous = next((r for r in reversed(load(root, ledger)) if r["kind"] == "run" and r["key"] == key), None)
+            cached = (not force and previous and estimate["hash"] and stable_evidence(previous)
+                      and (evidence_hash(previous) == estimate["hash"]
+                           and previous.get("scope_hash") == (scope_binding["plan"]["scope_hash"] if scope_binding else None)
+                           or scope_binding and can_carry(previous, estimate, scope_binding, inputs)))
+            selected_count = len(set(scope_binding["item"]["tests"] + scope_binding["item"]["sources"])) if scope_binding else 1
+            stages = validation_stages(estimate["content_reads"], 0 if cached else estimate["objects"],
+                                       0 if cached else 1, 0 if cached else selected_count, timeout)
+            reservation_input = _batch.input_hash if _batch else digest([estimate["hash"], env_id, context["environment_hash"], list(command)])
+            progress = _ValidationProgress(root, execution_context, stages, reservation_input, action,
+                                           defer_input=not _batch and estimate["hash"] is None)
+            _owned.append(progress)
+        observer = progress.observe("pre_evidence") if progress else None
+        before = tree_snapshot(root, inputs, paths=selected_paths, observer=observer)
         if scope_binding is not None:
             # 锁后全内容核验，绝不把等待前的证明当成当前事实。
             _batch.check(root, scope_binding["plan"])
-            scoped = before if inputs == _batch.inputs else tree_snapshot(root, _batch.inputs)
-            if scoped["hash"] != _batch.tree_hash:
+            scoped = before if inputs == _batch.inputs else tree_snapshot(root, _batch.inputs, paths=selected_paths, observer=observer)
+            if scoped["hash"] != _batch.tree_hash or scoped["tokens"] != _batch.tokens:
                 raise LedgerError("TREE_CHANGED：等待命令锁期间源文件/输入已变化，须重新推导")
         execution_input = _batch.input_hash if _batch else digest([before["hash"], env_id, context["environment_hash"], list(command)])
+        if progress:
+            progress.flush()
+            progress.bind(execution_input)
         with lock(ledger, "write"):
             rows = load(root, ledger)
             previous = next((r for r in reversed(rows) if r["kind"] == "run" and r["key"] == key), None)
+            blocked = next((r for r in reversed(rows) if r.get("kind") == "run" and r.get("key") == key
+                            and r.get("before_hash") == before["hash"]
+                            and r.get("tool_fingerprint") == tool_fingerprint(command, cwd)
+                            and r.get("exit_code") not in (0, None)
+                            and r.get("failure_kind") in {"ENV_UNAVAILABLE", "RUNNER_USAGE_ERROR", "NO_TESTS_COLLECTED"}), None)
+            if blocked:
+                return dict(result(blocked), retry_blocked=True,
+                            retry_reason="相同输入与环境的工具失败已记录；先修复输入或更新真实环境身份"), 2
             if (not force and previous and stable_evidence(previous)
                     and evidence_hash(previous) == before["hash"]
                     and previous.get("scope_hash") == (scope_binding["plan"]["scope_hash"] if scope_binding else None)):
                 previous["reuse_count"] += 1
                 previous["last_reused_at"] = time.time()
                 save(root, rows, ledger)
-                return result(previous, reused=True), 0
+                if progress:
+                    progress.flush()
+                    if progress in _owned:
+                        progress.finish("PASS")
+                return dict(result(previous, reused=True), io=before["io"]), 0
             if not force and previous and scope_binding and can_carry(previous, before, scope_binding, inputs):
                 carried = {"schema": SCHEMA, "kind": "run", "key": key, "context": context,
                            **context, "root": str(root), "ledger_root": str(ledger),
@@ -527,28 +831,36 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
                            "source_tree_hash": previous.get("source_tree_hash", previous["after_hash"]),
                            "started_at": time.time(), "duration_seconds": 0, "reuse_count": 0,
                            "delta": snapshot_delta(previous["files"], before["files"])}
+                if version_identity is not None:
+                    carried["execution_context"] = version_identity
                 rows.append(carried)
                 save(root, rows, ledger)
-                return result(carried), 0
-            execution_reservation = None
-            if execution_context is not None and not (_batch and key in _batch.reserved_keys):
-                from execution_policy import reserve_budget, PolicyError
+                if progress:
+                    progress.flush()
+                    if progress in _owned:
+                        progress.finish("PASS")
+                return dict(result(carried), io=before["io"]), 0
+            if progress:
                 if timeout is None or timeout <= 0:
-                    raise PolicyError("BUDGET_EXCEEDED", "没有可用于实际测试执行的时间预算")
-                reserve_budget(root, execution_context, "processes", 1, input_hash=execution_input, action=action)
-                selected_count = len(set(scope_binding["item"]["tests"] + scope_binding["item"]["sources"])) if scope_binding else 1
-                reserve_budget(root, execution_context, "selected_tests", selected_count, input_hash=execution_input, action=action)
-                # 预留上限必须传给实际进程；不把时间预算当说明文字。
-                execution_reservation = reserve_budget(root, execution_context, "elapsed_seconds", timeout, input_hash=execution_input, action=action)
+                    raise LedgerError("BUDGET_EXCEEDED：没有可用于实际测试执行的时间预算")
+                # 锁等待后若原预计复用的运行已失效，不得挪用零命令预留执行。
+                reserved = progress.ticket["stages"]["command"]
+                if (progress.actual["command"].get("processes", 0) >= reserved["processes"]
+                        or progress not in _owned and _batch and key not in _batch.reserved_keys):
+                    raise LedgerError("等待命令锁期间证据变化，当前票据没有剩余进程预留，须重新推导")
+                progress.flush()
             row = {"schema": SCHEMA, "kind": "run", "key": key,
                    "context": context, **context, "root": str(root), "ledger_root": str(ledger),
                    "run_id": uuid.uuid4().hex,
                    "status": "RUNNING", "exit_code": None, "before_hash": before["hash"],
                    "after_hash": None, "files": before["files"], "vcs_mode": before["vcs_mode"],
-                   "duration_seconds": 0, "started_at": time.time(), "reuse_count": 0}
+                   "duration_seconds": 0, "started_at": time.time(), "reuse_count": 0,
+                   "gitlinks": before["gitlinks"], "tool_fingerprint": tool_fingerprint(command, cwd)}
             if scope_binding is not None:
                 row.update(scope_binding=scope_binding, scope_hash=scope_binding["plan"]["scope_hash"])
-            if scope == "full" and execution_context is not None:
+            if version_identity is not None:
+                row["execution_context"] = version_identity
+            if scope == "version" and execution_context is not None:
                 row["execution_timeout"] = timeout
             # 先存 RUNNING，kill/崩溃后不可能回退复用更早的 PASS。
             rows.append(row)
@@ -556,42 +868,58 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
         started = time.monotonic()
         error = None
         process = None
-        stderr_file = tempfile.TemporaryFile()
-        stderr_closed = False
+        streams = {}
+        try:
+            output_dir = Path(ensure_runtime_dir(ledger)) / "test-output"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            row["output"] = {name: str(output_dir / (row["run_id"] + "." + name)) for name in ("stdout", "stderr")}
+            for name, path in row["output"].items():
+                streams[name] = Path(path).open("w+b")
+        except OSError as exc:
+            for stream in streams.values():
+                stream.close()
+            row.update(status="ERROR", evidence_status="UNVERIFIED", command_status="NOT_EXECUTED",
+                       process_started=False, error=str(exc), finished_at=time.time())
+            persist_run(root, ledger, row)
+            raise
+        closed = set()
 
-        def relay_stderr():
-            nonlocal stderr_closed
-            if process is None or process.stderr is None or stderr_closed:
+        def relay_output():
+            if process is None:
                 return
-            # 限定单轮搬运量，持续刷屏的子进程也必须回到 deadline/终止检查。
-            for _ in range(64):
-                try:
-                    chunk = os.read(process.stderr.fileno(), 65536)
-                except BlockingIOError:
-                    return
-                if not chunk:
-                    stderr_closed = True
-                    return
-                stderr_file.write(chunk)
-                # 写当前 fd，兼容 build.capture 的 dup2；不等换行或进程退出才公开进度。
-                pending = memoryview(chunk)
-                while pending:
-                    pending = pending[os.write(2, pending):]
+            for name, fd in (("stdout", 1), ("stderr", 2)):
+                pipe = getattr(process, name)
+                if pipe is None or name in closed:
+                    continue
+                # 有界搬运使持续刷屏也能响应 deadline；原输出同时持久化与实时转发。
+                for _ in range(64):
+                    try:
+                        chunk = os.read(pipe.fileno(), 65536)
+                    except BlockingIOError:
+                        break
+                    if not chunk:
+                        closed.add(name)
+                        break
+                    streams[name].write(chunk)
+                    pending = memoryview(chunk)
+                    while pending:
+                        pending = pending[os.write(fd, pending):]
 
         try:
             # 包装进程被 SIGKILL 后，仍活着的测试子进程继续持同键锁。
             process = subprocess.Popen(command, cwd=cwd, start_new_session=True,
-                                       pass_fds=(command_lock,), stderr=subprocess.PIPE)
-            os.set_blocking(process.stderr.fileno(), False)
+                                       pass_fds=(command_lock,), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            for name in streams:
+                os.set_blocking(getattr(process, name).fileno(), False)
             while True:
-                relay_stderr()
+                relay_output()
                 exit_code = process.poll()
                 if exit_code is not None:
                     break
                 remaining = timeout - (time.monotonic() - started) if timeout is not None else .1
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, timeout)
-                select.select([] if stderr_closed else [process.stderr], [], [], min(.1, remaining))
+                select.select([getattr(process, name) for name in streams if name not in closed], [], [], min(.1, remaining))
         except subprocess.TimeoutExpired:
             error, exit_code = "测试命令超时", 124
         except KeyboardInterrupt:
@@ -606,22 +934,24 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
                     except ProcessLookupError:
                         pass
                     process.wait()
-                relay_stderr()
+                relay_output()
             finally:
-                if process is not None and process.stderr is not None:
-                    process.stderr.close()
-                stderr_file.seek(0)
-                stderr_text = stderr_file.read().decode("utf-8", errors="replace")
-                stderr_file.close()
+                if process is not None:
+                    for name in streams:
+                        pipe = getattr(process, name)
+                        if pipe is not None:
+                            pipe.close()
+                for stream in streams.values():
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                streams["stderr"].seek(0)
+                stderr_text = streams["stderr"].read().decode("utf-8", errors="replace")
+                for stream in streams.values():
+                    stream.close()
         missing_module = bool(exit_code and missing_python_runner(command, stderr_text))
         if missing_module:
             error = "Python 测试运行器模块不可用"
         duration = time.monotonic() - started
-        try:
-            after_hash = tree_snapshot(root, inputs)["hash"]
-        except (OSError, ValueError) as exc:
-            after_hash = None
-            error = f"测试后指纹读取失败：{exc}"
         if not error and exit_code in (126, 127):
             error = "测试工具无法启动（退出码 126/127），未核验"
         pytest_failure = None
@@ -633,8 +963,35 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
                 4: ("RUNNER_USAGE_ERROR", "pytest 参数/配置错误，未核验"),
                 5: ("NO_TESTS_COLLECTED", "pytest 未收集到测试，未核验"),
             }[exit_code]
-        status = ("ERROR" if error else "FAIL" if exit_code else
-                  "TREE_CHANGED" if before["hash"] != after_hash else "PASS")
+        if (not error and python_runner_module(command) == "unittest"
+                and re.search(r"\bRan 0 tests\b", stderr_text)):
+            pytest_failure, error = "NO_TESTS_COLLECTED", "unittest 未执行任何测试，未核验"
+        # 命令事实先落账；后取证/预算错误永远不能遗留 RUNNING 或吞掉输出/退出码。
+        row.update(status="ERROR", evidence_status="UNVERIFIED", command_status="ERROR" if error else "FAIL" if exit_code else "PASS",
+                   exit_code=exit_code, process_started=process is not None,
+                   duration_seconds=duration, finished_at=time.time())
+        persist_run(root, ledger, row)
+        policy_notice = None
+        after = None
+        try:
+            if progress:
+                selected = (scope_binding["item"]["tests"] + scope_binding["item"]["sources"]) if scope_binding else [key]
+                progress.command(row, selected)
+            after = tree_snapshot(root, inputs, paths=selected_paths,
+                                  observer=progress.observe("post_evidence") if progress else None)
+            after_hash = after["hash"]
+            if progress:
+                progress.flush()
+        except (OSError, ValueError) as exc:
+            after_hash = after["hash"] if after else None
+            error = f"测试后取证未核验：{exc}"
+            policy_notice = {"status": getattr(exc, "status", "UNVERIFIED"), "reason": str(exc)} if progress else None
+        changed = after is not None and snapshot_changed(before, after)
+        status = ("ERROR" if error else "FAIL" if exit_code else "TREE_CHANGED" if changed else "PASS")
+        row["evidence_status"] = "UNVERIFIED" if error or changed else "VERIFIED"
+        row["after_gitlinks"] = after["gitlinks"] if after else None
+        row["io"] = {"pre_evidence": before["io"], "post_evidence": after["io"] if after else None,
+                     "tool_io": "unknown"}
         row.update(status=status, exit_code=exit_code, after_hash=after_hash,
                    duration_seconds=duration, finished_at=time.time())
         if error:
@@ -642,28 +999,17 @@ def run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None,
         row["failure_kind"] = ("TIMEOUT" if exit_code == 124 and error else "ENV_UNAVAILABLE" if exit_code in (126, 127) or missing_module
                                else pytest_failure if pytest_failure else "TOOL_ERROR" if error else "TREE_CHANGED" if status == "TREE_CHANGED"
                                else "TEST_FAILURE" if status == "FAIL" else None)
-        with lock(ledger, "write"):
-            rows = load(root, ledger)
-            index = next((i for i, r in enumerate(rows) if r.get("run_id") == row["run_id"]
-                          and r["kind"] == "run"), None)
-            if index is None:
-                raise LedgerError("执行中的账本记录丢失，拒绝出具 PASS")
-            rows[index] = row
-            save(root, rows, ledger)
-        # 先保存真实进程结果，再登记预算/策略；并发授权修改不能把已退出进程遗留成 RUNNING。
-        policy_notice = None
+        persist_run(root, ledger, row)
         try:
-            if execution_reservation is not None:
-                from execution_policy import settle_elapsed
-                settle_elapsed(root, execution_context, execution_reservation, duration)
-            if execution_context is not None:
-                from execution_policy import record_outcome
+            if progress in _owned:
                 outcome = row["failure_kind"] if row["failure_kind"] in ("ENV_UNAVAILABLE", "TOOL_ERROR") else (
                     "UNVERIFIED" if status in ("ERROR", "TREE_CHANGED") else status)
-                record_outcome(root, execution_context, action, outcome, execution_input,
-                               root_cause=row["failure_kind"], evidence={"run_id": row["run_id"], "exit_code": exit_code})
+                progress.finish(outcome, row["failure_kind"])
         except ValueError as exc:
             policy_notice = {"status": getattr(exc, "status", "UNVERIFIED"), "reason": str(exc)}
+        if policy_notice:
+            row.update(status="ERROR", evidence_status="UNVERIFIED", policy_notice=policy_notice)
+            persist_run(root, ledger, row)
         code = exit_code if exit_code >= 0 else 128 - exit_code
         out = result(row)
         if policy_notice:
@@ -687,20 +1033,50 @@ def accepted_run(rows, root, run_id, env_id, identity=None):
     return row
 
 
-def report_hash(root, report):
+def report_hash(root, report, observer=None):
     path = project_path(root, report)
-    if not path.is_file() or not path.read_bytes().strip():
+    if not path.is_file() or path.stat().st_size == 0:
         raise LedgerError("审查报告必须存在且非空；测试 PASS 不等于审查已完成")
-    return file_hash(path)
+    cache = _FingerprintCache(root)
+    def read(target):
+        if observer:
+            observer({"content_reads": 1, "metadata_entries": 1, "cache_hits": 0}, {str(target)})
+    try:
+        record = cache.read(path, read)
+        if observer and not record["read"]:
+            observer({"content_reads": 0, "metadata_entries": 1, "cache_hits": 1}, set())
+        return record["hash"]
+    finally:
+        cache.save()
 
 
-def validate_review_report(root, report, scope_hash, identity=None):
-    """轻量审查消费独立机器证据；测试 PASS/验证汇总永远不是 code-review。"""
-    hashed = report_hash(root, report)
+def validate_review_report(root, report, scope_hash, identity=None, observer=None):
+    """报告单次实读同时解析与计算指纹；测试 PASS 永远不是 code-review。"""
+    path = project_path(root, report)
+    from project_inventory import fingerprint_file
+    content = None
+    def reader(target):
+        nonlocal content
+        if observer:
+            observer({"content_reads": 1, "metadata_entries": 1, "cache_hits": 0}, {str(target)})
+        content = target.read_bytes()
+        if not content.strip():
+            raise LedgerError("审查报告必须存在且非空；测试 PASS 不等于审查已完成")
+        mode = target.stat().st_mode
+        return digest({"sha256": hashlib.sha256(content).hexdigest(), "mode": stat.S_IMODE(mode),
+                       "link": os.readlink(target) if target.is_symlink() else None})
+    cache = _FingerprintCache(root)
+    record = fingerprint_file(path, reader=reader, metadata=cache.metadata)
+    if content is None:
+        raise LedgerError("审查报告必须存在且非空")
+    cache.files[str(path)] = record
+    cache.changed = True
+    cache.save()
+    hashed = record["hash"]
     if identity is None or identity["mode"] != "light":
         return hashed
     try:
-        review = json.loads(project_path(root, report).read_text(encoding="utf-8"))
+        review = json.loads(content.decode("utf-8"))
     except (OSError, ValueError) as exc:
         raise LedgerError(f"light 审查必须是独立 code-review JSON：{exc}") from exc
     if (not isinstance(review, dict) or review.get("schema") != 1 or review.get("kind") != "code-review"
@@ -792,13 +1168,21 @@ def record_review(root, name, run_id, env_id, report, inputs=(), scope_file=None
         rows = load(root)
         sources = [accepted_run(rows, root, value, env_id, identity) for value in run_ids]
     inputs = normalize_inputs(root, [*(path for source in sources for path in source["inputs"]), *inputs])
-    snapshot = tree_snapshot(root, inputs)
-    report_digest = validate_review_report(root, report, scope_hash, identity)
-    for source in sources:
-        tested = tree_snapshot(root, source["inputs"])
-        if (tested["hash"] != evidence_hash(source)
-                or any(snapshot["files"].get(path) != value for path, value in tested["files"].items())):
-            raise LedgerError(f"sprint PASS {source['run_id']} 已过期，须对当前树重新验收")
+    validation_files = verification.get("validation_files")
+    requests = [(inputs, validation_files), *((list(values), validation_files) for values in {tuple(s["inputs"]) for s in sources})]
+    with evidence_budget(root, execution_context, requests, extra_reads=1) as progress:
+        observer = progress.observe("pre_evidence") if progress else None
+        snapshot = tree_snapshot(root, inputs, paths=validation_files, observer=observer)
+        report_digest = validate_review_report(root, report, scope_hash, identity, observer)
+        tested_snapshots = {tuple(inputs): snapshot}
+        for source in sources:
+            input_key = tuple(source["inputs"])
+            if input_key not in tested_snapshots:
+                tested_snapshots[input_key] = tree_snapshot(root, source["inputs"], paths=validation_files, observer=observer)
+            tested = tested_snapshots[input_key]
+            if (tested["hash"] != evidence_hash(source)
+                    or any(snapshot["files"].get(path) != value for path, value in tested["files"].items())):
+                raise LedgerError(f"sprint PASS {source['run_id']} 已过期，须对当前树重新验收")
     row = {"schema": SCHEMA, "kind": "review", "root": str(root), "name": name,
            "review_id": uuid.uuid4().hex, "run_id": run_ids[-1] if run_ids else None, "run_ids": run_ids,
            "recorded_at": time.time(), "env_id": env_id,
@@ -807,6 +1191,8 @@ def record_review(root, name, run_id, env_id, report, inputs=(), scope_file=None
            "report_hash": report_digest, **snapshot}
     if identity is not None:
         row["execution_context"] = identity
+    if validation_files is not None:
+        row["validation_files"] = validation_files
     row.update(scope_hash=scope_hash, scope_file=project_path(root, scope_file).relative_to(root).as_posix(),
                test_status=verification["status"], minor=verification["minor"],
                unmapped=verification["unmapped"], unrunnable=verification["unrunnable"],
@@ -834,10 +1220,18 @@ def review_delta(root, name, env_id, execution_context=None):
         run_ids = review_run_ids(baseline)
         for value in run_ids:
             accepted_run(rows, root, value, env_id, identity)
-    if (baseline["env_id"] != env_id or baseline["environment_hash"] != environment_hash()
-            or baseline["report_hash"] != validate_review_report(root, baseline["report"], baseline.get("scope_hash"), identity)):
-        raise LedgerError("审查环境/报告已变化，须全量审查")
-    current = tree_snapshot(root, baseline["inputs"])
+    from project_inventory import fingerprint_token
+    cache = _FingerprintCache(root)
+    report_path = project_path(root, baseline["report"])
+    token = fingerprint_token(report_path, metadata=cache.metadata)
+    report_reads = int(token is None or cache.files.get(str(report_path), {}).get("token") != token)
+    with evidence_budget(root, execution_context, [(baseline["inputs"], baseline.get("validation_files"))],
+                         extra_reads=report_reads) as progress:
+        observer = progress.observe("pre_evidence") if progress else None
+        if (baseline["env_id"] != env_id or baseline["environment_hash"] != environment_hash()
+                or baseline["report_hash"] != report_hash(root, baseline["report"], observer)):
+            raise LedgerError("审查环境/报告已变化，须全量审查")
+        current = tree_snapshot(root, baseline["inputs"], paths=baseline.get("validation_files"), observer=observer)
     old, new = baseline["files"], current["files"]
     from project_inventory import classify_changes
     classification = classify_changes(snapshot_delta(old, new), baseline["inputs"])
@@ -868,18 +1262,50 @@ def read_scope(root, scope_file, scope_hash=None, execution_context=None):
     return scope
 
 
+def tool_fingerprint(command, cwd):
+    """runner 可执行文件及 shebang 解释器的存在/内容观测；缺失也是可比较的值。"""
+    def observe(value):
+        if not value:
+            return None
+        path = Path(value)
+        found = (cwd / path if "/" in value and not path.is_absolute() else path) if "/" in value else (
+            shutil.which(value, path=os.environ.get("PATH")) or None)
+        if not found:
+            return {"path": None, "hash": None}
+        found = Path(found)
+        try:
+            content = found.read_bytes()
+        except OSError:
+            return {"path": str(found), "hash": None}
+        return {"path": str(found.resolve()), "hash": hashlib.sha256(content).hexdigest(), "mode": stat.S_IMODE(found.stat().st_mode),
+                "interpreter": observe(content.split(b"\n", 1)[0][2:].strip().split(b" ")[0].decode("utf-8", "replace"))
+                if content.startswith(b"#!") else None}
+    return digest(observe(command[0]))
+
+
+def historical_failures(rows, plan):
+    """历史失败独立展示，不把已修复的旧失败混入当前覆盖结论。"""
+    identity = plan.get("execution_context")
+    return [{"run_id": row["run_id"], "status": row["status"], "failure_kind": row.get("failure_kind"),
+             "scope_hash": row.get("scope_hash"), "exit_code": row.get("exit_code")}
+            for row in rows if row.get("kind") == "run" and row.get("status") in {"FAIL", "ERROR", "TREE_CHANGED"}
+            and row.get("scope_binding", {}).get("plan", {}).get("execution_context") == identity
+            and row.get("scope_binding", {}).get("plan", {}).get("since") == plan.get("since")]
+
+
 def set_status(scope, sources):
     statuses = {r["status"] for r in sources}
     if "FAIL" in statuses:
         return "FAIL", 1
     if statuses - {"PASS", "CARRIED"}:
         return "UNVERIFIED", 2
-    if scope["unrunnable"]:
+    if scope["unrunnable"] or scope["unmapped"]:
         return "UNVERIFIED", 2
     if not sources:
-        return "EMPTY", 0
-    if scope["unmapped"]:
-        return "PARTIAL", 0
+        applicable = scope.get("applicability", {})
+        if applicable.get("status") == "NOT_APPLICABLE" and applicable.get("reason") and applicable.get("paths"):
+            return "NOT_APPLICABLE", 0
+        return "UNVERIFIED", 2
     return ("CARRIED" if "CARRIED" in statuses else "PASS"), 0
 
 
@@ -900,21 +1326,27 @@ def verify_scope(root, scope_file, scope_hash, run_ids, env_id, ledger_root=None
         sources = [accepted_run(rows, root, run_id, env_id, identity) for run_id in ids]
     expected = sorted(digest(item) for item in scope["runs"])
     actual, snapshots = [], {}
-    for row in sources:
-        binding = row.get("scope_binding")
-        if not binding or row.get("scope_hash") != scope_hash or binding["plan"] != scope:
-            raise LedgerError("验收 run_id 未绑定当前确定性 Sprint 范围")
-        input_key = tuple(row["inputs"])
-        if input_key not in snapshots:
-            snapshots[input_key] = tree_snapshot(root, row["inputs"])
-        if snapshots[input_key]["hash"] != evidence_hash(row):
-            raise LedgerError("验收证据对应的树/测试输入已变化，须先 run-scope 补跑或 carry-forward")
-        actual.append(digest(binding["item"]))
+    requests = [(list(inputs), scope.get("validation_files")) for inputs in {tuple(row["inputs"]) for row in sources}]
+    with evidence_budget(root, execution_context, requests) as progress:
+        for row in sources:
+            binding = row.get("scope_binding")
+            if not binding or row.get("scope_hash") != scope_hash or binding["plan"] != scope:
+                raise LedgerError("验收 run_id 未绑定当前确定性 Sprint 范围")
+            input_key = tuple(row["inputs"])
+            if input_key not in snapshots:
+                snapshots[input_key] = tree_snapshot(root, row["inputs"], paths=scope.get("validation_files"),
+                    observer=progress.observe("pre_evidence") if progress else None)
+            if snapshots[input_key]["hash"] != evidence_hash(row):
+                raise LedgerError("验收证据对应的树/测试输入已变化，须先 run-scope 补跑或 carry-forward")
+            actual.append(digest(binding["item"]))
     if sorted(actual) != expected:
         raise LedgerError("run_ids 必须精确覆盖当前范围的全部运行项，不能漏套或重复")
-    status, _ = set_status(scope, sources)
-    return {"kind": "task-verification" if identity and identity["mode"] == "light" else "sprint-verification",
+    status, code = set_status(scope, sources)
+    if code:
+        raise LedgerError("测试证据存在覆盖缺口或未核验项，不能作为完成证据")
+    return {"applicability": scope.get("applicability"), "historical_failures": historical_failures(rows, scope), "kind": "task-verification" if identity and identity["mode"] == "light" else "sprint-verification",
             "execution_context": identity, "status": status, "scope_hash": scope_hash,
+            "validation_files": scope.get("validation_files"),
             "run_ids": ids, "unmapped": scope["unmapped"], "unrunnable": scope["unrunnable"],
             "minor": bool(scope["unmapped"]),
             "evidence": [{"run_id": r["run_id"], "status": r["status"],
@@ -924,6 +1356,16 @@ def verify_scope(root, scope_file, scope_hash, run_ids, env_id, ledger_root=None
 
 def run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=False, timeout=None,
               execution_context=None):
+    owned = []
+    try:
+        return _run_scope(root, scope_file, env_id, inputs, ledger_root, force, timeout, execution_context, owned)
+    finally:
+        for progress in owned:
+            progress.finish()
+
+
+def _run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=False, timeout=None,
+               execution_context=None, _owned=None):
     """重推范围后逐项执行。旧 PASS 跨树只可转成带来源的 CARRIED。"""
     root = Path(root).resolve()
     if not root.is_dir() or not isinstance(env_id, str) or not env_id.strip():
@@ -938,17 +1380,18 @@ def run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=False
     proof = _BatchProof(root, scope, env_id)
     if execution_context is not None:
         from test_scope import execution_context_data
-        from execution_policy import require_action, reserve_budget
+        from execution_policy import require_action
         context = execution_context_data(root, execution_context)
         require_action(context, "related-test")
         count = len(scope["runs"])
         timeout = timeout or min(30, context["execution_budget"]["elapsed_seconds"] / max(count, 1))
-        # 已有同树证据不消耗新的测试/进程预算。锁后若证据被并发失败取代，run 会另行预留。
+        # 同树证据不消耗新进程/测试额度；锁后失效而无预留时明确终止，不能挪用其它运行项预算。
         ledger = Path(ledger_root).resolve() if ledger_root else root
         with lock(ledger, "write"):
             previous_rows = load(root, ledger)
         selected, pending = set(), set()
-        snapshots = {}
+        estimates = {}
+        pre_reads, post_reads = 0, 0
         for item in scope["runs"]:
             item_inputs = normalize_inputs(root, [*inputs, *item["inputs"]])
             item_context = {"root": str(root), "cwd": str((root / item["cwd"]).resolve()), "scope": scope_kind,
@@ -956,21 +1399,26 @@ def run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=False
                             "inputs": item_inputs, "timeout": timeout, "selection": item, "execution_context": identity}
             key = digest(item_context)
             previous = next((r for r in reversed(previous_rows) if r["kind"] == "run" and r["key"] == key), None)
-            reusable = False
-            if not force and previous and stable_evidence(previous):
-                input_key = tuple(item_inputs)
-                if input_key not in snapshots:
-                    snapshots[input_key] = tree_snapshot(root, item_inputs)
-                snapshot = snapshots[input_key]
-                reusable = (evidence_hash(previous) == snapshot["hash"] and previous.get("scope_hash") == scope["scope_hash"]
-                            or can_carry(previous, snapshot, {"plan": scope, "item": item}, item_inputs))
+            input_key = tuple(item_inputs)
+            if input_key not in estimates:
+                estimates[input_key] = snapshot_estimate(root, item_inputs, scope.get("validation_files"))
+            estimate = estimates[input_key]
+            # 每个运行项都锁后核验；未知平台可能每次实读，预算按真实操作上限预留。
+            pre_reads += estimate["content_reads"]
+            reusable = (not force and previous and stable_evidence(previous) and estimate["hash"]
+                        and (evidence_hash(previous) == estimate["hash"] and previous.get("scope_hash") == scope["scope_hash"]
+                             or can_carry(previous, estimate, {"plan": scope, "item": item}, item_inputs)))
             if not reusable:
                 pending.add(key)
                 selected.update(item["tests"] + item["sources"])
-        reserve_budget(root, context, "selected_tests", len(selected), input_hash=proof.input_hash, action="related-test")
-        reserve_budget(root, context, "processes", len(pending), input_hash=proof.input_hash, action="related-test")
-        batch_reservation = reserve_budget(root, context, "elapsed_seconds", timeout * len(pending),
-                                           input_hash=proof.input_hash, action="related-test")
+                post_reads += estimate["objects"]
+        # 范围联合输入的锁后检查也计入闭环上限，不先逐资源扣费。
+        if scope["runs"]:
+            pre_reads += snapshot_estimate(root, proof.inputs, scope.get("validation_files"))["content_reads"] * len(scope["runs"])
+        proof.progress = _ValidationProgress(root, context,
+            validation_stages(pre_reads, post_reads, len(pending), len(selected), timeout),
+            proof.input_hash, "related-test")
+        _owned.append(proof.progress)
         proof.reserved_keys = pending
     runs = []
     interruption = None
@@ -986,21 +1434,38 @@ def run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=False
         if out.get("policy_notice"):
             interruption = out["policy_notice"]
             break
-        if out["status"] == "TREE_CHANGED":
+        if out["status"] == "TREE_CHANGED" or out.get("failure_kind") in {"ENV_UNAVAILABLE", "TOOL_ERROR", "RUNNER_USAGE_ERROR"}:
             break
-    if context is not None:
-        from execution_policy import settle_elapsed
-        actual_elapsed = sum(r["duration_seconds"] for r in runs if not r.get("reused") and r["key"] in proof.reserved_keys)
-        try:
-            settle_elapsed(root, context, batch_reservation, actual_elapsed)
-        except ValueError as exc:
-            interruption = {"status": getattr(exc, "status", "UNVERIFIED"), "reason": str(exc)}
     status, code = set_status(scope, runs)
     if interruption or len(runs) != len(scope["runs"]):
         status, code = "UNVERIFIED", 2
+    if context is not None:
+        try:
+            failures = [r.get("failure_kind") for r in runs if r.get("failure_kind") in ("ENV_UNAVAILABLE", "TOOL_ERROR")]
+            outcome = failures[0] if failures else status if status in ("PASS", "FAIL", "UNVERIFIED") else "PASS"
+            proof.progress.finish(outcome, interruption["reason"] if interruption else (failures[0] if failures else None))
+        except ValueError as exc:
+            interruption = {"status": getattr(exc, "status", "UNVERIFIED"), "reason": str(exc)}
+            status, code = "UNVERIFIED", 2
+            # 收尾失败不能留下本票据的新 PASS；历史复用来源保持原真实结论。
+            executed = set(proof.progress.run_ids)
+            with lock(ledger, "write"):
+                rows = load(root, ledger)
+                for row in rows:
+                    if row.get("run_id") in executed and row["kind"] == "run":
+                        row.update(status="ERROR", evidence_status="UNVERIFIED", policy_notice=interruption)
+                save(root, rows, ledger)
+            for row in runs:
+                if row["run_id"] in executed:
+                    row.update(status="ERROR", evidence_status="UNVERIFIED", policy_notice=interruption)
+    ledger = Path(ledger_root).resolve() if ledger_root else root
+    with lock(ledger, "write"):
+        history = historical_failures(load(root, ledger), scope)
     return {"kind": scope_kind + "-run-set", "execution_context": identity,
+            "applicability": scope.get("applicability"), "historical_failures": history,
             "status": status, "run_ids": [r["run_id"] for r in runs],
             "runs": runs, "interruption": interruption, "unrunnable": scope["unrunnable"], "scope_hash": scope["scope_hash"],
+            "validation_cost": proof.progress.summary() if context is not None else None,
             "unmapped": scope["unmapped"], "minor": bool(scope["unmapped"])}, code
 
 
@@ -1098,6 +1563,8 @@ def main(argv=None):
                 code = 0
     except (OSError, ValueError) as exc:
         out, code = {"kind": "error", "status": getattr(exc, "status", "ERROR"), "error": str(exc), "reused": False}, 2
+        if getattr(exc, "details", None):
+            out["details"] = exc.details
     # 子命令可能没有输出末尾换行，确保结果 JSON 总是独占最后一行。
     print("\n" + json.dumps(out, ensure_ascii=True, sort_keys=True), flush=True)
     return code

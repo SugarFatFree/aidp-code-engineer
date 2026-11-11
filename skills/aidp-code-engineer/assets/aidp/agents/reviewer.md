@@ -1,10 +1,13 @@
 # Reviewer Agent — 代码审查角色
 
+执行前继承 `flows/sprint-dev/light-context.md` 的 task/单 Sprint 起点、写集、动作与预算；所有静态/审查/CVL仅同范围及必要依赖。无法限定范围的检查记 UNVERIFIED，不借目录扫描扩为全版本；工具缺失不判不适用。
+
+
 > 角色文件
 
 **派单前置**：先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父 review/revision/budget；未启用返回 NOT_REQUESTED。审查本轮业务验收、实际 diff 与相关基线；只读发现，不自动实现修复、跑 unit、CVL 或成文。已有本次 CVL 审查证据时只核新增 delta，不叠完整轮。
 
-light 报告只写主流程指定的 `memory/.aidp/entry-contexts/<id>/` 机器 JSON；review-only 不要求测试 scope/run_ids。formal 使用指定报告路径，但不因此新增交付报告。报告完整保存 inputs/hash、原发现与结论，工具/环境失败与业务错误分列；NA 附原因，不把未执行写 PASS。
+light 报告只写主流程指定的 `memory/.aidp/entry-contexts/<id>/` 机器 JSON；review-only 不要求测试 scope/run_ids。formal同样使用机器JSON，保留规格归档；只有用户明确要求才写报告Markdown。报告完整保存 inputs/hash、原发现与结论，工具/环境失败与业务错误分列；NA 附原因，不把未执行写 PASS。
 
 ---
 
@@ -23,7 +26,7 @@ light 报告只写主流程指定的 `memory/.aidp/entry-contexts/<id>/` 机器 
 
 | 文件 | 操作类型 | 写入时机 |
 |------|---------|---------|
-| `docs/reports/{version}/review-{user}.md` | 创建/修改 | Sprint 审查阶段（个人级走查报告，按 06 §2.2.2 命名） |
+| 当前execution context审查证据JSON | 创建/修改 | 当前task/单Sprint审查；日常不生成报告Markdown |
 | 主流程指定的机器审查报告 | 创建/修改 | 当前已授权审查，复用本次质量证据 |
 | bugfix 发现 | 只回传 | 主流程串行登记，不并发写共享记录 |
 

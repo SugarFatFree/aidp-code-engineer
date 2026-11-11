@@ -410,6 +410,16 @@ def test_watchdog_manual_without_install():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _deploy_pending_test_target(root, version="V1.0.0"):
+    """已部署且未内部发布的版本，但 baseline 里没有 aiauto.execution_context：
+    这是“应有委派却缺失”的场景，调度必须拒绝启动，不能凭命令名获得授权。"""
+    path = os.path.join(root, "memory", ".sprint-autopilot-baseline.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"versions": {version: {"phase_beta_done_at": "2026-01-01T00:00:00Z",
+                                           "current_build": version + "_build1001",
+                                           "builds": [{"build": version + "_build1001"}]}}}, fh)
+
+
 def _loop(root, args, env_extra):
     env = dict(os.environ, **env_extra)
     env.pop("AIDP_TICK_COMMAND", None)
@@ -438,12 +448,20 @@ def test_agent_loop():
               os.path.isfile(os.path.join(root, "memory", ".aidp", "logs", "sprint-autopilot.log")))
 
         os.remove(out)
+        # 无已部署待测版本的空转 tick：允许入口自己输出 NO_TARGET 并保持心跳，但不携带任何委派上下文。
         r = _loop(root, ["--once", "sprint-aiauto-test"],
                   {"HOME": home, "AIDP_AGENT": "codex", "AIDP_AGENT_EXEC": tpl})
-        text = open(out, encoding="utf-8").read() if os.path.isfile(out) else ""
-        check("codex 提示词 = $<命令> + 自动补无人值守参数",
-              text.splitlines()[0:1] == ["$sprint-aiauto-test --unattended --no-loop"])
-        check("codex 提示词不含 aidp-cmd", "aidp-cmd" not in text.splitlines()[0])
+        check("无待测版本的空转测试 tick 可启动入口但不携带委派上下文",
+              r.returncode == 0 and os.path.isfile(out)
+              and "--execution-context" not in open(out, encoding="utf-8").read())
+        os.remove(out)
+        # 有已部署待测版本却没有可核验的 autopilot 测试委派：只跳过，不启动 Agent、不靠命令名获得授权。
+        _deploy_pending_test_target(root)
+        r = _loop(root, ["--once", "sprint-aiauto-test"],
+                  {"HOME": home, "AIDP_AGENT": "codex", "AIDP_AGENT_EXEC": tpl})
+        check("有待测版本但无委派的测试 tick 不启动 Agent", not os.path.isfile(out) and r.returncode != 1)
+        os.path.isfile(os.path.join(root, "memory", ".sprint-autopilot-baseline.json")) and os.remove(
+            os.path.join(root, "memory", ".sprint-autopilot-baseline.json"))
 
         r = _loop(root, ["--once", "sprint-autopilot"], {"HOME": home, "AIDP_AGENT": "dsh", "AIDP_AGENT_EXEC": ""})
         check("dsh 无执行模板 → rc=2 并提示配置", r.returncode == 2 and "scheduler.exec.dsh" in r.stderr)
@@ -488,6 +506,7 @@ def test_agent_loop_installed_layouts():
 
     for runtime_home, agent in ((".claude", "claude"), (".agents", "codex"), (".agents", "dsh")):
         root = _mkproj()
+        _deploy_pending_test_target(root)
         home = tempfile.mkdtemp()
         try:
             installed = Path(root) / runtime_home / "scripts"
@@ -501,14 +520,19 @@ def test_agent_loop_installed_layouts():
                            AIDP_AGENT_EXEC='printf "%s\\n" "$PWD" "$AIDP_HOME" {prompt} > captured.txt')
                 for key in ("AIDP_HOME", "AIDP_PROJECT_ROOT", "AIDP_TICK_COMMAND", "AIDP_TICK_TOKEN"):
                     env.pop(key, None)
+                (Path(root) / "captured.txt").unlink(missing_ok=True)
                 result = subprocess.run(["bash", str(installed / "agent_loop.sh"), "--once", command],
                                         cwd=home, env=env, capture_output=True, text=True, timeout=30)
                 capture = Path(root) / "captured.txt"
                 lines = capture.read_text(encoding="utf-8").splitlines() if capture.exists() else []
                 prefix = "$" if agent == "codex" else "/"
-                check(f"{runtime_home}/{agent}/{command} 从外部目录启动并定位项目根",
-                      result.returncode == 0 and lines == [root, str(installed.parent),
-                          f"{prefix}{command} --unattended --no-loop"])
+                if command == "sprint-aiauto-test":
+                    # 测试链路必须带可核验 autopilot 委派；无委派时只定位根并跳过，不启动 Agent。
+                    check(f"{runtime_home}/{agent}/{command} 有待测版本无委派不启动", not lines)
+                else:
+                    check(f"{runtime_home}/{agent}/{command} 从外部目录启动并定位项目根",
+                          result.returncode == 0 and lines == [root, str(installed.parent),
+                              f"{prefix}{command} --unattended --no-loop"])
                 check(f"{runtime_home}/{agent}/{command} 日志写入项目运行态",
                       (Path(root) / "memory" / ".aidp" / "logs" / f"{command}.log").is_file())
         finally:

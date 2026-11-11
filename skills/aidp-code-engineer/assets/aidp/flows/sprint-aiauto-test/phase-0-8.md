@@ -73,7 +73,10 @@ python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "${TARGET_VERSION:?}" --
 ```bash
 # facts.json 字段名与上游四态一一对应：client_mcp_declared / client_mcp_entry_available /
 #   registered_tools / invoked_tools / invocation_evidence / client_type
-python3 {{AIDP_HOME}}/scripts/aiauto_readiness.py --input <本轮 facts.json>
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?继承本轮真实测试上下文}"
+python3 {{AIDP_HOME}}/scripts/aiauto_readiness.py --input <本轮 facts.json> \
+  --execution-context "${EXECUTION_CONTEXT:?}" --version "${TARGET_VERSION:?}" --build "${BUILD:?}"
 ```
 
 - 该脚本**绝不产 pass**：它只回答「这类用例现在能不能跑」，前置缺失时给出

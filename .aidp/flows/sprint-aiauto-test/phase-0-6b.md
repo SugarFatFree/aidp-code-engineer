@@ -3,6 +3,27 @@
 
 > 先执行 `phase-0-6.md`。本片逐项执行，不得省略硬门；随脚手架同步。
 
+### 当前版本测试真实委派（autopilot 唯一调用点）
+
+autopilot Phase 3.4 的报告骨架与真实部署就绪后，在让位测试链/同步委派前执行本围栏。`VERSION_MANIFEST` 是按 `phase-2-unit.md` 从真实当前版本验收基线、正式用例索引与部署 commit 测试配置冻结的既有机器 JSON；不得临时发现全仓测试补全集。完整清单无法形成则返回具体阻塞，不能跳过本门而委派。父为真实 autopilot 根，同版本、原预算；test-only根不含 implement/commit/push/deploy。
+
+<!-- version-test-delegation -->
+```bash
+eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?真实autopilot父上下文}"
+TARGET_VERSION="${TARGET_VERSION:?当前版本}"
+BUILD="${BUILD:?当前真实build}"
+VERSION_MANIFEST="${VERSION_MANIFEST:?当前版本完整验收冻结清单路径}"
+TEST_CHILD_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
+  --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" --build-id "$BUILD" \
+  --manifest "$VERSION_MANIFEST" --json) || exit $?
+TEST_EXECUTION_CONTEXT=$(printf '%s' "$TEST_CHILD_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto.execution_context "$TEST_EXECUTION_CONTEXT" || exit $?
+printf '测试委派上下文：%s\n' "$TEST_EXECUTION_CONTEXT"
+```
+
+已有同 build/同 manifest 子路径直接复用；不同清单不能覆盖原证据。同步调用 `/sprint-aiauto-test --execution-context "$TEST_EXECUTION_CONTEXT" --once --unattended`；异步调度只消费该已校验路径（`AIDP_EXECUTION_CONTEXT`），不从 activeContext/current_build 重新授予权限。全部后续两路 worker 继承 child，不能传开发根。
+
 ### 0.2（续）自愈式交接
 
 `NEED_HANDOFF=1` 表示 **current_build 已定稿，或 AI执行报告骨架缺失**。必须在 Phase 1/2 开测、认领驱动及归档待确认项之前处理。`--once` / `--target` 只豁免已测去重，不能解除报告不可变锁；无 current_build 的 standalone 不交接、不铸官方 build、不产 HTML 报告。
@@ -25,27 +46,37 @@ fi
 PREVIOUS_HANDOFF=$($BE get aiauto_handoff_run_id --default "")
 [ "$PREVIOUS_HANDOFF" != "$PREFLIGHT_RUN_ID" ] || { echo "⛔ 同 run 交接未完成，失败返回，不递归调用 autopilot"; exit 2; }
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?沿用原固定build测试子上下文}"
-HANDOFF_ROOT_CONTEXT=$(python3 - "$EXECUTION_CONTEXT" "$TARGET_VERSION" "$BUILD" <<'HANDOFF'
-import sys
+HANDOFF_SOURCE=$(python3 - "$EXECUTION_CONTEXT" "$TARGET_VERSION" "$BUILD" <<'HANDOFF'
+import json, sys
 from pathlib import Path
 sys.path.insert(0, "{{AIDP_HOME}}/scripts")
-from entry_context import load_context, _context_path
-from execution_policy import require_action
+from entry_context import load_context, _context_path, resolve_autopilot_root
+from execution_policy import require_action, validate_test_binding
 root = Path.cwd()
 ctx = load_context(root, sys.argv[1])
-if (ctx.get("version"), ctx.get("build_id")) != tuple(sys.argv[2:]):
-    raise SystemExit("BUILD_CHANGED: 交接来源不是当前固定build")
-if not ctx.get("parent_task_id"):
-    raise SystemExit("UNAUTHORIZED: 缺少原测试子任务的授权根")
-parent_path = _context_path(root, ctx["parent_task_id"])
+version, build = sys.argv[2:]
+if ctx["version"] != version:
+    raise SystemExit("UNVERIFIED: 目标版本与上下文不符")
+require_action(ctx, "live-tests")
+target_only = not ctx.get("test_manifest")
+if target_only:
+    targets = ctx["task_scope"].get("acceptance", [])
+    if not targets or set(ctx["allowed_actions"]) - {"static", "live-tests"}:
+        raise SystemExit("UNVERIFIED: 独立目标不明确或不是仅测试上下文")
+    selected = resolve_autopilot_root(root, version, existing_only=True)
+    parent_path = Path(selected["execution_context"])
+else:
+    validate_test_binding(root, ctx, version, build)
+    parent_path = _context_path(root, ctx["parent_task_id"])
 parent = load_context(root, parent_path)
-if parent.get("parent_task_id") or parent["mode"] != "formal":
-    raise SystemExit("UNAUTHORIZED: 交接不能借其它任务重新建立根")
+if parent.get("parent_task_id") or parent["entry"] != "sprint-autopilot" or parent["version"] != version:
+    raise SystemExit("UNVERIFIED: 无已有可信autopilot根，保留原测试身份")
 require_action(parent, "live-tests")
-require_action(parent, "full-regression")
-print(parent_path)
+print(json.dumps({"root_context":str(parent_path), "target_only":target_only}))
 HANDOFF
 ) || exit $?
+HANDOFF_ROOT_CONTEXT=$(printf '%s' "$HANDOFF_SOURCE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["root_context"])') || exit $?
+HANDOFF_TARGET_ONLY=$(printf '%s' "$HANDOFF_SOURCE" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["target_only"]).lower())') || exit $?
 HANDOFF_FLAGS=(--skip-dev --target "$TARGET_VERSION" --preflight-run-id "$PREFLIGHT_RUN_ID" --execution-context "$HANDOFF_ROOT_CONTEXT")
 RETURN_FLAGS=(--target "$TARGET_VERSION" --preflight-run-id "$PREFLIGHT_RUN_ID")
 if [ "${HAS_ONCE_FLAG:-0}" = 1 ]; then
@@ -63,13 +94,13 @@ HANDOFF_ARGS=""; RETURN_ARGS=""
 printf -v HANDOFF_ARGS '%q ' "${HANDOFF_FLAGS[@]}"
 printf -v RETURN_ARGS '%q ' "${RETURN_FLAGS[@]}"
 $BE set aiauto_handoff_run_id "$PREFLIGHT_RUN_ID" aiauto_handoff_root_context "$HANDOFF_ROOT_CONTEXT" aiauto_handoff_from_context "$EXECUTION_CONTEXT" \
-  aiauto_handoff_from_build "$BUILD" aiauto_handoff_return_args "$RETURN_ARGS" \
+  aiauto_handoff_from_build "$BUILD" aiauto_handoff_target_only "$HANDOFF_TARGET_ONLY" aiauto_handoff_return_args "$RETURN_ARGS" \
   aiauto_handoff_prepared_deploy_at "$PREPARED_DEPLOY_AT" aiauto_handoff_prepared_commit "$PREPARED_COMMIT" || exit $?
 $BE del aiauto_handoff_to_build aiauto_handoff_deployment || exit $?
 printf '交接命令：/sprint-autopilot %s\n返回参数（待换绑）：%s\n' "$HANDOFF_ARGS" "$RETURN_ARGS"
 ```
 
-**② 同步交接，仅调用一次**：保存交接命令和返回参数模板。原测试实例交还控制权；编排用原根invoke autopilot的report_handoff受限分支（auto或独立aiauto来源均保留原权限），只做R-1和必要报告骨架；R-3就绪后运行下方换绑围栏。不得提前调用没有新ctx的返回模板，也不得把旧ctx直接改build_id。
+**② 同步交接，仅调用一次**：保存交接命令和返回参数模板。原测试实例交还控制权；编排用原根invoke autopilot的report_handoff受限分支（真实版本委派或经existing_only核验的target_only报告交接；独立目标回调原ctx，不升版本全量），只做R-1和必要报告骨架；R-3就绪后运行下方换绑围栏。不得提前调用没有新ctx的返回模板，也不得把旧ctx直接改build_id。
 
 - **锁与调用边界**：原测试实例按 `reference/agent-tools.md`「tick 占位收尾」用自己 Phase 0 的 token 完成收尾，session 占位释放成功后才 invoke autopilot；不得从锁文件取别人的 token。OS token=`agent_loop` 不执行 finish、不释放 wrapper 的 flock，后续同步子调用须继承原 `AIDP_TICK_COMMAND` / `AIDP_TICK_TOKEN` 环境，现有准入门只允许该 wrapper 的真实子链复用。若开发链已被其它 tick 占用，则交接未完成，走下方失败处置，不能假称已测试。
 - **唯一铸号与骨架生产者仍是 autopilot R-1（`sprint-autopilot/phase-3-4.md`步骤1必读`phase-3-4a.md`）**：旧 build 已 finalized 时铸新号，记录 `retest_of`；test-only 无新代码时由该围栏登记 `deploy_reuse_of=last_deployed_at`。测试侧不改 current_build、不手造报告、不用 `--force-amend`。该报告交接不执行R-2部署；R-3只产必要骨架并核可用性；返回后按②核R-1登记的to_build与current_build一致，部署复用登记仍须匹配当前部署。
@@ -86,20 +117,24 @@ BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}
 [ "$($BE get aiauto_handoff_run_id --default '')" = "$PREFLIGHT_RUN_ID" ] || exit 2
 HANDOFF_ROOT_CONTEXT=$($BE get aiauto_handoff_root_context --default '') || exit $?
 HANDOFF_FROM_CONTEXT=$($BE get aiauto_handoff_from_context --default '') || exit $?
+HANDOFF_TARGET_ONLY=$($BE get aiauto_handoff_target_only --default false) || exit $?
 HANDOFF_FROM_BUILD=$($BE get aiauto_handoff_from_build --default '') || exit $?
 HANDOFF_TO_BUILD=$($BE get aiauto_handoff_to_build --default '') || exit $?
 : "${HANDOFF_ROOT_CONTEXT:?}"; : "${HANDOFF_FROM_CONTEXT:?}"; : "${HANDOFF_FROM_BUILD:?}"; : "${HANDOFF_TO_BUILD:?}"
 [ "$($BE get current_build --default '')" = "$HANDOFF_TO_BUILD" ] || exit 2
 [ "$($BE --build "$HANDOFF_TO_BUILD" get ai_report_finalized --default false)" != true ] || exit 2
 [ -s "docs/reports/$TARGET_VERSION/AI执行报告/data/${HANDOFF_TO_BUILD}.js" ] || exit 2
-python3 - "$HANDOFF_FROM_CONTEXT" "$HANDOFF_ROOT_CONTEXT" "$TARGET_VERSION" "$HANDOFF_FROM_BUILD" <<'SOURCE'
+python3 - "$HANDOFF_FROM_CONTEXT" "$HANDOFF_ROOT_CONTEXT" "$TARGET_VERSION" "$HANDOFF_FROM_BUILD" "$HANDOFF_TARGET_ONLY" <<'SOURCE'
 import sys
 from pathlib import Path
 sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from entry_context import load_context
 old = load_context(Path.cwd(), sys.argv[1])
 parent = load_context(Path.cwd(), sys.argv[2])
-if (old.get("parent_task_id"), old.get("version"), old.get("build_id")) != (parent["task_id"], sys.argv[3], sys.argv[4]):
+if sys.argv[5] == "true":
+    if old["version"] != sys.argv[3] or not old["task_scope"].get("acceptance") or set(old["allowed_actions"]) - {"static", "live-tests"}:
+        raise SystemExit("UNAUTHORIZED: 原目标范围/测试权限变化")
+elif (old.get("parent_task_id"), old.get("version"), old.get("build_id")) != (parent["task_id"], sys.argv[3], sys.argv[4]):
     raise SystemExit("UNAUTHORIZED: 原交接上下文/根/版本/build不匹配")
 SOURCE
 [ "$?" = 0 ] || exit 2
@@ -142,9 +177,16 @@ if [ "$HANDOFF_TO_BUILD" != "$HANDOFF_FROM_BUILD" ]; then
     [ "$RETEST_OF" = "$HANDOFF_FROM_BUILD" ] || exit 2
   fi
 fi
-REBIND_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
-  --execution-context "$HANDOFF_ROOT_CONTEXT" --version "$TARGET_VERSION" --build-id "$HANDOFF_TO_BUILD" --json) || exit $?
-HANDOFF_REBOUND_CONTEXT=$(printf '%s' "$REBIND_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+if [ "$HANDOFF_TARGET_ONLY" = true ]; then
+  HANDOFF_REBOUND_CONTEXT="$HANDOFF_FROM_CONTEXT"
+else
+  VERSION_MANIFEST="${1:?回调围栏argv[1]传新build冻结清单路径}"
+  REBIND_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
+    --execution-context "$HANDOFF_ROOT_CONTEXT" --version "$TARGET_VERSION" --build-id "$HANDOFF_TO_BUILD" \
+    --manifest "${VERSION_MANIFEST:?按新build真实冻结验收清单，不能改写旧manifest}" --json) || exit $?
+  HANDOFF_REBOUND_CONTEXT=$(printf '%s' "$REBIND_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
+  python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto.execution_context "$HANDOFF_REBOUND_CONTEXT" || exit $?
+fi
 RETURN_ARGS=$($BE get aiauto_handoff_return_args --default '') || exit $?
 [ -n "$RETURN_ARGS" ] || exit 2
 CALLBACK_CONTEXT_ARG=""
@@ -153,7 +195,7 @@ RETURN_ARGS="$RETURN_ARGS --execution-context $CALLBACK_CONTEXT_ARG"
 printf '返回命令：/sprint-aiauto-test %s\n' "$RETURN_ARGS"
 ```
 
-只invoke该围栏输出的新返回命令；沿同根预算和来源派生新build child，旧fixed ctx保持不变。同run回调仍沿phase-0-6既有重入门；非本次R-1登记的baseline漂移继续拒绝。
+只invoke该围栏输出的新返回命令；版本委派沿同根预算派生新build child；target_only返回原target ctx、不fork full、不写aiauto.execution_context。旧ctx保持不变。同run回调仍沿phase-0-6既有重入门；非本次R-1登记的baseline漂移继续拒绝。
 
 **③ 失败才记账**：正常定稿后的新一轮不是故障，交接前不得调用失败处理器（无唤醒源会首次即冻、导致交接根本未执行）。autopilot 返回失败、被占用、未回调测试或本 run 回调仍不可测时，外层编排立即执行一次：
 

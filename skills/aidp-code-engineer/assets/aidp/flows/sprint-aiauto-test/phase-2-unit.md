@@ -6,9 +6,9 @@
 
 ## Phase 2 · 2.0.5u.0 主协调入口：同一 build 的两路独立派发
 
-**触发**：某个已部署 build 开测时执行，适用于用户手动、autopilot `--once`、`/loop` 和 `/sprint-batch`。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 继承父策略；只有真实显式命令/用户grant的支线才进入本节。主协调者先执行 Phase 0.0.0 的 tick begin/parse 并保管 token，再固定 `MAIN_ROOT`、`TARGET_VERSION`、`BUILD`、部署完整 `BUILD_COMMIT`，先冻结本次输入并核动作/预算，再在**同一批Agent调用中**派出所有已授权且尚需执行的worker。显式本命令的实测与全量单测两路仍并行，不等待一边完成才启动另一边；未请求支线NOT_REQUESTED，不派worker、不伪造PASS或pending。
+**触发**：仅真实 autopilot 用 `fork-test-build --manifest` 委派当前 version/build 时进入本节；独立 aiauto、batch Step 6、命令名/无人值守标记都不授予版本全量。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 校验父链、冻结清单及预算；缺项阻塞，禁止 project-wide/system-wide/历史全集或缺清单 fallback。主协调者先执行 Phase 0.0.0 的 tick begin/parse 并保管 token，再固定 `MAIN_ROOT`、`TARGET_VERSION`、`BUILD`、部署完整 `BUILD_COMMIT`，先冻结本次输入并核动作/预算，再在**同一批Agent调用中**派出所有已授权且尚需执行的worker。真实版本委派的实测与单测两路并行，不等待一边完成才启动另一边；未请求支线NOT_REQUESTED，不派worker、不伪造PASS或pending。
 
-1. 常规 build 从 baseline 的本版本 `builds[]` 中按 `build` 精确定位，读取该条 `push_commit`；不得用 `HEAD`、分支名、缩写 SHA 或相邻 build 代替。可用 `baseline_edit.py --version "$TARGET_VERSION" --build "$BUILD" get push_commit --default ""` 读取。standalone 由主协调者核验实际部署 commit，并把核验依据写进冻结计划的 `deployment`。
+1. 常规 build 从 baseline 的本版本 `builds[]` 中按 `build` 精确定位，读取该条 `push_commit`；不得用 `HEAD`、分支名、缩写 SHA 或相邻 build 代替。可用 `baseline_edit.py --version "$TARGET_VERSION" --build "$BUILD" get push_commit --default ""` 读取。独立目标实测不进入本节、不以 standalone 绕过真实父委派。
 2. 主协调者在浏览器环境、账号、权限、用例清单、已测去重等实测分支前置门之前做双路派发。这些门只约束实测子 Agent；纯后端、无浏览器适用面、无实测用例、实测已完成、浏览器工具不可用、登录失败都不能取消单测子 Agent。
 3. 两路均已授权且有部署baseline的build，派发前由主协调者运行 `python3 {{AIDP_HOME}}/scripts/aiauto_test_join.py begin --root . --version "{version}" --build "{BUILD}" --commit "{部署完整SHA}"`，声明两路在途；准发布等待此状态，不用旧的实测 PASS 提前放行。先轻量读取单测 `status`：同 build 的 `RUNNING` 只接续观察，不重复派 worker；已有终态可直接接收。尚未启动时派 unit worker。并发 tick 即使同时派 worker，执行器也只允许一个进入真实执行。
 仅一路获授权时不调用声明双路pending的begin/settle；按父context记录实际支线证据与另一支NOT_REQUESTED，不伪装完整双路验收。
@@ -58,17 +58,23 @@ done
 | `version` / `build` / `commit` | 与 CLI 完全一致；commit 为本仓可解析的完整小写 SHA（40 或 64 位），必须为 commit 对象 |
 | `source.path` | 部署 commit 内项目测试配置或契约卡的仓库相对路径 |
 | `source.sha256` | `git show <commit>:<source.path>` 原始字节的 SHA256；不是当前工作区文件的摘要 |
-| `suites` | 非空数组，每套真实完整单测命令一项，与该 commit 来源中的 `suites` **完全相等** |
-| `standalone` | 只有没有 baseline 本 build 的手动已部署环境才可显式设 `true` |
+| `suites` | 非空数组，与部署 commit 来源中的 `suites` 完全一致；每套必含显式目标 `runners`，不从 full_argv 或仓库发现全集 |
+| `acceptance_baseline` | `{path,sha256}`，当前版本真实验收基线 JSON 路径与原始字节摘要 |
+| `acceptance_tests` | 当前版本完整验收对应的可执行测试文件清单（不是 Markdown 册），非空且逐文件明确 |
+| `dependencies` | 必要回归测试/源码/资源的明确文件清单，可空；须有验收依赖依据，不 glob 历史全集 |
+| `standalone` | 不授予版本全量，不能绕过真实 autopilot 委派与 manifest 校验 |
 | `deployment` | standalone 必填 `{commit, verified:true, evidence}`；commit 同 CLI，evidence 为主协调者核验实际部署 commit 的非空依据。仅填 true 不是脚本替调用方完成部署核验；已有 baseline build 时仍必须匹配其 `push_commit`，不能用 standalone 绕过 |
 
-**支持的来源**：JSON 文件根 `suites` 或 `test_plan.suites`；Markdown 契约卡中**恰好一个**语言标记为 `aidp-test-plan` 的 fenced JSON 块，内容结构为 `schema:1`、`suites` 数组。现有契约的真实 `test_plan.full_argv/cwd/env_id/inputs` 应在部署前形成该可解析块；缺少已提交来源则记 `UNVERIFIED`，不得临时发明命令、读取脏工作区配置后冒充部署来源，也不为补来源而在本流程提交、打包或部署。
+**支持的来源**：JSON 文件根 `suites` 或 `test_plan.suites`；Markdown 契约卡中**恰好一个**语言标记为 `aidp-test-plan` 的 fenced JSON 块，内容结构为 `schema:1`、`suites` 数组。项目既有测试配置的 `runners/cwd/env_id/inputs` 应在部署前形成该可解析块；缺少已提交来源则记 `UNVERIFIED`，不得临时发明命令、读取脏工作区配置后冒充部署来源，也不为补来源而在本流程提交、打包或部署。
+
+验收基线 JSON 必须有 `version`、与 manifest 一致的 `acceptance_tests/dependencies`、`cases:[{id,test_files:[...]}]` 及 `case_index:{path,sha256}`。case_index 指向 `docs/testing/{version}/正式用例/` 当前正式索引；`cases[].id` 必须完整对应本版本正式用例标题，`test_files` 绑定实际测试文件。缺索引/缺映射不发现历史测试来补，不为补清单提交或部署。浏览器与单测使用同一 manifest hash，最终报告的用例 ID 与验收集合一致，不以部分绿灯代表版本通过。
 
 每个 suite 的字段为：
 
 | 字段 | 约束 |
 |---|---|
-| `full_argv` | 非空字符串数组，原样 argv 执行，不通过 shell；真实全量测试命令，禁止 `true` / `echo` 等占位及安装、构建、启动或部署动作 |
+| `runners` | 必需非空数组，沿 test_scope runner 格式；`argv` 含 `{tests}` / `{test_classes}` 选择器，cwd/env_id 与所属 suite 一致；仅执行 manifest 文件清单 |
+| `full_argv` | 旧配置兼容字段，不作为执行或缺清单 fallback；禁止占位、shell、安装、完整构建、启动或部署 |
 | `cwd` | 部署 worktree 内实际存在的相对目录，可为 `.` |
 | `env_id` | 非空、已冻结的测试工具链/依赖状态标识；不得冒充被测部署环境 |
 | `inputs` | 必填字符串数组，可为空；显式文档/契约输入相对 worktree，必须存在，禁止逃出 worktree |
@@ -111,12 +117,12 @@ python3 {{AIDP_HOME}}/scripts/build_unit_test.py status \
 
 工具或隔离依赖恢复后，在父full-regression授权、根因/输入已改变且retry预算允许时，主协调者才可选择同计划重试 `UNVERIFIED` / `TIMEOUT`，在原 `run` 调用上加 `--retry`。默认不重跑终态；`PASS` 即使传 `--retry` 也不执行，真实 `FAIL` 进入修复/新 build，不以同 build 重试掩盖。commit/计划变更必须使用新 build。重试保留此前 attempt 的结果和日志。
 
-Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=False, execution_context=None)`，execution_context仅指主仓策略；内部worktree账本不传该context，避免root身份冲突（plan 为 dict 或 JSON 文件路径）、`read_status(root, version, build)`。执行 API 修改本进程信号/环境/输出 fd，只能在专用执行器进程主线程调用，不嵌入多线程主 tick。
+Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=False, execution_context=None)`，execution_context仅指主仓策略；内部worktree账本继承该context，由执行器绑定主仓策略与冻结清单（plan 为 dict 或 JSON 文件路径）、`read_status(root, version, build)`。执行 API 修改本进程信号/环境/输出 fd，只能在专用执行器进程主线程调用，不嵌入多线程主 tick。
 
 **生命周期保证**：
 
-- 固定目录 `memory/.aidp/build-unit/{version}/{build}/`；其中 `worktree/` 是本 build detached worktree，`ledger/` 是专属本地账本根，`result.json` 是原子落盘结果，`plan.json` 是冻结计划副本，`suite-{attempt}-{index}.log` 保存完整 stdout/stderr。不同 build 不共享执行目录或缓存；即使 commit 相同也必须重跑。
-- `lifecycle.lock` 覆盖校验、worktree 创建、各套执行、清理和结果落盘；并发同 build 的另一 `run` 立即返回 `RUNNING` 或已完成结果，不排队占住 tick。每套都调用 `test_ledger.run(scope='full', ledger_root=本build专属目录)`，保留各自 `run_id`。
+- 固定目录 `memory/.aidp/build-unit/{version}/{build}/`；其中 `worktree/` 是本 build detached worktree，`ledger/` 是专属本地账本根，`result.json` 是原子落盘结果，`plan.json` 是冻结计划副本，`suite-{attempt}-{index}.log` 保存完整 stdout/stderr。不同build不共用执行目录；不能直接借旧build结论，复用必须由账本核验当前内容/环境/依赖并绑定当前manifest。
+- `lifecycle.lock` 覆盖校验、worktree 创建、各套执行、清理和结果落盘；并发同 build 的另一 `run` 立即返回 `RUNNING` 或已完成结果，不排队占住 tick。每套都调用 `test_ledger.run(scope='version', ledger_root=本build专属目录)`，保留各自 `run_id`。
 - `RUNNING` 持久化 pid、started_at、deadline_at 与已经完成的 runs；`status` 以锁判活。执行器异常退出、锁已释放但文件停留 RUNNING 时返回 `UNVERIFIED / executor-interrupted`，不会永久假运行。
 - 计时从执行器校验阶段开始，所有套件扣同一总预算；超时终止命令进程组，后续套件不再执行，最后清理本次创建的 worktree。清理 Git 命令另有有界退出保护；已有目录、既有 worktree 注册或中断遗留现场均不接管、不递归删除，不运行全局 `worktree prune`。
 - 结果与日志留在本地目录，worktree 删除不丢证据。同 build 再唤起 PASS 不重新测试；本 build 专属账本不能给另一个 build 冒充通过。
@@ -133,7 +139,7 @@ Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=
 |---|---|---|
 | `authorization_status=NOT_REQUESTED`、`executed=false` | 执行器二次授权拦截（外层status为UNVERIFIED） | 调用方按未请求处理，不建worktree、不派worker、不记欠账或PASS |
 | `PASS` | 全部套件通过 | 保留所有 run_id，同 build 复用；不得用它代替实测结果 |
-| `FAIL` | 已识别真实测试失败 | 与实测失败同等计入本 build 不通过；由下述 `aiauto_test_join.py settle` 幂等登记单测 BUG 并交 `/sprint-bugfix`，不得重复手工登记；新 build 两路重跑 |
+| `FAIL` | 已识别真实测试失败 | 与实测失败同等计入本 build 不通过；由下述 `aiauto_test_join.py settle` 保留失败证据；仅原开发父链具备 implement 才交 `/sprint-bugfix`，test-only 返回失败不开发，不得重复手工登记；新 build 两路重跑 |
 | `UNVERIFIED` | 本项未核验 | 缺来源/输入/commit、非 Git、baseline 不匹配、退出 127、模块缺失、无用例、损坏报告等；记原因，不登记为产品 BUG，不计通过，不 freeze |
 | `TIMEOUT` | 未完成（超时） | 保留已完成套件与超时日志；不挂起主 tick，不 freeze，不当作真实测试失败 |
 | `RUNNING` | 正在执行 | 后续 tick 读 status；不得当通过或启动第二个同 build 执行器 |
@@ -146,4 +152,4 @@ Python API：`run_build(root, version, build, commit, plan, timeout=3600, retry=
 - 主协调者先按 Phase 3.3 的 `failureTriage` 契约完成实测缺陷/产品澄清/环境未核验分类，写 `memory/.aidp/test-triage-${BUILD}.json`；`emit test` 带 `--failure-triage <该文件>`，`REPORT_DATA` 指向该 build 的 `data.js`。主协调者执行 `python3 {{AIDP_HOME}}/scripts/aiauto_test_join.py settle --root "$MAIN_ROOT" --version "$TARGET_VERSION" --build "$BUILD" --report "$REPORT_DATA" --triage "memory/.aidp/test-triage-${BUILD}.json"`（无待分流问题可省略分类文件与参数），由它验证 `unitTests` / `build.commit`，合并 baseline 的 `result` / `overall_status` / `unit_failed`，并幂等登记单测 FAIL 到 `docs/bugfix/{version}/bugfix-unit-{BUILD}.md`。不得再手工分配或登记同一批单测 BUG。
 - 主协调者校验结果的 version/build/commit 与本轮部署一致，再 finalize。尚无结果、RUNNING 或残留异常不能伪装通过；未核验不 freeze、不写 `aiauto_tested_at`。后续发布链路读取 join 的 `release-state`（pending/pass/failed/legacy）处理门禁，不能只看浏览器 PASS。允许跨 tick 接续，无须让一次 tick 等满 3600 秒。
 - 报告 HTML 中「全量实测」与「全量单测」分别列出适用状态；纯后端无浏览器适用面明确 N/A，单测仍展示实际结论。单测列出命令、各 run_id、已知计数/未知标记、失败用例、首要错误和日志证据。通知仅由主协调者一次发出。
-- `/sprint-test` 的开发期 Sprint 单测由 `test_scope.py` 推导并经 `run-scope` 记为 `scope=sprint`；它服务工作区验收与部署前门。本文件只服务已部署 build 的 `scope=full`，二者账本范围不可互相冒充。
+- `/sprint-test` 的开发期 Sprint 单测由 `test_scope.py` 推导并经 `run-scope` 记为 `scope=sprint`；它服务工作区验收与部署前门。本文件只服务真实委派的当前已部署 build 的 `scope=version`，二者账本范围不可互相冒充。

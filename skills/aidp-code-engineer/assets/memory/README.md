@@ -43,7 +43,7 @@
 
 | 文件 | 内容 | 入库 | 写入方 |
 |------|------|------|--------|
-| `.sprint-autopilot-baseline.json` | ★ `/sprint-autopilot`（开发链路）与 `/sprint-aiauto-test`（测试链路）**共享的版本状态机 baseline**（项目级扁平 `versions.{V}` + `current_build` + 项目级运行时记录 `project_state`），是两条链路判断"当前开发/被测版本"的唯一依据 | ✅ 入库共享 | 两命令 |
+| `.sprint-autopilot-baseline.json` | ★ `/sprint-autopilot`（开发链路）与 `/sprint-aiauto-test`（测试链路）**共享的版本状态机 baseline**（项目级扁平 `versions.{V}` + `current_build` + 项目级运行时记录 `project_state`），用于定位两条链路的版本状态；测试范围及权限还须核验真实委派上下文和本版验收清单，历史版本/build 记录不构成测试授权 | ✅ 入库共享 | 两命令 |
 | `.aidp/`（目录） | 本地运行态，路径单一信源 = `{{AIDP_HOME}}/scripts/aidp_paths.py`：里程碑通知台账、Stop 护栏计数 `stop-guard-count` 与放行留痕 `stop-guard-skips.jsonl`（滚动保留最近 50 条）、**本地告警台账 `alerts.jsonl`**（冻结 / 链路失联 / 通知未送达恒追加一行，无通知渠道时"停得响"靠它）、并发写锁 `locks/`（0 字节 `flock` 载体）、7×24 调度日志 `logs/`、memory 写前快照 `memory-snapshot/` | ❌ 已 gitignore（纯本地）| `aidp_paths.py` 各写方（`baseline_edit.py` / `notify.py` / `autopilot_fail_handle.py` / `agent_loop.sh` / `aidp_scheduler.py` / Stop hook 等）|
 | `.aidp/id-alloc.jsonl` | 同工作区原子保留 C/BUG/REQ/Q/D/ADR 等编号；已分配未使用可留空洞，源文档与作用域共同核对重号 | ❌ 本地；新克隆从已有定义取高水位 | `alloc_id.py`，不手工追加 |
 | `.aidp/test-ledger.jsonl` | 代码内容、显式输入、命令/范围/环境绑定的测试结果及独立审查快照；失效即重跑 | ❌ 本地；不作为跨机器通过凭证 | `test_ledger.py`，不手工填 PASS |

@@ -32,10 +32,15 @@ if "unitTests" not in p:
     raise SystemExit(0)
 if not report_ready(p):
     raise SystemExit("仍有运行中分支；不能 final/发 #3/冻结")
-joined=settle(root,v,b,p,standalone=official!="1",triage=p.get("failureTriage"))
-if joined["triage_status"] != "COMPLETE":
-    raise SystemExit("缺陷待分流：返回 3.3 补分类并 emit/settle，不发 #3、不冻结")
-status=joined["overall_status"]; color="green" if status=="PASS" else "red" if status=="FAIL" else "orange"
+if official=="1":
+    joined=settle(root,v,b,p,standalone=False,triage=p.get("failureTriage"))
+    if joined["triage_status"] != "COMPLETE":
+        raise SystemExit("缺陷待分流：返回 3.3 补分类并 emit/settle，不发 #3、不冻结")
+    status=joined["overall_status"]
+else:
+    # 独立目标不写版本汇合/join.json
+    status=overall_status(p)
+color="green" if status=="PASS" else "red" if status=="FAIL" else "orange"
 if official=="1":
     exec_dir=root / "docs/reports" / v / "AI执行报告"
     old=read_payload(exec_dir / "data" / (b+".js"))
@@ -82,7 +87,7 @@ else:
 JOINT_FINAL
 ```
 
-上述任一步失败不得继续发绿灯或写 frozen 标记；保留失败输出供主协调者修复同 build 产物。缺工具/超时/未核验不转作旧未收敛计数触发冻结。实际实测或单测代码失败仍走 `settle` 的 BUG/auto_fixable_pending → `/sprint-bugfix` → 新 build 两路重跑。
+上述任一步失败不得继续发绿灯或写 frozen 标记；保留失败输出。缺工具/超时/未核验不转作旧未收敛计数触发冻结。实际失败保留settle证据；原开发父任务有implement/deploy才修复并新build复验，test-only只返回失败。
 
 ### 历史无 unitTests 的收尾兼容
 
@@ -167,7 +172,7 @@ $BEV --build "${BUILD:?}" set status closed ai_report_finalized true \
   - **需清理的数据库**：DB 连接**优先取** `docs/testing/{version}/研发自测/` 的「测试环境与账号」配置的 DB 段；缺失则回退后端 `application.yml` 生效 profile 的 datasource（host/port/库名/账号）；**两者都缺 → 填 `{待补}` 占位 + 文档标注「需人工补数据库连接」，不静默留空**。
   - **涉及写库表 + 清理 SQL**：由本 build 实际跑过的用例/模块（auto-test-runner 本轮 `results/*.json` / 覆盖的 SUITE）映射到详细设计「数据库设计」对应业务表；**优先按「测试账号 create_by + 本轮时间窗 create_time」双条件生成逐表 `DELETE`**（表含审计字段时，安全、不误删真实数据）；无审计字段的表按业务标记/主键区间并标「需人工核对」；有外键依赖按子表→父表顺序。**严禁**生成整库 `DROP`/无条件 `DELETE`（除非该库为独占测试专用库才给 `TRUNCATE` 兜底选项）。
 - **报告不可变对齐**：本 build 一旦 finalize（Step 3 冻结），其数据清理文档**随之定稿**；后续测试结论变化走新 build → 另生成 `${下一 BUILD}_数据清理.md`，**绝不回改旧 build 的清理文档**。
-- **提交**：本文件随 build 仪式产物一并 `git add`（与报告同批提交，autopilot 侧统一 commit；本命令只负责生成落盘）。
+- **提交**：仅原开发父任务另有commit授权时由其提交；test-only不提交/推送/部署。
 
 **Step 4.1 — ★ 主动询问是否执行数据清理（交互式问用户；无人值守默认不执行）**：数据清理文档生成后**不自动执行**其中的清理 SQL（`DELETE` 属破坏性操作），而是把「是否现在清库」的决定权交用户：
 

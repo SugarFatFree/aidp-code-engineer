@@ -3,6 +3,128 @@
 from pathlib import Path, PurePosixPath
 import os
 import subprocess
+import re
+import stat
+import sys
+
+# 只排除工具缓存、构建产物和安装依赖；显式必要输入可覆盖此默认过滤。
+GENERATED_DIRS = frozenset(('__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache',
+    '.cache', '.tox', '.nox', '.venv', 'venv', 'node_modules', '.next', '.nuxt',
+    'dist', 'build', 'target', '.gradle', '.idea', '.vscode'))
+GENERATED_SUFFIXES = frozenset(('.pyc', '.pyo', '.class', '.o', '.obj'))
+
+
+def generated_excluded(rel):
+    path = PurePosixPath(rel)
+    return bool(set(path.parts) & GENERATED_DIRS) or path.suffix in GENERATED_SUFFIXES
+
+
+def installed_skill_package(root, rel):
+    """只识别约定安装根且带SKILL.md的包，不把业务同名目录当工具包。"""
+    path = PurePosixPath(rel)
+    for home in ('.', '.aidp', '.agents', '.claude', '.codex', '.dsh'):
+        base = PurePosixPath(home) / 'skills'
+        if not path.is_relative_to(base):
+            continue
+        parts = path.relative_to(base).parts
+        if parts:
+            package = base / parts[0]
+            if (Path(root) / package / 'SKILL.md').is_file():
+                return package.as_posix()
+    return None
+
+
+def _stat_identity(path):
+    """保留链接本体及真实目标身份；不存在也是可比较的观测值。"""
+    def values(value):
+        return [value.st_dev, value.st_ino, value.st_mode, value.st_size,
+                value.st_mtime_ns, value.st_ctime_ns]
+    try:
+        own = path.lstat()
+    except FileNotFoundError:
+        return {'missing': True}
+    result = {'stat': values(own)}
+    if stat.S_ISLNK(own.st_mode):
+        result['link'] = os.readlink(path)
+        result['target'] = str(path.resolve())
+        try:
+            result['target_stat'] = values(path.stat())
+        except FileNotFoundError:
+            result['target_stat'] = None
+    return result
+
+
+def fingerprint_metadata():
+    """每个取证阶段只读取一次挂载/启动元数据；调用方不得跨执行阶段保留。"""
+    if sys.platform != 'linux':
+        return None
+    try:
+        mounts = []
+        for line in Path('/proc/self/mountinfo').read_text().splitlines():
+            left, right = line.split(' - ', 1)
+            fields, filesystem = left.split(), right.split()[0]
+            mount = Path(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[4]))
+            mounts.append((mount, filesystem, fields[:6]))
+        return {'mounts': mounts, 'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def fingerprint_token(path, *, metadata=None):
+    """仅可信 Linux 本地纳秒 ctime 文件系统允许跳过内容读取。
+
+    前提是内核维护 inode/ctime，非特权进程不能恢复 ctime；不支持特权篡改、
+    文件系统快照回滚或网络/FUSE 元数据缓存。未知平台/文件系统必须返回 None。
+    每阶段重读 mountinfo/boot_id，禁止跨重启、换挂载或仅凭 mtime 复用。
+    """
+    metadata = fingerprint_metadata() if metadata is None else metadata
+    if not metadata:
+        return None
+    path = Path(path).absolute()
+    try:
+        def reliable(target):
+            candidates = [item for item in metadata['mounts'] if target.is_relative_to(item[0])]
+            selected = max(candidates, key=lambda item: len(item[0].parts))
+            if selected[1] not in ('ext4', 'xfs', 'btrfs', 'tmpfs'):
+                return None
+            return selected[2]
+        resolved = path.resolve()
+        mount = reliable(resolved)
+        own_mount = reliable(path.parent.resolve() / path.name)
+        if mount is None or own_mount is None:
+            return None
+        state = _stat_identity(path)
+        identities = [state.get('stat'), state.get('target_stat')]
+        # 秒级时间精度/无真实 inode 的文件系统不具备本优化的可靠前提。
+        if any(item is not None and (not item[1] or not item[5] % 1_000_000_000) for item in identities):
+            return None
+        return {'policy': 'linux-local-ctime-v1', 'boot': metadata['boot'],
+                'mount': mount, 'own_mount': own_mount, 'path': str(path), 'resolved': str(resolved), **state}
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def fingerprint_file(path, previous=None, reader=None, *, metadata=None):
+    """复用稳定内容摘要；未命中时实际读取，并拒绝读取过程中发生的 ABA/替换。"""
+    path = Path(path)
+    before_state = _stat_identity(path)
+    before = fingerprint_token(path, metadata=metadata)
+    if (before is not None and isinstance(previous, dict) and previous.get('token') == before
+            and 'hash' in previous):
+        if _stat_identity(path) != before_state:
+            raise InventoryError('TREE_CHANGED：指纹复用期间文件变化：' + str(path))
+        return {'hash': previous['hash'], 'token': before, 'read': False, 'observation': before_state}
+    if before_state.get('missing'):
+        value, read = None, False
+    else:
+        if reader is None:
+            from test_ledger import file_hash
+            reader = file_hash
+        value, read = reader(path), True
+    after = fingerprint_token(path, metadata=metadata)
+    if _stat_identity(path) != before_state or before != after:
+        raise InventoryError('TREE_CHANGED：读取期间文件变化，不能复用旧证据：' + str(path))
+    return {'hash': value, 'token': after, 'read': read, 'observation': before_state}
 
 class InventoryError(ValueError):
     def __init__(self, message):
@@ -25,7 +147,7 @@ def runtime_excluded(rel):
     return False
 
 def default_excluded(rel, repositories=(".",)):
-    if runtime_excluded(rel):
+    if runtime_excluded(rel) or generated_excluded(rel):
         return True
     path = PurePosixPath(rel)
     for repo in repositories:

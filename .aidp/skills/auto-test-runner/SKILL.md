@@ -119,21 +119,32 @@ description: >
 
 > ⚠️ **web 端不因 detect_drivers 的 npm 探测为空就 block:** web 主驱动是 **chrome-devtools MCP 插件工具**(属**运行时能力、本脚本探不到**;具体工具名属端专有,只在 `references/driver-web.md` 适配层出现)。只要**会话已挂载 chrome-devtools MCP 工具**,或**本机装有 Chrome/Chromium**,即视 web 可用。**仅当「MCP 工具未挂载 且 本机无 Chrome 且 无 npm 驱动」三者皆空时才 block web**,否则会把唯一真能跑的端误杀。detect_drivers 已对 web 按「npm 包 或 本机 Chrome 任一即可用」放宽,并在输出 `hint` 里说明 MCP 工具属运行时能力。
 
+### 执行范围由调用方决定(独立目标实测 vs 版本回归)
+
+- **内核不自行决定全集**:范围只来自调用方显式给出的用例清单(`--ids` / `--manifest`)或单个指定的用例文件;⛔ 任何情况下不得把「目录下全部用例」当作默认范围。版本全量测试只能由真实 autopilot 委派(绑定版本、build、验收基线与完整用例清单)触发,清单由调用方提供。
+- **独立目标实测**(调用方只给少数用例 ID):允许**不生成 tasks.md 与正式测试报告**,只按清单逐条执行并**返回每个用例的执行证据**(`case_id` / 状态 / 失败分级 / `evidence[]` / `block_reason`,字段口径同结果 JSON schema);仍遵守失败分级、证据取证、不改业务代码等全部执行红线。是否出报告、报告落在哪个 build 由调用方按其 build 仪式决定,本 SKILL 不替它决定。
+- 一旦出正式报告或建 tasks.md,流程与第三步 checker 等硬门照常适用,不因范围小而放宽。
+
 ### 第一步:准备(prepare)——定轮次 + 建 tasks.md 状态机
 
 1. **定轮次**:扫 `{产物目录}/build-{N}/` 已有 `round-*`,取最大号 +1 建新轮次目录 `round-{M}/`;旧轮次完整保留。断点续跑时复用当前轮次、不新建。
    - **★定 build vs 定 round(先分清再定轮次)**:
-     - **build 递增 → 全新 tasks.md 全量重跑**:上一 build 的缺陷经**外层 bugfix 修复后**要重新回归时,建**新 `build-{N+1}`**,用 `tasks_state.py init` **重建全新 tasks.md、全部 `[ ]`**,**全量重跑**——不继承上一 build 的任何 `[√]`,不 `resume` 跨 build,不只跑被修用例(只复验被修会漏同源缺陷)。
+     - **build 递增 → 全新 tasks.md、按调用方清单重跑**:上一 build 的缺陷经**外层 bugfix 修复后**要重新回归时,建**新 `build-{N+1}`**,用 `tasks_state.py init` **重建全新 tasks.md、全部 `[ ]`**,**按调用方提供的完整用例清单重跑**(内核不自行决定全集,清单由真实 autopilot 委派给出)——不继承上一 build 的任何 `[√]`,不 `resume` 跨 build,不只跑被修用例(只复验被修会漏同源缺陷)。
      - **round 递增 → 同 build 内 self-heal 复测**:同一 build 内针对 flaky / 集成链路等环境波动用例的重试(见执行模式分级 self-heal),复用本 build 上下文,**非跨 build 回归**。
-     - 即:**self-heal 复测锁 round 级 / 同 build,新回归轮锁 build 级 / 全量**,两者边界不得混用。
+     - 即:**self-heal 复测锁 round 级 / 同 build,新回归轮锁 build 级 / 按调用方清单**,两者边界不得混用。
 2. **建 tasks.md**:解析用例文档,按模块(套件)分组写 `round-{M}/tasks.md`(模板 [`assets/tasks-template.md`](./assets/tasks-template.md)),每条用例一行、初始状态 `[ ]`。
 
    **★完整命令行(照抄即可,勿臆造参数名):**
 
    ```bash
-   # 建 tasks.md:第一个入参是「用例文件或目录」,-o 给输出路径(不给则打印到 stdout)
-   python3 <SKILL_DIR>/scripts/tasks_state.py init <用例文件或目录> -o <round目录>/tasks.md
-   # (可选)执行选集:--select all(默认) | smoke(P0) | regression([回归] 标记)
+   # 建 tasks.md:第一个入参是「用例文件或目录」,-o 给输出路径(不给则打印到 stdout)。
+   # ★范围必须由调用方显式给出:用例清单 --ids TC-001 TC-002 / --manifest <文件>;清单外用例不进 tasks.md,
+   #   清单为空或解析不到任一 ID 报错(exit 2),⛔ 不退回「目录下全部」。目录输入无清单时必须显式 --select smoke|regression
+   python3 <SKILL_DIR>/scripts/tasks_state.py init <用例目录> --manifest <ids.txt> -o <round目录>/tasks.md
+   python3 <SKILL_DIR>/scripts/tasks_state.py init <用例目录> --ids TC-001 TC-002 -o <round目录>/tasks.md
+   # 单个用例文件作输入时文件本身即范围,可不传清单
+   python3 <SKILL_DIR>/scripts/tasks_state.py init <用例文件> -o <round目录>/tasks.md
+   # (可选)选集在清单内过滤:--select all(清单内全部) | smoke(P0) | regression([回归] 标记);无清单的目录输入只接受 smoke|regression
    python3 <SKILL_DIR>/scripts/tasks_state.py init <用例目录> -o <round目录>/tasks.md --select smoke
    # 改状态(批量):tasks.md 路径为第一个入参
    python3 <SKILL_DIR>/scripts/tasks_state.py update <round目录>/tasks.md --id TC-001 TC-002 --state running
@@ -310,7 +321,7 @@ run-context `free_scan: true` 时,在**全部模块用例跑完之后、报告�
 - **持久化**:状态写盘 tasks.md,详细用例内容按 TC-ID 现查,tasks.md 只存 ID+名称,降载。
 - **续跑**:中断后重跑,`python3 <SKILL_DIR>/scripts/tasks_state.py resume` 扫出所有 `[ ]`/`[>]` 续跑,已 `[√]` 跳过,**不从头重来**。
 - **★resume/`[√]`-跳过的作用域仅「同一 build 内中断恢复」(硬边界):** `resume` 与「已 `[√]` 跳过」只用于**同一 `build-{N}` 内**执行被中断后的续跑;`[!]`→ self-heal 复测入口也只在**同 build 内的下一 round**,是「只复验失败用例」的窄口径复测,**不得跨 build 沿用**(跨 build 只复验被修用例会漏同源缺陷)。
-- **★跨 build 边界 = 新回归轮,全量重跑:** 新 `build-{N+1}`(上一 build 缺陷经外层 bugfix 修复后的新回归)**必须 `init` 全新 tasks.md、全部用例回初始态 `[ ]`、全量重跑**,**绝不沿用上一 build 的 `[√]`、绝不 `resume` 跨 build、绝不只跑被修用例**——只复验被修用例会漏同源缺陷(如修完 P0 只验那条、漏同根因的 P1)。
+- **★跨 build 边界 = 新回归轮,按调用方提供的清单重跑:** 新 `build-{N+1}`(上一 build 缺陷经外层 bugfix 修复后的新回归)**必须 `init` 全新 tasks.md、清单内全部用例回初始态 `[ ]`、按该清单重跑**(清单即调用方给定的完整回归集,内核不自行决定全集),**绝不沿用上一 build 的 `[√]`、绝不 `resume` 跨 build、绝不只跑被修用例**——只复验被修用例会漏同源缺陷(如修完 P0 只验那条、漏同根因的 P1)。
 - **补齐遗漏**:第三步 checker 确保无 `[ ]`/`[>]` 残留才允许出报告。
 
 ---

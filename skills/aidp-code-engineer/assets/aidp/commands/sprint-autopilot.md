@@ -18,7 +18,7 @@ import json, sys
 from pathlib import Path
 sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from entry_context import load_context, route_context, _context_path
-from execution_policy import require_action
+from execution_policy import require_action, require_delegable
 root = Path.cwd()
 path, version, run = sys.argv[1:]
 parent = load_context(root, path, migrate=False)
@@ -29,13 +29,18 @@ if record.get("aiauto_handoff_run_id") != run:
     print("{}")
 else:
     canonical = _context_path(root, parent["task_id"])
-    if parent["mode"] != "formal" or parent.get("parent_task_id") or parent["entry"] not in ("sprint-autopilot", "sprint-aiauto-test"):
+    if parent["mode"] != "formal" or parent.get("parent_task_id") or parent["entry"] != "sprint-autopilot":
         raise SystemExit("UNAUTHORIZED: report handoff需要原正式授权根")
     if record.get("aiauto_handoff_root_context") != str(canonical):
         raise SystemExit("UNAUTHORIZED: report handoff原根不匹配")
     old = load_context(root, record.get("aiauto_handoff_from_context", ""), migrate=False)
     before = record.get("aiauto_handoff_from_build")
-    if not before or (old.get("parent_task_id"), old["version"], old.get("build_id")) != (parent["task_id"], version, before):
+    target_only = record.get("aiauto_handoff_target_only") is True
+    if target_only:
+        if old["version"] != version or not old["task_scope"].get("acceptance") or set(old["allowed_actions"]) - {"static", "live-tests"}:
+            raise SystemExit("UNAUTHORIZED: report handoff目标/权限不符")
+        require_action(old, "live-tests")
+    elif not before or (old.get("parent_task_id"), old["version"], old.get("build_id")) != (parent["task_id"], version, before):
         raise SystemExit("UNAUTHORIZED: report handoff固定来源不匹配")
     permitted = {before}
     if record.get("aiauto_handoff_to_build"):
@@ -43,7 +48,8 @@ else:
     if record.get("current_build") not in permitted:
         raise SystemExit("BUILD_CHANGED: report handoff不能认领任意漂移")
     require_action(parent, "live-tests")
-    require_action(parent, "full-regression")
+    if not target_only:
+        require_delegable(parent, "full-regression")
     result = route_context(root, canonical, phase="route", entry=parent["entry"])
     result.update(report_handoff=True, handoff_version=version, handoff_run_id=run)
     print(json.dumps(result, ensure_ascii=False))
@@ -82,7 +88,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-aut
   --execution-context "$EXECUTION_CONTEXT" --phase route --json || exit $?
 ```
 
-先消费`report_handoff`：为true时只沿原根执行 `flows/sprint-autopilot/phase-3-4.md` 的步骤1/2/3（R-1铸号/复用及必要报告骨架），然后执行 `flows/sprint-aiauto-test/phase-0-6b.md` 的handoff-rebind-callback并调用其新返回命令；结束此受限子调用。锁准入仍遵守原Phase0，不绕过其它tick。此分支不进入下文规划/开发/部署/独立审计、不执行R-2、phase-3-4b或3.1.5阶段出口，不改autopilot全局/版本根指针，不追加grant；缺部署依据只返回未完成，不借机部署。
+先消费`report_handoff`：为true时只沿原根执行 `flows/sprint-autopilot/phase-3-4.md` 的步骤1/2/3（R-1铸号/复用及必要报告骨架），然后执行 `flows/sprint-aiauto-test/phase-0-6b.md` 的handoff-rebind-callback并调用其新返回命令；结束此受限子调用。锁准入仍遵守原Phase0，不绕过其它tick。本轮report-handoff固定test-only，既有根即使曾有交付权限也不得执行；此分支不进入下文规划/开发/提交/推送/部署/独立审计、不执行R-2、phase-3-4b或3.1.5阶段出口，不改autopilot全局/版本根指针，不追加grant；缺部署依据只返回未完成，不借机部署。
 
 其它情况确认 `route=formal` 后仅执行已有actions；普通错域incoming仍由root selector拒绝，不能借report-handoff名义回退宽根。
 

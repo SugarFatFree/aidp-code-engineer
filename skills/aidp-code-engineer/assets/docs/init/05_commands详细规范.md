@@ -1,6 +1,6 @@
 # 05 — Commands 详细规范
 
-> 身份、动作授权与调用围栏统一见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。普通开发implement+static，相关测试与review分别按请求启用；formal不增加heavy权限，未请求检查NOT_REQUESTED。
+> 身份、动作授权与调用围栏统一见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。普通开发/修复implement+static+related-test，自动测试→必要修复复验→终端，无需另问单测。formal保规格归档，测试/静态/审查/CVL只当前task/单Sprint；真实skip受限返回，缺测试/工具不当PASS。
 
 > **文档定位**：本文档是斜杠命令体系的**总览和索引**。
 > 下游命令定义位于 `{{AIDP_HOME}}/commands/`（仅 Claude 为 `.claude/`，有 Codex / DSH 为 `.agents/`），适配入口分别为 `.claude/commands/`、`.codex/skills/aidp/`、`.dsh/commands/`。下方 Markdown 链接指向下游已安装的命令定义；通用命令行为在模板仓库维护后由脚手架下发。
@@ -75,12 +75,12 @@
 | **Sprint 执行** | `/sprint-batch [范围]` | 批量执行多个 Sprint | `superpowers:verification-before-completion`（⛔ 不用 `executing-plans`：它会停下征询，与「零询问连跑」冲突）| [`{{AIDP_HOME}}/commands/sprint-batch.md`](../../{{AIDP_HOME}}/commands/sprint-batch.md) |
 | | `/sprint-full {NNN}\|"<描述>"` | 单 Sprint 一键（支持按计划或自动累进） | 串联下方 5 个 | [`{{AIDP_HOME}}/commands/sprint-full.md`](../../{{AIDP_HOME}}/commands/sprint-full.md) |
 | | `/sprint-start {NNN}` | 启动单个 Sprint | - | [`{{AIDP_HOME}}/commands/sprint-start.md`](../../{{AIDP_HOME}}/commands/sprint-start.md) |
-| | `/sprint-dev [scope\|"描述"]` | 开发阶段（独立默认 light；formal 支持累进） | 默认实现+静态；TDD/review/CVL按父授权启用 | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |
+| | `/sprint-dev [scope\|"描述"]` | 开发阶段（独立默认 light；formal 支持累进） | 默认实现+静态+相关单测；review/CVL按父授权且同范围 | [`{{AIDP_HOME}}/commands/sprint-dev.md`](../../{{AIDP_HOME}}/commands/sprint-dev.md) |
 | | `/sprint-test` | 显式组合static+related-test+review+full-cvl；自然路由/嵌套只继承 | `code-verification-loop`（+ 外部可选 `api-tester`） | [`{{AIDP_HOME}}/commands/sprint-test.md`](../../{{AIDP_HOME}}/commands/sprint-test.md) |
 | | `/sprint-bugfix [sprint-NNN\|bugfix-*.md\|"描述"]` | 问题修复（★ 支持独立使用 + 自动累进；可按 Sprint / 指定文件名 / 描述累进三种入参） | `bugfix` + `superpowers:systematic-debugging` | [`{{AIDP_HOME}}/commands/sprint-bugfix.md`](../../{{AIDP_HOME}}/commands/sprint-bugfix.md) |
 | | `/sprint-close {NNN}` | Sprint 关闭 | - | [`{{AIDP_HOME}}/commands/sprint-close.md`](../../{{AIDP_HOME}}/commands/sprint-close.md) |
 | **7×24 全自动** ★ | `/sprint-autopilot` | PRD 监听 → 自动开发链路编排（操作系统调度 `aidp_scheduler.py` 守护） | 串联 `/version` + `/sprint-batch` | [`{{AIDP_HOME}}/commands/sprint-autopilot.md`](../../{{AIDP_HOME}}/commands/sprint-autopilot.md) |
-| | `/sprint-aiauto-test` | 显式命令并行live-tests+full-regression；调度安装另授权 | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例读已落盘的 `docs/testing/{version}/`（`正式用例/` 为主 + `研发自测/` 查漏补充），不直调用例生成 SKILL | [`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`](../../{{AIDP_HOME}}/commands/sprint-aiauto-test.md) |
+| | `/sprint-aiauto-test` | 独立只明确目标live-tests；仅真实autopilot委派且清单完整才当前版本全量；调度安装另授权 | `auto-test-runner`（执行内核）+ chrome-devtools-mcp（Web 驱动）；用例严格按明确目标/当前版本冻结验收清单，不直调用例生成 SKILL | [`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`](../../{{AIDP_HOME}}/commands/sprint-aiauto-test.md) |
 | **辅助** | `/memory-sync` | 记忆同步 | - | [`{{AIDP_HOME}}/commands/memory-sync.md`](../../{{AIDP_HOME}}/commands/memory-sync.md) |
 | | `/health-check` | 健康检查 | - | [`{{AIDP_HOME}}/commands/health-check.md`](../../{{AIDP_HOME}}/commands/health-check.md) |
 

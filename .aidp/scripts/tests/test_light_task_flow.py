@@ -68,6 +68,21 @@ class LightTaskFlowTests(unittest.TestCase):
         for key, value in extra.items(): args.extend(['--' + key.replace('_', '-'), value])
         return self.cli('entry_context.py', *args)
 
+    def run_related(self, ctx, expected=0):
+        runners = [{'cwd':'.', 'suffixes':['.py'], 'argv':[sys.executable, '-B', '{tests}']}]
+        scope = self.cli('test_scope.py', '--execution-context', ctx,
+                         '--runners-json', json.dumps(runners), '--json')
+        scope_path = Path(ctx).with_name('scope.json')
+        scope_path.write_text(json.dumps(scope))
+        run = self.cli('test_ledger.py', 'run-scope', '--execution-context', ctx,
+                       '--scope-file', str(scope_path), '--env-id', 'fixture', expected=expected)
+        verification = {'scope_file': str(scope_path), 'scope_hash': scope['scope_hash'],
+                        'env_id': 'fixture', 'run_ids': run['run_ids']}
+        arguments = ['--scope-file', str(scope_path), '--scope-hash', scope['scope_hash'], '--env-id', 'fixture']
+        for run_id in run['run_ids']:
+            arguments.extend(['--run-id', run_id])
+        return run, verification, arguments
+
     def assert_protected(self):
         for rel, expected in self.protected.items():
             self.assertEqual((self.root / rel).read_text(), expected, rel)
@@ -115,24 +130,161 @@ class LightTaskFlowTests(unittest.TestCase):
         self.assertTrue(complete['completed'])
         self.assert_protected()
 
-    def test_ordinary_feature_completes_with_only_real_static_check(self):
-        resolved = self.resolve()
+    def assert_default_test_closure(self, entry='sprint-dev', explicit=False):
+        source = {'kind':'explicit-command', 'request_id':'standalone-development', 'command':'/' + entry}
+        resolved = self.resolve(entry=entry, **({'authorization_source':json.dumps(source)} if explicit else {}))
+        ctx = resolved['execution_context']
+        self.assertIn('related-test', resolved['allowed_actions'])
+        nested = self.cli('entry_context.py', 'resolve', '--entry', 'sprint-test', '--execution-context', ctx)
+        self.assertEqual(nested['execution_context'], ctx)
+        self.assertEqual(nested['identity'], resolved['identity'])
+        (self.root / 'app.py').write_text('button = True\n')
+        static = self.cli('entry_context.py','static','--execution-context',ctx,'--input','app.py','--',
+            sys.executable,'-B','-c','import ast; ast.parse(open("app.py").read())')
+        blocked = self.cli('entry_context.py','complete','--execution-context',ctx,
+                           '--static-evidence',static['evidence_file'], expected=2)
+        self.assertFalse(blocked['completed'])
+        run, _, verification_args = self.run_related(ctx)
+        self.assertEqual(run['status'], 'PASS')
+        done = self.cli('entry_context.py','complete','--execution-context',ctx,
+                        '--static-evidence',static['evidence_file'], *verification_args)
+        self.assertTrue(done['completed'])
+        self.assertEqual(done['checks']['related-test'], 'PASS')
+        for action in ('review','full-cvl','docs-audit','full-regression','migration-rehearsal','deployment-tool-development'):
+            self.assertEqual(done['checks'][action], 'NOT_REQUESTED')
+        self.assert_protected()
+
+    def test_ordinary_feature_requires_real_related_tests_before_completion(self):
+        self.assert_default_test_closure()
+
+    def test_standalone_dev_inherits_light_related_test_scope(self):
+        self.assert_default_test_closure('sprint-dev', explicit=True)
+
+    def test_standalone_bugfix_inherits_light_related_test_scope(self):
+        self.assert_default_test_closure('sprint-bugfix', explicit=True)
+
+    def test_explicit_skip_tests_reports_limited_result_without_sprint(self):
+        source = {'kind':'user-text','request_id':'explicit-static-only',
+                  'text':'本次只修改并做静态检查，跳过单元测试', 'skip_actions':['related-test']}
+        resolved = self.resolve(authorization_source=json.dumps(source))
         ctx = resolved['execution_context']
         (self.root / 'app.py').write_text('button = True\n')
         static = self.cli('entry_context.py','static','--execution-context',ctx,'--input','app.py','--',
             sys.executable,'-B','-c','import ast; ast.parse(open("app.py").read())')
         done = self.cli('entry_context.py','complete','--execution-context',ctx,'--static-evidence',static['evidence_file'])
         self.assertTrue(done['completed'])
-        for action in ('related-test','review','full-cvl','docs-audit','full-regression','migration-rehearsal','deployment-tool-development'):
-            self.assertEqual(done['checks'][action], 'NOT_REQUESTED')
+        self.assertEqual(done['quality_verdict'], 'LIMITED')
+        self.assertFalse(done['development_completed'])
+        self.assertFalse(done['ready_for_release'])
+        self.assertEqual(done['checks']['related-test'], 'SKIPPED_BY_REQUEST')
         self.assertFalse(Path(ctx).with_name('scope.json').exists())
         self.assert_protected()
 
-    def test_explicit_commit_grant_keeps_gate_without_extra_tests(self):
+    def test_changed_assertion_requires_execution_of_that_test(self):
+        resolved = self.resolve(write_set='tests/test_app.py')
+        ctx = resolved['execution_context']
+        test = self.root / 'tests/test_app.py'
+        test.write_text(test.read_text().replace('button = True', 'button = False'))
+        static = self.cli('entry_context.py','static','--execution-context',ctx,
+            '--input','app.py','--input','tests/test_app.py','--',sys.executable,'-B','-c',
+            'import ast; ast.parse(open("tests/test_app.py").read())')
+        blocked = self.cli('entry_context.py','complete','--execution-context',ctx,
+                           '--static-evidence',static['evidence_file'], expected=2)
+        self.assertFalse(blocked['completed'])
+        run, _, verification_args = self.run_related(ctx)
+        self.assertEqual(run['status'], 'PASS')
+        done = self.cli('entry_context.py','complete','--execution-context',ctx,
+                        '--static-evidence',static['evidence_file'], *verification_args)
+        self.assertTrue(done['completed'])
+        self.assertEqual(done['checks']['related-test'], 'PASS')
+        self.assert_protected()
+
+    def test_delivery_receipts_reuse_static_snapshot_without_extra_work(self):
+        from unittest import mock
+        if str(SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(SCRIPTS))
+        import entry_context as entry
+        import execution_policy as policy
+        deploy = self.root / 'existing_deploy.py'
+        deploy.write_text('import json,sys\nfrom pathlib import Path\n'
+            'p=Path("memory/.aidp/deploy-count"); p.parent.mkdir(parents=True,exist_ok=True)\n'
+            'p.write_text(str(int(p.read_text())+1) if p.exists() else "1")\n'
+            'print(json.dumps({"status":"deployed","sha":sys.argv[1],"ready":True}))\n')
+        self.git('add', 'existing_deploy.py'); self.git('commit', '-qm', 'fixture existing deployment tool')
+        start = self.git('rev-parse', 'HEAD')
+        resolved = self.resolve()
+        ctx = resolved['execution_context']
+        (self.root / 'app.py').write_text('button = True\n')
+        static = self.cli('entry_context.py', 'static', '--execution-context', ctx, '--input', 'app.py', '--',
+            sys.executable, '-B', '-c', 'import ast; ast.parse(open("app.py").read())')
+        self.assertFalse(static['unit_tests_executed'])
+        evidence_file = Path(static['evidence_file'])
+        static_record = json.loads(evidence_file.read_text())
+        run, verification, _ = self.run_related(ctx)
+        self.assertEqual(run['status'], 'PASS')
+        revised = self.cli('entry_context.py', 'revise', '--execution-context', ctx,
+            '--grant', 'commit', '--grant', 'push', '--grant', 'deploy', '--authorization-source',
+            json.dumps({'kind':'user-text','request_id':'delivery-request','text':'提交、推送并部署本次修改'}))
+        self.assertEqual(revised['task_id'], resolved['task_id'])
+        self.cli('commit_gate.py', '--quiet', '--execution-context', ctx)
+        receipts = {}
+        def perform(action, argv):
+            policy.require_action(ctx, action)
+            completed = subprocess.run(argv, cwd=self.root, capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            receipt = Path(ctx).with_name(action + '.json')
+            receipt.write_text(json.dumps({'schema':1, 'action':action, 'status':'PASS',
+                'execution_context':entry.evidence_identity(entry.load_context(self.root, ctx)),
+                'inputs_ref':{'evidence_file':str(evidence_file),'checksum':static_record['checksum']},
+                'argv':argv,'result':{'returncode':completed.returncode,'stdout':completed.stdout,'stderr':completed.stderr},
+                'checks':[{'kind':'tool-receipt','status':'PASS','evidence':[str(receipt)]}]}))
+            receipts[action] = str(receipt)
+        self.git('add', 'app.py')
+        perform('commit', ['git', 'commit', '-m', 'fixture delivery'])
+        commit = self.git('rev-parse', 'HEAD')
+        with tempfile.TemporaryDirectory(prefix='aidp-local-remote-') as directory:
+            remote = Path(directory) / 'repo.git'
+            subprocess.run(['git', 'init', '--bare', '-q', str(remote)], check=True, capture_output=True)
+            self.git('remote', 'add', 'origin', str(remote))
+            branch = self.git('branch', '--show-current')
+            perform('push', ['git', 'push', 'origin', branch])
+            observed = subprocess.check_output(['git', '--git-dir', str(remote), 'rev-parse', branch], text=True).strip()
+            self.assertEqual(observed, commit)
+        perform('deploy', [sys.executable, '-B', str(deploy), commit])
+        reads = []
+        original_open = Path.open
+        def observe(path, *args, **kwargs):
+            if path.absolute() == (self.root / 'app.py').absolute(): reads.append(str(path))
+            return original_open(path, *args, **kwargs)
+        with mock.patch.object(Path, 'open', observe), mock.patch('subprocess.Popen', wraps=subprocess.Popen) as processes:
+            for _ in range(2):
+                done = entry.complete_context(self.root, ctx, static_evidence=str(evidence_file),
+                                              action_evidence=receipts, **verification)
+                self.assertTrue(done['completed'], done)
+                self.assertTrue(done['delivery_facts']['deploy']['delivered'])
+                self.assertEqual(done['checks']['related-test'], 'PASS')
+                for action in ('full-regression', 'review', 'full-cvl'):
+                    self.assertEqual(done['checks'][action], 'NOT_REQUESTED')
+            for call in processes.call_args_list:
+                argv = call.args[0] if call.args else call.kwargs['args']
+                self.assertEqual(Path(argv[0]).name, 'git', '收尾只能查询 Git 元数据，不能启动验证或部署工具')
+                self.assertNotIn('commit', argv)
+                self.assertNotIn('push', argv)
+        from project_inventory import fingerprint_token
+        if fingerprint_token(self.root / 'app.py') is not None:
+            self.assertEqual(reads, [], '可信输入在重复收尾期间不重读业务内容')
+        self.assertEqual((self.root / 'memory/.aidp/deploy-count').read_text(), '1')
+        self.assertEqual(self.git('rev-list', '--count', start + '..HEAD'), '1')
+        self.assertFalse((self.root / 'docs/deployment').exists())
+        self.assertEqual(json.loads(evidence_file.read_text())['checksum'], static_record['checksum'])
+        self.assert_protected()
+
+    def test_development_commit_grant_keeps_related_test_boundary(self):
         resolved = self.resolve(grants=['commit'])
         out = self.cli('commit_gate.py','--quiet','--context','aidp-command',
                        '--execution-context',resolved['execution_context'])
-        self.assertFalse(out['offchain']['actions']['unit_test'])
+        self.assertTrue(out['offchain']['actions']['unit_test'])
+        self.assertIn('full-regression', out['offchain']['not_requested'])
         self.assertFalse(out['offchain']['deploy'])
         self.assert_protected()
 
@@ -461,7 +613,48 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
     cli = LightTaskFlowTests.cli
     prepare_selection = PrereleaseContextFlowTests.prepare_selection
 
-    def prepare_build(self, skip=False):
+    def delegate_build(self, parent, version, build):
+        directory = self.root / 'docs/testing' / version
+        cases = directory / '正式用例'
+        cases.mkdir(parents=True, exist_ok=True)
+        index = cases / '00_索引.md'
+        index.write_text('# 正式用例\n\n[按钮验收](03_cases.md)\n')
+        (cases / '03_cases.md').write_text('#### 用例 TC-ONE: 按钮显示符合验收要求\n')
+        relative = lambda path: path.relative_to(self.root).as_posix()
+        checksum = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        acceptance = directory / 'acceptance.json'
+        acceptance.write_text(json.dumps({'version':version, 'acceptance_tests':['tests/test_app.py'],
+            'dependencies':['app.py'], 'cases':[{'id':'TC-ONE','test_files':['tests/test_app.py']}],
+            'case_index':{'path':relative(index),'sha256':checksum(index)}}))
+        suites = [{'cwd':'.','env_id':'stdlib','inputs':[], 'external_dependencies':'none',
+            'runners':[{'cwd':'.','env_id':'stdlib','suffixes':['.py'],
+                        'argv':[sys.executable,'-B','{tests}']}]}]
+        source = self.root / 'unit-plan.json'
+        source.write_text(json.dumps({'schema':1, 'suites':suites}))
+        self.git('add', relative(directory), 'unit-plan.json')
+        self.git('commit', '-qm', 'fixture version acceptance baseline')
+        commit = self.git('rev-parse', 'HEAD')
+        manifest = self.root / 'memory/.aidp' / (build + '-unit-manifest.json')
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({'schema':1,'version':version,'build':build,'commit':commit,
+            'acceptance_baseline':{'path':relative(acceptance),'sha256':checksum(acceptance)},
+            'acceptance_tests':['tests/test_app.py'],'dependencies':['app.py'],
+            'source':{'path':relative(source),'sha256':checksum(source)},'suites':suites}))
+        baseline_path = self.root / 'memory/.sprint-autopilot-baseline.json'
+        baseline = json.loads(baseline_path.read_text())
+        for row in baseline['versions'][version]['builds']:
+            if row['build'] == build:
+                row['push_commit'] = commit
+        baseline_path.write_text(json.dumps(baseline))
+        child = self.cli('entry_context.py','fork-test-build','--execution-context',parent['execution_context'],
+                         '--version',version,'--build-id',build,'--manifest',str(manifest))
+        baseline.setdefault('aiauto', {})['execution_context'] = child['execution_context']
+        baseline_path.write_text(json.dumps(baseline))
+        self.manifest = manifest
+        self.test_context = child['execution_context']
+        return child
+
+    def prepare_build(self, skip=False, delegate=True):
         parent, _ = self.prepare_selection('V1.1.0')
         if skip:
             parent = self.cli('entry_context.py', 'resolve', '--entry', 'sprint-autopilot',
@@ -476,6 +669,8 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
             current_build='V1.1.0_build1001', builds=[{'build': 'V1.1.0_build1001',
                 'push_commit': self.git('rev-parse', 'HEAD')}])
         baseline_path.write_text(json.dumps(baseline))
+        if not skip and delegate:
+            self.delegate_build(parent, 'V1.1.0', 'V1.1.0_build1001')
         return parent
 
     def entry_block(self):
@@ -523,6 +718,26 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
         self.assertEqual(route['route'], 'light')
         self.assertEqual(set(route['authorized_actions']), {'static', 'live-tests'})
 
+    def test_standalone_aiauto_cannot_claim_version_full_by_name_or_grant(self):
+        self.prepare_build(delegate=False)
+        forged = json.dumps({'kind': 'user-text', 'request_id': 'ask-full-by-name',
+                             'text': '对当前版本做全量测试', 'skip_actions': []})
+        for grants in ([], ['full-regression']):
+            with self.subTest(grants=grants):
+                args = ['resolve', '--entry', 'sprint-aiauto-test', '--version', 'V1.1.0',
+                        '--task-scope', 'test', '--authorization-source', forged]
+                for grant in grants:
+                    args += ['--grant', grant]
+                proc = subprocess.run([sys.executable, str(SCRIPTS / 'entry_context.py'), args[0],
+                    '--root', str(self.root), *args[1:]], capture_output=True, text=True)
+                if proc.returncode == 0:
+                    route = json.loads(proc.stdout.strip().splitlines()[-1])
+                    actions = set(route['allowed_actions'])
+                    self.assertNotIn('full-regression', actions)
+                    self.assertFalse({'implement', 'commit', 'push', 'deploy'} & actions)
+                else:
+                    self.assertTrue(proc.stdout + proc.stderr)
+
     def test_actual_scheduler_same_build_reuses_formal_context_and_root_budget(self):
         parent = self.prepare_build()
         first = json.loads(self.run_scheduled_entry().strip().splitlines()[-1])
@@ -543,7 +758,7 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
     def assert_pinned_build_drift(self, wake_source):
         parent = self.prepare_build()
         child = self.cli('entry_context.py', 'fork-test-build', '--execution-context', parent['execution_context'],
-            '--version', 'V1.1.0', '--build-id', 'V1.1.0_build1001')
+            '--version', 'V1.1.0', '--build-id', 'V1.1.0_build1001', '--manifest', str(self.manifest))
         baseline_path = self.root / 'memory/.sprint-autopilot-baseline.json'
         baseline = json.loads(baseline_path.read_text())
         baseline['versions']['V1.1.0']['current_build'] = 'V1.1.0_build1002'
@@ -588,6 +803,7 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
             last_deployed_at='2026-01-01T00:00:00Z', current_build='V1.0.0_build1001',
             builds=[{'build': 'V1.0.0_build1001', 'push_commit': self.git('rev-parse', 'HEAD')}])
         baseline_path.write_text(json.dumps(baseline))
+        self.delegate_build(parent, 'V1.0.0', 'V1.0.0_build1001')
         output = self.run_scheduled_entry().strip().splitlines()[-1]
         self.assertTrue(output.startswith('{'), output)
         route = json.loads(output)
@@ -611,6 +827,7 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
             current_build='V1.0.0_build1001', builds=[{'build': 'V1.0.0_build1001',
                 'push_commit': self.git('rev-parse', 'HEAD')}])
         baseline_path.write_text(json.dumps(baseline))
+        self.delegate_build(parent, 'V1.0.0', 'V1.0.0_build1001')
         output = self.run_scheduled_entry().strip().splitlines()[-1]
         self.assertTrue(output.startswith('{'), output)
         route = json.loads(output)

@@ -35,7 +35,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-dev
 - **方式 A（明确 Sprint）**：`/sprint-full` / `/sprint-batch` 内部调用或用户指定 Sprint，执行该 Sprint 的开发
 - **方式 B（明确正式累进）**：formal 父编排明确要求新 Sprint，完成后仅串联父授权的能力；普通描述直接调用仍为 light
 
-**本命令按父授权编排**：默认实现+静态验证；TDD/related-test、review、full-cvl、document/docs-audit 逐项过 `light-context.md` 动作围栏。角色写集隔离，已授权检查复用既有证据，修复只复核 delta。权威协议 = `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。
+**本命令按父授权编排**：默认实现+静态验证+related-test，自动测试与必要修复复验；review、full-cvl、document/docs-audit 逐项过 `light-context.md` 动作围栏。角色写集隔离，已授权检查复用既有证据，修复只复核 delta。权威协议 = `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`。
 
 参数：$ARGUMENTS
 - `/sprint-dev` — 有 formal 父上下文时开发其明确 Sprint；独立无上下文时为 light
@@ -66,7 +66,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-dev
   3. **不可逆或回退成本高**（已推送的 tag/分支、已分发的制品、`git mv` 一批目录才能撤销的结构）。
   典型如 **Phase 0B.0 版本落点决策门**（三条全中）：**绝不能以"不许自发问"为由跳过**。判定口诀：**动的是"要不要继续/怎么推进"→ 不问自动推进；动的是"版本号/持久目录/对外 tag 这类高成本不可逆承诺"→ 必须设门问用户**。
 - **★ "缺陷/问题怎么修"的默认处置 = `/sprint-bugfix`「缺陷处置默认决策纪律」（单一信源，约定 21 不复述）**：开发/修复途中遇到具体缺陷（失败被伪装成成功、前端吞后端 error、上游不可达、上游已交付更优端点、安全 fail-open 等）时，**先问一句「不做这个修复，当前行为是不是错的？」——是→按纪律映射表默认处置【直接修、不问】、拿不准也默认修**；只有"口径/单位/默认值需产品定义""涉及版本号/tag/对外承诺"才归"必须问"。**严禁把本就该默认修的缺陷当成"要产品拍板"挂起等人**（下游反馈根因）。
-- **★ 运行时验证纪律 = 约定 35（详规 `{{AIDP_HOME}}/rules/code.md`，约定 21 不复述）**：开发/验证代码**默认只静态验证**（类型/语法/lint/确定性脚本）；**绝不为"看 UI 效果 / 验证运行时"擅自启动前后端服务**（`npm run dev`/`vite`/`mvn spring-boot:run` 等——抢端口/冲突/卡机）**或跑完整构建**。需运行时/浏览器验证 → **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**。**★ Bash 起任何常驻服务类命令前先自检**「是否用户显式要求 / 是否 `deployment.mode=local` 授权例外」，否则中止改走 (a)/(b)/(c)。
+- **★ 运行时验证纪律 = 约定 35（详规 `{{AIDP_HOME}}/rules/code.md`，约定 21 不复述）**：开发/验证代码**默认静态验证与当前任务相关单测**（类型/语法/lint/确定性脚本）；**绝不为"看 UI 效果 / 验证运行时"擅自启动前后端服务**（`npm run dev`/`vite`/`mvn spring-boot:run` 等——抢端口/冲突/卡机）**或跑完整构建**。需运行时/浏览器验证 → **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**。**★ Bash 起任何常驻服务类命令前先自检**「是否用户显式要求 / 是否 `deployment.mode=local` 授权例外」，否则中止改走 (a)/(b)/(c)。
 
 ## 前置流程
 
@@ -523,12 +523,12 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 ### ★ 开发完成后：自动回写需求 + 设计文档（含研发需求回写）
 
-> ⚠️ 关键规则一句提醒：**Step X.0.0 是约定 22「上游文档级联同步」的统一入口**——开发引入超出既存文档范围的实质变更（新增接口/表/业务规则/页面/功能点、原型字段被覆盖/裁剪、Mock→真实、语义·口径·范围变更）时必须按 4 级触发（研发需求→详细设计→研发执行计划→研发自测用例）自动级联，**禁止绕过它直接调单一 SKILL 补单层**；Step X.7/X.8 是约定 25 配置项清单 + 部署流程 SOP（检测驱动、独立于配置变更）。
+> ⚠️ 关键规则一句提醒：**Step X.0.0 是约定 22「上游文档级联同步」的统一入口**——开发引入超出既存文档范围的实质变更（新增接口/表/业务规则/页面/功能点、原型字段被覆盖/裁剪、Mock→真实、语义·口径·范围变更）时必须按 4 级触发（研发需求→详细设计→研发执行计划→研发自测用例）自动级联，**禁止绕过它直接调单一 SKILL 补单层**；Step X.7/X.8 是约定 25 配置/部署变化的机器待同步登记，规划/正式发布再集中校准操作指引。
 
 > ⛔⛔ **详细步骤已外置为 3 个分片、进入本回写段的【第一动作】= 按需加载**：Step X.0.0–X.8 的完整步骤在 `{{AIDP_HOME}}/flows/sprint-dev/` 下 **3 个分片**，**进入本段第一动作 = 按序 Read 三片**、逐项执行：
 > 1. **`{{AIDP_HOME}}/flows/sprint-dev/postdev-writeback-1.md`** — Step X.0.0（上游文档级联同步检测）
 > 2. **`{{AIDP_HOME}}/flows/sprint-dev/postdev-writeback-2.md`** — Step X.0 / X.2 / X.3 / X.4 / X.5 / X.6 / X.7
-> 3. **`{{AIDP_HOME}}/flows/sprint-dev/postdev-writeback-3.md`** — Step X.8（部署流程 SOP + SQL执行台账）+ **累进路径的产物审计收口**
+> 3. **`{{AIDP_HOME}}/flows/sprint-dev/postdev-writeback-3.md`** — Step X.8（部署操作变化待同步）+ **累进路径的产物审计收口**
 >
 > 下方骨架仅供定位，**权威判定与触发条件一律以分片 flow 文件为准，绝不凭本骨架或记忆略过任一 Step，也不得只读其中一片**。
 
@@ -545,8 +545,8 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 | **X.4** | 更新项目级 memory（架构级变更时）|
 | **X.5** | 更新 SQL 脚本 |
 | **X.6** | ★ 更新 *事实清单.md（配置事实变更时）|
-| **X.7** | ★ 维护配置项清单（约定 25）|
-| **X.8** | ★ 部署流程 SOP + SQL执行台账（约定 25，检测驱动、独立于配置变更）|
+| **X.7** | 配置操作变化登记（约定 25）|
+| **X.8** | 部署操作变化待同步（约定 25，不在日常补 Markdown）|
 | **X.8 收口** | ★ 累进路径的产物审计（docs-audit 已授权且新内容未被同 hash 证据覆盖 → 派 version-auditor）|
 
 > 收口：回写段完成 → 进入下方「完成前验证」。**执行前务必已按序 Read `postdev-writeback-1.md` + `-2.md` + `-3.md` 并按其逐项完成，不能只看本表。**
@@ -557,7 +557,7 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 调用 `superpowers:verification-before-completion`：
 - 确认本 Sprint 范围内代码已实现、无遗留 TODO
-- ★ **不在开发阶段逐任务编译/校验**——后端编译 / 前端校验（lint + 类型检查，**不打包**）已收敛到 **Sprint 验收（`/sprint-test`）**，届时**仅处理本 Sprint 改动的一侧**（改前端才校验前端、改后端才编后端）且以**资源受限方式**执行（`nice` + 限并发，避免 CPU 打满），配方见 `agents/backend.md`「Step 7」/ `agents/frontend.md`「Step 4」。前端验收期只做 lint + 类型检查、**不跑完整打包**，部署打包由使用者按需自行执行。仅开发时仍在本轮完成必要静态检查，用 entry_context static 产证据，不依赖后续 test 才能完成
+- ★ **不在开发阶段逐任务编译/校验**——后端编译 / 前端校验（lint + 类型检查，**不打包**）已收敛到 **Sprint 验收（`/sprint-test`）**，届时**仅处理本 Sprint 改动的一侧**（改前端才校验前端、改后端才编后端）且以**资源受限方式**执行（`nice` + 限并发，避免 CPU 打满），配方见 `agents/backend.md`「Step 7」/ `agents/frontend.md`「Step 4」。前端验收期只做 lint + 类型检查、**不跑完整打包**，部署打包由使用者按需自行执行。静态证据用 entry_context static 生成；普通开发仍须自动完成 related-test，真实 skip 仅受限返回
 
 更新 `memory/{version}/{user}/activeContext.md`：
 - 在「子迭代记录」中追加开发阶段的 Round 记录
@@ -576,7 +576,7 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 **串联按父策略选择**：只有 related-test/review/full-cvl 获授权时才调用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]`；原始参数与无人值守标记继续透传。test 子入口继承，不因入口名自行取得公开组合。实现修复需 implement；同根因同 inputs 未变化则停止 retry，报告事实与当前授权范围。
 
-未授权检查为 NOT_REQUESTED，默认开发完成 static 后直接按 `light-context.md` complete。formal 需要关闭时进入 `/sprint-close {NNN} --execution-context "$EXECUTION_CONTEXT" [--unattended]`，只消费已要求的证据并执行原编号/归档门；不因 close 补跑测试或审计。`skip-test` 仍可抑制自动串联，不取消已获授权的交付义务。
+默认开发完成 static 后自动进入当前 task/单 Sprint 的 related-test，真实失败修复复验，再按 `light-context.md` 收口；无测试/缺工具不能当 PASS 或 NOT_REQUESTED。formal 需要关闭时进入 `/sprint-close {NNN} --execution-context "$EXECUTION_CONTEXT" [--unattended]`，只消费已要求的证据并执行原编号/归档门；不因 close 补跑测试或审计。父编排传 `skip-test` 只移交测试，不取消 related-test；仅用户真实明确 skip 按 source 限制并返回 LIMITED，不能标完整开发通过。
 
 ---
 
@@ -644,13 +644,13 @@ grep -A 50 "Sprint-${SPRINT_NNN}" docs/plans/{version}/01_研发执行计划.md 
 
 # 场景 2：分步模式下的开发阶段
 /sprint-start 001
-/sprint-dev           # 默认实现+静态；后续仅按当前授权串联
+/sprint-dev           # 默认实现+静态+相关单测；自动修复复验后终端返回
 # 已授权父链中抑制自动串联可带 skip-test
 /sprint-dev 001 skip-test
 
 # 场景 3：★ 独立使用自动累进
 /sprint-dev "新增用户导出功能"
-# 默认light：实现 → 静态 → 当前任务收尾；不创建Sprint
+# 默认light：实现 → 静态 → sprint-test → 必要修复/复验 → 终端；不创建Sprint
 
 # 场景 4：只想开发不想自动测试
 /sprint-dev "增加菜单缓存" skip-test

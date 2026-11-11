@@ -950,6 +950,14 @@ def main():
                 unit = unverified_result(args.build, commit, f"单测结果文件缺失：{unit_path}")
             else:
                 unit = payload["unitTests"]
+            if payload.get("version") not in (None, args.version):
+                raise ValueError("报告 version 与请求不一致")
+            payload["version"] = args.version
+            if unit.get("version") not in (None, args.version):
+                raise ValueError("单测结果 version 与当前报告不一致")
+            if not unit.get("testScope"):
+                unit = unverified_result(args.build, commit, "缺当前版本验收基线/正式清单绑定，旧全仓结果不可充当版本验收")
+                unit["version"] = args.version
             if args.browser_na_reason:
                 payload["browserTests"] = {"status": "N/A", "reason": args.browser_na_reason}
                 key = "summary" if args.kind == "test" else "testSummary"

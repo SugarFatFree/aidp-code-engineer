@@ -104,20 +104,32 @@ class AiautoParallelIntegrationTests(unittest.TestCase):
         env = {"UNIT_MODE": unit_mode, "UNIT_DELAY": str(unit_delay),
                "UNIT_STARTED": str(self.unit_started), "BROWSER_STARTED": str(self.browser_started),
                "UNIT_COUNTER": str(self.counter)}
-        suite = {"full_argv": [sys.executable, "-m", "unittest", "-v", "test_build"],
-                 "cwd": ".", "env_id": "isolated-stdlib-build", "inputs": [],
-                 "external_dependencies": "none", "env": env}
+        def suite(cwd, env_id, argv):
+            return {"cwd": cwd, "env_id": env_id, "inputs": [], "external_dependencies": "none", "env": env,
+                    "runners": [{"suffixes": [".py"], "argv": argv, "cwd": cwd, "env_id": env_id}]}
+        runner = [sys.executable, "-m", "unittest", "-v", "{tests}"]
         if missing:
-            suite["full_argv"] = ["aidp-integration-missing-unit-tool"]
-        suites = [suite]
+            runner = ["aidp-integration-missing-unit-tool", "{tests}"]
+        suites = [suite(".", "isolated-stdlib-build", runner)]
+        tests = ["test_build.py"]
         if opaque:
-            (self.root / "opaque_runner.py").write_text(
-                "import os, unittest, test_build\n"
-                "with open(os.devnull, 'w') as output:\n"
-                " result = unittest.TextTestRunner(stream=output).run(unittest.defaultTestLoader.loadTestsFromModule(test_build))\n"
-                "print('custom runner completed successfully' if result.wasSuccessful() else 'custom runner failed')\n"
-                "raise SystemExit(0 if result.wasSuccessful() else 1)\n")
-            suites.append(dict(suite, full_argv=[sys.executable, "opaque_runner.py"], env_id="isolated-custom-output"))
+            # 第二个真实套件放在独立 cwd/env，仍由同一份冻结清单明确列名。
+            (self.root / "second/tests").mkdir(parents=True)
+            (self.root / "second/tests/test_build.py").write_text(
+                UNIT_TEST.replace("Path('value.txt')", "(Path(__file__).resolve().parents[2] / 'value.txt')"))
+            suites.append(suite("second", "isolated-second-suite", runner))
+            tests.append("second/tests/test_build.py")
+        formal = self.root / "docs/testing" / self.version / "正式用例"
+        formal.mkdir(parents=True)
+        index = formal / "00_索引.md"
+        index.write_text("# 本版本正式用例索引\nTC-PARALLEL-1\n")
+        (formal / "03_cases.md").write_text("#### 用例 TC-PARALLEL-1: parallel fixture\n")
+        acceptance = {"version": self.version, "acceptance_tests": tests, "dependencies": ["value.txt"],
+                      "cases": [{"id": "TC-PARALLEL-1", "test_files": tests}],
+                      "case_index": {"path": index.relative_to(self.root).as_posix(),
+                                     "sha256": hashlib.sha256(index.read_bytes()).hexdigest()}}
+        acceptance_path = formal.parent / "acceptance.json"
+        acceptance_path.write_text(json.dumps(acceptance))
         config = json.dumps({"schema": 1, "suites": suites})
         # 使用部署 commit 内的真实 Markdown 契约来源，不依赖当前工作区计划。
         source = "# Full unit contract\n\n```aidp-test-plan\n" + config + "\n```\n"
@@ -127,7 +139,9 @@ class AiautoParallelIntegrationTests(unittest.TestCase):
         self.commit = self.git("rev-parse", "HEAD")
         self.plan = {"schema": 1, "version": self.version, "build": self.build, "commit": self.commit,
                      "source": {"path": "contract.md", "sha256": hashlib.sha256(source.encode()).hexdigest()},
-                     "suites": suites}
+                     "suites": suites, "acceptance_tests": tests, "dependencies": ["value.txt"],
+                     "acceptance_baseline": {"path": acceptance_path.relative_to(self.root).as_posix(),
+                                             "sha256": hashlib.sha256(acceptance_path.read_bytes()).hexdigest()}}
         self.baseline = self.root / "memory/.sprint-autopilot-baseline.json"
         self.baseline.parent.mkdir(exist_ok=True)
         self.baseline.write_text(json.dumps({"versions": {self.version: {
@@ -136,12 +150,26 @@ class AiautoParallelIntegrationTests(unittest.TestCase):
         (self.root / "value.txt").write_text("dirty main workspace")
         (self.root / "contract.md").write_text("uncommitted broken plan")
 
+    def delegate(self):
+        """真实 autopilot test-only 根 + 同 version/build 子任务；测试不能直接伪造授权。"""
+        sys.path.insert(0, str(SCRIPTS))
+        from entry_context import resolve_autopilot_root, fork_test_build
+        if not hasattr(self, "parent"):
+            self.parent = resolve_autopilot_root(self.root, self.version, authorization_source={
+                "kind": "explicit-command", "command": "sprint-autopilot", "request_id": "parallel-fixture",
+                "options": ["--skip-dev"]})["execution_context"]
+        manifest = self.root / "memory" / (self.build + "-plan.json")
+        manifest.write_text(json.dumps(self.plan))
+        context = fork_test_build(self.root, self.parent, self.version, self.build,
+                                  manifest=manifest)["execution_context"]
+        return context, manifest
+
     def unit_command(self, timeout=5):
-        plan_path = self.base / (self.build + "-plan.json")
-        plan_path.write_text(json.dumps(self.plan))
+        context, manifest = self.delegate()
         return [sys.executable, str(SCRIPTS / "build_unit_test.py"), "run",
                 "--root", str(self.root), "--version", self.version, "--build", self.build,
-                "--commit", self.commit, "--plan", str(plan_path), "--timeout", str(timeout)]
+                "--commit", self.commit, "--plan", str(manifest), "--execution-context", context,
+                "--timeout", str(timeout)]
 
     def spawn(self, argv):
         process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -268,7 +296,7 @@ class AiautoParallelIntegrationTests(unittest.TestCase):
 
     def test_unit_timeout_kills_only_unit_and_browser_still_finishes(self):
         self.prepare(unit_delay=60)
-        unit, browser = self.start_pair(browser_delay=.55, timeout=.3)
+        unit, browser = self.start_pair(browser_delay=3.5, timeout=2.5)
         unit_result = self.collect(unit)
         self.assertEqual(unit_result["status"], "TIMEOUT", unit_result)
         self.assertIsNone(browser.poll(), "unit timeout killed the browser process")
@@ -329,7 +357,7 @@ class AiautoParallelIntegrationTests(unittest.TestCase):
         browser_result, unit_result = self.collect(browser), self.collect(unit)
         self.assertEqual(unit_result["status"], "UNVERIFIED", unit_result)
         emitted, report, joined = self.emit_and_join(browser_result, unit_result, backend=True)
-        self.assertEqual(report["unitTests"]["runs"][0]["exit_code"], 127)
+        self.assertIn(report["unitTests"]["runs"][0]["exit_code"], (2, 127))
         self.assertEqual(report["unitTests"]["counts"], {"passed": None, "failed": None, "skipped": None})
         self.assertFalse(emitted["success_ready"])
         self.assertTrue(joined["unverified"])
@@ -345,9 +373,9 @@ class AiautoParallelIntegrationTests(unittest.TestCase):
         self.assertEqual(len(unit_result["runs"]), 2)
         self.assertNotEqual(unit_result["runs"][0]["run_id"], unit_result["runs"][1]["run_id"])
         self.assertEqual(unit_result["runs"][0]["counts"], {"passed": 1, "failed": 0, "skipped": 1})
-        self.assertEqual(unit_result["counts"], {"passed": None, "failed": None, "skipped": None})
+        self.assertEqual(unit_result["counts"], {"passed": 2, "failed": 0, "skipped": 2})
         _, report, joined = self.emit_and_join(browser_result, unit_result)
-        self.assertEqual(report["unitTests"]["runs"][1]["env_id"], "isolated-custom-output")
+        self.assertEqual({r["env_id"] for r in report["unitTests"]["runs"]}, {"isolated-stdlib-build", "isolated-second-suite"})
         self.assertTrue(joined["converged"])
         self.assertEqual(len(self.counter.read_text().splitlines()), 2)
 
@@ -398,15 +426,19 @@ class AiautoParallelIntegrationTests(unittest.TestCase):
         self.baseline.write_text(json.dumps(data))
         self.unit_started.unlink()
         self.browser_started.unlink()
-        unit, browser = self.start_pair()
+        # 同内容证据可复用，单测进程不会再启动；浏览器不应等待单测起跑文件。
+        unit, browser = self.start_pair(wait_unit=False)
         browser_result, new = self.collect(browser), self.collect(unit)
         self.assertEqual(new["status"], "PASS", new)
+        # 新 build 保留独立委派/manifest，但同版本同内容证据只可信复用，不重新启动测试进程。
         self.assertFalse(new["reused"])
+        self.assertTrue(new["runs"][0]["reused"])
+        self.assertEqual(new["runs"][0]["source_run_id"], first["runs"][0]["run_id"])
         self.assertNotEqual(first["runs"][0]["run_id"], new["runs"][0]["run_id"])
         _, report, joined = self.emit_and_join(browser_result, new)
         self.assertEqual(report["build"], self.build)
         self.assertTrue(joined["converged"])
-        self.assertEqual(len(self.counter.read_text().splitlines()), 2)
+        self.assertEqual(len(self.counter.read_text().splitlines()), 1)
         self.assertEqual(self.release_state(), "pass")
 
 

@@ -1,63 +1,24 @@
-> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
+> 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 只使用适用能力。
 
 # sprint-dev · 开发完成后回写详情（分片 3/3 · Step X.8）
 
-> **【分片 3/3 · postdev-writeback 二次切分】** 本片是 `/sprint-dev` 命令「开发完成后回写」段的收尾，覆盖 **Step X.8（部署流程 SOP + SQL执行台账，检测驱动、独立于配置变更，约定 25）**。前两片：`postdev-writeback-1.md`（Step X.0.0 级联检测）、`postdev-writeback-2.md`（Step X.0–X.7）。以本文件为准逐项执行、不得略过。
+#### Step X.8：部署操作变更留待集中同步
 
----
+日常 dev / bugfix / 链外任务 / 部署不自动新增或更新部署 Markdown，不为部署日志另做 commit/push。只核本任务变化的 SQL、配置、启动参数、初始化/迁移接口、服务与中间件；历史债务不纳入。沿用当前 execution context，不因 commit/push/deploy 新请求追加测试、CVL、全回归、迁移演练、多 Agent、计划卡或新工具开发。正式 aiauto 报告和已授权的两路测试链职责不变。
 
-#### Step X.8：★ 部署流程 SOP + SQL执行台账（检测驱动，独立于配置变更）
+有实际操作变化时，把权威文件/现成运行记录引用记到既有 baseline 的 `deployment_doc_pending.{version}`，不复制配置正文或生成报告。无变化不写：
 
-先按 `light-context.md` 核 document 与父 budget；仅有 deploy 时消费现成 SOP、执行必要备份/已授权迁移/就绪，不借本段开发工具。真实不兼容只回传最小变更与成本；没有 deployment-tool-development grant 不新写 controller。
-
-> `vcs_mode=none` 时下面两处 Git diff 均记 `unsupported:vcs-disabled`，不得把空 diff 当「无变更」；部署变更检测改用本 Sprint `activeContext.md` 涉及文件、SQL 与配置清单，本地规划产物按该清单派增量审计。无法得到可信文件清单时返回范围未核验原因，不自动扩大审计。`git` 模式仍按原 diff 范围执行。
-
-> **为何独立成步**：部署流程文档的实际变更源（新增 SQL / 部署后回填接口 / 需重启）**远宽于** Step X.7 的「配置文件被改动」触发面。若嵌套在 X.7 内，则"只加 SQL、零配置改动"时永远不生成（下游 V0.10 根因）。故本步**独立**、**触发源 = 部署侧实质变更检测**（照搬约定 6「检测 `sql/增量/` 下有无脚本即执行、不依赖研发执行计划是否列 SQL 任务」的检测驱动范式），**与是否改配置、研发执行计划是否列了『写部署文档』任务全部无关**。
-
-**★ 触发（检测驱动，无条件先检测；命中任一即"本版有部署侧变更"）**——命令端跑一次轻量检测：
+<!-- flowvar-check: allow DEPLOY_REF -->
 
 ```bash
-V={version}
-DEPLOY_CHANGE=0
-# ① SQL：docs/deployment/{V}/sql/增量/ 下有 NN_*.sql（跳过 99_回滚脚本.sql）
-#    暂存位兜底须含 SKILL 原生形态 `code/sql/v{版本}/`（小写 v）——只扫无 v 路径会漏掉它，
-#    而漏扫与本轮确实没有 SQL 在结果上同形。
-ls docs/deployment/$V/sql/增量/[0-9][0-9]_*.sql 2>/dev/null | grep -qv '99_' && DEPLOY_CHANGE=1
-for _c in "code/sql/v${V#V}" "code/sql/v$V" "code/sql/$V"; do
-  [ -d "$_c" ] && ls "$_c"/[0-9][0-9]_*.sql 2>/dev/null | grep -qv '99_' && DEPLOY_CHANGE=1
-done
-# ② 配置项清单本版有实质内容（Step X.7 已产出）——锚点用 3 段标题，不用「本版本变更」表名
-grep -ql "新增配置\|删除配置\|运行时配置文件变更" docs/deployment/$V/配置文件/增量/配置项清单*.md 2>/dev/null && DEPLOY_CHANGE=1
-# ③ 本 Sprint 代码 diff 含"部署后必须执行"信号：数据初始化/回填接口、数据迁移脚本、定时任务、context-path/启动参数变更、新增中间件/第三方依赖、判定需重启/重新构建
-#    识别信号（按技术栈取等价）：init/rebuild/migrate/backfill 类接口路径、@Scheduled 新增、server.servlet.context-path 变更、新增 pom/package 依赖中间件（redis/mq/es…）
-# 本任务变化路径取 development_scope.py 的 scope；只核该范围的部署信号，不用 HEAD~1。
+# VERSION、DEPLOY_REF 从本任务现有上下文重绑；DEPLOY_REF 是实际变化文件或运行记录引用。
+VERSION="${VERSION:?从当前执行上下文重绑版本，不读历史Sprint}"
+python3 {{AIDP_HOME}}/scripts/deployment_ops.py note --version "${VERSION:?}" --ref "${DEPLOY_REF:?}"
 ```
 
-> `DEPLOY_CHANGE=1` = 本版有部署侧变更 → **必须维护** `部署流程.md` + `SQL执行台账.md`；`=0`（纯前端样式/纯逻辑修复、无任何部署侧变更）→ 跳过本步。**检测由命令端做，不依赖研发执行计划是否列任务**。
+部署执行只消费现有操作指引和上述待同步引用。入口缺失时按已知真实脚本/配置判定最小前提缺口，不回调开发链补文档，不把“未写 Markdown”变成部署失败。备份按 `{{AIDP_HOME}}/reference/部署操作约定.md` 统一频率核对；不因 schema 迁移增加副本，不自动恢复旧数据。未配置 CI/pipeline 使用现有轻量出口，一次说明原因，不循环探测。
 
-**A) 部署流程 `docs/deployment/{version}/部署流程/部署流程.md`（给部署执行者的操作手册，固定文件名）**：
-- **定位**：面向**部署执行者**的操作手册（不是给开发者的设计说明）——每句都应回答"下一步敲什么命令 / 点什么"；解释"为什么这么设计 / 机制怎么实现"（去重表/sha256/迁移原理/历史背景）**一律不进本文档**（归详细设计或删）。与 `{version}-deployment-checklist.md`（运维手工的前置/回滚/灰度/监控）分工，**不复述配置细节**（指向 `配置文件/增量/配置项清单.md`）、**不复述 SQL 内容**（指向 `sql/增量/` 与台账）。
-- **★ 无条件 bootstrap-if-missing**：`DEPLOY_CHANGE=1` 且（`部署流程.md` 缺失 **或** 仅剩模板占位符未实值化）→ `mkdir -p docs/deployment/{version}/部署流程/` 并**从模板 `{{AIDP_HOME}}/templates/deployment/部署流程.md` 复制**（模板即 8 章骨架 `〇选形态/一打包/二部署/三中间件配置/四配置项/五验证/六排障/七回滚`，每章带生成指引注释 + 预期篇幅），填充占位符（`{version}`/`{prev-version}` + 各章实值）；已存在有效文件 → 增量更新对应章节（本版新增 init 接口 / 新形态 / 新中间件差异则补进对应章）。**"无文件则生成"不挂任何条件触发的增量步骤内**——检测到部署变更即 bootstrap。
-- **★ 生成约束（三条，随模板注释同源、命令端强制落地）**：
-  1. **多形态成套**：检测本版部署形态数 N（`docs/deployment/{version}/` 下部署资产 / PRD `autopilot_decisions.deployment` / 打包脚本判断），**N 种形态就产 N 套「打包」+「中间件配置」，缺一不可**；多形态共用一套构建命令时**明确写"构建命令相同、区别只在取用哪些产物"**（避免误以为要维护多条构建链路）。「打包」章须给**产物完整路径 + 文件名 + 解压后内部结构**（如"解压后直接是 bin/+lib/，无顶层目录"）；「中间件配置」须**内嵌完整可复制配置**（每形态各一份）+ 标注形态间差异，外部 `配置文件/` example 作补充**不作替代**。
-  2. **自动化环节压缩**：凡应用/框架**自动完成**的环节（启动期自动建表/自动迁移/自动初始化）**只写一句结论 + 幂等性说明**，**禁止**展开人工执行步骤、**禁止**写实现机制（去重表/sha256）。反例（禁）：把"启动期自动迁移、无需人工"当成"第一步 执行 SQL"来写；正例：「SQL 无需人工干预——建表与升级由应用启动时自动完成（幂等，重复启动不重复执行）；`sql/增量/` 仅权威副本供核对」。仅**确需人工执行 SQL** 时才展开步骤。
-  3. **配置项不双写（约定 25 延伸）**：「四、配置项」章**不重复**配置项内容，只声明"是否需要改"——全部有默认值 → 一句「配置保持默认即可，需按环境调整见 `../配置文件/增量/配置项清单.md`」；确有必填项 → **只列 key 名、不解释后果**（后果 + 敏感项加固归 `配置项清单.md`）。**部署流程 与 配置项清单 两份 .md 之间不得双写**（同一信息只在一处维护）。
-- **精炼铁律**：验证/排障两章一律"可复制命令 + 表格"不写散文；初始化接口/数据迁移**无则删该行 / 填"无"**、不臆造；各章超出模板注释标的预期篇幅多为掺入了设计说明 → 回头精简。
-
-**B) SQL执行台账 `docs/deployment/{version}/部署流程/SQL执行台账.md`（固定文件名，★ 团队共享入库）**：
-- **用途**：记录**各环境** SQL 执行状态（开发/演示/生产分列），弥补约定 6 的 `.applied-sql.json` 只覆盖开发库且为 per-user memory、不入部署文档、不覆盖其它环境的空白。
-- **首版**：`DEPLOY_CHANGE=1` 且台账缺失 → 从模板 `{{AIDP_HOME}}/templates/deployment/SQL执行台账.md` 复制，按 `sql/增量/` 下实际脚本逐行建表（脚本名 × 环境列）。
-- **★ 与约定 6 联动登记开发库列**：Step 1（后端开发）按约定 6 把 SQL 自动应用到开发库成功后，**除写 `.applied-sql.json` 外，同步在台账「开发库」列登记**（状态 ✅ / 影响行数 / 执行时间；no-op 记原因）；**演示/生产列留 `待部署` 占位**，待各环境部署时补——让台账**从开发第一天就存在**、非等到生产部署才临时手搓。
-- **团队共享**：台账是跨人协作的部署产物，**入库共享**（区别于 per-user `memory/{version}/{user}/.applied-sql.json`）。
-
-**C) ★ 反静默失败（约定 6 同款「部署阻断风险」告警，禁止静默跳过）**：`DEPLOY_CHANGE=1` 但出现下列任一 → **WARN + 标「部署阻断风险：部署流程文档缺失/未覆盖本版部署变更」**，绝不静默继续：
-- 模板 `{{AIDP_HOME}}/templates/deployment/部署流程.md` 或 `SQL执行台账.md` **不存在**（脚手架分发异常，提示重跑 upgrade）；
-- 生成/写入失败；
-- 检测到部署侧变更（`DEPLOY_CHANGE=1`）却最终无 `部署流程.md`（或仅占位符）。
-- **无人值守**（`--unattended`）：把该 WARN 记入 baseline（`versions.{V}.deploy_docs_missing=true`）+ autopilot **#4 提示**，不弹窗、不阻塞，但留痕，供部署前置门（`/sprint-batch` Step 6 / `/sprint-autopilot` Phase 3.2.1）拦截。
-
-**D) 固定命名契约 + 索引**：本版部署产物按固定角色名落位（**不套约定 15 的 `NN_` 分册编号**——部署产物是固定角色而非分册）：`部署流程/部署流程.md`、`部署流程/SQL执行台账.md`、`配置文件/增量/配置项清单.md`、`sql/增量/NN_*.sql`（+ 发布期 `sql/全量/`、`配置文件/全量/`，约定 37）。版本根 `docs/deployment/{version}/README.md`（双轨场景导航）由发布期产出，开发期不维护；各产物按**固定路径**定位、不做模糊匹配。命名契约单一信源见 `06_版本与用户目录约定.md` §2.5.4。
-
+版本规划与正式发布才读取该待办并按 `{{AIDP_HOME}}/reference/部署操作约定.md` 集中合并必要操作指引；用户明确要求额外报告时才另产。合并成功后仅结清实际覆盖的引用，失败保留。
 
 ---
 

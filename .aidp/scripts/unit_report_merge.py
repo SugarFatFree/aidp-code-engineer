@@ -231,6 +231,32 @@ def triage_state(payload):
             "environment": [item for item in items if item["category"] == "environment"]}
 
 
+def validate_report_scope(payload):
+    unit = payload.get("unitTests") or {}
+    scope = payload.get("testScope")
+    if not isinstance(scope, dict) or scope.get("kind") != "version":
+        return ["缺当前版本冻结 testScope；历史结果不能作为版本全量完成证据"]
+    errors = []
+    if scope != unit.get("testScope"):
+        errors.append("实测与单测 testScope 不一致")
+    for key in ("version", "build"):
+        if not scope.get(key) or scope[key] != payload.get(key) or scope[key] != unit.get(key):
+            errors.append(f"testScope.{key} 与报告身份不一致")
+    if not re.fullmatch(r"[0-9a-f]{64}", scope.get("manifest_hash", "")):
+        errors.append("testScope 缺冻结 manifest_hash")
+    if not scope.get("acceptance_baseline") or not scope.get("acceptance_tests") or not isinstance(scope.get("dependencies"), list):
+        errors.append("testScope 缺验收基线、正式测试清单或依赖清单")
+    ids = scope.get("case_ids")
+    if not isinstance(ids, list) or not ids or len(set(ids)) != len(ids):
+        errors.append("testScope 缺完整正式用例 ID")
+    elif (payload.get("browserTests") or {}).get("status") != "N/A":
+        cases = payload.get("cases") or []
+        actual = [case.get("id") for case in cases if isinstance(case, dict)]
+        if set(actual) != set(ids) or len(set(actual)) != len(actual):
+            errors.append("实测报告用例与本版本完整正式清单不一致")
+    return errors
+
+
 def overall_status(payload):
     browser = browser_status(payload)
     unit = payload.get("unitTests")
@@ -261,13 +287,14 @@ def report_ready(payload):
 
 
 def success_ready(payload):
-    return report_ready(payload) and overall_status(payload) == "PASS"
+    return report_ready(payload) and not validate_report_scope(payload) and overall_status(payload) == "PASS"
 
 
 def finalize_ready(payload):
     """仅已完成单测可冻结失败/成功事实；历史缺字段由调用方决定是否豁免。"""
     unit = payload.get("unitTests")
     return (report_ready(payload)
+            and not validate_report_scope(payload)
             and not validate_failure_triage(payload)
             and triage_state(payload)["status"] == "COMPLETE"
             and not triage_state(payload)["environment"]
@@ -290,6 +317,13 @@ def merge_unit_tests(payload, unit, build, commit, kind="test"):
         raise ValueError("；".join(errors))
     result = deepcopy(payload)
     result.update(build=build, commit=commit, unitTests=deepcopy(unit))
+    if unit.get("testScope") is not None:
+        if payload.get("testScope") not in (None, unit["testScope"]):
+            raise ValueError("实测与单测冻结 testScope 不一致")
+        result["testScope"] = deepcopy(unit["testScope"])
+        scope_errors = validate_report_scope(result)
+        if scope_errors:
+            raise ValueError("；".join(scope_errors))
     key = "summary" if kind == "test" else "testSummary"
     summary = result.setdefault(key, {})
     if "runtimeErrors" in result:
@@ -318,6 +352,8 @@ def validate_report_units(payload, kind):
         return []
     errors = validate_unit_tests(payload["unitTests"], payload.get("build"), payload.get("commit"))
     errors.extend(validate_failure_triage(payload))
+    if payload.get("testScope") is not None or (payload.get("unitTests") or {}).get("testScope") is not None:
+        errors.extend(validate_report_scope(payload))
     browser = payload.get("browserTests")
     if browser is not None and (not isinstance(browser, dict) or browser.get("status") not in BROWSER_STATES
                                 or not isinstance(browser.get("reason"), str) or not browser["reason"].strip()):

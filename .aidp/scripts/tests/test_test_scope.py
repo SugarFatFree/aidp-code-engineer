@@ -57,6 +57,13 @@ class ScopeFixture(unittest.TestCase):
     def derive(self, runners, since=None, expect=0):
         argv = [PY, str(SCOPE), "--root", str(self.root), "--since", self.base if since is None else since,
                 "--runners-json", json.dumps(runners), "--json"]
+        import test_scope
+        changed = test_scope.git_paths(self.root, "diff", "--name-only", "--no-renames", "-z", self.base)
+        changed += test_scope.git_paths(self.root, "ls-files", "--others", "--exclude-standard", "-z")
+        changed = [p for p in changed if not p.startswith(("memory/", "docs/testing/"))]
+        if changed:
+            for path in changed:
+                argv += ["--write-set", path]
         p = subprocess.run(argv, capture_output=True, text=True)
         self.assertEqual(p.returncode, expect, p.stdout + p.stderr)
         return json.loads(p.stdout) if expect == 0 else None
@@ -68,6 +75,17 @@ class ScopeFixture(unittest.TestCase):
 
 
 class TestScopeTests(ScopeFixture):
+    def test_dependency_scan_reads_mount_metadata_once_per_phase(self):
+        from unittest.mock import patch
+        import project_inventory
+        import test_scope
+        files = ["src/calc.py", "tests/__init__.py", "tests/test_calc.py"]
+        runners = test_scope.validate_runners([{"suffixes": [".py"], "argv": [PY, "-m", "unittest", "{tests}"]}], self.root)
+        with patch.object(project_inventory, "fingerprint_metadata", wraps=project_inventory.fingerprint_metadata) as metadata:
+            proof = test_scope.dependency_analysis(self.root, files, ["."], runners)
+        self.assertIn("src/calc.py", proof["tests"]["tests/test_calc.py"]["files"])
+        self.assertEqual(metadata.call_count, 1)
+
     def test_mixed_repo_splits_runners_by_suffix_and_maps_frontend_spec(self):
         self.write("src/calc.py", "def f():\n    return 2\n")
         self.write("web/card.tsx", "export const c = 2\n")
@@ -85,7 +103,7 @@ class TestScopeTests(ScopeFixture):
         self.write("docs/a.md", "changed doc\n")
         out = self.derive([{"suffixes": [".py"], "argv": [PY, "-m", "pytest", "{tests}"]}])
         self.assertIn("src/orphan.py", out["unmapped"])
-        self.assertNotIn("docs/a.md", str(out))  # 非代码与 docs 不进入输出，保证同树输出稳定
+        self.assertNotIn("docs/a.md", out["changed"])  # 非代码与 docs 不进入变更，保证同树输出稳定
         self.assertEqual(out["runs"], [], "无对应单测时不得回落为全量")
 
     def test_missing_since_or_runner_fails_closed(self):
@@ -135,7 +153,7 @@ class TestScopeTests(ScopeFixture):
         out = test_scope.derive(self.root, self.base,
                                [{"suffixes": [".py"], "argv": [PY, "{tests}"]}], ["tests"])
         self.assertIn("src/calc.py", out["changed"])
-        self.assertIn("web/card.tsx", out["changed"])
+        self.assertNotIn("web/card.tsx", out["changed"], "写集外未提交文件不能混入当前任务")
         self.assertIn("tests/test_calc.py", out["changed"])
         self.assertEqual(out["since"], self.base)
         self.assertEqual(out["write_set"], ["tests"])
@@ -210,7 +228,9 @@ class RunScopeTests(ScopeFixture):
         scope = self.scope_file([{"suffixes": [".py"], "argv": [PY, "-B", "-m", "unittest", "{tests}"]}])
         out = self.ledger("run-scope", "--root", str(self.root), "--scope-file", str(self.root / scope),
                           "--env-id", "e1")
-        self.assertEqual(out["status"], "EMPTY")
+        self.assertEqual(out["status"], "NOT_APPLICABLE")
+        self.assertEqual(out["applicability"]["paths"], ["docs/a.md"])
+        self.assertIn("无可执行行为", out["applicability"]["reason"])
         self.assertEqual(out["run_ids"], [])
 
     def test_record_review_accepts_sprint_runs_and_rejects_full(self):
@@ -227,11 +247,8 @@ class RunScopeTests(ScopeFixture):
             args += ["--run-id", run_id]
         self.assertEqual(self.ledger(*args)["kind"], "review")
         full = self.ledger("run", "--root", str(self.root), "--cwd", ".", "--scope", "full", "--env-id", "e1",
-                           "--", PY, "-c", "pass")
-        self.assertEqual(full["status"], "PASS")
-        self.ledger("record-review", "--root", str(self.root), "--name", "bad", "--env-id", "e1",
-                    "--report", "docs/testing/V1/sprint-001/report.md", "--run-id", full["run_id"],
-                    "--scope-file", scope, "--scope-hash", ok["scope_hash"], expect=2)
+                           "--", PY, "-c", "pass", expect=2)
+        self.assertIn("无版本边界 full 已禁用", full["error"])
 
 
 class ScopeEvidenceTests(ScopeFixture):
@@ -326,8 +343,9 @@ class ScopeEvidenceTests(ScopeFixture):
         self.assertTrue(all(r["status"] == "PASS" and not r["reused"] for r in changed["runs"]))
         self.write("src/shared.py", "shared = 2\n")
         scope = self.scope_file(runners)
-        unknown = self.execute(scope)
-        self.assertEqual(unknown["status"], "PARTIAL")
+        unknown = self.execute(scope, 2)
+        self.assertEqual(unknown["status"], "UNVERIFIED")
+        self.assertEqual(unknown["unmapped"], ["src/shared.py"])
         self.assertTrue(all(r["status"] == "PASS" and not r["reused"] for r in unknown["runs"]))
         self.assertEqual((self.root / "memory/other-count").read_text(), "3")
 
@@ -360,21 +378,17 @@ class ScopeEvidenceTests(ScopeFixture):
                               "--", PY, "-c", "pass")
         self.verify(scope, result, 2, ids=[unbound["run_id"], result["run_ids"][1]])
 
-    def test_zero_corresponding_tests_records_minor_without_fake_pass(self):
+    def test_zero_corresponding_tests_is_unverified_gap_without_fake_pass(self):
         self.write("src/orphan.rs", "fn untouched() {}\n")
         scope = self.scope_file([])
-        result = self.execute(scope)
-        self.assertEqual(result["status"], "EMPTY")
+        result = self.execute(scope, 2)
+        self.assertEqual(result["status"], "UNVERIFIED")
         self.assertEqual(result["run_ids"], [])
-        self.assertTrue(result["minor"])
-        self.assertEqual(self.verify(scope, result)["status"], "EMPTY")
-        self.write("docs/review.md", "无对应单测，已记录 Minor。")
-        review = self.ledger("record-review", "--root", str(self.root), "--env-id", "e1", "--name", "empty",
-                             "--scope-file", scope, "--scope-hash", result["scope_hash"], "--report", "docs/review.md")
-        self.assertIsNone(review["run_id"])
-        self.assertEqual(review["test_status"], "EMPTY")
-        self.assertFalse(self.ledger("review-delta", "--root", str(self.root), "--env-id", "e1",
-                                     "--name", "empty")["code_changed"])
+        self.assertEqual(result["unmapped"], ["src/orphan.rs"])
+        self.verify(scope, result, 2)
+        self.write("docs/review.md", "无对应单测，缺口未核验。")
+        self.ledger("record-review", "--root", str(self.root), "--env-id", "e1", "--name", "empty",
+                    "--scope-file", scope, "--scope-hash", result["scope_hash"], "--report", "docs/review.md", expect=2)
 
     def test_unrunnable_tools_or_timeouts_are_unverified(self):
         self.write("src/calc.py", "def f(): return 2\n")
@@ -576,8 +590,8 @@ class ScopeEvidenceTests(ScopeFixture):
                    "class Dynamic(unittest.TestCase):\n"
                    " def test_value(self): self.assertEqual(importlib.import_module('src.b').value, 1)\n")
         scope = self.scope_file(self.runners())
-        first = self.execute(scope)
-        self.assertEqual(first["status"], "PARTIAL")
+        first = self.execute(scope, 2)
+        self.assertEqual(first["status"], "UNVERIFIED")
         plan = json.loads((self.root / scope).read_text())
         self.assertTrue(plan["dependencies"]["tests"]["tests/test_dynamic.py"]["unknown"])
         self.write("src/b.py", "value = 2\n")
@@ -626,6 +640,152 @@ class TaskScopeTests(ScopeFixture):
         return self.ledger("verify", "--root", str(self.root), "--execution-context", context,
                            "--scope-file", scope, "--scope-hash", result["scope_hash"], "--env-id", "e1",
                            *(arg for value in result["run_ids"] for arg in ("--run-id", value)), expect=expect)
+
+    def test_post_settlement_failure_keeps_exit_and_invalidates_new_pass(self):
+        from unittest.mock import patch
+        import test_ledger
+        import execution_policy
+        context = self.context(write_set=["src/calc.py"])
+        scope, _ = self.task_scope(context)
+        original = execution_policy.settle_validation
+        def settlement(root, ctx, ticket, actual, **kwargs):
+            value = original(root, ctx, ticket, actual, **kwargs)
+            if ticket["action"] == "related-test":
+                raise execution_policy.PolicyError("BUDGET_EXCEEDED", "post-settlement evidence unavailable")
+            return value
+        with patch.object(execution_policy, "settle_validation", side_effect=settlement):
+            result, code = test_ledger.run_scope(self.root, scope, "e1", execution_context=context)
+        self.assertEqual(code, 2)
+        self.assertEqual(result["status"], "UNVERIFIED")
+        row = next(r for r in test_ledger.load(self.root) if r.get("run_id") == result["run_ids"][0])
+        self.assertEqual(row["status"], "ERROR")
+        self.assertEqual(row["evidence_status"], "UNVERIFIED")
+        self.assertEqual(row["command_status"], "PASS")
+        self.assertEqual(row["exit_code"], 0)
+        self.assertTrue(Path(row["output"]["stderr"]).is_file())
+
+    def test_atomic_batch_denial_does_not_charge_unexecuted_tests_or_processes(self):
+        ScopeEvidenceTests.counting_suite(self, "calc", 1)
+        ScopeEvidenceTests.counting_suite(self, "other", 1)
+        context = self.context(write_set=["src/calc.py", "src/other.py"], execution_budget={"processes": 1})
+        scope, _ = self.task_scope(context)
+        result = self.execute_task(context, scope, expect=2)
+        self.assertEqual(result["status"], "BUDGET_EXCEEDED")
+        budget = json.loads((Path(context).parent / "budget.json").read_text())
+        self.assertEqual(budget["used"]["processes"], 0)
+        self.assertEqual(budget["used"]["selected_tests"], 0)
+        self.assertFalse((self.root / "memory/calc-count").exists())
+        self.assertFalse((self.root / "memory/other-count").exists())
+
+    def test_interrupted_batch_refunds_only_unexecuted_commands(self):
+        self.write("tests/test_calc.py", "import unittest\nfrom pathlib import Path\n"
+                   "class Calc(unittest.TestCase):\n def test_mutate(self): Path('src/calc.py').write_text('changed = 1\\n')\n")
+        ScopeEvidenceTests.counting_suite(self, "other", 1)
+        context = self.context(write_set=["src/calc.py", "src/other.py"])
+        scope, _ = self.task_scope(context)
+        result = self.execute_task(context, scope, expect=2)
+        self.assertEqual(result["status"], "UNVERIFIED")
+        self.assertEqual(len(result["runs"]), 1)
+        self.assertEqual(result["runs"][0]["command_status"], "PASS")
+        self.assertEqual(result["runs"][0]["status"], "TREE_CHANGED")
+        budget = json.loads((Path(context).parent / "budget.json").read_text())
+        self.assertEqual(budget["used"]["processes"], 1)
+        self.assertEqual(budget["used"]["selected_tests"], 1)
+        self.assertFalse((self.root / "memory/other-count").exists())
+        reservations = [r for r in budget["reservations"] if r.get("kind") == "validation" and r["action"] == "related-test"]
+        self.assertEqual(len(reservations), 1)
+        self.assertIn("settlement", reservations[0])
+
+    def test_unchanged_installed_package_is_not_default_validation_input(self):
+        import entry_context
+        import test_scope
+        self.write("skills/unused/SKILL.md", "installed package")
+        for index in range(25):
+            self.write(f"skills/unused/tests/test_{index}.py", "import unittest\n")
+        git(self.root, "add", "skills")
+        git(self.root, "commit", "-qm", "installed package")
+        context = self.context(write_set=["src"], execution_budget={"scanned_files": 40})
+        self.write("src/calc.py", "def f(): return 2\n")
+        ctx = entry_context.load_context(self.root, context)
+        runners = [{"suffixes": [".py"], "argv": [PY, "-B", "-m", "unittest", "{tests}"]}]
+        plan = test_scope.derive(self.root, None, runners, execution_context=ctx)
+        self.assertEqual(plan["tests"], ["tests/test_calc.py"])
+        self.assertFalse(any(p.startswith("skills/") for p in plan["validation_files"]))
+        self.assertNotIn("tests/__init__.py", plan["changed"])
+
+    def test_imported_installed_package_remains_a_real_input(self):
+        import entry_context
+        import test_scope
+        self.write("skills/library/SKILL.md", "installed package")
+        self.write("skills/library/helper.py", "value = 1\n")
+        self.write("src/calc.py", "from skills.library.helper import value\ndef f(): return value\n")
+        git(self.root, "add", "skills", "src")
+        git(self.root, "commit", "-qm", "real imported dependency")
+        context = self.context(write_set=["src/calc.py"])
+        ctx = entry_context.load_context(self.root, context)
+        runners = [{"suffixes": [".py"], "argv": [PY, "-B", "-m", "unittest", "{tests}"]}]
+        plan = test_scope.derive(self.root, None, runners, execution_context=ctx)
+        self.assertIn("skills/library/helper.py", plan["validation_files"])
+        self.assertIn("skills/library/helper.py", plan["dependencies"]["tests"]["tests/test_calc.py"]["files"])
+        self.assertEqual(test_scope.derive(self.root, None, runners, execution_context=ctx), plan)
+        self.write("skills/library/helper.py", "value = 2\n")
+        with self.assertRaises(test_scope.ScopeError):
+            test_scope.validate_scope(self.root, plan, ctx)
+
+    def test_formal_scope_excludes_other_tasks_dirty_and_uses_acceptance_callers(self):
+        import entry_context
+        import test_scope
+        self.write("src/other.py", "value = 1\n")
+        self.write("tests/test_other.py", "import unittest\nfrom src.other import value\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "other module")
+        self.write("src/other.py", "value = 2\n")
+        context = entry_context.resolve_context(self.root, "sprint-dev", version="V1", sprint="001",
+            write_set=["src/calc.py"], acceptance=["验证 `tests/test_calc.py` 的业务规则"])["execution_context"]
+        self.write("src/calc.py", "def f(): return 2\n")
+        _, plan = self.task_scope(context)
+        self.assertEqual(plan["changed"], ["src/calc.py"])
+        self.assertEqual(plan["tests"], ["tests/test_calc.py"])
+        self.assertEqual(plan["acceptance_paths"], ["tests/test_calc.py"])
+
+    def test_acceptance_selects_behavior_test_without_naming_or_import_match(self):
+        self.write("tests/test_business.py", "import unittest\nclass Business(unittest.TestCase):\n def test_rule(self): self.assertTrue(True)\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "business acceptance")
+        context = self.context(write_set=["src/calc.py"], acceptance=["验收 `tests/test_business.py`"])
+        _, plan = self.task_scope(context)
+        self.assertIn("tests/test_business.py", plan["tests"])
+
+    def test_configuration_only_change_is_never_empty(self):
+        context = self.context()
+        self.write("pyproject.toml", "[tool.unittest]\n")
+        scope, plan = self.task_scope(context)
+        self.assertIn("tests/test_calc.py", plan["tests"])
+        self.assertIn("pyproject.toml", plan["validation_files"])
+        result = self.execute_task(context, scope, expect=2)
+        self.assertEqual(result["status"], "UNVERIFIED")
+        self.assertIn("web/card.spec.tsx", result["unrunnable"])
+
+    def test_metadata_inventory_does_not_spend_content_scan_budget(self):
+        import entry_context
+        import test_scope
+        for index in range(60):
+            self.write(f"docs/record-{index}.md", "metadata only")
+        git(self.root, "add", "docs")
+        git(self.root, "commit", "-qm", "documentation")
+        context = self.context(execution_budget={"scanned_files": 40})
+        self.write("src/calc.py", "def f(): return 2\n")
+        ctx = entry_context.load_context(self.root, context)
+        runners = [{"suffixes": [".py"], "argv": [PY, "-B", "-m", "unittest", "{tests}"]}]
+        first = test_scope.derive(self.root, None, runners, execution_context=ctx)
+        budget_file = Path(context).parent / "budget.json"
+        used = json.loads(budget_file.read_text())["used"]["scanned_files"]
+        self.assertLess(used, 40)
+        second = test_scope.derive(self.root, None, runners, execution_context=ctx)
+        self.assertEqual(first, second)
+        self.assertEqual(json.loads(budget_file.read_text())["used"]["scanned_files"], used)
+        self.assertNotIn("web/card.tsx", first["validation_files"])
+        self.assertIn("tests/test_calc.py", first["validation_files"])
 
     def test_no_sprint_task_reuses_only_its_own_evidence(self):
         first_context, second_context = self.context(), self.context()
@@ -829,37 +989,62 @@ class TaskScopeTests(ScopeFixture):
                     "--", PY, "-c", "pass", expect=2)
 
 
-class WorktreeLedgerTests(ScopeFixture):
-    """全量单测在 build worktree 执行；账本留专属 build 缓存，worktree 删除后仍可复用。"""
+class VersionManifestTests(ScopeFixture):
+    """版本全量只执行冻结 manifest 的明确清单；无边界 full 与目录/通配发现都被拒绝。"""
 
-    def test_full_run_in_detached_worktree_reuses_across_ticks_after_cleanup(self):
-        wt = self.tmp / "wt"
-        cache = self.tmp / "build-ledger" / self.base
-        git(self.root, "worktree", "add", "--detach", str(wt), self.base)
-        try:
-            self.write("src/calc.py", "def f():\n    return 9\n")  # 主工作区改动不得影响 build 树结果
-            argv = [PY, str(LEDGER), "run", "--root", str(wt), "--cwd", ".", "--scope", "full",
-                    "--env-id", f"aiauto-unit:{self.base}", "--ledger-root", str(cache),
-                    "--", PY, "-c", "pass"]
-            first = last_json(subprocess.run(argv, capture_output=True, text=True).stdout)
-            self.assertEqual(first["status"], "PASS")
-            self.assertFalse(first["reused"])
-        finally:
-            git(self.root, "worktree", "remove", "--force", str(wt))
-        # 临时 worktree 已删除，专属 build 账本仍在，主仓 Sprint 账本保持隔离。
-        self.assertTrue(Path(ledger_path(cache)).exists())
-        self.assertFalse(Path(ledger_path(self.root)).exists())
-        self.assertFalse((wt / "memory/.aidp/test-ledger.jsonl").exists())
-        # 重建同一 detached worktree（同 commit、同树）后复用专属缓存里的 PASS
-        git(self.root, "worktree", "add", "--detach", str(wt), self.base)
-        try:
-            argv = [PY, str(LEDGER), "run", "--root", str(wt), "--cwd", ".", "--scope", "full",
-                    "--env-id", f"aiauto-unit:{self.base}", "--ledger-root", str(cache),
-                    "--", PY, "-c", "pass"]
-            again = last_json(subprocess.run(argv, capture_output=True, text=True).stdout)
-            self.assertTrue(again["reused"], again)
-        finally:
-            git(self.root, "worktree", "remove", "--force", str(wt))
+    def manifest(self, **override):
+        import hashlib
+        self.write("docs/testing/V1/正式用例/用例.md", "### TC-001 计算\n")
+        index = self.root / "docs/testing/V1/正式用例/用例.md"
+        baseline = {"version": "V1", "acceptance_tests": ["tests/test_calc.py"],
+                    "dependencies": ["src/calc.py", "tests/__init__.py"],
+                    "cases": [{"id": "TC-001", "test_files": ["tests/test_calc.py"]}],
+                    "case_index": {"path": "docs/testing/V1/正式用例/用例.md",
+                                   "sha256": hashlib.sha256(index.read_bytes()).hexdigest()}}
+        self.write("docs/testing/V1/验收/acceptance.json", json.dumps(baseline))
+        content = (self.root / "docs/testing/V1/验收/acceptance.json").read_bytes()
+        manifest = {"version": "V1", "build": "b1", "commit": self.base,
+                    "acceptance_baseline": {"path": "docs/testing/V1/验收/acceptance.json",
+                                            "sha256": hashlib.sha256(content).hexdigest()},
+                    "acceptance_tests": ["tests/test_calc.py"], "dependencies": ["src/calc.py", "tests/__init__.py"]}
+        manifest.update(override)
+        return manifest
+
+    runners = [{"suffixes": [".py"], "argv": [PY, "-B", "-m", "unittest", "{tests}"]}]
+
+    def test_explicit_manifest_compiles_only_listed_tests_without_repo_discovery(self):
+        import test_scope
+        self.write("tests/test_other.py", "import unittest\n")  # 全仓可发现，但不在版本清单
+        plan = test_scope.derive_suite(self.root, self.runners, self.manifest())
+        self.assertEqual(plan["kind"], "version")
+        self.assertEqual(plan["tests"], ["tests/test_calc.py"])
+        self.assertEqual(plan["runs"][0]["argv"][-1], "tests/test_calc.py")
+        self.assertNotIn("tests/test_other.py", json.dumps(plan["runs"]))
+
+    def test_partial_foreign_or_unclosed_manifest_is_rejected(self):
+        import hashlib
+        import test_scope
+        base = self.manifest()
+        for bad in (dict(base, acceptance_tests=[]), dict(base, dependencies=["src/calc.py"]),
+                    dict(base, acceptance_baseline=dict(base["acceptance_baseline"], sha256="0" * 64)),
+                    dict(base, acceptance_baseline=dict(base["acceptance_baseline"], path="docs/testing/V2/x.json")),
+                    dict(base, acceptance_tests=["tests"])):
+            with self.assertRaises(test_scope.ScopeError, msg=bad):
+                test_scope.derive_suite(self.root, self.runners, bad)
+        # 清单遗漏必要传递依赖：真实 import 闭包必须被显式列入。
+        self.write("src/helper.py", "value = 1\n")
+        self.write("src/calc.py", "from src.helper import value\ndef f(): return value\n")
+        with self.assertRaises(test_scope.ScopeError) as caught:
+            test_scope.derive_suite(self.root, self.runners, self.manifest())
+        self.assertIn("src.helper", str(caught.exception))
+
+    def test_ledger_rejects_unbounded_full_and_version_without_delegated_plan(self):
+        out = self.ledger("run", "--root", str(self.root), "--cwd", ".", "--scope", "full", "--env-id", "e1",
+                          "--", PY, "-c", "pass", expect=2)
+        self.assertIn("无版本边界 full 已禁用", out["error"])
+        import test_ledger
+        with self.assertRaises(test_ledger.LedgerError):
+            test_ledger.run(self.root, ".", "version", "e1", [PY, "-c", "pass"])
 
 
 class FullScopeConfinementTests(unittest.TestCase):

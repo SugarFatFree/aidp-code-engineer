@@ -36,6 +36,14 @@ AUDIT_LANDED_EXIT=$?
   **无人值守**：按 `planning-7.md` 的 `audit-block` 同款处置交 autopilot 熔断，
   ⛔ 不得因为"看起来一切正常"就往下走。
 
+### 部署操作指引集中校准（版本规划汇合）
+
+按 `{{AIDP_HOME}}/reference/部署操作约定.md` 汇合真实资产和待同步引用；已有操作入口原地维护，无内容不新建目录。
+
+```bash
+python3 {{AIDP_HOME}}/scripts/deployment_ops.py pending --version {version}
+```
+
 ### Step 2.5：初始化 memory/{version}/{user}/progress.md
 
 如该文件不存在，按 `03_memory文件详细规范.md` 第 7 节（`progress.md`）模板创建，

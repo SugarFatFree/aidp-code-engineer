@@ -17,7 +17,7 @@
 
 ## 执行授权与派发
 
-模板正文不代表项目所有者已授权全部任务。动作模型、公开命令组合、来源证据与预算只由 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 定义。普通开发为 implement+static；未要求的检查为 NOT_REQUESTED。持久 policy 仅采纳用户显式选择，旧模板 true 不当 grant。派子 Agent 只改变执行方式，必须继承父 action/budget，不增加任务。
+模板正文不代表项目所有者已授权全部任务。动作模型、公开命令组合、来源证据与预算只由 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 定义。普通开发/修复默认 implement+static+related-test，自动 sprint-test→必要修复/复验→终端结果，不另问单测。真实只分析/只修改/skip 才限制动作，不能默认 static-only 完整完成；未要求的可选检查为 NOT_REQUESTED。持久 policy 仅采纳用户显式选择，旧模板 true 不当 grant。派子 Agent 只改变执行方式，必须继承父 action/budget，不增加任务。
 
 ---
 
@@ -91,13 +91,13 @@
 | `/sprint-selftest` | 研发自测方案 + 人工自测用例 + 测试环境与账号（调 dev-manual-testcase）| 版本规划期；通常 `/version`（Step 2.4.3.5）内部调用；缺自测时可单独补跑 |
 | `/sprint-start` | 准备当前任务；formal 才启动 Sprint | 进入开发前 |
 | `/sprint-dev` | 开发阶段（前/后端；默认 light，formal 支持累进）| 日常开发 |
-| `/sprint-test` | 测试 + 验收循环（QA Agent + code-verification-loop）| 开发完成后 |
+| `/sprint-test` | 当前 task / 单 Sprint 相关测试、必要修复复验；已授权静态/审查/CVL同范围，不带浏览器或全版本 | 开发/修复后自动调用 |
 | `/sprint-bugfix` | Bug 修复（默认 light；formal 按明确 Sprint 范围修复）| 测试发现或独立修复 |
 | `/sprint-close` | 收束任务；formal 才关闭并归档 Sprint | 验收通过后 |
 | `/sprint-full` | 单 Sprint 完整闭环：start→dev→test→bugfix→close | 一键跑完单 Sprint |
 | `/sprint-batch` | 批量执行研发执行计划的多个 Sprint；末段 Step 6 询问部署 + 调 `/sprint-aiauto-test --once`，失败用例回写「问题汇总清单」交 `/sprint-bugfix` | 跑完所有 Sprint |
 | `/sprint-autopilot` ★ | **开发链路编排器**：扫 `docs/requirements/` 识别最近一对，分别串 `/version --no-tag` 和 `/version + /sprint-batch`；触发部署但不跑 chrome（**例外 P0-4**：交互式【单次】调用没有第二条 loop 承担时，autopilot 自跑一次 `/sprint-aiauto-test --once --unattended`）；经 `notify.py` 发里程碑通知 | 7×24 用 `/loop 10m`；直接调用走配置向导 |
-| `/sprint-aiauto-test` ★ | **AI 自动化测试链路**（浏览器端：默认本地 CLI，显式声明才走远程 MCP）：从 baseline 读「当前开发版本」→ chrome 启动 + 登录 + 仿真测试 + 报告；与 autopilot 共享 baseline | 7×24 用 `/loop 5m`；单次 `--once`（不传版本号）；兜底 `--target V0.X.X` |
+| `/sprint-aiauto-test` ★ | **AI 自动化测试链路**（浏览器端：默认本地 CLI，显式声明才走远程 MCP）：独立仅明确目标实测；仅真实 autopilot 委派且 version/build/验收基线/完整用例清单齐备才当前版本全量；共享 baseline | 7×24 用 `/loop 5m`；单次 `--once`（不传版本号）；兜底 `--target V0.X.X` |
 
 ### 二、意图路由（自然语言 → sprint-* 命令）
 
@@ -120,7 +120,7 @@
 | "Sprint-NNN 一条龙"、"一键跑完 Sprint-NNN" | `/sprint-full [NNN]` |
 | "跑所有 Sprint"、"批量执行"、"按计划全跑"、"一键所有 Sprint" | `/sprint-batch` |
 | "无人值守"、"全自动开发"、"24 小时跑"、"autopilot"、"7×24"、"挂着自动开发" | `/sprint-autopilot`（无需传版本号）|
-| "chrome 测试/实测"、"浏览器/仿真/UAT/页面测试"、"部署后测试"、"账号登录测" | 复用 `/sprint-aiauto-test` 的目标实测能力，保留 live-tests 范围，不继承显式命令的 full-regression 组合 |
+| "chrome 测试/实测"、"浏览器/仿真/UAT/页面测试"、"部署后测试"、"账号登录测" | 复用 `/sprint-aiauto-test` 的目标实测能力，保留 live-tests 范围，独立调用不取得 full-regression；仅真实autopilot委派当前版本完整清单才可全量 |
 | "跑一下流水线"、"执行 CICD"、"触发构建部署"、"重新部署"、"部署到测试/研发环境" | **不新增命令**：先核 commit/push/deploy 各自动作来源，再在已授权 push 前调用 `classify_push.py --root . --version <版本> {--build <BUILD> | --standalone}`（⛔ 落盘的是它；`classify_commit_change.py` 只出分类不落盘）并将完整分类写入当前 build；**链外任务按约定 41 不铸 build ⇒ 走 `--standalone`**（缺 build 又不传它会直接 `ValueError`），它另落一条 commit 键控记录供 `commit_gate.py` 结算链外推送欠账；无正式代码变更时仍校验 push 成功但跳过远端 CICD/监听/就绪探针，分类失败按正式代码路径 fail-closed；正式代码变更经 CICD（`cicd.provider`，默认 GitHub Actions；push 自动触发，或 `cicd_watch.py --mode trigger` 主动触发）后由 `cicd_watch.py` 只读监听终态；主动 trigger/retry 与就绪探针先过本片执行策略的 deploy 门 |
 
 > ★ **AI 测试入口前置规则**：上表把"AI 自动化测试 / chrome 测试 / 部署后测试"路由到 `/sprint-aiauto-test`，但**若被测版本属 autopilot 体系**（判据 = `current_build` 存在，**或** `versions.{version}` 存在**且** `source != "sprint-batch"`；⛔ `source == "sprint-batch"` 一律不算——那条记录是 `/sprint-batch` Step 6 自己预写的，算进来会让首跑后的每次重跑都被弹回 autopilot。判据单一信源 = `{{AIDP_HOME}}/flows/sprint-batch/step-6b.md` Step 6.4）**且本 build AI执行报告缺失** → **必须先经 `/sprint-autopilot --skip-dev`（test-only 入口）跑「子流程 R」产出 AI执行报告【骨架】**（autopilot 是**骨架**的唯一生产者；用真实测试结论 finalize + 发报告本体 + #3 由 build 关闭方做），由它委派回浏览器实测；**严禁**在 AI执行报告缺失下直接手驱浏览器、散落 AI测试报告。仅**真正 standalone**（无 baseline 记录）才直达 `/sprint-aiauto-test`；即便误直达，其 Phase 0.2 步骤 2.5.1 也会**自愈交接**回 autopilot 兜底。口径：**实测前必有 AI执行报告**。
@@ -242,7 +242,7 @@
 
 24. **★ 提交前门禁 `commit_gate.py`（每次 `git commit` 前必跑；强制铁律）**：先核commit grant；**每次已授权** `git commit` 前**必须**跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"` 并读其 JSON。**★ 退出码即欠账信号**：`0`=无欠账；**`3`=有未落地义务**；`4`=保留阻塞档位——3/4 **不是"禁止 commit"**；**5 / NOT_AUTHORIZED 为硬禁止，不提交**。已有commit/push各自授权时才照常执行，之后按成因补做（台账格式/清理异常 → 修正并复核；推送欠账 → 按约定 31.5 补监听；实际级联仅由阶段入口或显式 `--cascade-now` 触发）；欠账告警恒打印 stderr、`--quiet` 不压制。**★ 作用域 = 变更事实、与命令入口无关**：裸对话路径同样适用。总开关 = `memory/aidp-config.yaml` 的 `commit_gate.enabled`。**详规见 `{{AIDP_HOME}}/reference/约定细则-2.md`**。
 
-25. **★ 配置文件分层**：运行时配置（如 `application.yml`/`.env`/`nginx.conf`/`vite.config` 等）**原文件为权威**，**禁止**在任何 Markdown 复抄完整配置文件、维护 key→示例值全量大表或创建 `.env.example` 等示例副本；.md 只承担 ① 增量配置项的代码块片段 ② 全量配置文件的"路径+用途+维护方"索引。**唯一例外 = 约定 37 的发布期全量基线 `docs/deployment/{version}/配置文件/全量/`**（判据见细则片 5 的 37.7）。`部署流程.md` 与 `配置项清单.md` 不得双写配置项内容（流程讲怎么做、清单讲配什么，清单只讲本版改了什么）。详规见 `/sprint-dev` Step X.7（配置项清单）+ Step X.8（部署流程）。
+25. **★ 配置文件分层**：运行时配置（如 `application.yml`/`.env`/`nginx.conf`/`vite.config` 等）**原文件为权威**，**禁止**在任何 Markdown 复抄完整配置文件、维护 key→示例值全量大表或创建 `.env.example` 等示例副本；.md 只承担 ① 增量配置项的代码块片段 ② 全量配置文件的"路径+用途+维护方"索引。**唯一例外 = 约定 37 的发布期全量基线 `docs/deployment/{version}/配置文件/全量/`**（判据见细则片 5 的 37.7）。`部署流程.md` 与 `配置项清单.md` 不得双写配置项内容（流程讲怎么做、清单讲配什么，清单只讲本版改了什么）。部署 Markdown 仅版本规划/正式发布集中校准，日常 dev/bugfix/链外/部署只留机器待同步引用，不为日志额外 commit/push；备份按项目策略与真实记录统一频率，DB/冷备/迁移快照合计，复用保留原时点，缺覆盖不自动追加或恢复。详规见 `{{AIDP_HOME}}/reference/部署操作约定.md`；X.7/X.8 仅登记本轮变化。
 
 26. **★ Mock 实现位置选型优先级**（允许 mock 的合规场景）：P0 前端 mock 首选 / P1 后端运行时开关次选（禁 `@Profile("dev")` 等环境专属守卫）/ P2 中间件最后；口诀"前端能拦截就前端拦截"、后端接口未部署严禁写一次性假数据接口；**守卫策略按标记分流（⛔ 两类目的相反，绝不能混用）**——`THIRD_PARTY_MOCK`（第三方未交付、要活到 UAT/Demo）**必须运行时开关**、6 字段标注块必填，构建期守卫判 Critical；`DEV_MOCK`（同项目后端未部署、绝不能进生产）**应当构建期裁掉**（`import.meta.env.DEV` 即合规形态），3 字段（since/owner/REMOVE_WHEN），反给它套运行时开关才判 Important；≤30% 工时、全生命周期 4 阶段（切真实/清理须触发约定 22 文档级联，非只清代码）。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载）**；回检 = `code-verification-loop` 维度 2B（残留 Critical 回 `/sprint-bugfix`）+ `dev-manual-testcase`。
 
@@ -262,7 +262,7 @@
 
 34. **★ 需求作废清算（跨版本 + ★ 同版本 / 同 Sprint 内口径反转；补约定 22「级联只版本内单向向下」的反向盲区）**：新结论推翻已写入文档的旧结论时（跨版本，或同一版本 / 同一 Sprint 内第二次口述反转第一次），必须清算所有引用旧结论的落点（需求条目 / ADR / 衍生论证 / 用例与断言 / 铁律 / 代码注释，关键语义词全库检索并留痕），被推翻条目加**显式作废标记指向新结论**、不静默改写，并**强制回答「旧口径下判定为安全的设计，在新口径下是否仍然安全」**。**★ 执行时机 = 两段式**：开发期当场只落作废标记（≤10 行）并把扩散面记进需求族增量册「已知失准点」，收口点才做全文订正。决策门落点 = `/sprint-dev` Phase 0B.1.3；**详规见 `{{AIDP_HOME}}/reference/约定细则-4.md`**。
 
-35. **★ 运行时验证纪律（开发期默认只静态验证；不擅自启动前后端服务、不完整构建——两类独立禁止项）**：开发/验证代码时**默认只做静态验证**（类型检查 / 语法 / lint / 确定性检查脚本）。**除非用户显式要求，禁止** ① **启动任何前后端服务**（dev server 或后端常驻进程）② **执行完整打包构建**。**★ 静态验证工具被当作「零新增」判据前，必须先做一次阳性对照**（工具失效的形态恰是输出「0 错误」；`{{AIDP_HOME}}/scripts/check_*.py` 除少数需专用夹具的外均支持 `--self-check`，全量跑 `{{AIDP_HOME}}/scripts/selfcheck.py`（逐脚本报 pass/unsupported 并写明原因））。**★ 格式化类 autofix 只允许作用于【本次新建】的文件**，既有文件只手工消除自己引入的告警。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载；`约定细则-4.md` 只做回检与指针，不复述详规）**；回检 = `verify.py::check_project_claude_aidp_conflict` + `agents/frontend.md`·`agents/backend.md` 验证步骤。
+35. **★ 运行时验证纪律（默认静态验证 + 当前任务相关单测；不擅自启动前后端服务、不完整构建——两类独立禁止项）**：开发/验证代码时按此默认（类型检查 / 语法 / lint / 确定性检查脚本 / 相关单测）。**除非用户显式要求，禁止** ① **启动任何前后端服务**（dev server 或后端常驻进程）② **执行完整打包构建**。**★ 静态验证工具被当作「零新增」判据前，必须先做一次阳性对照**（工具失效的形态恰是输出「0 错误」；`{{AIDP_HOME}}/scripts/check_*.py` 除少数需专用夹具的外均支持 `--self-check`，全量跑 `{{AIDP_HOME}}/scripts/selfcheck.py`（逐脚本报 pass/unsupported 并写明原因））。**★ 格式化类 autofix 只允许作用于【本次新建】的文件**，既有文件只手工消除自己引入的告警。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载；`约定细则-4.md` 只做回检与指针，不复述详规）**；回检 = `verify.py::check_project_claude_aidp_conflict` + `agents/frontend.md`·`agents/backend.md` 验证步骤。
 
 36. **子 Agent 继承授权**：派发只是完成已授权动作的执行方式，prompt 必带父 execution_context、revision、action、budget、真实输入 hash 与写集。用户显式选定的持久策略才可复用；模板、命令路由名、旧 true 与宿主可调用能力均不构成 grant。未启用角色记 NOT_REQUESTED，已启用角色受实际宿主能力约束；同输入工具失败停止重试。唯一协议见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，角色协作见 `{{AIDP_HOME}}/reference/约定细则-4.md`。
 
@@ -274,7 +274,7 @@
 
 40. **★ 上游/第三方接口调用日志强制规范（成功也要打；完整 URL + 入参出参；二进制只打元信息）**：调用**进程外**的第三方/上游依赖时（不含本地 DB 与缓存），**无论成功失败**都打印完整 URL + method + 入参与 status + 业务 code + 出参 + 耗时，请求响应可配对；**成功用 INFO、⛔ 不降级为 DEBUG**；二进制只打元信息、超长文本截断须标原始长度；**脱敏必须与本条同时落地**；实现上拦截器/过滤器优先、⛔ 禁止每个 client 各写各的。**详规见 `{{AIDP_HOME}}/rules/code.md` 约定 40**（后端接线见 `{{AIDP_HOME}}/rules/backend.md`，参考骨架见 `{{AIDP_HOME}}/reference/上游调用日志参考实现.md`）；机器门 = `python3 {{AIDP_HOME}}/scripts/check_upstream_call_log.py`，由 `/sprint-dev` Phase 1 Step 8 调用。
 
-41. **light/formal 身份与动作边界**：自然开发默认 light、implement+static；formal 保留编号、规格、归档，但不增授权。动作模型、budget、失败分类、hash 证据复用及 complete 配方统一见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。light 无 Sprint 卡/归档，不认领旧 Sprint；规模风险、复杂度、成本分别判断。未请求的测试/审查/文档为 NOT_REQUESTED，不作欠账或 PASS。既有版本、破坏性、DB 授权和运行时纪律继续适用。
+41. **light/formal 身份与动作边界**：自然开发/修复默认 light、implement+static+related-test；formal 保留编号、规格、归档，但不增授权。动作模型、budget、失败分类、hash 证据复用及 complete 配方统一见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。light 无 Sprint 卡/归档，不认领旧 Sprint；规模风险、复杂度、成本分别判断。未请求的额外审查/文档为 NOT_REQUESTED，默认相关测试不得借此跳过，不作欠账或 PASS。既有版本、破坏性、DB 授权和运行时纪律继续适用。
 
 ## AIDP 范式文档索引
 

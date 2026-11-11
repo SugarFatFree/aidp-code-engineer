@@ -697,6 +697,10 @@ def sync_docs(root: Path, was_aidp: bool, rep: Report, bk: "Backup", agents: lis
     base = L.ASSETS / "docs"
     home = runtime_home_for(agents)
     for rel, sp in L.iter_files(base):
+        # 跨版本工具由项目实际使用时建立；模板索引不制造空目录，
+        # 已有索引属于用户内容。必要导航交 ensure_nav_readmes/readme_policy。
+        if rel.startswith("deployment/tools/") and Path(rel).name == "README.md":
+            continue
         dp = root / "docs" / rel
         data = sp.read_bytes()
         if rel.endswith(".md"):

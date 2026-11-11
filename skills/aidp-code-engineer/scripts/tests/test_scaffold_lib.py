@@ -161,6 +161,50 @@ class MarkerAndFinalizeTest(unittest.TestCase):
                              "收口时台账推进到新骨架")
 
 
+class DeploymentGuideScopeTest(unittest.TestCase):
+    def test_existing_version_readme_does_not_require_extra_sql_documents(self):
+        import verify
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            version = root / 'docs/deployment/V0.2.0'
+            sql = version / 'sql/增量/01_schema.sql'
+            sql.parent.mkdir(parents=True)
+            sql.write_text('ALTER TABLE sample ADD COLUMN note TEXT;\n')
+            (version / 'README.md').write_text('# 部署操作\n运行现有部署脚本；应用启动时自动迁移，无需手工 SQL。\n')
+            before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            result = verify.VerifyResult()
+            verify.check_deployment_docs(root, result, 'V0.2.0')
+            self.assertEqual(result.warnings, [])
+            self.assertFalse(any('SQL执行台账' in item for item in result.info))
+            self.assertEqual(before, {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()})
+
+    def test_history_does_not_become_current_deployment_document_debt(self):
+        import verify
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old = root / 'docs/deployment/V0.1.0/sql/增量/01_old.sql'
+            old.parent.mkdir(parents=True)
+            old.write_text('ALTER TABLE sample ADD COLUMN old_note TEXT;\n')
+            result = verify.VerifyResult()
+            verify.check_deployment_docs(root, result, 'V0.2.0')
+            self.assertEqual(result.warnings, [])
+            self.assertEqual(result.info, [])
+
+    def test_missing_guide_is_a_planning_release_item_not_daily_dev_work(self):
+        import verify
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sql = root / 'docs/deployment/V0.2.0/sql/增量/01_new.sql'
+            sql.parent.mkdir(parents=True)
+            sql.write_text('ALTER TABLE sample ADD COLUMN new_note TEXT;\n')
+            result = verify.VerifyResult()
+            verify.check_deployment_docs(root, result, 'V0.2.0')
+            self.assertEqual(len(result.warnings), 1)
+            self.assertIn('规划/发布', result.warnings[0])
+            self.assertNotIn('/sprint-dev', result.warnings[0])
+            self.assertFalse((sql.parents[2] / 'README.md').exists())
+
+
 class NativeRecoveryConsumerTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

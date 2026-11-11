@@ -8,7 +8,8 @@
 ## ✨ 特性
 
 - **文档驱动的版本规划**：`/version` 一次产齐研发需求、详细设计、执行计划、研发自测用例，并经独立审计后才开工。
-- **Sprint 流水线**：`/sprint-batch` 一次跑完计划内全部 Sprint；`/sprint-dev`、`/sprint-bugfix` 处理增量功能与零散缺陷。
+- **开发自动自测**：普通开发/修复及独立 `/sprint-dev`、`/sprint-bugfix` 默认实现、静态检查、相关单测，自动测试→必要修复复验→终端结果，无需另问单测。light 不建 Sprint/卡片/成套文档；formal 保留规格与归档。
+- **范围明确**：`/sprint-test` 在 full/batch/autopilot 开发子任务中仍只测当前 task/单 Sprint；静态、审查、CVL 同范围。只有真实 autopilot 委派且版本、build、验收基线与完整清单齐备才当前版本全量，拒绝全项目、全系统或历史测试全集。独立 aiauto 只测明确目标。
 - **7×24 无人值守**：`/sprint-autopilot` 开发链路 + `/sprint-aiauto-test` 测试链路两条循环并行，监听 PRD → 规划 → 开发 → 部署 → 浏览器仿真测试 → 自动修复复测。
 - **AI 自动化测试**：基于 chrome-devtools-mcp 驱动真实浏览器，登录、走查、断言、截图，产出不可变的测试报告。
 - **AI 记忆系统**：`memory/` 分层记忆（项目级 / 版本级 / 用户级），跨会话延续上下文。
@@ -227,7 +228,7 @@ python3 {{AIDP_HOME}}/scripts/cicd_watch.py --selftest                          
 ```
 
 - ⛔ 令牌、密码只经环境变量引用，**不要明文写入仓库**。
-- `provider: none`、未配置流水线、或提供方 CLI / 凭据不可用时，只推送、不监听（退出码 3），不阻断链路。
+- `provider: none` 或未配置有效流水线时明确降级（退出码 3），不循环探测、不记部署成功；另已授权的项目现有部署入口仍以其真实回执为准。提供方 CLI / 凭据不可用时保留环境故障原因。
 - 流水线定义模板：模板仓库内为 `.aidp/templates/cicd/`，下游安装后为 `{{AIDP_HOME}}/templates/cicd/`（`github-actions/deploy.yml`、`gitlab-ci/.gitlab-ci.yml`、`jenkins/Jenkinsfile`）。
 
 ## 🧪 AI 自动化测试前置

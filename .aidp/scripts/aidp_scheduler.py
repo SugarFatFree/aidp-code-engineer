@@ -876,9 +876,76 @@ def tick_failure_kind(root, a):
     return "loop-agent-failed"
 
 
+def test_handoff_context(root, execution_context=None):
+    """独立进程只继承明确测试交接；命令名、activeContext、历史 build 不构成委派。"""
+    from entry_context import load_context
+    from execution_policy import validate_test_binding
+    from aidp_paths import baseline
+    state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+    handoff = state.get("aiauto") or {}
+    path = execution_context or handoff.get("execution_context")
+    if not isinstance(path, str) or not path:
+        raise ValueError("缺可追溯测试委派 aiauto.execution_context")
+    context = load_context(root, path)
+    validate_test_binding(root, context, context["version"], context.get("build_id"))
+    node = (state.get("versions") or {}).get(context["version"]) or {}
+    if node.get("current_build") != context.get("build_id"):
+        raise ValueError("测试委派不是当前版本当前 build，拒绝历史 build")
+    row = next((item for item in node.get("builds", []) if item.get("build") == context["build_id"]), {})
+    if row.get("ai_report_finalized"):
+        raise ValueError("测试委派 build 已定稿，不能重放旧交接")
+    return path, context
+
+
+def _test_target_state(root):
+    """返回 target（有待测版本且根允许测试）/ skipped（有待测版本但根已显式跳过测试）/ none。
+
+    与命令入口同一判据：已部署（phase_beta_done_at）且尚未内部发布的版本才算待测版本。
+    根已失去 live-tests/full-regression 时是用户明确不要测试，应报 NOT_REQUESTED，
+    不能说成“无目标”，也不能当作“应有委派却缺失”而报警。
+    """
+    from aidp_paths import baseline
+    try:
+        state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "none"
+    if not isinstance(state, dict):
+        return "none"
+    versions = state.get("versions") or {}
+    if not any(isinstance(node, dict) and node.get("phase_beta_done_at") and not node.get("internal_released_at")
+               for node in versions.values()):
+        return "none"
+    root_path = (state.get("autopilot") or {}).get("execution_context")
+    if isinstance(root_path, str) and root_path:
+        try:
+            from entry_context import load_context
+            allowed = set(load_context(root, root_path).get("allowed_actions", ()))
+            if not {"live-tests", "full-regression"} & allowed:
+                return "skipped"
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # 根不可读时保守按有目标处理，由委派校验拒绝
+    return "target"
+
+
+def _has_pending_test_target(root):
+    return _test_target_state(root) == "target"
+
+
 def do_tick_check(root, a):
     """一次调度唤醒消费一个退避轮；调用方应先取得链路锁。跳过不写 tick-result。"""
     from baseline_edit import LockedBaseline
+    context_path = None
+    if a.command == "sprint-aiauto-test":
+        try:
+            context_path, _ = test_handoff_context(root, getattr(a, "execution_context", None))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # 没有已部署待测版本时无需委派：放行让命令入口自己输出 NO_TARGET 并保持心跳，
+            # 否则空转 tick 被吞，watchdog 会把正常空闲误判成链路失联。
+            if not _has_pending_test_target(root):
+                context_path = None
+            else:
+                return 4, {"action": "tick-check", "command": a.command, "skip": True,
+                           "reason": "test-delegation-unverified", "error": str(exc)}
     with LockedBaseline(os.path.join(root, TICK_TIMEOUT_STATE_REL), write=True) as locked:
         if not isinstance(locked.data, dict):
             raise ValueError("tick 状态必须是 JSON 对象")
@@ -888,7 +955,8 @@ def do_tick_check(root, a):
             cur["skip_remaining"] = remaining - 1
         return (4 if remaining else 0), {"action": "tick-check", "command": a.command,
                                         "skip": bool(remaining), "skip_remaining": max(0, remaining - 1),
-                                        "streak": int(cur.get("streak") or 0)}
+                                        "streak": int(cur.get("streak") or 0),
+                                        "execution_context": context_path}
 
 
 def do_tick_result(root, a, send_notify=True):
@@ -1086,6 +1154,7 @@ def main(argv=None):
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--command", default=None, help="tick-result：链路命令名（如 sprint-autopilot）")
+    ap.add_argument("--execution-context", help="测试 tick 明确继承的 autopilot 子任务；默认只读 aiauto.execution_context")
     ap.add_argument("--rc", type=int, default=None, help="tick-result：本轮 tick 退出码")
     ap.add_argument("--tick-max", dest="tick_max", default="", help="tick-result：本轮硬超时秒数（仅用于告警文案）")
     ap.add_argument("--log", default="", help="tick-result：本轮日志路径（读取尾部作失败归因）")

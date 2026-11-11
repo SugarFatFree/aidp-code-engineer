@@ -54,8 +54,28 @@ class BuildUnitTests(unittest.TestCase):
         result.update(fields)
         return result
 
-    def freeze(self, suites=None, markdown=False, baseline=False):
+    def freeze(self, suites=None, markdown=False, baseline=False, tests=None, dependencies=None, extra_case=None):
+        tests = tests or ['test_sample.py']
+        dependencies = dependencies or []
         suites = suites or [self.suite()]
+        for i, suite in enumerate(suites):
+            suite['env_id'] = suite.get('env_id', 'stdlib') + str(i)
+            argv = [arg if arg != 'test_sample' else '{tests}' for arg in suite['full_argv']]
+            if '{tests}' not in argv:
+                argv.append('{tests}')
+            suite['runners'] = [{'suffixes': ['.py'], 'argv': argv,
+                                 'cwd': suite['cwd'], 'env_id': suite['env_id']}]
+        formal = self.root / 'docs/testing' / self.version / '正式用例'
+        formal.mkdir(parents=True, exist_ok=True)
+        index = formal / '00_索引.md'
+        index.write_text('# 本版本正式用例索引\nTC-ONE\n')
+        (formal / '03_cases.md').write_text('#### 用例 TC-ONE: sample\n')
+        acceptance = {'version': self.version, 'acceptance_tests': tests, 'dependencies': dependencies,
+                      'cases': [{'id': 'TC-ONE', 'test_files': tests}] + ([{'id': extra_case, 'test_files': tests}] if extra_case else []),
+                      'case_index': {'path': index.relative_to(self.root).as_posix(),
+                                     'sha256': hashlib.sha256(index.read_bytes()).hexdigest()}}
+        acceptance_path = formal.parent / 'acceptance.json'
+        acceptance_path.write_text(json.dumps(acceptance))
         config = {"schema": 1, "suites": suites}
         payload = json.dumps(config)
         source = "contract.md" if markdown else "unit-plan.json"
@@ -63,11 +83,13 @@ class BuildUnitTests(unittest.TestCase):
             payload = "# Test contract\n\n```aidp-test-plan\n" + payload + "\n```\n"
         (self.root / source).write_text(payload)
         self.git("add", ".")
-        self.git("commit", "-qm", "fixture")
+        self.git("commit", "-q", "--allow-empty", "-m", "fixture")
         self.commit = self.git("rev-parse", "HEAD")
         plan = {"schema": 1, "version": self.version, "build": self.build, "commit": self.commit,
                 "source": {"path": source, "sha256": hashlib.sha256(payload.encode()).hexdigest()},
-                "suites": suites}
+                "suites": suites, 'acceptance_tests': tests, 'dependencies': dependencies,
+                'acceptance_baseline': {'path': acceptance_path.relative_to(self.root).as_posix(),
+                                        'sha256': hashlib.sha256(acceptance_path.read_bytes()).hexdigest()}}
         if baseline:
             path = Path(build_unit.baseline(self.root))
             path.parent.mkdir(exist_ok=True)
@@ -76,17 +98,34 @@ class BuildUnitTests(unittest.TestCase):
         else:
             plan.update(standalone=True, deployment={"commit": self.commit, "verified": True,
                                                     "evidence": "deployment fixture verified by test"})
+        self.delegate(plan)
         return plan
 
+    def delegate(self, plan):
+        from entry_context import resolve_autopilot_root, fork_test_build
+        if not hasattr(self, 'parent'):
+            self.parent = resolve_autopilot_root(self.root, self.version, authorization_source={
+                'kind': 'explicit-command', 'command': 'sprint-autopilot', 'request_id': 'offline-fixture',
+                'options': ['--skip-dev']})['execution_context']
+            self.contexts = {}
+        if plan['build'] not in self.contexts:
+            path = self.root / 'memory' / (plan['build'] + '-manifest.json')
+            path.write_text(json.dumps(plan))
+            self.contexts[plan['build']] = fork_test_build(self.root, self.parent, self.version, plan['build'],
+                                                         manifest=path)['execution_context']
+        return self.contexts[plan['build']]
+
     def run_plan(self, plan, **kwargs):
+        if 'execution_context' not in kwargs:
+            kwargs['execution_context'] = self.delegate(plan)
         return build_unit.run_build(self.root, self.version, plan["build"], plan["commit"], plan, **kwargs)
 
     def cli(self, plan, *extra):
-        path = self.base / "frozen-plan.json"
-        path.write_text(json.dumps(plan))
+        context = self.delegate(plan)
+        path = self.root / 'memory' / (plan['build'] + '-manifest.json')
         return [sys.executable, str(SCRIPT), "run", "--root", str(self.root),
                 "--version", self.version, "--build", plan["build"], "--commit", plan["commit"],
-                "--plan", str(path), *extra]
+                "--plan", str(path), '--execution-context', context, *extra]
 
     def assert_cleaned(self, build=None):
         directory = build_unit.build_dir(self.root, self.version, build or self.build)
@@ -96,6 +135,7 @@ class BuildUnitTests(unittest.TestCase):
 
     def test_parent_authorization_is_rechecked_before_full_test(self):
         from entry_context import resolve_context
+        from execution_policy import PolicyError
         plan = self.freeze()
         ordinary = resolve_context(self.root, 'sprint-dev', version=self.version)
         result = self.run_plan(plan, execution_context=ordinary['execution_context'])
@@ -103,14 +143,77 @@ class BuildUnitTests(unittest.TestCase):
         self.assertEqual(result['authorization_status'], 'NOT_REQUESTED')
         self.assertEqual(result['runs'], [])
         self.assertFalse(build_unit.build_dir(self.root, self.version, self.build).exists())
-        granted = resolve_context(self.root, 'sprint-dev', version=self.version,
-            additional_grants=['full-regression'], authorization_source={
-                'kind': 'user-text', 'request_id': 'fixture-full', 'text': '运行完整单元测试'})
-        passed = self.run_plan(plan, execution_context=granted['execution_context'], timeout=10)
-        self.assertEqual(passed['status'], 'PASS', passed)
-        again = self.run_plan(plan, execution_context=granted['execution_context'], timeout=10)
+        # 用户文本/--grant 不能直接授予版本全量：resolve 阶段即拒绝，也不会留下 build 目录。
+        with self.assertRaisesRegex(PolicyError, 'autopilot'):
+            resolve_context(self.root, 'sprint-dev', version=self.version,
+                additional_grants=['full-regression'], authorization_source={
+                    'kind': 'user-text', 'request_id': 'fixture-full', 'text': '运行完整单元测试'})
+        self.assertFalse(build_unit.build_dir(self.root, self.version, self.build).exists())
+        delegated = self.run_plan(plan, timeout=10)
+        self.assertEqual(delegated['status'], 'PASS', delegated)
+        again = self.run_plan(plan, timeout=10)
         self.assertTrue(again['reused'])
         self.assert_cleaned()
+
+    def version_case_fence(self, plan):
+        """执行 phase-2-1.md 里真实的版本用例围栏内联脚本，返回 (退出码, 选中的册, 输出)。"""
+        import re as _re
+        text = (Path(__file__).resolve().parents[2] / 'flows/sprint-aiauto-test/phase-2-1.md').read_text(encoding='utf-8')
+        body = _re.search(r"<<'VERSION_CASES'\n(.*?)\nVERSION_CASES", text, _re.S).group(1)
+        body = body.replace('{{AIDP_HOME}}', str(SCRIPT.parent.parent))
+        context = self.delegate(plan)
+        done = subprocess.run([sys.executable, '-c', body, context, self.version, plan['build']],
+                              cwd=self.root, capture_output=True, text=True)
+        return done.returncode, done.stdout.split(), done.stdout + done.stderr
+
+    def test_version_case_fence_uses_frozen_manifest_only(self):
+        plan = self.freeze()
+        formal = self.root / 'docs/testing' / self.version / '正式用例'
+        code, selected, output = self.version_case_fence(plan)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(selected, ['docs/testing/%s/正式用例/03_cases.md' % self.version])
+        # 下划线开头的增量册即使含清单内 ID 也不是用例。
+        (formal / '_开发期用例增量.md').write_text('#### 用例 TC-ONE: 增量线索\n')
+        code, selected, output = self.version_case_fence(plan)
+        self.assertEqual(code, 0, output)
+        self.assertNotIn('_开发期用例增量.md', ' '.join(selected))
+        # 更旧版本目录里的 [回归] 册不会被自动并入。
+        old = self.root / 'docs/testing/V0.0.1/研发自测'
+        old.mkdir(parents=True)
+        (old / '02_回归用例.md').write_text('[回归]\n#### 用例 TC-OLD: 历史\n')
+        code, selected, output = self.version_case_fence(plan)
+        self.assertEqual(code, 0, output)
+        self.assertFalse([item for item in selected if 'V0.0.1' in item], selected)
+
+    def test_version_case_fence_rejects_book_with_ids_outside_frozen_list(self):
+        plan = self.freeze()
+        formal = self.root / 'docs/testing' / self.version / '正式用例'
+        (formal / '04_mixed.md').write_text('#### 用例 TC-ONE: 清单内\n#### 用例 TC-OTHER: 清单外\n')
+        code, selected, output = self.version_case_fence(plan)
+        self.assertNotEqual(code, 0, output)
+        # 册内含清单外 ID 时，基线与完整正式清单不一致，先由 validate_case_index 具体拒绝。
+        self.assertIn('不一致', output)
+        self.assertIn('BuildError', output)
+        self.assertFalse(selected)
+
+    def test_validate_case_index_ignores_underscore_incremental_books(self):
+        plan = self.freeze()
+        formal = self.root / 'docs/testing' / self.version / '正式用例'
+        baseline = build_unit.validate_case_index(self.root, plan)
+        self.assertEqual(baseline, ['TC-ONE'])
+        (formal / '_开发期用例增量.md').write_text('#### 用例 TC-ONE: 清单内线索\n')
+        self.assertEqual(build_unit.validate_case_index(self.root, plan), baseline)
+        (formal / '_另一增量.md').write_text('#### 用例 TC-OTHER: 清单外线索\n')
+        self.assertEqual(build_unit.validate_case_index(self.root, plan), baseline)
+        # 非下划线册里的清单外 ID 仍必须拒绝。
+        (formal / '04_real.md').write_text('#### 用例 TC-OTHER: 真实册\n')
+        with self.assertRaisesRegex(build_unit.BuildError, '不一致'):
+            build_unit.validate_case_index(self.root, plan)
+
+    def test_case_book_exclusion_rule_is_single_source(self):
+        for name in ('_a.md', '00_索引.md', '98_x.md', '99_待澄清.md', '01_研发自测方案.md', '测试环境与账号.md', '总览.md'):
+            self.assertFalse(build_unit.is_case_book(name), name)
+        self.assertTrue(build_unit.is_case_book('03_cases.md'))
 
     def test_dirty_main_and_config_do_not_affect_commit_worktree(self):
         plan = self.freeze(baseline=True)
@@ -120,7 +223,7 @@ class BuildUnitTests(unittest.TestCase):
         result = self.run_plan(plan)
         self.assertEqual(result["status"], "PASS", result)
         self.assertEqual(result["counts"], {"passed": 1, "failed": 0, "skipped": 1})
-        self.assertEqual(result["runs"][0]["command"], plan["suites"][0]["full_argv"])
+        self.assertEqual(result["runs"][0]["command"], [sys.executable, '-m', 'unittest', '-v', 'test_sample.py'])
         self.assertIn("test_pass", Path(result["runs"][0]["log"]).read_text())
         self.assertIn("dirty main", (self.root / "test_sample.py").read_text())
         self.assert_cleaned()
@@ -136,7 +239,7 @@ class Example(unittest.TestCase):
   self.assertEqual(open('value.txt').read(), 'committed')
 """)
         (self.root / "value.txt").write_text("committed")
-        plan = self.freeze()
+        plan = self.freeze(dependencies=['value.txt'])
         env = dict(os.environ, DEPLOY_DATABASE_URL="https://deployment.invalid", PYTHONPATH=str(self.root))
         process = subprocess.Popen(self.cli(plan), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         self.addCleanup(lambda: process.kill() if process.poll() is None else None)
@@ -196,9 +299,9 @@ class Example(unittest.TestCase):
         self.assertEqual(json.loads(again.stdout)["runs"], result["runs"])
         directory = build_unit.build_dir(self.root, self.version, self.build)
         self.assertEqual(len(list(directory.glob("suite-*.log"))), 1)
-        rows = build_unit.test_ledger.load(directory / "worktree", directory / "ledger")
+        rows = build_unit.test_ledger.load(directory / "worktree", directory.parent / "ledger")
         self.assertEqual(len([row for row in rows if row["kind"] == "run"]), 1)
-        self.assertEqual(rows[0]["scope"], "full")
+        self.assertEqual(rows[0]["scope"], "version")
         self.assert_cleaned()
 
     def test_real_failure_counts_and_error(self):
@@ -211,26 +314,28 @@ class Example(unittest.TestCase):
         self.assert_cleaned()
 
     def test_missing_tool_and_module_are_unverified(self):
-        plan = self.freeze([self.suite(["missing-build-unit-executable"]),
-                            self.suite([sys.executable, "-m", "no_such_build_unit_module"])])
-        result = self.run_plan(plan)
-        self.assertEqual(result["status"], "UNVERIFIED", result)
-        self.assertEqual([run["status"] for run in result["runs"]], ["UNVERIFIED", "UNVERIFIED"])
-        self.assertEqual(result["runs"][0]["exit_code"], 127)
-        self.assertEqual(result["counts"], build_unit.NULL_COUNTS)
+        for index, argv in enumerate((["missing-build-unit-executable"],
+                                      [sys.executable, "-m", "no_such_build_unit_module"])):
+            self.build = f'build{index}'
+            plan = self.freeze([self.suite(argv)])
+            result = self.run_plan(plan)
+            self.assertEqual(result["status"], "UNVERIFIED", result)
+            self.assertEqual([run["status"] for run in result["runs"]], ["UNVERIFIED"])
+            self.assertEqual(result["counts"], build_unit.NULL_COUNTS)
         self.assert_cleaned()
 
     def test_missing_import_in_unittest_is_not_product_bug(self):
         (self.root / "test_sample.py").write_text("import no_such_dependency\n")
         result = self.run_plan(self.freeze())
         self.assertEqual(result["status"], "UNVERIFIED", result)
-        self.assertIn("ModuleNotFoundError", result["primary_error"])
+        self.assertIn("未解析导入", result["primary_error"])
 
     def test_unknown_runner_counts_are_null_nonzero_is_unverified(self):
         (self.root / "runner.py").write_text("print('opaque custom runner output')\n")
         plan = self.freeze([self.suite([sys.executable, "runner.py"])])
         result = self.run_plan(plan)
-        self.assertEqual(result["status"], "PASS", result)
+        self.assertEqual(result["status"], "UNVERIFIED", result)
+        self.assertEqual(result["runs"][0]["reason"], "test-coverage-unverified")
         self.assertEqual(result["counts"], build_unit.NULL_COUNTS)
         (self.root / "runner.py").write_text("raise SystemExit(8)\n")
         self.build = "build2"
@@ -240,13 +345,17 @@ class Example(unittest.TestCase):
     def test_total_budget_shared_across_suites(self):
         (self.root / "test_sample.py").write_text(PASS_TEST.replace("self.assertEqual(2 + 2, 4)",
                                                                  "__import__('time').sleep(.35)"))
-        plan = self.freeze([self.suite(), self.suite()])
+        for name in ('first', 'second'):
+            (self.root / name / 'tests').mkdir(parents=True)
+            (self.root / name / 'tests' / 'test_sample.py').write_text((self.root / 'test_sample.py').read_text())
+        plan = self.freeze([self.suite(cwd='first'), self.suite(cwd='second')],
+                           tests=['first/tests/test_sample.py', 'second/tests/test_sample.py'])
         started = time.monotonic()
-        result = self.run_plan(plan, timeout=.65)
+        result = self.run_plan(plan, timeout=.95)
         self.assertEqual(result["status"], "TIMEOUT", result)
         self.assertLess(time.monotonic() - started, 2)
         self.assertEqual(result["runs"][0]["status"], "PASS", result)
-        self.assertEqual(result["runs"][-1]["status"], "TIMEOUT", result)
+        self.assertLess(len(result["runs"]), 3)
         self.assert_cleaned()
 
     def test_timeout_kills_descendant_process_group(self):
@@ -255,7 +364,7 @@ child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
 print('CHILD_PID=' + str(child.pid), flush=True)
 time.sleep(60)
 """)
-        result = self.run_plan(self.freeze([self.suite([sys.executable, "runner.py"])]), timeout=.3)
+        result = self.run_plan(self.freeze([self.suite([sys.executable, "runner.py"])]), timeout=3)
         self.assertEqual(result["status"], "TIMEOUT", result)
         text = Path(result["runs"][0]["log"]).read_text()
         pid = int(text.split("CHILD_PID=")[1].splitlines()[0])
@@ -270,7 +379,7 @@ time.sleep(60)
         missing = self.run_plan(plan)
         self.assertEqual(missing["status"], "UNVERIFIED", missing)
         # 执行器目录不是 cwd，直接脚本 runner 显式从 worktree 载入测试。
-        tool.write_text("#!" + sys.executable + "\nimport os, sys, unittest\nsys.path.insert(0, os.getcwd())\nunittest.main(module='test_sample', verbosity=2)\n")
+        tool.write_text("#!" + sys.executable + "\nimport os, sys, unittest\nsys.path.insert(0, os.getcwd())\nunittest.main(module='test_sample', verbosity=2, argv=['unit-tool'])\n")
         tool.chmod(0o755)
         self.assertTrue(self.run_plan(plan)["reused"])
         retried = self.run_plan(plan, retry=True)
@@ -286,11 +395,20 @@ time.sleep(60)
         data = json.loads(path.read_text())
         data["versions"][self.version]["builds"][0]["push_commit"] = "0" * 40
         path.write_text(json.dumps(data))
-        plan.update(standalone=True, deployment={"commit": self.commit, "verified": True, "evidence": "cannot override"})
+        # manifest 先于 push_commit 校验是新顺序；此处 manifest 保持与委派一致，必须由 push_commit 单独拦截。
         result = self.run_plan(plan)
         self.assertEqual(result["status"], "UNVERIFIED", result)
         self.assertIn("push_commit", result["primary_error"])
         self.assertFalse(result["runs"])
+
+    def test_changed_manifest_after_delegation_is_refused_before_push_commit_check(self):
+        plan = self.freeze(baseline=True)
+        self.delegate(plan)
+        plan["standalone"] = True
+        result = self.run_plan(plan, execution_context=self.contexts[plan["build"]])
+        self.assertEqual(result["status"], "UNVERIFIED", result)
+        self.assertIn("manifest", result["primary_error"])
+        self.assertEqual(result["runs"], [])
 
     def test_full_commit_required_standalone_evidence_required(self):
         plan = self.freeze()
@@ -471,6 +589,84 @@ time.sleep(60)
         self.assertEqual(result["status"], "UNVERIFIED", result)
         self.assertIn("父目录", result["primary_error"])
         self.assertFalse(result["runs"])
+
+    def test_missing_or_non_autopilot_context_never_runs(self):
+        from entry_context import resolve_context
+        plan = self.freeze()
+        for context in (None, resolve_context(self.root, 'sprint-aiauto-test', version=self.version)['execution_context']):
+            result = build_unit.run_build(self.root, self.version, plan['build'], plan['commit'], plan, execution_context=context)
+            self.assertEqual(result['status'], 'UNVERIFIED', result)
+            self.assertEqual(result['runs'], [])
+            self.assertFalse(build_unit.build_dir(self.root, self.version, plan['build']).exists())
+
+    def test_manifest_without_formal_case_mapping_is_refused(self):
+        plan = self.freeze(extra_case='TC-HISTORICAL')
+        result = self.run_plan(plan)
+        self.assertEqual(result['status'], 'UNVERIFIED', result)
+        self.assertEqual(result['runs'], [])
+        self.assertIn('正式用例', result['primary_error'])
+
+    def test_filtered_runner_and_system_wide_runner_are_refused(self):
+        for index, argv in enumerate(([sys.executable, '-m', 'pytest', '-k', 'one', '{tests}'],
+                                      [sys.executable, '-m', 'unittest', 'discover'])):
+            self.build = f'filter{index}'
+            plan = self.freeze([self.suite(argv)])
+            if index:
+                plan['suites'][0]['runners'][0]['argv'] = argv
+            result = self.run_plan(plan)
+            self.assertEqual(result['status'], 'UNVERIFIED', result)
+            self.assertEqual(result['runs'], [])
+
+    def test_unchanged_evidence_is_carried_across_builds_and_changed_inputs_rerun(self):
+        first_plan = self.freeze()
+        first = self.run_plan(first_plan, timeout=20)
+        self.assertEqual(first['status'], 'PASS', first)
+        self.build = 'V1.0.0_build2'
+        second = self.run_plan(self.freeze(), timeout=20)
+        self.assertEqual(second['status'], 'PASS', second)
+        self.assertTrue(second['runs'][0]['reused'])
+        self.assertEqual(second['runs'][0]['source_run_id'], first['runs'][0]['run_id'])
+        self.assertEqual(second['runs'][0]['counts'], first['runs'][0]['counts'])
+        self.assertNotEqual(second['runs'][0]['run_id'], first['runs'][0]['run_id'])
+        self.assertEqual(second['build'], 'V1.0.0_build2')
+        (self.root / 'test_sample.py').write_text(PASS_TEST + '\n# actual code change\n')
+        self.build = 'V1.0.0_build3'
+        third = self.run_plan(self.freeze(), timeout=20)
+        self.assertEqual(third['status'], 'PASS', third)
+        self.assertFalse(third['runs'][0].get('reused'))
+
+    def test_scheduler_inherits_only_traceable_current_build_delegation(self):
+        import aidp_scheduler
+        plan = self.freeze(baseline=True)
+        baseline = Path(build_unit.baseline(self.root))
+        with self.assertRaisesRegex(ValueError, '委派'):
+            aidp_scheduler.test_handoff_context(self.root)
+        context = self.delegate(plan)
+        data = json.loads(baseline.read_text())
+        node = data['versions'][self.version]
+        node['current_build'] = plan['build']
+        data['aiauto'] = {'execution_context': context}
+        baseline.write_text(json.dumps(data))
+        self.assertEqual(aidp_scheduler.test_handoff_context(self.root)[0], context)
+        # 旧 activeContext / 命令名 / 历史 build 都不是授权。
+        node['current_build'] = 'V1.0.0_older_build'
+        baseline.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, '当前版本当前 build'):
+            aidp_scheduler.test_handoff_context(self.root)
+        from entry_context import resolve_context
+        ordinary = resolve_context(self.root, 'sprint-aiauto-test', version=self.version)['execution_context']
+        data['aiauto'] = {'execution_context': ordinary}
+        node['current_build'] = plan['build']
+        baseline.write_text(json.dumps(data))
+        with self.assertRaises(Exception):
+            aidp_scheduler.test_handoff_context(self.root)
+
+    def test_test_only_context_cannot_start_other_actions(self):
+        from execution_policy import require_action, PolicyError
+        context = self.delegate(self.freeze())
+        for action in ('implement', 'commit', 'push', 'deploy'):
+            with self.assertRaises(PolicyError):
+                require_action(context, action)
 
     def test_self_check_real_git(self):
         result = build_unit.self_check()

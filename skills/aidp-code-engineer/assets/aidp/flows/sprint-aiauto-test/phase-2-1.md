@@ -1,4 +1,4 @@
-<!-- 二次切分 · phase-2 片1/2：覆盖 2.0 用例来源优先级解析（含跨版本回归继承/渲染模式拆分）-->
+<!-- 二次切分 · phase-2 片1/2：覆盖 2.0 用例来源优先级解析（含当前版本验收清单/渲染模式拆分）-->
 # sprint-aiauto-test · Phase 2 详情（AI 自动化仿真测试主循环 2.0–2.4）
 
 > 本文件是 `/sprint-aiauto-test` 命令 **Phase 2** 详情的**第 1/2 片**（⛔ 本片不含 Phase 2 全部子步——后续子步在 `-2`…`-2` 分片，按进度依次 Read，勿读完本片即认为已覆盖全段），由命令主体（`{{AIDP_HOME}}/commands/sprint-aiauto-test.md`）在**进入 Phase 2 时用 Read 工具按需加载**。命令主体只保留 Phase 2 的**硬门 + 2.0–2.4 骨架 + 指向本文件的指针**。
@@ -21,7 +21,7 @@
 > 🪟 **渲染模式 + 驱动对本主循环透明**：Phase 0 已按 `RENDER_MODE`（默认无头 `--headless=new`）+ `DRIVER`（本地 `cli` / 远程 `mcp`）启动/连接 Chrome；本循环的所有浏览器操作（navigate / click / fill / wait / screenshot / 取控制台错误）**经当前 `DRIVER` 执行**——`DRIVER=cli` 走 `chrome-devtools-cli`、`DRIVER=mcp-remote` 走 chrome-devtools-mcp tool，**两驱动 + 无头/有头下行为完全一致**，截图照常出图（见 3.2.5）。无需为无头 / 为某一驱动改写任何用例步骤；CLI 的具体调用映射详见依赖 SKILL。
 > 🟢 **`DRIVER=cli` 下「必须有头」用例同会话即时跑**：本地 CLI 跑到标记「必须有头」的用例时，**重启本机 chrome 切有头（去 `--headless=new`）执行该用例、跑完再切回无头**——仅重启本机 chrome 进程（本地秒级，须重新登录则按登录流程走），**Claude Code 无需重启**，故无需延后（Phase 2.0-E 在 `DRIVER=cli` 时本就不拆延后集）。建议把同角色的「必须有头」用例**聚到一起切一次**减少 chrome 重启次数。仅 `DRIVER=mcp-remote` 远程才延后 + 收敛后提醒（Phase 3.5）。
 
-### 2.0 用例来源优先级解析（★ 测试人员为主 + 研发自测查漏补充）
+### 2.0 当前版本完整验收集合（独立实测只用明确目标）
 
 > ⛔⛔ **2.0.0 前置门：本版有没有【未级联】的用例增量**（约定 22 × 本链路交界，先跑再解析来源）
 >
@@ -35,8 +35,8 @@
 > **刻意排除 `_*`**，而排除的前提是级联真的跑过了。理据见 `rationale.md`。
 >
 > - **exit 0** → 正式用例册即完整用例集，照常进 2.0。
-> - **exit 1** → 先跑 `/sprint-selftest --ledger-cascade [--unattended]`。生成成功、对应条目清理后按该命令的延期收口步骤清除本次已生成范围的 `deferred_sprints[]` / `deferred_tasks[]`，复跑本门；未通过不得进入用例执行。
-> - **exit 2** → 台账/状态不可判读，先修复再重跑，不能当作无欠账。
+> - **exit 1** → 用例义务未齐，返回具体阻塞；测试-only不生成规格/用例、不开发/提交/部署。原开发父任务如有document授权可补齐后重新冻结清单。
+> - **exit 2** → 台账/状态不可判读，返回未核验，不能当作无欠账。
 > - 补不齐时记录 `case_ledger_pending` 和覆盖不完整结论，停止本轮开测；⛔ 不要把增量册塞进用例发现；不得据此判版本通过，也不能让老用例全绿掩盖新增用例未生成。
 >
 > ★ **2.0.0bis 算本轮增量用例集**（前置门过后立刻跑；**只给报告用，不改执行范围**）
@@ -46,7 +46,7 @@
 > python3 {{AIDP_HOME}}/scripts/incremental_cases.py --version "$TARGET_VERSION" --build "$BUILD" --record
 > ```
 >
-> **执行仍全量**（每轮从整个用例集重建 tasks.md，⛔ 不按增量裁剪）；本步只解决**报告分不清**。
+> **执行范围仍为当前版本冻结清单及必要依赖**（不发现全项目/历史全集；同内容有效证据可复用）；本步只解决**报告分不清**。
 > 判据靠 git 新增的用例标题行、不靠标记，落 `builds[].incremental_case_ids`；
 > 无基准判 `no-anchor` + 空集 + 标「全量」。理据见 `rationale.md`。
 
@@ -57,93 +57,37 @@
 #   漏这一行会让下方判据读到空串、`${VAR:-默认}` 静默落默认值（恒真/恒假）。
 #   真源在 baseline 的（BUILD/DRIVER/DEPLOY_MODE/NOTIFY_ENABLED/LOOP_UNATTENDED…）由脚本自动回落。
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
-V="docs/testing/${TARGET_VERSION}"
-
-# A. 测试人员提供的用例：正式用例/ 下排除 00*（环境/账号/方案/索引等配置）与 99*（待澄清清单）前缀的管家文件，其余全部 .md
-#    （按 00/99 前缀约定排除，不写死具体文件名；真正的用例文件从 01_ 起编号）
-TEST_TEAM_CASES=$(find "$V/正式用例" "$V/测试验收" "$V/测试执行" -maxdepth 1 -name "*.md" \
-  -not -name "_*" \
-  -not -name "00*" \
-  -not -name "99*" \
-  -not -name "README.md" 2>/dev/null | sort)
-
-# B. 研发自测用例：研发自测/ 下排除管家文件（索引态：00_索引 / 01_研发自测方案 / 01_测试环境与账号 / 99_待澄清 / 旧锚 00_研发自测方案），用例从 02_ 起
-#    （口径对齐 `sprint-test.md` 用例文件筛选那段的 `-not -name "99_*"`；98_跨系统验证清单**不是可执行用例源**（它是核对清单，`tasks_state.py` 与各统计脚本一律整类跳过 `98_`）；跨系统场景须按用例格式写进 `02_`/`03_` 等用例分册；旧锚 grandfather 布局的 01_ 用例仍纳入——旧锚下 00_ 才是方案、01_ 是用例，不误排）
-DEV_CASES=$(find "$V/研发自测" -maxdepth 2 -name "*.md" \
-  -not -name "_*" \
-  -not -name "00_索引.md" \
-  -not -name "00_研发自测方案.md" \
-  -not -name "01_研发自测方案.md" \
-  -not -name "01_测试环境与账号.md" \
-  -not -name "99_*" \
-  -not -name "README.md" 2>/dev/null | sort)
-[ -z "$DEV_CASES" ] && [ -f "$V/研发自测.md" ] && DEV_CASES="$V/研发自测.md"
-
-# B2. ★ 跨版本回归用例继承（约定33 缺口5.2）：并入【历史版本】研发自测/ 中标 [回归] 的用例，
-#     让 /sprint-bugfix 缺陷反哺生成的回归用例跨版本沉淀、每版 release 自动复跑历史回归集（不从零开始）。
-#     标记来源：正文/frontmatter 含「[回归]」「回归用例」「关联缺陷:」任一（由 dev-manual-testcase 产出、bugfix 反哺时打标）。
-#     注：[回归] 标记 + 关联缺陷字段由 dev-manual-testcase 产出（见其用例模板 + check_testcase_format），本 glob 直接消费。
-# 只取严格早于目标的版本目录；本仓 V主.次[.补丁]，省略补丁按 0 比较，非法目录不入历史。
-REGRESSION_CASES=$(
-  for d in $(python3 - "$TARGET_VERSION" <<'PY'
-import re, sys
+# 当前版本全量只能来自真实autopilot委派的冻结manifest。
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须继承真实委派child}"
+PRIMARY_CASES=$(python3 - "$EXECUTION_CONTEXT" "$TARGET_VERSION" "$BUILD" <<'VERSION_CASES'
+import importlib.util, json, sys
 from pathlib import Path
-
-def version_key(name):
-    m = re.fullmatch(r"[Vv](0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\.(0|[1-9][0-9]*))?", name)
-    return tuple(int(n or 0) for n in m.groups()) if m else None
-
-target = version_key(sys.argv[1])
-for version in Path("docs/testing").glob("*"):
-    key = version_key(version.name)
-    cases = version / "研发自测"
-    if target is not None and key is not None and key < target and cases.is_dir():
-        print(cases)
-PY
-  ); do
-    find "$d" -maxdepth 2 -name "*.md" -not -name "_*" -not -name "00_*" -not -name "01_研发自测方案.md" -not -name "01_测试环境与账号.md" -not -name "README.md" 2>/dev/null
-  done | while read -r f; do grep -qiE '\[回归\]|回归用例|关联缺陷[:：]' "$f" 2>/dev/null && echo "$f"; done | sort -u
-)
-[ -n "$REGRESSION_CASES" ] && echo "♻️  并入跨版本历史回归用例 $(echo $REGRESSION_CASES | wc -w) 条（约定33 缺口5.2：缺陷反哺回归集跨版本继承）"
-
-# C. 优先级判定
-if [ -n "$TEST_TEAM_CASES" ]; then
-  echo "🎯 检测到测试人员用例 → 主集"
-  PRIMARY_CASES="$TEST_TEAM_CASES"
-  SUPPLEMENT_CASES="$DEV_CASES"   # 研发自测作为查漏补充
-  CASE_SOURCE_MODE="测试人员为主 + 研发自测查漏补充"
-elif [ -n "$DEV_CASES" ]; then
-  echo "🎯 未检测到测试人员用例 → 研发自测兜底"
-  PRIMARY_CASES="$DEV_CASES"
-  SUPPLEMENT_CASES=""
-  CASE_SOURCE_MODE="研发自测唯一来源"
-else
-  # ⛔ 无可用用例 = 确定性阻塞，不能只 echo+exit（每 tick 撞同一处、无 #4/streak/冻结 = 静默空转）。
-  #    ⛔ 专属 case_gate_fail_streak，不复用 env_fail_streak（0.1.1 通过即清零它 ⇒ 本门阈值恒不可达）。
-  #    达阈或无唤醒源即按「冻结字段写入契约」冻结
-  #    （**配置类**：解冻看用例/测试方案 mtime）。根因见 rationale.md。
-  echo "❌ 正式用例/ 与 研发自测/ 均无可用用例 → 本 tick 不测"
-  echo "   → 补用例：/sprint-selftest，或放进 正式用例/"
-  # 记账→判阈（内含无唤醒源即当场达阈）→冻结四件套→发 #4，一次做完
-  python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command aiauto-test --version "$TARGET_VERSION" \
-    --phase 2.0-cases --reason testplan-incomplete \
-    --streak-key case_gate_fail_streak --threshold "${ENV_FAIL_FREEZE_THRESHOLD:-3}" \
-    --why "正式用例/ 与 研发自测/ 均无可用用例，连续多 tick 无法开测；补用例即自动解冻"
-  exit 0   # ⛔ 不用 exit 1：已记账 + 已告警，让位本 tick 而非让 /loop 每 tick 撞同一失败
-fi
-# ★ 有可用用例 → 清零环境熔断计数
-python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del case_gate_fail_streak || true
-
-# 跨版本回归册并入补集；同功能点的不同边界用例仍须保留。
-[ -n "$REGRESSION_CASES" ] && SUPPLEMENT_CASES=$(printf '%s\n%s\n' "$SUPPLEMENT_CASES" "$REGRESSION_CASES" | sed '/^$/d' | sort -u)
-
-# D. 去重仅按完整文件路径；不同目录/版本的同名册全部保留。
-# TC 级去重须核对同一身份、前置条件、步骤和断言，并记录覆盖映射；不能仅凭文件名或 REQ 相同跳过。
-# ID 相同但语义不同属于冲突，须先修正身份并保留两条，不得静默丢弃。
-SUPPLEMENT_UNIQUE=$(awk 'FILENAME==ARGV[1] { if (NF) seen[$0]=1; next }
-  NF && !($0 in seen) && !($0 in kept) { kept[$0]=1; print }' \
-  <(printf '%s\n' "$PRIMARY_CASES") \
-  <(printf '%s\n' "$SUPPLEMENT_CASES"))
+sys.path.insert(0, "{{AIDP_HOME}}/scripts")
+from entry_context import load_context
+from execution_policy import validate_test_binding
+from build_unit_test import load_plan, validate_case_index, formal_case_books
+root = Path.cwd()
+ctx = load_context(root, sys.argv[1], migrate=False)
+validate_test_binding(root, ctx, sys.argv[2], sys.argv[3])
+plan = json.loads(Path(ctx["test_manifest"]["path"]).read_text())
+load_plan(root, sys.argv[2], sys.argv[3], plan["commit"], plan)
+ids = set(validate_case_index(root, plan))
+spec = importlib.util.spec_from_file_location("case_parser", "{{AIDP_HOME}}/skills/auto-test-runner/scripts/tasks_state.py")
+parser = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(parser)
+for path in formal_case_books(root, sys.argv[2]):  # 与 validate_case_index 共用同一排除规则
+    selected = {m[1] for m in parser.CASE_RE.finditer(path.read_text())}
+    if selected & ids:
+        if not selected <= ids:
+            raise SystemExit("UNVERIFIED: 用例册含未授权ID")
+        print(path.relative_to(root))
+VERSION_CASES
+) || exit $?
+[ -n "$PRIMARY_CASES" ] || { printf '%s\n' 'UNVERIFIED: 当前版本完整用例清单缺失'; exit 2; }
+SUPPLEMENT_CASES=""
+SUPPLEMENT_UNIQUE=""
+CASE_SOURCE_MODE="当前版本冻结验收清单"
+# 必要回归依赖仅从manifest.dependencies消费；不自动并入历史[回归]册。
 
 # E. ★ 渲染模式拆分（仅 DRIVER=mcp-remote 远程才拆延后集）：
 #    远程 MCP 切模式须重启（0.1.1.5），故无头跑时把「必须有头」用例拆出为延后集，本轮不跑，留到无头闭环收敛后由 Phase 3.5 提醒切有头补跑。
@@ -156,8 +100,10 @@ DEFERRED_HEADED_CASES=""
 case "${DRIVER}" in mcp*) IS_MCP=1 ;; *) IS_MCP=0 ;; esac
 if [ "$IS_MCP" = "1" ] && [ "${RENDER_MODE:-headless}" = "headless" ]; then
   is_headed_only() { grep -qiE '渲染模式[:：][[:space:]]*有头|必须有头|仅有头|\[有头\]' "$1" 2>/dev/null; }
-  NEW_PRIMARY=""; for f in $PRIMARY_CASES;    do is_headed_only "$f" && DEFERRED_HEADED_CASES="$DEFERRED_HEADED_CASES $f" || NEW_PRIMARY="$NEW_PRIMARY $f"; done
-  NEW_SUPP="";    for f in $SUPPLEMENT_UNIQUE; do is_headed_only "$f" && DEFERRED_HEADED_CASES="$DEFERRED_HEADED_CASES $f" || NEW_SUPP="$NEW_SUPP $f"; done
+  NEW_PRIMARY=""
+  for f in $PRIMARY_CASES;    do is_headed_only "$f" && DEFERRED_HEADED_CASES="$DEFERRED_HEADED_CASES $f" || NEW_PRIMARY="$NEW_PRIMARY $f"; done
+  NEW_SUPP=""
+  for f in $SUPPLEMENT_UNIQUE; do is_headed_only "$f" && DEFERRED_HEADED_CASES="$DEFERRED_HEADED_CASES $f" || NEW_SUPP="$NEW_SUPP $f"; done
   PRIMARY_CASES="$NEW_PRIMARY"; SUPPLEMENT_UNIQUE="$NEW_SUPP"     # 本轮实跑集已剔除「必须有头」
   [ -n "$DEFERRED_HEADED_CASES" ] && echo "🪟 远程无头本轮延后 $(echo $DEFERRED_HEADED_CASES | wc -w) 条「必须有头」用例 → 无头闭环收敛后由 Phase 3.5 一次性提醒切有头补跑（远程绝不中途切，见 0.1.1.5③）"
 fi

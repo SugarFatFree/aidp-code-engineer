@@ -17,7 +17,7 @@ development:
   # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。
   branch_policy: null
 
-# 可选执行策略；null 表示普通任务仅实现与轻量静态检查。
+# 可选执行策略；null 表示普通开发/修复默认实现、必要静态检查及本任务相关单测。
 # 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。
 execution_policy: null
 
@@ -63,6 +63,13 @@ cicd:
   # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻
   # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。
   push_deploy_min_wait_seconds: 300
+
+deployment:
+  # 备份策略沿项目既有设置；null 不授权备份，也不假定当天零次。
+  # 接入字段与真实记录格式见 {{AIDP_HOME}}/reference/部署操作约定.md。
+  # DB/完整冷备/迁移快照共用 record_file、max_per_day、timezone。
+  # commands 仅填既有 argv，skip_args 仅填现有部署脚本实际支持的参数。
+  backup: null
 
 stop_guard:
   # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。

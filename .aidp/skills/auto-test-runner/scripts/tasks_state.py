@@ -14,7 +14,7 @@ tasks.md 按 `## {模块名}` 分组,条目形如 `- [ ] TC-001 - 用例名称`�
 
 build/round 作用域(重要):
   * 新 build(上一 build 缺陷经外层 bugfix 修复后的新回归轮)一律用 `init`
-    重建全新 tasks.md(全部回 [ ])并全量重跑;
+    重建全新 tasks.md(全部回 [ ])并按调用方提供的清单重跑(--ids/--manifest,内核不自行决定全集);
   * `resume` 仅用于「同一 build 内」某轮执行被中断后的续跑,已 [√] 跳过;
   * 绝不用 `resume` 跨 build 沿用上一 build 的 [√]、绝不只复跑被修用例
     (只复验被修用例会漏同源缺陷)。
@@ -180,6 +180,41 @@ def _resolve_input(args, name, usage):
     return val
 
 
+ID_TOKEN_RE = re.compile(r'TC-[\w\-]+', re.IGNORECASE)
+
+
+def _collect_scope_ids(args):
+    """合并 --ids 与 --manifest 为调用方清单。返回 (有序去重 id 列表 | None 表示未传清单, 错误信息 | None)。
+
+    ⚠️ 传了清单却解析不到任何 ID(空文件/只有注释/拼写不合 TC-…)必须报错,
+    ⛔ 不得退回「全部」——那会把「调用方想跑的几条」静默放大成目录全集。
+    """
+    ids_arg = getattr(args, 'ids', None)
+    manifest = getattr(args, 'manifest', None)
+    if ids_arg is None and manifest is None:
+        return None, None
+    ids = []
+    if ids_arg is not None:
+        for raw in ids_arg:
+            ids += [t.upper() for t in ID_TOKEN_RE.findall(raw)]
+    if manifest is not None:
+        try:
+            mtext = Path(manifest).read_text(encoding='utf-8')
+        except OSError as exc:
+            return None, f'用例清单读取失败:{manifest}({exc})'
+        for line in mtext.splitlines():
+            line = line.split('#', 1)[0]
+            ids += [t.upper() for t in ID_TOKEN_RE.findall(line)]
+    seen, ordered = set(), []
+    for i in ids:
+        if i not in seen:
+            seen.add(i)
+            ordered.append(i)
+    if not ordered:
+        return None, '用例清单为空或解析不到任何 TC-ID(⛔ 不会退回「全部用例」)'
+    return ordered, None
+
+
 def cmd_init(args):
     source = _resolve_input(args, 'source', 'tasks_state.py init <用例文件或目录> -o <round目录>/tasks.md')
     if not source:
@@ -187,6 +222,17 @@ def cmd_init(args):
     src = Path(source)
     if not src.exists():
         return _err(args, f'用例源不存在:{src}')
+    scope_ids, scope_err = _collect_scope_ids(args)
+    if scope_err:
+        return _err(args, scope_err)
+    select = getattr(args, 'select', None)
+    # 范围必须由调用方显式给出:目录输入既无清单、又没显式选集 → 拒绝,⛔ 不默认「目录下全部用例」。
+    # 显式 `--select all` 在目录输入上同样不构成范围(没有清单就没有「全部」的边界)。
+    if scope_ids is None and src.is_dir() and select in (None, 'all'):
+        return _err(args, '目录输入必须由调用方显式限定范围:--ids / --manifest(用例清单),'
+                          '或显式 --select smoke|regression;⛔ 不默认执行目录下全部用例'
+                          '(单个用例文件作输入时,文件本身即范围,可不传)')
+    select = select or 'all'
     texts = []
     # 跳过非用例文档:00_索引 / 01_研发自测方案 / 98_跨系统清单 / 99_待澄清 + 测试环境与账号 配置
     # + 「总览」索引文档(多文件模式下套件在 03_ 起的模块分册里,总览只有表格清单)。
@@ -217,8 +263,8 @@ def cmd_init(args):
     # 用于就地解析该用例的优先级(四要素表在标题之后、下一条用例之前)
     bounds = [tokens[i + 1][0] if i + 1 < len(tokens) else len(text) for i in range(len(tokens))]
 
-    select = getattr(args, 'select', None) or 'all'
     groups = []  # [(suite_label, [(tc_id, name)])]
+    found_ids = set()
     cur = None
     skipped = 0
     unlabeled_kept = 0
@@ -227,6 +273,10 @@ def cmd_init(args):
             cur = (f'{ident} {label}'.strip(), [])
             groups.append(cur)
             continue
+        if scope_ids is not None:
+            if ident not in scope_ids:
+                continue
+            found_ids.add(ident)
         if select != 'all':
             body = text[start:bounds[i]]
             if select == 'smoke':
@@ -248,6 +298,10 @@ def cmd_init(args):
         cur[1].append((ident, label))
 
     total = sum(len(g[1]) for g in groups)
+    missing_ids = [i for i in (scope_ids or []) if i not in found_ids]
+    if scope_ids is not None and not found_ids:
+        return _err(args, f'用例清单中的 ID 在用例源里一个都没找到:{", ".join(scope_ids)}'
+                          '(⛔ 不会退回「全部用例」)')
     lines = ['# 执行进度 tasks.md', '',
              '> 状态:`[ ]`待执行 / `[>]`执行中 / `[√]`已完成(pass) / `[!]`阻塞或失败', '']
     # ★选集留痕(硬要求):不写这行,子集 tasks.md 与全量版**逐字同形** ——
@@ -259,7 +313,12 @@ def cmd_init(args):
         note += f',{unlabeled_kept} 条未标注优先级已保留' if unlabeled_kept else ''
         lines += [note,
                   '> 通过率与「P0=100%」等通过准则**仅对该子集成立**,不代表全量结论;'
-                  '**新 build 回归轮禁用选集**(须全量重跑,见 execution-methodology 第五节跨 build 硬边界)。',
+                  '**新 build 回归轮须按调用方提供的完整清单重跑**(见 execution-methodology 第五节跨 build 硬边界),不得用选集代替。',
+                  '']
+    if scope_ids is not None:
+        lines += [f'> 📋 **本轮范围 = 调用方清单**:清单 {len(scope_ids)} 条,进入 {len(found_ids)} 条'
+                  + (f';⚠️ **清单中未找到 {len(missing_ids)} 条**:{", ".join(missing_ids)}' if missing_ids else ''),
+                  '> 范围由调用方决定,内核不自行扩大;通过率等结论**仅对清单成立**。',
                   '']
     for label, cases in groups:
         if not cases:
@@ -279,7 +338,9 @@ def cmd_init(args):
             return _err(args, f'tasks.md 初始化失败:{exc}')
     result = {'suites': len([g for g in groups if g[1]]), 'cases': total,
               'output': args.output or None, 'select': select,
-              'skipped_by_select': skipped, 'unlabeled_kept': unlabeled_kept}
+              'skipped_by_select': skipped, 'unlabeled_kept': unlabeled_kept,
+              'scope': 'manifest' if scope_ids is not None else 'explicit',
+              'missing_ids': missing_ids}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
@@ -289,6 +350,8 @@ def cmd_init(args):
                 extra = f'(选集 {select},已过滤 {skipped} 条'
                 extra += f';{unlabeled_kept} 条未标注优先级已保留)' if unlabeled_kept else ')'
             print(f'✅ 生成 {args.output}:{result["suites"]} 模块 / {total} 用例{extra}')
+        if missing_ids:
+            print(f'⚠️ 清单中未找到 {len(missing_ids)} 条:{", ".join(missing_ids)}')
         else:
             # 选集摘要打 **stderr**:stdout 是 tasks.md 正文(可能被重定向进文件),
             # 摘要混进去会污染产物;但静默又会让「跑的是子集」这件事在 stdout 模式下完全看不见。
@@ -500,7 +563,8 @@ def main():
         description='tasks.md 进度状态机管理(断点续跑内核)。4 态:[ ]待执行 / [>]执行中 / '
                     '[√]已完成(pass) / [!]阻塞或失败(fail/block)。子命令 init/update/scan/resume。',
         epilog='示例:\n'
-               '  python3 tasks_state.py init 02_全量自测用例.md -o tasks.md   # 解析用例建 tasks.md\n'
+               '  python3 tasks_state.py init 用例目录/ --manifest ids.txt -o tasks.md   # 按调用方清单建 tasks.md\n'
+               '  python3 tasks_state.py init 02_全量自测用例.md -o tasks.md   # 单个用例文件即范围\n'
                '  python3 tasks_state.py update tasks.md --id TC-001 TC-002 --state running  # 批量改状态\n'
                '  python3 tasks_state.py scan tasks.md --json                 # 统计各态,有残留退出码 1\n'
                '  python3 tasks_state.py resume tasks.md --json               # 列出待续跑项\n'
@@ -512,16 +576,22 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
 
     p = sub.add_parser('init', parents=[common],
-                       help='从用例文档解析 SUITE/TC 生成 tasks.md(全 [ ]);新 build 全量重跑用它重建',
+                       help='从用例文档解析 SUITE/TC 生成 tasks.md(全 [ ]);范围由调用方清单(--ids/--manifest)限定;新 build 按调用方清单重跑用它重建',
                        description='从用例文件或目录解析 SUITE/TC,按模块分组生成 tasks.md(全 [ ] 初态)。'
-                                   '新 build(外层 bugfix 修复后的新回归轮)用本命令重建全新 tasks.md、全量重跑,不沿用旧 build 的 [√]。')
+                                   '新 build(外层 bugfix 修复后的新回归轮)用本命令重建全新 tasks.md、按调用方提供的清单重跑,不沿用旧 build 的 [√]。')
     p.add_argument('source', nargs='?',
                    help='用例文件或目录(位置参数;单文件或多文件目录均可,自动跳过 00_索引/01_研发自测方案/99_待澄清等非用例文件)')
     p.add_argument('--source', dest='source_opt',
                    help='与位置参数 source 等价的具名写法(二选一即可)')
     p.add_argument('-o', '--output', help='输出 tasks.md 路径(不给则打印到 stdout)')
-    p.add_argument('--select', choices=sorted(SELECT_MODES), default='all',
-                   help='执行选集(深度维度,复用既有数据不新增标签):'
+    p.add_argument('--ids', nargs='+', metavar='TC-ID',
+                   help='调用方给定的用例 ID 清单(空格或逗号分隔);清单外用例不进 tasks.md。'
+                        '清单解析不到任何 ID → 报错,⛔ 不退回全部')
+    p.add_argument('--manifest', metavar='FILE',
+                   help='用例 ID 清单文件(每行或逗号分隔,# 起为注释);可与 --ids 合并')
+    p.add_argument('--select', choices=sorted(SELECT_MODES), default=None,
+                   help='执行选集(深度维度,复用既有数据不新增标签);传了清单时在清单内过滤,'
+                        'all=清单内全部。目录输入无清单时必须显式给 smoke|regression,不接受缺省/all。'
                         + ';'.join(f'{k}={v}' for k, v in SELECT_MODES.items()))
     p.set_defaults(func=cmd_init)
 
@@ -546,7 +616,7 @@ def main():
                        help='列出所有待续跑项([ ] 与 [>]),供【同一 build 内】断点续跑',
                        description='列出所有 [ ]/[>] 待续跑项,已 [√] 跳过,不从头重来。'
                                    '作用域仅限「同一 build 内」中断恢复;勿用 resume 跨 build 沿用旧 build 的 [√],'
-                                   '跨 build 的新回归轮请用 init 重建 tasks.md 全量重跑。')
+                                   '跨 build 的新回归轮请用 init 重建 tasks.md 并按调用方清单重跑。')
     p.add_argument('tasks', nargs='?', help='tasks.md 路径(位置参数;亦可用 --tasks)')
     p.add_argument('--tasks', dest='tasks_opt', help='与位置参数 tasks 等价的具名写法')
     p.set_defaults(func=cmd_resume)

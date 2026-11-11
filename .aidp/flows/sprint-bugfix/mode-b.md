@@ -86,7 +86,9 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 **派单前对账**：用实际将传的 Sprint/文件过滤逐条核本次待修 BUG ID，保证 Step 0 范围内的导入项均可被 SKILL 读到；遗漏或归属不明返回 `scope-conflict`，不静默跳项。**不得通过删掉 Sprint 参数扩大修复范围**，也不得改写其他 Sprint 的归属来凑匹配。把已核实 BUG ID 与来源回链一并交给执行方。
 
-使用 `Skill` 工具调用 `bugfix` skill，参数 = 调用方给定的 `sprint-{NNN}` / 文件名，**都没有则用本次核实的BUG清单限定输入，不让空参数变成全版本扫描**。修复流程（归因拆分 → 根因定位〔方法论 `superpowers:systematic-debugging`，⛔ 根因证据确认前不改代码〕→ 修复 → 逐项验证 → 修复报告）以 SKILL 为单一信源，命令端不复述、不另行调用 systematic-debugging（约定 21）。
+**外层边界**：`bugfix` SKILL 是本项目自有，按 `report_mode` 区分产出：light 日常任务传 `report_mode=evidence-only`，不写 `bugfix-*-report.md`，根因/证据取其结构化返回写原 execution context JSON，终端给实际范围与状态；formal Sprint 保留默认 `file`，沿用原规格与归档。两种模式修复范围都只由本次核实的 BUG 清单决定；若内核不能遵守范围/产物边界，停在具体阻塞，不扩任务。
+
+使用 `Skill` 工具调用 `bugfix` skill，参数 = 调用方给定的 `sprint-{NNN}` / 文件名（light 另加 `report_mode=evidence-only`），**都没有则用本次核实的BUG清单限定输入，不让空参数变成全版本扫描**。修复流程（归因拆分 → 根因定位〔方法论 `superpowers:systematic-debugging`，⛔ 根因证据确认前不改代码〕→ 修复 → 逐项验证 → 当前任务机器证据）以 SKILL 为单一信源，命令端不复述、不另行调用 systematic-debugging（约定 21）。
 
 来自验收的调用只接管尚未闭环 BUG，保留原严重度（包括错误性 Suggestion）、原证据、契约修订、具体写集和原始 CVL 报告回链。related-test已授权才生成/执行失败测试并经test_ledger定向验证；否则只实现修复+static，不把未测写PASS；SKILL 不得另起完整 CVL。Git index/commit/push 与共享文档由主流程独占，显式授权另行串行交接。纯优化写不修理由，真实产品/版本/破坏性或部署授权问题按原门，不因进入修复自动获得授权。
 
@@ -100,9 +102,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 4. **修完单点不够 — 必须把同表中"形态类似"的其他消费者点也巡检一遍**（如改 axios 守卫必同时看 SSE / WebSocket 的独立 URL 拼装是否同病）
 5. 如本次修复实际上是"base 已变但消费者未联动"的清算 → 必须回写事实清单的「⚠️ 本次变更」表「已联动消费者点」列
 
-**★ 配置项清单联动**：本 bug 修复改动了任一配置文件（同 `/sprint-dev` Step X.7 触发条件清单）→ document已授权才执行 `/sprint-dev` Step X.7；否则仅登记事实漂移。已授权时按其 的增量更新流程——往 `docs/deployment/{version}/配置文件/增量/配置项清单*.md` 的对应段（①新增配置 / ②删除配置 / ③运行时配置文件变更，**3 段代码块结构、无表格**）追加条目，行内注释标注来源（Sprint 编号或 `bugfix-{YYYYMMDD}`）。
-
-**★ 部署流程 + SQL执行台账联动（检测驱动，独立于是否改配置）**：详见同目录 `rationale.md`「部署流程 + SQL执行台账联动的检测驱动细则」。
+**配置与部署操作联动**：本次修复涉及配置/SQL/启动参数/初始化/迁移接口时，按 `/sprint-dev` Step X.7/X.8 只将权威路径与必要运行记录引用写入既有机器待同步项；版本规划/正式发布再合并操作指引。日常修复不自动新增部署 Markdown、不为日志另做 commit/push。详见 `{{AIDP_HOME}}/reference/部署操作约定.md`。
 
 #### Step 2：推送分类与监听（约定 31.5）
 
@@ -119,9 +119,9 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 #### Step 3：回填状态与报告链接
 
-> **★ 契约边界（约定 21，与 SKILL 5.3 对齐）**：根因 / 证据 / 修复方案的**权威落点 = SKILL 生成的 `bugfix-*-report.md`**；问题记录与来源清单只就地回填状态、Commit 与报告链接，⛔ 不复写根因。
+> **★ 契约边界（约定 21，与 SKILL 5.3 对齐）**：根因 / 证据 / 修复方案的**权威落点 = 当前 execution context 机器证据JSON**；日常不执行SKILL自动Markdown报告步骤；问题记录与来源清单只就地回填状态、Commit 与报告链接，⛔ 不复写根因。
 
-**bugfix 记录（`bugfix-*-{user}.md`）**——表格行「状态」改 `已修复`；已提交的「Commit」填真实修复 SHA，尚未提交写“尚未提交 + 账本 after_hash”，不得伪造提交或用旧 HEAD 代替；详情章节追加一行 `修复报告：<report 相对路径>#<小节锚点>`，以及**部署提醒**（前端/后端/DB/Redis 是否需要重启或变更，报告未覆盖时）。
+**bugfix 记录（`bugfix-*-{user}.md`）**——表格行「状态」改 `已修复`；已提交的「Commit」填真实修复 SHA，尚未提交写“尚未提交 + 账本 after_hash”，不得伪造提交或用旧 HEAD 代替；详情章节追加一行 `修复证据：<JSON相对路径> / <问题ID>`，以及**部署提醒**（前端/后端/DB/Redis 是否需要重启或变更，报告未覆盖时）。
 
 **来源 B 清单行**（由 Step 0 回链定位；**不改 template 表结构**，6 列保持原状）：
 1. 「状态」列从 `待修复` 改为 `已修复`

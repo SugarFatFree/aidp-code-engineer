@@ -123,6 +123,46 @@ class TestLedgerTests(unittest.TestCase):
                            capture_output=True, text=True, timeout=10)
         self.assertEqual(p.returncode, 0, p.stderr)
 
+    def test_zero_collected_unittest_is_unverified(self):
+        (self.root / "test_empty.py").write_text("import unittest\n")
+        process = subprocess.run(self.argv(command=[sys.executable, "-m", "unittest", "test_empty.py"]),
+                                 capture_output=True, text=True)
+        self.assertIn(process.returncode, (1, 5), process.stdout + process.stderr)
+        result = json.loads(process.stdout.splitlines()[-1])
+        self.assertEqual(result["failure_kind"], "NO_TESTS_COLLECTED")
+        self.assertEqual(result["status"], "ERROR")
+
+    def test_same_input_tool_failure_is_not_retried_even_with_force(self):
+        command = [sys.executable, "-c", self.command[-1] + "; raise SystemExit(127)"]
+        first = self.invoke(command=command, expected=127)
+        second = self.invoke(command=command, options=("--force",), expected=2)
+        self.assertTrue(second["retry_blocked"])
+        self.assertEqual(second["run_id"], first["run_id"])
+        self.assertEqual(self.count_value(), 1)
+        (self.root / "src/app.py").write_text("answer = 2\n")
+        self.invoke(command=command, expected=127)
+        self.assertEqual(self.count_value(), 2)
+
+    def test_tool_restored_after_missing_allows_retry_but_unchanged_tool_does_not(self):
+        with tempfile.TemporaryDirectory(prefix="aidp-tool-") as temp:
+            tool = Path(temp) / "runner.sh"
+            command = [str(tool)]
+            first = self.invoke(command=command, expected=127)
+            self.assertEqual(first["failure_kind"], "ENV_UNAVAILABLE")
+            self.assertTrue(self.invoke(command=command, options=("--force",), expected=2)["retry_blocked"])
+            tool.write_text("#!/bin/sh\nexit 0\n")
+            tool.chmod(0o755)
+            restored = self.invoke(command=command)
+            self.assertEqual(restored["status"], "PASS")
+            self.assertNotEqual(restored["run_id"], first["run_id"])
+            # 修改 runner 内容后同样是真实工具变化：旧同根因失败不再阻断。
+            tool.write_text("#!/bin/sh\nexit 127\n")
+            broken = self.invoke(command=command, options=("--force",), expected=127)
+            self.assertNotEqual(broken["run_id"], restored["run_id"])
+            self.assertTrue(self.invoke(command=command, options=("--force",), expected=2)["retry_blocked"])
+            tool.write_text("#!/bin/sh\nexit 0\n")
+            self.assertEqual(self.invoke(command=command, options=("--force",))["status"], "PASS")
+
     def test_unchanged_pass_reused_without_forcing_a_third_execution(self):
         results = [self.invoke() for _ in range(5)]
         self.assertEqual([r["reused"] for r in results], [False, True, True, True, True])
@@ -245,10 +285,11 @@ class TestLedgerTests(unittest.TestCase):
             self.assertNotEqual(result["before_hash"], result["after_hash"])
 
     def test_spawn_error_and_timeout_never_reused(self):
-        for _ in range(2):
-            result = self.invoke(command=["/aidp-does-not-exist"], expected=127)
-            self.assertEqual(result["status"], "ERROR")
-            self.assertFalse(result["reused"])
+        result = self.invoke(command=["/aidp-does-not-exist"], expected=127)
+        self.assertEqual(result["status"], "ERROR")
+        blocked = self.invoke(command=["/aidp-does-not-exist"], expected=2)  # 同输入同环境不再重试
+        self.assertTrue(blocked["retry_blocked"])
+        self.assertFalse(blocked["reused"])
         for _ in range(2):
             result = self.invoke(options=("--timeout", "0.1"),
                                  command=[sys.executable, "-c", "import time; time.sleep(3)"], expected=124)
@@ -790,40 +831,12 @@ class TestLedgerTests(unittest.TestCase):
         changed = dict(noise, LEDGER_SESSION_TOKEN="another-session")
         self.assertFalse(self.invoke(env=changed)["reused"])
 
-    def test_full_api_uses_dedicated_build_ledger_across_worktree_paths(self):
-        spec = importlib.util.spec_from_file_location("ledger_full_api_test", SCRIPT)
-        ledger = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(ledger)
-        self.git("init", "-q")
-        self.git("config", "user.email", "test@example.invalid")
-        self.git("config", "user.name", "test")
-        self.git("add", "src/app.py")
-        self.git("commit", "-qm", "build")
-        main_run = self.invoke()
+    def test_unbounded_full_api_is_rejected_even_with_external_ledger(self):
+        import test_ledger
         with tempfile.TemporaryDirectory(prefix="aidp-build-cache-") as temp:
-            cache = Path(temp) / "build-ledger"
-            original = None
-            for index in range(2):
-                wt = Path(temp) / f"wt-{index}"
-                self.git("worktree", "add", "--detach", str(wt), "HEAD")
-                try:
-                    output, exit_code = ledger.run(root=wt, cwd=".", scope="full", env_id="build-1",
-                                                   command=[sys.executable, "-c", "pass"], ledger_root=cache)
-                    self.assertEqual(exit_code, 0)
-                    self.assertEqual(output["status"], "PASS")
-                    self.assertEqual(output["reused"], bool(index))
-                    if original is None:
-                        original = output
-                    else:
-                        self.assertEqual(output["run_id"], original["run_id"])
-                        self.assertEqual(output["root"], original["root"], "复用保留原执行 worktree 位置")
-                finally:
-                    self.git("worktree", "remove", "--force", str(wt))
-            self.assertTrue((cache / "memory/.aidp/test-ledger.jsonl").is_file())
-            main_again = self.invoke()
-            self.assertTrue(main_again["reused"])
-            self.assertEqual(main_again["run_id"], main_run["run_id"])
-            self.assertEqual(len(ledger.load(self.root)), 1, "独立 build 账本不得混入主仓 Sprint 记录")
+            with self.assertRaises(test_ledger.LedgerError):
+                test_ledger.run(root=self.root, cwd=".", scope="full", env_id="build-1",
+                                command=[sys.executable, "-c", "pass"], ledger_root=Path(temp) / "ledger")
 
     def test_tool_wrapper_exit_127_is_unverified_not_code_failure(self):
         out = self.invoke(command=[sys.executable, "-c", "raise SystemExit(127)"], expected=127)
@@ -855,7 +868,7 @@ class TestLedgerTests(unittest.TestCase):
         }.items():
             (self.root / name).write_text(text)
         runners = [{"suffixes": [".py"], "batch": False, "argv": [sys.executable, "-B", "-m", "unittest", "{tests}"]}]
-        plan = test_scope.derive(self.root, self.scope_base, runners)
+        plan = test_scope.derive(self.root, self.scope_base, runners, ["src", "tests"])
         rel, _ = self.scope_path(plan)
         command = [sys.executable, str(SCRIPT), "run-scope", "--root", str(self.root),
                    "--scope-file", rel, "--env-id", "local-test"]
@@ -864,7 +877,7 @@ class TestLedgerTests(unittest.TestCase):
         original = test_ledger.load(self.root)
         source = next(r for r in original if r["command"][-1] == "tests/test_a.py")
         (self.root / "src/b.py").write_text("value = 2\n")
-        plan = test_scope.derive(self.root, self.scope_base, runners)
+        plan = test_scope.derive(self.root, self.scope_base, runners, ["src", "tests"])
         rel, _ = self.scope_path(plan)
         snapshot = test_ledger.tree_snapshot(self.root)
         item = next(r for r in plan["runs"] if r["tests"] == ["tests/test_a.py"])
@@ -944,6 +957,98 @@ class TestLedgerTests(unittest.TestCase):
                 report.write_text(json.dumps(valid))
                 self.assertEqual(test_ledger.validate_review_report(self.root, "memory/review.json", "scope-fixture", identity),
                                  test_ledger.file_hash(report))
+
+    def test_narrow_snapshot_tracks_add_delete_rename_without_reading_other_contents(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import test_ledger
+        self.enable_scopes()
+        first = test_ledger.tree_snapshot(self.root, paths=["src/app.py"])
+        (self.root / "src/new.py").write_text("unrelated = 1\n")
+        added = test_ledger.tree_snapshot(self.root, paths=["src/app.py"])
+        self.assertNotEqual(first["hash"], added["hash"])
+        self.assertNotIn("src/new.py", added["files"])
+        self.assertEqual(added["io"]["content_reads"], 0)
+        (self.root / "src/new.py").rename(self.root / "src/renamed.py")
+        renamed = test_ledger.tree_snapshot(self.root, paths=["src/app.py"])
+        self.assertNotEqual(renamed["hash"], added["hash"])
+        (self.root / "src/renamed.py").unlink()
+        self.assertEqual(test_ledger.tree_snapshot(self.root, paths=["src/app.py"])["hash"], first["hash"])
+
+    def test_cold_snapshot_binds_real_input_before_negative_cache(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import entry_context
+        import test_ledger
+        import execution_policy
+        self.enable_scopes()
+        context_path = entry_context.resolve_context(self.root, "sprint-dev", version="V1",
+            write_set=["src/app.py"], additional_grants=["related-test"],
+            authorization_source={"kind": "user-text", "request_id": "cold-cache", "text": "run selected test"})["execution_context"]
+        context = entry_context.load_context(self.root, context_path)
+        command = ["/missing-aidp-runner"]
+        first, code = test_ledger.run(self.root, ".", "targeted", "e1", command, execution_context=context)
+        self.assertEqual(code, 127)
+        self.assertEqual(first["failure_kind"], "ENV_UNAVAILABLE")
+        with self.assertRaises(execution_policy.PolicyError):
+            test_ledger.run(self.root, ".", "targeted", "e1", command, execution_context=context)
+        (self.root / "src/app.py").write_text("answer = 2\n")
+        changed, code = test_ledger.run(self.root, ".", "targeted", "e1", command, execution_context=context)
+        self.assertEqual(code, 127)
+        self.assertNotEqual(changed["before_hash"], first["before_hash"])
+        budget = json.loads((Path(context_path).parent / "budget.json").read_text())
+        commands = [r for r in budget["reservations"] if r.get("action") == "related-test"]
+        self.assertEqual(len(commands), 2)
+        self.assertTrue(all(r.get("input_bound") and r.get("settlement") for r in commands))
+        self.assertEqual(budget["used"]["processes"], 0)
+
+    def test_snapshot_reuses_content_without_reading_files_again(self):
+        from unittest.mock import patch
+        sys.path.insert(0, str(SCRIPT.parent))
+        import test_ledger
+        import project_inventory
+        if project_inventory.fingerprint_token(self.root / "src/app.py") is None:
+            self.skipTest("filesystem does not support trusted fingerprints")
+        original = test_ledger.file_hash
+        with patch.object(test_ledger, "file_hash", wraps=original) as reader:
+            first = test_ledger.tree_snapshot(self.root)
+            self.assertGreater(reader.call_count, 0)
+            reader.reset_mock()
+            second = test_ledger.tree_snapshot(self.root)
+            self.assertEqual(reader.call_count, 0)
+        self.assertEqual(first["hash"], second["hash"])
+        self.assertEqual(second["io"]["content_reads"], 0)
+        self.assertGreater(second["io"]["cache_hits"], 0)
+        self.assertEqual(first["io"]["unique_files"], 1)
+
+    def test_execution_window_aba_never_produces_pass(self):
+        command = [sys.executable, "-c", "from pathlib import Path; p=Path('src/app.py'); original=p.read_bytes(); p.write_bytes(b'changed'); p.write_bytes(original)"]
+        out = self.invoke(command=command, expected=1)
+        self.assertEqual(out["status"], "TREE_CHANGED")
+        self.assertEqual(out["before_hash"], out["after_hash"])
+        self.assertEqual(out["exit_code"], 0)
+
+    def test_post_evidence_failure_preserves_command_output_and_exit(self):
+        from unittest.mock import patch
+        sys.path.insert(0, str(SCRIPT.parent))
+        import test_ledger
+        original = test_ledger.tree_snapshot
+        calls = 0
+        def snapshot(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls > 1:
+                raise OSError("post evidence unreadable")
+            return original(*args, **kwargs)
+        command = [sys.executable, "-c", "import sys; print('actual stdout'); print('actual stderr', file=sys.stderr); raise SystemExit(7)"]
+        with patch.object(test_ledger, "tree_snapshot", side_effect=snapshot):
+            out, code = test_ledger.run(self.root, ".", "targeted", "e1", command)
+        self.assertEqual(code, 7)
+        self.assertEqual(out["exit_code"], 7)
+        self.assertEqual(out["status"], "ERROR")
+        row = test_ledger.load(self.root)[-1]
+        self.assertEqual(row["command_status"], "FAIL")
+        self.assertEqual(row["evidence_status"], "UNVERIFIED")
+        self.assertIn("actual stdout", Path(row["output"]["stdout"]).read_text())
+        self.assertIn("actual stderr", Path(row["output"]["stderr"]).read_text())
 
     def test_self_check_has_positive_and_negative_cases(self):
         p = subprocess.run([sys.executable, str(SCRIPT), "--self-check"],

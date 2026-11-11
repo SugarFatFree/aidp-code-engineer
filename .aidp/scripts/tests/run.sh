@@ -106,6 +106,8 @@ run "test_test_scope.py（Sprint 单测推导 / run-scope 逐套记账 / worktre
 run "test_entry_context.py（轻量与正式身份继承及完成门）" python3 .aidp/scripts/tests/test_entry_context.py
 run "test_execution_policy.py（动作授权、预算及等价证据边界）" python3 .aidp/scripts/tests/test_execution_policy.py
 run "test_scope_performance.py（范围缓存、共享计划与合批性能）" python3 .aidp/scripts/tests/test_scope_performance.py
+run "test_verification_tools.py（项目工具链、静态包装器与真实检查分类）" python3 .aidp/scripts/tests/test_verification_tools.py
+run "test_deployment_ops.py（部署操作指引与备份频率边界）" python3 .aidp/scripts/tests/test_deployment_ops.py
 run "test_development_scope.py（开发前后统一风险与成本判据）" python3 .aidp/scripts/tests/test_development_scope.py
 run "test_sprint_discovery.py（Sprint编号、启动和关闭发现一致性）" python3 .aidp/scripts/tests/test_sprint_discovery.py
 run "test_light_task_flow.py（无Sprint命令串联与状态隔离）" python3 .aidp/scripts/tests/test_light_task_flow.py

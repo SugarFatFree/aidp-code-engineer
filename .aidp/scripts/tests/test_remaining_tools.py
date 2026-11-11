@@ -48,6 +48,47 @@ class TemporaryProject(unittest.TestCase):
     def read(self):
         return json.loads(self.baseline.read_text(encoding="utf-8"))
 
+    def delegation(self, version="V1", build="B1"):
+        """真实 autopilot test-only 根 + 同 version/build 冻结 manifest 子任务；不伪造授权。"""
+        import hashlib
+        sys.path.insert(0, str(SCRIPTS))
+        from entry_context import resolve_autopilot_root, fork_test_build
+        if not (self.root / ".git").exists():
+            for args in (("init", "-q"), ("config", "user.email", "f@example.invalid"), ("config", "user.name", "f")):
+                subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
+            (self.root / ".gitignore").write_text("memory/\n", encoding="utf-8")
+            (self.root / "test_sample.py").write_text("import unittest\nclass T(unittest.TestCase):\n def test_a(self): pass\n",
+                                                      encoding="utf-8")
+            subprocess.run(["git", "-C", str(self.root), "add", "-A"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "fixture"], check=True, capture_output=True)
+        formal = self.root / "docs/testing" / version / "正式用例"
+        formal.mkdir(parents=True, exist_ok=True)
+        index = formal / "00_索引.md"
+        index.write_text("# 本版本正式用例索引\nTC-ONE\n", encoding="utf-8")
+        (formal / "03_cases.md").write_text("#### 用例 TC-ONE: sample\n", encoding="utf-8")
+        acceptance = formal.parent / "acceptance.json"
+        acceptance.write_text(json.dumps({"version": version, "acceptance_tests": ["test_sample.py"], "dependencies": [],
+            "cases": [{"id": "TC-ONE", "test_files": ["test_sample.py"]}],
+            "case_index": {"path": index.relative_to(self.root).as_posix(),
+                           "sha256": hashlib.sha256(index.read_bytes()).hexdigest()}}), encoding="utf-8")
+        commit = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"], check=True,
+                                capture_output=True, text=True).stdout.strip()
+        runner = {"suffixes": [".py"], "argv": [sys.executable, "-m", "unittest", "-v", "{tests}"],
+                  "cwd": ".", "env_id": "stdlib"}
+        plan = {"schema": 1, "version": version, "build": build, "commit": commit,
+                "source": {"path": "unit-plan.json", "sha256": "b" * 64},
+                "suites": [{"cwd": ".", "env_id": "stdlib", "inputs": [], "external_dependencies": "none",
+                            "runners": [runner]}],
+                "acceptance_tests": ["test_sample.py"], "dependencies": [],
+                "acceptance_baseline": {"path": acceptance.relative_to(self.root).as_posix(),
+                                        "sha256": hashlib.sha256(acceptance.read_bytes()).hexdigest()}}
+        manifest = self.root / "memory" / (build + "-manifest.json")
+        manifest.write_text(json.dumps(plan), encoding="utf-8")
+        parent = resolve_autopilot_root(self.root, version, authorization_source={
+            "kind": "explicit-command", "command": "sprint-autopilot", "request_id": "remaining-tools",
+            "options": ["--skip-dev"]})["execution_context"]
+        return fork_test_build(self.root, parent, version, build, manifest=manifest)["execution_context"]
+
     def cli(self, script, *args):
         return subprocess.run([sys.executable, str(SCRIPTS / script), *map(str, args)],
                               cwd=self.root, capture_output=True, text=True, timeout=20)
@@ -186,13 +227,18 @@ class StuckBoundaryTests(TemporaryProject):
             "current_phase": "2-exec", "phase_status": "running", "phase_token": "B1",
             "phase_enter_count": 8, "phase_first_entered_at": "2000-01-01T00:00:00Z"}
         self.save(data)
+        context = self.delegation()
         calls = []
+        real_run = subprocess.run
         def fake_run(cmd, **kwargs):
+            if "check_stuck_phase.py" not in str(cmd) and "baseline_edit.py" not in str(cmd):
+                return real_run(cmd, **kwargs)  # 委派核验使用真实 Git/上下文，只替身阶段子进程
             calls.append(cmd)
             return subprocess.CompletedProcess(cmd, 3 if "check_stuck_phase.py" in str(cmd) else 0)
         with patch.object(phase.subprocess, "run", side_effect=fake_run):
             result = phase.main(["--baseline", str(self.baseline), "--version", "V1",
-                                 "--phase", "1-probe", "--next-phase", "2-exec", "--build", "B1"])
+                                 "--phase", "1-probe", "--next-phase", "2-exec", "--build", "B1",
+                                 "--execution-context", context])
         self.assertEqual(result, 3)
         self.assertIn("check_stuck_phase.py", str(calls[0]), "旧阶段未完成时应先检查，不能先写1-probe清零")
 
@@ -252,8 +298,11 @@ class GenerationPolicyTests(TemporaryProject):
 
 class PhaseLifecycleTests(TemporaryProject):
     def enter(self, phase_name, next_phase, tick="tick-1", *extra):
+        if not hasattr(self, "_context"):
+            self._context = self.delegation()
         return self.cli("aiauto_phase_entry.py", "--version", "V1", "--phase", phase_name,
-                        "--next-phase", next_phase, "--build", "B1", "--tick-id", tick, *extra)
+                        "--next-phase", next_phase, "--build", "B1", "--tick-id", tick,
+                        "--execution-context", self._context, *extra)
 
     def test_same_tick_is_counted_once_then_next_tick_accumulates(self):
         self.assertEqual(self.enter("1-probe", "2-exec").returncode, 0)

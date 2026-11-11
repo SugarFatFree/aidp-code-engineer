@@ -52,11 +52,11 @@ def test_convention_41_text():
     check("稳定锚点保持 1–41", "约定编号 1–41 为稳定锚点" in a)
     check("细则分片映射已登记 41", "约定 37·38·41" in a)
     check("单一策略保留light不铸build边界", "light 不铸 build" in policy)
-    check("普通开发只含实现与静态，部署及live须各自授权",
-          "普通开发默认 `implement + static`" in policy
+    check("普通开发含实现、静态与本任务相关单测，部署及live须各自授权",
+          "普通开发/修复默认 `implement + static + related-test`" in policy
           and "light 不铸 build、默认不部署" in policy
           and "在已有任务上分别增加 `commit`、`push`、`deploy`" in policy
-          and "自然浏览器请求只授权所指页面/流程，不借用全组合" in policy)
+          and "自然语言浏览器/页面请求只授权所指页面或流程的 live-tests，不借用 autopilot 版本全量组合" in policy)
     check("light不认领旧Sprint且不重置既有状态",
           "light 无 Sprint 卡/归档，不认领旧 Sprint" in convention
           and "light 收尾不创建 Sprint 归档、不重置已有 activeContext/progress" in a)
@@ -97,8 +97,8 @@ def test_offchain_budget_tiers():
     check("XS：≤2 代码文件 → 不归档、不部署",
           b["risk_tier"] == "S" and b["cost"]["band"] == "XS" and not b["actions"]["sprint_archive"] and b["deploy"] is False)
     b = budget(" M code/a.ts\n M code/b.ts\n M code/c.ts\n M code/d.ts\n")
-    check("S：文件数量只是成本，不授予单测或部署",
-          b["tier"] == "S" and not b["actions"]["unit_test"] and b["deploy"] is False)
+    check("S：开发默认相关单测，文件数量不扩大范围或授权部署",
+          b["tier"] == "S" and b["actions"]["unit_test"] and b["deploy"] is False)
 
     (d / "alter.sql").write_text("ALTER TABLE T ADD COLUMN X INT;", encoding="utf-8")
     b = budget(" M code/a.ts\n M alter.sql\n")
@@ -225,6 +225,8 @@ def test_standalone_push_debt():
             if src.is_file():
                 shutil.copy(src, d / ".aidp/scripts" / f)
         (d / "memory").mkdir()
+        (d / "memory/aidp-config.yaml").write_text(
+            "cicd:\n  provider: github-actions\n  pipelines: {test: deploy-test.yml}\n", encoding="utf-8")
         (d / "README.md").write_text("x", encoding="utf-8")
         subprocess.run(["git", "-C", str(d), "add", "-A"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(d), "commit", "-qm", "base"], check=True, capture_output=True)
@@ -382,7 +384,7 @@ def test_worker_contract_inputs_and_write_scope():
               and entry.index('light-context.md') < entry.index('**仅 formal**')
               and '**light**' in startup and 'formal 完整规格清单不用于 light' in startup
               and 'write_set' in entry and '--write-set' in light and '--acceptance' in light
-              and 'light 不创建 Sprint、契约卡或替代审批文档' in light
+              and 'light 不建 Sprint/卡片/审批文档' in light
               and command.index('return') < command.index('## formal 流程'))
         check(f'{role} 共享内容统一回主流程，不能直接改 bug/memory/事实',
               '共享写入统一交主流程' in entry

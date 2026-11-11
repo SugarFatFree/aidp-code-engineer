@@ -34,9 +34,15 @@ class JoinTests(unittest.TestCase):
         unit = dict(schema=1, build=self.build, commit=self.commit, status=state, reason='',
                     runs=[run] if state in ('PASS', 'FAIL') else [], counts=run['counts'],
                     failed_cases=run['failed_cases'], primary_error=run['primary_error'], reused=False)
-        result = dict(build=self.build, commit=self.commit, unitTests=unit,
+        scope = {'kind': 'version', 'version': self.version, 'build': self.build, 'manifest_hash': 'f' * 64,
+                 'acceptance_baseline': {'path': 'docs/testing/V1.0.0/acceptance.json', 'sha256': 'e' * 64},
+                 'acceptance_tests': ['test_sample.py'], 'dependencies': [], 'case_ids': ['TC-1']}
+        unit.update(version=self.version, testScope=scope)
+        result = dict(version=self.version, testScope=scope, build=self.build, commit=self.commit, unitTests=unit,
                       summary={'total': int(browser), 'pass': int(browser), 'fail': 0, 'block': 0,
                                'skip': 0, 'na': 0, 'passRate': 1 if browser else None})
+        if browser:
+            result['cases'] = [{'id': 'TC-1', 'title': '正式用例', 'result': 'pass'}]
         if not browser:
             result['browserTests'] = {'status': 'N/A', 'reason': '纯后端无浏览器适用面'}
         return result
@@ -71,19 +77,27 @@ class JoinTests(unittest.TestCase):
             self.assertEqual(gate.check_unit_report(str(self.root), self.version, self.build, self.commit)[0], valid)
         self.assertFalse(gate.check_unit_report(str(self.root), self.version, self.build, 'b' * 40)[0])
 
-    def test_standalone_join_preserves_main_baseline(self):
-        self.baseline.unlink()
-        directory = self.root / 'memory/.aidp/build-unit' / self.version / self.build
-        directory.mkdir(parents=True)
-        plan = {'version': self.version, 'build': self.build, 'commit': self.commit, 'standalone': True,
-                'deployment': {'commit': self.commit, 'verified': True, 'evidence': 'deployed version endpoint'}}
-        (directory / 'plan.json').write_text(json.dumps(plan))
+    def test_standalone_target_run_cannot_settle_version_scope(self):
         payload = self.payload(browser=False)
         merged = merge_unit_tests(payload, payload['unitTests'], self.build, self.commit)
-        out = join.settle(self.root, self.version, self.build, merged, standalone=True)
-        self.assertTrue(out['converged'])
-        self.assertFalse(self.baseline.exists())
-        self.assertTrue((directory / 'join.json').exists())
+        with self.assertRaisesRegex(ValueError, '独立目标实测'):
+            join.settle(self.root, self.version, self.build, merged, standalone=True)
+        self.assertNotIn('test_join', json.loads(self.baseline.read_text())['versions'][self.version]['builds'][0])
+
+    def test_legacy_or_other_version_report_cannot_settle(self):
+        payload = self.payload()
+        for mutate in (lambda p: (p.pop('testScope'), p['unitTests'].pop('testScope')),
+                       lambda p: p.update(version='V9.9.9')):
+            candidate = copy.deepcopy(payload)
+            mutate(candidate)
+            with self.assertRaises(ValueError):
+                join.settle(self.root, self.version, self.build, candidate)
+
+    def test_report_cases_must_equal_formal_version_case_ids(self):
+        payload = self.payload()
+        payload['cases'] = [{'id': 'TC-HISTORY', 'title': '历史', 'result': 'pass'}]
+        with self.assertRaises(ValueError):
+            self.settle(payload)
 
     def test_new_case_debt_after_report_requires_regeneration(self):
         data = json.loads(self.baseline.read_text())

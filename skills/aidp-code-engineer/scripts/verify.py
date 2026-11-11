@@ -607,32 +607,27 @@ def check_deployment_two_track_layout(root: Path, r: VerifyResult):
         r.note("部署产物两轨落位一致（sql/{增量,全量}/ + 配置文件/{增量,全量}/）")
 
 
-def check_deployment_docs(root: Path, r: VerifyResult):
-    dep = root / "docs/deployment"
-    if not dep.is_dir():
+def check_deployment_docs(root: Path, r: VerifyResult, version=None):
+    """只核当前版本的已有操作指引，不把历史资料或独立分册当日常欠账。"""
+    version = version or _current_version(root)
+    if not version or not L.VERSION_RE.match(version):
         return
-    miss_flow, miss_ledger = [], []
-    for v in _version_dirs(dep):
-        has_sql = any(re.match(r"^\d{2}_", f.name) and not f.name.startswith("99_")
-                      for f in (v / "sql").glob("增量/*.sql")) if (v / "sql").is_dir() else False
-        if not has_sql:
-            continue
-        flow = v / "部署流程/部署流程.md"
-        if not flow.is_file() or re.search(r"\{(version|prev-version)\}", L.read_text(flow)):
-            miss_flow.append(v.name)
-        if not (v / "部署流程/SQL执行台账.md").is_file():
-            miss_ledger.append(v.name)
-    if miss_flow:
-        r.warn("以下版本有增量 SQL 但『部署流程/部署流程.md』缺失或仍是模板占位：" + ", ".join(miss_flow)
-               + " → /sprint-dev 部署文档步骤补齐")
-    if miss_ledger:
-        r.note("以下版本有增量 SQL 但缺『部署流程/SQL执行台账.md』：" + ", ".join(miss_ledger))
-
-
-def check_deployment_tools(root: Path, r: VerifyResult):
-    tools = root / "docs/deployment/tools"
-    if tools.is_dir() and any(p.name != ".gitkeep" for p in tools.iterdir()) and not (tools / "README.md").is_file():
-        r.note("docs/deployment/tools/ 有内容但缺 README.md 索引")
+    directory = root / "docs/deployment" / version
+    sql = directory / "sql"
+    has_sql = any(path.is_file() for pattern in ("*.sql", "增量/*.sql", "全量/*.sql")
+                  for path in sql.glob(pattern))
+    if not has_sql:
+        return
+    # 版本根 README 是默认操作说明；已有旧布局可沿用，不要求再造一份。
+    guides = (directory / "README.md", directory / "部署流程.md",
+              directory / "部署流程/部署流程.md")
+    for path in guides:
+        if path.is_file():
+            text = L.read_text(path)
+            if text.strip() and not re.search(r"\{(version|prev-version)\}", text):
+                return
+    r.warn(f"{version} 的 SQL 产物尚缺有效操作指引；仅在规划/发布时校准，"
+           "日常部署不自动补文档。无手工 SQL 时在既有指引简注即可。")
 
 
 def check_sql_version_dir_consistency(root: Path, r: VerifyResult):
@@ -1352,8 +1347,7 @@ def main(argv=None) -> int:
     check_code_layout(root, r)
     check_code_readme(root, r)
     check_deployment_two_track_layout(root, r)
-    check_deployment_docs(root, r)
-    check_deployment_tools(root, r)
+    check_deployment_docs(root, r, version)
     check_sql_version_dir_consistency(root, r)
     if vcs_mode == "git":
         check_runtime_artifact_vcs(root, r)

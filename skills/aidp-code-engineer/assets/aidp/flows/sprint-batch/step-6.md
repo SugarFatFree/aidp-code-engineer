@@ -14,7 +14,7 @@
 #### Step 6.0 跳过条件判定（按优先级）
 
 > ⛔ **6.0.5 / 6.0.6 是【部署前】安全网，不受本跳过判定管辖——先跑它们，再做下表判定**。
-> 它们校的是「SQL 有没有真的应用到库」与「部署流程文档在不在」，与"跑不跑浏览器测试"无关；
+> 它们校的是「SQL 有没有真的应用到库」与「现有部署操作前提是否齐备」，与"跑不跑浏览器测试"无关；
 > 放在判定之后会被 `--skip-aiauto-test` 连坐，而 7×24 主路径恒带该 flag（根因见
 > `{{AIDP_HOME}}/flows/sprint-autopilot/rationale.md`「部署前安全网为何要在 autopilot 侧再跑一次」）。
 
@@ -25,7 +25,7 @@
 | PRD 头部 `autopilot_decisions.deployment.mode == none` | 直接跳过，报告里标 `⏭️ 已跳过（该版本 deployment.mode=none）` |
 | 上述全不命中 | 进 6.1 |
 
-实际部署触发前，只消费 `/sprint-test` Step 7 的当前 Sprint 单测证据，按该协议复用或补跑；跳过浏览器测试不免除部署授权。
+实际部署触发前只消费当前任务已经授权且仍适用的验证证据；仅 commit/push/deploy 请求不隐含补跑测试、CVL、全回归或迁移演练。未请求测试保留 NOT_REQUESTED，不形成部署欠账；跳过浏览器测试不免除部署授权。
 
 #### Step 6.0.5 ★ SQL 已应用校验（部署前安全网 — 防「部署后表缺失报错」，约定 6）
 
@@ -66,7 +66,7 @@ if ls "$SQL_DIR"/[0-9][0-9]_*.sql >/dev/null 2>&1; then
   done
   if [ -n "$UNAPPLIED" ]; then
     echo "⚠️ 部署阻断风险：本版本以下 SQL 未确认应用到开发库 →$UNAPPLIED"
-    echo "   部署后可能表缺失报错。请补跑 /sprint-dev（后端 Phase 1.2 Step 1 会自动应用，约定 6）或手动应用后再部署/测试。"
+    echo "   核对目标环境现有迁移记录；启动自动迁移无需重复手工执行。仅在本次已授权范围处理真实缺口，不回调开发/测试链。"
     # 非阻塞：显式呈现风险即可（记入最终汇总报告「SQL 应用」段）；交互式可 AskUserQuestion 让用户选「先补应用 / 继续」
   else
     echo "✅ 本版本 SQL 均已应用到开发库（.applied-sql.json 覆盖 $SQL_DIR/ 全部 NN_*.sql）"
@@ -74,25 +74,17 @@ if ls "$SQL_DIR"/[0-9][0-9]_*.sql >/dev/null 2>&1; then
 fi
 ```
 
-#### Step 6.0.6 ★ 部署流程文档校验（部署前安全网 — 防「部署先于部署文档」，与 /sprint-dev Step X.8 呼应）
+#### Step 6.0.6 部署操作前提核对
 
-> 本版本若有部署侧变更（sql/ 有脚本 / 部署后回填接口 / 需重启），部署流程 SOP + SQL执行台账应由 `/sprint-dev` **Step X.8（检测驱动）**在开发期已生成。本步是**部署前兜底核验**——堵住边界（某些 Sprint 全前端未触发 / Step X.8 曾被跳过），避免"制品已部署、部署流程文档还不存在"的倒序。
+消费版本规划/正式发布已有操作说明（版本根 README 或现有部署流程）及 `deployment_doc_pending` 的变化引用，核对本次目标环境/服务/库、既有命令、SQL 顺序与成功判据。没有版本专属 Markdown 不等于无法部署；仅报告确实缺失的操作前提，不回调 `/sprint-dev` 补建文档，不为部署记录额外 commit/push。
 
 ```bash
-eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell 2>/dev/null||true)"; VERSION="${TARGET_VERSION:-$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version)}"   # 口径同 6.0.5 首处
-V="$VERSION"; SQL_DIR="docs/deployment/$V/sql/增量"; [ -d "$SQL_DIR" ] || SQL_DIR="code/sql/$V"
-FLOW="docs/deployment/$V/部署流程/部署流程.md"
-if ls "$SQL_DIR"/[0-9][0-9]_*.sql 2>/dev/null | grep -qv '99_'; then   # 本版有部署侧变更信号
-  if [ ! -f "$FLOW" ] || grep -q '{version}\|{prev-version}' "$FLOW" 2>/dev/null; then
-    echo "⚠️ 部署阻断风险：本版有 SQL 但『$FLOW』缺失或仅剩模板占位符。"
-    echo "   请补跑 /sprint-dev（Step X.8 检测驱动会从模板 bootstrap 部署流程 + SQL执行台账）后再部署/测试。"
-    # 非阻塞：显式呈现（记入最终汇总报告「部署文档」段）；交互式可 AskUserQuestion 让用户选「先补生成 / 继续」；
-    # 无人值守（autopilot 调起，已带 --skip-aiauto-test 时不到本步）不弹窗、仅 WARN + 报告留痕
-  else
-    echo "✅ 本版本部署流程文档已就绪：$FLOW"
-  fi
-fi
+# VERSION 从父任务当前版本重绑。
+VERSION="${VERSION:?从当前执行上下文重绑版本，不读历史Sprint}"
+python3 {{AIDP_HOME}}/scripts/deployment_ops.py pending --version "${VERSION:?}"
 ```
+
+实际备份或迁移快照前按 `{{AIDP_HOME}}/reference/部署操作约定.md` 共用项目配置和真实记录限频；复用已有备份时使用现成部署器支持的跳过参数，不自动恢复旧数据。无 CI/pipeline 时沿既有轻量路径，不循环探测。部署请求不新增测试/CVL/全回归或迁移演练，正式 aiauto 测试/报告仍由原链路按已授权职责执行。
 
 #### Step 6.1 测试用例存在性校验（测试人员或研发自测任一存在即可）
 

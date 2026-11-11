@@ -30,9 +30,21 @@
 
 协议与真实调用见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。正式批量父任务按明确 Sprint `fork`，首次正式取号后 `bind-sprint`；两者都不替原流程取号。轻量 `check/complete` 只核本轮要求的动作及当前任务族义务，不关闭/归档/重置 Sprint。只读检测结束与质量通过分开；提交、推送、部署尚无执行证据时，`complete` 保留待执行动作。复杂度与正式身份独立判断。
 
+`plan-validation` 按当前工作范围读取项目工具链并给出只读候选与预算预估；`revise --replace-write-set` 可安全细化工作集，原授权、实际改动和历史消耗保留。工具选择、输入证据及简短输出的配方见 `{{AIDP_HOME}}/flows/sprint-dev/verification-inputs.md`，不新增任务卡或部署报告。
+
+## verification_tools.py — 项目验证工具选择
+
+供 `entry_context.py` 调用 `inspect_command`、`discover_checks`、`bind_environment`，识别项目已有 lint、类型检查、编译与相关测试职责。只读 shell/容器按实际内层命令判断；可变镜像的环境探测由执行器计入预算后实跑，固定真实镜像身份，不自动拉取工具。模块只分析和绑定事实，不执行验证命令、不新增授权；语法兜底不冒充单测或完整质量验收。
+
 ## execution_policy.py — 动作授权与共享预算
 
-普通开发默认实现与轻量静态自检；测试、独立审查、完整 CVL、文档审计、全量回归、迁移演练、部署工具开发及 Git/部署动作分别取授权。来源须是本轮真实用户要求、显式命令的公开职责或有用户选择证据的项目策略。子任务只能继承或缩小权限，共享根任务预算；未要求的动作是 NOT_REQUESTED。同根因、同输入的工具错误停止盲目重试，实际执行结果与预算结算分别保留。配置骨架不默认开启额外动作。
+普通开发/修复默认 `implement + static + related-test`，包含本次改动必要的失败修复与复验，不另问是否单测；明确只分析、只修改或跳过某项验证时保留真实请求和受限结论。独立审查、CVL、文档审计、迁移演练、部署工具开发及 Git/部署仍遵守各自动作边界；若执行审查/CVL也只覆盖本任务/Sprint。`full-regression` 仅指真实 autopilot 委派、绑定验收清单的当前版本全量，不代表整个项目或系统。子任务继承原身份、范围和根预算，不因名称、历史 build 或文件数量扩权。同根因、同输入的工具错误停止盲目重试，实际执行结果与预算结算分别保留。
+
+验证执行器通过 `reserve_validation` 一次预留前取证、命令、后取证和必需收尾，再按真实进度结算。冷缓存先用计划标识预留，前取证后由 `bind_validation_input` 绑定真实内容输入才执行命令，不拿元数据摘要绕过同输入失败记录。`scanned_files` 表示取证内容读取操作，路径数量/元数据/命中/工具对象分开观测；额度不足给出各段预计量、剩余及缺口，不自行扩额。取消只退未用，真实已执行事实及失败始终保留。
+
+## deployment_ops.py — 操作指引待办与备份频率
+
+调用配方见 `{{AIDP_HOME}}/reference/部署操作约定.md`。日常仅登记既有机器记录中的步骤变更引用，规划/发布再汇合必要操作说明和两列 SQL 清单，不因日志额外提交。备份沿项目已有策略、命令与权威记录统一计数，数据库/冷备/迁移快照不拆额度；保留真实时点，未启动/失败/成功后续失败/机器登记失败分别表达。它不接管部署，不自动恢复业务数据，也不为缺接口开发另一套工具。
 
 ## project_inventory.py / development_scope.py / sprint_inventory.py — 共同发现与判据
 
@@ -40,13 +52,13 @@
 
 ## test_ledger.py / test_scope.py — Sprint 范围与可追溯复用
 
-轻量 task 单测继承 `--execution-context`，证据与 formal Sprint 隔离，机器验收 JSON 可放上下文本地目录；无需 Sprint 编号或契约卡。正式 Sprint 单测的范围推导、执行、verify 与 record-review 协议唯一信源为 `{{AIDP_HOME}}/commands/sprint-test.md` Step 2.6 / Step 7。范围从 Sprint 起点 commit、实际改动与契约写集确定性生成；执行前核验内容、环境与工具指纹，同一冻结树复用已验证的依赖分析，锁等待后再次核验。直接使用任意命令的 sprint PASS 不能冒充带范围证据的验收。失败、未执行不能通过；无对应单测列 Minor，零运行集记 EMPTY。
+轻量 task 单测继承 `--execution-context`，证据与 formal Sprint 隔离，机器验收 JSON 可放上下文本地目录；无需 Sprint 编号或契约卡。正式 Sprint 单测的范围推导、执行、verify 与 record-review 协议唯一信源为 `{{AIDP_HOME}}/commands/sprint-test.md` Step 2.6 / Step 7。范围从 Sprint 起点 commit、实际改动与契约写集确定性生成；执行前核验内容、环境与工具指纹，同一冻结树复用已验证的依赖分析，锁等待后再次核验。直接使用任意命令的 sprint PASS 不能冒充带范围证据的验收。失败、未执行不能通过；无对应测试、缺 runner 或环境不可用保留具体缺口，不能记 PASS/NOT_REQUESTED。纯文档、格式等能确认无可测试行为时才给出 NOT_APPLICABLE 与具体依据；零运行集不能代替这些判定。
 
 `test_ledger.py` 保留 argv/cwd/env_id/inputs 与树证据；完整 plan/snapshot 单存，run 引用 plan_id/item_id 并在读取时校验。兼容 runner 可在同模块、同环境内合批，普通 Python 脚本不会把后续文件当参数假运行。资源映射与未知依赖须明示覆盖缺口，超预算不自动扩成全仓。未受后续变动影响的结果可显式 CARRIED，保留 source_run_id，不能伪装成当前树重跑。命令、依赖、环境变化使对应证据失效；只追加动作授权不使已有同输入证据失效。工具错误、环境不可用、业务断言失败分别记录。`--self-check` 可做轻量验证。
 
 ## build_unit_test.py / unit_report_merge.py / aiauto_test_join.py — build 两路测试
 
-全量单测执行协议只在 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md` 定义。执行器校验部署 commit 的冻结计划，用独立 detached worktree 运行、清理并保存每 build 的账本；`status` 读取真实终态，单次总预算默认 3600 秒。不同 build 分离缓存，同 build PASS 不重跑。
+当前版本全量单测协议见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md`，只有 autopilot 真实委派的 aiauto 子上下文可进入。执行器先核 version/build、委派父链、验收基线、正式用例映射和冻结 manifest，再用隔离 checkout 运行清单中的测试及必要依赖回归；不发现或执行仓库/历史版本测试全集。缺版本或清单就报告缺口，不回落全仓。`status` 读取真实终态，单次总预算默认 3600 秒；版本、范围、关键环境不得混用，同内容有效结果可复用。
 
 `emit-report.py --unit-result <结果JSON> --commit <部署SHA>` 经 `unit_report_merge.py` 合并两路数据；HTML 分开显示实测与单测，未知计数显示未提供。`aiauto_test_join.py begin/settle/release-state` 声明在途、合并终态、幂等登记 BUG 与读取准发布状态；未核验/超时不写通过、不写冻结，运行中不能 finalize。旧报告保持原有兼容读法。
 
@@ -281,11 +293,11 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 `autopilot-deploy-watch.py` 的**姊妹件**，补齐它明确不做的前半段：**① detect**（push 后按运行的 commit `== 本次 HEAD` **强绑定**查本次提交是否已起跑流水线）+ **③ poll**（按 run id **精确**轮询锚定的那次运行至终态，失败时判定"该重试第几次"）；另提供两个显式写动作 **`--mode trigger`**（主动触发一次运行）与 **`--mode retry`**（重试一次失败的运行）。
 平台 = `memory/aidp-config.yaml` 的 `cicd.provider`（`github-actions` 默认 / `gitlab-ci` / `jenkins` / `command` 任意平台自定义命令 / `none`），差异全部收在 `cicd_providers.py`。
-流水线取值：`--pipeline` > `cicd.pipelines[<env>]` > baseline `versions.{V}.cicd_run.pipeline` > 只配了一条时自动选中（`pipelines.<env>` 的含义随 provider：workflow 文件名 / 分支名 / Job 路径 / 命令模板里的 `{pipeline}`）。
+先核配置：`provider=none`，或既无有效 `cicd.pipelines` 又无显式 `--pipeline` 时直接降级，不构造提供方、不从历史 baseline 补配置。已接入后的流水线取值：`--pipeline` > `cicd.pipelines[<env>]` > baseline `versions.{V}.cicd_run.pipeline` > 只配了一条时自动选中（`pipelines.<env>` 的含义随 provider：workflow 文件名 / 分支名 / Job 路径 / 命令模板里的 `{pipeline}`）。
 **★ 读写分离**：`detect` / `poll` / `watch` 只读，把"该不该触发 / 该不该重试"判成 `next_action`，并在 JSON 里给出下一步命令 `trigger_cmd` / `retry_cmd`（形如 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger|retry …`）；调用方显式再调写模式。无人值守下是否自动执行写动作受 `cicd.auto_trigger`（默认 true）控制，脚本不越权代判。trigger / retry 受理后 `next_action=poll`（已拿到 run id）或 `detect`（平台不回显 run id，需按 commit 再探测）。
 穷尽判定、不留悬空态：失败→重试（配额未尽）；**平台调用失败/网络不可达** → `unreachable`，**不消耗重试配额**（取不到状态 ≠ 取到失败态）；**锚定运行消失/被顶替** → `vanished` 交人工（⛔ 绝不滑到"最近一条"顶替，那是误报部署成功的根因）；状态无法归类 → 不给绿灯、交人工。
 用法：`python3 {{AIDP_HOME}}/scripts/cicd_watch.py [--mode watch|detect|poll|trigger|retry] [--commit <本次push HEAD>] (--env <dev|test|prod> | --pipeline <标识>) [--run-id <id>] [--ref <branch>] [--post-push-wait 10] [--interval 25] [--timeout 480] [--max-retries N] [--retry-count N | --version <V> --baseline <path>]`（`--max-retries` 不传读 `cicd.max_retries`，缺省 3）。输出字段含 `provider`（配置值）/ `pipeline` / `pipeline_source` / `run_commit`（运行对应的 commit，重试后 run id 为空时按它 detect 回写）。**单次调用有上限**：poll / watch 到 `--timeout`（默认 480s）仍在运行 → `verdict=running`、`next_action=poll`、rc 0，下个 tick 继续 poll 同一 run id，不交人工、不耗重试配额。
-退出码：`0`=运行终态成功（`next_action=probe`，接着跑就绪探针）/ detect 命中（`poll`）/ 写动作已受理；`1`=**需调用方做写动作**（`next_action=trigger`/`retry`；`retry` 时同时输出 `run_id` / `retry_run_id` / `retry_commit` / `retry_count` / `retry_cmd`）；`2`=需人工（重试用尽/锚定消失/`trigger-failed`/`retry-failed`）；`3`=未接入或环境不满足（verdict：`disabled` provider=none / `not-configured` / `cli-missing` / `unauthenticated` / `provider-unavailable` / `bad-args`；命令端据此只 push 不监听）。`unreachable` / CLI 不可用在 autopilot 侧按 streak（3 次）才冻结，归环境类冻结、由 `autopilot_unfreeze.py --env-reprobe` 退避复探。stdout 恒一行 JSON。
+退出码：`0`=运行终态成功（`next_action=probe`，接着跑就绪探针）/ detect 命中（`poll`）/ 写动作已受理；`1`=**需调用方做写动作**（`next_action=trigger`/`retry`；`retry` 时同时输出 `run_id` / `retry_run_id` / `retry_commit` / `retry_count` / `retry_cmd`）；`2`=需人工（重试用尽/锚定消失/`trigger-failed`/`retry-failed`）；`3`=未接入或环境不满足（verdict：`disabled` provider=none / `not-configured` / `cli-missing` / `unauthenticated` / `provider-unavailable` / `bad-args`；命令端据此结束 CI 观察，另已授权的项目部署仍消费现成工具真实回执）。`disabled/not-configured` 明确返回 `configuration_degraded=true`、`next_action=none`，不进入循环探测或部署成功分支。`unreachable` / CLI 不可用在 autopilot 侧按 streak（3 次）才冻结，归环境类冻结、由 `autopilot_unfreeze.py --env-reprobe` 退避复探。stdout 恒一行 JSON。
 
 ★ **`4` = 降级放行就绪探针**（仅当 `cicd.push_auto_deploy` 已记录为 true）：平台给不出状态（不可达 / 运行消失 / 状态未知）或未观测到本次 commit 起跑的运行时，补等满 `cicd.push_deploy_min_wait_seconds`（缺省 300）后返回 `next_action=probe` + `degraded=true`，调用方**照 rc=0 进就绪探针、⛔ 不冻结**。它防的是一个**自锁**误冻：那类项目的流水线无法被单独触发（推送本身就是触发），于是「未起跑 → 主动触发」恒失败、「取不到状态 → 熔断」必然冻结，而解冻证据又是部署成功。⛔ 代价随 `degraded=true` 落进部署证据：未经平台确认、失败不自动重试、构建慢于等待时长时可能探到旧服务，**不得当作「确认成功」**。⛔ `failed`（取到明确失败态）与退出码 3（CLI 未装/未登录，可自动复探的 `cicd-cli-unavailable`）**都不走本通道**。开关：`aidp_state.py cicd-push-autodeploy-yes|-no`（只记事实，不改平台配置）；参数 `--push-auto-deploy auto|yes|no` / `--min-wait <秒>` 可覆盖。
 
@@ -317,7 +329,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 每次 `git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON。作用域 = **变更事实**、与命令入口无关（裸对话路径同样适用）。总开关 = `memory/aidp-config.yaml` 的 `commit_gate.enabled`（缺省 true）。
 输出字段：`commit_gate_enabled` / `is_template_project`（脚手架 skill 的任一落点——模板仓库根级 `skills/`、下游 `.claude/skills/` 或 `.agents/skills/`、历史的 `各 Agent 的运行根/skills/`——下 `SKILL.md` 与 `scripts/sync_memory_md.py` 都在、且 `scaffold_marker.py` 判为非下游）/ `working_tree_dirty` / `has_business_code_change` / `is_scaffold_only_change` / `today` /<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
-`pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送欠账：`cicd.provider != none` 时按 HEAD commit 查分类记录；正式代码推送超 1 小时无部署终态〔`deploy_terminal` / `last_deployed_at` / `probe_passed`〕计欠账，`unknown:<原因>` 终态不计欠账但可见）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单（不含日常 stale 派单））。
+`pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送欠账：提供方已启用且配置了有效流水线时按 HEAD commit 查分类记录；未配置直接降级，不产生监听欠账；正式代码推送超 1 小时无部署终态〔`deploy_terminal` / `last_deployed_at` / `probe_passed`〕计欠账，`unknown:<原因>` 终态不计欠账但可见）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单（不含日常 stale 派单））。
 可 import：`pending_cascade()` / `cascade_ledger_paths()` / `CASCADE_FAMILIES` / `suspected_cascade_bypass()` / `has_business_code_change()` / `is_scaffold_only_change()` / `pending_cicd()` / `offchain_budget()` / `gather()`。
 **★ 欠账告警恒打印 + 退出码说话**：未落地义务告警**不受 `--quiet` 压制**；退出码 `0`=无欠账 / `3`=有未落地义务（台账结构/清理异常 · 已级联未清理 · 格式漂移 · 归档标记未删 · 🔴 破坏性变更未登记失准点 · 疑似绕过攒批 · CICD 推送欠账）/ `4`=阻塞级（保留档位：当前判据集不产生该值，消费方仍须按阻塞处理）。**Why**：约定 24 强制的写法就是 `--quiet`，提醒若住在 `if not args.quiet:` 里就等于在唯一被强制执行的路径上从不打印。⚠️ 3/4 的语义是"本轮结束前有一项义务未落地"，**不是"禁止 commit"**；逃生阀 `--no-fail-on-debt`：压退出码但**不消音**——用掉它会往告警台账 `memory/.aidp/alerts.jsonl` 落一条 `commit-gate-debt-waived`（否则「豁免过的欠账」与「真的没欠账」在任何地方都分不开）。其余参数：`--context bare-conversation|aidp-command`（留痕 + 约定 41 适用性）。
 

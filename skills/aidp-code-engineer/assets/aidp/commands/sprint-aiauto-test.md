@@ -7,40 +7,25 @@
 
 ## 执行身份与授权前置路由
 
-先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，新任务按实际用户来源准备POLICY_ARGS。用户显式本命令公开static+live-tests+full-regression，两条测试职责仍并行；自然浏览器请求只用目标实测能力，不偷取全回归组合。嵌套只能inherit。
+先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。独立调用只测用户明确的目标页面/接口/场景；无目标返回具体缺口，不以 baseline 当前版或整个项目兜底。只有真实 autopilot 通过 `fork-test-build --manifest` 委派才有当前版本全量资格。测试-only 交接沿既有 autopilot 路径，禁止开发、提交、推送、部署。
 
 ```bash
-# OS调度只提供入口标记，不是授权；先只读选择真实部署及其已授权父任务。
-if [ -z "${EXECUTION_CONTEXT:-}" ] && [ "${AIDP_TICK_COMMAND:-}" = sprint-aiauto-test ]; then
+# 调度器仅传已校验的真实委派；不能按current_build或activeContext重造授权。
+EXECUTION_CONTEXT="${EXECUTION_CONTEXT:-${AIDP_EXECUTION_CONTEXT:-}}"
+if [ -z "$EXECUTION_CONTEXT" ] && [ "${AIDP_TICK_COMMAND:-}" = sprint-aiauto-test ]; then
   python3 {{AIDP_HOME}}/scripts/baseline_edit.py touch aiauto_test_heartbeat_at || exit $?
-  TEST_VERSION=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py current-version --default '') || exit $?
-  [ -n "$TEST_VERSION" ] || { printf '%s\n' 'NO_TARGET: 无已部署待测版本'; exit 0; }
-  BUILD_ID=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TEST_VERSION" get current_build --default '') || exit $?
-  [ -n "$BUILD_ID" ] || { printf '%s\n' 'NO_TARGET: 尚无真实build'; exit 0; }
-  BUILD_COMMIT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TEST_VERSION" --build "$BUILD_ID" get push_commit --default '') || exit $?
-  [ -n "$BUILD_COMMIT" ] || { printf '%s\n' 'NO_TARGET: 缺少本build部署commit'; exit 0; }
-  CURRENT_ROOT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get autopilot.execution_context --default '') || exit $?
-  ROOT_SELECT_ARGS=(--version "$TEST_VERSION" --existing-only)
-  [ -z "$CURRENT_ROOT" ] || ROOT_SELECT_ARGS+=(--execution-context "$CURRENT_ROOT")
-  ROOT_SELECT_RC=0
-  ROOT_SELECT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve-autopilot-root --root . \
-    "${ROOT_SELECT_ARGS[@]}" --json) || ROOT_SELECT_RC=$?
-  if [ "$ROOT_SELECT_RC" != 0 ]; then
-    ROOT_STATUS=$(printf '%s' "$ROOT_SELECT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", "UNVERIFIED"))') || exit 2
-    printf '%s\n' "$ROOT_SELECT"
-    [ "$ROOT_STATUS" != UNAUTHORIZED ] || { printf '%s\n' 'NOT_REQUESTED: 无已有可信测试父任务'; exit 0; }
-    exit "$ROOT_SELECT_RC"
+  EXECUTION_CONTEXT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py get aiauto.execution_context --default '') || exit $?
+  if [ -z "$EXECUTION_CONTEXT" ]; then
+    # 判据与调度器同源：已部署且未内部发布的版本才算待测目标；无目标只是空转tick。
+    TARGET_STATE=$(python3 -c 'import sys; sys.path.insert(0, "{{AIDP_HOME}}/scripts"); from aidp_scheduler import _test_target_state; print(_test_target_state("."))') || exit $?
+    [ "$TARGET_STATE" != none ] || { printf '%s\n' 'NO_TARGET: 无已部署待测版本'; exit 0; }
+    [ "$TARGET_STATE" != skipped ] || { printf '%s\n' 'NOT_REQUESTED: 当前版本已显式跳过测试；不创建上下文、不以baseline重造授权'; exit 0; }
+    printf '%s\n' 'UNVERIFIED: 有待测版本但无可信测试委派；不创建上下文、不以baseline重造授权'
+    exit 2
   fi
-  TEST_PARENT=$(printf '%s' "$ROOT_SELECT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
-  PARENT_ROUTE=$(python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --execution-context "$TEST_PARENT" --phase route --json) || exit $?
-  TEST_ALLOWED=$(printf '%s' "$PARENT_ROUTE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(d["route"]=="formal" and {"live-tests","full-regression"}<=set(d["authorized_actions"])))') || exit $?
-  [ "$TEST_ALLOWED" = 1 ] || { printf '%s\n' 'NOT_REQUESTED: 父任务未启用双路测试'; exit 0; }
-  TEST_CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
-    --execution-context "$TEST_PARENT" --version "$TEST_VERSION" --build-id "$BUILD_ID" --json) || exit $?
-  EXECUTION_CONTEXT=$(printf '%s' "$TEST_CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
 fi
 CONTEXT_ARGS=()
-if [ -n "${EXECUTION_CONTEXT:-}" ]; then
+if [ -n "$EXECUTION_CONTEXT" ]; then
   CONTEXT_ARGS+=(--execution-context "$EXECUTION_CONTEXT")
 else
   CONTEXT_ARGS+=(--version "{version}" "${POLICY_ARGS[@]}")
@@ -50,33 +35,13 @@ fi
 CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-aiauto-test \
   "${CONTEXT_ARGS[@]}" --json) || exit $?
 EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
-# 独立显式调用或父根直达：已有真实build才固定child，不借light/历史baseline授双测。
-PIN_ROOT_VERSION=$(python3 - "$EXECUTION_CONTEXT" <<'PIN_ROOT'
-import sys
-from pathlib import Path
-sys.path.insert(0, "{{AIDP_HOME}}/scripts")
-from entry_context import load_context
-ctx = load_context(Path.cwd(), sys.argv[1], migrate=False)
-allowed = {"live-tests", "full-regression"} <= set(ctx["allowed_actions"])
-root = ctx["mode"] == "formal" and not ctx.get("parent_task_id")
-print(ctx["version"] if root and allowed and ctx["entry"] in ("sprint-autopilot", "sprint-aiauto-test") else "")
-PIN_ROOT
-) || exit $?
-if [ -n "$PIN_ROOT_VERSION" ]; then
-  PIN_BUILD=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$PIN_ROOT_VERSION" get current_build --default '') || exit $?
-  if [ -n "$PIN_BUILD" ]; then
-    PIN_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \
-      --execution-context "$EXECUTION_CONTEXT" --version "$PIN_ROOT_VERSION" --build-id "$PIN_BUILD" --json) || exit $?
-    EXECUTION_CONTEXT=$(printf '%s' "$PIN_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
-  fi
-fi
 python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-aiauto-test \
   --execution-context "$EXECUTION_CONTEXT" --phase test --json || exit $?
 ```
 
-调度读取前先写轻量心跳；早退只证明tick活性，业务/工具失败仍按原状态返回，不能冒充测试完成。父根只经resolve-autopilot-root --existing-only选择，不建根/改grant/重置预算；当前同版窄根优先、历史planning不当授权。调度路径按真实version/build幂等fork-test-build，跨tick续用同一任务与根预算，不重新resolve根或从baseline制造grant；NO_TARGET等待下次已有调度，NOT_REQUESTED不进join/finalize。固定build传给后续双路协调，不能重选新build。
+消费 route 的真实范围与动作，委派子上下文固定 version/build/manifest，不能重选新 build。版本全量先核 `phase-2-unit.md` 的完整验收清单与必要依赖，缺失或 scope 越界立即阻塞；禁止 project-wide/system-wide/历史全集或缺清单 fallback。独立目标实测不进入全量单测、join 或版本通过判定；机器证据与终端结论只覆盖指定目标。light 不创建 Sprint/编号/卡片/成套文档。两路实际获授权才并行，未请求支线不派 worker；缺工具/缺测试则是未核验，不是 NOT_REQUESTED。
 
-消费actions后才派发：live-tests启用目标页面/接口观察，full-regression启用既有全量单测支线；每次派发过统一require_action/reserve_budget，prompt继承父revision/action/budget。light只复用测试内核并保存上下文机器证据后return，不创建Sprint/build/AI仪式产物；formal继续下文已授权报告链。未启用支线NOT_REQUESTED，不计测试失败或欠账，不调用新入口重新grant。
+**必须先分支再执行下文**：没有 `test_manifest` 的独立目标上下文，不进入下文版本选取、完整用例发现、单测worker、join/finalize或写 `aiauto_tested_at`。读取 `task_scope.acceptance` 的明确用例ID/来源文件；`aiauto_readiness.py --execution-context <当前路径> --version <明确版本> --input <实际facts.json>` 校验同一目标，再按已授权预算复用 `auto-test-runner` 执行能力、记录实际证据并终端返回。缺目标/工具/用例返回未核验，不能以all/full/目录占位。目标属于autopilot且骨架缺失时，先沿既有受限test-only报告交接补骨架，保留目标范围与权限；不得为交接转成版本全量。只有已通过 `validate_test_binding` 的真实委派child继续以下正式版本流程。
 
 **tick 占位收尾**：Phase 0 begin/parse 的本轮 token 保留在执行上下文。每一次返回前（含无变化、委派返回、配置等待、失败、冻结与 yield），全部工作完成后按 `{{AIDP_HOME}}/reference/agent-tools.md`「tick 占位收尾」执行 `autopilot_tick_flags.py finish --command aiauto-test --lock-token <本轮token>`。token 为 `agent_loop` 或未取得占位时不执行。不得在单个 Bash 结束时提前释放；重新 parse 沿用本轮 token。
 
@@ -171,7 +136,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 | `--no-loop` | 关 | 单次部署探测 + 跑/退出（不弹引导）；操作系统调度经 `agent_loop.sh --once` 自动补齐 |
 | `--role <name>` | all | 只用指定角色登录测，不轮所有 user_roles |
 | `--skip-login` | 关 | 跳过登录，仅测无需登录的页面（适合登录页 / 注册页 / 公开页）|
-| `--select <mode>` | `all` | **执行选集（深度维度）**：`all` 全量 / `smoke` 仅 P0（上游把 P0 定义为「核心功能正向(冒烟)」）/ `regression` 仅带 `[回归]` 标记的用例。透传给 SKILL 的 `tasks_state.py init --select`，**复用既有优先级与回归标记、不新造标签**。⛔ **三处强制 all**（见下方护栏）：无人值守 / 编排链内调用 / 新 build 回归轮 |
+| `--select <mode>` | `all` | **执行选集（深度维度）**：`all` 全量 / `smoke` 仅 P0（上游把 P0 定义为「核心功能正向(冒烟)」）/ `regression` 仅带 `[回归]` 标记的用例。在清单范围内透传给 `tasks_state.py init --select`（目录输入必须带清单或 `--select`，否则 rc=2），**复用既有优先级与回归标记、不新造标签**。仅真实版本全量委派时all=当前冻结清单全部；独立目标不扩围 |
 | `--free-scan` | 关 | ★ **自由巡检**：全部模块用例跑完后，对「菜单可达但本轮无用例覆盖」的页面逐个导航 + 拉运行时错误（用例集永远穷举不了页面，这类页面的接口 500 / JS 报错否则完全测不出）。透传 run-context `free_scan=true`；页数上限 `free_scan_max_pages`（默认 20，超限**不静默截断**、由 SKILL 单写一条 block 巡检项列明被跳过页面）。巡检项以 `entry_kind="free-scan"` + `case_id` 前缀 `运行时-` 落 results，**不计入用例统计、不自动记 bug**，单列报告 §2.6 由人确认后再转 bug（口径见 SKILL） |
 | `--capture-warnings` | 关 | 记录 `severity=P3` 的告警类运行时错误（框架废弃警告 / devtools 提示）。默认关——它们不改变 pass/fail，恒记录会让每条用例挂一串 P3、显著抬高报告体积与 token。透传 run-context `capture_warnings=true`；**P1/P2 恒记录，不受本开关影响** |
 | `--skip-mcp-check` | 关 | 跳过 chrome-devtools-mcp 检测（无意义，命令会退出，仅供 debug）|
@@ -181,7 +146,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 
 ## 双路协调入口
 
-对已部署 build 开测时，主流程先 Read `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md` 的双路协调协议，固定 build 与部署 commit，再在同一批 Agent 调用中启动实测分支与单测分支；不能等浏览器分支返回后才启动单测。Phase 0/1/2 的浏览器前置、无用例及 early-exit 只结束实测分支并返回状态；协调器继续等另一分支，不取消它。两路终态后由协调器执行 Phase 3，子 Agent 不自行 finalize、通知或修改共享 baseline。
+对已部署 build 开测时，主流程先 Read `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md` 的双路协调协议，仅真实 autopilot 委派且清单齐备时固定 build、部署 commit 与验收集合，再在同一批 Agent 调用中启动已授权实测分支与单测分支；不能等浏览器分支返回后才启动单测。Phase 0/1/2 的浏览器前置、无用例及 early-exit 只结束实测分支并返回状态；协调器继续等另一分支，不取消它。两路终态后由协调器执行 Phase 3，子 Agent 不自行 finalize、通知或修改共享 baseline。
 
 纯后端且无浏览器适用面时，实测明确回传 N/A 和依据，跳过浏览器连接/账号/截图门；单测和 HTML 报告照常。standalone 也需明确部署 build/commit，不能拿当前 HEAD 猜被部署版本；完整身份与缓存、报告规则仅见上述分片。
 
@@ -226,7 +191,7 @@ Phase 0 的配置和部署归属仍须每 tick 检查。随后各阶段按下表
 
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)" || exit 1
-PHASE_ENTRY=$(python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:?}" \
+PHASE_ENTRY=$(python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --execution-context "${EXECUTION_CONTEXT:?}" --version "${TARGET_VERSION:?}" \
   --phase "{当前阶段}" --next-phase "{下一阶段}" --build "${BUILD:-standalone}")
 PHASE_RC=$?; [ "$PHASE_RC" -eq 0 ] || exit "$PHASE_RC"
 printf '%s\n' "$PHASE_ENTRY"
@@ -238,7 +203,7 @@ printf '%s\n' "$PHASE_ENTRY"
 
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)" || exit 1
-python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:?}" \
+python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --execution-context "${EXECUTION_CONTEXT:?}" --version "${TARGET_VERSION:?}" \
   --phase "{当前阶段}" --next-phase "{下一阶段}" --build "${BUILD:-standalone}" --complete || exit 1
 ```
 
@@ -276,9 +241,9 @@ python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --version "${TARGET_VERSION:
 |---|---|---|---|
 | **2.0.0** | `phase-2-1.md` | ⛔⛔ 用例增量未级联前置门（台账未收口即不许开测）| 恒适用（**检出步** —— 台账未收口即不许开测） |
 | **2.0.0bis** | `phase-2-1.md` | 用例增量前置门的补充判据 | 恒适用 |
-| **2.0** | `phase-2-1.md` | 用例来源优先级解析（★ 测试人员为主 + 研发自测查漏补充 + 跨版本 `[回归]` 继承 + 渲染模式拆分）| 恒适用 |
+| **2.0** | `phase-2-1.md` | 用例来源优先级解析（★ 测试人员为主 + 研发自测查漏补充 + 清单明确列入的必要回归依赖 + 渲染模式拆分）| 恒适用 |
 | **2.0.5** | `phase-2-2.md` | 组装 run-context + 派测试执行子 Agent（★ 执行内核入口）| 恒适用（执行内核入口） |
-| **2.0.5u** | `phase-2-unit.md` | ★ 全量单测子 Agent：与 2.0.5 并行；在部署 commit 的独立 worktree 中以 `test_ledger.py run --scope full` 执行，失败登记 BUG，超时/未核验不阻断实测、不冻结 | 恒适用（不适用项按分片判定记「本项未核验」）|
+| **2.0.5u** | `phase-2-unit.md` | ★ 全量单测子 Agent：与 2.0.5 并行；在部署 commit 的独立 worktree 中以执行器派生的 `scope=version` 执行，失败登记 BUG，超时/未核验不阻断实测、不冻结 | 仅真实 autopilot 当前版本全量委派且清单完整|
 | **2.0.7** | `phase-2-1.md` | ★ 前置数据体检门（用例声明的前置数据是否真的在）| 恒适用（**检出步**） |
 | **2.1** | `phase-2-2.md` | 登录 → 测试 → 登出循环（★ skill 内部行为示意，命令端不手写直驱）| `--skip-login` 未传（否则走 2.3） |
 | **2.2** | `phase-2-2.md` | chrome-devtools-mcp 调用（★ skill 内部行为示意 — auto-test-runner「Web 端驱动适配器」执行）| 被测端含 `web`（由 Phase 0.0.5 的测试方案 `client` 字段算出） |
@@ -386,16 +351,16 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status
 
 ## 注意事项
 
-0. **🔗 约定 24 commit checkpoint（本命令的每条 `git commit` 路径通用）**：本命令虽不改业务代码，但仍有会 commit 的分支（如 Phase 0.2 Step 3 自动补全「测试环境与账号」配置后提交）。**这些 commit 之前**先跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON（纯配置提交通常无欠账，但**必须跑过判定、不得默认跳过**）；退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 / CICD 推送欠账），不是禁止 commit。判定字段与处置 **单一信源 = 约定 24**，此处不复述。
+0. **测试-only边界**：本命令与报告交接不开发、不提交、不推送、不部署；缺配置/工具/用例返回具体未核验，不通过补配置commit、重新部署或生成全套用例掩盖缺口。
 1. **不自动 merge master / 不改代码**：本命令只读 + 测试，不修改代码；测试失败由用户跑 `/sprint-bugfix`
 2. **配置入口优先 研发自测/ 配置**（chrome 地址 / 测试环境 URL / 账号）+ **账号配置分两类**（开发测试环境明文 / 生产·UAT 走 credentials JSON）：总则见 Phase 0.0.5，账号细则见 Phase 0.4
 3. **测试报告 = HTML**：结果渲进 `docs/reports/{version}/AI测试报告/`（`data/{BUILD}.js` + `index.html` 综合首页/各 build 子页 + 图表），截图落 `AI测试报告/screenshots/{BUILD}/`；**不产出 docs/testing markdown 报告**（见 Phase 3.1）。发布时 `/version` Step 3.3.8 取最终验收 build → 版本测试报告单文件 HTML
-4. **默认（无参）选版优先级**：先取 phase_beta_done_at 最新 + internal_released_at 为空的版本；如全部已测过 → 退出（不重复测）。**`needs_human=true`（熔断冻结）的版本自动跳过**（探测超时/账号缺失/未收敛达冻结阈值三类熔断，见 Phase 0.2 熔断冻结门）；解冻途径：按冻结类别自动解冻（新部署 / 配置更新 / 环境类自动复探，见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/rationale.md` 冻结枚举表），或人工 `python3 {{AIDP_HOME}}/scripts/autopilot_unfreeze.py --manual <V>`
+4. **目标来源**：真实委派只用 child 固定的version/build/manifest；独立调用只用用户明确目标，不从最新部署/历史baseline自动选全集。缺目标返回未核验；调度续跑只复用已校验上下文。
 5. **baseline 失同步保护**：本命令只**追加写** aiauto_tested_at / aiauto_test_report / aiauto_test_build_data 字段 + 刷 `builds[].status:"tested"`/`pass_rate`；不删除 sprint-autopilot 写的字段
 6. **mode=none 跳过**：autopilot_decisions.deployment.mode=none 的版本，本命令直接退出（标"该版本不做浏览器测试"）
 6bis. **★ `--select` 子集轮的三条硬护栏（子集≠测过了）**：选集会让「通过率」「P0=100%」等准则**只对子集成立**，若不设界就会出现「跑了 5 条 P0 全绿 → 版本被当成测过了」。故：
-   - **① 无人值守强制 all**：`--unattended` / `/loop` 上下文 / autopilot 委派 / `sprint-batch` Step 6 调起时，**忽略 `--select` 并终端告警**——这些路径产出的是官方 build 报告并驱动准发布收敛门，子集会让「测过了」名不副实。
-   - **② 新 build 回归轮强制 all**：上一 build 缺陷经 `/sprint-bugfix` 修复后的复测属 **build 递增（全量）**，SKILL 硬边界明令禁用选集（`execution-methodology` 第五节：*self-heal 复测锁 round 级/同 build；新回归锁 build 级/全量*）。判据 = 本版 `builds[]` 已有前序 build 且本轮是修复后复测。
+   - **① 真实版本委派**：只有autopilot冻结清单委派时才all，范围限当前版本全部验收用例与必要依赖。无人值守、batch或命令名不能把独立目标扩大为全量。
+   - **② 新build不借历史全集**：修复后重测仍核当前版本清单；同内容、环境与依赖均有效的证据按协议复用，真实失败修复后复验；不因build号变化自动扫描全项目。
    - **③ 子集轮不写「已测」语义**：只写 `aiauto_subset_tested_at` + `aiauto_select_mode`，**不写 `aiauto_tested_at`**（后者是准发布收敛门与 `current-version` 选版的判据，子集不足以支撑）。报告标题与终端摘要须显著标「子集轮（select=<mode>），通过率仅对该子集成立」。
    - 适用场景：**交互式手动快验**（改完一处想先跑冒烟看有没有崩），不替代任何一次正式全量轮。
 

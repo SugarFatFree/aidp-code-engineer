@@ -35,7 +35,7 @@
  10. 增量极简度        增量配置文档无 Markdown 表格、行内注释 ≤20 字符（约定 37.5-6）
  11. 全量核对可复核     `建表说明.md` / `配置说明.md` 须写明**剔除结论**与**导出源**（实例地址 + schema/库名）——
                       约定 37 全量基线的定义性判据「与真实环境交叉核对」，⛔ 二者均为 ERROR 级
- 12. DDL 注释实查      本版有 `ADD COLUMN` 时，注释覆盖率须【实查库】并落 SQL执行台账「三之二」
+ 12. DDL 注释实查      本版有 `ADD COLUMN` 时，注释覆盖率须【实查库】并落既有 baseline 机器记录
                       （⛔ 校的是库里状态、不是脚本内容；委派 check_sql_ledger_comment.py）
  13. 引导层同形        `全量/` 根下的环境段副本（bootstrap-/application-{profile}.yml）与
                       `# 权威源码：` 声明的源码同形（环境变量名 / 写法 / 默认值），且跨 profile
@@ -59,6 +59,7 @@ if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_relpath, runtime_text
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -387,6 +388,23 @@ def check_structure(ver_dir, rep):
                       f"{label}缺 {doc} —— 在什么库执行什么 / 文件导到哪、来源与剔除结论没有落点，"
                       f"产物无法自证")
             continue
+        # 新产物只含操作信息；来源与核对优先消费既有 baseline 的机器记录。
+        # 保留历史文档只读兼容，不要求新说明复制剔除分析。
+        state_path = ver_dir.parents[2] / "memory/.sprint-autopilot-baseline.json"
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            evidence = state.get("deployment_baseline_checks", {}).get(ver_dir.name, {}).get(d.parent.name)
+        except (OSError, ValueError):
+            evidence = None
+        if evidence is not None:
+            actual = {p.relative_to(ver_dir).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                      for p in sorted(d.rglob("*")) if p.is_file() and p.suffix != ".md"}
+            valid = (isinstance(evidence, dict) and evidence.get("source")
+                     and evidence.get("read_method") and isinstance(evidence.get("excluded"), list)
+                     and evidence.get("files") == actual)
+            if not valid:
+                rep.error("结构完整性", f"{label} 机器核对记录缺来源/只读方式/剔除结论或产物哈希已变化")
+            continue
         # ★ 存在性 ≠ 自证。约定 37 全量轨的**核心判据**是「表清单以代码 ORM 声明为准，
         #   再与真实库交叉核对；**代码有而库查无 → 剔除并写明理由**」——而此前机器门只断言
         #   索引文件在，索引里到底有没有写这个结论一个字都不看。于是「凭空导出一份未经核对的表」
@@ -407,7 +425,7 @@ def check_structure(ver_dir, rep):
             rep.error("结构完整性",
                       f"{label} {doc} 未见「剔除」相关结论 —— 约定 37 要求表清单以代码 ORM 声明为准"
                       f"再与真实库交叉核对，「代码有而库查无」的项须剔除并写明理由；"
-                      f"确无剔除项也要就地写明「本版无剔除项（已交叉核对）」，否则无从区分"
+                      f"新产物在 deployment_baseline_checks 记录 excluded 数组（无则 []），否则无从区分"
                       f"「核对过、没有要剔的」与「压根没核对」")
         # ★ 导出源断言：细则 37.3-2 反复强调「导出源必须是应用实际连接的那个库、
         #   写明实例地址 + schema 名」，而此前脚本里「导出源」三字只出现在一句错误提示文案中、
@@ -417,7 +435,7 @@ def check_structure(ver_dir, rep):
             rep.error("结构完整性",
                       f"{label} {doc} 未写明**导出源**（应用实际连接的实例地址 + schema/库名）——"
                       f"约定 37：全量基线以「代码 × 真实环境」交叉核对为准，导出源不写清则无从复核"
-                      f"这份基线到底来自哪个库")
+                      f"这份基线到底来自哪个库；新产物把 source 留在 deployment_baseline_checks")
         # ★ 只读采集方式断言 —— 约定 37 的另一半（「产出过程全程只读」）的落点。
         #   ⚠️ 必须说清这条能做到什么、做不到什么：「采集时有没有执行过 DDL/DML」**无法从产物反推**
         #   （真写了库，仓库里也不会留下痕迹）。所以本项不假装能验证过程，它验的是
@@ -430,7 +448,7 @@ def check_structure(ver_dir, rep):
             rep.error("结构完整性",
                       f"{label} {doc} 未写明**只读采集方式**（DDL 走哪个元数据视图 / 配置走哪个只读 API）"
                       f" —— 约定 37.6 要求全程只读：不执行任何 DDL/DML、不改任何环境配置、不启动任何服务。"
-                      f"采集方式不落文档，这条纪律就只是一句无从复核的自述")
+                      f"新产物把 read_method 留在 deployment_baseline_checks，不复抄分析进操作说明")
     return sql_full, cfg_full
 
 
@@ -900,17 +918,7 @@ def check_yaml_blocks_and_links(ver_dir, rep):
 
 
 def check_ddl_comment_verified(root, ver_dir, version, rep):
-    """12. 本版新增列的注释覆盖率**已实查库并落台账**（约定 37.5bis ②）。
-
-    ⛔ **校的是"有没有真去查过库"，不是"脚本里有没有写 COMMENT"**——实际项目中曾出现：SQL 脚本里**写了** `COMMENT ON COLUMN`，但手工执行时只跑了 `ALTER TABLE ADD`
-    那一段循环、注释语句**整段被漏掉**，而没有任何一步会发现；事后实查 `ALL_COL_COMMENTS`
-    结果是新增 10 列 **10/10 无注释**。**脚本内容正确 ≠ 库里状态正确**——只校脚本会
-    **恰好漏掉这次事故的形态**。
-
-    本门不连库（CI 里连不上测试/生产库是常态），改为校验**执行方有没有把实查结果落进台账**：
-    要填那张表，就得真去查一次。判定委派 `check_sql_ledger_comment.py`（单一实现，
-    ⛔ 不在这里重写一遍 ADD COLUMN 的方言识别——两处各写一份必然漂移）。
-    """
+    """12. 正式发布本版新增列的实查机器证据，委派 check_sql_ledger_comment.py。"""
     script = root / runtime_relpath("", __file__) / "scripts" / "check_sql_ledger_comment.py"
     if not script.is_file():
         rep.note("DDL 注释实查", "check_sql_ledger_comment.py 不存在，本项跳过")
@@ -932,7 +940,7 @@ def check_ddl_comment_verified(root, ver_dir, version, rep):
     rep.error("DDL 注释实查",
               (res.get("detail") or "本版新增列的注释覆盖率未实查")
               + "（约定 37.5bis ②：查 ALL_COL_COMMENTS / information_schema.COLUMNS 的"
-                "**实际状态**，把结果填进 SQL执行台账.md「三之二」；脚本里写了 COMMENT 不算）")
+                "**实际状态**，把结果留在 baseline 的 deployment_sql_checks；脚本里写了 COMMENT 不算）")
 
 
 def run(root, version):

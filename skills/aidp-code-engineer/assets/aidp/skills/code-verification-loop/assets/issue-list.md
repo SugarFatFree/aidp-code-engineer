@@ -22,7 +22,7 @@ Important 总数 = 阻断 Important + 非阻断 Important；loop 阻断项总数
 
 | 维度 | 结论 | Critical | Important（阻断） | Important（非阻断） | Suggestion | 问题编号/依据 |
 | :- | :- | :- | :- | :- | :- | :- |
-| {维度编号} | {Pass / Fail / 不适用 / 未执行（原因）} | {C} | {Ib} | {In} | {S} | {问题编号或核验依据} |
+| {维度编号} | {Pass / Fail / 不适用 / 未核验（原因）} | {C} | {Ib} | {In} | {S} | {问题编号或核验依据} |
 
 逐维度填完（留行规则同 SKILL）：已执行维度存在 Critical 或 Important（含非阻断）即 Fail，只有 Suggestion 可记 Pass；未执行不计 Pass/Fail，并按 SKILL 登记 Important「本项未核验」。不适用写原因，不能用来隐藏 L2。
 
@@ -224,7 +224,7 @@ I-1 保留在 Important 清单并交代后续处置；两种模式维度 4 均�
 ### UI 还原度违规（维度 10·约定39-R2/R3/R10）
 
 > 判据脚本由 AIDP 脚手架下发到**被测项目侧** `{{AIDP_HOME}}/scripts/check_ui_fidelity.py`（`{{AIDP_HOME}}` 由安装方渲染、相对被测项目根，见 [`../SKILL.md`](../SKILL.md)「运行路径约定」）；
-> ⛔ 本 SKILL 不写第二份同判据实现。脚本未下发时标「不适用」跳过、**报告仍留行**，
+> ⛔ 本 SKILL 不写第二份同判据实现。脚本未下发时标「未核验（工具缺失）」、**报告仍留行**，
 > 但仍须对 R10 做一次人工 grep 兜底（它零豁免、判据纯词法）。
 
 | 规则 | 典型问题 | 修复方向 |

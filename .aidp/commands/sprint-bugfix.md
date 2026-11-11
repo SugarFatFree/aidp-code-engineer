@@ -27,6 +27,8 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bug
 
 返回 `route=light` → 执行该片的 **repair** 能力，然后 **return**；不进入下文任何 Sprint 取号、卡片、activeContext、started、报告路径或归档步骤。返回 `route=formal` 才执行下文正式身份门；可选动作仍按 actions 筛选，未授权为 NOT_REQUESTED。任何子命令/修复/重试/续跑均保留原参数并显式附 `--execution-context "$EXECUTION_CONTEXT"`；不能只传 `--unattended`/`--from-batch` 而丢身份。
 
+独立修复默认 `implement+static+related-test`，完成实现后自动 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]` → 必要修复/复验 → 终端。父编排 `skip-test` 只把测试交回父流程；用户真实 skip 记受限结果，不假报完整通过。
+
 ## formal 流程
 
 你正在执行 `/sprint-bugfix` 命令。
@@ -121,7 +123,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bug
 
 一次性向用户抛出 **≥2 个待拍板事项前，逐条自检**：这条是否**真的**需要人定（命中表中"必须问"两行 / 满足统一决策纪律正向判据）？**任一条的答案是"其实默认就该这么做"→ 不得放进询问清单、直接按默认处置修**。无人值守场景，挂起的成本是"整轮停摆到人醒"，**远高于**按默认值推进后被纠正的成本（git 可回退）。
 
-> **★ 修复期运行时验证纪律 = 约定 35（详规 `{{AIDP_HOME}}/rules/code.md`，约定 21 不复述）**：验证修复**默认只静态验证**；**绝不为"看看修好没 / 验证运行时"擅自启动前后端服务或跑完整构建**——需运行时/浏览器验证走 **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**（唯一例外 = `deployment.mode=local` 授权）。
+> **★ 修复期运行时验证纪律 = 约定 35（详规 `{{AIDP_HOME}}/rules/code.md`，约定 21 不复述）**：验证修复**默认静态验证与当前任务相关单测**；**绝不为"看看修好没 / 验证运行时"擅自启动前后端服务或跑完整构建**——需运行时/浏览器验证走 **(a) 已部署环境 / (b) 用户已运行服务（先探端口、有则复用绝不另起）/ (c) 都无先 `AskUserQuestion` 由用户启动**（唯一例外 = `deployment.mode=local` 授权）。
 
 ## 参数解析与路径分支
 
@@ -173,7 +175,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bug
 | Step 0 | ⛔ 口述 bug + 来源 B 清单待修行先落 `bugfix-{date}-{user}.md` 条目（带来源回链），**不得跳过直接改代码** | 去重仅回链 / exact match，不做语义模糊判断 |
 | Step 1 | 调 `bugfix` skill（参数 `sprint-{NNN}` / 文件名 / 空=零散模式），prompt 附路径/URL/proxy + 配置 + 部署台账专项 | 路径类修完单点须巡检同表其他消费者点 |
 | Step 2 | 推送分类与监听（约定 31.5） | 正式代码变更 push 后必走 CICD 监听 + 就绪探针 |
-| Step 3 | 回填状态 / Commit / 修复报告链接（bugfix 记录 + 来源 B 清单行，不删行） | 根因权威落点 = SKILL 的 `-report.md`，⛔ 不复写 |
+| Step 3 | 回填状态 / Commit / 机器修复证据链接（bugfix 记录 + 来源 B 清单行，不删行） | 根因权威落点 = 当前execution context JSON，日常不写报告Markdown |
 | Step 4 | 编译（后端）/ 前端校验（lint+类型检查不打包） | 仅改动侧 + 资源受限 |
 | Step 5 | 自动回写设计文档（约定 22 级联；经 `--ledger-cascade` **就地改内容主文档正文**，⛔ 不新建 `NN_` 分册） | 纯逻辑修复不触发 |
 | Step 5.1 | ★ 累进产物审计（Step 5 产出四类文档任一份 → 派 version-auditor 子 Agent，⛔ 不得省）| `scope=incremental`，审 C-4/C-5/F/G/H 五项 |
@@ -256,7 +258,7 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 
 处理结果（位于 docs/bugfix/{version}/bugfix-*-{user}.md）：
 - B-{YYYYMMDD}-01: ✅ 已修复 — {问题标题}
-  根因：{见 SKILL 修复报告对应小节}
+  根因：{当前任务机器修复证据路径与问题ID}
   修改文件：{文件列表}
   Commit: `abc123`
 - B-{YYYYMMDD}-02: ✅ 已修复 — {问题标题}

@@ -362,6 +362,11 @@ def test_batch_cascade_and_bugfix_scope_contracts():
           '派单前对账' in mb and '不得通过删掉 Sprint 参数扩大修复范围' in mb)
     check('无 Sprint 的零散入口仍可导入留空归属',
           '无 Sprint 过滤' in mb and '可留空' in mb)
+    check('bugfix 默认仍产报告文件，light 日常可切 evidence-only 且不写报告',
+          '`file`（默认）' in skill and '`evidence-only`' in skill and '**不写任何 `*-report.md`**' in skill
+          and 'report_mode=evidence-only' in mb and '不能遵守范围/产物边界' in mb)
+    check('evidence-only 不得越出调用方给定的问题清单范围',
+          '内核不得自行扩大到其他问题记录、其他 Sprint 或其他版本' in skill)
 
 
 def test_vcs_mode_command_contracts():
@@ -702,19 +707,22 @@ def test_cvl_callsite_contract_details():
           and "`loop 推进`" in st and "上游判据冲突，待澄清" not in st)
     check("精简回传保留完整发现与四态，不过滤非阻断 Important",
           "唯一问题编号" in st and "不得只回传阻塞项" in st
-          and "各维度 Pass / Fail / 不适用 / 未执行（原因）" in st
+          and "各维度 Pass / Fail / 不适用 / 未核验（原因）" in st
           and "仅非阻断 Important 仍按 SKILL 返回的 `不通过` 交接" in st)
     check("终端模板不把未核验一律导向代码修复",
-          "未执行（原因）" in st[st.index("code-verification-loop 验收结果："):]
+          "未核验（原因）" in st[st.index("code-verification-loop 验收结果："):]
           and "总体结论：{通过 / 不通过" in st and "❌ 需修复" not in st)
     check("起点 commit 不回落本轮错误数，无 Git 明记未核验", "本 Sprint 起点 commit" in st
           and "⛔ 不得回落 merge-base / 本轮首跑错误数" in st and "unsupported:vcs-disabled" in st)
+    check("CVL 以 scope_files 限定当前 task/Sprint，范围无法收窄记未核验且不回退全项目，未核验不得写全部通过",
+          "scope_files" in st and "scope-unsupported" in st and "存在未核验维度" in st
+          and "未核验" in st and "不转" in st)
     check("移除失效 dimension 链接与首轮错误数作基线的旧指令", "references/dimension-" not in st
           and "首轮记录存量错误数作基线" not in st)
     recheck = st[st.index("## Step 7"):st.index("## 输出")]
     check("复验工具或基线不可用按未核验交接，不误送代码修复",
           "工具未安装标跳过" not in recheck and "非零退出先分类" in recheck
-          and "未执行（原因）" in recheck and "不交代码 bugfix" in recheck)
+          and "未核验（原因）" in recheck and "不交代码 bugfix" in recheck)
     front = (REPO / ".aidp/agents/frontend.md").read_text(encoding="utf-8")
     check("前端明确预处理器检查不覆盖 import/use 路径", "`@import` / `@use` 路径错**不在**该脚本覆盖内" in front)
 
@@ -856,8 +864,10 @@ def test_acceptance_ledger_command_examples():
         git('add', '-A')
         git('commit', '-qm', 'base')
         base = git('rev-parse', 'HEAD')
-        context = entry_context.resolve_context(root, 'sprint-dev', version='V1.0.0', sprint='001',
-                                                since=base)['execution_context']
+        # 普通开发默认含 related-test；“没有相关测试授权”只能来自用户明确跳过，围栏仍须据此拒绝。
+        context = entry_context.resolve_context(root, 'sprint-dev', version='V1.0.0', sprint='001', since=base,
+            authorization_source={'kind': 'user-text', 'request_id': 'contract-skip-unit',
+                                  'text': '本轮先不执行相关单测', 'skip_actions': ['related-test']})['execution_context']
         code.write_text('value = 1\n', encoding='utf-8')  # 本 Sprint 真实改动：推导出 test_app.py
         # 夹具运行器配置属于工具状态；放根目录会成为真实 JSON 资源覆盖缺口。
         runners = root / 'memory/.aidp/fixture-runners.json'

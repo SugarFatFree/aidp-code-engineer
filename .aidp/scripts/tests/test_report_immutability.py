@@ -198,6 +198,61 @@ def _flow_block(relative, marker):
                 if marker in block).replace("{{AIDP_HOME}}", str(REPO / ".aidp"))
 
 
+def _write_acceptance(root, version, tests, dependencies=()):
+    """写入本版本正式用例册、索引与验收基线；返回基线路径。内容确定，重复写入不改变 sha。"""
+    import hashlib
+    formal = root / "docs/testing" / version / "正式用例"
+    formal.mkdir(parents=True, exist_ok=True)
+    index = formal / "00_索引.md"
+    index.write_text("# 本版本正式用例索引\nTC-ONE\n", encoding="utf-8")
+    (formal / "03_cases.md").write_text("#### 用例 TC-ONE: sample\n", encoding="utf-8")
+    acceptance = {"version": version, "acceptance_tests": tests, "dependencies": list(dependencies),
+                  "cases": [{"id": "TC-ONE", "test_files": tests}],
+                  "case_index": {"path": index.relative_to(root).as_posix(),
+                                 "sha256": hashlib.sha256(index.read_bytes()).hexdigest()}}
+    path = formal.parent / "acceptance.json"
+    path.write_text(json.dumps(acceptance), encoding="utf-8")
+    return path
+
+
+def _frozen_manifest(root, version, build, *, tests=None, commit=None, suites=None, source=None, dependencies=()):
+    """真实版本验收冻结夹具：基线、正式用例索引与 build plan；不放宽 fork 的 manifest 要求。
+
+    默认用本地 test_sample.py；部署提交场景可传入 tests/commit/suites/source（契约来源 sha）。
+    """
+    import hashlib
+    tests = list(tests or ["test_sample.py"])
+    if tests == ["test_sample.py"]:
+        (root / "test_sample.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n def test_a(self): pass\n", encoding="utf-8")
+    path = _write_acceptance(root, version, tests, dependencies)
+    runner = {"suffixes": [".py"], "argv": [sys.executable, "-m", "unittest", "-v", "{tests}"],
+              "cwd": ".", "env_id": "stdlib"}
+    plan = {"schema": 1, "version": version, "build": build, "commit": commit or "a" * 40,
+            "source": source or {"path": "unit-plan.json", "sha256": "b" * 64},
+            "suites": suites or [{"cwd": ".", "env_id": "stdlib", "inputs": [], "external_dependencies": "none",
+                                  "runners": [runner]}],
+            "acceptance_tests": tests, "dependencies": list(dependencies),
+            "acceptance_baseline": {"path": path.relative_to(root).as_posix(),
+                                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
+    manifest = root / "memory" / (build + "-manifest.json")
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    return manifest
+
+
+def _manifest_for(root, version, build, deployed_commit=None):
+    """部署提交场景：契约 source/suites/tests 取自该提交里真实的 unit-plan.json，与单测实际运行一致。"""
+    if not deployed_commit:
+        return _frozen_manifest(root, version, build)
+    import hashlib
+    raw = subprocess.run(["git", "-C", str(root), "show", deployed_commit + ":unit-plan.json"],
+                         capture_output=True, check=True).stdout
+    return _frozen_manifest(root, version, build, tests=["test_deployed.py"], dependencies=["app.py"], commit=deployed_commit,
+                            suites=json.loads(raw)["suites"],
+                            source={"path": "unit-plan.json", "sha256": hashlib.sha256(raw).hexdigest()})
+
+
 def _retest_scene(root, *, once=False, target=False, finalized=True, build=True, skeleton=True,
                   root_entry='sprint-autopilot', bind_build=True, deployed_commit=None):
     version, current = "V0.1", "V0.1_build1001"
@@ -236,7 +291,8 @@ def _retest_scene(root, *, once=False, target=False, finalized=True, build=True,
     else:
         parent = entry_context.resolve_context(root, root_entry, version=version,
                                                authorization_source=source)['execution_context']
-    context = (entry_context.fork_test_build(root, parent, version, current)['execution_context']
+    context = (entry_context.fork_test_build(root, parent, version, current,
+                                                 manifest=_manifest_for(root, version, current, deployed_commit))['execution_context']
                if build and bind_build else parent)
     data = json.loads(baseline.read_text())
     if root_entry == 'sprint-aiauto-test':
@@ -354,8 +410,10 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
         return subprocess.run([sys.executable, str(scripts / "autopilot_tick_flags.py"), *args],
                               cwd=root, capture_output=True, text=True, timeout=60)
 
-    def bash(root, block, execution_context=None):
-        return subprocess.run(["bash", "-c", block], cwd=root, capture_output=True, text=True,
+    def bash(root, block, execution_context=None, manifest=None):
+        # 回调围栏的 argv[1] 必须是新 build 的真实冻结清单；缺省不传，保证其它围栏不受影响。
+        argv = ["bash", "-c", block] + (["callback-fence", str(manifest)] if manifest else [])
+        return subprocess.run(argv, cwd=root, capture_output=True, text=True,
                               env=_fixture_environment(root, execution_context), timeout=60)
 
     def context_argument(arguments):
@@ -389,12 +447,15 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
         fixture_git('init', '-q')
         fixture_git('config', 'user.name', 'Fixture')
         fixture_git('config', 'user.email', 'fixture@example.invalid')
-        (root / '.gitignore').write_text('memory/\ndocs/\n__pycache__/\n', encoding='utf-8')
+        (root / '.gitignore').write_text('memory/\ndocs/reports/\n__pycache__/\n', encoding='utf-8')
         (root / 'app.py').write_text("VERSION = 'deployed'\n", encoding='utf-8')
+        _write_acceptance(root, 'V0.1', ['test_deployed.py'], ['app.py'])  # 版本验收基线必须随部署 commit 提交
         (root / 'test_deployed.py').write_text('import unittest\nimport app\nclass DeploymentTest(unittest.TestCase):\n'
                                                ' def test_deployed(self): self.assertEqual(app.VERSION, "deployed")\n', encoding='utf-8')
-        unit_suites = [{'full_argv': [sys.executable, '-m', 'unittest', '-v', 'test_deployed'],
-                        'cwd': '.', 'env_id': 'deployed-stdlib-fixture', 'inputs': [], 'external_dependencies': 'none'}]
+        unit_suites = [{'full_argv': [sys.executable, '-m', 'unittest', '-v', '{tests}'],
+                        'cwd': '.', 'env_id': 'deployed-stdlib-fixture', 'inputs': [], 'external_dependencies': 'none',
+                        'runners': [{'suffixes': ['.py'], 'cwd': '.', 'env_id': 'deployed-stdlib-fixture',
+                                     'argv': [sys.executable, '-m', 'unittest', '-v', '{tests}']}]}]
         unit_source = json.dumps({'schema': 1, 'suites': unit_suites}).encode('utf-8')
         (root / 'unit-plan.json').write_bytes(unit_source)
         fixture_git('add', '-A'); fixture_git('commit', '-qm', 'deployed-code')
@@ -570,7 +631,7 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
                 data = json.loads(trusted)
                 mutate(data['versions']['V0.1'])
                 baseline.write_text(json.dumps(data), encoding='utf-8')
-                rejected = bash(root, rebind, handoff_context)
+                rejected = bash(root, rebind, handoff_context, manifest=_manifest_for(root, "V0.1", new, deployed_commit))
                 check(label + '：拒绝换绑且不创建新ctx', rejected.returncode != 0 and
                       '返回命令：' not in rejected.stdout and set(contexts_dir.glob('*/context.json')) == context_files)
             baseline.write_bytes(trusted)
@@ -578,12 +639,12 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
             skeleton_bytes = skeleton_path.read_bytes()
             skeleton_path.unlink()
             try:
-                rejected = bash(root, rebind, handoff_context)
+                rejected = bash(root, rebind, handoff_context, manifest=_manifest_for(root, "V0.1", new, deployed_commit))
                 check('缺真实新骨架：拒绝换绑且不创建新ctx', rejected.returncode != 0 and
                       '返回命令：' not in rejected.stdout and set(contexts_dir.glob('*/context.json')) == context_files)
             finally:
                 skeleton_path.write_bytes(skeleton_bytes)
-        rebound = bash(root, rebind, handoff_context)
+        rebound = bash(root, rebind, handoff_context, manifest=_manifest_for(root, "V0.1", new, deployed_commit))
         assert rebound.returncode == 0, rebound.stdout + rebound.stderr
         callback = next(line.split('/sprint-aiauto-test ', 1)[1] for line in rebound.stdout.splitlines()
                         if line.startswith('返回命令：'))
@@ -617,9 +678,8 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
         result, state = _test_entry_flow(root, execution_context=callback_context)
         check("同 run 回调从新 build 开测，不再交接", result.returncode == 0 and state == ["0", new, "1"])
         import build_unit_test
-        plan = {'schema': 1, 'version': 'V0.1', 'build': new, 'commit': deployed_commit,
-                'source': {'path': 'unit-plan.json', 'sha256': hashlib.sha256(unit_source).hexdigest()},
-                'suites': unit_suites}
+        # 与委派上下文绑定的是同一份冻结清单；run_build 必须按它而不是另一份手写计划运行。
+        plan = json.loads(_manifest_for(root, 'V0.1', new, deployed_commit).read_text(encoding='utf-8'))
         tested_row = next(r for r in json.loads(baseline.read_text())['versions']['V0.1']['builds'] if r['build'] == new)
         check('新build绑定原部署SHA而非HEAD或ctx.since', tested_row.get('push_commit') == deployed_commit
               and tested_row.get('push_commit') != fixture_git('rev-parse', 'HEAD'))
@@ -641,9 +701,13 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
         # 沿用 test_aiauto_test_join 的离线browser summary形态；case按既有emit契约补齐。
         # 此结果仅验证报告/状态消费者，不是执行过真实浏览器的验收声明。
         browser_input = root / 'offline-browser-result.json'
+        # testScope 是实测与单测共享的版本范围绑定（同一 manifest/build），取自单测结果，不另行伪造。
+        unit_scope = json.loads((build_unit_test.build_dir(root, 'V0.1', new) / 'result.json').read_text(
+            encoding='utf-8')).get('testScope')
         browser_input.write_text(json.dumps({'build': new, 'version': 'V0.1', 'commit': deployed_commit,
+            'testScope': unit_scope,
             'summary': {'total': 1, 'pass': 1, 'fail': 0, 'block': 0, 'skip': 0, 'na': 0, 'passRate': 1.0},
-            'cases': [{'id': 'OFFLINE-BROWSER-1', 'title': '离线浏览器结果夹具', 'result': 'pass',
+            'cases': [{'id': 'TC-ONE', 'title': '离线浏览器结果夹具（对应本版正式清单 TC-ONE）', 'result': 'pass',
                        'note': '仅验证emit/join/settle，不代表真实浏览器执行'}],
             'defects': [], 'runtimeErrors': []}, ensure_ascii=False), encoding='utf-8')
         merged = subprocess.run([sys.executable, str(scripts / 'emit-report.py'), '--kind', 'test',
@@ -663,6 +727,18 @@ def test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=True,
               and result.get('overall_status') == 'PASS' and result.get('converged') is True
               and aiauto_test_join.release_state(root, 'V0.1') == 'pass')
         assert settled.returncode == 0, settled.stdout + settled.stderr
+        # 已核验的版本测试范围（run_build PASS + settle）才能把阶段游标推进到 done。
+        data_after = json.loads(baseline.read_text(encoding='utf-8'))
+        data_after['versions']['V0.1']['aiauto_run_state'] = {
+            'current_phase': '3-audit', 'phase_status': 'running', 'next_phase': 'done', 'phase_token': new}
+        baseline.write_text(json.dumps(data_after), encoding='utf-8')
+        completed_phase = subprocess.run([sys.executable, str(scripts / 'aiauto_phase_entry.py'),
+            '--version', 'V0.1', '--phase', '3-audit', '--next-phase', 'done', '--build', new,
+            '--baseline', str(baseline), '--no-card', '--complete', '--execution-context', callback_context],
+            capture_output=True, text=True)
+        check('已核验版本测试范围后 --complete 可推进 done',
+              completed_phase.returncode == 0 and json.loads(baseline.read_text())['versions']['V0.1'][
+                  'aiauto_run_state']['phase_status'] == 'complete')
         final_budget = reserve_budget(root, callback_context, 'processes', 0, action='static')
         check('报告settle后仍沿原根预算和授权来源',
               final_budget['budget_task_id'] == parent['task_id'] and final_budget['used'] >= 4
@@ -729,10 +805,13 @@ def test_completed_test_cursor_does_not_reopen_old_build():
         }
         baseline.write_text(json.dumps(data), encoding="utf-8")
         original = baseline.read_bytes()
+        # 阶段入口必须带真实测试委派（_retest_scene 已按冻结 manifest fork 出旧 build 的子上下文）。
+        delegated = json.loads((root / "memory/.aidp/report-fixture-context.json").read_text())["execution_context"]
         def enter(build):
             return subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aiauto_phase_entry.py"),
                                    "--version", "V0.1", "--phase", "1-probe", "--next-phase", "2-exec",
-                                   "--build", build, "--baseline", str(baseline), "--no-card"],
+                                   "--build", build, "--baseline", str(baseline), "--no-card",
+                                   "--execution-context", delegated],
                                   capture_output=True, text=True)
         result = enter(old_build)
         output = json.loads(result.stdout) if result.stdout.strip() else {}
@@ -740,7 +819,20 @@ def test_completed_test_cursor_does_not_reopen_old_build():
               and output.get("resume_phase") == "done")
         check("终态短路不重写旧游标/停滞计数", baseline.read_bytes() == original)
         baseline.write_bytes(original)
-        result = enter("V0.1_build1002")
+        # 旧 build 的委派不能推进新 build：新 build 必须有自己的真实测试委派（同一 autopilot 根 fork）。
+        denied = enter("V0.1_build1002")
+        check("旧 build 的委派不能用于推进新 build", denied.returncode != 0 and "autopilot 委派" in denied.stdout + denied.stderr)
+        sys.path.insert(0, str(REPO / ".aidp/scripts"))
+        import entry_context
+        fixture_ctx = json.loads((root / "memory/.aidp/report-fixture-context.json").read_text())
+        new_context = entry_context.fork_test_build(root, fixture_ctx["parent"], "V0.1", "V0.1_build1002",
+            manifest=_manifest_for(root, "V0.1", "V0.1_build1002"))["execution_context"]
+        def enter_new():
+            return subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aiauto_phase_entry.py"),
+                                   "--version", "V0.1", "--phase", "1-probe", "--next-phase", "2-exec",
+                                   "--build", "V0.1_build1002", "--baseline", str(baseline), "--no-card",
+                                   "--execution-context", new_context], capture_output=True, text=True)
+        result = enter_new()
         check("不同 build 可从 Phase 1 开始", result.returncode == 0 and
               not json.loads(result.stdout).get("skip_phase"))
         data["versions"]["V0.1"].pop("aiauto_run_state")
@@ -755,10 +847,49 @@ def test_completed_test_cursor_does_not_reopen_old_build():
         baseline.write_text(json.dumps(data), encoding="utf-8")
         result = subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aiauto_phase_entry.py"),
                                  "--version", "V0.1", "--phase", "3-audit", "--next-phase", "done",
-                                 "--build", old_build, "--baseline", str(baseline), "--no-card", "--complete"],
+                                 "--build", old_build, "--baseline", str(baseline), "--no-card", "--complete",
+                                 "--execution-context", delegated],
                                 capture_output=True, text=True)
-        check("正常审计先 finalize 再 complete 的出口不受影响", result.returncode == 0 and
-              json.loads(baseline.read_text())["versions"]["V0.1"]["aiauto_run_state"]["phase_status"] == "complete")
+        # 新完成门：版本测试范围尚未完整核验时不得推进 done，也不改写游标（已核验后的正路径见主场景）。
+        check("版本测试范围未核验时 --complete 拒绝推进 done 且不改游标", result.returncode != 0
+              and "尚未完整核验" in result.stdout + result.stderr
+              and json.loads(baseline.read_text())["versions"]["V0.1"]["aiauto_run_state"]["phase_status"] == "running")
+
+
+def test_standalone_aiauto_root_cannot_fork_or_delegate_full():
+    """独立 /sprint-aiauto-test 只能做明确目标实测：没有版本全量权限，也走不到全量报告交接。
+
+    （旧版本曾允许独立根直接 fork 全量 child；该能力已被废除，版本全量只经真实 autopilot 委派。）
+    """
+    sys.path.insert(0, str(REPO / '.aidp/scripts'))
+    import entry_context
+    import execution_policy
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        for args in (('init', '-q'), ('config', 'user.name', 'Fixture'),
+                     ('config', 'user.email', 'fixture@example.invalid'), ('commit', '--allow-empty', '-qm', 'base')):
+            subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True)
+        source = {'kind': 'explicit-command', 'command': 'sprint-aiauto-test', 'request_id': 'standalone-root'}
+        standalone = entry_context.resolve_test_root(root, 'V0.1', authorization_source=source)
+        actions = set(standalone['allowed_actions'])
+        check('独立 aiauto 根只含静态与明确目标实测，没有版本全量', actions == {'static', 'live-tests'})
+        try:
+            execution_policy.require_delegable(standalone['execution_context'], 'full-regression')
+            delegable = True
+        except execution_policy.PolicyError:
+            delegable = False
+        check('独立 aiauto 根无权委派版本全量', not delegable)
+        try:
+            execution_policy.require_action(standalone['execution_context'], 'full-regression')
+            executable = True
+        except execution_policy.PolicyError:
+            executable = False
+        check('独立 aiauto 根也不能自己执行版本全量', not executable)
+        forked = subprocess.run([sys.executable, str(REPO / '.aidp/scripts/entry_context.py'), 'fork-test-build',
+            '--root', str(root), '--execution-context', standalone['execution_context'], '--version', 'V0.1',
+            '--build-id', 'V0.1_build1001', '--manifest', str(root / 'missing-manifest.json'), '--json'],
+            capture_output=True, text=True)
+        check('独立 aiauto 根不能 fork 版本全量测试子任务', forked.returncode != 0)
 
 
 def main():
@@ -767,7 +898,7 @@ def main():
     test_handoff_preserves_unattended_wake_semantics()
     test_real_test_only_handoff_mints_once_and_reuses_deployment()
     test_real_test_only_handoff_mints_once_and_reuses_deployment(finalized=False, skeleton=False, wake=True)
-    test_real_test_only_handoff_mints_once_and_reuses_deployment(root_entry='sprint-aiauto-test')
+    test_standalone_aiauto_root_cannot_fork_or_delegate_full()
     test_fixed_build_context_rejects_unrelated_baseline_drift()
     test_os_handoff_child_keeps_wrapper_lock()
     test_completed_test_cursor_does_not_reopen_old_build()

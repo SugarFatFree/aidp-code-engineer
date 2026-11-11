@@ -175,7 +175,7 @@ NO_JOINT_FREEZE
 > 接口非预期状态码、观察到但未被断言的缺陷，一律进本分流）。**`fail=0` 不是跳过理由**；
 > **来源与严重度都不改变它走不走闭环**。理据见 rationale.md「分流输入为何是全部缺陷」。
 > ⛔ **二分类判据 = `/sprint-bugfix`「缺陷处置默认决策纪律」（单一信源，约定 21 不复述）**：对每条缺陷先问「不做这个修复，当前行为是不是错的？」——是即【可自动修复类】。
-- **可自动修复类**（代码缺陷，根因明确、无语义分歧：如接口 500 / 字段映射错 / 空指针 / 校验缺失）→ 回写「问题汇总清单」（`R-`/`C-` 前缀，供`/sprint-bugfix` 拾取），并按下方落盘块置 `auto_fixable_pending=true`——**autopilot 检测到即自动 `/sprint-bugfix` → 重部署 → 铸新 build 复测**（见 sprint-autopilot「测试失败自动修复复测闭环」；**自动复测上限 3 轮/人工介入周期，达上限转人工手动修复、autopilot 检测到人工修复（新提交/新部署）即自动解冻并铸新 build 复测**）。**注意：复测是【新 build】**（本 build 一旦 R-4 finalize 即冻结，报告不可变铁律——绝不在旧 build 上重测重写）。
+- **可自动修复类**（代码缺陷，根因明确、无语义分歧：如接口 500 / 字段映射错 / 空指针 / 校验缺失）→ 回写「问题汇总清单」（`R-`/`C-` 前缀，供`/sprint-bugfix` 拾取），并按下方落盘块置 `auto_fixable_pending=true`——**只有原开发父任务已有 implement/deploy 授权时，autopilot 才自动修复→重部署→新build复验；test-only只返回失败，不附带开发/提交/推送/部署**（见 sprint-autopilot「测试失败自动修复复测闭环」；**已有开发授权的复测上限3轮；人工修复后按原门恢复**）。**注意：复测是【新 build】**（本 build 一旦 R-4 finalize 即冻结，报告不可变铁律——绝不在旧 build 上重测重写）。
 - **需人工确认类**（语义/范围问题，根因是"该不该这样"而非"写错了"——如入口是否该存在、字段是否本期需求）→ **不阻塞本轮**：记 baseline `versions.{V}.pending_clarifications[]`（`{question, affected_cases[], interim_verdict, raised_build, at}`），对应用例在本 build 报告记 **BLOCK/待确认**，**本轮照常 finalize 出报告**（结论按实测：有真失败=不通过、仅待确认=部分通过/带待确认标注）。#F 通知**列出待确认项清单**（问题 + 影响用例 + 暂行判定）。用户确认后由 `/sprint-autopilot --once` 铸**新 build** 复测，**严禁回头改旧 build 报告**。
 - **纯待确认、无真实代码失败**时：本轮即可 finalize（待确认项不算"未收敛需自动修"，`auto_fixable_pending` 不置真），避免为纯产品分歧空跑自动修复。
 

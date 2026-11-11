@@ -15,7 +15,7 @@
 
 **派单入口与共享写入（先于下文角色流程）**：
 
-**前端派单准入**：先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 的父策略围栏，默认只实现与静态验证；其它动作据授权启用，formal再核契约。
+**前端派单准入**：先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 的父策略围栏，默认实现、静态验证与相关单测，限定本 task/单 Sprint 及必要依赖，自动修复复验；其它动作据授权启用，formal再核契约。
 
 - **仅 formal**：派单准入先按 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md` 执行。输入包括 `contract_path/contract_revision`、`interface_documents`、`write_set`、`work_order`；前端资产、生成物和测试也须在该写集内。
 - formal S/M 的契约身份及批准修订校验见 `{{AIDP_HOME}}/flows/sprint-dev/incremental-contract.md`；未放行不开始实现。

@@ -43,7 +43,7 @@ python3 {{AIDP_HOME}}/scripts/development_scope.py --root . \
 | 决策与受影响结论 | 方案取舍；旧结论→新结论、具体落点、失效/改写/不受影响；口径反转必须回答旧安全结论是否仍成立并当轮补守卫 |
 | 执行工作单 | 每个 Task 的 REQ/步骤/AC/依赖、owner、具体 write_set/create_dirs；工作单回传落点由主流程分配，开发者只写自己的文件 |
 | 用例义务 | `check_case_ledger_pending.py --prepare` 的 required/deferred 真实读数、正式用例路径或延期原因；契约 AC 不能冒充正式实测用例 |
-| test_plan | 保留每套 `cwd`、`env_id`、`inputs`、开发用 `targeted_argv`；新增 `unit_runners`（每个模块的 `cwd/suffixes/argv/env_id/inputs`，字段及选择器规则见 `/sprint-test` Step 2.6）。`/sprint-test` 与部署前复用同一 `unit_runners` 推导结果。`full_argv` 只供 `/sprint-aiauto-test`，其冻结计划块与部署 commit 校验格式见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md`。命令全部取自项目已有测试配置，不造占位命令 |
+| test_plan | 保留每套 `cwd`、`env_id`、`inputs`、开发用 `targeted_argv`；新增 `unit_runners`（每个模块的 `cwd/suffixes/argv/env_id/inputs`，字段及选择器规则见 `/sprint-test` Step 2.6）。`/sprint-test` 与部署前复用同一 `unit_runners` 推导结果。版本全量只供真实 autopilot 委派的 `/sprint-aiauto-test`，必须冻结当前版本完整验收清单、必要依赖与带显式选择器的 runners，不能回落 `full_argv` 全仓发现；计划与部署 commit 校验格式见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md`。命令全部取自项目已有测试配置，不造占位命令 |
 | 时点 | 开始、契约放行、各分支结束、汇合、验收、可部署时间；卡在验收测试前冻结，验收/可部署时点及 run_id 写独立报告，不回写卡触发自我失效。阻塞契约卡目标≤10分钟，同类 M 全栈无 DDL 回放从口述到可部署目标≤70分钟（现状140分钟的50%）。仅用于定位耗时，不能因超时绕授权或硬门；未做业务回放不得宣称实证，缺证据不编造时间 |
 | 汇合证据 | contract_revision、实际文件清单、docs状态与正式产物路径、reviewer契约一致性结果、测试账本证据；未完成项和缺失原因不能删 |
 

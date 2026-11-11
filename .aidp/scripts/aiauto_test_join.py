@@ -21,7 +21,7 @@ from alloc_id import allocate
 from baseline_edit import LockedBaseline
 from unit_report_merge import (read_payload, report_ready, overall_status, browser_status,
                                validate_report_units, open_bug_count, unit_has_failure,
-                               triage_state)
+                               triage_state, validate_report_scope)
 
 
 def _name(value):
@@ -87,7 +87,11 @@ def settle(root, version, build, payload, standalone=False, triage=None):
         raise ValueError('必须提供当前 build 的两路汇总报告')
     if triage is not None and triage != payload.get('failureTriage'):
         raise ValueError('--triage 与报告 failureTriage 不一致；必须先重新 emit 报告')
-    errors = validate_report_units(payload, 'test')
+    errors = validate_report_units(payload, 'test') + validate_report_scope(payload)
+    if payload.get('version') != version:
+        errors.append('报告 version 与汇合目标不一致')
+    if standalone:
+        raise ValueError('独立目标实测不得写版本全量汇合；须真实 autopilot 委派')
     if errors or not report_ready(payload):
         raise ValueError('报告尚非有效终态：' + '; '.join(errors))
     status, browser = overall_status(payload), browser_status(payload)
@@ -100,7 +104,7 @@ def settle(root, version, build, payload, standalone=False, triage=None):
                   or (payload.get('browserTests') or {}).get('status') in ('UNVERIFIED', 'TIMEOUT'))
     now = datetime.now(timezone.utc).isoformat()
     digest = _hash({key: payload.get(key) for key in
-                    ('summary', 'unitTests', 'browserTests', 'cases', 'defects', 'runtimeErrors', 'failureTriage')})
+                    ('version', 'testScope', 'summary', 'unitTests', 'browserTests', 'cases', 'defects', 'runtimeErrors', 'failureTriage')})
     baseline = root / 'memory/.sprint-autopilot-baseline.json'
     if standalone:
         with LockedBaseline(str(baseline), write=False) as state:

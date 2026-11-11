@@ -19,10 +19,11 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 > - **复测轮（`retest_of` 非空）追加**：prompt 必须附**上一 build 的 block 用例清单（含各自原因）**，
 >   要求逐条给出三选一并写进 `note`：仍 block（原因不变）/ 仍 block（原因变更，须说明）/ 已解锁→实际结果。
 >   ⛔ 禁止照抄；收尾门 3q 拦未复评与空 `note`。
-> - **执行选集**：`SELECT_MODE != all` 时，prompt 要求子 Agent 建 tasks.md 时带选集参数——
->   `python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/tasks_state.py init <用例源> -o <tasks.md> --select $SELECT_MODE`。
->   ⚠️ `select` **不是 run-context 字段**（SKILL 侧仅 `tasks_state.py init` 的 CLI 参数），必须经 prompt 传；
->   脚本会自动在 tasks.md 头部写「本轮为子集」告示 +「准则仅对子集成立、新 build 回归轮禁用选集」提醒。
+> - **建 tasks.md 范围**：只来自 Phase 2.0 的册文件或清单，**⛔ 目录输入不得无清单 `init`**。
+>   模块只有一个册文件：`init <册文件> -o <tasks.md>`（文件即范围）；多个册文件：`init` 只收一个输入，须用册所在目录并 `--ids <模块清单内ID…>`
+>   或 `--manifest <ids文件>`，一个模块一份 tasks.md，不逐册各建。
+>   `SELECT_MODE != all` 时加 `--select $SELECT_MODE`（清单内过滤；非 run-context 字段，经 prompt 传）；
+>   脚本自动写「本轮为子集」告示，新 build 回归轮禁用选集。
 
 | run-context 字段 | 本命令传入值 | 来源 |
 |---|---|---|
@@ -31,18 +32,18 @@ Phase 0 已备齐环境（DRIVER / URL / 账号 / 等待时长 / BUILD），Phas
 | 环境地址 | 部署 URL | Phase 0.3 |
 | MCP | 按命令主体传 `client_mcp`（保留 `enabled`）及 Web 叶子入参 | 0.1.6 按 `TARGET_VERSION` 判定 |
 | 账号（各角色）| `$TEST_ROLES` 用户名/密码（密码不进日志）| Phase 0.4 |
-| 用例来源 | `PRIMARY_CASES` + `SUPPLEMENT_UNIQUE`（+ 跨版本 `[回归]` 用例，见 Phase 2.0）| Phase 2.0 |
-| `free_scan` | `--free-scan` 给出则 `true`，否则 `false`（默认关）| 本命令 flag |
+| 用例来源 | Phase 2.0 已校验的当前版本完整验收集合与manifest必要依赖；独立实测仅明确目标| Phase 2.0 |
+| `free_scan` | 仅显式要求且能限定当前目标/清单时为true，否则false；不能巡检全系统| 本命令 flag |
 | `free_scan_max_pages` | 不传（用 SKILL 缺省 20）；确需调整时随 `--free-scan` 一并给出 | 本命令 flag |
 | `capture_warnings` | `--capture-warnings` 给出则 `true`，否则 `false`（默认关）| 本命令 flag |
-| 执行选集 `SELECT_MODE` | `--select` 给出则该值，否则 `all`；**无人值守 / 编排链内调用 / 新 build 回归轮一律强制 `all`**（见命令主体注意事项 6bis）| 本命令 flag |
+| 执行选集 `SELECT_MODE` | `--select` 给出则该值，否则 `all`；**仅真实当前版本全量委派使用 `all`，且只覆盖冻结清单；无人值守标志不扩范围**（见命令主体注意事项 6bis）| 本命令 flag |
 | ★ DB 连接（约定 33 缺口 3）| 「测试环境与账号」§五 DB 连接段的 datasource / DB MCP 名 **+ `environment`（SKILL 明令必填、禁留空；缺则填 `{待用户填写}` 并在报告点名）**——⛔ 漏传不报错，只让归属落 `unverified`、`[双源对账]` 用例整批降级 （缺则回退后端 `application.yml` 生效 profile）| Phase 0.0.5 读配置 |
 | ★ 跨系统前置数据（约定 33 缺口 4）| 「测试环境与账号」§三/§四的**联动系统**入口 + 账号 + §五对应 DB | Phase 0.0.5 读配置 |
 | 存活心跳 `heartbeat_cmd` | `python3 {{AIDP_HOME}}/scripts/baseline_edit.py set aiauto_test_heartbeat_at @now` | ★ 长批次续写测试链路心跳（开发链路据此判「测试链路存活」）；主 Agent 每收回一个执行子 Agent 也执行一次 |
 | 单步等待上限 | 每步 `${OP_TIMEOUT}s` / 首开 `${NAV_TIMEOUT}s` | Phase 0.0.6 用户确认 / 无人值守默认值（见 2.2.1）|
 | 测试产物目录 | `docs/reports/${TARGET_VERSION}/AI测试报告/` | skill 在此下按其契约自建 `build-${BUILD}/round-{M}/`（含 tasks.md / results/ / evidence/）；BUILD 由 Phase 0.2 读 |
 | 证据归档目录 | **不覆盖，由 skill 按契约派生** = `build-${BUILD}/round-{M}/evidence/{TC-ID}-step{N}.{ext}`（`ext` 由驱动适配器决定：Web 默认 `.webp`、回退 `.png`，兼容 `.jpg/.jpeg`；命令端不猜扩展名）| ★ 尊重 auto-test-runner 落盘契约（约定 21，命令端不强加扁平/role 路径）；命令端 Phase 3.2.5 再从此处**消费/归集** skill 截图到报告 `screenshots/${BUILD}/` 供 SPA 渲染 |
-| 通过准则 | 取研发自测方案；缺则用 auto-test-runner skill 默认通过准则（阈值以 skill `references/report-format.md` 为单一信源，命令端不复述）| Phase 2.0 用例配套方案 |
+| 通过准则 | 取冻结验收基线与当前用例明确断言；缺失记阻塞，不能用默认阈值代替验收基线| Phase 2.0 用例配套方案 |
 
 > ★ **约定 33 配套边界（约定 21）**：命令端只负责把「DB 连接 / 跨系统前置数据」作为 run-context 参数**交给** auto-test-runner；**用起来**（DB 断言、前置段执行）以 auto-test-runner SKILL 为单一信源（`result-schema` 的 `db_assertion` 字段），命令端不复述、不实现。
 
@@ -60,7 +61,7 @@ skill 在 Web 端的行为概要（详见 auto-test-runner `references/execution
 - **每条用例走感知-执行-校验-决策闭环**：`observe` 读页面态 → `act` 按用例四要素步骤操作（含等待，单步上限取 run-context 的 `OP_TIMEOUT`/`NAV_TIMEOUT`）→ `assert` 比对预期 → 决策 pass/fail/block。
 - **关键步骤 `capture` 取证**（登录/提交/状态变化/断言/报错）：**无头下截图是唯一执行证据**；证据按 skill 契约落 `build-${BUILD}/round-{M}/evidence/{TC-ID}-step{N}.{ext}`（实际路径以结果 JSON `evidence[].artifact` 为准）（命令端 Phase 3.2.5 再归集到报告 `screenshots/${BUILD}/`）。
 - **每条用例执行后附带拉一次 console/network**，写入 `results/{TC-ID}.json` 的 `runtimeErrors[]`（pass 用例也拉——页面能用但后台有 500/JS 报错供下游升级 bug）；命令端 Phase 2.4 直接消费该字段。
-> ✅ **「自由巡检」已由 auto-test-runner 支持**（run-context `free_scan`，默认关）：全部模块用例跑完后，对「菜单可达但本轮无用例覆盖」的页面逐个导航 + 拉运行时错误。命令端经 `--free-scan` 开启，**不自行实现**（约定 21）。
+> ✅ **「自由巡检」已由 auto-test-runner 支持**（run-context `free_scan`，默认关）：仅对用户明确目标/当前验收清单内授权页面导航 + 拉运行时错误，不发现全系统页面。命令端经 `--free-scan` 开启，**不自行实现**（约定 21）。
 > 巡检项在 `results/` 里以 `entry_kind="free-scan"` + `case_id` 前缀 `运行时-` 落盘（`check_result.py` 校验二者一致）；页数超 `free_scan_max_pages`（默认 20）时 SKILL **不静默截断**，单写一条 block 巡检项列明被跳过页面——它同属巡检项，**不自动写入问题汇总清单**，只作为待确认项记入 AI 测试报告 §2.6 并在 #F 通知中列出（见 2.4），否则「巡检过了」名不副实。
 
 ### 2.2 chrome-devtools-mcp 调用（★ skill 内部行为示意 — 由 auto-test-runner「Web 端驱动适配器」执行）

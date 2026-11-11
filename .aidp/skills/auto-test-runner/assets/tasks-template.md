@@ -2,7 +2,7 @@
 
 > 进度状态机单一真相。状态:`[ ]`待执行 / `[>]`执行中 / `[√]`已完成(pass) / `[!]`阻塞或失败(fail/block)。
 > 只存 用例 ID + 名称,详细内容执行时按 TC-ID 从用例文档现查。按 `## {模块名}` 分组。
-> 可由 `python3 <SKILL_DIR>/scripts/tasks_state.py init <用例路径> -o tasks.md` 自动生成。
+> 可由 `python3 <SKILL_DIR>/scripts/tasks_state.py init <用例文件 | 用例目录 --manifest ids.txt> -o tasks.md` 自动生成。
 
 ## SUITE-USER 用户管理(管理员视角)
 

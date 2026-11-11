@@ -1,5 +1,8 @@
 # /sprint-batch — 批量执行所有 Sprint
 
+开发子任务的 `/sprint-test` 始终仅当前task/单Sprint，静态/审查/CVL若执行也同范围及必要依赖；不得随带浏览器/全版本。父内部skip-test只移交测试，不取消默认相关单测。日常只终端与机器证据，formal保原规格归档。
+
+
 ## 执行身份与授权前置路由（先于本文其余动作）
 
 本入口强制 formal，按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 解析并继承身份；脚本不替代原正式门。
@@ -322,7 +325,7 @@ Git 下核验未提交级联改动只落既有主文档/索引，台账的条目
 | 子步骤 | 职责（一句话）|
 |--------|--------------|
 | 6.0.5 SQL 已应用校验 ★**先跑** | 部署前安全网：本版 `sql/增量/` 全 `NN_*.sql` 是否都在 `.applied-sql.json`，未应用 → WARN 部署阻断风险（约定 6）|
-| 6.0.6 部署流程文档校验 ★**先跑** | 本版有 SQL 却缺 `部署流程/部署流程.md` 或仅剩占位符 → WARN（与 `/sprint-dev` Step X.8 呼应）|
+| 6.0.6 部署操作前提核对 ★**先跑** | 消费现成操作说明与机器待同步引用；只报真实前提缺口，不补部署 Markdown |
 | 6.0 跳过条件判定 | ⛔ **本行在 6.0.5/6.0.6 【之后】执行**（编号小 ≠ 先跑）：它们是部署前安全网、与"跑不跑浏览器测试"无关，放在判定之后会被 `--skip-aiauto-test` 连坐，而 7×24 主路径恒带该 flag。判据 = `--skip-aiauto-test` / Step 3 硬失败 / `deployment.mode==none` → 跳过并在报告标原因 |
 | 6.1 用例存在性校验 | 测试人员用例（`正式用例/`）或研发自测任一存在即可，均无 → 跳过 AI 测试 |
 | 6.2 deployment 配置 | 读 PRD `autopilot_decisions.deployment`；完整→三选一沿用/改/跳，缺→`AskUserQuestion` 分批收集写回 PRD |
@@ -411,7 +414,7 @@ Git 下核验未提交级联改动只落既有主文档/索引，台账的条目
 
 1. **逐项审视"待人工清单"**（本次批量累计生成）：
    - `docs/bugfix/{version}/bugfix-{今日}-{user}.md`「待修 bug」段（bugfix 循环超限残留）
-   - `docs/testing/{version}/sprint-*/sprint-*-test-report.md` 「失败用例 / Critical 问题」段
+   - 本批各Sprint上下文的测试/审查机器证据中「失败用例 / Critical问题」；不扫描历史Sprint报告
    - **★**：`docs/testing/{version}/正式用例/**` 与 `docs/testing/{version}/研发自测/**` 末尾「问题汇总清单」表（含 aiauto-test 自动回写的 C-NNN 行）
 2. **跨 Sprint 联调验证**：基于研发执行计划（全部分册）的功能依赖链，按业务流跑端到端验证（不以单 Sprint 为单元）
 3. **集中修复**：用 `/sprint-bugfix` 批量处理累计 bug 清单（自动拾取「问题汇总清单」+ 零散 bug 文件）

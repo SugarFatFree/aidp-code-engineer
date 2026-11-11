@@ -122,7 +122,7 @@
       （此时 `WILL_BROWSER_TEST=0`，根因分诊那一支不再命中）。
 
    **★ 交互式补测（`NEED_INLINE_AIAUTO=1` 时执行，⛔ 不得跳过）**：`Agent({run_in_background:false})`
-   派发前执行light-context的live-tests require_action及agents预算围栏；未授权直接NOT_REQUESTED返回收尾，已授权派子Agent跑 **`/sprint-aiauto-test --execution-context "$EXECUTION_CONTEXT" --once --unattended`**（⛔ 斜杠命令不能进 bash 围栏，必 `127`；
+   派发前执行light-context的live-tests require_action及agents预算围栏；未授权直接NOT_REQUESTED返回收尾，已授权时先按 `phase-0-6b.md` 真实版本委派围栏核对 manifest，再从 baseline `aiauto.execution_context` 取已校验 child，派子Agent跑 **`/sprint-aiauto-test --execution-context "$TEST_EXECUTION_CONTEXT" --once --unattended`**（⛔ 斜杠命令不能进 bash 围栏，必 `127`；
    ⛔ `--unattended` 不可省：**子 Agent 答不了 `AskUserQuestion`**，裸 `--once` 会在首个交互门挂死——
    这与"用户在不在场"无关，取决于**谁在执行**），
    prompt继承父revision/action/budget和真实inputs hash；只回传 `{"tested":bool,"pass_rate":N,"reason":"…"}`；回来后**从本门开头复跑一次**。

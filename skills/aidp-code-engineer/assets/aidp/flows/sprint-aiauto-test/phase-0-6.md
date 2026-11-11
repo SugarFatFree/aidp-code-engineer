@@ -161,7 +161,7 @@ if [ -z "$TARGET_FLAG_VALUE" ]; then
       $BE del needs_human needs_human_kind aiauto_frozen_at probe_frozen_at freeze_reason \
         probe_fail_streak aiauto_test_unconverged_streak report_gate_fail_streak \
         shot_gate_fail_streak qr_gate_fail_streak \
-        final_gate_fail_streak env_fail_streak case_gate_fail_streak handoff_fail_streak aiauto_gate_fail_streak \
+        final_gate_fail_streak env_fail_streak handoff_fail_streak aiauto_gate_fail_streak \
         auto_retest_streak retest_cap_frozen_at retest_frozen_head
       python3 {{AIDP_HOME}}/scripts/baseline_edit.py del aiauto_blocked_reason || true
       echo "🔓 $TARGET_VERSION $UNFREEZE → 自动解冻重测"

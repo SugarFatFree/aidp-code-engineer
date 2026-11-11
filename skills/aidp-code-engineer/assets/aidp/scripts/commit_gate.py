@@ -26,7 +26,8 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
     "offchain": dict,                # ★ 约定 41：链外任务动作预算 + 规模档位
     "context": str,                  # --context 原样回显（留痕）
     "path_scope": dict,              # --allow-path 暂存区白名单，越界只报 WARN（不改变欠账退出码）
-    "id_allocation": dict,           # 已启用时核对原子编号账本及实际定义；损坏/重号登记欠账
+    "id_allocation": dict,           # 已启用时核对原子编号账本及实际定义；损坏/本次重号登记欠账
+    "cache": dict,                   # 逐检查命中、实际指纹读取/元数据观测、checker耗时；未测内部I/O标unknown
     "debts": [str]                   # 未落地义务代号清单（非空 ⇔ 退出码 3）：cascade-not-cleaned /
                                      #   cascade-unparsed / cascade-archived-not-deleted / cascade-destructive-unregistered /
                                      #   cascade-bypass / cicd-push-pending
@@ -279,7 +280,7 @@ def cascade_ledger_paths(root: str, version: str):
     return out
 
 
-def pending_cascade(root: str, today: str = "") -> dict:
+def pending_cascade(root: str, today: str = "", *, versions=None) -> dict:
     """开发期【族增量册】（约定 22 攒批级联）是否有待级联条目。
 
     ★ `stale` = **日期不等于今天**的条目数（= 昨天及更早）。收口点只处理这些——当天新增的
@@ -296,12 +297,13 @@ def pending_cascade(root: str, today: str = "") -> dict:
     archived = out["archived_not_deleted"]
 
     # ★ 版本集 = 四族根目录下版本目录的**并集**（只扫一棵树会漏掉「本版只改了设计」这类情形）
-    versions = set()
-    for _fam, base, _sub, _name in CASCADE_FAMILIES:
-        d = os.path.join(root, base)
-        if os.path.isdir(d):
-            versions.update(x for x in os.listdir(d)
-                            if os.path.isdir(os.path.join(d, x)))
+    if versions is None:  # 独立 API 保持全版本审计；提交门显式传本次涉及版本。
+        versions = set()
+        for _fam, base, _sub, _name in CASCADE_FAMILIES:
+            d = os.path.join(root, base)
+            if os.path.isdir(d):
+                versions.update(x for x in os.listdir(d)
+                                if os.path.isdir(os.path.join(d, x)))
     if not versions:
         return out
 
@@ -490,12 +492,12 @@ _STRUCT_PATTERNS = (
 )
 
 
-def _added_structural_signals(code_files):
+def _added_structural_signals(code_files, root=None):
     """扫本次待提交 diff 的**新增行**，找结构性新增信号。取不到 diff 时返回空（不臆测）。"""
     out = []
     try:
         r = subprocess.run(["git", "diff", "HEAD", "--unified=0", "--"] + list(code_files)[:60],
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=20, cwd=root)
         # ⚠️ diff 取不到（无 HEAD 等）只跳过新增行扫描，⛔ 不得提前 return 连带跳过下面的新增页面判定
         for ln in (r.stdout.split("\n") if r.returncode == 0 else []):
             for rx, label in _STRUCT_PATTERNS:
@@ -511,7 +513,7 @@ def _added_structural_signals(code_files):
     return out
 
 
-def suspected_cascade_bypass(porcelain: str) -> dict:
+def suspected_cascade_bypass(porcelain: str, root=None) -> dict:
     """约定 22「攒批被整段绕过」的**反向可检测性**判据（确定性、零语义判断）。
 
     ⛔ 修的不是"规则没写清楚"，是"**规则清楚但不可检测**"。绕过之后全链路零告警：
@@ -549,7 +551,7 @@ def suspected_cascade_bypass(porcelain: str) -> dict:
                 struct.append(("新增/变更 SQL", q))
             elif q.startswith("docs/prototype/"):
                 continue
-        struct += _added_structural_signals(code_hits)
+        struct += _added_structural_signals(code_hits, root=root)
     hit2 = bool(struct) and not ledger_touched
     return {
         "suspected": hit or hit2,
@@ -621,7 +623,8 @@ def _head_has_formal_change(root: str) -> bool:
 def pending_cicd(root: str) -> dict:
     """约定 31.5「推送 ≠ 交付完成」的**欠账信号**。作用域 = 变更事实、与命令入口无关。
 
-    适用条件：`memory/aidp-config.yaml` 的 `cicd.provider != none`，且本地 HEAD 已与上游一致（确实推过了）。
+    适用条件：本地已配置有效 CICD 流水线，且 HEAD 已与上游一致（确实推过了）。
+    未接入仅标配置降级和部署未核验，不制造不可执行的监听欠账；真实部署由动作回执门判断。
     判据（按 HEAD commit 键控，⛔ 不看「某个 build 曾经分类过」）：
       ① HEAD 含正式代码变更，却在 baseline 里找不到该 commit 的分类记录
          （build 级 `change_classification` / `pushes[]` 或版本级 `standalone_pushes[]`）→ 欠账；
@@ -630,14 +633,13 @@ def pending_cicd(root: str) -> dict:
          `deploy_terminal=unknown:<原因>`（provider 不可用等合法降级）算已记录、不算欠账。
     """
     out = {"applicable": False, "pending": False, "version": None, "build": None, "reason": ""}
-    try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import aidp_config
-        provider = str(aidp_config.cicd_config(root).get("provider") or "github-actions")
-    except Exception:  # noqa: BLE001
-        provider = "github-actions"
-    if provider == "none":
-        return out
+    import aidp_config
+    from cicd_watch import unconfigured_cicd
+    unavailable = unconfigured_cicd(aidp_config.cicd_config(root))
+    if unavailable:
+        kind, reason = unavailable
+        return dict(out, status='UNVERIFIED', configuration_degraded=True,
+                    configuration_status=kind, deployment_verified=False, reason=reason)
     local, _ = _git(root, "rev-parse", "HEAD")
     remote, _ = _git(root, "rev-parse", "@{u}")
     if not local or not remote or local != remote:
@@ -667,6 +669,7 @@ def pending_cicd(root: str) -> dict:
         if _iso_ts(vo.get("last_deployed_at")) >= cls_at > 0 or bnode.get("probe_passed"):
             continue
         if cls_at and _t.time() - cls_at < TERMINAL_GRACE_SECONDS:
+            out["recheck_at"] = min(out.get("recheck_at", float("inf")), cls_at + TERMINAL_GRACE_SECONDS)
             continue
         out.update(pending=True, version=v, build=b,
                    reason="推送（HEAD %s）已分类为正式代码变更，但超过 1 小时仍无部署终态记录："
@@ -677,12 +680,14 @@ def pending_cicd(root: str) -> dict:
 
 # ───────────────────────── 约定 41：链外档位 ─────────────────────────
 
-def offchain_budget(root: str, context: str, porcelain: str, execution_context=None) -> dict:
-    """风险与成本只描述事实；动作集合来自父任务授权，不由文件数量推导。"""
+def offchain_budget(root: str, context: str, porcelain: str, execution_context=None, *, evidence=None) -> dict:
+    """风险事实可以复用；动作集合每次从已实时验真的父任务取，不缓存 AUTHORIZED。"""
     from development_scope import analyze_changes
     files = _porcelain_paths(porcelain)
-    evidence = analyze_changes(root, files=files, execution_context=execution_context)
-    allowed = set((execution_context or {}).get("allowed_actions", ("implement", "static")))
+    if evidence is None:
+        evidence = analyze_changes(root, files=files, execution_context=execution_context)
+    from execution_policy import SCOPE_ACTIONS
+    allowed = set((execution_context or {}).get("allowed_actions", SCOPE_ACTIONS["development"]))
     ddl = ("new-table" if evidence["has_new_table"] else "destructive" if evidence["has_destructive"]
            else "unknown" if evidence["ddl_unknown"] else "alter" if evidence["has_ddl"] else None)
     optional = ("related-test", "review", "full-cvl", "docs-audit", "full-regression",
@@ -700,8 +705,8 @@ def offchain_budget(root: str, context: str, porcelain: str, execution_context=N
         "deploy": "deploy" in allowed,
         "actions": {"unit_test": "related-test" in allowed, "sprint_archive": False, "deploy": "deploy" in allowed},
         "not_requested": [action for action in optional if action not in allowed],
-        "always_required": ["约定22 受影响族增量册", "约定24 已授权提交的必要门禁", "约定31.5 已授权推送的只读核验", "轻量静态验证(约定35)"],
-        "note": "复杂度与文件数量不授予测试、审查或部署权限；未启用项是NOT_REQUESTED，不是通过或欠账。",
+        "always_required": ["约定22 受影响族增量册", "约定24 已授权提交的必要门禁", "约定31.5 已授权推送的只读核验", "本任务静态与相关测试闭环（尊重明确验证限制）"],
+        "note": "普通开发包含本任务相关单测；复杂度与文件数量不扩大测试范围或授予审查、部署权限。显式跳过按原请求报告，未启用的其他动作不是通过或欠账。",
     }
 
 
@@ -719,40 +724,238 @@ def id_allocation_status(root):
         return {"applicable": True, "passed": False, "errors": [{"detail": str(exc)}]}
 
 
+class _GateCache:
+    """既有 runtime 内逐检查缓存；只复用真实输入，不缓存权限或整份提交决策。"""
+    def __init__(self, root):
+        from aidp_paths import runtime_dir
+        from entry_context import _safe_inside
+        self.root = _AidpPath(root).resolve()
+        self.path = _safe_inside(self.root, _AidpPath(runtime_dir(root)) / 'commit-gate-cache.json')
+        self.data = {'fingerprints': {}, 'checks': {}}
+        self.stats = {'checks': {}, 'content_reads': 0, 'cache_hits': 0, 'metadata_entries': 0,
+                      'cost_scope': 'cache-input fingerprints only; checker/internal Git I/O separately reported',
+                      'checker_io': 'unknown', 'git_io': 'unknown'}
+
+    @staticmethod
+    def digest(value):
+        import hashlib
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    def __enter__(self):
+        import fcntl
+        from entry_context import _safe_inside
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock = _safe_inside(self.root, self.path.with_suffix('.lock'))
+        self.lock = lock.open('a+b')
+        fcntl.flock(self.lock.fileno(), fcntl.LOCK_EX)
+        try:
+            saved = json.loads(self.path.read_text(encoding='utf-8'))
+            payload = saved['data']
+            if (isinstance(payload, dict) and saved.get('schema') == 1 and saved.get('checksum') == self.digest(payload)
+                    and isinstance(payload.get('fingerprints'), dict) and isinstance(payload.get('checks'), dict)):
+                self.data = payload
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # 无可信缓存就重新检查，不把损坏缓存当成通过证据。
+        return self
+
+    def __exit__(self, *error):
+        import fcntl
+        from entry_context import _atomic_json
+        try:
+            if error[0] is None:
+                _atomic_json(self.root, self.path, {'schema': 1, 'data': self.data,
+                                                   'checksum': self.digest(self.data)})
+        finally:
+            fcntl.flock(self.lock.fileno(), fcntl.LOCK_UN)
+            self.lock.close()
+
+    def fingerprints(self, paths):
+        from project_inventory import fingerprint_file, fingerprint_metadata, generated_excluded, runtime_excluded
+        from test_ledger import file_hash
+        metadata = fingerprint_metadata() or {}  # 本阶段共享；下阶段重取，未知时禁止免读内容。
+        result, expanded = {}, set()
+        for path in {_AidpPath(path).absolute() for path in paths}:
+            if not path.is_dir():
+                expanded.add(path)
+                continue
+            if path.is_symlink():
+                raise ValueError('提交门输入目录不可为符号链接：' + str(path))
+            members = []
+            def onerror(exc):
+                raise exc
+            for parent, dirs, files in os.walk(path, onerror=onerror):
+                base = _AidpPath(parent)
+                dirs[:] = [name for name in dirs if not generated_excluded(name) and name != '.git']
+                if any((base / name).is_symlink() for name in dirs):
+                    raise ValueError('提交门输入目录包含符号链接')
+                for name in files:
+                    candidate = base / name
+                    rel = candidate.relative_to(path).as_posix()
+                    self.stats['metadata_entries'] += 1
+                    if not generated_excluded(rel) and not runtime_excluded(rel):
+                        members.append(rel)
+                        expanded.add(candidate)
+            result[str(path)] = {'directory_members': sorted(members)}
+        for path in sorted(expanded):
+            key = str(path)
+            self.stats['metadata_entries'] += 1
+            def reader(target):
+                self.stats['content_reads'] += 1
+                return file_hash(target)
+            row = fingerprint_file(path, self.data['fingerprints'].get(key), reader=reader, metadata=metadata)
+            self.stats['cache_hits'] += int(not row['read'] and row['hash'] is not None)
+            self.data['fingerprints'][key] = row
+            result[key] = row['hash']
+        return result
+
+    def check(self, name, paths, facts, checker, *, modules=()):
+        import copy
+        import time
+        # 判据实现本身也是该项的输入；HEAD、其他检查配置不放入全局键。
+        paths = [*paths, _AidpPath(__file__), *[_AidpPath(__file__).with_name(item + '.py') for item in modules]]
+        inputs = self.fingerprints(paths)
+        key = self.digest({'files': inputs, 'facts': facts})
+        previous = self.data['checks'].get(name, {})
+        expires = (previous.get('result') or {}).get('recheck_at') if isinstance(previous.get('result'), dict) else None
+        hit = previous.get('key') == key and (expires is None or time.time() < expires)
+        self.stats['checks'][name] = {'hit': hit, 'input_files': len(inputs),
+                                      'checker_io': 0 if hit else 'unknown', 'checker_elapsed_seconds': 0}
+        if hit:
+            return copy.deepcopy(previous['result'])
+        started = time.monotonic()
+        result = checker()
+        self.stats['checks'][name]['checker_elapsed_seconds'] = time.monotonic() - started
+        if self.fingerprints(paths) != inputs:
+            raise ValueError('TREE_CHANGED：提交门检查期间输入变化：' + name)
+        self.data['checks'][name] = {'key': key, 'result': copy.deepcopy(result)}
+        return result
+
+
+def _gate_versions(paths):
+    return sorted({part for path in paths for part in _AidpPath(path).parts
+                   if re.fullmatch(r'V\d+(?:\.\d+)*(?:[-_][A-Za-z0-9.]+)?', part)})
+
+
+def _allocation_sources(root, cache):
+    from aidp_paths import id_alloc_ledger
+    import alloc_id
+    ledger = _AidpPath(id_alloc_ledger(root))
+    if not ledger.exists():
+        return [ledger]
+    def read_records():
+        try:
+            return alloc_id._read_ledger(ledger)
+        except (OSError, ValueError):
+            return []  # 正式 checker 仍返回原始损坏错误，不把读取失败当通过。
+    records = cache.check('allocation_records', [ledger], {}, read_records, modules=('alloc_id',))
+    scopes = {(scope, '') for scope in alloc_id.DEFAULT_SCOPE.values()} | {('bugs', '')}
+    scopes.update((item['scope'], item['version']) for item in records)
+    sources = {ledger}
+    for scope, version in scopes:
+        sources.update(alloc_id._files(_AidpPath(root), scope, version))
+    return sorted(sources)
+
+
+def _task_cascade(root, ctx):
+    from entry_context import completion_obligations, _context_path
+    result = completion_obligations(_AidpPath(root), _context_path(_AidpPath(root), ctx['task_id']))
+    return dict(result['version_obligations']['cascade'], diagnostics=result['diagnostics'])
+
+
+def _scoped_allocation(result, paths):
+    if not result.get('applicable'):
+        return result
+    relevant, historical = [], []
+    for issue in result.get('errors', []):
+        locations = issue.get('locations')
+        (historical if locations and not any(item.get('file') in paths for item in locations) else relevant).append(issue)
+    return dict(result, errors=relevant, passed=not relevant, diagnostics=historical)
+
+
 def gather(root: str, context: str = "bare-conversation", cascade_now: bool = False, execution_context=None) -> dict:
+    """只读事实摘要：逐项按真实输入复用，父策略实时验真；不要求或缓存 commit 授权。"""
+    from project_inventory import runtime_excluded, generated_excluded
+    from development_scope import analyze_changes
+    root = str(_AidpPath(root).resolve())
     if execution_context is not None:
+        from execution_policy import _budget_owner
         from entry_context import load_context, validate_context
-        execution_context = (validate_context(_AidpPath(root).resolve(), execution_context)
-                             if isinstance(execution_context, dict)
-                             else load_context(_AidpPath(root).resolve(), execution_context))
-    enabled = commit_gate_enabled(root)
-    is_tpl = is_template_project(root)
+        execution_context = (validate_context(_AidpPath(root), execution_context)
+                             if isinstance(execution_context, dict) else load_context(_AidpPath(root), execution_context))
+        _budget_owner(_AidpPath(root), execution_context)  # 只读消费者验父链，不把读取事实当 commit 动作。
     today = _date()
-    porcelain, _ = _git(root, "status", "--porcelain", strip=False)  # 取原文：保首行前导空格，见 _git
-    dirty = bool(porcelain.strip())
-    cascade = pending_cascade(root, today)
-    bypass = suspected_cascade_bypass(porcelain)
-    if cascade_now:
-        bypass = dict(bypass, suspected=False, suppressed_by="--cascade-now")
-    return {
-        "commit_gate_enabled": enabled,
-        "is_template_project": is_tpl,
-        "working_tree_dirty": dirty,
-        "has_business_code_change": has_business_code_change(porcelain),
-        "is_scaffold_only_change": is_scaffold_only_change(porcelain),
-        "today": today,
-        # ★ 约定 22 攒批级联台账（AIDP_HOME/reference/开发期族增量.md）
-        "pending_cascade": cascade,
-        # 已标记级联完成却未删除的条目数（= pending_cascade.cascaded_not_cleaned，顶层便于命令端直读）
-        "cascaded_not_cleaned": int(cascade.get("cascaded_not_cleaned") or 0),
-        "suspected_cascade_bypass": bypass,
-        "pending_cicd": pending_cicd(root),
-        "id_allocation": id_allocation_status(root),
-        "offchain": offchain_budget(root, context, porcelain, execution_context),
-        "execution_context": ({key: execution_context.get(key) for key in ("mode", "task_id", "version", "since")}
-                              if execution_context else None),
-        "context": context,
-    }
+    porcelain, code = _git(root, 'status', '--porcelain', '--untracked-files=all', strip=False)
+    if code:
+        raise ValueError('无法读取当前改动，不能复用提交门结果')
+    porcelain = '\n'.join(line for line in porcelain.splitlines()
+                          if _porcelain_paths(line) and not runtime_excluded(_porcelain_paths(line)[0]))
+    paths = sorted(set(_porcelain_paths(porcelain)))
+    scoped = paths if not execution_context else [path for path in paths if any(
+        item == '.' or path == item or path.startswith(item.rstrip('/') + '/')
+        for item in execution_context['write_set'])]
+    # 授权修订不进入风险/代码输入键；固定起点、写集与初始脏文件仍是归属判据。
+    scope = ({key: execution_context.get(key) for key in
+              ('task_id', 'version', 'since', 'write_set', 'initial_files', 'initial_git_files', 'preexisting_dirty')}
+             if execution_context else {})
+    versions = [execution_context['version']] if execution_context else _gate_versions(paths)
+    ledgers = [filename for version in versions for _, filename in cascade_ledger_paths(root, version)]
+    config = _AidpPath(root) / 'memory/aidp-config.yaml'
+    head, _ = _git(root, 'rev-parse', 'HEAD')
+    upstream, _ = _git(root, 'rev-parse', '@{u}')
+    with _GateCache(root) as cache:
+        enabled = cache.check('config', [config], {}, lambda: commit_gate_enabled(root), modules=('aidp_config',))
+        markers = [_AidpPath(root) / base / name for base in SCAFFOLD_SKILL_ROOTS
+                   for name in ('SKILL.md', 'scripts/sync_memory_md.py', 'scripts/scaffold_marker.py')]
+        is_tpl = cache.check('template', [config, *markers], {}, lambda: is_template_project(root), modules=('aidp_config',))
+        cascade = cache.check('pending_cascade', ledgers, {'date': today, 'scope': scope, 'versions': versions},
+            lambda: _task_cascade(root, execution_context) if execution_context else pending_cascade(root, today, versions=versions),
+            modules=('entry_context',) if execution_context else ())
+        risk_paths = [path for path in scoped if not _is_scaffold_contract(path) and not generated_excluded(path)]
+        business = [path for path in risk_paths if _is_business_code(path)]
+        # ls-tree 只取相关 blob 身份；真正内容 diff 留给未命中时的 checker。
+        base_files = _git(root, 'ls-tree', '-r', '-z', 'HEAD', '--', *risk_paths) if risk_paths else ('', 0)
+        index_files = _git(root, 'ls-files', '--stage', '-z', '--', *risk_paths) if risk_paths else ('', 0)
+        scoped_porcelain = '\n'.join(line for line in porcelain.splitlines()
+                                     if _porcelain_paths(line)[0] in scoped)
+        risk_porcelain = '\n'.join(line for line in porcelain.splitlines()
+                                   if _porcelain_paths(line)[0] in risk_paths)
+        bypass = cache.check('cascade_bypass', [_AidpPath(root) / path for path in business],
+            {'porcelain': risk_porcelain, 'base_files': base_files},
+            lambda: suspected_cascade_bypass(risk_porcelain, root=root))
+        if cascade_now:
+            bypass = dict(bypass, suspected=False, suppressed_by='--cascade-now')
+        from classify_commit_change import _walk_project_roots
+        classifier = _AidpPath(root) / runtime_text('__AIDP_HOME__/scripts/classify_commit_change.py', __file__)
+        cicd = cache.check('pending_cicd', [config, _AidpPath(root) / 'memory/.sprint-autopilot-baseline.json',
+                                          classifier, classifier.with_name('vcs.py')],
+            {'head': head, 'upstream': upstream, 'project_roots': sorted(_walk_project_roots(root))},
+            lambda: pending_cicd(root), modules=('aidp_config', 'cicd_watch', 'classify_commit_change'))
+        if execution_context and head == execution_context.get('since') and cicd.get('pending'):
+            cicd = dict(cicd, pending=False, diagnostic=cicd['reason'], reason='PREEXISTING_UNCHANGED')
+        allocation = cache.check('id_allocation', _allocation_sources(root, cache), {},
+            lambda: id_allocation_status(root), modules=('alloc_id',))
+        allocation = _scoped_allocation(allocation, scoped)
+        inputs = [_AidpPath(root) / path for path in risk_paths]
+        # SQL 增量只依赖相关基准 blob；无关/空提交不使代码风险检查整体失效。
+        baseline = scope or {'base_files': base_files}
+        evidence = cache.check('offchain', inputs, {'files': risk_paths, 'baseline': baseline, 'index': index_files},
+            lambda: analyze_changes(root, files=risk_paths, execution_context=execution_context),
+            modules=('development_scope', 'project_inventory', 'entry_context'))
+        if execution_context is not None:
+            execution_context = validate_context(_AidpPath(root), execution_context)
+            _budget_owner(_AidpPath(root), execution_context)  # 缓存命中仍验父策略；commit grant 仅在 CLI/执行前验。
+        return {
+            'commit_gate_enabled': enabled, 'is_template_project': is_tpl,
+            'working_tree_dirty': bool(porcelain.strip()),
+            'has_business_code_change': has_business_code_change(scoped_porcelain),
+            'is_scaffold_only_change': is_scaffold_only_change(scoped_porcelain), 'today': today,
+            'pending_cascade': cascade, 'cascaded_not_cleaned': int(cascade.get('cascaded_not_cleaned') or 0),
+            'suspected_cascade_bypass': bypass, 'pending_cicd': cicd, 'id_allocation': allocation,
+            'offchain': offchain_budget(root, context, scoped_porcelain, execution_context, evidence=evidence),
+            'execution_context': ({key: execution_context.get(key) for key in ('mode', 'task_id', 'version', 'since')}
+                                  if execution_context else None),
+            'context': context, 'cache': cache.stats,
+        }
 
 
 def debt_items(info: dict) -> list:
@@ -881,8 +1084,11 @@ def main(argv=None):
         info = gather(args.repo_root, context=args.context, cascade_now=args.cascade_now,
                       execution_context=args.execution_context)
     except (ValueError, OSError) as exc:
-        print(json.dumps({"error": str(exc), "passed": False}, ensure_ascii=False))
-        return 2
+        denied = getattr(exc, 'status', None) == 'UNAUTHORIZED'
+        print(json.dumps({'error': str(exc), 'passed': False,
+                          **({'status': 'NOT_AUTHORIZED', 'action': 'commit', 'executed': False, 'debts': []}
+                             if denied else {})}, ensure_ascii=False))
+        return 5 if denied else 2
     info["path_scope"] = scope
     if args.execution_context:
         from execution_policy import require_action, PolicyError

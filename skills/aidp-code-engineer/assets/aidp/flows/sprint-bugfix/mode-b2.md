@@ -73,7 +73,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 #### Step 5.5：★ P0/P1 缺陷反哺回归用例（约定 33 缺口 5.1 — 缺陷是最精准的用例来源）
 
-> 缺陷本身就是最精准的回归用例来源（复现步骤现成）；`docs/bugfix/{version}/` 的缺陷记录修复后即终结、release suite 不增长 → 同类缺陷可重复发生。故每条 P0/P1 缺陷修复后**强制沉淀一条回归用例**，并跨版本继承（`/sprint-aiauto-test` Phase 2.0 自动并入历史 `[回归]` 用例，见约定 33 缺口 5.2），让历史教训自动沉淀、不逐版从零。
+> 缺陷本身就是最精准的回归用例来源（复现步骤现成）；`docs/bugfix/{version}/` 的缺陷记录修复后即终结、release suite 不增长 → 同类缺陷可重复发生。故每条 P0/P1 缺陷修复后**强制沉淀一条回归用例**，只在当前版本验收清单明确引用且属必要依赖时复用（不自动并入历史全集），让历史教训自动沉淀、不逐版从零。
 
 **触发条件**：document已授权，且本次修复的缺陷严重度为 **P0 / P1**（严重度取 bug 记录；零散低 severity bug 可跳过）。
 
@@ -81,12 +81,12 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 **步骤**：
 1. 对每条状态转「已修复」的 P0/P1 缺陷，经 `/sprint-selftest {version} --execution-context "$EXECUTION_CONTEXT" --ledger-cascade [--unattended]`（内部调 `dev-manual-testcase` 增量）**就地追加**一条回归用例到既有用例册——★ **本命令带 `--unattended` 时必透传**：方式 A 的执行体就是本流程，而 batch/full/autopilot 的无人值守主链恒经方式 A，漏传会让 `dev-manual-testcase` 的强制询问第零步把整条 7×24 链挂死（`/sprint-selftest` 认这个 flag，上游传了它才不会被静默丢弃），落 `docs/testing/{version}/研发自测/` 既有用例主文档（⛔ 不新建 `NN_` 分册——方式 B 不产分册，见 Step 5）。
-2. 命令端传给 SKILL 的上下文须含：**缺陷 ID + 复现步骤 + 修复后预期**，并要求用例**标记 `[回归]` + 用例头登记「关联缺陷: {缺陷ID}」**，形成 用例 ID ↔ 缺陷 ID 双向关联。（`[回归]` 标记 + 缺陷 ID 字段的用例 schema 支持以 `dev-manual-testcase` 为单一信源，命令端只传上下文、不定义字段结构——约定 21；该标记字段已由 dev-manual-testcase 落地，`/sprint-aiauto-test` Phase 2.0 glob 据此跨版本继承。）
-3. 该回归用例即被 `/sprint-aiauto-test` Phase 2.0 跨版本 `[回归]` glob 纳入后续每版 release suite（缺口 5.2）。
+2. 命令端传给 SKILL 的上下文须含：**缺陷 ID + 复现步骤 + 修复后预期**，并要求用例**标记 `[回归]` + 用例头登记「关联缺陷: {缺陷ID}」**，形成 用例 ID ↔ 缺陷 ID 双向关联。（`[回归]` 标记 + 缺陷 ID 字段的用例 schema 支持以 `dev-manual-testcase` 为单一信源，命令端只传上下文、不定义字段结构——约定 21；该标记字段已由 dev-manual-testcase 落地，后续仅由当前验收清单明确引用。）
+3. 后续版本只有验收清单明确引用且证明必要时才纳入该用例；禁止历史 `[回归]` glob 自动并入每版全集。
 
 #### Step 6：更新 activeContext
 
 仅在当前 formal 上下文明确绑定同一 Sprint 时，在 `memory/{version}/{user}/activeContext.md` 的「待处理 Bugfix」区域更新修复状态；身份/编号不符返回调用方。light 已在入口 return，不执行本步。
 
-独立方式B仅related-test已授权时遵循 `/sprint-test` Step 2.6 / Step 7；部署只复用已请求证据，不新跑测试；已有验收会话则回传原实现者的修复与单测证据，不重复完整 CVL，也不以测试代替质量审查。
+独立方式B默认自动调用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]`，并遵循 `/sprint-test` Step 2.6 / Step 7；部署只复用已请求证据，不新跑测试；已有验收会话则回传原实现者的修复与单测证据，不重复完整 CVL，也不以测试代替质量审查。
 

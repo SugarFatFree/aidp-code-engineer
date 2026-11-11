@@ -1,6 +1,6 @@
 ---
 name: bugfix
-description: 执行 Bug 修复全流程。当用户提到修复bug、处理问题记录、bugfix时使用。读取问题记录 → 分析影响范围 → 修复代码 → 生成修复报告。
+description: 执行 Bug 修复全流程。当用户提到修复bug、处理问题记录、bugfix时使用。读取问题记录 → 分析影响范围 → 修复代码 → 生成修复报告（调用方传 report_mode=evidence-only 时改为返回结构化结果、不写报告文件）。
 argument-hint: "[sprint编号（可选）] [问题文件名（可选）]"
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Agent, Glob, Grep, AskUserQuestion, TodoWrite
@@ -189,7 +189,18 @@ docs/bugfix/{version}/
 
 ### Step 5：生成修复记录文档
 
-所有问题确认修复后，严格按照 AIDP 范式生成修复报告。
+所有问题确认修复后，按调用方传入的 `report_mode` 产出修复记录（缺省 `file`，保持原有行为）：
+
+| report_mode | 产出 | 适用 |
+|---|---|---|
+| `file`（默认） | 按 5.1/5.2 生成 `bugfix-*-report.md` | formal Sprint、用户明确要报告 |
+| `evidence-only` | **不写任何 `*-report.md`**，改为向调用方返回下方结构化结果 | 日常（light）修复：证据由调用方写入机器记录、终端汇报 |
+
+`evidence-only` 返回结构（每个问题一项，一条反馈拆出的多个现象各占一项）：`id`、`root_cause`、`evidence`（代码位置/日志行/实测记录；留空则该归因属未验证假设，不得判已修复）、`changed_files`（相对项目根的路径与改动说明）、`verification`（验证方式与结果；关联测试及其结果由调用方的测试链路核实）、`status`（已修复/未解决）、`unresolved`（未解决项及原因）。该模式下仍保留「问题记录状态列 / Commit 列由调用方就地回填」的约定（5.3），但**不得创建报告文件，也不得在问题记录里复写根因**。
+
+两种模式下，修复范围都只由调用方给定的问题记录/文件清单决定，**内核不得自行扩大到其他问题记录、其他 Sprint 或其他版本**。
+
+以下 5.1、5.2 仅在 `report_mode=file` 时执行。
 
 **5.1 确定文档路径**
 
@@ -265,7 +276,7 @@ docs/bugfix/{version}/[{问题子目录}/]bugfix-{YYYYMMDD}-{序号}-report.md
 
 - 问题记录原文件（`bugfix-*.md`）：SKILL 自身**不重写其正文/详情**；但**允许调用方（命令端）就地回填状态列 / Commit 列 / 修复报告链接**——`bugfix-*.md`（及其来源清单）是可审计"活文档"，状态就地演进（待修→已修→已验证）即审计轨迹
 - **根因 / 证据 / 修复方案的权威落点 = 本报告**：问题记录与来源清单只放状态、Commit 与指向本报告对应小节的链接，⛔ 不再复写一份根因
-- 详细修复报告单独生成为 `bugfix-*-report.md`（不塞进问题记录正文）
+- `report_mode=file` 时，详细修复报告单独生成为 `bugfix-*-report.md`（不塞进问题记录正文）；`evidence-only` 时不生成，权威落点改为调用方记录的机器证据
 - 报告中文件路径使用相对于项目根目录的路径
 
 ### Step 6：输出完成报告
@@ -280,7 +291,7 @@ docs/bugfix/{version}/[{问题子目录}/]bugfix-{YYYYMMDD}-{序号}-report.md
 |------|------|------|-----------|
 | ... | ... | 已修复 | N |
 
-文档归档：
+文档归档（仅 `report_mode=file`；`evidence-only` 写「无报告文件，证据见调用方机器记录」）：
 - {报告文件路径} ✅
 
 代码修改摘要：
@@ -296,11 +307,12 @@ docs/bugfix/{version}/[{问题子目录}/]bugfix-{YYYYMMDD}-{序号}-report.md
 ## 输出
 
 - 修复后的代码文件（前端/后端）
-- 修复报告文档：`docs/bugfix/{version}/[{问题子目录}/]bugfix-{YYYYMMDD}-{序号}-report.md`（与问题记录文件同目录）
+- 修复报告文档（仅 `report_mode=file`）：`docs/bugfix/{version}/[{问题子目录}/]bugfix-{YYYYMMDD}-{序号}-report.md`（与问题记录文件同目录）
+- `report_mode=evidence-only`：不产出报告文件，返回 Step 5 的结构化结果
 
 ## 注意事项
 
-- **修复未验证 = 不归档**：每个问题修复后必须验证，未验证的修复不得写入报告
+- **修复未验证 = 不归档**：每个问题修复后必须验证，未验证的修复不得写入报告（`evidence-only` 下不得标记为已修复）
 - **SKILL 不重写问题原文件正文**：问题记录（`bugfix-*.md`）的详情正文由 SKILL 保持原样、详细修复报告单独生成；但**状态列 / Commit 列允许调用方就地回填**（可审计活文档，见 5.3）
 - **最小改动原则**：只修改与问题直接相关的代码，不做额外重构或优化
 - **前后端联动**：接口变更必须前后端同步修改，避免调用链断裂

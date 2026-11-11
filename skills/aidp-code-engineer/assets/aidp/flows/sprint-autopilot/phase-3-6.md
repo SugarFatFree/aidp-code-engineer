@@ -11,11 +11,12 @@
 
 ### 3.2.1 CICD 编排 + 部署就绪探针（`cicd-provider` 触发，或正式代码 push 触发）
 
+部署前沿用当前 execution context。备份/迁移操作按 `{{AIDP_HOME}}/reference/部署操作约定.md` 核项目策略与真实记录：DB/冷备/迁移快照共用额度，适用备份复用原时点并用现有 skip 参数；覆盖不足或记录不明时报告前提缺口，不追加复制、不自动恢复。日常部署不生成部署 Markdown、不为日志另行 commit/push，不追加测试/CVL/全回归/迁移演练或工具开发。
 > **`vcs_mode=none` 优先出口**：仅跳过依赖 push commit 的 cloud CICD 触发/监听与远端就绪探针，记 `status=skipped, reason=unsupported:vcs-disabled`，不得标记通过，也不得借 `cicd_skipped=true` 冒充「已成功推送且无需流水线」。`mode=cloud` 不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d、不等待旧部署；转 Phase 3.3/3.4 继续本地审计和报告。**`mode=local` 的本地就绪不依赖 Git**：依 `phase-3-5b.md` 先探实际服务/端口，未就绪不得写证据；本地就绪后写 `last_deployed_at` + `phase_beta_done_at`，保留测试交接与可验证部署证据，不能把本地部署同远端 CICD 一起跳过。不因 Git 能力缺失冻结本地开发。仅 `git` 模式走下方分类缺失 fail-closed 与推送绑定逻辑。
 
 > **★ 进入本 Phase 前置判定**：读取当前 build 的 `change_classification`（由 Phase 3.2 push 前分类写入）。`cicd_skipped=true` 且 `classification_error=false` 时，本 Phase **整段跳过**：push 已成功校验，直接记录 push 完成，不触发/监听远端 CICD、不等待部署、不跑就绪探针，也不读取远端状态反推分类。分类记录缺失、脚本失败或 `classification_error=true` 时一律按正式代码路径进入本 Phase（fail-closed）。
 > **适用条件**：分类允许监听，且项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none`、`cicd.pipelines.<env>` 已配、提供方 CLI/凭据可用）。`cicd-provider` 模式可主动触发（`cicd_watch.py --mode trigger`，要求该流水线在平台侧允许手动/API 触发，如 GitHub Actions 的 `workflow_dispatch`）；`git-push`/`ci-pipeline` 由 push/外部自动触发后只检测并接管运行。两类 trigger 的失败监控、最多 `cicd.max_retries`（默认 3）次重试和就绪探针相同。
-> **不适用（回落轻量路径）**：分类明确跳过，或 `cicd.provider=none`、未配置 `cicd.pipelines`、提供方 CLI/凭据不可用（`cicd_watch.py` 退出码 3）、`manual-script`、`mode=local`、`mode=none`。分类明确跳过按上条直接完成；其余按 Phase 3.2 轻量分支处理。
+> **不适用（回落轻量路径）**：分类明确跳过，或 `cicd.provider=none`、未配置有效 `cicd.pipelines` 且没有显式 `--pipeline`、`manual-script`、`mode=local`、`mode=none`。无 CI/流水线由 `cicd_watch.py` 在构造 provider 前返回 `rc=3, configuration_degraded=true, next_action=none`，`consume` 核当前配置与本 build SHA 后保留 `UNVERIFIED/NOT_REQUESTED`、清本段待办并转既有下一阶段；立即结束 A/B/C/D，不再 list/detect/poll，不运行就绪探针、不冻结、不写部署成功。显式合法 pipeline 仍支持。CLI/凭据故障与配置未接入不同，按原故障恢复分支处理。
 > 检测 / 轮询 / 触发 / 重试一律经 `{{AIDP_HOME}}/scripts/cicd_watch.py`（`--mode detect|poll|trigger|retry`，平台差异收在 `cicd_providers.py`，⛔ 命令端不直接调任何平台 CLI）。每次调用及 consume 都传 `--execution-context "$EXECUTION_CONTEXT"`，每个独立围栏从当前版本 baseline 的 `execution_context` 重新读取，不能新建上下文或自行补 deploy grant。push 权限只允许必要只读监听；只有真实 deploy 授权才可主动写或交接部署探针。缺上下文/无 deploy 时返回 `NOT_REQUESTED,next_action=none`，保留 `observed_verdict` 与原平台事实，立即结束本部署段：不进入后续 A/B/C/D、不弹授权请求、不冻结、不补欠账。只读观测到真实失败仍 `rc=2,ok=false`，不得改报成功。
 >
 > ⛔ **本片引用的 `GIT_PUSH_COMMIT` / `GIT_PUSH_AT` 一律从 baseline 读，不要当成上一分片传下来的 shell 变量**——它们赋在 `phase-3-5b.md` 的推送围栏里，跨不过 Bash 调用边界；取空会让下面所有 commit 强绑定判据退化成"抓最近一条运行"，而那正是本片反复禁止的事：

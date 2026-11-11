@@ -174,6 +174,9 @@ DERIVED_VARS = {
         #    feature 分支推上去了、部署源没有本轮代码 → CICD 构建旧产物、探针照样绿、
         #    测试链路对着**旧版本**跑全套并判「通过」。全程零报错，是最危险的一类。
         "PENDING_MERGE_TO",      # 需合并回的部署源分支（branch_strategy=feature 时由 Phase 0.4 落盘）
+        # ★ 开发分支：Phase 3.2 提交围栏落盘；后续独立围栏 `--shell` 取回。未登记时各围栏只能各自
+        #   `git branch --show-current` 自愈，而一旦工作树停在部署分支（合并围栏失败/漏切回）就取到部署分支。
+        "DEV_BRANCH",            # 本 tick 的开发分支（不是部署源；push/合并/切回都以它为准）
         # ↓ 真源在 baseline，由 BASELINE_FALLBACK / DERIVED_FROM 自动供给，无需任何分片 set
         "BUILD",                 # 当前 build 标识（versions.{V}.current_build）
         "BUILD_SEQ",             # build 序号（由 BUILD 推导）

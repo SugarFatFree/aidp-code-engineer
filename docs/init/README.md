@@ -71,6 +71,7 @@ project/
 │   ├── hooks/                  # 钩子脚本（autopilot Stop 护栏）
 │   ├── templates/deployment/   # 部署操作说明模板（仅确需时取用）
 │   ├── templates/reports/      # AI 全自动报告模板
+│   ├── templates/cicd/         # CICD 流水线起步模板（github-actions / gitlab-ci / jenkins）
 │   └── templates/optional-rules/  # ★ 按需安装的可选规则（如 WebMCP；未启用不装进 rules/）
 ├── code/                       # 源代码
 │   ├── frontend/               # 前端代码
@@ -123,7 +124,7 @@ project/
 | 命令 | 说明 |
 |------|------|
 | `/sprint-init` | 项目初始化 |
-| `/sprint-init-design` | 初始化后的首版设计（骨架设计，非版本级详细设计） |
+| `/sprint-init-design` | 分步初始化前半段：Phase 0–2，生成 5 个项目级记忆文件 |
 | `/sprint-init-complete` | 初始化收尾（补齐输入、核对骨架、出具可开工结论） |
 | `/sprint-requirements` | PRD → 研发需求基线 |
 | `/sprint-design` | 详细设计（代码怎么写） |
@@ -214,8 +215,8 @@ project/
 
 ### 2. Sprint 粒度
 
-- 每个 Sprint 2-3 周
-- 每个 Sprint 包含 3-5 个 **Task**（⚠️ AIDP 无「User Story」层；模型是 **EPIC × Sprint × Task 三层**，单一信源 = `dev-execution-planner` SKILL）
+- Sprint = 可独立验收的功能单元（可含多个 EPIC，EPIC 内前后端 / 测试 Task 同属一个 Sprint），粒度判据见 `06_版本与用户目录约定.md` §3.4，不设固定周期与 Task 数上限
+- 每个 Sprint 由若干 **Task** 组成（⚠️ AIDP 无「User Story」层；模型是 **EPIC × Sprint × Task 三层**，单一信源 = `dev-execution-planner` SKILL）
 
 ### 3. 文档维护
 
@@ -295,7 +296,7 @@ AIDP 范式提供了完整的理论层文档（位于 `docs/init/`），包含�
 ├── rules/      → 路径限定规则（`paths:` glob 匹配到才加载）：代码向核心约定详规
 ├── flows/      → 长命令的 Phase 分片（命令本体留骨架，Phase 正文按需 Read）
 ├── reference/  → 按需 Read 的查阅分片（命令速查 / skills 用途 / 约定细则 / 初始化与文档索引）
-├── templates/  → deployment（部署操作说明模板，仅确需时取用）/ reports（AI 报告）/ optional-rules（按需安装的可选规则）
+├── templates/  → deployment（部署操作说明模板，仅确需时取用）/ reports（AI 报告）/ cicd（CICD 流水线起步模板）/ optional-rules（按需安装的可选规则）
 │                + `_开发期族增量.md` 四族共用模板
 ├── scripts/    → 确定性校验与判定脚本
 └── hooks/      → 钩子脚本

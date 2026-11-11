@@ -230,6 +230,8 @@ formal 正式规格（普通计划/L；S/M 用上述已批准契约）：
 
 17. **★ 通用还原度后端侧（约定 39）**：① **R10 导出必须导全量**——导出接口方法体**禁止透传** `pageNo`/`pageSize`/`PageHelper`/`Pageable`（判 **Critical、⛔ 零豁免**：页面看到 1 万条、导出只出当前页 20 条，用户无从察觉）；② **R9 存量数据兼容性必须显式验证**——改结构 / 加必填 / 收窄取值域时，须对老数据跑一遍真实验证，不得只测新建路径；③ **R12 同一指标跨页面必须同源**——多处取数走同一权威口径（基准 = 详设「统计指标口径表」第 8 列）。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 39，机器门 `python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py --json`。
 
+18. **★ SQL 标识符（Mapper XML / 内联 SQL / `.sql`）**：表名、字段名一律不加引号、同一表名只有一种拼写；判据单一信源 = `code-verification-loop` 维度 4「SQL 标识符通用性」，本条不复述。开发期自检：`python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/scan_code_conventions.py code/backend --checks sql-identifier-case --json`（采集器退出码恒 0，须读命中清单）；目标库方言 `aidp_config.py get project.sql_dialect` 非空时追加 `--sql-db <值>`，空 = 通用。
+
 ### 流程 A：Sprint 后端开发
 
 ```

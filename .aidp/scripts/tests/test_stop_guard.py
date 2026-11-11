@@ -40,6 +40,8 @@ class StopGuardLimitTests(unittest.TestCase):
         self.assertEqual(1, len(noted))
         self.assertIn('no-build', noted[0]['detail'])
         self.assertIn('上限', results[3].stderr)
+        self.assertEqual(2, len([r for r in self.records() if r['branch'] == 'max-blocks-exceeded']),
+                         '超上限之后的放行也必须记账（B-11），不能静默')
         self.assertEqual(2, self.stop('new-task').returncode)
 
     def install_gate(self):

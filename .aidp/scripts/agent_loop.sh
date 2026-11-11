@@ -223,8 +223,8 @@ run_one() {
     fi
     # 直接 tick 的持久占位同样在此锁内读写；短命 Python 只做原子准入，不冒充跨工具持锁。
     reserved=0
-    python3 - "$lock" <<'PY' 9>&- >>"$log" 2>&1 || reserved=$?
-import json, sys
+    python3 - "$lock" "$cmd" <<'PY' 9>&- >>"$log" 2>&1 || reserved=$?
+import json, os, sys, time
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         raw = fh.read().strip()
@@ -233,7 +233,24 @@ try:
         raise ValueError("invalid lock record")
 except (OSError, ValueError):
     sys.exit(3)
-sys.exit(4 if rec.get("owner") == "session" else 0)
+if rec.get("owner") != "session":
+    sys.exit(0)
+# ★ 交互会话遗留占位（关会话未 finish）会让 OS 调度每轮静默跳过；不自动回收（原 tick 可能仍在改文件），
+#   但占位超过 30 分钟必须出声：每小时至多一条本地告警，等 watchdog 的 hung 判定之前就让人看到。
+try:
+    age = int(time.time()) - int(rec.get("started_at") or 0)
+    marker = sys.argv[1] + ".session-skip-alerted"
+    stale_marker = (not os.path.exists(marker)) or time.time() - os.path.getmtime(marker) > 3600
+    if rec.get("started_at") and age >= 1800 and stale_marker:
+        sys.path.insert(0, os.path.join(os.environ["AIDP_HOME"], "scripts"))
+        import aidp_paths
+        aidp_paths.append_alert(".", kind="loop-session-placeholder", source="agent_loop", command=sys.argv[2],
+            message=f"{sys.argv[2]} 的交互会话占位已持续 {age}s 未 finish，OS 调度每轮都被跳过；"
+                    "确认原 tick 已停止后，用其原 token 执行 autopilot_tick_flags.py finish（禁止删锁文件）")
+        open(marker, "a").close(); os.utime(marker, None)
+except Exception:  # noqa: BLE001 —— 告警旁路，不影响跳过决定
+    pass
+sys.exit(4)
 PY
     if [ "$reserved" = 4 ]; then
       echo "[agent_loop] $(date '+%F %T') ${cmd} 直接 tick 尚未 finish，跳过" >>"$log"

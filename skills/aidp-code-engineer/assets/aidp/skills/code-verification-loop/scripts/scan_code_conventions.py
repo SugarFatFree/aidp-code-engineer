@@ -540,13 +540,65 @@ def _table_refs(clean: str):
         if name.lower() in NOT_TABLE_WORDS:
             continue
         before = clean[max(0, m.start() - 24):m.start()]
-        if kw == "update" and re.search(r"(key|for)\s*$", before, re.IGNORECASE):
+        # ON DUPLICATE KEY UPDATE / FOR UPDATE / 列定义里的 ON UPDATE CURRENT_TIMESTAMP|CASCADE 的 UPDATE 都不是 UPDATE <表>
+        if kw == "update" and re.search(r"(key|for|on)\s*$", before, re.IGNORECASE):
             continue
         if kw == "from":
             head = clean[max(0, m.start() - 80):m.start()]
             if re.search(r"(extract|substring|trim|overlay)\s*\([^)]*$", head, re.IGNORECASE):
                 continue
         yield name, m.start("name")
+
+
+_DDL_NON_COL = {"primary", "unique", "key", "index", "constraint", "foreign", "check", "fulltext", "spatial",
+                "column"}
+
+
+def _split_top(body: str):
+    """按顶层逗号切(括号内的逗号如 DECIMAL(10,2) 不切),返回 (片段, 偏移)。"""
+    parts, depth, cur, start = [], 0, [], 0
+    for i, ch in enumerate(body):
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            parts.append(("".join(cur), start))
+            cur, start = [], i + 1
+        else:
+            cur.append(ch)
+    parts.append(("".join(cur), start))
+    return parts
+
+
+def _paren_body(text: str, open_idx: int):
+    depth, i = 1, open_idx + 1
+    while i < len(text) and depth:
+        depth += {"(": 1, ")": -1}.get(text[i], 0)
+        i += 1
+    return text[open_idx + 1:i - 1], open_idx + 1
+
+
+def _dameng_not_upper(unq: str):
+    """达梦:CREATE/ALTER TABLE 的表名,CREATE TABLE 括号内列名(括号配对,不依赖换行/收尾分号),
+    ALTER ... ADD [COLUMN] c 与 ADD (c1 T, c2 T) 批量形态的列名,必须全大写。yield (名字, 偏移)。"""
+    for m in re.finditer(r"(?i)\b(?:create\s+table(?:\s+if\s+not\s+exists)?|alter\s+table)\s+(" + _IDENT + r")", unq):
+        if m.group(1) != m.group(1).upper():
+            yield m.group(1), m.start(1)
+    for m in re.finditer(r"(?i)\bcreate\s+table(?:\s+if\s+not\s+exists)?\s+" + _IDENT + r"(?:\." + _IDENT + r")?\s*\(", unq):
+        body, base = _paren_body(unq, m.end() - 1)
+        for item, pos in _split_top(body):
+            t = re.match(r"\s*(" + _IDENT + r")", item)
+            if t and t.group(1).lower() not in _DDL_NON_COL and t.group(1) != t.group(1).upper():
+                yield t.group(1), base + pos + t.start(1)
+    for m in re.finditer(r"(?i)\badd\s+(?:column\s+)?(\()?\s*(" + _IDENT + r")", unq):
+        if m.group(1):
+            body, base = _paren_body(unq, m.start(1))
+            for item, pos in _split_top(body):
+                t = re.match(r"\s*(" + _IDENT + r")", item)
+                if t and t.group(1).lower() not in _DDL_NON_COL and t.group(1) != t.group(1).upper():
+                    yield t.group(1), base + pos + t.start(1)
+        else:
+            n = m.group(2)
+            if n.lower() not in _DDL_NON_COL and n != n.upper():
+                yield n, m.start(2)
 
 
 def check_sql_identifier_case(root: Path, db: str = ""):
@@ -582,30 +634,9 @@ def check_sql_identifier_case(root: Path, db: str = ""):
         feed(path, clean, 1)
         if db == "dameng":
             unq = re.sub(r'"[^"\n]*"|`[^`\n]*`', " ", clean)
-            for m in re.finditer(r"(?i)\b(?:create\s+table(?:\s+if\s+not\s+exists)?|alter\s+table)\s+(" + _IDENT + r")", unq):
-                if m.group(1) != m.group(1).upper():
-                    findings.append({"file": rel(path, root), "line": 1 + unq.count("\n", 0, m.start(1)),
-                                     "category": "not-upper", "name": m.group(1)})
-            for m in re.finditer(r"(?i)\badd\s+(?:column\s+)?(" + _IDENT + r")\b", unq):
-                n = m.group(1)
-                if n.lower() not in ("column", "constraint", "primary", "unique", "foreign", "index", "key", "check") and n != n.upper():
-                    findings.append({"file": rel(path, root), "line": 1 + unq.count("\n", 0, m.start(1)),
-                                     "category": "not-upper", "name": n})
-            for m in re.finditer(r"(?is)create\s+table(?:\s+if\s+not\s+exists)?\s+" + _IDENT + r"\s*\((.*?)\n\s*\)\s*(?:;|$)", unq):
-                depth, cur, items = 0, [], []
-                for ch in m.group(1):
-                    depth += (ch == "(") - (ch == ")")
-                    if ch == "," and depth == 0:
-                        items.append("".join(cur)); cur = []
-                    else:
-                        cur.append(ch)
-                items.append("".join(cur))
-                for it in items:
-                    t = re.match(r"\s*(" + _IDENT + r")", it)
-                    if t and t.group(1).lower() not in ("primary", "unique", "key", "index", "constraint", "foreign", "check") \
-                            and t.group(1) != t.group(1).upper():
-                        findings.append({"file": rel(path, root), "line": 1 + unq.count("\n", 0, m.start(1)),
-                                         "category": "not-upper", "name": t.group(1)})
+            for name, off in _dameng_not_upper(unq):
+                findings.append({"file": rel(path, root), "line": 1 + unq.count("\n", 0, off),
+                                 "category": "not-upper", "name": name})
 
     for path in iter_files(root, JVM_EXTS):
         for i, raw in enumerate(read_lines(path), 1):
@@ -690,12 +721,16 @@ def render_text(results, summary, notes, checks):
         hits = results["sql-identifier-case"]
         q = [h for h in hits if h["category"] == "quoted-identifier"]
         d = [h for h in hits if h["category"] == "spelling-drift"]
-        out.append(f"■ SQL 标识符通用性 (architect 检查项 18): 被引号包裹 {len(q)} 处, 同表多拼写 {len(d)} 处")
+        u = [h for h in hits if h["category"] == "not-upper"]
+        out.append(f"■ SQL 标识符通用性 (architect 检查项 18): 被引号包裹 {len(q)} 处, 同表多拼写 {len(d)} 处"
+                   + (f", 达梦非全大写 {len(u)} 处" if u else ""))
+        for h in u[:40]:
+            out.append(f"    [达梦非全大写] {h['file']}:{h['line']}  {h['name']}")
         for h in q[:40]:
             out.append(f"    [引号包裹] {h['file']}:{h['line']}  {h['name']}")
         for h in d[:40]:
             out.append(f"    [拼写漂移·risk={h['risk']}] {h['name']} -> {h['spellings']}  {h['locations'][:3]}")
-        if len(q) > 40 or len(d) > 40:
+        if len(q) > 40 or len(d) > 40 or len(u) > 40:
             out.append("    ... 更多见 --json")
         out.append("")
 

@@ -538,7 +538,7 @@ cd code/backend/{module-name}
 
 **用途**：AI Agent 每次启动必读的主入口文件（Codex / DeepSeek Harness 读 `AGENTS.md`；Claude Code 读 `CLAUDE.md`，二者并存时 `CLAUDE.md` 仅引用 `AGENTS.md`）。
 
-> ⚠️ **本章节不内嵌完整模板**：内嵌副本易落后于 `AGENTS.md` 实际权威版本。**模板请直接读取本仓库根目录的 `AGENTS.md` 实际文件**——它是权威单一信源；新建/升级项目时由 `aidp-code-engineer` SKILL 同步分发到下游项目。
+> ⚠️ **本章节不内嵌完整模板**：内嵌副本易落后于 `AGENTS.md` 实际权威版本。**请直接读取当前项目根目录的 `AGENTS.md` 实际文件**——新建/升级项目时由 `aidp-code-engineer` SKILL 把脚手架的下发记忆源渲染分发到项目根，项目内以该实际文件为准。
 >
 > 详细内容（当前状态字段格式、Agent 激活路由、命令清单、核心约定 41 条、Skill 表等）见 `AGENTS.md` 本体。
 

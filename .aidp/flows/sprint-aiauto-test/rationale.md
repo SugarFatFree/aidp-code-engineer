@@ -503,7 +503,7 @@ Phase 3.3 才写 `aiauto_tested_at`。位于它**之前**的门若裸 `exit 1`�
 | `account-missing` | 配置类 | 账号文件 mtime 晚于冻结时刻 |
 | `account-invalid` | 配置类 | 同上 |
 | `testplan-incomplete` | 配置类 | 测试方案文件 mtime 晚于冻结时刻 |
-| `cicd-auto-trigger-off` | 配置类 | `memory/aidp-config.yaml` mtime（开启 `cicd.auto_trigger` / 调整 `cicd.provider`·`cicd.pipelines`）|
+| `cicd-auto-trigger-off` | 配置类 | `memory/aidp-config.yaml` mtime（移除/更新 `auto_trigger_source` 禁用来源 / 调整 `cicd.provider`·`cicd.pipelines`）|
 | `prd-missing` | 配置类 | **PRD 目录 mtime**：`docs/requirements/{V}/产品提供/` 晚于冻结时刻。⛔ 与 `config-missing` 分开：后者认心跳，而心跳是本链路每 tick 无条件先写的，自己写的冻结会被自己刚刷的心跳立刻解冻 |
 | `config-missing` | 配置类 | 冻结后出现新鲜心跳且测试真实阻塞已解除；复用 `autopilot_unfreeze.py::test_loop_alive`，仅剔除自身冻结标记，不能用心跳掩盖其它阻塞 |
 | `manifest-missing` | 配置类 | 待测版本无可信测试委派/清单缺失（`aidp_scheduler.py` 的 tick-check 标记 `aiauto_blocked_reason=manifest-missing@V`，开发链路达阈冻结）。恢复证据 = 测试委派重新可核验（`test_handoff_context` 通过）。⛔ 不认心跳（测试链路每 tick 都刷）也不认 mtime |
@@ -524,12 +524,12 @@ Phase 3.3 才写 `aiauto_tested_at`。位于它**之前**的门若裸 `exit 1`�
 ### 冻结分类：为什么 `cicd-auto-trigger-off` 归配置类、`stuck-phase` 归交接类
 
 **`cicd-auto-trigger-off`** 在**部署尚未发生时**（首次触发）或重试前冻结
-（`cicd.auto_trigger=false` 时无人可触发 / 重试 CICD 流水线）。它们此前**只写不认**——不在任何解冻 case 分支里，
+（存在 `auto_trigger_source` 禁用来源且 `cicd.auto_trigger=false` 时无人可触发 / 重试 CICD 流水线）。它们此前**只写不认**——不在任何解冻 case 分支里，
 而通用解冻路径①的判据是「冻结后有新部署」：部署根本没发生过，`last_deployed_at` 永远不会前进，
-于是这条路径**永不触发**。净效果：项目只要没开自动触发，7×24 链路 100% 在首次部署处永久停摆，
+于是这条路径**永不触发**。净效果：项目只要存在禁用来源，7×24 链路 100% 在首次部署处永久停摆，
 只能人工 `--reset-baseline`。
 
-归**配置类**（mtime 判据）是因为它们的真实修复动作就是**改配置**：开启 `cicd.auto_trigger`、
+归**配置类**（mtime 判据）是因为它们的真实修复动作就是**改配置**：移除/更新 `auto_trigger_source` 禁用来源、
 或调整 `cicd.provider` / `cicd.pipelines` —— 两者都落在 `memory/aidp-config.yaml`，按其 mtime 判定即可。
 
 **`stuck-phase`** 是**状态机不推进**（同一 Phase 反复进入、时长超阈），与部署无关。

@@ -98,7 +98,7 @@ class ConsumersTolerateMaskTest(unittest.TestCase):
             (src / "skills/demo").mkdir(parents=True)
             (src / "skills/demo/SKILL.md.in").write_text("x\n", encoding="utf-8")
             journal.expect_tree(root / ".agents", src)
-            created = {p.as_posix() for p in journal.created}
+            created = {p.as_posix() for p in journal.before}
             self.assertIn(".agents/skills/demo/SKILL.md", created)
             self.assertNotIn(".agents/skills/demo/SKILL.md.in", created)
 

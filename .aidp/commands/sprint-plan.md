@@ -277,6 +277,8 @@ for p in glob.glob(sys.argv[1] + "/*.json"):
 print(f"GRAN_SKIPPED={sk}; GRAN_MUST={must}")
 PY
 )"
+# 验收标准形式初筛（4b 的机器一侧）：空白 / 占位 / 纯套话 / 过短且无可核验落点的单元格计数
+AC_HITS=$(python3 {{AIDP_HOME}}/scripts/check_plan_ac.py $GRAN_FILES --count) || AC_HITS=-1
 # 待澄清问题清单— 单文件含「待澄清问题清单」章节 OR 多文件含 99_待澄清问题清单.md
 PENDING=$(grep -l '待澄清问题清单' docs/plans/{version}/*.md 2>/dev/null | wc -l)
 PENDING_FILE=$(ls docs/plans/{version}/99_待澄清问题清单.md 2>/dev/null | wc -l)
@@ -290,7 +292,7 @@ PENDING_FILE=$(ls docs/plans/{version}/99_待澄清问题清单.md 2>/dev/null |
 | 2 | 禁越界（不写设计） | `DDL_HIT == 0` | { ✅ / ❌（命中 N 处）} |
 | 3 | Task 三锚点溯源 | **以 `check_task_granularity.py` 为准**（SKILL 要求每行 REQ / 设计 / 原型三锚点同时命中）：`GRAN_EXIT == 0` **且 `GRAN_SKIPPED != True`** 才算过（`skipped=True` = 一个 Task 段都没识别到、**未实质核验**，须回查 Task 标题形态 `### Task N.M` 后重跑，不得当通过）；`== 1` 且 `GRAN_MUST > 0` = 必修、`== 1` 且 `GRAN_MUST == 0` = 警告复核；`== 2` = 入参错，修参数重跑、不计 Fail。命令端不另设百分比阈值 | { ✅ / ❌（退出码 N + 必修 M 条 + 摘要）} |
 | 4 | 拆分文件数控制 | 单文件，或 ≤5（含 `00_索引.md`）；**Task>60 时按 SKILL 例外放行** —— 判据以 SKILL「拆分关键约束」为单一信源 | { ✅ / ❌ } |
-| 4b | **验收标准可验收性**| 每个 Task 行的「验收标准」单元格**非空且可判真假**——⛔ 不接受「完成开发」「功能正常」「按设计实现」这类无法判定的措辞。**判据委派 `dev-execution-planner` 的 QR**（机器门 `check_task_granularity.py` 只校 9 列**表头**、不看单元格内容）| { ✅ / ❌（N 行不可验收）} |
+| 4b | **验收标准可验收性**| 每个 Task 行的「验收标准」单元格**非空且可判真假**——⛔ 不接受「完成开发」「功能正常」「按设计实现」这类无法判定的措辞。**机器初筛 = `check_plan_ac.py`**（`AC_HITS > 0` 即该数行不可验收、必修；`-1` = 脚本出错、按未核验处理；初筛只抓空白 / 占位 / 纯套话 / 过短无落点，**通过不等于可验收**）；语义判据仍**委派 `dev-execution-planner` 的 QR**（`check_task_granularity.py` 只校 9 列**表头**、不看单元格内容）| { ✅ / ❌（N 行不可验收）} |
 | 4c | **与已交付代码同向**| 每个涉及**已有能力**的 Task，其验收标准与 `code/` 现状**不对立**（不出现"计划要求 A、代码是非 A"却仍判通过）。⚠️ fresh 模式**同样必查**——fresh ≠ greenfield，brownfield 重规划时 `code/` 里已有大量已交付实现；核对方法与 `## 补充模式` 的「必读『代码现状』轻量核对」同一套（单一信源见该段）。⛔ **留空不算过**：留空无法区分「核对过、无对立」与「根本没核对」 | { ✅ / ❌（N 处对立）/ ⛔ 未核对 } |
 | 5 | 待澄清问题清单 | `PENDING ≥ 1` OR `PENDING_FILE == 1`；P-NNN/D-NNN/Q-NNN 编号格式合法 + 🔧 暂行方案列无空白 + 不接受模糊表述（grep `待确认\|按常规处理\|参考行业惯例` 命中 = 0） | { ✅ / ❌ } |
 

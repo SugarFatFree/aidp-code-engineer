@@ -16,7 +16,7 @@
 ```yaml
 ---
 autopilot_decisions:
-  # === 决策字段（7 段：①视觉基准 ②缓存策略 ③Mock 位置 ④第三方未交付 ⑤测试策略 ⑥决策冲突处置；⑦ deployment）===
+  # === 决策字段（8 段：①视觉基准 ②缓存策略 ③Mock 位置 ④第三方未交付 ⑤测试策略 ⑥决策冲突处置；⑦ deployment；⑧ tech_boundary）===
   visual_baseline: prototype-only         # 约定 4 视觉基准：mockup-strict | prototype-only | optimize-with-uispec
   cache_strategy: disabled                 # 约定 26 + dev-logic-architect「缓存机制用户确认原则」：disabled | redis | caffeine | localStorage
   mock_position: frontend                  # 约定 26：frontend | backend | middleware
@@ -26,6 +26,14 @@ autopilot_decisions:
       expected_ready: 2026-07-15
   test_strategy: chrome-mcp                # chrome-mcp（浏览器实测）| static-only（仅静态扫描）
   on_decision_conflict: pause-notify       # 决策冲突时：pause-notify（暂停并发 #4 通知） | continue-with-default
+
+  # === ⑧ 技术边界预确认（★ 无人值守生成设计时的唯一供给；dev-logic-architect Phase 1 是强交互闸门、严禁推断）===
+  # 本版需生成设计时必填 backend + database（纯前端 / 无库项目显式写 none，none 是声明不是缺失）；其余维度可选、写了即原样进「确认汇总」。
+  # 也可不在 PRD 写，改由 `docs/architecture/技术选型.md`「技术栈总览」已填行供给（PRD 优先）。两源皆无 → Phase 0.6 第 2bis 步冻结待人，⛔ 不推断。
+  tech_boundary:
+    backend: "Spring Boot 3 + MyBatis-Plus"  # 后端栈（含 ORM）；纯前端写 none
+    database: "达梦 DM8"                      # 数据库（决定 --sql-db 方言，达梦 → dameng）；无库写 none
+    frontend: "Vue 3 + Element Plus"         # 可选
 
   # === ★ 部署 + 测试环境 ===
   deployment:
@@ -140,7 +148,8 @@ autopilot_decisions:
   |----|------|------|
   | 脏树处置（working tree 非空） | 按前置门尝试 `pull --rebase --autostash`；失败以 `dirty-tree` 记账熔断，不擅自暂存他人修改 | Phase 0.1（`phase-0-3.md`） |
   | 上版收口（存在未 close 的上个 Sprint/版本残留） | 按既有归档流程自动收口，不问 | Phase 3.x |
-  | 模块边界 / 技术边界确认 | 取 PRD 预声明；无则按项目既有技术栈/目录约定确定性推断（约定 18/28） | PRD `autopilot_decisions` + 约定 28 |
+  | 模块边界确认 | 取 PRD 预声明；无则按项目既有目录约定确定性推断（约定 18/28） | PRD `autopilot_decisions` + 约定 28 |
+  | **技术边界确认**（`dev-logic-architect` Phase 1，数据库必确认、严禁推断） | **⛔ 不推断**：只取 PRD `tech_boundary`，其次 `docs/architecture/技术选型.md` 已填行（唯一实现 `autopilot_tech_boundary.py`），已预确认则作为「确认汇总」传给 `/sprint-design`；两源皆无 → Phase 0.6 第 2bis 步冻结待人补声明 | PRD ⑧ + `reference/SKILL编排层接入.md` §四 |
   | test-intent 流程裁剪 | 保守默认 full、不裁剪（除非显式 `--skip-dev`） | Phase 0.1 |
 - **仍需人工的两类（收敛后的白名单 · 两种模式共用，见 D5）**：① 本轮必需的外部写动作所依赖的凭据失效且无降级路径（如部署脚本凭据过期）② 部署目标完全无法推断（`deployment.mode` / 部署源分支无上下文可推）**且** PRD `deployment` 段未预声明。**除这两类之外**：无人值守零 `AskUserQuestion`；交互式单次同样不得询问，一律取确定性默认继续 + 留痕。⛔ **「缺前置数据 / 缺测试账号」不在白名单内**——它由 Phase 0「用例前置资源对账门」（`phase-0-9.md` 0.6bis）在 Phase 0 一次性问清，此后以此为由暂停即违规（见 `phase-3-1.md` 非法跳过借口清单）。
 

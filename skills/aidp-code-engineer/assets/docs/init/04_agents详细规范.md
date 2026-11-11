@@ -66,8 +66,9 @@ Reviewer Agent   代码审查
 | 触发点 | 激活的 Agent |
 |--------|-------------|
 | `/sprint-init` / `/sprint-init-design` | PM → Architect → UI |
-| `/version` / `/sprint-requirements` | PM |
-| `/version` Step 2.4.7（版本规划产物落盘后，强制） | Version-Auditor |
+| `/sprint-init-complete` | UI（Phase 3，有原型代码才激活）→ PM（Phase 4） |
+| `/version` / `/sprint-requirements` / `/sprint-plan`（Step 2） | PM |
+| `/version` Step 2.4.7（版本规划产物落盘后，强制）；autopilot Phase 3.3 build 终审 | Version-Auditor（Step 2.4.7 另并行 QR-Handoff-Auditor） |
 | `/sprint-design` | Architect + UI |
 | `/sprint-dev` | Backend + Frontend（并行） |
 | `/sprint-test` | QA |

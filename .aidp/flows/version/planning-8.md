@@ -63,8 +63,6 @@ python3 {{AIDP_HOME}}/scripts/deployment_ops.py pending --version {version}
 
 - `AGENTS.md`「当前状态.当前版本」改为 {version}。
 
-*（Step 2.7.1 / 2.7.2 编号保留、暂未使用；其余分片有「见 Step 2.7.3」的直引，故不重排。）*
-
 ### Step 2.7.3：★ 同步代码内本应用版本号（构建描述符随版本号 bump 一起改）
 
 > 版本号 bump 的落点是「文档 + 代码」两侧：Step 2.7 已写文档侧，本步补齐代码侧。理据见 `rationale.md`。

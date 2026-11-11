@@ -163,6 +163,7 @@ Chrome 版本门或 secure context 前提——那些是 Web 专有。
 - **幂等性**：DDL 包含 `IF NOT EXISTS` / `IF EXISTS` 判断
 - **增量原则**：每个版本的脚本只含本版本新增/修改内容，不累积历史（历史 DDL 留在 `docs/deployment/{prev-version}/sql/增量/`）
 - **DB 兼容**：必须兼容项目使用的数据库（注意方言差异）
+- **SQL 标识符**：规则见 `dev-logic-architect` 核心原则 12 / 检查项 18（本处不复述）；目标库方言取 `aidp_config.py get project.sql_dialect`，非空时 SKILL 脚本带 `--db <值>`，空 = 通用
 - 详细多维度核验见 `dev-logic-architect` SKILL `references/quality-review-checklist.md`（按约定 21 不在本文件复述具体维度编号与主题清单）。AIDP 项目级父路径与命名细节见 `docs/init/06_版本与用户目录约定.md` §2.5.4；**SKILL 已启用路径占位符自动发现**，项目级 `{SQL脚本目录}` / `{文档目录}` 等占位符 → AIDP 路径映射见同文件 §2.5.7
 
 ### 流程 D：架构评审

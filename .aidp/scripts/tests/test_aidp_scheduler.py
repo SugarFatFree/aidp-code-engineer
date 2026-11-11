@@ -451,13 +451,14 @@ def test_agent_loop():
               os.path.isfile(os.path.join(root, "memory", ".aidp", "logs", "sprint-autopilot.log")))
 
         os.remove(out)
-        # 无已部署待测版本的空转 tick：允许入口自己输出 NO_TARGET 并保持心跳，但不携带任何委派上下文。
+        # 无已部署待测版本的空转 tick（B-07 确定性空闲门）：tick-check 自己刷新心跳并跳过，不再拉起 Agent 会话。
         r = _loop(root, ["--once", "sprint-aiauto-test"],
                   {"HOME": home, "AIDP_AGENT": "codex", "AIDP_AGENT_EXEC": tpl})
-        check("无待测版本的空转测试 tick 可启动入口但不携带委派上下文",
-              r.returncode == 0 and os.path.isfile(out)
-              and "--execution-context" not in open(out, encoding="utf-8").read())
-        os.remove(out)
+        hb = json.load(open(os.path.join(root, "memory", ".sprint-autopilot-baseline.json"), encoding="utf-8")) \
+            if os.path.isfile(os.path.join(root, "memory", ".sprint-autopilot-baseline.json")) else {}
+        check("无待测版本的空转测试 tick 不启动 Agent、但刷新测试心跳",
+              r.returncode == 0 and not os.path.isfile(out) and bool(hb.get("aiauto_test_heartbeat_at")))
+        # (out 在上一步未生成，无需清理)
         # 有已部署待测版本却没有可核验的 autopilot 测试委派：只跳过，不启动 Agent、不靠命令名获得授权。
         _deploy_pending_test_target(root)
         r = _loop(root, ["--once", "sprint-aiauto-test"],
@@ -673,11 +674,17 @@ def test_install_preflight():
               and any("Bash/Agent" in w for w in res.get("warnings") or []))
         os.makedirs(os.path.join(root, ".claude"))
         with open(os.path.join(root, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
-            json.dump({"permissions": {"allow": ["Bash", "Agent"]}}, fh)
+            json.dump({"permissions": {"allow": ["Bash", "Agent", "Skill"]}}, fh)
         r = _sched(["install", "--platform", "cron", "--dry-run", "--json", "--agent", "claude"], root, home)
         res = json.loads(r.stdout or "{}")
         check("permissions.allow 覆盖后不再 WARN", r.returncode == 0
               and not any("permissions.allow" in w for w in res.get("warnings") or []))
+        check("★B-05 通知渠道未就绪 → install 显著 WARN（冻结/挂死告警只落本地台账）", any(
+            "通知渠道未就绪" in w for w in res.get("warnings") or []))
+        r = _sched(["status", "--platform", "cron", "--json"], root, home)
+        st = json.loads(r.stdout or "{}")
+        check("status 展示通知就绪度与预算容量说明", st.get("notify", {}).get("ready") is False
+              and "有限硬顶" in (st.get("budget_note") or ""))
     finally:
         shutil.rmtree(root, ignore_errors=True)
         shutil.rmtree(home, ignore_errors=True)
@@ -755,6 +762,11 @@ def test_session_reservation_lifecycle():
                   {"HOME": home, "AIDP_AGENT": "claude", "AIDP_AGENT_EXEC": "touch ran"})
         check("直接 tick 占位持续挡住 OS tick", r.returncode == 0
               and not os.path.exists(os.path.join(root, "ran")))
+        check("★B-09 超 30 分钟的遗留占位跳过时写一条本地告警",
+              sum(1 for x in _alerts(root) if x.get("kind") == "loop-session-placeholder") == 1)
+        _loop(root, ["--once", "sprint-autopilot"], {"HOME": home, "AIDP_AGENT": "claude", "AIDP_AGENT_EXEC": "touch ran"})
+        check("占位告警每小时至多一条（去重）",
+              sum(1 for x in _alerts(root) if x.get("kind") == "loop-session-placeholder") == 1)
         with open(lock, "w") as fh:
             json.dump({"owner": "session", "token": "live-tick", "started_at": 1}, fh)
         ns = type("A", (), {"scheduled": True})()
@@ -874,13 +886,13 @@ def test_delegation_gap_signals():
         check("告警写清“待测版本无可信委派/清单缺失”", gap and "无可信委派/清单缺失" in gap[0]["message"])
         check("达阈后顶层标 manifest-missing@V（开发链路据此分流 reason）",
               _baseline(root).get("aiauto_blocked_reason") == "manifest-missing@V1.0.0")
-        # 版本已内部发布 → 不再是待测目标：入口照常空转，阻塞标记与去重状态被清除。
+        # 版本已内部发布 → 不再是待测目标：tick-check 确定性空闲门跳过（不拉起 Agent），阻塞标记与去重状态被清除。
         bl = _baseline(root)
         bl["versions"]["V1.0.0"]["internal_released_at"] = "2026-01-02T00:00:00Z"
         with open(os.path.join(root, S.BASELINE_REL), "w", encoding="utf-8") as fh:
             json.dump(bl, fh)
         r = _loop(root, ["--once", "sprint-aiauto-test"], env)
-        check("目标消失后 Agent 照常启动", r.returncode == 0 and os.path.exists(started))
+        check("目标消失后空闲门跳过且不启动 Agent", r.returncode == 0 and not os.path.exists(started))
         check("目标消失后清除 manifest-missing 标记", "aiauto_blocked_reason" not in _baseline(root))
         check("wrapper 不再有第二套委派核验分支（单一判据在 tick-check）",
               "test_handoff_context" not in open(LOOP, encoding="utf-8").read()
@@ -1027,6 +1039,15 @@ def test_baseline_epoch():
     check("不可解析 → 无输出、rc=1（调用方自定兜底）", bad.returncode == 1 and bad.stdout.strip() == "")
 
 
+def test_scheduler_defaults_single_source():
+    print("【E-06 调度默认值单一信源】")
+    import aidp_config
+    fb = dict(S._SCHEDULER_FALLBACK, exec={})
+    check("aidp_scheduler 兜底默认值与 aidp_config.SCHEDULER_DEFAULTS 一致", fb == aidp_config.SCHEDULER_DEFAULTS)
+    src = open(SCHED, encoding="utf-8").read()
+    check("aidp_scheduler 头注枚举含 tick_max_seconds", "`stale_cycles` / `tick_max_seconds` / `exec`" in src)
+
+
 def test_self_check():
     print("【--self-check】")
     r = subprocess.run([sys.executable, SCHED, "--self-check"], capture_output=True, text=True)
@@ -1115,6 +1136,30 @@ def test_real_failure_backoff():
         r = _loop(root, ["--once", "sprint-autopilot"], dict(env, AIDP_AGENT_EXEC="aidp_nonexistent_cli_987"))
         check("CLI 不存在的真实 rc127 进入归因", r.returncode == 127
               and any(x.get("kind") == "loop-agent-cli-missing" for x in _alerts(root)))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_repeated_timeout_freezes_version():
+    print("【B-06 连续硬超时无进展 → 冻结 stuck-phase】")
+    root, home = _mkproj(), tempfile.mkdtemp()
+    try:
+        bl = os.path.join(root, "memory", ".sprint-autopilot-baseline.json")
+        os.makedirs(os.path.dirname(bl), exist_ok=True)
+        with open(bl, "w", encoding="utf-8") as fh:
+            json.dump({"autopilot": {"target_version": "V1.0.0"}, "versions": {"V1.0.0": {}}}, fh)
+        env = dict(os.environ, HOME=home, AIDP_FEISHU_WEBHOOK="")
+        outs = []
+        for _ in range(S.TICK_TIMEOUT_FREEZE_AFTER):
+            r = subprocess.run([sys.executable, SCHED, "tick-result", "--root", root, "--command", "sprint-autopilot",
+                                "--rc", "124", "--tick-max", "7200", "--json"], cwd=root, env=env,
+                               capture_output=True, text=True, timeout=120)
+            outs.append(json.loads(r.stdout or "{}"))
+        node = json.load(open(bl, encoding="utf-8"))["versions"]["V1.0.0"]
+        check("未到阈值次数前不冻结", not any(o.get("frozen") for o in outs[:-1]))
+        check("连续超时达阈 → needs_human + freeze_reason=stuck-phase",
+              node.get("needs_human") and node.get("freeze_reason") == "stuck-phase" and outs[-1].get("frozen") == "V1.0.0")
     finally:
         shutil.rmtree(root, ignore_errors=True)
         shutil.rmtree(home, ignore_errors=True)
@@ -1238,6 +1283,7 @@ if __name__ == "__main__":
     test_real_failure_backoff()
     test_watchdog_env_concurrency_and_grace()
     test_tick_state_concurrency_and_notification()
+    test_repeated_timeout_freezes_version()
     test_render()
     test_watchdog()
     test_watchdog_never_started()
@@ -1257,6 +1303,7 @@ if __name__ == "__main__":
     test_authorization_not_needed_with_existing_persistent_root()
     test_authorization_take()
     test_baseline_epoch()
+    test_scheduler_defaults_single_source()
     test_self_check()
     test_scheduler_docs()
     print(f"\n{_passed} passed, {_failed} failed")

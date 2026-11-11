@@ -285,6 +285,14 @@ Phase 1「PRD 变化检测」的确定性程序。内联 bash 的常见失效是
 
 从本版 PRD `autopilot_decisions.deployment.deploy_ends.frontend.ready_asset_probe` 读首页 URL 与 `must_contain` 特征串，下载首页引用的同源 JS/CSS，逐串核对真实部署资产。前端未声明或未配置特征串时标 `skipped`（不伪造 `frontend_deploy_verified`）；应校验而资源缺失或未命中则退出 1。`--record-ready --build <BUILD> [--commit <SHA>]` 在特征校验后通过 `LockedBaseline` 同锁写入 build 级 `probe_passed/frontend_deploy_verified/probe_at` 与版本级 `last_deployed_at/phase_beta_done_at`，失败不留部分成功证据（退出 2）。无 Git 本地部署省略 `--commit`，Git 部署必须用本 build 的 push SHA 绑定。用法：`python3 {{AIDP_HOME}}/scripts/frontend_asset_probe.py --version <V> [--record-ready --build <BUILD> --commit <SHA>] [--baseline <path>]`。
 
+## sprint_baseline.py — Sprint 改动前基线 `baseline_ref` 的确定性解析
+
+`python3 {{AIDP_HOME}}/scripts/sprint_baseline.py resolve --root . [--card-ref REF] [--passthrough REF] [--sprint-uncommitted] [--main-branch B] --json`：契约卡 → 上游透传 → 工作区未提交取 `HEAD`（须声明且工作区确有改动）→ `merge-base`（仅 ≠ `HEAD` 有效）取到即停，每个候选校验为 commit 且是 `HEAD` 祖先；输出 `baseline_ref`（commit 或 `none`）/`source`/`reason`/`vcs_mode`/`unverified_label`，退出码 0 取到、3 取不到、2 入参错误。非 Git 恒 `none` + `unsupported:vcs-disabled`。不用 `HEAD~1`、不猜 commit。调用方 = `commands/sprint-test.md` 的 CVL `baseline_ref` 入参；回归 = `tests/test_sprint_baseline.py`。
+
+## sql_reorg.py — SQL 整理（/version 3.3.7）语句守恒校验
+
+`python3 {{AIDP_HOME}}/scripts/sql_reorg.py check --orig <dir> --new <dir> [--exclude 99_回滚脚本.sql] --json`：复用 `development_scope._statements` 按语句切分，规范化空白与引号外大小写后比对语句多重集合；原侧 / 新侧 0 条或集合不等一律退出 1（调用方必须保留原文件），目录不存在退出 2。取代 shell 的 `grep -c … || echo 0`（0 行时变量为 `"0\n0"`，比较报错被当作放行）。调用方 = `flows/version/release-3.md` 3.3.7 c 段；回归 = `tests/test_sql_reorg.py`。
+
 ## release_scope.py — 本次发布实际覆盖哪些版本（含未单独发布的过渡版本）
 
 AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 tag，代码随后续版本一并发布）。发布收口若只认「本版本」，过渡版本的收口工作就**无人认领**。它是确定性可算的：**收口范围 = `(上一个已发布 tag, 本次版本]` ∩ 仓库真实存在的版本目录**。
@@ -308,6 +316,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 ## cicd_providers.py — CICD 平台适配层（约定 31.5）
 
 `cicd_watch.py` 的底座：各平台统一暴露 `check()` / `list_runs()` / `view_run()` / `trigger()` / `retry()`，运行状态归一为 `queued|running|success|failure|cancelled|skipped|unknown`。内置 `github-actions`（`gh` CLI 已登录）、`gitlab-ci`（REST API，`cicd.gitlab-ci.url` / `project`，令牌经 `token_env`）、`jenkins`（REST API，`cicd.jenkins.url`，账号 / API Token 经 `user_env` / `token_env`）、`command`（`cicd.command.<动作>` 命令模板，占位符 `{pipeline}` `{commit}` `{run_id}` `{ref}` `{limit}`）。⛔ 令牌只经环境变量引用。接口细节以模块 docstring 为准。
+仅环境变量的旋钮：`AIDP_GH_BIN`（github-actions 提供方使用的 `gh` 可执行文件路径，缺省 `gh`；供非常规安装位置 / 离线测试桩，不进 yaml）。
 
 ### `--selftest`：证明它现在还能用
 
@@ -369,6 +378,8 @@ wrapper 与独立 watchdog 均读取 `~/.config/aidp/env` 的 KEY=VALUE（支持
 成功安装后，实际周期保存到 `memory/.aidp/scheduler-installation.json`；watchdog 与 status 优先读取已安装周期，配置热改需重装才生效。`status --json` 分别返回 `installation` 与当前 `config`；dry-run/仅输出命令不记录安装成功，失败重装保留上次成功快照，成功卸载清除对应安装态。
 `install` 先做预检：无 `flock` 且无 python3 `fcntl`、或 Agent=dsh 未配 `scheduler.exec.dsh` → ERROR 不装；无 `timeout`/`gtimeout`、Agent=claude 而 `.claude/settings.json` 的 `permissions.allow` 未放行 `Bash`/`Agent` → WARN。
 用法：`python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install|uninstall|status|watchdog [--agent auto|claude|codex|dsh] [--dev-interval 10m] [--test-interval 5m] [--platform systemd|cron|launchd|schtasks] [--dry-run] [--json]`；`--self-check` 离线自测（临时目录渲染三条任务）。配置段 = `memory/aidp-config.yaml` 的 `scheduler`（`aidp_config.scheduler_config()`）。
+**仅环境变量的旋钮（不进 yaml）**：`AIDP_TICK_TIMEOUT_ALERT_AFTER`（连续失败达该次数才通知并启用退避，默认 3，旧名沿用）；`AIDP_TICK_MAX_SECONDS` / `AIDP_AGENT` / `AIDP_AGENT_EXEC` 另有对应 yaml 键。回落默认值单一信源 = `aidp_config.SCHEDULER_DEFAULTS`。
+**可见性与容量（无人值守不静默）**：`install` 预检对「通知渠道未就绪」给显著 WARN（冻结/挂死告警此时只落本地台账）；`status --json` 额外返回 `notify`（渠道就绪度）、`budget`（各版本根任务预算占用 %）与 `budget_note`（根预算是有限硬顶、续额须用户原话，长周期多 Sprint 版本不承诺 0 人工）；根预算占用首次越过 80% / 95% 时 `tick-check` 各发一条 `loop-budget-near-exhausted` 告警，只预警、不放宽限额。`tick-check` 对测试链路「无待测目标 / 已显式跳过测试」确定性空闲门：刷新心跳后跳过，不拉起 Agent。`tick-result` 对同一版本的 autopilot tick 连续 5 次硬超时被杀，冻结该版（`stuck-phase`，仅人工解冻）。`agent_loop.sh` 遇交互会话遗留的持久占位超过 30 分钟，每小时至多写一条 `loop-session-placeholder` 告警（不自动回收占位）。
 
 ## aidp_state.py — 项目级运行时状态（baseline 的 `project_state` 段）
 
@@ -628,7 +639,7 @@ SKILL 之间**不得互相 import 或引用对方路径**（否则单独取用�
 
 已接线 = 被契约正文（`commands`/`flows`/`agents`/`rules`/`reference`/`hooks`/`templates`/`skills`
 下的 `.md`）按名提到，**或**被同仓任一 `.py`（含 `verify.py` 的门登记表、`tests/` 单测）
-或 `.github/workflows/` 提到，**或**登记在 `script-callers-baseline.txt`。
+或 `.github/workflows/` 提到，**或**登记在 `script-callers-baseline.txt`（按需创建，缺省 = 空）。
 ⛔ **本 README 的条目不算**（"目录里有一行"正是孤儿脚本最典型的伪装），
 ⛔ **`selfcheck.py` 的探针登记也不算**（探针证明"这个检查抓得到东西"，不是"有人在跑它"），
 ⛔ 脚本自身内容不算（否则人人自证合格）。
@@ -797,16 +808,6 @@ SKILL 名 713 字符，那不是归属是噪音（窗口调小到 120 会漏掉�
 约定 22 口径级联残留门：旧口径是否仍作为**生效规则**残留在四族文档里。
 把命中分「真残留 / 订正留痕」两类，上下文扫描遇标题即止。接线 = `version-auditor` 审计 G 前置。
 
-## tests/sync_group_table.py — tests/README 分组表重排器
-
-把 `tests/README.md` 的分组表与 `test_guard_scripts.py` 的**实跑分组**对齐：真值现算
-（跑一遍套件、按实跑顺序取 `【…】` 与 `[NN] …` 两种标题），已填的「覆盖」列按标题原样保留，
-新增分组填 `—`。**Why 要有它**：那张表自称「单一信源」却停在 30 行、落后 45 组——根因不是
-谁偷懒，而是**维护方式本身要求人手抄**。只加一道行数机器门不够：门每次红、人每次手工重排、
-下一次照样漂，只是漂之前会红一下。
-用法：`python3 {{AIDP_HOME}}/scripts/tests/sync_group_table.py [--check]`。
-退出码：`0`=已一致 / 已写回；`1`=`--check` 下检出漂移；`2`=用法或环境错。
-
 ## plan_sprints.py — 研发执行计划 → Sprint 集合的唯一口径
 
 扫 `docs/plans/{version}/` 下**全部** `*研发执行计划*.md`（不是第一份），产出 Sprint 全集 /
@@ -880,7 +881,7 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 
 ## rename_version.py — 版本号全仓改名（目录/文件名/正文）
 
-开发期临时编号发布时按 SemVer 正名是常规操作，下游已连续两版手工做：12 个版本目录 `git mv` + 15 个文件/目录改名 + **1710 处**文本替换，每次约 10 分钟，漏一处就是隐性残留且无机器门可拦。三个内置处理：① `{{AIDP_HOME}}/skills/` 与 `{{AIDP_HOME}}/scripts/tests/` 整棵排除（那里的版本号是**范式示例与测试夹具**，改了会破坏脚手架一致性和测试）；② 空目录 `git mv` 会失败，自动回退 `mv`；③ 收尾恒打印**剩余命中清单 + 逐条豁免理由**，有未豁免残留时**退出码 1**。代码内自报版本（pom 各级子模块/package.json/Dockerfile）是裸版本号格式，交 `check_version_identifier.py`，收尾会提示。
+**人用工具，无命令 / 流程端调用**（用户主动要求给版本改名时才手动运行）。开发期临时编号发布时按 SemVer 正名涉及版本目录 `git mv`、文件/目录改名与大量文本替换，漏一处即隐性残留且无其他机器门可拦。三个内置处理：① `{{AIDP_HOME}}/skills/` 与 `{{AIDP_HOME}}/scripts/tests/` 整棵排除（那里的版本号是**范式示例与测试夹具**，改了会破坏脚手架一致性和测试）；② 空目录 `git mv` 会失败，自动回退 `mv`；③ 收尾恒打印**剩余命中清单 + 逐条豁免理由**，有未豁免残留时**退出码 1**。代码内自报版本（pom 各级子模块/package.json/Dockerfile）是裸版本号格式，交 `check_version_identifier.py`，收尾会提示。
 用法：`python3 {{AIDP_HOME}}/scripts/rename_version.py <old> <new> [--root .] [--apply] [--json]`（默认只出计划）。
 
 ## design_full_rollforward.py — 全量设计分册内 section 级前滚（3.3.11 提速）
@@ -1280,7 +1281,7 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 ## aidp_config.py — 人维护配置（`memory/aidp-config.yaml`）
 
 项目标识（`project.name` 英文应用编码 / `project.name_cn` 中文名称）/ 提交前门禁（`commit_gate.enabled`）/ 里程碑通知（`notify.enabled` / `fallback` / `channels`）/ CICD（`cicd.provider` / `auto_trigger` / `max_retries` / `pipelines`）/ 7×24 调度（`scheduler.agent` / `dev_interval` / `test_interval` / `stale_cycles` / `exec`）/ Stop 护栏开关、脚手架版本戳、autopilot 决策兜底。
-读取 API：`project_config()` / `commit_gate_enabled()` / `notify_config()` / `cicd_config()` / `scheduler_config()` / `stop_guard_enabled()` / `scaffold_version()` / `scaffold_pending()` / `is_downstream()`；单行流式写法（`- {type: feishu, webhook_env: …}`、`pipelines: {dev: deploy-dev.yml}`）解析时展开。
+读取 API：`project_config()` / `sql_dialect()`（`project.sql_dialect`，可空通用键，null = 通用；非空原样透传给 SKILL 脚本 `--db` / `--sql-db`，不枚举库名、不推断；命令端取值 `aidp_config.py get project.sql_dialect`）/ `commit_gate_enabled()` / `notify_config()` / `cicd_config()` / `scheduler_config()` / `stop_guard_enabled()` / `scaffold_version()` / `scaffold_pending()` / `is_downstream()`；单行流式写法（`- {type: feishu, webhook_env: …}`、`pipelines: {dev: deploy-dev.yml}`）解析时展开。
 写入是**逐行外科手术**而非重新序列化 —— 这份文件一半的价值在注释（每个开关旁写着
 关掉之后会发生什么），`yaml.dump()` 一次就把它退化成无注释的 json。
 读取顺序恒为「本文件 → 内置缺省」。
@@ -1293,6 +1294,11 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 PRD 未声明时兜底。挑兜底文件的判据是「**有没有声明**」而非「文件在不在」——
 脚手架会给每个下游建出 `aidp-config.yaml`（该段初值为空），只按存在性挑会在升级当天
 把下游真实决策静默换成空。
+
+## autopilot_tech_boundary.py — 无人值守「技术边界预确认」判定
+
+`dev-logic-architect` Phase 1 技术边界确认是强交互闸门（数据库必确认、严禁推断），无人值守下子 Agent 无人可问。本脚本只**机械读取用户已落盘的声明**：PRD `autopilot_decisions.tech_boundary`（经 `autopilot_decisions_merge.py` 双信源合并）> `docs/architecture/技术选型.md`「技术栈总览」已填行；最低要求 `backend` + `database`（无则显式写 `none`）。不推断；`--summary` 输出可直接并入 `/sprint-design` 上下文的「确认汇总」，`--json` 带 `db_dialect`（达梦 → `dameng`）。
+用法：`python3 {{AIDP_HOME}}/scripts/autopilot_tech_boundary.py --version <V> [--root .] [--prd-root docs/requirements] [--json|--summary]`。退出码：`0`=已预确认 · `1`=缺失（Phase 0.6 第 2bis 步据此冻结 `prd-missing`）· `2`=用法错。调用方：`flows/sprint-autopilot/phase-0-8.md`、`commands/sprint-design.md`；回归 `tests/test_unattended_recovery.py`。
 
 ## baseline_archive.py — baseline 历史版本节点归档
 
@@ -1344,6 +1350,16 @@ Sprint 内按守护面裁剪是合法的，发布前必须全跑一次，否则�
 判据：扫 `.md` 里的 `python3 <路径>.py …` 调用（代码块与行内代码都算，`\` 续行拼接，`[--flag X]` 可选写法与 `--a|--b` 并列写法照常判定）：① 路径含占位（`<SKILL_DIR>` 等）时按文件名找，优先与文档同属一个 SKILL 的那份；`{{AIDP_HOME}}/` 下写死的路径不存在 → `missing-script`；② 每个 `--flag` 必须是目标脚本（及同目录被 import 的模块）源码里的字符串常量或可被 argparse 缩写唯一匹配 → 否则 `unknown-flag`；③ 目标脚本有 `add_subparsers` 时，紧跟路径的首个非 flag 词须是 `add_parser` 名，首个位置参数声明了 `choices` 时须落在其内 → 否则 `unknown-subcommand`；④ 非 argparse 脚本被传 flag → WARN `non-argparse`。
 豁免：行内 `cli-check: ignore <原因>`。用法：`python3 {{AIDP_HOME}}/scripts/check_cli_invocation.py [--root <仓库根>] [--path <相对路径>] [--json]`；`--self-check`。退出码：`0`=无 ERROR / `1`=有 ERROR / `2`=用法错。CI 必跑。
 
+## audit_carryover.py — version-auditor 上轮未处置项结转与自动升级（确定性）
+
+承载 `agents/version-auditor.md`「六bis」的机械部分：读上一份 `version-output-audit-*.md` 的「十·修复建议」表，轮次 +1、Important 连续 3 轮升级 Critical（Warning 不升级）、渲染「十二」章。「本轮是否仍是同一个问题」是语义判断，脚本不猜，由审计 Agent 用 `--still-open` 传入。
+用法：`python3 {{AIDP_HOME}}/scripts/audit_carryover.py carry --audit-dir docs/audit/{version} [--exclude <本轮报告>] [--still-open I-02,I-05] [--json]`（列候选 / 算结转）；`audit_carryover.py check --audit-dir docs/audit/{version} --report <本轮报告> [--json]`（回检沿用编号的轮次必须 = 上轮 + 1、达阈值须标升级；零重合与缺「十二」章报 WARN）。退出码：`0` 通过 / `1` `check` 有 ERROR / `2` 用法错。调用方 = `agents/version-auditor.md`「六bis」；回归见 `tests/test_audit_carryover.py`。
+
+## check_plan_ac.py — 研发执行计划「验收标准」列形式初筛（确定性）
+
+`/sprint-plan` 4b 的机器一侧：扫计划表（表头含 `Task` 与 `验收标准`）里空白 / 占位 / 纯套话（「完成开发」「功能正常」「按设计实现」）/ 过短且无可核验落点（无链接、无反引号命令、无 `§` 锚点）的单元格。只做形式判定，**通过不等于可验收**，语义判据仍归 `dev-execution-planner` 的 QR。
+用法：`python3 {{AIDP_HOME}}/scripts/check_plan_ac.py <计划.md>... [--json] [--count] [--strict]`。退出码：`0` 通过（命中默认只 WARN）/ `1` `--strict` 且有命中 / `2` 文件不存在。调用方 = `commands/sprint-plan.md` 回检块（`AC_HITS`）；回归见 `tests/test_plan_ac.py`。
+
 ## check_version_audit_landed.py — 版本规划产物审计「真的跑过」（确定性，**ERROR 级**）
 
 `/version` Step 2.4.7 的独立审计是「规划产物经审计才算数」的唯一承载者（PRD 条目去处 = 审计 C/C-4、原型覆盖度 = 审计 F，都是 Critical 硬门），而**「跑了且通过」与「压根没跑」在终端上长得一模一样**——散文管不住这种形态：`docs/audit/{version}/` 为空、没有任何 flag、命令照样往下走。本门把它变成可判定的。
@@ -1364,6 +1380,6 @@ Sprint 内按守护面裁剪是合法的，发布前必须全跑一次，否则�
 
 ---
 
-## tests/ — 上述确定性脚本的回归单测
+## tests/ — 上述确定性脚本的回归单测（仅模板仓库存在，下游安装后无此目录）
 
 一键跑全部：`bash {{AIDP_HOME}}/scripts/tests/run.sh`（模板仓库维护验证默认按影响范围选测，见根 `AGENTS.md`）。测试文件清单、覆盖说明与运行方式的**单一信源**是 `{{AIDP_HOME}}/scripts/tests/README.md`，本文不再复述文件表；新增测试文件须同时登记进 `run.sh` 与该 README 的文件表。

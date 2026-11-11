@@ -22,6 +22,10 @@
 | `test_verification_tools.py` | 项目配置与 CI 验证命令选择、语法/lint/类型/编译/单测分类、只读 shell/容器边界 | `python3 .aidp/scripts/tests/test_verification_tools.py` | Python 标准库、离线工具替身 |
 | `test_deployment_ops.py` | 备份频率与真实回执、跨类型并发限额、待同步操作指引和精简 SQL 台账 | `python3 .aidp/scripts/tests/test_deployment_ops.py` | Python 标准库、临时 Git、离线命令替身 |
 | `test_development_scope.py` | 风险与文件成本分离、真实SQL差异与基线不确定性 | `python3 .aidp/scripts/tests/test_development_scope.py` | Python 标准库、临时 Git |
+| `test_sprint_baseline.py` | `baseline_ref` 解析：契约卡/透传/工作区未提交/merge-base≠HEAD/none，非祖先与选项形态拒绝，无 Git 标注 | `python3 .aidp/scripts/tests/test_sprint_baseline.py` | Python 标准库、临时 Git |
+| `test_audit_carryover.py` | version-auditor 结转：轮次 +1、Important 连续 3 轮升级 Critical、Warning 不升级、回检轮次与升级标记、零重合 WARN | `python3 .aidp/scripts/tests/test_audit_carryover.py` | Python 标准库 |
+| `test_plan_ac.py` | 计划验收标准形式初筛：空白/占位/套话/过短无落点命中、链接与反引号命令放行、随附样例零命中 | `python3 .aidp/scripts/tests/test_plan_ac.py` | Python 标准库 |
+| `test_sql_reorg.py` | SQL 整理语句守恒：多重集合比对、0 条与空侧 fail-closed、回滚脚本排除 | `python3 .aidp/scripts/tests/test_sql_reorg.py` | Python 标准库 |
 | `test_sprint_discovery.py` | 计划分册/启动/归档/关闭共同发现，保留证据分域 | `python3 .aidp/scripts/tests/test_sprint_discovery.py` | Python 标准库、临时 Git |
 | `test_light_task_flow.py` | 默认开发/修复的相关单测闭环、断言修改必实跑、明确跳过的受限结论；临时 Git/离线部署复用测试证据，重复收尾不重放，已有 Sprint 字节不变 | `python3 .aidp/scripts/tests/test_light_task_flow.py` | Python 标准库、Git、离线部署替身 |
 | `test_build_unit_test.py` | 部署完整提交隔离执行、并发缓存、超时清理 | `python3 .aidp/scripts/tests/test_build_unit_test.py` | Python 标准库、Git、Node（报告渲染） |
@@ -38,7 +42,7 @@
 | `test_offchain_scope.py` | 约定 41 链外档位（`commit_gate.py::offchain_budget` 的 XS/S/M/L 分档与动作预算）+ 链外推送欠账 + 约定 17 反向门 | `python3 .aidp/scripts/tests/test_offchain_scope.py` | Python 标准库 |
 | `test_release_gates.py` | 发布期硬门（`check_release_residual_gate.py` 等的双侧对照 + 各脚本 `--self-check`） | `python3 .aidp/scripts/tests/test_release_gates.py` | Python 标准库 |
 | `test_report_immutability.py` | 报告不可变门（已 finalize build 的篡改检出 + skeleton 期前移）+ driver 如实性窗口 + `renderMode` 取证来源 | `python3 .aidp/scripts/tests/test_report_immutability.py` | Python 标准库 |
-| `test_unattended_recovery.py` | 无人值守失败处置与自动恢复：`autopilot_fail_handle.py --command` 按链路取唤醒源、同 reason 冻结幂等、未达阈不发通知、冻结写本地告警台账 `memory/.aidp/alerts.jsonl`；`autopilot_unfreeze.py` 环境类复探（退避 + 上限）/ `--clear` / `--manual` | `python3 .aidp/scripts/tests/test_unattended_recovery.py` | Python 标准库 |
+| `test_unattended_recovery.py` | 无人值守失败处置与自动恢复：`autopilot_fail_handle.py --command` 按链路取唤醒源、同 reason 冻结幂等、未达阈不发通知、冻结写本地告警台账 `memory/.aidp/alerts.jsonl`；`autopilot_unfreeze.py` 环境类复探（退避 + 上限）/ `--clear` / `--manual`；推送围栏「合并到部署源」失败即中止并切回开发分支、`DEV_BRANCH` 登记；`autopilot_tech_boundary.py` 技术边界预确认判定 | `python3 .aidp/scripts/tests/test_unattended_recovery.py` | Python 标准库 |
 | `test_stop_guard.py` | 缺build与handback失败的Stop阻止上限、告警去重及成功清计数 | `python3 .aidp/scripts/tests/test_stop_guard.py` | Python标准库、真实hook进程 |
 | `test_unattended_edges.py` | JSON渲染取证正反例、实测参数、脏树默认及旧运行路径说明 | `python3 .aidp/scripts/tests/test_unattended_edges.py` | Python标准库、Bash |
 | `test_dispatch_retry.py` | C1/C2退避封顶、无唤醒源失败处置、成功清零及实际规划围栏 | `python3 .aidp/scripts/tests/test_dispatch_retry.py` | Python标准库、Bash |

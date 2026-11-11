@@ -484,6 +484,32 @@ def budget_exhaustion(root, execution_context):
     return ("exhausted" if short else "renewed"), (short or items)
 
 
+def budget_usage(root, execution_context):
+    """只读：根任务预算已用 / 限额 / 占比 -> dict | None（上下文不可读时 None）。
+
+    供调度器 status 展示余量与「接近耗尽」预警用；不改任何账本、不放宽任何限额。
+    返回 {"resources": {资源: {"used","limit","pct"}}, "max_pct", "max_resource"}，pct 为 0-100+ 的整数。
+    """
+    from entry_context import load_context
+    root = Path(root).resolve()
+    try:
+        ctx = load_context(root, execution_context)
+        owner = _budget_owner(root, ctx)
+        _, state = _budget_state(root, owner)
+        limits = owner["execution_budget"]
+    except (ValueError, OSError, KeyError, TypeError, PolicyError):
+        return None
+    rows = {}
+    for key, limit in limits.items():
+        used = state["used"].get(key, 0)
+        rows[key] = {"used": used, "limit": limit,
+                     "pct": int(round(100.0 * used / limit)) if limit else (100 if used else 0)}
+    if not rows:
+        return None
+    top = max(rows, key=lambda k: rows[k]["pct"])
+    return {"resources": rows, "max_pct": rows[top]["pct"], "max_resource": top}
+
+
 def _check_failed_input(state, input_hash, action):
     if input_hash:
         failure = next((row for row in reversed(state["outcomes"])

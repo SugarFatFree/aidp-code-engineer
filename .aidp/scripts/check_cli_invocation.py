@@ -25,7 +25,7 @@
 
 ## 豁免
 
-行内写 `cli-check: ignore <原因>` 即豁免该行。
+行内写 `cli-check: ignore <原因>` 即豁免该行；调用行前 6 行内有「先跑 `--help`，脚本列有…时」式条件探测说明的，unknown-flag 不报（flag 由运行时探测）。
 
 ## 用法
 
@@ -54,6 +54,10 @@ EXCLUDE_DIR_PREFIXES = (".aidp-backup",)
 # 本地运行态（gitignore）：旧审计/验证快照里是历史版本的整份文档副本，不是仓库文档；精确按相对路径排除。
 EXCLUDE_REL_DIRS = {"memory/.aidp"}
 IGNORE_RE = re.compile(r"cli-check:\s*ignore\s*\S")
+# 条件探测式调用：文档自己写明「先跑 --help，脚本列有该 flag 时才带上」，flag 是否存在由调用方运行时决定，
+# 不是对脚本 CLI 的硬承诺。仅豁免 unknown-flag（子命令/缺失脚本仍报），且只看调用行前 PROBE_LOOKBACK 行。
+PROBE_RE = re.compile(r"--help[^\n]{0,40}(?:列有|支持|存在|提供)")
+PROBE_LOOKBACK = 6
 INVOKE_RE = re.compile(r"(?<![\w-])python3?\s+(?:-u\s+)?([^\s`'\"|;&()]+\.py)\b([^`\n]*)")
 STOP_TOKENS = {"|", "||", "&&", ";", ">", ">>", "<", "2>&1", "&", ")", "then", "do"}
 CJK_RE = re.compile("[\u3000-\u9fff\uff00-\uffef]")
@@ -226,8 +230,9 @@ def run(root, paths=None):
                         warns.append({"file": rel, "line": no, "script": bname,
                                       "kind": "non-argparse", "token": flags[0]})
                         continue
+                    probed = any(PROBE_RE.search(x) for x in raw[max(0, no - 1 - PROBE_LOOKBACK):no - 1])
                     for fl in flags:
-                        if PLACEHOLDER_RE.search(fl):
+                        if PLACEHOLDER_RE.search(fl) or probed:
                             continue
                         if not info.flag_known(fl):
                             errors.append({"file": rel, "line": no, "script": bname,

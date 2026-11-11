@@ -243,7 +243,9 @@ RELEASED=$(printf '%s\n' "$TAGS" | head -1)
 [ -z "$RELEASED" ] && [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" get internal_released_at --default "" 2>/dev/null)" ] && RELEASED="internal_released_at"
 [ -z "$RELEASED" ] && [ -d "docs/deployment/$V/配置文件/全量" ] && RELEASED="deployment-baseline"
 # ② progress.md「版本历史」/ 版本更新日志 标本版「✅ 已发布」
-[ -z "$RELEASED" ] && grep -qsE "$V.*✅ ?已发布|已发布.*$V" "memory/$V/$(python3 {{AIDP_HOME}}/scripts/vcs.py user)/progress.md" 版本更新日志.md 2>/dev/null && RELEASED="$V(状态已发布)"
+# ⛔ 版本号须转义 `.` 并要求版本边界（`V0.2.1` 不得命中 `V0.2.10 ✅ 已发布`）
+V_ESC=${V//./\\.}; V_PAT="${V_ESC}([^0-9.]|$)"
+[ -z "$RELEASED" ] && grep -qsE "${V_PAT}.*✅ ?已发布|已发布.*${V_PAT}" "memory/$V/$(python3 {{AIDP_HOME}}/scripts/vcs.py user)/progress.md" 版本更新日志.md 2>/dev/null && RELEASED="$V(状态已发布)"
 # ⛔ fail-closed：tag 判定本身失败且其余信号均未命中 → 落点未知，按「已发布」进下方决策门，⛔ 不并入"未发布"
 [ "$TAG_OK" = 0 ] && [ -z "$RELEASED" ] && RELEASED="unknown(tag-query-failed)"
 elif [ "$VCS_MODE" = "none" ]; then
@@ -252,14 +254,14 @@ elif [ "$VCS_MODE" = "none" ]; then
   [ -n "$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$V" get internal_released_at --default "" 2>/dev/null)" ] && RELEASED="internal_released_at"
   [ -z "$RELEASED" ] && [ -d "docs/deployment/$V/配置文件/全量" ] && RELEASED="deployment-baseline"
   UNRELEASED=0
-  V_ESC=${V//./\\.}
+  V_ESC=${V//./\\.}; V_PAT="${V_ESC}([^0-9.]|$)"
   for progress in "memory/$V"/*/progress.md 版本更新日志.md; do
     [ -f "$progress" ] || continue
-    if grep -qsE "$V_ESC.*✅ ?已发布|已发布.*$V_ESC" "$progress"; then
+    if grep -qsE "${V_PAT}.*✅ ?已发布|已发布.*${V_PAT}" "$progress"; then
       [ -z "$RELEASED" ] && RELEASED="$V(状态已发布)"
     fi
     # 只有版本号同一行明确写未发布，且不存在任何已发布信号，才允许累进。
-    grep -qsE "$V_ESC.*未发布|未发布.*$V_ESC" "$progress" && UNRELEASED=1
+    grep -qsE "${V_PAT}.*未发布|未发布.*${V_PAT}" "$progress" && UNRELEASED=1
   done
   if [ "$UNRELEASED" = 1 ] && [ -n "$RELEASED" ]; then
     RELEASED="unknown(local-release-state-conflict)"

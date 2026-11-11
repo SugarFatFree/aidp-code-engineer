@@ -1388,6 +1388,16 @@ def _runtime_source() -> Path:
     return L.template_aidp() or L.BUNDLE_AIDP
 
 
+def _source_runtime_rels(source) -> set:
+    """真源提供的受管契约相对路径（安装名）。
+
+    ⛔ 真源为 bundle 时 SKILL.md 以 `SKILL.md.in` 遮名存放：与「已装 / 旧 manifest」的安装名对账前
+    必须先 `bundle_unmask`（真实 `.aidp/` 树对它是空操作，无条件调用），否则所有 SKILL.md
+    都被误判「新版已不提供」。
+    """
+    return {L.bundle_unmask(rel) for rel, _p in runtime_layout._runtime_files(Path(source))}
+
+
 def snapshot_runtime_fillable(root: Path) -> dict:
     """安装前保存已吸收的骨架指纹；旧项目补记旧下发件，防重跑误认新件已合并。"""
     ledger = L._uf_load(root)
@@ -2189,6 +2199,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         #   `local_overwritten` 与「用户确实没改过」在 JSON 上完全同形。
         _prev_manifest = ({name: meta["sha256"] for name, meta in manifest["files"].items()}
                           if manifest is not None else installed_manifest(root))
+        _source_rels = _source_runtime_rels(source)
         if isinstance(_prev_manifest, dict):
             for _rel, _sha in sorted(_prev_manifest.items()):
                 if _rel in L.USER_FILLABLE_CONTRACTS:
@@ -2198,7 +2209,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 _live = dest / _rel
                 if not _live.is_file() or _live.is_symlink():
                     continue
-                if not (Path(source) / _rel).is_file():
+                if _rel not in _source_rels:
                     continue          # 新版已无此契约 → 属 orphans 范畴
                 try:
                     _now = L.sha256(_live.read_bytes())
@@ -2210,7 +2221,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         # ★ 覆盖升级整包替换：「旧 manifest 有、新 source 无」的文件替换后即消失，
         #   事后的 orphans 判据（安装后仍存在）永远不成立，必须在替换前算。
         if not preserve_gated and isinstance(_prev_manifest, dict):
-            _new_src = {rel for rel, _p in runtime_layout._runtime_files(Path(source))}
+            _new_src = _source_rels
             _user_owned = set(manifest.get("user_files", [])) if manifest is not None else set()
             for _rel in sorted(set(_prev_manifest) - _new_src - _user_owned):
                 _live = dest / _rel
@@ -2237,7 +2248,7 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
         #   漏报的后果是项目里留着一份「看着生效、实际早已无调用方」的契约，
         #   而它与「本项目特化了这一条」在磁盘上完全同形，只有对照旧 manifest 才分得清。
         if isinstance(_prev_manifest, dict):
-            _new_rels = {rel for rel, _p in runtime_layout._runtime_files(Path(source))}
+            _new_rels = _source_rels
             for _rel in sorted(set(_prev_manifest) - _new_rels):
                 if not (dest / _rel).exists():
                     continue          # 已被用户删掉，不算孤儿

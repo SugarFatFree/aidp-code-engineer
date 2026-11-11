@@ -105,6 +105,8 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 **调用参数**（按 SKILL 输入要求传入）：
 - **运行模式**：`mode=verify-only`——任务描述写明「代码与文档已按档位汇合；只验收、不修复，单轮完整问题清单交调用方」。CVL **不支持 delta 参数**，不构造 `mode=delta` 或虚构开关。只做这一次完整质量审查；修复后由调用层 reviewer 查问题与新增 diff，**不得宣称 CVL 二次完整通过**。其命令型检查同样经测试账本复用，不能用账本替代语义质量审查。
 - **代码路径（`scope_files`）**：当前 task/单 Sprint 写集及必要依赖的精确文件清单，不传 `code/`、项目根或全版本目录；`scope_ids` 同步传本任务需求/接口/页面/用例 ID。
+- **目标库方言**：`python3 {{AIDP_HOME}}/scripts/aidp_config.py get project.sql_dialect`，非空时在 prompt 写明原样传 `--sql-db <值>`（CVL「SQL 标识符通用性」扫描），空 = 通用、不传；只透传，判据以 SKILL 为准。
+- **DDL 并入范围**：本 Sprint 有 DDL / 初始化数据变更时，把对应 `docs/deployment/{version}/sql/增量/*.sql` 并入 `scope_files`（该目录不在 `code/` 下，不显式并入则 `sql-identifier-case` 扫不到实际交付的 `.sql`）。
 - **设计文档路径**：`docs/design/detail/{version}/` 下真实正式产物，并显式附 `docs/design/detail/{version}/_sprint-{NNN}-契约卡.md` 与 `contract_revision`。S 未成文部分以契约卡为本轮规格、四族台账为待成文义务，明确告诉 CVL 不把预期延期误报成“正式文档已齐备”；SKILL 自身判据和原结论保持原样。
 - **接口文档路径**：按契约卡 docs路径/`00_索引.md` 指向的真实接口章节；M 合册直接传合册与契约接口章节，不传不存在的 `03_接口设计.md`。旧布局兼容 `03_接口设计.md` / `接口设计.md`，多分册则传目录与明确文件清单。
 - **被测项目根**：仓库根（`.`），仅用于定位 `{{AIDP_HOME}}/scripts/` 下四个外部脚本维度（10 `check_ui_fidelity.py` / 12 `check_upstream_call_log.py` / 13 `check_design_anchor.py` / 15 `check_sibling_family.py`）。范围模式下这些维度按 SKILL 范围模式规则处理（不扫全项目）；SKILL 标注的「未核验」不是代码缺陷，调用层可按任务文件清单另行只读核对并留证据，不改写 SKILL 结论。
@@ -116,9 +118,13 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 - **被验收版本号**：仅**版本级**调用（不传 `scope_files`）的维度 13 才必需传 `{version}`；本命令的范围模式不要求，仍把 `{version}` 写进任务描述便于回链。
 
 
-- **改动前基线 `baseline_ref`**（SKILL 入参；维度 0 类型检查的存量基线及维度 4 / 7 / 8 / 14 的一切基线对照**一律取改动前**；未传时 SKILL 回落 `git merge-base HEAD <主干分支>`——**主干开发时 merge-base 就是 `HEAD`**，本次改动被整批吞成「存量」，方向是假绿。故本参数**必须显式传**，⛔ 不得省略交给 SKILL 回落）：
-  - `vcs_mode=git`：传 `baseline_ref=<本 Sprint 起点 commit>`（`/sprint-dev` 动手前的 HEAD，与 `flows/sprint-dev/postdev-writeback-1.md` X.0.0 变更检测用的 `{sprint-start-sha}` 同一值）。先读取契约卡保存的改动前基线 ref，验证它确为本 Sprint 起点；旧流程无卡时按序解析、取到即停：① 上游编排（`/sprint-full` 等）显式透传的起点 commit；② 本 Sprint 改动全部仍在工作区未提交（本 Sprint 无已提交 commit）→ `HEAD`；③ 当前在特性分支 → `git merge-base HEAD <主干分支>`，**仅当结果 ≠ `HEAD` 才有效**；④ 以上皆不成立 → 按下方「取不到」处置。⛔ 不得用 `HEAD~1` 顶替（多 commit 的 Sprint 会漏掉前面的改动）、⛔ 不得凭感觉挑一个 commit。
-  - `vcs_mode=none`：无可检出的改动前代码（`sprint-{NNN}-local-before.json` 只有 sha256、不含旧内容，跑不了改动前的类型检查）→ 一律按「取不到」处置。
+- **改动前基线 `baseline_ref`**（SKILL 入参，取值语义与未传时的回落以 SKILL 为准，命令端不复述；本参数**必须显式传**，⛔ 不得省略交给 SKILL 回落）：
+  - `vcs_mode=git`：传 `baseline_ref=<本 Sprint 起点 commit>`，来源是契约卡 / activeContext 保存的改动前基线 ref（`/sprint-dev` 动手前冻结的起点，与 `execution_context` 的 `since` 同源；`flows/sprint-dev/incremental-contract.md` 身份与状态行）。取值**只经**确定性解析，不靠现场读文字推导：
+    ```bash
+    python3 {{AIDP_HOME}}/scripts/sprint_baseline.py resolve --root . [--card-ref <契约卡基线 ref>] [--passthrough <上游编排透传起点>] [--sprint-uncommitted] [--main-branch <主干分支>] --json
+    ```
+    `--sprint-uncommitted` 仅当本 Sprint 改动全部仍在工作区未提交时加（脚本另验工作区确有未提交改动）。脚本按「契约卡 → 上游透传 → 工作区未提交取 `HEAD` → `merge-base`（仅 ≠ `HEAD` 有效）」取到即停，每个候选校验为 `HEAD` 祖先；输出 `baseline_ref`（commit 或 `none`）与 `unverified_label`，退出码 3 = 取不到。⛔ 不得用 `HEAD~1` 顶替、⛔ 不得凭感觉挑一个 commit。
+  - `vcs_mode=none`：无可检出的改动前代码（`sprint-{NNN}-local-before.json` 只有 sha256、不含旧内容，跑不了改动前的类型检查）→ 一律按「取不到」处置（脚本同样返回 `none` + `unsupported:vcs-disabled`）。
   - **取不到时**：传 `baseline_ref=none`（SKILL 的显式「无改动前基线」入参）：依赖基线的项落「**基线无效，本项未核验**」（`未核验（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`），不回落 `merge-base`，也不以本轮首跑错误数作基线。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**无人值守 / 编排调用必须向上游返回「存在未核验维度 / 不通过」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
 
 **额外提示**（命令端补充给 skill 的上下文）：

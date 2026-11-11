@@ -81,6 +81,12 @@ python3 {{AIDP_HOME}}/scripts/deployment_ops.py pending --version {version}
    python3 {{AIDP_HOME}}/scripts/release_baseline_check.py --version {version} --json
    ```
    13 项确定性校验。**有 ERROR → 逐条修复后重跑，修不掉则本步判失败**（走上面的欠账登记 + 跳过），**绝不带 ERROR 发布全量基线**——占位符残留 / 密码明文 / 环境绑定物残留这类缺陷在新环境跑起来之前发现不了。WARN（裸配置项 / 建表缺幂等）不阻塞，但须在发布报告列出。
+   **SQL 标识符采集（全量 `.sql`，判据以 `code-verification-loop` 维度 4「SQL 标识符通用性」为准，本处不复述）**：采集器退出码恒 0，⛔ 必须读命中清单，不能凭退出码判通过：
+   ```bash
+   SQL_DB=$(python3 {{AIDP_HOME}}/scripts/aidp_config.py get project.sql_dialect)   # 空 = 通用，不带 --sql-db
+   python3 {{AIDP_HOME}}/skills/code-verification-loop/scripts/scan_code_conventions.py docs/deployment/{version}/sql/全量 --checks sql-identifier-case ${SQL_DB:+--sql-db "$SQL_DB"} --json
+   ```
+   命中项按 SKILL 的「历史库既有加引号表须显式登记沿用」口径处置（导出自历史库的既有写法不静默改名），其余随全量脚本一并修正后重跑。
 
 **输出摘要**：
 ```

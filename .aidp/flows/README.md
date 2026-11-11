@@ -22,7 +22,7 @@
 5. **flow 文件不是命令**：`{{AIDP_HOME}}/flows/` **不**被 Claude Code 当作 slash 命令扫描（只有 `{{AIDP_HOME}}/commands/*.md` 才是），故不污染 `/` 菜单；`Read` 工具可正常读取。
 6. **★ 单文件大小硬约束：每个【执行分片】≤20KB（硬上限）、尽量 ~10KB**。**执行分片 = `{{AIDP_HOME}}/flows/**` 下除 `README.md` / `rationale.md` / `invariants.md` / `usage-guard.md` / `output-examples.md` 之外的【全部】 `.md`**——不只 `phase-N.md`：`version/planning-*`、`sprint-design/step-*`、`sprint-dev/postdev-*` 等同样是执行分片，且其中若干长期贴着上限。**原因**：flow 文件被 Read 进上下文时，若本身上百 KB，"lost in the middle" 照旧存在、等于没拆彻底——分片的意义正是让"任一时刻活跃指令"足够小。超 20KB 的执行分片必须**按子步骤边界二次切分**成多个 `<段名>-1.md` / `<段名>-2.md` …（每片头部写明"本片覆盖子步骤 X.a–X.b"），命令主体的该段骨架表则**逐子步映射到对应分片**、模型按进度依次 Read。**切分不得从中间截断**任何 markdown 表格 / 代码块 / 单条硬门。
    - **★ 附属文件豁免**：`invariants.md`（全 Phase 通用、由命令主体在进入执行链前**一次性加载**，本就不随 Phase 反复进出上下文）、`usage-guard.md`（参考性、执行路径不载）、`rationale.md` / `output-examples.md`（执行期不载）**不受 ≤20KB 硬上限约束**——它们不是"某一时刻的活跃指令集"，切碎反而破坏"按名引用解析到唯一定义处"的单一信源性。但仍应**尽量精简**：只放真正全局通用的条目，Phase 专属内容一律回归对应 `phase-N.md`。
-7. **★ 序列连续、无缺口（统一性）**：一个命令若已把多数 Phase/Step 外置，就**全部外置、不留中间缺口**（避免 `phase-0/1/3` 缺 `phase-2` 这种别扭序列）——哪怕某段较小也外置以保持一致。
+7. **★ 序列连续、无缺口（统一性）**：一个命令若已把多数 Phase/Step 外置，就**全部外置、不留中间缺口**（避免 `phase-0/1/3` 缺 `phase-2` 这种别扭序列）——哪怕某段较小也外置以保持一致。**例外（主体留存）**：① 硬门 / 判定步（如 `sprint-selftest` 的 Step 2 输出前硬门）——执行体在读分片前就必须在场，外置会形成先读后判的循环依赖；② 体量未达外置门槛的小段（如 `sprint-design` 的 Step 0.7 / 5.x / 6 / 7、`sprint-dev` 的 Phase 0A / 0B，见下文「保留不拆」）。除此之外不留缺口。
 8. **★ 适用条件前置（让执行体"先判后读"、不读用不上的片）**：**唯一机制 = 命令主体骨架表的「适用条件」列**（骨架表已在上下文，执行体据此判断某子步/分片当次适不适用，不满足则**整片跳过、无需 Read**，如纯小程序/移动轮次跳过 chrome 预检片、客户端 MCP 未声明跳过 `phase-0-8.md`）。⛔ **唯一机制就是这一列**，不设「分片 frontmatter 机读副本」（`{{AIDP_HOME}}/rules/` 的 `paths:` frontmatter 是另一回事）。
    - **覆盖面 = 全部「分片数 ≥4」的命令，且逐表都有这列**。⛔ 本文**不写命令名、不写片数**（写死必漂，同本 README 的「写死必漂」教训；且片数声明另受 `check_shard_counts.py` 按行归属校验）——**现状以机器门输出为准**：`python3 {{AIDP_HOME}}/scripts/check_step_index_coverage.py` 对「分片数 ≥4 且某张带『所在分片』列的骨架表无『适用条件』列」**逐表**报 WARN（不占退出码：补列是内容工作、不该拦住别人的提交，但缺口必须有人看见）。
      ⚠️ **判据刻意是逐表、不是逐命令**：一个命令常有多张骨架表，按「至少一张有」算就让其余几张的缺口完全隐身 —— 而执行体读的是**它当前那一段**那张表。不带「所在分片」列的表（如硬门判定表）不在要求范围内，它们不是用来跳片的。
@@ -74,7 +74,7 @@
 
 > 命令主体行数随维护浮动、不写进本表（要看跑 `wc -l {{AIDP_HOME}}/commands/<命令>.md`）；**分片数**是稳定契约，由 `verify.py` 的分片计数与 ≤20KB 体积校验兜住。
 
-Phase 序列连续无缺口（本目录约定 7）；每个 flow 目录另含 `rationale.md`（理据剥离位，执行期不载）。
+Phase 序列除约定 7 列明的主体留存例外外连续无缺口；每个 flow 目录另含 `rationale.md`（理据剥离位，执行期不载）。
 
 **本目录约定 6 的达标情况以现算为准**（⛔ 不在本文写死结论：写死必漂，与本 README 上方「写死必漂」同一条教训）——跑 `python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/verify.py . <项目版本号> <user>` 看「flows 分片超 20480B」一项。**判据 = `> 20480` 才违规、恰好 20480 合规**（与 `check_flow_slice_size` 逐字一致）。`sprint-autopilot/invariants.md`（显著超出）属**顶层不变式类、按本目录约定 6 不受 ≤20KB 约束**——它在进入执行链前一次性加载、非按 Phase 轮换，但**仍偏大、应持续精简**（Phase 专属内容回归对应 `phase-N.md`）。临时自查一行（⛔ 判据以 verify 为准，本行只是就手看看）：`find {{AIDP_HOME}}/flows -name '*.md' ! -name 'README.md' ! -name 'rationale.md' ! -name 'invariants.md' ! -name 'usage-guard.md' -size +20480c`——`find` 的 `+N` 是**严格大于**，故 `+20480c` 与闸门口径完全一致；**必须扫全部执行分片**：只匹配 `phase-*.md` 会漏掉 `version/planning-*`·`release-*`、`sprint-design/step-*`、`sprint-dev/*` 等多片。
 

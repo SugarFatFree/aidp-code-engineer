@@ -124,7 +124,8 @@ def _exit_bounded_block(root, key, message):
     except (ValueError, TypeError):
         count = 0
     if count > STOP_GUARD_MAX_BLOCKS:
-        _exit_allow()
+        # 上限之后的每次放行同样记账（此前静默放行 = 护栏失效却无记录，与本文件「放行必须出声」相悖）
+        _exit_allow_noted(root, "max-blocks-exceeded", f"{key} 已超阻止上限 {STOP_GUARD_MAX_BLOCKS}，护栏对该 build 不再介入；未收口原因：{message}")
     counts[key] = count + 1
     try:
         path.write_text(json.dumps(counts, ensure_ascii=False), encoding="utf-8")

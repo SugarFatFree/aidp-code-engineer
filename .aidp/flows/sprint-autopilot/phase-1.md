@@ -151,10 +151,12 @@ fi
 
 ```bash
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-python3 {{AIDP_HOME}}/scripts/autopilot_stuck_check.py --version "$TARGET_VERSION"; SC=$?
+# ★ 仅准发布的 tick（无开发目标）TARGET_VERSION 为空：改查 PRE_RELEASE_VERSION（Phase 2 同样维护其 run-state），
+#   否则通用兜底在该路径上形同缺席、且把正常稳态当成「入参错」。两者皆空才是真入参/环境错（rc=2）。
+python3 {{AIDP_HOME}}/scripts/autopilot_stuck_check.py --version "${TARGET_VERSION:-${PRE_RELEASE_VERSION:-}}"; SC=$?
 case "$SC" in   # ⛔ 必须按码分流；禁写 `|| exit 0`（见 rationale）
   1) echo "→ 已冻结（#4 由脚本自己发出）"; exit 0;;
-  2) echo "⚠️ 入参/环境错（如本块未代入 TARGET_VERSION）→ 跳过本门继续，不据此退出";;
+  2) echo "⚠️ 入参/环境错（TARGET_VERSION 与 PRE_RELEASE_VERSION 均为空 / 本块未代入）→ 跳过本门继续，不据此退出";;
   3) # stuck 成立但冻结写盘失败。有下一 tick → 让位重试；⛔ 无唤醒源时「让位」= 就此收场，
      #    而 stuck 恰恰是「既不失败也不推进」——静默退出与它本身完全同形，必须留下冻结记录。
      if [ "${HAS_WAKE_SOURCE:-0}" = "1" ]; then

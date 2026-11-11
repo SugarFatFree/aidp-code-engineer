@@ -702,7 +702,12 @@ class ScheduledAiautoContextFlowTests(unittest.TestCase):
         log = self.root / 'memory/.aidp/logs/sprint-aiauto-test.log'
         detail = proc.stdout + proc.stderr + (log.read_text() if log.is_file() else '')
         self.assertEqual(proc.returncode, 0, detail)
-        self.assertTrue(output.is_file())
+        if not output.is_file():
+            # tick-check 确定性空闲门（B-07）：无待测目标/已显式跳过测试时不拉起 Agent，等价于入口输出下列结论。
+            for reason, text in (('no-test-target', 'NO_TARGET'), ('test-not-requested', 'NOT_REQUESTED')):
+                if '原因：' + reason in detail:
+                    return text + ' (idle gate)'
+        self.assertTrue(output.is_file(), detail)
         return output.read_text()
 
     def test_natural_browser_entry_stays_light_despite_deployed_build(self):

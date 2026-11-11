@@ -83,7 +83,7 @@ ENV_BOUND_SQL = (
 )
 
 # COMMENT ON COLUMN "T"."C" IS '...' / COMMENT ON TABLE "T" IS '...'
-# —— 列/表限定语法，非环境绑定物；匹配 schema 前缀前先整句摘除（见 check 3 注释）。
+# —— 列/表限定写法（带引号时的形态），非环境绑定物；匹配 schema 前缀前先整句摘除（见 check 3 注释）。
 COMMENT_ON_RE = re.compile(
     r"COMMENT\s+ON\s+(?:COLUMN|TABLE)\b[^;]*;?", re.I | re.S)
 
@@ -517,7 +517,7 @@ def check_sql_env_bound(sql_full, rep):
             continue
         body = "\n".join(ln for ln in text.splitlines() if not ln.strip().startswith("--"))
         # ★ 先摘掉 COMMENT ON COLUMN/TABLE 语句再匹配 schema 前缀：
-        #   `"T_USER"."NAME"` 在 COMMENT ON COLUMN 里是**列限定语法**（达梦/Oracle 必需），
+        #   `"T_USER"."NAME"` 在 COMMENT ON COLUMN 里是**带引号时的列限定写法**（引号标识符的既有形态；不加引号的全大写写法同样可用，见 SKILL 核心原则 12，本门不据此判裸引号表名），
         #   与 `"SCHEMA"."TABLE"` 这种真·环境绑定物同形。不排除的话，一个正常建表脚本
         #   的每条列注释都算一次命中——下游实测 5 个脚本命中 163 次、**全部是列注释**。
         #   为迎合正则删列注释就是丢掉全部字段业务含义（违反约定 17），于是这条 ERROR

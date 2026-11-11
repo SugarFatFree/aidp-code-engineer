@@ -124,6 +124,17 @@ def test_cli_invocation():
     check("★ 阳性：只排除精确的 memory/.aidp，其他同名片段的错误调用仍报", rc == 1 and not d.get("ok"))
     shutil.rmtree(root, ignore_errors=True)
 
+    # 条件探测式调用：文档自述「先跑 --help，脚本列有 … 时才带」→ unknown-flag 不报；无该说明仍报。
+    root = _mkroot()
+    _w(root, ".aidp/scripts/tool_probe.py", "import argparse\nap = argparse.ArgumentParser()\nap.add_argument('--version')\n")
+    _w(root, "docs/probe.md", "先跑 `--help`，脚本列有 `--paths` 时带上：\n\n```bash\npython3 .aidp/scripts/tool_probe.py --version 1 --paths a\n```\n")
+    rc, d = _run("check_cli_invocation.py", root)
+    check("条件探测说明之后的未知 flag 不报", rc == 0 and d.get("ok"))
+    _w(root, "docs/noprobe.md", "```bash\npython3 .aidp/scripts/tool_probe.py --version 1 --paths a\n```\n")
+    rc, d = _run("check_cli_invocation.py", root)
+    check("★ 阳性：无探测说明的同样调用仍报 unknown-flag", rc == 1 and [e["kind"] for e in d.get("errors", [])] == ["unknown-flag"])
+    shutil.rmtree(root, ignore_errors=True)
+
 
 def test_private_markers():
     print("\n[P] check_private_markers.py")

@@ -74,7 +74,7 @@
 
 ★ **核心原则**：所有"可能中途阻塞执行主流程（Phase 2/3）"的决策必须在 Phase 0 全部收齐。绝不允许命令跑到 Phase 3.2 才弹 `AskUserQuestion` 问"你的部署 URL 是什么"——长时间运行被半路打断对 7×24 是致命缺陷。
 
-★ **零交互覆盖清单（不只"字段缺失"，连"自动判定 / 自动降级"也算 Phase 0 责任）**：以下**会中途阻塞**的决策全部前置为 Phase 0 自动判定或自动降级，**主流程（Phase 2/3）中途一律不得再就它们弹 `AskUserQuestion`**（前置为 Phase 0 一次性决策，不是禁止交互式在 Phase 0 问）——① **ENTRY_MODE**：`--skip-dev` → `test-only`（显式、零交互）；`full`↔`incremental` 由 3.1.0 `PLANNING_DONE` 硬判据自动裁定（非弹窗）；**唯一需交互的是"命中 test-intent 关键词但未带 `--skip-dev`"这一裁剪歧义** → **属 Phase 0 必问白名单**：**交互式在 Phase 0 `AskUserQuestion` 问「全流程 / 仅测试」（P0-0，不再"绝不弹窗自动判 test-only"）、`/loop` 无人值守保守默认 full 不弹窗**；② **远程 chrome 不可达**由测试链路 `/sprint-aiauto-test` Phase 0.1.5 A0 **自动降级本机无头 cli**（非强制远程 + 本机可用时），绝不弹"retry / 换IP / abort"；③ 其余决策字段按下表一次性收齐（字段清单单一信源 = `phase-0-7.md` 字段定义块）。⛔ **`/loop` 无人值守上下文：主流程任何 `AskUserQuestion` 视为规范违规**（无人值守恒走保守默认，含 ENTRY_MODE 保守 full）。
+★ **零交互覆盖清单（不只"字段缺失"，连"自动判定 / 自动降级"也算 Phase 0 责任）**：以下**会中途阻塞**的决策全部前置为 Phase 0 自动判定或自动降级，**Phase 2/3 中途一律不得再就它们弹 `AskUserQuestion`**——① **ENTRY_MODE**：`--skip-dev` → `test-only`（显式、零交互）；`full`↔`incremental` 由 3.1.0 `PLANNING_DONE` 硬判据自动裁定（非弹窗）；**唯一需交互的是"命中 test-intent 关键词但未带 `--skip-dev`"这一裁剪歧义**：**交互式在 Phase 0 `AskUserQuestion` 问「全流程 / 仅测试」（P0-0）、`/loop` 无人值守保守默认 full 不弹窗**；② **远程 chrome 不可达**由测试链路 `/sprint-aiauto-test` Phase 0.1.5 A0 **自动降级本机无头 cli**（非强制远程 + 本机可用时），不弹"retry / 换IP / abort"；③ 其余决策字段按下表一次性收齐（清单见 `phase-0-7.md`）。⛔ **`/loop` 无人值守：主流程任何 `AskUserQuestion` 视为规范违规**（恒走保守默认）。
 
 ★ **Phase 0 必问白名单（"零弹窗"的显式例外）**：test-intent 裁剪歧义（P0-0）、0.6 决策字段缺失、0.6bis 用例前置资源缺口属于**一次性前置配置收集**，**不受**上面「零弹窗 / 禁止中途阻塞」约束——那些约束针对**执行主流程（Phase 2/3）中途**阻塞，**不是** Phase 0 前置一次性收集。即：**交互式调用（用户在场）下必须在 Phase 0 `AskUserQuestion` 问一次**；**仅 `/loop` 无人值守**（无人可问）才走保守默认 + WARN。
 
@@ -93,6 +93,19 @@ $DM --json   # 合并结果 = 第 2 步字段比对的唯一输入；冲突告�
 $DM --check || echo "⚠️ 兜底段 memory/aidp-config.yaml autopilot_decisions 与 PRD 冲突：本轮按 PRD 跑，按上面建议清理"
 ```
 2. 与必填决策字段清单对比（单一信源 = `phase-0-7.md` 的字段定义块），得出**完整缺失字段清单**
+2bis. **★ 技术边界预确认门（仅无人值守）**：本版需生成设计（`docs/design/detail/$TARGET_VERSION/` 不存在，或带 `--force-replan`）时，须有用户落盘的技术边界：PRD `autopilot_decisions.tech_boundary`（`phase-0-7.md` ⑧）> `docs/architecture/技术选型.md`；唯一实现 = `autopilot_tech_boundary.py`，⛔ 不推断。皆无 → 冻结（`prd-missing`，补 PRD 后自动解冻）+ #4，**不进入 `/sprint-design`**（缘由见 `rationale.md`「技术边界预确认门」）：
+
+   ```bash
+   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
+   if [ "${LOOP_UNATTENDED:-0}" = 1 ] && { [ ! -d "docs/design/detail/${TARGET_VERSION:?}" ] || [ "${FORCE_REPLAN:-0}" = 1 ]; }; then
+     python3 {{AIDP_HOME}}/scripts/autopilot_tech_boundary.py --version "$TARGET_VERSION" >/dev/null 2>&1 || {
+       python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --version "$TARGET_VERSION" --phase 0.6-tech-boundary \
+         --reason prd-missing --freeze-now \
+         --why "无可用技术边界：请补 PRD 头部 autopilot_decisions.tech_boundary（至少 backend+database，无则写 none）"
+       exit 0; }
+   fi
+   ```
+
 3. 缺失字段为空 → 直接进入 Phase 1
 4. 缺失字段非空 → **按上下文分流**（堵住"7×24 中途新增一份缺字段 PRD 就弹窗死锁"缺口）：
    - **交互式（用户在场）**：命令端**一次性弹 AskUserQuestion 系列收集**，按下方批次分批问（每批最多 4 题）。

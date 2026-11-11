@@ -337,19 +337,19 @@ baseline，必须先于任何读取。`--reset-baseline` 走 rc=10（执行完�
 - **尾段孤儿（0.3.4 选版为何要先看 `run_state`）**——S1 的判据是"至少有一个未关闭 Sprint"，于是**最后一个 Sprint 一 close，版本立刻翻 S2**、随即被踢出 `{S0,S1}` 的 TARGET 候选；而它的部署 / 就绪探针 / 终审 / 收尾**还没跑**。这不是理论路径：Step D 明确设计成"本 tick 未探完 → 游标留本步、下 tick 续探"（探针超时上限默认 600s），即"tick 在尾段中途结束"是被预期的常态。孤儿之后是连锁的：`last_deployed_at` 永不写 → Phase 2 0a 累计 `prerelease_deploy_block_streak` → 3 tick 后按 `deploy-unreachable` 冻结，而诊断是错的（不是环境不可达，是自己没去跑完探针）；再叠加 Phase 2 的 0T 中间过渡版本规则——只要更新版本的研发执行计划已存在（7×24 里 autopilot 自己就会规划下一版），冻结被翻转成"照常归档准发布"，于是**一个从未部署成功、从未实测的版本被静默标记为准发布**，恰好击穿 0a/0b 双门要防的那件事。修法：选版先扫 `run_state.next_phase ∉ {"", "done"}`，不论 S 态优先续跑。
 - **就绪探针出口条件（`phase-3-7.md` Step D）**——出口分支读 `${PROBE_PASSED:-0}`，而该变量全仓零赋值 → 恒取 0 → 恒走 else → 探针明明过了，游标也永远停在 `3.2.1-probe`：下 tick 从头重探、`last_deployed_at` 反复重写、`pending_actions` 的 `deploy-probe` 永不清空，于是 Phase 3.3/3.4 永不开始、build 永不收口，最后只能靠通用 stuck 熔断（8 tick + 滞留 2h）冻结待人。讽刺的是 Step D 的独立出口正是为了治"游标停在 probe"才加的——出口写了，但它的条件变量没人赋值，等价于出口不存在。现改为**判定当场落盘 + 出口读回**，并以「本 build 的 `last_deployed_at` 已写」作事实兜底（判据只认产物、不认执行体自述）。
 - **规划段为何必须委派独立子 Agent**——`/version` 是全链路最重的一段：读 2000+ 行 `version.md`、4 个规划 SKILL 的生成往返、再加 version-auditor 终审。这几十万 token 的**生成过程**若落在 autopilot 主上下文里，规划 tick 就是破 1M 的头号来源。委派之后主上下文只收一份 compact JSON，过程全留在子上下文里随之释放。交互式不委派是因为 `/version` 中需要用户决策的交互门要用户在场应答，而子 Agent 不能与用户交互。
-- **CICD 重试为何必须重跑锚定运行（Step C 失败重试）**——重试有两种看似等价的写法：`cicd_watch.py --mode retry --run-id <id>` 重跑**上一次失败的那条运行**（commit 由运行本身确定），`cicd_watch.py --mode trigger --ref <branch>` 则是**重新派发**、取分支**实时 HEAD**。重试期间只要有人往该分支推了代码，后一种写法下「自动重试」就悄悄变成「自动构建并部署一份从未被任何人确认过的新代码」——它已经不是重跑，而「无人值守可自动重试」赖以成立的前提「内容完全由上一次失败运行确定性推导得出」当场不成立。故 `retry` 恒走 `--mode retry`、首次派发才走 `--mode trigger`，两者语义不混用（个别平台的「重试」本身会按 Job 最新配置重建，故重试后仍要核对锁定运行的 commit）。prod 同理更敏感：同一份制品自动重部署生产三次会重启服务、覆盖当前制品，还可能与人工正在做的回滚打架——是否把 prod 纳入 `cicd.pipelines` 并由 `cicd.auto_trigger` 自动触发，应由项目显式决定，而不是默认敞开。
+- **CICD 重试为何必须重跑锚定运行（Step C 失败重试）**——重试有两种看似等价的写法：`cicd_watch.py --mode retry --run-id <id>` 重跑**上一次失败的那条运行**（commit 由运行本身确定），`cicd_watch.py --mode trigger --ref <branch>` 则是**重新派发**、取分支**实时 HEAD**。重试期间只要有人往该分支推了代码，后一种写法下「自动重试」就悄悄变成「自动构建并部署一份从未被任何人确认过的新代码」——它已经不是重跑，而「无人值守可自动重试」赖以成立的前提「内容完全由上一次失败运行确定性推导得出」当场不成立。故 `retry` 恒走 `--mode retry`、首次派发才走 `--mode trigger`，两者语义不混用（个别平台的「重试」本身会按 Job 最新配置重建，故重试后仍要核对锁定运行的 commit）。prod 同理更敏感：同一份制品自动重部署生产三次会重启服务、覆盖当前制品，还可能与人工正在做的回滚打架——是否把 prod 纳入 `cicd.pipelines` 并由 deploy grant 授权自动触发，应由项目显式决定，而不是默认敞开。
 
 
 
-#### 首次触发为何必须经 `cicd.auto_trigger` 显式授权（`phase-3-6.md` Step B）
+#### 首次触发为何必须经「当次 deploy grant」授权（`phase-3-6.md` Step B）
 
 `trigger`（首次主动触发）跑的是分支当前 HEAD，属「构建并部署新代码」，与「重跑失败构建」性质不同。PRD 里预声明 `deployment.cloud_deploy_trigger: cicd-provider` 表达的只是"这个项目走 CICD 流水线这条路"，**不是**"授权此后每一次真实构建部署"——**预声明 ≠ 授权**。
 
-故无人值守下的写动作（`cicd_watch.py --mode trigger` / `--mode retry`）统一由 `memory/aidp-config.yaml` 的 `cicd.auto_trigger` 这一个显式开关授权：开着（默认）即可自动执行；关着则不执行写动作，按 `cicd-auto-trigger-off` 冻结发 #4 待人。
+故无人值守下的写动作（`cicd_watch.py --mode trigger` / `--mode retry`）的授权来自**当次 execution context 的 deploy grant**（用户本轮明确要求 push/deploy 的真实来源），经写入口复核真实授权、项目禁用来源与共享预算。`memory/aidp-config.yaml` 的 `cicd.auto_trigger` 缺省 false，**只是兼容旧键**：单独设 true 不是授权、单独设 false 也不形成禁令；只有同时存在 `auto_trigger_source`（kind=project-policy 的用户明确选择）且 `auto_trigger: false` 才拦截，此时按 `cicd-auto-trigger-off` 冻结发 #4 待人（修复 = 移除/更新该禁用来源，或调整 `cicd.provider` / `cicd.pipelines`）。
 
 **场景边界**：项目配了「push 自动触发」时，正常路径是 detect 直接命中本次 push 的运行，走到 `trigger` 说明自动触发没起来、属异常，须提示；项目**未**配自动触发时，才由 autopilot 主动派发。
 
-代价是 `auto_trigger` 关闭时遇到"自动触发没起来"会冻结待人。这是**有意的取舍**：宁可停下等人，也不替没有授权的人按下部署按钮。
+代价是存在项目禁用来源时遇到"自动触发没起来"会冻结待人。这是**有意的取舍**：宁可停下等人，也不替没有授权的人按下部署按钮。
 
 
 #### CICD 失败为何先重试而非自查（`phase-3-6.md` Step C）
@@ -734,8 +734,11 @@ Stop hook 调 gate 时不传 `--expect-cards`、正好走这条推导，受影�
 1. **`eval --shell` 排在 `git push` 之后** → push 时 `$DEV_BRANCH` 恒空，
    `git push origin ""` 直接 `fatal: invalid refspec ''`（rc=128）→ `|| exit 1` →
    按同段第 5 条要走「失败处置 #4 通知 @用户介入、暂停本轮」——**无人值守链路每轮停摆等人**。
-2. **`DEV_BRANCH` 不在 tick 白名单**：它唯一的赋值（带 `$(git branch --show-current)` 自愈回落）
-   在本片**另一个**围栏里，`eval --shell` 也供不了它。故本围栏必须自己再兜一次底。
+2. **`DEV_BRANCH` 曾不在 tick 白名单**：它唯一的赋值（带 `$(git branch --show-current)` 自愈回落）
+   在本片**另一个**围栏里，`eval --shell` 也供不了它。现已登记为 autopilot tick 变量，由提交围栏在切走分支前落盘；
+   本围栏仍保留 `${DEV_BRANCH:-$(git branch --show-current)}` 兜底。**合并到部署源段**的每一步（fetch/switch/pull/merge/
+   classify/push）都有失败分支：中止合并、**切回 DEV_BRANCH**、走 `_push_fail`；成功推送后同样切回——否则冲突会让
+   未合并的旧 tip 被当成功推出，或让工作树留在部署分支、下个 tick 的开发提交直接落到部署源。
 3. **`BE` 在本围栏从未赋值**（前两个围栏各赋过一次，第三个漏了）→ 末行展开成
    `--version … set …` → `command not found` → `push_at` / `push_commit` **永不落盘** →
    Step D 就绪探针的兜底判据（`probe_commit == push_commit`）随之恒假，游标永远留在 `3.2.1-probe`。
@@ -974,7 +977,7 @@ mtime 解冻，`/sprint-aiauto-test` 的 `phase-0-6.md` 里**本来就有一份*
 与 autopilot 侧的 `account-missing` 恰恰冻结在**首次部署之前**：`phase_beta_done_at` 是 null，
 `current-version` 返回空，整个 shard 在解冻代码之前就 `exit 0`。
 
-净效果：7×24 链路第一次遇到「`cicd.auto_trigger` 关闭且需主动触发」或「测试账号没填」时冻结，**此后没有任何
+净效果：7×24 链路第一次遇到「存在 `auto_trigger_source` 禁用来源且需主动触发」或「测试账号没填」时冻结，**此后没有任何
 代码路径会来解冻它**——补好配置也没用，只能 `--reset-baseline`。
 `phase-3-7.md` 那句「补好账号即自动恢复」在这个场景下是空头承诺。
 
@@ -990,3 +993,7 @@ Phase 3.2 的单 Sprint 分支由子 Agent Read 分片执行，**它没见过 Ph
 只能靠分片里写着的东西判断。所以「本分支仅在 `HAS_WAKE_SOURCE=1` 时进入」不能只写在散文里 ——
 散文判错一次就会在无受托人的情况下 `UNATTENDED_YIELD`，`run_state.next_sprint` 停在 NNN、
 没有下一 tick 来接，整条链路永久停摆且不报错。围栏里那三行断言就是把这个前提变成可执行的。
+
+## 技术边界预确认门（phase-0-8 2bis）
+
+`dev-logic-architect` Phase 1「技术边界确认」是强交互闸门（数据库必确认、严禁从框架/原型推断），无人值守下子 Agent 无人可问：无供给时要么在无人可答处结束本轮（既不失败也不推进，只会拖到 stuck-phase 熔断），要么违反铁律自行补栈。故在进入 `/sprint-design` 前确定性检查声明是否存在，并且不套「保守默认」——数据库没有安全默认。通过时 `/sprint-design` 的无人值守上下文由 `autopilot_tech_boundary.py --summary` 供给，契约见 `reference/SKILL编排层接入.md` §四。

@@ -272,4 +272,4 @@ python3 skills/aidp-code-engineer/scripts/verify.py . --template --read-only   #
 python3 -m unittest discover -s skills/aidp-code-engineer/scripts/tests
 ```
 
-只在用户明确要求时提升范式版本：`python3 skills/aidp-code-engineer/scripts/bump_version.py V1.0.1`（改写 `版本变更历史.md`「当前范式版本」并在内部重跑 `mirror_to_bundle.py` 派生 `SCAFFOLD_VERSION` 与 `CONTRACT_MANIFEST.json`），再跑上面的模板自检，由人补写变更记录。
+只在用户明确要求时提升范式版本：`python3 skills/aidp-code-engineer/scripts/bump_version.py V<x.y.z>`（改写 `版本变更历史.md`「当前范式版本」并在内部重跑 `mirror_to_bundle.py` 派生 `SCAFFOLD_VERSION` 与 `CONTRACT_MANIFEST.json`），再跑上面的模板自检，由人补写变更记录。

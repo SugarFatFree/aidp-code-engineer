@@ -596,6 +596,107 @@ def test_recovery_scope_boundaries():
     finally:
         shutil.rmtree(root)
 
+def _merge_fence():
+    """取 phase-3-5b.md 推送围栏里「push DEV_BRANCH → 合并到部署源 → 记 push_commit」那一段真实文本。"""
+    t = (REPO / ".aidp/flows/sprint-autopilot/phase-3-5b.md").read_text(encoding="utf-8")
+    a = t.index("        _push_fail() {")
+    b = t.index("        $BE --version \"$TARGET_VERSION\" --build \"$BUILD\" set push_at", a)
+    body = "\n".join(l[8:] if l.startswith("        ") else l for l in t[a:b].splitlines())
+    return body
+
+
+def _git(cwd, *a):
+    return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True)
+
+
+def test_push_fence_merge_to_deploy_source():
+    """B-03：合并到部署源失败（冲突）时必须中止合并、切回 DEV_BRANCH、走失败处置；成功时也切回。"""
+    print("▶ 推送围栏：合并到部署源的错误处理与切回开发分支")
+    for conflict in (True, False):
+        root = Path(tempfile.mkdtemp(prefix="aidp-pushfence-"))
+        try:
+            origin, work, stub = root / "origin.git", root / "work", root / "stub"
+            stub.mkdir()
+            (stub / "scripts").mkdir()
+            (stub / "scripts/autopilot_fail_handle.py").write_text(
+                "import sys,pathlib\npathlib.Path(%r).write_text(' '.join(sys.argv[1:]))\n" % str(root / "failcalled"))
+            (stub / "scripts/classify_push.py").write_text("")
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(origin)], check=True)
+            subprocess.run(["git", "clone", "-q", str(origin), str(work)], capture_output=True)
+            for k, v in (("user.email", "t@t"), ("user.name", "t")):
+                _git(work, "config", k, v)
+            _git(work, "checkout", "-q", "-b", "master")
+            (work / "a.txt").write_text("base\n"); _git(work, "add", "."); _git(work, "commit", "-qm", "base")
+            _git(work, "push", "-q", "origin", "master")
+            _git(work, "checkout", "-q", "-b", "feat")
+            (work / "a.txt").write_text("feat\n"); _git(work, "commit", "-qam", "feat")
+            _git(work, "checkout", "-q", "master")
+            if conflict:  # 部署源上有冲突的并行提交
+                (work / "a.txt").write_text("master-side\n"); _git(work, "commit", "-qam", "m2")
+                _git(work, "push", "-q", "origin", "master")
+            _git(work, "checkout", "-q", "feat")
+            body = _merge_fence().replace("{{AIDP_HOME}}", str(stub))
+            script = ("BE=true; TARGET_VERSION=V1; BUILD=b1; DEV_BRANCH=feat; PENDING_MERGE_TO=master\n"
+                      "set -u\n" + body + "\necho REACHED_END")
+            cp = subprocess.run(["bash", "-c", script], cwd=work, capture_output=True, text=True)
+            branch = _git(work, "branch", "--show-current").stdout.strip()
+            tag = "冲突" if conflict else "无冲突"
+            check(f"[{tag}] 围栏结束后工作树回到 DEV_BRANCH", branch == "feat")
+            check(f"[{tag}] 无残留 MERGE_HEAD", not (work / ".git/MERGE_HEAD").exists())
+            if conflict:
+                check("[冲突] 走了失败处置且部署源未被推出未合并 tip",
+                      (root / "failcalled").exists() and "REACHED_END" not in cp.stdout)
+            else:
+                check("[无冲突] 部署源已含本轮代码且不走失败处置",
+                      not (root / "failcalled").exists()
+                      and _git(origin, "log", "--format=%s", "master").stdout.count("feat") >= 1)
+        finally:
+            shutil.rmtree(root)
+
+
+def test_dev_branch_registered_in_tick_flags():
+    print("▶ DEV_BRANCH 已登记为 autopilot tick 变量")
+    import autopilot_tick_flags as F
+    check("DEV_BRANCH 在 autopilot DERIVED_VARS 中", "DEV_BRANCH" in F.DERIVED_VARS["autopilot"])
+
+
+def test_tech_boundary_preconfirmation():
+    """B-01：无人值守技术边界只机械读用户已落盘声明（PRD tech_boundary > 技术选型.md），不推断；缺失即 rc=1。"""
+    print("▶ 无人值守技术边界预确认判定（autopilot_tech_boundary.py）")
+    TB = str(SCRIPTS / "autopilot_tech_boundary.py")
+    root = Path(tempfile.mkdtemp(prefix="aidp-techb-"))
+    try:
+        def run(*a):
+            return subprocess.run([sys.executable, TB, "--root", str(root), "--version", "V1.0.0", *a],
+                                  capture_output=True, text=True)
+        cp = run("--json")
+        check("两源皆空 → missing/rc=1，不推断", cp.returncode == 1 and json.loads(cp.stdout)["status"] == "missing"
+              and json.loads(cp.stdout)["missing"] == ["backend", "database"])
+        arch = root / "docs/architecture"
+        arch.mkdir(parents=True)
+        (arch / "技术选型.md").write_text(
+            "| 分类 | 项目 | 技术选型 | 版本 | 理由 | 决策人 | Sprint |\n|--|--|--|--|--|--|--|\n"
+            "| 数据库 | - | - | - | - | - | - |\n| 后端框架 | - | Spring Boot | 3 | x | u | 1 |\n", encoding="utf-8")
+        check("模板占位行不算确认：只有后端、缺数据库 → missing", run().returncode == 1
+              and json.loads(run("--json").stdout)["missing"] == ["database"])
+        (arch / "技术选型.md").write_text(
+            "| 分类 | 项目 | 技术选型 | 版本 | 理由 | 决策人 | Sprint |\n|--|--|--|--|--|--|--|\n"
+            "| 数据库 | - | 达梦 DM8 | 8 | x | u | 1 |\n| 后端框架 | - | Spring Boot | 3 | x | u | 1 |\n", encoding="utf-8")
+        res = json.loads(run("--json").stdout)
+        check("技术选型.md 已填 → confirmed 且 db_dialect=dameng", res["status"] == "confirmed"
+              and res["db_dialect"] == "dameng" and "技术选型.md" in res["source"])
+        prd = root / "docs/requirements/V1.0.0/产品提供"
+        prd.mkdir(parents=True)
+        (prd / "prd.md").write_text("---\nautopilot_decisions:\n  tech_boundary:\n    backend: none\n"
+                                    "    database: none\n---\n# PRD\n", encoding="utf-8")
+        res = json.loads(run("--json").stdout)
+        check("PRD tech_boundary 优先，显式 none 是声明而非缺失", res["status"] == "confirmed"
+              and res["source"].startswith("prd:") and res["db_dialect"] == "none")
+        out = run("--summary").stdout
+        check("--summary 输出『确认汇总』并禁止推断未列维度", "确认汇总" in out and "不得推断" in out)
+    finally:
+        shutil.rmtree(root)
+
 
 if __name__ == "__main__":
     test_recovery_scope_boundaries()
@@ -610,5 +711,8 @@ if __name__ == "__main__":
     test_vcs_disabled_unattended_flow_contract()
     test_prd_watch_steady_state()
     test_build_mint_registers_one_row()
+    test_push_fence_merge_to_deploy_source()
+    test_dev_branch_registered_in_tick_flags()
+    test_tech_boundary_preconfirmation()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed ══")
     sys.exit(1 if _failed else 0)

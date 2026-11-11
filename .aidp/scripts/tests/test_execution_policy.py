@@ -1647,6 +1647,28 @@ class BudgetExhaustionDisposalTests(unittest.TestCase):
         self.assertEqual(again["budget_frozen"], [])
         self.assertEqual(self.node()["aiauto_frozen_at"], frozen_at)
 
+    def test_budget_usage_and_near_exhaustion_warning_fires_once_per_level(self):
+        """B-02：占用 >=80% 预警一次（按档位去重），status 展示余量；预警不放宽任何限额。"""
+        self.make_root()
+        usage = self.policy.budget_usage(self.root, self.path)
+        self.assertEqual(usage["resources"]["retries"], {"used": 0, "limit": 12, "pct": 0})
+        _, res = self.tick_check()
+        self.assertEqual(res["budget_warned"], [])
+        self.policy.reserve_budget(self.root, self.path, "retries", 10, "c" * 64)  # 10/12 = 83%
+        self.assertEqual(self.policy.budget_usage(self.root, self.path)["max_pct"], 83)
+        _, res = self.tick_check()
+        self.assertEqual(res["budget_warned"], [self.VERSION])
+        alerts = (self.root / "memory/.aidp/alerts.jsonl").read_text()
+        self.assertIn("loop-budget-near-exhausted", alerts)
+        _, again = self.tick_check()
+        self.assertEqual(again["budget_warned"], [], "同档位不重复告警")
+        self.assertEqual(json.loads(Path(self.path).read_text())["execution_budget"]["retries"], 12)
+        import aidp_scheduler as sched
+        from types import SimpleNamespace
+        _, st = sched.do_status(str(self.root), SimpleNamespace(platform="cron"))
+        self.assertEqual(st["budget"][0]["max_resource"], "retries")
+        self.assertIn("有限硬顶", st["budget_note"])
+
     def test_manual_unfreeze_refuses_and_never_resets_root_budget(self):
         self.make_root()
         self.exhaust_retries()

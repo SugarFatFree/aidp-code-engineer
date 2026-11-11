@@ -38,6 +38,8 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
         BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
         : "${TARGET_VERSION:?}"; : "${BUILD:?}"
         DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
+        # ★ 落盘本 tick 的开发分支（此刻尚未切走）：后续独立 Bash 围栏经 `--shell` 取回，不再靠「当前分支」自愈
+        [ -n "$DEV_BRANCH" ] && python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot DEV_BRANCH "$DEV_BRANCH" >/dev/null 2>&1 || true
         BASE_REF=$(git rev-parse "origin/${DEV_BRANCH}" 2>/dev/null || true)
         [ -n "$BASE_REF" ] || BASE_REF=$(git rev-parse HEAD 2>/dev/null || true)
         $BE --version "$TARGET_VERSION" --build "$BUILD" set push_base_ref "$BASE_REF"
@@ -91,15 +93,24 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
         git push origin "$DEV_BRANCH" || { _push_fail "git push $DEV_BRANCH"; exit 0; }
         PENDING_MERGE_TO="${PENDING_MERGE_TO:-}"
         if [ -n "$PENDING_MERGE_TO" ] && [ "$PENDING_MERGE_TO" != "$DEV_BRANCH" ]; then
-          git fetch origin "$PENDING_MERGE_TO"
-          git switch "$PENDING_MERGE_TO" && git pull --rebase origin "$PENDING_MERGE_TO"
+          # ★ 本段每一步都必须显式失败分支：任一步失败 → 中止合并/变基、切回 DEV_BRANCH、走失败处置。
+          #   ⛔ 不得让后续命令在冲突态/部署分支上继续（会把未合并的旧 tip 当成功推出、
+          #   或让下个 tick 的开发提交直接落到部署源分支）。
+          _back_to_dev() { git merge --abort >/dev/null 2>&1; git rebase --abort >/dev/null 2>&1; git switch "$DEV_BRANCH" >/dev/null 2>&1; }
+          git fetch origin "$PENDING_MERGE_TO" || { _push_fail "git fetch $PENDING_MERGE_TO"; exit 0; }
+          git switch "$PENDING_MERGE_TO" || { _back_to_dev; _push_fail "git switch $PENDING_MERGE_TO"; exit 0; }
+          git pull --rebase origin "$PENDING_MERGE_TO" || { _back_to_dev; _push_fail "git pull --rebase $PENDING_MERGE_TO"; exit 0; }
           MERGE_BASE_REF=$(git rev-parse HEAD)
-          git merge --no-edit "$DEV_BRANCH"
+          git merge --no-edit "$DEV_BRANCH" || { _back_to_dev; _push_fail "合并 $DEV_BRANCH 到 $PENDING_MERGE_TO 失败（冲突）"; exit 0; }
           python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$MERGE_BASE_REF" \
-            || { _push_fail "合并后重新分类失败"; exit 0; }
-          git push origin "$PENDING_MERGE_TO" || { _push_fail "git push $PENDING_MERGE_TO"; exit 0; }
+            || { _back_to_dev; _push_fail "合并后重新分类失败"; exit 0; }
+          git push origin "$PENDING_MERGE_TO" || { _back_to_dev; _push_fail "git push $PENDING_MERGE_TO"; exit 0; }
+          # 先取部署源上的推送 commit，再切回 DEV_BRANCH（后续围栏/下个 tick 一律在开发分支上继续）
+          GIT_PUSH_AT=$(date -Iseconds); GIT_PUSH_COMMIT=$(git rev-parse HEAD)
+          git switch "$DEV_BRANCH" || { _push_fail "切回 $DEV_BRANCH 失败"; exit 0; }
+        else
+          GIT_PUSH_AT=$(date -Iseconds); GIT_PUSH_COMMIT=$(git rev-parse HEAD)
         fi
-        GIT_PUSH_AT=$(date -Iseconds); GIT_PUSH_COMMIT=$(git rev-parse HEAD)
         $BE --version "$TARGET_VERSION" --build "$BUILD" set push_at "$GIT_PUSH_AT" push_commit "$GIT_PUSH_COMMIT"
         fi
         ```

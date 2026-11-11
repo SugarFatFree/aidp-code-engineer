@@ -122,9 +122,13 @@ print(len([i for i in (d.get('issues') or []) if i.get('level')=='Critical']))" 
       echo "❌ 执行结果不合 auto-test-runner 结果契约（阻断项 ${CR_BLOCKING} 条）→ 在报告标「证据形状不合契约」"
       SHAPE_BAD=1
   fi
+else
+  # SKILL 缺 check_result.py = 安装残缺：不得继续往下清空/覆盖已归集截图，按证据形状不合处理
+  echo "❌ 缺 auto-test-runner/scripts/check_result.py（SKILL 安装残缺）→ 在报告标「证据形状不合契约」"
+  SHAPE_BAD=1
 fi
 
-# ① 归集：消费 check_result.py --json 的 artifacts（已解析且确认归属本轮 evidence；退出码≠0 不消费，改由下方非空核验门拦截）
+# ① 归集：消费 check_result.py --json 的 artifacts（已解析且确认归属本轮 evidence；`SHAPE_BAD=1`——退出码≥2、存在 Critical 或 check_result.py 缺失——不消费，改由下方非空核验门拦截）
 CR_JSON="${CR_JSON:-}" python3 - "$SHOT_DIR" "${SHAPE_BAD:-0}" <<'SHOTS'
 import json, os, re, shutil, sys
 from pathlib import Path

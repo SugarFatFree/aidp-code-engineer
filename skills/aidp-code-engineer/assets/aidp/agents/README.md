@@ -22,9 +22,9 @@
 
 | 文件 | 角色 | 谁激活 |
 |------|------|--------|
-| `pm.md` | 产品经理 | `/sprint-requirements`、`/sprint-plan`（Step 2）、`/version`、`/sprint-init`、`/sprint-close` |
+| `pm.md` | 产品经理 | `/sprint-requirements`、`/sprint-plan`（Step 2）、`/version`、`/sprint-init`、`/sprint-init-complete`（Phase 4）、`/sprint-close` |
 | `architect.md` | 架构师 | `/sprint-design`、`/sprint-init` |
-| `ui.md` | UI / 原型 | `/sprint-design` Step 0.7（原型内容基线 / 设计令牌前置产出）与 Step 5.0（回填校正）；Step 5.1 / 5.2 的 UI 规范同归它 |
+| `ui.md` | UI / 原型 | `/sprint-design` Step 0.7（原型内容基线 / 设计令牌前置产出）与 Step 5.0（回填校正）；Step 5.1 / 5.2 的 UI 规范同归它；`/sprint-init-complete` Phase 3（原型认知建立，有原型代码才激活） |
 | `frontend.md` | 前端开发 | `/sprint-dev` Phase 1.3 |
 | `backend.md` | 后端开发 | `/sprint-dev` Phase 1.2 |
 | `qa.md` | 测试验收 | `/sprint-test`（默认静态验证 + 当前任务相关单测；⛔ 不启服务 / 不做完整构建 / 不做浏览器实测，运行时归 `/sprint-aiauto-test`） |

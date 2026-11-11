@@ -32,7 +32,7 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
   launchd   macOS → `~/Library/LaunchAgents/com.aidp.<项目>.{dev,test,watchdog}.plist`
   schtasks  Windows → 只输出 `schtasks` 命令（需在 Git Bash / WSL 等可运行 bash 的环境下执行），不自动执行
 
-配置：`memory/aidp-config.yaml` 的 `scheduler` 段（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `exec`），
+配置：`memory/aidp-config.yaml` 的 `scheduler` 段（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `tick_max_seconds` / `exec`），
 安装命令行参数优先。成功装配后将周期保存到 `memory/.aidp/scheduler-installation.json`；
 watchdog / status 优先使用此快照，配置周期热改须重装才生效，无安装态（含手工 loop）时使用配置。
 status 的 installation 返回上次成功装配快照，config 返回当前配置。失败重装保留旧快照，
@@ -108,6 +108,14 @@ AUTHORIZATION_STATE_REL = os.path.join("memory", ".aidp", "scheduler-authorizati
 GAP_STATE_REL = os.path.join("memory", ".aidp", "scheduler-gaps.json")
 DELEGATION_GAP_ALERT_AFTER = 3     # 待测版本连续多少轮无可信委派才升级为告警 + 阻塞标记
 AUTH_ALERT_EVERY_SECONDS = 6 * 3600
+# 根任务执行预算是有限硬顶（耗尽后只有用户原话续额一条路）：占用达此百分比起预警，避免「突然冻结」。
+BUDGET_WARN_PCTS = (80, 95)
+# 同一版本的 autopilot tick 连续因硬超时被杀达此次数 = 「无进展」（被 TERM 的 tick 到不了 Phase 出口，
+# stuck_check 的计数不涨）：冻结该版（stuck-phase，仅人工解冻）并发 #4，不再无限重跑耗额度。
+TICK_TIMEOUT_FREEZE_AFTER = 5
+BUDGET_CAPACITY_NOTE = ("根任务预算（sprint-autopilot 默认 7200 秒 / agents 64 / retries 12 等，跨 tick 累计，见 "
+                        "execution_policy.py COMMAND_BUDGETS）是有限硬顶：耗尽即 budget-exhausted 冻结，"
+                        "续额必须有用户真实原话，不能由调度/AI 自动重置——长周期多 Sprint 版本无法承诺 0 人工")
 TIMEOUT_RCS = (124, 137)
 CRON_MARK = "# AIDP-SCHEDULER"
 GRACE_SECONDS = 300
@@ -184,13 +192,18 @@ def project_slug(root):
     return f"{base}-{h}"
 
 
+_SCHEDULER_FALLBACK = {"dev_interval": "10m", "test_interval": "5m", "agent": "auto",
+                       "stale_cycles": 3, "tick_max_seconds": 7200}
+
+
 def scheduler_config(root):
     try:
         import aidp_config
         return aidp_config.scheduler_config(root)
     except Exception:  # noqa: BLE001
-        return {"dev_interval": "10m", "test_interval": "5m", "agent": "auto", "stale_cycles": 3,
-                "tick_max_seconds": 7200, "exec": {}}
+        # 默认值单一信源 = aidp_config.SCHEDULER_DEFAULTS；仅当 aidp_config 整体不可导入时才用这份兜底，
+        # 一致性由 test_aidp_scheduler 的断言守住（改默认值只改 aidp_config）。
+        return dict(_SCHEDULER_FALLBACK, exec={})
 
 
 def detect_platform():
@@ -427,7 +440,6 @@ def resolve_intervals(root, a):
     return out
 
 
-# Claude Code headless（`claude -p`）下未预授权即被拒的工具：tick 至少要跑脚本、派子 Agent
 CLAUDE_REQUIRED_ALLOW = ("Bash", "Agent")
 
 
@@ -457,6 +469,16 @@ def _env_file_has(key):
                        for ln in fh)
     except OSError:
         return False
+
+
+def _notify_readiness(root):
+    """通知渠道就绪度（离线本地判定，不发送探测）-> {ready, reason}。判不出按未就绪，不抛。"""
+    try:
+        import notify
+        rep = notify.check_notify_config(root)
+        return {"ready": bool(rep.get("ready")), "reason": rep.get("reason") or rep.get("status") or ""}
+    except Exception as exc:  # noqa: BLE001 —— 预检旁路，不得阻断 install/status
+        return {"ready": False, "reason": f"无法判定（{type(exc).__name__}）"}
 
 
 def install_preflight(root, agent, plat):
@@ -491,8 +513,14 @@ def install_preflight(root, agent, plat):
         gaps = _claude_allow_gaps(root)
         if gaps:
             warns.append(f"permissions.allow 尚不能确认覆盖 {'/'.join(gaps)}（含用户级与项目级配置）："
-                         "请核验所需 Bash/Agent 与 MCP 细粒度规则及 deny；headless 未授权调用会被拒。"
+                         "请核验所需 Bash/Agent/Skill 与（浏览器实测时）mcp__chrome-* 细粒度规则及 deny；headless 未授权调用会被拒，"
+                         "且 rc=0 的整轮零进展不会被记账，首个 tick 后请核对日志"
                          "安装器只读检查，不改权限、不注入权限绕过参数")
+    ready = _notify_readiness(root)
+    if not ready["ready"]:
+        warns.append(f"通知渠道未就绪（{ready['reason']}）：冻结 #4 / loop-tick-hung / loop-agent-quota 等告警将只写本地台账 "
+                     "memory/.aidp/alerts.jsonl，无人值守时没人看得到。请先配置 memory/aidp-config.yaml 的 "
+                     "notify（enabled + channels）并运行 notify.py --check-config --json")
     return errors, warns
 
 
@@ -843,7 +871,7 @@ def heartbeat_report(root, now=None, intervals=None):
     for chain, meta in CHAINS.items():
         secs = (intervals or {}).get(chain) or installed.get(chain) \
             or parse_interval(cfg.get(meta["interval_key"])) \
-            or parse_interval({"dev": "10m", "test": "5m"}[chain])
+            or parse_interval(_SCHEDULER_FALLBACK[meta["interval_key"]])
         threshold = int(cfg.get("stale_cycles") or 3) * secs + GRACE_SECONDS
         # 允许硬超时后的 TERM/KILL 与记账通知收尾；环境覆盖与 wrapper 使用同一解析器。
         hung_threshold = max(threshold, effective_tick_max(root) + TICK_FINISH_GRACE_SECONDS, 3600)
@@ -1185,6 +1213,58 @@ def _run_script(root, name, *argv):
         return 2
 
 
+def _budget_headroom(root):
+    """各版本根任务预算占用 -> [{version, max_pct, max_resource, resources}]（只读；读不到的版本跳过）。"""
+    from aidp_paths import baseline
+    try:
+        state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+        from execution_policy import budget_usage
+    except (OSError, ValueError, ImportError):
+        return []
+    out = []
+    for version, node in sorted((state.get("versions") or {}).items() if isinstance(state, dict) else []):
+        if isinstance(node, dict) and node.get("autopilot_root_context"):
+            usage = budget_usage(root, node["autopilot_root_context"])
+            if usage:
+                out.append(dict(usage, version=version, frozen=bool(node.get("needs_human"))))
+    return out
+
+
+def _warn_budget_near_exhaustion(root, command="sprint-autopilot"):
+    """占用首次越过 80% / 95% 时各发一条告警（按版本+档位去重）；返回本次新告警的版本列表。
+
+    只预警、不放宽：续额仍只能由用户真实来源经 autopilot_unfreeze --renew-budget 完成。
+    """
+    fired = []
+    for row in _budget_headroom(root):
+        if row["frozen"] or row["max_pct"] < BUDGET_WARN_PCTS[0]:
+            continue
+        level = max(p for p in BUDGET_WARN_PCTS if row["max_pct"] >= p)
+        key = f"{row['version']}"
+
+        def mutate(data, key=key, level=level):
+            seen = data.setdefault("budget_warned", {})
+            if int(seen.get(key) or 0) >= level:
+                return False
+            seen[key] = level
+            return True
+        if not _gap_update(root, mutate):
+            continue
+        res = row["resources"][row["max_resource"]]
+        msg = (f"根任务执行预算接近耗尽：{row['version']} 的 {row['max_resource']} 已用 {res['used']}/{res['limit']}"
+               f"（{row['max_pct']}%）。耗尽后该版整体冻结（budget-exhausted），只有用户明确续额才能恢复："
+               f"`autopilot_unfreeze.py --renew-budget {row['version']} --budget-json '{{...}}' "
+               "--authorization-source '{\"kind\":\"user-text\",...}'`。请在冻结前决定是否续额")
+        rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": "agent_loop",
+               "kind": "loop-budget-near-exhausted", "command": command, "version": row["version"],
+               "message": msg}
+        _append_alert(root, rec)
+        sys.stderr.write(f"[AIDP-ALERT] {msg}\n")
+        _notify_alert(root, rec, f"[AIDP] {row['version']} 执行预算已用 {row['max_pct']}%")
+        fired.append(row["version"])
+    return fired
+
+
 def _freeze_exhausted_budgets(root):
     """根任务预算耗尽且未续额：按 budget-exhausted 冻结该版（幂等；不清零任何预算）。返回已冻结版本。"""
     from aidp_paths import baseline
@@ -1232,15 +1312,23 @@ def do_tick_check(root, a):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             # 没有已部署待测版本时无需委派：放行让命令入口自己输出 NO_TARGET 并保持心跳，
             # 否则空转 tick 被吞，watchdog 会把正常空闲误判成链路失联。
-            if not _has_pending_test_target(root):
-                context_path = None
+            state = _test_target_state(root)
+            if state != "target":
+                # ★ B-07 确定性空闲门：无待测目标（none）或根已显式跳过测试（skipped）时，命令入口的唯一动作
+                #   就是刷新心跳后输出 NO_TARGET / NOT_REQUESTED 退出（见 sprint-aiauto-test.md 路由前置）。
+                #   这里等价地刷新心跳并跳过，不再为一次空转拉起完整 LLM 会话（稳态空闲时每天数百次纯耗额度）。
                 _clear_delegation_gap(root)
+                _refresh_heartbeat(root, "test")
+                return 4, {"action": "tick-check", "command": a.command, "skip": True,
+                           "reason": "no-test-target" if state == "none" else "test-not-requested",
+                           "idle": True}
             else:
                 return 4, {"action": "tick-check", "command": a.command, "skip": True,
                            "reason": "test-delegation-unverified", "error": str(exc),
                            **_note_delegation_gap(root, exc)}
     elif a.command == "sprint-autopilot":
         extra["budget_frozen"] = _freeze_exhausted_budgets(root)
+        extra["budget_warned"] = _warn_budget_near_exhaustion(root, a.command)
         token = getattr(a, "token", None) or __import__("uuid").uuid4().hex
         status, source, info = tick_authorization(root, a.command, token, getattr(a, "tick_args", "") or "")
         extra["authorization"] = status
@@ -1296,7 +1384,28 @@ def do_tick_result(root, a, send_notify=True):
     if send_notify and notifications:
         rec, title = notifications[0]
         res["notification_status"] = _notify_alert(root, rec, title)
+    if res.get("freeze_candidate"):
+        res["frozen"] = _freeze_timeout_stuck(root, res["freeze_candidate"], a)
     return rc, res
+
+
+def _freeze_timeout_stuck(root, count, a):
+    """连续硬超时无进展 -> 冻结进行中的版本（stuck-phase，仅人工解冻）；幂等。返回已冻结版本或 ''。"""
+    from aidp_paths import baseline
+    try:
+        state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+        version = ((state.get("autopilot") or {}).get("target_version") or "").strip()
+        node = (state.get("versions") or {}).get(version) or {}
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not version or node.get("needs_human"):
+        return ""
+    rc = _run_script(root, "autopilot_fail_handle.py", "--version", version, "--phase", "tick-timeout-no-progress",
+                     "--reason", "stuck-phase", "--freeze-now",
+                     "--why", f"autopilot tick 已连续 {count} 次触发硬超时（{a.tick_max}s）被终止、无任何 Phase 出口落账，"
+                              "继续重跑只会耗额度；请人工查看 tick 日志，确认该版单 tick 是否需要更长 AIDP_TICK_MAX_SECONDS "
+                              "或拆分 Sprint 后解冻")
+    return version if rc in (0, 3) else ""
 
 
 def _tick_result(root, a, state, notifications):
@@ -1340,6 +1449,8 @@ def _tick_result(root, a, state, notifications):
         notifications.append((rec, f"{label} tick 连续 {streak} 次失败"))
     res.update(streak=streak, kind=kind, failure_key=key, skip_remaining=skip,
                alerted=bool(ledger), notified=due)
+    if kind == "loop-tick-timeout" and cmd == "sprint-autopilot" and failure["count"] >= TICK_TIMEOUT_FREEZE_AFTER:
+        res["freeze_candidate"] = failure["count"]
     return (3 if streak >= n else 0), res
 
 
@@ -1369,7 +1480,9 @@ def do_status(root, a):
             installed[f"cron:{chain}"] = any(f"{CRON_MARK} {slug} {chain}" in ln for ln in tab)
     return 0, {"action": "status", "platform": plat, "root": root, "slug": slug,
                "installed": installed, "config": scheduler_config(root),
-               "installation": installed_schedule(root), "heartbeats": heartbeat_report(root)}
+               "installation": installed_schedule(root), "heartbeats": heartbeat_report(root),
+               "budget": _budget_headroom(root), "budget_note": BUDGET_CAPACITY_NOTE,
+               "notify": _notify_readiness(root)}
 
 
 # ───────────────────────── 自检 ─────────────────────────

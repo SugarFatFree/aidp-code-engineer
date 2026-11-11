@@ -703,15 +703,19 @@ python3 {{AIDP_HOME}}/scripts/requirement_query.py supersessions --before {versi
 
 **动作（每轮审计开始前必做，`fresh` / `--supplement` / build 终审三种模式统一）**：
 
-1. **读上一轮报告**：在 `output_path` 目录按文件名排序取**最近一份**已有审计报告
-   （`version-output-audit-*.md`）。没有 → 本版首次审计，「十二」章写「无结转项」，跳过本节其余步骤。
-2. **逐条比对**：取上轮「十·修复建议」里 **Important / Warning** 的每一条，判断本轮是否仍然成立：
+1. **读上一轮报告并取结转候选**：`python3 {{AIDP_HOME}}/scripts/audit_carryover.py carry --audit-dir docs/audit/{version} --exclude <本轮 output_path> --json`
+   （上一份 = `version-output-audit-*.md` 中最新者；没有 → 本版首次审计，「十二」章写「无结转项」，跳过本节其余步骤）。
+   输出 `candidates` = 上轮「十·修复建议」里 Important / Warning（及上轮已升级且仍未处置者）的每一条及其「若仍成立」的轮次与升级判定。
+2. **逐条比对（语义判断，脚本不猜）**：对每个候选判断本轮是否仍然成立：
    - 已不成立（产物已补齐 / 判据已变）→ **不结转**，也不再计轮次；
-   - 仍然成立 → **沿用其编号**结转进本轮「十」表，`连续未处置轮次` = 上轮值 + 1。
-3. **自动升级**：`连续未处置轮次 ≥ 3` 的 **Important** → **本轮判定为 Critical**，
+   - 仍然成立 → **沿用其编号**结转进本轮「十」表。
+   把仍成立的编号交回脚本：`carry ... --still-open I-02,I-05`，由脚本算 `连续未处置轮次` = 上轮值 + 1，并给出 `escalations`。
+3. **自动升级**：脚本判定 `连续未处置轮次 ≥ 3` 的 **Important** → **本轮判定为 Critical**，
    在「十」表标 `⬆️ 已升级为 Critical`，并按 Critical 的口径阻塞。
    ⚠️ **Warning 不升级**（它本就是"仅记录"档，升级会把噪音变成阻塞）。
-4. **填「十二」章**：列出全部结转项及其轮次与本轮判定。
+4. **填「十二」章**：直接使用脚本输出的 `table_12`。
+5. **写完报告后回检**：`python3 {{AIDP_HOME}}/scripts/audit_carryover.py check --audit-dir docs/audit/{version} --report <本轮报告>`；
+   `exit 1`（沿用编号的轮次不是上轮 +1 / 达阈值未标升级）→ 先改报告再返回。零重合 WARN 是在提示「重新编号」风险，确认确已全部解决再放行。
 
 > ⛔ **编号必须在同一版本内跨轮次稳定**：同一条问题沿用首次出现时的编号。
 > 每轮重新编号 = 轮次计数永远归 1 = 本节完全失效（且失效形态是"看起来在正常工作"）。

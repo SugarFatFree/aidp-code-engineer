@@ -3168,6 +3168,36 @@ class UpgradeReportTest(unittest.TestCase):
             self.assertFalse((runtime / mod).exists())
             self.assertEqual(res["orphans"], [])
 
+    def test_bundle_source_upgrade_does_not_flag_masked_skill_md_as_orphan(self):
+        """真源为 bundle 时 SKILL.md 以 `SKILL.md.in` 遮名存放；升级对账必须先还原安装名，
+        否则全部 SKILL.md 被误报为「新版已不提供」（孤儿 / 已删除契约）。"""
+        with H.TempRepo() as root, mock.patch.object(S, "_runtime_source", return_value=L.BUNDLE_AIDP):
+            init_opts = self._options()
+            init_opts.mode = "init"
+            S.run(root, init_opts)
+            runtime = root / ".claude"
+            skill_rel = "skills/bugfix/SKILL.md"
+            self.assertTrue((runtime / skill_rel).is_file())
+            scaffold_marker.write_version(root, "V0.0.1")
+            res = S.run(root, self._options())
+            self.assertEqual(res["contract_decision"], "overwrite")
+            self.assertEqual(res["orphans"], [])
+            self.assertEqual([r for r in res["removed_contracts"] if r.endswith("SKILL.md")], [])
+            self.assertEqual([r for r in res["removed_modified"] if r.endswith("SKILL.md")], [])
+
+    def test_bundle_source_upgrade_reports_locally_modified_skill_md_as_overwritten(self):
+        """本地改过的 SKILL.md 在覆盖升级时必须进 `local_overwritten`（bundle 遮名同样要先还原）。"""
+        with H.TempRepo() as root, mock.patch.object(S, "_runtime_source", return_value=L.BUNDLE_AIDP):
+            init_opts = self._options()
+            init_opts.mode = "init"
+            S.run(root, init_opts)
+            skill_rel = "skills/bugfix/SKILL.md"
+            live = root / ".claude" / skill_rel
+            live.write_text(live.read_text(encoding="utf-8") + "\n本地改动\n", encoding="utf-8")
+            scaffold_marker.write_version(root, "V0.0.1")
+            res = S.run(root, self._options())
+            self.assertIn(skill_rel, res["local_overwritten"])
+
 
 class TemplateOnlyHelpersTest(unittest.TestCase):
     def test_nav_purpose_deployment_is_not_sop_ledger(self):

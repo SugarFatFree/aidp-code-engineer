@@ -109,6 +109,7 @@ project-root/
 │   ├── hooks/                            # ★ 钩子脚本（autopilot Stop 护栏）
 │   ├── templates/deployment/             # ★ 部署操作说明模板（仅版本规划 / 正式发布按实际需要取用）
 │   ├── templates/reports/                # ★ AI 全自动报告模板（AI执行报告 + AI测试报告 + AI数据清理 + 版本测试报告 + README）
+│   ├── templates/cicd/                   # CICD 流水线起步模板（github-actions / gitlab-ci / jenkins）
 │   └── templates/optional-rules/         # ★ 按需安装的可选规则（如 WebMCP 详规；未启用即不装进 rules/）
 │
 ├── .github/workflows/                    # CICD 流水线定义（默认 GitHub Actions；其他平台按其约定，约定 31）
@@ -631,7 +632,7 @@ rm -rf memory/V*
 **关键约定**：
 - 上层命令只负责编排，具体工作由下层子命令完成
 - 每个子命令都可单独调用（支持模式 3 分步执行）
-- Bugfix 循环默认 5 次上限；**超限默认标记"⚠️ 软失败：bugfix 循环超限"并继续进入关闭 Sprint**，未修 bug 留在 `bugfix-{YYYYMMDD}-{user}.md`（状态「待修复」）交批量末段人工处理。仅显式传 `--stop-on-blocker` 才停下等待人工介入
+- Bugfix 循环默认 5 次上限；**超限后 `/sprint-full` 返回 `closed:false`、保留上下文、不归档；`/sprint-batch` 记「⚠️ 软失败：bugfix 循环超限」并继续下一个 Sprint**，未修 bug 留在 `bugfix-{YYYYMMDD}-{user}.md`（状态「待修复」）交批量末段人工处理。仅显式传 `--stop-on-blocker` 才停下等待人工介入
 
 ### 6.4 Sprint 与子迭代机制
 
@@ -956,7 +957,7 @@ description: {一句话说明本 Skill 做什么 + 在什么场景/关键词下�
 | 类别 | 命令 | 用途 |
 |------|------|------|
 | **初始化** | `/sprint-init` | 全量初始化（一次性） |
-| | `/sprint-init-design` | 初始化前半段（生成记忆文件） |
+| | `/sprint-init-design` | 分步初始化前半段：Phase 0–2，生成 5 个项目级记忆文件 |
 | | `/sprint-init-complete` | 初始化后半段（审核后完成） |
 | **版本规划** | `/version V0.1.0 "M1 MVP"` | 版本管理：规划（串联下方 4 个）/ 发布打 tag |
 | | `/sprint-requirements` | 生成版本需求文档（调用 ux-logic-extractor） |
@@ -1019,7 +1020,7 @@ description: {一句话说明本 Skill 做什么 + 在什么场景/关键词下�
 # - 追加到 研发执行计划
 # - 执行 start → dev → test → bugfix → close
 
-# 模式 2C：单独用 /sprint-dev 或 /sprint-bugfix 入口（light，不累进 Sprint）
+# 日常 light 入口：单独用 /sprint-dev 或 /sprint-bugfix 入口（light，不累进 Sprint）
 /sprint-dev "新增用户导出功能"          # 默认 light：不建 Sprint，累进只属 /sprint-full
 /sprint-bugfix "修复批量导入逻辑"       # 默认 light，不同于正式 /sprint-full
 

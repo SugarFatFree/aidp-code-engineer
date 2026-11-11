@@ -35,7 +35,8 @@ from pathlib import Path
 
 FENCE_RE = re.compile(r'^```(\w*)\s*$')
 SQL_TAGS = {'sql', 'mysql', 'dm', 'dameng', 'oracle', 'postgresql', 'postgres', 'pgsql', 'ddl', 'plsql'}
-GUARD_RE = re.compile(r'❌|反例|错误示例|禁止|不要|不得|严禁|避免')
+# 「历史沿用」= 设计已在「历史 SQL 风格沿用说明」登记的既有加引号表,该行不算新违规(行内写 `-- 历史沿用` 即可)
+GUARD_RE = re.compile(r'❌|反例|错误示例|禁止|不要|不得|严禁|避免|历史沿用')
 IDENT = r'[A-Za-z_][\w$]*'
 TABLE_CTX_RE = re.compile(
     r'\b(?P<kw>create\s+table(?:\s+if\s+not\s+exists)?|alter\s+table|drop\s+table(?:\s+if\s+exists)?|'
@@ -44,7 +45,9 @@ TABLE_CTX_RE = re.compile(
 NOT_TABLE_WORDS = {'select', 'set', 'values', 'dual', 'only', 'lateral', 'if', 'table', 'where', 'as',
                    'on', 'using', 'unnest', 'generate_series'}
 CONSTRAINT_START = {'primary', 'unique', 'key', 'index', 'constraint', 'foreign', 'check', 'fulltext', 'spatial'}
-ADD_COL_RE = re.compile(r'\badd\s+(?:column\s+)?(' + IDENT + r')\b', re.IGNORECASE)
+ADD_COL_RE = re.compile(r'\badd\s+(?:column\s+)?(?!\()(' + IDENT + r')\b', re.IGNORECASE)
+# 达梦/Oracle 批量形态 ALTER TABLE t ADD (c1 INT, c2 INT)
+ADD_LIST_RE = re.compile(r'\badd\s+(?:column\s+)?\(', re.IGNORECASE)
 # 跨库都会在不加引号时出问题的保留字(刻意保守:只列几乎所有主流库都保留的;命中判 Important)
 RESERVED = {'order', 'group', 'user', 'level', 'key', 'desc', 'table', 'index', 'select', 'from', 'where',
             'check', 'default', 'rowid', 'rownum', 'union', 'having', 'limit', 'offset', 'by', 'to',
@@ -146,7 +149,8 @@ def table_refs(clean: str):
         if name.lower() in NOT_TABLE_WORDS:
             continue
         before = clean[max(0, m.start() - 24):m.start()]
-        if kw == 'update' and re.search(r'(key|for)\s*$', before, re.IGNORECASE):
+        # ON DUPLICATE KEY UPDATE / FOR UPDATE / 列定义里的 ON UPDATE CURRENT_TIMESTAMP|CASCADE 的 UPDATE 都不是 UPDATE <表>
+        if kw == 'update' and re.search(r'(key|for|on)\s*$', before, re.IGNORECASE):
             continue
         if kw == 'from':
             head = clean[max(0, m.start() - 80):m.start()]
@@ -194,6 +198,27 @@ def scan_file(path: Path, md: str, db: str = ''):
                 issues.append({'level': 'Important', 'rule': 'reserved_word_identifier', 'file': str(path),
                                'line': line_of(unq, off, base),
                                'msg': f'字段名 `{name}` 是保留字/易冲突词;不加引号无法规避,请改名(如 user_level、order_no)'})
+        for m in ADD_LIST_RE.finditer(unq):
+            depth, i = 1, m.end()
+            while i < len(unq) and depth:
+                depth += {'(': 1, ')': -1}.get(unq[i], 0)
+                i += 1
+            body, pos = unq[m.end():i - 1], 0
+            for item in split_top(body):
+                tok = re.match(IDENT, item.strip())
+                if tok and tok.group(0).lower() not in CONSTRAINT_START | {'column', 'constraint'}:
+                    name = tok.group(0)
+                    off = m.end() + pos + (len(item) - len(item.lstrip()))
+                    columns[name.lower()].append((name, str(path), line_of(unq, off, base)))
+                    if dameng and name != name.upper():
+                        issues.append({'level': 'Critical', 'rule': 'dameng_identifier_not_upper', 'file': str(path),
+                                       'line': line_of(unq, off, base),
+                                       'msg': f'达梦:字段名 `{name}` 必须全大写(`{name.upper()}`),且不加引号'})
+                    if name.lower() in RESERVED:
+                        issues.append({'level': 'Important', 'rule': 'reserved_word_identifier', 'file': str(path),
+                                       'line': line_of(unq, off, base),
+                                       'msg': f'字段名 `{name}` 是保留字/易冲突词;不加引号无法规避,请改名'})
+                pos += len(item) + 1
         for m in ADD_COL_RE.finditer(unq):
             name = m.group(1)
             if name.lower() in CONSTRAINT_START | {'column', 'constraint'}:
@@ -206,14 +231,14 @@ def scan_file(path: Path, md: str, db: str = ''):
     return found_sql, issues, tables, columns
 
 
-def drift(groups, rule, level, what):
+def drift(groups, rule, level, what, hint='推荐小写蛇形'):
     out = []
     for key, occ in groups.items():
         spellings = sorted({o[0] for o in occ})
         if len(spellings) > 1:
             f, ln = occ[0][1], occ[0][2]
             out.append({'level': level, 'rule': rule, 'file': f, 'line': ln,
-                        'msg': f'{what} `{key}` 出现多种拼写 {spellings};同一名字全设计只保留一种(推荐小写蛇形),'
+                        'msg': f'{what} `{key}` 出现多种拼写 {spellings};同一名字全设计只保留一种({hint}),'
                                f'DDL / DML / Mapper 逐字一致'})
     return out
 
@@ -247,8 +272,9 @@ def main():
     if read_errors and not files:
         print('错误:无法读取任何文件', file=sys.stderr)
         return 2
-    issues += drift(tables, 'table_spelling_drift', 'Critical', '表名')
-    issues += drift(columns, 'column_spelling_drift', 'Important', '字段名')
+    hint = '达梦统一全大写' if args.db == 'dameng' else '推荐小写蛇形'
+    issues += drift(tables, 'table_spelling_drift', 'Critical', '表名', hint)
+    issues += drift(columns, 'column_spelling_drift', 'Important', '字段名', hint)
     crit = [i for i in issues if i['level'] == 'Critical']
     imp = [i for i in issues if i['level'] == 'Important']
     skipped = not found and not issues

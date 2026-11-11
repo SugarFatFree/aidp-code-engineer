@@ -662,6 +662,7 @@ def _check_artifact_contract(data, name, result_path, issues, artifact_index=Non
                        f'`{evidence_root}` 内,不得引用旧 round 或外部文件')
                 continue
 
+            first_seen = resolved not in seen_actual_artifacts
             if resolved in seen_actual_artifacts:
                 _issue(issues, 'Important', 'duplicate_artifact_entry',
                        f'{name}: `{field}[{i}].artifact` 重复登记同一个实际文件 `{resolved}`;'
@@ -669,7 +670,7 @@ def _check_artifact_contract(data, name, result_path, issues, artifact_index=Non
             else:
                 seen_actual_artifacts.add(resolved)
             registered_lexical_paths.add(existing.absolute())
-            if artifact_sink is not None:
+            if artifact_sink is not None and first_seen:  # 重复登记同一实际文件只列一次
                 ext = suffix.lstrip('.')
                 step_val = item.get('step') if isinstance(item, dict) else None
                 artifact_sink.append({

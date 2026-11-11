@@ -1909,7 +1909,7 @@ stateDiagram-v2
 
 | 维度 | 方案 |
 |------|------|
-| **旧数据迁移** | 新增字段 `level`,历史数据默认值 1,通过 `UPDATE biz_user SET level = 1 WHERE level IS NULL` 批量初始化 |
+| **旧数据迁移** | 新增字段 `user_level`,历史数据默认值 1,通过 `UPDATE biz_user SET user_level = 1 WHERE user_level IS NULL` 批量初始化 |
 | **接口版本兼容** | 新接口保留旧版本 `/api/v1/xxx` 3 个月,新版本 `/api/v2/xxx`,Header 中 `X-API-Version` 区分(**此为存量遗留接口兼容期的版本化特例,属核心原则 7 的"用户明确要求版本化"例外;新建内部接口仍不加 `/api/` 前缀**) |
 | **DDL 变更影响** | 新增字段必须允许 NULL 或 DEFAULT,删除字段前先下线所有引用代码 |
 | **配置项兼容** | 新增配置提供默认值,避免老环境启动失败 |

@@ -86,17 +86,11 @@ TMP_DIR=$(mktemp -d)
 #    d) 里 `TMP_DIR` 取空会展开成 `mv /*.sql "$SQL_DIR"/` —— 对文件系统根做 glob 的破坏性操作。
 echo "$TMP_DIR" > .aidp-sqlreorg-tmpdir
 # AI 把新文件内容写到 $TMP_DIR/<NN>_<中文名>.sql
-# 守恒校验（防止漏掉某条 SQL）：
-# ⛔ 必须先按**文件名**过滤再 cat（同 :98 的 `ls | grep -v "…\.sql$"` 口径）：
-#    `cat *.sql | grep -v "99_回滚脚本.sql"` 过滤的是**内容行**，而 SQL 正文里不会出现自己的文件名
-#    → 一行都滤不掉 → ORIG 把回滚脚本的 DROP/ALTER 也计进来，而 TMP_DIR 按 3.3.7.2「回滚脚本永远不动」
-#    不含它 → 守恒**恒不相等**：只要项目有 99_回滚脚本.sql，SQL 归档整理**每次发布必失败**
-#    （走「失败不阻塞」分支：删 TMP_DIR、原文件保留、每轮稳定新增同一条发布欠账，且 --finalize-docs 补跑也永远失败）。
-ORIG_SQL_FILES=$(ls "$SQL_DIR"/*.sql 2>/dev/null | grep -v "99_回滚脚本\.sql$" || true)
-ORIG_STMT_COUNT=$([ -n "$ORIG_SQL_FILES" ] && cat $ORIG_SQL_FILES | grep -cE "^(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|MERGE)\s" || echo 0)
-NEW_STMT_COUNT=$(cat "$TMP_DIR"/*.sql 2>/dev/null | grep -cE "^(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|MERGE)\s" || echo 0)
-if [ "$ORIG_STMT_COUNT" -ne "$NEW_STMT_COUNT" ]; then
-  echo "FAIL: SQL 语句数不一致（原 $ORIG_STMT_COUNT vs 新 $NEW_STMT_COUNT），中止整理保留原文件"
+# 守恒校验（防止漏掉某条 SQL）：唯一实现 = sql_reorg.py（整型比较 + 按语句多重集合比对，默认排除 99_回滚脚本.sql）。
+# ⛔ 不得再用 `grep -c … || echo 0` 手算：0 行时变量成 "0\n0"，`[ -ne ]` 报错被 if 当作条件为假 → 守恒静默放行，
+#    随后 d) 段会 git rm 全部原 .sql 并换成残缺新文件。原侧 / 新侧 0 条、语句集合不等一律退出 1。
+if ! python3 {{AIDP_HOME}}/scripts/sql_reorg.py check --orig "$SQL_DIR" --new "$TMP_DIR" --json; then
+  echo "FAIL: SQL 语句守恒校验未通过，中止整理保留原文件"
   rm -rf "$TMP_DIR"; rm -f .aidp-sqlreorg-tmpdir
   # 走「失败不阻塞」分支
 fi

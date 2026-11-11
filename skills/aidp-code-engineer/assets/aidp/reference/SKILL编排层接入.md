@@ -119,3 +119,16 @@ python3 {{AIDP_HOME}}/scripts/check_webmcp.py --version "{version}" --detect --j
 | `/sprint-aiauto-test` → `auto-test-runner` | 经 run-context，不随 prompt | 见 `flows/sprint-aiauto-test/phase-0-8.md` | 同该片（本表不复述） |
 
 > 新增调用方入参名以**目标 SKILL 的输入表**为准；本表与 SKILL 不一致时以 SKILL 为准并回改本表。上游 PRD 头部的声明位置与旧别名归一规则归 `check_client_mcp.py` 文档头与 `{{AIDP_HOME}}/templates/optional-rules/` 下的可选详规，本节不复述。
+
+## 四、无人值守下的「技术边界已预确认」上下文（仅 `/sprint-design` → `dev-logic-architect`）
+
+`dev-logic-architect` Phase 1「技术边界确认」是强交互闸门：逐维度向用户确认、数据库必确认、**严禁**从框架/原型推断、确认汇总经用户 accept 前不得进入 Phase 2。子 Agent 没有 `AskUserQuestion`，所以无人值守下编排层必须**供给**而不是等待或推断：
+
+| 步骤 | 做什么 |
+| :- | :- |
+| 供给来源（唯一实现 `autopilot_tech_boundary.py`） | PRD `autopilot_decisions.tech_boundary`（至少 `backend` + `database`，无则显式 `none`）> `docs/architecture/技术选型.md`「技术栈总览」已填行。⛔ 不从框架/原型/既有代码推断 |
+| 前置门 | `/sprint-autopilot` Phase 0.6 第 2bis 步：本版需生成设计而两源皆无 → 冻结 `prd-missing`，不进 `/sprint-design` |
+| 传入方式 | `autopilot_tech_boundary.py --version {version} --summary` 的输出原样并入调用 prompt，语义 = 「技术边界已由用户预确认，以下即确认汇总，视为已 accept，直接进入 Phase 2」；未列维度（ORM/连接池/序列化/实时通信等）按 SKILL「不臆造兜底原则」登记 `99_待澄清问题清单.md` |
+| 数据库方言 | 同一脚本 `--json` 的 `db_dialect`（达梦 → `dameng`）供 `--db` / `--sql-db` 取值，不另猜 |
+
+边界：这是编排层对 SKILL 既有「用户主权」的**供给**，不是绕过——汇总内容全部来自用户已落盘的声明。SKILL 侧是否已原生支持「读取已确认的技术选型并跳过 Phase 1」属上游能力；上游未支持前，以上下文显式声明为准，SKILL 若仍坚持提问则按失败信号交上游熔断，不得由本层替它补栈。

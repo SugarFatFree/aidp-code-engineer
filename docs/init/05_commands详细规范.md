@@ -65,7 +65,7 @@
 | 类别 | 命令 | 触发时机 | 调用的 skill | 命令文件 |
 |------|------|---------|-------------|---------|
 | **初始化** | `/sprint-init` | 项目初始化（一次性） | - | [`{{AIDP_HOME}}/commands/sprint-init.md`](../../{{AIDP_HOME}}/commands/sprint-init.md) |
-| | `/sprint-init-design` | 分步初始化前半段 | - | [`{{AIDP_HOME}}/commands/sprint-init-design.md`](../../{{AIDP_HOME}}/commands/sprint-init-design.md) |
+| | `/sprint-init-design` | 分步初始化前半段：Phase 0–2，生成 5 个项目级记忆文件 | - | [`{{AIDP_HOME}}/commands/sprint-init-design.md`](../../{{AIDP_HOME}}/commands/sprint-init-design.md) |
 | | `/sprint-init-complete` | 分步初始化后半段 | - | [`{{AIDP_HOME}}/commands/sprint-init-complete.md`](../../{{AIDP_HOME}}/commands/sprint-init-complete.md) |
 | **版本规划** | `/version [版本号] [里程碑]` | 新版本规划 / 版本发布 | 串联下方 4 个 | [`{{AIDP_HOME}}/commands/version.md`](../../{{AIDP_HOME}}/commands/version.md) |
 | | `/sprint-requirements` | 生成需求文档 | `ux-logic-extractor` | [`{{AIDP_HOME}}/commands/sprint-requirements.md`](../../{{AIDP_HOME}}/commands/sprint-requirements.md) |

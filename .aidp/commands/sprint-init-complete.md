@@ -22,7 +22,7 @@
 
 如果任何文件缺失，停止执行并提示用户先执行 `/sprint-init-design`。
 
-### ★ Phase 0：脚手架契约装配（与全量 `/sprint-init` 同款，⛔ 不可省）
+## ★ Phase 0：脚手架契约装配（与全量 `/sprint-init` 同款，⛔ 不可省）
 
 ⛔ **只验上面 5 个 memory 文件是不够的**——那 5 个文件手工凑齐即可通过，而 `{{AIDP_HOME}}/scripts/`、
 `.claude/settings.json`、`{{AIDP_HOME}}/{agents,commands,rules,flows,reference,templates}` 等契约面
@@ -34,6 +34,8 @@ python3 {{AIDP_HOME}}/skills/aidp-code-engineer/scripts/scaffold.py . --version 
 ```
 
 产出物与幂等性同 `/sprint-init` Phase 0（create-if-missing，已存在一律不动）。
+
+> Phase 1–2 由 `/sprint-init-design` 完成，本命令从 Phase 0 装配后接 Phase 3 续。
 
 ## Phase 3：UI Agent — 原型认知建立（可选）
 

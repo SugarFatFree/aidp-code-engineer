@@ -59,8 +59,8 @@
   包含字段：id(BIGINT 主键), order_no(VARCHAR(32) 唯一), enterprise_id(BIGINT), title(VARCHAR(255))...
   索引：order_no 唯一索引、enterprise_id 普通索引...
   ```sql
-  CREATE TABLE "biz_work_order" (
-      "id" BIGINT NOT NULL IDENTITY(1, 1),
+  CREATE TABLE biz_work_order (
+      id BIGINT NOT NULL IDENTITY(1, 1),
       ...50行SQL...
   );
   ```

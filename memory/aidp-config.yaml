@@ -4,12 +4,18 @@
 # memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。
 #
 # 改完无需重启任何东西，下一次命令运行即生效。
+# 例外：scheduler.dev_interval / test_interval（调度周期）已写进操作系统定时任务，改后须重跑
+# aidp_scheduler.py install 才生效（watchdog / status 优先读上次安装快照）。
 
 project:
   # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，
   # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。
   name: aidp-code-engineer
   name_cn: AIDP 代码工程师模板
+  # 目标数据库方言（可空，通用键）。null = 通用，不启用任何库专项规则；非空时原样透传给
+  # SKILL 脚本的 --db / --sql-db 参数（可取值以 SKILL 当前识别的为准，本文件不枚举）。
+  # 由用户在技术选型确认数据库后记录，Agent 不自行推断。
+  sql_dialect: null
 
 development:
   # 首次修改需求或修复漏洞前由用户选择，之后在本项目沿用。
@@ -48,7 +54,7 @@ notify:
 cicd:
   # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。
   provider: github-actions
-  # 兼容旧键：单独设 true 或 false 都不改变行为（旧布尔不是授权，是否触发以当次 deploy 授权为准）。
+  # 兼容旧键（默认值 false，不表达禁令）：单独设 true 或 false 都不改变行为（旧布尔不是授权，是否触发以当次 deploy 授权为准）。
   # 只有同时存在用户明确选择的禁用来源 auto_trigger_source（kind: project-policy，结构同
   # execution_policy.authorization_source，由 Agent 在用户明确要求禁止自动触发后记录，不要手填）
   # 且 auto_trigger: false，才拦截自动触发 / 重试。
@@ -94,7 +100,8 @@ scheduler:
   # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久
   # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。
   # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；
-  # watchdog 用 max(stale 阈值, 本值, 1h) 作「持锁超期 = 挂死」的判据。0 = 不设上限（不推荐）。
+  # watchdog 用 max(stale 阈值, 本值 + 180s 收尾宽限, 1h) 作「持锁超期 = 挂死」的判据（环境变量覆盖后同样生效）。
+  # 0 = 不设上限（不推荐）。
   tick_max_seconds: 7200
   # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。
   # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。

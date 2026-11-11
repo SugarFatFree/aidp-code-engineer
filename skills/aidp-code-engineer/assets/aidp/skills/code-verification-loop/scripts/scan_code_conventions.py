@@ -5,7 +5,7 @@
 把维度 4 中「靠 grep/diff 就能确定性采集」的回检子项收敛到一个自包含脚本,逐项采集命中点,
 输出 `文件:行号 + 命中类别 + 片段`,供 Agent 拿命中清单与详细设计 / 基线人工比对判定。
 
-覆盖的 5 个子项(均为采集,不下最终违规结论):
+覆盖的 6 个子项(均为采集,不下最终违规结论):
   http-hardcode   HTTP 客户端配置硬编码    扫源码里硬编码的 http(s)://URL / IP / 凭证字面量
                   (对应 dev-logic-architect 核心原则 16「HTTP 客户端配置驱动铁律」——
                    base URL/IP/端口/凭证必须走配置文件,不得硬编码在代码)
@@ -15,6 +15,10 @@
                   (旧组件/模块被删后,新代码仍引用 → 编译期或运行期炸)
   dep-baseline    新增依赖/import 越界基线  git diff 新增的 import,其顶层包未声明在
                   package.json / requirements.txt / pyproject.toml(越过依赖基线)
+  sql-identifier-case SQL 标识符通用性(`--sql-db dameng` 另采 not-upper:达梦建表标识符须全大写)   代码里的 SQL(.sql / MyBatis Mapper XML / Java·Kotlin 字符串内 SQL)
+                  **不得给表名、字段名加引号**(双引号 / 反引号),同一表名只有一种拼写
+                  (对应 dev-logic-architect 检查项 18「标识符通用性」:达梦/Oracle 把未加引号标识符折成大写、
+                   加引号则保留原样,「小写加引号建表、不加引号查询」会查不到;不加引号才通用)
   audit-fill      审计字段填充溯源          审计人字段(create_by/update_by/创建人/修改人 等)被写死为
                   常量字面量("system" 等),或逻辑删除写点(setDeleted(1)/deleted=1/@TableLogic)
                   邻近未同步 update_by/update_time(对应 dev-logic-architect 核心原则 22 / 检查项 30)
@@ -67,7 +71,8 @@ EXCLUDE_DIRS = {"node_modules", ".git", "dist", "build", "target", "out",
                 ".next", ".nuxt", "vendor", "__pycache__", "coverage",
                 ".idea", ".vscode", ".gradle", "bin", "obj"}
 
-ALL_CHECKS = ["http-hardcode", "refresh-scope", "dead-ref", "dep-baseline", "audit-fill"]
+ALL_CHECKS = ["http-hardcode", "refresh-scope", "dead-ref", "dep-baseline", "audit-fill",
+              "sql-identifier-case"]
 
 # http-hardcode:这些 host 是 schema/命名空间/文档串,不是运行时端点,直接跳过减噪
 SAFE_URL_HOSTS = (
@@ -481,6 +486,147 @@ def check_audit_fill(root: Path):
     return findings
 
 
+# ----------------------------------------------------------------------------- sql-identifier-case
+SQL_FILE_EXTS = {".sql", ".xml"}
+JVM_EXTS = {".java", ".kt"}
+SQL_LINE_HINT = re.compile(r"(?i)\b(select\b|insert\s+into\b|update\s+\w+\s+set\b|delete\s+from\b|"
+                           r"create\s+table\b|alter\s+table\b|\bfrom\s+\w+|\bjoin\s+\w+)")
+_IDENT = r"[A-Za-z_][\w$]*"
+TABLE_CTX_RE = re.compile(
+    r"\b(?P<kw>create\s+table(?:\s+if\s+not\s+exists)?|alter\s+table|drop\s+table(?:\s+if\s+exists)?|"
+    r"truncate\s+table|from|join|into|update|references)\s+(?P<name>" + _IDENT + r"(?:\." + _IDENT + r")?)",
+    re.IGNORECASE)
+NOT_TABLE_WORDS = {"select", "set", "values", "dual", "only", "lateral", "if", "table", "where", "as",
+                   "on", "using", "unnest"}
+
+
+def _strip_sql_noise(text: str, xml: bool = False) -> str:
+    """剥 `--` / `/* */` / 单引号字符串(XML 另剥 `<!-- -->` 与标签),保留换行以守行号。"""
+    if xml:
+        text = re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
+        text = re.sub(r"<[^>]*>", lambda m: " " + "\n" * m.group(0).count("\n"), text)
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "'":
+            j = i + 1
+            while j < n:
+                if text[j] == "'" and j + 1 < n and text[j + 1] == "'":
+                    j += 2
+                    continue
+                if text[j] == "'":
+                    break
+                j += 1
+            out.append("''" + "\n" * text[i:j + 1].count("\n"))
+            i = j + 1
+        elif text.startswith("--", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("\n" * text[i:j].count("\n"))
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _table_refs(clean: str):
+    for m in TABLE_CTX_RE.finditer(clean):
+        kw = m.group("kw").lower()
+        name = m.group("name").split(".")[-1]
+        if name.lower() in NOT_TABLE_WORDS:
+            continue
+        before = clean[max(0, m.start() - 24):m.start()]
+        if kw == "update" and re.search(r"(key|for)\s*$", before, re.IGNORECASE):
+            continue
+        if kw == "from":
+            head = clean[max(0, m.start() - 80):m.start()]
+            if re.search(r"(extract|substring|trim|overlay)\s*\([^)]*$", head, re.IGNORECASE):
+                continue
+        yield name, m.start("name")
+
+
+def check_sql_identifier_case(root: Path, db: str = ""):
+    """采集两类命中点(退出码恒 0,是否违规由 Agent 判):
+      - quoted-identifier:SQL 里的标识符被双引号/反引号包裹(Java/Kotlin 只认转义引号 `\\"x\\"` 与反引号,
+        且只看含 SQL 关键字的行,避免把普通字符串字面量当标识符)
+      - spelling-drift:同一表名(忽略大小写相同)出现多种拼写;risk=high(MySQL/Linux 表名区分大小写,换库即坏)
+    ⚠️ Kotlin 原始字符串 `\"\"\"...\"\"\"` 里的 SQL 以普通双引号包标识符,本采集器不覆盖(已知局限,见 notes)。"""
+    findings, tables = [], {}
+
+    def feed(path, clean, line0):
+        # 引号内内容不再参与拼写比对(已按 quoted-identifier 采集过)
+        unq = re.sub(r'"[^"\n]*"|`[^`\n]*`', " ", clean)
+        for name, off in _table_refs(unq):
+            tables.setdefault(name.lower(), []).append((name, rel(path, root), line0 + unq.count("\n", 0, off)))
+
+    for path in iter_files(root, SQL_FILE_EXTS):
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        xml = path.suffix.lower() == ".xml"
+        if xml and "<mapper" not in raw:
+            continue
+        clean = _strip_sql_noise(raw, xml=xml)
+        lines = clean.split("\n")
+        raw_lines = raw.split("\n")
+        for i, ln in enumerate(lines, 1):
+            for m in re.finditer(r'"([^"\n]+)"|`([^`\n]+)`', ln):
+                findings.append({"file": rel(path, root), "line": i, "category": "quoted-identifier",
+                                 "name": m.group(1) or m.group(2),
+                                 "snippet": (raw_lines[i - 1] if i - 1 < len(raw_lines) else ln).strip()[:200]})
+        feed(path, clean, 1)
+        if db == "dameng":
+            unq = re.sub(r'"[^"\n]*"|`[^`\n]*`', " ", clean)
+            for m in re.finditer(r"(?i)\b(?:create\s+table(?:\s+if\s+not\s+exists)?|alter\s+table)\s+(" + _IDENT + r")", unq):
+                if m.group(1) != m.group(1).upper():
+                    findings.append({"file": rel(path, root), "line": 1 + unq.count("\n", 0, m.start(1)),
+                                     "category": "not-upper", "name": m.group(1)})
+            for m in re.finditer(r"(?i)\badd\s+(?:column\s+)?(" + _IDENT + r")\b", unq):
+                n = m.group(1)
+                if n.lower() not in ("column", "constraint", "primary", "unique", "foreign", "index", "key", "check") and n != n.upper():
+                    findings.append({"file": rel(path, root), "line": 1 + unq.count("\n", 0, m.start(1)),
+                                     "category": "not-upper", "name": n})
+            for m in re.finditer(r"(?is)create\s+table(?:\s+if\s+not\s+exists)?\s+" + _IDENT + r"\s*\((.*?)\n\s*\)\s*(?:;|$)", unq):
+                depth, cur, items = 0, [], []
+                for ch in m.group(1):
+                    depth += (ch == "(") - (ch == ")")
+                    if ch == "," and depth == 0:
+                        items.append("".join(cur)); cur = []
+                    else:
+                        cur.append(ch)
+                items.append("".join(cur))
+                for it in items:
+                    t = re.match(r"\s*(" + _IDENT + r")", it)
+                    if t and t.group(1).lower() not in ("primary", "unique", "key", "index", "constraint", "foreign", "check") \
+                            and t.group(1) != t.group(1).upper():
+                        findings.append({"file": rel(path, root), "line": 1 + unq.count("\n", 0, m.start(1)),
+                                         "category": "not-upper", "name": t.group(1)})
+
+    for path in iter_files(root, JVM_EXTS):
+        for i, raw in enumerate(read_lines(path), 1):
+            st = raw.strip()
+            if not st or st.startswith(("//", "*", "/*")) or '"' not in raw or not SQL_LINE_HINT.search(raw):
+                continue
+            line = _strip_sql_noise(raw)
+            for m in re.finditer(r'\\"([^"\\\n]+)\\"|`([^`\n]+)`', line):
+                findings.append({"file": rel(path, root), "line": i, "category": "quoted-identifier",
+                                 "name": m.group(1) or m.group(2), "snippet": st[:200]})
+            feed(path, re.sub(r'\\"[^"\\\n]*\\"', " ", line), i)
+
+    for key, occ in sorted(tables.items()):
+        spellings = sorted({o[0] for o in occ})
+        if len(spellings) > 1:
+            findings.append({"file": occ[0][1], "line": occ[0][2], "category": "spelling-drift",
+                             "name": key, "spellings": spellings, "risk": "high",
+                             "locations": [f"{o[1]}:{o[2]}={o[0]}" for o in occ[:8]]})
+    return findings
+
+
 def render_text(results, summary, notes, checks):
     out = []
     out.append("【源码静态约定回检】scan_code_conventions.py")
@@ -540,6 +686,19 @@ def render_text(results, summary, notes, checks):
             out.append("    ... 更多见 --json")
         out.append("")
 
+    if "sql-identifier-case" in checks:
+        hits = results["sql-identifier-case"]
+        q = [h for h in hits if h["category"] == "quoted-identifier"]
+        d = [h for h in hits if h["category"] == "spelling-drift"]
+        out.append(f"■ SQL 标识符通用性 (architect 检查项 18): 被引号包裹 {len(q)} 处, 同表多拼写 {len(d)} 处")
+        for h in q[:40]:
+            out.append(f"    [引号包裹] {h['file']}:{h['line']}  {h['name']}")
+        for h in d[:40]:
+            out.append(f"    [拼写漂移·risk={h['risk']}] {h['name']} -> {h['spellings']}  {h['locations'][:3]}")
+        if len(q) > 40 or len(d) > 40:
+            out.append("    ... 更多见 --json")
+        out.append("")
+
     if notes:
         out.append("  说明/跳过:")
         for n in notes:
@@ -552,13 +711,15 @@ def render_text(results, summary, notes, checks):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="源码静态约定回检合集(http-hardcode / refresh-scope / dead-ref / dep-baseline / audit-fill)")
+        description="源码静态约定回检合集(http-hardcode / refresh-scope / dead-ref / dep-baseline / audit-fill / sql-identifier-case)")
     parser.add_argument("code_dir", help="待扫描的代码目录")
     parser.add_argument("--json", action="store_true", help="JSON 输出")
     parser.add_argument("--checks", default=",".join(ALL_CHECKS),
                         help=f"逗号分隔,默认全部:{','.join(ALL_CHECKS)}")
     parser.add_argument("--base", default="HEAD",
                         help="dep-baseline 的 git diff 基线引用,默认 HEAD")
+    parser.add_argument("--sql-db", default="", choices=["", "dameng"],
+                        help="sql-identifier-case 的目标库;dameng = .sql 里建表/改表的表名、字段名必须全大写")
     args = parser.parse_args()
 
     root = Path(args.code_dir)
@@ -584,6 +745,9 @@ def main():
         results["dep-baseline"] = check_dep_baseline(root, args.base, notes)
     if "audit-fill" in checks:
         results["audit-fill"] = check_audit_fill(root)
+    if "sql-identifier-case" in checks:
+        results["sql-identifier-case"] = check_sql_identifier_case(root, args.sql_db)
+        notes.append("sql-identifier-case: Kotlin 原始字符串(三引号)内的 SQL 与 .properties/注解外的拼接 SQL 不在覆盖面,需人工 grep")
 
     summary = {c: len(results[c]) for c in checks}
 

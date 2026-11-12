@@ -1,24 +1,8 @@
 > 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 只使用适用能力。
 
-# sprint-dev · 开发完成后回写详情（分片 3/3 · Step X.8）
+# sprint-dev · 开发完成后回写详情（分片 3/3 · 累进路径产物审计收口）
 
-#### Step X.8：部署操作变更留待集中同步
-
-日常 dev / bugfix / 链外任务 / 部署不自动新增或更新部署 Markdown，不为部署日志另做 commit/push。只核本任务变化的 SQL、配置、启动参数、初始化/迁移接口、服务与中间件；历史债务不纳入。沿用当前 execution context，不因 commit/push/deploy 新请求追加测试、CVL、全回归、迁移演练、多 Agent、计划卡或新工具开发。正式 aiauto 报告和已授权的两路测试链职责不变。
-
-有实际操作变化时，把权威文件/现成运行记录引用记到既有 baseline 的 `deployment_doc_pending.{version}`，不复制配置正文或生成报告。无变化不写：
-
-<!-- flowvar-check: allow DEPLOY_REF -->
-
-```bash
-# VERSION、DEPLOY_REF 从本任务现有上下文重绑；DEPLOY_REF 是实际变化文件或运行记录引用。
-VERSION="${VERSION:?从当前执行上下文重绑版本，不读历史Sprint}"
-python3 {{AIDP_HOME}}/scripts/deployment_ops.py note --version "${VERSION:?}" --ref "${DEPLOY_REF:?}"
-```
-
-部署执行只消费现有操作指引和上述待同步引用。入口缺失时按已知真实脚本/配置判定最小前提缺口，不回调开发链补文档，不把“未写 Markdown”变成部署失败。备份按 `{{AIDP_HOME}}/reference/部署操作约定.md` 统一频率核对；不因 schema 迁移增加副本，不自动恢复旧数据。未配置 CI/pipeline 使用现有轻量出口，一次说明原因，不循环探测。
-
-版本规划与正式发布才读取该待办并按 `{{AIDP_HOME}}/reference/部署操作约定.md` 集中合并必要操作指引；用户明确要求额外报告时才另产。合并成功后仅结清实际覆盖的引用，失败保留。
+开发/修复可实时更新 `docs/deployment` 内相关数据库脚本与实际配置文件，不登记待同步引用；操作指引等文档性内容仅在 `/version` 规划期与正式发布期按 `{{AIDP_HOME}}/reference/部署操作约定.md` 更新。
 
 ---
 

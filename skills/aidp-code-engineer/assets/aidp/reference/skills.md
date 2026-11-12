@@ -73,8 +73,9 @@
 
 ### bugfix SKILL 调用约定（light / formal 共用，各调用方只引用本节）
 
-- **范围**：参数 = 调用方给定的 `sprint-{NNN}` / 文件名，范围上限 = 本次核实的 BUG 清单（BUG ID + 来源回链），由调用方写进 prompt。⛔ 空参数不等于全扫：既无参数又无清单时，交互式先澄清目标，编排 / 无人值守返回缺口「缺少修复范围」（与 SKILL「输入」段同口径）。
+- **范围**：formal 参数 = 调用方给定的 `sprint-{NNN}` / 文件名，范围上限 = 本次核实的 BUG 清单（BUG ID + 来源回链）。light/evidence-only 传父 `execution_context`、明确 `failures` 清单及可核查 evidence（测试失败含 run_id/节点）、父 write_set/acceptance；不为调用建 docs/bugfix 条目、不读取历史 Sprint 状态。字段与缺口处理按 SKILL「light + evidence-only 输入」。⛔ 空参数不等于全扫：既无参数又无清单时，交互式先澄清目标，编排 / 无人值守返回缺口「缺少修复范围」，不猜修复目标。
 - **`report_mode`**：light 日常任务传 `report_mode=evidence-only`（不写 `bugfix-*-report.md`，根因 / 证据取其结构化返回写原 execution context 机器 JSON）；formal Sprint 保留默认 `file`（SKILL 报告即根因 / 证据权威落点，沿用原规格与归档）。两种模式修复范围都只由清单决定。
+- **light 证据回写**：调用方用 `execution_policy.py record-outcome --action implement --status <真实状态> --input-hash <实际输入hash> --evidence-json <结构化结果>`（并传 root/execution-context）写回当前任务机器 JSON；failure 清单、根因及复验引用保持可追溯，不直接编辑授权字段、不建 Markdown。相关测试仍由父任务既有测试链核验；SKILL 的「已修复」不能替代测试 PASS。
 - 根因方法论（含 `superpowers:systematic-debugging`）与修复流程归 SKILL 单一信源，调用方不复述、不另行调用。
 
 ### 编号与执行证据的调用层协议

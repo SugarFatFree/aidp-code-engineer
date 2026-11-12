@@ -11,15 +11,19 @@
 
 | 文件 | 内容 | 谁指过来 |
 |---|---|---|
-| `约定细则-1.md` ~ `约定细则-5.md` | 核心约定 1–41 中「有外置细则」那些条的子项 / Why / 示例 | 项目记忆文件「核心约定」段 |
-| `命令速查.md` | 各命令的完整实操示例、flag 组合、7×24 前置 | 项目记忆文件「常用命令速查」 |
-| `skills.md` | 各 SKILL 的详细用途 | 项目记忆文件「本项目使用的 Skills」 |
+| `core-conventions.md` | 核心约定 1–41 的完整决策主行与细则指针，编号唯一权威 | 项目记忆文件；formal 读完整协议 |
+| `task-routing.md` | 命令清单、意图路由、角色与 Skills 清单、运行目录适配 | 项目记忆文件；formal 按需加载 |
+| `约定细则-1.md` ~ `约定细则-5.md` | 核心约定 1–41 中「有外置细则」那些条的子项 / Why / 示例 | `core-conventions.md` |
+| `light-entry.md` | light 任务精简入口：固定流程、`light_task.py` 用法、硬边界、何时再读 `light-context.md` | `/sprint-dev`、`/sprint-bugfix` 独立 light 路径、`light-context.md` 开头 |
+| `review-evidence.md` | 已授权审查的报告结构、差量复用与等价证据 | `light-context.md` 的 review / full-cvl / equivalent-evidence 分支 |
+| `命令速查.md` | 各命令的完整实操示例、flag 组合、7×24 前置、AI 测试入口前置规则全文 | `task-routing.md`「常用命令速查」 |
+| `skills.md` | 各 SKILL 的详细用途 | `task-routing.md`「本项目使用的 Skills」 |
 | `初始化与文档索引.md` | 初始化输入清单 + AIDP 范式文档索引 | 项目记忆文件两处 |
 | `开发期族增量.md` | 约定 22「攒批级联」的**四族增量册**详规与收口点清单（**该条的单一信源**）| 约定 22 主行；`{{AIDP_HOME}}/commands/`{sprint-requirements,sprint-design,sprint-plan,sprint-selftest}.md（各写明「单一信源 = 本文件」）+ `sprint-dev.md`·`sprint-close.md` 引用 |
 | `子Agent必读.md` | 项目级踩坑清单（**用户填充型**，见下）| `agents/frontend.md`·`agents/backend.md`、`/sprint-close` Step 5.1 |
 | `上游调用日志参考实现.md` | 约定 40 的拦截器骨架（traceId 配对 / 截断 / 脱敏 / 二进制降级）| `rules/code.md`·`rules/backend.md` 约定 40 |
 | `agent-tools.md` | Claude Code / Codex / DeepSeek Harness 的判定依据、记忆文件、SKILL / 命令 / 插件目录、工具名与定时循环对照 | 项目记忆文件「多 Agent 兼容」段、`agent_sync.py` 适配入口 |
-| `部署操作约定.md` | 部署文档时机与内容、SQL 台账精简口径、备份频率与真实记录（命令侧规则，不复制到下游 `docs/deployment/`）| `/version` 发布期集中校准、`/sprint-dev` 部署待同步、`docs/deployment/README.md` |
+| `部署操作约定.md` | 默认部署动作、部署文档时机与内容、SQL 台账精简口径（命令侧规则，不复制到下游 `docs/deployment/`）| `/version` 规划期与发布期集中校准、`docs/deployment/README.md` |
 | `SKILL编排层接入.md` | 版本规划四个子命令接入 SKILL「编排层调用协议」的命令端契约（入参来源 / 移交清单校验 / 打点落盘）| `/version`、`/sprint-requirements`、`/sprint-design`、`/sprint-plan`、`/sprint-selftest` |
 
 ## ⛔ 维护边界（约定 16）

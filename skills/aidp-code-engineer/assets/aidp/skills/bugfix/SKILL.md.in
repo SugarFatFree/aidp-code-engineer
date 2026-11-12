@@ -10,7 +10,7 @@ allowed-tools: Read, Write, Edit, Bash, Agent, Glob, Grep, AskUserQuestion, Todo
 
 ## 触发条件
 
-当 `docs/bugfix/` 下有待修复的问题记录，需要执行分析、修复代码、验证和归档时触发。
+当调用方提供本任务明确的故障/测试失败清单，或 `docs/bugfix/` 下有指定的待修复问题记录，需要分析、修复和验证时触发。light 默认由调用方传 `report_mode=evidence-only`，formal/file 保留台账及归档闭环。
 
 ## 输入
 
@@ -19,19 +19,30 @@ allowed-tools: Read, Write, Edit, Bash, Agent, Glob, Grep, AskUserQuestion, Todo
   - 示例：`sprint-001` — 只处理 Sprint 列标注为 Sprint-001 的待修复条目
   - 示例：`sprint-001 bugfix-20260304-alice.md` / `bugfix-20260304-alice.md` — 仅处理指定问题文件
 - 本次待修 BUG 清单（调用方在 prompt 中给出的 BUG ID / 来源回链，可选）：给了即为范围上限；`$ARGUMENTS` 为空时必须有它（见上）。
-- 问题记录文件为 `docs/bugfix/{version}/` 下（含子目录）的 `bugfix-{YYYYMMDD}-{user}.md`。**这是本 SKILL 唯一的输入面**：其他来源（测试问题汇总清单、AI 测试失败清单、Issue 等）由调用方先落成这里的条目（带来源回链）再调用，本 SKILL 不扫其他目录。
+- **formal/file 的问题记录**为 `docs/bugfix/{version}/` 下（含子目录）的 `bugfix-{YYYYMMDD}-{user}.md`。**这是 formal/file 唯一的输入面**：其他来源（测试问题汇总清单、AI 测试失败清单、Issue 等）由调用方先落成这里的条目（带来源回链）再调用，本 SKILL 不扫其他目录。仅 `report_mode=evidence-only` 不改变 formal 身份或跳过既有台账；light 输入按下节。
+
+### light + evidence-only 输入
+
+父 `execution_context` 的 mode=light 且 `report_mode=evidence-only` 时，直接使用当前任务机器证据中的明确 `failures` 清单；调用方可在 prompt 中传同一清单及其实际证据定位。必须包含：
+
+- `execution_context` 路径与当前 task_id/revision；沿用父任务 `write_set`、`acceptance`，实现修复须已有 implement 授权。
+- `failures[]` 每项的稳定 id（可用真实测试 node id，不强制分配正式 BUG 编号）、现象、触发/复现步骤、期望与实际、`evidence`（可核查的代码/日志/测试记录位置）。测试失败附真实 `run_id` 与失败测试文件/节点；用户报告故障没有测试 run 时注明待复现，不伪造 run_id。
+- 验收点及涉及路径须落在父写集；输入不足、证据不可读/与任务不符、越界时返回「缺少修复范围」或具体 scope-conflict，交回调用方补事实/按真实授权 revise；不能猜测范围、扩大 grant 或从历史问题补齐。无 implement 只返回发现。
+
+light 不要求问题记录文件存在，**不创建 `docs/bugfix` 条目、Sprint 卡或 Markdown 报告**。同任务先前修复从父机器证据读取；根因、修复结果、复验结果由调用方用既有 `execution_policy.py record-outcome` 写回该任务机器 JSON，不能直接改授权/身份字段。formal/file 继续上面的台账输入和 Step 5 归档。
 
 ## 前置条件
 
-1. `docs/bugfix/{version}/` 目录下（含子目录）存在 `bugfix-*.md` 问题记录文件
-2. `docs/init/00_AIDP范式主文档.md` 存在（用于确认文档归档范式）
-3. 项目代码目录 `code/frontend/` / `code/backend/` 存在
+- **light + evidence-only**：上节父上下文、明确故障清单、可核查证据、实际写集与验收点齐备；代码路径按父写集定位，不要求前后端固定目录或正式归档文档。
+- **formal/file**：`docs/bugfix/{version}/` 下存在指定 `bugfix-*.md`，且 `docs/init/00_AIDP范式主文档.md` 及本次涉及的项目代码目录存在；保留原台账与归档前置。formal/evidence-only 仍用正式问题记录，只省略报告文件。
 
 ## 执行步骤
 
 ### Step 1：读取项目规范与背景信息
 
-读取以下文档，提取修复所需的项目上下文：
+light 只读父任务证据、当前受影响代码、对应 rules 与必要项目技术约束；**light 不读取 activeContext/progress**，不从历史 Sprint 猜身份。以下归档主文档及迭代级状态只在 formal 使用；项目级 techContext/systemPatterns 仍按本次修复需要读取。
+
+formal 读取以下文档，提取修复所需的项目上下文：
 
 ```
 docs/init/00_AIDP范式主文档.md  → 提取：
@@ -49,7 +60,9 @@ memory/systemPatterns.md                  → 技术决策与架构约束（项�
 
 ### Step 2：扫描并解析问题记录
 
-**2.1 定位问题文件**
+**light 跳过 2.1 的目录扫描**，只解析已验证的父 `failures` 清单。2.2 的问题字段来自该清单与实际证据；2.2b 的拆分及后续修复共用，记录落在任务机器证据。formal 按 2.1–2.2 读取原问题文件。
+
+**2.1 定位问题文件（仅 formal）**
 
 扫描目录：
 ```
@@ -105,7 +118,7 @@ docs/bugfix/{version}/
 **3.0 二次反馈强制走「推翻上次诊断」分支（★ 不得复述上次结论）**
 
 **用户对同一问题复述第 2 次时，必须推翻上一次的诊断重新查**，而不是重复上次结论、也不是"再修一遍同一处"。
-判定「是否二次反馈」：同一现象在 `docs/bugfix/{version}/` 已有记录（含已标"已修复"的），或用户表述含
+判定「是否二次反馈」：light 的同一现象在父任务机器证据已有修复记录，或 formal 的指定 `docs/bugfix/{version}/` 条目已有记录（含已标"已修复"的），或用户表述含
 "还是 / 依然 / 又 / 仍然 / 没好"。命中即：
 
 1. **把上次的归因显式标记为已被推翻**（写进本次记录的「归因」列：`推翻上次归因：<原归因>，理由：<现象仍在>`）；
@@ -120,8 +133,9 @@ docs/bugfix/{version}/
 
 使用 Agent（Explore 类型）搜索相关代码：
 - 根据问题描述中的模块名、功能名、接口路径等关键词
-- 搜索前端文件：`code/frontend/*/` 下的 `.vue`、`.ts`、`.js` 文件
-- 搜索后端文件：`code/backend/*/` 下的 `.java`、`.xml`、`.yml` 文件
+- light 限定父写集及其直接调用依赖读取，按项目实际语言与目录定位；越出写集的必要修改先回父流程 revise
+- formal 前端文件可在 `code/frontend/*/` 下定位 `.vue`、`.ts`、`.js`
+- formal 后端文件可在 `code/backend/*/` 下定位 `.java`、`.xml`、`.yml`
 - 搜索 API 定义、路由配置、Store/状态管理等
 
 **3.2 阅读源码**
@@ -154,7 +168,7 @@ docs/bugfix/{version}/
 用 `TodoWrite` 为每个修复项建一条待办（⛔ 不要用 `TaskCreate`/`TaskUpdate`/`TaskList`——这三个工具不存在，写了这一步就恒不可执行、且没有任何门会报）：
 - 后端修复任务优先（前端通常依赖后端接口变更）
 - 前端修复任务在后端完成后执行
-- 文档归档任务依赖所有修复任务
+- formal/file 的文档归档任务依赖所有修复任务；light 只向父任务返回结构化证据
 
 **4.2 执行修复**
 
@@ -197,9 +211,9 @@ docs/bugfix/{version}/
 | `file`（默认） | 按 5.1/5.2 生成 `bugfix-*-report.md` | formal Sprint、用户明确要报告 |
 | `evidence-only` | **不写任何 `*-report.md`**，改为向调用方返回下方结构化结果 | 日常（light）修复：证据由调用方写入机器记录、终端汇报 |
 
-`evidence-only` 返回结构（每个问题一项，一条反馈拆出的多个现象各占一项）：`id`、`root_cause`、`evidence`（代码位置/日志行/实测记录；留空则该归因属未验证假设，不得判已修复）、`changed_files`（相对项目根的路径与改动说明）、`verification`（验证方式与结果；关联测试及其结果由调用方的测试链路核实）、`status`（已修复/未解决）、`unresolved`（未解决项及原因）。该模式下仍保留「问题记录状态列 / Commit 列由调用方就地回填」的约定（5.3），但**不得创建报告文件，也不得在问题记录里复写根因**。
+`evidence-only` 返回结构（每个问题一项，一条反馈拆出的多个现象各占一项）：`id`、`root_cause`、`evidence`（代码位置/日志行/实测记录；留空则该归因属未验证假设，不得判已修复）、`changed_files`（相对项目根的路径与改动说明）、`verification`（验证方式与结果；关联测试及其结果由调用方的测试链路核实）、`status`（已修复/未解决）、`unresolved`（未解决项及原因）。已有正式问题记录时保留「状态列 / Commit 列由调用方就地回填」的约定（5.3）；light 无原问题记录时不创建状态列或 Commit 列，直接由调用方将结构化结果写回父任务机器证据。**不得创建报告文件，也不得在问题记录里复写根因**。
 
-两种模式下，修复范围都只由调用方给定的问题记录/文件清单决定，**内核不得自行扩大到其他问题记录、其他 Sprint 或其他版本**。
+两种模式下，修复范围都只由调用方给定的父任务 failures 或正式问题记录/文件清单决定，**内核不得自行扩大到其他问题记录、其他 Sprint 或其他版本**。
 
 以下 5.1、5.2 仅在 `report_mode=file` 时执行。
 

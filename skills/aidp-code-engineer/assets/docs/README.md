@@ -46,7 +46,7 @@ docs/
 | `prototype/{version}/mockup/` | 高保真原型（视觉最高优先级） | 人工提供 或 UI Agent 自动生成 |
 | `requirements/{version}/` | AIDP 版本需求基线 | `/sprint-requirements` |
 | `design/detail/{version}/` | 详细设计、API、数据库 | `/sprint-design` |
-| `deployment/{version}/` | 部署产物双轨（约定 37）：`sql/增量/` + `sql/全量/`、`配置文件/增量/配置项清单.md` + `配置文件/全量/`（nginx / compose / k8s / 配置中心），版本根 `README.md` 为唯一操作入口（`部署流程/` 仅确需时存在，不设 `00_索引.md`） | `/sprint-design`（增量 SQL）+ `/sprint-dev` Step X.7（增量配置；部署操作变化只登记待同步）+ 版本规划 / 正式发布集中校准+ `/version` Step 3.3.7.9（全量两轨） |
+| `deployment/{version}/` | 部署产物双轨（约定 37）：`sql/增量/` + `sql/全量/`、`配置文件/增量/配置项清单.md` + `配置文件/全量/`（nginx / compose / k8s / 配置中心），版本根 `README.md` 为唯一操作入口（`部署流程/` 仅确需时存在，不设 `00_索引.md`） | `/sprint-design`（增量 SQL）+ 版本规划 / 正式发布集中校准 + `/version` Step 3.3.7.9（全量两轨） |
 | `deployment/tools/` | ★ **非版本隔离**（项目级特例）：跨版本运维脚本 / 一次性迁移工具归档 | 各角色按需（详见 [`init/06_版本与用户目录约定.md`](init/06_版本与用户目录约定.md) §2.5.4.1）|
 | `testing/{version}/` | 测试文档（研发自测/ 正式用例/ sprint-NNN/） | `/sprint-selftest`+`/sprint-test`+`/sprint-aiauto-test` |
 | `plans/{version}/` | 研发执行计划 | `/sprint-plan` |

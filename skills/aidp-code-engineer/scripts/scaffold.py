@@ -504,8 +504,11 @@ def refresh_optional_rules(root: Path, homes, snapshot: dict, rep: Report):
     都对外承诺了「随升级自动刷新」）。
     """
     for home in homes:
+        runtime = root / home
+        manifest_path = runtime / runtime_layout.RUNTIME_MANIFEST
+        manifest = runtime_layout._read_manifest(runtime) if manifest_path.is_file() else None
         for tpl_rel, inst_rel in L.OPTIONAL_RULES:
-            new_tpl, inst = root / home / tpl_rel, root / home / inst_rel
+            new_tpl, inst = runtime / tpl_rel, runtime / inst_rel
             if not new_tpl.is_file() or not inst.is_file():
                 continue
             old_tpl, old_inst = snapshot.get((home, tpl_rel, inst_rel), (None, None))
@@ -513,12 +516,24 @@ def refresh_optional_rules(root: Path, homes, snapshot: dict, rep: Report):
             if inst.read_bytes() == new:
                 continue
             # 「本地改过」的判据 = 安装副本 ≠ **上一版**模板；取不到上一版时保守判为改过。
-            modified = old_tpl is None or old_inst is None or old_inst != old_tpl
+            modified = (old_tpl is None or old_inst is None or old_inst != old_tpl
+                        or inst.read_bytes() != old_inst)
             if modified:
                 rep.warn(f"{home}/{inst_rel} 与上一版模板位不一致（疑似本地修改），未覆盖；"
                          f"确认后跑 `python3 {home}/scripts/check_webmcp.py --install-rule --force` 重装")
                 continue
+            runtime_layout._assert_contained(inst, runtime)
+            registered = manifest is not None and inst_rel in manifest["files"]
+            if registered and (inst_rel not in runtime_layout._manifest_user_files(manifest)
+                               or runtime_layout._file_metadata(inst) != manifest["files"][inst_rel]):
+                rep.warn(f"{home}/{inst_rel} 与运行清单不一致，未覆盖；请人工核对该规则及 manifest")
+                continue
             write_if_diff(inst, new)
+            if registered:
+                # 只更新本次已证明未被用户改动的规则，保留其他全部指纹与 user_files 归属。
+                manifest["files"][inst_rel] = runtime_layout._file_metadata(inst)
+                write_if_diff(manifest_path, (json.dumps(manifest, ensure_ascii=False,
+                                                       indent=2, sort_keys=True) + "\n").encode("utf-8"))
             rep.act("update", f"{home}/{inst_rel}", "已安装的可选规则随模板升级")
 
 
@@ -804,7 +819,8 @@ def _fill_missing_sub_keys(have: str, tpl: str, skipped=None) -> "tuple[str, lis
     往里塞一份缩进对不上的 YAML。
     """
     tpl_blocks = _yaml_top_blocks(tpl)
-    lines = have.splitlines()
+    lines = have.splitlines(keepends=True)
+    newline = "\r\n" if "\r\n" in have else "\n"
     # 顶层段的起止行号（右开区间），尾部空行不算在段内。
     bounds, current, start = {}, None, 0
     for index, line in enumerate(lines):
@@ -856,15 +872,123 @@ def _fill_missing_sub_keys(have: str, tpl: str, skipped=None) -> "tuple[str, lis
     out = []
     for index, line in enumerate(lines):
         if index in additions:
-            out.extend(additions.pop(index))
+            if out and not out[-1].endswith(("\n", "\r")):
+                out[-1] += newline
+            out.extend(item + newline for item in additions.pop(index))
         out.append(line)
     for chunk in additions.values():            # 插入点落在文件末尾
-        out.extend(chunk)
-    return "\n".join(out).rstrip("\n") + "\n", filled
+        if out and not out[-1].endswith(("\n", "\r")):
+            out[-1] += newline
+        out.extend(item + newline for item in chunk)
+    return "".join(out), filled
+
+
+def snapshot_config_template(root: Path):
+    """只信任安装位的旧交付件；在运行包备份/替换及 self-install 前调用。"""
+    target = L.installed_skill_dir(root, L.CONFIG_TPL_REL)
+    if target is None:
+        return None
+    try:
+        runtime_layout._assert_contained(target / L.CONFIG_TPL_REL, root)
+        marker = runtime_layout._assert_contained(target / ".aidp-scaffold-generated", root)
+        if not marker.is_file() or marker.read_bytes() != b"aidp-code-engineer\n":
+            return None
+        return _prev_delivered(root, L.CONFIG_TPL_REL)
+    except (OSError, ValueError):
+        return None
+
+
+def _config_nodes(text: str, strict=True):
+    """定位块式 YAML 的键片段，不反序列化或重排用户文件；歧义时拒绝清理。"""
+    lines = text.splitlines(keepends=True)
+    nodes, stack = {}, []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        while stack and indent <= nodes[stack[-1]]["indent"]:
+            nodes[stack.pop()]["end"] = index
+        # 标量/列表/用户专属段的内部不再解释成配置键。
+        if stack and not nodes[stack[-1]]["mapping"]:
+            continue
+        match = re.fullmatch(r"( *)([A-Za-z_][\w-]*):(?:\s+(.*))?", line.rstrip("\r\n"))
+        if match is None or (indent and not stack):
+            if strict:
+                return None
+            continue  # 宽松模式只提取人工核对路径，绝不作为删除依据。
+        value = match.group(3) or ""
+        # anchor/alias/merge 可让删除一处改变其他键含义，必须保留待人工判断。
+        if strict and re.search(r"(?:^|[\s,\[{])[&*][\w-]+", value.split(" #", 1)[0]):
+            return None
+        path = (*stack[-1], match.group(2)) if stack else (match.group(2),)
+        if strict and path in nodes:
+            return None
+        nodes[path] = {"start": index, "end": len(lines), "indent": indent,
+                       "multiline": value.startswith(("|", ">")),
+                       "mapping": (not value or value.startswith("#")
+                                   or (not strict and value.startswith("&"))) and path != ("custom_user",)}
+        stack.append(path)
+    return nodes
+
+
+def _config_review_paths(previous: str, incoming: str):
+    """仅供告警的候选完整路径；无可信基线时不声称这些键属于模板。"""
+    old, new = (_config_nodes(text, strict=False) for text in (previous, incoming))
+    return [".".join(path) for path in old if path[0] != "custom_user" and path not in new
+            and not any(child[:-1] == path for child in old)]
+
+
+def _retire_config_keys(have: str, previous: str, incoming: str):
+    """旧模板曾提供、新模板已删除的叶子键：原样删除，用户改动留存。"""
+    old, new, current = (_config_nodes(text) for text in (previous, incoming, have))
+    if old is None or new is None or current is None:
+        paths = _config_review_paths(previous, incoming)
+        return have, [], ["配置含不能安全定位的 YAML 结构，退休键未自动清理；待核对键："
+                          + "、".join(paths or ["无法提取完整键路径，请人工核对旧模板"])]
+    old_lines, lines = previous.splitlines(keepends=True), have.splitlines(keepends=True)
+    removed, review, cut = [], [], set()
+
+    def content(source, node):
+        return [line.rstrip("\r\n") for line in source[node["start"]:node["end"]]
+                if node["multiline"] or (line.strip() and not line.lstrip().startswith("#"))]
+
+    for path, node in old.items():
+        if path[0] == "custom_user" or path in new:
+            continue
+        if node["mapping"] and any(key[:-1] == path for key in old):
+            continue  # 按叶子清理，退休段里的用户新增键仍需保留。
+        parents = [path[:i] for i in range(1, len(path))]
+        opaque = next((p for p in parents if (p in new and not new[p]["mapping"])
+                       or (p in current and not current[p]["mapping"])), None)
+        label = ".".join(path)
+        if opaque is not None:
+            review.append(label + "（父段不是块式映射，无法判定）")
+            continue
+        local = current.get(path)
+        if local is None:
+            continue
+        if content(lines, local) != content(old_lines, node):
+            review.append(label + "（项目已修改）")
+            continue
+        cut.update(i for i in range(local["start"], local["end"])
+                   if lines[i].strip() and not lines[i].lstrip().startswith("#"))
+        removed.append(label)
+    # 已退休的映射段仅在清空后删除键行；注释和未知用户子键原样留存。
+    for path, node in reversed(list(current.items())):
+        if path not in old or path in new or path[0] == "custom_user" or not node["mapping"]:
+            continue
+        body = [i for i in range(node["start"] + 1, node["end"])
+                if lines[i].strip() and not lines[i].lstrip().startswith("#")]
+        if body and all(i in cut for i in body):
+            # 用户在段标题上添加的说明也不随模板删除。
+            if lines[node["start"]].rstrip("\r\n") == old_lines[old[path]["start"]].rstrip("\r\n"):
+                cut.add(node["start"])
+    return "".join(line for i, line in enumerate(lines) if i not in cut), removed, review
 
 
 def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claude",),
-                branch_policy=None):
+                branch_policy=None, previous_template=None):
     aidp_config.validate_branch_policy(branch_policy)
     tpl = L.render((L.SKILL_DIR / L.CONFIG_TPL_REL).read_text(encoding="utf-8"), ctx)
     tpl = tpl.replace("{{AIDP_HOME}}", runtime_home_for(agents))
@@ -875,24 +999,46 @@ def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claud
         L.write_text_lf(dst, tpl)
         rep.act("create", "memory/aidp-config.yaml")
     else:
-        have = dst.read_text(encoding="utf-8")
+        have = dst.read_bytes().decode("utf-8")
+        removed = []
+        if previous_template is None:
+            candidates = _config_review_paths(have, tpl)
+            rep.warn("缺少可信旧配置模板，未自动清理退休键；已保留现有配置，"
+                     "请对照旧交付件与新版模板人工核对，未知用户键不作退休判定；"
+                     "新版模板之外的待核对键：" + "、".join(candidates or ["无可定位的额外键"]))
+        else:
+            try:
+                previous = L.render(previous_template.decode("utf-8"), ctx)
+                previous = previous.replace("{{AIDP_HOME}}", runtime_home_for(agents))
+            except UnicodeDecodeError:
+                candidates = _config_review_paths(have, tpl)
+                rep.warn("旧配置模板无法解码，退休键未自动清理；现有配置已保留；"
+                         "新版模板之外的待核对键：" + "、".join(candidates or ["无可定位的额外键"]))
+            else:
+                have, removed, review = _retire_config_keys(have, previous, tpl)
+                if review:
+                    rep.warn("退休配置已保留，需人工裁决：" + "、".join(review))
         present = set(re.findall(r"^([A-Za-z_][\w-]*):", have, re.M))
         missing = [(k, v) for k, v in _yaml_top_blocks(tpl).items() if k not in present]
         if missing:
-            have = have.rstrip("\n") + "\n\n" + "\n".join(v for _, v in missing)
+            newline = "\r\n" if "\r\n" in have else "\n"
+            separator = newline if have.endswith(("\n", "\r")) else newline * 2
+            have += separator + ("\n".join(v for _, v in missing)).replace("\n", newline)
         skipped = []
         have, filled = _fill_missing_sub_keys(have, tpl, skipped)
         if skipped:
             rep.warn("配置段已保留原值，未自动补齐子键（非块式映射或缩进不兼容），"
                      "请对照新版模板检查：" + "、".join(skipped))
-        if missing or filled:
+        if missing or filled or removed:
             bk.save("memory/aidp-config.yaml")
-            L.write_text_lf(dst, have)
+            write_if_diff(dst, have.encode("utf-8"))
             detail = []
             if missing:
                 detail.append("补齐配置段：" + "、".join(k for k, _ in missing))
             if filled:
                 detail.append("补齐配置键：" + "、".join(filled))
+            if removed:
+                detail.append("清理未修改的退休配置键：" + "、".join(removed))
             rep.act("update", "memory/aidp-config.yaml", "；".join(detail))
     save_branch_policy(root, branch_policy, rep, bk, backup=existed)
 
@@ -1013,8 +1159,13 @@ def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: boo
     home = runtime_home_for(agents)
     rendered = rendered.replace("{{AIDP_HOME}}", home)
     installed_template = root / home / "skills" / L.SKILL_NAME / L.MEMORY_TPL_REL
-    bodies = L.memory_bodies(root)
-    target = L.memory_target(root, agents)
+    bodies = _check_memory_bodies(root, allow_custom_merge=True)
+    target = "AGENTS.md" if "AGENTS.md" in bodies else L.memory_target(root, agents)
+    if len(bodies) == 2 and bodies["AGENTS.md"] == bodies["CLAUDE.md"]:
+        # 相同正文可安全归一；否则主正文升级后会与遗留副本产生假冲突。
+        bk.save("CLAUDE.md")
+        L.write_text_lf(root / "CLAUDE.md", agent_adapter.SHELL_BODY)
+        rep.act("update", "CLAUDE.md", "相同正文归一为 AGENTS.md 导入薄壳")
     if not bodies:
         L.write_text_lf(root / target, rendered)
         rep.act("create", target, "项目记忆文件")
@@ -1034,6 +1185,10 @@ def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: boo
             bodies[target] = bodies[body_file]
             body_file = target
             rep.act("merge", target, f"主记忆从 {source_file} 迁入最终正文位")
+            if source_file == "CLAUDE.md" and target == "AGENTS.md":
+                bk.save("CLAUDE.md")
+                L.write_text_lf(root / "CLAUDE.md", agent_adapter.SHELL_BODY)
+                rep.act("update", "CLAUDE.md", "完整正文已迁入 AGENTS.md，转换导入薄壳")
         entries = L.queue_entries(root)
         updated = []
         for line in entries:
@@ -1082,8 +1237,12 @@ def sync_memory_file(root: Path, agents, ctx: dict, decision: str, was_aidp: boo
     rep.act("merge", target, "原记忆文件内容并入「项目自定义」段：" + "、".join(sorted(bodies)))
     L.enqueue(root, target, installed_template)
     rep.act("queue", target, "复核「项目自定义」段：去重、与 AIDP 约定冲突项交用户裁决")
-    if "claude" not in agents and "CLAUDE.md" in bodies and target != "CLAUDE.md":
-        rep.note("CLAUDE.md 原文已并入 AGENTS.md；当前未装配 Claude Code，CLAUDE.md 保留原样")
+    if "CLAUDE.md" in bodies and target == "AGENTS.md":
+        # 本次 merge_custom 已逐来源保全纯项目正文，凭该次实际合并才转换薄壳。
+        # 不把「看起来包含某些文字」当作旧模板已合并的凭据。
+        bk.save("CLAUDE.md")
+        L.write_text_lf(root / "CLAUDE.md", agent_adapter.SHELL_BODY)
+        rep.act("update", "CLAUDE.md", "原正文已合并到 AGENTS.md 项目自定义段，转换导入薄壳")
 
 
 # ── 导航 README / .gitkeep ─────────────────────────────────────────────────
@@ -1999,6 +2158,19 @@ def native_recovery_evidence(root: Path) -> list:
     return evidence
 
 
+def _check_memory_bodies(root: Path, allow_custom_merge=False):
+    try:
+        bodies = agent_adapter.memory_bodies(root)
+        # 只允许 migrate 对纯项目正文走已知的 merge_custom 路径。
+        # 任一正文含 AIDP 模板时，不能把整份旧模板冒充自定义内容附加。
+        if not (allow_custom_merge and bodies
+                and not any(L.looks_like_aidp_body(body) for body in bodies.values())):
+            agent_adapter.validate_memory_bodies(bodies)
+        return bodies
+    except SystemExit as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
                 migrate_legacy: bool = False) -> dict:
     recovery = native_recovery_evidence(root)
@@ -2012,6 +2184,7 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
     version = a.version or guess_version(root) or "V0.1.0"
     user = a.user or vcs.developer_identity(root)
     _preflight_native_project_paths(root, version, user)
+    _check_memory_bodies(root, allow_custom_merge=mode == "migrate")
     source = _runtime_source()
     _preflight_native_entries(root, agents, source)
     _preflight_native_adapter(root, agents, source)
@@ -2121,6 +2294,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
             "removed_modified": rep.removed_modified,
             "unregistered_gated_additions": rep.unregistered_gated_additions, "local_overwritten": rep.local_overwritten, "backup": None,
                 "actions": rep.actions, "warnings": rep.warnings, "notes": rep.notes}
+    # 运行包替换也会搬走其内的已安装 SKILL；不能到 sync_config/self-install 时再取旧模板。
+    config_template_before = snapshot_config_template(root)
     bk = Backup(root, rep)
     legacy_backup_files = []
     if migrate_legacy:
@@ -2284,11 +2459,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 if _rel not in rep.orphans:
                     rep.orphans.append(_rel)
     # 可选规则的安装位不在下发面里（真源没有它、运行包当用户文件原样带走），
-    # 不专门刷新就永久停在安装那天的版本。失败只告警，绝不影响已完成的安装事务。
-    try:
-        refresh_optional_rules(root, [home for _kind, home in specs], optional_rules_before, rep)
-    except OSError as exc:  # noqa: BLE001
-        rep.warn(f"可选规则刷新失败（不影响本次安装）：{exc}")
+    # 不专门刷新就永久停在安装那天的版本。规则与清单必须同成同败，写入失败由外层事务回滚。
+    refresh_optional_rules(root, [home for _kind, home in specs], optional_rules_before, rep)
     for ag in agents:
         marker = root / MARKER_DIRS[ag]
         if not marker.is_dir():
@@ -2298,7 +2470,8 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
     for rel in dirs:
         _mkdir(root / rel, parents=True, exist_ok=True)
     sync_docs(root, bool(previous), rep, bk, agents)
-    sync_config(root, ctx, rep, bk, agents, branch_policy=getattr(a, "branch_policy", None))
+    sync_config(root, ctx, rep, bk, agents, branch_policy=getattr(a, "branch_policy", None),
+                previous_template=config_template_before)
     sync_memory(root, ctx, bool(previous), rep, bk, agents)
     sync_root_files(root, ctx, agents, rep, bk)
     if decision != "protect":

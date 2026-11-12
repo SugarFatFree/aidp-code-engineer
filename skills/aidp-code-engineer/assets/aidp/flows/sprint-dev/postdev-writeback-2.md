@@ -1,8 +1,8 @@
 > 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
 
-# sprint-dev · 开发完成后回写详情（分片 2/3 · Step X.0–X.7）
+# sprint-dev · 开发完成后回写详情（分片 2/3 · Step X.0–X.6）
 
-> **【分片 2/3 · postdev-writeback 二次切分】** 本片是 `/sprint-dev` 命令「开发完成后：自动回写需求 + 设计文档」段的中段，覆盖 **Step X.0（研发需求回写）/ X.2（详细设计）/ X.3（研发执行计划）/ X.4（memory）/ X.5（SQL 脚本）/ X.6（事实清单）/ X.7（配置项清单，约定 25）**。前片 `postdev-writeback-1.md`（Step X.0.0 级联检测），后片 `postdev-writeback-3.md`（Step X.8 部署流程）。进入回写段须按序 Read 全 3 片、以本文件为准逐项执行、不得略过任一 Step。
+> **【分片 2/3 · postdev-writeback 二次切分】** 本片是 `/sprint-dev` 命令「开发完成后：自动回写需求 + 设计文档」段的中段，覆盖 **Step X.0（研发需求回写）/ X.2（详细设计）/ X.3（研发执行计划）/ X.4（memory）/ X.5（SQL 脚本）/ X.6（事实清单）**。前片 `postdev-writeback-1.md`（Step X.0.0 级联检测），后片 `postdev-writeback-3.md`（累进路径产物审计收口）。进入回写段须按序 Read 全 3 片、以本文件为准逐项执行、不得略过任一 Step。
 
 ---
 
@@ -27,7 +27,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 > 且级联发生在**没有合并同类项 / 没有失效消解 / 没有按合并后总量重判档位**的错误时机。
 
 
-> 编号说明：本回写段编号为 X.0 / X.2 / X.3 / X.4–X.7 + X.8（部署操作变化待同步，只登记机器待办；需求与设计分列 X.0 与 X.2，**无 X.1**）；编号保持稳定不重排，避免下游引用漂移。
+> 编号说明：本回写段编号为 X.0 / X.2 / X.3 / X.4–X.6（部署文档不在日常回写中触碰，仅版本规划/正式发布集中校准；需求与设计分列 X.0 与 X.2，**无 X.1**）；编号保持稳定不重排，避免下游引用漂移。
 
 仅当 Step X.0.0 影响清单含「需求漏项」类（L1 触发条件）时执行；由 X.0.0 自动驱动，下方步骤为执行细则：
 
@@ -90,6 +90,8 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 
 如新增/变更表，按 SKILL 命名规范（中文 + 两位数字序号前缀；`99_回滚脚本.sql` 序号保留）新增到 `docs/deployment/{version}/sql/增量/{NN}_<中文名>.sql`，序号续在当前版本最大序号 +1（详见 `/sprint-design` Step 3）。
 
+实际配置文件发生变化时，可同步更新 `docs/deployment/{version}/配置文件/` 中本次涉及的既有部署资产；不为留痕另造副本，配置项清单、配置说明等文档性内容留到版本规划/正式发布整理。
+
 #### Step X.6：★ 更新*事实清单.md（如涉及配置事实变更）
 
 如本 Sprint 改动了 `application.yml` / `application.properties` / `vite.config.*` / nginx 等**真实运行时配置**（context-path / 端口 / proxy / API 前缀 / 健康检查路径），必须：
@@ -103,16 +105,4 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 4. 如某消费者点本次确实无需联动 → 在「已联动消费者点」列以括号注明"无需联动 — 原因 XXX"
 5. 漏改的消费者点常导致下次"双前缀 404 / SSE 走错地址 / nginx 反代失效"等级联事故 —— `vcs_mode=git` 提交前用 `git diff --name-only`；`vcs_mode=none` 用 X.0.0 的本地 sha256 变更清单与事实清单「路径消费者点」表对账，缺项要么补改要么注明"无需联动"
 6. **★ 消费者点集合是"会变大"的、不止 base 改动才动本表**：Phase 1.3 Step 1「请求通道单一判据 + 消费者点登记门」在**新增请求通道**（新 composable / 工具 / `fetch`·`EventSource`·`WebSocket`）时就要往「路径消费者点」表**补登记新行**——本 Step X.6 管的是 base/context-path **改动时的联动**，二者互补。集合悄悄变大而无人登记，会让下次 base 变更漏掉新通道（双前缀 404 温床）。
-
-#### Step X.7：配置操作变化登记
-
-运行时配置原文件是权威，不复抄完整配置、不创建示例副本。日常 dev / bugfix 不生成部署 Markdown；本任务涉及配置文件或代码内动态配置注入时，把改动文件引用交 Step X.8 记入既有 `deployment_doc_pending`。变化来源：`vcs_mode=git` 取 git diff；`vcs_mode=none` 用 `sprint-{NNN}-local-before.json` 与 X.0.0 的 `sprint-{NNN}-local-changes.json` 逐文件 `sha256` 前后态判定增删改，快照缺失记 `evidence-missing`，⛔ 不得把空 Git diff 当作「无配置变更」。核对范围只取当前任务的实际变化；无可信前态就注明缺口，不扩大成全版配置审计。
-
-版本规划/正式发布集中校准时，按 `{{AIDP_HOME}}/reference/部署操作约定.md` 合并到 `docs/deployment/{version}/配置文件/增量/配置项清单.md`（配置中心变体沿现有文件）：
-
-- 只列本版新增、修改、删除配置，按权威文件/dataId 给出必要片段和短注释；无变更在既有操作说明简注，不造空清单。
-- nginx/compose/k8s 只给改动片段、插入位置与生效命令，不贴整份文件。
-- 动态注入 key 同样纳入本次变化（如 `@Value` / 配置绑定 / 可配置定时器）；给出必配与是否需重启，不补历史欠项。
-- 删除按原缩进粒度标明单 key/整段，不能误删父配置块；秘密值不进 Markdown。
-- 部署流程只引用该清单，不双写配置内容；发布期真实配置全量文件仍按约定 37 维护。
 

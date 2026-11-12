@@ -364,7 +364,7 @@ if name == 'baseline_edit.py':
     elif action == 'bump':
         key = args[0]; state[key] = int(state.get(key, 0)) + 1; save(); print(state[key])
 elif name == 'autopilot_tick_flags.py': print('TARGET_VERSION=V0.2.0')
-elif name == 'classify_push.py': print('{}')
+elif name == 'classify_push.py': print('{"decision": "watch", "paths": {}, "reason": null, "error": false}')
 elif name == 'cicd_watch.py':
     with (root / 'watch-calls.jsonl').open('a') as stream: stream.write(json.dumps(args) + '\\n')
     queuefile = root / 'queue.json'

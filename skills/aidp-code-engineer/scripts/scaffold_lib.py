@@ -513,6 +513,31 @@ def memory_managed_text(text: str) -> str:
         ".claude/", ".aidp/").replace(".agents/", ".aidp/").strip()
 
 
+# 完整记忆章节外置后的对应入口。只帮助迁移新增注解，绝不搬运旧模板正文。
+MEMORY_REFERENCE_SECTIONS = {
+    "## 核心约定（必须遵守）": "reference/core-conventions.md",
+    "## 核心约定": "reference/core-conventions.md",
+    "## ★ 多 Agent 兼容（Claude Code / Codex / DeepSeek Harness）": "reference/task-routing.md",
+    "## ★ 常用命令速查": "reference/task-routing.md",
+    "## ★ Sprint 命令清单 + 意图路由": "reference/task-routing.md",
+    "## Agent 激活路由": "reference/task-routing.md",
+    "## ★ 命令 vs Skill 关系说明": "reference/task-routing.md",
+    "## 本项目使用的 Skills": "reference/task-routing.md",
+    "## 初始化输入文件清单": "reference/task-routing.md",
+    "## AIDP 范式文档索引": "reference/task-routing.md",
+}
+
+
+def _added_inline_comment(before: list, local: list) -> str:
+    """只识别旧行原文后新增的完整 HTML 注解，不把改写规则视为注解。"""
+    if len(before) != 1 or len(local) != 1 or not before[0].strip():
+        return ""
+    if not local[0].startswith(before[0]):
+        return ""
+    suffix = local[0][len(before[0]):].strip()
+    return suffix if re.fullmatch(r"<!--[^<>]*-->", suffix) else ""
+
+
 def merge_memory_upgrade(old: str, new_rendered: str, previous=None, evidence=None) -> str:
     """旧模板三方合并；歧义时保持原文，调用方必须入现有改写队列。
 
@@ -556,11 +581,18 @@ def merge_memory_upgrade(old: str, new_rendered: str, previous=None, evidence=No
                                    for line in local[c:d] if line.strip()))
         if op == "insert" and heading == STATUS_HEADING and fragment:
             independent = True
+        reference = MEMORY_REFERENCE_SECTIONS.get(heading)
+        relocated = bool(reference and reference in new_rendered)
+        # 外置章节允许搬运可证明仅追加的注解；正文改写仍入队，不以迁移为由抹掉。
+        comment = _added_inline_comment(before[a:b], local[c:d]) if op == "replace" else ""
+        if relocated and comment:
+            fragment = _added_inline_comment(before_raw[a:b], local_raw[c:d])
+            independent = bool(fragment)
         # 规则性追加即使行级不重叠，也不能证明与新版其他规则相容。
         if re.search(r"必须|禁止|不|仅|只|需|跳过|允许|应当|优先|覆盖|忽略|约束|约定|规则|默认|要求|"
                      r"\b(?:must|never|always|skip|override|ignore|only|shall|should|not)\b", fragment, re.I):
             independent = False
-        if independent and baseline_section == new_section:
+        if independent and (baseline_section == new_section or relocated or heading == STATUS_HEADING):
             (status_additions if heading == STATUS_HEADING else additions).append(fragment)
         else:
             evidence.append({"reason": "template-project-conflict", "section": heading,

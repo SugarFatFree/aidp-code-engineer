@@ -283,6 +283,8 @@ def check_files(root: Path, template: bool, r: VerifyResult):
             r.error(f"缺失脚本: .aidp/scripts/{name}")
     if not _contract_path(root, ".aidp/hooks/autopilot-stop-guard.py", template).is_file():
         r.error("缺失 hook: .aidp/hooks/autopilot-stop-guard.py")
+    if not _contract_path(root, ".aidp/hooks/pretool-guard.py", template).is_file():
+        r.warn("缺失 hook: .aidp/hooks/pretool-guard.py（入口协议 / 测试范围 PreToolUse 护栏；升级后补齐）")
     if not _contract_path(root, ".aidp/agents/aidp-compliance.md", template).is_file():
         r.warn("缺失合规 Agent: .aidp/agents/aidp-compliance.md")
     for name in REQUIRED_DOCS_INIT:
@@ -860,8 +862,9 @@ def check_env_key_freshness(root: Path, r: VerifyResult):
 
 
 def check_convention_anchor_consistency(root: Path, r: VerifyResult):
-    env = _agent_env(root) or {}
-    body = L.read_text(root / (env.get("memory_file") or "AGENTS.md"))
+    from aidp_runtime import convention_source
+    source = convention_source(root)
+    body = L.read_text(source) if source is not None else ""
     nums = [int(m.group(1)) for m in re.finditer(r"^(\d+)\.\s+\*\*", body, re.M)]
     if not nums:
         return

@@ -22,7 +22,7 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
                                      #   stale 仅供诊断；日期积压不触发提交后自动派单。
     "cascaded_not_cleaned": int,     # 已标记级联完成却仍未删除的条目数（同 pending_cascade.cascaded_not_cleaned）
     "suspected_cascade_bypass": dict,  # ★ 约定 22 反向判据：疑似绕过攒批（见 suspected_cascade_bypass()）
-    "pending_cicd": dict,            # ★ 约定 31.5：已推送正式代码却未经推送分类器，或分类后部署终态长时间未记录
+    "pending_cicd": dict,            # ★ 约定 31.5：CICD 已启用时现场 git 取得的推送提示（advisory，不计债）；未启用不检查
     "offchain": dict,                # ★ 约定 41：链外任务动作预算 + 规模档位
     "context": str,                  # --context 原样回显（留痕）
     "path_scope": dict,              # --allow-path 暂存区白名单，越界只报 WARN（不改变欠账退出码）
@@ -30,7 +30,7 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
     "cache": dict,                   # 逐检查命中、实际指纹读取/元数据观测、checker耗时；未测内部I/O标unknown
     "debts": [str]                   # 未落地义务代号清单（非空 ⇔ 退出码 3）：cascade-not-cleaned /
                                      #   cascade-unparsed / cascade-archived-not-deleted / cascade-destructive-unregistered /
-                                     #   cascade-bypass / cicd-push-pending
+                                     #   cascade-bypass
   }
 
 ★ 未落地义务告警【恒打印到 stderr，`--quiet` 也不压制】+ 退出码说话：
@@ -41,12 +41,12 @@ commit_gate.py — 约定 24「提交前门禁」：每次 `git commit` 前跑�
   - **0** 无欠账（或 commit_gate.enabled=false，或 `--no-fail-on-debt`）；
   - **3** 有未落地义务（任一）：约定 22 已级联未清理〔`cascaded_not_cleaned > 0`〕·
     台账格式漂移〔`unparsed` 非空〕· 打了归档标记却未删〔`archived_not_deleted`〕·
-    🔴 破坏性变更未在「已知失准点」段登记〔`destructive_unregistered`〕· 疑似绕过攒批 ·
-    CICD 推送欠账〔`pending_cicd.pending`〕；
+    🔴 破坏性变更未在「已知失准点」段登记〔`destructive_unregistered`〕· 疑似绕过攒批
+    （CICD 推送信息只是 advisory 提示，不计债）；
   - **5** 带执行上下文的调用未获 commit 授权，禁止提交；不登记为业务欠账；
   - **4** 阻塞级（保留档位：义务已升级为必须人工介入时使用；当前判据集不产生该值，消费方仍须按阻塞处理）。
   ⚠️ 3/4 的语义是"**本轮结束前有一项义务未落地**"，**不是"现在禁止 commit"**——命令端见 3/4 照常
-  commit+push，之后补上义务（派台账收口子 Agent / 补推送分类与监听）；义务落地后退出码自动回 0。
+  commit+push，之后补上义务（派台账收口子 Agent）；义务落地后退出码自动回 0。
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
@@ -576,105 +576,44 @@ def is_scaffold_only_change(porcelain: str) -> bool:
 
 # ───────────────────────── 约定 31.5：推送欠账 ─────────────────────────
 
-TERMINAL_GRACE_SECONDS = 60 * 60   # 分类后多久仍无部署终态才算欠账（给监听 / 下个 tick 留时间）
-
-
-def _iso_ts(v) -> float:
-    from datetime import datetime
-    try:
-        return datetime.fromisoformat(str(v)).timestamp()
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _push_records(bl: dict, head: str):
-    """baseline 里与 HEAD commit 对应的推送分类记录 → [(version, build|None, record, version_node)]。"""
-    out = []
-    for v, vo in ((bl or {}).get("versions") or {}).items():
-        if not isinstance(vo, dict):
-            continue
-        for it in vo.get("standalone_pushes") or []:
-            if isinstance(it, dict) and str(it.get("commit") or "")[:40] == head[:40]:
-                out.append((v, None, it, vo))
-        for b in vo.get("builds") or []:
-            if not isinstance(b, dict):
-                continue
-            recs = [it for it in (b.get("pushes") or []) if isinstance(it, dict)]
-            if isinstance(b.get("change_classification"), dict):
-                recs.append(b["change_classification"])
-            for it in recs:
-                if str(it.get("commit") or "")[:40] == head[:40]:
-                    out.append((v, b.get("build"), dict(it, _build=b), vo))
-    return out
-
-
 def _head_has_formal_change(root: str) -> bool:
-    """HEAD 提交是否含正式代码变更（单一信源 = classify_commit_change.py；判不出按否）。"""
+    """HEAD 提交是否含正式代码变更（单一信源 = classify_commit_change.py；判不出按是 = fail-closed）。"""
     try:
         cp = subprocess.run(
-            [sys.executable, os.path.join(root, runtime_text('__AIDP_HOME__/scripts/classify_commit_change.py', __file__)),
-             "--root", root, "--base-ref", "HEAD~1", "--json"],
+            [sys.executable, "-B", os.path.join(root, runtime_text('__AIDP_HOME__/scripts/classify_commit_change.py', __file__)),
+             "--root", root, "--head", "HEAD", "--json"],
             capture_output=True, text=True, timeout=60)
-        return bool(json.loads(cp.stdout or "{}").get("has_formal_code_change"))
+        payload = json.loads(cp.stdout or "{}")
+        return bool(payload.get("has_formal_code_change") or payload.get("classification_error"))
     except Exception:  # noqa: BLE001
-        return False
+        return True
 
 
 def pending_cicd(root: str) -> dict:
-    """约定 31.5「推送 ≠ 交付完成」的**欠账信号**。作用域 = 变更事实、与命令入口无关。
+    """约定 31.5 的 CICD 推送**提示信号**（advisory，永不计债、不影响退出码）。
 
-    适用条件：本地已配置有效 CICD 流水线，且 HEAD 已与上游一致（确实推过了）。
-    未接入仅标配置降级和部署未核验，不制造不可执行的监听欠账；真实部署由动作回执门判断。
-    判据（按 HEAD commit 键控，⛔ 不看「某个 build 曾经分类过」）：
-      ① HEAD 含正式代码变更，却在 baseline 里找不到该 commit 的分类记录
-         （build 级 `change_classification` / `pushes[]` 或版本级 `standalone_pushes[]`）→ 欠账；
-      ② 有记录且为正式代码变更（未 `cicd_skipped`），分类超过 1 小时仍无部署终态
-         （记录上的 `deploy_terminal`，或所属版本 `last_deployed_at` 晚于分类时刻，或 build `probe_passed`）→ 欠账。
-         `deploy_terminal=unknown:<原因>`（provider 不可用等合法降级）算已记录、不算欠账。
+    - CICD 未启用（`aidp_config.cicd_enabled`）→ 不检查：`applicable=False`；
+    - 已启用 → 现场 git（`rev-parse HEAD` / `@{u}`）取得 HEAD 是否已推送、是否含正式代码变更，
+      **不读 baseline 的任何记录**；已推送且含正式变更时 `advisory=True` 并列出 `commit`，
+      监听由 autopilot / `cicd_watch.py` 或用户请求负责。
+    `pending` 恒为 False（保留键，兼容既有消费方）。
     """
-    out = {"applicable": False, "pending": False, "version": None, "build": None, "reason": ""}
+    out = {"applicable": False, "pending": False, "advisory": False, "commit": None,
+           "formal_code_change": None, "version": None, "build": None, "reason": ""}
     import aidp_config
-    from cicd_watch import unconfigured_cicd
-    unavailable = unconfigured_cicd(aidp_config.cicd_config(root))
-    if unavailable:
-        kind, reason = unavailable
-        return dict(out, status='UNVERIFIED', configuration_degraded=True,
-                    configuration_status=kind, deployment_verified=False, reason=reason)
+    enabled, why = aidp_config.cicd_enabled(root)
+    if not enabled:
+        return dict(out, status="CICD_NOT_ENABLED", reason=why)
     local, _ = _git(root, "rev-parse", "HEAD")
     remote, _ = _git(root, "rev-parse", "@{u}")
     if not local or not remote or local != remote:
         return out                        # 还没 push / 无上游 → 不适用
-    out["applicable"] = True
-    try:
-        with open(os.path.join(root, "memory/.sprint-autopilot-baseline.json"), encoding="utf-8") as f:
-            bl = json.load(f)
-        bl = bl if isinstance(bl, dict) else {}
-    except Exception:  # noqa: BLE001
-        bl = {}
-    recs = _push_records(bl, local)
-    if not recs:
-        if _head_has_formal_change(root):
-            out.update(pending=True,
-                       reason="已推送正式代码（HEAD %s）但无推送分类记录：`classify_push.py --version <V> "
-                              "{--build <B> | --standalone}` 未跑（链外推送用 --standalone），部署终态无人知道" % local[:8])
-        return out
-    import time as _t
-    for v, b, rec, vo in recs:
-        if rec.get("cicd_skipped") or not (rec.get("formal_code_change") or rec.get("has_formal_code_change")):
-            continue
-        if rec.get("deploy_terminal"):
-            continue
-        cls_at = _iso_ts(rec.get("classified_at"))
-        bnode = rec.get("_build") or {}
-        if _iso_ts(vo.get("last_deployed_at")) >= cls_at > 0 or bnode.get("probe_passed"):
-            continue
-        if cls_at and _t.time() - cls_at < TERMINAL_GRACE_SECONDS:
-            out["recheck_at"] = min(out.get("recheck_at", float("inf")), cls_at + TERMINAL_GRACE_SECONDS)
-            continue
-        out.update(pending=True, version=v, build=b,
-                   reason="推送（HEAD %s）已分类为正式代码变更，但超过 1 小时仍无部署终态记录："
-                          "监听 CICD 后跑 `classify_push.py --record-terminal success|failed|unknown:<原因>`" % local[:8])
-        return out
+    out.update(applicable=True, commit=local)
+    formal = _head_has_formal_change(root)
+    out["formal_code_change"] = formal
+    if formal:
+        out.update(advisory=True,
+                   reason="HEAD %s 已推送且含正式代码变更；CICD 已启用，监听由 autopilot / cicd_watch.py 或用户请求负责" % local[:8])
     return out
 
 
@@ -926,12 +865,9 @@ def gather(root: str, context: str = "bare-conversation", cascade_now: bool = Fa
             bypass = dict(bypass, suspected=False, suppressed_by='--cascade-now')
         from classify_commit_change import _walk_project_roots
         classifier = _AidpPath(root) / runtime_text('__AIDP_HOME__/scripts/classify_commit_change.py', __file__)
-        cicd = cache.check('pending_cicd', [config, _AidpPath(root) / 'memory/.sprint-autopilot-baseline.json',
-                                          classifier, classifier.with_name('vcs.py')],
+        cicd = cache.check('pending_cicd', [config, classifier, classifier.with_name('vcs.py')],
             {'head': head, 'upstream': upstream, 'project_roots': sorted(_walk_project_roots(root))},
             lambda: pending_cicd(root), modules=('aidp_config', 'cicd_watch', 'classify_commit_change'))
-        if execution_context and head == execution_context.get('since') and cicd.get('pending'):
-            cicd = dict(cicd, pending=False, diagnostic=cicd['reason'], reason='PREEXISTING_UNCHANGED')
         allocation = cache.check('id_allocation', _allocation_sources(root, cache), {},
             lambda: id_allocation_status(root), modules=('alloc_id',))
         allocation = _scoped_allocation(allocation, scoped)
@@ -975,8 +911,6 @@ def debt_items(info: dict) -> list:
         items.append("cascade-destructive-unregistered")
     if (info.get("suspected_cascade_bypass") or {}).get("suspected"):
         items.append("cascade-bypass")
-    if (info.get("pending_cicd") or {}).get("pending"):
-        items.append("cicd-push-pending")
     return items
 
 
@@ -1031,15 +965,10 @@ def _print_obligations(info: dict) -> None:
             "     **变更内容与理由本身**（台账是中转站、不承担长期溯源），再把台账真删掉。\n")
 
     cicd = info.get("pending_cicd") or {}
-    if cicd.get("pending"):
+    if cicd.get("advisory"):
         sys.stderr.write(
-            runtime_text(f"🚄 本次推送未经推送分类器（版本 {cicd.get('version')} / build {cicd.get('build')}）"
-            "——约定 31.5「**推送 ≠ 交付完成**」。\n"
-            "   → `git push` 之【前】跑 `python3 __AIDP_HOME__/scripts/classify_push.py --root . "
-            "--version <V> --build <B> --base-ref <BASE>`；\n"
-            "     无正式代码变更记 `cicd_skipped=true` 即算完成；有变更须 `cicd_watch.py` "
-            "监听至终态 + 就绪探针。\n"
-            "   ⛔ 作用域 = **推送这一事实、与命令入口无关**：裸对话路径同样适用。\n", __file__))
+            f"ℹ️ CICD 已启用：HEAD {str(cicd.get('commit'))[:8]} 已推送且含正式代码变更"
+            "（提示，不计债）；需要时由 autopilot / `cicd_watch.py` 或用户请求监听。\n")
 
     dest = casc.get("destructive_unregistered") or []
     if dest:

@@ -18,6 +18,7 @@ import tempfile
 import shutil
 import importlib.util
 from pathlib import Path
+from flow_test_helpers import sprint_dev_text
 
 REPO = Path(__file__).resolve().parents[3]
 GATE = str(REPO / ".aidp/scripts/autopilot-ceremony-gate.py")
@@ -77,7 +78,7 @@ def test_decidable_skips_levels():
     check("★ 零误报：两层都空 → 本项不加噪音行", scene(None, None) == "")
 
     # 写方口径：三处必须一致，且与读方接得上
-    dev = (REPO / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
+    dev = sprint_dev_text("formal-increment")
     ver = (REPO / ".aidp/commands/version.md").read_text(encoding="utf-8")
     full = (REPO / ".aidp/commands/sprint-full.md").read_text(encoding="utf-8")
     check("★ sprint-dev 写方已改为 builds[current_build]（无 build 才回落版本级）",
@@ -377,9 +378,11 @@ def test_branch_policy_config():
         return subprocess.run([sys.executable, "-B", str(script), "--root", str(root), *args],
                               capture_output=True, text=True)
 
+    marker = "memory/.aidp/branch-policy-read.json"   # 唯一允许的写入：entry_gate.py 校验的「已读取」运行态标记
+
     def snapshot(root):
         return {p.relative_to(root).as_posix(): p.read_bytes()
-                for p in root.rglob("*") if p.is_file()}
+                for p in root.rglob("*") if p.is_file() and p.relative_to(root).as_posix() != marker}
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -387,7 +390,8 @@ def test_branch_policy_config():
         data = json.loads(result.stdout)
         check("无 Git 查询不适用且不创建配置或仓库", result.returncode == 0 and data == {
             "vcs_mode": "none", "policy": None, "needs_choice": False, "status": "not-applicable"}
-            and list(root.iterdir()) == [])
+            and [p.name for p in root.iterdir()] == ["memory"] and (root / marker).is_file()
+            and not (root / "memory/aidp-config.yaml").exists())
         subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
         before = snapshot(root)
         result = cli(root, "branch-policy")

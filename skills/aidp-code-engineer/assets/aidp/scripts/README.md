@@ -44,9 +44,17 @@
 
 验证执行器通过 `reserve_validation` 一次预留前取证、命令、后取证和必需收尾，再按真实进度结算。冷缓存先用计划标识预留，前取证后由 `bind_validation_input` 绑定真实内容输入才执行命令，不拿元数据摘要绕过同输入失败记录。`scanned_files` 表示取证内容读取操作，路径数量/元数据/命中/工具对象分开观测；额度不足给出各段预计量、剩余及缺口，不自行扩额。取消只退未用，真实已执行事实及失败始终保留。
 
-## deployment_ops.py — 操作指引待办与备份频率
+## dispatch_plan.py — light 并行派发判定
 
-调用配方见 `{{AIDP_HOME}}/reference/部署操作约定.md`。日常仅登记既有机器记录中的步骤变更引用，规划/发布再汇合必要操作说明和两列 SQL 清单，不因日志额外提交。备份沿项目已有策略、命令与权威记录统一计数，数据库/冷备/迁移快照不拆额度；保留真实时点，未启动/失败/成功后续失败/机器登记失败分别表达。它不接管部署，不自动恢复业务数据，也不为缺接口开发另一套工具。
+用法：`python3 {{AIDP_HOME}}/scripts/dispatch_plan.py --task "a=f1,f2" --task "b=f3,f4" [--reads a=3] [--tasks-json JSON|@文件] [--emit-prompts --execution-context CTX --action implement --budget TEXT]`。≥2 个互不相交写集且各读≥3或改≥2文件 → `decision=parallel`；写集交集列入 `conflicts` 并串行；输出 `parallel_groups/serial/conflicts/reasons/prompts`（prompt 带父上下文、action、budget、写集与「只跑相关测试」，禁传 grant）。只判定不授权；退出码 0/2。规则见 `flows/sprint-dev/light-parallel.md`。
+
+## light_task.py — light 任务标准流程单一入口
+
+`python3 {{AIDP_HOME}}/scripts/light_task.py {start|select|run|report|all} --root . [--execution-context CTX] [--session-id ID] [--runners-json JSON|@文件] [--env-id ID]`：`start` = `entry_context.py resolve/route` + `aidp_config.py branch-policy` + `entry_gate.py bind`；分支未选择时返回 `entry_bound=false`，保存选择后继承同一上下文重跑；`select` = `execution_policy require-action related-test` → `test_scope.py` → `select_related_tests.py`（写白名单）；`run` = 对 scope 内每条命令先过 `test_command_guard.py check`（拒绝即终止，不拼整目录/全量命令）再 `test_ledger.py run-scope` + `verify`；`report` = 改动文件/选中测试/通过·失败·未映射/known-failure 差集（`test_baseline.py diff`）与 `verdict`。stdout 末行恒为 JSON；退出 0 成功、1 测试 FAIL、2 输入/授权/守卫/未核验。用法速览见 `{{AIDP_HOME}}/reference/light-entry.md`。
+
+## deployment_ops.py — 发布/规划期 SQL 执行台账渲染
+
+仅保留 `sql-ledger --version V --phase planning|release --input JSON`：按已有机器记录的操作输入渲染两列 SQL 清单，校验脚本存在与全量/增量双轨归属。不读写 baseline、不备份、不部署、不做 Git；普通部署不调用。配方见 `{{AIDP_HOME}}/reference/部署操作约定.md`。
 
 ## project_inventory.py / development_scope.py / sprint_inventory.py — 共同发现与判据
 
@@ -57,6 +65,10 @@
 轻量 task 单测继承 `--execution-context`，证据与 formal Sprint 隔离，机器验收 JSON 可放上下文本地目录；无需 Sprint 编号或契约卡。正式 Sprint 单测的范围推导、执行、verify 与 record-review 协议唯一信源为 `{{AIDP_HOME}}/commands/sprint-test.md` Step 2.6 / Step 7。范围从 Sprint 起点 commit、实际改动与契约写集确定性生成；执行前核验内容、环境与工具指纹，同一冻结树复用已验证的依赖分析，锁等待后再次核验。直接使用任意命令的 sprint PASS 不能冒充带范围证据的验收。失败、未执行不能通过；无对应测试、缺 runner 或环境不可用保留具体缺口，不能记 PASS/NOT_REQUESTED。纯文档、格式等能确认无可测试行为时才给出 NOT_APPLICABLE 与具体依据；零运行集不能代替这些判定。
 
 `test_ledger.py` 保留 argv/cwd/env_id/inputs 与树证据；完整 plan/snapshot 单存，run 引用 plan_id/item_id 并在读取时校验。兼容 runner 可在同模块、同环境内合批，普通 Python 脚本不会把后续文件当参数假运行。资源映射与未知依赖须明示覆盖缺口，超预算不自动扩成全仓。未受后续变动影响的结果可显式 CARRIED，保留 source_run_id，不能伪装成当前树重跑。命令、依赖、环境变化使对应证据失效；只追加动作授权不使已有同输入证据失效。工具错误、环境不可用、业务断言失败分别记录。`--self-check` 可做轻量验证。
+
+## select_related_tests.py / test_command_guard.py / test_baseline.py — 测试范围机器强制
+
+`select_related_tests.py` 由 git 改动、未跟踪文件、导入图与命名约定推出相关测试白名单，复用 `test_scope.py` 的依赖分析。`--scope FILE` 校验已有相关范围的同任务身份、内容 hash 与当前输入后原样使用其测试集合；上下文或推导校验失败即拒绝，不能回退命名猜测。显式相关文件集合即使恰好覆盖小项目全部测试也完整保留；默认不设数量上限，显式 `--max-tests N` 不足时退出 2 并报告 `BUDGET_EXCEEDED`，不发布截断白名单。白名单写入 `memory/.aidp/test-allowlist/<key>.json`（key 为上下文 task_id，无上下文为 `default`）；有上下文时只接受同任务记录，缺失或损坏即拒绝，无上下文时只读取 default，不借用其他任务最新记录。`test_command_guard.py` 的 `check` / `wrap [--background --log F]` / `changed` 对 pytest / jest / vitest / mvn / gradle / go test / `run_tests*` / ruff 判定：无参数或目录拒绝，显式文件须在白名单内，`--allow-full` 仅 autopilot 授权的 full-regression 上下文放行（缺授权 fail closed），`git stash` 拒绝；`--background` 把输出写日志并在结束时写 `<日志>.exit`。`test_baseline.py` 的 `record` / `diff` / `show` 以 `memory/.aidp/test-baseline/<key>.json` 保存已知失败基线，输出「新失败 = 本次失败 − 基线」，基线那次没有执行迹象时拒绝比较。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 35「测试范围由机器强制」，项目入口范例见 `{{AIDP_HOME}}/templates/scripts/run_tests.sh`。
 
 ## build_unit_test.py / unit_report_merge.py / aiauto_test_join.py — build 两路测试
 
@@ -340,7 +352,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 每次 `git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON。作用域 = **变更事实**、与命令入口无关（裸对话路径同样适用）。总开关 = `memory/aidp-config.yaml` 的 `commit_gate.enabled`（缺省 true）。
 输出字段：`commit_gate_enabled` / `is_template_project`（脚手架 skill 的任一落点——模板仓库根级 `skills/`、下游 `.claude/skills/` 或 `.agents/skills/`、历史的 `各 Agent 的运行根/skills/`——下 `SKILL.md` 与 `scripts/sync_memory_md.py` 都在、且 `scaffold_marker.py` 判为非下游）/ `working_tree_dirty` / `has_business_code_change` / `is_scaffold_only_change` / `today` /<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
-`pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送欠账：提供方已启用且配置了有效流水线时按 HEAD commit 查分类记录；未配置直接降级，不产生监听欠账；正式代码推送超 1 小时无部署终态〔`deploy_terminal` / `last_deployed_at` / `probe_passed`〕计欠账，`unknown:<原因>` 终态不计欠账但可见）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单（不含日常 stale 派单））。
+`pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送**提示**，advisory、永不计债：CICD 未启用〔`aidp_config.cicd_enabled`〕→ 不检查，`applicable=false`/`status=CICD_NOT_ENABLED`；已启用 → 现场 `git rev-parse HEAD`/`@{u}` 判 HEAD 是否已推送、是否含正式变更，已推送且含正式变更时 `advisory=true` 并给出 `commit`；**不读 baseline**，`pending` 恒 false）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单（不含日常 stale 派单））。
 可 import：`pending_cascade()` / `cascade_ledger_paths()` / `CASCADE_FAMILIES` / `suspected_cascade_bypass()` / `has_business_code_change()` / `is_scaffold_only_change()` / `pending_cicd()` / `offchain_budget()` / `gather()`。
 **★ 欠账告警恒打印 + 退出码说话**：未落地义务告警**不受 `--quiet` 压制**；退出码 `0`=无欠账 / `3`=有未落地义务（台账结构/清理异常 · 已级联未清理 · 格式漂移 · 归档标记未删 · 🔴 破坏性变更未登记失准点 · 疑似绕过攒批 · CICD 推送欠账）/ `4`=阻塞级（保留档位：当前判据集不产生该值，消费方仍须按阻塞处理）。**Why**：约定 24 强制的写法就是 `--quiet`，提醒若住在 `if not args.quiet:` 里就等于在唯一被强制执行的路径上从不打印。⚠️ 3/4 的语义是"本轮结束前有一项义务未落地"，**不是"禁止 commit"**；逃生阀 `--no-fail-on-debt`：压退出码但**不消音**——用掉它会往告警台账 `memory/.aidp/alerts.jsonl` 落一条 `commit-gate-debt-waived`（否则「豁免过的欠账」与「真的没欠账」在任何地方都分不开）。其余参数：`--context bare-conversation|aidp-command`（留痕 + 约定 41 适用性）。
 
@@ -350,9 +362,21 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 `memory_file(root)`：只有 claude → `CLAUDE.md`；否则 `AGENTS.md`；`AGENTS.md` 存在且 `CLAUDE.md` 仅为 `@AGENTS.md` 薄壳 → `AGENTS.md`。读写项目记忆文件的脚本一律经它取路径，⛔ 不自行拼文件名。
 用法：`python3 {{AIDP_HOME}}/scripts/agent_env.py detect|memory-file [--root .]`（输出 JSON）；`--self-check` 自测。
 
+## entry_gate.py — 入口协议门（改 `code/**` 前须已 resolve + 已读 branch-policy）
+
+`bind --if-writable` 对只读或空写集仍选择当前任务身份，但返回 `skipped=true, ok=false`、不授写权限，避免下一次编辑借用本会话旧任务。
+
+`python3 {{AIDP_HOME}}/scripts/entry_gate.py check --root . [--target PATH] [--json]`；`--self-check` 自测。入口成功后用 `bind --root . --execution-context CTX [--session-id ID] --json` 绑定准确任务。check 只读校验显式 `AIDP_EXECUTION_CONTEXT` 或任务标记，不扫描其他 active context，错误指向不回退；校验真实身份、项目根、active、新鲜期、implement 与非空 write_set。branch-policy 读取标记须属于当前根且与实时偏好一致，formal/tick 同样必须满足两项入口条件。缺项退出 2 并给补齐命令；非 code/** 路径不适用。有 session_id 时仅匹配同会话，缺少标识时通用标记仅代表串行项目任务。
+
+## shell_write_targets.py — Bash 写目标解析 helper
+
+由 `hooks/pretool-guard.py` 调用 `analyze`，静态识别 sed 原地写、重定向、tee/cp/mv/install/rm 与可识别 bash/python 包装，结果逐目标复用 entry_gate。未知动态写入明确拒绝；纯读及入口 bootstrap 不阻断。没有解释任意外部程序正文，不作为安全沙箱。入口与测试门独立默认开启，配置、逃生文件及旧文件迁移见 `{{AIDP_HOME}}/hooks/README.md`。
+
 ## agent_sync.py — `{{AIDP_HOME}}/` 单一信源 → 各 Agent 工具入口装配（确定性、幂等）
 
 按 `agent_env.py` 的检测结果生成 Claude Code（`.claude/skills|commands|plugins`、`.claude/settings.json`）、Codex（公共 `.agents/skills`、官方命令根 `.codex/skills/aidp`、插件 `.codex/skills`、`.codex/hooks.json` / `config.toml`）、DeepSeek Harness（公共与插件 `.agents/skills`、`.dsh/commands`、`.dsh/hooks.json` / `mcp.json`）入口；生成入口登记进根 `.gitignore` 托管块、不入库。Codex 命令 SKILL 是**指针入口、不内联正文**：前言声明「第一动作 = Read `{{AIDP_HOME}}/commands/<命令>.md`」，正文中串联的 `/foo args` 同法读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 执行，未知命令 fail closed。⛔ 别改回内联：命令正文只是骨架（真正的指令在 `flows/` 分片里按需读），内联会让「脚手架升了 commands/ 与分片、agent_sync 未重跑」时 Codex 执行旧骨架 / 读新分片，Step 编号对不上。入口默认是 managed-copy 副本；兼容的 `--mode link` 也归一为 managed-copy，不再生成符号链接。改规则永远改 `{{AIDP_HOME}}/` 后重跑。同时负责项目记忆文件形态（`CLAUDE.md` / `AGENTS.md` / `@AGENTS.md` 薄壳）切换，⛔ 绝不丢弃正文。适配层配置由本脚本生成，不进脚手架 bundle 镜像。
+Stop hook 之外幂等装配 PreToolUse hook（`hooks/pretool-guard.py`）：Claude Code 写 `.claude/settings.json` 的 `hooks.PreToolUse`（matcher `Bash|Edit|Write|MultiEdit|NotebookEdit`），Codex 写 `.codex/hooks.json`（matcher `Bash|shell|shell_command|exec_command|local_shell|apply_patch|Edit|Write`）；DeepSeek Harness 的 PreToolUse 契约未证实，不写入，只在输出 `notes` 说明。只识别并替换自己托管的命令，用户已有 PreToolUse 组原样保留。
+正文保护：`AGENTS.md` 与 `CLAUDE.md` 同时存在不同正文时，普通同步与 `--check` 均报冲突并保留两文件；请先合并独有规则，再将 `CLAUDE.md` 改为 `@AGENTS.md` 薄壳。相同正文及合法导入薄壳正常同步。脚手架 migrate 只有在本次已把纯项目正文逐来源合并进「项目自定义」段后，才安全转换薄壳；不会自动附加整份旧 AIDP 模板来消除冲突。
 用法：`python3 {{AIDP_HOME}}/scripts/agent_sync.py [--agents claude,codex,dsh] [--mode copy] [--check] [--human]`；`--self-check` 自测。退出码：`0`=已一致/已写入；`1`=`--check` 发现漂移；`2`=参数、环境或用户自有目标冲突。
 
 ## agent_loop.sh — 非交互唤起 AIDP 命令
@@ -466,7 +490,7 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 ## check_webmcp.py — 前端 WebMCP 的启用判定 + 脚手架侧装配守卫（★ 未启用即整体 N/A）
 
 **第一职责是「启用判定的单一实现」**：WebMCP 是**可选**能力（详规 `{{AIDP_HOME}}/rules/webmcp.md`），横跨 rules / agents / flows / verify 五六个落点，每个落点都要回答「本项目启用了吗」。各处各自 grep PRD 必然判据漂移，且**一处判错就给未启用项目凭空长出告警和产物位**、直接违反「默认关闭」总原则。故 `--detect` 是该判定的唯一实现，其余落点一律调它。版本化调用必须传 `--version`：目标版优先，只向历史继承，显式关闭即停止；无参兼容项目级最新声明。先读 PRD `autopilot_decisions.client_mcp` 的 WebMCP 实现（兼容旧 `webmcp`），未声明才读架构基线；启动命令和环境地址采用相同版本作用域。
-**第二职责是「按需安装详规」**：`--install-rule` 把 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` 幂等装到 `{{AIDP_HOME}}/rules/webmcp.md`（未启用时**拒绝安装**，`--force` 可强装）。⚠️ **详规默认不在 `rules/` 下是刻意的**——`rules/*.md` 是**路径触发**加载的，常驻会让绝大多数不启用该能力的项目每次编辑前端代码白读十几 KB。配套四条保证见 `{{AIDP_HOME}}/rules/README.md`「按需安装的可选规则」段（漏装硬拦 / **随升级自动刷新** / 升级不删 / 不误报孤儿）；其中"刷新"由 `scaffold.py::refresh_optional_rules` 承担——安装位**不在 bundle 下发面里**，两条同步路径都碰不到它，不专门处理就永久停在安装那天的版本。
+**第二职责是「按需安装详规」**：`--install-rule` 把 `{{AIDP_HOME}}/templates/optional-rules/webmcp.md` 幂等装到 `{{AIDP_HOME}}/rules/webmcp.md`（未启用时**拒绝安装**，`--force` 可强装）。⚠️ **详规默认不在 `rules/` 下是刻意的**——`rules/*.md` 是**路径触发**加载的，常驻会让绝大多数不启用该能力的项目每次编辑前端代码白读十几 KB。配套四条保证见 `{{AIDP_HOME}}/rules/README.md`「按需安装的可选规则」段（漏装硬拦 / **随升级自动刷新** / 升级不删 / 不误报孤儿）；其中"刷新"由 `scaffold.py::refresh_optional_rules` 承担：只更新与升级前模板一致、快照后也未变动的安装副本，并精确同步该文件的运行清单指纹；用户修改保留并告警，其他文件的指纹保持原样，规则或清单写入失败由安装事务回滚。安装位**不在 bundle 下发面里**，两条同步路径都碰不到它，不专门处理就永久停在安装那天的版本。
 ★ **职责边界（别把代码合规检查加回来）**：WebMCP 检查分两处、判据不重叠——**代码实现合规**（单一适配层 / `unregisterTool` / 错误契约死文案 / 写操作绕通道 / 敏感值外泄 / 白名单）归上游 `code-verification-loop` **维度 9** + 其 `scripts/check_webmcp_adapter.py`；**脚手架侧装配**归本脚本。前两项曾在本脚本实现过，上游落地后已**移交**（同一判据两份实现 = 改一处漏一处、两处都自称权威，是本仓最高频漂移源；`check_di_resolvability.py` 有同样先例）。`test_guard_scripts.py` 有一条防回归断言盯着这件事。
 未启用 → `applicable:false` + 退出码 `0` + **零 finding**，`verify.py` 侧连 `note()` 都不发。启用后跑三项守卫：① **详规已安装**（ERROR — `rules/*.md` 是路径触发加载的，不在那儿就永不加载 = 规则等于不存在）② **详规未过期**（WARN — 与模板位不一致，即自动刷新没跑到或副本被本地改过）③ **「测试环境与账号」已回写 WebMCP 段**（ERROR，只判目标版本作用域的环境文件，不连坐其他版本；下游踩过：用例三处指向该文档、文档里从未写，文件在锚点空、链接检查查不出来）。
 用法：`python3 {{AIDP_HOME}}/scripts/check_webmcp.py [--root <仓库根>] [--version <目标版本>] [--detect] [--install-rule] [--force] [--json]`，退出码 `0`（通过或 N/A）/`1`/`2`；由 `verify.py::check_webmcp` 映射为 **ERROR**（仅启用时）。★ 命令端据 `--detect` 的输出把 `webmcp_enabled` / `webmcp_entry_symbols` 传给四个上游 SKILL（`dev-logic-architect` 维度 33 / `dev-manual-testcase` 用例族 + 维度 20 / `code-verification-loop` 维度 9 / `auto-test-runner` `invoke` 能力）——它们**全部入参门控且明令不自行探测**，⛔ **不传 = 那些维度永不启用**，启用了该能力的项目会静默漏掉四层质量门。
@@ -871,9 +895,9 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 
 ## classify_commit_change.py / classify_push.py — 正式代码变更分类与 push 分流（约定 31.5）
 
-`classify_commit_change.py` 判定一批改动里是否含**正式代码**（`code/**`、`web/**`、`server/**`、`src/**` 及各布局入口/锁文件），`classify_push.py` 在 push 前调它并把完整结果写进当前 build。无正式代码变更时记 `cicd_skipped=true`、**不触发/监听远端 CICD、不等部署、不跑就绪探针**，但仍校验 push 成功；正式代码变更、分类缺失或分类出错一律走监听路径（**fail-closed**）。⛔ 不得反过来用远端流水线状态反推分类。
-用法：`python3 {{AIDP_HOME}}/scripts/classify_commit_change.py --root . [--base-ref <ref>] --json`；`python3 {{AIDP_HOME}}/scripts/classify_push.py --version <V> {--build <B> | --standalone} [--base-ref <ref>]`（记录按 commit 键控，供 `commit_gate.py::pending_cicd` 结算）。
-监听结束后记部署终态：`python3 {{AIDP_HOME}}/scripts/classify_push.py --version <V> --record-terminal success|failed|unknown:<原因>`——`unknown:<原因>`（如 `provider=none`、CLI 不可用）是显式降级：不算欠账，但在门禁输出里可见。
+`classify_commit_change.py` 判定一批改动里是否含**正式代码**（`code/**`、`web/**`、`server/**`、`src/**` 及各布局入口/锁文件）；保守类一律按正式变更：git 子模块指针（gitlink）变更、嵌套 `.git` 子仓内的改动、源码根下的配置类文件及 `docs/deployment` 内实际 SQL、配置资产（`.yml/.xml/.properties/.sql/.env` 等，列在输出 `conservative_files`；操作说明和报告仍属文档）。纯只读，不写任何文件。
+用法：`python3 {{AIDP_HOME}}/scripts/classify_commit_change.py --root . [--base-ref <ref>] [--head <ref>] --json`；`--base-ref ""` 按未提供处理；只给 `--head` = 该提交相对其首个父提交（根提交相对空树）；都不给 = 工作区相对 HEAD。
+`classify_push.py` = 上者的**纯只读**推送分流，**不写 baseline、不写任何文件**：`python3 {{AIDP_HOME}}/scripts/classify_push.py --root . [--base-ref <ref>] [--head <ref>] [--json]`，stdout 恒为一个 JSON：`{"decision":"watch|skip","paths":{changed_files,formal_code_files,non_formal_files,conservative_files,source_roots},"reason":…,"error":bool}`，退出码 0（非 git 根为 3）。分类缺失/出错 → `decision=watch,error=true`（**fail-closed**）。旧的 `--version/--build/--standalone/--baseline/--record-terminal` 已删除（传入即 argparse 报错）。仅在 CICD 已启用（`aidp_config.py cicd-enabled`）时才需要它；未启用时推送只有 `git push`。⛔ 不得反过来用远端流水线状态反推分类。
 
 ## readme_policy.py — README 三档范围判定（共享策略，被 scaffold/migrate/verify 共用）
 
@@ -1280,14 +1304,15 @@ git 判"改没改"走 **stat 快速路径**：index 记的 `(size, mtime)` 与�
 
 ## aidp_config.py — 人维护配置（`memory/aidp-config.yaml`）
 
-**键以模板 `memory/aidp-config.yaml` 为准（该文件逐键带注释），不在此重复枚举**；段落索引：`project`（`name` / `name_cn` / `sql_dialect`）· `development.branch_policy` · `execution_policy` · `commit_gate.enabled` · `notify`（`enabled` / `fallback` / `channel_ready_card` / `channels`）· `cicd`（`provider` / `auto_trigger` + `auto_trigger_source` / `max_retries` / `pipelines` / 各提供方专属段 / `push_auto_deploy` / `push_deploy_min_wait_seconds`）· `deployment.backup` · `stop_guard.enabled` · `scheduler`（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `tick_max_seconds` / `exec`）· `scaffold`（`version` / `pending`）· `autopilot_decisions` 兜底段。
-读取 API：`project_config()` / `sql_dialect()`（`project.sql_dialect` 原样读，可空通用键）/ `sql_db_flag()`（**传给 SKILL 脚本 `--db` / `--sql-db` 的唯一取值**：`dm`/`dameng`/`达梦*` → `dameng`，其余为空 = 不传；SKILL 脚本只有 dameng 有专项规则、传 mysql 等会 argparse 退出 2；命令端 `aidp_config.py sql-db-flag`）/ `commit_gate_enabled()` / `notify_config()` / `cicd_config()` / `cicd_push_auto_deploy()` / `cicd_push_deploy_min_wait()` / `scheduler_config()` / `stop_guard_enabled()` / `read_branch_policy()` / `branch_policy()` / `read_execution_policy()` / `scaffold_version()` / `scaffold_pending()` / `is_downstream()`；单行流式写法（`- {type: feishu, webhook_env: …}`、`pipelines: {dev: deploy-dev.yml}`）解析时展开。布尔开关按 YAML 1.1 解析（`true/yes/on/1`、`false/no/off/0`），无法识别的值读取侧按缺省处理、`show` 的 `warnings` 列出。
+**键以模板 `memory/aidp-config.yaml` 为准（该文件逐键带注释），不在此重复枚举**；段落索引：`project`（`name` / `name_cn` / `sql_dialect`）· `development.branch_policy` · `execution_policy` · `commit_gate.enabled` · `notify`（`enabled` / `fallback` / `channel_ready_card` / `channels`）· `cicd`（`provider` / `auto_trigger` + `auto_trigger_source` / `max_retries` / `pipelines` / 各提供方专属段 / `push_auto_deploy` / `push_deploy_min_wait_seconds`）· `stop_guard.enabled` · `entry_guard.enabled` · `scheduler`（`dev_interval` / `test_interval` / `agent` / `stale_cycles` / `tick_max_seconds` / `exec`）· `scaffold`（`version` / `pending`）· `autopilot_decisions` 兜底段。
+读取 API：`project_config()` / `sql_dialect()`（`project.sql_dialect` 原样读，可空通用键）/ `sql_db_flag()`（**传给 SKILL 脚本 `--db` / `--sql-db` 的唯一取值**：`dm`/`dameng`/`达梦*` → `dameng`，其余为空 = 不传；SKILL 脚本只有 dameng 有专项规则、传 mysql 等会 argparse 退出 2；命令端 `aidp_config.py sql-db-flag`）/ `commit_gate_enabled()` / `notify_config()` / `cicd_config()` / `cicd_push_auto_deploy()` / `cicd_push_deploy_min_wait()` / `scheduler_config()` / `stop_guard_enabled()` / `entry_guard_enabled()` / `read_branch_policy()` / `branch_policy()` / `read_execution_policy()` / `scaffold_version()` / `scaffold_pending()` / `is_downstream()`；单行流式写法（`- {type: feishu, webhook_env: …}`、`pipelines: {dev: deploy-dev.yml}`）解析时展开。布尔开关按 YAML 1.1 解析（`true/yes/on/1`、`false/no/off/0`），无法识别的值读取侧按缺省处理、`show` 的 `warnings` 列出。
 CLI：`get <段.键>`（空白 / `null` / 占位值输出空，与读取 API 同口径）· `set <段.键> <值>`（有确定值域的键写前校验：布尔 / 整数下限 / `cicd.provider` 枚举 / `scheduler.agent` ∈ auto|claude|codex|dsh / 调度周期；含 `: ` ` #` 的字符串自动加引号，含换行的值拒绝；非法 rc=2 不写盘）· `show`（含 `sql_db_flag`、`warnings`）· `ensure` · `sql-db-flag` · `branch-policy`。
 写入是**逐行外科手术**而非重新序列化 —— 这份文件一半的价值在注释（每个开关旁写着
 关掉之后会发生什么），`yaml.dump()` 一次就把它退化成无注释的 json。
 读取顺序恒为「本文件 → 内置缺省」。
 
-`python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy` 只读返回工作分支策略的 `vcs_mode/policy/needs_choice/status`；Git 未选择退出 3，非法配置退出 2，已选及无 Git 不适用退出 0。首次由用户选 `current` 或 `new` 后用 `set development.branch_policy <选择>` 保存，后续沿用；缺值不自动变成 current。脚手架三模式支持显式 `--branch-policy current|new`，升级无该参数保留旧值；模板始终 null，不携带维护者偏好。脚本只保存和查询，实际任务分支继承及创建约束见 `reference/agent-tools.md`。
+`python3 {{AIDP_HOME}}/scripts/aidp_config.py cicd-enabled [--json]` 只读判定 CICD 是否启用：`cicd.provider=none` 或 `cicd.pipelines` 无有效项 → 未启用（退出 1），否则启用（退出 0）；`--json` 输出 `{"enabled":bool,"reason":str}`。Python API `cicd_enabled(root)` → `(bool, reason)`，与 `cicd_watch.unconfigured_cicd` 共用 `cicd_unconfigured()` 同一实现；不落盘。脚手架升级采用旧已交付模板、当前配置、新模板三方比较：如 `deployment.backup` 已从新模板移除且项目原值未改，自动清理；用户改过、结构不能安全判定或缺少可信旧模板时保留，并按完整键路径告警。`custom_user` 不参与退休清理，注释与原有换行保留；配置人工核对不进入语义改写队列。
+`python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy` 只读返回工作分支策略的 `vcs_mode/policy/needs_choice/status`（并落运行态标记 `memory/.aidp/branch-policy-read.json` 供 `entry_gate.py` 校验「已读取」）；Git 未选择退出 3，非法配置退出 2，已选及无 Git 不适用退出 0。首次由用户选 `current` 或 `new` 后用 `set development.branch_policy <选择>` 保存，后续沿用；缺值不自动变成 current。脚手架三模式支持显式 `--branch-policy current|new`，升级无该参数保留旧值；模板始终 null，不携带维护者偏好。脚本只保存和查询，实际任务分支继承及创建约束见 `reference/agent-tools.md`。
 
 ## autopilot_decisions_merge.py — PRD frontmatter × 兜底配置的决策合并
 

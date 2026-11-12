@@ -1,6 +1,6 @@
 # 执行上下文、动作授权与轻量能力
 
-本片是**执行策略单一信源**与 light 配方。formal 保留编号、开工、规格、归档，不扩大动作授权；light 不建 Sprint/卡片/审批文档。各入口先按本片选步骤；可选未请求为 NOT_REQUESTED，不是欠账或 PASS。
+本片是**执行策略单一信源**与 light 配方；日常 light 先读速览 `reference/light-entry.md`，仅需授权/预算/收口细则时再按节读本片。formal 保留编号、开工、规格、归档，不扩大动作授权；light 不建 Sprint/卡片/审批文档。各入口先按本片选步骤；可选未请求为 NOT_REQUESTED，不是欠账或 PASS。
 
 ## 业务目标与动作模型
 
@@ -17,15 +17,15 @@
 | 显式 `/version` 规划 | `document`、`static`、`docs-audit` | 发布、提交、部署、代码测试；保留 `--repair-planning`、`--fast` 及已有 QR 缓存 |
 | 独立 `/sprint-aiauto-test` / 明确浏览器实测 | 仅明确目标的 `static`、`live-tests`；自然语言浏览器/页面请求只授权所指页面或流程的 live-tests，不借用 autopilot 版本全量组合 | 全版本、开发修复、提交、推送、部署 |
 | 显式 autopilot 执行 | 真实来源的 development+commit/push/deploy/live-tests；仅真实委派 aiauto 且当前版本清单完整才 full-regression | test-only/`--skip-dev` 不含 implement/commit/push/deploy；裸向导不执行，不安装调度 |
-| “提交、推送、部署” | 在已有任务上分别增加 `commit`、`push`、`deploy` | 迁移演练、部署工具开发、重新回归/审计 |
+| 普通“提交、推送、部署”请求 | 按用户原话运行 git commit、git push、项目现有部署入口；不为交付创建 context/grant | 迁移演练、备份、部署后核验、部署工具开发、重新回归/审计 |
 
-动作键：`implement/static/document/related-test/review/full-cvl/docs-audit/full-regression/migration-rehearsal/deployment-tool-development/commit/push/deploy/live-tests/equivalent-evidence`。`verification_level` 仅为派生摘要。部署授权包含按用户频率策略执行或复用的既有备份、已授权迁移、现成工具与就绪检查；不能以迁移/快照另造备份例外。DB目标及不可逆操作仍守原门。push 只允许观察由本次 push 自动触发的流水线；主动 trigger/retry 必须有 `deploy`。旧 `auto_trigger=true`、机器可用或模板“所有者常驻授权”不构成 grant。
+动作键：`implement/static/document/related-test/review/full-cvl/docs-audit/full-regression/migration-rehearsal/deployment-tool-development/commit/push/deploy/live-tests/equivalent-evidence`。`verification_level` 仅为派生摘要。部署=运行项目现有部署脚本，备份属项目自身运维、AIDP不要求。DB目标及不可逆操作仍守原门。push 只允许观察由本次 push 自动触发的流水线；主动 trigger/retry 必须有 `deploy`。旧 `auto_trigger=true`、机器可用或模板“所有者常驻授权”不构成 grant。
 
 `authorization_source` 保留真实 request_id、原文/命令与显式持久选择；模板true不当grant。已授权直接做，未请求可选项跳过；缺事实报缺口。
 
 ## 入口、继承与 grant revision
 
-新普通任务默认 light；明确Sprint、version/full/batch/autopilot或真实显式aiauto为formal；自然browser仍light。先核版本归属与工作分支；不从 activeContext、历史计划或规模推断任务身份。`task_id` 由机器生成，`memory/.aidp/entry-contexts/<id>/` 仅存自动证据 JSON，不是新的人工任务卡。
+新开发/测试等受管任务默认 light；纯交付请求按「close」普通交付分支，不进入本节创建上下文。明确Sprint、version/full/batch/autopilot或真实显式aiauto为formal；自然browser仍light。先核版本归属与工作分支；不从 activeContext、历史计划或规模推断任务身份。`task_id` 机器生成，`entry-contexts/<id>/` 仅存自动证据 JSON，非人工任务卡。
 
 各入口的 `POLICY_ARGS` 在**无父上下文时**按下列配方生成，参数逐项传 argv，不做 shell eval：
 
@@ -65,7 +65,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
   --entry "{实际子命令名}" --execution-context "$EXECUTION_CONTEXT" --phase "{当前阶段}" --json
 ```
 
-phase 取 `prepare/dev/test/repair/close/route`。消费 `route/actions/authorized_actions/not_requested_actions`；只执行返回动作，不能按下文旧步骤补齐未授权检查。失败立即返回原因。同任务用户后续增加动作时，主流程通过 revise 增加 grant 并更新 revision；写集扩大同样 revise，不手改 JSON、不保留旧证据假装新修订已完成：
+phase 取 `prepare/dev/test/repair/close/route`。消费 `route/actions/authorized_actions/not_requested_actions`；只执行返回动作，不能按下文旧步骤补齐未授权检查。失败立即返回原因。同一开发/测试任务后续增加受管动作时，主流程通过 revise 增加 grant 并更新 revision；写集扩大同样 revise。普通提交/推送/部署请求不因此新增 grant 或重建任务，也不重新跑开发验收；autopilot 编排仍消费其既有交付 grant。不手改 JSON、不保留旧证据假装新修订已完成：
 
 ```bash
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?当前任务}"
@@ -83,7 +83,7 @@ Sprint派发的实际fork围栏见 `/sprint-batch` Step3：重复allow-action仅
 
 ## 执行围栏、预算与失败
 
-所有实际动作先核父action并预留资源，包装器已预留则不重复。直接工具/Agent按下方配方；prompt带context/revision/action/剩余budget/真实输入hash/写集/业务验收，并行写集不交叉，共享状态主流程串行写。
+本节开发/测试与 autopilot 受管动作先核父action并预留资源，包装器已预留则不重复；普通交付只按「close」独立分支执行，不新增 grant/预算记录。直接工具/Agent按下方配方；prompt带context/revision/action/剩余budget/真实输入hash/写集/业务验收，并行写集不交叉，共享状态主流程串行写。并行判定见 `light-parallel.md`。
 
 ```bash
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?父路径}"
@@ -93,13 +93,12 @@ COST="${COST:?预计数量或最长耗时}"
 INPUT_HASH="${INPUT_HASH:?从本轮实际输入算得SHA256}"
 python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
   --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" || exit $?
-RESERVATION_FILE=$(mktemp "$(dirname "$EXECUTION_CONTEXT")/reservation.XXXXXX.json") || exit $?
-python3 {{AIDP_HOME}}/scripts/execution_policy.py reserve-budget --root . \
+RESERVATION_JSON=$(python3 {{AIDP_HOME}}/scripts/execution_policy.py reserve-budget --root . \
   --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" \
-  --resource "$RESOURCE" --cost "$COST" --input-hash "$INPUT_HASH" > "$RESERVATION_FILE" || exit $?
+  --resource "$RESOURCE" --cost "$COST" --input-hash "$INPUT_HASH") || exit $?
 # 实际动作结束后据真实结果登记；不是用登记替代执行。
 if [ "$RESOURCE" = elapsed_seconds ]; then
-  RESERVATION_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["reservation_id"])' "$RESERVATION_FILE") || exit $?
+  RESERVATION_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["reservation_id"])' <<< "$RESERVATION_JSON") || exit $?
   ACTUAL_SECONDS="${ACTUAL_SECONDS:?执行体monotonic结束减开始的实际耗时}"
   python3 {{AIDP_HOME}}/scripts/execution_policy.py settle-elapsed --root . \
     --execution-context "$EXECUTION_CONTEXT" --reservation-id "$RESERVATION_ID" \
@@ -121,7 +120,7 @@ FAIL/TOOL_ERROR/ENV_UNAVAILABLE/UNVERIFIED/NOT_REQUESTED分别保留，不把sco
 ## prepare / dev / repair
 
 1. prepare 读用户需求、相关代码和既有基线；light 不认领已有 Sprint、不重置 activeContext/progress、不写 started，准备完返回。
-2. dev/repair 按实际范围复用 backend/frontend 与 rules，完成实现、必要静态检查后自动调用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]`，执行本片 test 能力；真实失败交原实现者修复并复验（调 `bugfix` SKILL 传 `report_mode=evidence-only`，见 `reference/skills.md`），随后 close 终端收口。保留同 task/起点/写集；不借子入口加 review/CVL/文档，无需单测确认；review/test-only 只回传发现。
+2. dev/repair 按实际范围复用 backend/frontend 与 rules，完成实现、必要静态检查后自动调用 `/sprint-test --execution-context "$EXECUTION_CONTEXT" [--unattended]`，执行本片 test 能力；真实失败交原实现者修复并复验（调自有 `bugfix` SKILL 传 `report_mode=evidence-only`、父 execution_context 与明确 failures/真实证据/写集/验收，见 `reference/skills.md`；不强造问题 Markdown），随后 close 终端收口。保留同 task/起点/写集；不借子入口加 review/CVL/文档，无需单测确认；review/test-only 只回传发现。
 3. 规模预判与完成复核使用同一 `development_scope.py`、同一冻结上下文；risk/complexity/cost 独立，文件数只表示成本、不判 L。风险提示不授予迁移、文档或 heavy 检查：
 
 ```bash
@@ -142,7 +141,7 @@ python3 {{AIDP_HOME}}/scripts/development_scope.py --root . \
 
 ## test：只执行授权分支
 
-`related-test` 才生成 scope 和运行单测。真实运行器来自项目 `unit_runners` 的 `cwd/argv/inputs/env_id`；`since/write_set` 来自父上下文。命名或 related 选择器沿用 `/sprint-test` Step 2.6。JSON/YAML/SQL变更无映射须记未核验。
+`related-test` 才生成 scope 和运行单测。自动范围 `test_scope.py` / `light_task.py select/all` 需要有效 Git commit；无 Git 只可按显式文件运行本地测试，自动范围及相关证据链记 `UNVERIFIED / unsupported:vcs-disabled`，不声称完整闭环、不自动 `git init`。真实运行器来自项目 `unit_runners` 的 `cwd/argv/inputs/env_id`；`since/write_set` 来自父上下文。命名或 related 选择器沿用 `/sprint-test` Step 2.6。`light_task.py select/run/report` 即下围栏加命令守卫的单一入口。JSON/YAML/SQL变更无映射须记未核验。
 
 <!-- light-task-unit -->
 ```bash
@@ -171,9 +170,7 @@ python3 {{AIDP_HOME}}/scripts/test_ledger.py verify --root . \
 
 light 为 task，formal 为单 Sprint；full/batch/autopilot 开发子任务也守同一边界。static/review/CVL 若执行，仅该写集及必要依赖，不随带浏览器或全版本。缺测试/runner、未覆盖项、工具缺失均 `UNVERIFIED` 并阻塞通过；纯文档须 `applicability={status:NOT_APPLICABLE,reason:具体依据,paths:[实际文件]}`，不能仅凭后缀或空集合判不适用。修复只补失效项，同内容证据复用，最终核完整当前 scope。
 
-`review` 分支读 `agents/reviewer.md`，只读核本轮 diff 与验收标准，报告自动写上下文目录；不生成 unit-scope、不顺带 CVL/文档。`full-cvl` 另获授权时按 `/sprint-test` Step 2 做一次 verify-only，review 消费这次证据及差量发现，不额外叠完整轮。独立审查保留 schema、kind=code-review、`execution_context=entry_context.evidence_identity(ctx)`、覆盖当前write_set的具体文件→SHA256 inputs映射、reviewer/checks/findings与证据。每项检查保留kind/status及非空evidence路径数组；未核验/FAIL不填PASS。只读可结束并保留FAIL；Minor/Suggestion纯改进有reason/evidence可accepted，错误不得借此放行。
-
-同时有 related-test+review 且本轮真实质量检查完成时，才用既有 `test_ledger.py record-review` 绑定 scope/hash、全部 run_ids 和真实报告；review-only 使用 `--review-evidence` 完成，不依赖测试账本。所有错误性发现保留原等级与状态；改进建议可附不修原因，不能为通过而删发现或把工具失败转 BUG。
+`review`、`full-cvl` 的报告结构、证据绑定与复用见 `{{AIDP_HOME}}/reference/review-evidence.md`，仅授权后读取；review-only 不运行单测。
 
 ## close：验证就绪与整任务完成
 
@@ -200,10 +197,12 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py check --root . \
 
 只有真实限制source取消related-test才不传scope；纯文档NOT_APPLICABLE仍传其scope依据。review-only传review-evidence；full-cvl/docs-audit/live-tests等追加真实action-evidence。未要求的检查不造空报告，不把未请求项列pending。
 
-**已授权交付**：只做尚未完成的commit→push→deploy，每步核动作/预算；commit用带context的commit_gate（exit5禁止），push/deploy按约定31.5。真实成功回执用 `--action-evidence "commit=<回执路径>"`（push/deploy同形）传check/complete；无交付grant不传回执。不能用AUTHORIZED代替实际argv/result或提供方receipt，不重放已成功动作，不为日志写部署Markdown/追加提交，不因仅SHA变化全重验。缺回执返回PENDING_ACTIONS，继续父任务。formal继续原关闭归档门，complete不替代正式关闭；受限请求可action_completed，仍非development_completed。
+**普通交付请求**：只做尚未完成的 commit→push→项目现有部署入口；不建 context/grant/回执文件、不为纯交付调用 check/complete。commit 前跑 `commit_gate.py --quiet`，push 按约定31.5「普通推送」独立只读观察；未启用 CICD 不观察，已启用不要求 version/context，不写 baseline。不重放成功动作，不新增备份或部署后核验，不因仅 SHA 变化全重验；真实执行结果直接汇报。
+
+**已有开发/编排任务收口**：当前上下文已持有交付 grant 且任务要求这些动作时，才以真实成功回执 `--action-evidence "commit=<回执路径>"`（push/deploy同形）传 check/complete；无交付 grant 不传回执。不能用 AUTHORIZED 代替真实 argv/result 或提供方 receipt，不为日志写部署 Markdown/追加提交。该已有任务缺必要回执才返回 PENDING_ACTIONS 并继续父任务，纯交付请求不因此建记录或变成开发欠账。formal 继续原关闭归档门，complete 不替代正式关闭；受限请求可 action_completed，仍非 development_completed。
 
 full-regression仅真实autopilot经 `fork-test-build --manifest` 委派的当前version/build；清单与基线缺失阻塞，禁止project-wide/system-wide/历史全集和缺清单fallback。真实调用见 `flows/sprint-aiauto-test/phase-2-unit.md`。full-evidence逐run核环境/inputs、完整当前版本测试及必要依赖，不用相关scope冒充。
 
-review已授权且有审查基线才review-delta，可信零diff复用；变化只补失效项。真实只分析/只修改/skip受限返回，不冒充完整开发通过。等价证据仅在equivalent-evidence显式授权下走entry_context equivalent，传原original-run-id、env-id、review-evidence及适用ledger-root；仅脚本支持的原TOOL_ERROR且实际exit0/当前输入一致情形可用。check/complete消费独立equivalent-evidence JSON，保留原失败，业务FAIL不替代。
+审查差量与显式授权的等价证据按 `reference/review-evidence.md`，原错误保留，业务 FAIL 不替代。
 
 **终端收口**消费 `completed/action_completed/development_completed/quality_verdict/finalization_status`，标明 task/Sprint/version 范围，分别列 PASS、具体不适用、未执行、FAIL、阻塞；LIMITED/跳过非完整开发通过。日常不写报告 Markdown，自动 JSON/日志留原证据目录；formal保原规格与归档。light不创建Sprint、编号、卡片、成套文档、不认领历史Sprint或铸build。

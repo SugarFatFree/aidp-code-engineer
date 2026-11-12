@@ -139,7 +139,7 @@
 > - **④ 发里程碑通知**（通知渠道已配置时；`NOTIFY_ENABLED=0` 才豁免，且须打印豁免原因，见 ⑤细则）；
 > - **⑤ live-tests/full-regression获授权才委派相应测试支线产真实报告**（autopilot 只产 AI执行报告；AI测试报告 + 测试通知由第二条 `/loop /sprint-aiauto-test --unattended --no-loop` 产，缺则按 ④细则自触发/提级告警）；
 > - **⑥ 返回前【无条件】跑一次收尾 ceremony 闸**（`autopilot-ceremony-gate.py`，结构级、必打印"应产 vs 实产"逐项清单，见 ⑥细则 + 文末「命令收尾硬门」）。
-> - **②细则（提交/推送分权）**：真实explicit-command来源的autopilot公开包包含本轮commit/push/deploy，已有skip选项收窄；仅entry名称或自然路由不是grant，更不是持久授权。各动作消费父策略，旧模板true不迁移为grant。已授权直接执行不重问，未请求NOT_REQUESTED不弹窗或冻结。实际git写入前require_action；commit_gate传execution_context，exit5/NOT_AUTHORIZED禁止提交，3/4保留原欠账语义。skip-deploy只约束部署，不能冒充push授权；明确push可只读监听自动触发结果。DEV_BRANCH/PENDING_MERGE_TO仍遵守原分支与合并授权门，不自动tag/merge主干。
+> - **②细则（提交/推送分权）**：真实explicit-command来源的autopilot公开包包含本轮commit/push/deploy，已有skip选项收窄；仅entry名称或自然路由不是grant，更不是持久授权。各动作消费父策略，旧模板true不迁移为grant。已授权直接执行不重问，未请求NOT_REQUESTED不弹窗或冻结。实际git写入前require_action；commit_gate直接 `--quiet`，3/4不阻止提交。skip-deploy只约束部署，不能冒充push授权；明确push可只读监听自动触发结果。DEV_BRANCH/PENDING_MERGE_TO仍遵守原分支与合并授权门，不自动tag/merge主干。
 
 > - **★ ⑥细则（收尾硬门：无条件 + 结构级 + 必打印，堵"既不产物也不告警"黑洞）**：命令**返回前无条件**跑一次 `python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check --version {V} --build {B} …`（**不埋在"走到才触发"的 Phase 里**）——校 build/HTML报告/通知台账/测试报告归属，缺失即补产、补不齐 `exit 1` 不静默返回；**无论过没过都打印"应产清单 vs 逐项实产核验"**（build号/AI执行报告/AI测试报告/各里程碑通知，缺项标原因 + 补产命令，脚本已内置该表头）。
 > - **★ ③细则（"未进流水线"必打印，从 prose 升级为结构级）**：确实无法进入 Phase 2/3（判增量绕过/Phase 1 无变化/版本已交付/停在配置向导）而**不产 build/报告/通知**时，**必须**跑 `python3 {{AIDP_HOME}}/scripts/autopilot-ceremony-gate.py check --version {V} --no-pipeline-reason "<具体依据>"`（结构级强制打印"⚠️ 本轮未进入开发流水线…判定依据=<原因>" + 应产=无说明，`exit 0`）——堵"既不产物也不告警"黑洞。
@@ -151,14 +151,16 @@
 
 ## IRON-5：推送分类与监听不变式
 
-> ⛔⛔ **推送分类与监听不变式（顶层铁律）**：每次 AIDP 代码 push 前，必须调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" [--build "$BUILD"] [--base-ref "$BASE_REF"]` 并把完整结果写入当前 build（⛔ 分工别写反：**落盘的是 `classify_push.py`**，它内部调 `classify_commit_change.py` 取分类；后者只有 `--root/--base-ref/--json/paths`，**无 `--version`/`--build`、不落盘**，直接写它 = 分类结果永不进 build、下游读方按 fail-closed 白跑一轮 CICD 监听）。分类为无正式代码变更且无分类错误时，push 仍须成功校验并记录 `cicd_skipped=true`，随后完成本次 push，不触发/监听远端 CICD、不等待部署、不跑就绪探针；分类为正式代码变更、分类结果缺失或分类错误时，先只读监听本commit；deploy已授权才继续主动trigger/retry/就绪，预算和同输入停止规则见light-context。
-> - **★ 作用域 = 全命令，不限本流程**（单一信源 = 约定 31.5）：所有 AIDP 命令的 push 点均须执行同一分类与分流，包括 `/sprint-dev`、`/sprint-bugfix`、`/sprint-batch`、`/version` 和用户授权的直接推送。
-> - 分类脚本调用失败、JSON 不完整或分类结果无法落盘时必须 fail-closed，按正式代码路径监听；不得用远端流水线状态反推分类。
-> - `cicd.provider=none`、未配置 `cicd.pipelines`（或 `cicd_watch.py` 退出码 3：提供方 CLI/凭据不可用）、`manual-script`、`mode=local` 或 `mode=none` 时，分类允许监听但没有可接管的远端流水线，按对应轻量部署分支处理；明确 `cicd_skipped=true` 的 push 不进入任何部署探针。
+> ⛔⛔ **推送分类与监听不变式（顶层铁律）**：autopilot 的 push 先用自有状态 `push_base_ref`（提交前存）/ `push_commit`（push 后存，均经 `baseline_edit.py`）做**现场只读分类**：`python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --base-ref "$BASE_REF" --head "$HEAD" --json`（纯只读、不落盘，输出 `decision=watch|skip`；⛔ 不得期待它写任何 build 字段，也不得读取任何落盘的分类记录）。仅 `decision=skip` 时 push 仍须成功校验并完成，不触发/监听远端 CICD、不等待部署、不跑就绪探针；`watch`、分类失败或缺字段一律按正式代码监听（fail-closed）：先只读监听本commit；deploy已授权才继续主动trigger/retry/就绪，预算和同输入停止规则见light-context。普通（非 autopilot）推送不写 baseline、未启用 CICD 只 `git push`。
+> - **★ 作用域 = 全命令，不限本流程**（单一信源 = 约定 31.5）：已启用 CICD（`aidp_config.py cicd-enabled`）时，所有 AIDP 命令的 push 点均须执行同一只读分类与分流，包括 `/sprint-dev`、`/sprint-bugfix`、`/sprint-batch`、`/version` 和用户的直接推送；未启用只 `git push`。
+> - 分类脚本调用失败或 JSON 不完整时必须 fail-closed，按正式代码路径监听；不得用远端流水线状态反推分类。
+> - `cicd.provider=none` 或未配置有效 `cicd.pipelines` 时结束 CI 观察，不借 baseline 补配置；CLI/凭据不可用如实记环境不可用。只有 autopilot 父任务已授权部署，且其实际入口为 `manual-script` / `mode=local` 时，才按对应部署分支处理；普通 push 不派生部署，`mode=none` 或 `decision=skip` 不进入部署探针。
 >
-> ★ 按 push 归属**分两条路径、不叠加**（避免主部署被双探针 / 在流水线尚未触发时过早探针误超时）：
+> ★ **普通推送独立只读**：非 autopilot-owned 的 push（包括独立 `/sprint-dev`、`/sprint-bugfix`、`/sprint-batch`、`/version` 与裸对话）按约定 31.5「普通推送」消费配置和现场 Git / 平台事实；`provider=none` 或有效流水线为空就结束观察。已启用且分类需监听时调用不带 context/version 的 `cicd_watch.py --mode watch|detect|poll`，不建 context、不读写 tick/baseline/retry/pending 状态、不 trigger/retry/就绪探针，不进入以下 A/B。
+>
+> ★ **以下两条仅限 autopilot-owned push**，按是否被主部署编排接管分流，不叠加（避免双探针）：
 > - **【路径 A】主部署 push（由 Phase 3.2.1 完整 CICD 编排接管）**——`cicd-provider` / `git-push`+已配置 `cicd.pipelines` 的**主开发分支推送**，其"查触发/主动触发/轮询/重试≤3 + 就绪探针 + 写 `last_deployed_at`"**全部由 Phase 3.2.1 Step A0–D 编排承担（权威路径）**；Step D 的就绪探针同样调用 `autopilot-deploy-watch.py`（单一实现，`push_probe_fail_streak` 熔断），⛔ 路径 A 不在 Step D 之外再叠加一次探针。
-> - **【路径 B】需要独立处理的 push**——分类结果允许监听但未由 Phase 3.2.1 主部署编排接管的 push（如测试期缺陷修复后、独立 `/sprint-dev`·`/sprint-batch`、`/version` 发布期或其它非主部署编排 push）走两个确定性脚本串成完整六步；分类明确为非正式变更的 push 不进入路径 B：
+> - **【路径 B】autopilot-owned 二级 push**——继承当前 autopilot 父任务、分类允许监听且未由 Phase 3.2.1 主部署编排接管的二级 push（如本轮测试期缺陷修复或委派子命令推送），才在父授权范围内走以下六步；普通独立推送及分类明确为非正式变更的 push 不进入路径 B：
 >   **① ③ 流水线监听 + 失败重试（已接入 CICD 时必做）** —— `{{AIDP_HOME}}/scripts/cicd_watch.py`（平台 = `cicd.provider`，默认 GitHub Actions；差异收在 `cicd_providers.py`）：
 >   ```bash
 >   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"   # ★ 围栏首行，取回 tick 变量
@@ -208,7 +210,7 @@
 >   脚本内置：**先 health 判 UP（⛔ 不用登录页可达性判就绪，登录页常是第三方/SSO）**、冷启动窗口内 502/503/连接拒绝属正常不判失败、`--auth-url` 给出时要求「鉴权接口连续 2 次取到非空数据」、`exit 0` 就绪并写 `versions.{version}.last_deployed_at` 放行测试链路。
 >   - **★ `exit 2`（就绪探针超时）熔断落地（autopilot 自有字段，勿复用测试链路 `probe_fail_streak`）**：`autopilot_fail_handle.py` 递增 baseline `versions.{V}.push_probe_fail_streak +1` → `< 3` 只记账后退本 tick，`≥ 3` 按「冻结字段写入契约」写齐 `versions.{V}.needs_human=true` + `aiauto_frozen_at=@now` + `freeze_reason=probe-timeout` + 顶层 `aiauto_blocked_reason`、发最后一张 #4 后冻结本版（后续 tick 跳过；⛔ 别再用私有字段名 `push_probe_frozen_at`——解冻方只认 `aiauto_frozen_at`），**⛔ 不重跑流水线**；`exit 0` 清零 streak。**★ `exit 5`（已就绪、但写 `last_deployed_at` 失败）走另一条**：⛔ **不得计入 `push_probe_fail_streak`**——`probe-timeout` 的解冻证据正是 `last_deployed_at`，而这一轮失败的恰恰是写它，按超时熔断等于把恢复路径一起堵死。正确处置：发一次 #4 说明「环境已就绪但 baseline 写入失败」、原地重试写入，本 tick 不冻结、不重跑流水线。
 > - **登记 `pending_actions`**：只记录已授权且尚需执行的动作；NOT_REQUESTED结算后不再阻塞。路径B在对应授权下把 `cicd-watch`（已接入 CICD 时）与 `deploy-watch` 放进 `run_state.pending_actions`，**各自对应脚本 `exit 0` 才移除**——未移除即本 Phase 未完成（与阶段推进不变式 + 收尾门 3k 义务清算联动，堵住"推了就当完事、测试链路空转"）；路径 A 由 Step D 完成即视为已就绪、不进 `pending_actions`。
-> - **同不变式下传各子命令**：`/sprint-dev` / `/sprint-bugfix` / `/sprint-batch` 在自身二级推送点（含 bugfix 修复后推送）、`/version` 在发布期推送点，同样先分类再按正式代码结果进入监听路径（见各自命令/分片的「推送分类与监听」段），autopilot 委派它们与它们独立跑时行为一致。
+> - **同不变式下传各子命令**：`/sprint-dev` / `/sprint-bugfix` / `/sprint-batch` / `/version` 的推送点先识别归属；继承当前 autopilot 父任务的二级 push 才走路径 B，独立调用只走约定 31.5「普通推送」。命令名或历史 baseline 的存在不构成 autopilot 归属。
 > - **★ 刷新 `last_autopilot_head`（配合 retest-cap 人工修复检测）**：本流程内**任何一次** autopilot 自身 push 确认完成后（路径 A/B 均含），把顶层 `last_autopilot_head` 刷新为当前 `git rev-parse HEAD`——记录"autopilot 自己推进到的最后一个 commit"，供「测试失败自动修复复测闭环」step 3bis 用双重不等区分人工新提交与 autopilot 自推、防 `retest-cap` 冻结版本被误解冻（见该段 + baseline schema `last_autopilot_head`）。
 
 ## IRON-6：上下文管理策略（防单 tick 破 1M）

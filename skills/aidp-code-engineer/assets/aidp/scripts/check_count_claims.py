@@ -20,7 +20,7 @@ r"""check_count_claims.py — 文档里的「自称计数」必须与被数的�
 1. **核心约定数** —— `N 项核心约定` / `核心约定 1–N` / `约定 1-N` / `核心约定 N 条`
    ⇢ 真值 = 「核心约定」正文的**最大约定号**（`^N. **` 形态），口径复用
    `verify.py::check_convention_anchor_consistency`；正文权威文件同 `_convention_source`：
-   两文件并存时 = `AGENTS.md`；仅 Claude Code 的单文件形态 = `CLAUDE.md`。
+   外置 `reference/core-conventions.md` 优先；旧安装兼容 `AGENTS.md` / `CLAUDE.md`。
    （与 verify.py 的差别：那边只扫 4 个固定文件、本脚本扫全仓——「36 项核心约定」正是漂在
    `设计目标.md` 这种不在那 4 个之列的文件里。）
 2. **语义维度数** —— `N 个语义维度`
@@ -73,7 +73,7 @@ from pathlib import Path as _AidpPath
 _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
-from aidp_runtime import runtime_relpath, runtime_text
+from aidp_runtime import runtime_relpath, runtime_text, convention_source as _convention_source
 import argparse
 import json
 import os
@@ -149,23 +149,9 @@ def _read(path):
 
 
 def convention_source(root):
-    """「核心约定」正文权威文件。
-
-    模板仓库 = `AIDP_HOME/AIDP-AGENTS.md`（下发记忆源；根 AGENTS.md 只是模板自身维护记忆）；
-    下游项目 = AGENTS.md 优先，仅 Claude Code 时 = CLAUDE.md。同 verify.py。
-    """
-    paradigm = os.path.join(root, runtime_relpath("", __file__), "AIDP-AGENTS.md")
-    if os.path.isfile(paradigm):
-        return paradigm
-    aidp = os.path.join(root, "AGENTS.md")
-    if os.path.isfile(aidp):
-        return aidp
-    inlined = os.path.join(root, "CLAUDE.md")
-    if os.path.isfile(inlined):
-        t = _read(inlined)
-        if t and "## 核心约定" in t:
-            return inlined
-    return None
+    """外置核心约定优先；旧安装回退到完整项目记忆，共享运行根定位。"""
+    source = _convention_source(root)
+    return str(source) if source is not None else None
 
 
 def truth_max_convention(root):

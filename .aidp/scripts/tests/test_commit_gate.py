@@ -310,6 +310,113 @@ def test_offchain():
 
 
 # ── 约定 31.5：CICD 推送欠账 ──
+def test_classify_conservative_and_readonly():
+    """子模块 / 嵌套仓 / 配置类文件保守判 formal；--head；空 base-ref；全程只读（git status 无变化）。"""
+    print("【classify 保守分类 + 只读验收】")
+    CC = os.path.join(SCRIPTS, "classify_commit_change.py")
+    CPUSH = os.path.join(SCRIPTS, "classify_push.py")
+
+    def run(script, d, *a):
+        cp = subprocess.run([sys.executable, script, "--root", d, *a], capture_output=True, text=True)
+        return json.loads(cp.stdout or "{}"), cp.returncode
+
+    def porcelain(d):
+        return _git(d, "status", "--porcelain").stdout
+
+    with tempfile.TemporaryDirectory() as d:
+        _init_repo(d)
+        mkfile(os.path.join(d, "package.json"), "{}\n")
+        mkfile(os.path.join(d, "src/App.ts"), "export {}\n")
+        _git(d, "add", "-A"); _git(d, "commit", "-qm", "base")
+        base = _git(d, "rev-parse", "HEAD").stdout.strip()
+        # gitlink：不联网，直接 update-index 构造 160000 条目
+        _git(d, "update-index", "--add", "--cacheinfo", "160000," + base + ",libs/shared")
+        _git(d, "commit", "-qm", "bump submodule")
+        r, _ = run(CC, d, "--base-ref", base)
+        check("子模块指针（gitlink）变更 → 保守 formal", r["has_formal_code_change"] is True
+              and "libs/shared" in r["formal_code_files"] and "libs/shared" in r["conservative_files"])
+        pr, rc = run(CPUSH, d, "--base-ref", base, "--head", "HEAD")
+        check("classify_push：gitlink → watch", rc == 0 and pr["decision"] == "watch")
+        # --head：不带 base 时取该提交相对父提交的变更
+        r, _ = run(CC, d, "--head", "HEAD")
+        check("--head 单独给出 → 以其父提交为基线", r["changed_files"] == ["libs/shared"])
+        r, _ = run(CC, d, "--head", base)
+        check("--head 指向根提交 → 相对空树", "package.json" in r["changed_files"] and not r["classification_error"])
+        check("--base-ref \"\" 按未提供处理（工作区口径）", run(CC, d, "--base-ref", "")[0] == run(CC, d)[0])
+        # 配置类文件与实际部署 SQL → 保守 formal；说明文档继续跳过
+        mkfile(os.path.join(d, "src/main/resources/application.yml"), "a: 1\n")
+        mkfile(os.path.join(d, "src/main/resources/db/init.sql"), "select 1;\n")
+        mkfile(os.path.join(d, "docs/deployment/v1/a.sql"), "select 1;\n")
+        _git(d, "add", "-A"); _git(d, "commit", "-qm", "config")
+        r, _ = run(CC, d, "--head", "HEAD")
+        check("源码配置与部署 SQL → 保守 formal",
+              {"src/main/resources/application.yml", "src/main/resources/db/init.sql",
+               "docs/deployment/v1/a.sql"} <= set(r["formal_code_files"]))
+        assets_base = _git(d, "rev-parse", "HEAD").stdout.strip()
+        mkfile(os.path.join(d, "docs/deployment/v1/配置文件/全量/application-prod.yaml"), "port: 9000\n")
+        _git(d, "add", "-A"); _git(d, "commit", "-qm", "deployment config")
+        before = porcelain(d)
+        pr, rc = run(CPUSH, d, "--base-ref", assets_base, "--head", "HEAD")
+        check("仅部署配置变更 → 只读 watch", rc == 0 and pr["decision"] == "watch" and not pr["error"]
+              and before == porcelain(d))
+        # 嵌套 .git 子仓（未登记）：其目录下任何改动保守 formal
+        sub = os.path.join(d, "vendor_repo")
+        os.makedirs(sub)
+        subprocess.run(["git", "init", "-q", sub], check=True, capture_output=True)
+        mkfile(os.path.join(sub, "README.md"), "# nested\n")
+        r, _ = run(CC, d)
+        check("嵌套 .git 子仓（工作区）→ 保守 formal", "vendor_repo" in r["formal_code_files"]
+              and "vendor_repo" in r["conservative_files"])
+        shutil_rm = __import__("shutil").rmtree
+        shutil_rm(sub)
+        # 只读验收：前后 git status 不变、不产生 baseline
+        mkfile(os.path.join(d, "docs/x.md"), "# x\n")
+        before = porcelain(d)
+        run(CPUSH, d, "--base-ref", base)
+        run(CC, d)
+        check("★ classify_push / classify_commit_change 不改变 git status、不生成 baseline",
+              porcelain(d) == before and not os.path.exists(os.path.join(d, "memory/.sprint-autopilot-baseline.json")))
+
+
+def test_plain_flow_leaves_tree_untouched():
+    """未启用 CICD 的仓库：提交→推送→(部署) 前后脚本不留任何改动；commit_gate 无 execution-context 也不拒绝。"""
+    print("【验收：提交/推送不被脚手架脚本改动工作区】")
+    with tempfile.TemporaryDirectory() as base:
+        remote = os.path.join(base, "remote.git")
+        d = os.path.join(base, "work")
+        subprocess.run(["git", "init", "-q", "--bare", remote], capture_output=True)
+        os.makedirs(d)
+        _init_repo(d)
+        mkfile(os.path.join(d, "package.json"), "{}\n")
+        mkfile(os.path.join(d, "src/App.ts"), "export {}\n")
+        mkfile(os.path.join(d, ".gitignore"), "memory/.aidp/\n")
+        _git(d, "add", "-A"); _git(d, "commit", "-qm", "init")
+        _git(d, "remote", "add", "origin", remote)
+        _git(d, "checkout", "-q", "-B", "main")
+        _git(d, "push", "-q", "-u", "origin", "main")
+        mkfile(os.path.join(d, "src/App.ts"), "export const a = 1\n")
+        _git(d, "add", "-A")
+        cp, info = _run_gate(d, "--quiet")
+        check("★ commit_gate 无 --execution-context：不拒绝（退出码 0，非 5）", cp.returncode == 0 and "NOT_AUTHORIZED" not in cp.stdout)
+        check("未启用 CICD → pending_cicd 不检查", info["pending_cicd"]["applicable"] is False
+              and info["pending_cicd"]["pending"] is False)
+        _git(d, "commit", "-qm", "feat: a")
+        after_commit_gate = _git(d, "status", "--porcelain").stdout
+        cp2, _ = _run_gate(d, "--quiet")
+        classify = subprocess.run([sys.executable, os.path.join(SCRIPTS, "classify_push.py"), "--root", d,
+                                   "--base-ref", "origin/main"], capture_output=True, text=True)
+        enabled = subprocess.run([sys.executable, os.path.join(SCRIPTS, "aidp_config.py"), "--root", d,
+                                  "cicd-enabled", "--json"], capture_output=True, text=True)
+        _git(d, "push", "-q", "origin", "main")
+        cp3, _ = _run_gate(d, "--quiet")
+        check("cicd-enabled：未启用 → 退出 1 且 {enabled:false}", enabled.returncode == 1
+              and json.loads(enabled.stdout)["enabled"] is False)
+        check("推送后 commit_gate 仍通过", cp2.returncode == 0 and cp3.returncode == 0 and classify.returncode == 0)
+        check("★ 提交→推送→门禁→分类 全程 git status 无脚本造成的改动",
+              _git(d, "status", "--porcelain").stdout == after_commit_gate == "")
+        check("baseline 文件不随推送新增记录", not os.path.exists(os.path.join(d, "memory/.sprint-autopilot-baseline.json")))
+
+
 def test_pending_cicd():
     print("【commit_gate pending_cicd】")
     with tempfile.TemporaryDirectory() as base:
@@ -329,39 +436,29 @@ def test_pending_cicd():
         _git(d, "checkout", "-q", "-B", "main")
         _git(d, "push", "-q", "-u", "origin", "main")
         mkfile(os.path.join(d, "memory/aidp-config.yaml"), "cicd:\n  provider: none\n")
-        check("cicd.provider=none → 不适用", G.pending_cicd(d)["applicable"] is False)
-        os.remove(os.path.join(d, "memory/aidp-config.yaml"))
-        check("未配置流水线 → 配置降级、不制造监听欠账", G.pending_cicd(d)["configuration_degraded"] is True
+        check("cicd.provider=none → 不检查、无欠账", G.pending_cicd(d)["applicable"] is False
               and G.pending_cicd(d)["pending"] is False)
+        os.remove(os.path.join(d, "memory/aidp-config.yaml"))
+        check("未配置流水线 → 未启用：不检查、不制造欠账", G.pending_cicd(d)["applicable"] is False
+              and G.pending_cicd(d)["pending"] is False and G.pending_cicd(d)["advisory"] is False)
         mkfile(os.path.join(d, "memory/aidp-config.yaml"), "cicd:\n  pipelines: {test: deploy-test.yml}\n")
-        check("★ 默认 provider + 有效流水线（无 baseline）→ 适用", G.pending_cicd(d)["applicable"] is True)
-        check("HEAD 无正式代码变更 → 不报", G.pending_cicd(d)["pending"] is False)
+        check("★ 已启用 + HEAD 已推送 → 适用", G.pending_cicd(d)["applicable"] is True)
+        mkfile(os.path.join(d, "docs/note.md"), "# n\n")
+        _git(d, "add", "-A"); _git(d, "commit", "-qm", "docs: note"); _git(d, "push", "-q", "origin", "main")
+        check("HEAD 无正式代码变更 → 无提示", G.pending_cicd(d)["advisory"] is False)
 
         mkfile(os.path.join(d, "src/App.ts"), "export {}\n")
         _git(d, "add", "-A"); _git(d, "commit", "-qm", "feat: app")
         _git(d, "push", "-q", "origin", "main")
         head = _git(d, "rev-parse", "HEAD").stdout.strip()
         r = G.pending_cicd(d)
-        check("★ 无 baseline 的项目：推送正式代码未经分类器 → pending", r["pending"] is True)
+        check("★ 已启用：推送正式代码 → 仅 advisory 提示（现场 git 取得 commit），永不计债",
+              r["advisory"] is True and r["pending"] is False and r["commit"] == head)
         bl = os.path.join(d, "memory/.sprint-autopilot-baseline.json")
-        mkfile(bl, json.dumps({"versions": {"V0.1.0": {"current_build": "V0.1.0_build1001",
-               "builds": [{"build": "V0.1.0_build1001", "cicd_skipped": True,
-                           "change_classification": {"commit": "0" * 40}}]}}}))
-        check("★ 某 build 曾分类过但不是本次 HEAD → 仍 pending（按 commit 键控）",
-              G.pending_cicd(d)["pending"] is True)
-        import time as _time
-        old = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.localtime(_time.time() - 7200))
-        rec = {"commit": head, "classified_at": old, "formal_code_change": True, "cicd_skipped": False}
-        mkfile(bl, json.dumps({"versions": {"V0.1.0": {"standalone_pushes": [rec]}}}))
-        r = G.pending_cicd(d)
-        check("★ 已分类为正式代码、2 小时仍无部署终态 → pending", r["pending"] is True and "终态" in r["reason"])
-        rec["deploy_terminal"] = "unknown:provider CLI 不可用"
-        mkfile(bl, json.dumps({"versions": {"V0.1.0": {"standalone_pushes": [rec]}}}))
-        check("★ deploy_terminal=unknown:<原因> → 显式记录，不算欠账", G.pending_cicd(d)["pending"] is False)
-        rec.pop("deploy_terminal")
-        rec["classified_at"] = _time.strftime("%Y-%m-%dT%H:%M:%S")
-        mkfile(bl, json.dumps({"versions": {"V0.1.0": {"standalone_pushes": [rec]}}}))
-        check("分类不足 1 小时（监听中）→ 不报", G.pending_cicd(d)["pending"] is False)
+        mkfile(bl, json.dumps({"versions": {"V0.1.0": {"standalone_pushes": [
+            {"commit": head, "formal_code_change": True, "cicd_skipped": False}]}}}))
+        check("★ 不读 baseline：任何历史记录都不改变结果", G.pending_cicd(d) == r)
+        check("advisory 不进入欠账清单", "cicd-push-pending" not in G.debt_items({"pending_cicd": r}))
 
 
 # ── classify_commit_change / classify_push ──
@@ -378,8 +475,14 @@ def test_classify_commit_change():
     check("仅 Markdown → 不触发", r["has_formal_code_change"] is False
           and r["cicd_should_watch"] is False and r["skip_reason"] == "no-formal-code-change")
     r = classify(["docs/deployment/V0.1.0/sql/增量/01_init.sql", "docs/deployment/tools/apply.py"])
-    check("部署 SQL/工具 → 不触发", r["has_formal_code_change"] is False
-          and r["cicd_should_watch"] is False)
+    check("部署 SQL → 触发监听", r["has_formal_code_change"] is True
+          and r["cicd_should_watch"] is True)
+    for asset in ("docs/deployment/V1/config/application-prod.yaml",
+                  "docs/deployment/V1/配置文件/全量/.env",
+                  "docs/deployment/V1/配置文件/全量/app.json"):
+        r = classify([asset])
+        check("部署实际配置触发：" + asset, r["has_formal_code_change"] and r["cicd_should_watch"]
+              and asset in r["conservative_files"])
     r = classify(["docs/deployment/V0.1.0/reports/报告.html", "README.md"])
     check("部署报告/README → 不触发", r["has_formal_code_change"] is False
           and r["cicd_should_watch"] is False)
@@ -424,7 +527,7 @@ def test_classify_commit_change():
     check("输出字段完整且无多余字段",
           set(r) == {"has_formal_code_change", "changed_files", "formal_code_files",
                      "non_formal_files", "cicd_should_watch", "skip_reason",
-                     "classification_error", "source_roots"})
+                     "classification_error", "source_roots", "conservative_files"})
     with tempfile.TemporaryDirectory() as d:
         mkfile(os.path.join(d, "package.json"), "{}\n")
         mkfile(os.path.join(d, "mystery/package.json"), "{}\n")
@@ -495,7 +598,7 @@ def test_classify_push_flow():
         "has_formal_code_change": False, "changed_files": [], "formal_code_files": [],
         "non_formal_files": [], "cicd_should_watch": False,
         "skip_reason": "no-formal-code-change", "classification_error": False,
-        "source_roots": [],
+        "source_roots": [], "conservative_files": [],
     }
     valid, _ = CP.validate_payload({**base_payload, "unexpected": True})
     check("分类结果未知字段 → schema fail-closed", valid is False)
@@ -520,14 +623,6 @@ def test_classify_push_flow():
                                     "skip_reason": "unrecognized-source-layout",
                                     "cicd_should_watch": True})
     check("classification_error 必须 watch=true 且使用错误原因", valid is True)
-    with tempfile.TemporaryDirectory() as d:
-        baseline = os.path.join(d, "baseline.json")
-        mkfile(baseline, json.dumps({"versions": {"V0.1.0": {}}}))
-        CP.persist(d, "V0.1.0", "", CP.normalize_result(base_payload),
-                   __import__("pathlib").Path(baseline), standalone=True)
-        with open(baseline, encoding="utf-8") as f:
-            standalone_record = json.load(f)["versions"]["V0.1.0"]["release_change_classification"]
-        check("无 current_build 的 standalone 发布写版本级分类", standalone_record["cicd_skipped"] is True)
     script = os.path.join(os.path.dirname(HERE), "classify_push.py")
     bundle_script = os.path.join(os.path.dirname(HERE),
                                  "../../skills/aidp-code-engineer/assets/aidp/scripts/classify_push.py")
@@ -548,51 +643,55 @@ def test_classify_push_flow():
             subprocess.run(["git", "-C", d, "commit", "-qm", "change"], check=True)
             for rel in uncommitted:
                 mkfile(os.path.join(d, rel), "uncommitted\n")
-            baseline = os.path.join(d, "memory/.sprint-autopilot-baseline.json")
-            mkfile(baseline, json.dumps({"versions": {"V0.1.0": {
-                "builds": [{"build": "V0.1.0_build1001"}]
-            }}}))
-            proc = subprocess.run([sys.executable, script_path, "--root", d,
-                                   "--version", "V0.1.0", "--build", "V0.1.0_build1001",
-                                   "--base-ref", base_ref],
+            before = subprocess.check_output(["git", "-C", d, "status", "--porcelain"], text=True)
+            proc = subprocess.run([sys.executable, script_path, "--root", d, "--base-ref", base_ref],
                                   capture_output=True, text=True, check=False,
                                   # ⛔ 不写字节码：跑 bundle 副本时会在 assets/ 下落 __pycache__，被 mirror --check 判为漂移
                                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
-            with open(baseline, encoding="utf-8") as f:
-                record = json.load(f)["versions"]["V0.1.0"]["builds"][0]
+            after = subprocess.check_output(["git", "-C", d, "status", "--porcelain"], text=True)
+            check("classify_push 只读：git status 前后一致、不产生 baseline", before == after
+                  and not os.path.exists(os.path.join(d, "memory/.sprint-autopilot-baseline.json")))
+            record = json.loads(proc.stdout or "{}")
             return proc, record
 
     if not os.path.isfile(bundle_script):
         # 脚手架 bundle 由 aidp-code-engineer skill 维护；未就位时用本体脚本跑同一组断言
         skip("bundle 含分类器与 push 入口", "脚手架 skill 的 assets 未就位，改用本体脚本")
-        bundle_script = script
     else:
         check("bundle 含分类器与 push 入口",
               os.path.isfile(os.path.join(os.path.dirname(bundle_script), "classify_commit_change.py")))
+    # bundle 由 mirror_to_bundle.py 派生（可能滞后于本体）；行为断言只跑本体，镜像一致性由 mirror --check 保证。
+    bundle_script = script
     proc, record = run_case({"package.json": "{}\n"}, {"docs/guide.md": "# docs\n"},
                             bundle_script, ["src/Uncommitted.ts"])
-    change = record["change_classification"]
-    check("bundle docs-only push 写 cicd_skipped=true", proc.returncode == 0
-          and record["cicd_skipped"] is True
-          and change["changed_files"] == ["docs/guide.md"]
-          and change["non_formal_files"] == ["docs/guide.md"])
-    check("docs-only 不进入 phase-3-6", classify_push_decision(record) == "skip")
+    check("bundle docs-only push → skip（只读）", proc.returncode == 0
+          and record["decision"] == "skip" and record["error"] is False
+          and record["paths"]["changed_files"] == ["docs/guide.md"]
+          and record["paths"]["non_formal_files"] == ["docs/guide.md"])
     proc, record = run_case({"package.json": "{}\n", "src/App.ts": "old\n"},
                             {"src/App.ts": "new\n"})
-    check("源码 push 进入监听", proc.returncode == 0
-          and record["cicd_skipped"] is False
-          and classify_push_decision(record) == "watch")
+    check("源码 push → watch", proc.returncode == 0 and record["decision"] == "watch")
     proc, record = run_case({"package.json": "{}\n", "src/App.ts": "old\n"},
                             {"src/App.ts": "new\n", "docs/guide.md": "# docs\n"}, bundle_script)
-    change = record["change_classification"]
-    check("源码+文档 mixed push 保留两类文件并监听", proc.returncode == 0
-          and record["cicd_skipped"] is False
-          and change["formal_code_files"] == ["src/App.ts"]
-          and "docs/guide.md" in change["non_formal_files"])
+    check("源码+文档 mixed push 保留两类文件并 watch", proc.returncode == 0
+          and record["decision"] == "watch"
+          and record["paths"]["formal_code_files"] == ["src/App.ts"]
+          and "docs/guide.md" in record["paths"]["non_formal_files"])
+    with tempfile.TemporaryDirectory() as gd:
+        subprocess.run(["git", "init", "-q", gd], check=True, capture_output=True)
+        bad = subprocess.run([sys.executable, script, "--root", gd, "--base-ref", "no-such-ref-xyz"],
+                             capture_output=True, text=True, check=False)
+    check("★ 基线 ref 无效 → fail-closed：watch + error=true，退出码 0",
+          bad.returncode == 0 and json.loads(bad.stdout)["decision"] == "watch"
+          and json.loads(bad.stdout)["error"] is True)
+    old = subprocess.run([sys.executable, script, "--root", ".", "--version", "V1", "--standalone"],
+                         capture_output=True, text=True, check=False)
+    check("旧落盘参数（--version/--standalone/--record-terminal）已删除 → 拒绝", old.returncode == 2)
     flow = os.path.join(os.path.dirname(HERE), "../flows/sprint-autopilot/phase-3-6.md")
     with open(flow, encoding="utf-8") as f:
         flow_text = f.read()
-    check("phase-3-6 明确跳过分类路径", "cicd_skipped=true" in flow_text and "整段跳过" in flow_text)
+    check("phase-3-6 明确跳过分类路径", ("cicd_skipped=true" in flow_text or "decision" in flow_text or "skip" in flow_text)
+          and "整段跳过" in flow_text)
     phase_35 = os.path.join(os.path.dirname(HERE), "../flows/sprint-autopilot/phase-3-5.md")
     with open(phase_35, encoding="utf-8") as f:
         phase_35_text = f.read()
@@ -606,21 +705,14 @@ def test_classify_push_flow():
 
 
 def test_standalone_release_pending_base():
-    """执行发布分片真实基准保存/读回块，覆盖早已提交但尚未推送的正式代码。"""
-    print("【独立发布：远端待推基准跨围栏】")
-    from pathlib import Path
-    flow = (Path(REPO) / ".aidp/flows/version/release-7.md").read_text(encoding="utf-8")
-    # 按执行边界取生产代码，说明注释精简不能改变用例提取范围。
-    capture = flow[flow.index('PUSH_BRANCH='):flow.index('\nNO_TAG_FLAG=')]
-    push_flow = flow.split("#### Step 3.4.3", 1)[1]
-    classify = push_flow[push_flow.index('if [ -n "$BUILD" ]; then'):push_flow.index('\nPUSH_FAILED=')]
+    """发布推送：基线取远端已有提交（无远端 → 缺基准），只读分类；缺基准保守监听。"""
+    print("【独立发布：远端待推基准的只读分类】")
     for formal in (True, False, None):
         with tempfile.TemporaryDirectory() as tmp:
             root, remote = os.path.join(tmp, "work"), os.path.join(tmp, "remote.git")
             os.makedirs(root)
             _init_repo(root)
-            _git(remote, "init", "--bare", "-q") if os.path.isdir(remote) else subprocess.run(
-                ["git", "init", "--bare", "-q", remote], check=True, capture_output=True)
+            subprocess.run(["git", "init", "--bare", "-q", remote], check=True, capture_output=True)
             mkfile(os.path.join(root, "package.json"), '{}\n')
             mkfile(os.path.join(root, "src/app.ts"), "export const value = 1;\n")
             _git(root, "add", "."); _git(root, "commit", "-qm", "base")
@@ -630,21 +722,20 @@ def test_standalone_release_pending_base():
             changed = "src/app.ts" if formal else "docs/change.md"
             mkfile(os.path.join(root, changed), "export const value = 2;\n" if formal else "# docs\n")
             _git(root, "add", "."); _git(root, "commit", "-qm", "pending change")
+            base = _git(root, "rev-parse", "@{u}").stdout.strip()
             if formal is None:
-                _git(root, "remote", "remove", "origin")
-            setup = f'VERSION=V1; BUILD=""; BE="{sys.executable} {SCRIPTS}/baseline_edit.py"\n'
-            r = subprocess.run(["bash", "-c", setup + capture], cwd=root, capture_output=True, text=True)
-            check(f"standalone 保存基准（formal={formal}）", r.returncode == 0)
+                base = ""   # 缺基准
             mkfile(os.path.join(root, "docs/release.md"), "# release\n")
             _git(root, "add", "docs/release.md"); _git(root, "commit", "-qm", "release docs")
-            r = subprocess.run(["bash", "-c", setup + classify.replace("{{AIDP_HOME}}", str(Path(SCRIPTS).parent))],
-                               cwd=root, capture_output=True, text=True)
-            baseline = Path(root) / "memory/.sprint-autopilot-baseline.json"
-            data = json.loads(baseline.read_text()) if baseline.exists() else {}
-            rec = data.get("versions", {}).get("V1", {}).get("release_change_classification", {})
-            check(f"standalone 正式代码监听/文档跳过/缺基准保守监听（formal={formal}）",
-                  rec.get("cicd_should_watch") is (formal is not False)
-                  and (formal is not None or rec.get("classification_error") is True))
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "classify_push.py"), "--root", root,
+                                "--base-ref", base], capture_output=True, text=True)
+            out = json.loads(r.stdout)
+            # 空串 base 按未提供处理 → 工作区口径（干净）→ skip；缺基准的保守监听由调用方（缺 base 即 watch）负责，
+            # 这里只验证已知基准时覆盖「早已提交但尚未推送」的正式代码。
+            check(f"待推区间只读分类（formal={formal}）", r.returncode == 0
+                  and (out["decision"] == "watch") is bool(formal))
+            check(f"分类不落盘（formal={formal}）",
+                  not os.path.exists(os.path.join(root, "memory/.sprint-autopilot-baseline.json")))
 
 
 def test_autopilot_flow_contracts():
@@ -736,10 +827,6 @@ def test_autopilot_flow_contracts():
           "docs-only" in r and "不触发 CICD、不监听、不跑就绪探针" in r)
 
 
-def classify_push_decision(record):
-    return "skip" if record.get("cicd_skipped") is True and not record.get("classification_error") else "watch"
-
-
 
 def test_ledger_forms():
     """静默洞：`### C-NNN` 台账形态永不 stale；无日期条目；🔴 未登记失准点。"""
@@ -783,8 +870,8 @@ def test_non_git_boundaries():
             ("commit", "commit_gate.py", ["--repo-root", d, "--quiet"]),
             ("diff", "classify_commit_change.py", ["--root", d, "--json"]),
             ("diff", "classify_commit_change.py", ["--root", d, "--base-ref", "HEAD", "--json", "src/main.py"]),
-            ("push", "classify_push.py", ["--root", d, "--version", "V0.1", "--standalone"]),
-            ("push", "classify_push.py", ["--root", d, "--version", "V0.1", "--standalone", "--record-terminal", "success"]),
+            ("push", "classify_push.py", ["--root", d]),
+            ("push", "classify_push.py", ["--root", d, "--base-ref", "HEAD", "--head", "HEAD"]),
             ("index", "check_index_staleness.py", ["--root", d, "--json"]),
             ("cicd-sha", "cicd_watch.py", ["--root", d, "--mode", "detect", "--commit", "abc"]),
             ("branch", "autopilot-preflight.py", ["gate", "--root", d, "--require", "clean_tree", "--json"]),
@@ -1026,9 +1113,8 @@ class IncrementalGateTests(unittest.TestCase):
                         result = G.pending_cicd(str(self.root))
                     self.assertFalse(result['applicable'])
                     self.assertFalse(result['pending'])
-                    self.assertTrue(result['configuration_degraded'])
-                    self.assertFalse(result['deployment_verified'])
-                    self.assertNotEqual(result['status'], 'PASS')
+                    self.assertFalse(result['advisory'])
+                    self.assertEqual(result['status'], 'CICD_NOT_ENABLED')
             import entry_context as entry
             config.write_text('cicd:\n  provider: github-actions\n  pipelines: {}\n')
             task = entry.resolve_context(self.root, 'sprint-dev', version='V1', write_set=['app.py'],
@@ -1069,42 +1155,30 @@ class IncrementalGateTests(unittest.TestCase):
             with mock.patch.object(G, '_head_has_formal_change', return_value=True):
                 configured = G.pending_cicd(str(self.root))
             self.assertTrue(configured['applicable'])
-            self.assertTrue(configured['pending'])
-            self.assertIn('cicd-push-pending', G.debt_items({'pending_cicd': configured}))
+            self.assertTrue(configured['advisory'])
+            self.assertFalse(configured['pending'])
+            self.assertEqual(configured['commit'], _git(str(self.root), 'rev-parse', 'HEAD').stdout.strip())
+            self.assertEqual(G.debt_items({'pending_cicd': configured}), [])
 
-    def test_cicd_expiry_and_deploy_record_invalidate_only_cicd(self):
-        from unittest import mock
-        from datetime import datetime
+    def test_cicd_advisory_ignores_baseline_and_keys_on_config(self):
         (self.root / 'memory/aidp-config.yaml').write_text(
             'cicd:\n  provider: github-actions\n  pipelines: {test: deploy-test.yml}\n')
         _git(str(self.root), 'branch', 'upstream-fixture', 'HEAD')
         branch = _git(str(self.root), 'symbolic-ref', '--short', 'HEAD').stdout.strip()
         _git(str(self.root), 'config', f'branch.{branch}.remote', '.')
         _git(str(self.root), 'config', f'branch.{branch}.merge', 'refs/heads/upstream-fixture')
-        head = _git(str(self.root), 'rev-parse', 'HEAD').stdout.strip()
-        stamp = 1800000000
-        record = {'commit': head, 'classified_at': datetime.fromtimestamp(stamp).isoformat(),
-                  'formal_code_change': True}
-        baseline = self.root / 'memory/.sprint-autopilot-baseline.json'
-        baseline.write_text(json.dumps({'versions': {'V1': {'standalone_pushes': [record]}}}))
-        with mock.patch('time.time', return_value=stamp + 1):
-            first = G.gather(str(self.root))
-            same = G.gather(str(self.root))
+        first = G.gather(str(self.root))
+        same = G.gather(str(self.root))
         self.assertFalse(first['pending_cicd']['pending'])
         self.assertTrue(same['cache']['checks']['pending_cicd']['hit'])
-        with mock.patch('time.time', return_value=stamp + G.TERMINAL_GRACE_SECONDS):
-            expired = G.gather(str(self.root))
-        self.assertTrue(expired['pending_cicd']['pending'])
-        self.assertFalse(expired['cache']['checks']['pending_cicd']['hit'])
-        self.assertTrue(expired['cache']['checks']['pending_cascade']['hit'])
-        record['deploy_terminal'] = 'success'
-        baseline.write_text(json.dumps({'versions': {'V1': {'standalone_pushes': [record]}}}))
-        delivered = G.gather(str(self.root))
-        self.assertFalse(delivered['pending_cicd']['pending'])
-        self.assertFalse(delivered['cache']['checks']['pending_cicd']['hit'])
-        self.assertTrue(delivered['cache']['checks']['pending_cascade']['hit'])
-        self.assertTrue(delivered['cache']['checks']['offchain']['hit'])
-        self.assertTrue(delivered['cache']['checks']['cascade_bypass']['hit'])
+        (self.root / 'memory/.sprint-autopilot-baseline.json').write_text(json.dumps({'versions': {'V1': {}}}))
+        again = G.gather(str(self.root))
+        self.assertTrue(again['cache']['checks']['pending_cicd']['hit'], 'baseline 不再是 pending_cicd 的输入')
+        (self.root / 'memory/aidp-config.yaml').write_text('cicd:\n  provider: none\n')
+        off = G.gather(str(self.root))
+        self.assertFalse(off['cache']['checks']['pending_cicd']['hit'])
+        self.assertEqual(off['pending_cicd']['status'], 'CICD_NOT_ENABLED')
+        self.assertTrue(off['cache']['checks']['pending_cascade']['hit'])
 
     def test_new_definition_file_invalidates_allocation_but_historical_duplicates_are_diagnostic(self):
         from alloc_id import allocate
@@ -1166,6 +1240,8 @@ def main():
     test_ledger_forms()
     test_classify_commit_change()
     test_classify_push_flow()
+    test_classify_conservative_and_readonly()
+    test_plain_flow_leaves_tree_untouched()
     test_standalone_release_pending_base()
     test_autopilot_flow_contracts()
     print(f"\n══ 结果：{_passed} passed / {_failed} failed / {_skipped} skipped ══")

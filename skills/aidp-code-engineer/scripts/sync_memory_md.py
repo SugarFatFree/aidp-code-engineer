@@ -20,6 +20,7 @@
 退出码：0 已一致 / 已写入 · 1 `--check` 发现漂移 · 2 源文件结构不符或环境错误
 """
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -70,7 +71,22 @@ def find_template_root(start: Path) -> Path:
 
 
 def build(root: Path) -> str:
-    return render_downstream((root / SOURCE_REL).read_text(encoding="utf-8"))
+    source = render_downstream((root / SOURCE_REL).read_text(encoding="utf-8"))
+    if "reference/core-conventions.md" in source:
+        core = root / ".aidp/reference/core-conventions.md"
+        if not core.is_file():
+            raise TemplateShapeError("外置核心约定正文缺失：reference/core-conventions.md")
+        numbers = [int(n) for n in re.findall(r"(?m)^(\d+)\.\s+\*\*", core.read_text(encoding="utf-8"))]
+        if numbers != list(range(1, 42)):
+            raise TemplateShapeError(f"核心约定稳定编号必须完整且唯一为 1–41：{numbers}")
+        if re.search(r"(?m)^\d+\.\s+\*\*", source):
+            raise TemplateShapeError("常驻记忆不得复制外置核心约定主行")
+        if len(source.encode("utf-8")) > 12 * 1024:
+            raise TemplateShapeError("常驻记忆超过 12KB，请把完整协议移至 reference")
+        for relative in re.findall(r"\{\{AIDP_HOME\}\}/(reference/[\w-]+\.md)", source):
+            if not (root / ".aidp" / relative).is_file():
+                raise TemplateShapeError(f"记忆按需入口缺失：{relative}")
+    return source
 
 
 def main(argv=None) -> int:

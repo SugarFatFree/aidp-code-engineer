@@ -2,10 +2,13 @@
 
 ## 执行身份与授权前置路由（先于本文其余动作）
 
-先 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。按原参数解析父上下文与显式 Sprint；历史计划和 activeContext 不决定本任务身份。
+按原参数解析父上下文与显式 Sprint；历史计划和 activeContext 不决定本任务身份。独立 light 修复只先 Read `{{AIDP_HOME}}/reference/light-entry.md`；已有父上下文或显式 Sprint 时按节 Read `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 的入口规则。
+
+下方围栏已完成 resolve/route 与编辑前置，不再执行一次 `light_task.py start`。实现后用 `light_task.py all` 完成选测/执行/汇总（修复后 `run --reselect` 只复验失败项）；授权/预算/收口细则按节读 `light-context.md`。
 
 `POLICY_ARGS` 仅新任务按 `light-context.md`「入口、继承与 grant revision」生成；嵌套只继承，后文每个动作先过该片围栏。
 
+<!-- flowvar-check: allow EXECUTION_CONTEXT,POLICY_ARGS,TASK_WRITE_SET,TASK_ACCEPTANCE,EXPLICIT_SPRINT,AIDP_SESSION_ID -->
 ```bash
 # EXECUTION_CONTEXT 来自入参；EXPLICIT_SPRINT 仅来自用户明确的 Sprint，不读 activeContext 推导。
 CONTEXT_ARGS=()
@@ -21,9 +24,17 @@ CONTEXT_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root .
   "${CONTEXT_ARGS[@]}" --json) || exit $?
 EXECUTION_CONTEXT=$(printf '%s' "$CONTEXT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["execution_context"])') || exit $?
 # 消费 resolve 返回的 execution_context 为 EXECUTION_CONTEXT，再路由。
-python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bugfix \
-  --execution-context "$EXECUTION_CONTEXT" --phase repair --json
+ROUTE_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bugfix \
+  --execution-context "$EXECUTION_CONTEXT" --phase repair --json) || exit $?
+python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy --root . >&2 || exit $?
+BIND_ARGS=()
+[ -z "${AIDP_SESSION_ID:-}" ] || BIND_ARGS+=(--session-id "$AIDP_SESSION_ID")
+python3 {{AIDP_HOME}}/scripts/entry_gate.py bind --if-writable --root . \
+  --execution-context "$EXECUTION_CONTEXT" "${BIND_ARGS[@]}" >/dev/null || exit $?
+printf '%s\n' "$ROUTE_RESULT"
 ```
+
+首次代码 Edit 前须完成分支策略读取与当前会话绑定；缺分支选择先按 `agent-tools.md` 保存真实选择再续跑。无 implement 或空写集仅选择当前任务身份、只读准备，不授写权限、不扩大 grant；按真实任务 revise 后才可重新绑定并核验写入资格。嵌套只继承父上下文。
 
 返回 `route=light` → 执行该片的 **repair** 能力，然后 **return**；不进入下文任何 Sprint 取号、卡片、activeContext、started、报告路径或归档步骤。返回 `route=formal` 才执行下文正式身份门；可选动作仍按 actions 筛选，未授权为 NOT_REQUESTED。任何子命令/修复/重试/续跑均保留原参数并显式附 `--execution-context "$EXECUTION_CONTEXT"`；不能只传 `--unattended`/`--from-batch` 而丢身份。
 
@@ -174,7 +185,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bug
 | 前置准备 | 读 systemPatterns/techContext/architecture + 详细设计/事实清单/对外开放接口 | bug 涉路径/URL/404 必精读「路径消费者点」表；对外接口修复红线禁引 Session/Cookie/JWT |
 | Step 0 | ⛔ 口述 bug + 来源 B 清单待修行先落 `bugfix-{date}-{user}.md` 条目（带来源回链），**不得跳过直接改代码** | 去重仅回链 / exact match，不做语义模糊判断 |
 | Step 1 | 调 `bugfix` skill（参数 `sprint-{NNN}` / 文件名，prompt 带本次核实的 BUG ID 清单；空参数无清单 → 澄清 / 返回缺口），附路径/URL/proxy + 配置 + 部署台账专项 | 路径类修完单点须巡检同表其他消费者点 |
-| Step 2 | 推送分类与监听（约定 31.5） | 正式代码变更 push 后必走 CICD 监听 + 就绪探针 |
+| Step 2 | 推送分类与监听（约定 31.5） | 未启用 CICD 只 git push；已启用且含正式代码变更才 CICD 监听 + 就绪探针 |
 | Step 3 | 回填状态 / Commit / 证据或报告链接（bugfix 记录 + 来源 B 清单行，不删行） | 根因权威落点随 `report_mode`：formal 默认 `file` = SKILL 报告；`evidence-only` = 当前 execution context JSON |
 | Step 4 | 编译（后端）/ 前端校验（lint+类型检查不打包） | 仅改动侧 + 资源受限 |
 | Step 5 | 自动回写设计文档（约定 22 级联；经 `--ledger-cascade` **就地改内容主文档正文**，⛔ 不新建 `NN_` 分册） | 纯逻辑修复不触发 |
@@ -333,4 +344,4 @@ OPEN_RC=$?        # 0=无已启动未关闭轮次→继续；1=有→立即停�
 | 需要架构调整才能修 | 方式 C |
 | 修复方案还不明确，先分析 | 方式 B（Claude 会分析后给方案）|
 
-> ★ **若本命令触发 `git commit`**（自动提交场景）：按**约定 24** 走提交前门禁——每次 commit 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON，退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 / CICD 推送欠账），**不是禁止 commit**；判定字段与处置的单一信源 = 约定 24，本命令按约定 21 只做编排触发、不复述。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->
+> ★ **若本命令触发 `git commit`**（自动提交场景）：按**约定 24** 走提交前门禁——每次 commit 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON，退出码 3/4 = 本轮结束前有义务未落地（约定 22 台账积压 / CICD 已启用时的 commit 提示行），**不是禁止 commit**；判定字段与处置的单一信源 = 约定 24，本命令按约定 21 只做编排触发、不复述。<!-- dup-check: ignore 已改为指针，此行是指针本身 -->

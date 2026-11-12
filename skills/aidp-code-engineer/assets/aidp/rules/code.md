@@ -276,11 +276,40 @@ SHELL-MARKERS: .外壳类名,.外壳子类名      # 写在 shell 文件里，�
 **★ 基线对照另须先判定「基线那次真的跑起来了」**：拿改动前后做差值对比时，
 先确认基线那次**确有执行**（输出行数是否合理、有无「路径不存在 / 未执行」类信号）——
 空结果 / 未执行信号一律**拒绝比较**，不得给出差值。
-真实事故：用 `git stash` 取基线时把验证依赖的**未跟踪配置文件**一起带走了，
-基线那次实际未执行却产出一个看似正常的基线，差点把假的「错误变少了」当成好消息。
+**基线取法**：⛔ 不用 `git stash`——它会把验证依赖的**未跟踪配置文件**一并带走，
+基线那次实际未执行却产出看似正常的基线，假的「错误变少了」会被当成好消息。
+改用 `test_baseline.py` 记录改动前的「已知失败基线」，或 `git worktree add` 取干净副本；
+`test_command_guard.py` 对 `git stash`（push / save / 无子命令 / `-u`）机器拒绝。用法见下节「测试范围由机器强制」。
 
 ⛔ **不做阳性对照就无法区分「没问题」与「根本没跑」**——两者输出一模一样。
 本条与「反向断言必须配阳性对照」同源：**期望值为 0 的判据，必须先证明它能不为 0。**
+
+### ★ 测试范围由机器强制（相关测试白名单 + 命令护栏）
+
+「只跑本任务相关测试」由脚本判定，不靠自觉：
+
+- **白名单**：`python3 {{AIDP_HOME}}/scripts/select_related_tests.py --json`——由 git 改动、未跟踪文件、导入图与命名约定（`test_*.py` / `*.test.ts` / `*Test.java` / `*_test.go` 等，项目没有运行器声明也适用）推出相关测试，写入 `memory/.aidp/test-allowlist/<key>.json`。结果数量封顶，**任何情况下都不会是系统全量或整目录**；找不到测试的源文件列入 `unmapped`，如实报缺口，不回落全量。
+- **命令护栏**：`python3 {{AIDP_HOME}}/scripts/test_command_guard.py check --command "<命令>"`（执行方式：`wrap -- <命令>`）识别 pytest / jest / vitest / `mvn test` / `gradle test` / `go test` / `run_tests*` / `ruff` 等：无位置参数或参数为目录 → 拒绝；显式文件须在白名单内（白名单缺失时放行并提示）；`ruff` 只检查改动文件（`test_command_guard.py changed --ext .py` 列出）；`git stash` 拒绝。`--allow-full` 仅当执行上下文真实持有 full-regression（autopilot 测试编排的 fork 子任务）才放行，缺授权 fail closed。PreToolUse hook（`{{AIDP_HOME}}/hooks/pretool-guard.py`）对 Bash 命令自动调用同一判定；不支持 hook 的 Agent 在执行测试类命令前自行调用 `check`（替代手段见 `reference/agent-tools.md`）。
+- **项目测试入口**：`{{AIDP_HOME}}/templates/scripts/run_tests.sh` 是下游可直接采用的包装范例（下游自有文件，模板不自动安装）：复制到 `scripts/run_tests.sh`，改 `AIDP_HOME` 与 `TEST_CMD` / `LINT_CMD` 两处；`--related` 取白名单后只跑相关测试，无参数或目录参数拒绝，`--lint` 只检查改动文件，`--allow-full` 经护栏核验授权。
+- **基线对照**：改动前在干净树跑一次，`python3 {{AIDP_HOME}}/scripts/test_baseline.py record --from-log <日志>`；改动后 `test_baseline.py diff --from-log <日志>`，「新失败 = 本次失败 − 基线」。基线那次没有执行迹象时拒绝记录与比较。
+
+**后台跑测试的标准写法**：输出重定向到文件，用 `.exit` 标记或「最终汇总行」判定结束，⛔ 不用会被用例名误命中的 `grep` 轮询（`grep -i fail` 会命中 `test_failed_login` 这类用例名，提前或永不结束）。
+
+```bash
+# 1) 后台执行（Bash run_in_background）：输出进日志，结束时写 /tmp/t.log.exit（内容为退出码）
+python3 {{AIDP_HOME}}/scripts/test_command_guard.py wrap --background --log /tmp/t.log -- python3 -m pytest -q tests/test_a.py
+# 2) 等待（Monitor 或 Bash run_in_background）：until 循环等标记文件，命中即退出，只通知一次
+until [ -f /tmp/t.log.exit ]; do sleep 2; done; cat /tmp/t.log.exit; tail -n 30 /tmp/t.log
+# 需要边跑边看时，Monitor 只匹配行首锚定的最终汇总行（pytest：`=== N passed, M failed in 3.2s ===`），并同时兜住崩溃
+tail -f /tmp/t.log | grep --line-buffered -E '^=+ .* in [0-9.]+s|Traceback|Killed|^\S*Error'
+```
+
+没有 Monitor 的 Agent 用带上限的 `until` 循环加定时回读日志（见 `reference/agent-tools.md`）；无论哪种，结论取 `.exit` 内容与汇总行，不取中间输出。
+
+### ★ 编码期两条易碎测试约定
+
+- **新增随机性不得挤占既有注入随机源的调用序列**：被测代码依赖注入的随机源（`FixedRandom` 之类固定序列夹具、固定种子的 RNG）时，既有测试按调用顺序逐次取值断言；新增的打散 / 抖动 / 采样 / 随机 ID 若也取同一个随机源，会让此后每次取值整体错位。需要「多样性」时用稳定散列（对输入键取 hash 再取模），不消耗注入的随机源；确需新增随机调用，设计阶段先 grep 注入该随机源的夹具并评估序列影响，夹具与断言同改。
+- **改写死金额 / 数值的业务常量前先定位全部断言**：改动写死的金额、费率、阈值、数量上限等常量前，先 grep 所有断言该数值的测试与夹具（含字面量、由它派生的乘积 / 合计、格式化后的文本如 `12.00` / `1200` 分），列出清单，常量与全部断言一次改完，再跑清单内的测试；不逐个等红再修。
 
 ### ★ 格式化类 autofix 只允许作用于【本次新建】的文件
 

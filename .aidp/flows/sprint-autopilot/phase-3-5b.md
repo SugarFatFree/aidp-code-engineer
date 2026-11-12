@@ -28,11 +28,11 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
 
    - **日常累进部署测试门（先于 push 或任何部署触发）**：只消费 `/sprint-test` Step 7 的当前 Sprint 单测证据，仅related-test已授权才复用/补失效delta；未授权NOT_REQUESTED。仅提交推送部署不追加测试或审计。
 
-   > **`vcs_mode=none` 独立出口（优先于下方 Git 推送围栏）**：开发/测试/Sprint 关闭成果仍留在本地。对提交、推送、推送分类、远端 CICD 各节点写当前 build `steps[]` 为 `status=skipped`、`reason=unsupported:vcs-disabled`，baseline 同步保留未推送事实；不执行 `git status/add/commit/push`，不伪造 `push_commit` / `push_at` / `cicd_skipped=true`（该字段只表示 Git push 后按内容分类跳过 CICD）。`mode=local` 不经过 Git/CICD，必须探本地服务真实就绪（启动命令成功不等于就绪）；就绪后按下方「部署完成 → 落盘交接信号」写 `last_deployed_at` + `phase_beta_done_at` 并记录本地探活 URL/结果，未就绪则不得写证据或交接测试；依赖 Git push 的 cloud 路径只记未部署，不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d 部署成功通知，不启动对旧代码的浏览器测试。随后继续 Phase 3.3 本地审计、Phase 3.4 报告和收尾；不得因跳过 Git 节点冻结本地开发。`git` 时执行下方原围栏。
+   > **`vcs_mode=none` 独立出口（优先于下方 Git 推送围栏）**：开发/测试/Sprint 关闭成果仍留在本地。对提交、推送、推送分类、远端 CICD 各节点写当前 build `steps[]` 为 `status=skipped`、`reason=unsupported:vcs-disabled`，baseline 同步保留未推送事实；不执行 `git status/add/commit/push`，不伪造 `push_commit` / `push_at`，也不把「未推送」冒充为「无正式代码变更、跳过 CICD」。`mode=local` 不经过 Git/CICD，必须探本地服务真实就绪（启动命令成功不等于就绪）；就绪后按下方「部署完成 → 落盘交接信号」写 `last_deployed_at` + `phase_beta_done_at` 并记录本地探活 URL/结果，未就绪则不得写证据或交接测试；依赖 Git push 的 cloud 路径只记未部署，不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d 部署成功通知，不启动对旧代码的浏览器测试。随后继续 Phase 3.3 本地审计、Phase 3.4 报告和收尾；不得因跳过 Git 节点冻结本地开发。`git` 时执行下方原围栏。
 
    - **★ 部署触发前置：开发成果提交 + 分类 + 推送（确定性步骤，绝不可省）**：dev 循环 /（incremental）增量改动完成后、执行下方「部署动作」**之前**，分别核commit与push授权后处理本轮改动；未授权动作NOT_REQUESTED。本步以 `git status --porcelain` 为准兜底，不依赖子命令是否已提交：
      1. **动作授权**：本轮真实explicit-command来源可授公开commit/push/deploy组合，仅entry名称/自然路由/旧配置不授。按 `light-context.md` 各核grant与budget，未请求直接跳过对应环节不弹窗；已授权才操作本轮 **DEV_BRANCH**。只 push DEV_BRANCH；按 Phase 0.4 的 `PENDING_MERGE_TO` 对齐部署源；绝不打 tag。
-     2. **确定性提交**：在提交前先确定本次 push 的分类基准并写入当前 build，再决定是否提交：
+     2. **确定性提交**：在提交前先确定本次 push 的分类基准并写入当前 build（autopilot 自有状态 `push_base_ref`），再决定是否提交：
         ```bash
         eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
         BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
@@ -51,20 +51,19 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
         # 测试计划草稿：不存在才一次性发现并生成 docs/testing/$TARGET_VERSION/test-plan.json，已存在复用不覆盖；随本步提交，不新开提交循环
         python3 {{AIDP_HOME}}/scripts/build_unit_test.py plan-init --root . --version "$TARGET_VERSION" || exit $?
         ```
-        plan-init 后以 `git status --porcelain` 重新判定可提交改动（草稿须进入本次提交，即部署 commit）。commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"` 读完整 JSON：退出码3/4是欠账信号，5/NOT_AUTHORIZED硬禁止提交。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 推送欠账仍按约定 31.5 补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
-     3. **push 前分类（唯一入口）**：在 `git push` 前执行，始终显式传入提交前保存的 `BASE_REF`（不能在提交后用默认 `HEAD` 推断）：
+        plan-init 后以 `git status --porcelain` 重新判定可提交改动（草稿须进入本次提交，即部署 commit）。commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读完整 JSON：退出码3/4是欠账信号、不阻止提交。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 已启用时的 commit 提示行按约定 31.5 现场补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
+     3. **push 前现场只读分类（不落盘）**：`git push` 前执行，基准取提交前保存的 `push_base_ref`（不能提交后用默认 `HEAD` 推断）；`classify_push.py` 纯只读，结果只决定本 tick 是否监听：
         ```bash
         eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
         BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
         : "${TARGET_VERSION:?}"; : "${BUILD:?}"
         BASE_REF=$($BE --version "$TARGET_VERSION" --build "$BUILD" get push_base_ref --default "")
-        CLASSIFY=(python3 {{AIDP_HOME}}/scripts/classify_push.py --root .
-          --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$BASE_REF")
-        "${CLASSIFY[@]}"
-        CLASSIFY_RC=$?
+        DECISION=$(python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --base-ref "$BASE_REF" --head HEAD --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("decision"))') || DECISION=watch
+        [ "$DECISION" = skip ] || DECISION=watch   # 仅明确 skip 才免监听；失败/缺字段一律 watch（fail-closed）
+        echo "push-classify decision=$DECISION"
         ```
-        该命令内部必须调用 `classify_push.py --root . --version "$V" --build "$B"`（⛔ 不是 `classify_commit_change.py`，那个不落盘），完整结果写入当前 build。命令失败、JSON 缺字段或 baseline 无法落盘都按 **fail-closed** 处理：不得跳过监听，后续按正式代码路径执行。
-     4. **确定性推送与分流**：`cicd_skipped=true` 且无错误时也必须成功 push，但跳过远端 CICD、部署等待和探针；不得用远端状态反推分类。分类为正式代码或错误时进入原有监听/重试/探针。若 `PENDING_MERGE_TO` 已声明部署源，先推 feature，再执行实际合并与推送：
+        3.2.1/3.2.2 各围栏用同一写法**现场重算**（`--base-ref "$push_base_ref" --head "$push_commit"`），不依赖落盘分类。
+     4. **确定性推送与分流**：`decision=skip` 时也必须成功 push，但跳过远端 CICD、部署等待和探针；不得用远端状态反推分类。`watch`（含分类失败）时进入原有监听/重试/探针。若 `PENDING_MERGE_TO` 已声明部署源，先推 feature，再执行实际合并与推送：
         ```bash
         # ★★ 本围栏 = 独立 Bash 调用：$DEV_BRANCH / $BE / $BUILD 一律不存活，必须先取回
         #    （eval 必须在 git push **之前**；根因见 rationale.md「推送围栏的三个取空」）
@@ -102,8 +101,9 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
           git pull --rebase origin "$PENDING_MERGE_TO" || { _back_to_dev; _push_fail "git pull --rebase $PENDING_MERGE_TO"; exit 0; }
           MERGE_BASE_REF=$(git rev-parse HEAD)
           git merge --no-edit "$DEV_BRANCH" || { _back_to_dev; _push_fail "合并 $DEV_BRANCH 到 $PENDING_MERGE_TO 失败（冲突）"; exit 0; }
-          python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$TARGET_VERSION" --build "$BUILD" --base-ref "$MERGE_BASE_REF" \
-            || { _back_to_dev; _push_fail "合并后重新分类失败"; exit 0; }
+          # 合并后分类基准改为合并前部署源 tip（autopilot 自有状态；3.2.1/3.2.2 现场重算时读取）
+          $BE --version "$TARGET_VERSION" --build "$BUILD" set push_base_ref "$MERGE_BASE_REF" \
+            || { _back_to_dev; _push_fail "合并后记录分类基准失败"; exit 0; }
           git push origin "$PENDING_MERGE_TO" || { _back_to_dev; _push_fail "git push $PENDING_MERGE_TO"; exit 0; }
           # 先取部署源上的推送 commit，再切回 DEV_BRANCH（后续围栏/下个 tick 一律在开发分支上继续）
           GIT_PUSH_AT=$(date -Iseconds); GIT_PUSH_COMMIT=$(git rev-parse HEAD)

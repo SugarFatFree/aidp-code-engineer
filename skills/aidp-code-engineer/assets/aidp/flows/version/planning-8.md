@@ -38,11 +38,7 @@ AUDIT_LANDED_EXIT=$?
 
 ### 部署操作指引集中校准（版本规划汇合）
 
-按 `{{AIDP_HOME}}/reference/部署操作约定.md` 汇合真实资产和待同步引用；已有操作入口原地维护，无内容不新建目录。
-
-```bash
-python3 {{AIDP_HOME}}/scripts/deployment_ops.py pending --version {version}
-```
+按 `{{AIDP_HOME}}/reference/部署操作约定.md`，对照本版 diff/现状集中校准真实资产；已有操作入口原地维护，无内容不新建目录。
 
 ### Step 2.5：初始化 memory/{version}/{user}/progress.md
 

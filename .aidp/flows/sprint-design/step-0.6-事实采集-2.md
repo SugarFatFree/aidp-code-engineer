@@ -40,7 +40,7 @@ python3 {{AIDP_HOME}}/scripts/code_inventory.py delta --since {prev_version}   #
 **输出**：`render` 出的 Markdown 直接写入事实清单的「代码现状清单」段（紧跟「路径消费者点」表之后），格式见分片 `step-0.6-事实采集-3.md` 的 Step 0.6.5 事实清单模板。
 **落盘后补一次快照**：`python3 {{AIDP_HOME}}/scripts/code_inventory.py snapshot --version {version}`——下一个版本的 `delta --since {version}` 靠它算 Δ，漏打快照会让下版退回全量判断。
 
-> **配置文件清单的边界**：本步骤**仅列文件路径作为线索**，**不展开具体配置项**——具体配置项的权威清单由 `/sprint-dev` Step X.7 维护到 `docs/deployment/{version}/配置文件/增量/配置项清单.md`（运维视角）。两者分工：本清单帮设计/开发"知道有哪些配置文件存在"；配置项清单帮运维"知道每个 key 改什么"。
+> **配置文件清单的边界**：本步骤**仅列文件路径作为线索**，**不展开具体配置项**——具体配置项的权威清单由 `/version` 规划期与发布期集中维护到 `docs/deployment/{version}/配置文件/增量/配置项清单.md`（运维视角）。两者分工：本清单帮设计/开发"知道有哪些配置文件存在"；配置项清单帮运维"知道每个 key 改什么"。
 
 **用途**：
 - 直接作为 Step 0.3 四象限对比的"代码已实现"列输入

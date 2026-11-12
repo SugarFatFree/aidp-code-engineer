@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from flow_test_helpers import sprint_dev_text
 
 REPO = Path(__file__).resolve().parents[3]
 _passed = _failed = 0
@@ -43,7 +44,7 @@ def _load(name, path):
 
 def test_convention_41_text():
     print("\n[O1] 约定 41 落点与锚点一致性")
-    a = (REPO / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8")
+    a = (REPO / ".aidp/reference/core-conventions.md").read_text(encoding="utf-8")
     convention = next((line for line in a.splitlines() if line.startswith("41. ")), "")
     policy = (REPO / ".aidp/flows/sprint-dev/light-context.md").read_text(encoding="utf-8")
     check("主行保留编号41及light/formal身份，并指向动作策略单一源",
@@ -52,10 +53,11 @@ def test_convention_41_text():
     check("稳定锚点保持 1–41", "约定编号 1–41 为稳定锚点" in a)
     check("细则分片映射已登记 41", "约定 37·38·41" in a)
     check("单一策略保留light不铸build边界", "light 不铸 build" in policy)
-    check("普通开发含实现、静态与本任务相关单测，部署及live须各自授权",
+    check("普通开发含相关单测；普通交付依用户请求独立执行，live按授权",
           "普通开发/修复默认 `implement + static + related-test`" in policy
           and "light 不铸 build、默认不部署" in policy
-          and "在已有任务上分别增加 `commit`、`push`、`deploy`" in policy
+          and "不为交付创建 context/grant" in policy
+          and "在已有任务上分别增加 `commit`、`push`、`deploy`" not in policy
           and "自然语言浏览器/页面请求只授权所指页面或流程的 live-tests，不借用 autopilot 版本全量组合" in policy)
     check("light不认领旧Sprint且不重置既有状态",
           "light 无 Sprint 卡/归档，不认领旧 Sprint" in convention
@@ -63,7 +65,8 @@ def test_convention_41_text():
     check("风险复杂度成本分开，formal身份及历史不能扩大授权",
           "规模风险、复杂度、成本分别判断" in convention
           and "formal 保留编号、规格、归档，但不增授权" in convention
-          and "复杂度、已有 activeContext 或历史计划不能升级身份或授权" in a)
+          and "复杂度、已有 activeContext 或历史计划不能升级身份或授权"
+          in (REPO / ".aidp/reference/task-routing.md").read_text(encoding="utf-8"))
 
     d5 = (REPO / ".aidp/reference/约定细则-5.md").read_text(encoding="utf-8")
     for sec in ("41.1", "41.2", "41.3", "41.4", "41.5", "41.6"):
@@ -185,13 +188,13 @@ def test_comment_ratio_gate():
     dev = (REPO / ".aidp/flows/sprint-dev/phase-1-dev-1.md").read_text(encoding="utf-8")
     check("★ 已接线到 /sprint-dev（否则又是一条没有调用方的门）",
           "check_comment_ratio.py" in dev)
-    a = (REPO / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8")
+    a = (REPO / ".aidp/reference/core-conventions.md").read_text(encoding="utf-8")
     check("约定 17 主行写明两个方向都有回检", "check_comment_ratio.py" in a)
 
 
 def test_archive_and_mutation_rounds():
     print("\n[O4] 归档篇幅分档 + 变异对照轮数")
-    a = (REPO / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8")
+    a = (REPO / ".aidp/reference/core-conventions.md").read_text(encoding="utf-8")
     check("★ 约定 9 补了归档篇幅分档（此前无任何篇幅约束）",
           "口述累进 ≤40 行" in a and "只记「事后查不到的东西」" in a)
     d5 = (REPO / ".aidp/reference/约定细则-5.md").read_text(encoding="utf-8")
@@ -204,13 +207,8 @@ def test_archive_and_mutation_rounds():
 
 
 def test_standalone_push_debt():
-    """G-CHAIN-2：链外推送（约定 41 明规定不铸 build）也必须进欠账。
-
-    此前 `pending_cicd` 在「取不到 build 条目」处直接 continue —— 而链外恒无 build，
-    于是这条最常见的路径（口述需求 → 改代码 → commit+push）**恒不报欠账**：
-    那次推送的部署终态无人知道，且与「已监听到终态」在 gate 输出里完全同形。
-    """
-    print("\n[O5] 链外推送的部署终态欠账")
+    """G-CHAIN-2（改写）：链外推送不落盘；CICD 已启用时只产出 advisory 提示，未启用不检查；从不计债。"""
+    print("\n[O5] 链外推送：只读分类 + advisory 提示（无落盘）")
     hg = _load("hg3", str(REPO / ".aidp/scripts/commit_gate.py"))
     d = Path(tempfile.mkdtemp())
     try:
@@ -225,11 +223,13 @@ def test_standalone_push_debt():
             if src.is_file():
                 shutil.copy(src, d / ".aidp/scripts" / f)
         (d / "memory").mkdir()
-        (d / "memory/aidp-config.yaml").write_text(
+        cfg = d / "memory/aidp-config.yaml"
+        cfg.write_text(
             "cicd:\n  provider: github-actions\n  pipelines: {test: deploy-test.yml}\n", encoding="utf-8")
         (d / "README.md").write_text("x", encoding="utf-8")
         subprocess.run(["git", "-C", str(d), "add", "-A"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(d), "commit", "-qm", "base"], check=True, capture_output=True)
+        base = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         code = d / "code/backend/x/src"
         code.mkdir(parents=True)
         (code / "A.java").write_text("class A{}", encoding="utf-8")
@@ -244,27 +244,27 @@ def test_standalone_push_debt():
         subprocess.run(["git", "-C", str(d), "config", f"branch.{br}.remote", "."], check=True)
         subprocess.run(["git", "-C", str(d), "config", f"branch.{br}.merge",
                         "refs/heads/upstream-ref"], check=True)
-        (d / "memory/.sprint-autopilot-baseline.json").write_text(
-            '{"versions":{"V0.1.0":{"cicd":true}}}', encoding="utf-8")
+        before = subprocess.run(["git", "-C", str(d), "status", "--porcelain"], capture_output=True, text=True).stdout
 
         r = hg.pending_cicd(str(d))
-        check("★★ 阳性：链外推送未经分类器 → 报欠账（旧实现因无 build 恒 continue）",
-              r["pending"] is True and "链外" in r["reason"])
-        subprocess.run([sys.executable, str(d / ".aidp/scripts/classify_push.py"),
-                        "--root", str(d), "--version", "V0.1.0", "--standalone"],
-                       capture_output=True, cwd=str(d))
-        check("★ 阴性：跑过 --standalone → 欠账消失",
-              hg.pending_cicd(str(d))["pending"] is False)
-        bl = json.loads((d / "memory/.sprint-autopilot-baseline.json").read_text(encoding="utf-8"))
-        pushes = bl["versions"]["V0.1.0"].get("standalone_pushes") or []
-        check("★ 台账是 commit 键控的（单槽 release_change_classification 无 sha、后写覆盖前写，判不出覆盖的是哪次推送）",
-              len(pushes) == 1 and len(str(pushes[0].get("commit") or "")) >= 40)
+        check("★★ 已启用 + 链外推送正式代码 → 仅 advisory（现场 git），不计债",
+              r["advisory"] is True and r["pending"] is False and hg.debt_items({"pending_cicd": r}) == [])
+        out = subprocess.run([sys.executable, str(d / ".aidp/scripts/classify_push.py"),
+                              "--root", str(d), "--base-ref", base], capture_output=True, text=True, cwd=str(d),
+                             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        check("★ 只读分类：Java 源码 → watch", json.loads(out.stdout)["decision"] == "watch")
+        check("★ 分类后无 baseline、git status 不变",
+              not (d / "memory/.sprint-autopilot-baseline.json").exists()
+              and subprocess.run(["git", "-C", str(d), "status", "--porcelain"],
+                                 capture_output=True, text=True).stdout == before)
+        cfg.write_text("cicd:\n  provider: none\n", encoding="utf-8")
+        r2 = hg.pending_cicd(str(d))
+        check("★ 未启用 CICD → 不检查、无提示", r2["applicable"] is False and r2["advisory"] is False)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
-    a = (REPO / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8")
-    check("★ 约定 31.5 主行写明链外走 --standalone（否则缺 build 直接 ValueError）",
-          "--standalone" in a)
+    a = (REPO / ".aidp/reference/core-conventions.md").read_text(encoding="utf-8")
+    check("★ 下发记忆不再要求链外推送走 --standalone 落盘", "--standalone" not in a)
 
 
 def test_dispatch_and_deletion_contracts():
@@ -273,7 +273,7 @@ def test_dispatch_and_deletion_contracts():
     def text(relative):
         return (REPO / relative).read_text(encoding="utf-8")
 
-    dev = text(".aidp/commands/sprint-dev.md")
+    dev = sprint_dev_text("formal-existing")
     flow = text(".aidp/flows/sprint-dev/phase-1-dev-2.md")
     dispatch = flow.split("### Phase 1.4：", 1)[1]
     check("并行实现由 AIDP 编排，不借串行 SKILL 的调度语义",
@@ -413,6 +413,8 @@ def test_documented_entry_routes():
             body = (REPO / f'.aidp/commands/{command}.md').read_text(encoding='utf-8')
             fence = body.split('```bash\n', 1)[1].split('\n```', 1)[0]
             shell = fence.replace('{{AIDP_HOME}}', str(REPO / '.aidp')).replace('{version}', 'V0.1.0')
+            if command == "sprint-dev":
+                shell = 'TASK_WRITE_SET=(code/app.py); TASK_ACCEPTANCE=("实现当前任务"); POLICY_ARGS=()\n' + shell
             env = dict(os.environ)
             env.pop('EXECUTION_CONTEXT', None)
             env.pop('EXPLICIT_SPRINT', None)

@@ -76,17 +76,20 @@ cicd:
   # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。
   push_deploy_min_wait_seconds: 300
 
-deployment:
-  # 备份策略沿项目既有设置；null 不授权备份，也不假定当天零次。
-  # 接入字段与真实记录格式见 {{AIDP_HOME}}/reference/部署操作约定.md。
-  # DB/完整冷备/迁移快照共用 record_file、max_per_day、timezone。
-  # commands 仅填既有 argv，skip_args 仅填现有部署脚本实际支持的参数。
-  # 可选 timeout_seconds：项目备份命令的超时秒数（缺省 3600）。
-  backup: null
-
 stop_guard:
   # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。
   # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。
+  enabled: true
+
+entry_guard:
+  # 只控制入口门：Edit 与常见 Bash 写 code/** 前，须绑定本任务 resolve、读取 branch-policy 且目标在 write_set 内。
+  # 临时关闭：touch memory/.entry-guard-off；旧 .pretool-guard-off 仅兼容为入口关闭，迁移后删除旧文件。
+  # 关闭本门不影响 test_guard；故障排除后恢复 true 并删除相应逃生文件。
+  enabled: true
+
+test_guard:
+  # 独立控制测试范围门：无参/目录/越界测试与 git stash；默认开启。
+  # 临时关闭：touch memory/.test-guard-off；不影响 entry_guard。
   enabled: true
 
 scheduler:

@@ -51,7 +51,7 @@ from pathlib import Path as _AidpPath
 _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
-from aidp_runtime import runtime_relpath, runtime_text
+from aidp_runtime import runtime_relpath, runtime_text, contract_root
 from vcs import detect_mode, unsupported, EXIT_UNSUPPORTED
 import argparse
 import json
@@ -104,6 +104,10 @@ def protected_files(root):
     import glob
     from pathlib import PurePosixPath
     out = set(PROTECTED)
+    # 外置协议同属受保护记忆；固定候选也能找回整棵目录被删除前的快照。
+    for home in (".aidp", ".agents", ".claude"):
+        for name in ("core-conventions.md", "task-routing.md"):
+            out.add(f"{home}/reference/{name}")
     # 工作区 glob 看不到整份被删的迭代记忆，必须并入快照和 HEAD 的受保护路径。
     for base in (root, os.path.join(root, SNAPSHOT_DIR)):
         for pattern in ITERATION_GLOBS:
@@ -148,7 +152,7 @@ def _baseline(root, rel):
     """→ (基线文本, 来源)；快照优先，其次 git HEAD。"""
     sp = os.path.join(root, SNAPSHOT_DIR, rel)
     if os.path.isfile(sp):
-        return open(sp, encoding="utf-8").read(), "snapshot"
+        return _AidpPath(sp).read_text(encoding="utf-8"), "snapshot"
     old = _git_show(root, rel)
     return old, ("HEAD" if old is not None else None)
 
@@ -200,6 +204,36 @@ def _nonempty(text):
     return sum(1 for l in text.split("\n") if l.strip())
 
 
+def _with_relocated_protocol(root, relative, text):
+    """把记忆明确指向的外置协议纳入比较；项目状态/自定义仍只看原文件。
+
+    这不是 ignore：外置文件不存在、章节丢失或塌缩仍报错。只接纳固定的
+    核心约定/路由落点，不追任意链接，且不把其内容用来掩盖项目手写区丢失。
+    """
+    if _AidpPath(relative).name not in {"AGENTS.md", "CLAUDE.md", "AIDP-AGENTS.md"}:
+        return text
+    home = contract_root(root)
+    sections = []
+    for filename in ("core-conventions.md", "task-routing.md"):
+        if "reference/" + filename not in text:
+            continue
+        path = home / "reference" / filename
+        if not path.is_file():
+            continue
+        active = False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("## "):
+                title = line[3:]
+                active = (title.startswith("核心约定") if filename == "core-conventions.md" else
+                          title in {"★ 多 Agent 兼容（Claude Code / Codex / DeepSeek Harness）",
+                                    "★ 常用命令速查", "★ Sprint 命令清单 + 意图路由", "Agent 激活路由",
+                                    "★ 命令 vs Skill 关系说明", "本项目使用的 Skills",
+                                    "初始化输入文件清单", "AIDP 范式文档索引"})
+            if active:
+                sections.append(line)
+    return text + "\n\n" + "\n".join(sections) if sections else text
+
+
 def run(root=".", shrink=0.4, files=None):
     # ★ 同 check_index_staleness：`applicable` 两条路都给，缺了就会让"通过"被读成"不适用"。
     res = {"applicable": True, "checked": 0, "skipped": [], "errors": []}
@@ -223,11 +257,12 @@ def run(root=".", shrink=0.4, files=None):
                     os.path.join(SNAPSHOT_DIR, rel) if src == "snapshot" else "git show HEAD:" + rel),
             })
             continue
-        new = open(path, encoding="utf-8").read()
+        new = _AidpPath(path).read_text(encoding="utf-8")
         if IGNORE_RE.search("\n".join(new.split("\n")[:8])):
             res["skipped"].append({"file": rel, "why": "显式 ignore"})
             continue
         res["checked"] += 1
+        new = _with_relocated_protocol(root, rel, new)
         so, sn = _sections(old), _sections(new)
         for k, cnt in so.items():
             title = k[1]

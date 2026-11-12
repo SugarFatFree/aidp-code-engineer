@@ -316,12 +316,12 @@ def test_convention_main_line_length():
     print("\n[L] check_convention_dup.py 主行长度上限（WARN，不进退出码）")
     root = _mkroot()
     (root / ".aidp/reference").mkdir(parents=True)
-    shutil.copy(REPO / ".aidp/AIDP-AGENTS.md", root / ".aidp/AIDP-AGENTS.md")
+    shutil.copy(REPO / ".aidp/reference/core-conventions.md", root / ".aidp/reference/core-conventions.md")
     for f in (REPO / ".aidp/reference").glob("约定细则-*.md"):
         shutil.copy(f, root / ".aidp/reference" / f.name)
     rc, d = _run("check_convention_dup.py", root)
     check("阴性：现行主行均不超长", rc == 0 and d.get("overlong") == [])
-    p = root / ".aidp/AIDP-AGENTS.md"
+    p = root / ".aidp/reference/core-conventions.md"
     text = p.read_text(encoding="utf-8")
     lines = text.split("\n")
     sec = next(i for i, ln in enumerate(lines) if ln.startswith("## 核心约定"))

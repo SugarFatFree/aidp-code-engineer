@@ -21,18 +21,17 @@ import sys
 
 CONFIG_REL = os.path.join("memory", "aidp-config.yaml")
 
-_SEC_RE = re.compile(r"^scaffold:\s*$")
+_SEC_RE = re.compile(r"^scaffold:\s*(?:#.*)?$")
 _KEY_RE = re.compile(r"^\s+(version|pending)\s*:\s*(.*?)\s*$")
 
 
 def _read(path):
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8", newline="") as f:
         return f.read()
 
 
 def _write(path, text):
-    # newline="" —— 关掉平台行尾翻译，Windows 上也恒写 LF（版本戳落在 memory/aidp-config.yaml，
-    # 混入 CRLF 会让同一份配置在两端算出不同字节指纹）。
+    # 关闭平台行尾翻译；保留读入的 CRLF/LF，不改写用户配置的其他字节。
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(text)
 
@@ -91,25 +90,41 @@ def _ensure_cfg(root):
 
 def _set(root, key, value):
     p = _ensure_cfg(root)
-    lines = _read(p).splitlines()
+    original = _read(p)
+    lines = original.splitlines(keepends=True)
+    newline = "\r\n" if "\r\n" in original else "\n"
     val = "null" if value is None else str(value)
     sec = next((i for i, ln in enumerate(lines)
                 if ln[:1] not in (" ", "\t") and _SEC_RE.match(ln.strip())), None)
     if sec is None:
-        lines += ["", "scaffold:", "  %s: %s" % (key, val)]
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += newline
+        lines += [newline, "scaffold:" + newline, "  %s: %s%s" % (key, val, newline)]
     else:
         end = next((j for j in range(sec + 1, len(lines))
-                    if lines[j].strip() and lines[j][:1] not in (" ", "\t")), len(lines))
+                    if lines[j].strip() and not lines[j].lstrip().startswith("#")
+                    and lines[j][:1] not in (" ", "\t")), len(lines))
         hit = next((j for j in range(sec + 1, end)
                     if _KEY_RE.match(lines[j]) and _KEY_RE.match(lines[j]).group(1) == key), None)
         if hit is not None:
-            lines[hit] = "  %s: %s" % (key, val)
+            # 只替换标量 token，缩进、空格、行内说明和 EOF 原样保留。
+            matched = re.match(r"(\s*(?:version|pending)\s*:[ \t]*)([^#\r\n]*?)([ \t]*(?:#[^\r\n]*)?)(\r?\n)?$",
+                               lines[hit])
+            current = matched.group(2).strip().strip("\"'")
+            if current == val or (value is None and current in ("", "null", "~")):
+                return
+            suffix = matched.group(3)
+            if suffix.startswith("#"):
+                suffix = " " + suffix  # 原空标量的空格已被前缀吸收，新值后仍需注释分隔符。
+            lines[hit] = matched.group(1) + val + suffix + (matched.group(4) or "")
         else:
             ins = end
             while ins > sec + 1 and not lines[ins - 1].strip():
                 ins -= 1
-            lines.insert(ins, "  %s: %s" % (key, val))
-    _write(p, "\n".join(lines) + "\n")
+            if ins and not lines[ins - 1].endswith(("\n", "\r")):
+                lines[ins - 1] += newline
+            lines.insert(ins, "  %s: %s%s" % (key, val, newline))
+    _write(p, "".join(lines))
 
 
 def write_version(root, raw):

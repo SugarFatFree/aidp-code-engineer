@@ -1,8 +1,8 @@
 > 本片仅供 formal。先按 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 核父身份；light 返回对应能力分支，不执行本片。
 
-# sprint-dev · 开发完成后回写详情（Step X.0.0–X.8）
+# sprint-dev · 开发完成后回写详情（Step X.0.0–X.6 + 收口）
 
-> 分片 1/3：本片覆盖 X.0.0；随后依次 Read `postdev-writeback-2.md`（X.0–X.7）和 `postdev-writeback-3.md`（X.8），不得省略。理据见 `rationale.md`。
+> 分片 1/3：本片覆盖 X.0.0；随后依次 Read `postdev-writeback-2.md`（X.0–X.6）和 `postdev-writeback-3.md`（累进路径产物审计收口），不得省略。理据见 `rationale.md`。
 
 ---
 
@@ -41,7 +41,7 @@
    | 5 | 计划偏差 | Sprint-{NNN} 实际工时 8d vs 计划 5d | 工时记录 | 01_研发执行计划.md | L3+L4 |
    | 6 | ★ 第三方 Mock→真实对接 | 第三方交付后切真实（删 Mock 桩/拦截、`VITE_USE_MOCK` 或 `@Profile("mock")` 关、`.env.*` baseURL 切真实端点）| xxxClient / .env.* / mock 开关 | **01_详细设计.md / 03_接口设计.md**（契约变了 +**01_研发需求.md**）| L2+L3+L4（契约变 +L1）|
 
-   > **`vcs_mode=none` 本地证据**：开发入口须在 Phase 0A.5 删除或 Phase 1 改写前保存上述 local-before 快照。本步按围栏比较相同目录的内容哈希（含新增/删除），从实际变化文件提取接口、DDL、页面、规则和配置事实。空 Git diff 或当前结构不能证明零漂移；快照缺失/文件不可读时记 `evidence-missing`，审计本 Sprint 全部业务文件与上游文档，不跳过 X.0/X.2/X.3。`DEV_FILES` 与 X.7 共用这份相对路径清单。
+   > **`vcs_mode=none` 本地证据**：开发入口须在 Phase 0A.5 删除或 Phase 1 改写前保存上述 local-before 快照。本步按围栏比较相同目录的内容哈希（含新增/删除），从实际变化文件提取接口、DDL、页面、规则和配置事实。空 Git diff 或当前结构不能证明零漂移；快照缺失/文件不可读时记 `evidence-missing`，审计本 Sprint 全部业务文件与上游文档，不跳过 X.0/X.2/X.3。
    > 本步骤的变更范围权威实现为 `development_scope.py`；`postdev-writeback-2.md` 的 Step X.2~X.3 仅在用户绕过 X.0.0 直接走兜底人工模式时单独触发。
    >
    > ★ **检测项 6「Mock→真实对接」要点**（约定 22 + 约定 26 阶段②/④）：切真实常**不表现为新增接口**（接口名没变、只是实现换成真实 client + baseURL），故易漏判。（余下理据见同目录 `rationale.md`）

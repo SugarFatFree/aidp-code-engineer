@@ -15,6 +15,7 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
+from flow_test_helpers import sprint_dev_text
 
 REPO = Path(__file__).resolve().parents[3]
 CML = str(REPO / ".aidp/scripts/check_memory_loss.py")
@@ -131,7 +132,7 @@ def test_release_debt_ledger():
 
 def test_released_version_gate_fail_closed():
     print("\n[sprint-dev 版本落点门：tag 判定失败 fail-closed]")
-    md = (REPO / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
+    md = sprint_dev_text("formal-increment")
     m = re.search(r"\*\*① 检测「当前版本已发布[^\n]*\n```bash\n(.*?)```", md, re.S)
     check("找到版本落点检测 bash 块", bool(m))
     if not m:
@@ -146,7 +147,7 @@ def test_released_version_gate_fail_closed():
 
 def test_released_version_gate_without_git():
     print("\n[sprint-dev 无 Git 版本落点门]")
-    md = (REPO / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
+    md = sprint_dev_text("formal-increment")
     m = re.search(r"\*\*① 检测「当前版本已发布[^\n]*\n```bash\n(.*?)```", md, re.S)
     check("找到无 Git 版本落点检测块", bool(m))
     if not m:
@@ -376,12 +377,25 @@ def test_batch_cascade_and_bugfix_scope_contracts():
           and '处理全部待修复条目' not in skill)
     check('evidence-only 不得越出调用方给定的问题清单范围',
           '内核不得自行扩大到其他问题记录、其他 Sprint 或其他版本' in skill)
+    task_input = skill.split('### light + evidence-only 输入', 1)[-1].split('## 前置条件', 1)[0]
+    check('light 修复明确接受父上下文中的真实故障清单，不要求正式台账',
+          '### light + evidence-only 输入' in skill
+          and all(token in task_input for token in ('execution_context', 'failures', 'write_set', 'acceptance',
+                                                     'run_id', 'evidence', '不创建', 'docs/bugfix', '缺少修复范围')))
+    check('light SKILL 只读取当前任务证据，不读取历史 Sprint 状态',
+          'light 不读取 activeContext/progress' in skill
+          and 'light 跳过 2.1 的目录扫描' in skill
+          and 'formal/file 的问题记录' in skill)
+    check('light 无台账时不制造回填目标，根因结构化证据留在父任务',
+          '无原问题记录时不创建状态列或 Commit 列' in skill
+          and 'record-outcome' in conv and 'failures' in conv)
 
 
 def test_vcs_mode_command_contracts():
     print("\n[vcs_mode 命令入口与无 Git 语义]")
     for name in ("sprint-dev", "sprint-test", "sprint-autopilot", "sprint-aiauto-test", "sprint-close", "version"):
-        text = (REPO / f".aidp/commands/{name}.md").read_text(encoding="utf-8")
+        text = (sprint_dev_text("formal-preflight") if name == "sprint-dev" else
+                (REPO / f".aidp/commands/{name}.md").read_text(encoding="utf-8"))
         check(f"{name} 消费 vcs_mode=git|none", "vcs_mode" in text and "git|none" in text)
         check(f"{name} 无 Git 留痕 unsupported:vcs-disabled", "unsupported:vcs-disabled" in text)
     version = (REPO / ".aidp/commands/version.md").read_text(encoding="utf-8")
@@ -408,7 +422,7 @@ def test_vcs_disabled_downstream_contracts():
     p39 = flow(auto / "phase-3-9.md")
     p1 = flow(dev / "postdev-writeback-1.md")
     p2 = flow(dev / "postdev-writeback-2.md")
-    command = flow(REPO / ".aidp/commands/sprint-dev.md")
+    command = sprint_dev_text("formal-preflight", "formal-existing")
     version = flow(REPO / ".aidp/commands/version.md")
     aiauto_freeze = flow(REPO / ".aidp/flows/sprint-aiauto-test/phase-3-3b.md")
     check("测试链路冻结仅在 Git 模式读取 HEAD",
@@ -429,12 +443,11 @@ def test_vcs_disabled_downstream_contracts():
           all(part in p1 for part in ("development_scope.py", "execution_context", "内容哈希（含新增/删除）", "快照缺失/文件不可读"))
           and 'development_scope.py --root .' in scope_contract
           and '--execution-context "$EXECUTION_CONTEXT"' in scope_contract)
-    check("配置清单消费本地哈希变更", "-local-before.json" in p2 and "sha256" in p2)
 
 
 def test_local_file_change_evidence():
     print("\n[无 Git 开发前后文件快照实跑]")
-    command = (REPO / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
+    command = sprint_dev_text("formal-preflight")
     flow = (REPO / ".aidp/flows/sprint-dev/postdev-writeback-1.md").read_text(encoding="utf-8")
     contract = (REPO / ".aidp/flows/sprint-dev/incremental-contract.md").read_text(encoding="utf-8")
     capture = re.search(r'```bash\n(SNAP="memory/\{version\}/\{user\}/sprints/sprint-\{NNN\}-local-before\.json".*?\nfi)\n```', command, re.S)

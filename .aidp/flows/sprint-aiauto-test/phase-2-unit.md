@@ -101,10 +101,12 @@ UNIT_BUILD=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["bui
 UNIT_COMMIT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["commit"])' "$UNIT_PLAN") || exit 2
 AIAUTO_UNIT_TIMEOUT_SECONDS="${AIAUTO_UNIT_TIMEOUT_SECONDS:?读取父预算内实际批准的执行上限}"
 UNIT_TIMEOUT_SECONDS="$AIAUTO_UNIT_TIMEOUT_SECONDS"
-python3 {{AIDP_HOME}}/scripts/build_unit_test.py run \
+UNIT_COMMAND=(python3 {{AIDP_HOME}}/scripts/build_unit_test.py run \
   --root "$MAIN_ROOT" --version "$UNIT_VERSION" --build "$UNIT_BUILD" \
   --commit "$UNIT_COMMIT" --plan "$UNIT_PLAN" --timeout "$UNIT_TIMEOUT_SECONDS" \
-  --execution-context "$EXECUTION_CONTEXT"
+  --execution-context "$EXECUTION_CONTEXT")
+python3 {{AIDP_HOME}}/scripts/test_command_guard.py wrap --allow-full \
+  --root "$MAIN_ROOT" --execution-context "$EXECUTION_CONTEXT" -- "${UNIT_COMMAND[@]}"
 ```
 
 后续tick只读status，不消费执行预算，不要求新增grant：

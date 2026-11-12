@@ -66,7 +66,7 @@ def _run(script, *args, root=None, **env_extra):
 BODY = "# demo-app 项目记忆\n\n## 核心约定\n\n1. **示例约定**：alice 维护。\n"
 
 
-def _mkrepo(markers=(), claude_md=BODY, agents_md=None, hook=True):
+def _mkrepo(markers=(), claude_md=BODY, agents_md=None, hook=True, pretool=False):
     root = Path(tempfile.mkdtemp()) / "demo-app"
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], capture_output=True)
@@ -85,6 +85,8 @@ def _mkrepo(markers=(), claude_md=BODY, agents_md=None, hook=True):
     if hook:
         (root / ".aidp/hooks").mkdir(parents=True)
         (root / AS.STOP_GUARD_REL).write_text("# stop guard\n", encoding="utf-8")
+        if pretool:
+            (root / ".aidp/hooks/pretool-guard.py").write_text("# pretool guard\n", encoding="utf-8")
     for m in markers:
         (root / m).mkdir(exist_ok=True)
     if claude_md is not None:
@@ -347,12 +349,15 @@ def test_memory_migration_shapes():
     finally:
         _rm(root)
 
-    # 两份都有正文 + 并存 → 以 AGENTS.md 为准，CLAUDE.md 变薄壳
-    root = _mkrepo(markers=(".claude", ".dsh"), agents_md="# AGENTS 正文\n")
+    # 两份相同正文 + 并存 → 可安全归一为单一正文。
+    root = _mkrepo(markers=(".claude", ".dsh"), agents_md=BODY)
     try:
-        _run(SYNC_PY, "--root", str(root), "--agents", "claude,dsh")
-        check("两份正文并存 → AGENTS.md 保持，CLAUDE.md 成薄壳",
-              _read(root / "AGENTS.md") == "# AGENTS 正文\n" and _read(root / "CLAUDE.md") == AS.SHELL_BODY)
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,dsh")
+        check("两份相同正文 → AGENTS.md 保持，CLAUDE.md 成薄壳",
+              rc == 0 and _read(root / "AGENTS.md") == BODY
+              and _read(root / "CLAUDE.md") == AS.SHELL_BODY)
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,dsh", "--check")
+        check("相同正文归一后二次同步幂等", rc == 0 and out.get("actions") == [])
     finally:
         _rm(root)
 
@@ -1210,6 +1215,190 @@ def test_user_stop_hook_with_same_basename_is_preserved():
         _rm(root)
 
 
+def test_memory_shell_comments_do_not_hide_rules():
+    check("合法多行 HTML 注释加导入仍是薄壳",
+          AS._is_shell("<!--\n generated import\n-->\n@AGENTS.md\n"))
+    check("注释同一行的独有规则不能被当成薄壳",
+          not AS._is_shell("<!-- note --> 独有规则\n@AGENTS.md\n"))
+    check("未闭合注释不能被当成薄壳",
+          not AS._is_shell("<!-- 独有规则\n@AGENTS.md\n"))
+
+
+def test_different_memory_bodies_fail_closed():
+    for agents in ("claude,codex", "claude,dsh", "claude", "codex"):
+        for extra in ((), ("--check",)):
+            root = _mkrepo(markers=(".claude", ".codex"), agents_md=BODY,
+                           claude_md="@AGENTS.md\n\n独有规则：禁止删除项目数据。\n")
+            try:
+                before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*")
+                          if p.is_file() and ".git" not in p.relative_to(root).parts}
+                rc, out, _, err = _run(SYNC_PY, "--root", str(root), "--agents", agents, *extra)
+                after = {p.relative_to(root): p.read_bytes() for p in root.rglob("*")
+                         if p.is_file() and ".git" not in p.relative_to(root).parts}
+                message = out.get("error", "") + err
+                check(f"{agents} {extra} 双正文冲突拒绝执行且所有文件不变",
+                      rc == 2 and "AGENTS.md" in message and "CLAUDE.md" in message
+                      and "冲突" in message and before == after)
+            finally:
+                _rm(root)
+
+
+PRETOOL_CLAUDE = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/pretool-guard.py"'
+PRETOOL_CODEX = 'python3 "${PWD}/.agents/hooks/pretool-guard.py" --agent codex'
+
+
+def _pretool_groups(path):
+    return json.loads(_read(path)).get("hooks", {}).get("PreToolUse", [])
+
+
+def test_pretool_hook_wiring_per_agent():
+    print("【PreToolUse hook：三端装配（Claude / Codex 写入，DSH 未证实不写）】")
+    root = _mkrepo(markers=(".claude", ".codex", ".dsh"), pretool=True)
+    try:
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex,dsh")
+        claude = _pretool_groups(root / ".claude/settings.json")
+        codex = _pretool_groups(root / ".codex/hooks.json")
+        check("Claude：PreToolUse 单一托管组，matcher 覆盖 Bash 与编辑类工具",
+              rc == 0 and claude == [{"matcher": AS.PRETOOL_MATCHER["claude"],
+                                      "hooks": [{"type": "command", "command": PRETOOL_CLAUDE}]}]
+              and all(t in AS.PRETOOL_MATCHER["claude"].split("|")
+                      for t in ("Bash", "Edit", "Write", "MultiEdit")))
+        check("Codex：PreToolUse 匹配 Bash 与 apply_patch，命令带 --agent codex",
+              codex == [{"matcher": "Bash|shell|shell_command|exec_command|local_shell|apply_patch|Edit|Write",
+                         "hooks": [{"type": "command", "command": PRETOOL_CODEX}]}])
+        dsh = json.loads(_read(root / ".dsh/hooks.json"))
+        check("DSH：未证实 → 不写 PreToolUse，Stop hook 照常", "PreToolUse" not in dsh["hooks"]
+              and "Stop" in dsh["hooks"])
+        check("DSH：输出 notes 说明未装配原因", any("DeepSeek Harness" in n for n in out.get("notes", [])))
+        check("Stop hook 不受影响", json.loads(_read(root / ".claude/settings.json"))["hooks"]["Stop"][0]["hooks"][0][
+            "command"] == AS._hook_cmd("claude"))
+        before = {p: _read(root / p) for p in (".claude/settings.json", ".codex/hooks.json", ".dsh/hooks.json")}
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex,dsh")
+        check("重复运行幂等（零写入、字节不变）", rc == 0 and not out["drift"]
+              and before == {p: _read(root / p) for p in before})
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex,dsh", "--check")
+        check("--check 无漂移", rc == 0 and out["drift"] is False)
+        for mode in ("link", "copy"):
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude,codex", "--mode", mode)
+            check(f"--mode {mode} 同样幂等（PreToolUse 不重复追加）", rc == 0
+                  and len(_pretool_groups(root / ".claude/settings.json")) == 1
+                  and len(_pretool_groups(root / ".codex/hooks.json")) == 1)
+    finally:
+        _rm(root)
+
+
+def test_pretool_hook_without_source_is_not_written():
+    print("【PreToolUse hook：无脚本不写】")
+    root = _mkrepo(markers=(".claude",))
+    try:
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        check("运行包无 pretool-guard.py → 不写 PreToolUse", rc == 0
+              and "PreToolUse" not in json.loads(_read(root / ".claude/settings.json"))["hooks"])
+    finally:
+        _rm(root)
+
+
+def test_user_pretool_hooks_are_preserved():
+    print("【PreToolUse hook：用户已有配置不被动，只替换自己托管的命令】")
+    root = _mkrepo(markers=(".claude", ".codex"), pretool=True)
+    try:
+        user_bash = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 tools/audit.py",
+                                                   "timeout": 5}]}
+        same_name = {"matcher": "Edit", "hooks": [{"type": "command",
+                                                   "command": "python3 /opt/user-tools/.aidp/hooks/pretool-guard.py"}]}
+        legacy_mixed = {"matcher": "Bash|Write", "hooks": [
+            {"type": "command", "command": "python3 tools/keep.py"},
+            {"type": "command", "command": f"python3 {AS.STOP_GUARD_REL.replace('autopilot-stop-guard', 'pretool-guard')}"}]}
+        settings = {"permissions": {"allow": ["Bash(git status)"]},
+                    "hooks": {"PreToolUse": [user_bash, same_name, legacy_mixed],
+                              "PostToolUse": [{"hooks": [{"type": "command", "command": "python3 tools/post.py"}]}]}}
+        path = root / ".claude/settings.json"
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        rc, _, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        merged = json.loads(_read(path))
+        groups = merged["hooks"]["PreToolUse"]
+        check("用户 Bash/同名脚本 PreToolUse 组原样保留", rc == 0 and groups[0] == user_bash and groups[1] == same_name)
+        check("混合组里只摘出托管命令，用户命令留在原组",
+              groups[2] == {"matcher": "Bash|Write", "hooks": [{"type": "command", "command": "python3 tools/keep.py"}]})
+        check("托管命令独占新组且只出现一次",
+              groups[3] == {"matcher": AS.PRETOOL_MATCHER["claude"],
+                            "hooks": [{"type": "command", "command": PRETOOL_CLAUDE}]} and len(groups) == 4)
+        check("其他事件与权限配置不变", merged["permissions"] == settings["permissions"]
+              and merged["hooks"]["PostToolUse"] == settings["hooks"]["PostToolUse"])
+        rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "claude", "--check")
+        check("二次同步幂等", rc == 0 and out.get("actions") == [])
+        # 旧路径纯托管组 → 原位升级 matcher 与命令，位置不变
+        settings["hooks"]["PreToolUse"] = [
+            user_bash, {"matcher": "Bash", "hooks": [
+                {"type": "command", "command": f"python3 {AS.STOP_GUARD_REL.replace('autopilot-stop-guard', 'pretool-guard')}"}]},
+            same_name]
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        _run(SYNC_PY, "--root", str(root), "--agents", "claude")
+        groups = json.loads(_read(path))["hooks"]["PreToolUse"]
+        check("旧托管组原位升级 matcher/命令，不改变用户组顺序",
+              groups[0] == user_bash and groups[2] == same_name and len(groups) == 3
+              and groups[1] == {"matcher": AS.PRETOOL_MATCHER["claude"],
+                                "hooks": [{"type": "command", "command": PRETOOL_CLAUDE}]})
+        # Codex 同理
+        codex_user = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 tools/c.py"}]}
+        (root / ".codex/hooks.json").write_text(json.dumps({"hooks": {"PreToolUse": [codex_user]}}), encoding="utf-8")
+        _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+        groups = _pretool_groups(root / ".codex/hooks.json")
+        check("Codex：用户 PreToolUse 保留并追加托管组", groups[0] == codex_user and len(groups) == 2
+              and groups[1]["hooks"][0]["command"] == PRETOOL_CODEX)
+    finally:
+        _rm(root)
+
+
+def test_pretool_merge_unit_and_structure_errors():
+    print("【PreToolUse hook：合并单元 / 结构错误 fail closed】")
+    cmd, matcher = PRETOOL_CLAUDE, AS.PRETOOL_MATCHER["claude"]
+    dup = {"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": cmd}]},
+        {"matcher": "Edit", "hooks": [{"type": "command", "command": cmd}]}]}}
+    groups = AS._merge_pretool_hook(dup, cmd, matcher)["hooks"]["PreToolUse"]
+    check("重复托管组并成一个", groups == [{"matcher": matcher, "hooks": [{"type": "command", "command": cmd}]}])
+    check("空配置 → 新增一个托管组", AS._merge_pretool_hook({}, cmd, matcher)["hooks"]["PreToolUse"][0]["matcher"] == matcher)
+    check("托管识别：只认本项目路径，不认外部同名脚本",
+          AS._is_managed_pretool_hook(PRETOOL_CLAUDE) and AS._is_managed_pretool_hook(PRETOOL_CODEX)
+          and not AS._is_managed_pretool_hook("python3 /opt/x/.claude/hooks/pretool-guard.py")
+          and not AS._is_managed_pretool_hook("python3 tools/pretool-guard.py"))
+    bad_cases = [("PreToolUse 非数组", {"hooks": {"PreToolUse": {}}}),
+                 ("group 非对象", {"hooks": {"PreToolUse": ["x"]}}),
+                 ("matcher 非字符串", {"hooks": {"PreToolUse": [{"matcher": 3, "hooks": []}]}})]
+    for label, payload in bad_cases:
+        root = _mkrepo(markers=(".codex",), pretool=True)
+        try:
+            path = root / ".codex/hooks.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            rc, out, _, _ = _run(SYNC_PY, "--root", str(root), "--agents", "codex")
+            check(f"结构错误（{label}）→ 原子失败且不改文件",
+                  rc == 2 and "hooks" in out.get("error", "") and _read(path) == json.dumps(payload)
+                  and not (root / ".codex/config.toml").exists())
+        finally:
+            _rm(root)
+
+
+def test_pretool_hook_from_native_runtime():
+    print("【PreToolUse hook：运行根降层同址（identity）】")
+    for agents, runtime_rel, marker, target, want in (
+            ("claude", ".claude", ".claude", ".claude/settings.json", PRETOOL_CLAUDE),
+            ("codex", ".agents", ".codex", ".codex/hooks.json", PRETOOL_CODEX)):
+        root = _mkrepo(markers=(marker,), pretool=True)
+        try:
+            _move_source_into_runtime(root, runtime_rel)
+            script = root / runtime_rel / "scripts/agent_sync.py"
+            rc, out, _, _ = _run(str(script), "--root", str(root), "--agents", agents)
+            groups = _pretool_groups(root / target)
+            check(f"{agents}：原生运行根下装配 PreToolUse 且脚本路径指向运行根",
+                  rc == 0 and len(groups) == 1 and groups[0]["hooks"][0]["command"] == want
+                  and (root / runtime_rel / "hooks/pretool-guard.py").is_file())
+            rc, checked, _, _ = _run(str(script), "--root", str(root), "--agents", agents, "--check")
+            check(f"{agents}：原生运行根 --check 无漂移", rc == 0 and checked.get("drift") is False)
+        finally:
+            _rm(root)
+
+
 def test_managed_stop_hook_path_boundaries():
     print("【Stop hook：只识别项目内托管路径】")
     root = Path(tempfile.mkdtemp()) / "demo-app"
@@ -1879,9 +2068,16 @@ def main():
     test_agent_env()
     test_sync_all_agents_managed_copy()
     test_memory_migration_shapes()
+    test_different_memory_bodies_fail_closed()
+    test_memory_shell_comments_do_not_hide_rules()
     test_copy_mode_and_errors()
     test_user_stop_hook_with_same_basename_is_preserved()
     test_managed_stop_hook_path_boundaries()
+    test_pretool_hook_wiring_per_agent()
+    test_pretool_hook_without_source_is_not_written()
+    test_user_pretool_hooks_are_preserved()
+    test_pretool_merge_unit_and_structure_errors()
+    test_pretool_hook_from_native_runtime()
     test_sync_executes_from_native_runtime_without_root_aidp()
     test_native_runtime_managed_copy_contract()
     test_managed_copy_tree_drift_is_recursive()

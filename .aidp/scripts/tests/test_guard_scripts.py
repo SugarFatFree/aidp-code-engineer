@@ -19,6 +19,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from flow_test_helpers import sprint_dev_text
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # 让 import check_* 可用
@@ -1969,7 +1970,7 @@ def test_terminology_and_conv30():
           not any(n["file"].endswith(("rationale.md", "invariants.md"))
                   for n in (d2.get("new") or [])))
     check("约定 30 范围已含 flows/reference/rules（契约正文的大头在那里）",
-          "`{{AIDP_HOME}}/flows/**`" in (repo / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8"))
+          "`{{AIDP_HOME}}/flows/**`" in (repo / ".aidp/reference/core-conventions.md").read_text(encoding="utf-8"))
 
 
 def test_ledger_format_tolerance():
@@ -3849,10 +3850,11 @@ def test_autopilot_deadlocks_and_gate_bypasses():
           "set notify_enabled false" in p02 and "用户通知开关" in p02
           and "tick_flags" in p02 and "本地不可用" in p02)
 
-    # H12 cicd_skipped 时游标必须推出 3.2.1-probe
+    # H12 现场分类 skip 时游标必须推出 3.2.1-probe
     p37 = (ft.parent / "sprint-autopilot/phase-3-7.md").read_text(encoding="utf-8")
-    check("★ H12 cicd_skipped 分支直接进 3.3-audit",
-          'CICD_SKIPPED' in p37 and '"3.2.1-probe" "3.3-audit"' in p37)
+    check("★ H12 现场分类 skip 分支直接进 3.3-audit（不读落盘分类）",
+          'DECISION' in p37 and '"skip"' in p37 and '"3.2.1-probe" "3.3-audit"' in p37
+          and 'change_classification' not in p37)
 
     # H8/G-A8 解冻探针：unconverged 可解冻、release-blocked 仅人工
     uf = scripts / "autopilot_unfreeze.py"
@@ -4985,7 +4987,6 @@ def main():
     test_fail_handle_freeze_now_and_enum_guard()
     test_commonmark_fence_and_env_freshness()
     test_defect_triage_and_block_review()
-    test_classify_push_accumulates()
     test_residue_variants_and_verdict_line()
     test_exec_report_inherits_cases()
     test_card_section_file_and_render_scope()
@@ -6721,9 +6722,9 @@ def test_entry_mode_build_scoped():
 def test_dev_scale_and_reversal_gate():
     print("\n[52] 口述档位门有生产方 + 口径反转清算门")
     repo = Path(__file__).resolve().parents[3]
-    dev = (repo / ".aidp/commands/sprint-dev.md").read_text(encoding="utf-8")
+    dev = sprint_dev_text("formal-docs", "formal-reversal")
     pw1 = (repo / ".aidp/flows/sprint-dev/postdev-writeback-1.md").read_text(encoding="utf-8")
-    aidp = (repo / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8")
+    aidp = (repo / ".aidp/reference/core-conventions.md").read_text(encoding="utf-8")
     ledger = (repo / ".aidp/reference/开发期族增量.md").read_text(encoding="utf-8")
 
     # ★ 组合性缺陷原型：Phase 0B.1.1 三处消费 `--scale={档位}`，却没有任何一步生产它。
@@ -6960,7 +6961,7 @@ def test_cascade_bypass_and_commit_gate():
 
     # ★ 约定 12 曾是"实时回写"的指挥源，与约定 22 攒批从未对过账 —— 下游观感就是
     #   "开发过程中版本规划文件在被实时更新"。它必须把时机让给约定 22。
-    aidp = (repo / ".aidp/AIDP-AGENTS.md").read_text(encoding="utf-8")
+    aidp = (repo / ".aidp/reference/core-conventions.md").read_text(encoding="utf-8")
     c12 = [l for l in aidp.split("\n") if l.startswith("12. ")]
     check("★ 约定 12 存在且把执行时机让给约定 22", len(c12) == 1 and "归约定 22" in c12[0])
     check("★ 约定 12 明令开发期不实时改这些文档",
@@ -7025,11 +7026,11 @@ def test_cascade_bypass_and_commit_gate():
 
     # ★ 三类新欠账信号：都必须【有 stderr + 计退出码】，只留 JSON 字段等于静默
     hg2 = (repo / ".aidp/scripts/commit_gate.py").read_text(encoding="utf-8")
-    check("★ 约定 31.5 欠账有信号（裸对话推送此前零 CICD 信号）",
-          "def pending_cicd(" in hg2 and "🚄 本次推送未经推送分类器" in hg2)
-    check("★ 31.5 欠账计入退出码", '(info.get("pending_cicd") or {}).get("pending")' in hg2)
-    check("★ 31.5 适用条件按项目配置（provider 与有效 pipelines），不看是否跑过 autopilot；未配置只降级",
-          "unconfigured_cicd(aidp_config.cicd_config(root))" in hg2 and "configuration_degraded" in hg2)
+    check("★ 约定 31.5 推送信号：仅 advisory 提示，不计债、不读 baseline",
+          "def pending_cicd(" in hg2 and "advisory" in hg2 and "cicd-push-pending" not in hg2
+          and "_push_records" not in hg2 and "TERMINAL_GRACE_SECONDS" not in hg2)
+    check("★ 31.5 适用条件 = aidp_config.cicd_enabled（与 cicd_watch.unconfigured_cicd 同一实现）",
+          "aidp_config.cicd_enabled(root)" in hg2)
     c3 = (repo / ".aidp/reference/约定细则-3.md").read_text(encoding="utf-8")
     check("★ 31.5 作用域补齐「与命令入口无关 / 裸对话同样适用」",
           "代码推送这一事实" in c3 and "裸对话路径" in c3)
@@ -8051,41 +8052,6 @@ def test_defect_triage_and_block_review():
         {"build": "V0.1_build1002", "change_classification": {"x": 1}}]})
     check("★ 3l 扩展阳性：同 build 两条记录 → FAIL（读方只取第一条，后写字段永远不可见）",
           "重复 build 号" in out)
-
-
-def test_classify_push_accumulates():
-    """[67] 同一 build 多次 push 时，「本 build 发过正式代码」这个事实不得被后写覆盖。
-
-    下游实证：build1002 的基线是一次含 2 个 Java 文件的提交，其后一次纯文档 push
-    把 change_classification 整个覆盖成 no-formal-code-change / cicd_skipped=true。
-    扁平键保持 per-push 语义（Phase 3.6/3.7 刚分类完就读，问的是"这一次要不要等部署"），
-    build 级事实另存 build_* 系列，单调不回退。
-    """
-    print("\n[67] classify_push 同 build 多次推送累积")
-    sys.path.insert(0, os.path.dirname(HERE))
-    from classify_push import accumulate_push
-
-    node = {}
-    accumulate_push(node, {"classified_at": "t1", "formal_code_change": True,
-                           "classification_error": False, "cicd_skipped": False,
-                           "skip_reason": None, "changed_files": ["A.java", "B.java"],
-                           "formal_code_files": ["A.java", "B.java"]})
-    accumulate_push(node, {"classified_at": "t2", "formal_code_change": False,
-                           "classification_error": False, "cicd_skipped": True,
-                           "skip_reason": "no-formal-code-change",
-                           "changed_files": ["README.md"], "formal_code_files": []})
-    check("★ 阳性：代码 push 后再来一次纯文档 push，build 级事实不被降级",
-          node["build_formal_code_change"] is True and node["build_cicd_skipped"] is False)
-    check("build 级文件清单取并集、可追溯",
-          node["build_formal_code_files"] == ["A.java", "B.java"] and node["push_count"] == 2)
-
-    n2 = {}
-    accumulate_push(n2, {"classified_at": "t1", "formal_code_change": False,
-                         "classification_error": False, "cicd_skipped": True,
-                         "skip_reason": "no-formal-code-change",
-                         "changed_files": ["x.md"], "formal_code_files": []})
-    check("★ 阴性：全程纯文档的 build 不得被误判成发过代码",
-          n2["build_formal_code_change"] is False and n2["build_cicd_skipped"] is True)
 
 
 def test_residue_variants_and_verdict_line():

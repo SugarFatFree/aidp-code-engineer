@@ -53,6 +53,16 @@ RUNTIME_ROOT = runtime_root(__file__)
 SHELL_BODY = "@AGENTS.md\n"
 STOP_GUARD_SOURCE = RUNTIME_ROOT / "hooks/autopilot-stop-guard.py"
 STOP_GUARD_REL = runtime_text('__AIDP_HOME__/hooks/autopilot-stop-guard.py', __file__)
+PRETOOL_GUARD_SOURCE = RUNTIME_ROOT / "hooks/pretool-guard.py"
+# PreToolUse 装配范围（依官方文档查证，见 reference/agent-tools.md 第五节）：
+#   Claude Code：Bash 与文件编辑类工具；Codex：Bash 与 apply_patch（matcher 别名 Edit / Write）；
+#   DeepSeek Harness：官方文档未证实 hooks.json 的 PreToolUse 契约 → 不写入，只在 notes 说明。
+PRETOOL_MATCHER = {"claude": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+                   "codex": "Bash|shell|shell_command|exec_command|local_shell|apply_patch|Edit|Write"}
+PRETOOL_UNSUPPORTED_NOTE = {
+    "dsh": ("DeepSeek Harness 的 PreToolUse hooks 契约未证实（依赖第三方 hooks 插件、schema 各异），"
+            "未写入 .dsh/hooks.json；入口协议与测试范围护栏改走命令正文前置 Read、"
+            "test_command_guard.py wrap / light_task.py 入口与 Stop hook 兜底，见 reference/agent-tools.md")}
 # 运行根即 Agent 自己的目录（契约平铺其下）。字面量刻意拆写是为了躲开
 # check_runtime_paths 的"硬编码旧运行根"正则 —— 这里是定义处，不是引用。
 AGENT_RUNTIME_HOME = {"claude": "." + "claude", "codex": "." + "agents",
@@ -119,7 +129,8 @@ def _title_description(text: str) -> str:
 
 
 def _is_shell(text: str) -> bool:
-    body = [l for l in text.splitlines() if l.strip() and not l.strip().startswith("<!--")]
+    visible = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    body = [l for l in visible.splitlines() if l.strip()]
     return len(body) == 1 and body[0].strip() == "@AGENTS.md"
 
 
@@ -457,12 +468,34 @@ def _tree_equal(a: Path, b: Path) -> bool:
 
 
 # ── 记忆文件 ──────────────────────────────────────────────────────────────────
+def memory_bodies(root: Path) -> dict:
+    """读取可判定的正文；不可读文件不能当成空文件覆盖。"""
+    bodies = {}
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        path = root / name
+        if not os.path.lexists(path):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SystemExit(f"[agent_sync] 无法读取 {name}，拒绝改写记忆文件：{exc}") from exc
+        if text.strip() and not _is_shell(text):
+            bodies[name] = text
+    return bodies
+
+
+def validate_memory_bodies(bodies: dict):
+    if len(bodies) == 2 and bodies["AGENTS.md"] != bodies["CLAUDE.md"]:
+        raise SystemExit("[agent_sync] AGENTS.md 与 CLAUDE.md 正文冲突，拒绝覆盖；"
+                         "两份正文已保留。请先人工合并独有规则，再将 CLAUDE.md 改为 @AGENTS.md 薄壳")
+
+
 def sync_memory(plan: Plan, agents: list):
     root = plan.root
     agents_md, claude_md = root / "AGENTS.md", root / "CLAUDE.md"
-    a_txt, c_txt = _read(agents_md), _read(claude_md)
-    c_body = c_txt if (c_txt and not _is_shell(c_txt)) else ""
-    a_body = a_txt if (a_txt and not _is_shell(a_txt)) else ""
+    bodies = memory_bodies(root)
+    validate_memory_bodies(bodies)
+    c_body, a_body = bodies.get("CLAUDE.md", ""), bodies.get("AGENTS.md", "")
     only_claude = agents == ["claude"]
 
     if only_claude:
@@ -1181,7 +1214,8 @@ def _hook_cmd(agent: str) -> str:
     return f'python3 "${{PWD}}/{rel}" --agent {agent}'
 
 
-def _is_managed_stop_hook(command: str, root: Path | None = None) -> bool:
+def _is_managed_hook(command: str, root: Path | None, script: str) -> bool:
+    """命令是否指向本项目托管的 `hooks/<script>`（含旧运行根、绝对路径写法；不认外部同名脚本）。"""
     try:
         argv = shlex.split(command)
     except ValueError:
@@ -1190,9 +1224,10 @@ def _is_managed_stop_hook(command: str, root: Path | None = None) -> bool:
         return False
     if len(argv) == 4 and (argv[2] != "--agent" or argv[3] not in ("codex", "dsh")):
         return False
-    legacy = f"{LEGACY_AIDP_DIR}/hooks/autopilot-stop-guard.py"
-    claude = _hook_rel("claude")
-    shared = _hook_rel("codex")
+    tail = f"hooks/{script}"
+    legacy = f"{LEGACY_AIDP_DIR}/{tail}"
+    claude = f"{AGENT_RUNTIME_HOME['claude']}/{tail}"
+    shared = f"{AGENT_RUNTIME_HOME['codex']}/{tail}"
     rel_paths = (legacy, claude, shared)
     path = argv[1]
     if path in rel_paths:
@@ -1205,6 +1240,21 @@ def _is_managed_stop_hook(command: str, root: Path | None = None) -> bool:
                 and any(_lexical(Path(path)) == _lexical(root / rel) for rel in rel_paths))
 
 
+def _is_managed_stop_hook(command: str, root: Path | None = None) -> bool:
+    return _is_managed_hook(command, root, "autopilot-stop-guard.py")
+
+
+def _is_managed_pretool_hook(command: str, root: Path | None = None) -> bool:
+    return _is_managed_hook(command, root, "pretool-guard.py")
+
+
+def _pretool_cmd(agent: str) -> str:
+    rel = f"{AGENT_RUNTIME_HOME[agent]}/hooks/pretool-guard.py"
+    if agent == "claude":
+        return f'python3 "$CLAUDE_PROJECT_DIR/{rel}"'
+    return f'python3 "${{PWD}}/{rel}" --agent {agent}'
+
+
 def _merge_stop_hook(data: dict, cmd: str, root: Path | None = None) -> dict:
     hooks = data.setdefault("hooks", {})
     stop = hooks.setdefault("Stop", [])
@@ -1215,6 +1265,34 @@ def _merge_stop_hook(data: dict, cmd: str, root: Path | None = None) -> dict:
                 h["type"] = "command"
                 return data
     stop.append({"hooks": [{"type": "command", "command": cmd}]})
+    return data
+
+
+def _merge_pretool_hook(data: dict, cmd: str, matcher: str, root: Path | None = None) -> dict:
+    """幂等装配 PreToolUse：只认并替换自己托管的命令，用户已有 PreToolUse 配置原样保留。
+
+    托管命令独占一个 matcher 组：已在纯托管组里 → 原位更新命令与 matcher；
+    混在用户组里 → 只把托管命令摘出该组（用户组其余内容不动）并另起托管组。
+    """
+    groups = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    own = {"matcher": matcher, "hooks": [{"type": "command", "command": cmd}]}
+    placed = False
+    kept = []
+    for group in groups:
+        entries = group.get("hooks", [])
+        managed = [h for h in entries if _is_managed_pretool_hook(h.get("command", ""), root)]
+        if not managed:
+            kept.append(group)
+        elif len(managed) == len(entries) and not placed:
+            kept.append(dict(group, matcher=matcher, hooks=[{"type": "command", "command": cmd}]))
+            placed = True
+        elif len(managed) == len(entries):
+            continue                            # 重复的纯托管组：并入首个
+        else:
+            kept.append(dict(group, hooks=[h for h in entries if h not in managed]))
+    if not placed:
+        kept.append(own)
+    groups[:] = kept
     return data
 
 
@@ -1233,7 +1311,10 @@ def sync_hooks(plan: Plan, agent: str):
         data = json.loads(_read(path) or "{}")
     except json.JSONDecodeError:
         raise SystemExit(f"[agent_sync] {path} 不是合法 JSON，拒绝覆盖，请先修复")
-    plan.write_text(path, _json_dump(_merge_stop_hook(data, _hook_cmd(agent), root)))
+    merged = _merge_stop_hook(data, _hook_cmd(agent), root)
+    if agent in PRETOOL_MATCHER and PRETOOL_GUARD_SOURCE.is_file():
+        merged = _merge_pretool_hook(merged, _pretool_cmd(agent), PRETOOL_MATCHER[agent], root)
+    plan.write_text(path, _json_dump(merged))
     if agent == "codex":
         cfg = root / ".codex" / "config.toml"
         text = _read(cfg)
@@ -1268,23 +1349,26 @@ def _validate_hook_structure(data: dict, path: Path):
     hooks = data.get("hooks", {})
     if not isinstance(hooks, dict):
         raise SystemExit(f"[agent_sync] hooks 结构错误：{path} 的 hooks 必须是对象")
-    stop = hooks.get("Stop", [])
-    if not isinstance(stop, list):
-        raise SystemExit(f"[agent_sync] hooks 结构错误：{path} 的 Stop 必须是数组")
-    for index, group in enumerate(stop):
-        if not isinstance(group, dict):
-            raise SystemExit(f"[agent_sync] hooks 结构错误：{path} Stop[{index}] 必须是对象")
-        entries = group.get("hooks", [])
-        if not isinstance(entries, list):
-            raise SystemExit(f"[agent_sync] hooks 结构错误：{path} Stop[{index}].hooks 必须是数组")
-        for hook_index, hook in enumerate(entries):
-            if not isinstance(hook, dict):
-                raise SystemExit(
-                    f"[agent_sync] hooks 结构错误：{path} Stop[{index}].hooks[{hook_index}] 必须是对象")
-            if "command" in hook and not isinstance(hook["command"], str):
-                raise SystemExit(f"[agent_sync] hooks 结构错误：{path} command 必须是字符串")
-            if "type" in hook and not isinstance(hook["type"], str):
-                raise SystemExit(f"[agent_sync] hooks 结构错误：{path} type 必须是字符串")
+    for event in ("Stop", "PreToolUse"):
+        groups = hooks.get(event, [])
+        if not isinstance(groups, list):
+            raise SystemExit(f"[agent_sync] hooks 结构错误：{path} 的 {event} 必须是数组")
+        for index, group in enumerate(groups):
+            if not isinstance(group, dict):
+                raise SystemExit(f"[agent_sync] hooks 结构错误：{path} {event}[{index}] 必须是对象")
+            entries = group.get("hooks", [])
+            if not isinstance(entries, list):
+                raise SystemExit(f"[agent_sync] hooks 结构错误：{path} {event}[{index}].hooks 必须是数组")
+            for hook_index, hook in enumerate(entries):
+                if not isinstance(hook, dict):
+                    raise SystemExit(
+                        f"[agent_sync] hooks 结构错误：{path} {event}[{index}].hooks[{hook_index}] 必须是对象")
+                if "command" in hook and not isinstance(hook["command"], str):
+                    raise SystemExit(f"[agent_sync] hooks 结构错误：{path} command 必须是字符串")
+                if "type" in hook and not isinstance(hook["type"], str):
+                    raise SystemExit(f"[agent_sync] hooks 结构错误：{path} type 必须是字符串")
+            if event == "PreToolUse" and "matcher" in group and not isinstance(group["matcher"], str):
+                raise SystemExit(f"[agent_sync] hooks 结构错误：{path} {event}[{index}].matcher 必须是字符串")
 
 
 def _validate_codex_features(root: Path):
@@ -1330,7 +1414,9 @@ def _validate_hooks(root: Path, agents: list):
         path = paths[agent]
         data = _json_object(path, f"{agent} hooks {path}") if path.exists() else {}
         _validate_hook_structure(data, path)
-        _merge_stop_hook(json.loads(json.dumps(data)), _hook_cmd(agent), root)
+        probe = _merge_stop_hook(json.loads(json.dumps(data)), _hook_cmd(agent), root)
+        if agent in PRETOOL_MATCHER and PRETOOL_GUARD_SOURCE.is_file():
+            _merge_pretool_hook(probe, _pretool_cmd(agent), PRETOOL_MATCHER[agent], root)
     if "codex" in agents:
         _validate_codex_features(root)
 
@@ -1622,8 +1708,13 @@ def run(root: Path, agents: list, mode: str, apply: bool) -> dict:
     _prune(plan, root / LEGACY_CODEX_COMMAND_SKILLS, set())
     _prune(plan, root / ".dsh/skills", set())
     sync_gitignore(plan, generated)
-    return {"agents": agents, "mode": "managed-copy", "applied": apply,
-            "drift": plan.drift, "actions": plan.actions}
+    result = {"agents": agents, "mode": "managed-copy", "applied": apply,
+              "drift": plan.drift, "actions": plan.actions}
+    notes = [PRETOOL_UNSUPPORTED_NOTE[a] for a in agents
+             if a in PRETOOL_UNSUPPORTED_NOTE and PRETOOL_GUARD_SOURCE.is_file()]
+    if notes:
+        result["notes"] = notes
+    return result
 
 
 def _self_check() -> int:

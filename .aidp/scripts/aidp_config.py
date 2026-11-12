@@ -32,16 +32,21 @@ _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_text
+import json
 import os
 import re
 import sys
+import time
 
 CONFIG_REL = os.path.join("memory", "aidp-config.yaml")
 
 # Stop 护栏的盲打逃生舱（`touch` 即关，优先级高于 yaml 键）
 STOP_GUARD_OFF_REL = os.path.join("memory", ".autopilot-stop-guard-off")
+ENTRY_GUARD_OFF_REL = os.path.join("memory", ".entry-guard-off")
+LEGACY_ENTRY_GUARD_OFF_REL = os.path.join("memory", ".pretool-guard-off")
+TEST_GUARD_OFF_REL = os.path.join("memory", ".test-guard-off")
 
-TEMPLATE = runtime_text("# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n# 例外：scheduler.dev_interval / test_interval（调度周期）已写进操作系统定时任务，改后须重跑\n# aidp_scheduler.py install 才生效（watchdog / status 优先读上次安装快照）。\n\nproject:\n  # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，\n  # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。\n  name: null\n  name_cn: null\n  # 目标数据库方言（可空，通用键）。null = 通用，不启用任何库专项规则。目前 SKILL 脚本\n  # （--db / --sql-db）只有 dameng 有专项规则：dm / dameng / 达梦* 经 `aidp_config.py sql-db-flag`\n  # 映射为 dameng 后才传，其余值（mysql 等）不传。由用户在技术选型确认数据库后记录\n  # （无人值守下达梦由技术边界判定回写，仅在本键为空时），Agent 不自行推断。\n  sql_dialect: null\n\ndevelopment:\n  # 首次修改需求或修复漏洞前由用户选择，之后在本项目沿用。\n  # null = 尚未选择；current = 直接在当前分支修改；new = 每次独立任务新建分支。\n  # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。\n  branch_policy: null\n\n# 可选执行策略；null 表示普通开发/修复默认实现、必要静态检查及本任务相关单测。\n# 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。\n# 来源键 authorization_source 由 Agent 在用户明确选择后记录，不要自行手填；形如：\n#   execution_policy: {authorization_source: {kind: project-policy, user_selected: true, request_id: <请求标识>, text: <用户原话>}}\nexecution_policy: null\n\ncommit_gate:\n  # 提交前门禁总开关（约定 24：每次 git commit 前跑 __AIDP_HOME__/scripts/commit_gate.py）。\n  # 关掉之后：不再检查台账积压 / CICD 推送欠账。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32：__AIDP_HOME__/scripts/notify.py）。\n  # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。\n  enabled: false\n  # 一个渠道失败时是否尝试下一个\n  fallback: true\n  # autopilot 启动时是否发 #0a「渠道已连通」通知（默认不发，避免噪音）\n  channel_ready_card: false\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只经环境变量引用，不明文入库。\n  channels: []\n  # 例：\n  #   - {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #   - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #   - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #   - {type: lark-cli, chat_id: \"<chat id>\"}\n  #   - {type: command, command: \"<读 stdin JSON 的发送命令>\"}\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 兼容旧键（默认值 false，不表达禁令）：单独设 true 或 false 都不改变行为（旧布尔不是授权，是否触发以当次 deploy 授权为准）。\n  # 只有同时存在用户明确选择的禁用来源 auto_trigger_source（kind: project-policy，结构同\n  # execution_policy.authorization_source，由 Agent 在用户明确要求禁止自动触发后记录，不要手填）\n  # 且 auto_trigger: false，才拦截自动触发 / 重试。\n  auto_trigger: false\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: \"...\", view: \"...\", trigger: \"...\", retry: \"...\", check: \"...\"}\n  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。\n  # 只记事实、不改 CICD 配置。由 `__AIDP_HOME__/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。\n  push_auto_deploy: false\n  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4\n  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻\n  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。\n  push_deploy_min_wait_seconds: 300\n\ndeployment:\n  # 备份策略沿项目既有设置；null 不授权备份，也不假定当天零次。\n  # 接入字段与真实记录格式见 __AIDP_HOME__/reference/部署操作约定.md。\n  # DB/完整冷备/迁移快照共用 record_file、max_per_day、timezone。\n  # commands 仅填既有 argv，skip_args 仅填现有部署脚本实际支持的参数。\n  # 可选 timeout_seconds：项目备份命令的超时秒数（缺省 3600）。\n  backup: null\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（python3 __AIDP_HOME__/scripts/aidp_scheduler.py install）：\n  # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知\n  stale_cycles: 3\n  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久\n  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。\n  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；\n  # watchdog 用 max(stale 阈值, 本值 + 180s 收尾宽限, 1h) 作「持锁超期 = 挂死」的判据（环境变量覆盖后同样生效）。\n  # 0 = 不设上限（不推荐）。\n  tick_max_seconds: 7200\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: \"codex exec --sandbox workspace-write {prompt}\"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n", __file__)
+TEMPLATE = runtime_text("# AIDP 项目配置（**人维护**，团队共享、随 git 提交）\n#\n# 这是你可以直接改的那一份。程序写的运行时状态在\n# memory/.sprint-autopilot-baseline.json —— 那份别手动动，会被下一轮覆盖。\n#\n# 改完无需重启任何东西，下一次命令运行即生效。\n# 例外：scheduler.dev_interval / test_interval（调度周期）已写进操作系统定时任务，改后须重跑\n# aidp_scheduler.py install 才生效（watchdog / status 优先读上次安装快照）。\n\nproject:\n  # 项目标识。name = 英文应用编码（默认 git 仓库目录名）；name_cn = 对外中文名称，\n  # 里程碑通知标题、OpenAPI 文档标题、子项目默认命名取它（缺省回退 name → git 仓库名）。\n  name: null\n  name_cn: null\n  # 目标数据库方言（可空，通用键）。null = 通用，不启用任何库专项规则。目前 SKILL 脚本\n  # （--db / --sql-db）只有 dameng 有专项规则：dm / dameng / 达梦* 经 `aidp_config.py sql-db-flag`\n  # 映射为 dameng 后才传，其余值（mysql 等）不传。由用户在技术选型确认数据库后记录\n  # （无人值守下达梦由技术边界判定回写，仅在本键为空时），Agent 不自行推断。\n  sql_dialect: null\n\ndevelopment:\n  # 首次修改需求或修复漏洞前由用户选择，之后在本项目沿用。\n  # null = 尚未选择；current = 直接在当前分支修改；new = 每次独立任务新建分支。\n  # 只记录开发偏好，不创建分支，也不替代部署源对齐或版本发布规则。\n  branch_policy: null\n\n# 可选执行策略；null 表示普通开发/修复默认实现、必要静态检查及本任务相关单测。\n# 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。\n# 来源键 authorization_source 由 Agent 在用户明确选择后记录，不要自行手填；形如：\n#   execution_policy: {authorization_source: {kind: project-policy, user_selected: true, request_id: <请求标识>, text: <用户原话>}}\nexecution_policy: null\n\ncommit_gate:\n  # 提交前门禁总开关（约定 24：每次 git commit 前跑 __AIDP_HOME__/scripts/commit_gate.py）。\n  # 关掉之后：不再检查台账积压 / CICD 推送欠账。\n  enabled: true\n\nnotify:\n  # 里程碑通知总开关（约定 32：__AIDP_HOME__/scripts/notify.py）。\n  # 未开启或未配置任何渠道时，播报节点静默跳过，不阻断链路。\n  enabled: false\n  # 一个渠道失败时是否尝试下一个\n  fallback: true\n  # autopilot 启动时是否发 #0a「渠道已连通」通知（默认不发，避免噪音）\n  channel_ready_card: false\n  # 渠道按顺序尝试，成功即停。⛔ webhook 地址 / 密钥只经环境变量引用，不明文入库。\n  channels: []\n  # 例：\n  #   - {type: feishu, webhook_env: AIDP_FEISHU_WEBHOOK, secret_env: AIDP_FEISHU_SECRET}\n  #   - {type: dingtalk, webhook_env: AIDP_DINGTALK_WEBHOOK, secret_env: AIDP_DINGTALK_SECRET}\n  #   - {type: wecom, webhook_env: AIDP_WECOM_WEBHOOK}\n  #   - {type: lark-cli, chat_id: \"<chat id>\"}\n  #   - {type: command, command: \"<读 stdin JSON 的发送命令>\"}\n\ncicd:\n  # CICD 提供方（约定 31.5）：github-actions（默认）/ gitlab-ci / jenkins / command / none。\n  provider: github-actions\n  # 兼容旧键（默认值 false，不表达禁令）：单独设 true 或 false 都不改变行为（旧布尔不是授权，是否触发以当次 deploy 授权为准）。\n  # 只有同时存在用户明确选择的禁用来源 auto_trigger_source（kind: project-policy，结构同\n  # execution_policy.authorization_source，由 Agent 在用户明确要求禁止自动触发后记录，不要手填）\n  # 且 auto_trigger: false，才拦截自动触发 / 重试。\n  auto_trigger: false\n  max_retries: 3\n  # 部署环境 → 流水线标识。github-actions = workflow 文件名；gitlab-ci = 分支名（可留空）；\n  # jenkins = Job 路径；command = 原样代入命令模板的 {pipeline}。例：{test: deploy-test.yml}\n  pipelines: {}\n  # 各提供方专属参数（只填所选那个）。⛔ 令牌 / 密码只写环境变量名。\n  # gitlab-ci: {url: https://gitlab.com, project: group/name, token_env: AIDP_GITLAB_TOKEN}\n  # jenkins:   {url: https://jenkins.example.com, user_env: AIDP_JENKINS_USER, token_env: AIDP_JENKINS_TOKEN}\n  # command:   {list: \"...\", view: \"...\", trigger: \"...\", retry: \"...\", check: \"...\"}\n  # ★ 本项目「推送即自动部署」吗（约定 31.5）：true = 推送本身就是触发，⛔ 不再主动触发流水线。\n  # 只记事实、不改 CICD 配置。由 `__AIDP_HOME__/scripts/aidp_state.py cicd-push-autodeploy-yes|-no` 写。\n  push_auto_deploy: false\n  # 推送即自动部署时，推送后最短等待秒数：等满仍取不到流水线状态 → cicd_watch.py 返回 rc=4\n  # （降级放行就绪探针），⛔ 不冻结。防的是「流水线无法被单独触发 + 平台取不到状态」时链路被误冻\n  # 且无恢复路径 —— 那种项目里主动触发恒失败，按失败熔断等于永不放行。\n  push_deploy_min_wait_seconds: 300\n\nstop_guard:\n  # autopilot Stop 护栏（防止无人值守链路在未收口时静默停下）。\n  # 关掉 = 临时逃生舱：护栏误报把你挡住时用，⛔ 排除故障后记得改回 true。\n  enabled: true\n\nentry_guard:\n  # 只控制入口门：Edit 与常见 Bash 写 code/** 前，须绑定本任务 resolve、读取 branch-policy 且目标在 write_set 内。\n  # 临时关闭：touch memory/.entry-guard-off；旧 .pretool-guard-off 仅兼容为入口关闭，迁移后删除旧文件。\n  # 关闭本门不影响 test_guard；故障排除后恢复 true 并删除相应逃生文件。\n  enabled: true\n\ntest_guard:\n  # 独立控制测试范围门：无参/目录/越界测试与 git stash；默认开启。\n  # 临时关闭：touch memory/.test-guard-off；不影响 entry_guard。\n  enabled: true\n\nscheduler:\n  # 7×24 操作系统调度（python3 __AIDP_HOME__/scripts/aidp_scheduler.py install）：\n  # 开发、测试链路各一个用户级定时任务，另装独立 watchdog 巡检（默认 5m）；两链路互不阻塞。\n  dev_interval: 10m\n  test_interval: 5m\n  # 执行 Agent：auto（按 agent_env.py detect）/ claude / codex / dsh\n  agent: auto\n  # 任一链路连续多少个周期无心跳即本地告警（memory/.aidp/alerts.jsonl）+ 里程碑通知\n  stale_cycles: 3\n  # 单轮 tick 的硬上限（秒）。⛔ 它防的是最安静的一种故障：Agent 进程挂死 → 互斥锁被永久\n  # 持有 → 之后每次调度都「上一轮仍在运行，跳过」→ watchdog 永远判 running → 零告警停摆。\n  # agent_loop.sh 用它给 tick 套 timeout（环境变量 AIDP_TICK_MAX_SECONDS 优先，默认 7200）；\n  # watchdog 用 max(stale 阈值, 本值 + 180s 收尾宽限, 1h) 作「持锁超期 = 挂死」的判据（环境变量覆盖后同样生效）。\n  # 0 = 不设上限（不推荐）。\n  tick_max_seconds: 7200\n  # 各 Agent 的非交互执行命令模板（{prompt} 为占位符）；留空用内置默认。\n  # ⛔ 内置默认之外的 CLI 写法请按所用 Agent 当前版本的官方文档自行确认。\n  exec: {}\n  # 例：exec: {codex: \"codex exec --sandbox workspace-write {prompt}\"}\n\nscaffold:\n  # 本项目上次同步到的脚手架版本号。**由 aidp-code-engineer 脚手架写入，人别改**——\n  # 改小会触发不必要的全量覆盖，改大会让真正的升级被跳过。\n  version: null\n  # 升级中途留下的待消费语义改写队列；非 null 表示**上一轮升级尚未真正交付**。\n  pending: null\n\n# autopilot 决策兜底（★ 权威是本版 PRD frontmatter 的 autopilot_decisions 段，\n# 本段仅在 PRD 未声明时生效；全项目一份、无版本维度）。\nautopilot_decisions: {}\n", __file__)
 
 
 # ───────────────────────── 读 ─────────────────────────
@@ -395,6 +400,28 @@ def cicd_push_deploy_min_wait(root="."):
     return value if value > 0 else 300
 
 
+def cicd_unconfigured(cfg, explicit_pipeline=None):
+    """CICD 是否「配置上未接入」的唯一实现（`cicd_enabled` 与 `cicd_watch.unconfigured_cicd` 共用）。
+
+    返回 None = 已接入；否则 (kind, reason)：kind ∈ disabled（provider=none）/ not-configured（pipelines 无有效项）。
+    只读传入的 cfg，不读文件、不落盘、不构造 provider。
+    """
+    if str(cfg.get("provider", "")).strip().lower() == "none":
+        return "disabled", "cicd.provider=none（未接入 CICD）"
+    if isinstance(explicit_pipeline, str) and explicit_pipeline.strip():
+        return None
+    pipelines = cfg.get("pipelines") or {}
+    if not isinstance(pipelines, dict) or not any(isinstance(v, str) and v.strip() for v in pipelines.values()):
+        return "not-configured", "cicd.pipelines 未配置有效流水线；不调用 provider，部署状态未核验"
+    return None
+
+
+def cicd_enabled(root="."):
+    """本项目是否启用 CICD → (enabled: bool, reason: str)。纯只读；以持久化配置为准。"""
+    miss = cicd_unconfigured(cicd_config(root))
+    return (False, miss[1]) if miss else (True, "cicd.provider=%s 且 cicd.pipelines 已配置" % cicd_config(root)["provider"])
+
+
 def cicd_push_auto_deploy(root="."):
     """本项目是否已记录「推送即自动部署」（`cicd.push_auto_deploy`，缺省 False）。"""
     return bool((cicd_config(root) or {}).get("push_auto_deploy"))
@@ -409,6 +436,21 @@ def stop_guard_enabled(root="."):
     if os.path.exists(os.path.join(root, STOP_GUARD_OFF_REL)):
         return False
     return get_bool(root, "stop_guard.enabled", True)
+
+
+def entry_guard_enabled(root="."):
+    """只关闭入口门；旧 .pretool-guard-off 仅兼容为入口开关，不影响测试门。"""
+    if any(os.path.exists(os.path.join(root, path)) for path in
+           (ENTRY_GUARD_OFF_REL, LEGACY_ENTRY_GUARD_OFF_REL)):
+        return False
+    return get_bool(root, "entry_guard.enabled", True)
+
+
+def test_guard_enabled(root="."):
+    """测试范围门独立默认开启；入口门开关和旧逃生文件不影响它。"""
+    if os.path.exists(os.path.join(root, TEST_GUARD_OFF_REL)):
+        return False
+    return get_bool(root, "test_guard.enabled", True)
 
 
 SCHEDULER_DEFAULTS = {"dev_interval": "10m", "test_interval": "5m", "agent": "auto",
@@ -526,7 +568,8 @@ def _fmt_scalar(value):
 
 # ★ set 的键校验表（只收有确定值域的键；其余键仍是自由字符串）。
 _BOOL_KEYS = frozenset({"commit_gate.enabled", "notify.enabled", "notify.fallback", "notify.channel_ready_card",
-                        "cicd.auto_trigger", "cicd.push_auto_deploy", "stop_guard.enabled"})
+                        "cicd.auto_trigger", "cicd.push_auto_deploy", "stop_guard.enabled",
+                        "entry_guard.enabled", "test_guard.enabled"})
 _INT_KEYS = {"cicd.max_retries": 0, "cicd.push_deploy_min_wait_seconds": 1,
              "scheduler.stale_cycles": 1, "scheduler.tick_max_seconds": 0}
 _INTERVAL_KEYS = frozenset({"scheduler.dev_interval", "scheduler.test_interval"})
@@ -748,12 +791,22 @@ def _self_check():
                    and nc["channels"][1].get("command") == "cat"))
         ok.append(("★ cicd.pipelines 流式映射被展开",
                    cicd_config(k)["pipelines"] == {"dev": "deploy-dev.yml", "test": "deploy-test.yml"}))
+        ok.append(("★ cicd_enabled：有效 pipelines → 启用；模板缺省（无 pipelines）→ 未启用",
+                   cicd_enabled(k)[0] is True and cicd_enabled(d)[0] is False))
+        open(os.path.join(k, CONFIG_REL), "w", encoding="utf-8").write(
+            "cicd:\n  provider: none\n  pipelines: {test: deploy-test.yml}\n")
+        ok.append(("★ cicd_enabled：provider=none → 未启用（即使配了 pipelines）", cicd_enabled(k)[0] is False))
         shutil.rmtree(k, ignore_errors=True)
         e = tempfile.mkdtemp()
         os.makedirs(os.path.join(e, "memory"))
         # 逃生舱优先级
         open(os.path.join(e, STOP_GUARD_OFF_REL), "w").write("")
         ok.append(("★ touch 逃生舱优先于 yaml 键", stop_guard_enabled(e) is False))
+        ok.append(("entry_guard 缺省开启；逃生舱文件与 yaml 键均可关闭",
+                   entry_guard_enabled(d) is True
+                   and entry_guard_enabled(e) is True
+                   and (open(os.path.join(e, ENTRY_GUARD_OFF_REL), "w").write("") or True)
+                   and entry_guard_enabled(e) is False))
         # 下游判定 fail-closed
         f = tempfile.mkdtemp()
         os.makedirs(os.path.join(f, "memory"))
@@ -789,6 +842,27 @@ def _self_check():
     return 0 if all(r for _, r in ok) else 1
 
 
+def _mark_branch_policy_read(root, result):
+    """落「已读取 branch-policy」运行态标记（`memory/.aidp/branch-policy-read.json`，不入库）。
+
+    供 `entry_gate.py` 校验：改 code/** 前必须读过本偏好。写失败只忽略——标记是护栏证据，
+    不能让只读查询因此失败。
+    """
+    try:
+        from aidp_paths import ensure_runtime_dir, runtime_dir
+        ensure_runtime_dir(root)
+        record = {"root": os.path.realpath(root), "read_at": time.time(), "policy": result.get("policy"),
+                  "status": result.get("status"), "needs_choice": result.get("needs_choice"),
+                  "vcs_mode": result.get("vcs_mode")}
+        path = os.path.join(runtime_dir(root), "branch-policy-read.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(record, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def main(argv=None):
     import argparse
     import json
@@ -801,14 +875,21 @@ def main(argv=None):
     s.add_argument("--root", default=argparse.SUPPRESS)
     sub.add_parser("show").add_argument("--root", default=argparse.SUPPRESS)
     sub.add_parser("ensure").add_argument("--root", default=argparse.SUPPRESS)
-    sub.add_parser("branch-policy", help="只读查询开发分支偏好与首次选择状态").add_argument(
+    sub.add_parser("branch-policy", help="只读查询开发分支偏好与首次选择状态（同时落「已读取」运行态标记）").add_argument(
         "--root", default=argparse.SUPPRESS)
+    sub.add_parser("cicd-enabled", help="只读：CICD 是否启用（退出 0=启用 / 1=未启用；--json 输出 {enabled, reason}）").add_argument(
+        "--json", action="store_true")
     sub.add_parser("sql-db-flag", help="输出 SKILL 脚本 --db/--sql-db 的取值（dameng 或空 = 不传）").add_argument(
         "--root", default=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     if a.self_check:
         return _self_check()
     root = a.root
+    if a.cmd == "cicd-enabled":
+        enabled, why = cicd_enabled(root)
+        if a.json:
+            print(json.dumps({"enabled": enabled, "reason": why}, ensure_ascii=False))
+        return 0 if enabled else 1
     if a.cmd == "sql-db-flag":
         print(sql_db_flag(root))
         return 0
@@ -821,6 +902,7 @@ def main(argv=None):
                               "needs_choice": False, "status": "invalid",
                               "error": str(exc)}, ensure_ascii=False))
             return 2
+        _mark_branch_policy_read(root, result)
         print(json.dumps(result, ensure_ascii=False))
         return 3 if result["needs_choice"] else 0
     if a.cmd == "get":

@@ -22,7 +22,7 @@
 5. **flow 文件不是命令**：`{{AIDP_HOME}}/flows/` **不**被 Claude Code 当作 slash 命令扫描（只有 `{{AIDP_HOME}}/commands/*.md` 才是），故不污染 `/` 菜单；`Read` 工具可正常读取。
 6. **★ 单文件大小硬约束：每个【执行分片】≤20KB（硬上限）、尽量 ~10KB**。**执行分片 = `{{AIDP_HOME}}/flows/**` 下除 `README.md` / `rationale.md` / `invariants.md` / `usage-guard.md` / `output-examples.md` 之外的【全部】 `.md`**——不只 `phase-N.md`：`version/planning-*`、`sprint-design/step-*`、`sprint-dev/postdev-*` 等同样是执行分片，且其中若干长期贴着上限。**原因**：flow 文件被 Read 进上下文时，若本身上百 KB，"lost in the middle" 照旧存在、等于没拆彻底——分片的意义正是让"任一时刻活跃指令"足够小。超 20KB 的执行分片必须**按子步骤边界二次切分**成多个 `<段名>-1.md` / `<段名>-2.md` …（每片头部写明"本片覆盖子步骤 X.a–X.b"），命令主体的该段骨架表则**逐子步映射到对应分片**、模型按进度依次 Read。**切分不得从中间截断**任何 markdown 表格 / 代码块 / 单条硬门。
    - **★ 附属文件豁免**：`invariants.md`（全 Phase 通用、由命令主体在进入执行链前**一次性加载**，本就不随 Phase 反复进出上下文）、`usage-guard.md`（参考性、执行路径不载）、`rationale.md` / `output-examples.md`（执行期不载）**不受 ≤20KB 硬上限约束**——它们不是"某一时刻的活跃指令集"，切碎反而破坏"按名引用解析到唯一定义处"的单一信源性。但仍应**尽量精简**：只放真正全局通用的条目，Phase 专属内容一律回归对应 `phase-N.md`。
-7. **★ 序列连续、无缺口（统一性）**：一个命令若已把多数 Phase/Step 外置，就**全部外置、不留中间缺口**（避免 `phase-0/1/3` 缺 `phase-2` 这种别扭序列）——哪怕某段较小也外置以保持一致。**例外（主体留存）**：① 硬门 / 判定步（如 `sprint-selftest` 的 Step 2 输出前硬门）——执行体在读分片前就必须在场，外置会形成先读后判的循环依赖；② 体量未达外置门槛的小段（如 `sprint-design` 的 Step 0.7 / 5.x / 6 / 7、`sprint-dev` 的 Phase 0A / 0B，见下文「保留不拆」）。除此之外不留缺口。
+7. **★ 序列连续、无缺口（统一性）**：一个命令若已把多数 Phase/Step 外置，就**全部外置、不留中间缺口**（避免 `phase-0/1/3` 缺 `phase-2` 这种别扭序列）——哪怕某段较小也外置以保持一致。**例外（主体留存）**：① 硬门 / 判定步（如 `sprint-selftest` 的 Step 2 输出前硬门）——执行体在读分片前就必须在场，外置会形成先读后判的循环依赖；② 体量未达外置门槛的小段（如 `sprint-design` 的 Step 0.7 / 5.x / 6 / 7，见下文「保留不拆」）。除此之外不留缺口。
 8. **★ 适用条件前置（让执行体"先判后读"、不读用不上的片）**：**唯一机制 = 命令主体骨架表的「适用条件」列**（骨架表已在上下文，执行体据此判断某子步/分片当次适不适用，不满足则**整片跳过、无需 Read**，如纯小程序/移动轮次跳过 chrome 预检片、客户端 MCP 未声明跳过 `phase-0-8.md`）。⛔ **唯一机制就是这一列**，不设「分片 frontmatter 机读副本」（`{{AIDP_HOME}}/rules/` 的 `paths:` frontmatter 是另一回事）。
    - **覆盖面 = 全部「分片数 ≥4」的命令，且逐表都有这列**。⛔ 本文**不写命令名、不写片数**（写死必漂，同本 README 的「写死必漂」教训；且片数声明另受 `check_shard_counts.py` 按行归属校验）——**现状以机器门输出为准**：`python3 {{AIDP_HOME}}/scripts/check_step_index_coverage.py` 对「分片数 ≥4 且某张带『所在分片』列的骨架表无『适用条件』列」**逐表**报 WARN（不占退出码：补列是内容工作、不该拦住别人的提交，但缺口必须有人看见）。
      ⚠️ **判据刻意是逐表、不是逐命令**：一个命令常有多张骨架表，按「至少一张有」算就让其余几张的缺口完全隐身 —— 而执行体读的是**它当前那一段**那张表。不带「所在分片」列的表（如硬门判定表）不在要求范围内，它们不是用来跳片的。
@@ -66,7 +66,7 @@
 | `version` | 规划 planning×10〔含 3b / 7b〕 + 发布 release×10〔含 4b / 7b / 7c〕，**20 片** |
 | `sprint-aiauto-test` | Phase 0/1/2/3，**19 片**（phase-0×9〔含二次切分的 0-6b、可选能力的 0-8〕/ phase-1 / phase-2×3〔含 2.0.5u 全量单测子 Agent 的 phase-2-unit〕/ phase-3×6〔含二次切分的 3-3b〕）|
 | `sprint-design` | 5 大 Step 段，**9 片** |
-| `sprint-dev` | 轻量上下文 `light-context.md` + 验证输入 `verification-inputs.md` + 正式累进契约 `incremental-contract.md` + Phase 1 开发×2 + 回写×3，**8 片** |
+| `sprint-dev` | light 入口先路由并返回；formal 按阶段加载 `formal-*.md`（前置 / 已有 Sprint / 累进 / 文档 / 反转与启动 / 开发 / 回写 / 收口） + `light-context.md`（速览见 `reference/light-entry.md`） + `light-parallel.md` + `verification-inputs.md` + `incremental-contract.md` + Phase 1 开发×2 + 回写×3，**17 片**；`output-examples.md` 仅供参考 |
 | `sprint-selftest` | Step 1×2 / Step 3×2，**4 片** |
 | `sprint-batch` | `step-6` + `step-6b`（浏览器测试链路），**2 片** |
 | `sprint-bugfix` | `mode-b` + `mode-b2`（独立修复路径），**2 片** |

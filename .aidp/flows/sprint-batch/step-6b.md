@@ -22,8 +22,8 @@
    [ -n "$VERSION" ] || { echo "⛔ 取不到版本号 → 中止本步，不静默跳过"; exit 1; }
    BASELINE_FILE="memory/.sprint-autopilot-baseline.json"
    NOW=$(date -Iseconds)
-   # ⛔ 写 last_deployed_at 前须先有部署证据（约定 31.5；根因见 rationale）：classify_push.py →
-   #    无正式代码变更记 cicd_skipped=true 且不写该字段；有变更须 cicd_watch 终态 + 就绪探针才写。
+   # ⛔ 写 last_deployed_at 前须先有部署证据（约定 31.5；根因见 rationale）：现场只读分类
+   #    （classify_push.py，不落盘）：无正式代码变更不写该字段；有变更须 cicd_watch 终态 + 就绪探针才写。
    #
    # ⛔⛔ 下面几行**必须是可执行语句**，⛔ 不得退回注释（根因见 rationale.md「预写 baseline」）。
    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"

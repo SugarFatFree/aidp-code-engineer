@@ -8,6 +8,7 @@
 | `reports/` | AI 报告 HTML SPA 骨架（AI执行报告 / AI测试报告 / 版本测试报告 三个目录，均为 `index.html` + `assets/` 骨架）+ 单文件模板 `AI数据清理.md`（产出到 `AI数据清理/` 子目录）+ README | `emit-report.py` 渲染时取用 |
 | `deployment/` | 部署骨架（`部署流程.md` / `SQL执行台账.md`） | 仅版本规划 / 正式发布集中校准时，确无唯一操作入口或确需独立 SQL 清单才复制填充（见 `reference/部署操作约定.md`） |
 | `cicd/` | CICD 流水线定义起步模板：`github-actions/deploy.yml`（默认）、`gitlab-ci/.gitlab-ci.yml`、`jenkins/Jenkinsfile`；三者遵守同一组约定（随提交触发、按 commit 可查、部署完成即结束） | 下游按 `memory/aidp-config.yaml` 的 `cicd.provider` 复制对应模板到平台约定位置，并登记 `cicd.pipelines`（约定 31.5） |
+| `scripts/` | 下游项目脚本范例：`run_tests.sh`（测试入口包装，内部走 `test_command_guard.py wrap`：无参数/目录拒绝、`--related` 只跑相关测试、`--lint` 只查改动文件、`--allow-full` 须授权） | 下游自行复制到项目 `scripts/` 并改 `AIDP_HOME` / 测试命令两处；下游自有文件，模板不自动安装，用法见 `rules/code.md` 约定 35 |
 | `optional-rules/` | **按需安装规则的权威模板位** | 由各自的 `--install-rule` 装到 `{{AIDP_HOME}}/rules/` |
 | `_开发期族增量.md` | 约定 22 四族增量册的空骨架 | 各族首次记增量时复制到对应族目录 |
 

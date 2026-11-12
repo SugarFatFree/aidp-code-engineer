@@ -13,7 +13,7 @@
 
 ## Phase 1 开发执行（两种分支共用 — 下设 Phase 1.0pre~1.4）
 
-> 本段是「Phase 1：开发」的展开（分支 A/B 共用）。`### 步骤 N` 是开发执行的子步骤，与回写段（`postdev-writeback-*.md`）的 `Step X.0~X.7` 体系视觉分级一致。
+> 本段是「Phase 1：开发」的展开（分支 A/B 共用）。`### 步骤 N` 是开发执行的子步骤，与回写段（`postdev-writeback-*.md`）的 `Step X.0~X.6` 体系视觉分级一致。
 
 ### Phase 1.0pre：activeContext 当前 Sprint 编号置位/校验（★ caller-agnostic + 幂等）
 

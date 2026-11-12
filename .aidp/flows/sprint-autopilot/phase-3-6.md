@@ -11,10 +11,10 @@
 
 ### 3.2.1 CICD 编排 + 部署就绪探针（`cicd-provider` 触发，或正式代码 push 触发）
 
-部署前沿用当前 execution context。备份/迁移操作按 `{{AIDP_HOME}}/reference/部署操作约定.md` 核项目策略与真实记录：DB/冷备/迁移快照共用额度，适用备份复用原时点并用现有 skip 参数；覆盖不足或记录不明时报告前提缺口，不追加复制、不自动恢复。日常部署不生成部署 Markdown、不为日志另行 commit/push，不追加测试/CVL/全回归/迁移演练或工具开发。
-> **`vcs_mode=none` 优先出口**：仅跳过依赖 push commit 的 cloud CICD 触发/监听与远端就绪探针，记 `status=skipped, reason=unsupported:vcs-disabled`，不得标记通过，也不得借 `cicd_skipped=true` 冒充「已成功推送且无需流水线」。`mode=cloud` 不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d、不等待旧部署；转 Phase 3.3/3.4 继续本地审计和报告。**`mode=local` 的本地就绪不依赖 Git**：依 `phase-3-5b.md` 先探实际服务/端口，未就绪不得写证据；本地就绪后写 `last_deployed_at` + `phase_beta_done_at`，保留测试交接与可验证部署证据，不能把本地部署同远端 CICD 一起跳过。不因 Git 能力缺失冻结本地开发。仅 `git` 模式走下方分类缺失 fail-closed 与推送绑定逻辑。
+部署前沿用当前 execution context。迁移操作按 `{{AIDP_HOME}}/reference/部署操作约定.md` 执行；备份属项目自身运维策略，AIDP 不要求、不阻碍。日常部署不生成部署 Markdown、不为日志另行 commit/push，不追加测试/CVL/全回归/迁移演练或工具开发。
+> **`vcs_mode=none` 优先出口**：仅跳过依赖 push commit 的 cloud CICD 触发/监听与远端就绪探针，记 `status=skipped, reason=unsupported:vcs-disabled`，不得标记通过，也不得冒充「已成功推送且无需流水线」。`mode=cloud` 不写 `last_deployed_at` / `phase_beta_done_at`，不发 #1d、不等待旧部署；转 Phase 3.3/3.4 继续本地审计和报告。**`mode=local` 的本地就绪不依赖 Git**：依 `phase-3-5b.md` 先探实际服务/端口，未就绪不得写证据；本地就绪后写 `last_deployed_at` + `phase_beta_done_at`，保留测试交接与可验证部署证据，不能把本地部署同远端 CICD 一起跳过。不因 Git 能力缺失冻结本地开发。仅 `git` 模式走下方分类缺失 fail-closed 与推送绑定逻辑。
 
-> **★ 进入本 Phase 前置判定**：读取当前 build 的 `change_classification`（由 Phase 3.2 push 前分类写入）。`cicd_skipped=true` 且 `classification_error=false` 时，本 Phase **整段跳过**：push 已成功校验，直接记录 push 完成，不触发/监听远端 CICD、不等待部署、不跑就绪探针，也不读取远端状态反推分类。分类记录缺失、脚本失败或 `classification_error=true` 时一律按正式代码路径进入本 Phase（fail-closed）。
+> **★ 进入本 Phase 前置判定**：用 autopilot 自有的 `push_base_ref` / `push_commit` 现场只读分类（下方首个围栏算 `DECISION`；`classify_push.py` 不落盘）。仅 `decision=skip` 时本 Phase **整段跳过**：push 已成功校验，不触发/监听远端 CICD、不等待部署、不跑就绪探针，也不读远端状态反推分类。分类失败/缺字段一律按 `watch` 进入本 Phase（fail-closed）。
 > **适用条件**：分类允许监听，且项目已接入 CICD（`memory/aidp-config.yaml` 的 `cicd.provider` ≠ `none`、`cicd.pipelines.<env>` 已配、提供方 CLI/凭据可用）。`cicd-provider` 模式可主动触发（`cicd_watch.py --mode trigger`，要求该流水线在平台侧允许手动/API 触发，如 GitHub Actions 的 `workflow_dispatch`）；`git-push`/`ci-pipeline` 由 push/外部自动触发后只检测并接管运行。两类 trigger 的失败监控、最多 `cicd.max_retries`（默认 3）次重试和就绪探针相同。
 > **不适用（回落轻量路径）**：分类明确跳过，或 `cicd.provider=none`、未配置有效 `cicd.pipelines` 且没有显式 `--pipeline`、`manual-script`、`mode=local`、`mode=none`。无 CI/流水线由 `cicd_watch.py` 在构造 provider 前返回 `rc=3, configuration_degraded=true, next_action=none`，`consume` 核当前配置与本 build SHA 后保留 `UNVERIFIED/NOT_REQUESTED`、清本段待办并转既有下一阶段；立即结束 A/B/C/D，不再 list/detect/poll，不运行就绪探针、不冻结、不写部署成功。显式合法 pipeline 仍支持。CLI/凭据故障与配置未接入不同，按原故障恢复分支处理。
 > 检测 / 轮询 / 触发 / 重试一律经 `{{AIDP_HOME}}/scripts/cicd_watch.py`（`--mode detect|poll|trigger|retry`，平台差异收在 `cicd_providers.py`，⛔ 命令端不直接调任何平台 CLI）。每次调用及 consume 都传 `--execution-context "$EXECUTION_CONTEXT"`，每个独立围栏从当前版本 baseline 的 `execution_context` 重新读取，不能新建上下文或自行补 deploy grant。push 权限只允许必要只读监听；只有真实 deploy 授权才可主动写或交接部署探针。缺上下文/无 deploy 时返回 `NOT_REQUESTED,next_action=none`，保留 `observed_verdict` 与原平台事实，立即结束本部署段：不进入后续 A/B/C/D、不弹授权请求、不冻结、不补欠账。只读观测到真实失败仍 `rc=2,ok=false`，不得改报成功。
@@ -22,10 +22,13 @@
 > ⛔ **本片引用的 `GIT_PUSH_COMMIT` / `GIT_PUSH_AT` 一律从 baseline 读，不要当成上一分片传下来的 shell 变量**——它们赋在 `phase-3-5b.md` 的推送围栏里，跨不过 Bash 调用边界；取空会让下面所有 commit 强绑定判据退化成"抓最近一条运行"，而那正是本片反复禁止的事：
 > ```bash
 > eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-> BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
-> B=$($BE get current_build --default "")
-> GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --build "$B" get push_commit --default "" || echo "")
-> GIT_PUSH_AT=$([ -n "$B" ] && $BE --build "$B" get push_at --default "" || echo "")
+> BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+> B=$($BE --version "$V" get current_build --default "")
+> GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_commit --default "" || echo "")
+> GIT_PUSH_AT=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_at --default "" || echo "")
+> PUSH_BASE=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_base_ref --default "" || echo "")
+> DECISION=$(python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --base-ref "$PUSH_BASE" ${GIT_PUSH_COMMIT:+--head "$GIT_PUSH_COMMIT"} --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("decision"))') || DECISION=watch
+> [ "$DECISION" = skip ] || DECISION=watch   # 仅明确 skip 才免监听（fail-closed）
 > [ -n "$GIT_PUSH_COMMIT" ] || echo "⛔ 取不到 push_commit → 禁止用弱信号认领运行，回 Phase 3.2 确认推送是否真的成功"
 > ```
 
@@ -84,12 +87,12 @@
 - **否则**：执行下面独立围栏，用选定流水线做防重复检测，仍以本 build 的 push SHA 强绑定。选定流水线必须已写入 `cicd_run.pipeline`；不能只存在上一围栏的 shell 变量中。
   ```bash
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
-  B=$($BE get current_build --default "")
-  GIT_PUSH_COMMIT=$($BE --build "${B:?}" get push_commit --default "")
-  GIT_PUSH_AT=$($BE --build "$B" get push_at --default "")
-  RESOLVED_PIPELINE=$($BE get cicd_run.pipeline --default "")
-  EXECUTION_CONTEXT=$($BE get execution_context --default '') || exit $?
+  BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+  B=$($BE --version "$V" get current_build --default "")
+  GIT_PUSH_COMMIT=$($BE --version "$V" --build "${B:?}" get push_commit --default "")
+  GIT_PUSH_AT=$($BE --version "$V" --build "$B" get push_at --default "")
+  RESOLVED_PIPELINE=$($BE --version "$V" get cicd_run.pipeline --default "")
+  EXECUTION_CONTEXT=$($BE --version "$V" get execution_context --default '') || exit $?
   mkdir -p memory/.aidp; DRC=0
   python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --execution-context "$EXECUTION_CONTEXT" --commit "${GIT_PUSH_COMMIT:?}" --push-at "$GIT_PUSH_AT" \
     --pipeline "${RESOLVED_PIPELINE:?}" --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json || DRC=$?
@@ -107,26 +110,26 @@
   - **仅脚本输出 `next_action=trigger` 时**执行；写入口会复核真实授权、项目禁用来源与共享预算：
     ```bash
     eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"
-    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version ${TARGET_VERSION:?}"
-    B=$($BE get current_build --default "")
-    GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --build "$B" get push_commit --default "" || echo "")
-    GIT_PUSH_AT=$([ -n "$B" ] && $BE --build "$B" get push_at --default "" || echo "")
-    RESOLVED_PIPELINE=$($BE get cicd_run.pipeline --default "")
+    BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"; V="${TARGET_VERSION:?}"
+    B=$($BE --version "$V" get current_build --default "")
+    GIT_PUSH_COMMIT=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_commit --default "" || echo "")
+    GIT_PUSH_AT=$([ -n "$B" ] && $BE --version "$V" --build "$B" get push_at --default "" || echo "")
+    RESOLVED_PIPELINE=$($BE --version "$V" get cicd_run.pipeline --default "")
     DEV_BRANCH="${DEV_BRANCH:-$(git branch --show-current)}"
-    EXECUTION_CONTEXT=$($BE get execution_context --default '') || exit $?
+    EXECUTION_CONTEXT=$($BE --version "$V" get execution_context --default '') || exit $?
     # 写授权、能力开关、预算统一由 cicd_watch 校验；不能以配置替代本轮 grant。
-    mkdir -p memory/.aidp; CJ=memory/.aidp/cicd-trigger.json; CRC=0
+    mkdir -p memory/.aidp; CRC=0
     python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --execution-context "$EXECUTION_CONTEXT" --pipeline "${RESOLVED_PIPELINE:?}" --ref "$DEV_BRANCH" \
-      --commit "${GIT_PUSH_COMMIT:?}" --version "$TARGET_VERSION" --timeout 480 > "$CJ" || CRC=$?
+      --commit "${GIT_PUSH_COMMIT:?}" --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-trigger.json || CRC=$?
     python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" \
-      --result "$CJ" --result-code "$CRC" || exit $?
+      --result memory/.aidp/cicd-trigger.json --result-code "$CRC" || exit $?
     # next_action=detect → 平台不回显 run id，用本 build 的 push_commit 强绑定重新锁定。
-    if [ "$(jq -r '.next_action' "$CJ")" = "detect" ]; then
-      CJ=memory/.aidp/cicd-detect.json; CRC=0
+    if [ "$(jq -r '.next_action' memory/.aidp/cicd-trigger.json)" = "detect" ]; then
+      CRC=0
       python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode detect --execution-context "$EXECUTION_CONTEXT" --commit "$GIT_PUSH_COMMIT" --push-at "$GIT_PUSH_AT" --pipeline "$RESOLVED_PIPELINE" \
-        --version "$TARGET_VERSION" --timeout 480 > "$CJ" || CRC=$?
+        --version "$TARGET_VERSION" --timeout 480 > memory/.aidp/cicd-detect.json || CRC=$?
       python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode consume --execution-context "$EXECUTION_CONTEXT" --version "$TARGET_VERSION" \
-        --result "$CJ" --result-code "$CRC" || exit $?
+        --result memory/.aidp/cicd-detect.json --result-code "$CRC" || exit $?
     fi
     ```
     ⚠️ 按分支触发构建的是**分支当前 HEAD**：受理只代表请求已发送，尚未核验的 `run_commit` 保持空。随后 poll 核对实际 commit 与 `GIT_PUSH_COMMIT`，错绑即冻结，禁止冒充本次提交的部署。

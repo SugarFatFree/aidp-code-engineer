@@ -36,7 +36,7 @@
 | `docs/audit/{version}/version-output-audit-YYYY-MM-DD.md` | 创建 | `/version` Step 2.4.7 规划期审计 |
 | `docs/audit/{version}/version-output-audit-补丁-NN.md` | 创建 | 规划期补充模式审计 |
 | `docs/audit/{version}/version-output-audit-{build}.md` | 创建 | `/sprint-autopilot` Phase 3.3 build 终审；`build` 与 `output_path` 由调用方显式传入 |
-| `docs/audit/{version}/incremental-audit-{YYYYMMDD-HHMM}.md` | 创建 | `trigger=accretion`：`/sprint-dev` Step X.8 · `/sprint-bugfix` Step 5.1 口述累进路径审计 |
+| `docs/audit/{version}/incremental-audit-{YYYYMMDD-HHMM}.md` | 创建 | `trigger=accretion`：`/sprint-dev` 回写收口 · `/sprint-bugfix` Step 5.1 口述累进路径审计 |
 
 ---
 

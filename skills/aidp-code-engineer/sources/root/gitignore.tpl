@@ -108,6 +108,10 @@ memory/.autopilot-stop-guard-count
 memory/.autopilot-stop-guard-skips.jsonl
 # 人工临时禁用护栏的逃生舱开关（存在即全程放行；⛔ 用完记得删）
 memory/.autopilot-stop-guard-off
+# PreToolUse 两道门独立临时停用；旧文件仅关闭入口门，迁移后删除
+memory/.pretool-guard-off
+memory/.entry-guard-off
+memory/.test-guard-off
 # === AI 报告临时输入草稿（emit-report.py 的 --data；写在对应报告目录、生成 HTML 后自动删除，不入库）===
 docs/reports/*/*/.build-input-*.json
 memory/.exec-report-*.json

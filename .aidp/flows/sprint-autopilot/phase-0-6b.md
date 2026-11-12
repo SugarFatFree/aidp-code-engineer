@@ -74,7 +74,7 @@ python3 {{AIDP_HOME}}/scripts/notify.py --node "#4" --auto --header-color red \
    修复后若仍不收敛，由测试链路在下一轮实测后**重新置真**。
    ★ `auto_fix_in_progress_since` = 「修复 + 重部署尚未完成」标记：测试链路节流门见到它且 `last_deployed_at` 早于它时**跳过本 tick**（不对旧部署整轮重测、不再置 `AFP`、不耗 `retest_auto_cap`）；新部署完成（Phase 3.2.1 写 `last_deployed_at`）时由部署出口 `del auto_fix_in_progress_since`。
 2. **派 `/sprint-bugfix`** 消费「问题汇总清单」里的 `R-`/`C-` 前缀条目（双源扫描口径单一信源 = `/sprint-bugfix`，本片不复述）。**无人值守恒带 `--unattended`**；派单 prompt 显式写明「**只修复并本地 commit，⛔ 不 push**：推送由本轮 Phase 3.2 部署触发前置统一执行，带新 build」。
-3. **★ 铸新 build（Phase 3.1.5，本片出口把游标推到 `3.1.5-build`）→ 再推送 + 重部署（Phase 3.2/3.2.1）**：推送的 `push_base_ref` / `push_at` / `push_commit` / `change_classification` 必须全部落到**新 build**。
+3. **★ 铸新 build（Phase 3.1.5，本片出口把游标推到 `3.1.5-build`）→ 再推送 + 重部署（Phase 3.2/3.2.1）**：推送的 `push_base_ref` / `push_at` / `push_commit` 必须全部落到**新 build**。
    ⛔ 修复在旧 build 名下推送、或先部署后铸 build 时，推送围栏里的 `BUILD` 会回落到 `versions.{V}.current_build` = **上一轮那个 `status=tested` 的旧 build**，
    新 build 缺这些键 → Phase 3.7 的「`PROBE_COMMIT != PUSH_COMMIT` → `PROBE_PASSED=0`」与 `cicd_skipped` 判据取空误判，游标卡在 `3.2.1-probe`。
 4. **重部署**：按 `deployment.mode` 与 `--skip-deploy` 走 Phase 3.2/3.2.1 既有路径，不另起流程。

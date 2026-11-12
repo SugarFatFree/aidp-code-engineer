@@ -5,6 +5,7 @@ import json
 import os
 import re
 from pathlib import Path
+from flow_test_helpers import sprint_dev_text
 import subprocess
 import sys
 import tempfile
@@ -289,12 +290,15 @@ class LightTaskFlowTests(unittest.TestCase):
         self.assert_protected()
 
     def test_actual_five_entry_fences_preserve_context_without_sprint_artifacts(self):
+        # 此用例验证入口继承；项目已由用户选定沿用当前分支。
+        (self.root / 'memory/aidp-config.yaml').write_text('development:\n  branch_policy: current\n')
         context = ''
         for name in ('sprint-dev', 'sprint-start', 'sprint-test', 'sprint-bugfix', 'sprint-dev', 'sprint-close'):
             text = (SCRIPTS.parent / 'commands' / (name + '.md')).read_text()
             block = re.search(r'```bash\n(.*?)\n```', text, re.S).group(1)
             self.assertIn('entry_context.py resolve', block)
             block = block.replace('{{AIDP_HOME}}', str(SCRIPTS.parent)).replace('{version}', 'V1')
+            block = 'POLICY_ARGS=(); TASK_WRITE_SET=(app.py); TASK_ACCEPTANCE=(按钮可见)\n' + block
             run = subprocess.run(['bash', '-e', '-c', block], cwd=self.root,
                 env=dict(os.environ, EXECUTION_CONTEXT=context, EXPLICIT_SPRINT=''), capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
@@ -303,6 +307,39 @@ class LightTaskFlowTests(unittest.TestCase):
             if context:
                 self.assertEqual(route['execution_context'], context)
             context = route['execution_context']
+        self.assert_protected()
+
+    def test_light_bugfix_evidence_roundtrip_without_formal_records(self):
+        resolved = self.resolve(entry='sprint-bugfix')
+        ctx = resolved['execution_context']
+        failed, verification, _ = self.run_related(ctx, expected=1)
+        self.assertEqual('FAIL', failed['status'])
+        failure = {'id': 'tests/test_app.py::ButtonTest::test_button',
+                   'run_id': verification['run_ids'][0], 'evidence': verification,
+                   'phenomenon': '按钮不可见', 'expected': 'button = True', 'actual': 'button = False'}
+        payload = {'failures': [failure], 'write_set': ['app.py'], 'acceptance': ['按钮可见']}
+        source_hash = hashlib.sha256((self.root / 'app.py').read_bytes()).hexdigest()
+        command = [sys.executable, '-B', str(SCRIPTS / 'execution_policy.py'),
+                   'record-outcome', '--root', str(self.root), '--execution-context', ctx,
+                   '--action', 'implement', '--status', 'FAIL', '--input-hash', source_hash,
+                   '--evidence-json', json.dumps(payload)]
+        recorded = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(0, recorded.returncode, recorded.stdout + recorded.stderr)
+        self.assertEqual(payload, json.loads(recorded.stdout)['evidence'])
+        inherited = self.cli('entry_context.py', 'resolve', '--entry', 'sprint-bugfix', '--execution-context', ctx)
+        self.assertEqual(resolved['task_id'], inherited['task_id'])
+        (self.root / 'app.py').write_text('button = True\n')
+        passed, new_verification, _ = self.run_related(ctx)
+        self.assertEqual('PASS', passed['status'])
+        output = dict(payload, root_cause='初始按钮值错误', changed_files=['app.py'], verification=new_verification)
+        command[command.index('FAIL')] = 'PASS'
+        command[command.index(source_hash)] = hashlib.sha256((self.root / 'app.py').read_bytes()).hexdigest()
+        command[-1] = json.dumps(output)
+        recorded = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(0, recorded.returncode, recorded.stdout + recorded.stderr)
+        self.assertEqual(output, json.loads(recorded.stdout)['evidence'])
+        self.assertFalse((self.root / 'docs/bugfix').exists())
+        self.assertEqual([], list(self.root.rglob('*-report.md')))
         self.assert_protected()
 
     def test_actual_entry_fence_explicit_sprint_preserves_formal_gate(self):
@@ -558,7 +595,7 @@ class PrereleaseContextFlowTests(unittest.TestCase):
         full = self.cli('entry_context.py', 'resolve', '--entry', 'sprint-full', '--version', 'V1.1.0',
             '--authorization-source', json.dumps({'kind': 'explicit-command', 'request_id': 'one-full',
                                                 'command': '/sprint-full'}))
-        text = (SCRIPTS.parent / 'commands/sprint-dev.md').read_text()
+        text = sprint_dev_text("formal-increment")
         blocks = re.findall(r'^[ \t]*```bash\n(.*?)\n[ \t]*```[ \t]*$', text, re.S | re.M)
         block = next(block for block in blocks if 'CONTEXT_OPERATION=fork' in block)
         block = block.replace('{{AIDP_HOME}}', str(SCRIPTS.parent))

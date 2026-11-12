@@ -36,7 +36,7 @@ class DeploymentTests(unittest.TestCase):
         self.baseline = self.root / 'memory/.sprint-autopilot-baseline.json'
         self.baseline.write_text(json.dumps({'autopilot': {'wake_source_this_tick': 'loop'}, 'versions': {
             VERSION: {'current_build': BUILD, 'builds': [{'build': BUILD, 'push_commit': SHA,
-                      'push_at': '2020-01-01T00:00:00Z', 'change_classification': {'cicd_skipped': False}}],
+                      'push_at': '2020-01-01T00:00:00Z'}],
                       'cicd_run': {'pipeline': 'web', 'run_id': 'r1', 'run_commit': SHA, 'env': 'test'},
                       'cicd_unreachable_streak': 2, 'cicd_cli_fail_streak': 2}}}))
         self.initial_baseline = self.baseline.read_text()
@@ -415,12 +415,34 @@ class DeploymentTests(unittest.TestCase):
                 rc, _ = self.consume(0, value)
                 self.assertNotEqual(rc, 0)
                 self.assertNotEqual(self.node()['run_state']['next_phase'], '3.2.1-probe')
+        # 无 push_base_ref（分类缺失）→ fail-closed 监听，绝不 skip。
+        rc, result = self.consume(4, self.result())
+        self.assertNotEqual(result.get('next_action'), 'skip')
+        # 有 push_base_ref + push_commit 且为纯文档推送 → 只读分类 skip，且不改工作区。
+        def git(*a):
+            return subprocess.run(['git', '-C', str(self.root), '-c', 'user.email=a@b.c', '-c', 'user.name=t', *a],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        (self.root / 'package.json').write_text('{}\n')
+        git('add', 'package.json'); git('commit', '-qm', 'base')
+        base = git('rev-parse', 'HEAD')
+        (self.root / 'docs').mkdir()
+        (self.root / 'docs/g.md').write_text('# g\n')
+        git('add', 'docs/g.md'); git('commit', '-qm', 'docs')
+        head = git('rev-parse', 'HEAD')
         data = json.loads(self.initial_baseline)
-        data['versions'][VERSION]['builds'][0]['change_classification']['cicd_skipped'] = True
+        data['versions'][VERSION]['builds'][0].update(push_commit=head, push_base_ref=base)
         self.baseline.write_text(json.dumps(data))
         rc, result = self.consume(4, self.result())
         self.assertEqual((rc, result['next_action']), (0, 'skip'))
         self.assertNotIn('run_state', self.node())
+        # 同一区间含正式代码 → 不 skip。
+        (self.root / 'src').mkdir()
+        (self.root / 'src/App.ts').write_text('export {}\n')
+        git('add', 'src/App.ts'); git('commit', '-qm', 'code')
+        data['versions'][VERSION]['builds'][0]['push_commit'] = git('rev-parse', 'HEAD')
+        self.baseline.write_text(json.dumps(data))
+        rc, result = self.consume(4, self.result())
+        self.assertNotEqual(result.get('next_action'), 'skip')
 
     def test_write_authorization_and_retry_cap(self):
         for mode, auto, count, expected in [('trigger', False, 0, 'auto-trigger-off'),

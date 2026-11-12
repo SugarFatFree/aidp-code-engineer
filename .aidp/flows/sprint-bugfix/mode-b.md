@@ -102,20 +102,13 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
 4. **修完单点不够 — 必须把同表中"形态类似"的其他消费者点也巡检一遍**（如改 axios 守卫必同时看 SSE / WebSocket 的独立 URL 拼装是否同病）
 5. 如本次修复实际上是"base 已变但消费者未联动"的清算 → 必须回写事实清单的「⚠️ 本次变更」表「已联动消费者点」列
 
-**配置与部署操作联动**：本次修复涉及配置/SQL/启动参数/初始化/迁移接口时，按 `/sprint-dev` Step X.7/X.8 只将权威路径与必要运行记录引用写入既有机器待同步项；版本规划/正式发布再合并操作指引。日常修复不自动新增部署 Markdown、不为日志另做 commit/push。详见 `{{AIDP_HOME}}/reference/部署操作约定.md`。
+**配置与部署操作联动**：本次修复涉及配置/SQL/启动参数/初始化/迁移接口时，可实时更新 `docs/deployment` 内对应数据库脚本与实际配置文件；操作指引、清单和台账等文档性内容仅版本规划/正式发布整理，不登记待同步引用。详见 `{{AIDP_HOME}}/reference/部署操作约定.md`。
 
 #### Step 2：推送分类与监听（约定 31.5）
 
-未在route.authorized_actions中的push记NOT_REQUESTED并跳过本环节；已授权分支先执行，再按light-context预留实际资源：
+用户未要求 push → 跳过本环节。要求 push 时先 `python3 {{AIDP_HOME}}/scripts/aidp_config.py cicd-enabled`：退出 1（未启用）→ 推送只有 `git push`，不跑脚本、不写文件。
 
-```bash
-EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须从父任务入参重绑真实上下文路径}"
-python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
-  --execution-context "$EXECUTION_CONTEXT" --action push || exit $?
-```
-
-
-部署上下文下，修复 push 前先保存 `BASE_REF`，调用 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF"`（链外无 build → `--standalone`）。无正式代码变更且无分类错误 → 仍校验 push 成功、记 `cicd_skipped=true`，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误 → 走 `cicd_watch.py --mode watch --commit <sha> --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；主动retry另须deploy grant与变化证据/预算，不以push授权扩权）+ `autopilot-deploy-watch.py` 就绪探针；监听结束后 `classify_push.py --version "$VERSION" --record-terminal success|failed|unknown:<原因>` 记部署终态（约定 31.5）。⛔ 不得以远端状态反推分类。
+已启用 CICD 时，修复 push 前先保存 `BASE_REF`，只读分类 `python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --base-ref "$BASE_REF" --head "$(git rev-parse HEAD)"`（不落盘）。无正式代码变更且无分类错误 → 仅校验 push 成功，不监听 CICD、不跑探针；正式代码变更 / 分类缺失或错误（fail-closed）→ 走 `cicd_watch.py --mode watch --commit "$(git rev-parse HEAD)" --env <env>` 监听 CICD 流水线终态（`cicd.provider`，默认 GitHub Actions；主动retry另须deploy grant与变化证据/预算，不以push扩权）+ `autopilot-deploy-watch.py` 就绪探针；终态现场获知，不落盘。⛔ 不得以远端状态反推分类。
 
 #### Step 3：回填状态与报告链接
 

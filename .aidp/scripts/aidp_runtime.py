@@ -135,6 +135,39 @@ def runtime_relpath(relative: str | os.PathLike[str] = "", script_file: Path | s
     return target.relative_to(project_root(script_file)).as_posix()
 
 
+def contract_root(root: Path | str) -> Path:
+    """定位被检查项目的契约根，兼容维护源、共享根与 Claude 单独安装。
+
+    检查器可从模板仓库对另一个项目运行，不能拿检查器自身的目录当目标根。
+    共享根优先于 Claude 装配副本；空 Agent 标记目录不视为已安装契约。
+    """
+    project = Path(root)
+    for relative in (".aidp", ".agents", ".claude", ".agents/aidp", ".claude/aidp"):
+        home = project / relative
+        if (home / "reference").is_dir() or (home / "scripts").is_dir():
+            return home
+    return project / ".aidp"
+
+
+def convention_candidates(root: Path | str) -> tuple[Path, ...]:
+    """约定主行单一信源优先，兼容仍使用完整项目记忆的旧安装。"""
+    project = Path(root)
+    home = contract_root(project)
+    return (home / "reference/core-conventions.md", home / "AIDP-AGENTS.md",
+            project / "AGENTS.md", project / "CLAUDE.md")
+
+
+def convention_source(root: Path | str) -> Path | None:
+    """返回约定正文；外置文件存在即权威，损坏时不回退到陈旧正文。"""
+    import re
+    candidates = convention_candidates(root)
+    for index, candidate in enumerate(candidates):
+        if candidate.is_file():
+            if index == 0 or re.search(r"(?m)^\d+\.\s+\*\*", candidate.read_text(encoding="utf-8")):
+                return candidate
+    return None
+
+
 def runtime_text(text: str, script_file: Path | str = __file__) -> str:
     """Expand legacy source-tree path literals for template and native runtimes."""
     home = runtime_relpath("", script_file).rstrip("/")

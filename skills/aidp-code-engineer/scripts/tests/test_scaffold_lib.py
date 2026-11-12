@@ -410,6 +410,79 @@ class MemoryBaselineMergeTest(unittest.TestCase):
         self.assertFalse(evidence)
 
 
+class CompactMemoryMigrationTest(unittest.TestCase):
+    BASE = ("# demo\n\n## 当前状态\n\n- **当前版本**：V0.1.0\n\n---\n\n"
+            "## 核心约定（必须遵守）\n\n1. **示例规则**：每次发布执行测试。\n\n"
+            "## 本项目使用的 Skills\n\n| Skill | 被谁调用 |\n| `demo` | `/sprint-test` |\n\n"
+            "## 项目自定义\n\n<!-- AIDP:PROJECT-CUSTOM -->\n")
+    NEW = ("# demo\n\n## 当前状态\n\n- **当前版本**：V0.1.0\n\n---\n\n"
+           "## 核心约定\n\nformal 读取 `{{AIDP_HOME}}/reference/core-conventions.md`。\n"
+           "路由见 `{{AIDP_HOME}}/reference/task-routing.md`。\n\n"
+           "## 项目自定义\n\n<!-- AIDP:PROJECT-CUSTOM -->\n")
+
+    def test_relocated_sections_keep_only_local_annotations_and_state(self):
+        note = "项目注解：联调示例在 `.agents/examples/team.md`。"
+        old = self.BASE.replace("1. **示例规则**：每次发布执行测试。",
+                                "1. **示例规则**：每次发布执行测试。\n\n" + note)
+        old = old.replace("V0.1.0", "V0.7.0").replace(
+            "\n\n---", "\n- **联调环境**：stage\n\n等待客户联调，记录 issue-42。\n\n---")
+        old += "\n团队配置：PostgreSQL。\n"
+        evidence = []
+        out = L.merge_memory_upgrade(old, self.NEW, previous=self.BASE, evidence=evidence)
+        self.assertFalse(evidence, evidence)
+        self.assertIn("V0.7.0", out)
+        self.assertIn("联调环境**：stage", out)
+        self.assertIn("等待客户联调", out)
+        self.assertIn(note, L.custom_section(out))
+        self.assertIn("团队配置：PostgreSQL。", out)
+        self.assertNotIn("1. **示例规则**", out)
+        self.assertNotIn("| Skill |", out)
+        self.assertEqual(L.merge_memory_upgrade(out, self.NEW, previous=self.NEW), out)
+
+    def test_inline_comment_on_relocated_rule_is_preserved(self):
+        note = "<!-- 项目注解：联调联系人 alice -->"
+        old = self.BASE.replace("每次发布执行测试。", "每次发布执行测试。 " + note)
+        evidence = []
+        out = L.merge_memory_upgrade(old, self.NEW, previous=self.BASE, evidence=evidence)
+        self.assertFalse(evidence, evidence)
+        self.assertIn(note, L.custom_section(out))
+        self.assertNotIn("1. **示例规则**", out)
+
+    def test_real_sync_memory_in_claude_and_shared_layouts(self):
+        ctx = {"project": "demo", "project_cn": "演示", "user": "alice",
+               "version": "V0.1.0", "date": "2026-01-01"}
+        note = "项目注解：联调联系人 alice。"
+        for agents in (["claude"], ["codex"], ["claude", "codex"]):
+            with self.subTest(agents=agents), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                filename = "CLAUDE.md" if agents == ["claude"] else "AGENTS.md"
+                target = root / filename
+                old = self.BASE.replace("每次发布执行测试。", "每次发布执行测试。\n\n" + note)
+                old = old.replace("V0.1.0", "V0.9.0") + "\n团队数据库：PostgreSQL。\n"
+                target.write_text(old, encoding="utf-8")
+                if len(agents) > 1:
+                    (root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+                report = scaffold.Report()
+                scaffold.sync_memory_file(root, agents, ctx, "overwrite", True,
+                                          report, scaffold.Backup(root, report), self.BASE.encode())
+                merged = target.read_text(encoding="utf-8")
+                self.assertIn("reference/core-conventions.md", merged)
+                self.assertIn(note, L.custom_section(merged))
+                self.assertIn("V0.9.0", merged)
+                self.assertIn("团队数据库：PostgreSQL。", merged)
+                self.assertNotIn("1. **示例规则**", merged)
+                self.assertFalse(L.queue_entries(root))
+                if len(agents) > 1:
+                    self.assertEqual((root / "CLAUDE.md").read_text(), "@AGENTS.md\n")
+
+    def test_modified_rule_stays_in_review_queue_with_original_evidence(self):
+        old = self.BASE.replace("每次发布执行测试。", "项目仅在周五执行测试。")
+        evidence = []
+        out = L.merge_memory_upgrade(old, self.NEW, previous=self.BASE, evidence=evidence)
+        self.assertEqual(out, old)
+        self.assertIn("项目仅在周五执行测试。", evidence[0]["project"])
+
+
 class TemplateGitignoreTplTest(unittest.TestCase):
     def test_root_rules_must_reach_downstream_tpl(self):
         import verify

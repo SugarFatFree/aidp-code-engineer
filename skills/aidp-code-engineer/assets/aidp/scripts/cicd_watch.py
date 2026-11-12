@@ -208,15 +208,9 @@ def _baseline_version(baseline, version):
 
 
 def unconfigured_cicd(cfg, explicit_pipeline=None):
-    """本地配置明确未接入时直接降级；不构造 provider、不读旧运行补配置。"""
-    if str(cfg.get('provider', '')).strip().lower() == 'none':
-        return 'disabled', 'cicd.provider=none（未接入 CICD）'
-    if isinstance(explicit_pipeline, str) and explicit_pipeline.strip():
-        return None
-    pipelines = cfg.get('pipelines') or {}
-    if not isinstance(pipelines, dict) or not any(isinstance(v, str) and v.strip() for v in pipelines.values()):
-        return 'not-configured', 'cicd.pipelines 未配置有效流水线；不调用 provider，部署状态未核验'
-    return None
+    """本地配置明确未接入时直接降级；与 `aidp_config.cicd_enabled` 共用同一实现。"""
+    import aidp_config
+    return aidp_config.cicd_unconfigured(cfg, explicit_pipeline)
 
 
 def resolve_pipeline(cfg, provider, env, pipeline, baseline_pipeline=None):
@@ -394,6 +388,20 @@ def _cmd(mode, env, pipeline, run_id=None, *, context=None, commit=None):
     return SELF + ' ' + shlex.join(parts)
 
 
+def classify_push_decision(root, base_ref, head):
+    """调用只读 `classify_push.py`；返回 'skip' 或 'watch'，任何失败一律 'watch'。"""
+    try:
+        proc = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / 'classify_push.py'),
+                               '--root', str(root), '--base-ref', base_ref, '--head', head],
+                              capture_output=True, text=True, timeout=60)
+        out = json.loads(proc.stdout or '{}')
+        if proc.returncode == 0 and out.get('decision') == 'skip' and not out.get('error'):
+            return 'skip'
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return 'watch'
+
+
 def consume_result(a, root):
     """显式消费本次平台输出；独立围栏共用证据、冻结和出口，绝不执行平台写动作。"""
     baseline = Path(a.baseline)
@@ -426,11 +434,11 @@ def consume_result(a, root):
         node = json.loads(baseline.read_text(encoding='utf-8'))['versions'][a.version]
         build = next((b for b in node.get('builds', []) if b.get('build') == node.get('current_build')), {})
         push = build.get('push_commit') or ''
-        classification = build.get('change_classification') or {}
-        if classification.get('cicd_skipped') is True and not classification.get('classification_error'):
-            return done(0, 'skip', '本 build 分类明确跳过 CICD')
         if not push:
             raise ValueError('本 build 缺 push_commit，禁止消费流水线证据')
+        # 只读现场分类（autopilot 自有 push_base_ref + push_commit）；缺基线 / 分类失败 → 监听（fail-closed）。
+        if build.get('push_base_ref') and classify_push_decision(root, build['push_base_ref'], push) == 'skip':
+            return done(0, 'skip', '本 build 推送无正式代码变更（只读分类），跳过 CICD')
         old = node.get('cicd_run') or {}
         verdict, action = result.get('verdict'), result.get('next_action')
         rc = a.result_code

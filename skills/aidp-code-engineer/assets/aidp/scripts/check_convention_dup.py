@@ -1,71 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check_convention_dup.py — 核心约定「主行双写」确定性护栏（脚手架契约脚本）。
+"""核心约定主行双写守卫。
 
-## 为什么需要本脚本
+主行唯一权威为运行根的 reference/core-conventions.md；旧安装回退到
+AIDP-AGENTS.md / AGENTS.md / CLAUDE.md。运行根统一由 aidp_runtime 定位，
+兼容模板维护源、Claude 单独安装、共享运行根及历史嵌套布局。
 
-核心约定有两处落点，职责必须严格二分：
+细则分片与 rules 只放子项、Why、示例，不复制决策主行。检测主行的首句
+探针（去强调与空白差异），小节标题不参与。超长主行只告警。
 
-  · **主行文件**「核心约定」段 —— **决策要点主行**（常驻上下文、唯一权威）；
-  · `AIDP_HOME/reference/约定细则-N.md`   —— 该条的**子项 / Why / 示例 / 实现子项**（按需 Read）。
-
-★ **主行文件按形态探测，不写死**（两种形态都是合法下发结果）：
-
-  · **形态 A `AGENTS.md`**（含 Codex / DeepSeek Harness，或模板项目自身）：`AGENTS.md` 承载正文，
-    并存的 `CLAUDE.md` 只是薄壳 + `@AGENTS.md` 导入；
-  · **形态 B `CLAUDE.md`**（仅 Claude Code）：**无 `AGENTS.md`**，正文就在 `CLAUDE.md` 单文件。
-
-  写死 A 会让**所有形态 B 项目 100% 走 SKIP、exit 0** —— 那是**假通过**而非"不适用"，
-  等于新铁律在下游零护栏（真实回流：某下游项目升级后该脚本永久空跑；
-  此处不写具体版本号——事故是历史事实，写死版本号会随每次 bump 变成假话）。
-
-一旦细则分片把主行原样复制一份，就形成**双写**：两处各自演进、悄悄漂移，
-"见约定 N"到底以哪份为准全靠猜（真实事故：约定 35 两处文本已不同，一处 704 字符、
-公共前缀只到 514 字符）。本脚本把「细则分片不得复制主行」固化成有退出码的硬门。
-
-## 判定口径
-
-1. 从项目记忆文件（`AGENTS.md` / `CLAUDE.md`）的「## 核心约定」段提取每条主行：形如 `N. **标题**：正文…`；
-2. 取该主行的 **首句探针**——正文去掉 `N. ` 序号后，切到第一个句末标点（`。；;`）；
-   不足 40 字符则继续向后取，直到 ≥40 字符或整行用完（整行不足 40 字符则用整行）；
-3. 把探针与各 `AIDP_HOME/reference/约定细则-*.md` 全文**同样归一化**（去 Markdown 强调符 `*`、
-   折叠空白）后做子串匹配；命中 = 该条主行被复制进细则分片 → 报重复。
-
-归一化去掉 `*` 与空白差异，是为了让"改了两个星号/换了个空格"的伪装式复制同样被抓到。
-
-## 用法
-
-    python3 AIDP_HOME/scripts/check_convention_dup.py            # 人读报告
-    python3 AIDP_HOME/scripts/check_convention_dup.py --json     # 机读 JSON
-    python3 AIDP_HOME/scripts/check_convention_dup.py --root /path/to/repo
-
-退出码：0 = 无重复（或缺文件不适用）；1 = 检出重复；2 = 用法/读取错误。
-
-JSON 输出含 `skip_kind` 区分跳过原因，供 `verify.py` 把"真不适用"与"路径假设不匹配"分开报：
-`not-aidp`（两个候选主行文件都不存在，非 AIDP 项目）/ `no-conventions`（主行文件在但抽不出
-「## 核心约定」主行 —— 格式变更或文件被裁剪，**属异常、需人看**）/ `no-detail-fragments`
-（无 `约定细则-N.md` 分片，无从比对）。
+用法：python3 AIDP_HOME/scripts/check_convention_dup.py --root . [--json]
+退出码：0 无重复或不适用，1 重复，2 读取错误。skip_kind 区分 not-aidp、
+no-conventions（已有文件却无约定，须人工核对）与 no-detail-fragments。
 """
 import sys as _aidp_sys
 from pathlib import Path as _AidpPath
 _aidp_scripts = str(_AidpPath(__file__).resolve().parent)
 if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
-from aidp_runtime import runtime_text
+from aidp_runtime import runtime_text, contract_root, convention_candidates
 import argparse
 import json
 import os
 import re
 import sys
 
-# ★ 主行文件候选（按序探测，命中即用）——形态 A 在前、形态 B 在后。
-#   顺序不可颠倒：两个文件都在时只有 AGENTS.md 才是主行权威，
-#   `CLAUDE.md` 在形态 A 下仅是薄壳（`@AGENTS.md` 一行，抽不出主行）。
-MAIN_FILE_CANDIDATES = (
-    runtime_text('__AIDP_HOME__/AIDP-AGENTS.md', __file__),  # 模板仓库：下发记忆源（根 AGENTS.md 是模板自身维护记忆，无约定主行）
-    "AGENTS.md",  # 形态 A：含 Codex / DeepSeek Harness，或二者并存
-    "CLAUDE.md",  # 形态 B：仅 Claude Code
-)
 DETAIL_GLOB_DIR = runtime_text('__AIDP_HOME__/reference', __file__)
 RULES_GLOB_DIR = runtime_text('__AIDP_HOME__/rules', __file__)
 DETAIL_PREFIX = "约定细则-"
@@ -130,19 +89,22 @@ def load_details(root):
     """
     out = []
     # ① `AIDP_HOME/reference/约定细则-N.md`
-    d = os.path.join(root, DETAIL_GLOB_DIR)
+    home = contract_root(root)
+    detail_dir = (home / "reference").relative_to(_AidpPath(root)).as_posix()
+    rules_dir = (home / "rules").relative_to(_AidpPath(root)).as_posix()
+    d = os.path.join(root, detail_dir)
     cands = []
     if os.path.isdir(d):
-        cands += [(os.path.join(DETAIL_GLOB_DIR, n), os.path.join(d, n))
+        cands += [(os.path.join(detail_dir, n), os.path.join(d, n))
                   for n in sorted(os.listdir(d))
                   if n.startswith(DETAIL_PREFIX) and n.endswith(".md")]
     # ② ★ `AIDP_HOME/rules/*.md` —— **代码向约定（4/17/18/19/20/23/26/27/28/29/35/39/40）的详规
     #    住在这里，不是 reference/**。只扫 reference/ 时，主行被复制进 rules/ 完全不查：
     #    而 rules 是**按 paths 自动加载**的，一份复制过去的主行会和 AGENTS.md 的那份
     #    同时进上下文，两处一改一没改就是最典型的漂移面。当前实测 0 处，属**无门区**而非无风险。
-    rd = os.path.join(root, RULES_GLOB_DIR)
+    rd = os.path.join(root, rules_dir)
     if os.path.isdir(rd):
-        cands += [(os.path.join(RULES_GLOB_DIR, n), os.path.join(rd, n))
+        cands += [(os.path.join(rules_dir, n), os.path.join(rd, n))
                   for n in sorted(os.listdir(rd))
                   if n.endswith(".md") and n != "README.md"]
     for rel, path in cands:
@@ -156,15 +118,15 @@ def load_details(root):
 
 
 def resolve_main_file(root):
-    """探测主行文件：按 MAIN_FILE_CANDIDATES 取**第一个存在且真能抽出主行**的候选。
+    """共享定位器给出外置文件及旧记忆候选，取权威主行。
 
     返回 `(相对路径, 主行列表)`；全不命中返回 `(None, 存在但抽不出主行的候选列表)`。
     "存在但抽不出主行"要与"文件不存在"区分——前者是形态 A 的薄壳 `CLAUDE.md`
     （正常，继续试下一个候选），若**所有**候选都如此则属异常（格式漂移），须报出而非静默跳过。
     """
     present_but_empty = []
-    for rel in MAIN_FILE_CANDIDATES:
-        path = os.path.join(root, rel)
+    for path in convention_candidates(root):
+        rel = path.relative_to(_AidpPath(root)).as_posix()
         if not os.path.isfile(path):
             continue
         with open(path, "r", encoding="utf-8") as f:
@@ -172,11 +134,13 @@ def resolve_main_file(root):
         if mains:
             return rel, mains
         present_but_empty.append(rel)
+        if path.name == "core-conventions.md":
+            break  # 已声明的外置权威损坏，不能退到旧正文掩盖异常。
     return None, present_but_empty
 
 
 # 主行长度上限（字符）：主行只留决策要点 + 详规指针，Why / 实证 / 回检细节放细则分片或 rules。
-# 超限只 WARN、不进退出码——常驻上下文膨胀是渐进问题，报出来即可。
+# 超限只 WARN、不进退出码——按需协议膨胀是渐进问题，报出来即可。
 MAX_MAIN_CHARS = 600
 
 
@@ -198,7 +162,7 @@ def run(root):
             "applicable": False,
             "skip_kind": "not-aidp",
             "main_file": None,
-            "reason": f"{' / '.join(MAIN_FILE_CANDIDATES)} 均不存在（非 AIDP 项目），跳过",
+            "reason": f"{' / '.join(str(p) for p in convention_candidates(root))} 均不存在（非 AIDP 项目），跳过",
             "checked": 0,
             "duplicates": [],
         }
@@ -250,7 +214,7 @@ def run(root):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="核心约定主行双写检查：AGENTS.md 主行不得被 约定细则-N.md 复制")
+        description="核心约定主行双写检查：外置主行不得被细则与 rules 复制")
     ap.add_argument("--root", default=".", help="仓库根目录（默认当前目录）")
     ap.add_argument("--json", action="store_true", help="只输出机读 JSON")
     ap.add_argument("--self-check", action="store_true",

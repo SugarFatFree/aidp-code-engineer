@@ -136,7 +136,7 @@ project-root/
 │   │   │   └── 全量/                     # 【全量轨】发布期产出：建表说明.md + NN_建表-<业务域>.sql + NN_初始化数据.sql，不含任何 ALTER
 │   │   ├── 部署流程/                     # 部署操作说明（版本根 README 为唯一入口；部署流程.md / SQL执行台账.md 仅确需时存在）
 │   │   └── 配置文件/                     # ⛔ 根下不直放配置产物，只允许 增量/ 与 全量/
-│   │       ├── 增量/                     # 【增量轨】配置项清单.md（/sprint-dev Step X.7 维护）
+│   │       ├── 增量/                     # 【增量轨】配置项清单.md（/version 规划期与发布期维护）
 │   │       └── 全量/                     # 【全量轨】发布期产出：配置说明.md + 引导层环境文件 + nginx/compose/k8s 完整份 + <配置中心>/*.yml
 │   ├── deployment/tools/               # ★ 跨版本：运维/一次性工具归档（非版本隔离；本应用/<上游系统>/其他 + README 索引，见 06 §2.5.4.1）
 │   │
@@ -226,7 +226,7 @@ project-root/
 | `docs/architecture/` | 架构约束三件套 + 可选架构设计文档（单/多文档，兼容识别） | 项目初始化前由人提供 |
 | `docs/bugfix/{version}/` | 测试或使用中发现的问题记录（版本级单层，发现人在文件名） | 迭代过程中由该用户记录 |
 | `docs/implementation/{version}/{user}/` | 个人实施过程记录、踩坑笔记 | 迭代过程中 |
-| `docs/deployment/{version}/` | 部署产物：双轨 SQL（增量/全量）+ 配置文件 + 版本根 README 唯一操作入口（部署流程.md / SQL执行台账.md / checklist 仅确需时存在，约定 37）；**`docs/deployment/tools/` 跨版本、不按版本隔离** | `/sprint-dev` X.7（增量配置）· 仅版本规划 / `/version` 3.3.7 集中校准 |
+| `docs/deployment/{version}/` | 部署产物：双轨 SQL（增量/全量）+ 配置文件 + 版本根 README 唯一操作入口（部署流程.md / SQL执行台账.md / checklist 仅确需时存在，约定 37）；**`docs/deployment/tools/` 跨版本、不按版本隔离** | 数据库脚本、实际配置文件随开发/修复实时更新；文档性内容仅版本规划 / `/version` 3.3.7 集中整理 |
 | `docs/references/{version}/` | 提给第三方的对外需求 / 接口对接资料（版本专属；另有跨版本「通用区」）| `/sprint-design` · `/version` 3.3.9 |
 | `docs/prompts/{version}/` | 本版沉淀的提示词模板（供复用，不参与发布收敛）| 人工 / 各命令按需 |
 

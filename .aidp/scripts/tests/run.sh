@@ -105,9 +105,13 @@ run "test_test_ledger.py（测试复用与审查差量）" python3 .aidp/scripts
 run "test_test_scope.py（Sprint 单测推导 / run-scope 逐套记账 / worktree 全量复用）" python3 .aidp/scripts/tests/test_test_scope.py
 run "test_entry_context.py（轻量与正式身份继承及完成门）" python3 .aidp/scripts/tests/test_entry_context.py
 run "test_execution_policy.py（动作授权、预算及等价证据边界）" python3 .aidp/scripts/tests/test_execution_policy.py
+run "test_dispatch_plan.py（light 并行派发判定与 prompt）" python3 .aidp/scripts/tests/test_dispatch_plan.py
+run "test_select_related_tests.py（改动→相关测试白名单，不得全量）" python3 .aidp/scripts/tests/test_select_related_tests.py
+run "test_test_command_guard.py（测试命令护栏与授权 fail closed）" python3 .aidp/scripts/tests/test_test_command_guard.py
+run "test_test_baseline.py（已知失败基线 record/diff）" python3 .aidp/scripts/tests/test_test_baseline.py
 run "test_scope_performance.py（范围缓存、共享计划与合批性能）" python3 .aidp/scripts/tests/test_scope_performance.py
 run "test_verification_tools.py（项目工具链、静态包装器与真实检查分类）" python3 .aidp/scripts/tests/test_verification_tools.py
-run "test_deployment_ops.py（部署操作指引与备份频率边界）" python3 .aidp/scripts/tests/test_deployment_ops.py
+run "test_deployment_ops.py（SQL 台账渲染与已删子命令）" python3 .aidp/scripts/tests/test_deployment_ops.py
 run "test_development_scope.py（开发前后统一风险与成本判据）" python3 .aidp/scripts/tests/test_development_scope.py
 run "test_sprint_baseline.py（baseline_ref 确定性解析）" python3 .aidp/scripts/tests/test_sprint_baseline.py
 run "test_audit_carryover.py（version-auditor 结转与升级计算）" python3 .aidp/scripts/tests/test_audit_carryover.py
@@ -116,6 +120,8 @@ run "test_bugfix_scope.py（bugfix 台账按列解析）" python3 .aidp/scripts/
 run "test_sql_reorg.py（SQL 整理语句守恒校验）" python3 .aidp/scripts/tests/test_sql_reorg.py
 run "test_sprint_discovery.py（Sprint编号、启动和关闭发现一致性）" python3 .aidp/scripts/tests/test_sprint_discovery.py
 run "test_light_task_flow.py（无Sprint命令串联与状态隔离）" python3 .aidp/scripts/tests/test_light_task_flow.py
+run "test_sprint_dev_slices.py（轻量入口与formal阶段分片）" python3 .aidp/scripts/tests/test_sprint_dev_slices.py
+run "test_light_task.py（light 单一入口 start/select/run/report）" python3 .aidp/scripts/tests/test_light_task.py
 run "test_build_unit_test.py（部署提交隔离执行与缓存）" python3 .aidp/scripts/tests/test_build_unit_test.py
 run "test_unit_report.py（双路报告与终态口径）" python3 .aidp/scripts/tests/test_unit_report.py
 run "test_aiauto_test_join.py（两路汇总与失败登记）" python3 .aidp/scripts/tests/test_aiauto_test_join.py
@@ -132,6 +138,9 @@ run "test_offchain_scope.py（约定41 链外动作边界 + 约定17 反向门�
 run "test_baseline_archive.py（baseline 归档回落 + decisions 双信源）" python3 .aidp/scripts/tests/test_baseline_archive.py
 run "test_unattended_recovery.py（无人值守失败处置 + 自动恢复）" python3 .aidp/scripts/tests/test_unattended_recovery.py
 run "test_stop_guard.py（结束护栏所有阻止路径有界）" python3 .aidp/scripts/tests/test_stop_guard.py
+run "test_pretool_guard.py（PreToolUse 入口护栏 + 测试范围护栏）" python3 .aidp/scripts/tests/test_pretool_guard.py
+run "test_shell_write_targets.py（Bash 写入目标与官方围栏兼容）" python3 .aidp/scripts/tests/test_shell_write_targets.py
+run "test_entry_gate.py（入口协议门判定）" python3 .aidp/scripts/tests/test_entry_gate.py
 run "test_unattended_edges.py（报告取证、参数透传与兼容路径）" python3 .aidp/scripts/tests/test_unattended_edges.py
 run "test_dispatch_retry.py（派发退避上限与成功清零）" python3 .aidp/scripts/tests/test_dispatch_retry.py
 run "test_cicd_deployment.py（部署监听、降级与即时冻结）" python3 .aidp/scripts/tests/test_cicd_deployment.py

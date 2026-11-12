@@ -1,53 +1,40 @@
 <!--
-  {{project}} 项目记忆正文（AIDP 范式）。Claude Code 下由 CLAUDE.md 承载或经 @AGENTS.md 加载。
-  「当前状态」由 /memory-sync、/version、/sprint-* 自动维护；规范性内容随 aidp-code-engineer 脚手架升级对齐；
-  项目特有的约定写进文末「项目自定义」段，脚手架升级时保留。
+  {{project}} 项目记忆正文（AIDP 范式）。规范随脚手架升级；当前状态与项目自定义保留。
 -->
 
 # {{project}}
 
-**{{project}}** 基于 AIDP（AI-Driven Iterative Development Paradigm）范式建设：从版本规划、Sprint 执行、AI 自动化测试到发布归档，全程由 AI 编码 Agent 的子 Agent + Skills 驱动；支持 Claude Code / Codex / DeepSeek Harness。项目记忆文件为 `AGENTS.md`（Claude Code 下为 `CLAUDE.md`），项目背景详见 `memory/projectBrief.md`。
+**{{project}}** 使用 AIDP 范式。项目背景见 `memory/projectBrief.md`；本文件只常驻身份分流、安全边界与项目状态。
 
-> 每次会话先确定执行身份，再读取适用上下文：
-> 1. 原任务续跑/嵌套调用继承 `--execution-context <机器JSON路径>`；新普通自然语言任务默认 light。明确 Sprint 或 `/version`、`/sprint-full`、`/sprint-batch`、`/sprint-autopilot` 才为 formal，先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 的入口协议。
-> 2. 读当前版本与开发者身份；缺身份用 `python3 {{AIDP_HOME}}/scripts/vcs.py user` 解析。light 不因已有 activeContext、历史计划或文件数量认领 Sprint；不要求先完成版本规划。确需新版本落点时保留用户决策门。
-> 3. 按需读项目级 memory 与受影响的既有基线；仅 formal Sprint 路径读取 `memory/{version}/{user}/activeContext.md` + `progress.md` 作为当前 Sprint 执行输入。
+## 会话入口与按需加载
 
----
+- 普通自然语言开发/修复默认 **light**；仓库存在 active Sprint、任务复杂、文件多、复用 `/sprint-dev` 或 `/sprint-bugfix` 都不改变身份。明确 Sprint 或 `/version`、`/sprint-full`、`/sprint-batch`、`/sprint-autopilot` 才走 **formal**。
+- **light 只读 `{{AIDP_HOME}}/reference/light-entry.md` 与受影响的 `rules/*.md`**；项目文件与基线按实际需要读取。不要预读完整动作协议、Sprint 流程、核心约定全文、角色/Skills 清单；不要创建或认领 Sprint、读取旧 activeContext 当作当前任务、生成正式归档。
+- **formal 才读完整协议**：`{{AIDP_HOME}}/flows/sprint-dev/light-context.md`、`{{AIDP_HOME}}/reference/core-conventions.md`，再按 `{{AIDP_HOME}}/reference/task-routing.md` 读取选定命令/流程。正式 Sprint 才读 `memory/{version}/{user}/activeContext.md` 与 `progress.md`。
+- 续跑、嵌套调用、子 Agent 继承父任务的 `--execution-context`、revision、action、budget、真实输入 hash 与写集，不从历史计划猜父任务。命令名、模板默认值、工具可用性都不是授权；formal 也不增加授权。
+- 读当前版本与开发者身份；缺身份用 `python3 {{AIDP_HOME}}/scripts/vcs.py user` 解析。light 不要求先做版本规划；确需新版本落点时由用户决定。
 
 ## 执行授权与派发
 
-模板正文不代表项目所有者已授权全部任务。动作模型、公开命令组合、来源证据与预算只由 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 定义。普通开发/修复默认 implement+static+related-test，自动 sprint-test→必要修复/复验→终端结果，不另问单测。真实只分析/只修改/skip 才限制动作，不能默认 static-only 完整完成；未要求的可选检查为 NOT_REQUESTED。持久 policy 仅采纳用户显式选择，旧模板 true 不当 grant。派子 Agent 只改变执行方式，必须继承父 action/budget，不增加任务。
-
----
-
-## ★ 多 Agent 兼容（Claude Code / Codex / DeepSeek Harness）
-
-- **运行目录**：本项目的 AIDP 真源为 `各 Agent 的运行根/` —— 即 Agent 自己的目录，契约平铺其下；模板仓库的 `.aidp` 目录是维护源，**下游项目根没有这个目录**。Claude Code 与其他 Agent 并存时从 `.claude/` 的装配副本读取。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
-- **无 Git 分流**：先读取脚手架返回的 `vcs_mode=git|none`；`none` 仍可规划、开发、本地测试和本地归档，Git 提交、推送、tag、CICD 监听不可假定成功，正式发布必须 fail closed、不得宣布已发布。是否建立 Git 仓库由用户决定，不自动 `git init`。
-
-- **单一信源 = `{{AIDP_HOME}}/`**：命令、角色、规则、流程、脚本、hook、模板、SKILL、插件在此维护并入库。`agent_sync.py` 生成其他 Agent 的装配副本、指针入口和配置，生成物不手改，是否忽略以根 `.gitignore` 托管块为准；不能把运行真源一并忽略。具体目录所有权见 `{{AIDP_HOME}}/reference/agent-tools.md`，clone 后运行 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 恢复适配入口。
-- **命令与 SKILL 分离**：AIDP 命令只放 `各 Agent 的运行根/commands/`，公共 SKILL 只放 `各 Agent 的运行根/skills/`，插件只放 `各 Agent 的运行根/plugins/`。Claude Code 使用 `.claude/commands/<命令>.md`（`/<命令>`）；Codex 使用官方发现根 `.codex/skills/aidp/<命令>/SKILL.md`（`$<命令>`，只允许用户显式调用；该文件是**指针入口**，权威正文仍在 `各 Agent 的运行根/commands/<命令>.md`，执行第一动作即 Read 它）；DeepSeek Harness 使用 `.dsh/commands/<命令>.md`（`/<命令>`）。Codex 与 DeepSeek Harness 共用 `.agents/skills/` 中的公共 SKILL，命令参数均保持 `$ARGUMENTS` 语义。Codex 命令正文遇到明确的 `/foo args` 串联时，确定性读取 `各 Agent 的运行根/commands/foo.md`，把 `args` 原样作为子命令 `$ARGUMENTS` 在当前执行链内联执行；文件不存在或无法唯一映射时 fail closed。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
-- **当前 Agent 判定**：`python3 各 Agent 的运行根/scripts/agent_env.py detect`——`AIDP_AGENT` 环境变量优先，其次项目根存在 `.codex/` → Codex、`.dsh/` → DeepSeek Harness、`.claude/` → Claude Code（可并存）。  <!-- runtime-path-ignore: 指 Agent 自身目录这一概念，非运行契约路径，两包均保持原样 -->
-- **项目记忆文件**：只用 Claude Code 时为 `CLAUDE.md`；Codex / DeepSeek Harness 为 `AGENTS.md`；并存时正文在 `AGENTS.md`、`CLAUDE.md` 仅一行 `@AGENTS.md`。脚本一律经 `agent_env.py memory-file` 取路径。
-- **工具名**：文档以 Claude Code 工具名书写（`AskUserQuestion` / `Agent` / `Skill` / `TodoWrite` / `/loop` 等），在其他 Agent 下按 **`{{AIDP_HOME}}/reference/agent-tools.md`** 换成等价能力，语义不变。
-
----
+- 普通开发/修复默认 implement + static + related-test，完成相关测试及必要修复复验后输出结果；用户明确只分析/只修改/skip 时遵守限制。额外审查、全量回归、实测、文档按请求执行，未请求项记 NOT_REQUESTED，不算 PASS 或欠账。
+- 不擅自启动前后端服务、不执行完整打包构建；两项分别须用户明确要求。默认静态验证和当前任务相关测试。已有文件只修本次引入的问题，格式化 autofix 仅用于本次新建文件。
+- 提交、推送、发布、部署、破坏性/不可逆写与 DB 操作保留各自授权边界。生产/UAT 凭据不明文入库；实际凭据使用私有文件或环境变量，日志必须脱敏。未知的数据写权限按只读处理。
+- 用户要求“提交推送并部署”默认仅做 git commit、git push、项目现有部署脚本；不为此新建任务上下文、记录、备份或部署后核验。每次 commit 前运行 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 并读取 JSON；欠账退出码 3/4 不阻止 commit，按实际成因处理，不借机扩大任务。
+- 无 Git 可开发、显式文件本地测试和本地归档；自动范围/证据链需有效 commit，记 `UNVERIFIED / unsupported:vcs-disabled`，不称完整闭环或发布，不自动 `git init`。失败、跳过、环境不可用如实区分，同输入工具失败不空转。
+- 先读既有设计/代码再实现，架构、数据库、接口约束持续适用；引入实质变更只在实际受影响的族记增量，不建空册或替代审批文档。用户显式需求与分支选择不能被外部 SKILL 默认流程覆盖。
 
 ## 工作分支偏好
 
-修改需求、代码或修复漏洞前，最外层执行体读取 `python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy`。Git 项目未选择时只询问一次“直接当前分支 / 每个独立任务新建分支”，保存到 `memory/aidp-config.yaml` 的 `development.branch_policy` 后持续沿用；无 Git 不询问。`current` 包括 main/master，不自动切换；`new` 只在任务开始创建一次，嵌套命令、子 Agent、复验和续跑共用该分支。不得因外部 SKILL 默认要求工作树就覆盖此选择；未选择的无人值守任务返回配置缺失，不代选。完整处理见 `{{AIDP_HOME}}/reference/agent-tools.md`「工作分支：首次选择、项目内沿用」。
+最外层修改前读取 `python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy`。Git 项目未选择时只询问一次“直接当前分支 / 每个独立任务新建分支”，保存到 `memory/aidp-config.yaml` 的 `development.branch_policy`；无 Git 不询问。`current` 包括 main/master；`new` 只在任务开始创建一次。嵌套、子 Agent、复验和续跑共用分支，不自行建 worktree。未选择的无人值守任务返回配置缺失。完整处理见 `{{AIDP_HOME}}/reference/agent-tools.md`。
 
 ## 语言与沟通偏好
 
-- 开发者母语**中文**；Claude 面向开发者的反馈/提示/解释/计划/总结/追问/报告/错误说明**一律优先中文**。
-- 代码、命令、日志、API 字段名、配置项键、SQL、第三方专有名词（React/Vue/Spring/Hermes 等）保持原文，不强行翻译；中英混排时专有名词周围保留中文语境（如"调用 SSO 的鉴权接口"）。
-
----
+- 开发者母语**中文**；反馈、解释、计划、总结、追问、报告与错误说明优先中文。
+- 代码、命令、日志、API 字段、配置键、SQL、第三方专有名词保持原文。
 
 ## 当前状态
 
-> 此区域由 `/memory-sync`、`/version`、`/sprint-*` 系列命令定点更新，只写状态短行与证据链接。「整体进度」至多包含最近 2 个 Sprint 摘要，早期记录先移交 `progress.md`，不删历史关闭证据或未决项。
+> 此区域由 `/memory-sync`、`/version`、`/sprint-*` 定点更新，只写状态短行与证据链接。「整体进度」至多最近 2 个 Sprint 摘要，早期记录先移交 `progress.md`，不删历史关闭证据或未决项。
 
 - **当前版本**：{{version}}
 - **当前开发者**：{{user}}
@@ -58,229 +45,13 @@
 
 ---
 
-## ★ 常用命令速查
+## 核心约定与运行目录
 
-> 完整实操示例（各 flag / 7×24 详细前置 / 分阶段示例）见 **`{{AIDP_HOME}}/reference/命令速查.md`**（按需 Read）；本节只列入口 + 关键警示。自然语言自动路由见下方「Sprint 命令清单 + 意图路由」。
+核心约定 1–41 完整正文及稳定编号只维护于 `{{AIDP_HOME}}/reference/core-conventions.md`；细则仍在它指向的 rules/reference 文件。formal 读完整协议；light 不因「必须遵守」字样加载完整协议，代码规则按受影响文件读取：通用 `rules/code.md`、前端 `rules/frontend.md`、后端 `rules/backend.md`。
 
-- **版本规划**：`/version V0.1.0 "M1"`（内部串 requirements→design→plan→selftest）
-- **日常轻量任务**：自然语言或 `/sprint-dev "<描述>"`、`/sprint-bugfix ["<描述>"]` 默认 light；**正式 Sprint 执行**：`/sprint-full NNN`、`/sprint-batch`（公开 development 组合；部署/实测另按授权）
-- **单Sprint/分步/辅助**：`/sprint-full NNN` · `/sprint-start;/sprint-dev;/sprint-test;/sprint-close` · `/memory-sync` · `/health-check`
-- **7×24 全自动（★ 开发 + 测试两条链路必须同时运行才是完整闭环）**：
-  ```bash
-  python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install   # 操作系统调度：开发 10m + 测试 5m + 独立 watchdog 5m（三种 Agent 通用）
-  python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status    # 定时任务 + 两条链路心跳
-  # Claude Code 会话内交互式短期用法（会话级、7 天过期、空闲才触发、同会话两条串行）：
-  /loop 10m /sprint-autopilot --unattended --no-loop
-  /loop 5m  /sprint-aiauto-test --unattended --no-loop
-  ```
-  > ⚠️ 只跑开发链路 → 浏览器实测永不自动开始（约 3 tick 后静态-only finalize + 冻结待人）。**headless 裸 `--once` 须叠 `--unattended`**（否则首个 AskUserQuestion 无人可答挂起；`agent_loop.sh` 已自动补齐）。冻结 / 告警恒写本地告警台账 `memory/.aidp/alerts.jsonl`。前置（`notify` 通知渠道 / chrome-mcp / PRD `autopilot_decisions` / CICD `cicd.provider` + `cicd.pipelines` 等）详见 `{{AIDP_HOME}}/reference/命令速查.md`。
+运行真源为 `{{AIDP_HOME}}/`。仅 Claude Code 使用 `.claude/`；Codex / DeepSeek Harness（含并存）使用 `.agents/`，Claude Code 读取装配副本。命令在 `commands/`、技能在 `skills/`，适配入口由 `agent_sync.py` 生成，不手改生成物。项目记忆落点通过 `agent_env.py memory-file` 查询；并存时 `AGENTS.md` 为正文、`CLAUDE.md` 为 `@AGENTS.md` 薄壳。 <!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 
-## ★ Sprint 命令清单 + 意图路由
-
-> **核心规则**：自动命令路由保留，但**选择能力与确定 light/formal 身份分开**。普通自然语言默认 light，可复用 start/dev/test/bugfix/close；明确 Sprint 或 version/full/batch/autopilot 才为 formal。先 resolve/route 按父策略筛选动作，再进入适用分支；复杂度、已有 activeContext 或历史计划不能升级身份或授权。需求含糊只澄清具体目标，不询问是否要创建 Sprint。
-
-### 一、Sprint 命令全清单（16 个）
-
-| 命令 | 用途 | 触发时机 |
-|------|------|---------|
-| `/sprint-init` | 项目全量初始化（生命周期仅 1 次）| 首次接入 AIDP |
-| `/sprint-init-design` + `/sprint-init-complete` | 初始化分步模式（前/后半段）| 严格人工审核 |
-| `/sprint-requirements` | 产品 PRD → 研发需求 | 版本规划期；通常 `/version` 内部调用 |
-| `/sprint-design` | 详细设计 / 接口 / 数据库 / 对外接口 / 集成对接 | 版本规划期；通常 `/version` 内部调用 |
-| `/sprint-plan` | 研发执行计划（Task 拆分 + 排期）| 版本规划期；通常 `/version` 内部调用 |
-| `/sprint-selftest` | 研发自测方案 + 人工自测用例 + 测试环境与账号（调 dev-manual-testcase）| 版本规划期；通常 `/version`（Step 2.4.3.5）内部调用；缺自测时可单独补跑 |
-| `/sprint-start` | 准备当前任务；formal 才启动 Sprint | 进入开发前 |
-| `/sprint-dev` | 开发阶段（前/后端；默认 light，formal 支持累进）| 日常开发 |
-| `/sprint-test` | 当前 task / 单 Sprint 相关测试、必要修复复验；已授权静态/审查/CVL同范围，不带浏览器或全版本 | 开发/修复后自动调用 |
-| `/sprint-bugfix` | Bug 修复（默认 light；formal 按明确 Sprint 范围修复）| 测试发现或独立修复 |
-| `/sprint-close` | 收束任务；formal 才关闭并归档 Sprint | 验收通过后 |
-| `/sprint-full` | 单 Sprint 完整闭环：start→dev→test→bugfix→close | 一键跑完单 Sprint |
-| `/sprint-batch` | 批量执行研发执行计划的多个 Sprint；末段 Step 6 仅在父级部署 / 实测授权时才衔接 `/sprint-aiauto-test --once`（缺授权不询问），失败用例回写「问题汇总清单」交 `/sprint-bugfix` | 跑完所有 Sprint |
-| `/sprint-autopilot` ★ | **开发链路编排器**：扫 `docs/requirements/` 识别最近一对，分别串 `/version --no-tag` 和 `/version + /sprint-batch`；触发部署但不跑 chrome（**例外 P0-4**：交互式【单次】调用没有第二条 loop 承担时，autopilot 自跑一次 `/sprint-aiauto-test --once --unattended`）；经 `notify.py` 发里程碑通知 | 7×24 用 `/loop 10m`；直接调用走配置向导 |
-| `/sprint-aiauto-test` ★ | **AI 自动化测试链路**（浏览器端：默认本地 CLI，显式声明才走远程 MCP）：独立仅明确目标实测；仅真实 autopilot 委派且 version/build/验收基线/完整用例清单齐备才当前版本全量；共享 baseline | 7×24 用 `/loop 5m`；单次 `--once`（不传版本号）；兜底 `--target V0.X.X` |
-
-### 二、意图路由（自然语言 → sprint-* 命令）
-
-规划类行仅在用户明确要求对应正式规划产物时适用；普通任务里“设计一个接口”“拆一下实现步骤”仍在 light 任务内复用相关角色，不自动生成版本规划或 Sprint 文档。表内 start/dev/test/bugfix/close 先按执行上下文分流，不能把能力关键词当正式身份。
-
-| 关键词 / 表达 | 路由到 |
-|--------------|------|
-| "初始化项目"、"接入 AIDP"、"第一次跑"、"建立 AIDP 范式" | `/sprint-init`（或分步 design + complete）|
-| "整理需求"、"PRD 转研发需求"、"分析需求"、"功能规格" | `/sprint-requirements` |
-| "设计接口/数据库/详细设计"、"出技术方案"、"做架构"、"出 DDL"、"对外开放/集成接口设计" | `/sprint-design` |
-| "拆任务"、"研发执行计划"、"任务排期"、"Sprint 划分"、"出开发计划" | `/sprint-plan` |
-| "生成研发自测"、"生成自测用例"、"出自测方案"、"补研发自测"、"测试用例生成"、"配测试环境与账号" | `/sprint-selftest` |
-| "把这个环境/账号记一下"、"补录测试账号"、"存下这个库连接"、"记录环境地址" | `/sprint-selftest --capture`（约定 38）★ 用户**随口给出**地址/账号时**无需等这句话**，按约定 38 当轮自动归档 |
-| "开始 Sprint-NNN"、"启动 sprint" | `/sprint-start`（formal；明确编号） |
-| "开发 XXX"、"新增 XXX"、"实现 XXX 模块"、"加个 XXX 按钮"、"前/后端实现" | `/sprint-dev`（默认 light，保留用户描述）|
-| "跑相关测试"、"测试 XXX" | `/sprint-test` 能力路由，仅 related-test，不借显式命令组合 |
-| "code review"、"代码审查" | reviewer 能力路由，仅 review，不附带 unit/CVL/文档 |
-| "修个 bug"、"修复 XXX 问题"、"问题处理"、"页面打不开"（描述具体问题）| `/sprint-bugfix [描述]`（默认 light，复杂度不改变身份）|
-| "关闭 Sprint"、"Sprint 完事了" | `/sprint-close`（formal）；普通任务的"收尾"复用 close（light） |
-| "Sprint-NNN 一条龙"、"一键跑完 Sprint-NNN" | `/sprint-full [NNN]` |
-| "跑所有 Sprint"、"批量执行"、"按计划全跑"、"一键所有 Sprint" | `/sprint-batch` |
-| "无人值守"、"全自动开发"、"24 小时跑"、"autopilot"、"7×24"、"挂着自动开发" | `/sprint-autopilot`（无需传版本号）|
-| "chrome 测试/实测"、"浏览器/仿真/UAT/页面测试"、"部署后测试"、"账号登录测" | 复用 `/sprint-aiauto-test` 的目标实测能力，保留 live-tests 范围，独立调用不取得 full-regression；仅真实autopilot委派当前版本完整清单才可全量 |
-| "跑一下流水线"、"执行 CICD"、"触发构建部署"、"重新部署"、"部署到测试/研发环境" | **不新增命令**：先核 commit/push/deploy 各自动作来源，再在已授权 push 前调用 `classify_push.py --root . --version <版本> {--build <BUILD> | --standalone}`（⛔ 落盘的是它；`classify_commit_change.py` 只出分类不落盘）并将完整分类写入当前 build；**链外任务按约定 41 不铸 build ⇒ 走 `--standalone`**（缺 build 又不传它会直接 `ValueError`），它另落一条 commit 键控记录供 `commit_gate.py` 结算链外推送欠账；无正式代码变更时仍校验 push 成功但跳过远端 CICD/监听/就绪探针，分类失败按正式代码路径 fail-closed；正式代码变更经 CICD（`cicd.provider`，默认 GitHub Actions；push 自动触发，或 `cicd_watch.py --mode trigger` 主动触发）后由 `cicd_watch.py` 只读监听终态；主动 trigger/retry 与就绪探针先过本片执行策略的 deploy 门 |
-
-> ★ **AI 测试入口前置规则**：上表把"AI 自动化测试 / chrome 测试 / 部署后测试"路由到 `/sprint-aiauto-test`，但**若被测版本属 autopilot 体系**（判据 = `current_build` 存在，**或** `versions.{version}` 存在**且** `source != "sprint-batch"`；⛔ `source == "sprint-batch"` 一律不算——那条记录是 `/sprint-batch` Step 6 自己预写的，算进来会让首跑后的每次重跑都被弹回 autopilot。判据单一信源 = `{{AIDP_HOME}}/flows/sprint-batch/step-6b.md` Step 6.4）**且本 build AI执行报告缺失** → **必须先经 `/sprint-autopilot --skip-dev`（test-only 入口）跑「子流程 R」产出 AI执行报告【骨架】**（autopilot 是**骨架**的唯一生产者；用真实测试结论 finalize + 发报告本体 + #3 由 build 关闭方做），由它委派回浏览器实测；**严禁**在 AI执行报告缺失下直接手驱浏览器、散落 AI测试报告。仅**真正 standalone**（无 baseline 记录）才直达 `/sprint-aiauto-test`；即便误直达，其 Phase 0.2 步骤 2.5.1 也会**自愈交接**回 autopilot 兜底。口径：**实测前必有 AI执行报告**。
-> **★ 豁免（本规则只约束"链外直达"）**：由 autopilot 编排链**内部**调起的 `/sprint-batch` Step 6（autopilot Phase 3.2 → `/sprint-batch` → Step 6）属**已在链内**——AI执行报告由本轮 autopilot 负责产出，但 autopilot 链内**恒带 `--skip-aiauto-test`**（`phase-3-5b.md` 列为必传），故 Step 6 实际在其 6.0 跳过条件处即整段跳过——浏览器实测唯一归独立 `/sprint-aiauto-test` 链路。本规则**只针对链外直达**（用户/自然语言路由直接进 `/sprint-aiauto-test`）。
-
-### 三、路由判定流程
-
-1. **先继承身份**：嵌套、重试、验收内修复与续跑必须传原 `--execution-context`，原 `$ARGUMENTS` 保留；缺失时不能从 activeContext 猜父任务。
-2. **新任务选择能力**：斜杠命令读取对应正文；自然语言按上表自动路由。"进入开发"、"开发并测试 XXX"、"修复接口"、"收尾"默认 light，只执行已授权能力，不因命令名含 sprint 升级身份或授权。
-3. **确定身份**：明确 `Sprint-NNN`/Sprint 执行意图时走 formal，编号不明只澄清目标编号，不自动认领最早计划；版本规划/发布与 full/batch/autopilot 为 formal。普通任务即使仓库已有 active Sprint 也仍 light。
-4. **先分流再过门**：各入口先执行 `entry_context.py resolve/route`。light 读取 `flows/sprint-dev/light-context.md`、执行对应轻量能力后 **return**；formal 才进入下文 Sprint 取号、契约、activeContext、归档门。formal 不等于 heavy 授权；同样只执行 allowed_actions，未启用检查记 NOT_REQUESTED。
-
----
-
-## Agent 激活路由
-
-| 当前任务 | 激活 Agent | 指令文件 |
-|---------|-----------|---------|
-| 需求分析 | PM Agent | `{{AIDP_HOME}}/agents/pm.md` |
-| 系统设计 | Architect Agent | `{{AIDP_HOME}}/agents/architect.md` |
-| UI 规范与原型分析 | UI Agent | `{{AIDP_HOME}}/agents/ui.md` |
-| 前端开发 | Frontend Agent | `{{AIDP_HOME}}/agents/frontend.md` |
-| 后端开发 | Backend Agent | `{{AIDP_HOME}}/agents/backend.md` |
-| 测试执行 | QA Agent | `{{AIDP_HOME}}/agents/qa.md` |
-| 代码审查 | Reviewer Agent | `{{AIDP_HOME}}/agents/reviewer.md` |
-| ★ 范式合规检查 | AIDP-Compliance Agent | `{{AIDP_HOME}}/agents/aidp-compliance.md`（脚手架 init/migrate/upgrade 末尾自动激活；包住 `verify.py` 全部检查 + 4 个语义维度（维度 4「目标↔实现背离」仅当仓库根有 `设计目标.md` 时启用，无则 INFO 跳过））|
-| ★ 版本规划产物审计 | Version-Auditor Agent | `{{AIDP_HOME}}/agents/version-auditor.md`（`/version` Step 2.4.7 强制激活；独立子 Agent 隔离上下文；8 项审计 A 存在性/B 边界/C 覆盖完整性（含 C-4 PRD 行级原子条目→研发需求、C-5 研发需求字段→详细设计 反向覆盖，Critical 硬门）/D 增量一致性/E 引用链/F 原型覆盖度（Critical 硬门）/G 语义变更派生完整性（约定 22 第三类触发，Critical 硬门）/H 跨版本需求作废完整性（约定 34）；产出 `docs/audit/{version}/`；唯一跳过 = `--skip-audit`，**且仅当 `trigger=version`**；autopilot Phase 3.3 的 build 终审无跳过路径）|
-| ★ SKILL 移交维度审计 | QR-Handoff-Auditor Agent | `{{AIDP_HOME}}/agents/qr-handoff-auditor.md`（`/version --qr-level` 非 full 时，Step 2.4.7 与 Version-Auditor 同轮并行；每份移交清单一个实例） |
-
-> ⚠️ **派 Agent 前先读 `{{AIDP_HOME}}/agents/README.md`**：上表这几份是**角色指令文件**，不是 Claude Code 原生的注册式 `subagent_type` —— `Agent({subagent_type: "backend"})` 调不起它们，而误用的失败形态是**静默的**（派出去一个没读过角色文件的通用子 Agent，它照样会交出一份看着像模像样的结果）。
-
----
-
-## ★ 命令 vs Skill 关系说明
-
-| 类型 | 位置 | 触发 | 作用 |
-|------|------|---------|------|
-| **斜杠命令** | `{{AIDP_HOME}}/commands/*.md` | 用户输入 `/xxx` | 用户入口，高层编排器 |
-| **技能（Skill）** | `{{AIDP_HOME}}/skills/*/SKILL.md` | Claude 内部用 `Skill` 工具调用 | 底层实现细节 |
-
-典型链：`/sprint-bugfix`（命令编排器）→ 内部调 `bugfix` skill + `superpowers:systematic-debugging`。同名 `bugfix` 命令与 skill 作用域不同、不冲突（前者用户入口、后者执行时内部工具）。
-
----
-
-## 本项目使用的 Skills
-
-> 各 SKILL **详细用途**见 **`{{AIDP_HOME}}/reference/skills.md`**（按需 Read）+ 各 `SKILL.md`（单一信源，约定 21）；本节只列「skill → 被谁调用」供路由。生成新业务编号前须 Read 该参考的「编号与执行证据的调用层协议」，通过 `alloc_id.py` 预留号段并传给执行方，禁止并发自行取最大号加一。
-
-| Skill | 被谁调用 |
-|-------|---------|
-| `ux-logic-extractor` | `/sprint-requirements`（累进经 `--supplement` / `--ledger-cascade` 同一入口） |
-| `dev-logic-architect` | `/sprint-design`（累进同上）；开发期预检直调其脚本见 `/sprint-dev` |
-| `dev-execution-planner` | `/sprint-plan`（累进同上） |
-| `dev-manual-testcase` ★ | `/sprint-selftest`（研发自测唯一生产入口）；其他命令一律经它转调（全量 / `--supplement` / `--ledger-cascade`）、不直调 SKILL |
-| `auto-test-runner` ★ | `/sprint-aiauto-test` Phase 2 执行内核 |
-| `code-verification-loop` | `/sprint-test`（仅验收模式）；开发期预检直调其脚本：`/sprint-dev`、Frontend/Backend Agent |
-| `bugfix` | `/sprint-bugfix` |
-| `notify.py`（脚本，非 skill）★ | `/sprint-autopilot`·`/sprint-aiauto-test` 里程碑通知（约定 32，渠道按 `memory/aidp-config.yaml` `notify.channels`）|
-| `aidp-code-engineer` | 脚手架 init/migrate/upgrade |
-| `superpowers:*`（tdd/debugging/verification）| `/sprint-dev`（tdd/verification）·`bugfix` SKILL（debugging）·`/sprint-batch`、`/sprint-test`、`/sprint-bugfix` 方式 B（verification）。并行开发由 AIDP 按写集隔离编排，不调用串行 `subagent-driven-development`；`executing-plans` 不用于零询问的 `/sprint-batch` 顶层循环 |
-
-> 外部可选：`api-tester` 等（未装即跳过）；浏览器实测驱动 `chrome-devtools-mcp` 随仓库分发于 `各 Agent 的运行根/plugins/chrome-devtools-mcp/`：Claude Code 使用完整项目插件，Codex / DeepSeek Harness 共用 `.agents/skills/chrome-devtools-mcp/skills/`，MCP 分别写入 `.codex/config.toml` / `.dsh/mcp.json`（见 `各 Agent 的运行根/reference/skills.md`）。<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
-
-## 初始化输入文件清单
-
-> 完整的输入/产物路径清单（PRD / 研发需求 / 架构 / 设计 / 原型 / 部署资产 / 报告模板 / AI 报告目录等）见 **`{{AIDP_HOME}}/reference/初始化与文档索引.md`**（按需 Read）；路径权威 = `docs/init/06_版本与用户目录约定.md`。
-
-## 核心约定（必须遵守）
-
-> 约定编号 1–41 为稳定锚点（命令/Agent/SKILL/记忆全靠「约定 N」引用），不得重排或合并。**本段每条只做「决策要点 + 详规指向」索引**；详细规则在其**单一信源**处（随脚手架下发，可查）——工作流约定指向所指 SKILL/agent/命令，**代码向约定（4/17/18/19/20/23/26/27/28/29/35/39/40）指向 `{{AIDP_HOME}}/rules/*.md`**（`frontend.md`→`code/frontend/**`、`backend.md`→`code/backend/**`、`code.md`→`code/**`，带 `paths:` frontmatter，**Claude Code 下编辑对应代码时才自动加载**、不占常驻上下文；Codex / DeepSeek Harness 无此机制，须编辑前显式 Read，见 `{{AIDP_HOME}}/reference/agent-tools.md`）。「见约定 N」始终解析到本段索引摘要 + 其单一信源详规。 **★ 每条的完整细则/Why/示例/实现子项已外置为按需 Read 的分片（本目录总览见 `{{AIDP_HOME}}/reference/README.md`），映射如下——约定 1·2·6·9·11·13·14·15·16·21 → `{{AIDP_HOME}}/reference/约定细则-1.md`；约定 22·24·30 → `{{AIDP_HOME}}/reference/约定细则-2.md`；约定 31·32·33 → `{{AIDP_HOME}}/reference/约定细则-3.md`；约定 34·35·36 → `{{AIDP_HOME}}/reference/约定细则-4.md`；约定 37·38·41 → `{{AIDP_HOME}}/reference/约定细则-5.md`（其余约定为一行、无外置细则）。★ 分片内只放该条的子项/Why/示例，**决策要点主行以本段为唯一权威、分片不复制**（避免双写漂移）。**
->
-> ⚙️ **技术栈中立**：下文出现的具体技术（`@RefreshScope`/`@Profile`/`el-*`/`@Size`/`VITE_USE_MOCK`/MyBatis 等）一律为**示例**，请按本项目实际编程语言与技术选型对应等价机制；纯属某技术栈的约定（如约定 27 仅配置中心项目适用）不适用时直接忽略。AIDP 范式的角色技术细则（`agents/backend.md` / `frontend.md`）默认以 Java Spring Boot + Vue 为例，下游可按需替换。
-
-1. **版本规划期生成所有设计文档**：需求和详细设计在 `/version` 阶段一次性生成，Sprint 执行期只读取不重新生成
-
-2. **任务身份先于累进**：普通自然语言新增功能/修复默认 light，复用 `/sprint-dev`、`/sprint-bugfix` 不自动创建 Sprint。**formal 明确累进**才创建 Sprint 并追加设计，且仅适用于当前版本未发布；两种身份都保留版本落点、破坏性及不可逆操作授权门。详规适用域由约定 41 与 `flows/sprint-dev/light-context.md` 先行裁定。
-
-3. **零散 bug 独立修复**：`/sprint-bugfix`（无参数），无需新 Sprint
-
-4. **UI 优先级（视觉+内容+操作逻辑三层对齐 / 字段裁剪三件套 / 设计令牌 / L1·L2 / 4 情形 A-D）**：前端视觉·内容·操作逻辑三层须对齐原型（除非走裁剪三件套显式说明）；原型字段的裁剪/改名/增列走「研发需求留痕 → 产品确认门 → 约定 22 级联」三件套，绝不静默漂移；无高保真时按情形 A/B/C/D 决策（C/D 用户显式选），情形 B/C 先从原型提「设计令牌」再开发；L1 页面样式（元素齐全+设计语言体系+布局）严格对齐、偏差 Critical，L2 用项目组件默认样式但主题 token 取自 L1。**★ 全部决策铁律（三层定义 / 三件套双向双盲区 / 规划期"漏写=违规" / 强制产出物「原型内容基线」+「设计令牌」/ 约定 28 边界 / L1·L2 分级 / 叶子组件白名单 / 图标语义化 等）见 `{{AIDP_HOME}}/rules/frontend.md`（编辑 `code/frontend/**` 时自动加载）**；回检 = `code-verification-loop` 维度 4「视觉还原度(L1/L2)」+ `version-auditor`「原型覆盖度」(Critical 硬门) + `dev-manual-testcase`。
-
-5. **公共组件优先**：布局/导航/侧边栏等公共组件必须先抽取复用，禁止跨页面重复实现
-
-6. **数据库基线必读 + ★ SQL 开发期自动应用（幂等）**：设计表前必须读 `memory/databaseBaseline.md`，已有表不重复创建。
-
-7. **遵守架构约束 + 全目录识别架构文档**：所有设计和代码必须符合 `docs/architecture/` 约束文档；读 `docs/architecture/` 时**全目录扫描**——除约束三件套外，还识别可选的**架构设计文档**（单文档 `架构设计.md` 或子文件夹 `架构设计/` 多文档，兼容存量任意命名，详见 `06_版本与用户目录约定.md` §2.1.1），架构设计文档作为详细设计的上游输入。**★ 仅有架构设计、缺架构约束时**（版本规划期）：`/sprint-design` Step 4.2 据架构设计派生一份 `架构约束.md`，使全局约束基线不缺失
-
-8. **ADR 必记**：影响架构的技术决策必须追加到 `memory/systemPatterns.md`
-
-9. **formal Sprint 关闭前归档**：未执行 `/sprint-close` 不得开始下一个 Sprint；light 收尾不创建 Sprint 归档、不重置已有 activeContext/progress。**★ 归档只记「事后查不到的东西」+ 篇幅分档**（约定 41.5）：⛔ 不记 git log 查得到的、不记文档里已有的、不记下一轮会重算的；记的是**判断与取舍**（为什么选这个方案、放弃了什么、留下什么已知失准点）。建议上限：口述累进 ≤40 行 / 计划内 Sprint ≤80 行 / 含口径反转 ≤120 行（超出不阻断，但须自问「这些是不是事后查得到的」）。
-
-10. **formal Bugfix 文件规范**（light 修复证据使用任务上下文目录的机器 JSON）：`docs/bugfix/{version}/bugfix-{YYYYMMDD}-{user}.md`（一天一人一份）+ 表格 + 详情章节。用户主动提及 GitHub Issue 时先用 `gh issue view/list` 读取再修（可选），详见约定 31.3。
-
-11. **目录隔离**：迭代产出按 `{version}/` 或 `{version}/{user}/` 隔离，不跨用户改他人目录。
-
-12. **★ 文档动态同步（触发条件在此，【执行时机与落盘形态】一律归约定 22，本条不另立一套）**：引入新接口 / 表 / 功能时，详细设计·接口设计·数据库设计·研发执行计划**都要跟上**——但**跟上的方式 = 约定 22 的攒批**：**开发过程中只写四族 `_开发期{族}增量.md`（与各族内容主文档同目录，落点见详规）**，到**收口点**才批量级联、**就地改各族内容主文档正文**（⛔ 不新建分册；机器门 `check_cascade_landing.py` 见到 `NN_<业务主题>.md` 即判违规）。**⛔ 开发过程中不实时改这些文档**：不改 `01_` 等主文档正文、不逐次刷 `00_索引.md`、不为一次改动新起分册——`00_索引.md` 的生成时间/清单（约定 15）在**收口时**随增量一并刷新。⛔ 本条**不构成**「实时回写」的授权；与约定 22 冲突时**以约定 22 为准**。
-
-13. **提交信息规范**：遵循 Conventional Commits（`feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`，可带作用域如 `feat(user):`），**一次提交只做一件事**（业务改动、重构、格式化、脚手架同步各自成笔）。详规见 `{{AIDP_HOME}}/reference/约定细则-1.md`。
-
-14. **文档语言（中文为主）**：AIDP 命令生成文档**正文 + 文件名都用中文**。
-
-15. **同类多文件编号 + `00_索引.md` 专职导航锚 + 补充文档命名（去"补充"字眼）**：**四类版本规划文档（研发需求/详细设计/研发执行计划/研发自测）恒有 `00_索引.md` + 内容主文档从 `01_` 起——含单文件态、无例外**（裸中文名如 `详细设计.md` 属 `version-auditor` A-06b Critical）；其余同类多文件才按两位数字前缀排序（`01_`~`99_`，超 99 合并；已带日期前缀的文件按日期排序不加数字前缀）。单一信源 = `dev-logic-architect` SKILL「多文件拆分」+ `{{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_doc_split.py`（⚠️ `dev-execution-planner` / `ux-logic-extractor` 各自另带一份**同名但形态定义不全**的脚本，判据以 dla 那份为准）。
-
-16. **★ SKILL 修改作用域硬约束**：`{{AIDP_HOME}}/skills/` 下**全部 SKILL 均由 AIDP 模板仓库（`aidp-code-engineer`）自有维护**——在模板仓库内可直接修改，改后同步进脚手架；**经脚手架初始化/升级的下游项目内不应直接改**——改后无法回流模板、下次升级被覆盖丢失、与姊妹项目永久漂移，需要变更时回到模板仓库修改后再升级下发。
-
-17. **★ 代码注释强制规范**（覆盖 Claude 默认"无注释"原则，统一遵守）：类/接口/枚举/组件、方法/函数、字段/常量、关键代码段均须按规范加**业务含义**注释（枚举值域、参数·返回·抛出语义、与 DB COMMENT/PRD 对齐），强度按 A/B/C 三档。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载）**；回检**两个方向都有**：写少了 = `code-verification-loop`「注释完备性」（A 档裸代码 → Critical 回 `/sprint-bugfix`）；写多了 = `python3 {{AIDP_HOME}}/scripts/check_comment_ratio.py`（声明之外的注释过密 → Important 不阻断，由 `/sprint-dev` Phase 1 Step 7bis 调用）。⛔ 反向门不是「少写注释」的许可——它只砍 B/C 档的同义反复。
-
-18. **★ 代码目录统一标准（`{子项目}` 中间层为铁律）**：新建 `code/` 强制前后端二分 `code/frontend/{子项目}/` + `code/backend/{子项目}/`，源码根标志（`src/`/`pom.xml`/`build.gradle`/`package.json`/`go.mod` 等）**只能落在 `{子项目}` 层下、严禁直放 `code/frontend`·`code/backend` 父目录根**（即便单项目也须有 `{子项目}` 层）；`{子项目}名` 经用户确认门（默认推荐 `<项目名>-frontend|backend`、不静默采用）。**详规（init/migrate/upgrade 三模式行为 + Agent 读写边界 + 强制范围）见 `{{AIDP_HOME}}/rules/code.md`**；回检 = `verify.py::check_code_layout`。
-
-19. **★ README 三档规范**：① 前后端子项目根（含每个 module）必有 `README.md`，说明用途、技术栈、启动、目录、配置与依赖；源码单元内部不生成。② 源码树外直接子目录 ≥2 或有 1 个非空子目录的枢纽，只保留一份导航，默认 README；已有契约要求的 `00_索引.md`（约定 15）或部署说明时不再补 README。③ 其余平铺目录不生成。判定唯一实现 = `readme_policy.py::is_readme_required_directory`，`README_REQUIRED` 显式声明优先，存量范围外 README 只报告不删除。详规见 `{{AIDP_HOME}}/rules/code.md`；触发 = `/sprint-dev` 首次写码前 / `/sprint-init`，回检 = `verify.py::check_code_readme`。
-
-20. **★ 文件复杂度 + 复用封装强制规范**（任务需要的复用 ≠ 过度抽象）：单文件按语言软阈值（Java/Kotlin ≤500、Vue/React ≤300、TS/JS ≤400、Python ≤600、Go ≤500、SQL DDL ≤800）、单方法/函数硬阈值 ≤50 行必拆；同 Sprint 内 3 次复用即抽公共单元（**★ 前端视觉单元收紧到 2 次**——逻辑的重复会被 bug 打出来，**样式的重复不报错、只会分叉**；**★ 判据类逻辑**——URL/base 拼装、鉴权头、租户解析、时间格式化、金额换算、脱敏归一——**散落 ≥2 处即须收敛，比 3 次阈值更严**）；复制型代码必落 `SYNC-WITH: <源文件>` 标记 + 技术债项写明「为什么现在不抽 / 解除条件」（缺任一 = 未处理，⛔ 登记不是免责声明）；抽取须**整族 + 全参数化**、且**与重构分两次提交**；禁 God Class（>1000 行）/ 瑞士军刀方法 / 3+ 复制粘贴 / 无 3 次复用的空抽象。**详规（各语言阈值 + 豁免）见 `{{AIDP_HOME}}/rules/code.md`**；回检 = 超阈值 Important、>2 倍 Critical 回 `/sprint-bugfix`。
-
-21. **★ 命令调用 SKILL 的内容职责分层**（强制）：命令通过 `Skill` 工具调 SKILL 时**不得重复或修改 SKILL 已有规则**，但允许做项目级补充。SKILL 是单一信源，命令只做编排 + 项目级延伸。
-
-22. **★ 上游文档级联同步（默认【攒批】执行，非即时）**：引入超出既存文档范围的实质变更（新增接口/表/业务规则/页面/功能点/Sprint 拆分/原型字段被覆盖或裁剪/第三方接口 Mock 切真实/语义·口径·范围·单位·默认值·状态机·权限范围变更）在相应收口点按受影响范围级联回核心上游文档族：**研发需求 → 详细设计 → 研发执行计划 → 研发自测用例**。**★ 执行形态 = 攒批**：先按受影响的族记入 `_开发期{族}增量.md`（同一变更跨族共用 `C-NNN`），由【收口点】批量级联、结合代码现状核实，成功即删条目、清空即删文件；`--cascade-now` 仅用户显式要求时可当场级联；light 只记实际受影响族，不建空册、Sprint 卡、替代审批文档，test/close 不触发全套级联。**★ 作用域 = 变更事实、与命令入口无关**：裸对话路径同样先记增量册（绕过由 `commit_gate.py::suspected_cascade_bypass` 反向检出）。**详规见 `{{AIDP_HOME}}/reference/开发期族增量.md`**。
-
-23. **★ DB 约束写代码硬规范**：DDL 声明的字段约束（NOT NULL/长度/唯一/外键/数值范围）必须前置校验到**接口层/服务层/前端表单层**，禁止依赖 DB 抛错回滚、禁止把数据库异常（如 `SQLException`/`DataIntegrityViolationException`）原样暴露前端（须包业务码 + 友好提示）。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载）**——后端长度/唯一查/外键查 + 前端必填·长度·失焦查唯一·枚举对齐·数值范围 + 反模式均在其中；回检在 `code-verification-loop` 维度 4 + `dev-manual-testcase` 4 类边界场景（null/超长/重复/外键缺失）。
-
-24. **★ 提交前门禁 `commit_gate.py`（每次 `git commit` 前必跑；强制铁律）**：先核commit grant；**每次已授权** `git commit` 前**必须**跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet --execution-context "$EXECUTION_CONTEXT"` 并读其 JSON。**★ 退出码即欠账信号**：`0`=无欠账；**`3`=有未落地义务**；`4`=保留阻塞档位——3/4 **不是"禁止 commit"**；**5 / NOT_AUTHORIZED 为硬禁止，不提交**。已有commit/push各自授权时才照常执行，之后按成因补做（台账格式/清理异常 → 修正并复核；推送欠账 → 按约定 31.5 补监听；实际级联仅由阶段入口或显式 `--cascade-now` 触发）；欠账告警恒打印 stderr、`--quiet` 不压制。**★ 作用域 = 变更事实、与命令入口无关**：裸对话路径同样适用。总开关 = `memory/aidp-config.yaml` 的 `commit_gate.enabled`。**详规见 `{{AIDP_HOME}}/reference/约定细则-2.md`**。
-
-25. **★ 配置文件分层**：运行时配置（如 `application.yml`/`.env`/`nginx.conf`/`vite.config` 等）**原文件为权威**，**禁止**在任何 Markdown 复抄完整配置文件、维护 key→示例值全量大表或创建 `.env.example` 等示例副本；.md 只承担 ① 增量配置项的代码块片段 ② 全量配置文件的"路径+用途+维护方"索引。**唯一例外 = 约定 37 的发布期全量基线 `docs/deployment/{version}/配置文件/全量/`**（判据见细则片 5 的 37.7）。`部署流程.md` 与 `配置项清单.md` 不得双写配置项内容（流程讲怎么做、清单讲配什么，清单只讲本版改了什么）。部署 Markdown 仅版本规划/正式发布集中校准，日常 dev/bugfix/链外/部署只留机器待同步引用，不为日志额外 commit/push；备份按项目策略与真实记录统一频率，DB/冷备/迁移快照合计，复用保留原时点，缺覆盖不自动追加或恢复。详规见 `{{AIDP_HOME}}/reference/部署操作约定.md`；X.7/X.8 仅登记本轮变化。
-
-26. **★ Mock 实现位置选型优先级**（允许 mock 的合规场景）：P0 前端 mock 首选 / P1 后端运行时开关次选（禁 `@Profile("dev")` 等环境专属守卫）/ P2 中间件最后；口诀"前端能拦截就前端拦截"、后端接口未部署严禁写一次性假数据接口；**守卫策略按标记分流（⛔ 两类目的相反，绝不能混用）**——`THIRD_PARTY_MOCK`（第三方未交付、要活到 UAT/Demo）**必须运行时开关**、6 字段标注块必填，构建期守卫判 Critical；`DEV_MOCK`（同项目后端未部署、绝不能进生产）**应当构建期裁掉**（`import.meta.env.DEV` 即合规形态），3 字段（since/owner/REMOVE_WHEN），反给它套运行时开关才判 Important；≤30% 工时、全生命周期 4 阶段（切真实/清理须触发约定 22 文档级联，非只清代码）。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载）**；回检 = `code-verification-loop` 维度 2B（残留 Critical 回 `/sprint-bugfix`）+ `dev-manual-testcase`。
-
-27. **★ 配置中心动态配置热刷新**（仅用配置中心的项目适用）：注入配置中心**可变**配置的组件（连接池/限流阈值/开关/第三方地址密钥等）必须支持**运行时热刷新**（无需重启即生效，如 `@RefreshScope`），长生命周期持有者避免缓存旧引用；仅启动期固定配置/纯逻辑类/服务发现不需要。**详规见 `{{AIDP_HOME}}/rules/backend.md`（编辑 `code/backend/**` 时自动加载）**；回检 = `code-verification-loop` 维度 4。
-
-28. **★ 实现层"已有技术栈/组件复用优先"原则**：实现层优先用项目已有栈/组件（不强引原型用而项目无的库），**★ 作用域仅"实现选型层"（用哪个库/组件去实现），绝不豁免约定 4 的视觉+内容+操作逻辑三层对齐**——"用项目组件 ≠ 用组件库默认观感 ≠ 可砍内容/简化流程"；已有栈能满足禁引新库，不支持须 `AskUserQuestion` 同意 + 写 `systemPatterns.md` ADR。**详规见 `{{AIDP_HOME}}/rules/code.md`**；回检 = `code-verification-loop` 维度 4 grep 新增依赖是否在 baseline。
-
-29. **★ 历史代码识别与处置**：开发同名/同语义模块前先核对历史代码。无菜单、无静态引用、无路由、显式重做仅是候选信号，须补查动态入口及实际可达性；未知保留。A 仍使用→按约定 28 复用；B 证据充分且不再使用→按清单删旧重写；C 仍使用且显式重构优先→兼容迁移，未获裁决不删。关联文件逐项证明独占引用，不能连带推定。详规见 `{{AIDP_HOME}}/rules/code.md`；判定入口 = `/sprint-dev` Phase 0A.5，回检 = `code-verification-loop` 维度 4。
-
-30. **★ 命令 / Agent / 文档正文只陈述「最终行为」；版本号与变更历史收口归档**（强制）：`{{AIDP_HOME}}/commands/*.md`、`{{AIDP_HOME}}/agents/*.md`、**`{{AIDP_HOME}}/flows/**`、`{{AIDP_HOME}}/reference/**`、`{{AIDP_HOME}}/rules/**`**、`docs/init/*.md`、根级项目记忆文件（`AGENTS.md` / `CLAUDE.md`）/`README.md` 等指令/文档正文只描述当前该做什么（★ 契约正文的大头如今在 flows/reference/rules 三处，它们同受本条约束——**唯 `rationale.md` 例外**，那本就是承载「为什么这么定」的根因文件），**禁止**铺陈版本变更历史（"原来怎样→现在改成怎样→为什么"），**也不写任何范式版本号戳**（文件头 `AIDP Vx.y` / 标题 `（Vx.y）` / 页脚 `基于 AIDP Vx.y 范式` / 行内 `（Vx.y 新增）`/`Vx.y 起` 等一律不写）。
-
-31. **★ CICD 与协作平台集成（多提供方，默认 GitHub Actions）**：**31.3 缺陷读取（可选）** = 用户主动提及 GitHub Issue 时用 `gh issue view/list` 读取后再修，未安装 `gh` 即跳过。**★ 31.5「推送分类与监听」**：每次代码 push 前先跑 `classify_push.py`（链外任务用 `--standalone`）；无正式代码变更 → 记 `cicd_skipped=true`、只校验 push 成功；有正式代码变更 / 分类缺失或出错 → 经 `cicd_watch.py` 监听 `cicd.provider` 的流水线至终态、主动重试及就绪探针先核 deploy 授权与剩余预算，并记真实终态（无法获知记 `unknown:<原因>`）；`provider=none` 或 CLI/凭据不可用时只 push、不监听。用户主动要求跑流水线同样适用。**详规见 `{{AIDP_HOME}}/reference/约定细则-3.md`**。
-
-32. **★ 里程碑通知渠道装配**：里程碑通知统一经 `python3 {{AIDP_HOME}}/scripts/notify.py`（`--auto` 按 `memory/aidp-config.yaml` 的 `notify.channels` 依次尝试 `feishu` / `lark-cli` / `dingtalk` / `wecom` / `command`，成功即停）；`notify.enabled=false` 或未配置任何渠道（退出码 3）= 合规降级、静默跳过本播报节点，⛔ 不弹窗问人。**⛔ webhook 地址 / 签名密钥不得明文入库**：配置里只写环境变量名引用（`webhook_env: AIDP_FEISHU_WEBHOOK`、`secret_env: AIDP_FEISHU_SECRET` 等），真实值放本机环境变量。**详规见 `{{AIDP_HOME}}/reference/约定细则-3.md`**。
-
-33. **★ 规划期基线类文档 → 测试期消费入口对账铁律**：AIDP 规划期强制产出多份**基线类文档**（version-auditor 规划期硬门保证产出 + 被上游设计覆盖），**测试期必须有对应消费者以基线为基准逐项断言**，否则"产出即沉睡"（卡片该删没删/列漏渲染/统计口径错〔已删数据仍计入〕/字段未脱敏等 AI 测试全绿却漏测）。
-
-34. **★ 需求作废清算（跨版本 + ★ 同版本 / 同 Sprint 内口径反转；补约定 22「级联只版本内单向向下」的反向盲区）**：新结论推翻已写入文档的旧结论时（跨版本，或同一版本 / 同一 Sprint 内第二次口述反转第一次），必须清算所有引用旧结论的落点（需求条目 / ADR / 衍生论证 / 用例与断言 / 铁律 / 代码注释，关键语义词全库检索并留痕），被推翻条目加**显式作废标记指向新结论**、不静默改写，并**强制回答「旧口径下判定为安全的设计，在新口径下是否仍然安全」**。**★ 执行时机 = 两段式**：开发期当场只落作废标记（≤10 行）并把扩散面记进需求族增量册「已知失准点」，收口点才做全文订正。决策门落点 = `/sprint-dev` Phase 0B.1.3；**详规见 `{{AIDP_HOME}}/reference/约定细则-4.md`**。
-
-35. **★ 运行时验证纪律（默认静态验证 + 当前任务相关单测；不擅自启动前后端服务、不完整构建——两类独立禁止项）**：开发/验证代码时按此默认（类型检查 / 语法 / lint / 确定性检查脚本 / 相关单测）。**除非用户显式要求，禁止** ① **启动任何前后端服务**（dev server 或后端常驻进程）② **执行完整打包构建**。**★ 静态验证工具被当作「零新增」判据前，必须先做一次阳性对照**（工具失效的形态恰是输出「0 错误」；`{{AIDP_HOME}}/scripts/check_*.py` 除少数需专用夹具的外均支持 `--self-check`，全量跑 `{{AIDP_HOME}}/scripts/selfcheck.py`（逐脚本报 pass/unsupported 并写明原因））。**★ 格式化类 autofix 只允许作用于【本次新建】的文件**，既有文件只手工消除自己引入的告警。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载；`约定细则-4.md` 只做回检与指针，不复述详规）**；回检 = `verify.py::check_project_claude_aidp_conflict` + `agents/frontend.md`·`agents/backend.md` 验证步骤。
-
-36. **子 Agent 继承授权**：派发只是完成已授权动作的执行方式，prompt 必带父 execution_context、revision、action、budget、真实输入 hash 与写集。用户显式选定的持久策略才可复用；模板、命令路由名、旧 true 与宿主可调用能力均不构成 grant。未启用角色记 NOT_REQUESTED，已启用角色受实际宿主能力约束；同输入工具失败停止重试。唯一协议见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`，角色协作见 `{{AIDP_HOME}}/reference/约定细则-4.md`。
-
-37. **★ 版本发布双轨部署基线（全量 + 增量；全量以「代码 × 真实环境」交叉核对为准、全程只读）**：`/version` 正式发布须为每个版本同时产出**增量轨**（已有环境怎么升级 = `sql/增量/` + `配置文件/增量/配置项清单.md`）与**全量轨**（从零怎么搭 = `sql/全量/` + `配置文件/全量/`，只跟最新代码走、不含 ALTER/迁移），**两套绝不叠加执行**，**零变更的版本同样要产全量**；`sql/` 与 `配置文件/` 根下不得直放两轨产物（`verify.py::check_deployment_two_track_layout` ERROR）。**详规见 `{{AIDP_HOME}}/reference/约定细则-5.md`**（与约定 25 的边界见 37.7）；编排落点 = `/version` Step 3.3.7.9（可 `--rebuild-baseline` 补跑），机器门 = `{{AIDP_HOME}}/scripts/release_baseline_check.py`。
-
-38. **★ 开发期环境地址 / 账号即时归档到研发自测（用户随口给出即落库，绝不用完即丢）**：用户在**任意时刻**（含无命令的普通对话）给出**环境访问地址、登录账号密码、DB 连接**或**写操作授权**时，**必须在本轮就**归档到当前版本 `docs/testing/{version}/研发自测/01_测试环境与账号.md`（机器消费权威）并同步 `01_研发自测方案.md` §3；**生产 / UAT 凭据**改存 `memory/.sprint-autopilot-credentials.json`（chmod 600 + `.gitignore`）并须用户显式确认；写操作授权按「只读 / 可逆写 / ⛔ 不可逆写」三档登记，**未登记一律按只读处理（fail-closed）**。**详规见 `{{AIDP_HOME}}/reference/约定细则-5.md`**；显式补录入口 = `/sprint-selftest --capture`。
-
-39. **★ 通用还原度规则集（R1–R13，与业务领域无关）**：把原型对齐从「整体判断」换成「逐项打勾」——**R1** 原型内容基线按六类逐项列出 · **R2** 状态取值视觉可区分 · **R3** 截断必配 tooltip · **R4** 破坏性操作二次确认 · **R5** 失效实体入口拦截 · **R6** 被引用实体删除后降级展示 · **R7** 加载未完成不渲染脏数据 · **R8** 编辑后视图自动同步 · **R9** 存量数据兼容验证 · **R10** 导出全量且与页面一致 · **R11** 数值字段五要素 · **R12** 同一指标跨页同源 · **R13** 列表页声明数据量级与分页。**详规见 `{{AIDP_HOME}}/rules/code.md` 约定 39**（含三段回检）；机器门 = `python3 {{AIDP_HOME}}/scripts/check_ui_fidelity.py`（R10 零豁免）。跨 SKILL 引用写全称 `约定39-RN`、严禁裸 `RN`。
-
-40. **★ 上游/第三方接口调用日志强制规范（成功也要打；完整 URL + 入参出参；二进制只打元信息）**：调用**进程外**的第三方/上游依赖时（不含本地 DB 与缓存），**无论成功失败**都打印完整 URL + method + 入参与 status + 业务 code + 出参 + 耗时，请求响应可配对；**成功用 INFO、⛔ 不降级为 DEBUG**；二进制只打元信息、超长文本截断须标原始长度；**脱敏必须与本条同时落地**；实现上拦截器/过滤器优先、⛔ 禁止每个 client 各写各的。**详规见 `{{AIDP_HOME}}/rules/code.md` 约定 40**（后端接线见 `{{AIDP_HOME}}/rules/backend.md`，参考骨架见 `{{AIDP_HOME}}/reference/上游调用日志参考实现.md`）；机器门 = `python3 {{AIDP_HOME}}/scripts/check_upstream_call_log.py`，由 `/sprint-dev` Phase 1 Step 8 调用。
-
-41. **light/formal 身份与动作边界**：自然开发/修复默认 light、implement+static+related-test；formal 保留编号、规格、归档，但不增授权。动作模型、budget、失败分类、hash 证据复用及 complete 配方统一见 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md`。light 无 Sprint 卡/归档，不认领旧 Sprint；规模风险、复杂度、成本分别判断。未请求的额外审查/文档为 NOT_REQUESTED，默认相关测试不得借此跳过，不作欠账或 PASS。既有版本、破坏性、DB 授权和运行时纪律继续适用。
-
-## AIDP 范式文档索引
-
-> AIDP 范式文档（`docs/init/00`~`06`）索引见 **`{{AIDP_HOME}}/reference/初始化与文档索引.md`**（按需 Read）；`06_版本与用户目录约定.md` 为路径权威。
-
----
+完整命令/意图/角色/Skills 路由见 `{{AIDP_HOME}}/reference/task-routing.md`；工具适配与目录所有权见 `{{AIDP_HOME}}/reference/agent-tools.md`；初始化输入与范式文档索引见 `{{AIDP_HOME}}/reference/初始化与文档索引.md`。这些都是按需入口，不是会话必读清单。正式派角色前先读 `{{AIDP_HOME}}/agents/README.md`，角色文件不是原生 `subagent_type`。
 
 ## 项目自定义
 

@@ -76,15 +76,9 @@ fi
 
 #### Step 6.0.6 部署操作前提核对
 
-消费版本规划/正式发布已有操作说明（版本根 README 或现有部署流程）及 `deployment_doc_pending` 的变化引用，核对本次目标环境/服务/库、既有命令、SQL 顺序与成功判据。没有版本专属 Markdown 不等于无法部署；仅报告确实缺失的操作前提，不回调 `/sprint-dev` 补建文档，不为部署记录额外 commit/push。
+读取版本规划/正式发布已有操作说明（版本根 README 或现有部署流程，只读不写），核对本次目标环境/服务/库、既有命令与 SQL 顺序。没有版本专属 Markdown 不等于无法部署；仅报告确实缺失的操作前提，不回调 `/sprint-dev` 补建文档，不触碰 `docs/deployment`。
 
-```bash
-# VERSION 从父任务当前版本重绑。
-VERSION="${VERSION:?从当前执行上下文重绑版本，不读历史Sprint}"
-python3 {{AIDP_HOME}}/scripts/deployment_ops.py pending --version "${VERSION:?}"
-```
-
-实际备份或迁移快照前按 `{{AIDP_HOME}}/reference/部署操作约定.md` 共用项目配置和真实记录限频；复用已有备份时使用现成部署器支持的跳过参数，不自动恢复旧数据。无 CI/pipeline 时沿既有轻量路径，不循环探测。部署请求不新增测试/CVL/全回归或迁移演练，正式 aiauto 测试/报告仍由原链路按已授权职责执行。
+备份与部署后核验不属于 AIDP 通用要求（项目自有运维策略），不额外要求。无 CI/pipeline 时沿既有轻量路径，不循环探测。部署请求不新增测试/CVL/全回归或迁移演练，正式 aiauto 测试/报告仍由原链路按已授权职责执行。
 
 #### Step 6.1 测试用例存在性校验（测试人员或研发自测任一存在即可）
 

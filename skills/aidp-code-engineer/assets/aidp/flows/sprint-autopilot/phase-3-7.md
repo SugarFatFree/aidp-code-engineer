@@ -11,7 +11,7 @@
 
 **Step D — 部署就绪探针（流水线成功 ≠ 可测；先等≥15 秒、按技术栈延长，启动就绪才算可测）**
 
-> **★ 进入本 Step 前置判定**：读取当前 build 的 `change_classification`。若 `cicd_skipped=true` 且 `classification_error=false`，本 Step **不执行**，因为该 push 不触发远端部署；保留 push 成功与 `cicd_skipped` 留痕即可。分类缺失、分类命令失败或 `classification_error=true` 一律继续执行本 Step（fail-closed）。
+> **★ 进入本 Step 前置判定**：用 autopilot 自有 `push_base_ref`/`push_commit` 现场只读分类（见文末游标围栏的 `DECISION`；不读任何落盘分类）。仅 `decision=skip` 时本 Step **不执行**（该 push 不触发远端部署），保留 push 成功留痕即可；分类失败/缺字段一律按 `watch` 继续执行（fail-closed）。
 
 CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服务可能仍在启动（容器拉起 / 应用编译 / DB 连接池预热）。
 - **★ 先等≥15 秒、按技术栈延长再探**：流水线报「成功」后服务未必立刻可连（容器拉起 / 应用编译 / DB 连接池预热），**最少等 15s**（`cicd_post_deploy_wait_seconds`，默认 15），并**按本项目后端技术栈的冷启动特性额外延长**——命令端探测 `code/backend/` 构建文件自动判定基线：**JVM 系（`pom.xml`/`build.gradle`，如 Spring Boot：JVM 预热 + 容器上下文 + 连接池预热较慢）取 30~45s**；Node（`package.json`）/ Python（`requirements.txt`/`pyproject.toml`）/ Go（`go.mod`）等较轻量取 20~25s；多服务并存取最重者。用户在 `cicd_post_deploy_wait_seconds` 显式填值则覆盖自动判定，但**下限恒为 15s**。本固定等待只是"别太早探"的下限，真正就绪仍由下方探针轮询判定。
@@ -79,13 +79,13 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
   **★ 判定当场落盘结论（不可省，下方出口靠它推进游标）**：
   ```bash
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"
-  V="${TARGET_VERSION:?}"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version $V"
-  BUILD=$($BE get current_build --default "")
+  V="${TARGET_VERSION:?}"; BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
+  BUILD=$($BE --version "$V" get current_build --default "")
   [ -n "$BUILD" ] || { echo "⛔ 未找到当前 build，禁止写部署证据"; exit 1; }
   VCS_MODE=$(python3 {{AIDP_HOME}}/scripts/vcs.py mode) || exit 1
   GIT_PUSH_COMMIT=""
   if [ "$VCS_MODE" = "git" ]; then
-    GIT_PUSH_COMMIT=$($BE --build "$BUILD" get push_commit --default "")
+    GIT_PUSH_COMMIT=$($BE --version "$V" --build "$BUILD" get push_commit --default "")
     [ -n "$GIT_PUSH_COMMIT" ] || { echo "⛔ push_commit 缺失，禁止写 Git 部署证据"; exit 1; }
   elif [ "${DEPLOY_MODE:-}" != "local" ]; then
     echo "⛔ vcs_mode=none 仅 local 部署可写本地就绪证据"; exit 1
@@ -100,8 +100,8 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
     echo "⛔ 部署证据写盘失败，本 tick 不推进、不按探针超时冻结"; exit 1
   fi
   if [ "$FRC" != "0" ]; then
-    $BE --build "$BUILD" set probe_passed false frontend_deploy_verified false || exit 1
-    $BE --build "$BUILD" del probe_at probe_commit || exit 1
+    $BE --version "$V" --build "$BUILD" set probe_passed false frontend_deploy_verified false || exit 1
+    $BE --version "$V" --build "$BUILD" del probe_at probe_commit || exit 1
     MISSING=$(jq -c '.missing // []' memory/.aidp/frontend-probe.json)
     REASON=$(jq -r '.reason // ""' memory/.aidp/frontend-probe.json)
     python3 {{AIDP_HOME}}/scripts/autopilot_fail_handle.py --command autopilot --version "$V" --build "$BUILD" \
@@ -113,7 +113,7 @@ CICD「成功」只代表**部署完成**（镜像发布 / 文件落盘），服
     echo "⚠️ 前端产物特征探针跳过（未声明部署或未提供特征串），无法确认前端是否部署新版本"
   fi
   python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command autopilot PROBE_PASSED 1 || exit 1
-  $BE del auto_fix_in_progress_since || true
+  $BE --version "$V" del auto_fix_in_progress_since || true
   if [ "$VCS_MODE" = "git" ]; then
     HEAD=$(git rev-parse HEAD) || exit 1
     [ -n "$HEAD" ] && python3 {{AIDP_HOME}}/scripts/baseline_edit.py set last_autopilot_head "$HEAD"
@@ -152,16 +152,17 @@ if [ -n "$BUILD" ]; then
 fi
 case "${PROBE_PASSED:-0}" in true|True|TRUE|1) PROBE_PASSED=1 ;; *) PROBE_PASSED=0 ;; esac
 [ "$TICK_PROBE_PASSED" = "0" ] && PROBE_PASSED=0
-# ★ 本 push 无正式代码变更（cicd_skipped）时【没有部署要等、也没有探针会跑】——
+# ★ 本 push 无正式代码变更（现场分类 decision=skip）时【没有部署要等、也没有探针会跑】——
 #   必须直接把游标推到 3.3-audit。否则探针恒 0 → 恒走 else → 游标永远留在 3.2.1-probe，
 #   下 tick 重来一遍，last_deployed_at 永不写、Phase 3.3/3.4 永不开始，最后只能靠通用
 #   stuck 熔断（8 tick + 滞留 2h）冻结待人 —— 一次纯文档提交就能让整版停摆。
 BUILD_CS=$($BE --version "$V" get current_build --default "")
-CICD_SKIPPED=$([ -n "$BUILD_CS" ] && $BE --version "$V" --build "$BUILD_CS" get cicd_skipped --default "" || echo "")
-CLS_ERR=$([ -n "$BUILD_CS" ] && $BE --version "$V" --build "$BUILD_CS" get classification_error --default "" || echo "")
-if [ "$CICD_SKIPPED" = "true" ] && [ "$CLS_ERR" != "true" ]; then
+PUSH_BASE=$([ -n "$BUILD_CS" ] && $BE --version "$V" --build "$BUILD_CS" get push_base_ref --default "" || echo "")
+PUSH_HEAD=$([ -n "$BUILD_CS" ] && $BE --version "$V" --build "$BUILD_CS" get push_commit --default "" || echo "")
+DECISION=$(python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --base-ref "$PUSH_BASE" ${PUSH_HEAD:+--head "$PUSH_HEAD"} --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("decision"))') || DECISION=watch
+if [ "$DECISION" = "skip" ]; then
   $BE --version "$V" run-state "3.2.1-probe" "3.3-audit" "done" \
-    --summary "本 push 无正式代码变更（cicd_skipped），无部署可探，直接进 Phase 3.3" --pending ""
+    --summary "本 push 无正式代码变更（现场分类 skip），无部署可探，直接进 Phase 3.3" --pending ""
 elif [ "${PROBE_PASSED:-0}" = "1" ]; then
   # 探针通过：last_deployed_at 已在上文写入，可以进审计
   $BE --version "$V" run-state "3.2.1-probe" "3.3-audit" "done" \

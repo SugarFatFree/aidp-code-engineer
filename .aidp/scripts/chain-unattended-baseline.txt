@@ -20,11 +20,6 @@
 {{AIDP_HOME}}/commands/sprint-batch.md	/version {version}	2
 {{AIDP_HOME}}/commands/sprint-bugfix.md	/version {version}	1
 {{AIDP_HOME}}/commands/sprint-close.md	/version {version}	1
-{{AIDP_HOME}}/commands/sprint-dev.md	/sprint-bugfix sprint-{NNN}	1
-{{AIDP_HOME}}/commands/sprint-dev.md	/sprint-full 001	1
-{{AIDP_HOME}}/commands/sprint-dev.md	/sprint-start 001	1
-{{AIDP_HOME}}/commands/sprint-dev.md	/version {V}	2
-{{AIDP_HOME}}/commands/sprint-dev.md	/version {version}	1
 {{AIDP_HOME}}/commands/sprint-full.md	/sprint-bugfix sprint-002	1
 {{AIDP_HOME}}/commands/sprint-full.md	/version V0.1.0	2
 {{AIDP_HOME}}/commands/sprint-full.md	/version {version}	2
@@ -51,6 +46,12 @@
 {{AIDP_HOME}}/flows/sprint-autopilot/usage-guard.md	/version --no-tag	1
 {{AIDP_HOME}}/flows/sprint-batch/step-6.md	/sprint-aiauto-test --once	2
 {{AIDP_HOME}}/flows/sprint-batch/step-6b.md	/sprint-aiauto-test --once	3
+# sprint-dev 正文分片迁移：交互式版本落点选项2处、参考输出/手动用法4处；调用文本与次数沿用原记录。
+{{AIDP_HOME}}/flows/sprint-dev/formal-increment.md	/version {V}	2
+{{AIDP_HOME}}/flows/sprint-dev/output-examples.md	/sprint-bugfix sprint-{NNN}	1
+{{AIDP_HOME}}/flows/sprint-dev/output-examples.md	/sprint-full 001	1
+{{AIDP_HOME}}/flows/sprint-dev/output-examples.md	/sprint-start 001	1
+{{AIDP_HOME}}/flows/sprint-dev/output-examples.md	/version {version}	1
 {{AIDP_HOME}}/flows/version/planning-2.md	/sprint-plan --supplement	1
 {{AIDP_HOME}}/flows/version/planning-2.md	/sprint-selftest --supplement	1
 {{AIDP_HOME}}/flows/version/planning-8.md	/sprint-autopilot {version} 版本规划已执行	2

@@ -12,15 +12,19 @@
 | `test_report_render.js` | 渲染口径（`pct` 经渲染路径：0.84→84%、100.0→100% 不出 10000%）+ 坏数据健壮性（risks 分组对象不白屏 / cases 别名无 undefined / 无 buildNo 不 `#undefined`） | `node .aidp/scripts/tests/test_report_render.js` | `node` |
 | `test_report_lightbox.js` | 截图灯箱交互：滚轮缩放（含以光标为锚点、上下限、阻止页面滚动）、放大后拖拽平移、双击复位、换图重置。⛔ 判据是**真触发 wheel/mousedown 再断言 transform**，不是「源码里有没有 wheel 字样」——那种字符串匹配改坏了照样绿 | `node .aidp/scripts/tests/test_report_lightbox.js` | `node` |
 | `test_release_unit_report.js` | 发布测试报告独立保留实测/单测事实，失败与未核验不判绿，历史兼容 | `node .aidp/scripts/tests/test_release_unit_report.js` | Node.js |
-| `test_commit_gate.py` | `commit_gate.py`（约定 24）：模板项目判定 / 业务代码与纯脚手架判定 / 约定 22 台账积压（stale、多态识别、已级联未清理、归档标记、格式漂移）/ `suspected_cascade_bypass` / 约定 41 `offchain` 档位 / `pending_cicd` 推送欠账 / CLI 退出码 0·3 与 `--quiet` 告警恒打印 / `commit_gate.enabled` 总开关；另含 `classify_commit_change` · `classify_push` 分类（按 commit 键控记录、部署终态） | `python3 .aidp/scripts/tests/test_commit_gate.py` | Python 标准库 + `git` |
+| `test_commit_gate.py` | `commit_gate.py`（约定 24）：模板项目判定 / 业务代码与纯脚手架判定 / 约定 22 台账积压（stale、多态识别、已级联未清理、归档标记、格式漂移）/ `suspected_cascade_bypass` / 约定 41 `offchain` 档位 / `pending_cicd` 推送 advisory 提示（未启用不检查、不读 baseline、不计债） / CLI 退出码 0·3 与 `--quiet` 告警恒打印 / `commit_gate.enabled` 总开关；另含 `classify_commit_change`（gitlink/嵌套仓/配置类保守分类、`--head`、空 `--base-ref`）· `classify_push` 只读分类（不落盘、fail-closed）及「提交→推送」前后 `git status` 无脚本改动的验收 | `python3 .aidp/scripts/tests/test_commit_gate.py` | Python 标准库 + `git` |
 | `test_alloc_id.py` | 原子号段分配：历史取号、作用域交叠、账本损坏、空洞与引用、并发锁 | `python3 .aidp/scripts/tests/test_alloc_id.py` | Python 标准库、POSIX 文件锁 |
 | `test_test_ledger.py` | 真实测试执行与PASS复用：内容树、范围/命令/环境/输入隔离、并发、失败与树漂移、验收快照及差量 | `python3 .aidp/scripts/tests/test_test_ledger.py` | Python 标准库、POSIX 文件锁、Git |
 | `test_test_scope.py` | Sprint 单测确定性推导（按运行器分组、无对应单测、无运行器、不回落全量）+ `run-scope` 逐套记账（PASS 复用/FAIL/EMPTY）+ 全量单测 worktree 账本复用（清理后仍命中） | `python3 .aidp/scripts/tests/test_test_scope.py` | Python 标准库、Git |
 | `test_entry_context.py` | 轻量/正式身份、嵌套续跑、正式子任务、真实完成门及族义务 | `python3 .aidp/scripts/tests/test_entry_context.py` | Python 标准库、Git |
 | `test_execution_policy.py` | 分离动作授权、共享预算、无变化工具失败终止与显式等价证据 | `python3 .aidp/scripts/tests/test_execution_policy.py` | Python 标准库、临时 Git |
+| `test_dispatch_plan.py` | 并行判定（互不相交写集+读写阈值）、冲突文件、串行原因、子 Agent prompt 必带项、输入错误退出 2 | `python3 .aidp/scripts/tests/test_dispatch_plan.py` | Python 标准库 |
+| `test_select_related_tests.py` | 改动→相关测试白名单：命名约定回退（py/java/go/ts）、未跟踪文件、unmapped、不得全量、上下文 task_id 命名白名单、输入错误退出 2 | `python3 .aidp/scripts/tests/test_select_related_tests.py` | Python 标准库、临时 Git |
+| `test_test_command_guard.py` | 测试命令护栏：无参数/目录拒绝、白名单子集、ruff 仅改动文件、git stash 拒绝、`--allow-full` 缺授权 fail closed 与真实 autopilot 授权放行、wrap/background/changed | `python3 .aidp/scripts/tests/test_test_command_guard.py` | Python 标准库、临时 Git |
+| `test_test_baseline.py` | 已知失败基线 record/diff：新失败差集、日志/JUnit 解析、基线缺失与未执行拒绝比较 | `python3 .aidp/scripts/tests/test_test_baseline.py` | Python 标准库 |
 | `test_scope_performance.py` | 同树分析缓存、资源映射、子模块指纹、计划去重与安全合批 | `python3 .aidp/scripts/tests/test_scope_performance.py` | Python 标准库、临时 Git |
 | `test_verification_tools.py` | 项目配置与 CI 验证命令选择、语法/lint/类型/编译/单测分类、只读 shell/容器边界 | `python3 .aidp/scripts/tests/test_verification_tools.py` | Python 标准库、离线工具替身 |
-| `test_deployment_ops.py` | 备份频率与真实回执、跨类型并发限额、待同步操作指引和精简 SQL 台账 | `python3 .aidp/scripts/tests/test_deployment_ops.py` | Python 标准库、临时 Git、离线命令替身 |
+| `test_deployment_ops.py` | sql-ledger 精简渲染、已删子命令（backup/note/pending）拒绝与零落盘 | `python3 .aidp/scripts/tests/test_deployment_ops.py` | Python 标准库、临时 Git、离线命令替身 |
 | `test_development_scope.py` | 风险与文件成本分离、真实SQL差异与基线不确定性 | `python3 .aidp/scripts/tests/test_development_scope.py` | Python 标准库、临时 Git |
 | `test_sprint_baseline.py` | `baseline_ref` 解析：契约卡/透传/工作区未提交/merge-base≠HEAD/none，非祖先与选项形态拒绝，无 Git 标注 | `python3 .aidp/scripts/tests/test_sprint_baseline.py` | Python 标准库、临时 Git |
 | `test_audit_carryover.py` | version-auditor 结转：轮次 +1、Important 连续 3 轮升级 Critical、Warning 不升级、回检轮次与升级标记、零重合 WARN | `python3 .aidp/scripts/tests/test_audit_carryover.py` | Python 标准库 |
@@ -29,6 +33,9 @@
 | `test_sql_reorg.py` | SQL 整理语句守恒：多重集合比对、0 条与空侧 fail-closed、回滚脚本排除 | `python3 .aidp/scripts/tests/test_sql_reorg.py` | Python 标准库 |
 | `test_sprint_discovery.py` | 计划分册/启动/归档/关闭共同发现，保留证据分域 | `python3 .aidp/scripts/tests/test_sprint_discovery.py` | Python 标准库、临时 Git |
 | `test_light_task_flow.py` | 默认开发/修复的相关单测闭环、断言修改必实跑、明确跳过的受限结论；临时 Git/离线部署复用测试证据，重复收尾不重放，已有 Sprint 字节不变 | `python3 .aidp/scripts/tests/test_light_task_flow.py` | Python 标准库、Git、离线部署替身 |
+| `test_sprint_dev_slices.py` | light 入口 ≤6KB、一次身份路由和返回、formal A/B 阶段可达、原子片与关键围栏可提取；显式 Sprint / fork / bind-sprint 绑定、会话隔离、空写集 revise 后续跑 | `python3 .aidp/scripts/tests/test_sprint_dev_slices.py` | Python 标准库、Bash |
+| `flow_test_helpers.py` | 测试显式读取指定 sprint-dev 权威分片，不回退旧单文件或递归聚合；由上述分片及命令契约测试调用 | — | Python 标准库 |
+| `test_light_task.py` | light 单一入口 start/select/run/report/all：任务继承与会话绑定、分支策略拒绝、选测与白名单、通过/失败退出码、unmapped 处置、守卫拒绝与运行目录接线、baseline 可入库 | `python3 .aidp/scripts/tests/test_light_task.py` | Python 标准库、临时 Git |
 | `test_build_unit_test.py` | 部署完整提交隔离执行、并发缓存、超时清理 | `python3 .aidp/scripts/tests/test_build_unit_test.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_unit_report.py` | 全量单测/实测独立展示、缺证据不能通过、旧报告兼容 | `python3 .aidp/scripts/tests/test_unit_report.py` | Python 标准库、Git、Node（报告渲染） |
 | `test_aiauto_test_join.py` | 单测失败幂等登记、未核验不冻结、准发布状态 | `python3 .aidp/scripts/tests/test_aiauto_test_join.py` | Python 标准库、Git、Node（报告渲染） |
@@ -40,11 +47,14 @@
 | `test_guard_scripts.py` | 确定性护栏全套（分组清单见下方「test_guard_scripts.py 分组」——**该表是唯一信源**，其它文档只放指针、不复制清单也不复制组数） | `python3 .aidp/scripts/tests/test_guard_scripts.py` | Python 标准库；脚手架内部集成断言默认执行，缺少必要外部工具时按具体用例报告 SKIP |
 | `test_baseline_archive.py` | baseline 归档/迁移链路（`baseline_archive` 归档范围 + 墓碑判据 + `baseline_edit get` 归档回落 + `autopilot_decisions` 双信源） | `python3 .aidp/scripts/tests/test_baseline_archive.py` | Python 标准库 |
 | `test_field_level_and_evidence.py` | 写读错层（`decidable_skips` 版本级/build 级）+ memory 保护面 + flock 锁路径单一信源 + 运行时产物落点收编（`aidp_paths` / `aidp_config` / `commit_gate` 同口径） | `python3 .aidp/scripts/tests/test_field_level_and_evidence.py` | Python 标准库 |
-| `test_offchain_scope.py` | 约定 41 链外档位（`commit_gate.py::offchain_budget` 的 XS/S/M/L 分档与动作预算）+ 链外推送欠账 + 约定 17 反向门 | `python3 .aidp/scripts/tests/test_offchain_scope.py` | Python 标准库 |
+| `test_offchain_scope.py` | 约定 41 链外档位（`commit_gate.py::offchain_budget` 的 XS/S/M/L 分档与动作预算）+ 链外推送只读提示、不落盘不计债 + 约定 17 反向门 | `python3 .aidp/scripts/tests/test_offchain_scope.py` | Python 标准库 |
 | `test_release_gates.py` | 发布期硬门（`check_release_residual_gate.py` 等的双侧对照 + 各脚本 `--self-check`） | `python3 .aidp/scripts/tests/test_release_gates.py` | Python 标准库 |
 | `test_report_immutability.py` | 报告不可变门（已 finalize build 的篡改检出 + skeleton 期前移）+ driver 如实性窗口 + `renderMode` 取证来源 | `python3 .aidp/scripts/tests/test_report_immutability.py` | Python 标准库 |
 | `test_unattended_recovery.py` | 无人值守失败处置与自动恢复：`autopilot_fail_handle.py --command` 按链路取唤醒源、同 reason 冻结幂等、未达阈不发通知、冻结写本地告警台账 `memory/.aidp/alerts.jsonl`；`autopilot_unfreeze.py` 环境类复探（退避 + 上限）/ `--clear` / `--manual`；推送围栏「合并到部署源」失败即中止并切回开发分支、`DEV_BRANCH` 登记；`autopilot_tech_boundary.py` 技术边界预确认判定 | `python3 .aidp/scripts/tests/test_unattended_recovery.py` | Python 标准库 |
 | `test_stop_guard.py` | 缺build与handback失败的Stop阻止上限、告警去重及成功清计数 | `python3 .aidp/scripts/tests/test_stop_guard.py` | Python标准库、真实hook进程 |
+| `test_pretool_guard.py` | PreToolUse hook 真实进程：跳过入口协议改 `code/**` 被阻断并提示补哪一步、已 resolve + 已读 branch-policy 放行、非 `code/**` 不受影响、无参 pytest / run_tests 目录 / `git stash` 阻断、Codex apply_patch 补丁头路径、独立逃生舱与配置开关、校验异常拒绝及留痕 | `python3 .aidp/scripts/tests/test_pretool_guard.py` | Python 标准库、真实 hook 进程 |
+| `test_shell_write_targets.py` | Bash 写目标、条件元数据、未知动态拒绝与可信 tick 引导解析 | `python3 .aidp/scripts/tests/test_shell_write_targets.py` | Python 标准库 |
+| `test_entry_gate.py` | `entry_gate.py` 入口协议判定（resolve 上下文新鲜期 / 归属 / 状态、branch-policy 读取标记、formal/tick 同门、只读身份切换不得复用旧写权限）及 `aidp_config.py branch-policy` 落标记 | `python3 .aidp/scripts/tests/test_entry_gate.py` | Python 标准库 + `git` |
 | `test_unattended_edges.py` | JSON渲染取证正反例、实测参数、脏树默认及旧运行路径说明 | `python3 .aidp/scripts/tests/test_unattended_edges.py` | Python标准库、Bash |
 | `test_dispatch_retry.py` | C1/C2退避封顶、无唤醒源失败处置、成功清零及实际规划围栏 | `python3 .aidp/scripts/tests/test_dispatch_retry.py` | Python标准库、Bash |
 | `test_cicd_deployment.py` | CICD降级probe、need-accept边界、即时冻结及成功出口 | `python3 .aidp/scripts/tests/test_cicd_deployment.py` | Python标准库、离线提供方替身 |
@@ -128,7 +138,7 @@
 | 44 | `check_version_identifier 多层反应堆 parent 同步` | — |
 | 45 | `check_md_anchors 站内锚点死链` | 站内 `#锚点` 死链检出 |
 | 46 | `check_ghost_flags 幽灵旗标 / 零误报` | 检出幽灵旗标 + 四类零误报（owner 判定 / 续行继承 / CSS 变量 / 假定义防护） |
-| 47 | `check_loop_examples /loop 示例必带 --unattended --no-loop` | 漏写检出 + 逐"出现"判 + 显式豁免（含 loop-example-ignore 仅豁免 --no-loop）|
+| 47 | `check_loop_examples /loop 示例必带 --unattended` | — |
 | 48 | `check_line_refs 硬编码行号引用` | 四种行号写法 + `L1-L3` 层级不误报 + 目标可解析性分组 |
 | 49 | `check_shard_counts 分片自称片数 / 范围记法` | 片数少算检出 + 范围记法漏 `b` 分片检出 + 三类零误报（显式列出 / 序数「第 N 片」/ 跨命令同名前缀） |
 | 50 | `check_sprint_numbering Sprint 编号跨版本 + 划分粒度` | 跨版本重号检出 + 同功能前后端被拆成两 Sprint 检出 |
@@ -165,22 +175,21 @@
 | 81 | `失败处置：--freeze-now / --extra / 枚举不可解析` | — |
 | 82 | `CommonMark 围栏判定 + env/.env 键集新鲜度` | — |
 | 83 | `收尾门 3p/3q 缺陷分流 + 上轮 block 复评` | — |
-| 84 | `classify_push 同 build 多次推送累积` | — |
-| 85 | `口径残留门 短形式词表 + 判决行` | — |
-| 86 | `exec 报告继承 cases[]/testSummary` | — |
-| 87 | `notify --section-file + 渲染冒烟检测面` | — |
-| 88 | `设计目标三条形式落地的收口` | — |
-| 89 | `环境降级：无 bash / 无 Git / SKILL 安装位（阴性 + 阳性成对）` | — |
-| 90 | `--reset-* 旗标执行器` | — |
-| 91 | `冻结字段写入契约` | — |
-| 92 | `SKILL 阻断名单棘轮` | — |
-| 93 | `术语一致性 + 约定 30 正文体检` | — |
-| 94 | `台账多态识别 + 格式漂移告警` | — |
-| 95 | `收尾门 3n 测试结果挂靠用例基线` | — |
-| 96 | `子 Agent 派单契约（cascade_mode / dev_scale）` | — |
-| 97 | `业务计数声明表全库回扫` | — |
-| 98 | `约定 30 棘轮键：内容指纹而非行号` | — |
-| 99 | `check_version_audit_landed 审计落地门` | — |
+| 84 | `口径残留门 短形式词表 + 判决行` | — |
+| 85 | `exec 报告继承 cases[]/testSummary` | — |
+| 86 | `notify --section-file + 渲染冒烟检测面` | — |
+| 87 | `设计目标三条形式落地的收口` | — |
+| 88 | `环境降级：无 bash / 无 Git / SKILL 安装位（阴性 + 阳性成对）` | — |
+| 89 | `--reset-* 旗标执行器` | — |
+| 90 | `冻结字段写入契约` | — |
+| 91 | `SKILL 阻断名单棘轮` | — |
+| 92 | `术语一致性 + 约定 30 正文体检` | — |
+| 93 | `台账多态识别 + 格式漂移告警` | — |
+| 94 | `收尾门 3n 测试结果挂靠用例基线` | — |
+| 95 | `子 Agent 派单契约（cascade_mode / dev_scale）` | — |
+| 96 | `业务计数声明表全库回扫` | — |
+| 97 | `约定 30 棘轮键：内容指纹而非行号` | — |
+| 98 | `check_version_audit_landed 审计落地门` | — |
 
 > ⚠️ **本表不是"要靠人记得改"的清单，也不写死分组数**——真值只能现算（写死必漂）。
 > 两种打印形态（早期 `【…】` 与后加的 `[NN] …`）都算分组，上表已含**全部**分组、按实跑顺序排列。

@@ -159,10 +159,8 @@ BE="python3 {{AIDP_HOME}}/scripts/baseline_edit.py"
 BUILD=$($BE --version "$VERSION" get current_build --default "")
 if [ -n "$BUILD" ]; then
   BASE_REF=$($BE --version "$VERSION" --build "$BUILD" get push_base_ref --default "")
-  python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --build "$BUILD" --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
 else
   BASE_REF=$($BE --version "$VERSION" get release_push_base_ref --default "")
-  python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --version "$VERSION" --standalone --base-ref "$BASE_REF" || CLASSIFY_ERROR=1
 fi
 # 三处 push 分别捕获失败；落盘并阻断后续探针/发布完成声明。
 PUSH_FAILED=""
@@ -204,14 +202,10 @@ if [ -z "$PUSH_AT" ] || [ "$($BE --version "$VERSION" get release_push_commit --
   PUSH_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   $BE --version "$VERSION" set release_push_commit "$PUSH_COMMIT" release_push_at "$PUSH_AT" || exit 1
 fi
-if [ "${CLASSIFY_ERROR:-0}" = "1" ]; then
-  CICD_SKIPPED=false
-  echo "⚠️ 发布 push 分类失败 → fail-closed，按正式代码进入 CICD 监听"
-elif [ -n "$BUILD" ]; then
-  CICD_SKIPPED=$($BE --version "$VERSION" --build "$BUILD" get cicd_skipped --default false)
-else
-  CICD_SKIPPED=$($BE --version "$VERSION" get release_change_classification.cicd_skipped --default false)
-fi
+# 现场只读分类（classify_push.py 不落盘）；仅明确 skip 才免监听，失败/缺字段 fail-closed 按正式代码
+DECISION=$(python3 {{AIDP_HOME}}/scripts/classify_push.py --root . --base-ref "$BASE_REF" --head "$PUSH_COMMIT" --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("decision"))') || DECISION=watch
+CICD_SKIPPED=false
+[ "$DECISION" = "skip" ] && CICD_SKIPPED=true
 if [ "$CICD_SKIPPED" = "true" ]; then
   echo "✅ 发布 push 判定为 docs-only → 不触发 CICD、不监听、不跑就绪探针"
 else
@@ -305,7 +299,7 @@ else
 fi
 ```
 
-> ★ **推送分类与监听（约定 31.5）**：有 `current_build` 写 build、无则 `--standalone` 写版本级，⛔ 禁空 build；分类用 `BASE_REF`。
+> ★ **推送分类与监听（约定 31.5）**：分类现场只读、不落盘，基准取 build 的 `push_base_ref`（无 build 取版本级 `release_push_base_ref`）。
 > Step 3.6 读取版本级 `release_cicd`：`status=unknown` 时列出原原因与 `degraded`；探针通过不能写成「流水线已确认成功」。
 > **发布期禁止自动 trigger**：仅用户主动要求时执行 `python3 {{AIDP_HOME}}/scripts/cicd_watch.py --mode trigger --env <env> --ref <branch>`；`cicd.provider=none` 或无 `cicd.pipelines` 时不适用。理据见 `rationale.md`。
 

@@ -15,12 +15,13 @@
 | AIDP 命令入口 | `/sprint-dev …`（`.claude/commands/`） | `$sprint-dev …`（`.codex/skills/aidp/`，仅显式调用） | `/sprint-dev …`（`.dsh/commands/`） |<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 | 插件（`各 Agent 的运行根/plugins/`） | `.claude/plugins/<name>/` + settings 登记 marketplace 并启用 | 嵌套 SKILL 位于 `.agents/skills/<name>/skills/`，MCP 合并到 `.codex/config.toml` | 嵌套 SKILL 与 Codex 共用 `.agents/skills/<name>/skills/`，MCP 汇总到 `.dsh/mcp.json` |<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 | Stop hook | `.claude/settings.json` | `.codex/hooks.json`（`config.toml` 需 `codex_hooks = true`） | `.dsh/hooks.json`，由 hooks 插件加载 |
+| PreToolUse hook | `.claude/settings.json`（`hooks.PreToolUse`） | `.codex/hooks.json`（`hooks.PreToolUse`，同上开关） | **未证实，不装配**——见第五节替代手段 |
 
 模板仓库的 `.aidp` 仅供维护，下游根目录没有该源码目录；以下 `{{AIDP_HOME}}` 是安装后解析的运行目录。**生成入口**由 `python3 {{AIDP_HOME}}/scripts/agent_sync.py` 生成（不入库，登记在 `.gitignore` 托管块）；⛔ 与运行真源**同址**的那些不算生成入口——运行根降层后 Claude Code 的 `commands/` `skills/` `plugins/` 就是契约本体、必须入库，`agent_sync.py` 判定 identity 后整体跳过它们；命令只在 `{{AIDP_HOME}}/commands/`、公共 SKILL 只在 `{{AIDP_HOME}}/skills/`、插件只在 `{{AIDP_HOME}}/plugins/`。Codex 命令位于官方发现根 `.codex/skills/aidp/`，带 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `allow_implicit_invocation: false`。该入口**不内联命令正文**，只声明「第一动作 = Read `{{AIDP_HOME}}/commands/<命令>.md`」；正文明确串联 `/foo args` 时同法读取 `{{AIDP_HOME}}/commands/foo.md`，把 `args` 原样作为 `$ARGUMENTS` 内联执行；未知命令或无法唯一映射时 fail closed。`AIDP_AGENT=codex,claude` 环境变量可覆盖自动判定。
 
 ### 执行策略
 
-工具可用性不代表任务授权。派发、脚本、Git与部署先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 围栏；子Agent继承父action/budget/真实inputs hash，缺源旧配置不作grant。调度安装另需用户明确授权。
+工具可用性不代表任务授权。开发/测试派发与脚本先执行 `{{AIDP_HOME}}/flows/sprint-dev/light-context.md` 围栏；子Agent继承父action/budget/真实inputs hash，缺源旧配置不作grant。普通提交/推送/部署按用户真实请求执行既有入口，不为交付创建 context/grant/回执文件；普通 push 按约定31.5独立只读观察，CICD none/有效流水线为空不观察，启用时不需 version/context、不写 baseline。autopilot 自有交付仍继承父授权及预算。调度安装另需用户明确授权。
 
 ### rules 路径限定加载：仅 Claude Code 原生成立
 
@@ -72,7 +73,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_config.py branch-policy
 
 ## 三、7×24 无人值守（操作系统调度为主）
 
-**非 Git 能力矩阵**：`vcs_mode=none` 可安装、规划、开发、本地测试和本地归档；Git diff / commit / push / tag、基于 commit SHA 的 CICD 监听及正式发布不可用。不可用步骤标记 `unsupported:vcs-disabled` 或明确阻断，不得报告为通过或宣布已发布；脚手架不自动 `git init`。`/sprint-test` 的 CVL 改动前基线（`baseline_ref=none`）在非 Git 下无法取得：无人值守仅「基线依赖项」未核验时按 `unsupported:vcs-disabled` 降级放行并通知一次、不计失败，口径见 `commands/sprint-test.md`。
+**非 Git 能力矩阵**：`vcs_mode=none` 可安装、规划、开发、按显式文件运行本地测试和本地归档；自动 `test_scope.py` / `light_task.py select/all` 需要有效 Git commit，无 Git 时自动范围及相关测试证据链记 `UNVERIFIED / unsupported:vcs-disabled`，不能宣称完整开发测试闭环。Git diff / commit / push / tag、基于 commit SHA 的 CICD 监听及正式发布不可用。不可用步骤标记 `unsupported:vcs-disabled` 或明确阻断，不得报告为通过或宣布已发布；脚手架不自动 `git init`。`/sprint-test` 的 CVL 改动前基线（`baseline_ref=none`）在非 Git 下无法取得：无人值守仅「基线依赖项」未核验时按 `unsupported:vcs-disabled` 降级放行并通知一次、不计失败，口径见 `commands/sprint-test.md`。
 
 两条链路（开发链路 `sprint-autopilot` + 测试链路 `sprint-aiauto-test`）必须**同时**运行才是完整的开发 + 测试闭环；二者通过 `memory/.sprint-autopilot-baseline.json` 交接，与使用哪个 Agent 无关。
 
@@ -136,3 +137,40 @@ $PY = if (Get-Command python -EA SilentlyContinue) { "python" } else { "py -3" }
 
 - ⛔ **不要去改文档里的 `python3` 字面量**：它同时是 `check_cli_invocation.py` 的识别形状（现巡检数千处调用），改写等于把那道门连根拔掉。
 - ✅ **脚本内部起子进程一律用 `sys.executable`**，不受本节影响——当前实现已全部如此，`aidp_scheduler.py` 生成的 systemd / cron / launchd / schtasks 四类定时任务也都由它派生。
+
+## 五、PreToolUse hook：三端支持矩阵与替代手段
+
+`{{AIDP_HOME}}/hooks/pretool-guard.py` 是单一 PreToolUse hook，做两项机器强制：**入口协议不可跳过**（改 `code/**` 前须已 `entry_context.py resolve` 且已读 `aidp_config.py branch-policy`，判定见 `scripts/entry_gate.py`）与**测试范围**（Bash 命令交 `scripts/test_command_guard.py`：无参 / 目录 / 全量测试命令、`git stash` 一律拒绝）。结论按官方文档查证（2026-11-12 核对），**未证实的不当作已支持**：
+
+| 项 | Claude Code | Codex | DeepSeek Harness |
+|----|-------------|-------|------------------|
+| 支持 PreToolUse | ✅ 官方支持 | ✅ 官方支持（`hooks` 特性默认可用，`codex_hooks` 为已弃用别名，`agent_sync.py` 仍写入它以兼容旧版本） | ⚠️ **未证实**：未见 DSH 官方统一的 `.dsh/hooks.json` PreToolUse 契约；生态里有多个第三方 hooks 插件（Claude Code 方言桥接、Codex 方言桥接、自有 schema），配置文件位置与 schema 各不相同 |
+| 配置位置 | `.claude/settings.json` → `hooks.PreToolUse[]` | `.codex/hooks.json`（或 `config.toml` 的 `[hooks]` 表）→ `hooks.PreToolUse[]` | 不装配（`agent_sync.py` 在输出 `notes` 说明） |
+| matcher | 区分大小写的工具名正则 / `\|` 列表；本仓写 `Bash\|Edit\|Write\|MultiEdit\|NotebookEdit` | 工具名正则；Shell 命令按 `Bash`，文件编辑经 `apply_patch`，matcher 可写 `apply_patch` / `Edit` / `Write`；本仓兼容写 `Bash\|shell\|shell_command\|exec_command\|local_shell\|apply_patch\|Edit\|Write` | — |
+| stdin JSON | `tool_name`、`tool_input`（Bash 为 `command`；Edit / Write / MultiEdit 为 `file_path`；NotebookEdit 为 `notebook_path`）、`cwd` | `tool_name`（`Bash` / `apply_patch` / MCP 名）、`tool_input.command`（Bash 可为字符串或 argv 数组；原生 shell 输入兼容 `cmd`、`workdir/cwd`；`apply_patch` 为补丁文本，hook 解析 `*** Add/Update/Delete File:`、`*** Move to:` 头取路径）、`cwd`、`turn_id` | — |
+| 阻断协议 | `exit 2` + stderr，或 exit 0 + `hookSpecificOutput.permissionDecision="deny"` + `permissionDecisionReason`；deny 在 bypass 权限模式下同样生效 | 同左（另接受旧式 `{"decision":"block"}`）；`permissionDecision="ask"` **解析但不支持**，故无人值守下也不依赖它 | — |
+| 项目根 | 注入 `CLAUDE_PROJECT_DIR` | 无项目根变量，hook 命令用 `${PWD}`，脚本回落 `cwd` / git 根 | — |
+| 覆盖边界 | Edit 与可识别 Bash 写入统一入口校验；动态写目标拒绝并提示拆分。任意外部程序/脚本正文不做完整解释，不是安全沙箱 | 同左；官方明确托管工具、部分专用工具路径不触发 hook。项目级 hooks 须 **trust** 后才加载，新增或改动需在 `/hooks` 评审信任才运行 | — |
+
+本 hook 使用 `exit 2` + stderr；`--agent codex` 额外输出 deny JSON。目标工具的坏输入、缺模块或内部失败均拒绝并记录 `decision: deny`，不把测试校验失败当成放行。
+
+入口门由 `entry_guard.enabled` / `memory/.entry-guard-off` 控制；测试门由独立默认开启的 `test_guard.enabled` / `memory/.test-guard-off` 控制，关闭任何一门不影响另一门。旧 `memory/.pretool-guard-off` 仅兼容为入口关闭，迁移为 `.entry-guard-off` 后删除旧文件，恢复入口时亦须清除旧文件。
+
+入口必须绑定当前任务：显式 `AIDP_EXECUTION_CONTEXT`，或 `entry_gate.py bind --execution-context ...` 写出的任务标记；不扫描其他 active context，错误指向不回退。校验根、身份、active 状态、新鲜期、implement 与 write_set；formal/tick 同样要求已读 branch-policy。宿主 `session_id` 存在时仅接受该 session 的绑定，提示会给出实际 `--session-id`；没有标识时通用任务标记仅支持串行项目任务，不宣称会话隔离。
+
+Bash 解析覆盖常见 sed 原地写、输出重定向、tee、cp/mv/install/rm、cd/常量变量和可识别 bash/python `-c` 包装；纯读和入口 JSON 解析保持可用。窄兼容同一运行安装的 `autopilot_tick_flags.py --shell` 单个命令替换 eval 引导（可选 `--command autopilot|aiauto-test`），不执行脚本来推断安全、不泛化为任意 eval。固定元数据输出后的失败退出、只读 JSON 的 here-string 作为正常数据流处理，真正动态写入仍明确拒绝并提示先走入口、拆分命令。精确条件与迁移步骤见 `{{AIDP_HOME}}/hooks/README.md`。
+
+### 不支持 / 未证实的端：替代手段（语义不变，只换手段）
+
+hook 不可用时，这两项约束退回「命令入口 + 脚本强制」，不得因此跳过：
+
+1. **测试范围**：一律经 `python3 {{AIDP_HOME}}/scripts/test_command_guard.py wrap -- <命令>`（或 `light_task.py` 单一入口，它内部走 wrap）执行测试 / ruff 等命令；先 `select_related_tests.py` 取相关测试白名单，只传显式文件。后台跑法用 `wrap --background --log FILE`，结束读 `FILE.exit`。需要「改动前基线对照」时用 `test_baseline.py` 的已知失败基线或 `git worktree`，⛔ 不用 `git stash`。
+2. **入口协议**：命令正文已要求先 `entry_context.py resolve`、先读 `branch-policy`；hook 缺席的端上，改 `code/**` 之前执行体须先运行 `python3 {{AIDP_HOME}}/scripts/entry_gate.py check --root . --target <拟改文件>`，退出 2 就按提示补步骤，不得继续编辑。派发子 Agent 时把这条写进派单简报。
+3. **兜底**：Stop hook（`autopilot-stop-guard.py`）与收尾核验（`entry_context.py check` / `complete`、`test_ledger.py`）在结束前核对证据；未走入口协议或超范围测试的产物在此处判缺，而不是静默通过。
+4. **DeepSeek Harness 若装了某款 hooks 插件**：可由项目负责人按该插件文档自行把同一脚本接成 PreToolUse（仅在该插件明确兼容本脚本的 stdin 与 exit 2 协议后；没有验证则不宣称可用）；确认官方契约后再改 `agent_sync.py::PRETOOL_MATCHER` 纳入自动装配，未确认前保持不写。
+
+### 查证来源
+
+- Claude Code：Hooks reference（<https://code.claude.com/docs/en/hooks>）。本次抓取该页被网络阻断，PreToolUse 的 matcher / stdin 字段 / `exit 2` 与 `permissionDecision` 阻断协议、`CLAUDE_PROJECT_DIR` 取自对该页内容的检索摘要及社区引用实例（<https://dev.to/fewparts/how-to-stop-a-claude-code-agent-writing-outside-a-directory-253p>），升级 Claude Code 版本后以官方页为准复核。
+- Codex：Hooks（<https://developers.openai.com/codex/hooks>），本次直接抓取并核对：PreToolUse 的 Tool coverage（Bash、`apply_patch`、MCP、其他本地函数工具；托管工具不覆盖）、matcher 别名、`tool_input.command`、deny / `exit 2` 协议、`ask` 未支持、`hooks` 特性键与 `codex_hooks` 弃用别名、项目 hooks 的 trust 要求。
+- DeepSeek Harness：<https://github.com/SugarFatFree/dsh-agent-extension>（只含命令 / SKILL / 路径规则，无 hooks）；生态内第三方 hooks 插件与桥接信息仅来自搜索摘要（如 <https://github.com/JohnXu22786/hooks-adapter>），官方页面抓取被网络阻断，结论标「未证实」。

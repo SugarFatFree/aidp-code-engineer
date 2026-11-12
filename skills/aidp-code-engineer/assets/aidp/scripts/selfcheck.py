@@ -563,34 +563,17 @@ def _p_count_claims(root):
 def _p_conv_dup(root):
     # 判据 = 约定主行的首句被逐字复制进细则分片 ⇒ 探针必须取【真实主行】，
     # 自己编一句"像那条约定"的话是抓不到的（首句探针是子串匹配）。
-    # ⛔ 入口文件名**不能写死**：项目记忆文件按启用的 Agent 可能是 `AGENTS.md` 或
-    #    `CLAUDE.md`（二者并存时 `CLAUDE.md` 是 `@AGENTS.md` 薄壳，抽不出主行）。
-    #    写死其一会让另一形态的项目一跑 selfcheck.py 就整个崩掉。
-    #    候选顺序：agent_env 解析出的记忆文件 → AGENTS.md → CLAUDE.md。
-    src = ""
-    try:
-        sys.path.insert(0, SCRIPTS_DIR)
-        from agent_env import memory_file as _memory_file
-        first = _memory_file(root)
-    except ImportError:
-        first = "AGENTS.md"
-    cands = []
-    for cand in (runtime_text('__AIDP_HOME__/AIDP-AGENTS.md', __file__), first, "AGENTS.md", "CLAUDE.md"):
-        if cand not in cands:
-            cands.append(cand)
-    for cand in cands:
-        try:
-            src = open(os.path.join(root, cand), encoding="utf-8").read()
-        except OSError:
-            continue
-        if any(l.startswith("20. **") for l in src.splitlines()):
-            break
+    # 与检查器共享外置正文/旧版主记忆定位，不能让阳性对照留在旧文件上空跑。
+    from aidp_runtime import convention_source, contract_root
+    source = convention_source(root)
+    src = source.read_text(encoding="utf-8") if source is not None else ""
     line = next((l for l in src.splitlines() if l.startswith("20. **")), None)
     if line is None:
         raise RuntimeError(
-            "项目记忆文件都取不到约定 20 主行（AGENTS.md / CLAUDE.md）—— "
+            "外置核心约定或旧项目记忆取不到约定 20 主行—— "
             "探针无法注入真实主行，不能用自造句子冒充（首句探针是子串匹配，假句子抓不到）")
-    _append(root, runtime_text('__AIDP_HOME__/reference/约定细则-1.md', __file__), "\n\n" + line + "\n")
+    target = contract_root(root) / "reference/约定细则-1.md"
+    _append(root, os.path.relpath(target, root), "\n\n" + line + "\n")
 
 
 unsupported("autopilot_reset.py",

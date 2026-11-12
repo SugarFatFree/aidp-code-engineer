@@ -805,6 +805,262 @@ class ConfigSubKeySafetyTest(unittest.TestCase):
         self.assertIn("cicd: # keep comment", result)
 
 
+class ConfigRetirementTest(unittest.TestCase):
+    """构造已交付旧模板；只比较有来源的退休键，不猜测用户字段。"""
+
+    def options(self, mode="upgrade"):
+        return Namespace(mode=mode, agent="claude", user="alice", json=True,
+                         version="V0.1.0", name_cn=None, force=False,
+                         adapter_mode="copy", no_agent_sync=True,
+                         keep_backups=1, keep_days=7, branch_policy=None)
+
+    def prepare_upgrade(self, root, modified=False):
+        with mock.patch.object(S, "_install_native_skill"):
+            S.run(root, self.options("init"))
+        incoming = (L.SKILL_DIR / L.CONFIG_TPL_REL).read_bytes()
+        previous = incoming + b"\ndeployment:\n  backup: null\n"
+        installed = root / ".claude/skills/aidp-code-engineer"
+        path = installed / L.CONFIG_TPL_REL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(previous)
+        (installed / ".aidp-scaffold-generated").write_text("aidp-code-engineer\n")
+        config = root / "memory/aidp-config.yaml"
+        data = config.read_text() + ("\n# deployment user note\ndeployment:\n"
+                                    "  backup: " + ("custom-backup" if modified else "null") +
+                                    "\n  custom_option: keep\ncustom_user:\n  note: keep exactly\n")
+        config.write_bytes(data.replace("\n", "\r\n").encode())
+        return config, path
+
+    def test_upgrade_removes_old_default_keeps_users_and_is_idempotent(self):
+        with H.TempRepo() as root:
+            config, old_template = self.prepare_upgrade(root)
+            before = config.read_bytes()
+            result = S.run(root, self.options())
+            self.assertNotIn(b"  backup: null", config.read_bytes())
+            self.assertEqual(config.read_bytes(), before.replace(b"  backup: null\r\n", b""))
+            self.assertEqual(old_template.read_bytes(), (L.SKILL_DIR / L.CONFIG_TPL_REL).read_bytes())
+            self.assertTrue(any("deployment.backup" in x.get("why", "") for x in result["actions"]))
+            once = config.read_bytes()
+            second = S.run(root, self.options())
+            self.assertEqual(config.read_bytes(), once)
+            self.assertFalse(any(x["path"] == "memory/aidp-config.yaml" for x in second["actions"]))
+
+    def test_cross_version_upgrade_snapshots_config_before_runtime_replacement(self):
+        with H.TempRepo() as root:
+            config, old_template = self.prepare_upgrade(root)
+            old_bytes = old_template.read_bytes()
+            scaffold_marker.write_version(root, "V0.0.1")
+            before = config.read_bytes()
+            events = []
+            render, sync = runtime_layout.render_runtime, S.sync_config
+
+            def render_observed(*args, **kwargs):
+                events.append("render")
+                return render(*args, **kwargs)
+
+            def sync_observed(*args, **kwargs):
+                self.assertEqual(events, ["render"])
+                self.assertEqual(kwargs["previous_template"], old_bytes)
+                events.append("config")
+                return sync(*args, **kwargs)
+
+            with mock.patch.object(runtime_layout, "render_runtime", side_effect=render_observed), \
+                    mock.patch.object(S, "sync_config", side_effect=sync_observed):
+                result = S.run(root, self.options())
+            self.assertEqual(result["contract_decision"], "overwrite")
+            self.assertEqual(config.read_bytes(), before.replace(b"  backup: null\r\n", b"")
+                             .replace(b"version: V0.0.1", b"version: " + BUNDLE_VERSION.encode()))
+            self.assertEqual(old_template.read_bytes(), (L.SKILL_DIR / L.CONFIG_TPL_REL).read_bytes())
+            self.assertFalse(result["pending"], result["rewrite_queue"])
+
+    def test_upgrade_preserves_changed_retired_key_and_warns(self):
+        with H.TempRepo() as root:
+            config, _ = self.prepare_upgrade(root, modified=True)
+            before = config.read_bytes()
+            result = S.run(root, self.options())
+            self.assertEqual(config.read_bytes(), before)
+            self.assertTrue(any("退休" in x and "deployment.backup" in x for x in result["warnings"]))
+            self.assertFalse(result["pending"], result["rewrite_queue"])
+
+    def test_missing_old_baseline_preserves_unknown_fields_with_notice(self):
+        with H.TempRepo() as root:
+            config, previous = self.prepare_upgrade(root)
+            previous.unlink()
+            before = config.read_bytes()
+            result = S.run(root, self.options())
+            self.assertEqual(config.read_bytes(), before)
+            self.assertTrue(any("旧配置模板" in x and "退休" in x
+                                and "deployment.backup" in x for x in result["warnings"]))
+
+    def test_unsafe_structure_warns_with_full_retired_key_path(self):
+        previous = "deployment:\n  nested:\n    backup: null\n"
+        for have in ("deployment:\n  nested: &custom\n    backup: null\n",
+                     "deployment:\n  nested:\n    backup: null\n    backup: custom\n"):
+            with self.subTest(have=have):
+                result, removed, review = S._retire_config_keys(have, previous, "deployment: {}\n")
+                self.assertEqual(result, have)
+                self.assertFalse(removed)
+                self.assertTrue(any("deployment.nested.backup" in item for item in review), review)
+
+    def test_alias_inside_list_makes_retirement_unsafe(self):
+        previous = "deployment:\n  backup: [&shared old]\nother:\n  values: [*shared]\n"
+        result, removed, review = S._retire_config_keys(previous, previous,
+                                                       "other:\n  values: []\n")
+        self.assertEqual(result, previous)
+        self.assertFalse(removed)
+        self.assertTrue(any("deployment.backup" in item for item in review))
+
+    def test_multiline_retired_value_is_not_deleted_when_blank_lines_change(self):
+        previous = "deployment:\n  backup: |\n    one\n\n    two\n"
+        have = previous.replace("one\n\n", "one\n")
+        result, removed, review = S._retire_config_keys(have, previous, "deployment:\n  keep: true\n")
+        self.assertEqual(result, have)
+        self.assertFalse(removed)
+        self.assertTrue(any("deployment.backup" in item for item in review))
+
+    def test_marker_same_values_preserve_commented_header_and_null_spelling(self):
+        for header in ("scaffold:", "scaffold: # version stamps"):
+            for null in ("~", ""):
+                with self.subTest(header=header, null=null), H.TempRepo() as root:
+                    path = root / "memory/aidp-config.yaml"
+                    path.parent.mkdir()
+                    original = (header + '\r\n  version: "V0.0.1" # pinned\r\n'
+                                + "  pending: " + null + " # no upgrade\r\n").encode()
+                    path.write_bytes(original)
+                    with mock.patch.object(scaffold_marker, "_write", wraps=scaffold_marker._write) as write:
+                        scaffold_marker.write_version(root, "V0.0.1")
+                        write.assert_not_called()
+                    self.assertEqual(path.read_bytes(), original)
+                    self.assertEqual(scaffold_marker.read_version(root), "V0.0.1")
+                    self.assertIsNone(scaffold_marker.read_pending(root))
+
+    def test_marker_empty_scalar_keeps_comment_separated_when_set(self):
+        with H.TempRepo() as root:
+            path = root / "memory/aidp-config.yaml"
+            path.parent.mkdir()
+            path.write_bytes(b"scaffold:\r\n  pending: # keep comment\r\n")
+            scaffold_marker.write_pending(root, "V0.0.2")
+            self.assertEqual(path.read_bytes(), b"scaffold:\r\n  pending: V0.0.2 # keep comment\r\n")
+
+    def test_unreadable_old_template_warns_with_candidate_paths(self):
+        with H.TempRepo() as root:
+            path = root / "memory/aidp-config.yaml"
+            path.parent.mkdir()
+            path.write_text("deployment:\n  backup: null\ncustom_user:\n  keep: true\n")
+            report = S.Report()
+            S.sync_config(root, {}, report, S.Backup(root, report), previous_template=b"\xff")
+            self.assertIn("deployment:\n  backup: null\n", path.read_text())
+            self.assertTrue(any("deployment.backup" in warning for warning in report.warnings))
+            self.assertFalse(any("custom_user.keep" in warning for warning in report.warnings))
+
+    def test_marker_changes_only_values_preserving_comments_and_line_endings(self):
+        with H.TempRepo() as root:
+            config = root / "memory/aidp-config.yaml"
+            config.parent.mkdir()
+            original = (b"scaffold:\r\n  version: V0.0.1 # pinned\r\n"
+                        b"  pending: null # review\r\ncustom_user: {x: keep}")
+            config.write_bytes(original)
+            scaffold_marker.write_pending(root, "V0.0.2")
+            self.assertEqual(config.read_bytes(), original.replace(b"pending: null", b"pending: V0.0.2"))
+            once = config.stat().st_mtime_ns
+            scaffold_marker.write_pending(root, "V0.0.2")
+            self.assertEqual(config.stat().st_mtime_ns, once)
+            scaffold_marker.write_version(root, "V0.0.2")
+            self.assertEqual(config.read_bytes(), original.replace(b"version: V0.0.1", b"version: V0.0.2"))
+
+    def test_cleanup_failure_restores_original_bytes_and_old_snapshot(self):
+        with H.TempRepo() as root:
+            config, previous = self.prepare_upgrade(root)
+            before, old_bytes = config.read_bytes(), previous.read_bytes()
+            observed = []
+
+            def fail_after_config(*args, **kwargs):
+                observed.append(config.read_bytes())
+                raise OSError("after config retirement")
+
+            with mock.patch.object(S, "_install_native_skill", side_effect=fail_after_config):
+                with self.assertRaisesRegex(OSError, "after config retirement"):
+                    S.run(root, self.options())
+            self.assertNotIn(b"  backup: null", observed[0])
+            self.assertEqual(config.read_bytes(), before)
+            self.assertEqual(previous.read_bytes(), old_bytes)
+
+
+class MemoryBodyConflictTest(unittest.TestCase):
+    def test_aidp_body_move_does_not_leave_a_conflicting_old_copy(self):
+        with H.TempRepo() as root:
+            ctx = {"project": "demo", "project_cn": "demo", "user": "alice",
+                   "version": "V0.1.0", "date": "2026-11-12"}
+            incoming = (L.SKILL_DIR / L.MEMORY_TPL_REL).read_text()
+            previous = incoming.replace("开发者母语**中文**", "开发者母语**英文**")
+            body = L.render(previous, ctx).replace("{{AIDP_HOME}}", ".agents")
+            (root / "CLAUDE.md").write_text(body)
+            rep = S.Report()
+            S.sync_memory_file(root, ["claude", "codex"], ctx, "overwrite", True, rep,
+                               S.Backup(root, rep), previous_template=previous.encode())
+            self.assertEqual((root / "CLAUDE.md").read_text(), "@AGENTS.md\n")
+            self.assertIn("开发者母语**中文**", (root / "AGENTS.md").read_text())
+            S.agent_adapter.validate_memory_bodies(S.agent_adapter.memory_bodies(root))
+
+    def test_upgrade_cli_preserves_both_bodies_and_runtime(self):
+        with H.TempRepo() as root:
+            scaffold(root, "--agent", "claude,codex")
+            (root / "CLAUDE.md").write_text("@AGENTS.md\n\n独有的项目规则\n")
+            before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*")
+                      if p.is_file() and ".git" not in p.relative_to(root).parts
+                      and "__pycache__" not in p.parts}
+            result = H.run_script("scaffold.py", root, "--mode", "upgrade", "--agent", "claude,codex",
+                                  "--user", "alice", "--json", check=False)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("冲突", result.stdout + result.stderr)
+            self.assertIn("CLAUDE.md", result.stdout + result.stderr)
+            self.assertIn("AGENTS.md", result.stdout + result.stderr)
+            after = {p.relative_to(root): p.read_bytes() for p in root.rglob("*")
+                     if p.is_file() and ".git" not in p.relative_to(root).parts
+                     and "__pycache__" not in p.parts}
+            self.assertEqual(before, after)
+
+    def test_migrate_failure_rolls_back_both_original_bodies(self):
+        with H.TempRepo() as root:
+            original = {"AGENTS.md": b"# Shared rules\nKeep shared text\n",
+                        "CLAUDE.md": b"# Local rules\nKeep local text\n"}
+            for name, data in original.items():
+                (root / name).write_bytes(data)
+            options = ConfigRetirementTest().options("migrate")
+            options.agent = "claude,codex"
+            observed = []
+
+            def fail_after_merge(*args, **kwargs):
+                observed.append((root / "CLAUDE.md").read_text())
+                self.assertIn("Keep local text", (root / "AGENTS.md").read_text())
+                raise OSError("after body merge")
+
+            with mock.patch.object(S, "_install_native_skill", side_effect=fail_after_merge):
+                with self.assertRaisesRegex(OSError, "after body merge"):
+                    S.run(root, options)
+            self.assertEqual(observed, ["@AGENTS.md\n"])
+            for name, data in original.items():
+                self.assertEqual((root / name).read_bytes(), data)
+            self.assertFalse((root / "memory/aidp-config.yaml").exists())
+            self.assertFalse((root / ".agents" / runtime_layout.RUNTIME_MANIFEST).exists())
+
+    def test_migrate_converts_only_after_exact_custom_merge(self):
+        with H.TempRepo() as root:
+            a_body, c_body = "# Team rules\nKeep AGENTS content\n", "# Local rules\nKeep CLAUDE content\n"
+            (root / "AGENTS.md").write_text(a_body)
+            (root / "CLAUDE.md").write_text(c_body)
+            result = scaffold(root, "--mode", "migrate", "--agent", "claude,codex")
+            self.assertTrue(result["pending"])
+            merged = (root / "AGENTS.md").read_text()
+            self.assertIn(a_body.strip(), merged)
+            self.assertIn(c_body.strip(), merged)
+            self.assertEqual((root / "CLAUDE.md").read_text(), "@AGENTS.md\n")
+            second = scaffold(root, "--mode", "upgrade", "--agent", "claude,codex")
+            self.assertEqual((root / "AGENTS.md").read_text(), merged)
+            self.assertFalse(any(a["path"] in ("AGENTS.md", "CLAUDE.md")
+                                 for a in second["actions"]))
+
+
 class BranchPolicyTest(unittest.TestCase):
     def setUp(self):
         # 使用最新配置真源，不要求为这组定向测试先修改仓库 bundle。
@@ -2493,6 +2749,125 @@ class DeliveredFilesTest(unittest.TestCase):
 
 
 class OptionalRuleRefreshTest(unittest.TestCase):
+    def prepare_native(self, root, modified=False):
+        source = root.parent / "optional-source"
+        for directory in L.RUNTIME_DIRS:
+            path = source / directory / "README.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("# fixture\n")
+        for template, _installed in L.OPTIONAL_RULES:
+            path = source / template
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("old optional\n")
+        runtime = root / ".claude"
+        runtime_layout.render_runtime(source, runtime, ".claude", "V1.0.0", "claude")
+        for _template, installed in L.OPTIONAL_RULES:
+            (runtime / installed).write_text("user customization\n" if modified else "old optional\n")
+        before = S.snapshot_optional_rules(root, [".claude"])
+        for template, _installed in L.OPTIONAL_RULES:
+            (source / template).write_text("new optional\n")
+        report = S.Report()
+        backup = S.Backup(root, report)
+        runtime_layout.render_runtime(source, runtime, ".claude", "V1.0.1", "claude",
+                                      backup_callback=lambda _: backup.save_tree(".claude"))
+        runtime_layout.validate_runtime(runtime, expected_home=".claude")
+        return runtime, before, report
+
+    def test_native_refresh_keeps_manifest_consistent_through_final_validation(self):
+        with H.TempRepo() as root:
+            runtime, before, report = self.prepare_native(root)
+            manifest_before = runtime_layout._read_manifest(runtime)
+            S.refresh_optional_rules(root, [".claude"], before, report)
+            for _template, installed in L.OPTIONAL_RULES:
+                self.assertEqual((runtime / installed).read_text(), "new optional\n")
+            manifest = runtime_layout.validate_runtime(runtime, expected_home=".claude")
+            self.assertEqual(manifest["user_files"], manifest_before["user_files"])
+            for relative, metadata in manifest_before["files"].items():
+                if relative not in L.OPTIONAL_INSTALLED_CONTRACTS:
+                    self.assertEqual(manifest["files"][relative], metadata)
+
+    def test_native_refresh_is_idempotent(self):
+        with H.TempRepo() as root:
+            runtime, before, report = self.prepare_native(root)
+            S.refresh_optional_rules(root, [".claude"], before, report)
+            snapshot = S._complete_tree_state(runtime)
+            second = S.Report()
+            S.refresh_optional_rules(root, [".claude"], S.snapshot_optional_rules(root, [".claude"]), second)
+            self.assertEqual(S._complete_tree_state(runtime), snapshot)
+            self.assertEqual(second.actions, [])
+            runtime_layout.validate_runtime(runtime, expected_home=".claude")
+
+    def test_native_refresh_preserves_changes_made_after_snapshot(self):
+        with H.TempRepo() as root:
+            runtime, before, report = self.prepare_native(root)
+            relative = L.OPTIONAL_RULES[0][1]
+            (runtime / relative).write_text("edited after snapshot\n")
+            old_meta = runtime_layout._read_manifest(runtime)["files"][relative]
+            S.refresh_optional_rules(root, [".claude"], before, report)
+            self.assertEqual((runtime / relative).read_text(), "edited after snapshot\n")
+            self.assertEqual(runtime_layout._read_manifest(runtime)["files"][relative], old_meta)
+            self.assertTrue(any(relative in warning for warning in report.warnings))
+            with self.assertRaisesRegex(ValueError, relative):
+                runtime_layout.validate_runtime(runtime, expected_home=".claude")
+
+    def test_real_upgrade_refresh_and_manifest_failure_rollback(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail), H.TempRepo() as root:
+                runtime, before, report = self.prepare_native(root)
+                S.refresh_optional_rules(root, [".claude"], before, report)
+                original = S._complete_tree_state(runtime)
+                source = root.parent / "optional-source"
+                for template, _installed in L.OPTIONAL_RULES:
+                    (source / template).write_text("third optional\n")
+                options = ConfigRetirementTest().options()
+                write = S.write_if_diff
+                observed = []
+
+                def checked_write(path, data):
+                    if fail and path == runtime / runtime_layout.RUNTIME_MANIFEST:
+                        observed.append((runtime / L.OPTIONAL_RULES[0][1]).read_text())
+                        raise OSError("optional manifest write failed")
+                    return write(path, data)
+
+                with mock.patch.object(S, "_runtime_source", return_value=source), \
+                        mock.patch.object(L, "bundle_version", return_value="V1.0.2"), \
+                        mock.patch.object(S, "_install_native_skill"), \
+                        mock.patch.object(S, "write_if_diff", side_effect=checked_write):
+                    if fail:
+                        with self.assertRaisesRegex(OSError, "optional manifest write failed"):
+                            S.run(root, options)
+                        self.assertEqual(observed, ["third optional\n"])
+                        self.assertEqual(S._complete_tree_state(runtime), original)
+                    else:
+                        S.run(root, options)
+                        for _template, installed in L.OPTIONAL_RULES:
+                            self.assertEqual((runtime / installed).read_text(), "third optional\n")
+                        once = S._complete_tree_state(runtime)
+                        second = S.run(root, options)
+                        self.assertEqual(S._complete_tree_state(runtime), once)
+                        self.assertFalse(any(a["path"] in {".claude/" + rel for _, rel in L.OPTIONAL_RULES}
+                                             for a in second["actions"]))
+                runtime_layout.validate_runtime(runtime, expected_home=".claude")
+
+    def test_native_refresh_preserves_user_changes_and_warns(self):
+        with H.TempRepo() as root:
+            runtime, before, report = self.prepare_native(root, modified=True)
+            manifest_before = (runtime / runtime_layout.RUNTIME_MANIFEST).read_bytes()
+            S.refresh_optional_rules(root, [".claude"], before, report)
+            for _template, installed in L.OPTIONAL_RULES:
+                self.assertEqual((runtime / installed).read_text(), "user customization\n")
+            self.assertEqual((runtime / runtime_layout.RUNTIME_MANIFEST).read_bytes(), manifest_before)
+            self.assertEqual(len(report.warnings), len(L.OPTIONAL_RULES))
+            runtime_layout.validate_runtime(runtime, expected_home=".claude")
+
+    def test_native_refresh_does_not_mask_unrelated_manifest_drift(self):
+        with H.TempRepo() as root:
+            runtime, before, report = self.prepare_native(root)
+            (runtime / "rules/README.md").write_text("unexpected modification\n")
+            S.refresh_optional_rules(root, [".claude"], before, report)
+            with self.assertRaisesRegex(ValueError, "rules/README.md"):
+                runtime_layout.validate_runtime(runtime, expected_home=".claude")
+
     def test_optional_rule_refresh(self):
         tpl_rel, inst_rel = L.OPTIONAL_RULES[0]
         with H.TempRepo() as root:

@@ -31,7 +31,7 @@
   `0` = 门真的跑过且自身通过
   `1` = 门自身判不通过（原样透传它的结论）
   `3` = **门没真的跑过**（skipped / 采集量 0）—— ⛔ 这不是通过
-  `2` = 用法 / 环境错（命令起不来、输出不是 JSON）
+  `2` = 用法 / 环境错（命令起不来、输出不是 JSON、存在 read_errors 导致检查不完整）
 
 `--allow-empty "<理由>"` 可显式表态「本轮确实没东西可查」：退出码变 0，
 但**理由会打印出来留痕**。⛔ 不要拿它当默认开关——那等于把门删掉却留着它的名字。
@@ -138,6 +138,22 @@ def main():
                                for k in ("skipped", "skip", "not_run")),
            "collected": col.as_dict() if hasattr(col, "as_dict") else {},
            "ran": not starved}
+
+    read_errors = payload.get("read_errors")
+    if read_errors:
+        # 读过部分内容不代表整道门通过；空输入豁免也不能覆盖读取故障。
+        out.update(verdict="read-error", gate_passed=False, incomplete=True,
+                   read_errors=read_errors, gate_stdout=proc.stdout, gate_stderr=proc.stderr)
+        if a.json:
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+        else:
+            print("⛔ %s：存在不可读输入，检查不完整，不能判通过：%s"
+                  % (a.label, json.dumps(read_errors, ensure_ascii=False)))
+            if proc.stdout.strip():
+                print(proc.stdout.rstrip())
+            if proc.stderr.strip():
+                print(proc.stderr.rstrip(), file=sys.stderr)
+        return 2
 
     if starved:
         if a.allow_empty and a.allow_empty.strip():

@@ -989,13 +989,13 @@ def check_one(data, name, result_path=None, artifact_index=None, artifact_owners
     if not data.get('case_id'):
         _issue(issues, 'Critical', 'missing_case_id', f'{name}: 缺 case_id')
     status = data.get('status')
-    if status not in STATUS_ENUM:
+    if not isinstance(status, str) or status not in STATUS_ENUM:
         _issue(issues, 'Critical', 'bad_status',
                f'{name}: status={status!r} 非法(应为 pass|fail|block|na)')
 
     # 条目类型:巡检项必须显式标注,否则会被当成用例计进通过率
     ek = data.get('entry_kind')
-    if ek is not None and ek not in ENTRY_KIND_ENUM:
+    if ek is not None and (not isinstance(ek, str) or ek not in ENTRY_KIND_ENUM):
         _issue(issues, 'Critical', 'bad_entry_kind',
                f'{name}: entry_kind={ek!r} 非法(应为 {sorted(ENTRY_KIND_ENUM)},缺省=case)')
     elif str(data.get('case_id') or '').startswith(FREE_SCAN_ID_PREFIX) and ek != 'free-scan':
@@ -1503,6 +1503,8 @@ def main():
             data, name, f, artifact_indexes[evidence_dir], artifact_owners,
             require_preflight=args.require_runtime_preflight,
             webmcp_enabled=args.webmcp_enabled, artifact_sink=artifacts))
+        if not isinstance(data, dict):  # check_one 已报 not_object
+            continue
         el = data.get('elapsed_ms')
         if isinstance(el, (int, float)) and not isinstance(el, bool):
             elapsed_by_round.setdefault(round_dir, []).append({

@@ -346,13 +346,20 @@ def main() -> int:
         "passed": True,
     }
 
+    read_errors: List[Dict] = []
     for f in md_files:
         # 跳过待澄清清单 / 专职索引 / README(非功规点正文,不承载 5.N/REQ- 段)
         # 新范式 00_索引.md 只汇总清单与全局索引,历史 00_*-总览.md grandfather 一并豁免
         if ("99_" in f.name or "README" in f.name.upper()
                 or f.name == "00_索引.md" or re.match(r"^00_.*(总览|索引)\.md$", f.name)):
             continue
-        result = analyze_file(f)
+        try:
+            result = analyze_file(f)
+        except OSError as exc:
+            # 断链符号链接 / 无读权限:登记 read_errors 继续,⛔ 不可裸 traceback(exit 1 与「检出违规」撞码)
+            #   也不可静默当作「该文件无违规」。
+            read_errors.append({"file": str(f), "error": f"{type(exc).__name__}: {exc}"})
+            continue
         aggregated["files"].append(result)
         aggregated["total_sections"] += result["sections"]
         n = result["sections"]
@@ -364,6 +371,19 @@ def main() -> int:
             aggregated["h3_hits"] += round(result["coverage"]["H3_高保真来源"] * n)
             aggregated["h4_hits"] += round(result["coverage"]["H4_关联功规点"] * n)
         aggregated["total_link_violations"] += len(result.get("link_violations", []))
+
+    if read_errors:
+        aggregated["read_errors"] = read_errors
+        for e in read_errors:
+            print(f"❌ 无法读取 {e['file']}: {e['error']}", file=sys.stderr)
+
+    if aggregated["total_sections"] == 0 and read_errors:
+        # 有文件读不出来而其余文件又没有功规点段:什么都没核验到,既不是通过也不是「跳过」
+        if args.json:
+            print(json.dumps({"passed": False, "skipped": False, "read_errors": read_errors,
+                              "msg": "存在不可读文件且未核验到任何功规点段"},
+                             ensure_ascii=False, indent=2))
+        return 2
 
     if aggregated["total_sections"] == 0:
         if args.json:

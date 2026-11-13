@@ -104,7 +104,7 @@ Important 总数 = 阻断 Important + 非阻断 Important；loop 阻断项总数
 | HTTP 客户端配置硬编码 | {✅ / ❌ 问题编号 / ⏭️ 不适用（原因）} | {http-hardcode 0 命中, base URL/IP/凭证走配置 + ${ENV} 占位} |
 | 配置中心热刷新漏标 | {✅ / ❌ 问题编号 / ⏭️ 不适用（原因）} | {可变 key 的 @Value 类均带 @RefreshScope / @ConfigurationProperties} |
 | 新增依赖/import 越界基线 | {✅ / ❌ 问题编号 / ⏭️ 不适用（原因）} | {dep-baseline 0 命中, 新增 import 顶层包均已声明在清单} |
-| SQL 标识符通用性 | {✅ / ❌ 问题编号 / ⏭️ 不适用（原因）} | {sql-identifier-case 0 命中: SQL 无引号包裹的表名/字段名, 同表单一拼写} |
+| SQL 标识符通用性 | {✅ / ❌ 问题编号 / ⏭️ 不适用（原因）} | {sql-identifier-case 0 命中: SQL 无引号包裹的表名/字段名, 同表单一拼写;达梦项目加 --sql-db dameng 并核 .sql 建/改表标识符全大写} |
 | 审计字段填充溯源 | {✅ / ❌ 问题编号 / ⏭️ 不适用（原因）} | {audit-fill 0 命中, 审计字段走自动填充从登录态取操作人, 无写死 system, 逻辑删除同步 update_by/update_time} |
 | 错误契约与失败可见性（fail-closed） | {✅ / ❌ 问题编号} | {①成功响应表达失败 ②前端吞错渲染空态 ③fail-open = Critical；④上游改字段静默取默认值 = Important；只判「失败分支内」，合法业务空集合不在覆盖面；设计未写错误契约时登记待澄清} |
 | UI 公共化·重复样式声明块 | {✅ / 🟡 问题编号} | {新增组件与既有文件重复的样式声明块} |

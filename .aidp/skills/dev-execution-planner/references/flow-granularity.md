@@ -56,11 +56,11 @@
 **太详细 ❌**（冗余,抄了设计文档）：
 ```
 - [ ] 创建工单表
-  包含字段：id(BIGINT 主键), order_no(VARCHAR(32) 唯一), enterprise_id(BIGINT), title(VARCHAR(255))...
-  索引：order_no 唯一索引、enterprise_id 普通索引...
+  包含字段：ID(BIGINT 主键), ORDER_NO(VARCHAR(32) 唯一), ENTERPRISE_ID(BIGINT), TITLE(VARCHAR(255))...
+  索引：ORDER_NO 唯一索引、ENTERPRISE_ID 普通索引...
   ```sql
   CREATE TABLE BIZ_WORK_ORDER (
-      id BIGINT NOT NULL IDENTITY(1, 1),
+      ID BIGINT NOT NULL IDENTITY(1, 1),
       ...50行SQL...
   );
   ```
@@ -97,6 +97,7 @@
 5. 完成后对照设计 A.3 逐字段、逐索引、逐约束核对一致性。
 
 约束:
+- DDL 中表名/字段名一律不加引号;达梦下全大写(未加引号标识符会折成大写,加引号则保留原样、与不加引号的查询对不上);
 - 严禁自行推断设计未覆盖的字段或索引,遇歧义暂停反馈;
 - 遵守"字段宽容原则":仅在设计明确标注 NOT NULL 的字段加 NOT NULL,且必须有 DEFAULT 或应用层赋值保障。
 ~~~

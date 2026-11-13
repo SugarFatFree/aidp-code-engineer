@@ -36,7 +36,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # B1 文件名违规关键词 (Python 中文 unicode 区间,匹配技术域词)
 FILENAME_VIOLATION_PATTERNS = [
@@ -82,11 +82,14 @@ def check_filename(name: str) -> List[Dict]:
     return issues
 
 
-def check_content(path: Path) -> List[Dict]:
+def check_content(path: Path, read_errors: Optional[List[Dict]] = None) -> List[Dict]:
     issues: List[Dict] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        # ⚠️ 读不出来绝不可当作「该文件无违规」(假绿):登记 read_errors,由 main() 进输出并定退出码
+        if read_errors is not None:
+            read_errors.append({"file": str(path), "error": f"{type(exc).__name__}: {exc}"})
         return issues
     if not lines:
         return issues
@@ -150,6 +153,8 @@ def main() -> int:
         return 0
 
     all_issues: List[Dict] = []
+    read_errors: List[Dict] = []
+    content_scanned = 0
     for f in md_files:
         if f.name.startswith("00_"):  # 专职索引 00_索引.md 豁免(历史 00_*总览/主文档同豁免)
             continue
@@ -157,10 +162,18 @@ def main() -> int:
         # 字典枚举白名单文件跳过 B2 内容嗅探(避免误报字典 PascalCase + 类型词)
         if ALLOWED_DICT_PATTERN.search(f.name):
             continue
-        all_issues.extend(check_content(f))
+        content_scanned += 1
+        all_issues.extend(check_content(f, read_errors))
+
+    if read_errors and len(read_errors) >= content_scanned:
+        # 凡需读内容的文件全读不出来:没有核验到任何东西,不是通过
+        for e in read_errors:
+            print(f"错误: 无法读取 {e['file']}: {e['error']}", file=sys.stderr)
+        return 2
 
     if args.json:
         print(json.dumps({
+            "read_errors": read_errors,
             "passed": len(all_issues) == 0,
             "files": len(md_files),
             "issue_count": len(all_issues),
@@ -168,6 +181,8 @@ def main() -> int:
         }, ensure_ascii=False, indent=2))
         return 0 if not all_issues else 1
 
+    for e in read_errors:
+        print(f"⚠️  无法读取 {e['file']}: {e['error']}(该文件未核验)", file=sys.stderr)
     if not all_issues:
         print(f"✅ 通过: {len(md_files)} 个 PRD 子文件,无违规分册")
         return 0

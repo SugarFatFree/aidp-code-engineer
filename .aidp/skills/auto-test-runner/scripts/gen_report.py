@@ -238,6 +238,7 @@ def level_defect(status, priority, block_reason, critical_family=False, env_issu
 # 否则 env-facts.json 会被当成一条用例统计—— 实测「1 条用例 + env-facts.json」曾聚合出
 # total=2 / block=2 / 多出一个「未分组」模块。用文件名黑名单 + 「无 case_id 即非用例」双保险。
 NON_RESULT_FILES = {'env-facts.json', 'token-usage.json', 'run-context.json'}
+STR_SCALAR_FIELDS = ('case_id', 'status', 'suite', 'execution_mode', 'entry_kind', 'error', 'note', 'block_reason')
 
 
 def load_results(round_dir, read_errors=None):
@@ -272,11 +273,30 @@ def load_results(round_dir, read_errors=None):
             read_errors.append({'file': str(f),
                                 'error': f'顶层不是 JSON 对象(实为 {type(data).__name__}),无法作为一条用例结果'})
             continue
+        # ⚠️ 标量字段类型闸门:这些字段会被当 dict 键 / 切片 / `.replace()` 使用,
+        #    非字符串(数组/对象/数字)会让聚合裸 traceback、exit 1(与「存在无证据 verified pass」撞码)。
+        #    收进 read_errors(不丢弃、不 exit 0),与「顶层非对象」同一处置。
+        bad_keys = [k for k in STR_SCALAR_FIELDS
+                    if data.get(k) is not None and not isinstance(data.get(k), str)]
+        if bad_keys:
+            read_errors.append({'file': str(f),
+                                'error': f'字段 {", ".join(bad_keys)} 必须是字符串(或缺省),无法作为一条用例结果'})
+            continue
         out.append(data)
     return out
 
 
 FREE_SCAN_KIND = 'free-scan'
+
+
+def _s(v):
+    """渲染前把非字符串标量/容器转成字符串(畸形 runtimeErrors 元素不得让报告渲染 traceback;
+    形状问题由 check_result.py 在落盘期拦,这里只保证聚合不崩、内容仍可见)。"""
+    if isinstance(v, str):
+        return v
+    if v is None:
+        return ''
+    return json.dumps(v, ensure_ascii=False)
 
 
 def split_entries(entries):
@@ -419,9 +439,10 @@ def aggregate(all_entries):
             for e in rt_errors:
                 runtime_findings.append({
                     'case_id': r.get('case_id', '?'), 'suite': suite,
-                    'level': e.get('severity', 'P3'), 'category': '运行时错误',
-                    'type': e.get('type', ''), 'error': e.get('detail') or e.get('message', ''),
-                    'artifact': e.get('artifact', ''), 'kind': 'runtime',
+                    'level': _s(e.get('severity', 'P3')), 'category': '运行时错误',
+                    'type': _s(e.get('type', '')),
+                    'error': _s(e.get('detail') or e.get('message', '')),
+                    'artifact': _s(e.get('artifact', '')), 'kind': 'runtime',
                 })
 
     product_defect_count = sum(1 for d in defects if d['is_product_defect'])

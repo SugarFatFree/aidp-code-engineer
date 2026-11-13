@@ -198,7 +198,7 @@ def check_facts(data):
 
     # 值域
     render_mode = data.get('renderMode')
-    if not _is_empty(render_mode) and render_mode not in RENDER_MODES:
+    if not _is_empty(render_mode) and (not isinstance(render_mode, str) or render_mode not in RENDER_MODES):
         err('renderMode', f'renderMode 取值须为 {sorted(RENDER_MODES)} 或 null,'
                           f'当前 {render_mode!r}')
 
@@ -210,7 +210,8 @@ def check_facts(data):
     #   `reusedInstance` 为 null(没测出来)同样不许——「是否复用未知」不等于「已确认未复用」,
     #   而这恰是复用常驻实例场景下最典型的取证失败态。
     if reused is not False:
-        rms = (data.get('renderModeSource') or '').strip()
+        rms = data.get('renderModeSource')
+        rms = rms.strip() if isinstance(rms, str) else ''
         m = SOURCE_FULL_RE.match(rms)
         if m and m.group('prefix') == '显式指定':
             state = ('reusedInstance=true(连到已存在的实例)' if reused is True

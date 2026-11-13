@@ -30,7 +30,7 @@ python3 {{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_sql_style_consist
 4. 本版无 DDL/DML 变更 → 不产空占位文件（N3 空占位判违规）；全量建库脚本属约定 37 全量轨，由 `/version` 发布期产出，⛔ 不在本步生成。
 5. **DDL 幂等性硬要求**：所有 CREATE/ALTER 包含 `IF NOT EXISTS` / `IF EXISTS` 判断（SKILL「Module D 版本归档完整性」维度内置核验）。
 
-**所有 .sql 文件统一要求**：建表语句完整可执行 / 索引齐全 / 初始化数据（如有）独立成块 / 兼容项目实际使用的数据库（MySQL/PostgreSQL/达梦 等）。标识符（表名 / 字段名）规则以 `dev-logic-architect` 核心原则 12 / 检查项 18 为准，本处不复述；目标库方言取 `python3 {{AIDP_HOME}}/scripts/aidp_config.py sql-db-flag`（仅 `dameng` 有专项规则；其余库输出空），非空时作为 `--db <值>` 随 SKILL 调用 prompt 传给子 Agent（空 = 通用，不传）；`run_qr_checks.py` 不透传 `--db`，prompt 须写明由 QR 子 Agent 对 `check_sql_identifiers.py` 另行带 `--db <值>`。
+**所有 .sql 文件统一要求**：建表语句完整可执行 / 索引齐全 / 初始化数据（如有）独立成块 / 兼容项目实际使用的数据库（MySQL/PostgreSQL/达梦 等）。标识符（表名 / 字段名）规则以 `dev-logic-architect` 核心原则 12 / 检查项 18 为准，本处不复述；目标库方言取 `python3 {{AIDP_HOME}}/scripts/aidp_config.py sql-db-flag`（仅 `dameng` 有专项规则；其余库输出空），非空时作为 `--db <值>` 随 SKILL 调用 prompt 传给子 Agent（空 = 通用，不传）；采用试验性 `run_qr_checks.py` 采集时直接传同一 `--db <值>`；无需为方言透传额外补跑叶子脚本；试验采集不能替代正式 QR 步骤 0，正式检查仍按 SKILL 执行。
 
 **★ Step 3.2：SQL 落位到 `docs/deployment/{version}/sql/增量/` + 版本落位一致性防护（两阶段：SKILL 暂存 → 命令端归位；堵"补充/增量 SQL 落错版本目录、文件头版本≠目录版本"）**：
 

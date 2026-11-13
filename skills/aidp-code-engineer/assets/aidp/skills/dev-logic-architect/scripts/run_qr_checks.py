@@ -89,7 +89,7 @@ def has_findings(data):
 
 
 def _collect_sequential(script_dir, target, checks, sql_root=None, version=None,
-                        requirements=None):
+                        requirements=None, db=None):
     entries = []
     for name, flags, collector in checks:
         entry = {"script": name, "status": "unavailable", "returncode": None,
@@ -118,6 +118,9 @@ def _collect_sequential(script_dir, target, checks, sql_root=None, version=None,
             command.extend(("--version", version))
         if name == "check_permission_constraint.py" and requirements:
             command.extend(("--requirements", str(requirements)))
+        if name == "check_sql_identifiers.py" and db:
+            # db_dialect=dameng 时 Q5(标识符全大写)只有带 --db 才会执行,漏传 = 静默假绿
+            command.extend(("--db", db))
         command.append("--json")
         entry["command"] = command
         started = time.monotonic()
@@ -197,16 +200,16 @@ def important_items(data):
 
 
 def collect(script_dir, target, checks=CHECKS, sql_root=None, version=None,
-            requirements=None, workers=1):
+            requirements=None, workers=1, db=None):
     if not 1 <= workers <= 4:
         raise ValueError("workers 必须在 1~4 之间")
     if workers == 1:
         return _collect_sequential(script_dir, target, checks, sql_root,
-                                   version, requirements)
+                                   version, requirements, db)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(
             lambda check: _collect_sequential(script_dir, target, (check,),
-                                              sql_root, version, requirements)[0],
+                                              sql_root, version, requirements, db)[0],
             checks,
         ))
 
@@ -230,6 +233,7 @@ def main():
     parser.add_argument("--sql-root", type=Path, help="SQL 版本检查的根目录")
     parser.add_argument("--version", help="当前版本，供 SQL 版本检查使用")
     parser.add_argument("--requirements", type=Path, help="研发需求目录，供权限约束检查使用")
+    parser.add_argument("--db", choices=("dameng",), help="目标库方言(db_dialect);dameng 时 check_sql_identifiers 带 --db dameng")
     parser.add_argument("--json", action="store_true", help="输出全部原始结果")
     parser.add_argument("--workers", type=int, choices=range(1, 5), default=1,
                         metavar="1..4", help="只读脚本的并发数，默认串行")
@@ -244,7 +248,7 @@ def main():
         parser.error("研发需求路径不存在")
     entries = collect(Path(__file__).parent, args.target, sql_root=args.sql_root,
                       version=args.version, requirements=args.requirements,
-                      workers=args.workers)
+                      workers=args.workers, db=args.db)
     markdown_files = sum(1 for _ in args.target.rglob("*.md"))
     output = {"target": str(args.target), "markdown_files": markdown_files,
               "checks": entries,

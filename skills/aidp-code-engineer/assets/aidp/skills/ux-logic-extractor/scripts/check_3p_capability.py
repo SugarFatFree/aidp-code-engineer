@@ -221,11 +221,23 @@ def main() -> int:
         print(f"错误: 未找到 .md 文件: {target}", file=sys.stderr)
         return 2
 
-    file_results = [analyze_file(p) for p in md_files]
+    file_results, read_errors = [], []
+    for p in md_files:
+        try:
+            file_results.append(analyze_file(p))
+        except OSError as exc:
+            # 断链符号链接 / 无读权限:登记 read_errors 继续;⛔ 裸 traceback 是 exit 1,与「检出违规」撞码
+            read_errors.append({"file": str(p), "error": f"{type(exc).__name__}: {exc}"})
+    for e in read_errors:
+        print(f"错误: 无法读取 {e['file']}: {e['error']}", file=sys.stderr)
+    if not file_results:
+        print("错误: 全部 .md 均不可读,未核验任何内容", file=sys.stderr)
+        return 2
     summary = aggregate(file_results)
 
     if args.json:
-        print(json.dumps({"summary": summary, "files": file_results}, ensure_ascii=False, indent=2))
+        print(json.dumps({"summary": summary, "files": file_results, "read_errors": read_errors},
+                         ensure_ascii=False, indent=2))
     else:
         print_text_report(file_results, summary)
 

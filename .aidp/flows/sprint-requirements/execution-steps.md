@@ -68,6 +68,8 @@ ls docs/requirements/PRD-*.md                    # 仅当上面为空时使用
 - 原型代码：docs/prototype/{version}/code/（必读，含 .jsx/.vue/.html 等）
 - 高保真原型：docs/prototype/{version}/mockup/（如存在则必读）
 
+机器门 JSON 中 `read_errors` 非空表示输入未完整核验，即使 exit 0 也不能判整道门通过；先修复不可读输入再重跑，不能把环境错误转成需求缺陷。
+
 SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死行数/阈值）：REQ 段头部上游溯源 + 引用密度覆盖率，均由 SKILL 内置硬核回检 + 脚本 `{{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py` 把关（具体头部行数 / 覆盖率阈值详见 SKILL.md）。
 ```
 
@@ -80,10 +82,11 @@ python3 {{AIDP_HOME}}/scripts/assert_gate_ran.py \
   "docs/requirements/{version}/研发需求" --json
 ASSERT_RC=$?
 # 0 = 外部门实际跑过且自身通过；1 = 外部门实际跑过但判不通过；
-# 3 = 外部门输出 skipped / 采集量 0（⛔ 不是通过）；2 = 输出不可判定或命令起不来。
+# 3 = 外部门输出 skipped / 采集量 0（⛔ 不是通过）；2 = 输入读取不完整、输出不可判定或命令起不来。
 # ASSERT_RC=3 时只有在本轮确实没有可检查对象时才允许改为：
 #   ... --allow-empty "本轮无研发需求段，适用范围外"
 # 否则先修目录 / 标题 / 编号使被调门真的扫到内容，再重跑。
+[ "$ASSERT_RC" -eq 0 ] || exit "$ASSERT_RC"
 ```
 
 ⛔ 包装器只负责确认「门真的跑过」，不重述 SKILL 的字段、阈值或质量结论；原始门的 JSON 仍是判级单一信源。

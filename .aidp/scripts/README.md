@@ -548,7 +548,7 @@ autopilot 现有熔断（`dev_fail_streak` / `probe_fail_streak` / `test_loop_mi
 
 ## assert_gate_ran.py — 外部机器门真实执行断言
 
-包装一个必须输出 JSON 的外部机器门，先执行它，再从 `aidp_collect.from_external_gate()` 读取 `collected` / `skipped` 等事实。**采集量为 0、外部门自报 skipped 或无法解析 JSON 时不判通过**：默认退出 `3`（`not-run`），只有显式 `--allow-empty "理由"` 才把本轮标记为适用范围外并留痕；外部门自身非零退出则透传为 `ran-and-failed`。这堵的是「目标目录/编号正则偏了 → 门扫到 0 个对象 → `passed:true` + exit 0」与真实通过同形的假绿。
+包装一个必须输出 JSON 的外部机器门，先执行它，再从 `aidp_collect.from_external_gate()` 读取 `collected` / `skipped` 等事实。**存在 `read_errors` 时返回 `2/read-error`，保留读取错误、原 stdout/stderr 及已检出的质量详情；`--allow-empty` 不能覆盖读取故障**。采集量为 0、外部门自报 skipped 或无法解析 JSON 时不判通过：默认退出 `3`（`not-run`），只有显式 `--allow-empty "理由"` 才把本轮标记为适用范围外并留痕；外部门自身非零退出则透传为 `ran-and-failed`。这堵的是「目标目录/编号正则偏了 → 门扫到 0 个对象 → `passed:true` + exit 0」与真实通过同形的假绿。
 
 用法：`python3 {{AIDP_HOME}}/scripts/assert_gate_ran.py --label "上游溯源" -- python3 {{AIDP_HOME}}/skills/ux-logic-extractor/scripts/check_req_upstream.py <目录> --json`。
 调用方 = `{{AIDP_HOME}}/flows/sprint-requirements/execution-steps.md` 的上游溯源回检；适用范围外必须显式写 `--allow-empty` 理由，⛔ 不得把它当默认逃生阀。

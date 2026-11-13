@@ -325,6 +325,14 @@ def main():
         print("⚠️  未发现 markdown 用例文件: {}".format(target), file=sys.stderr)
         sys.exit(2)
 
+    # 读不出来(断链符号链接/无权限)= 环境错 exit 2,绝不抛裸 traceback(exit 1 会伪装成违规)
+    for _f in md_files:
+        try:
+            _f.read_bytes()
+        except OSError as _e:
+            print("❌ 文件读不出来: {} ({})".format(_f, _e), file=sys.stderr)
+            sys.exit(2)
+
     results = []
     total_suites = 0
     all_issues = []

@@ -22,7 +22,7 @@ MySQL 的表名是否区分大小写取决于 lower_case_table_names。于是「
 未发现任何 SQL 围栏 → skipped(exit 0,⚠️ 不等于通过)。
 
 退出码: 0 无 Critical(或 N/A 跳过) / 1 有 Critical / 2 入参错(路径不存在、无法读取)。
-用法: check_sql_identifiers.py <设计文档.md | 目录> [--json] [--strict]
+用法: check_sql_identifiers.py <设计文档.md | 目录> [--json] [--db dameng] [--strict]
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ TABLE_CTX_RE = re.compile(
 NOT_TABLE_WORDS = {'select', 'set', 'values', 'dual', 'only', 'lateral', 'if', 'table', 'where', 'as',
                    'on', 'using', 'unnest', 'generate_series'}
 CONSTRAINT_START = {'primary', 'unique', 'key', 'index', 'constraint', 'foreign', 'check', 'fulltext', 'spatial'}
-ADD_COL_RE = re.compile(r'\badd\s+(?:column\s+)?(?!\()(' + IDENT + r')\b', re.IGNORECASE)
+ADD_COL_RE = re.compile(r'\badd\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?(?!\()(' + IDENT + r')\b', re.IGNORECASE)
 # 达梦/Oracle 批量形态 ALTER TABLE t ADD (c1 INT, c2 INT)
 ADD_LIST_RE = re.compile(r'\badd\s+(?:column\s+)?\(', re.IGNORECASE)
 # 跨库都会在不加引号时出问题的保留字(刻意保守:只列几乎所有主流库都保留的;命中判 Important)
@@ -101,7 +101,8 @@ def sql_blocks(md: str):
             text = '\n'.join(body)
             if tag in SQL_TAGS or (tag == '' and re.search(r'create\s+table', text, re.IGNORECASE)):
                 # 守卫须在剥注释之前判(反例标记常写在 `-- ❌` 注释里),命中的行整行清空
-                guarded = ['' if GUARD_RE.search(b) else b for b in body]
+                # 单引号字符串(COMMENT '不得为空')里的禁令词不算守卫,否则该行的引号标识符整行逃出 Q1(假绿)
+                guarded = ['' if GUARD_RE.search(re.sub(r"'(?:[^']|'')*'", "''", b)) else b for b in body]
                 yield i + 2, '\n'.join(guarded), tag in SQL_TAGS, tag
             i = j
         i += 1
@@ -280,7 +281,7 @@ def main():
     skipped = not found and not issues
     passed = not crit and (not imp if args.strict else True)
     if args.json:
-        print(json.dumps({'skipped': skipped, 'passed': passed, 'critical': len(crit), 'important': len(imp),
+        print(json.dumps({'skipped': skipped, 'files_scanned': len(files) - len(read_errors), 'passed': passed, 'critical': len(crit), 'important': len(imp),
                           'read_errors': read_errors, 'issues': issues}, ensure_ascii=False, indent=2))
     else:
         if skipped:

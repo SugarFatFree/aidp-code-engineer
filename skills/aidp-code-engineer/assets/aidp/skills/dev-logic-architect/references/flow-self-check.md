@@ -129,7 +129,7 @@
 - `scripts/check_count_claim_table.py` — 业务计数声明表 5 列结构核验 + 同名声明 C6/C7 跨表一致(对应核心原则 28 / 检查项 36;**须传目录**)
 - `scripts/check_render_merge_table.py` — 渲染层归并声明表 5 列结构核验(对应核心原则 29 / 检查项 37;刻意不判缺表,`skipped` ≠ 通过)
 - `scripts/qr_orchestration.py` — 编排层 `qr_level` 分级派发 / 移交清单 / 紧凑回传校验工具(不承载判据,协议见 [`flow-orchestration.md`](./flow-orchestration.md))
-- `scripts/run_qr_checks.py` — **试验性 QR 机器结果采集器**,只调用现有 28 条脚本并保留原始输出,不增加 Author 自检项或 QR 维度,未接入正式 QR 步骤 0;`skipped`/`collector`/`unavailable` 不等于通过。
+- `scripts/run_qr_checks.py` — **试验性 QR 机器结果采集器**,只调用现有 29 条脚本并保留原始输出,不增加 Author 自检项或 QR 维度,未接入正式 QR 步骤 0;`skipped`/`collector`/`unavailable` 不等于通过。
 
 > 上述检查项 40/41 两个脚本均由 [`flow-qr-dispatch.md`](./flow-qr-dispatch.md) 的 **QR 步骤 0** 调用。命令端只负责把该步骤派给独立 QR Agent,**命令端无需重复实现判据**;否则同一判据两份实现必然漂移。
 

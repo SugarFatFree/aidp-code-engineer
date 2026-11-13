@@ -338,6 +338,11 @@ def cmd_init(args):
         cur[1].append((ident, label))
 
     total = sum(len(g[1]) for g in groups)
+    if not any(t[1] == 'case' for t in tokens):
+        # ⚠️ 用例源里一条用例标题都没解析到(路径给错 / 非用例文档 / 标题形态不识别):
+        #    ⛔ 不可 exit 0 产出一份空 tasks.md —— 与 `ids` 同口径(exit 2)。
+        #    (按选集/清单过滤后为 0 是另一回事,由下面两条分支各自处理,不在此列。)
+        return _err(args, f'未在用例源中解析到任何用例:{src}')
     missing_ids = [i for i in (scope_ids or []) if i not in found_ids]
     if scope_ids is not None and not found_ids:
         return _err(args, f'用例清单中的 ID 在用例源里一个都没找到:{", ".join(scope_ids)}'
@@ -390,11 +395,15 @@ def cmd_init(args):
                 extra = f'(选集 {select},已过滤 {skipped} 条'
                 extra += f';{unlabeled_kept} 条未标注优先级已保留)' if unlabeled_kept else ')'
             print(f'✅ 生成 {args.output}:{result["suites"]} 模块 / {total} 用例{extra}')
-        if missing_ids:
-            print(f'⚠️ 清单中未找到 {len(missing_ids)} 条:{", ".join(missing_ids)}')
+        if args.output:
+            if missing_ids:
+                print(f'⚠️ 清单中未找到 {len(missing_ids)} 条:{", ".join(missing_ids)}')
         else:
-            # 选集摘要打 **stderr**:stdout 是 tasks.md 正文(可能被重定向进文件),
-            # 摘要混进去会污染产物;但静默又会让「跑的是子集」这件事在 stdout 模式下完全看不见。
+            # stdout 是 tasks.md 正文(常被 `> tasks.md` 重定向进文件):**只**放正文。
+            # ⚠️ 此前「有未找到 ID」时 stdout 只打警告、不打正文,重定向出来的 tasks.md 就是一行警告
+            #    (一份看着生成了、实则没有任何用例的 tasks.md)。选集摘要与缺失告警一律走 stderr。
+            if missing_ids:
+                print(f'⚠️ 清单中未找到 {len(missing_ids)} 条:{", ".join(missing_ids)}', file=sys.stderr)
             if select != 'all':
                 print(f'(选集 {select}:已过滤 {skipped} 条'
                       + (f';{unlabeled_kept} 条未标注优先级已保留)' if unlabeled_kept else ')'),
@@ -433,17 +442,27 @@ def cmd_update(args):
     mark = STATE_MARK[args.state]
     changed = 0
     ids = set(args.id)
+    missing = []
     try:
         with _locked_tasks(path):
             lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+            hit = set()
             for idx, line in enumerate(lines):
                 im = ITEM_RE.match(line)
                 if im and im.group(2) in ids:
                     lines[idx] = re.sub(r'\[([ >√x!])\]', f'[{mark}]', line, count=1)
                     changed += 1
-            _atomic_write(path, '\n'.join(lines) + '\n')
+                    hit.add(im.group(2))
+            missing = sorted(ids - hit)
+            # ⚠️ ID 不在 tasks.md 里 = 调用方写错/范围错位,⛔ 不可静默「更新 0 条」exit 0
+            #    (执行体会以为这条用例已落定,而它在 tasks.md 里仍是 [ ] —— 断点续跑与残留检查
+            #    反而被一个「成功」的 update 蒙过去)。有任何缺失则整批不写,exit 2 并点名。
+            if not missing:
+                _atomic_write(path, '\n'.join(lines) + '\n')
     except OSError as exc:
         return _err(args, f'tasks.md 更新失败:{exc}')
+    if missing:
+        return _err(args, f'tasks.md 中找不到这些用例 ID,整批未写入:{", ".join(missing)}')
     result = {'updated': changed, 'ids': list(ids), 'state': args.state}
     print(json.dumps(result, ensure_ascii=False) if args.json
           else f'✅ 更新 {changed} 条为 [{mark}]')

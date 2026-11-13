@@ -22,7 +22,7 @@
 
 ### 试验性批量采集入口(未替代 QR 步骤 0)
 
-`python3 <SKILL_DIR>/scripts/run_qr_checks.py <设计文档目录> --sql-root <SQL根目录> --version <当前版本> [--requirements <研发需求目录>] --workers 4 --json` 只调度下方已有 29 条脚本并原样收集 rc/JSON/stdout/stderr/Important/read_errors/skipped/扫描数,不复写判据。SQL 根目录或版本取不到时该项记 `unavailable` 而非通过;脚本 `skipped=true` 只记机器状态 `skipped`,**不是维度 N/A**,独立 QR 须逐项列输入事实与触发条件才可判 N/A;`check_audit_field_fill.py` 属 `collector`,rc=0 仍交独立 QR 读发现项。单脚本失败须继续收集其余项。当前仅在本 SKILL 的参考资料样本(24 份 .md)量到采集器串行 2.879s/四路并发 0.839s,原两菜单案例的 token/工具调用/端到端墙钟**未取到**;该样本不是原案例。**在同一案例证明原始结论一致且工具调用数与墙钟均下降前,本节只是试验入口,不得取代下面由独立 QR 子 Agent 运行的正式 bash 步骤 0。**
+`python3 <SKILL_DIR>/scripts/run_qr_checks.py <设计文档目录> --sql-root <SQL根目录> --version <当前版本> [--requirements <研发需求目录>] [--db dameng] --workers 4 --json` 只调度下方已有 29 条脚本并原样收集 rc/JSON/stdout/stderr/Important/read_errors/skipped/扫描数,不复写判据。SQL 根目录或版本取不到时该项记 `unavailable` 而非通过;脚本 `skipped=true` 只记机器状态 `skipped`,**不是维度 N/A**,独立 QR 须逐项列输入事实与触发条件才可判 N/A;`check_audit_field_fill.py` 属 `collector`,rc=0 仍交独立 QR 读发现项。单脚本失败须继续收集其余项。当前仅在本 SKILL 的参考资料样本(24 份 .md)量到采集器串行 2.879s/四路并发 0.839s,原两菜单案例的 token/工具调用/端到端墙钟**未取到**;该样本不是原案例。**在同一案例证明原始结论一致且工具调用数与墙钟均下降前,本节只是试验入口,不得取代下面由独立 QR 子 Agent 运行的正式 bash 步骤 0。**
 
 ### 🛡️ 落盘后 bash 硬核回检(子 Agent 强制第一步,先于语义维度审查)
 

@@ -463,9 +463,10 @@ def check_noninteractive(case: dict):
 
 def check_file(file_path: Path):
     """检查单个用例文档"""
-    if not file_path.exists():
-        return {"file": str(file_path), "error": "文件不存在", "issues": []}
-    content = file_path.read_text(encoding="utf-8")
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return {"file": str(file_path), "error": "文件读不出来: {}".format(e), "read_error": True, "issues": []}
     cases = split_testcases(content)
     suite_organized = bool(SUITE_HEADER.search(content))
     file_result = {
@@ -612,7 +613,7 @@ def check_multi_file_split(target: Path):
     tc_owner = {}
     for f in case_files:
         try:
-            content = f.read_text(encoding="utf-8")
+            content = f.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
         for m in TESTCASE_HEADER.finditer(content):
@@ -665,6 +666,12 @@ def main():
         for md in sorted(target.glob("*.md")):
             results.append(check_file(md))
         multi_issues = check_multi_file_split(target)
+
+    unreadable = [r for r in results if r.get("read_error")]
+    if unreadable:
+        for r in unreadable:
+            print("❌ {}: {}".format(r["file"], r["error"]), file=sys.stderr)
+        sys.exit(2)
 
     summary = aggregate(results, multi_issues)
 

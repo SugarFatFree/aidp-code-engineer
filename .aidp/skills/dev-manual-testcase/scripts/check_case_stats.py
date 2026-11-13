@@ -653,6 +653,14 @@ def main():
         print(json.dumps({'error': msg}, ensure_ascii=False) if args.json else msg)
         return 2
 
+    # 读不出来(断链符号链接/无权限)= 环境错 exit 2,绝不抛裸 traceback(exit 1 会伪装成违规)
+    for _f in files:
+        try:
+            _f.read_bytes()
+        except OSError as _e:
+            print("❌ 文件读不出来: {} ({})".format(_f, _e), file=sys.stderr)
+            return 2
+
     results = [r for r in (check_file(f, scale=args.scale, case_cap=args.module_case_cap)
                            for f in files) if r is not None]
     if not results:

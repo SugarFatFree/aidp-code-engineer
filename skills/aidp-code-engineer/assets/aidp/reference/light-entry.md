@@ -2,6 +2,8 @@
 
 > 本文件是 light 任务的**速览入口**：普通 `/sprint-dev`、`/sprint-bugfix` 走下面的固定流程即可，**不必通读** `flows/sprint-dev/light-context.md`（执行策略单一信源，20KB）。仅在下方「何时再读全文」所列情形才按节 Read 它；formal 路径不使用本文件。
 
+> 文中 `python3` 即本机 Python 解释器：系统只有 `python`（或 `python3.x`）时照样替换命令名，脚本与护栏对 `python`/`python3`/`python3.x` 一视同仁，护栏报错里的提示命令也会按本机可用名给出。
+
 ## 1. 固定流程（一步一个命令）
 
 ```bash
@@ -9,6 +11,7 @@
 python3 {{AIDP_HOME}}/scripts/light_task.py start --root . --version "{version}" \
   --write-set "{实际写集路径}" --acceptance "{本轮可核验业务结果}"
 # branch_needs_choice=true 时先按项目记忆的「工作分支偏好」保存选择，再带返回的 context 重跑 start。
+# --version 缺省取项目最高版本目录（返回 version_source=inferred）；缺任何必填项时报错里带完整可复制命令。
 ```
 
 宿主提供会话 ID 时，给 `start` 传 `--session-id`（或设置 `AIDP_SESSION_ID`），与 hook 的 `session_id` 对齐；被拦截时按提示中的当前会话 ID 绑定。只有 `entry_bound=true` 才完成编辑前置。无会话 ID 的宿主使用明确的项目任务标记；并行子 Agent 必须传各自 `AIDP_EXECUTION_CONTEXT`，不能依赖共享标记切换任务。测试范围校验和入口校验分别控制，开关与适配说明见 `agent-tools.md`。
@@ -36,10 +39,23 @@ python3 {{AIDP_HOME}}/scripts/light_task.py all --root . \
 | 长时测试 | 后台跑用 `test_command_guard.py wrap --background --log FILE -- CMD...`，Monitor 等 `FILE.exit`，不轮询 sleep |
 | 授权 | 默认只有 `implement`、`static`、`related-test`；review / full-cvl / 文档须本轮真实请求，不得自行追加；普通 commit / push / deploy 由用户一句话授权，只做 git commit、git push、项目现有部署脚本，不建 context/grant/回执文件，不为纯交付调用 check/complete |
 | 普通推送 | 按约定31.5：CICD 未启用不观察；启用且分类需监听时只读 `cicd_watch.py`，现场取得 commit，不需 version/context、不写 baseline、不 trigger/retry/探针 |
+| 提交前门禁 | `commit_gate.py --quiet` 只输出决定性摘要（有无欠账、退出码、级联总数、错误前 5 条，<2KB），完整 JSON 已写 `memory/.aidp/commit-gate-last.json`；要完整内容才加 `--full` |
 | 无 Git | 可开发、显式文件本地测试、本地归档；自动 test_scope/相关证据链需有效 commit，记 `UNVERIFIED / unsupported:vcs-disabled`，不称完整闭环、不自动 `git init` |
-| 范围 | 写集扩大先 `entry_context.py revise`；light 不建 Sprint/卡片，不改 activeContext/progress |
+| 范围 | 写集扩大**在同一任务内增量**：`light_task.py extend-write-set --root . --execution-context CTX --add-write-set <路径>`（或 `entry_context.py revise … --add-write-set <路径>`），无需重新 start，旧选测/运行结论随之失效、重跑 select；light 不建 Sprint/卡片，不改 activeContext/progress |
 | 部署资产 | `docs/deployment` 内相关数据库脚本、实际配置文件可随开发/修复实时更新；操作手册、说明、清单和台账等文档性内容集中在版本规划/正式发布整理 |
 | 并行 | 可拆成 ≥2 个互不相交写集（各读≥3 或改≥2 文件）时按 `flows/sprint-dev/light-parallel.md` 先跑 `dispatch_plan.py` |
+
+### 被入口护栏拦截的写法与替代（别靠试错）
+
+护栏只拦 `code/**`（及任务 `write_set` 之外的 code 路径）；拒绝信息分三类，各带类别、命中片段和替代写法。
+
+| 拒绝类型 | 常见成因 | 替代 |
+|---|---|---|
+| 协议未完成 | 未 start/resolve、未读 branch-policy | 按提示命令补齐，再编辑 |
+| 超出 write_set | 范围从后端扩到前端等 | 照报错里的 `entry_context.py revise … --add-write-set <目录>` 原地扩写集 |
+| 静态分析无法判定 | 目标含变量/通配符、循环内写、未知 `eval`、`python` 里动态路径 | 优先 Write/Edit 工具；或改写成**字面量路径**的单步命令 |
+
+可以直接用的写法（目标是字面量路径且在 `write_set` 内即通过）：`cat >> code/…/a.py <<'EOF' … EOF`、`python3 - <<'EOF' … EOF`（程序里写常量路径）、`sed -i 's/旧/新/' code/…/a.py`（只检查文件参数，`s/…/…/` 里的字符不算通配符）。**scratch**：临时内容写 `memory/.aidp/scratch/` 或 `/tmp`，重定向与 heredoc 均不拦。容器：`docker cp/exec/run` 写容器内部是外部副作用，走授权提示；bind mount 到仓库的路径按宿主源路径校验，详见 `reference/container-tools.md`（用 `--user` 避免 root 属主产物）。拿不准时先离线自检，不执行命令：`python3 {{AIDP_HOME}}/hooks/pretool-guard.py --explain "<命令>"`。
 
 ## 3. 何时再读 `light-context.md` 全文（按节）
 

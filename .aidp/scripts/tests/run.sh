@@ -141,6 +141,7 @@ run "test_stop_guard.py（结束护栏所有阻止路径有界）" python3 .aidp
 run "test_pretool_guard.py（PreToolUse 入口护栏 + 测试范围护栏）" python3 .aidp/scripts/tests/test_pretool_guard.py
 run "test_shell_write_targets.py（Bash 写入目标与官方围栏兼容）" python3 .aidp/scripts/tests/test_shell_write_targets.py
 run "test_entry_gate.py（入口协议门判定）" python3 .aidp/scripts/tests/test_entry_gate.py
+run "test_docker_host_user.py（容器以宿主用户运行包装）" python3 .aidp/scripts/tests/test_docker_host_user.py
 run "test_unattended_edges.py（报告取证、参数透传与兼容路径）" python3 .aidp/scripts/tests/test_unattended_edges.py
 run "test_dispatch_retry.py（派发退避上限与成功清零）" python3 .aidp/scripts/tests/test_dispatch_retry.py
 run "test_cicd_deployment.py（部署监听、降级与即时冻结）" python3 .aidp/scripts/tests/test_cicd_deployment.py

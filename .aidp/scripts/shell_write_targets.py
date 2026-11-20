@@ -22,6 +22,90 @@ WRITERS = {"sed", "tee", "cp", "mv", "install", "rm", "touch", "mkdir", "truncat
 SEPARATORS = {";", "&&", "||", "|", "&", "|&", "(", ")"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>", ">&", "<", "<<", "<<<", "<&", "<>"}
 
+HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z0-9_.-]+))")
+DATA_READERS = {"cat", "rg", "grep", "egrep", "fgrep", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "read",
+                "jq", "awk", "sed", "diff", "cmp", "base64", "tee", "docker"}
+FILE_HANDLE_METHODS = {"write", "writelines", "flush", "close", "read", "readline", "readlines", "seek", "tell"}
+SAFE_CALL_METHODS = {
+    "replace", "strip", "lstrip", "rstrip", "split", "rsplit", "splitlines", "join", "format", "startswith",
+    "endswith", "lower", "upper", "title", "encode", "decode", "append", "extend", "insert", "pop", "items",
+    "keys", "values", "add", "update", "setdefault", "copy", "count", "index", "find", "rfind", "sub", "subn",
+    "findall", "finditer", "search", "match", "fullmatch", "group", "groups", "compile", "dedent", "sort",
+    "isdigit", "isalpha", "partition", "rpartition", "relative_to", "with_suffix", "resolve", "joinpath",
+    "as_posix", "parent", "name", "exit",
+}
+SAFE_CALL_NAMES = {"sorted", "enumerate", "range", "list", "dict", "set", "tuple", "min", "max", "sum", "any",
+                   "all", "zip", "reversed", "float", "isinstance", "sys.exit", "exit", "format", "abs", "round"}
+SAFE_CALL_PREFIXES = ("re.", "os.path.", "json.", "textwrap.", "math.", "datetime.", "time.", "string.")
+
+
+def strip_heredocs(text):
+    """剥离 here-document 正文，返回 (无正文命令文本, 按出现顺序的正文列表)。
+
+    正文是 stdin 数据，不是命令；不剥离会把正文里的 > / ; 误当成写入。
+    """
+    out, docs, pending = [], [], []
+    i, size, quote = 0, len(text), None
+    while i < size:
+        char = text[i]
+        if quote:
+            out.append(char)
+            if char == "\\" and quote == '"' and i + 1 < size:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if char == quote:
+                quote = None
+            i += 1
+            continue
+        if char == "\\" and i + 1 < size:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if char in "\"'":
+            quote = char
+        elif char == "#" and (i == 0 or text[i - 1] in " \t\n;|&()"):
+            end = text.find("\n", i)
+            end = size if end < 0 else end
+            out.append(text[i:end])
+            i = end
+            continue
+        elif text.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            continue
+        elif text.startswith("<<", i):
+            match = HEREDOC_OP.match(text, i)
+            if match:
+                delimiter = match.group(2) if match.group(2) is not None else (
+                    match.group(3) if match.group(3) is not None else match.group(5))
+                quoted = match.group(5) is None or bool(match.group(4))
+                pending.append((delimiter, bool(match.group(1)), quoted))
+                out.append("<< __AIDP_HEREDOC__")
+                i = match.end()
+                continue
+        elif char == "\n" and pending:
+            out.append("\n")
+            i += 1
+            for delimiter, strip_tabs, quoted in pending:
+                body = []
+                while i < size:
+                    end = text.find("\n", i)
+                    line = text[i:] if end < 0 else text[i:end]
+                    i = size if end < 0 else end + 1
+                    if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                        break
+                    body.append(line)
+                docs.append({"delimiter": delimiter, "quoted": quoted,
+                             "body": "\n".join(body) + ("\n" if body else "")})
+            pending = []
+            continue
+        out.append(char)
+        i += 1
+    for delimiter, _, quoted in pending:
+        docs.append({"delimiter": delimiter, "quoted": quoted, "body": ""})
+    return "".join(out), docs
+
 
 def command_text(value):
     """Claude string / Codex argv；argv 必须 quote 后再解析，不能空格拼接。"""
@@ -71,10 +155,21 @@ class _Analysis:
         self.metadata_operations_only = True
         self.command_variables = set()
         self.conditional_assignments = set()
+        self.details = []      # 结构化拒绝原因：category/fragment/reason
+        self.external = []     # 容器/外部副作用：不是仓库文件直写，由调用方走授权提示
+        self.heredocs = []     # 已剥离正文、按出现顺序等待消费的 here-document
 
-    def unknown(self, reason):
-        if reason not in self.reasons:
-            self.reasons.append(reason)
+    def unknown(self, reason, category="other", fragment=None):
+        text = reason if not fragment else "%s：%s" % (reason, fragment)
+        if text not in self.reasons:
+            self.reasons.append(text)
+            self.details.append({"category": category, "reason": reason,
+                                 "fragment": fragment or ""})
+
+    def side_effect(self, kind, fragment):
+        item = {"kind": kind, "fragment": fragment}
+        if item not in self.external:
+            self.external.append(item)
 
     def expand(self, value, env):
         def substitute(match):
@@ -107,7 +202,7 @@ class _Analysis:
         self.metadata_operations_only = self.metadata_operations_only and metadata
         target = self.path(value, cwd, env)
         if target is None:
-            self.unknown("写目标含未解析变量、通配符或动态展开")
+            self.unknown("写目标含未解析变量、通配符或动态展开", "wildcard", value)
         else:
             if target not in self.targets:
                 self.targets.append(target)
@@ -122,7 +217,7 @@ class _Analysis:
             argv = _tokens(command)
         except ValueError:
             return False
-        if len(argv) < 3 or argv[0] != "python3":
+        if len(argv) < 3 or not re.fullmatch(r"python(?:[23](?:\.\d+)?)?", Path(argv[0]).name):
             return False
         path = Path(argv[1])
         path = path if path.is_absolute() else Path(cwd) / path
@@ -230,14 +325,23 @@ class _Analysis:
         return "".join(out)
 
     def shell(self, command, cwd, env, depth=0):
+        outer = self.heredocs
+        try:
+            self._shell(command, cwd, env, depth)
+        finally:
+            self.heredocs = outer
+
+    def _shell(self, command, cwd, env, depth=0):
         if depth > 8:
-            self.unknown("shell 包装层级过深")
+            self.unknown("shell 包装层级过深", "wrapper")
             return
+        command, documents = strip_heredocs(command)
         try:
             words = _tokens(self.substitutions(command, cwd, env, depth))
         except ValueError:
-            self.unknown("shell 引号或语法无法解析")
+            self.unknown("shell 引号或语法无法解析", "parse", command.strip()[:80])
             return
+        self.heredocs = documents  # 嵌套替换会重置队列，故在其后装入本层正文
         env = dict(env)
         env["PWD"] = str(cwd)
         metadata_dir = runtime_dir(cwd)
@@ -281,7 +385,7 @@ class _Analysis:
                 or write["target"] == metadata_dir or write["target"].startswith(metadata_dir + os.sep))
             for write in self.writes)
         if (compound or branch_environment) and not fixed_metadata and any(target != os.devnull for target in self.targets):
-            self.unknown("条件分支、循环或子 shell 的写入环境不确定")
+            self.unknown("条件分支、循环或子 shell 的写入环境不确定", "compound")
 
     def segment(self, words, cwd, env, depth):
         if not words:
@@ -305,12 +409,12 @@ class _Analysis:
         if not words:
             env.update(local)
             return cwd
-        argv, i, here_string = [], 0, False
+        argv, i, here_string, heredoc = [], 0, False, None
         while i < len(words):
             word = words[i]
             if word in REDIRECTS:
                 if i + 1 >= len(words):
-                    self.unknown("重定向缺少目标")
+                    self.unknown("重定向缺少目标", "redirect")
                     break
                 target = words[i + 1]
                 if argv and argv[-1].isdigit():
@@ -322,7 +426,9 @@ class _Analysis:
                 elif word == "<<<":
                     here_string = True
                 elif word == "<<":
-                    self.unknown("here-document 执行语义未展开")
+                    heredoc = self.heredocs.pop(0) if self.heredocs else None
+                    if heredoc is None:
+                        self.unknown("here-document 正文无法定位", "heredoc")
                 i += 2
             else:
                 argv.append(word)
@@ -368,12 +474,14 @@ class _Analysis:
         args = argv[1:]
         if name in {"cd", "pushd", "popd"}:
             self.cwd_mutation = True
+        if heredoc is not None:
+            self.heredoc_consumer(name, args, heredoc, cwd, local, depth)
         if here_string:
             reads_stdin = name in {"cat", "rg", "grep", "sed", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "read"}
             python_code = bool(re.fullmatch(r"python(?:[23](?:\.\d+)?)?", name)) and "-c" in args
             shell_code = name in SHELLS and any(a.startswith("-") and not a.startswith("--") and "c" in a for a in args)
             if not (reads_stdin or python_code or shell_code):
-                self.unknown("here-string 消费方不能证明只把 stdin 当数据")
+                self.unknown("here-string 消费方不能证明只把 stdin 当数据", "heredoc", name)
         if name == "export":
             for item in args:
                 match = ASSIGN.match(item)
@@ -387,11 +495,11 @@ class _Analysis:
             return cwd
         if name == "cd":
             if len(args) != 1 or args[0].startswith("-"):
-                self.unknown("cd 目标无法解析")
+                self.unknown("cd 目标无法解析", "cwd")
                 return cwd
             new = self.path(args[0], cwd, local)
             if new is None:
-                self.unknown("cd 目标含动态展开")
+                self.unknown("cd 目标含动态展开", "cwd")
                 return cwd
             env["PWD"] = new
             return new
@@ -399,20 +507,22 @@ class _Analysis:
             flag = next((i for i, a in enumerate(args) if a.startswith("-") and not a.startswith("--") and "c" in a), None)
             if flag is not None and flag + 1 < len(args):
                 self.shell(args[flag + 1], cwd, local, depth + 1)
-            elif not args or any(a in {"-s", "-"} for a in args):
-                self.unknown("shell 从标准输入读取动态程序")
+            elif (not args or any(a in {"-s", "-"} for a in args)) and heredoc is None:
+                self.unknown("shell 从标准输入读取动态程序", "dynamic-exec", name)
             # 外部脚本正文不在本静态解析器覆盖范围内。
         elif re.fullmatch(r"python(?:[23](?:\.\d+)?)?", name) and "-c" in args:
             index = args.index("-c")
             if index + 1 < len(args):
                 self.python(args[index + 1], cwd, local, depth + 1)
             else:
-                self.unknown("python -c 缺少程序")
+                self.unknown("python -c 缺少程序", "python")
+        elif name == "docker" or name == "docker-compose" or name == "podman":
+            self.docker(name, args, cwd, local)
         elif name == "eval":
             if len(args) != 1 or args[0] not in self.trusted_eval:
-                self.unknown("动态执行命令不能证明无业务写入；仅兼容本安装的 tick_flags --shell 固定引导")
+                self.unknown("动态执行命令不能证明无业务写入；仅兼容本安装的 tick_flags --shell 固定引导", "dynamic-exec", " ".join(argv)[:80])
         elif name in {"source", "."} or "$" in name or "`" in name:
-            self.unknown("动态执行命令不能证明无业务写入")
+            self.unknown("动态执行命令不能证明无业务写入", "dynamic-exec", name)
         elif name == "sed":
             inplace = any(a == "--in-place" or a.startswith("--in-place=") or a.startswith("-i")
                           or (a.startswith("-") and not a.startswith("--") and "i" in a[1:]) for a in args)
@@ -427,24 +537,24 @@ class _Analysis:
                         continue
                     if a.startswith(("--expression=", "--file=")) or (a.startswith(("-e", "-f")) and len(a) > 2):
                         expression = True
-                    elif not a.startswith("-"):
-                        operands.append(a)
+                    elif a and not a.startswith("-"):
+                        operands.append(a)  # 空串是 BSD 风格 -i '' 的后缀位，不是文件
                     i += 1
                 if not expression and operands:
-                    operands.pop(0)
+                    operands.pop(0)  # 第一个非选项参数是 s/…/…/ 脚本，不参与写目标判定
                 if not operands:
-                    self.unknown("sed -i 写目标无法解析")
+                    self.unknown("sed -i 缺少文件参数，无法确定写目标", "sed", " ".join(args)[:80])
                 suffix = next((a.split("=", 1)[1] for a in args if a.startswith("--in-place=")), "")
                 suffix = next((a[2:] for a in args if a.startswith("-i") and len(a) > 2), suffix)
                 for item in operands:
                     self.write(item, cwd, local)
                     if suffix:
                         if "*" in suffix:
-                            self.unknown("sed 备份后缀含动态目标")
+                            self.unknown("sed 备份后缀含动态目标", "sed")
                         else:
                             self.write(item + suffix, cwd, local)
             elif any(re.search(r"(?:^|[; ])w\s+", a) for a in args):
-                self.unknown("sed w 指令写目标需拆成显式重定向")
+                self.unknown("sed w 指令写目标需拆成显式重定向", "sed", " ".join(args)[:80])
         elif name in WRITERS:
             operands, dest, i = [], None, 0
             values = {"-t", "--target-directory", "-m", "--mode", "-o", "--owner", "-g", "--group",
@@ -489,16 +599,138 @@ class _Analysis:
                         self.write(operand, cwd, local, metadata=(name == "mkdir"))
         elif name in {"find", "xargs"}:
             if any(a in WRITERS or a in {"-exec", "-execdir", "-delete"} for a in args):
-                self.unknown("循环或复合命令写目标需展开后校验")
+                self.unknown("循环或复合命令写目标需展开后校验", "compound", " ".join(argv)[:80])
         elif name not in {"echo", "printf", "cat", "rg", "grep"} and any(Path(a).name in WRITERS for a in args):
-            self.unknown("未识别的包装器包含写入命令")
+            self.unknown("未识别的包装器包含写入命令", "wrapper", " ".join(argv)[:80])
         return cwd
+
+    def heredoc_consumer(self, name, args, doc, cwd, env, depth):
+        """here-document 正文是 stdin：解释器读 stdin 时按程序分析，数据读者放行。"""
+        body = doc["body"]
+        if not doc["quoted"] and ("$(" in body or "`" in body):
+            self.substitutions(body, cwd, dict(env), depth + 1)  # 未加引号的正文会真实执行替换
+        python = bool(re.fullmatch(r"python(?:[23](?:\.\d+)?)?", name))
+        script_args = [a for a in args if not a.startswith("-") or a == "-"]
+        if python and "-c" not in args and "-m" not in args and (not script_args or script_args == ["-"]):
+            self.python(body, cwd, env, depth + 1)  # python3 - <<'EOF'：正文即程序
+        elif name in SHELLS and ("-c" not in "".join(a for a in args if a.startswith("-") and not a.startswith("--"))) \
+                and (not args or any(a in {"-s", "-"} for a in args)):
+            self.shell(body, cwd, env, depth + 1)
+        elif python or name in SHELLS or name in DATA_READERS or name in WRITERS:
+            return  # 脚本文件/-c/-m 的 stdin 与数据读者：正文只是数据
+        else:
+            self.unknown("here-document 消费方不能证明只把 stdin 当数据", "heredoc", name)
+
+    def docker(self, name, args, cwd, env):
+        """容器写入分两类：落到仓库 bind mount 的按宿主路径校验，其余是外部副作用走授权提示。"""
+        words = list(args)
+        while words and words[0].startswith("-"):
+            words.pop(0)
+        sub = words.pop(0) if words else ""
+        if name != "docker" and name != "podman":
+            sub = next((w for w in args if w in {"run", "exec", "cp"}), "")
+            words = args[args.index(sub) + 1:] if sub else []
+        fragment = " ".join([name, *args])[:100]
+        if sub == "cp":
+            operands = [w for w in words if not w.startswith("-")]
+            if len(operands) < 2:
+                self.unknown("docker cp 参数不完整", "docker-write", fragment)
+                return
+            src, dest = operands[0], operands[-1]
+            container_side = lambda value: re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*:", value) and not value.startswith(("./", "/", "~"))
+            if container_side(dest):
+                self.side_effect("docker-cp-into-container", fragment)   # 写容器文件系统
+            else:
+                self.write(dest, cwd, env)                                # 容器→宿主：落宿主路径
+                if not container_side(src):
+                    self.unknown("docker cp 两端都不是容器路径，无法判定方向", "docker-write", fragment)
+            return
+        if sub not in {"run", "exec", "compose"}:
+            return
+        mounts, command, i, workdir = [], [], 0, "/"
+        value_options = {"-v", "--volume", "--mount", "-w", "--workdir", "-u", "--user", "-e", "--env", "--name",
+                         "--entrypoint", "--network", "--net", "-p", "--publish", "--env-file", "-l", "--label",
+                         "--add-host", "--cap-add", "--cap-drop", "--memory", "-m", "--cpus", "--platform",
+                         "--restart", "--pull", "--hostname", "-h", "--device", "--group-add", "--tmpfs",
+                         "--user", "--log-driver", "--ulimit", "--shm-size"}
+        if sub == "exec":
+            value_options |= {"-w", "--workdir"}
+        while i < len(words):
+            item = words[i]
+            if item in {"-v", "--volume"} and i + 1 < len(words):
+                mounts.append(words[i + 1])
+                i += 2
+            elif item.startswith("--volume="):
+                mounts.append(item.split("=", 1)[1])
+                i += 1
+            elif item == "--mount" and i + 1 < len(words):
+                mounts.append(words[i + 1])
+                i += 2
+            elif item.startswith("--mount="):
+                mounts.append(item.split("=", 1)[1])
+                i += 1
+            elif item in {"-w", "--workdir"} and i + 1 < len(words):
+                workdir = words[i + 1]
+                i += 2
+            elif item in value_options:
+                i += 2
+            elif item.startswith("-"):
+                i += 1
+            else:
+                # run 的第一个位置参数是镜像，exec 的是容器名；其后才是容器内命令。
+                command = words[i + 1:]
+                break
+        if not command:
+            return
+        table = []
+        for mount in mounts:
+            if "=" in mount and "," in mount:
+                fields = dict(part.split("=", 1) for part in mount.split(",") if "=" in part)
+                if fields.get("type", "bind") == "bind":
+                    table.append((fields.get("source") or fields.get("src"), fields.get("target") or fields.get("destination") or fields.get("dst")))
+            else:
+                parts = mount.split(":")
+                if len(parts) >= 2:
+                    table.append((parts[0], parts[1]))
+        self.container_command(command, table, cwd, env, fragment, workdir)
+
+    def container_command(self, command, mounts, cwd, env, fragment, workdir="/"):
+        """容器内命令的写目标：落在 bind mount 内 → 映射成宿主路径；否则视为容器内副作用。"""
+        probe = _Analysis()
+        probe.shell(shlex.join(command), workdir if workdir.startswith("/") else "/", {}, 1)
+        if not probe.writes:
+            if probe.reasons:
+                self.side_effect("docker-exec-in-container", fragment)
+            return
+        host_hit = False
+        for write in probe.writes:
+            target = write["target"]
+            for source, destination in mounts:
+                if not source or not destination:
+                    continue
+                destination = destination.rstrip("/") or "/"
+                if target != destination and not target.startswith(destination + "/"):
+                    continue
+                host = self.expand(source, env)
+                if host is None:
+                    self.unknown("bind mount 源路径含未解析变量", "docker-write", source)
+                    host_hit = True
+                    break
+                host = host if os.path.isabs(host) else str(Path(cwd) / host)
+                relative = target[len(destination):].lstrip("/")
+                self.write(str(Path(host) / relative) if relative else host, cwd, env)
+                host_hit = True
+                break
+        if not host_hit:
+            self.side_effect("docker-exec-in-container", fragment)
+        elif probe.reasons:
+            self.unknown("容器内命令写入含无法解析的目标", "docker-write", fragment)
 
     def python(self, program, cwd, env, depth):
         try:
             tree = ast.parse(program)
         except (ValueError, SyntaxError):
-            self.unknown("python -c 无法静态解析")
+            self.unknown("python -c 无法静态解析", "python")
             return
         values = {}
 
@@ -525,14 +757,35 @@ class _Analysis:
         def write(node):
             value = literal(node)
             if value is None:
-                self.unknown("python 写目标不是可解析的常量路径")
+                self.unknown("python 写目标不是可解析的常量路径", "python")
             else:
                 self.write(value, cwd, env)
 
+        file_ops = {"open", "write_text", "write_bytes", "unlink", "touch", "mkdir", "rmdir", "chmod", "rename",
+                    "replace", "remove", "makedirs", "rmtree", "copy", "copy2", "copyfile", "move", "system",
+                    "run", "call", "check_call", "Popen", "chdir"}
+
+        def touches_files(node):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    callee = child.func.attr if isinstance(child.func, ast.Attribute) else label(child.func)
+                    if callee in file_ops and not (callee == "replace" and len(child.args) >= 2):
+                        return True
+            return False
+
+        handles = set()
         # 按语句顺序处理，后续赋值不能改写先前 open 的目标。
         for node in (node for statement in tree.body for node in ast.walk(statement)):
-            if isinstance(node, (ast.For, ast.While, ast.If, ast.Try, ast.FunctionDef, ast.Lambda)):
-                self.unknown("python 控制流中的文件操作不能静态证明安全")
+            if isinstance(node, (ast.For, ast.While, ast.If, ast.Try, ast.FunctionDef, ast.Lambda)) and touches_files(node):
+                self.unknown("python 控制流中的文件操作不能静态证明安全", "python", "控制流内含文件写入")
+            if isinstance(node, ast.With):
+                for item in node.items:
+                    if isinstance(item.optional_vars, ast.Name) and isinstance(item.context_expr, ast.Call) \
+                            and label(item.context_expr.func) in {"open", "io.open"}:
+                        handles.add(item.optional_vars.id)
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) \
+                    and label(node.value.func) in {"open", "io.open"}:
+                handles.update(t.id for t in node.targets if isinstance(t, ast.Name))
             if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 values[node.targets[0].id] = literal(node.value)
             if not isinstance(node, ast.Call):
@@ -554,7 +807,9 @@ class _Analysis:
                 if node.args:
                     write(node.args[0])
                 else:
-                    self.unknown("python 文件调用缺参数")
+                    self.unknown("python 文件调用缺参数", "python")
+            elif (method == "replace" and len(node.args) >= 2) and not name.startswith(("os.", "shutil.")):
+                pass  # str.replace(old, new)；Path.replace 只有一个参数
             elif method in {"rename", "replace"} or name in {"shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.move"}:
                 if name.startswith(("os.", "shutil.")):
                     if len(node.args) >= 2:
@@ -562,30 +817,37 @@ class _Analysis:
                         if name in {"os.rename", "os.replace", "shutil.move"}:
                             write(node.args[0])
                     else:
-                        self.unknown("python 移动/复制参数不完整")
+                        self.unknown("python 移动/复制参数不完整", "python")
                 elif node.args:
                     write(node.func.value)
                     write(node.args[0])
             elif name == "os.chdir":
-                self.unknown("python chdir 需拆成 shell cd 后的独立命令")
+                self.unknown("python chdir 需拆成 shell cd 后的独立命令", "python")
             elif name in {"os.system", "subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.Popen"}:
                 try:
                     command = ast.literal_eval(node.args[0])
                     self.shell(command_text(command), cwd, env, depth + 1)
                 except (ValueError, TypeError, IndexError):
-                    self.unknown("python 子进程命令无法解析")
+                    self.unknown("python 子进程命令无法解析", "python")
             elif name in {"print", "len", "str", "repr", "int", "bool", "Path", "pathlib.Path", "json.dumps", "json.loads", "json.load"}:
                 pass
             elif method in {"get", "read", "read_text", "read_bytes", "exists", "is_file", "is_dir", "stat", "glob", "rglob"}:
                 pass
             elif method == "write" and isinstance(node.func.value, ast.Call) and label(node.func.value.func) in {"open", "io.open"}:
                 pass  # 内层 open 独立检查
+            elif (method in FILE_HANDLE_METHODS and isinstance(node.func.value, ast.Name)
+                  and node.func.value.id in handles):
+                pass  # open() 已按模式检查；句柄方法不改变目标
+            elif name in SAFE_CALL_NAMES or name.startswith(SAFE_CALL_PREFIXES) or (
+                    method in SAFE_CALL_METHODS and not touches_files(node)):
+                pass
             else:
-                self.unknown("python 调用的写入效果无法确定：" + (name or method))
+                self.unknown("python 调用的写入效果无法确定", "python", name or method)
 
 
 def analyze(command, cwd, env=None):
     result = _Analysis()
     result.shell(command_text(command), str(Path(cwd).resolve()), os.environ if env is None else env)
     return {"targets": result.targets, "writes": result.writes,
-            "uncertain": bool(result.reasons), "reasons": result.reasons}
+            "uncertain": bool(result.reasons), "reasons": result.reasons,
+            "details": result.details, "external": result.external}

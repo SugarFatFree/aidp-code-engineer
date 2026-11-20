@@ -395,6 +395,34 @@ class EntryContextTests(unittest.TestCase):
         self.assertEqual(before, Path(resolved['execution_context']).read_bytes())
         self.assertIn('cleanup', result['budget_estimate'])
 
+    def test_plan_validation_skips_not_yet_created_inputs_instead_of_failing(self):
+        (self.root / 'deploy').mkdir(exist_ok=True)
+        resolved = self.resolve('--write-set', 'app.py', '--write-set', 'docs/deployment/V1/deploy_local.sh')
+        result = self.cli('plan-validation', '--execution-context', resolved['execution_context'])
+        self.assertEqual(['docs/deployment/V1/deploy_local.sh'], result['missing_inputs'])
+        self.assertEqual(['app.py'], result['inputs'])
+        self.assertTrue(result['candidates'], '存在的输入仍然正常规划')
+        self.assertIn('尚未创建', result['warnings'][0])
+        only_missing = self.cli('plan-validation', '--execution-context', resolved['execution_context'],
+                                '--input', 'docs/deployment/V1/deploy_local.sh')
+        self.assertEqual([], only_missing['candidates'])
+        self.assertFalse(only_missing['executed'])
+        # 路径创建后恢复为正常规划，不残留降级状态
+        target = self.root / 'docs/deployment/V1'
+        target.mkdir(parents=True)
+        (target / 'deploy_local.sh').write_text('#!/bin/sh\n')
+        created = self.cli('plan-validation', '--execution-context', resolved['execution_context'])
+        self.assertEqual([], created['missing_inputs'])
+
+    def test_evidence_input_missing_error_is_actionable(self):
+        import entry_context as entry
+        resolved = self.resolve('--write-set', 'app.py')
+        ctx = entry.load_context(self.root, resolved['execution_context'])
+        session = entry._FingerprintSession(self.root, ctx)
+        with self.assertRaises(entry.ContextError) as caught:
+            entry._input_paths(self.root, ctx, ['app.py', 'never/created.sh'], session)
+        self.assertIn('从证据 --input 中移除', str(caught.exception))
+
     def test_delivery_receipt_reuses_input_reference_and_preserves_delivered_fact(self):
         import entry_context as entry
         resolved = self.resolve_static_only('--write-set', 'app.py')

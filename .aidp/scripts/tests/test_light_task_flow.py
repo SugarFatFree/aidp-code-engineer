@@ -282,7 +282,7 @@ class LightTaskFlowTests(unittest.TestCase):
 
     def test_development_commit_grant_keeps_related_test_boundary(self):
         resolved = self.resolve(grants=['commit'])
-        out = self.cli('commit_gate.py','--quiet','--context','aidp-command',
+        out = self.cli('commit_gate.py','--quiet','--full','--context','aidp-command',
                        '--execution-context',resolved['execution_context'])
         self.assertTrue(out['offchain']['actions']['unit_test'])
         self.assertIn('full-regression', out['offchain']['not_requested'])
@@ -354,7 +354,7 @@ class LightTaskFlowTests(unittest.TestCase):
 
     def test_commit_gate_keeps_light_identity_inside_command(self):
         ctx = self.resolve()['execution_context']
-        result = self.cli('commit_gate.py','--quiet','--context','aidp-command','--execution-context',ctx, expected=5)
+        result = self.cli('commit_gate.py','--quiet','--full','--context','aidp-command','--execution-context',ctx, expected=5)
         self.assertTrue(result['offchain']['applies'])
         self.assertEqual(result['execution_context']['mode'], 'light')
         self.assertFalse(result['offchain']['actions']['sprint_archive'])

@@ -20,7 +20,7 @@ from pathlib import Path
 _SCRIPTS = str(Path(__file__).resolve().parent)
 if _SCRIPTS not in sys.path:
     sys.path.insert(0, _SCRIPTS)
-from aidp_runtime import runtime_text
+from aidp_runtime import runtime_text, localize_python
 from aidp_paths import runtime_dir
 
 GUARDED_PREFIXES = ("code/",)
@@ -134,6 +134,23 @@ def _resolve_cmd():
         '--version "<版本号>" --write-set "<本任务写集路径>" --acceptance "<本轮可核验业务结果>" --json', __file__)
 
 
+def shown_context(root, ctx_path):
+    try:
+        return Path(ctx_path).resolve().relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return str(ctx_path)
+
+
+def revise_cmd(root, ctx_path, rel):
+    """可直接复制的同任务扩写集命令；建议加目标所在目录，须在用户真实需求范围内。"""
+    shown = shown_context(root, ctx_path)
+    parent = Path(rel).parent.as_posix() if rel else ""
+    scope = parent if parent not in ("", ".") else (rel or "<路径>")
+    return runtime_text(
+        'python3 __AIDP_HOME__/scripts/entry_context.py revise --root . --execution-context "%s" '
+        '--add-write-set %s' % (shown, shlex.quote(scope)), __file__)
+
+
 def _branch_cmd():
     return runtime_text("python3 __AIDP_HOME__/scripts/aidp_config.py branch-policy", __file__)
 
@@ -184,7 +201,7 @@ def check(root=".", target=None, env=None):
             result["hints"].append("当前任务未授权 implement；先经开发入口 resolve 对应任务")
         if not scope:
             result["missing"].append("write-set")
-            result["hints"].append("本任务写集为空，先用 entry_context.py revise 声明写集")
+            result["hints"].append("本任务写集为空，在同一任务内增量声明（无需重新 start）：" + revise_cmd(root, path, rel))
         elif rel:
             from entry_context import _relative_path, ContextError
             try:
@@ -192,9 +209,16 @@ def check(root=".", target=None, env=None):
                 valid_target = True
             except ContextError:
                 valid_target = False
-            if not valid_target or not any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in scope):
+            in_scope = valid_target and any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in scope)
+            if not in_scope and rel in ("code", "code/"):
                 result["missing"].append("write-set")
-                result["hints"].append("目标含符号链接或不在本任务 write_set 内，先明确真实路径并用 entry_context.py revise 更新写集")
+                result["hints"].append("目标是整个 code/ 目录，范围过大：缩小到具体的文件或子目录，且须在 write_set 内")
+            elif not in_scope:
+                result["missing"].append("write-set")
+                result["hints"].append("目标 %s 不在本任务 write_set 内（或含符号链接）。确属本任务范围时，在同一任务内增量扩写集（无需重新 start）：%s"
+                                       % (rel, revise_cmd(root, path, rel)))
+                result["hints"].append(runtime_text("light 任务也可：python3 __AIDP_HOME__/scripts/light_task.py extend-write-set --root . "
+                                       "--execution-context \"%s\" --add-write-set <路径>", __file__) % shown_context(root, path))
     else:
         result["missing"].append("entry-context")
         result["hints"].append("先执行入口协议 resolve：" + _resolve_cmd())
@@ -203,6 +227,7 @@ def check(root=".", target=None, env=None):
             '随后显式传 AIDP_EXECUTION_CONTEXT，或 python3 __AIDP_HOME__/scripts/entry_gate.py bind '
             '--root . --execution-context "<context.json>"' + session_arg + ' --json', __file__))
     _branch_check(root, result)
+    result["hints"] = [localize_python(hint) for hint in result["hints"]]
     result["ok"] = not result["missing"]
     return result
 

@@ -56,11 +56,11 @@ python3 {{AIDP_HOME}}/scripts/entry_gate.py bind --root . --execution-context "$
 
 **官方 tick 引导的窄兼容**：仅识别 `eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"`，允许追加选择命名空间的 `--command autopilot|aiauto-test`。脚本路径必须解析到当前 helper 同一安装目录的 `autopilot_tick_flags.py`，且 eval 只有这一个完整命令替换参数；不接受外部同名脚本、其他子命令、拼接额外命令或任意变量 eval。识别依据是该本地脚本用 `shlex.quote` 输出赋值的既定契约，解析器不执行脚本、不采信任意脚本输出。导出结果仍是动态值，不能据此把变量写目标当作确定路径。
 
-固定路径的元数据输出后接 `|| exit $?` 不再误拒。官方条件围栏仅通过重定向和 `mkdir` 写当前工作目录下 `memory/.aidp/` 的字面路径时，允许分支决定是否写入；仍逐目标经过入口门及符号链接检查，混入 `ln/cp/mv` 等改变路径含义的操作不适用此例外。不豁免变量写目标、cwd 变化或条件分支中改写命令别名；其他复合写入保持保守拒绝。官方部署围栏的版本参数显式传 argv，分支结果各用固定文件名，不把末次变量赋值当成全部分支的写集。已识别的只读消费者（包括 JSON 解析的 Python `-c`）可用 `<<<` 输入数据；把 stdin 作为程序的裸 bash/python、未知 eval 和未解析 here-document 仍拒绝。真实 autopilot 围栏中的常量命令别名按词拆分解析，不执行别名来判安全。
+固定路径的元数据输出后接 `|| exit $?` 不再误拒。官方条件围栏仅通过重定向和 `mkdir` 写当前工作目录下 `memory/.aidp/` 的字面路径时，允许分支决定是否写入；仍逐目标经过入口门及符号链接检查，混入 `ln/cp/mv` 等改变路径含义的操作不适用此例外。不豁免变量写目标、cwd 变化或条件分支中改写命令别名；其他复合写入保持保守拒绝。官方部署围栏的版本参数显式传 argv，分支结果各用固定文件名，不把末次变量赋值当成全部分支的写集。已识别的只读消费者（包括 JSON 解析的 Python `-c`）可用 `<<<` 输入数据。**here-document**：正文先剥离再解析（正文里的 `>`、`;` 不是命令）；`cat/tee > <字面量路径> <<'EOF'` 按重定向目标判定，`python3 - <<'EOF'` / `bash -s <<'EOF'` 把正文当程序分析，未加引号的正文里的 `$(…)` 会真实执行故同样计入；写目标须是字面量路径，动态目标与未知消费者仍拒绝。未知 eval 仍拒绝。真实 autopilot 围栏中的常量命令别名按词拆分解析，不执行别名来判安全。
 
 官方预算围栏直接捕获 `execution_policy.py reserve-budget` 的 JSON stdout，用只读 `<<<` 提取预留 ID 后结算；预算校验与失败退出保持不变，不再通过 `mktemp` 输出路径做 shell 重定向。解析器不将 `mktemp` 输出当作可信写目标，避免 `TMPDIR`、自定义模板或组合命令把写入引向业务目录。
 
-未解析变量、动态写目标、无法确认的 Python 调用或复合写入会明确拒绝，提示先走入口并拆成显式路径命令；即使入口已完成也不会把未知写目标当成 write_set 内。它不解释任意外部程序/脚本正文，不是覆盖所有恶意绕过的 shell 沙箱；未触发宿主 hook 的专用工具仍不受它拦截。
+未解析变量、动态写目标、无法确认的 Python 调用或复合写入会明确拒绝；拒绝输出分三类并带**类别、命中片段、合规替代**：`协议未完成`（缺 resolve/branch-policy/implement，附补齐命令）、`超出本任务 write_set`（附可复制的同任务 `entry_context.py revise --add-write-set …`，无需重新 start；light 可用 `light_task.py extend-write-set`）、`静态分析无法判定`（与协议无关，给拆分/改用 Write/Edit 的替代写法）。**容器**：`docker cp/exec/run` 写容器文件系统属外部副作用，输出 `ask` 授权提示而非拒绝（Codex 端不弹，直接放行）；容器内命令写入落在 `-v/--mount` bind mount 内时，按宿主源路径校验 write_set。**scratch**：`/tmp` 与 `memory/.aidp/scratch/` 不受入口门限制。**离线自检**：`python3 {{AIDP_HOME}}/hooks/pretool-guard.py --explain "<命令>" [--cwd DIR] [--json]`（或 `--explain-edit <路径>`）只解释判定，不执行。即使入口已完成也不会把未知写目标当成 write_set 内。它不解释任意外部程序/脚本正文，不是覆盖所有恶意绕过的 shell 沙箱；未触发宿主 hook 的专用工具仍不受它拦截。
 
 **独立开关与迁移**：
 

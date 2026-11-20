@@ -54,6 +54,7 @@
 | `test_stop_guard.py` | 缺build与handback失败的Stop阻止上限、告警去重及成功清计数 | `python3 .aidp/scripts/tests/test_stop_guard.py` | Python标准库、真实hook进程 |
 | `test_pretool_guard.py` | PreToolUse hook 真实进程：跳过入口协议改 `code/**` 被阻断并提示补哪一步、已 resolve + 已读 branch-policy 放行、非 `code/**` 不受影响、无参 pytest / run_tests 目录 / `git stash` 阻断、Codex apply_patch 补丁头路径、独立逃生舱与配置开关、校验异常拒绝及留痕 | `python3 .aidp/scripts/tests/test_pretool_guard.py` | Python 标准库、真实 hook 进程 |
 | `test_shell_write_targets.py` | Bash 写目标、条件元数据、未知动态拒绝与可信 tick 引导解析 | `python3 .aidp/scripts/tests/test_shell_write_targets.py` | Python 标准库 |
+| `test_docker_host_user.py` | `docker_host_user.py` 补 `--user`、容器内 `-u` 不算、脚本 `--check` 续行/豁免/退出码 | `python3 .aidp/scripts/tests/test_docker_host_user.py` | Python 标准库 |
 | `test_entry_gate.py` | `entry_gate.py` 入口协议判定（resolve 上下文新鲜期 / 归属 / 状态、branch-policy 读取标记、formal/tick 同门、只读身份切换不得复用旧写权限）及 `aidp_config.py branch-policy` 落标记 | `python3 .aidp/scripts/tests/test_entry_gate.py` | Python 标准库 + `git` |
 | `test_unattended_edges.py` | JSON渲染取证正反例、实测参数、脏树默认及旧运行路径说明 | `python3 .aidp/scripts/tests/test_unattended_edges.py` | Python标准库、Bash |
 | `test_dispatch_retry.py` | C1/C2退避封顶、无唤醒源失败处置、成功清零及实际规划围栏 | `python3 .aidp/scripts/tests/test_dispatch_retry.py` | Python标准库、Bash |

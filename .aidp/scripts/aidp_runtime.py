@@ -172,3 +172,19 @@ def runtime_text(text: str, script_file: Path | str = __file__) -> str:
     """Expand legacy source-tree path literals for template and native runtimes."""
     home = runtime_relpath("", script_file).rstrip("/")
     return text.replace("__AIDP_HOME__", home)
+
+
+def python_cmd() -> str:
+    """本机可用的解释器命令名：优先 python3，其次 python（不同系统/版本命名不同）。"""
+    import shutil
+    for name in ("python3", "python"):
+        if shutil.which(name):
+            return name
+    return "python3"
+
+
+def localize_python(text: str) -> str:
+    """把提示命令里行首/空白后的 `python3 ` 换成本机可用的解释器名。"""
+    import re
+    name = python_cmd()
+    return text if name == "python3" else re.sub(r"(?<![\w./-])python3(?= )", name, text)

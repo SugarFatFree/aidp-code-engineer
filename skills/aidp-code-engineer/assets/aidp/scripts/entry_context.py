@@ -1285,7 +1285,7 @@ def _input_paths(root, ctx, inputs, session):
     for relative in paths:
         _safe_inside(root, root / relative)
         if not (root / relative).exists() and relative not in ctx['initial_files']:
-            raise ContextError(f'输入不存在且没有冻结删除基线：{relative}')
+            raise ContextError(f'输入不存在且没有冻结删除基线：{relative}；它在任务开始时也不存在——从证据 --input 中移除该路径，或先创建该文件后重试')
     return sorted(paths)
 
 
@@ -1395,8 +1395,17 @@ def plan_validation(root, execution_context, inputs=()):
     from verification_tools import discover_checks
     root = _root(root)
     ctx = load_context(root, execution_context, migrate=False)
-    selected = _write_set(root, inputs or ctx.get('verification_inputs', ctx['write_set']))
-    paths = _expand_inputs(root, ctx, selected)
+    requested = _write_set(root, inputs or ctx.get('verification_inputs', ctx['write_set']))
+    # 尚未创建（任务开始时也不存在）的路径不是失败：只读规划跳过并如实列出，不整体中止。
+    def _absent(relative):
+        target = root / relative
+        known = relative in ctx['initial_files'] or relative in ctx.get('initial_git_files', {}) or any(
+            name.startswith(relative.rstrip('/') + '/') for name in ctx['initial_files'])
+        return not target.exists() and not target.is_symlink() and not known
+    missing_inputs = [relative for relative in requested if _absent(relative)]
+    selected = [relative for relative in requested if relative not in missing_inputs]
+    all_missing = bool(requested) and not selected  # 全是尚未创建的路径：无可规划对象
+    paths = _expand_inputs(root, ctx, selected) if not all_missing else set()
     selection_cost = {}
     session = _FingerprintSession(root, ctx)
     started = time.monotonic()
@@ -1410,7 +1419,7 @@ def plan_validation(root, execution_context, inputs=()):
         return session.read_text(path)
     try:
         candidates = discover_checks(root, allowed_actions=ctx['allowed_actions'], scope_paths=selected,
-                                     read_text=reader, read_cost=selection_cost)
+                                     read_text=reader, read_cost=selection_cost) if not all_missing else []
     finally:
         session.save()
         policy.settle_elapsed(root, ctx, reservation, time.monotonic() - started)
@@ -1420,7 +1429,11 @@ def plan_validation(root, execution_context, inputs=()):
               'checked_file_count', 'config_dependencies', 'expanded_scope_reason', 'syntax_only',
               'available', 'command_sources', 'side_effects')
     count = len(paths)
+    warnings = []
+    if missing_inputs:
+        warnings.append('以下输入当前不存在（尚未创建）已跳过规划，创建后重新规划：' + ', '.join(missing_inputs))
     return {'task_id': ctx['task_id'], 'write_set': ctx['write_set'], 'inputs': selected,
+            'missing_inputs': missing_inputs, 'warnings': warnings,
             'executed': False, 'unit_tests_executed': False,
             'fingerprint_input_count': count, 'selection_read_cost': selection_cost,
             'candidates': [{key: candidate.get(key) for key in fields} for candidate in candidates],
@@ -2207,7 +2220,8 @@ def main(argv=None):
             item.add_argument("--acceptance", nargs="+", action="extend")
             item.add_argument("--task-scope", choices=tuple(policy.SCOPE_ACTIONS))
         if command in ("resolve", "revise"):
-            item.add_argument("--write-set", nargs="+", action="extend")
+            item.add_argument("--write-set", "--add-write-set", dest="write_set", nargs="+", action="extend",
+                              help="本任务写集路径；revise 默认只增量扩展（--add-write-set 为同义别名）")
             item.add_argument("--grant", action="append", default=[])
             item.add_argument("--authorization-source", type=json.loads)
             item.add_argument("--execution-budget", type=json.loads)

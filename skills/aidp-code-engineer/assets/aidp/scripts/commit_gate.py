@@ -894,6 +894,67 @@ def gather(root: str, context: str = "bare-conversation", cascade_now: bool = Fa
         }
 
 
+SUMMARY_MAX_ERRORS = 5
+FULL_REPORT_NAME = "commit-gate-last.json"
+
+
+def _collect_errors(info: dict) -> list:
+    """从各检查结果里取错误文本（未截断；摘要再限条数/长度）。"""
+    errors = []
+    allocation = info.get("id_allocation") or {}
+    casc = info.get("pending_cascade") or {}
+    sources = [allocation.get("errors"), casc.get("errors"), casc.get("unparsed"),
+               casc.get("destructive_unregistered")]
+    for source in sources:
+        if isinstance(source, list):
+            errors.extend(item if isinstance(item, str) else json.dumps(item, ensure_ascii=False) for item in source)
+    for key in ("error", "reason"):
+        if isinstance(info.get(key), str) and info.get("status") == "NOT_AUTHORIZED":
+            errors.append(info[key])
+    return errors
+
+
+def save_full_report(repo_root: str, info: dict) -> str:
+    """完整 JSON 写文件并返回相对路径；写失败返回空串（摘要照常输出）。"""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import aidp_paths
+        directory = aidp_paths.runtime_dir(repo_root)
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, FULL_REPORT_NAME)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(info, handle, ensure_ascii=False, indent=1)
+        return os.path.relpath(path, repo_root)
+    except Exception:  # noqa: BLE001 —— 报告文件是旁路
+        return ""
+
+
+def quiet_summary(info: dict, exit_code: int, full_report: str) -> dict:
+    """--quiet 的决定性字段：是否有欠账、退出码、级联总数、错误（限前 N 条），<2KB。"""
+    casc = info.get("pending_cascade") or {}
+    errors = _collect_errors(info)
+    outside = (info.get("path_scope") or {}).get("outside") or []
+    cicd = info.get("pending_cicd") or {}
+    summary = {
+        "summary": True,
+        "has_debt": bool(info.get("debts")),
+        "exit_code": exit_code,
+        "debts": list(info.get("debts") or []),
+        "commit_gate_enabled": info.get("commit_gate_enabled"),
+        "pending_cascade_total": int(casc.get("total") or 0),
+        "cascaded_not_cleaned": int(casc.get("cascaded_not_cleaned") or 0),
+        "errors": [e[:160] for e in errors[:SUMMARY_MAX_ERRORS]],
+        "errors_total": len(errors),
+        "cicd_advisory": bool(cicd.get("advisory")),
+        "path_outside": outside[:SUMMARY_MAX_ERRORS],
+        "full_report": full_report,
+        "hint": "完整 JSON：加 --full，或读 full_report 指向的文件",
+    }
+    if info.get("status"):
+        summary.update(status=info["status"], action=info.get("action"), executed=info.get("executed"))
+    return summary
+
+
 def debt_items(info: dict) -> list:
     """未落地义务清单（与退出码 3 的判据逐项对齐）。"""
     casc = info.get("pending_cascade") or {}
@@ -987,7 +1048,9 @@ def _print_obligations(info: dict) -> None:
 def main(argv=None):
     ap = argparse.ArgumentParser(description="约定 24 提交前门禁：台账积压 / 推送欠账 / 链外档位 / 模板判定")
     ap.add_argument("--repo-root", default=".")
-    ap.add_argument("--quiet", action="store_true", help="只输出 JSON，不输出状态叙述（未落地义务告警仍打印）")
+    ap.add_argument("--quiet", action="store_true",
+                    help="不输出状态叙述，stdout 只给决定性字段摘要（<2KB；完整 JSON 写文件并给出路径）；未落地义务告警仍打印")
+    ap.add_argument("--full", action="store_true", help="stdout 输出完整 JSON（默认摘要）；与 --quiet 同用时仍输出完整内容")
     ap.add_argument("--no-fail-on-debt", action="store_true",
                     help="有未落地义务时仍返回 0（逃生阀；⛔ 不要在约定 24 的常规判定调用里加。⚠️ 用掉它会往 memory/.aidp/alerts.jsonl 落一条 commit-gate-debt-waived）")
     ap.add_argument("--context", default="bare-conversation",
@@ -1025,13 +1088,19 @@ def main(argv=None):
             require_action(args.execution_context, "commit")
         except PolicyError as exc:
             info.update(status="NOT_AUTHORIZED", action="commit", executed=False, reason=str(exc), debts=[])
-            print(json.dumps(info, ensure_ascii=False))
+            report = save_full_report(args.repo_root, info)
+            print(json.dumps(info if args.full or not args.quiet else quiet_summary(info, 5, report),
+                             ensure_ascii=False))
             return 5  # 不是债务3/4；调用方不能按“先提交再补欠账”继续。
     if scope["outside"]:
         sys.stderr.write("[WARN] 暂存区包含派发白名单外路径（owner=%s）：%s；提交前由编排者核对归属，禁止带入他人改动。\n"
                          % (args.owner or "未声明", ", ".join(scope["outside"])))
     info["debts"] = debt_items(info) if info["commit_gate_enabled"] else []
-    print(json.dumps(info, ensure_ascii=False))
+    exit_code = 3 if (info["commit_gate_enabled"] and info["debts"] and not args.no_fail_on_debt) else 0
+    if args.quiet and not args.full:
+        print(json.dumps(quiet_summary(info, exit_code, save_full_report(args.repo_root, info)), ensure_ascii=False))
+    else:
+        print(json.dumps(info, ensure_ascii=False))
 
     if not info["commit_gate_enabled"]:
         if not args.quiet:

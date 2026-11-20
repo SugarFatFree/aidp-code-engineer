@@ -64,7 +64,10 @@ def _init_repo(d):
     _git(d, "config", "user.name", "alice")
 
 
-def _run_gate(d, *args):
+def _run_gate(d, *args, summary=False):
+    # 既有用例断言完整 JSON 字段：--quiet 默认只给摘要，这里补 --full 保持原覆盖面；摘要另有专测。
+    if "--quiet" in args and "--full" not in args and not summary:
+        args = (*args, "--full")
     cp = subprocess.run([sys.executable, GATE, "--repo-root", d, *args],
                         capture_output=True, text=True, cwd=d)
     try:
@@ -72,6 +75,45 @@ def _run_gate(d, *args):
     except ValueError:
         info = {}
     return cp, info
+
+
+
+# ── commit_gate --quiet 摘要（<2KB）与 --full ──
+def test_quiet_summary_is_small_and_decisive():
+    print("【commit_gate --quiet：只给决定性字段（<2KB），--full 才输出完整 JSON】")
+    with tempfile.TemporaryDirectory() as d:
+        _init_repo(d)
+        ledger = os.path.join(d, "docs", "requirements", "V1.0.0")
+        os.makedirs(ledger)
+        # 大量欠账条目：完整 JSON 会随之膨胀，摘要必须保持有界
+        for i in range(400):
+            open(os.path.join(ledger, "f%03d.md" % i), "w").write("# x\n")
+        cp, summary = _run_gate(d, "--quiet", summary=True)
+        check("摘要 <2KB", len(cp.stdout.encode()) < 2048)
+        for key in ("has_debt", "exit_code", "debts", "pending_cascade_total", "errors", "errors_total", "full_report"):
+            check("摘要含 %s" % key, key in summary)
+        check("摘要退出码字段与进程退出码一致", summary.get("exit_code") == cp.returncode)
+        check("摘要不含完整大字段", "cache" not in summary and "offchain" not in summary and "pending_cascade" not in summary)
+        report = os.path.join(d, summary["full_report"]) if summary.get("full_report") else ""
+        check("完整 JSON 写入文件并给出路径", bool(report) and os.path.isfile(report)
+              and "pending_cascade" in json.load(open(report)))
+        cp_full, full = _run_gate(d, "--quiet", "--full", summary=True)
+        check("--full 输出完整 JSON", "pending_cascade" in full and len(cp_full.stdout) > len(cp.stdout))
+        check("无 --quiet 默认仍是完整 JSON", "pending_cascade" in _run_gate(d)[1])
+
+
+def test_quiet_summary_caps_errors_and_reports_debt_exit():
+    print("【commit_gate --quiet 摘要：错误限条、欠账退出码】")
+    info = {"commit_gate_enabled": True, "debts": ["cascade-unparsed"],
+            "pending_cascade": {"total": 120, "cascaded_not_cleaned": 2,
+                                "unparsed": ["e%d " % i + "x" * 400 for i in range(40)]},
+            "id_allocation": {"applicable": True, "errors": ["dup"]}, "path_scope": {"outside": ["a", "b"]}}
+    summary = G.quiet_summary(info, 3, "memory/.aidp/commit-gate-last.json")
+    check("错误最多 5 条且逐条截断", len(summary["errors"]) == 5 and all(len(e) <= 160 for e in summary["errors"]))
+    check("errors_total 报真实总数", summary["errors_total"] == 41)
+    check("有欠账 has_debt 且退出码 3", summary["has_debt"] is True and summary["exit_code"] == 3)
+    check("级联总数保留", summary["pending_cascade_total"] == 120)
+    check("摘要整体 <2KB", len(json.dumps(summary, ensure_ascii=False).encode()) < 2048)
 
 
 # ── commit_gate：纯函数判定 ──
@@ -1232,6 +1274,8 @@ def main():
     test_id_allocation_gate()
     test_non_git_boundaries()
     test_gate_pure()
+    test_quiet_summary_is_small_and_decisive()
+    test_quiet_summary_caps_errors_and_reports_debt_exit()
     test_gate_cli_cascade()
     test_family_ledgers()
     test_cascade_bypass()

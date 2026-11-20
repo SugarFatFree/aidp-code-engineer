@@ -502,5 +502,149 @@ class SwitchAndFailOpenTests(HookBase):
         self.assertEqual(before, sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob('*')))
 
 
+class ActionableDenialTests(HookBase):
+    """误报收敛 + 可操作报错：类别/命中片段/合规替代/自检，且写集外仍然拒绝。"""
+
+    def setUp(self):
+        super().setUp()
+        for directory in ('code/backend/x', 'code/frontend/y'):
+            (self.root / directory).mkdir(parents=True)
+        (self.root / 'code/backend/x/a.py').write_text('x = 1\n')
+
+    def ready(self):
+        self.protocol_done(write_set=['code/backend'])
+
+    def test_heredoc_to_literal_path_inside_write_set_passes_outside_denied(self):
+        self.ready()
+        inside = "cat >> code/backend/x/tests_a.py <<'EOF'\nvalue = 1 > 0; echo $(rm -rf code)\nEOF"
+        self.assertEqual(0, self.bash(inside).returncode)
+        python_inside = "python3 - <<'EOF'\nfrom pathlib import Path\nPath('code/backend/x/a.py').write_text('y = 2')\nEOF"
+        self.assertEqual(0, self.bash(python_inside).returncode)
+        outside = self.bash("cat >> code/frontend/y/a.ts <<'EOF'\nx\nEOF")
+        self.assertEqual(2, outside.returncode)
+        python_outside = self.bash("python3 - <<'EOF'\nopen('code/frontend/y/a.ts', 'w').write('x')\nEOF")
+        self.assertEqual(2, python_outside.returncode)
+
+    def test_sed_inplace_literal_path_inside_passes_outside_denied(self):
+        self.ready()
+        self.assertEqual(0, self.bash("sed -i 's/旧*/新?/' code/backend/x/a.py").returncode)
+        self.assertEqual(0, self.bash("sed -i '' 's/a/b/' code/backend/x/a.py").returncode)
+        denied = self.bash("sed -i 's/旧/新/' code/frontend/y/a.ts")
+        self.assertEqual(2, denied.returncode)
+        self.assertEqual(2, self.bash("sed -i 's/a/b/' code/backend/x/*.py").returncode)
+
+    def test_write_set_denial_prints_copyable_in_task_revise_command(self):
+        self.ready()
+        denied = self.edit('code/frontend/y/app.ts')
+        self.assertEqual(2, denied.returncode)
+        self.assertIn('超出本任务 write_set', denied.stderr)
+        self.assertIn('entry_context.py revise', denied.stderr)
+        self.assertIn('--add-write-set code/frontend/y', denied.stderr)
+        self.assertIn('--execution-context "memory/.aidp/entry-contexts/', denied.stderr)
+        self.assertNotIn('先完成入口 resolve', denied.stderr)
+
+    def test_revise_add_write_set_extends_same_task_without_new_start(self):
+        self.ready()
+        from entry_gate import find_context
+        path, ctx = find_context(self.root, {})
+        self.assertEqual(2, self.edit('code/frontend/y/app.ts').returncode)
+        done = subprocess.run([sys.executable, str(AIDP / 'scripts/entry_context.py'), 'revise', '--root', str(self.root),
+                               '--execution-context', str(path), '--add-write-set', 'code/frontend/y', '--json'],
+                              text=True, capture_output=True)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertEqual(ctx['task_id'], json.loads(done.stdout)['task_id'])
+        self.assertEqual(0, self.edit('code/frontend/y/app.ts').returncode)
+        self.assertEqual(0, self.edit('code/backend/x/a.py').returncode, '原写集仍然有效')
+        self.assertEqual(2, self.edit('code/other/z.py').returncode, '未声明的路径仍被拒绝')
+
+    def test_protocol_incomplete_and_undecidable_are_distinguished(self):
+        protocol = self.bash("echo x > code/backend/x/a.py")
+        self.assertEqual(2, protocol.returncode)
+        self.assertIn('协议未完成', protocol.stderr)
+        self.assertNotIn('静态分析无法判定', protocol.stderr)
+        self.ready()
+        undecided = self.bash('echo x > "code/$UNKNOWN.py"')
+        self.assertEqual(2, undecided.returncode)
+        self.assertIn('静态分析无法判定', undecided.stderr)
+        self.assertIn('变量/通配符写目标', undecided.stderr)
+        self.assertIn('$UNKNOWN', undecided.stderr, '须指出命中片段')
+        self.assertIn('Write/Edit', undecided.stderr, '须给合规替代写法')
+        self.assertIn('--explain', undecided.stderr)
+        self.assertNotIn('先完成入口 resolve', undecided.stderr)
+
+    def test_each_denial_category_names_fragment_and_alternative(self):
+        self.ready()
+        cases = {
+            'wildcard': 'for f in code/backend/*.py; do echo x > "$f"; done',
+            'python': "python3 - <<'EOF'\nfor p in ['a']:\n    open(p, 'w').write('x')\nEOF",
+            'heredoc': "xargs rm <<'EOF'\ncode/a\nEOF",
+        }
+        for category, command in cases.items():
+            with self.subTest(category=category):
+                result = self.bash(command)
+                self.assertEqual(2, result.returncode)
+                self.assertIn('合规替代', result.stderr)
+                self.assertIn('静态分析无法判定', result.stderr)
+
+    def test_docker_container_writes_ask_instead_of_wrapper_denial(self):
+        self.ready()
+        for command in ('docker cp ./a.txt web:/app/a.txt', 'docker exec web sh -c "echo x > /tmp/a"',
+                        'docker run --rm img chown -R 1000:1000 /data'):
+            with self.subTest(command=command):
+                result = self.bash(command)
+                self.assertEqual(0, result.returncode, result.stderr)
+                decision = json.loads(result.stdout)['hookSpecificOutput']
+                self.assertEqual('ask', decision['permissionDecision'])
+                self.assertIn('外部副作用', decision['permissionDecisionReason'])
+                self.assertNotIn('包装器', decision['permissionDecisionReason'])
+        self.assertEqual(0, self.bash('docker cp ./a.txt web:/app/a.txt', agent='codex').returncode)
+
+    def test_docker_bind_mount_follows_host_write_set(self):
+        self.ready()
+        inside = self.bash(f'docker run --rm -v {self.root}/code/backend:/w img chown -R 1000:1000 /w/x')
+        self.assertEqual(0, inside.returncode, inside.stderr)
+        self.assertEqual('', inside.stdout, '落在写集内的 bind mount 不弹授权，直接按宿主路径放行')
+        outside = self.bash(f'docker run --rm -v {self.root}/code/frontend:/w img chown -R 1000:1000 /w/y')
+        self.assertEqual(2, outside.returncode)
+        self.assertIn('code/frontend/y', outside.stderr)
+        self.assertEqual(2, self.bash(f'docker cp web:/app/o.txt {self.root}/code/frontend/y/o.txt').returncode)
+        self.assertEqual(0, self.bash(f'docker cp web:/app/o.txt {self.root}/code/backend/x/o.txt').returncode)
+
+    def test_scratch_directories_are_writable_without_protocol(self):
+        for command in ("cat > /tmp/aidp-scratch-check.txt <<'EOF'\nhello\nEOF",
+                        "mkdir -p memory/.aidp/scratch && cat > memory/.aidp/scratch/note.md <<'EOF'\nx\nEOF",
+                        "python3 - <<'EOF'\nopen('/tmp/aidp-scratch-check.txt', 'w').write('x')\nEOF"):
+            with self.subTest(command=command):
+                result = self.bash(command)
+                self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_explain_reports_decision_without_executing(self):
+        self.ready()
+        marker = self.root / 'explain-marker.txt'
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(self.root))
+        def explain(command, *extra):
+            return subprocess.run([sys.executable, str(HOOK), '--explain', command, *extra], text=True,
+                                  capture_output=True, env=env, timeout=30)
+        denied = explain(f'echo x > {marker}; echo y > code/frontend/y/a.ts')
+        self.assertEqual(2, denied.returncode, denied.stdout + denied.stderr)
+        self.assertIn('拒绝', denied.stdout)
+        self.assertIn('仅解释，未执行', denied.stdout)
+        self.assertFalse(marker.exists(), '--explain 不得执行命令')
+        allowed = explain("cat >> code/backend/x/a.py <<'EOF'\nx\nEOF")
+        self.assertEqual(0, allowed.returncode, allowed.stdout + allowed.stderr)
+        self.assertIn('允许', allowed.stdout)
+        asked = explain('docker cp ./a web:/a')
+        self.assertEqual(0, asked.returncode)
+        self.assertIn('需授权提示', asked.stdout)
+        as_json = json.loads(explain('echo x > "$UNKNOWN"', '--json').stdout)
+        self.assertEqual('deny', as_json['decision'])
+        self.assertEqual('static-undecidable', as_json['kind'])
+        self.assertFalse(as_json['executed'])
+        edit = subprocess.run([sys.executable, str(HOOK), '--explain-edit', 'code/frontend/y/a.ts'], text=True,
+                              capture_output=True, env=env, timeout=30)
+        self.assertEqual(2, edit.returncode)
+        self.assertIn('write_set', edit.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()

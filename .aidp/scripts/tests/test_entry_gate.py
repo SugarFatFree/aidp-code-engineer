@@ -46,6 +46,39 @@ class EntryGateTests(unittest.TestCase):
     def check(self, target='code/app.py', env=None):
         return entry_gate.check(self.root, target, env={} if env is None else env)
 
+    def test_write_set_denial_hint_has_copyable_revise_command_and_light_alternative(self):
+        path = self.context(write_set=['code/backend'])
+        self.marker()
+        result = entry_gate.check(self.root, 'code/frontend/y/app.ts', env={})
+        self.assertIn('write-set', result['missing'])
+        joined = '\n'.join(result['hints'])
+        self.assertIn('entry_context.py revise --root . --execution-context "memory/.aidp/entry-contexts/', joined)
+        self.assertIn('--add-write-set code/frontend/y', joined)
+        self.assertIn('light_task.py extend-write-set', joined)
+        self.assertNotIn('resolve', joined.split('revise')[0].split('\n')[-1], '不再让人重新 resolve 新任务')
+        in_scope = entry_gate.check(self.root, 'code/backend/x/a.py', env={})
+        self.assertTrue(in_scope['ok'], in_scope)
+        # 整个 code 目录不会被建议整体放开
+        broad = entry_gate.check(self.root, 'code', env={})
+        self.assertIn('范围过大', '\n'.join(broad['hints']))
+        self.assertEqual(str(path), entry_gate.check(self.root, 'code/frontend/y/app.ts', env={})['context'])
+
+    def test_empty_write_set_hint_names_same_task_command(self):
+        self.context(write_set=['docs'])
+        self.marker()
+        result = entry_gate.check(self.root, 'code/a.py', env={})
+        self.assertIn('--add-write-set', '\n'.join(result['hints']))
+
+    def test_hint_commands_use_available_python_name(self):
+        from unittest import mock
+        with mock.patch('shutil.which', side_effect=lambda n: '/usr/bin/python' if n == 'python' else None):
+            result = entry_gate.check(self.root, 'code/a.py', env={})
+        joined = '\n'.join(result['hints'])
+        self.assertIn('python ', joined)
+        self.assertNotIn('python3 ', joined, '没有 python3 的系统提示命令改用 python')
+        with mock.patch('shutil.which', side_effect=lambda n: '/usr/bin/' + n):
+            self.assertIn('python3 ', '\n'.join(entry_gate.check(self.root, 'code/a.py', env={})['hints']))
+
     def test_nothing_done_reports_both_steps_with_commands(self):
         res = self.check()
         self.assertFalse(res['ok'])

@@ -14,6 +14,7 @@
 | `core-conventions.md` | 核心约定 1–41 的完整决策主行与细则指针，编号唯一权威 | 项目记忆文件；formal 读完整协议 |
 | `task-routing.md` | 命令清单、意图路由、角色与 Skills 清单、运行目录适配 | 项目记忆文件；formal 按需加载 |
 | `约定细则-1.md` ~ `约定细则-5.md` | 核心约定 1–41 中「有外置细则」那些条的子项 / Why / 示例 | `core-conventions.md` |
+| `container-tools.md` | 容器工具以宿主用户运行（`docker_host_user.py`、`--check` 现有包装脚本、与入口护栏的关系） | 在项目里跑 `docker run/exec` 前 |
 | `light-entry.md` | light 任务精简入口：固定流程、`light_task.py` 用法、硬边界、何时再读 `light-context.md` | `/sprint-dev`、`/sprint-bugfix` 独立 light 路径、`light-context.md` 开头 |
 | `review-evidence.md` | 已授权审查的报告结构、差量复用与等价证据 | `light-context.md` 的 review / full-cvl / equivalent-evidence 分支 |
 | `命令速查.md` | 各命令的完整实操示例、flag 组合、7×24 前置、AI 测试入口前置规则全文 | `task-routing.md`「常用命令速查」 |

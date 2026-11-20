@@ -144,6 +144,86 @@ class ShellTargetsTests(unittest.TestCase):
     def test_unrecognized_writer_wrapper_is_conservative(self):
         self.assertTrue(self.targets('nice -n 5 sed -i s/a/b/ code/a.py')['uncertain'])
 
+    # ── heredoc：落点可静态确定的不再一律拒绝，正文不是命令 ──
+    def test_heredoc_with_literal_target_is_determined(self):
+        self.assert_targets("cat >> code/a/tests/t.py <<'EOF'\nx = 1 > 0; y = $(rm -rf code)\nEOF", ['code/a/tests/t.py'])
+        self.assert_targets("cat > code/a.txt <<EOF\nplain text > not redirect\nEOF", ['code/a.txt'])
+        self.assert_targets("tee code/a.txt <<'EOF'\nhello\nEOF", ['code/a.txt'])
+        self.assert_targets("cat <<-'EOF' > code/a.txt\n\tindented\n\tEOF", ['code/a.txt'])
+
+    def test_heredoc_negative_dynamic_target_and_unquoted_substitution_still_checked(self):
+        self.assertTrue(self.targets("cat > code/$NAME.py <<'EOF'\nx\nEOF", env={})['uncertain'])
+        # 未加引号的 heredoc 正文会真实执行 $(...)，其中的写入必须计入
+        result = self.targets("cat <<EOF > /tmp/x\n$(echo hi > code/leak.txt)\nEOF", env={})
+        self.assertIn(str(self.root / 'code/leak.txt'), result['targets'])
+        # 带引号的正文只是数据
+        quoted = self.targets("cat <<'EOF' > /tmp/x\n$(echo hi > code/leak.txt)\nEOF", env={})
+        self.assertNotIn(str(self.root / 'code/leak.txt'), quoted['targets'])
+        self.assertTrue(self.targets("xargs rm <<'EOF'\ncode/a\nEOF", env={})['uncertain'])
+
+    def test_python_stdin_heredoc_is_analyzed_as_program(self):
+        ok = "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('code/a.py')\ntext = p.read_text().replace('a', 'b')\n" \
+             "if text:\n    text = text.strip()\np.write_text(text)\nEOF"
+        self.assert_targets(ok, ['code/a.py'])
+        self.assert_targets("python3 - <<'EOF'\nwith open('code/a.txt', 'w') as f:\n    f.write('hi')\nEOF", ['code/a.txt'])
+        self.assertTrue(self.targets("python3 - <<'EOF'\nfor p in ['a', 'b']:\n    open(p, 'w').write('x')\nEOF", env={})['uncertain'])
+        escape = self.targets("python3 - <<'EOF'\nimport os\nos.system('rm code/a.py')\nEOF", env={})
+        self.assertIn(str(self.root / 'code/a.py'), escape['targets'])
+        self.assertTrue(self.targets("python3 - <<'EOF'\nunknown_tool.save()\nEOF", env={})['uncertain'])
+
+    def test_failure_details_name_category_and_fragment(self):
+        result = self.targets("cat > code/$NAME.py <<'EOF'\nx\nEOF", env={})
+        self.assertEqual('wildcard', result['details'][0]['category'])
+        self.assertIn('$NAME', result['details'][0]['fragment'])
+
+    # ── sed -i：只看文件参数，s/…/…/ 里的字符不是通配符 ──
+    def test_sed_inplace_checks_only_file_operands(self):
+        self.assert_targets("sed -i 's/旧*/新?/' code/a.py", ['code/a.py'])
+        self.assert_targets("sed -i '' 's/a*/b/' code/a.py", ['code/a.py'])
+        self.assert_targets("sed -i.bak -E 's/x|y/[z]/g' code/a.py", ['code/a.py', 'code/a.py.bak'])
+        self.assert_targets("sed -i -e 's/a/b/' -e 's/c*/d/' code/a.py code/b.py", ['code/a.py', 'code/b.py'])
+        self.assertTrue(self.targets("sed -i 's/a/b/' code/*.py", env={})['uncertain'])
+        self.assertTrue(self.targets("sed -i 's/a/b/'", env={})['uncertain'])
+
+    # ── docker：容器写入单独分类 ──
+    def test_docker_container_writes_are_external_side_effects(self):
+        for command in ('docker cp ./a.txt web:/app/a.txt', 'docker exec web sh -c "echo hi > /tmp/a"',
+                        'docker run --rm img chown -R 1000:1000 /data'):
+            with self.subTest(command=command):
+                result = self.targets(command, env={})
+                self.assertFalse(result['uncertain'], result)
+                self.assertEqual([], result['targets'])
+                self.assertTrue(result['external'], result)
+
+    def test_docker_bind_mount_and_cp_out_map_to_host_paths(self):
+        self.assert_targets('docker cp web:/app/out.txt code/out.txt', ['code/out.txt'])
+        self.assert_targets(f'docker run --rm -v {self.root}/code:/w img chown -R 1000:1000 /w/x', ['code/x'])
+        mounted = self.targets(f'docker run --rm --mount type=bind,source={self.root}/code,target=/w img rm -rf /w/y', env={})
+        self.assertEqual([str(self.root / 'code/y')], mounted['targets'])
+        outside = self.targets(f'docker run --rm -v {self.root}/code:/w img chown 1:1 /elsewhere', env={})
+        self.assertEqual([], outside['targets'])
+        self.assertTrue(outside['external'])
+
+    def test_docker_does_not_hide_host_side_writes(self):
+        result = self.targets('docker cp web:/app/a.txt code/a.txt && echo x > code/b.txt', env={})
+        self.assertEqual({str(self.root / 'code/a.txt'), str(self.root / 'code/b.txt')}, set(result['targets']))
+
+    def test_python_command_name_variants_are_equivalent(self):
+        program = "\nfrom pathlib import Path\nPath('code/a.py').write_text('x')\nEOF"
+        for name in ('python3', 'python', 'python3.11', 'python2'):
+            with self.subTest(name=name):
+                self.assert_targets("%s - <<'EOF'%s" % (name, program), ['code/a.py'])
+                self.assert_targets("%s -c \"open('code/b.py', 'w').write('x')\"" % name, ['code/b.py'])
+                bad = self.targets("%s - <<'EOF'\nopen(p, 'w').write('x')\nEOF" % name, env={})
+                self.assertTrue(bad['uncertain'])
+
+    def test_tick_bootstrap_accepts_python_or_python3(self):
+        helper = Path(__file__).resolve().parents[1] / 'autopilot_tick_flags.py'
+        for name in ('python3', 'python'):
+            with self.subTest(name=name):
+                result = self.targets('eval "$(%s %s --shell --command autopilot)"' % (name, helper), env={})
+                self.assertFalse(result['uncertain'], result)
+
 
 if __name__ == '__main__':
     unittest.main()

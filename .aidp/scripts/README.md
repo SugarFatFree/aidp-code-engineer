@@ -50,7 +50,7 @@
 
 ## light_task.py — light 任务标准流程单一入口
 
-`python3 {{AIDP_HOME}}/scripts/light_task.py {start|select|run|report|all} --root . [--execution-context CTX] [--session-id ID] [--runners-json JSON|@文件] [--env-id ID]`：`start` = `entry_context.py resolve/route` + `aidp_config.py branch-policy` + `entry_gate.py bind`；分支未选择时返回 `entry_bound=false`，保存选择后继承同一上下文重跑；`select` = `execution_policy require-action related-test` → `test_scope.py` → `select_related_tests.py`（写白名单）；`run` = 对 scope 内每条命令先过 `test_command_guard.py check`（拒绝即终止，不拼整目录/全量命令）再 `test_ledger.py run-scope` + `verify`；`report` = 改动文件/选中测试/通过·失败·未映射/known-failure 差集（`test_baseline.py diff`）与 `verdict`。stdout 末行恒为 JSON；退出 0 成功、1 测试 FAIL、2 输入/授权/守卫/未核验。用法速览见 `{{AIDP_HOME}}/reference/light-entry.md`。
+`python3 {{AIDP_HOME}}/scripts/light_task.py {start|extend-write-set|select|run|report|all} --root . [--execution-context CTX] [--session-id ID] [--runners-json JSON|@文件] [--env-id ID]`：`start` = `entry_context.py resolve/route` + `aidp_config.py branch-policy` + `entry_gate.py bind`；分支未选择时返回 `entry_bound=false`，保存选择后继承同一上下文重跑；缺 `--version` 时取项目最高版本目录（`version_source=inferred`），缺必填项时报错内带完整可复制命令；`extend-write-set --add-write-set <路径>` = 同任务内 `entry_context.py revise` + 重绑，无需重新 start；`select` = `execution_policy require-action related-test` → `test_scope.py` → `select_related_tests.py`（写白名单）；`run` = 对 scope 内每条命令先过 `test_command_guard.py check`（拒绝即终止，不拼整目录/全量命令）再 `test_ledger.py run-scope` + `verify`；`report` = 改动文件/选中测试/通过·失败·未映射/known-failure 差集（`test_baseline.py diff`）与 `verdict`。stdout 末行恒为 JSON；退出 0 成功、1 测试 FAIL、2 输入/授权/守卫/未核验。用法速览见 `{{AIDP_HOME}}/reference/light-entry.md`。
 
 ## deployment_ops.py — 发布/规划期 SQL 执行台账渲染
 
@@ -350,7 +350,7 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 ## commit_gate.py — 约定 24 提交前门禁（确定性、可单测）
 
-每次 `git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON。作用域 = **变更事实**、与命令入口无关（裸对话路径同样适用）。总开关 = `memory/aidp-config.yaml` 的 `commit_gate.enabled`（缺省 true）。
+每次 `git commit` 前跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读 JSON：`--quiet` 只输出摘要（`has_debt`/`exit_code`/`debts`/`pending_cascade_total`/`errors` 前 5 条/`full_report` 路径，<2KB），完整 JSON 落 `memory/.aidp/commit-gate-last.json`；`--full` 才把完整 JSON 打到 stdout。作用域 = **变更事实**、与命令入口无关（裸对话路径同样适用）。总开关 = `memory/aidp-config.yaml` 的 `commit_gate.enabled`（缺省 true）。
 输出字段：`commit_gate_enabled` / `is_template_project`（脚手架 skill 的任一落点——模板仓库根级 `skills/`、下游 `.claude/skills/` 或 `.agents/skills/`、历史的 `各 Agent 的运行根/skills/`——下 `SKILL.md` 与 `scripts/sync_memory_md.py` 都在、且 `scaffold_marker.py` 判为非下游）/ `working_tree_dirty` / `has_business_code_change` / `is_scaffold_only_change` / `today` /<!-- runtime-path-ignore: 适配位对照，必须逐字写出各 Agent 的目录 -->
 `pending_cascade`（约定 22 四族增量册摘要 `{files,total,stale,cascaded_not_cleaned,unparsed,archived_not_deleted,destructive_unregistered,versions,…}`）/ `cascaded_not_cleaned` / `suspected_cascade_bypass`（约定 22 攒批被绕过的反向判据：「当场级联」/「结构性新增零台账」两形态，`--cascade-now` 抑制）/ `pending_cicd`（约定 31.5 推送**提示**，advisory、永不计债：CICD 未启用〔`aidp_config.cicd_enabled`〕→ 不检查，`applicable=false`/`status=CICD_NOT_ENABLED`；已启用 → 现场 `git rev-parse HEAD`/`@{u}` 判 HEAD 是否已推送、是否含正式变更，已推送且含正式变更时 `advisory=true` 并给出 `commit`；**不读 baseline**，`pending` 恒 false）/ `offchain`（约定 41 链外档位 XS/S/M/L 与动作预算）/ `debts`（未落地义务代号清单（不含日常 stale 派单））。
 可 import：`pending_cascade()` / `cascade_ledger_paths()` / `CASCADE_FAMILIES` / `suspected_cascade_bypass()` / `has_business_code_change()` / `is_scaffold_only_change()` / `pending_cicd()` / `offchain_budget()` / `gather()`。
@@ -368,9 +368,13 @@ AIDP 允许**中间过渡版本**（做完需求/设计/开发但不单独打 ta
 
 `python3 {{AIDP_HOME}}/scripts/entry_gate.py check --root . [--target PATH] [--json]`；`--self-check` 自测。入口成功后用 `bind --root . --execution-context CTX [--session-id ID] --json` 绑定准确任务。check 只读校验显式 `AIDP_EXECUTION_CONTEXT` 或任务标记，不扫描其他 active context，错误指向不回退；校验真实身份、项目根、active、新鲜期、implement 与非空 write_set。branch-policy 读取标记须属于当前根且与实时偏好一致，formal/tick 同样必须满足两项入口条件。缺项退出 2 并给补齐命令；非 code/** 路径不适用。有 session_id 时仅匹配同会话，缺少标识时通用标记仅代表串行项目任务。
 
+## docker_host_user.py — 以宿主机用户运行容器工具
+
+`python3 {{AIDP_HOME}}/scripts/docker_host_user.py {run|exec} [docker 参数…]`（自动补 `--user "$(id -u):$(id -g)"`，已显式传 `--user/-u` 原样转发，`--dry-run` 只打印）；`--check <脚本…>` 扫描现有 `docker|podman|docker compose run/exec` 调用是否缺 `--user`（缺则退出 1，行内 `# aidp:allow-root` 显式豁免）。避免容器 root 写出宿主机读不了的产物；说明见 `{{AIDP_HOME}}/reference/container-tools.md`。
+
 ## shell_write_targets.py — Bash 写目标解析 helper
 
-由 `hooks/pretool-guard.py` 调用 `analyze`，静态识别 sed 原地写、重定向、tee/cp/mv/install/rm 与可识别 bash/python 包装，结果逐目标复用 entry_gate。未知动态写入明确拒绝；纯读及入口 bootstrap 不阻断。没有解释任意外部程序正文，不作为安全沙箱。入口与测试门独立默认开启，配置、逃生文件及旧文件迁移见 `{{AIDP_HOME}}/hooks/README.md`。
+由 `hooks/pretool-guard.py` 调用 `analyze`，静态识别 sed 原地写、重定向、tee/cp/mv/install/rm 与可识别 bash/python 包装，结果逐目标复用 entry_gate。here-document 正文先剥离再解析（`python3 - <<EOF` 当程序、其余当数据）；`docker cp/exec/run` 区分容器内外部副作用（`external`）与 bind mount 落到仓库的宿主写（映射后进 `writes`）。返回 `details`（类别/原因/命中片段）供拒绝信息使用。未知动态写入明确拒绝；纯读及入口 bootstrap 不阻断。没有解释任意外部程序正文，不作为安全沙箱。入口与测试门独立默认开启，配置、逃生文件及旧文件迁移见 `{{AIDP_HOME}}/hooks/README.md`。
 
 ## agent_sync.py — `{{AIDP_HOME}}/` 单一信源 → 各 Agent 工具入口装配（确定性、幂等）
 

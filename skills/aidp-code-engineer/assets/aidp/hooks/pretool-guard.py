@@ -3,6 +3,11 @@
 
 Claude Bash/Edit/Write 与 Codex shell/patch payload 共用判定；不宣称 DSH
 已有官方 PreToolUse 接口。exit 2 + stderr 阻断，Codex 另输出 deny JSON。
+外部副作用（容器内写入等，不是仓库文件直写）输出 ask 决定，由宿主弹出授权提示。
+
+离线自检（只解释判定，不执行）：
+  pretool-guard.py --explain "<shell 命令>" [--cwd DIR] [--json]
+  pretool-guard.py --explain-edit <文件路径>
 """
 import json
 import os
@@ -128,8 +133,37 @@ def check_bash(root, command, env):
         return None
     reason = _render_home(result.get("reason") or "命令被测试范围护栏拒绝", root)
     hint = _render_home(result.get("hint") or "", root)
-    return ("AIDP 测试范围护栏：" + reason + ("\n  → " + hint if hint else "")
-            + "\n（仅测试门临时停用：test_guard.enabled: false 或 touch memory/.test-guard-off；入口门保持独立。）")
+    message = ("AIDP 测试范围护栏 · 拒绝（测试命令超出本任务白名单）\n类别：测试范围\n原因：" + reason
+               + ("\n合规替代：\n  → " + hint if hint else "")
+               + "\n（仅测试门临时停用：test_guard.enabled: false 或 touch memory/.test-guard-off；入口门保持独立。）")
+    return _decision("deny", "test-scope", category="test-scope", fragment=reason[:120], message=message)
+
+
+CATEGORY_LABEL = {
+    "heredoc": "heredoc", "redirect": "重定向", "wildcard": "变量/通配符写目标", "docker-write": "docker 写",
+    "wrapper": "包装器写入", "python": "python 写入", "sed": "sed", "compound": "复合/条件分支",
+    "dynamic-exec": "动态执行", "cwd": "目录切换", "parse": "语法解析", "other": "其他",
+}
+CATEGORY_ADVICE = {
+    "heredoc": "heredoc 目标必须是字面量路径（cat > code/…/x <<'EOF'），且在 write_set 内；或改用 Write/Edit 工具写文件",
+    "redirect": "重定向目标写成字面量路径并在 write_set 内；或改用 Write/Edit 工具",
+    "wildcard": "把变量/通配符展开成字面量路径后逐个写；或改用 Write/Edit 工具",
+    "docker-write": "容器内目标走授权提示；bind mount 到仓库的路径按宿主源路径校验，须在 write_set 内",
+    "wrapper": "去掉包装层，直接写字面量路径；或改用 Write/Edit 工具",
+    "python": "写目标用字面常量路径，避免循环/分支内写文件；或改用 Write/Edit 工具",
+    "sed": "sed -i 's/旧/新/' <字面量文件路径>；脚本里的字符不会被当作写目标",
+    "compound": "拆成多条单步命令，每条只写一个字面量路径",
+    "dynamic-exec": "避免 eval/source/动态命令；改用显式命令",
+    "cwd": "不要在同一命令里 cd 后再写；用字面量绝对/相对路径",
+    "parse": "检查引号/括号是否成对，或拆成更简单的命令",
+    "other": "改用 Write/Edit 工具，或拆成可静态判定的显式路径命令",
+}
+SCRATCH_HINT = "临时内容可写 scratch 目录：memory/.aidp/scratch/ 或 /tmp（不受入口门限制）"
+
+
+def _decision(decision, kind, **extra):
+    return dict({"decision": decision, "kind": kind, "category": "", "fragment": "", "message": "",
+                 "alternatives": []}, **extra)
 
 
 def check_targets(root, targets, env):
@@ -138,11 +172,54 @@ def check_targets(root, targets, env):
         result = entry_gate.check(root, target, env=env)
         if result["ok"]:
             continue
-        lines = ["AIDP 入口护栏：修改 %s 前入口协议未走完，缺：%s" % (
-            result.get("target") or target, "、".join(result["missing"]))]
+        protocol = {"entry-context", "branch-policy", "branch-policy-choice", "implement"}
+        kind = "protocol-incomplete" if protocol & set(result["missing"]) else "out-of-write-set"
+        label = "协议未完成" if kind == "protocol-incomplete" else "超出本任务 write_set"
+        shown = result.get("target") or target
+        lines = ["AIDP 入口护栏 · 拒绝（%s）" % label,
+                 "类别：%s" % ("入口协议" if kind == "protocol-incomplete" else "超出 write_set"),
+                 "命中目标：%s；缺：%s" % (shown, "、".join(result["missing"]))]
+        lines.append("合规替代：")
         lines.extend("  → " + hint for hint in result["hints"])
         lines.append("（仅入口门临时停用：entry_guard.enabled: false 或 touch memory/.entry-guard-off；测试门保持独立。）")
-        return "\n".join(lines)
+        return _decision("deny", kind, category=kind, fragment=str(shown), message="\n".join(lines),
+                         alternatives=list(result["hints"]))
+    return None
+
+
+def check_shell_writes(root, command, cwd, env):
+    import shell_write_targets
+    writes = shell_write_targets.analyze(command, cwd, env)
+    for write in writes["writes"]:
+        found = check_targets(root, [write["target"]], dict(env, **write["env"]))
+        if found:
+            return found
+    if writes["uncertain"]:
+        details = writes.get("details") or [{"category": "other", "reason": r, "fragment": ""} for r in writes["reasons"]]
+        lines = ["AIDP 入口护栏 · 拒绝（静态分析无法判定；这不表示入口协议未完成）",
+                 "无法证明该命令的写目标是否落在 code/** 及本任务 write_set 内："]
+        alternatives = []
+        for item in details:
+            label = CATEGORY_LABEL.get(item["category"], item["category"])
+            lines.append("  · [%s] %s%s" % (label, item["reason"], "：" + item["fragment"] if item["fragment"] else ""))
+            advice = CATEGORY_ADVICE.get(item["category"], CATEGORY_ADVICE["other"])
+            if advice not in alternatives:
+                alternatives.append(advice)
+        lines.append("合规替代：")
+        lines.extend("  → " + advice for advice in alternatives)
+        lines.append("  → 改用 Write/Edit 工具逐文件写入（工具写入只校验目标路径）")
+        lines.append("  → " + SCRATCH_HINT)
+        lines.append("自检（只解释、不执行）：pretool-guard.py --explain \"<命令>\"")
+        first = details[0] if details else {"category": "other", "fragment": ""}
+        return _decision("deny", "static-undecidable", category=first["category"], fragment=first["fragment"],
+                         message="\n".join(lines), alternatives=alternatives)
+    if writes.get("external"):
+        lines = ["AIDP 入口护栏 · 需要授权（外部副作用，不是对仓库文件的直接写入）"]
+        for item in writes["external"]:
+            lines.append("  · [%s] %s" % (item["kind"], item["fragment"]))
+        lines.append("该命令写的是容器文件系统，或容器内未绑定到仓库的路径；请确认是否继续。")
+        return _decision("ask", "external-side-effect", category="docker-write",
+                         fragment=writes["external"][0]["fragment"], message="\n".join(lines))
     return None
 
 
@@ -157,7 +234,72 @@ def _shell_input(tool_input):
     raise ValueError("shell command 必须是非空字符串或 argv 字符串数组")
 
 
+def evaluate(root, tool, tool_input, cwd, env):
+    """纯判定，不执行命令：返回 {decision: allow|deny|ask, kind, category, fragment, message, alternatives}。"""
+    entry_enabled, test_enabled = _enabled(root, "entry"), _enabled(root, "test")
+    if tool in SHELL_TOOLS:
+        command = _shell_input(tool_input)
+        if test_enabled:
+            scoped_command = command if Path(cwd) == root else f"cd {shlex.quote(cwd)} && {command}"
+            found = check_bash(root, scoped_command, env)
+            if found:
+                return found
+        if entry_enabled:
+            found = check_shell_writes(root, command, cwd, env)
+            if found:
+                return found
+    elif entry_enabled:
+        found = check_targets(root, edit_targets(tool, tool_input, cwd), env)
+        if found:
+            return found
+    return _decision("allow", "allow")
+
+
+def _explain(argv):
+    """离线自检：只解释判定结果，不执行命令。"""
+    import argparse
+    parser = argparse.ArgumentParser(prog="pretool-guard.py")
+    parser.add_argument("--explain", metavar="CMD")
+    parser.add_argument("--explain-edit", metavar="PATH")
+    parser.add_argument("--cwd")
+    parser.add_argument("--root")
+    parser.add_argument("--session-id")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--agent")
+    args = parser.parse_args(argv)
+    root = Path(args.root).resolve() if args.root else _project_root({})
+    cwd = str((root / args.cwd).resolve()) if args.cwd else str(root)
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    env = dict(os.environ)
+    if args.session_id:
+        env["AIDP_SESSION_ID"] = args.session_id
+    try:
+        if args.explain is not None:
+            result = evaluate(root, "bash", {"command": args.explain}, cwd, env)
+            subject = args.explain
+        else:
+            result = evaluate(root, "edit", {"file_path": args.explain_edit}, cwd, env)
+            subject = args.explain_edit
+    except Exception as exc:  # 与真实 hook 同样 fail-closed，但这里只是解释
+        result = _decision("deny", "guard-error", category="guard-error", fragment=str(exc)[:120],
+                           message="AIDP 护栏无法完成校验：%s: %s" % (type(exc).__name__, exc))
+        subject = args.explain if args.explain is not None else args.explain_edit
+    result = dict(result, subject=subject, executed=False)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        label = {"allow": "允许", "deny": "拒绝", "ask": "需授权提示"}[result["decision"]]
+        print("判定：%s（%s）  [仅解释，未执行]" % (label, result["kind"]))
+        print("对象：" + str(subject))
+        if result["message"]:
+            print(result["message"])
+    return 2 if result["decision"] == "deny" else 0
+
+
 def main():
+    if any(a in ("--explain", "--explain-edit") for a in sys.argv[1:]):
+        return _explain(sys.argv[1:])
     root = _project_root({})
     try:
         data = json.load(sys.stdin)
@@ -182,36 +324,21 @@ def main():
         env = dict(os.environ)
         if data.get("session_id"):
             env["AIDP_SESSION_ID"] = str(data["session_id"])
-        entry_enabled, test_enabled = _enabled(root, "entry"), _enabled(root, "test")
-        message = None
-        if tool in SHELL_TOOLS:
-            command = _shell_input(tool_input)
-            if test_enabled:
-                scoped_command = command if Path(cwd) == root else f"cd {shlex.quote(cwd)} && {command}"
-                message = check_bash(root, scoped_command, env)
-            if not message and entry_enabled:
-                import shell_write_targets
-                writes = shell_write_targets.analyze(command, cwd, env)
-                for write in writes["writes"]:
-                    message = check_targets(root, [write["target"]], dict(env, **write["env"]))
-                    if message:
-                        break
-                if not message and writes["uncertain"]:
-                    # 入口就绪也不能据此证明未知目标在 write_set 中；拆分后按实际目标复验。
-                    message = ("AIDP 入口护栏：无法确定动态/复合写入是否落在 code/** 及本任务 write_set 内："
-                               + "；".join(writes["reasons"])
-                               + "\n先完成入口 resolve、branch-policy 和任务绑定，再拆为可校验的显式路径写入命令。")
-        elif entry_enabled:
-            message = check_targets(root, edit_targets(tool, tool_input, cwd), env)
-        if message:
-            _block(message)
+        result = evaluate(root, tool, tool_input, cwd, env)
+        if result["decision"] == "deny":
+            _block(result["message"])
+        if result["decision"] == "ask" and _agent_flag() == "claude":
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "ask",
+                "permissionDecisionReason": result["message"]}}, ensure_ascii=False) + "\n")
     except SystemExit:
         raise
     except Exception as exc:
         detail = "%s: %s" % (type(exc).__name__, exc)
         _note_skip(root, detail)
-        _block("AIDP 护栏无法完成校验，已拒绝此次工具调用：" + detail
-               + "\n请修复输入或守卫模块后重试；入口门与测试范围门分别配置，不能以内部异常代替通过。")
+        _block("AIDP 护栏无法完成校验，已拒绝此次工具调用（校验异常，不是入口协议未完成）：" + detail
+               + "\n请修复输入或守卫模块后重试；可用 pretool-guard.py --explain \"<命令>\" 离线复现。"
+               + "入口门与测试范围门分别配置，不能以内部异常代替通过。")
     return 0
 
 

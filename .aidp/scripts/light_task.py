@@ -2,12 +2,13 @@
 """light 任务标准流程单一入口：resolve → 选测 → 执行 → 汇总。
 
 只编排既有脚本，不另立规则、不绕过 execution_policy：
-  start   entry_context resolve + route(dev) + aidp_config branch-policy 读取
+  start   （缺 --version 时取项目最高版本目录）entry_context resolve + route(dev) + aidp_config branch-policy 读取
   select  execution_policy require-action(related-test) → test_scope（unit-scope.json）
           → select_related_tests（写白名单；脚本缺失时阻断）
   run     逐条 test_command_guard check 校验 scope 里的每条命令 → test_ledger run-scope → verify
           （命令只来自 test_scope 的相关测试，永不拼整目录/全量命令；guard 拒绝即终止）
   report  汇总改动文件/选中测试/通过·失败·未映射/known-failure 差集，并给出 verdict
+  extend-write-set  同一任务内增量扩写集（entry_context revise + 重绑），无需重新 start
   all     依次执行 start/select/run/report
 
 输出：stdout 最后一行恒为 JSON（--json 时整个 stdout 仅此一行）。
@@ -16,12 +17,15 @@
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS))
+from aidp_runtime import python_cmd  # noqa: E402
 STATE_NAME = "light-task.json"
 OK_STATUSES = {"PASS", "CARRIED", "NOT_APPLICABLE"}
 
@@ -107,14 +111,48 @@ def _task_key(ctx):
 
 
 # ---------------------------------------------------------------- start
+_VERSION_DIR = re.compile(r"^V\d+(?:\.\d+)*$")
+
+
+def _version_key(name):
+    return tuple(int(part) for part in name[1:].split("."))
+
+
+def default_version(root):
+    """未传 --version 时取项目当前版本：版本化目录里的最高版本号；取不到返回 None。"""
+    found = set()
+    for parent in ("docs/requirements", "docs/plans", "docs/design", "memory"):
+        base = Path(root) / parent
+        if base.is_dir():
+            found.update(child.name for child in base.iterdir() if child.is_dir() and _VERSION_DIR.match(child.name))
+    return max(found, key=_version_key) if found else None
+
+
+def _start_command(args, version):
+    write_set = " ".join(shlex.quote(p) for p in (args.write_set or ["<实际写集路径>"]))
+    acceptance = " ".join(shlex.quote(p) for p in (args.acceptance or ["<本轮可核验业务结果>"]))
+    here = os.path.relpath(str(Path(__file__)), os.getcwd())
+    return ("%s %s start --root %s --version %s --write-set %s --acceptance %s"
+            % (python_cmd(), shlex.quote(here), shlex.quote(args.root), shlex.quote(version or "<版本号>"),
+               write_set, acceptance))
+
+
 def step_start(args):
     root = args.root
     cmd = ["resolve", "--root", root, "--entry", args.entry, "--json"]
+    version_source = "argument"
     if args.execution_context:
         cmd += ["--execution-context", args.execution_context]
     else:
-        if not args.version or not args.write_set or not args.acceptance:
-            raise StepError("新任务 start 须带 --version / --write-set / --acceptance（或继承 --execution-context）")
+        if not args.version:
+            args.version = default_version(root)
+            version_source = "inferred" if args.version else None
+        missing = [flag for flag, value in (("--version", args.version), ("--write-set", args.write_set),
+                                            ("--acceptance", args.acceptance)) if not value]
+        if missing:
+            raise StepError("新任务 start 缺 %s（或改为继承 --execution-context）。可直接复制并补全：%s"
+                            % ("、".join(missing), _start_command(args, args.version)),
+                            command=_start_command(args, args.version))
         cmd += ["--version", args.version, "--write-set", *args.write_set,
                 "--acceptance", *args.acceptance]
         if args.task_scope:
@@ -158,8 +196,32 @@ def step_start(args):
         "entry_binding_skipped": bool(binding and binding.get("skipped")),
         "session_id": args.session_id,
     }
+    if version_source == "inferred":
+        result["version"] = args.version
+        result["version_source"] = "inferred"
     _save_state(ctx, "start", result)
     return result
+
+
+# -------------------------------------------------------- extend-write-set
+def step_extend(args):
+    """同一任务内增量扩写集：entry_context revise 后重绑身份，旧选测/运行结论失效。"""
+    ctx = _ctx(args)
+    if not args.write_set:
+        raise StepError("extend-write-set 须带 --add-write-set <路径>（可多个）；"
+                        "例：light_task.py extend-write-set --root . --execution-context CTX --add-write-set code/frontend/app")
+    _, _, _, revised = _call("entry_context.py", "revise", "--root", args.root, "--execution-context", ctx,
+                             "--write-set", *args.write_set, "--json")
+    bind_args = ["bind", "--root", args.root, "--execution-context", ctx, "--if-writable", "--json"]
+    if args.session_id:
+        bind_args += ["--session-id", args.session_id]
+    _, _, _, binding = _call("entry_gate.py", *bind_args)
+    _save_state(ctx, "run", {"status": "UNVERIFIED", "run_ids": [], "exit_code": 2,
+                             "warnings": ["写集已扩展，须重新 select/run"]})
+    return {"step": "extend-write-set", "execution_context": ctx,
+            "write_set": ((revised or {}).get("task_scope") or {}).get("paths", args.write_set),
+            "entry_bound": bool(binding and binding.get("ok")),
+            "next": "写集已在同一任务内扩展；改完后重新运行 select/run/report（旧选测与运行结论已失效）"}
 
 
 # --------------------------------------------------------------- select
@@ -363,7 +425,7 @@ def step_all(args):
             "verdict": report["verdict"], "steps": results, "exit_code": code}
 
 
-STEPS = {"start": step_start, "select": step_select, "run": step_run, "report": step_report, "all": step_all}
+STEPS = {"start": step_start, "extend-write-set": step_extend, "select": step_select, "run": step_run, "report": step_report, "all": step_all}
 
 
 def build_parser():
@@ -376,7 +438,8 @@ def build_parser():
     parser.add_argument("--entry", default="sprint-dev")
     parser.add_argument("--phase", default="dev")
     parser.add_argument("--version")
-    parser.add_argument("--write-set", nargs="+", action="extend")
+    parser.add_argument("--write-set", "--add-write-set", dest="write_set", nargs="+", action="extend",
+                        help="本任务写集；extend-write-set 用 --add-write-set 增量追加")
     parser.add_argument("--acceptance", nargs="+", action="extend")
     parser.add_argument("--task-scope")
     parser.add_argument("--grant", action="append")

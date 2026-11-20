@@ -62,6 +62,41 @@ class LightTaskTests(unittest.TestCase):
         again = self.cli("start", "--execution-context", out["execution_context"], runners=False)
         self.assertEqual(again["task_id"], out["task_id"])
 
+    # ── 版本默认值与同任务扩写集 ──
+    def test_start_infers_version_from_versioned_directories(self):
+        for name in ("V0.9.0", "V1.2.0", "V1.10.0", "docs-notes"):
+            (self.root / "docs/plans" / name).mkdir(parents=True)
+        out = self.cli("start", "--write-set", "app.py", "--acceptance", "x 为 2", runners=False)
+        self.assertEqual("V1.10.0", out["version"], '按 SemVer 取最高版本，而不是字符串序')
+        self.assertEqual("inferred", out["version_source"])
+        context = json.loads(Path(out["execution_context"]).read_text())
+        self.assertEqual("V1.10.0", context["version"])
+        explicit = self.cli("start", "--version", "V0.9.0", "--write-set", "app.py", "--acceptance", "x", runners=False)
+        self.assertNotIn("version_source", explicit, "显式 --version 不被推断覆盖")
+
+    def test_start_missing_arguments_prints_complete_copyable_command(self):
+        out = self.cli("start", "--write-set", "app.py", expected=2, runners=False)
+        self.assertIn("--version", out["error"])
+        self.assertIn("--acceptance", out["error"])
+        self.assertIn("可直接复制", out["error"])
+        self.assertIn("light_task.py start", out["command"])
+        self.assertIn("--write-set app.py", out["command"])
+        self.assertIn("--version '<版本号>'", out["command"])
+
+    def test_extend_write_set_in_same_task_without_new_start(self):
+        out = self.start()
+        (self.root / "extra").mkdir()
+        extended = self.cli("extend-write-set", "--execution-context", out["execution_context"],
+                            "--add-write-set", "extra", runners=False)
+        self.assertEqual(out["task_id"], json.loads(Path(out["execution_context"]).read_text())["task_id"])
+        self.assertEqual(["app.py", "extra"], extended["write_set"])
+        self.assertIn("select/run/report", extended["next"])
+        again = self.cli("extend-write-set", "--execution-context", out["execution_context"],
+                         "--add-write-set", "extra", runners=False)
+        self.assertEqual(["app.py", "extra"], again["write_set"], "重复扩展幂等")
+        missing = self.cli("extend-write-set", "--execution-context", out["execution_context"], expected=2, runners=False)
+        self.assertIn("--add-write-set", missing["error"])
+
     def test_repeated_write_set_and_acceptance_keep_all_values(self):
         out = self.cli("start", "--version", "V1", "--write-set", "app.py", "--write-set", "code/b.py",
                        "--acceptance", "first", "--acceptance", "second", runners=False)

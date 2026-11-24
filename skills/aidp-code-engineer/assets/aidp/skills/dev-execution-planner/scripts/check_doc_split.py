@@ -248,6 +248,18 @@ def main() -> int:
     # `_` 前缀文件是过程性中间产物，不计入交付文档总数或模式判定。
     md_files = [f for f in doc_dir.iterdir()
                 if f.is_file() and f.suffix == '.md' and not f.name.startswith('_')]
+    # ⚠️ 读不出来 ≠ 没有违规:断链符号链接 / 无读权限的 .md 若被静默当成「空文件」,
+    #    会得到「碎片子文档」假红或「Task 编号无重复」假绿,且原先会抛裸 traceback(exit 1 伪装成违规)。
+    #    统一约定:环境错 → stderr 点名 + exit 2(不计违规,但绝不静默通过)。
+    unreadable = []
+    for f in md_files:
+        try:
+            f.read_bytes()
+        except OSError as e:
+            unreadable.append(f'{f.name}({e.__class__.__name__})')
+    if unreadable:
+        print('错误: 以下文档读不出来,拒绝在残缺样本上给出结论: ' + ', '.join(unreadable), file=sys.stderr)
+        return 2
     issues: list[dict] = []
     summary: dict = {'total_md': len(md_files), 'main_doc': None, 'sub_docs': 0, 'mode': 'single'}
 

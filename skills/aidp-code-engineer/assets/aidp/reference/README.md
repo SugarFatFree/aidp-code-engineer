@@ -54,6 +54,6 @@
 
 ## 新增文件时
 
-1. 必须有**至少一处指针**指过来 —— 否则实际上没人会读到它。⚠️ **这一条目前没有机器门**：`verify.py` 的孤儿检查只管本体↔bundle 镜像，`check_singlesource_pointer.py` 只做**正向**指针可解析性，都不反向校验「本目录某文件有没有被指过」。靠人守。
+1. 必须有**至少一处指针**指过来 —— 否则实际上没人会读到它。⚠️ **反向指针（本目录某文件有没有被指过）目前没有机器门**：`verify.py` 的孤儿检查只管本体↔bundle 镜像，`check_singlesource_pointer.py` 只做**正向**指针可解析性；第 2 点的登记一项由 `check_readme_registry.py` 守。靠人守。
 2. 在上表登记一行。
 3. 在**模板仓库**跑一次 `python3 skills/aidp-code-engineer/scripts/mirror_to_bundle.py` 镜像进脚手架（⛔ 下游没有这一步：那是模板仓库专用的维护脚本，且下游根本没有 `.aidp` 这个维护源目录可镜像）。

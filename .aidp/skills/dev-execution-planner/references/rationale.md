@@ -22,10 +22,12 @@
    手滑写错路径即整档静默放行。
 3. **有 N/A 跳过分支的脚本,`--json` 必须给出 `skipped: true` 等可区分标记**——否则「真通过」与「整档没跑」分不开。
 
-## 已登记的已知缺口
+## 已登记的已知缺口(部分已修)
 
-`analyze_third_party_progress.py` 在样例上抛裸 traceback 且 `exit 1`(崩溃伪装成「检出违规」)。
-同类缺口的修复方向:读失败记为 `read_error` 并返回 `2`,⛔ 绝不可静默计为通过。它是分析工具、不是检查门,故不纳入 QR 派发。
+(2026-11 已修)`analyze_third_party_progress.py` / `generate_third_party_checklist.py` 此前对「读不出 / 传目录」抛裸 traceback 且 `exit 1`(崩溃伪装成「检出违规」),现统一 `exit 2` + stderr 原因,回归见 `tests/test_unreadable_inputs.py`。
+同类修法:读失败 → 环境错 `exit 2`(检查门:拒绝在残缺样本上出结论;代码扫描类:部分不可读继续并把 `read_errors` 写进 `--json`),⛔ 绝不可静默计为通过。它们是分析工具、不是检查门,故不纳入 QR 派发。
+
+仍登记在案:`check_env_config.py` / `scan_aidp.py` / `scan_mock_data.py` 对不可读的源/配置文件仍是 `errors=ignore` + 跳过(`--probe-unreadable` 仍会报其假绿),未改。
 
 ## `mvn compile` 不是只编译
 

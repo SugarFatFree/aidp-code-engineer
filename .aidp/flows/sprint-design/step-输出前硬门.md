@@ -16,7 +16,7 @@
 **关键约束**：Claude 在输出"✅ /sprint-design 完成"**之前**，**必须**：
 1. 真实执行下方两个 bash 块（A 回检清单 + B 三合一回写校验）— 用 Bash 工具跑，不是默念也不是估算
 2. 把 A 块每项 Pass/Fail 结果写入"🔍 输出前回检"块（**逐行填表**，不能省略）
-3. B 块退出码必须为 `0` 且看到 `✅ 基线 + ADR + 金额字段 三合一回写校验通过` 这行输出；退出码非 0 → 按报错补 `memory/databaseBaseline.md` / `memory/systemPatterns.md` / 修复 DECIMAL 金额字段后**重跑**到 0
+3. B 块退出码必须为 `0` 且看到 `✅ 基线 + ADR + 金额字段 三合一回写校验通过` 这行输出；退出码非 0 → 按报错补 `memory/databaseBaseline.md` / `memory/systemPatterns.md` / 修复金额字段后**重跑**到 0
 4. **任一 Fail（A 块任一项 / B 块退出码非 0）→ 立即输出"❌ 回检未通过：缺失项 …"，停下来请用户决定**（要求 skill 重新生成 / 人工补齐 / 强制放行）；不得用"基本通过""主要项通过"等模糊措辞绕过
 
 ### A. 回检清单 bash 块
@@ -72,11 +72,11 @@ cd -
 | 4 | 第三方接口职责边界（HAS_THIRD_PARTY_DEP=true） | Step 1.7.5 5 项 ✓ | { Pass / N/A / Fail } |
 | 5 | 字典/枚举代码契约（HAS_A4 > 0） | step-1.6「SKILL 脚本复核」的 `check_enum_contract.py` 退出码 = 0（`2`=入参错 → 修参数重跑，**不记 Fail**）；「字典/枚举强制生成枚举类」维度 Critical | { Pass / N/A / Fail } |
 | 5b | ER 图 + 禁 FK + 索引列 NOT NULL（HAS_A3 > 0） | step-1.6「SKILL 脚本复核」的 `check_er_and_fk.py` + `check_index_not_null.py` 退出码均 = 0（`2`=入参错 → 修参数重跑，**不记 Fail**）；「ER 关系图与外键约束」+「索引列 NOT NULL 强制」维度 Critical | { Pass / N/A / Fail } |
-| 5c | 文本字段长度冗余 3×（HAS_A3 > 0） | ⚠️ **告警档、不计 Fail**：`check_text_field_length.py` 在 SKILL 侧未接入 QR 步骤 0（口径以 `dev-logic-architect/references/quality-review-checklist.md` 为准）；有发现记入回检小结交人判 | { Pass / N/A / ⚠️ 告警 } |
+| 5c | 文本字段长度冗余（含人名类字段 DB ≥300 下限，HAS_A3 > 0） | `check_text_field_length.py` **传目录**运行（SKILL 已接入 QR 步骤 0 的 10c，判据以 `dev-logic-architect/references/quality-review-checklist.md` 为准，命令端不复述）：退出码 0 = 通过；`2` = 入参错 / 文档读不出 → 修后重跑，**不记 Fail**；`1` 必须读 `--json` 的 `issues[].severity`——有 `Critical` = Fail，仅 `Important` = 警告，记入回检小结交人判 | { Pass / N/A / ⚠️ 告警 / Fail } |
 | 5d | 列表页数据量级与分页策略（约定39-R13；含列表页即适用） | step-1.6「SKILL 脚本复核」的 `check_list_page_scale.py` **传目录**、退出码 = 0（`2`=入参错 → 修参数重跑，**不记 Fail**）**且** `--json` 的 `findings[]` 无 `level == "Important"`——⛔ S1「一张子表都没有」判 Important、**不占退出码**，只看 `$?` 会把它读成通过；「性能与边界限制」检查项 5 子项 Critical | { Pass / N/A / Fail } |
 | 6 | 待澄清问题清单（不中断原则；配合 SKILL「待澄清问题清单完整性」维度） | 单文件 `PENDING_CH ≥ 1`（即含 Module E 章节）OR 多文件 `PENDING_FILE == 1`（即存在 `99_待澄清问题清单.md`，即便无待澄清项也要保留标题）；并且 D-NNN/Q-NNN 编号合法 + 🔧 暂行方案列无空白 + 不接受模糊表述（grep `待确认\|按常规处理\|参考行业惯例` 命中 = 0） | { Pass / Fail } |
 | 7 | L2/L3 溯源覆盖率（SKILL「上游溯源完备性」维度） | `UPS_EXIT == 0` **且 `UPS_SKIPPED == 0`**（⛔ `skipped=true` = 未实质核验、不得当通过，口径同 step-1.6；阈值与逐类口径由 `check_upstream_reference.py` 内置，**命令端不复述**；`2`=入参错 → 修参数重跑，**不记 Fail**）| { Pass / Fail } |
-| 8 | **货币金额字段整数化（「货币金额字段整数化」维度 Critical）** | 由下方「B 三合一回写校验」脚本第 3 段统一核验：金额字段全部 `BIGINT`（或 64 位整数等价）+ `COMMENT` 含"单位:..."声明 + 无 `FLOAT/DOUBLE/REAL`（调上游 `check_money_field.py`）；本项目无金额字段时标 N/A | { Pass / N/A / Fail } |
+| 8 | **货币金额字段整数化（「货币金额字段整数化」维度 Critical）** | 由下方「B 三合一回写校验」脚本第 3 段统一核验：`check_money_field.py` 退出码 = 0（`2` = 入参错 / 读不出 → 修后重跑，不记 Fail；DECIMAL 是否合规——沿用项目既有约定或带降级理由——以 SKILL `flow-money-field.md` 为准，命令端不复述）；本项目无金额字段时标 N/A | { Pass / N/A / Fail } |
 
 **输出格式**（每项必填）：
 
@@ -89,7 +89,7 @@ cd -
   4. 第三方接口职责边界（HAS_THIRD_PARTY_DEP）：{✅ / N/A / ❌}
   5. 字典/枚举代码契约（HAS_A4）：{✅ / N/A / ❌}
   5b. ER 图 + 禁 FK + 索引列 NOT NULL（HAS_A3）：{✅ / N/A / ❌}
-  5c. 文本字段长度冗余 3×（HAS_A3，告警档）：{✅ / N/A / ⚠️}
+  5c. 文本字段长度冗余（HAS_A3）：{✅ / N/A / ⚠️ / ❌}
   5d. 列表页数据量级与分页策略（约定39-R13）：{✅ / N/A / ❌（含 Important S1 也记 ❌）}
   6. 待澄清问题清单：{✅ / ❌}
   7. L2/L3 溯源覆盖率：{覆盖率 N%；✅ / ⚠️ / ❌}
@@ -102,7 +102,7 @@ cd -
 
 > ⚠️ **本脚本是 `/sprint-design` 完成的硬门槛，不是描述性脚本**。Claude 在宣布"sprint-design 完成"**之前**，**必须**通过 Bash 工具**真实执行**下述脚本并**解析退出码**：
 > - `exit 0` → 通过，可标完成
-> - `exit 1` → **不允许**标完成；必须按报错提示补写 `memory/databaseBaseline.md` / `memory/systemPatterns.md` / 修复 DECIMAL 金额字段后**重跑**直到通过
+> - `exit 1` → **不允许**标完成；必须按报错提示补写 `memory/databaseBaseline.md` / `memory/systemPatterns.md` / 修复金额字段后**重跑**直到通过
 >
 > 不执行本脚本等于 sprint-design 未完成。命令执行器**严禁**在未跑此脚本的情况下回执"已完成"。
 
@@ -179,7 +179,7 @@ python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" >/dev/null 2>&1; MONEY_RC=$?
 if [ "$MONEY_RC" -ne 0 ]; then
   echo "❌ 金额字段「货币金额字段整数化」维度不通过（check_money_field.py exit=$MONEY_RC）："
   python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" 2>&1 | sed 's/^/   /'
-  echo "   修复步骤：金额字段类型改为 BIGINT + COMMENT 加'单位:分'/'单位:厘'等声明（见 references/currency-unit-reference.md）；重跑本脚本"
+  echo "   修复步骤：金额字段改 BIGINT + COMMENT 加'单位:分'等声明，或为 DECIMAL 补降级/沿用理由（见 references/flow-money-field.md、currency-unit-reference.md）；重跑本脚本"
   exit 1
 fi
 

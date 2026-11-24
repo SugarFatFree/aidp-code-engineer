@@ -937,14 +937,14 @@ com.{company}.{project}
 ```
 ❌ 错误做法：直接设为 NOT NULL
 CREATE TABLE sys_user (
-  real_name VARCHAR(150) NOT NULL COMMENT '真实姓名(前端限制 50 字符,DB 冗余 3×,PRD 必填)',
+  real_name VARCHAR(300) NOT NULL COMMENT '真实姓名(前端限制 100 字符,DB 冗余 3×,PRD 必填)',
   ...
 );
 问题：数据导入、第三方同步、历史数据迁移时可能没有真实姓名，导致插入失败
 
 ✅ 正确做法：数据库允许 NULL，代码层校验
 CREATE TABLE sys_user (
-  real_name VARCHAR(150) DEFAULT NULL COMMENT '真实姓名(前端限制 50 字符,DB 冗余 3×,前端注册时必填,代码层校验)',
+  real_name VARCHAR(300) DEFAULT NULL COMMENT '真实姓名(前端限制 100 字符,DB 冗余 3×,前端注册时必填,代码层校验)',
   ...
 );
 
@@ -1631,7 +1631,7 @@ CREATE TABLE sys_dict_data (
 | :- | :- | :- | :- | :- | :- | :- | :- |
 | 累计消耗点数 | 概览页「累计消耗」卡片 | 点数(整数) | 0 位,不舍入 | 全时段(无时间过滤) | 含已回收;不含逻辑删除记录 | 订单级汇总 | `GET /console/stat/overview` → `usedPoints` |
 | 累计消耗点数 | 用量监控页顶部数字 | 点数(整数) | 0 位,不舍入 | 全时段(无时间过滤) | 含已回收;不含逻辑删除记录 | 订单级汇总 | `GET /console/stat/overview` → `usedPoints` |
-| 日均调用量 | 趋势图 Y 轴 | 次 | 1 位,四舍五入 | 近 30 天(含今日,`[T-29 00:00, T 23:59]`,东八区) | 含失败调用;不含内部压测账号 | 天级聚合 | `GET /console/stat/trend` → `dailyCount` |
+| 日均调用量 | 趋势图 Y 轴 | 次 | 1 位,四舍五入 | 近 30 天(含今日,`[T-29 00:00:00, T 23:59:59]`,东八区) | 含失败调用;不含内部压测账号 | 天级聚合 | `GET /console/stat/trend` → `dailyCount` |
 
 > 用量监控页复用同一接口、不另算(此类说明写表下注,**不要塞进单元格**——同名指标各行的
 > 「权威取数口径」必须逐字一致,硬门据此比对)。

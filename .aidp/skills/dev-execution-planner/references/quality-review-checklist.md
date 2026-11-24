@@ -50,8 +50,7 @@
 | 扫代码根、非文档（续） | `check_env_config.py` | 它扫的是 `.env.example` / `.gitignore` / `application.yml`——**研发执行计划文档目录永远不可能有这些**，传文档目录只能得到 N/A 或结构性错误，不能作为通过依据。⛔ 不能进步骤 0；真实项目源码根由调用方单独传入，团队强制要求示例副本时加 `--require-env-example` |
 | 扫代码根、非文档 | `check_service_impl_stub.py` · `check_third_party_dep_reverse.py` · `scan_aidp.py` · `scan_mock_data.py` | 入参是**被测项目源码根**，传文档目录只会「没扫到文件 → exit 0」，那是 N/A 跳过、**不是通过**。⛔ 把它们塞进步骤 0 等于凭空多四个恒绿灯 |
 
-> ⚠️ `analyze_third_party_progress.py` 在样例上抛裸 traceback 且 `exit 1`（崩溃伪装成「检出违规」）——
-> 属已登记的已知缺口(见 `rationale.md`「已登记的已知缺口」)，**它不是检查门**（是分析工具），不纳入 QR 派发。
+> ⚠️ `analyze_third_party_progress.py` / `generate_third_party_checklist.py` 是**分析/生成工具、不是检查门**,不纳入 QR 派发;入参错与读不出文件均 `exit 2`(2026-11 已修,此前样例/目录入参会抛裸 traceback 且 `exit 1`)。
 
 ---
 

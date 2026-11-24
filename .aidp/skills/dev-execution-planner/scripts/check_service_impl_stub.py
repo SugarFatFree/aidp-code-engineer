@@ -279,11 +279,13 @@ def main() -> int:
         "critical_count": 0,
         "important_count": 0,
         "passed": True,
+        "read_errors": [],  # 读不出的实现文件:不得静默当作「无占位」
     }
 
     for f in files:
         result = analyze_file(f)
         if "error" in result:
+            aggregated["read_errors"].append({"file": result["file"], "error": result["error"]})
             continue
         # 过滤指定方法
         if args.method:
@@ -297,6 +299,14 @@ def main() -> int:
                 aggregated["critical_count"] += 1
             else:
                 aggregated["important_count"] += 1
+
+    # 读不出文件:全部读不出 = 环境错 exit 2;部分读不出 = 继续并在输出里可见(同全仓口径)
+    if aggregated["read_errors"] and len(aggregated["read_errors"]) == len(files):
+        print(f"错误: 全部 {len(files)} 个 Service 实现文件读不出: "
+              f"{aggregated['read_errors'][0]['error']}", file=sys.stderr)
+        return 2
+    if aggregated["read_errors"]:
+        print(f"⚠️  {len(aggregated['read_errors'])} 个文件读不出,结论仅覆盖其余文件", file=sys.stderr)
 
     # 判定退出码
     if aggregated["critical_count"] > 0:

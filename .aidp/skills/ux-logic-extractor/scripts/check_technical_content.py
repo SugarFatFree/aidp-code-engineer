@@ -37,7 +37,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # 正则与白名单(豁免词)
@@ -178,14 +178,20 @@ def is_exempt_line(line: str) -> bool:
     return any(p.search(line) for p in EXEMPT_LINE_PATTERNS)
 
 
-def scan_file(path: Path) -> List[Dict]:
-    """返回 issue 列表,每条 {file, line, rule, snippet, count}"""
+def scan_file(path: Path, read_errors: Optional[List[Dict]] = None) -> List[Dict]:
+    """返回 issue 列表,每条 {file, line, rule, snippet, count}
+
+    ⚠️ 读不出来(断链符号链接/无权限)登记到 read_errors,不当作 issue:原先伪装成
+    `READ_ERROR` 违规 → exit 1,与「检出违规」撞码,调用方会去「改 PRD」而 PRD 并没错;
+    与全目录姊妹脚本口径一致(部分不可读→继续+read_errors;全部不可读→exit 2)。
+    """
     issues: List[Dict] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception as exc:
-        return [{"file": str(path), "line": 0, "rule": "READ_ERROR",
-                 "snippet": str(exc), "count": 0}]
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        if read_errors is not None:
+            read_errors.append({"file": str(path), "error": f"{type(exc).__name__}: {exc}"})
+        return issues
 
     # 反例窗口:含 ❌/✅/反例 标记后的若干行视为反例上下文,豁免
     counterexample_remaining = 0
@@ -294,11 +300,17 @@ def main() -> int:
         return 2  # 入参错。原先返回 1 = **假红**:把一次路径写错升级成"PRD 产物违规",触发无谓重写返工
 
     all_issues: List[Dict] = []
+    read_errors: List[Dict] = []
     for f in targets:
-        all_issues.extend(scan_file(f))
+        all_issues.extend(scan_file(f, read_errors))
+    if read_errors and len(read_errors) == len(targets):
+        for e in read_errors:
+            print(f"错误: 无法读取 {e['file']}: {e['error']}", file=sys.stderr)
+        return 2  # 一个文件都没核验到 = 环境错,不是通过
 
     if args.json:
         print(json.dumps({
+            "read_errors": read_errors,
             "passed": len(all_issues) == 0,
             "scanned_files": len(targets),
             "issue_count": len(all_issues),
@@ -306,6 +318,8 @@ def main() -> int:
         }, ensure_ascii=False, indent=2))
         return 0 if not all_issues else 1
 
+    for e in read_errors:
+        print(f"⚠️  无法读取 {e['file']}: {e['error']}(该文件未核验)", file=sys.stderr)
     if not all_issues:
         print(f"✅ 通过: 扫描 {len(targets)} 个 PRD 文件,未发现技术内容残留")
         return 0

@@ -191,8 +191,8 @@ SHELL-MARKERS: .外壳类名,.外壳子类名      # 写在 shell 文件里，�
 - **6 字段标注块必填**：`THIRD_PARTY_MOCK`（vendor/api/since/expected_ready/owner/REMOVE_WHEN）；后端未部署的 `DEV_MOCK` 带 since/owner/REMOVE_WHEN
 - **30% 工时上限**：Mock 是临时占位，不投入超过真实对接 30% 工时
 - **★ 守卫策略按标记分流（⛔ 两类目的相反，绝不能混用）**——两个上游 SKILL 同一口径，单一信源 = `code-verification-loop` 维度 2B + `dev-execution-planner`「情况 0 / 情况 1」：
-  - **`THIRD_PARTY_MOCK`（第三方未交付）→ 必须运行时开关**（前端 env `VITE_THIRD_PARTY_MOCK_ENABLED` / 后端 `@Profile("mock")`）。它**要活到 UAT/Demo**，用构建期守卫会让它部署后失效。⛔ 严禁 `import.meta.env.DEV` / `@Profile("dev")` 这类构建期或环境专属守卫 → 机器门判 **Critical**。
-  - **`DEV_MOCK`（同项目后端接口未部署）→ 应当构建期裁掉**。它**绝不能进生产**，`if (import.meta.env.DEV)` 正是**要求的合规形态**；反过来给它套运行时开关才该提示（那意味着这个 dev mock 在生产有机会被打开）→ 机器门判 **Important**（`dev_mock_runtime_switch`）。
+  - **`THIRD_PARTY_MOCK`（第三方未交付）→ 必须运行时开关**（前端 env `VITE_THIRD_PARTY_MOCK_ENABLED` / 后端 `@Profile("mock")`）。它**要活到 UAT/Demo**，用构建期守卫会让它部署后失效。⛔ 严禁 `import.meta.env.DEV` / `@Profile("dev")` 这类构建期或环境专属守卫 → 机器门判 Critical（严重度以 CVL 维度 2B 为准）。
+  - **`DEV_MOCK`（同项目后端接口未部署）→ 应当构建期裁掉**。它**绝不能进生产**，`if (import.meta.env.DEV)` 正是**要求的合规形态**；反过来给它套运行时开关才该提示（那意味着这个 dev mock 在生产有机会被打开）→ 仅提示（严重度以 CVL 维度 2B 为准）。
   - ⛔ **别拿其中一类的结论去套另一类**：扫描器「构建期守卫 = Critical」**只对 `THIRD_PARTY_MOCK` 成立**。
 - **★ 全生命周期 4 阶段**（`dev-manual-testcase` + `code-verification-loop` 维度 2B 核验）：① 开发期 Mock → ② 开发期切真实 → ③ 部署期 Mock（UAT/Demo）→ ④ 真实对接后清理验证（代码/fixture/开关/拦截全删 + grep 验证）。`.env.*` baseURL 已切真实但 mock 任一残留 → **Critical** 回 `/sprint-bugfix`
   - **★ 阶段②/④ 必触发约定 22 文档级联（不止清代码）**：切真实不是"改改 baseURL 删删 mock"就完了——按约定 22「第三方 Mock→真实对接」实质变更走文档级联（级联层级见约定 22，此处不复述）。**分工**：代码侧 Mock 残留由 `code-verification-loop` 维度 2B 核验；**文档侧**（详细设计/接口设计仍写 Mock）由约定 22 的 `/sprint-dev` Step X.0.0 维度 6 开发期回写 + `/version` Step 3.3.10 发布期收敛兜底。**只清代码不回写设计 = 违反约定 22**。

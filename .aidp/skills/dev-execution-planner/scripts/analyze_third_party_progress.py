@@ -203,9 +203,13 @@ def main():
     plan_path = Path(args.plan_doc)
     if not plan_path.exists():
         print(f"错误: 文件不存在: {plan_path}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(2)
 
-    content = plan_path.read_text(encoding='utf-8')
+    try:
+        content = plan_path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as exc:  # 目录/断链/无权限/非 UTF-8:环境错,不抛裸 traceback
+        print(f"错误: 读不出文件 {plan_path}: {exc}", file=sys.stderr)
+        sys.exit(2)
     rows = extract_checklist_rows(content)
     summary = summarize(rows)
 

@@ -191,9 +191,13 @@ def main():
     design_path = Path(args.design_doc)
     if not design_path.exists():
         print(f"错误: 文件不存在: {design_path}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(2)
 
-    content = design_path.read_text(encoding='utf-8')
+    try:
+        content = design_path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as exc:  # 目录/断链/无权限/非 UTF-8:环境错,不抛裸 traceback
+        print(f"错误: 读不出文件 {design_path}: {exc}", file=sys.stderr)
+        sys.exit(2)
     interfaces = extract_third_party_interfaces(content)
 
     if args.json:

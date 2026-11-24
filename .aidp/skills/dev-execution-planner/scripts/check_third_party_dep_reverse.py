@@ -111,6 +111,10 @@ LOCALHOST_PATTERNS = [
 ]
 
 # 跳过目录
+# 读不出的文件(断链符号链接/无权限):记录而非静默 continue,进 --json 的 read_errors 与文本告警。
+# 否则「读不出」与「没有外部依赖信号」同形,会把 B.7 误标成「无外部依赖」。
+READ_ERRORS: List[str] = []
+
 SKIP_DIRS = {"node_modules", "target", "build", "dist", ".git", ".idea", "__pycache__", "venv", ".venv", "out"}
 
 # 配置文件扩展名
@@ -138,6 +142,7 @@ def scan_code_for_http_clients(root: Path) -> List[Dict]:
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            READ_ERRORS.append(str(path))
             continue
 
         for client_type, patterns in HTTP_CLIENT_PATTERNS.items():
@@ -184,6 +189,7 @@ def scan_config_for_external_urls(root: Path) -> List[Dict]:
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            READ_ERRORS.append(str(path))
             continue
 
         # 找包含 URL 的配置行
@@ -224,6 +230,7 @@ def scan_dependencies_for_vendors(root: Path) -> List[Dict]:
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            READ_ERRORS.append(str(path))
             continue
 
         content_lower = content.lower()
@@ -329,6 +336,7 @@ def main() -> int:
         "config": external_config,
         "dependencies": dep_findings,
         "passed": True,  # 此脚本不直接判通过/不通过,只输出清单供设计期参考
+        "read_errors": list(READ_ERRORS),  # 非空 = 扫描样本残缺,「无信号」结论不可信
     }
     if args.aggregate:
         aggregated["reuse_signals"] = reuse_signals
@@ -342,6 +350,9 @@ def main() -> int:
 
     # 文本输出
     print(f"扫描根目录: {args.root}\n")
+    if READ_ERRORS:
+        print(f"⚠️  {len(READ_ERRORS)} 个文件读不出(如 {READ_ERRORS[0]}),扫描样本残缺,"
+              f"「无外部依赖信号」不可信\n", file=sys.stderr)
     print(f"📊 第三方依赖反向兜底扫描结果\n")
 
     print(f"代码层(HTTP 客户端调用): 共 {len(code_findings)} 处, 外部地址 {len(external_code)} 处")

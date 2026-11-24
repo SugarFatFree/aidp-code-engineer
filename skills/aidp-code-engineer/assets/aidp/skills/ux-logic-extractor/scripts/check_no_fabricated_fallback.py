@@ -222,6 +222,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"错误: 无法读取 {r['file']}: {r['read_error']}", file=sys.stderr)
         return 2
 
+    # 部分不可读:--json stdout 是纯数组、契约不能改,故走 stderr,避免「未核验」被静默当成通过
+    for r in read_errors:
+        print(f"⚠️ 无法读取 {r['file']}: {r['read_error']}(该文件未核验)", file=sys.stderr)
+
     if args.json:
         print(json.dumps(all_findings, ensure_ascii=False, indent=2))
     else:

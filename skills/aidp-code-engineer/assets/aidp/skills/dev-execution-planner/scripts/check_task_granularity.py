@@ -730,6 +730,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("⚠️ 未发现任何 .md 文件", file=sys.stderr)
         return 2
 
+    # ⚠️ 读不出的 .md 若被 analyze_file 的 `except OSError` 吞成「无发现」→ exit 0 假绿。
+    #    先整体预检,任一不可读即 exit 2(环境错,stderr 点名),绝不在残缺样本上出结论。
+    unreadable = []
+    for f in md_files:
+        try:
+            f.read_bytes()
+        except OSError as e:
+            unreadable.append(f"{f}({e.__class__.__name__})")
+    if unreadable:
+        print("错误: 以下文档读不出来,拒绝在残缺样本上给出结论: " + ", ".join(unreadable), file=sys.stderr)
+        return 2
+
     all_findings: List[Dict] = []
     scanned_tasks = 0
     for f in md_files:

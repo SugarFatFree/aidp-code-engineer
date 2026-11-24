@@ -193,6 +193,13 @@ class RuleTests(GuardBase):
                     self.assertEqual(result["kind"], "none")
                     loader.assert_not_called()
 
+    def test_build_with_skip_tests_not_blocked_by_missing_allowlist(self):
+        ctx = self.context()["execution_context"]
+        for cmd in ("mvn clean package -DskipTests", "mvn package -Dmaven.test.skip=true"):
+            res = self.ev(cmd, execution_context=ctx)
+            self.assertTrue(res["allowed"], (cmd, res))
+        self.assertFalse(self.ev("mvn test", execution_context=ctx)["allowed"])
+
     def test_only_exact_build_metadata_subcommands_are_exempt(self):
         from unittest.mock import patch
         ctx = self.context()["execution_context"]

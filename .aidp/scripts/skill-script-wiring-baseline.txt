@@ -22,11 +22,6 @@ dev-execution-planner/check_ddl_consistency.py          # SKILL 自检，非命�
 dev-execution-planner/generate_third_party_checklist.py # 产物生成器
 dev-execution-planner/scan_aidp.py                      # SKILL 内部上下文扫描
 dev-logic-architect/check_ddl_consistency.py            # SKILL 自检，非命令端硬门
-dev-logic-architect/check_third_party_mock_runtime.py   # 核心原则 14。⚠️ 已核实：上游只在
-                                               # references/flow-self-check.md（**作者侧自检**）列它，
-                                               # QR 派发面 flow-qr-dispatch.md 零命中，索引表标「⚠️ 待接入」。
-                                               # 原注释写「QR 内部执行」不准确，已更正——白名单的前提
-                                               # 必须是核实过的事实，抄一个假前提等于给自己发豁免。
 # —— 以下 4 条：本轮把 check_skill_ref_freshness 的「裸名全局匹配」改成「精确路径 / 同文档内
 #    脚本名+SKILL名 共现」之后才冒出来的。此前被跨 SKILL 同名脚本掩盖（实测 6 组同名），
 #    典型：ux-logic-extractor 的同名脚本出现在别处，就让 dev-logic-architect 那份永不报。——
@@ -34,9 +29,6 @@ dev-execution-planner/check_service_impl_stub.py        # 已核实：上游 ref
                                                # 明确写了调用式，属 SKILL 内部编排
 dev-execution-planner/check_third_party_dep_reverse.py  # 已核实：上游 flow-execution.md 反向兜底段自调
 dev-execution-planner/scan_mock_data.py                 # 已核实：上游 flow-granularity.md 清单项自调
-dev-logic-architect/check_no_fabricated_fallback.py     # 上游索引表标「❌ 假红率待验证」、只在
-                                               # flow-self-check.md 作者侧列出 —— 上游自己都没启用，
-                                               # 命令端不该先接。⚠️ 上游转为启用后须回来接线并删本行。
 dev-manual-testcase/strip_comments.py          # 零残留断言实跑的【取材器】，不是校验器；
                                                # 命令端跑齐的是 7 个校验器，它不在那一组
 

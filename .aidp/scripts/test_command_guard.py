@@ -613,7 +613,7 @@ def evaluate(command, root=".", execution_context=None, allow_full=False):
         if ok:
             return _result(True, "full-regression 已由 autopilot 授权放行", "", res["kind"])
         return _result(False, f"--allow-full 被拒绝：{why}", FULL_HINT, res["kind"])
-    if allow_error and res["kind"] != "ruff":
+    if allow_error and res["kind"] != "ruff" and not res["allowed"]:
         return _result(False, f"相关测试白名单校验失败：{allow_error}", FULL_HINT, res["kind"])
     return res
 

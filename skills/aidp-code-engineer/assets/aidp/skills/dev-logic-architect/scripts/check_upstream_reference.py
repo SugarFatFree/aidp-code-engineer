@@ -484,4 +484,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except OSError as _e:  # 文件读不出来(断链符号链接/无权限)= 环境错,⛔ 不可冒充「检出违规」的 exit 1,也不可静默当通过
+        print(f"错误: 读取文件失败 {_e}", file=sys.stderr)
+        sys.exit(2)

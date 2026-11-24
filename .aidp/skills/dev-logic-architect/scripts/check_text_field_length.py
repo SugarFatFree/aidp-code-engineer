@@ -20,6 +20,7 @@ check_text_field_length.py — 文本字段长度冗余合规扫描
      - TEXT/MEDIUMTEXT/LONGTEXT(非 VARCHAR)
      - 冗余 / 快照字段(COMMENT 写「冗余自 X」「快照」「系统写入」「自动复制」:值来自另一张表或系统,
        不是用户在本处输入的,无前端限制可言)
+  3b. 人名类字段(姓名/人员名称)DB 长度 ≥ 300(下限,与前端限制 × 3 取大):个别少数民族姓名可达几十个字
   4. VARCHAR 长度不超出 utf8mb4 单字段上限(16383)
   5. COMMENT 已显式标豁免关键词(强格式/系统生成/算法决定/JSON 字符串/Base64/BCrypt 等)
      时尊重作者声明,即使字段名命中自由输入关键词也不再要求"前端限制 N + 3× 冗余"
@@ -337,6 +338,34 @@ FIELD_LINE_PATTERN = re.compile(
 MYSQL_UTF8MB4_VARCHAR_MAX = 16383
 
 
+# 人名类字段专项下限:个别少数民族姓名可达几十个字、一般 100 字内 → 前端限制 100 × 3 冗余 = 300。
+# 下限与「前端限制 × 3」取大(PRD 只写「最长 20」时 DB 也不得低于 300)。
+PERSON_NAME_MIN_DB_LENGTH = 300
+PERSON_NAME_FIELD_RE = re.compile(
+    r"(?:^|_)(?:real_?name|full_?name|person_?name|employee_?name|staff_?name|member_?name|"
+    r"contact_?name|operator_?name|creator_?name|user_?real_?name|nick_?real_?name|surname|given_?name)(?:$|_)")
+PERSON_NAME_COMMENT_KEYWORDS = (
+    "姓名", "真实姓名", "人员名称", "人员姓名", "用户姓名", "员工姓名", "联系人姓名", "操作人姓名", "创建人姓名",
+    "申请人姓名", "审批人姓名", "责任人姓名", "负责人姓名", "成员姓名", "人名")
+# 标签段里出现这些词说明不是「完整姓名」本体(拼音/首字母/脱敏展示/姓名长度等衍生信息)
+PERSON_NAME_COMMENT_EXCLUDES = ("拼音", "首字母", "缩写", "脱敏", "长度")
+
+
+def is_person_name_field(field_name, comment):
+    """人名类字段:字段名命中 real_name/full_name 等,或 COMMENT 写了姓名/人员名称等。
+    ⚠️ 不含「用户名/登录名/账号」(登录账号是强格式,不是人名)与商品/文件/部门等「名称」。"""
+    if PERSON_NAME_FIELD_RE.search(field_name.lower()):
+        return True
+    if not comment:
+        return False
+    # 只看 COMMENT 的「标签段」(第一个括号/逗号/分号之前):括号里的说明常顺带提到「姓名」
+    # (如 备注「可填联系人姓名」、身份证号「与姓名一并校验」),整串子串匹配会把它们判成人名字段(假红)。
+    head = re.split(r"[(（,,;;:：]", comment, maxsplit=1)[0]
+    if any(x in head for x in PERSON_NAME_COMMENT_EXCLUDES):
+        return False
+    return any(k in head for k in PERSON_NAME_COMMENT_KEYWORDS)
+
+
 def field_match_keyword(field_name, kw_dict):
     fname_low = field_name.lower()
     if fname_low in kw_dict:
@@ -437,6 +466,16 @@ def check_field(field_name, raw_type, comment, table_name, file_path):
             "severity": "Critical",
             "rule": "VARCHAR 超出 utf8mb4 上限",
             "hint": f"VARCHAR({db_len}) 超出 utf8mb4 单字段上限 {MYSQL_UTF8MB4_VARCHAR_MAX} 字符,改用 TEXT",
+        })
+
+    # 人名类字段专项下限(与豁免/自由输入分类无关:快照/冗余的人名同样要装得下完整姓名)
+    if is_person_name_field(field_name, comment) and db_len < PERSON_NAME_MIN_DB_LENGTH:
+        issues.append({
+            **entry,
+            "severity": "Critical",
+            "rule": "DB 长度低于人名字段下限 300",
+            "hint": f"人名类字段(姓名/人员名称)DB 长度不得低于 {PERSON_NAME_MIN_DB_LENGTH}(前端限制建议 100 字符 × 3 冗余),当前 {db_len};"
+                    f"与「前端限制 × 3」取大者",
         })
 
     # 豁免字段优先识别
@@ -651,4 +690,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except OSError as _e:  # 文件读不出来(断链符号链接/无权限)= 环境错,⛔ 不可冒充「检出违规」的 exit 1,也不可静默当通过
+        print(f"错误: 读取文件失败 {_e}", file=sys.stderr)
+        sys.exit(2)

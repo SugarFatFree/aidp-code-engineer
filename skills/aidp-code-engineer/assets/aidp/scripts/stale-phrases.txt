@@ -12,3 +12,4 @@ Step 6[^\n|]{0,20}询问部署 | **/*.md | Step 6 仅在父 deploy/live-tests/fu
 implement \+ static(?!\s*\+\s*related-test) | **/*.md | 普通开发/修复默认 implement + static + related-test | V1.2.3
 未执行（原因） | **/*.md | CVL 未授权项状态用 NOT_REQUESTED（未授权），不再用「未执行（原因）」 | V1.2.3
 /sprint-aiauto-test[^\n]{0,60}--grant[ =]full-regression|独立 ?aiauto(?:-test)?[^\n。；|]{0,20}可(?:以)?(?:跑|执行|做)?(?:版本)?全量 | **/*.md | 独立 aiauto 只接受明确验收目标；版本全量只经真实 autopilot 委派 | V1.2.3
+关闭会同时停用测试命令护栏 | **/*.md | 入口门与测试范围门已拆开：entry_guard.enabled / test_guard.enabled 与 .entry-guard-off / .test-guard-off 互相独立 | V1.2.4

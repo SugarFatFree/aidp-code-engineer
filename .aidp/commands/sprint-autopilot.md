@@ -94,7 +94,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-aut
 
 **跨版本与跨tick**：真实当前根路径存`autopilot.execution_context`，各版另存`autopilot_root_context`供跨目标恢复（保留历史execution_context），先校验继承；损坏时返回具体冲突；跨版本由resolve-autopilot-root按真实来源/已选持续意图选择对应根，同版续跑与回到已有版本复用原路径及已用预算。旧无源/once历史不能给新版本授grant。仅准发布时根版本取PRE_RELEASE_VERSION，但TARGET_VERSION仍为空；两者皆空走无任务/配置分支。Phase2从根幂等fork-version得到受限release子路径；同版尾段也用该子任务。每次进入阶段取回路径，不假设shell状态持久；前版历史execution_context不覆盖。正式编号/开工门与Sprint子任务协议保留。
 
-**根预算是有限硬顶（如实边界）**：根任务预算（默认7200秒/agents 64/retries 12等，跨tick累计，值见`execution_policy.py` COMMAND_BUDGETS）耗尽即`budget-exhausted`冻结，续额只能由用户真实原话经`autopilot_unfreeze.py --renew-budget`完成，调度/AI不得自动重置——这是有意保留的安全边界，因此多Sprint长周期版本**不承诺0人工**。可见性：`aidp_scheduler.py status`展示各版本预算占用与容量说明，占用首次越过80%/95%发`loop-budget-near-exhausted`告警，便于冻结前决定是否续额。
+**根预算与0人工（如实边界）**：autopilot来源下累计类预算（默认`elapsed_seconds`7200/`scanned_files`50000/`retries`12/`selected_tests`5000，跨tick累计，值见`execution_policy.py` COMMAND_BUDGETS）按硬限处理，**真实耗尽**（已用≥上限）才`budget-exhausted`冻结；单步估算偏大只拒绝该步骤、给降耗建议，不冻结版本。`agents`/`processes`是**并发硬限**（同时运行数，满额排队，`acquire-slot`/`release-slot`），不累计、不会“用完”；崩溃/被kill的子Agent遗留槽位在下一轮tick开始时按链路回收。续额必须有用户真实授权：要真正0人工，用户在`aidp_scheduler.py install --authorization-text "<原话>" --auto-renew-budget N`时**一次性授权N次自动续额**，耗尽时调度器按该授权自动续一个基本量（告警`loop-budget-auto-renewed`；只放宽执行资源，不授予任何业务动作），次数用完才冻结，之后只能由用户原话经`autopilot_unfreeze.py --renew-budget`续额，调度/AI不得自行重置。未授权自动续额时多Sprint长周期版本不承诺0人工。可见性：`aidp_scheduler.py status`展示各版本预算占用与容量说明，占用首次越过80%/95%发`loop-budget-near-exhausted`告警。
 
 ## formal 流程
 

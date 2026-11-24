@@ -30,6 +30,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd docs/design/detail/{version}/
 
 # 1) 文件数 + NN_ 前缀回检（Step 1.5 落盘约束 + Step 1.8 检查项 1）
+# 1b 拆分数回检不在本块算：本块 FILES 含管家文件，仅供 1a；1b 按 sprint-design.md「拆分文件数回检」行的 CONTENT/FILES/MAX 三行（只算内容主文档）在仓库根执行
 FILES=$(ls *.md 2>/dev/null | wc -l)
 BARE_NAMES=$(ls *.md 2>/dev/null | grep -vcE '^[0-9]{2}_')
 HAS_INDEX=$(ls 00_索引.md 2>/dev/null | wc -l)
@@ -66,7 +67,7 @@ cd -
 | # | 检查项 | Pass 条件 | 当前结果 |
 |---|--------|---------|---------|
 | 1a | 文件数与编号 | `FILES ≤ 1`（单文件，免检）OR `FILES ≥ 2 && BARE_NAMES == 0 && HAS_INDEX == 1` | { Pass / Fail：FILES=N, BARE=N, INDEX=N } |
-| 1b | 拆分文件数控制 | `FILES ≤ 5` 或 单文件最大行数 ≥ 800 | { Pass / Fail } |
+| 1b | 拆分文件数控制 | 用 sprint-design.md「拆分文件数回检」行的 `FILES`/`MAX`（只算内容主文档，不用本块含管家文件的 FILES）：`FILES ≤ 5` 或 `MAX ≥ 800` | { Pass / Fail } |
 | 2 | L1 文档级头部 | `L1_MISS == 0`（每个文件头部前 20 行都含上游引用块） | { Pass / Fail：缺失 M 个文件 } |
 | 3 | 对外接口规范（HAS_OPEN_API=true） | Step 1.7 9 项硬规范全部 ✓ | { Pass / N/A / Fail } |
 | 4 | 第三方接口职责边界（HAS_THIRD_PARTY_DEP=true） | Step 1.7.5 5 项 ✓ | { Pass / N/A / Fail } |
@@ -102,6 +103,7 @@ cd -
 
 > ⚠️ **本脚本是 `/sprint-design` 完成的硬门槛，不是描述性脚本**。Claude 在宣布"sprint-design 完成"**之前**，**必须**通过 Bash 工具**真实执行**下述脚本并**解析退出码**：
 > - `exit 0` → 通过，可标完成
+> - `exit 2` → 入参错（check_money_field.py），修参数重跑，不记 Fail
 > - `exit 1` → **不允许**标完成；必须按报错提示补写 `memory/databaseBaseline.md` / `memory/systemPatterns.md` / 修复金额字段后**重跑**直到通过
 >
 > 不执行本脚本等于 sprint-design 未完成。命令执行器**严禁**在未跑此脚本的情况下回执"已完成"。
@@ -175,8 +177,10 @@ fi
 MONEY_CHECK_SCRIPT="{{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_money_field.py"
 # ⛔ 判定以退出码为准（SKILL 口径：非 0 即维度 17 不通过，Important 也算）；脚本缺失 = SKILL 安装残缺，按不通过处理，不跳过
 [ -f "$MONEY_CHECK_SCRIPT" ] || { echo "❌ 未找到 $MONEY_CHECK_SCRIPT（SKILL 安装残缺）——「货币金额字段整数化」无从核验，按不通过处理"; exit 1; }
-python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" >/dev/null 2>&1; MONEY_RC=$?
-if [ "$MONEY_RC" -ne 0 ]; then
+python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" >/dev/null 2>&1 && MONEY_RC=0 || MONEY_RC=$?   # set -e 下不得裸 `;MONEY_RC=$?`
+if [ "$MONEY_RC" -eq 2 ]; then
+  echo "⚠️ check_money_field.py 入参错 / 读不出（exit=2）：修参数后重跑，不记 Fail"; exit 2
+elif [ "$MONEY_RC" -ne 0 ]; then
   echo "❌ 金额字段「货币金额字段整数化」维度不通过（check_money_field.py exit=$MONEY_RC）："
   python3 "$MONEY_CHECK_SCRIPT" "$DESIGN_DIR" 2>&1 | sed 's/^/   /'
   echo "   修复步骤：金额字段改 BIGINT + COMMENT 加'单位:分'等声明，或为 DECIMAL 补降级/沿用理由（见 references/flow-money-field.md、currency-unit-reference.md）；重跑本脚本"

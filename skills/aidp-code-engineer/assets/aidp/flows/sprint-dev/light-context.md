@@ -83,7 +83,7 @@ Sprint派发的实际fork围栏见 `/sprint-batch` Step3：重复allow-action仅
 
 ## 执行围栏、预算与失败
 
-本节开发/测试与 autopilot 受管动作先核父action并预留资源，包装器已预留则不重复；普通交付只按「close」独立分支执行，不新增 grant/预算记录。直接工具/Agent按下方配方；prompt带context/revision/action/剩余budget/真实输入hash/写集/业务验收，并行写集不交叉，共享状态主流程串行写。并行判定见 `light-parallel.md`。
+本节开发/测试与 autopilot 受管动作先核父action并预留资源（`scanned_files`/`elapsed_seconds`/`selected_tests`/`retries`；`agents`/`processes` 是并发硬限，改用 `acquire-slot`/`release-slot`，`reserve-budget` 对它们只做累计统计），包装器已预留则不重复；普通交付只按「close」独立分支执行，不新增 grant/预算记录。直接工具/Agent按下方配方；prompt带context/revision/action/剩余budget/真实输入hash/写集/业务验收，并行写集不交叉，共享状态主流程串行写。并行判定见 `light-parallel.md`。
 
 ```bash
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?父路径}"
@@ -113,7 +113,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py record-outcome --root . \
   --root-cause "$ROOT_CAUSE" --evidence-json "$EVIDENCE_JSON"
 ```
 
-RESOURCE取scanned_files/selected_tests/processes/agents/retries/elapsed_seconds。scanned_files计内容读取次数；static/run-scope已预留的不重复扣费。monotonic计真实耗时，仅未使用预留可返。预算跨tick保留；超额按verification-inputs核范围/缓存/缺口。
+RESOURCE取scanned_files/selected_tests/processes/agents/retries/elapsed_seconds。scanned_files 按同一路径去重计量内容读取，缓存命中不计费；static/run-scope已预留的不重复扣费。monotonic计真实耗时，仅未使用预留可返。预算跨tick保留；超额按verification-inputs核范围/缓存/缺口。
 
 FAIL/TOOL_ERROR/ENV_UNAVAILABLE/UNVERIFIED/NOT_REQUESTED分别保留，不把scope错误都开BUG。同根因同inputs停止retry；变化只复验delta且受预算限制。equivalent-evidence须显式授权并保留原错误。规划QR同revision/inputs真实hash匹配才复用，不建第二清单。
 

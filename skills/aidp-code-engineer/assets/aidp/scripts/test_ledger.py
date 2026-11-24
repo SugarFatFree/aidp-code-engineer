@@ -30,6 +30,7 @@ Sprint 账本。外置 full 账本按仓库身份/相对 cwd/内容树匹配，�
 from __future__ import annotations
 
 import argparse
+import contextlib
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -563,7 +564,8 @@ class _ValidationProgress:
         self.root, self.context = root, context
         self.actual = {name: {} for name in stages}
         self.paths, self.selected, self.run_ids = set(), set(), []
-        self.observations = {"unique_files": 0, "metadata_entries": 0, "cache_hits": 0, "tool_objects": 0}
+        self.observations = {"unique_files": 0, "metadata_entries": 0, "cache_hits": 0, "tool_objects": 0,
+                             "deduplicated_reads": 0}
         options = {"defer_input": True} if defer_input else {}
         self.ticket = reserve_validation(root, context, stages, input_hash, action=action, **options)
         self.finished = False
@@ -578,7 +580,11 @@ class _ValidationProgress:
     def observe(self, stage):
         def record(io, paths):
             values = self.actual[stage]
-            values["scanned_files"] = values.get("scanned_files", 0) + io["content_reads"]
+            # 同一路径的重复读取只计一次（跨阶段去重）；缺路径归因时不能证明重复，按实读计费。
+            fresh = set(paths) - self.paths
+            charged = min(io["content_reads"], len(fresh)) if paths and io["content_reads"] else io["content_reads"]
+            self.observations["deduplicated_reads"] = self.observations.get("deduplicated_reads", 0) + (io["content_reads"] - charged)
+            values["scanned_files"] = values.get("scanned_files", 0) + charged
             self.paths.update(paths)
             self.observations["unique_files"] = len(self.paths)
             self.observations["metadata_entries"] += io["metadata_entries"]
@@ -741,11 +747,11 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
     requested_timeout = timeout
     if execution_context is not None:
         if scope == "version" and timeout is None:
-            from execution_policy import reserve_budget
-            available = reserve_budget(root, execution_context, "elapsed_seconds", 0, action=action)["remaining"]
-            timeout = min(3600, available)
+            from execution_policy import step_timeout
+            timeout = step_timeout(root, execution_context, "version-command", action=action)
         else:
-            timeout = timeout or min(30, execution_context["execution_budget"]["elapsed_seconds"])
+            from execution_policy import step_timeout
+            timeout = step_timeout(root, execution_context, "command", timeout, action=action)
     context = {"root": str(root), "cwd": str(cwd), "scope": scope, "env_id": env_id,
                "environment_hash": environment_hash(), "command": list(command),
                # full 默认剩余预算随结算变化，不能让同树已通过证据因此失效。
@@ -865,6 +871,20 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
             # 先存 RUNNING，kill/崩溃后不可能回退复用更早的 PASS。
             rows.append(row)
             save(root, rows, ledger)
+        # 并发硬限：同时运行的测试进程共用根任务同一并发池；满额排队（可见、可取消），
+        # 取得槽位后才起进程并计时，等待不计入命令超时，结束/异常/超时都释放。
+        slots = contextlib.ExitStack()
+        if execution_context is not None:
+            import execution_policy as _policy
+            try:
+                slots.enter_context(_policy.concurrency_slot(
+                    root, execution_context, "test", wait_seconds=max(60.0, float(timeout or 0)) if timeout else 600.0,
+                    label=" ".join(command)[:120]))
+            except _policy.PolicyError as exc:
+                row.update(status="ERROR", evidence_status="UNVERIFIED", command_status="NOT_EXECUTED",
+                           process_started=False, error=str(exc), finished_at=time.time())
+                persist_run(root, ledger, row)
+                raise
         started = time.monotonic()
         error = None
         process = None
@@ -876,6 +896,7 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
             for name, path in row["output"].items():
                 streams[name] = Path(path).open("w+b")
         except OSError as exc:
+            slots.close()
             for stream in streams.values():
                 stream.close()
             row.update(status="ERROR", evidence_status="UNVERIFIED", command_status="NOT_EXECUTED",
@@ -936,6 +957,7 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
                     process.wait()
                 relay_output()
             finally:
+                slots.close()   # 进程已结束/被杀：释放并发槽位
                 if process is not None:
                     for name in streams:
                         pipe = getattr(process, name)
@@ -1384,7 +1406,8 @@ def _run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=Fals
         context = execution_context_data(root, execution_context)
         require_action(context, "related-test")
         count = len(scope["runs"])
-        timeout = timeout or min(30, context["execution_budget"]["elapsed_seconds"] / max(count, 1))
+        from execution_policy import step_timeout
+        timeout = timeout or step_timeout(root, context, "command", None, action="related-test") / max(count, 1)
         # 同树证据不消耗新进程/测试额度；锁后失效而无预留时明确终止，不能挪用其它运行项预算。
         ledger = Path(ledger_root).resolve() if ledger_root else root
         with lock(ledger, "write"):

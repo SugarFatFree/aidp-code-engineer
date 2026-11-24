@@ -63,7 +63,7 @@ skill 在 Web 端的行为概要（详见 auto-test-runner `references/execution
 > ✅ **「自由巡检」已由 auto-test-runner 支持**（run-context `free_scan`，默认关）：仅对用户明确目标/当前验收清单内授权页面导航 + 拉运行时错误，不发现全系统页面。命令端经 `--free-scan` 开启，**不自行实现**（约定 21）。
 > 巡检项在 `results/` 里以 `entry_kind="free-scan"` + `case_id` 前缀 `运行时-` 落盘（`check_result.py` 校验二者一致）；页数超 `free_scan_max_pages`（默认 20）时 SKILL **不静默截断**，单写一条 block 巡检项列明被跳过页面——它同属巡检项，**不自动写入问题汇总清单**，只作为待确认项记入 AI 测试报告 §2.6 并在 #F 通知中列出（见 2.4），否则「巡检过了」名不副实。
 
-### 2.2 chrome-devtools-mcp 调用（★ skill 内部行为示意 — 由 auto-test-runner「Web 端驱动适配器」执行）
+### 2.2 chrome-devtools-mcp 调用（★ skill 内部行为示意 — 由 auto-test-runner「驱动适配层」（`references/driver-web.md`）执行）
 
 > ⛔ **命令端不直驱**：以下工具由 auto-test-runner 的 Web 驱动适配器内部调用（约定 21），列出仅供理解。
 
@@ -104,7 +104,7 @@ MCP tool 调用（下列工具名以 `mcp__chrome-devtools__*` 占位；**远程
 
 ### 2.3 `--skip-login` 模式
 
-经 run-context 告知 auto-test-runner「跳过登录流程」：本轮测试用例必须是「无需登录」类型（登录页 / 注册页 / 公开介绍页等），skill 直接进入用例执行、不走登录态准备。
+run-context 的各角色账号区不填（标 `{待编排层传入}`），「当前端会话」保持「未登录」；本轮用例必须是「无需登录」类型（登录页 / 注册页 / 公开介绍页等）。Phase 3 结果校验此时不加 `--require-runtime-preflight`。
 
 ### 2.4 ★ 运行时错误全程捕获与 bug 记录（不在用例里也要记）
 

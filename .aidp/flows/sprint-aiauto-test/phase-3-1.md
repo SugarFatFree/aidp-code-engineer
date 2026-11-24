@@ -103,6 +103,7 @@ mkdir -p "$SHOT_DIR"
 
 if [ -f {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py ]; then
   CR_WEBMCP=""
+  CR_PREFLIGHT="--require-runtime-preflight"; [ "${SKIP_LOGIN:-0}" = "1" ] && CR_PREFLIGHT=""   # --skip-login 的公开页用例无 identity/protected_api 预检，不强求
   CR_CLIENT_JSON=$(python3 {{AIDP_HOME}}/scripts/check_client_mcp.py --version "${TARGET_VERSION:?}" --detect --json); CR_CLIENT_EXIT=$?
   if [ "$CR_CLIENT_EXIT" -ne 0 ] || ! CR_WEBMCP=$(printf '%s' "$CR_CLIENT_JSON" | python3 -c "import json,sys
 d=json.load(sys.stdin)
@@ -114,7 +115,7 @@ print('--webmcp-enabled' if d.get('declared') is True and d.get('client_type')==
   fi
   python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" del client_mcp_gate_fail_streak
   CR_JSON=$(python3 {{AIDP_HOME}}/skills/auto-test-runner/scripts/check_result.py \
-    "${BTR}/build-${BUILD}"/round-*/results/ --require-runtime-preflight ${CR_WEBMCP} --json 2>/dev/null); CR_EXIT=$?
+    "${BTR}/build-${BUILD}"/round-*/results/ ${CR_PREFLIGHT} ${CR_WEBMCP} --json 2>/dev/null); CR_EXIT=$?
   CR_BLOCKING=$(printf '%s' "$CR_JSON" | python3 -c "import json,sys
 d=json.load(sys.stdin)
 print(len([i for i in (d.get('issues') or []) if i.get('level')=='Critical']))" 2>/dev/null || echo -1)   # 阻断只看 level=='Critical'（SKILL 单一信源）

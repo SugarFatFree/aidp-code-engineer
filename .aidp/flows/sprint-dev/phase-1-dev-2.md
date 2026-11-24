@@ -111,7 +111,7 @@ Step 4.6: ★ 同族增量项静态门（约定 20 姊妹条「同族增量项�
 
 1. **派发前核对写集与依赖**：按 Task 列具体 `write_set`（新增、删除、测试、锁文件均含）、`create_dirs`、`dependencies`。写集无交集且依赖已交付才并行；公共配置/共享类型/生成物有交集改为串行，未知冲突按有冲突处理。M仅document已授权才派docs，L已授权文档先行；未请求成文NOT_REQUESTED。
 2. **隔离写权限**：docs Agent 独占正式文档写集，开发 Agent 只回各自工作单，不改文档/台账。契约卡、四族台账、memory、baseline、Git index/commit/push 由主流程统一处理；原子编号登记与 Git 交接按协议执行。默认子 Agent 不自行提交或关闭 Sprint；用户明确授权 worker 提交时串行交接索引，不并发 git add/commit。
-3. **按授权汇合**：收齐本次实际实现与已请求文档后，review未授权则NOT_REQUESTED并进入收尾；review已授权且无full-cvl时派一次只读reviewer。full-cvl已授权则统一在sprint-test做一次CVL并复用为review证据，不先叠整轮契约reviewer。每次派发先执行下列对应action门，再按light-context预留agents/耗时预算；未启用角色不派空任务。
+3. **按授权汇合**：收齐本次实际实现与已请求文档后，review未授权则NOT_REQUESTED并进入收尾；review已授权且无full-cvl时派一次只读reviewer。full-cvl已授权则统一在sprint-test做一次CVL并复用为review证据，不先叠整轮契约reviewer。每次派发先执行下列对应action门，再按light-context取agent并发槽位并预留耗时预算；未启用角色不派空任务。
 
 ```bash
 # ACTION按实际分支取implement/document/review；不得据角色名自行新增授权。
@@ -120,9 +120,11 @@ ACTION="${ACTION:?按当前派单职责赋值}"
 INPUT_HASH="${INPUT_HASH:?当前真实输入SHA256}"
 python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
   --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" || exit $?
-python3 {{AIDP_HOME}}/scripts/execution_policy.py reserve-budget --root . \
-  --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" \
-  --resource agents --cost 1 --input-hash "$INPUT_HASH" || exit $?
+# agents 是并发硬限：取槽位；子 Agent 结束后必须 release-slot
+# rc=2 且 JSON status=QUEUED：并发已满（票据已撤销），稍后重试或降为串行，不要继续派发（`|| exit $?` 会在此停下）
+python3 {{AIDP_HOME}}/scripts/execution_policy.py acquire-slot --root . \
+  --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" --kind agent --wait-seconds 300 || exit $?
+# 子 Agent 结束（成功/失败/取消）后：python3 {{AIDP_HOME}}/scripts/execution_policy.py release-slot --root . --execution-context "$EXECUTION_CONTEXT" --slot-id <acquire-slot 返回的 slot.slot_id>
 ```
 
 4. **Sprint收口**：formal身份与归档保留；document已请求才等完整文档，review/tests只验对应证据。close零diff不重跑检查。问题交原实现者只修已授权scope，并复核delta。

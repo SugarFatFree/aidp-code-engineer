@@ -28,6 +28,12 @@ development:
 # 额外动作仅采纳明确用户选择的 project-policy 来源，不迁移旧模板自动开关。
 # 来源键 authorization_source 由 Agent 在用户明确选择后记录，不要自行手填；形如：
 #   execution_policy: {authorization_source: {kind: project-policy, user_selected: true, request_id: <请求标识>, text: <用户原话>}}
+# 执行预算（execution_policy.execution_budget，可选；省略 = 按项目规模自适应的默认值）：
+#   并发硬限  agents / processes        = 同时运行的上限，父任务/子 Agent 共用同一并发池，满额排队
+#   总量软限  scanned_files / elapsed_seconds = 默认只预警并按「缩小范围→用缓存→减少重复取证→才请用户决策」降级，不停止
+#   固定硬限  selected_tests / retries   = 始终阻断
+# 此处显式写入的值一律视为硬上限（旧配置同样，不会被静默放宽或降为软限）；autopilot 无人值守链路与部署/推送等高风险动作按硬限处理。
+# 放宽额度不等于业务授权：不会授予全量回归、启动服务、扩大写集或部署。预算分类查看：execution_policy.py budget-report。
 execution_policy: null
 
 commit_gate:

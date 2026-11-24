@@ -535,6 +535,7 @@ def _result(root, ctx):
             "since": ctx["since"], "identity": evidence_identity(ctx),
             "authorization_identity": context_identity(ctx),
             **{field: ctx[field] for field in policy.POLICY_FIELDS},
+            "budget_policy": policy.budget_summary(ctx),
             "snapshot_cost": {"metadata_files": len(ctx["initial_files"]),
                               "hashed_files": len(ctx["initial_files"]) - len(ctx.get("initial_git_files", {}))}}
 
@@ -578,8 +579,11 @@ def resolve_context(root, entry, version=None, sprint=None, execution_context=No
         if authorization_source and authorization_source.get("kind") in ("explicit-command", "project-policy") and authorization_source.get("command"):
             if _entry(authorization_source["command"].lstrip("/")) != entry:
                 raise ContextError("显式命令来源与入口不一致")
+        # 初始化快照只在 scanned_files 是硬限（用户显式写入/autopilot）时设上限；软限只预警，不能在建任务时就中止。
+        init_cap = (execution["execution_budget"]["scanned_files"]
+                    if "scanned_files" in policy.hard_resources(execution) else None)
         start, support, files, dirty, gitlinks, lazy = _initial_snapshot(
-            root, since, max_files=execution["execution_budget"]["scanned_files"], write_set=paths)
+            root, since, max_files=init_cap, write_set=paths)
         explicit_aiauto = bool(authorization_source and authorization_source.get("kind") in ("explicit-command", "project-policy")
                                and authorization_source.get("command", "").lstrip("/") == "sprint-aiauto-test")
         ctx = {"schema": SCHEMA, "root": str(root), "entry": entry,
@@ -829,10 +833,13 @@ def revise_context(root, execution_context, write_set=None, *, additional_grants
             removed = policy.source_removals(source)
             next_actions = (set(ctx["allowed_actions"]) | grants) - removed
             record = dict(source, actions=sorted(grants))
+            record["budget_keys"] = sorted(execution_budget) if execution_budget is not None else []
             if execution_budget is not None:
                 record["execution_budget"] = budget
             prior = next((s for s in ctx["authorization_source"] if s["request_id"] == source["request_id"]), None)
-            if prior is not None and prior != record:
+            # budget_keys 只标记哪些键由用户显式给出，重放比较不把它当作授权内容
+            if prior is not None and ({k: v for k, v in prior.items() if k != "budget_keys"}
+                                      != {k: v for k, v in record.items() if k != "budget_keys"}):
                 raise ContextError("同一 request_id 的授权重放内容不一致")
             if prior is None and (next_actions != set(ctx["allowed_actions"]) or budget != ctx["execution_budget"]
                                   or source["kind"] in ("explicit-command", "project-policy") or removed):
@@ -1409,9 +1416,7 @@ def plan_validation(root, execution_context, inputs=()):
     selection_cost = {}
     session = _FingerprintSession(root, ctx)
     started = time.monotonic()
-    limit = min(10, ctx['execution_budget']['elapsed_seconds'])
-    if limit <= 0:
-        raise policy.PolicyError('BUDGET_EXCEEDED', '没有候选规划读取时间预算')
+    limit = policy.step_timeout(root, ctx, 'selection', action=None)
     reservation = policy.reserve_budget(root, ctx, 'elapsed_seconds', limit)
     def reader(path):
         if time.monotonic() - started > limit:
@@ -1496,9 +1501,7 @@ def run_static(root, execution_context, argv, inputs=(), timeout=30):
             pass
     session = _FingerprintSession(root, ctx, action='static')
     selection_started = time.monotonic()
-    selection_limit = min(10, ctx['execution_budget']['elapsed_seconds'])
-    if selection_limit <= 0:
-        raise policy.PolicyError('BUDGET_EXCEEDED', '没有工具选择读取预算')
+    selection_limit = policy.step_timeout(root, ctx, 'selection', action='static')
     selection_reservation = policy.reserve_budget(root, ctx, 'elapsed_seconds', selection_limit, action='static')
     def selection_reader(path):
         if time.monotonic() - selection_started > selection_limit:

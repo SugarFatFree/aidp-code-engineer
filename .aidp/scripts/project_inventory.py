@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """共享主仓、嵌套 gitlink 与运行时边界发现；不执行项目代码。"""
 from pathlib import Path, PurePosixPath
+import functools
 import os
 import subprocess
 import re
@@ -14,6 +15,7 @@ GENERATED_DIRS = frozenset(('__pycache__', '.pytest_cache', '.mypy_cache', '.ruf
 GENERATED_SUFFIXES = frozenset(('.pyc', '.pyo', '.class', '.o', '.obj'))
 
 
+@functools.lru_cache(maxsize=262144)
 def generated_excluded(rel):
     path = PurePosixPath(rel)
     return bool(set(path.parts) & GENERATED_DIRS) or path.suffix in GENERATED_SUFFIXES
@@ -21,6 +23,9 @@ def generated_excluded(rel):
 
 def installed_skill_package(root, rel):
     """只识别约定安装根且带SKILL.md的包，不把业务同名目录当工具包。"""
+    # 绝大多数路径与技能目录无关：先用子串快速排除，避免为数万个文件各构造一串 pathlib 对象（大仓热点）。
+    if 'skills/' not in rel:
+        return None
     path = PurePosixPath(rel)
     for home in ('.', '.aidp', '.agents', '.claude', '.codex', '.dsh'):
         base = PurePosixPath(home) / 'skills'
@@ -70,6 +75,17 @@ def fingerprint_metadata():
         return None
 
 
+def _mount_index(metadata):
+    """挂载点路径片段 → (文件系统, 前 6 字段)；同一路径重复挂载取最先出现者，与旧的 max() 取首个最长一致。"""
+    index = metadata.get('_mount_index')
+    if index is None:
+        index = {}
+        for mount, filesystem, fields in metadata['mounts']:
+            index.setdefault(mount.parts, (filesystem, fields))
+        metadata['_mount_index'] = index
+    return index
+
+
 def fingerprint_token(path, *, metadata=None):
     """仅可信 Linux 本地纳秒 ctime 文件系统允许跳过内容读取。
 
@@ -82,12 +98,18 @@ def fingerprint_token(path, *, metadata=None):
         return None
     path = Path(path).absolute()
     try:
+        index = _mount_index(metadata)
+
         def reliable(target):
-            candidates = [item for item in metadata['mounts'] if target.is_relative_to(item[0])]
-            selected = max(candidates, key=lambda item: len(item[0].parts))
-            if selected[1] not in ('ext4', 'xfs', 'btrfs', 'tmpfs'):
+            # 最长前缀挂载点（与逐个 is_relative_to 再取最长等价，但只沿祖先路径查表，
+            # 成本与挂载点总数无关；挂载很多的容器/k8s 主机上不再逐文件线性扫描）。
+            parts = target.parts
+            selected = next((index[parts[:n]] for n in range(len(parts), 0, -1) if parts[:n] in index), None)
+            if selected is None:
+                raise ValueError('no mount')
+            if selected[0] not in ('ext4', 'xfs', 'btrfs', 'tmpfs'):
                 return None
-            return selected[2]
+            return selected[1]
         resolved = path.resolve()
         mount = reliable(resolved)
         own_mount = reliable(path.parent.resolve() / path.name)
@@ -134,6 +156,7 @@ class InventoryError(ValueError):
 def _git(root, *args):
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=30)
 
+@functools.lru_cache(maxsize=262144)
 def runtime_excluded(rel):
     parts = PurePosixPath(rel).parts
     if ".git" in parts:
@@ -147,6 +170,12 @@ def runtime_excluded(rel):
     return False
 
 def default_excluded(rel, repositories=(".",)):
+    # 纯函数：同一路径在快照、选测、成员摘要等多处被反复判定，按 (路径, 仓库集合) 缓存
+    return _default_excluded(rel, tuple(repositories))
+
+
+@functools.lru_cache(maxsize=262144)
+def _default_excluded(rel, repositories):
     if runtime_excluded(rel) or generated_excluded(rel):
         return True
     path = PurePosixPath(rel)
@@ -288,6 +317,24 @@ def git_worktree_inventory(root, since=None, max_files=None):
             "repositories": sorted(repositories),
             "source_roots": sorted({str(parent) for p in files for parent in PurePosixPath(p).parents if parent.name in ("src", "lib")}),
             "test_roots": sorted({str(parent) for p in files for parent in PurePosixPath(p).parents if parent.name in ("tests", "test", "__tests__")})}
+
+
+def quick_counts(root):
+    """廉价项目盘点：仅一次 `git ls-files`，不读文件内容；供软阈值按仓库规模自适应。
+
+    返回 {"files", "tests", "modules"}；git 不可用时 None（调用方回退固定下限）。
+    """
+    try:
+        result = _git(Path(root).resolve(), "ls-files", "-z")
+    except (OSError, ValueError):
+        return None
+    if result.returncode:
+        return None
+    names = [os.fsdecode(n) for n in result.stdout.split(b"\0") if n]
+    markers = {"package.json", "pom.xml", "build.gradle", "build.gradle.kts", "pyproject.toml", "go.mod", "Cargo.toml"}
+    test_name = re.compile(r"(Tests?\.java|\.(spec|test)\.(ts|tsx|js|jsx)|_test\.(py|go)|(^|/)test_[^/]*\.py)$")
+    return {"files": len(names), "tests": sum(1 for n in names if test_name.search(n)),
+            "modules": sum(1 for n in names if PurePosixPath(n).name in markers)}
 
 
 # 简短公共入口，兼容调用方命名。

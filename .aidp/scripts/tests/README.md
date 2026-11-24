@@ -18,6 +18,7 @@
 | `test_test_scope.py` | Sprint 单测确定性推导（按运行器分组、无对应单测、无运行器、不回落全量）+ `run-scope` 逐套记账（PASS 复用/FAIL/EMPTY）+ 全量单测 worktree 账本复用（清理后仍命中） | `python3 .aidp/scripts/tests/test_test_scope.py` | Python 标准库、Git |
 | `test_entry_context.py` | 轻量/正式身份、嵌套续跑、正式子任务、真实完成门及族义务 | `python3 .aidp/scripts/tests/test_entry_context.py` | Python 标准库、Git |
 | `test_execution_policy.py` | 分离动作授权、共享预算、无变化工具失败终止与显式等价证据 | `python3 .aidp/scripts/tests/test_execution_policy.py` | Python 标准库、临时 Git |
+| `test_budget_policy.py` | 并发硬限 + 总量软限预算：软限降级顺序、用户硬上限与恢复路径、并发槽位排队/释放/父子共池、显式相关测试入口、导入事实增量缓存与断点续扫、步骤超时无隐藏上限、旧配置迁移 | `python3 .aidp/scripts/tests/test_budget_policy.py` | Python 标准库、临时 Git |
 | `test_dispatch_plan.py` | 并行判定（互不相交写集+读写阈值）、冲突文件、串行原因、子 Agent prompt 必带项、输入错误退出 2 | `python3 .aidp/scripts/tests/test_dispatch_plan.py` | Python 标准库 |
 | `test_select_related_tests.py` | 改动→相关测试白名单：命名约定回退（py/java/go/ts）、未跟踪文件、unmapped、不得全量、上下文 task_id 命名白名单、输入错误退出 2 | `python3 .aidp/scripts/tests/test_select_related_tests.py` | Python 标准库、临时 Git |
 | `test_test_command_guard.py` | 测试命令护栏：无参数/目录拒绝、白名单子集、ruff 仅改动文件、git stash 拒绝、`--allow-full` 缺授权 fail closed 与真实 autopilot 授权放行、wrap/background/changed | `python3 .aidp/scripts/tests/test_test_command_guard.py` | Python 标准库、临时 Git |

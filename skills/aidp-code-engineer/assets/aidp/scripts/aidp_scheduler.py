@@ -16,7 +16,7 @@ agent_loop 负责选 Agent、拼非交互命令、补 `--no-loop`、flock 互斥
 ## 子命令
 
     install    [--agent A] [--dev-interval 10m] [--test-interval 5m] [--platform P] [--dry-run] [--json]
-               [--authorization-text "<用户原话>" [--authorization-request-id ID]]
+               [--authorization-text "<用户原话>" [--authorization-request-id ID] [--auto-renew-budget N]]
     uninstall  [--platform P] [--dry-run] [--json]
     status     [--platform P] [--json]
     watchdog   [--quiet] [--json]          # 心跳巡检：定时唤醒时无心跳从首次巡检起计时，超时告警
@@ -113,9 +113,11 @@ BUDGET_WARN_PCTS = (80, 95)
 # 同一版本的 autopilot tick 连续因硬超时被杀达此次数 = 「无进展」（被 TERM 的 tick 到不了 Phase 出口，
 # stuck_check 的计数不涨）：冻结该版（stuck-phase，仅人工解冻）并发 #4，不再无限重跑耗额度。
 TICK_TIMEOUT_FREEZE_AFTER = 5
-BUDGET_CAPACITY_NOTE = ("根任务预算（sprint-autopilot 默认 7200 秒 / agents 64 / retries 12 等，跨 tick 累计，见 "
-                        "execution_policy.py COMMAND_BUDGETS）是有限硬顶：耗尽即 budget-exhausted 冻结，"
-                        "续额必须有用户真实原话，不能由调度/AI 自动重置——长周期多 Sprint 版本无法承诺 0 人工")
+BUDGET_CAPACITY_NOTE = ("根任务预算（sprint-autopilot 默认 elapsed 7200 秒 / scanned_files 50000 / retries 12 等累计量，"
+                        "跨 tick 累计，见 execution_policy.py COMMAND_BUDGETS；agents/processes 是并发上限，不累计）"
+                        "是有限硬顶：真实耗尽即 budget-exhausted 冻结。续额必须有用户真实原话——要 0 人工，请在 install 时用 "
+                        "`--auto-renew-budget N` 一次性授权 N 次自动续额（只放宽执行资源，不授予业务动作），"
+                        "用完仍冻结等人，AI/调度不能自行重置")
 TIMEOUT_RCS = (124, 137)
 CRON_MARK = "# AIDP-SCHEDULER"
 GRACE_SECONDS = 300
@@ -440,7 +442,7 @@ def resolve_intervals(root, a):
     return out
 
 
-CLAUDE_REQUIRED_ALLOW = ("Bash", "Agent")
+CLAUDE_REQUIRED_ALLOW = ("Bash", "Agent", "Skill")
 
 
 def _claude_allow_gaps(root):
@@ -520,8 +522,20 @@ def install_preflight(root, agent, plat):
         if gaps:
             warns.append(f"permissions.allow 尚不能确认覆盖 {'/'.join(gaps)}（含用户级与项目级配置）："
                          "请核验所需 Bash/Agent/Skill 与（浏览器实测时）mcp__chrome-* 细粒度规则及 deny；headless 未授权调用会被拒，"
-                         "且 rc=0 的整轮零进展不会被记账，首个 tick 后请核对日志"
-                         "安装器只读检查，不改权限、不注入权限绕过参数")
+                         "且 rc=0 的整轮零进展不会被记账，首个 tick 后请核对日志。"
+                         "安装器只读检查，不改权限、不注入权限绕过参数；确认后可把下列规则并入 .claude/settings.json 的 "
+                         'permissions.allow：["Bash", "Agent", "Skill"]（需更细粒度时按项目安全要求收窄，如 Bash(python3:*)、Bash(git:*)）')
+    # ★ 无人值守首个 tick 才暴露的前置缺口，改在安装时一次性列出（用户只需处理一次）
+    try:
+        from aidp_config import branch_policy as _branch_policy
+        if _branch_policy(root).get("needs_choice"):
+            errors.append("development.branch_policy 尚未选择（Git 项目）：无人值守无法询问，首个写 code/** 的子 Agent 会被入口门拒绝并"
+                          "累计失败。请先由用户选择一次：`python3 aidp_config.py set development.branch_policy current|new`")
+    except Exception:  # noqa: BLE001 —— 预检旁路，判不出不阻断安装
+        pass
+    if not os.path.isfile(os.path.join(root, "docs", "architecture", "技术选型.md")):
+        warns.append("docs/architecture/技术选型.md 不存在：若 PRD 也没有技术边界声明，autopilot 规划阶段会冻结等人补声明（D3 门）。"
+                     "请在挂载前补齐技术选型或在 PRD 中声明技术边界，避免首个版本才停下")
     ready = _notify_readiness(root)
     if not ready["ready"]:
         warns.append(f"通知渠道未就绪（{ready['reason']}）：冻结 #4 / loop-tick-hung / loop-agent-quota 等告警将只写本地台账 "
@@ -571,7 +585,8 @@ def do_install(root, a):
         res["commands"] = render_schtasks(root, agent, intervals)
         res["notes"].append("Windows 计划任务需手工在管理员终端执行上述 schtasks 命令（需可运行 bash 的环境）")
         if auth_text and not a.dry_run:
-            res["authorization"] = record_authorization(root, auth_text, getattr(a, "authorization_request_id", None))
+            res["authorization"] = record_authorization(root, auth_text, getattr(a, "authorization_request_id", None),
+                                                    auto_renew=getattr(a, "auto_renew_budget", 0) or 0)
         return 0, res
     else:
         res["error"] = f"不支持的平台：{plat}"
@@ -610,14 +625,23 @@ def do_install(root, a):
     return 0, res
 
 
-def record_authorization(root, text, request_id=None):
-    """落盘用户在 install 时明确给出的持续执行指令；之后每个 autopilot tick 据此生成确定性授权来源。"""
+def record_authorization(root, text, request_id=None, auto_renew=0):
+    """落盘用户在 install 时明确给出的持续执行指令；之后每个 autopilot tick 据此生成确定性授权来源。
+
+    auto_renew = 用户在同一次授权里同意的「根预算自动续额」次数上限（0 = 不授权，耗尽即冻结等人）。
+    续额只放宽执行资源额度，不授予任何业务动作；用完次数后仍按原路径冻结。
+    """
     import uuid
     rec = {"kind": "explicit-command", "persistent": True, "text": text.strip(),
            "install_request_id": (request_id or "").strip() or "scheduler-install-" + uuid.uuid4().hex,
            "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if auto_renew and auto_renew > 0:
+        rec["auto_renew"] = {"max": int(auto_renew), "used": 0, "history": []}
     _write_json(os.path.join(root, AUTHORIZATION_STATE_REL), rec)
-    return {k: rec[k] for k in ("install_request_id", "recorded_at")}
+    out = {k: rec[k] for k in ("install_request_id", "recorded_at")}
+    if "auto_renew" in rec:
+        out["auto_renew_budget"] = rec["auto_renew"]["max"]
+    return out
 
 
 def load_authorization(root):
@@ -1285,6 +1309,67 @@ def _warn_budget_near_exhaustion(root, command="sprint-autopilot"):
     return fired
 
 
+def _reap_previous_tick_slots(root, a):
+    """tick 开始时回收同链路上一轮遗留的并发槽位/排队票据（崩溃或被 kill 的子 Agent 不会永久占满 agents 池）。"""
+    from aidp_paths import baseline
+    try:
+        state = json.loads(_AidpPath(baseline(root)).read_text(encoding="utf-8"))
+        from execution_policy import reap_slots
+    except (OSError, ValueError, ImportError):
+        return 0
+    total = 0
+    for node in (state.get("versions") or {}).values() if isinstance(state, dict) else ():
+        path = node.get("autopilot_root_context") if isinstance(node, dict) else None
+        if not path:
+            continue
+        try:
+            total += reap_slots(root, path, a.command, keep_tick=getattr(a, "token", "") or "")["reaped"]
+        except (ValueError, OSError, KeyError, TypeError):
+            continue
+    return total
+
+
+def _auto_renew_budget(root, version, path, items):
+    """用户在 install 时一次性授权的自动续额：耗尽时在次数上限内放宽根预算，再解冻。成功返回 True。
+
+    只放宽执行资源额度（每次加一个 sprint-autopilot 基本量），来源是 install 记录的用户原话；
+    不授予 deploy/full-regression 等业务动作，不清零已用量；次数用完或失败则返回 False，沿原路径冻结等人。
+    """
+    rec = load_authorization(root)
+    auto = rec.get("auto_renew") if rec else None
+    if not isinstance(auto, dict) or auto.get("used", 0) >= auto.get("max", 0):
+        return False
+    try:
+        from execution_policy import COMMAND_BUDGETS
+        from entry_context import load_context
+        import autopilot_unfreeze as unfreeze
+        base = COMMAND_BUDGETS["sprint-autopilot"]
+        limits = load_context(root, path)["execution_budget"]
+        new = {row["resource"]: max(limits[row["resource"]], row["required"]) + base[row["resource"]] for row in items
+               if row["resource"] in base and row["resource"] in limits}
+        if not new:
+            return False
+        number = auto.get("used", 0) + 1
+        source = {"kind": "user-text", "request_id": f"{rec['install_request_id']}#auto-renew-{number}",
+                  "text": rec["text"], "persistent": True}
+        result = unfreeze.renew_budget(root, version, new, source)
+    except (ImportError, OSError, ValueError, KeyError):
+        return False
+    if not result.get("renewed") or result.get("budget_state") == "exhausted":
+        return False
+    auto["used"] = auto.get("used", 0) + 1
+    auto.setdefault("history", []).append({"version": version, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                           "new_limits": new})
+    _write_json(os.path.join(root, AUTHORIZATION_STATE_REL), rec)
+    try:
+        from aidp_paths import append_alert
+        append_alert(root, kind="loop-budget-auto-renewed", version=version, renewal=f"{auto['used']}/{auto['max']}",
+                     new_limits=new, note="根预算按 install 时的用户授权自动续额；只放宽执行资源，不授予业务动作")
+    except (ImportError, OSError, ValueError):
+        pass
+    return True
+
+
 def _freeze_exhausted_budgets(root):
     """根任务预算耗尽且未续额：按 budget-exhausted 冻结该版（幂等；不清零任何预算）。返回已冻结版本。"""
     from aidp_paths import baseline
@@ -1306,6 +1391,8 @@ def _freeze_exhausted_budgets(root):
     for version, path in sorted(roots.items()):
         status, items = budget_exhaustion(root, path)
         if status != "exhausted":
+            continue
+        if _auto_renew_budget(root, version, path, items):
             continue
         need = ",".join(f"{row['resource']}>={row['required']}" for row in items)
         rc = _run_script(root, "autopilot_fail_handle.py", "--version", version, "--phase", "budget-exhausted",
@@ -1347,6 +1434,7 @@ def do_tick_check(root, a):
                            "reason": "test-delegation-unverified", "error": str(exc),
                            **_note_delegation_gap(root, exc)}
     elif a.command == "sprint-autopilot":
+        extra["slots_reaped"] = _reap_previous_tick_slots(root, a)
         extra["budget_frozen"] = _freeze_exhausted_budgets(root)
         extra["budget_warned"] = _warn_budget_near_exhaustion(root, a.command)
         token = getattr(a, "token", None) or __import__("uuid").uuid4().hex
@@ -1622,6 +1710,9 @@ def main(argv=None):
                     help="install：用户明确要求持续运行的原话，记录为无头 tick 的授权来源")
     ap.add_argument("--authorization-request-id", dest="authorization_request_id", default=None,
                     help="install：该用户请求的标识（缺省自动生成）")
+    ap.add_argument("--auto-renew-budget", dest="auto_renew_budget", type=int, default=0,
+                    help="install：用户同意的根预算自动续额次数上限（须同时给 --authorization-text；"
+                         "每次续额放宽一个 COMMAND_BUDGETS 基本量，只放宽执行资源，不授予业务动作）")
     ap.add_argument("--rc", type=int, default=None, help="tick-result：本轮 tick 退出码")
     ap.add_argument("--tick-max", dest="tick_max", default="", help="tick-result：本轮硬超时秒数（仅用于告警文案）")
     ap.add_argument("--log", default="", help="tick-result：本轮日志路径（读取尾部作失败归因）")

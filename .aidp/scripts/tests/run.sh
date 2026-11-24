@@ -105,6 +105,7 @@ run "test_test_ledger.py（测试复用与审查差量）" python3 .aidp/scripts
 run "test_test_scope.py（Sprint 单测推导 / run-scope 逐套记账 / worktree 全量复用）" python3 .aidp/scripts/tests/test_test_scope.py
 run "test_entry_context.py（轻量与正式身份继承及完成门）" python3 .aidp/scripts/tests/test_entry_context.py
 run "test_execution_policy.py（动作授权、预算及等价证据边界）" python3 .aidp/scripts/tests/test_execution_policy.py
+run "test_budget_policy.py（并发硬限/总量软限预算、显式相关测试入口、选测增量缓存）" python3 .aidp/scripts/tests/test_budget_policy.py
 run "test_dispatch_plan.py（light 并行派发判定与 prompt）" python3 .aidp/scripts/tests/test_dispatch_plan.py
 run "test_select_related_tests.py（改动→相关测试白名单，不得全量）" python3 .aidp/scripts/tests/test_select_related_tests.py
 run "test_test_command_guard.py（测试命令护栏与授权 fail closed）" python3 .aidp/scripts/tests/test_test_command_guard.py

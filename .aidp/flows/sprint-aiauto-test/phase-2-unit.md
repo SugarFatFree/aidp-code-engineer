@@ -1,7 +1,6 @@
 > ⚠️ **权威性**：本文件是 build 双路派发与全量单测执行协议唯一信源；他处只引用。
 > ⚠️ **理据**：见同目录 `rationale.md`。
 
-<!-- 新增分片 · phase-2 全量单测子 Agent：与 2.0.5 实测子 Agent 并行，互不阻断 -->
 # sprint-aiauto-test · 双路协调与全量单测（2.0.5u）
 
 ## Phase 2 · 2.0.5u.0 主协调入口：同一 build 的两路独立派发
@@ -30,13 +29,16 @@ if not paths:
 inputs = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in sorted(paths)}
 print(hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest())
 ') || exit $?
+SLOT_IDS=()
 for ACTION in "${DISPATCH_ACTIONS[@]}"; do
   python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
     --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" || exit $?
-  python3 {{AIDP_HOME}}/scripts/execution_policy.py reserve-budget --root . \
-    --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" \
-    --resource agents --cost 1 --input-hash "$INPUT_HASH" || exit $?
+  # rc=2 且 status=QUEUED=并发已满：稍后重试或降串行，不继续派发
+  SLOT_JSON=$(python3 {{AIDP_HOME}}/scripts/execution_policy.py acquire-slot --root . \
+    --execution-context "$EXECUTION_CONTEXT" --action "$ACTION" --kind agent --wait-seconds 300) || exit $?
+  SLOT_IDS+=("$(printf '%s' "$SLOT_JSON" | python3 -c 'import json,sys;print(json.load(sys.stdin)["slot"]["slot_id"])')")
 done
+# worker 全部返回后，对 SLOT_IDS 逐个 release-slot --slot-id "$id"
 ```
 
 派单额外带execution_context、当前revision、各自action、父剩余budget、INPUT_HASH；worker继承，不重新grant。执行器内部扣进程/耗时预算，主协调者不重复扣。

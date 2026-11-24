@@ -394,8 +394,16 @@ class BudgetFenceTests(HookBase):
         self.assertEqual([], list(self.root.rglob('reservation.*.json')))
         self.assertEqual([], list((self.root / 'code').iterdir()))
 
+    def test_budget_fence_soft_total_limit_overrun_is_recorded_not_blocked(self):
+        result, budget, before = self.budget_execution(COST='1000000000')
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        state = json.loads(budget.read_text())
+        self.assertTrue(any(row.get('resource') == 'elapsed_seconds' for row in state['soft_events']),
+                        '软限超额必须留痕（预警），而不是静默或阻断')
+
     def test_budget_fence_keeps_authorization_and_over_budget_exit(self):
-        for overrides in ({'ACTION': 'deploy'}, {'COST': '1000000000'}):
+        # elapsed_seconds 默认是总量软限（超额只预警，见下一用例）；固定硬限 retries 超额仍拒绝且不改账本
+        for overrides in ({'ACTION': 'deploy'}, {'RESOURCE': 'retries', 'COST': '1000000000'}):
             with self.subTest(overrides=overrides):
                 result, budget, before = self.budget_execution(**overrides)
                 self.assertEqual(2, result.returncode, result.stdout + result.stderr)
@@ -598,6 +606,38 @@ class ActionableDenialTests(HookBase):
                 self.assertIn('外部副作用', decision['permissionDecisionReason'])
                 self.assertNotIn('包装器', decision['permissionDecisionReason'])
         self.assertEqual(0, self.bash('docker cp ./a.txt web:/app/a.txt', agent='codex').returncode)
+
+    def deploy_ready(self):
+        """与 ready() 相同，但任务持有 deploy 授权（经真实入口解析，不改写上下文以免破坏身份校验）。"""
+        from entry_context import resolve_context
+        result = resolve_context(self.root, 'sprint-dev', version='V1.0.0', write_set=['code'], acceptance=['fixture'],
+                                 additional_grants=['deploy'], authorization_source={
+                                     'kind': 'user-text', 'request_id': 'deploy-1', 'text': '本次允许部署到容器'})
+        (self.runtime / 'entry-task.json').write_text(json.dumps({
+            'root': str(self.root), 'task_id': result['task_id'], 'execution_context': result['execution_context']}))
+        import aidp_config
+        aidp_config._mark_branch_policy_read(str(self.root), aidp_config.branch_policy(str(self.root)))
+
+    def test_unattended_docker_write_is_decided_deterministically_not_asked(self):
+        """P1-2：无人值守 tick 里没人能答 ask——无 deploy 授权明确拒绝并说明，有则放行并留痕；各 Agent 行为一致。"""
+        command = 'docker cp ./a.txt web:/app/a.txt'
+        tick = {'AIDP_TICK_COMMAND': 'sprint-autopilot'}
+        self.ready()
+        for agent in ('claude', 'codex'):
+            denied = self.bash(command, agent=agent, env_extra=tick)
+            self.assertEqual(2, denied.returncode, (agent, denied.stderr))
+            self.assertIn('deploy 授权', denied.stderr)
+            self.assertNotIn('"ask"', denied.stdout)
+        self.deploy_ready()
+        for agent in ('claude', 'codex'):
+            allowed = self.bash(command, agent=agent, env_extra=tick)
+            self.assertEqual(0, allowed.returncode, (agent, allowed.stderr))
+            self.assertNotIn('"ask"', allowed.stdout)
+        ledger = (self.root / 'memory/.aidp/external-side-effects.jsonl').read_text()
+        self.assertEqual(2, ledger.count('deploy-authorized-unattended'))
+        # 交互会话保持原样：claude 走 ask
+        interactive = self.bash(command)
+        self.assertEqual('ask', json.loads(interactive.stdout)['hookSpecificOutput']['permissionDecision'])
 
     def test_docker_bind_mount_follows_host_write_set(self):
         self.ready()

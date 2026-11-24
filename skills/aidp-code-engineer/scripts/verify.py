@@ -1167,6 +1167,9 @@ def check_template_bundle(root: Path, r: VerifyResult):
         r.note(f"范式版本一致：{cv}")
         if not L.changelog_has_entry(root, cv):
             r.error(f"{L.CHANGELOG} 缺少当前范式版本 {cv} 的变更记录条目（`### {cv}（日期）`）→ 人工补一条 ≤100 字摘要")
+        else:
+            for problem in L.changelog_head_consistency(root, cv):
+                r.error(f"{L.CHANGELOG}：{problem}")
 
 
 # 根 .gitignore 里只服务模板仓库自身、不下发的规则

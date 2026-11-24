@@ -297,6 +297,31 @@ def _explain(argv):
     return 2 if result["decision"] == "deny" else 0
 
 
+def _resolve_unattended_ask(root, env, result):
+    """无人值守下把 ask 变成确定性决定：当前任务持有 deploy 授权 → allow（写 external-side-effects.jsonl 留痕）。"""
+    granted = False
+    try:
+        import entry_gate
+        _, ctx = entry_gate.find_context(root, env)
+        granted = bool(ctx and "deploy" in (ctx.get("allowed_actions") or []))
+    except Exception:  # noqa: BLE001 — 读不到上下文按未授权处理（fail closed）
+        granted = False
+    if granted:
+        try:
+            ledger = Path(root) / "memory" / RUNTIME_DIRNAME / "external-side-effects.jsonl"
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            with ledger.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "decision": "allow",
+                                         "basis": "deploy-authorized-unattended", "detail": result.get("message", "")[:300]},
+                                        ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+        return "allow", ""
+    return "deny", ("无人值守 tick 中该命令属于外部副作用（如 docker cp/exec/run 写容器文件系统），需要 deploy 授权，"
+                    "而当前任务没有该授权，且无人可确认。\n" + result.get("message", "") +
+                    "\n处置：改为在 bind mount 内或宿主机上完成；确需写容器时，由用户在 /sprint-autopilot 授权中包含 deploy 后再运行。")
+
+
 def main():
     if any(a in ("--explain", "--explain-edit") for a in sys.argv[1:]):
         return _explain(sys.argv[1:])
@@ -327,7 +352,13 @@ def main():
         result = evaluate(root, tool, tool_input, cwd, env)
         if result["decision"] == "deny":
             _block(result["message"])
-        if result["decision"] == "ask" and _agent_flag() == "claude":
+        if result["decision"] == "ask" and env.get("AIDP_TICK_COMMAND"):
+            # 无人值守 tick（调度器注入 AIDP_TICK_COMMAND）：没有人可答 ask，等同拒绝却不说明原因。
+            # 按 deploy 授权确定性处置：已授权 → 放行并留痕；未授权 → 明确拒绝（各 Agent 行为一致）。
+            decision, note = _resolve_unattended_ask(root, env, result)
+            if decision == "deny":
+                _block(note)
+        elif result["decision"] == "ask" and _agent_flag() == "claude":
             sys.stdout.write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "ask",
                 "permissionDecisionReason": result["message"]}}, ensure_ascii=False) + "\n")

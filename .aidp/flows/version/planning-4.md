@@ -97,7 +97,7 @@ done
 TESTCASE_DIR="$V_TEST/研发自测/"
 ```
 
-**2. 补充产物：保持 SKILL 干净命名 `NN_<业务名>.md`（不加"补充"字眼）**——补充模式 B-2 下，上游 SKILL 的增量产出本就是 `NN_<业务名>.md`（已禁"补充/追加"语义前缀，`check_doc_split.py` 亦禁）。⚠️ 两处易错：① 三个 SKILL 都明令「本 SKILL **没有** `mode=supplement` 之类的模式参数，严禁臆造」——`--supplement` 是**命令端**的 flag；② 三份同名 `check_doc_split.py` 的编号不同（ULE / DEP 是检查项 7，**DLA 是检查项 11**），设计详情用的正是 DLA 那份。命令端**只做序号续编校正**（若 SKILL 给的 NN 与目录现存最大序号冲突/不连续，按源文件跟踪状态归一到 `MAX+1`），**绝不再补回"补充"字眼**。业务主题 `${TOPIC}`：用户 `/version V0.X "<主题>"` 显式传入 > 口述文件名解析 > 兜底 `增量NN${NN}`。
+**2. 补充产物：保持 SKILL 干净命名 `NN_<业务名>.md`（不加"补充"字眼）**——补充模式 B-2 下，上游 SKILL 的增量产出本就是 `NN_<业务名>.md`（已禁"补充/追加"语义前缀，`check_doc_split.py` 亦禁）。⚠️ 两处易错：① 三个 SKILL 都明令「本 SKILL **没有** `mode=supplement` 之类的模式参数，严禁臆造」——`--supplement` 是**命令端**的 flag；② 三份同名 `check_doc_split.py` 的检查项编号不同（ULE 9 / DEP 11 / **DLA 12**），设计详情用的正是 DLA 那份。命令端**只做序号续编校正**（若 SKILL 给的 NN 与目录现存最大序号冲突/不连续，按源文件跟踪状态归一到 `MAX+1`），**绝不再补回"补充"字眼**。业务主题 `${TOPIC}`：用户 `/version V0.X "<主题>"` 显式传入 > 口述文件名解析 > 兜底 `增量NN${NN}`。
 
 ```bash
 # 独立 Bash 围栏：不能沿用上一围栏里的函数。

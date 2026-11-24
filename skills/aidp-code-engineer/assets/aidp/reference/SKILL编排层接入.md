@@ -39,9 +39,9 @@ case "$QR_LEVEL" in scripts|critical|full) ;; *) exit 2 ;; esac
 printf 'qr_level=%s\n' "$QR_LEVEL"
 ```
 
-调用prompt必须带 `qr_level=$QR_LEVEL`、父context/revision/action/budget及真实输入hash；每个新Agent先按light-context预留agents预算。SKILL返回按本节原parse-handoff解析，保留既有索引移交块与真实未审事实，不另造清单。没有docs-audit时，非Critical语义/独立审计为NOT_REQUESTED，不登记成本轮欠账、不立即派qr-handoff-auditor，不以清块为由补审。若用户仅要求编辑而不能承担依赖最低生成校验，继续必要编辑能力，不谎称完整生成已通过。
+调用prompt必须带 `qr_level=$QR_LEVEL`、父context/revision/action/budget及真实输入hash；每个新Agent先 `execution_policy.py acquire-slot --kind agent`（`agents` 是并发硬限，满额排队，结束后 `release-slot`）。SKILL返回按本节原parse-handoff解析，保留既有索引移交块与真实未审事实，不另造清单。没有docs-audit时，非Critical语义/独立审计为NOT_REQUESTED，不登记成本轮欠账、不立即派qr-handoff-auditor，不以清块为由补审。若用户仅要求编辑而不能承担依赖最低生成校验，继续必要编辑能力，不谎称完整生成已通过。
 
-**落盘后复核去重**：机器门及不可关闭Critical属于所请求生成的最低自检，优先复用同revision/inputs真实hash的既有证据；缺证据/产物改动时仅补失效项。额外代码侧report-only巡检、非Critical语义复核、version-auditor/qr-handoff-auditor须docs-audit，未授权跳过，不以生成后处理名义另叠完整QR。每次派Agent前require_action(document或docs-audit按真实职责)并预留父agents预算，工具失败不自动换一套审计求绿。
+**落盘后复核去重**：机器门及不可关闭Critical属于所请求生成的最低自检，优先复用同revision/inputs真实hash的既有证据；缺证据/产物改动时仅补失效项。额外代码侧report-only巡检、非Critical语义复核、version-auditor/qr-handoff-auditor须docs-audit，未授权跳过，不以生成后处理名义另叠完整QR。每次派Agent前require_action(document或docs-audit按真实职责)并取agent并发槽位（`acquire-slot --kind agent`，结束后`release-slot`），工具失败不自动换一套审计求绿。
 
 有docs-audit的公开/version组合、显式qr-level与fast保留原职责：fast明确延期的检查仍按原收口处理。缓存只复用同revision/inputs真实hash证据；修复只delta，不能因为再进生成子入口叠一轮完整QR。
 

@@ -249,7 +249,7 @@ python3 {{AIDP_HOME}}/scripts/aiauto_phase_entry.py --execution-context "${EXECU
 | **2.0.5u** | `phase-2-unit.md` | ★ 全量单测子 Agent：与 2.0.5 并行；在部署 commit 的独立 worktree 中以执行器派生的 `scope=version` 执行，失败登记 BUG，超时/未核验不阻断实测、不冻结 | 仅真实 autopilot 当前版本全量委派且清单完整|
 | **2.0.7** | `phase-2-1.md` | ★ 前置数据体检门（用例声明的前置数据是否真的在）| 恒适用（**检出步**） |
 | **2.1** | `phase-2-2.md` | 登录 → 测试 → 登出循环（★ skill 内部行为示意，命令端不手写直驱）| `--skip-login` 未传（否则走 2.3） |
-| **2.2** | `phase-2-2.md` | chrome-devtools-mcp 调用（★ skill 内部行为示意 — auto-test-runner「Web 端驱动适配器」执行）| 被测端含 `web`（由 Phase 0.0.5 的测试方案 `client` 字段算出） |
+| **2.2** | `phase-2-2.md` | chrome-devtools-mcp 调用（★ skill 内部行为示意 — auto-test-runner「驱动适配层」（`references/driver-web.md`）执行）| 被测端含 `web`（由 Phase 0.0.5 的测试方案 `client` 字段算出） |
 | **2.3** | `phase-2-2.md` | `--skip-login` 模式（测公开页）| `--skip-login` 已传 |
 | **2.4** | `phase-2-2.md` | ★ 运行时错误全程捕获与 bug 记录（不在用例里也要记）| 恒适用（运行时错误全程捕获，⛔ 不随用例集裁剪） |
 

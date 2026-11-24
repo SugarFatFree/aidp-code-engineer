@@ -749,6 +749,59 @@ class AgentSwitchSafetyTest(unittest.TestCase):
                 assert_no_runtime(self, root, ".agents" if home == ".claude" else ".claude")
 
 
+class ChangelogHeadConsistencyTest(unittest.TestCase):
+    def check(self, text, version="V1.2.5"):
+        with H.TempRepo() as root:
+            (root / L.CHANGELOG).write_text(text, encoding="utf-8")
+            return L.changelog_head_consistency(root, version)
+
+    def test_consistent_head_has_no_problem(self):
+        self.assertEqual(self.check("**AIDP V1.2.5**（最后更新：2026-11-24）\n\n### V1.2.5（2026-11-24）\n- a\n\n### V1.2.4（2026-11-12）\n"), [])
+
+    def test_entry_not_on_top_or_date_mismatch_is_reported(self):
+        wrong_order = self.check("**AIDP V1.2.5**（最后更新：2026-11-24）\n### V1.2.4（2026-11-12）\n### V1.2.5（2026-11-24）\n")
+        self.assertTrue(any("最上方" in x for x in wrong_order))
+        wrong_date = self.check("**AIDP V1.2.5**（最后更新：2026-11-24）\n### V1.2.5（2026-11-20）\n")
+        self.assertTrue(any("日期" in x for x in wrong_date))
+        self.assertTrue(self.check("没有条目"))
+
+
+class UpgradeStateReportTest(unittest.TestCase):
+    """升级后只读提示：语义变化的配置键、仍在生效的护栏关闭开关。只提示，不改值、不删文件。"""
+
+    def report(self, root, have):
+        rep = S.Report()
+        S.report_config_state(root, have, rep)
+        return rep.warnings
+
+    def test_reinterpreted_budget_keys_are_called_out_with_value_kept(self):
+        with H.TempRepo() as root:
+            have = ("execution_policy:\n  execution_budget:\n    agents: 8\n    processes: 24   # 旧：累计启动数\n"
+                    "    scanned_files: 5000\ncicd:\n  auto_trigger: true\n")
+            warnings = "\n".join(self.report(root, have))
+            for key, needle in (("execution_budget.agents", "同时运行的上限"), ("execution_budget.processes", "并发上限"),
+                                ("execution_budget.scanned_files", "硬上限"), ("cicd.auto_trigger", "兼容旧键")):
+                self.assertIn(key, warnings)
+                self.assertIn(needle, warnings)
+
+    def test_unset_or_null_values_are_not_reported(self):
+        with H.TempRepo() as root:
+            self.assertEqual(self.report(root, "execution_policy: null\ncicd:\n  auto_trigger: null\n"), [])
+
+    def test_guard_off_switches_are_reported_not_deleted(self):
+        with H.TempRepo() as root:
+            legacy = root / "memory/.pretool-guard-off"
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_text("")
+            warnings = "\n".join(self.report(root, "entry_guard:\n  enabled: false\ntest_guard:\n  enabled: true\n"))
+            self.assertIn("entry_guard.enabled: false", warnings)
+            self.assertNotIn("test_guard.enabled", warnings)
+            self.assertIn("memory/.pretool-guard-off", warnings)
+            self.assertIn("不会自动恢复", warnings)
+            self.assertTrue(legacy.exists(), "只提示，绝不自动删除")
+            self.assertEqual(self.report(root, "entry_guard:\n  enabled: true\n")[0].count("pretool-guard-off"), 2)
+
+
 class ConfigSubKeySafetyTest(unittest.TestCase):
     def assert_yaml_value(self, text, expected):
         # 脚手架保持零第三方依赖；有 PyYAML 时额外用严格解析器验证合法性。

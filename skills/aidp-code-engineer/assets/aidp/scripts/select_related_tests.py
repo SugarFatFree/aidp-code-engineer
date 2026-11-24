@@ -11,6 +11,13 @@
 memory/.aidp/test-allowlist/<key>.json（key = 上下文 task_id，无上下文为 default），
 由 test_command_guard 对「显式文件参数」做子集校验。
 
+显式入口（人工/调用方已明确相关测试文件时，不做全仓依赖扫描）：
+  --explicit-tests FILE [FILE ...] [--basis "选择依据"] [--command "实际执行命令"] [--execution-context CTX_JSON]
+  校验：文件存在、位于本项目、是测试文件、未被默认排除，且与任务范围有关（写集内 / 同模块 / 同名映射；
+  都不满足时须 --basis 记录人工选择依据，标记 relation=declared）。只做 stat 与 git 文件清单，零内容读取、
+  零依赖扫描；有上下文时须持有 related-test 授权。结果与自动选测写入同一白名单（并集），basis.mode=explicit，
+  并记录选择依据/目标文件/任务身份/执行命令；不能借此扩大到全量回归、扩写集或绕过护栏。
+
 输出 JSON：{"tests":[...],"unmapped":[...],"allowed_args":[...],"allowlist_file":"...","basis":{...}}
 tests 为空时 unmapped/basis.note 说明原因（仅文档改动、无对应测试等）。
 
@@ -239,6 +246,120 @@ def select(root, since, write_set, ctx_path, runners, max_tests, scope_path=""):
     return result
 
 
+def _module_root(root, rel):
+    """向上找最近带模块标记文件的目录；仓库根不算模块边界（返回 None）。"""
+    import test_scope
+    current = PurePosixPath(rel).parent
+    while str(current) not in ("", "."):
+        if any((root / current / marker).is_file() for marker in test_scope.MODULE_MARKERS):
+            return current.as_posix()
+        current = current.parent
+    return None
+
+
+def _in_write_set(rel, write_set):
+    for item in write_set:
+        item = item.rstrip("/")
+        if rel == item or rel.startswith(item + "/"):
+            return True
+    return False
+
+
+def select_explicit(root, files, ctx_path, basis_text, command_text=""):
+    """正式入口：人工已选定相关测试文件时直接生成白名单，不做全仓依赖扫描（解除“白名单只能由选测器生成”的死结）。"""
+    import test_scope
+    from project_inventory import default_excluded
+    root = Path(root).resolve()
+    if not files:
+        raise InputError("--explicit-tests 至少需要一个测试文件")
+    meta = load_context_meta(root, ctx_path) if ctx_path else None
+    if ctx_path:
+        import execution_policy as policy
+        try:
+            policy.require_action(test_scope.execution_context_data(root, ctx_path), "related-test")
+        except (policy.PolicyError, ValueError, OSError) as exc:
+            raise InputError(f"显式相关测试需要 related-test 授权：{exc}") from exc
+    elif not (basis_text or "").strip():
+        raise InputError("无任务上下文时必须用 --basis 记录选择依据")
+    write_set = meta["write_set"] if meta else []
+    listing = None
+    chosen, relations = [], {}
+    problems = []
+    for value in files:
+        path = Path(value)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(root)
+            except ValueError:
+                problems.append(f"{value}：不在本项目内")
+                continue
+        rel = PurePosixPath(path.as_posix()).as_posix()
+        if ".." in PurePosixPath(rel).parts or rel.startswith("/"):
+            problems.append(f"{value}：必须是 root 内相对路径")
+            continue
+        target = root / rel
+        if not target.is_file() or target.is_symlink() and not target.resolve().is_relative_to(root):
+            problems.append(f"{rel}：文件不存在或越出项目")
+            continue
+        if not looks_like_test(rel):
+            problems.append(f"{rel}：不是测试文件（按命名约定判定）")
+            continue
+        if default_excluded(rel):
+            problems.append(f"{rel}：属于默认排除目录（docs/memory/构建产物等）")
+            continue
+        if _in_write_set(rel, write_set):
+            kind = "write-set"
+        else:
+            kind = None
+            test_module = _module_root(root, rel)
+            if test_module and any(_module_root(root, w) == test_module for w in write_set):
+                kind = "same-module"
+            elif write_set:
+                if listing is None:
+                    listing = repo_files(root)
+                    by_name = {}
+                    for name in listing:
+                        by_name.setdefault(PurePosixPath(name).name, set()).add(name)
+                for source in write_set:
+                    if (root / source).is_file() and rel in tests_for(source, listing, by_name):
+                        kind = "name-mapped"
+                        break
+            if kind is None:
+                if (basis_text or "").strip():
+                    kind = "declared"
+                else:
+                    problems.append(f"{rel}：与任务写集无可核对关系；请用 --basis 记录人工选择依据")
+                    continue
+        relations[rel] = kind
+        chosen.append(rel)
+    if problems:
+        raise InputError("显式相关测试校验失败：" + "；".join(problems))
+    key = safe_key(meta["task_id"] if meta else "default")
+    rel_file = f"{ALLOWLIST_DIR}/{key}.json"
+    target = root / rel_file
+    previous = {}
+    try:
+        previous = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(previous, dict) or previous.get("task_id") != (meta["task_id"] if meta else "default"):
+            previous = {}
+    except (OSError, ValueError):
+        previous = {}
+    tests = sorted(set(previous.get("tests", [])) | set(chosen))
+    entry = {"basis": (basis_text or "").strip(), "files": sorted(chosen), "relations": relations,
+             "command": command_text, "recorded_at": int(time.time()),
+             "task_id": meta["task_id"] if meta else "default", "scan": {"content_reads": 0, "dependency_scan": False}}
+    history = list(previous.get("explicit", [])) + [entry]
+    result = {"schema": SCHEMA, "tests": tests, "unmapped": [], "allowed_args": list(tests), "allowlist_file": rel_file,
+              "basis": {"mode": "explicit", "explicit": entry, "total_tests": len(tests),
+                        "note": "显式相关测试入口：零内容读取、零依赖扫描；不授权全量回归、写集扩大或服务启动"}}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    record = dict(result, task_id=meta["task_id"] if meta else "default", created_at=int(time.time()), explicit=history)
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, target)
+    return result
+
+
 def _paths_ok(root):
     try:
         _git(root, "rev-parse", "--git-dir")
@@ -255,6 +376,10 @@ def main(argv=None):
     parser.add_argument("--execution-context", default="")
     parser.add_argument("--runners-json", default="[]")
     parser.add_argument("--scope", default="", help="校验已有 test_scope 范围后原样发布测试文件白名单")
+    parser.add_argument("--explicit-tests", nargs="+", default=[], metavar="FILE",
+                        help="已明确的相关测试文件：直接生成白名单，不做全仓依赖扫描")
+    parser.add_argument("--basis", default="", help="显式入口的选择依据（人工确认的理由，原样记录）")
+    parser.add_argument("--command", default="", help="显式入口将实际执行的测试命令（仅记录，不执行）")
     parser.add_argument("--max-tests", type=int, default=DEFAULT_MAX)
     parser.add_argument("--out", default="")
     parser.add_argument("--json", action="store_true")
@@ -269,7 +394,10 @@ def main(argv=None):
             runners = json.loads(raw)
         except ValueError as exc:
             raise InputError(f"--runners-json 不是合法 JSON：{exc}") from exc
-        result = select(args.root, args.since, args.write_set, args.execution_context, runners, args.max_tests, args.scope)
+        if args.explicit_tests:
+            result = select_explicit(args.root, args.explicit_tests, args.execution_context, args.basis, args.command)
+        else:
+            result = select(args.root, args.since, args.write_set, args.execution_context, runners, args.max_tests, args.scope)
     except (InputError, OSError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2

@@ -33,7 +33,19 @@
 
   0 = 全部锚点在代码中可定位（或无设计文档 / 无代码目录 → N/A 跳过）
   1 = 存在找不到落点的锚点（Important），或路径不可读（fail-closed）
-  2 = 用法错误（缺 `--version` 值等，由 argparse 直接给出）
+  2 = 用法错误（缺 `--version` 值、`--paths` 指向不存在的文件、`--changed-only` 取不到 git 改动等）
+
+## 范围模式（`--paths` / `--changed-only`，供 `code-verification-loop` 范围模式调用）
+
+  · 范围 = 给定文件清单（`--paths <文件...>`）∪ 本次 git 改动文件（`--changed-only`，已跟踪改动 +
+    暂存 + 未跟踪新增），两者可并用。
+  · **范围只裁剪「被核验的锚点」**：只核验出处落在范围内设计文档（`.md`）里的锚点；
+    范围外设计文档里的同类违规不报。落点搜索仍覆盖完整源码目录 + 范围内源码文件
+    （锚点本就可能由范围外文件实现，只搜范围内文件会制造成片假阳性）。
+  · 范围内没有任何设计文档 → 明确 `applicable=false`（`[SKIP] 范围内无设计文档…`，exit 0），
+    JSON 带 `scope` 字段；调用方需把设计文档并入清单，否则本维度没有可核验对象。
+  · 范围模式**仍要求 `--version`**（缺则 exit 2）；`--paths` 含不存在的文件 → exit 2 并列出；
+    `--changed-only` 无 git / 非 git 仓库 → exit 2 报 unsupported，⛔ 不静默通过也不回退全量。
 
 ⚠️ **这三个码的分配不是随手定的，反过来定会让本门整体静默失效。** 本门被
 `code-verification-loop` 维度 13 以 `--version <值> --json` 调用，而那侧对
@@ -46,11 +58,13 @@
 
     check_design_anchor.py --version V0.14.0 [--code code] [--root .]
                           [--design <额外设计目录>] [--json]
+                          [--paths <文件...>] [--changed-only]     # 范围模式
 """
 import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 CODE_EXTS = {".java", ".kt", ".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go",
@@ -88,8 +102,10 @@ def _is_anchor(tok):
     return bool(_CAMEL_RE.search(tok))        # camelCase 标识符；全小写单词太泛，不取
 
 
-def extract_anchors(root, design_dirs):
-    """从设计文档抽锚点。返回 {token: [{file,line,text}]}，以及被豁免的 token。"""
+def extract_anchors(root, design_dirs, only_files=None):
+    """从设计文档抽锚点。返回 {token: [{file,line,text}]}，以及被豁免的 token。
+
+    only_files 非 None = 范围模式：只读相对路径（正斜杠）在集合内的设计文档。"""
     anchors, exempted = {}, {}
     scanned = 0
     for d in design_dirs:
@@ -103,6 +119,8 @@ def extract_anchors(root, design_dirs):
                     continue
                 path = os.path.join(dirpath, fn)
                 rel = os.path.relpath(path, root).replace(os.sep, "/")
+                if only_files is not None and rel not in only_files:
+                    continue
                 try:
                     with open(path, "r", encoding="utf-8", errors="replace") as fh:
                         lines = fh.read().splitlines()
@@ -131,7 +149,7 @@ def extract_anchors(root, design_dirs):
     return anchors, exempted, scanned
 
 
-def load_code_text(root, code_dirs):
+def load_code_text(root, code_dirs, extra_files=()):
     """把代码目录读成一个大字符串做包含判定（token 级，不需要精确 AST）。"""
     chunks, files = [], 0
     for d in code_dirs:
@@ -150,6 +168,18 @@ def load_code_text(root, code_dirs):
                     files += 1
                 except OSError:
                     continue
+    seen = set()
+    for rel in extra_files:       # 范围内的源码文件并入落点语料（可能在 --code 目录之外）
+        full = os.path.join(root, rel)
+        if rel in seen or os.path.splitext(rel)[1] not in CODE_EXTS or not os.path.isfile(full):
+            continue
+        seen.add(rel)
+        try:
+            with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                chunks.append(fh.read())
+            files += 1
+        except OSError:
+            continue
     return "\n".join(chunks), files
 
 
@@ -176,14 +206,18 @@ def _found_in_code(tok, code_text):
     return False
 
 
-def run(root, version, code_dirs, extra_design):
+def run(root, version, code_dirs, extra_design, scope=None):
+    """scope=None 全量；否则为范围内相对路径集合（范围模式）。"""
     design_dirs = [f"docs/design/detail/{version}"] + list(extra_design or [])
-    anchors, exempted, n_docs = extract_anchors(root, design_dirs)
+    anchors, exempted, n_docs = extract_anchors(root, design_dirs, scope)
     if not n_docs:
-        return {"applicable": False,
-                "reason": f"docs/design/detail/{version}/ 无设计文档，跳过",
-                "ok": True, "missing": [], "exempted": {}}
-    code_text, n_code = load_code_text(root, code_dirs)
+        why = (f"范围内（{len(scope)} 个文件）无设计文档，无可核验锚点——需把 "
+               f"docs/design/detail/{version}/ 下相关设计文档并入范围"
+               if scope is not None else f"docs/design/detail/{version}/ 无设计文档，跳过")
+        return {"applicable": False, "reason": why, "ok": True, "missing": [],
+                "exempted": {}, **({"scope": {"files": len(scope), "design_docs": 0}}
+                                   if scope is not None else {})}
+    code_text, n_code = load_code_text(root, code_dirs, sorted(scope or ()))
     if not n_code:
         return {"applicable": False,
                 "reason": f"{'/'.join(code_dirs)} 下无可扫源码，跳过",
@@ -196,7 +230,32 @@ def run(root, version, code_dirs, extra_design):
     return {"applicable": True, "reason": "",
             "version": version, "design_docs": n_docs, "code_files": n_code,
             "anchors": len(anchors), "exempted_anchors": len(exempted),
-            "missing": missing, "ok": not missing}
+            "missing": missing, "ok": not missing,
+            **({"scope": {"files": len(scope), "design_docs": n_docs}}
+               if scope is not None else {})}
+
+
+def _norm_rel(root, p):
+    """把传入路径规整成相对 root 的正斜杠路径。"""
+    full = p if os.path.isabs(p) else os.path.join(root, p)
+    return os.path.relpath(os.path.normpath(full), root).replace(os.sep, "/")
+
+
+def git_changed_files(root):
+    """本次改动文件（相对 root）：工作区改动 + 暂存 + 未跟踪新增，只留仍存在的文件。
+    无 git / 非仓库 → 抛 RuntimeError（调用方报 unsupported，不静默通过）。"""
+    out = set()
+    for cmd in (["ls-files", "-z", "-m", "-o", "--exclude-standard"],
+                ["diff", "--cached", "-z", "--name-only", "--relative"]):
+        try:
+            r = subprocess.run(["git", "-C", root] + cmd, capture_output=True,
+                               text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"git 不可用：{exc}")
+        if r.returncode != 0:
+            raise RuntimeError("非 git 仓库或 git 执行失败：" + (r.stderr or "").strip()[:120])
+        out.update(x for x in r.stdout.split("\0") if x)  # -z：中文路径不被 git 转义
+    return {x for x in out if os.path.isfile(os.path.join(root, x))}
 
 
 def main():
@@ -208,6 +267,12 @@ def main():
                     help="源码目录（可重复；缺省 code）")
     ap.add_argument("--design", action="append", default=[],
                     help="额外设计目录（可重复）")
+    ap.add_argument("--paths", nargs="+", default=None, metavar="FILE",
+                    help="范围模式：只核验出处在这些设计文档里的锚点（源码文件并入落点语料）；"
+                         "含不存在的文件 → 退出 2")
+    ap.add_argument("--changed-only", action="store_true",
+                    help="范围模式：范围 = 本次 git 改动文件（可与 --paths 并用）；"
+                         "无 git → 退出 2（unsupported），不回退全量")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-check", action="store_true",
                     help="阳性对照自检：注入必然命中的探针，验证本检查确实生效"
@@ -222,8 +287,24 @@ def main():
                                 json_out=getattr(args, "json", False)))
 
     code_dirs = args.code or ["code"]
+    scope = None
+    if args.paths is not None or args.changed_only:
+        scope = set()
+        if args.paths:
+            norm = [(p, _norm_rel(args.root, p)) for p in args.paths]
+            absent = [p for p, rel in norm if not os.path.isfile(os.path.join(args.root, rel))]
+            if absent:
+                sys.stderr.write("❌ --paths 指向不存在的文件：" + ", ".join(absent) + "\n")
+                return 2
+            scope.update(rel for _, rel in norm)
+        if args.changed_only:
+            try:
+                scope.update(git_changed_files(args.root))
+            except RuntimeError as exc:
+                sys.stderr.write(f"❌ unsupported：--changed-only 取不到改动文件（{exc}）\n")
+                return 2
     try:
-        res = run(args.root, args.version, code_dirs, args.design)
+        res = run(args.root, args.version, code_dirs, args.design, scope)
     except OSError as exc:
         sys.stderr.write(f"❌ 无法判定：{exc}\n   fail-closed\n")
         return 1

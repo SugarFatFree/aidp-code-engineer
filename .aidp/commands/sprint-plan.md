@@ -115,7 +115,7 @@ SKILL 内置规则单一信源（命令端按约定 21 不复述，不写死列�
 >
 > 按共用QR配方复用同revision/inputs真实hash证据；只有缺失/失效的最低生成自检需要复核时（保留原错误与父预算）→ **派一个独立子 Agent 按该文件判据仅补缺失/失效的必要脚本；不追加未授权非Critical语义QR**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-execution-planner`，计划目录 = `docs/plans/{version}/`），只回传各脚本退出码 + `--json` 的必修 / 警告 / `skipped` 摘要；⛔ 不在主对话内联跑。
 
-判违规 → 暂停 Step 2，把退出码 + 报告正文展示给用户，让 SKILL 重写；退出码 `2`（入参错）→ 修参数重跑，不算产物违规。SKILL QR 标记通过但产物明显违规 → 视为 SKILL 缺陷，在模板仓库修 SKILL（约定 16），不在此步绕过。
+判违规 → 暂停 Step 2，把退出码 + 报告正文展示给用户，让 SKILL 重写；退出码 `2`（入参错）→ 修参数重跑，不算产物违规。SKILL QR 标记通过但产物明显违规 → 视为 SKILL 缺陷，反馈模板维护者转上游修 SKILL（约定 16；`bugfix` 除外），不在此步绕过。
 
 ### Step 1.6：★ DDL Task SQL 路径回写到最终部署位置（搬迁配套，镜像 sprint-design Step 3.2 ④）
 

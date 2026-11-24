@@ -2878,6 +2878,48 @@ def test_design_anchor_gate():
     rc2 = subprocess.run([sys.executable, script, "--root", str(root), "--version", "V9.9.9"],
                          capture_output=True, text=True).returncode
     check("无设计文档 → SKIP exit 0", rc2 == 0)
+
+    # ── 范围模式：--paths / --changed-only ──
+    d2 = root / "docs/design/detail/V0.1.0"
+    (d2 / "02_另一份.md").write_text("字段 `OTHER_DEVIATION` 必须实现。\n", encoding="utf-8")
+    in_doc = "docs/design/detail/V0.1.0/01_详细设计.md"
+    out_doc = "docs/design/detail/V0.1.0/02_另一份.md"
+    rc, d = gate("--paths", in_doc)
+    names = {m["anchor"] for m in d["missing"]}
+    check("★ --paths 范围内违规 → exit 1 且报出", rc == 1 and "CHANNEL_PERSONAL" in names)
+    check("★ --paths 范围外同类违规不报（OTHER_DEVIATION）", "OTHER_DEVIATION" not in names)
+    rc, d = gate("--paths", "code/backend/app/src/S.java")
+    check("★ --paths 范围内无设计文档 → 明确 SKIP（applicable=false）且 exit 0",
+          rc == 0 and d["applicable"] is False and "无设计文档" in d["reason"])
+    rc, d = gate("--paths", out_doc)
+    check("★ 只含另一份设计文档 → 只报它的锚点",
+          rc == 1 and {m["anchor"] for m in d["missing"]} == {"OTHER_DEVIATION"})
+    cp = subprocess.run([sys.executable, script, "--root", str(root), "--json",
+                         "--paths", in_doc], capture_output=True, text=True)
+    check("★ 范围模式缺 --version → exit 2", cp.returncode == 2)
+    cp = subprocess.run([sys.executable, script, "--root", str(root), "--version", "V0.1.0",
+                         "--paths", "docs/nope.md"], capture_output=True, text=True)
+    check("★ --paths 指向不存在文件 → exit 2 且点名", cp.returncode == 2 and "nope.md" in cp.stderr)
+    cp = subprocess.run([sys.executable, script, "--root", str(root), "--version", "V0.1.0",
+                         "--changed-only"], capture_output=True, text=True)
+    check("★ --changed-only 非 git 目录 → exit 2 unsupported（不静默通过）",
+          cp.returncode == 2 and "unsupported" in cp.stderr)
+    # 真 git 夹具：只改动 01 文档，02 未被改动
+    git = lambda *a: subprocess.run(["git", "-C", str(root)] + list(a),
+                                    capture_output=True, text=True)
+    if git("init", "-q").returncode == 0:
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
+        (d2 / "01_详细设计.md").write_text(
+            (d2 / "01_详细设计.md").read_text(encoding="utf-8") + "新增 `NEW_CHANGED_CONST`。\n",
+            encoding="utf-8")
+        rc, d = gate("--changed-only")
+        names = {m["anchor"] for m in d["missing"]}
+        check("★ --changed-only 只核验改动文件里的锚点（改动内违规报、未改动文档不报）",
+              rc == 1 and "NEW_CHANGED_CONST" in names and "OTHER_DEVIATION" not in names)
+        git("checkout", "--", ".")
+        rc, d = gate("--changed-only")
+        check("★ --changed-only 无改动 → 明确 SKIP exit 0", rc == 0 and d["applicable"] is False)
     shutil.rmtree(root, ignore_errors=True)
 
 

@@ -115,7 +115,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
   - **维度 13「实现偏离设计」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_design_anchor.py`
   - **维度 15「同族增量项一致性」** → `<被测项目根>/{{AIDP_HOME}}/scripts/check_sibling_family.py`
 
-- **被验收版本号**：仅**版本级**调用（不传 `scope_files`）的维度 13 才必需传 `{version}`；本命令的范围模式不要求，仍把 `{version}` 写进任务描述便于回链。
+- **被验收版本号**：维度 13 的脚本无论版本级还是范围模式都要求 `--version`，本命令范围模式必须显式传 `{version}`（并把本版设计文档并入 `scope_files`，维度 13 只核验范围内设计文档的锚点），缺失会落「未核验」；同时写进任务描述便于回链。
 
 
 - **改动前基线 `baseline_ref`**（SKILL 入参，取值语义与未传时的回落以 SKILL 为准，命令端不复述；本参数**必须显式传**，⛔ 不得省略交给 SKILL 回落）：
@@ -125,7 +125,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
     ```
     `--sprint-uncommitted` 仅当本 Sprint 改动全部仍在工作区未提交时加（脚本另验工作区确有未提交改动）。脚本按「契约卡 → 上游透传 → 工作区未提交取 `HEAD` → `merge-base`（仅 ≠ `HEAD` 有效）」取到即停，每个候选校验为 `HEAD` 祖先；输出 `baseline_ref`（commit 或 `none`）与 `unverified_label`，退出码 3 = 取不到。⛔ 不得用 `HEAD~1` 顶替、⛔ 不得凭感觉挑一个 commit。
   - `vcs_mode=none`：无可检出的改动前代码（`sprint-{NNN}-local-before.json` 只有 sha256、不含旧内容，跑不了改动前的类型检查）→ 一律按「取不到」处置（脚本同样返回 `none` + `unsupported:vcs-disabled`）。
-  - **取不到时**：传 `baseline_ref=none`（SKILL 的显式「无改动前基线」入参）：依赖基线的项落「**基线无效，本项未核验**」（`未核验（原因）` 行 + 一条 `Important`「本项未核验」→ 结论 `不通过`），不回落 `merge-base`，也不以本轮首跑错误数作基线。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**`git` 模式的无人值守 / 编排调用必须向上游返回「存在未核验维度 / 不通过」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
+  - **取不到时**：传 `baseline_ref=none`（SKILL 的显式「无改动前基线」入参）：依赖基线的项按 SKILL 口径落「基线无效，本项未核验」。命令端处置：该类条目**不是代码缺陷**，⛔ 不转写 bugfix（`/sprint-bugfix` 无从修复，只会空转）；在测试报告列为**待人工核验项**（`vcs_mode=none` 记 `unsupported:vcs-disabled`，`git` 模式记「基线无效：未取到 Sprint 起点 commit」），⛔ 不折算为通过、不私自改判 SKILL 结论。**`git` 模式的无人值守 / 编排调用必须向上游返回「存在未核验维度 / 不通过」失败信号，附基线缺失或工具环境原因，交上游按失败计数熔断；不能只挂一条待办后返回成功、不能自动制造基线。交互式才列待人工核验项**。
   - **`vcs_mode=none` 的无人值守 / 编排口径（降级放行，与「非 Git 可规划 / 开发 / 本地测试」一致）**：基线缺失是环境能力缺口而非代码缺陷，熔断只会让非 Git 项目的每个 Sprint 都在此失败。故**仅当**未核验项全部是「依赖改动前基线的项（`unsupported:vcs-disabled`）」且无其它失败 / 未核验维度时：向上游返回**成功**信号并附 `unsupported:vcs-disabled` 降级项清单，测试报告如实列出这些项（⛔ 不折算为通过、不改写 SKILL 结论文字），并经 `python3 {{AIDP_HOME}}/scripts/notify.py --auto --title "vcs-disabled 降级放行"` 通知**一次**（同一版本已通知过则不重发；退出码 3 = 未配渠道 → 静默跳过）。含其它未核验 / 失败时仍按上一条向上游返回失败信号。
 
 **额外提示**（命令端补充给 skill 的上下文）：
@@ -134,7 +134,7 @@ python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
   - PRD（用于三方冲突裁决的样式/文案/业务规则裁决）：`docs/requirements/{version}/研发需求/`
   - 迭代执行计划（任务清单）：`docs/plans/{version}/01_研发执行计划.md`
   - **同族增量项声明表**（`dev-logic-architect` 检查项 41 的 5 列表，在 `docs/design/detail/{version}/` 内）：供 SKILL 维度 15 消费；上游没产出时的回退与告警归 SKILL
-- **★ 规划期基线类文档（约定 33 强制传入，供 SKILL「PRD↔实现」直接比对 + 视觉还原 L1 + 内容完整性核对消费）**——把下列路径显式作输入传给 SKILL，笼统标注"以这些基线为准回检实现有无漏项/漏列/偏离"（约定 21 只传路径、不复述 SKILL 维度）：
+- **★ 规划期基线类文档（约定 33 强制传入，供 SKILL「产品 PRD 原文 ⟷ 实现 条目对账」 + 视觉还原 L1 + 内容完整性核对消费）**——把下列路径显式作输入传给 SKILL，笼统标注"以这些基线为准回检实现有无漏项/漏列/偏离"（约定 21 只传路径、不复述 SKILL 维度）：
   - **PRD 原文（产品提供）**：`docs/requirements/{version}/产品提供/*.md`（作**独立比对基准**，供「PRD↔实现」直接比对维度回检"实现里到底有没有这个按钮/这一列"，绕过设计文档同源污染）
   - **原型内容基线**：`docs/design/detail/{version}/NN_原型内容基线.md`（内容完整性逐页核对：原型有/实现无或行为不符/未标处置 → Critical）
   - **设计令牌**：`docs/design/detail/{version}/NN_设计令牌.md`（如存在，视觉还原 L1 强校验基准）

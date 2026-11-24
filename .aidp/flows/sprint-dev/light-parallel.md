@@ -26,7 +26,7 @@ python3 {{AIDP_HOME}}/scripts/dispatch_plan.py \
 
 - `decision=parallel` → 把 `parallel_groups[0]` 内各任务**同一消息内**并发派子 Agent，prompt 取 `prompts[].prompt`；`serial` 中的任务等并行批结束后主 Agent 自己做；
 - `decision=serial` → 不派发，按 `reasons`/`conflicts`（冲突文件与任务）串行执行；
-- 派发前按 `light-context.md` 围栏对 `agents` 资源预留并先 `execution_policy.py require-delegable --action "$ACTION"`（只判有资格委派；真正执行仍由各动作的 require-action 把关）。
+- 派发前先 `execution_policy.py require-delegable --action "$ACTION"`，并对每个子 Agent `acquire-slot --kind agent`（`agents` 是并发硬限，满额排队；子 Agent 结束后 `release-slot`，见 `phase-1-dev-2.md` 围栏）（只判有资格委派；真正执行仍由各动作的 require-action 把关）。
 
 ## 子 Agent prompt 必带项（脚本模板已含）
 

@@ -833,11 +833,8 @@ def run_build(root, version, build, commit, plan, timeout=3600, retry=False, exe
                     reserve_budget(root, execution_context, "retries", 1, input_hash, action="full-regression")
                 reserve_budget(root, execution_context, "processes", len(plan.get("suites", [])),
                                input_hash, action="full-regression")
-                available = reserve_budget(root, execution_context, "elapsed_seconds", 0,
-                                           input_hash, action="full-regression")["remaining"]
-                timeout = min(timeout, available)
-                if timeout <= 0:
-                    raise BuildError("任务执行耗时预算已用尽")
+                from execution_policy import step_timeout
+                timeout = step_timeout(root, execution_context, "version-command", timeout, action="full-regression")
                 reservation = reserve_budget(root, execution_context, "elapsed_seconds", timeout,
                                              input_hash, action="full-regression")
             result.update(plan_hash=plan_hash, status="RUNNING", reason="validating",

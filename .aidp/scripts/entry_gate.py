@@ -103,12 +103,23 @@ def find_context(root, env=None):
     explicit = env.get("AIDP_EXECUTION_CONTEXT")
     marker = None
     if "AIDP_EXECUTION_CONTEXT" not in env:
-        marker_path = task_marker_path(root, env.get("AIDP_SESSION_ID"))
+        session = env.get("AIDP_SESSION_ID") or None
+        marker_path = task_marker_path(root, session)
         marker = _load_json(marker_path)
-        if not marker or not _same_root(marker, root) or not _fresh(marker_path, limit):
-            return None, None
-        if marker.get("session_id") != (env.get("AIDP_SESSION_ID") or None):
-            return None, None
+        if (not marker or not _same_root(marker, root) or not _fresh(marker_path, limit)
+                or marker.get("session_id") != session):
+            marker = None
+            # 无人值守 tick（调度器注入 AIDP_TICK_COMMAND）：hook 带宿主 session_id 查询，但模型 Bash 里的 bind
+            # 拿不到该变量，只能写无会话标记。同一链路 tick 串行，故此时回退读无会话标记（仍要求同根、新鲜）；
+            # 交互会话不走此回退，保持「有 session 只读同会话标记」的严格口径。
+            if session and env.get("AIDP_TICK_COMMAND"):
+                fallback = task_marker_path(root, None)
+                candidate = _load_json(fallback)
+                if (candidate and _same_root(candidate, root) and _fresh(fallback, limit)
+                        and candidate.get("session_id") is None):
+                    marker = candidate
+            if marker is None:
+                return None, None
         explicit = marker.get("execution_context")
     if not isinstance(explicit, str) or not explicit:
         return None, None

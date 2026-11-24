@@ -406,17 +406,18 @@ print(json.dumps(out)); sys.exit(status)
         second, _ = ledger.run_scope(self.root, path, 'policy', execution_context=context)
         self.assertFalse(second['runs'][0]['reused'])
 
-    def test_parallel_scope_commands_share_one_process_budget(self):
+    def test_parallel_scope_commands_share_one_process_concurrency_pool(self):
         context = self.context(budget={'processes': 1})
         self.write('src/app.py', 'value = 2\n')
         path, _ = self.plan(context=context)
         command = [sys.executable, str(SCRIPTS / 'test_ledger.py'), 'run-scope', '--root', str(self.root),
                    '--scope-file', str(path), '--execution-context', context, '--env-id', 'parallel-budget']
         processes = [subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
-        outputs = [p.communicate(timeout=15) for p in processes]
-        self.assertEqual(sorted(p.returncode for p in processes), [0, 2], str(outputs))
+        outputs = [p.communicate(timeout=30) for p in processes]
+        # processes 现为并发硬限：两条命令共用同一并发池，排队串行执行而不是一条被拒
+        self.assertEqual(sorted(p.returncode for p in processes), [0, 0], str(outputs))
         results = [json.loads(stdout.splitlines()[-1]) for stdout, _ in outputs]
-        self.assertEqual({r['status'] for r in results}, {'PASS', 'BUDGET_EXCEEDED'})
+        self.assertEqual({r['status'] for r in results}, {'PASS'})
         self.assertEqual(len(ledger.load(self.root)), 1)
 
     def test_review_recording_requires_review_grant_but_verify_is_read_only(self):

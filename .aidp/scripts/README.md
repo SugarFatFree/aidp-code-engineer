@@ -42,7 +42,24 @@
 
 普通开发/修复默认 `implement + static + related-test`，包含本次改动必要的失败修复与复验，不另问是否单测；明确只分析、只修改或跳过某项验证时保留真实请求和受限结论。独立审查、CVL、文档审计、迁移演练、部署工具开发及 Git/部署仍遵守各自动作边界；若执行审查/CVL也只覆盖本任务/Sprint。`full-regression` 仅指真实 autopilot 委派、绑定验收清单的当前版本全量，不代表整个项目或系统。子任务继承原身份、范围和根预算，不因名称、历史 build 或文件数量扩权。同根因、同输入的工具错误停止盲目重试，实际执行结果与预算结算分别保留。
 
-验证执行器通过 `reserve_validation` 一次预留前取证、命令、后取证和必需收尾，再按真实进度结算。冷缓存先用计划标识预留，前取证后由 `bind_validation_input` 绑定真实内容输入才执行命令，不拿元数据摘要绕过同输入失败记录。`scanned_files` 表示取证内容读取操作，路径数量/元数据/命中/工具对象分开观测；额度不足给出各段预计量、剩余及缺口，不自行扩额。取消只退未用，真实已执行事实及失败始终保留。
+**预算三类（口径单一信源，见 `execution_policy.py` 顶部）**：
+
+| 类别 | 资源 | 行为 |
+|---|---|---|
+| 并发硬限 | `agents` / `processes` | 同时运行上限，由 `acquire-slot` / `release-slot`（或 `concurrency_slot`）强制；累计启动数只作统计；上限 0 = 明确禁止启动 |
+| 总量软限 | `scanned_files` / `elapsed_seconds` | 默认只预警并写入报告，不停止；阈值由 `adaptive_defaults` 按仓库文件数自适应（`scanned_files = max(2000, 3×文件数)`，`elapsed_seconds = 300 + 文件数÷10`，只读一次 `git ls-files`） |
+| 固定硬限 | `selected_tests` / `retries` | 范围与失败风暴护栏，始终阻断 |
+
+- **软限降级顺序**固定为：缩小范围 → 使用缓存 → 减少重复取证 → 确实无法继续才请用户决策（`soft_advice`；有新结果产出就不升级；从不停止任务）。
+- **软限转为阻断**仅四种情形：用户显式写入的键（含旧配置，旧 `project-policy`/带 `execution_budget` 的修订记录不静默降为软限）、低于默认值的收紧、autopilot 无人值守链路、deploy/push/live-tests 等高风险动作。
+- **并发池**：父任务、子 Agent、嵌套流程共用根任务同一池；满额进入可见的 FIFO 队列（`slots` 查看、`cancel-queued` 取消）；正常/异常/取消/超时/持有进程死亡/租约（`--lease-seconds`，默认 3600）过期都会释放；排队票据 30 分钟过期。**CLI `acquire-slot` 没拿到槽位时撤销票据并以退出码 2 退出**（JSON `status=QUEUED`），流程里的 `|| exit $?` 会停下重试而不是继续派发；每轮 autopilot tick 开始时按链路回收上一轮遗留的槽位（`reap_slots`，不同链路并行互不影响）。
+- **真实耗尽才冻结**：`BUDGET_EXCEEDED` 的 `details.recovery` 给出恢复路径（降耗手段 + 带用户原文的 `revise --execution-budget` 续额；续额不扩大业务授权）；单步估算超出剩余额度只拒绝该步骤，不写耗尽标记、不冻结版本；只有已用 ≥ 上限才标记耗尽。
+- **0 人工续额**：`aidp_scheduler.py install --authorization-text "<原话>" --auto-renew-budget N` 一次性授权 N 次自动续额，耗尽时按 COMMAND_BUDGETS 基本量续一次（告警 `loop-budget-auto-renewed`），只放宽执行资源，不授予业务动作；次数用完才冻结等人。
+- **展示与迁移**：`budget-report` 展示每项资源的类别与原因，入口输出的 `budget_policy` 给出迁移说明；脚手架升级报告会点名「含义已变」的配置键（`agents`/`processes` 等）与仍在生效的护栏关闭开关。资源额度不等于业务授权：放宽额度不授予全量回归、启动服务、扩大写集或部署。
+- **单步超时**只有一个信源 `step_timeout`（`scan 300 / selection 60 / command 30 / version-command 3600` 秒，可用显式参数或 `AIDP_STEP_TIMEOUT_<KIND>` 覆盖；仅 elapsed 为阻断类时才以剩余额度封顶），内部不得再出现 `min(10, …)` 一类未说明的更低上限（`test_budget_policy.py` 有静态守卫）。
+- **长任务进展**：`record_progress` / `assess_progress` / `emit_progress` 输出阶段与已处理数，并按 advancing / repeated-failure / external-failure / scope-growth / stalled 归类；同输入同原因的失败不重试。
+
+验证执行器通过 `reserve_validation` 一次预留前取证、命令、后取证和必需收尾，再按真实进度结算。冷缓存先用计划标识预留，前取证后由 `bind_validation_input` 绑定真实内容输入才执行命令，不拿元数据摘要绕过同输入失败记录。`scanned_files` 按同一路径去重计量（重复读取只计一次，缓存命中不计费），路径数量/元数据/命中/去重/工具对象分开观测，外部工具 I/O 标 `unknown` 而非零；额度不足给出各段预计量、剩余及缺口，不自行扩额。取消只退未用，真实已执行事实及失败始终保留。
 
 ## dispatch_plan.py — light 并行派发判定
 
@@ -68,7 +85,7 @@
 
 ## select_related_tests.py / test_command_guard.py / test_baseline.py — 测试范围机器强制
 
-`select_related_tests.py` 由 git 改动、未跟踪文件、导入图与命名约定推出相关测试白名单，复用 `test_scope.py` 的依赖分析。`--scope FILE` 校验已有相关范围的同任务身份、内容 hash 与当前输入后原样使用其测试集合；上下文或推导校验失败即拒绝，不能回退命名猜测。显式相关文件集合即使恰好覆盖小项目全部测试也完整保留；默认不设数量上限，显式 `--max-tests N` 不足时退出 2 并报告 `BUDGET_EXCEEDED`，不发布截断白名单。白名单写入 `memory/.aidp/test-allowlist/<key>.json`（key 为上下文 task_id，无上下文为 `default`）；有上下文时只接受同任务记录，缺失或损坏即拒绝，无上下文时只读取 default，不借用其他任务最新记录。`test_command_guard.py` 的 `check` / `wrap [--background --log F]` / `changed` 对 pytest / jest / vitest / mvn / gradle / go test / `run_tests*` / ruff 判定：无参数或目录拒绝，显式文件须在白名单内，`--allow-full` 仅 autopilot 授权的 full-regression 上下文放行（缺授权 fail closed），`git stash` 拒绝；`--background` 把输出写日志并在结束时写 `<日志>.exit`。`test_baseline.py` 的 `record` / `diff` / `show` 以 `memory/.aidp/test-baseline/<key>.json` 保存已知失败基线，输出「新失败 = 本次失败 − 基线」，基线那次没有执行迹象时拒绝比较。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 35「测试范围由机器强制」，项目入口范例见 `{{AIDP_HOME}}/templates/scripts/run_tests.sh`。
+`select_related_tests.py` 由 git 改动、未跟踪文件、导入图与命名约定推出相关测试白名单，复用 `test_scope.py` 的依赖分析。**显式入口** `--explicit-tests FILE… [--basis 依据] [--command 命令]`：人工/调用方已明确相关测试文件时直接生成白名单，只做 stat 与 git 文件清单（零内容读取、零依赖扫描），校验文件存在、位于本项目、是测试文件、未被默认排除且与任务范围有关（写集内 / 同模块 / 同名映射；都不满足须 `--basis`，标记 `declared`），有上下文时须持有 `related-test`；与自动选测写入同一白名单（并集），记录依据/文件/任务身份/命令，不能借此扩大到全量回归或绕过护栏——选测器被预算或时间挡住时先走这里，不要手改白名单、清上下文或关护栏。依赖分析按「路径 + 内容摘要」缓存每个文件的导入事实（`memory/.aidp/scope-facts/facts.json`）：无关文件变化不致全量失效，只重解析变化文件；扫描中途超时已完成部分落盘，重跑即断点续扫。`--scope FILE` 校验已有相关范围的同任务身份、内容 hash 与当前输入后原样使用其测试集合；上下文或推导校验失败即拒绝，不能回退命名猜测。显式相关文件集合即使恰好覆盖小项目全部测试也完整保留；默认不设数量上限，显式 `--max-tests N` 不足时退出 2 并报告 `BUDGET_EXCEEDED`，不发布截断白名单。白名单写入 `memory/.aidp/test-allowlist/<key>.json`（key 为上下文 task_id，无上下文为 `default`）；有上下文时只接受同任务记录，缺失或损坏即拒绝，无上下文时只读取 default，不借用其他任务最新记录。`test_command_guard.py` 的 `check` / `wrap [--background --log F]` / `changed` 对 pytest / jest / vitest / mvn / gradle / go test / `run_tests*` / ruff 判定：无参数或目录拒绝，显式文件须在白名单内，`--allow-full` 仅 autopilot 授权的 full-regression 上下文放行（缺授权 fail closed），`git stash` 拒绝；`--background` 把输出写日志并在结束时写 `<日志>.exit`。`test_baseline.py` 的 `record` / `diff` / `show` 以 `memory/.aidp/test-baseline/<key>.json` 保存已知失败基线，输出「新失败 = 本次失败 − 基线」，基线那次没有执行迹象时拒绝比较。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 35「测试范围由机器强制」，项目入口范例见 `{{AIDP_HOME}}/templates/scripts/run_tests.sh`。
 
 ## build_unit_test.py / unit_report_merge.py / aiauto_test_join.py — build 两路测试
 
@@ -856,8 +873,9 @@ M2 从未执行且无任何告警**（不报错、不重试、结论是"成功"�
 实现偏离设计门：详细设计点名过的字段/常量到源码里找落点，抓「换了数据来源却编译过、
 界面完整、不报错」那类偏离。Important 级。接线 = `/sprint-close` Step 2.5.1 +
 `code-verification-loop` 维度 13（**比维度 10/12 多一个必填 `--version`**）。
-用法：`python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version V0.14.0 [--root .] [--code code] [--design <额外设计目录>] [--json]`。
-退出码：`0`=全部锚点可定位（或无设计/无代码 → N/A 跳过）/ `1`=有找不到落点的锚点（Important），或路径不可读（fail-closed）/ `2`=用法错。
+用法：`python3 {{AIDP_HOME}}/scripts/check_design_anchor.py --version V0.14.0 [--root .] [--code code] [--design <额外设计目录>] [--json] [--paths <文件...>] [--changed-only]`。
+范围模式（CVL 范围模式调用）：`--paths` 给文件清单、`--changed-only` 取 git 改动文件（工作区+暂存+未跟踪，可并用）；范围只裁剪被核验的锚点（出处在范围内设计 `.md` 的才核验，范围外同类违规不报），落点语料仍是完整源码目录 + 范围内源码文件；范围内无设计文档 → 明确 SKIP；仍要求 `--version`。
+退出码：`0`=全部锚点可定位（或无设计/无代码/范围内无设计 → N/A 跳过）/ `1`=有找不到落点的锚点（Important），或路径不可读（fail-closed）/ `2`=用法错（缺 `--version`、`--paths` 文件不存在、`--changed-only` 无 git → unsupported）。
 ⚠️ **「有发现」必须落 1 而非 2**——与 `check_ui_fidelity.py`·`check_upstream_call_log.py` 同一套。
 维度 13 的调用方对 `exit 2` 的处置是「入参/环境错 → 修正参数后重跑」，既不计过也不计不过；
 把发现放在 2 上，每条真实偏离都会被读成环境问题丢掉，**门在跑、恒绿、两侧报告都不留痕**。

@@ -95,7 +95,7 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . \
 >
 > ⚙️ **定位（按约定 21）**：用例的结构 / 格式 / 溯源 / 方案闭环 / 数量基线 / 还原度 / 零残留断言判定**一律以 `dev-manual-testcase` Quality Review 为单一信源**；本门只做两件事——① 派子 Agent 原样跑 SKILL 脚本复核、② 查 SKILL 不管的项目级落盘约定。
 
-**① SKILL脚本复核**：先按共用配方复用同hash的最低生成自检证据，只有缺失/失效项才派单；父document动作/agents预算先过围栏，非Critical语义审计不由本步追加。按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参如下：
+**① SKILL脚本复核**：先按共用配方复用同hash的最低生成自检证据，只有缺失/失效项才派单；父document动作先过围栏、派子Agent前先取agent并发槽位（`acquire-slot --kind agent`，结束后`release-slot`），非Critical语义审计不由本步追加。按 **`{{AIDP_HOME}}/skills/dev-manual-testcase/references/flow-qr-dispatch.md`「🛡️ 落盘后 bash 硬核回检」+ 子 Agent 步骤 0 原样跑全部脚本**（`<SKILL_DIR>` = `{{AIDP_HOME}}/skills/dev-manual-testcase`，用例路径 = `docs/testing/{version}/研发自测`，⛔ 传目录）。项目级入参如下：
 - `check_case_stats.py` 显式传 `--scale {档位}`（本命令 `--scale=` 入参 / `/version` Step 2.4.1.5 判档；均无则 L）；收到 `--module-case-cap=N` / `--prd-presence-table=<路径>` 时**同时**传 `--module-case-cap N` / `--prd-presence-table <路径>`（与 SKILL 内判定同口径；对账表有未覆盖行 = exit 1）；
 - `--issue-record` 按序取**上游研发需求** `docs/requirements/{version}/研发需求/01_研发需求.md` → `00_研发需求.md` → 本目录 `99_待澄清问题清单.md`，均无则不传（⛔ 首选不得是本目录自产清单：那是自己查自己）；
 - 收到 `--module-kind=<值>` 时 `check_testcase_format.py` / `check_testcase_suite.py` / `check_fidelity_suite.py` 传 `--module-kind <值>`（不传则 `[非交互]` 标记不被认可）；

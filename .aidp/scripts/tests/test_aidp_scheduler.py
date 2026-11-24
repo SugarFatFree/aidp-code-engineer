@@ -46,7 +46,7 @@ def check(name, cond):
         print(f"  ❌ FAIL: {name}")
 
 
-def _mkproj(config="", authorized=True):
+def _mkproj(config="", authorized=True, choose_branch_policy=True):
     """authorized=True 时按 install --authorization-text 的真实落点记录用户持续指令（无头 autopilot tick 的前提）。"""
     d = tempfile.mkdtemp(prefix="aidp-sched-")
     subprocess.run(["git", "init", "-q", d], check=True)
@@ -60,6 +60,9 @@ def _mkproj(config="", authorized=True):
         notify_source = fh.read()
     with open(notify_path, "w", encoding="utf-8") as fh:
         fh.write(notify_source.replace("sys.exit(main())", "sys.exit(3)"))
+    if choose_branch_policy and "branch_policy" not in config:
+        # 安装预检要求 Git 项目已选择分支偏好（无人值守无法询问）；绝大多数用例与该前置无关
+        config = config.rstrip("\n") + ("\n" if config else "") + "development:\n  branch_policy: current\n"
     if config:
         with open(os.path.join(d, "memory", "aidp-config.yaml"), "w", encoding="utf-8") as fh:
             fh.write(config)
@@ -668,6 +671,15 @@ def test_install_preflight():
         res = json.loads(r.stdout or "{}")
         check("★dsh 未配 exec → install rc=2（不装注定失败的任务）", r.returncode == 2
               and "scheduler.exec.dsh" in (res.get("error") or ""))
+        bare = _mkproj(choose_branch_policy=False)
+        try:
+            r = _sched(["install", "--platform", "cron", "--dry-run", "--json", "--agent", "claude"], bare, home)
+            res = json.loads(r.stdout or "{}")
+            check("★P1-4 Git 项目未选分支偏好 → install 拒绝并给出一次性设置命令（不拖到首个 tick）", r.returncode == 2
+                  and "branch_policy" in (res.get("error") or "") and "aidp_config.py set" in (res.get("error") or ""))
+            check("技术选型缺失 → install WARN（D3 门提前暴露）", any("技术选型" in w for w in res.get("warnings") or []))
+        finally:
+            shutil.rmtree(bare, ignore_errors=True)
         r = _sched(["install", "--platform", "cron", "--dry-run", "--json", "--agent", "claude"], root, home)
         res = json.loads(r.stdout or "{}")
         check("claude 未放行 Bash/Agent → WARN 但照装", r.returncode == 0

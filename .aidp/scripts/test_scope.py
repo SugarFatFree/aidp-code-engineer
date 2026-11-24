@@ -315,8 +315,138 @@ def read_frozen_source(root, path, frozen_files=None, observer=None, frozen_toke
     return content
 
 
+FACTS_POLICY = "python-import-facts-v1"
+_DYNAMIC_MODULES = frozenset(("importlib", "runpy", "subprocess", "ctypes", "builtins", "os", "sys"))
+_DYNAMIC_CALLS = frozenset(("__import__", "eval", "exec", "compile", "getattr", "globals", "locals",
+                            "system", "popen", "load_tests", "loadTestsFromName", "loadTestsFromNames",
+                            "discover", "joinpath", "with_name", "with_suffix", "glob", "rglob", "chdir"))
+_FACTS_MEMORY = {}
+
+
+def extract_facts(path, tree):
+    """一次遍历抽出文件自身的导入事实（与具体测试/运行器无关，只依赖内容）；可 JSON 持久化并跨测试复用。
+
+    原实现对每个测试的整个闭包重复 ast.walk，同一文件在 N 个测试里被遍历 N 次（CPU 打满的来源）；
+    现在每个内容版本只遍历一次。需结合测试 cwd/PYTHONPATH 才能确定的部分（导入解析、Path/open 常量）只存原料。
+    """
+    unknown, imports, refs = set(), [], []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.Import):
+                names, relative = [(a.name, False) for a in node.names], None
+            else:
+                if any(a.asname and a.asname != a.name for a in node.names
+                       if a.name in {"Path", "open", "eval", "exec", "__import__"}):
+                    unknown.add(f"{path}: 动态输入函数别名")
+                relative = None
+                if node.level:
+                    parent = PurePosixPath(path).parent
+                    for _ in range(node.level - 1):
+                        parent = parent.parent
+                    relative = str(parent)
+                names = [(node.module or "", False)]
+                names += [(".".join(filter(None, (node.module, a.name))), True) for a in node.names if a.name != "*"]
+                if any(a.name == "*" for a in node.names):
+                    unknown.add(f"{path}: 星号导入无法证明独立")
+            for name, attribute in names:
+                imports.append([name, attribute, relative])
+                if name.split(".")[0] in _DYNAMIC_MODULES:
+                    unknown.add(f"{path}: 动态加载/外部执行 {name}")
+        elif isinstance(node, ast.Call):
+            name = node.func.id if isinstance(node.func, ast.Name) else (
+                node.func.attr if isinstance(node.func, ast.Attribute) else "")
+            if name in _DYNAMIC_CALLS:
+                unknown.add(f"{path}: 动态依赖调用 {name}")
+            if name in {"Path", "open"}:
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    refs.append(node.args[0].value)
+                else:
+                    unknown.add(f"{path}: 动态文件路径 {name}")
+        elif isinstance(node, ast.Name) and node.id in {"__import__", "eval", "exec", "compile", "globals", "locals"}:
+            unknown.add(f"{path}: 动态执行引用 {node.id}")
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Name) and node.value.id in {"Path", "open"}:
+            unknown.add(f"{path}: 动态输入函数转交")
+        elif isinstance(node, ast.Attribute) and node.attr in {"path", "modules", "meta_path", "__dict__"}:
+            unknown.add(f"{path}: 动态解析属性 {node.attr}")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {"__getattr__", "load_tests"}:
+            unknown.add(f"{path}: 动态加载钩子 {node.name}")
+    return {"unknown": sorted(unknown), "imports": imports, "refs": refs}
+
+
+class FactsCache:
+    """按「路径 + 冻结内容摘要」缓存导入事实：无关文件变化不使其失效，内容变化只重解析该文件。
+
+    进程内与磁盘（memory/.aidp/scope-analysis/facts.json）两级；扫描中途超时也会落盘已完成部分，
+    下次从断点继续而不是从头来过。摘要不同、策略版本不同或文件损坏一律视为未命中并重算。
+    """
+    def __init__(self, root):
+        self.root = Path(root)
+        self.hits = self.misses = 0
+        self.dirty = False
+        self.entries = {}
+        self.file = None
+        try:
+            from aidp_paths import ensure_runtime_dir
+            self.file = Path(ensure_runtime_dir(self.root)) / "scope-facts" / "facts.json"
+        except (OSError, ValueError, ImportError, AttributeError):
+            return
+        try:
+            record = json.loads(self.file.read_text(encoding="utf-8"))
+            if record.get("policy") == FACTS_POLICY and isinstance(record.get("files"), dict):
+                self.entries = record["files"]
+        except (OSError, ValueError, AttributeError):
+            pass   # 首次运行/文件损坏：视为全部未命中，重算后覆盖
+
+    def get(self, path, content_digest):
+        entry = _FACTS_MEMORY.get((str(self.root), path, content_digest))
+        if entry is None:
+            row = self.entries.get(path)
+            if isinstance(row, dict) and row.get("digest") == content_digest and isinstance(row.get("facts"), dict):
+                entry = row["facts"]
+                _FACTS_MEMORY[(str(self.root), path, content_digest)] = entry
+        if entry is None:
+            self.misses += 1
+        else:
+            self.hits += 1
+        return entry
+
+    def put(self, path, content_digest, facts):
+        _FACTS_MEMORY[(str(self.root), path, content_digest)] = facts
+        row = {"digest": content_digest, "facts": facts}
+        try:
+            info = (self.root / path).stat()
+            row["stat"] = [info.st_size, info.st_mtime_ns]
+        except OSError:
+            pass
+        self.entries[path] = row
+        self.dirty = True
+
+    def likely_valid(self, path):
+        """仅用于预留估算：该文件上次解析后大小/mtime 未变 → 预计免读免解析（不替代摘要核验）。"""
+        row = self.entries.get(path)
+        try:
+            info = (self.root / path).stat()
+        except OSError:
+            return False
+        return bool(row and row.get("stat") == [info.st_size, info.st_mtime_ns])
+
+    def save(self):
+        if not self.dirty or self.file is None:
+            return
+        try:
+            self.file.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", dir=self.file.parent, delete=False) as stream:
+                json.dump({"policy": FACTS_POLICY, "files": self.entries}, stream)
+                temporary = stream.name
+            os.replace(temporary, self.file)
+            self.dirty = False
+        except OSError:
+            pass  # 缓存只是加速，写失败不影响结果
+
+
 def dependency_analysis(root, files, modules, runners, deadline=None, repositories=(".",), frozen_files=None,
-                        observer=None, candidates=None, frozen_tokens=None, metadata=None):
+                        observer=None, candidates=None, frozen_tokens=None, metadata=None, facts_cache=None,
+                        progress=None):
     """解析本地 Python 导入闭包；命名映射只增加依赖，绝不证明独立。
 
     不执行项目代码。缺失/外部导入、动态加载及无法解析的文件均显式标记 unknown。
@@ -330,21 +460,47 @@ def dependency_analysis(root, files, modules, runners, deadline=None, repositori
     directories = {str(parent) for p in python_files for parent in PurePosixPath(p).parents}
     parsed = {}
 
-    def parse(path):
-        if path not in parsed:
-            try:
-                content = read_frozen_source(root, path, frozen_files, observer, frozen_tokens, metadata)
-                # ast.parse(bytes) 保留 Python 源码编码声明/BOM 的处理，且不再次打开源码。
-                parsed[path] = ast.parse(content, filename=path)
-            except (OSError, UnicodeError, SyntaxError) as exc:
-                parsed[path] = type(exc).__name__
-        return parsed[path]
+    def facts_of(path):
+        """导入事实：先查「路径+冻结摘要」缓存，未命中才读取并解析；解析失败返回错误类型名字符串。"""
+        if path in parsed:
+            return parsed[path]
+        digest_value = frozen_files.get(path) if frozen_files is not None else None
+        cached = facts_cache.get(path, digest_value) if (facts_cache is not None and digest_value) else None
+        if cached is not None:
+            if observer:
+                observer({"content_reads": 0, "metadata_entries": 0, "cache_hits": 1}, set())
+            parsed[path] = cached
+            return cached
+        try:
+            content = read_frozen_source(root, path, frozen_files, observer, frozen_tokens, metadata)
+            # ast.parse(bytes) 保留 Python 源码编码声明/BOM 的处理，且不再次打开源码。
+            facts = extract_facts(path, ast.parse(content, filename=path))
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            parsed[path] = type(exc).__name__
+            return parsed[path]
+        parsed[path] = facts
+        if facts_cache is not None and frozen_files is not None and frozen_files.get(path):
+            facts_cache.put(path, frozen_files[path], facts)
+        return facts
+
+    resolve_memo, module_memo = {}, {}
+
+    def module_of(path):
+        if path not in module_memo:
+            module_memo[path] = module_for(path, modules)
+        return module_memo[path]
 
     def package_files(path):
         return {str(parent / "__init__.py") for parent in PurePosixPath(path).parents
                 if str(parent / "__init__.py") in python_files}
 
     def resolve(module, bases):
+        key = (module, tuple(bases))
+        if key not in resolve_memo:
+            resolve_memo[key] = _resolve(module, bases)
+        return resolve_memo[key]
+
+    def _resolve(module, bases):
         resolved, exists = set(), False
         for base in bases:
             path = PurePosixPath(base, *module.split(".")) if module else PurePosixPath(base)
@@ -356,7 +512,7 @@ def dependency_analysis(root, files, modules, runners, deadline=None, repositori
                 resolved.update(package_files(str(path / "__namespace__.py")))
                 for match in matches:
                     resolved.update(package_files(match))
-        return resolved, exists
+        return frozenset(resolved), exists
 
     named_sources = {}
     for source in python_files:
@@ -364,7 +520,10 @@ def dependency_analysis(root, files, modules, runners, deadline=None, repositori
             for test in mapped_tests(source, files, modules):
                 named_sources.setdefault(test, set()).add(source)
     analysis = {}
-    for test in sorted(p for p in (files if candidates is None else candidates) if is_test(p)):
+    ordered_tests = sorted(p for p in (files if candidates is None else candidates) if is_test(p))
+    for done, test in enumerate(ordered_tests):
+        if progress is not None:
+            progress("dependency-analysis", done, len(ordered_tests))
         matching = [r for r in runners if within(test, r["cwd"]) and PurePosixPath(test).suffix in r["suffixes"]]
         runner = max(matching, key=lambda r: len(PurePosixPath(r["cwd"]).parts), default=None)
         cwd = runner["cwd"] if runner else module_for(test, modules)
@@ -395,78 +554,39 @@ def dependency_analysis(root, files, modules, runners, deadline=None, repositori
         pending, closure = list(seeds), set()
         while pending:
             if deadline is not None and time.monotonic() > deadline:
-                raise ScopeError("BUDGET_EXCEEDED：依赖扫描时间超出预算")
+                raise ScopeError(f"BUDGET_EXCEEDED：依赖扫描时间超出预算（已分析 {done}/{len(ordered_tests)} 个测试；"
+                                 "已完成文件的导入事实已落盘，重跑即断点续扫，不会从头来过）")
             path = pending.pop()
             if path in closure:
                 continue
             closure.add(path)
             if path not in python_files:
                 continue
-            tree = parse(path)
-            if isinstance(tree, str):
-                unknown.add(f"{path}: 无法解析 Python ({tree})")
+            facts = facts_of(path)
+            if isinstance(facts, str):
+                unknown.add(f"{path}: 无法解析 Python ({facts})")
                 continue
-            module = module_for(path, modules)
+            module = module_of(path)
             bases = list(dict.fromkeys((cwd, str(PurePosixPath(test).parent),
                                         str(PurePosixPath(cwd, "src")), str(PurePosixPath(cwd, "lib")),
                                         module, str(PurePosixPath(module, "src")), ".", "src", "lib", *pythonpath)))
             dependencies = set()
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
-                    if isinstance(node, ast.Import):
-                        imports = [(a.name, False) for a in node.names]
-                        search = bases
-                    else:
-                        search = bases
-                        if any(a.asname and a.asname != a.name for a in node.names
-                               if a.name in {"Path", "open", "eval", "exec", "__import__"}):
-                            unknown.add(f"{path}: 动态输入函数别名")
-                        if node.level:
-                            parent = PurePosixPath(path).parent
-                            for _ in range(node.level - 1):
-                                parent = parent.parent
-                            search = [str(parent)]
-                        imports = [(node.module or "", False)]
-                        imports += [(".".join(filter(None, (node.module, a.name))), True)
-                                    for a in node.names if a.name != "*"]
-                        if any(a.name == "*" for a in node.names):
-                            unknown.add(f"{path}: 星号导入无法证明独立")
-                    for name, attribute in imports:
-                        resolved, exists = resolve(name, search)
-                        dependencies.update(resolved)
-                        if not exists and not attribute and name.split(".")[0] not in sys.stdlib_module_names:
-                            unknown.add(f"{path}: 未解析导入 {name or '.'}")
-                        if name.split(".")[0] in {"importlib", "runpy", "subprocess", "ctypes", "builtins", "os", "sys"}:
-                            unknown.add(f"{path}: 动态加载/外部执行 {name}")
-                elif isinstance(node, ast.Call):
-                    name = node.func.id if isinstance(node.func, ast.Name) else (
-                        node.func.attr if isinstance(node.func, ast.Attribute) else "")
-                    if name in {"__import__", "eval", "exec", "compile", "getattr", "globals", "locals",
-                                "system", "popen", "load_tests", "loadTestsFromName", "loadTestsFromNames",
-                                "discover", "joinpath", "with_name", "with_suffix", "glob", "rglob", "chdir"}:
-                        unknown.add(f"{path}: 动态依赖调用 {name}")
-                    if name in {"Path", "open"}:
-                        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                            value = node.args[0].value
-                            target = Path(os.path.abspath(root / cwd / value))
-                            if not target.is_relative_to(root):
-                                unknown.add(f"{path}: 仓库外文件输入")
-                            else:
-                                rel = target.relative_to(root).as_posix()
-                                # docs/memory 等默认排除状态仍遵守 --input/env-id 契约。
-                                if not default_excluded(rel, repositories):
-                                    dependencies.add(rel)
-                                    dependencies.update(p for p in files if within(p, rel))
-                        else:
-                            unknown.add(f"{path}: 动态文件路径 {name}")
-                elif isinstance(node, ast.Name) and node.id in {"__import__", "eval", "exec", "compile", "globals", "locals"}:
-                    unknown.add(f"{path}: 动态执行引用 {node.id}")
-                elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Name) and node.value.id in {"Path", "open"}:
-                    unknown.add(f"{path}: 动态输入函数转交")
-                elif isinstance(node, ast.Attribute) and node.attr in {"path", "modules", "meta_path", "__dict__"}:
-                    unknown.add(f"{path}: 动态解析属性 {node.attr}")
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {"__getattr__", "load_tests"}:
-                    unknown.add(f"{path}: 动态加载钩子 {node.name}")
+            unknown.update(facts["unknown"])
+            for name, attribute, relative in facts["imports"]:
+                resolved, exists = resolve(name, bases if relative is None else [relative])
+                dependencies.update(resolved)
+                if not exists and not attribute and name.split(".")[0] not in sys.stdlib_module_names:
+                    unknown.add(f"{path}: 未解析导入 {name or '.'}")
+            for value in facts["refs"]:
+                target = Path(os.path.abspath(root / cwd / value))
+                if not target.is_relative_to(root):
+                    unknown.add(f"{path}: 仓库外文件输入")
+                else:
+                    rel = target.relative_to(root).as_posix()
+                    # docs/memory 等默认排除状态仍遵守 --input/env-id 契约。
+                    if not default_excluded(rel, repositories):
+                        dependencies.add(rel)
+                        dependencies.update(p for p in files if within(p, rel))
             pending.extend(dependencies - closure)
         analysis[test] = {"files": sorted(closure), "unknown": sorted(unknown),
                           "runner_unknown": sorted(runner_unknown)}
@@ -587,7 +707,8 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
     from project_inventory import git_worktree_inventory, default_excluded
     from test_ledger import tree_snapshot, environment_hash, snapshot_estimate, _ValidationProgress, _FingerprintCache
     started = time.monotonic()
-    scan_seconds = min(10, execution_context["execution_budget"]["elapsed_seconds"]) if execution_context else 300
+    from execution_policy import step_timeout
+    scan_seconds = step_timeout(root, execution_context, "scan", action="static") if execution_context else 300
     deadline = started + scan_seconds
     if execution_context and scan_seconds <= 0:
         raise ScopeError("BUDGET_EXCEEDED：没有可用于静态扫描的时间预算")
@@ -601,9 +722,12 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
         runner["inputs"] = sorted(set(runner["inputs"]) | set(document_inputs))
     analysis_inputs = analysis_paths(root, inventory, execution_context, [*write_set, *explicit_inputs])
     progress, observer = None, None
+    facts_cache = FactsCache(root)
     if execution_context:
         estimate = snapshot_estimate(root, explicit_inputs, analysis_inputs)
-        parsable = sum(p.endswith((".py", ".java")) and not default_excluded(p, inventory["repositories"])
+        # 只有尚无有效导入事实缓存的 Python 文件才需要重新读取+解析；缓存命中的不计入预估
+        parsable = sum(p.endswith(".py") and not default_excluded(p, inventory["repositories"])
+                       and not facts_cache.likely_valid(p)
                        for p in (repository if analysis_inputs is None else analysis_inputs))
         baseline_reads = len(set(inventory["preexisting_dirty"]) & set(execution_context.get("initial_git_files", {})))
         stages = {"pre_evidence": {"scanned_files": estimate["content_reads"] + parsable + baseline_reads + 3,
@@ -679,9 +803,27 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
         if observed != extra_files:
             analysis = None
     if analysis is None:
-        analysis = dependency_analysis(root, files, modules, runners, deadline=deadline, repositories=inventory["repositories"],
-                                       frozen_files=snapshot["files"], observer=observer, candidates=analysis_inputs,
-                                       frozen_tokens=snapshot["tokens"], metadata=cache.metadata)
+        last_report = [time.monotonic()]
+
+        def report(stage, processed, total):
+            # 长任务阶段进展：至少每 10 秒一行（阶段 / 已处理 / 总数），避免长时间只有“仍在运行”
+            if time.monotonic() - last_report[0] >= 10:
+                last_report[0] = time.monotonic()
+                from execution_policy import emit_progress, record_progress
+                emit_progress(stage, processed, total, f"导入事实缓存命中 {facts_cache.hits}、新解析 {facts_cache.misses}")
+                if execution_context:
+                    try:
+                        record_progress(root, execution_context, stage, processed, total, "导入依赖分析")
+                    except (ValueError, OSError):
+                        pass   # 进展记录只是可观测性，不能影响选测本身
+        try:
+            analysis = dependency_analysis(root, files, modules, runners, deadline=deadline,
+                                           repositories=inventory["repositories"], frozen_files=snapshot["files"],
+                                           observer=observer, candidates=analysis_inputs,
+                                           frozen_tokens=snapshot["tokens"], metadata=cache.metadata,
+                                           facts_cache=facts_cache, progress=report)
+        finally:
+            facts_cache.save()   # 含超时/异常路径：已完成部分落盘，断点续扫
         pending_analysis = analysis
     dependencies = copy.deepcopy(analysis)
     # 显式资源依赖进入传递闭包，既用于选测，也用于跨树证据判断。

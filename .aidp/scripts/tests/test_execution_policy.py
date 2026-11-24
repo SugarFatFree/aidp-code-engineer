@@ -17,7 +17,7 @@ import entry_context as entry
 def reserve_worker(root, context):
     import execution_policy as policy
     try:
-        policy.reserve_budget(root, context, "processes", 1, "a" * 64)
+        policy.reserve_budget(root, context, "retries", 1, "a" * 64)
         return "reserved"
     except policy.PolicyError as exc:
         return exc.status
@@ -26,7 +26,7 @@ def reserve_worker(root, context):
 def validation_worker(root, context):
     import execution_policy as policy
     stages = {stage: {} for stage in policy.VALIDATION_STAGES}
-    stages["command"] = {"processes": 1}
+    stages["command"] = {"retries": 1}
     stages["pre_evidence"] = {"scanned_files": 1}
     stages["post_evidence"] = {"scanned_files": 1}
     try:
@@ -489,11 +489,11 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertNotIn("actual_cost", next(row for row in state["reservations"] if row["reservation_id"] == reserved["reservation_id"]))
 
     def test_budget_is_atomic_across_processes(self):
-        first = self.resolve(execution_budget={"processes": 3})
+        first = self.resolve(execution_budget={"retries": 2})
         with concurrent.futures.ProcessPoolExecutor(max_workers=6) as pool:
             statuses = list(pool.map(reserve_worker, [str(self.root)] * 12, [first["execution_context"]] * 12))
-        self.assertEqual(statuses.count("reserved"), 3, statuses)
-        self.assertEqual(statuses.count("BUDGET_EXCEEDED"), 9, statuses)
+        self.assertEqual(statuses.count("reserved"), 2, statuses)
+        self.assertEqual(statuses.count("BUDGET_EXCEEDED"), 10, statuses)
 
     def validation_stages(self, scans=2, processes=1):
         return {"pre_evidence": {"scanned_files": scans},
@@ -505,34 +505,36 @@ class ExecutionPolicyTests(unittest.TestCase):
 
     def test_validation_rejects_all_resources_atomically_with_complete_diagnostic(self):
         import execution_policy as policy
-        first = self.resolve(execution_budget={"scanned_files": 5, "processes": 0})
+        first = self.resolve(execution_budget={"scanned_files": 5, "retries": 0})
         before = self.budget_state(first)
+        stages = dict(self.validation_stages(), command={"retries": 1, "elapsed_seconds": 10})
         with self.assertRaises(policy.PolicyError) as denied:
-            policy.reserve_validation(self.root, first["context"], self.validation_stages(), "a" * 64, action="static")
+            policy.reserve_validation(self.root, first["context"], stages, "a" * 64, action="static")
         self.assertEqual(denied.exception.status, "BUDGET_EXCEEDED")
         details = denied.exception.details
         self.assertEqual(details["expected"]["scanned_files"], 5)
-        self.assertEqual(details["shortfall"]["processes"], 1)
+        self.assertEqual(details["shortfall"]["retries"], 1)
+        self.assertEqual(details["shortfall"]["processes"], 0)  # 并发资源不是累计额度
         self.assertEqual(details["stages"]["post_evidence"]["scanned_files"], 2)
         self.assertIn("basis", details["recommendation"])
         self.assertEqual(before, self.budget_state(first))
 
     def test_validation_real_process_concurrency_shares_root_and_rejects_without_charge(self):
         import execution_policy as policy
-        parent = self.resolve(entry="sprint-batch", execution_budget={"processes": 3})
+        parent = self.resolve(entry="sprint-batch", execution_budget={"retries": 2})
         child = entry.fork_context(self.root, parent["execution_context"], "001")
         before = self.budget_state(parent)["used"]
         with concurrent.futures.ProcessPoolExecutor(max_workers=6) as pool:
             results = list(pool.map(validation_worker, [str(self.root)] * 12,
                                     [parent["execution_context"], child["execution_context"]] * 6))
         tickets = [row for row in results if isinstance(row, dict)]
-        self.assertEqual(len(tickets), 3, results)
-        self.assertEqual(results.count("BUDGET_EXCEEDED"), 9, results)
+        self.assertEqual(len(tickets), 2, results)
+        self.assertEqual(results.count("BUDGET_EXCEEDED"), 10, results)
         state = self.budget_state(parent)
-        self.assertEqual(state["used"]["processes"], 3)
-        self.assertEqual(state["used"]["scanned_files"], before["scanned_files"] + 6)
+        self.assertEqual(state["used"]["retries"], 2)
+        self.assertEqual(state["used"]["scanned_files"], before["scanned_files"] + 4)
         with self.assertRaises(policy.PolicyError):
-            policy.reserve_budget(self.root, child["context"], "processes", 1)
+            policy.reserve_budget(self.root, child["context"], "retries", 1)
 
     def test_validation_cancel_retains_recorded_reads_and_only_refunds_unused(self):
         import execution_policy as policy
@@ -869,19 +871,23 @@ class ExecutionPolicyTests(unittest.TestCase):
 
     def test_grant_replay_is_idempotent_and_budget_usage_survives_revision(self):
         import execution_policy as policy
-        first = self.resolve(execution_budget={"processes": 1})
-        policy.reserve_budget(self.root, first["context"], "processes", 1, "a" * 64)
+        first = self.resolve(execution_budget={"retries": 1})
+        policy.reserve_budget(self.root, first["context"], "retries", 1, "a" * 64)
         revised = self.grant(first, ["push"])
         repeated = self.grant(revised, ["push"])
         self.assertEqual(revised["identity_hash"], repeated["identity_hash"])
         with self.assertRaises(policy.PolicyError):
-            policy.reserve_budget(self.root, repeated["context"], "processes", 1, "b" * 64)
+            policy.reserve_budget(self.root, repeated["context"], "retries", 1, "b" * 64)
 
     def test_every_budget_resource_is_enforced_and_elapsed_settles_actual_work(self):
         import execution_policy as policy
         first = self.resolve(execution_budget={**{key: 1 for key in policy.DEFAULT_BUDGET}, "scanned_files": 2})
         for resource in policy.DEFAULT_BUDGET:
             ticket = policy.reserve_budget(self.root, first["context"], resource, 1, "a" * 64)
+            if resource in policy.CONCURRENT_RESOURCES:
+                # 并发资源的 used 只是累计启动统计，不因累计超额拒绝；上限由 acquire_slot 强制（见并发测试）
+                policy.reserve_budget(self.root, first["context"], resource, 1, "b" * 64)
+                continue
             with self.assertRaises(policy.PolicyError):
                 policy.reserve_budget(self.root, first["context"], resource, 1, "b" * 64)
             if resource == "elapsed_seconds":
@@ -1395,15 +1401,15 @@ class ExecutionPolicyTests(unittest.TestCase):
         import execution_policy as policy
         parent = entry.resolve_context(self.root, "sprint-autopilot", version="V1", write_set=["app.py"],
             authorization_source={"kind": "explicit-command", "request_id": "pre-only", "command": "/sprint-autopilot"},
-            execution_budget={"processes": 1})
+            execution_budget={"retries": 1})
         child = entry.fork_version(self.root, parent["execution_context"], "V1")
         self.assertEqual(child["context"]["version"], "V1")
         self.assertEqual(child["context"]["allowed_actions"], ["commit", "docs-audit", "document", "push", "static"])
-        policy.reserve_budget(self.root, child["context"], "processes", 1, "a" * 64)
+        policy.reserve_budget(self.root, child["context"], "retries", 1, "a" * 64)
         again = entry.fork_version(self.root, parent["execution_context"], "V1")
         self.assertEqual(again["identity_hash"], child["identity_hash"])
         with self.assertRaises(policy.PolicyError):
-            policy.reserve_budget(self.root, again["context"], "processes", 1, "b" * 64)
+            policy.reserve_budget(self.root, again["context"], "retries", 1, "b" * 64)
 
     def test_test_build_child_is_deterministic_restricted_and_shares_refreshed_budget(self):
         import execution_policy as policy
@@ -1469,15 +1475,15 @@ class ExecutionPolicyTests(unittest.TestCase):
         import execution_policy as policy
         parent = entry.resolve_context(self.root, "sprint-autopilot", version="V2", write_set=["app.py"],
             authorization_source={"kind": "explicit-command", "request_id": "autopilot-v2", "command": "/sprint-autopilot"},
-            execution_budget={"processes": 1})
+            execution_budget={"retries": 1})
         child = entry.fork_version(self.root, parent["execution_context"], "V1")
         self.assertEqual(child["context"]["version"], "V1")
         self.assertEqual(child["context"]["allowed_actions"], ["commit", "docs-audit", "document", "push", "static"])
         self.assertEqual(child["context"]["parent_task_id"], parent["task_id"])
         self.assertEqual(entry.fork_version(self.root, parent["execution_context"], "V1")["identity_hash"], child["identity_hash"])
-        policy.reserve_budget(self.root, child["context"], "processes", 1, "a" * 64)
+        policy.reserve_budget(self.root, child["context"], "retries", 1, "a" * 64)
         with self.assertRaises(policy.PolicyError):
-            policy.reserve_budget(self.root, parent["context"], "processes", 1, "b" * 64)
+            policy.reserve_budget(self.root, parent["context"], "retries", 1, "b" * 64)
         for result in (self.resolve(), self.resolve(entry="sprint-autopilot")):
             with self.assertRaises(ValueError):
                 entry.fork_version(self.root, result["execution_context"], "V0")
@@ -1568,14 +1574,14 @@ class ExecutionPolicyTests(unittest.TestCase):
 
     def test_child_inherits_grants_and_shares_parent_budget(self):
         import execution_policy as policy
-        parent = self.resolve(entry="sprint-batch", execution_budget={"processes": 1})
+        parent = self.resolve(entry="sprint-batch", execution_budget={"retries": 1})
         child = entry.fork_context(self.root, parent["execution_context"], "007")
         self.assertEqual(child["context"]["allowed_actions"], parent["context"]["allowed_actions"])
         with self.assertRaises(ValueError):
             self.grant(child, ["full-regression"])
-        policy.reserve_budget(self.root, child["context"], "processes", 1, "a" * 64)
+        policy.reserve_budget(self.root, child["context"], "retries", 1, "a" * 64)
         with self.assertRaises(policy.PolicyError) as denied:
-            policy.reserve_budget(self.root, parent["context"], "processes", 1, "b" * 64)
+            policy.reserve_budget(self.root, parent["context"], "retries", 1, "b" * 64)
         self.assertEqual(denied.exception.status, "BUDGET_EXCEEDED")
 
 
@@ -1600,11 +1606,66 @@ class BudgetExhaustionDisposalTests(unittest.TestCase):
         return path
 
     def exhaust_retries(self):
+        """真实耗尽：额度用满后再预留一次。（单次估算超出剩余额度不算耗尽，见下方专门用例）"""
+        policy = self.policy
+        policy.reserve_budget(self.root, self.path, "retries", 12, "a" * 64)
+        with self.assertRaises(policy.PolicyError) as denied:
+            policy.reserve_budget(self.root, self.path, "retries", 1, "b" * 64)
+        self.assertEqual(denied.exception.status, "BUDGET_EXCEEDED")
+
+    def test_auto_renew_within_install_authorization_keeps_unattended_chain_running(self):
+        """P0-3：install 时一次性授权 N 次自动续额 → 耗尽先续额不冻结；次数用完才冻结等人；不授予任何业务动作。"""
+        import aidp_scheduler as sched
+        self.make_root()
+        sched.record_authorization(str(self.root), "请 7×24 持续跑完该版本，预算不够时自动续两次", "install-req-1", auto_renew=2)
+        before_actions = set(json.loads(Path(self.path).read_text())["allowed_actions"])
+        for number in (1, 2):
+            self.exhaust_retries() if number == 1 else self.exhaust_again()
+            rc, res = self.tick_check()
+            self.assertEqual((rc, res["budget_frozen"]), (0, []), f"第 {number} 次耗尽应自动续额而不是冻结")
+            self.assertEqual(self.policy.budget_exhaustion(self.root, self.path)[0], "renewed")
+        auth = json.loads((self.root / sched.AUTHORIZATION_STATE_REL).read_text())["auto_renew"]
+        self.assertEqual((auth["used"], auth["max"]), (2, 2))
+        alerts = (self.root / "memory/.aidp/alerts.jsonl").read_text()
+        self.assertEqual(alerts.count("loop-budget-auto-renewed"), 2)
+        ctx = json.loads(Path(self.path).read_text())
+        self.assertEqual(set(ctx["allowed_actions"]), before_actions, "自动续额不得扩大动作授权")
+        self.assertEqual(ctx["authorization_source"][-1]["kind"], "user-text")
+        self.exhaust_again()
+        rc, res = self.tick_check()
+        self.assertEqual(res["budget_frozen"], [self.VERSION], "次数用完后仍按原路径冻结等人")
+        self.assertEqual(self.node()["freeze_reason"], "budget-exhausted")
+
+    def exhaust_again(self):
+        policy = self.policy
+        limit = json.loads(Path(self.path).read_text())["execution_budget"]["retries"]
+        used = json.loads(Path(self.path).with_name("budget.json").read_text())["used"]["retries"]
+        if limit > used:
+            policy.reserve_budget(self.root, self.path, "retries", limit - used, "d" * 64)
+        with self.assertRaises(policy.PolicyError):
+            policy.reserve_budget(self.root, self.path, "retries", 1, "e" * 64)
+
+    def test_no_auto_renew_without_user_authorization(self):
+        import aidp_scheduler as sched
+        self.make_root()
+        sched.record_authorization(str(self.root), "请持续运行", "install-req-2")      # 没有 auto_renew
+        self.exhaust_retries()
+        rc, res = self.tick_check()
+        self.assertEqual(res["budget_frozen"], [self.VERSION])
+
+    def test_oversized_estimate_rejects_the_step_but_does_not_freeze_the_version(self):
+        """P0-2：剩余额度还在，只是这一步估算偏大 → 只拒绝该步骤，不写耗尽标记，版本不被冻结等人。"""
+        self.make_root()
         policy = self.policy
         policy.reserve_budget(self.root, self.path, "retries", 5, "a" * 64)
         with self.assertRaises(policy.PolicyError) as denied:
             policy.reserve_budget(self.root, self.path, "retries", 8, "b" * 64)
         self.assertEqual(denied.exception.status, "BUDGET_EXCEEDED")
+        self.assertTrue(denied.exception.details["recovery"]["only_affected_stage_stops"])
+        self.assertEqual(policy.budget_exhaustion(self.root, self.path), ("none", []))
+        rc, res = self.tick_check()
+        self.assertEqual((rc, res["budget_frozen"]), (0, []))
+        policy.reserve_budget(self.root, self.path, "retries", 7, "c" * 64)   # 缩小后的步骤仍可继续
 
     def node(self):
         return json.loads(self.baseline.read_text())["versions"][self.VERSION]
@@ -1630,7 +1691,7 @@ class BudgetExhaustionDisposalTests(unittest.TestCase):
         state, items = self.policy.budget_exhaustion(self.root, self.path)
         self.assertEqual((state, items), ("exhausted", [{"resource": "retries", "required": 13}]))
         ledger = json.loads(Path(self.path).with_name("budget.json").read_text())
-        self.assertEqual(ledger["used"]["retries"], 5)
+        self.assertEqual(ledger["used"]["retries"], 12)
 
     def test_tick_check_freezes_exhausted_version_once_with_budget_reason(self):
         self.make_root()
@@ -1651,7 +1712,7 @@ class BudgetExhaustionDisposalTests(unittest.TestCase):
         """B-02：占用 >=80% 预警一次（按档位去重），status 展示余量；预警不放宽任何限额。"""
         self.make_root()
         usage = self.policy.budget_usage(self.root, self.path)
-        self.assertEqual(usage["resources"]["retries"], {"used": 0, "limit": 12, "pct": 0})
+        self.assertEqual(usage["resources"]["retries"], {"used": 0, "limit": 12, "pct": 0, "class": "hard"})
         _, res = self.tick_check()
         self.assertEqual(res["budget_warned"], [])
         self.policy.reserve_budget(self.root, self.path, "retries", 10, "c" * 64)  # 10/12 = 83%
@@ -1722,7 +1783,7 @@ class BudgetExhaustionDisposalTests(unittest.TestCase):
         root_ctx = json.loads(Path(self.path).read_text())
         self.assertEqual(root_ctx["execution_budget"]["retries"], 20)
         self.assertEqual(root_ctx["authorization_source"][-1]["kind"], "user-text")
-        self.assertEqual(json.loads(Path(self.path).with_name("budget.json").read_text())["used"]["retries"], 5)
+        self.assertEqual(json.loads(Path(self.path).with_name("budget.json").read_text())["used"]["retries"], 12)
         self.assertEqual(self.policy.budget_exhaustion(self.root, self.path)[0], "renewed")
         self.policy.reserve_budget(self.root, self.path, "retries", 8, "c" * 64)   # 续额后可继续
         self.assertEqual(self.tick_check()[1]["budget_frozen"], [])

@@ -664,10 +664,24 @@ class TaskScopeTests(ScopeFixture):
         self.assertEqual(row["exit_code"], 0)
         self.assertTrue(Path(row["output"]["stderr"]).is_file())
 
-    def test_atomic_batch_denial_does_not_charge_unexecuted_tests_or_processes(self):
+    def test_process_concurrency_limit_serializes_batch_instead_of_denying_it(self):
+        """processes 是并发硬限：上限为 1 时批内命令排队串行执行，不再整批拒绝；累计启动数仅作统计。"""
         ScopeEvidenceTests.counting_suite(self, "calc", 1)
         ScopeEvidenceTests.counting_suite(self, "other", 1)
         context = self.context(write_set=["src/calc.py", "src/other.py"], execution_budget={"processes": 1})
+        scope, _ = self.task_scope(context)
+        result = self.execute_task(context, scope, expect=0)
+        self.assertEqual(result["status"], "PASS")
+        budget = json.loads((Path(context).parent / "budget.json").read_text())
+        self.assertEqual(budget["used"]["processes"], 2)
+        self.assertEqual(budget["slots"], [], "全部槽位已释放")
+        self.assertTrue((self.root / "memory/calc-count").exists())
+        self.assertTrue((self.root / "memory/other-count").exists())
+
+    def test_zero_process_concurrency_denies_batch_before_any_execution(self):
+        ScopeEvidenceTests.counting_suite(self, "calc", 1)
+        ScopeEvidenceTests.counting_suite(self, "other", 1)
+        context = self.context(write_set=["src/calc.py", "src/other.py"], execution_budget={"processes": 0})
         scope, _ = self.task_scope(context)
         result = self.execute_task(context, scope, expect=2)
         self.assertEqual(result["status"], "BUDGET_EXCEEDED")

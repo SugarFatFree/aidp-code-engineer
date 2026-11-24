@@ -38,7 +38,7 @@ formal 进入正式流程时读取本文件及对应细则；light 只读 `{{AID
 
 15. **同类多文件编号 + `00_索引.md` 专职导航锚 + 补充文档命名（去"补充"字眼）**：**四类版本规划文档（研发需求/详细设计/研发执行计划/研发自测）恒有 `00_索引.md` + 内容主文档从 `01_` 起——含单文件态、无例外**（裸中文名如 `详细设计.md` 属 `version-auditor` A-06b Critical）；其余同类多文件才按两位数字前缀排序（`01_`~`99_`，超 99 合并；已带日期前缀的文件按日期排序不加数字前缀）。单一信源 = `dev-logic-architect` SKILL「多文件拆分」+ `{{AIDP_HOME}}/skills/dev-logic-architect/scripts/check_doc_split.py`（⚠️ `dev-execution-planner` / `ux-logic-extractor` 各自另带一份**同名但形态定义不全**的脚本，判据以 dla 那份为准）。
 
-16. **★ SKILL 修改作用域硬约束**：`{{AIDP_HOME}}/skills/` 下**全部 SKILL 均由 AIDP 模板仓库（`aidp-code-engineer`）自有维护**——在模板仓库内可直接修改，改后同步进脚手架；**经脚手架初始化/升级的下游项目内不应直接改**——改后无法回流模板、下次升级被覆盖丢失、与姊妹项目永久漂移，需要变更时回到模板仓库修改后再升级下发。
+16. **★ SKILL 修改作用域硬约束**：`{{AIDP_HOME}}/skills/` 下 SKILL 分两类来源：**`bugfix` 由 AIDP 模板仓库（`aidp-code-engineer`）自有**，在模板仓库内直接修改并同步进脚手架；**其余 6 个同步自上游，模板仓库也只读、不改**，缺陷整理成提示词转上游修复后再同步。**经脚手架初始化/升级的下游项目内一律不应直接改任何 SKILL**——改后无法回流、下次升级被覆盖丢失、与姊妹项目永久漂移；需要变更时反馈给模板维护者（`bugfix` 在模板仓库修；其余转上游），再升级下发。
 
 17. **★ 代码注释强制规范**（覆盖 Claude 默认"无注释"原则，统一遵守）：类/接口/枚举/组件、方法/函数、字段/常量、关键代码段均须按规范加**业务含义**注释（枚举值域、参数·返回·抛出语义、与 DB COMMENT/PRD 对齐），强度按 A/B/C 三档。**详规见 `{{AIDP_HOME}}/rules/code.md`（编辑 `code/**` 时自动加载）**；回检**两个方向都有**：写少了 = `code-verification-loop`「注释完备性」（A 档裸代码 → Critical 回 `/sprint-bugfix`）；写多了 = `python3 {{AIDP_HOME}}/scripts/check_comment_ratio.py`（声明之外的注释过密 → Important 不阻断，由 `/sprint-dev` Phase 1 Step 7bis 调用）。⛔ 反向门不是「少写注释」的许可——它只砍 B/C 档的同义反复。
 

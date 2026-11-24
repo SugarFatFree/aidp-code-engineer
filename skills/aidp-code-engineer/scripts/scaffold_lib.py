@@ -82,6 +82,26 @@ MANIFEST_REL = "assets/CONTRACT_MANIFEST.json"
 MEMORY_TPL_REL = "assets/AGENTS.md.tpl"
 PARADIGM_MEMORY_REL = ".aidp/AIDP-AGENTS.md"   # 模板仓库的下发记忆源（仅模板仓库有；不镜像、经 sync_memory_md.py 生成模板）
 CONFIG_TPL_REL = "assets/aidp-config.yaml.tpl"
+
+# 升级时「键仍在、含义变了」的配置：不改下游的值，只在升级报告里告知旧值现在如何被解释。
+# （键被删除的退休键由 scaffold._retire_config_keys 按旧/新模板差集清理，不在此表。）
+# 每项：(键路径, 起始版本, 说明)。新增语义变化时只需往这里加一行。
+CONFIG_KEY_REINTERPRETED = (
+    (("execution_policy", "execution_budget", "agents"), "V1.2.5",
+     "agents 由「累计启动数」改为「同时运行的上限」（并发硬限，满额排队）；原值现按并发上限解释，累计启动数只作统计"),
+    (("execution_policy", "execution_budget", "processes"), "V1.2.5",
+     "processes 由「累计启动数」改为「同时运行的上限」（并发硬限）；原值现按并发上限解释，0 表示明确禁止启动"),
+    (("execution_policy", "execution_budget", "scanned_files"), "V1.2.5",
+     "scanned_files 默认改为总量软限（只预警）；你显式写入的值继续按硬上限生效，不会被放宽"),
+    (("execution_policy", "execution_budget", "elapsed_seconds"), "V1.2.5",
+     "elapsed_seconds 默认改为总量软限（只预警）；你显式写入的值继续按硬上限生效，不会被放宽"),
+    (("cicd", "auto_trigger"), "V1.2.0",
+     "auto_trigger 是兼容旧键：单独设置不再改变行为，只有同时存在 auto_trigger_source 才拦截自动触发"),
+)
+# 人工关闭护栏的逃生文件：升级后仍会静默生效，升级报告须点名（不自动删除）。
+GUARD_OFF_FILES = ("memory/.pretool-guard-off", "memory/.entry-guard-off", "memory/.test-guard-off",
+                   "memory/.autopilot-stop-guard-off")
+GUARD_OFF_CONFIG_KEYS = (("entry_guard", "enabled"), ("test_guard", "enabled"), ("stop_guard", "enabled"))
 VERSION_REL = "assets/SCAFFOLD_VERSION"
 CHANGELOG = "版本变更历史.md"
 
@@ -299,6 +319,27 @@ def changelog_has_entry(root: Path, version: str) -> bool:
     except OSError:
         return False
     return re.search(rf"^###\s+{re.escape(version)}(?:[\s（(]|$)", text, re.M) is not None
+
+
+def changelog_head_consistency(root: Path, version: str):
+    """变更记录最新条目（第一个 `### Vx.y.z（日期）`）须是当前版本，且日期与「当前范式版本」标记的最后更新日期一致。
+
+    → 问题描述列表（空 = 一致）。bump_version.py 只改标记，条目是人工补的：补错位置或日期会被这里发现。
+    """
+    try:
+        text = (root / CHANGELOG).read_text(encoding="utf-8")
+    except OSError:
+        return [f"{CHANGELOG} 不可读"]
+    head = re.search(r"^###\s+(V\d+\.\d+\.\d+)(?:（(\d{4}-\d{2}-\d{2})）)?", text, re.M)
+    mark = re.search(r"\*\*AIDP\s+(V\d+\.\d+\.\d+)\*\*(?:（最后更新：(\d{4}-\d{2}-\d{2})）)?", text)
+    problems = []
+    if head is None:
+        return [f"{CHANGELOG} 没有任何 `### Vx.y.z（日期）` 条目"]
+    if head.group(1) != version:
+        problems.append(f"最新条目是 {head.group(1)}，应为当前版本 {version}（条目须放在「变更记录」最上方）")
+    if mark and head.group(1) == mark.group(1) and head.group(2) != mark.group(2):
+        problems.append(f"最新条目日期 {head.group(2)} 与标记最后更新日期 {mark.group(2)} 不一致")
+    return problems
 
 
 def changelog_version(root: Path):

@@ -987,6 +987,23 @@ def _retire_config_keys(have: str, previous: str, incoming: str):
     return "".join(line for i, line in enumerate(lines) if i not in cut), removed, review
 
 
+def report_config_state(root: Path, have: str, rep: Report):
+    """升级后只读核对：语义变化的配置键 + 仍在生效的护栏关闭开关。只提示，不改任何值、不删文件。"""
+    nodes = _config_nodes(have, strict=False) or {}
+    lines = have.splitlines()
+    for path, since, note in L.CONFIG_KEY_REINTERPRETED:
+        if path in nodes and lines[nodes[path]["start"]].split("#", 1)[0].split(":", 1)[-1].strip() not in ("", "null", "~"):
+            rep.warn(f"配置键 {'.'.join(path)} 的含义自 {since} 起变化（值已保留）：{note}")
+    off = []
+    for path in L.GUARD_OFF_CONFIG_KEYS:
+        if path in nodes and re.search(r":\s*false\b", lines[nodes[path]["start"]].split("#", 1)[0]):
+            off.append(".".join(path) + ": false")
+    off += [rel for rel in L.GUARD_OFF_FILES if (root / rel).exists()]
+    if off:
+        rep.warn("护栏处于人工关闭状态（升级不会自动恢复，也不会删除这些开关）：" + "、".join(off)
+                 + "。确认故障已排除后请手动恢复；旧 memory/.pretool-guard-off 现仅关闭入口门，迁移请改用 .entry-guard-off")
+
+
 def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claude",),
                 branch_policy=None, previous_template=None):
     aidp_config.validate_branch_policy(branch_policy)
@@ -1040,6 +1057,7 @@ def sync_config(root: Path, ctx: dict, rep: Report, bk: "Backup", agents=("claud
             if removed:
                 detail.append("清理未修改的退休配置键：" + "、".join(removed))
             rep.act("update", "memory/aidp-config.yaml", "；".join(detail))
+        report_config_state(root, have, rep)
     save_branch_policy(root, branch_policy, rep, bk, backup=existed)
 
 

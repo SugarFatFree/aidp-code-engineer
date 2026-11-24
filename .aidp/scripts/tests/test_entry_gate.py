@@ -207,6 +207,19 @@ class EntryGateTests(unittest.TestCase):
         self.marker()
         self.assertFalse(self.check(env={'AIDP_SESSION_ID': 'different'})['ok'])
 
+    def test_unattended_tick_falls_back_to_sessionless_marker_but_interactive_does_not(self):
+        """P1-1：无人值守 tick 里 bind 拿不到宿主 session，hook 带 session 查询——tick 环境下回退读无会话标记；交互会话保持严格。"""
+        self.context()
+        self.marker()                                   # 无会话标记（模型 Bash 里 bind 写出的形态）
+        tick = {'AIDP_SESSION_ID': 'host-session-xyz', 'AIDP_TICK_COMMAND': 'sprint-autopilot'}
+        self.assertTrue(self.check(env=tick)['ok'])
+        self.assertFalse(self.check(env={'AIDP_SESSION_ID': 'host-session-xyz'})['ok'])
+        stale = dict(tick)
+        marker = entry_gate.task_marker_path(self.root, None)
+        old = time.time() - 10 ** 7
+        os.utime(marker, (old, old))
+        self.assertFalse(self.check(env=stale)['ok'], '过期标记不得被回退使用')
+
     def test_changed_branch_policy_requires_fresh_read(self):
         import aidp_config
         self.context()

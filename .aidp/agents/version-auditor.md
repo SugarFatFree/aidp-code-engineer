@@ -52,10 +52,12 @@
 > | 入参 | 含义 | 缺省 |
 > | :- | :- | :- |
 > | `trigger` | `version`（`/version` Step 2.4.7）/ `autopilot`（Phase 3.3 build 终审）/ `accretion`（口述累进路径）| `version` |
-> | `scale` | 需求规模档位 `S\|M\|L`（命令端标 **★ 必传**）| ⛔ 无缺省——**漏传会让 S 档必然误判两个 Critical**，`--unattended` 下直接熔断；取不到时**停下来问**，别猜 |
+> | `scale` | 需求规模档位 `S\|M\|L`（命令端标 **★ 必传**）| 无缺省；缺失或非法时按下方「缺参处置」返回，不猜档位 |
 > | `delta_scope` | 增量审计的 Δ 裁剪范围（`scope=incremental` 时的改动清单 / `--since` 基线）| 空 = 全量审计 |
 > | `changed_files` | 本轮 git diff 清单（累进路径用）| 空 = 全量 |
 > | `output_path` | 审计报告落点 | `docs/audit/{version}/` |
+>
+> **缺参处置（唯一口径）**：`scale` 缺失或不在 S/M/L 时，不开始依赖档位的存在性裁决，不默认 L。报告写「未核验：缺少有效 scale」，返回 `overall=block`、`reason=missing-scale`、`items.A_existence.level=unverified`，由调用方从 baseline `versions.{version}.req_scale.tier` 补齐后重派；不把事实缺口判成产物缺失。独立子 Agent 不询问用户；无人值守（`--unattended` / `trigger=autopilot`）由调用方记账并返回阻塞，禁止等人或伪造档位。
 >
 > ⛔ `scale` / `delta_scope` 必须真的被读：命令端花十几行规定了怎么裁剪，审计侧不读就等于「增量审计」每次都在跑全量。**C-4 / C-5 / F 三项的核对范围一律按 `delta_scope` 裁剪。**
 
@@ -99,7 +101,7 @@
 
 > ★ **先读命令端传入的 `scale`（S / M / L）再判 A-03/A-04**：需求规模档位决定详细设计**该产几册**——
 > `S` = 1 册合并详设（接口与库表并入 `01_详细设计.md`，不另分册）/ `M` = 3 册 / `L` = 按专题全套。
-> 档位口径单一信源 = `dev-logic-architect` SKILL 的档位表，本 Agent 不复述阈值。命令端未传 `scale` 时按 `L` 处理。
+> 档位口径单一信源 = `dev-logic-architect` SKILL 的档位表，本 Agent 不复述阈值。命令端未传有效 `scale` 时统一按「二、会话启动检查清单」的缺参处置返回。
 > ⛔ 不看档位就要求分册存在，会把 S 档**正常且被命令端主动合并**的产物判成两个 Critical，形成"修不好的阻塞"。
 
 按下表逐项核验，**任一缺失** = Critical（标注为「条件必备」的按其条件判 N/A）：
@@ -624,6 +626,7 @@ python3 {{AIDP_HOME}}/scripts/requirement_query.py supersessions --before {versi
 
 - `{version}`（必传）
 - `mode`（`fresh` / `supplement-NN`，必传）
+- `scale`（`S` / `M` / `L`，必传；缺参处置统一见「二、会话启动检查清单」）
 - `prev_version`（增量场景必传；由命令端按产物目录 SemVer 扫描取「上一迭代版本」，含未发布的中间过渡版本，非 tag）
 - `trigger`（可选；`version` 默认规划期，`autopilot` = Phase 3.3 build 终审，`accretion` = 口述累进路径审计）
 - `build`（`trigger=autopilot` 时必传；必须与当前 baseline `current_build` 一致）
@@ -642,7 +645,7 @@ python3 {{AIDP_HOME}}/scripts/requirement_query.py supersessions --before {versi
   "overall": "pass" | "warn" | "block",
   "report_path": "<实际写盘路径>",
   "items": {
-    "A_existence": {"level": "pass|warn|critical", "missing": [...]},
+    "A_existence": {"level": "pass|warn|critical|unverified", "missing": [...]},
     "B_boundary": {"level": "...", "violations": [{"file": "...", "line": 123, "kind": "..."}]},
     "C_coverage": {"level": "...", "coverage_rate": 0.93, "missing_prd_ids": [...],
                    "unmapped_prd_atoms": [{"loc": "spec.md:194", "text": "导出（操作描述表）", "kind": "操作描述表未承接"}]},
@@ -677,6 +680,7 @@ python3 {{AIDP_HOME}}/scripts/requirement_query.py supersessions --before {versi
 - `overall == "pass"` → 继续 Step 2.5
 - `overall == "warn"` → 继续 Step 2.5，在 Step 2.8 报告里追加警告区块
 - `overall == "block"` →
+  - 输入事实缺口（如 `reason=missing-scale`）先按「二、会话启动检查清单」返回调用方补事实；不走下面产物修复/强制忽略选项。`trigger=autopilot` 统一交 Phase 3.3 失败处置，不在此询问。
   - ⛔ **`--unattended` 时不走下面 1~4**：无人值守下**绝不弹窗**，按 `planning-7.md` 命令端处置的无人值守分支执行（自动修复至多 3 轮 → 仍 block 则返回 `audit-block` 交上层熔断），本处不复述。
   1. 用 `AskUserQuestion` 让用户在「自动按建议回调 SKILL / 我手工修复 / 强制忽略并继续」三选一
   2. 选①时按 `fix_actions[]` 自动回 Step 2.4.x 跑对应 SKILL，跑完后**重新触发本 Agent**

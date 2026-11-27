@@ -988,15 +988,20 @@ def _retire_config_keys(have: str, previous: str, incoming: str):
 
 
 def report_config_state(root: Path, have: str, rep: Report):
-    """升级后只读核对：语义变化的配置键 + 仍在生效的护栏关闭开关。只提示，不改任何值、不删文件。"""
-    nodes = _config_nodes(have, strict=False) or {}
-    lines = have.splitlines()
+    """只读核对语义变化、未知键与护栏关闭开关；复用运行解析器，兼容内联映射。"""
+    data = aidp_config._parse(have)
+    if not isinstance(data, dict):
+        rep.warn("配置无法解析，未能核对配置键及护栏开关；请检查 memory/aidp-config.yaml，原文已保留")
+        data = {}
+    for warning in aidp_config.unknown_key_warnings(data):
+        rep.warn("配置核对：" + warning)
     for path, since, note in L.CONFIG_KEY_REINTERPRETED:
-        if path in nodes and lines[nodes[path]["start"]].split("#", 1)[0].split(":", 1)[-1].strip() not in ("", "null", "~"):
+        value = aidp_config._dig(data, ".".join(path))
+        if value is not None and value != "":
             rep.warn(f"配置键 {'.'.join(path)} 的含义自 {since} 起变化（值已保留）：{note}")
     off = []
     for path in L.GUARD_OFF_CONFIG_KEYS:
-        if path in nodes and re.search(r":\s*false\b", lines[nodes[path]["start"]].split("#", 1)[0]):
+        if aidp_config._bool_value(aidp_config._dig(data, ".".join(path))) is False:
             off.append(".".join(path) + ": false")
     off += [rel for rel in L.GUARD_OFF_FILES if (root / rel).exists()]
     if off:
@@ -1563,8 +1568,13 @@ def _stale_files(source: Path, dest: Path, home: str, gated: bool) -> list:
 
 
 def _ungated_stale(source: Path, dest: Path, home: str) -> list:
-    """不受版本门控目录（`scripts/`）里，bundle 渲染结果与已装字节不同的文件（相对运行根）。"""
-    return _stale_files(source, dest, home, gated=False)
+    """不受版本门控的文件差异，含旧 manifest 管理且新版已撤掉的脚本。"""
+    stale = set(_stale_files(source, dest, home, gated=False))
+    if (dest / runtime_layout.RUNTIME_MANIFEST).is_file():
+        manifest = runtime_layout._read_manifest(dest)
+        retired = set(manifest["files"]) - _source_runtime_rels(source) - set(manifest.get("user_files", []))
+        stale.update(name for name in retired if Path(name).parts[0] in L.UNGATED_DIRS)
+    return sorted(stale)
 
 
 def _gated_stale(source: Path, dest: Path, home: str) -> list:
@@ -2239,6 +2249,20 @@ def _run_native(root: Path, a, mode: str, agents: list, agent_source: str,
     else:
         L.FILE_MUTATION.reset(token)
         shutil.rmtree(journal.backup)
+        # 只在安装事务成功后清理历史备份；阻断/版本保护/失败路径均不触碰恢复材料。
+        if result.get("status") != "blocked" and result.get("contract_decision") in ("fill", "overwrite"):
+            protected = {result["backup"]} if result.get("backup") else set()
+            try:
+                pruned = L.prune_backups(root, getattr(a, "keep_backups", L.PRUNE_KEEP_LAST_DEFAULT),
+                                         getattr(a, "keep_days", L.PRUNE_KEEP_DAYS_DEFAULT), protected=protected)
+            except OSError as exc:
+                result.setdefault("warnings", []).append(f"安装已完成，历史备份清理未完成：{exc}")
+            else:
+                result.setdefault("actions", []).extend(
+                    {"op": "prune", "path": name, "why": "成功安装后按备份保留策略清理"}
+                    for name in pruned["removed"])
+                if pruned["failed"]:
+                    result.setdefault("warnings", []).append("历史备份清理失败，请人工核对残留：" + "、".join(pruned["failed"]))
         return result
 
 
@@ -2440,12 +2464,14 @@ def _run_native_impl(root: Path, a, mode: str, agents: list, agent_source: str,
                 if _now != _sha:
                     rep.note_overwrite(_rel)
 
-        # ★ 覆盖升级整包替换：「旧 manifest 有、新 source 无」的文件替换后即消失，
-        #   事后的 orphans 判据（安装后仍存在）永远不成立，必须在替换前算。
-        if not preserve_gated and isinstance(_prev_manifest, dict):
+        # ★ 旧 manifest 管理、新 source 已撤掉的文件必须在替换前记录；
+        #   同版本也会删除退休 scripts，但仍保留门控契约和 user_files。
+        if isinstance(_prev_manifest, dict):
             _new_src = _source_rels
             _user_owned = set(manifest.get("user_files", [])) if manifest is not None else set()
             for _rel in sorted(set(_prev_manifest) - _new_src - _user_owned):
+                if preserve_gated and Path(_rel).parts[0] not in L.UNGATED_DIRS:
+                    continue
                 _live = dest / _rel
                 if not _live.is_file() or _live.is_symlink() or runtime_layout._adapter_generated(dest, _rel):
                     continue

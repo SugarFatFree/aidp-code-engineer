@@ -995,6 +995,71 @@ def test_install_records_user_instruction():
         shutil.rmtree(home, ignore_errors=True)
 
 
+def test_install_auto_renew_authorization():
+    print("【自动续额授权校验 / 各平台持久化 / 重装幂等】")
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    for platform in ("cron", "systemd", "launchd", "schtasks"):
+        root = _mkproj(authorized=False)
+        home = tempfile.mkdtemp()
+        try:
+            args = SimpleNamespace(agent="codex", platform=platform, dev_interval=None,
+                test_interval=None, dry_run=False, authorization_text="请持续运行，预算不足时自动续额两次",
+                authorization_request_id="install-renew-1", auto_renew_budget=2)
+            with patch.dict(os.environ, HOME=home), patch.object(S, "install_preflight", return_value=([], [])), \
+                    patch.object(S, "_run", return_value=(0, "")), \
+                    patch.object(S, "_read_crontab", return_value=[]), \
+                    patch.object(S, "_write_crontab", return_value=(0, "")) as cron_write:
+                args.dry_run = True
+                rc, _ = S.do_install(root, args)
+                check(platform + " dry-run 不写授权", rc == 0 and not os.path.exists(os.path.join(root, S.AUTHORIZATION_STATE_REL)))
+                args.dry_run = False
+                args.auto_renew_budget, args.authorization_request_id = 0, "install-renew-zero"
+                rc, _ = S.do_install(root, args)
+                check(platform + " N=0 持久保存禁用自动续额", rc == 0
+                      and S.load_authorization(root).get("auto_renew", {}).get("max") == 0)
+                args.auto_renew_budget, args.authorization_request_id = 2, "install-renew-1"
+                rc, _ = S.do_install(root, args)
+                rec = S.load_authorization(root)
+                check(platform + " 持久保存 N", rc == 0 and rec.get("auto_renew", {}).get("max") == 2)
+                # 构造已消费次数与 pending：同来源重装不得抹掉恢复凭据。
+                rec["auto_renew"] = {"max": 2, "used": 1, "history": [{"version": "V1.0.0"}],
+                                     "pending": {"version": "V1.0.0", "new_limits": {"retries": 24}}}
+                S._write_json(os.path.join(root, S.AUTHORIZATION_STATE_REL), rec)
+                rc, _ = S.do_install(root, args)
+                check(platform + " 同请求重装保留次数和 pending", rc == 0 and S.load_authorization(root) == rec)
+                for field, value in (("auto_renew_budget", 3), ("authorization_text", "改成无限制持续运行")):
+                    before = cron_write.call_count
+                    old = getattr(args, field)
+                    setattr(args, field, value)
+                    try:
+                        rc, _ = S.do_install(root, args)
+                    except ValueError:
+                        rc = 2
+                    setattr(args, field, old)
+                    check(platform + " 同 request 冲突拒绝 " + field,
+                          rc == 2 and S.load_authorization(root) == rec and cron_write.call_count == before)
+                for amount, text in ((-1, args.authorization_text), (1.5, args.authorization_text),
+                                     (True, args.authorization_text), (1, ""), (1, "<用户原话>")):
+                    args.auto_renew_budget, args.authorization_text = amount, text
+                    try:
+                        rc, _ = S.do_install(root, args)
+                    except ValueError:
+                        rc = 2
+                    check(platform + " 拒绝无效 N/缺本次真实原话 " + repr((amount, text)),
+                          rc == 2 and S.load_authorization(root) == rec)
+            for invalid in (-1, 1.5, True, "2"):
+                try:
+                    S.record_authorization(root, "请持续运行", "invalid-install", auto_renew=invalid)
+                    rejected = False
+                except ValueError:
+                    rejected = True
+                check(platform + " record 拒绝非法 N " + repr(invalid), rejected)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(home, ignore_errors=True)
+
+
 def test_authorization_not_needed_with_existing_persistent_root():
     print("【已有根带持续来源时不再供给来源（避免每 tick 修订授权）】")
     import entry_context as E
@@ -1326,6 +1391,7 @@ if __name__ == "__main__":
     test_delegation_gap_signals()
     test_headless_autopilot_authorization()
     test_install_records_user_instruction()
+    test_install_auto_renew_authorization()
     test_authorization_not_needed_with_existing_persistent_root()
     test_authorization_take()
     test_baseline_epoch()

@@ -182,7 +182,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    | 相等 | `fill`：保留既有契约正文，仅恢复旧 manifest 已登记但被删的文件；bundle 同版本新增的门控文件不补（升级输出 `unregistered_gated_additions` 与警告会列出，要对齐加 `--force`） |
    | 高于脚手架版本 | `protect`：不动契约，提示换用新版脚手架 |
 
-   任何处置下都执行：`{{AIDP_HOME}}/scripts/` 字节不同即覆盖；脚手架自身重新安装；`docs/init` 刷新；`memory/aidp-config.yaml` 只补缺失配置段；项目级 memory 与 `docs/architecture/` 三份约束骨架：装上后从没填过的（指纹台账 `.aidp-user-fillable.json` 与现文件一致）直接刷新为新版骨架，填过的只替换残留占位符、新版骨架变了才进语义改写队列；`.gitignore` 托管区（`# >>> AIDP-GITIGNORE-MANAGED` 标记之间）整块刷新、区外规则不动；`agent_sync.py` 重新装配。覆盖任何已有文件前都先备份到 `.aidp-backup-<时间戳>/`（输出 `backup`）。
+   `overwrite` / `fill` 下执行：`{{AIDP_HOME}}/scripts/` 字节不同即覆盖，并清理旧 manifest 登记、新包已撤掉且非 `user_files` 的脚本（同版本也生效，输出删除与备份清单）；脚手架自身重新安装；`docs/init` 刷新；`memory/aidp-config.yaml` 补缺失配置段，依据可信旧模板清理未修改的退休默认项，保留用户修改和未知字段并提示；内联映射也参与预算语义与未知键告警；项目级 memory 与 `docs/architecture/` 三份约束骨架：装上后从没填过的（指纹台账 `.aidp-user-fillable.json` 与现文件一致）直接刷新为新版骨架，填过的只替换残留占位符、新版骨架变了才进语义改写队列；`.gitignore` 托管区（`# >>> AIDP-GITIGNORE-MANAGED` 标记之间）整块刷新、区外规则不动；`agent_sync.py` 重新装配。覆盖任何已有文件前都先备份到 `.aidp-backup-<时间戳>/`（输出 `backup`）。
 
    保护规则：
    - **本地改过的契约**：`overwrite` 时按上一版安装的 `CONTRACT_MANIFEST.json` 指纹比对，项目改过又被新版覆盖的文件逐个列在输出 `local_overwritten` 与警告里（附备份目录），向用户转述；
@@ -190,9 +190,9 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
    - **项目记忆文件**：`overwrite` 前读取已安装模板快照，并用 `.aidp-user-fillable.json` 的模板/合并指纹辨别上游模板与项目内容；「当前状态」固定字段和「项目自定义」段保留，独立状态散文留在状态段，旧模板章节中可确定的独立项目注解迁入自定义正文。模板行的项目修改/删除、规则性追加、同节新旧变更冲突或缺可信旧基线时，原正文不动，具体差异进入现有语义改写队列并保持 `pending`。相同骨架与已合并内容无需改写时不动；重复升级不重复章节/待办，也不通过自动改动待办正文绕过收口。Agent 布局切换时待办跟随最终正文位，保持入队指纹与证据；
    - **项目私有 SKILL**（`{{AIDP_HOME}}/skills/` 下脚手架没有的目录）：不触碰；
    - **旧契约被删**：`overwrite` 是整包替换，上一版 manifest 有、新版没有的契约会随之删除（不再留孤儿）。替换前按旧 manifest 指纹算出并输出 `removed_contracts`（未改过）与 `removed_modified`（本地改过，原文只在备份内），向用户转述并指明备份目录；
-  - **孤儿契约**（仅 `fill` 保留旧文件时出现：旧 manifest 有、新版没有、项目里仍在）：输出 `orphans` 清单，只报告不删除——向用户列出，确认后再删。
+   - **孤儿契约**（`fill` 下仍保留的门控正文）：旧 manifest 有、新版没有、项目里仍在时输出 `orphans` 清单，只报告不删除。非门控 scripts 的退休清理按上一段执行，不混入该保留规则。
 3. **处理语义改写队列并收口**：同 Mode 2 第 4 步。
-4. **备份清理**：脚本按「最近 1 个 ∪ 7 天内」保留 `.aidp-backup-*`（`--keep-backups N` / `--keep-days N` 调整，`--keep-backups 0` 不清理）；输出里超出阈值会提示手工删除。
+4. **备份清理**：仅本次安装事务成功后，按「最近 1 个 ∪ 7 天内」保留 `.aidp-backup-*`（`--keep-backups N` / `--keep-days N` 调整，`--keep-backups 0` 不清理），额外保护本次备份。失败、阻断或高版本 `protect` 路径不执行清理；必要回滚恢复材料不受普通备份保留策略影响。
 5. 执行「验证」章节。
 
 ### 升级失败与恢复（init / migrate 同样适用）

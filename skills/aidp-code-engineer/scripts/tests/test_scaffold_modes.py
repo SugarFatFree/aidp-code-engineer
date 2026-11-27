@@ -784,6 +784,37 @@ class UpgradeStateReportTest(unittest.TestCase):
                 self.assertIn(key, warnings)
                 self.assertIn(needle, warnings)
 
+    def test_inline_budget_and_guard_state_are_reported_without_changing_config(self):
+        with H.TempRepo() as root:
+            config = root / "memory/aidp-config.yaml"
+            config.parent.mkdir()
+            have = ("execution_policy: {execution_budget: {agents: 8, processes: 24, scanned_files: 5000}}\n"
+                    "entry_guard: {enabled: false}\ntest_guard: {enabled: true}\n")
+            config.write_bytes(have.encode())
+            warnings = "\n".join(self.report(root, have))
+            for key in ("execution_budget.agents", "execution_budget.processes", "execution_budget.scanned_files",
+                        "entry_guard.enabled: false"):
+                self.assertIn(key, warnings)
+            self.assertNotIn("test_guard.enabled", warnings)
+            self.assertEqual(config.read_bytes(), have.encode())
+
+    def test_unknown_keys_are_reported_after_config_sync_but_preserved(self):
+        with H.TempRepo() as root:
+            config = root / "memory/aidp-config.yaml"
+            config.parent.mkdir()
+            template = (L.SKILL_DIR / L.CONFIG_TPL_REL).read_bytes()
+            have = (template.decode() + "\nentry_gaurd:\n  enabled: false\n"
+                    "custom_user:\n  team_option: keep\n").replace(
+                        "  provider: github-actions", "  provider: github-actions\n  providre: none")
+            config.write_bytes(have.encode())
+            report = S.Report()
+            S.sync_config(root, {}, report, S.Backup(root, report), previous_template=template)
+            warnings = "\n".join(report.warnings)
+            self.assertIn("entry_gaurd", warnings)
+            self.assertIn("cicd.providre", warnings)
+            self.assertNotIn("custom_user.team_option", warnings)
+            self.assertEqual(config.read_bytes(), have.encode())
+
     def test_unset_or_null_values_are_not_reported(self):
         with H.TempRepo() as root:
             self.assertEqual(self.report(root, "execution_policy: null\ncicd:\n  auto_trigger: null\n"), [])
@@ -800,6 +831,136 @@ class UpgradeStateReportTest(unittest.TestCase):
             self.assertIn("不会自动恢复", warnings)
             self.assertTrue(legacy.exists(), "只提示，绝不自动删除")
             self.assertEqual(self.report(root, "entry_guard:\n  enabled: true\n")[0].count("pretool-guard-off"), 2)
+
+
+class _NativeUpgradeFixture(unittest.TestCase):
+    """仅冻结本组需要的运行源，避免并行维护时真源变化影响升级判据。"""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="aidp-upgrade-source-")
+        self.addCleanup(temporary.cleanup)
+        source = Path(temporary.name)
+        for directory in L.RUNTIME_DIRS:
+            (source / directory).mkdir()
+            (source / directory / "README.md").write_text("# Runtime fixture\n")
+        (source / "scripts/notify.py").write_text(
+            'print(\'{"ready": false, "reason": "notify.enabled=false"}\')\n')
+        patcher = mock.patch.object(S, "_runtime_source", return_value=source)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class NativeBackupRetentionTest(_NativeUpgradeFixture):
+    def options(self, mode="upgrade"):
+        return Namespace(mode=mode, agent="claude", user="alice", json=True,
+                         version="V0.1.0", name_cn=None, force=False,
+                         adapter_mode="copy", no_agent_sync=True,
+                         keep_backups=1, keep_days=1, branch_policy=None)
+
+    def old_backups(self, root):
+        paths = [root / f".aidp-backup-{stamp}" for stamp in
+                 ("20000101000000", "20010101000000", "29990101000000")]
+        for path in paths:
+            path.mkdir()
+            (path / "evidence.txt").write_text("recovery evidence\n")
+        return paths
+
+    def test_success_prunes_expired_backups_but_protects_current_snapshot(self):
+        with H.TempRepo() as root, mock.patch.object(S, "_install_native_skill"):
+            S.run(root, self.options("init"))
+            expired1, expired2, future = self.old_backups(root)
+            script = root / ".claude/scripts/notify.py"
+            customized = script.read_bytes() + b"\n# project edit\n"
+            script.write_bytes(customized)
+            options = self.options()
+            options.keep_days = 0  # 当前备份被未来时间戳挤出最近一份，仍必须显式保护。
+            result = S.run(root, options)
+            self.assertFalse(expired1.exists())
+            self.assertFalse(expired2.exists())
+            self.assertTrue(future.exists(), "按时间戳排序最新的备份仍按原有策略保留")
+            current = root / result["backup"]
+            self.assertEqual((current / ".claude/scripts/notify.py").read_bytes(), customized)
+            self.assertEqual({item["path"] for item in result["actions"] if item["op"] == "prune"},
+                             {expired1.name, expired2.name})
+
+    def test_failed_install_does_not_prune_any_backup(self):
+        with H.TempRepo() as root, mock.patch.object(S, "_install_native_skill"):
+            S.run(root, self.options("init"))
+            previous = self.old_backups(root)
+            script = root / ".claude/scripts/notify.py"
+            original = script.read_bytes() + b"\n# recover this edit\n"
+            script.write_bytes(original)
+            with mock.patch.object(S, "diagnose_notify_config", side_effect=OSError("late install failure")), \
+                    mock.patch.object(L, "prune_backups", wraps=L.prune_backups) as prune:
+                with self.assertRaisesRegex(OSError, "late install failure"):
+                    S.run(root, self.options())
+            prune.assert_not_called()
+            self.assertTrue(all(path.exists() for path in previous))
+            self.assertEqual(script.read_bytes(), original)
+
+    def test_blocked_or_protected_install_does_not_prune(self):
+        with H.TempRepo() as root:
+            previous = self.old_backups(root)
+            for result in ({"status": "blocked", "contract_decision": "overwrite"},
+                           {"contract_decision": "protect"}):
+                with self.subTest(result=result), \
+                        mock.patch.object(S, "_run_native_impl", return_value=result), \
+                        mock.patch.object(L, "prune_backups", wraps=L.prune_backups) as prune:
+                    S._run_native(root, self.options(), "upgrade", ["claude"], "argument")
+                prune.assert_not_called()
+            self.assertTrue(all(path.exists() for path in previous))
+
+
+class SameVersionScriptRetirementTest(_NativeUpgradeFixture):
+    def options(self, mode="upgrade"):
+        return Namespace(mode=mode, agent="claude", user="alice", json=True,
+                         version="V0.1.0", name_cn=None, force=False,
+                         adapter_mode="copy", no_agent_sync=True,
+                         keep_backups=0, keep_days=1, branch_policy=None)
+
+    def register(self, runtime, relative, user_owned=False):
+        path = runtime / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"# previous delivered file\n")
+        manifest = runtime_layout._read_manifest(runtime)
+        manifest["files"][relative] = runtime_layout._file_metadata(path)
+        if user_owned:
+            manifest.setdefault("user_files", []).append(relative)
+        runtime_layout._write_manifest(runtime, manifest)
+        return path
+
+    def test_removal_only_change_refreshes_managed_scripts(self):
+        with H.TempRepo() as root, mock.patch.object(S, "_install_native_skill"):
+            S.run(root, self.options("init"))
+            relative = "scripts/retired-script.py"
+            old = self.register(root / ".claude", relative)
+            result = S.run(root, self.options())
+            self.assertEqual(result["contract_decision"], "fill")
+            self.assertFalse(old.exists())
+            self.assertIn(relative, result["removed_contracts"])
+            self.assertTrue((root / result["backup"] / ".claude" / relative).is_file())
+
+    def test_modified_retired_scripts_are_reported_and_user_files_are_retained(self):
+        with H.TempRepo() as root, mock.patch.object(S, "_install_native_skill"):
+            S.run(root, self.options("init"))
+            runtime = root / ".claude"
+            relative = "scripts/retired-script.py"
+            old = self.register(runtime, relative)
+            registered_user = self.register(runtime, "scripts/team-managed.py", user_owned=True)
+            retired_rule = self.register(runtime, "rules/retired-rule.md")
+            private = runtime / "scripts/team-private.py"
+            private.write_bytes(b"# project-only script\n")
+            old.write_bytes(b"# customized retired script\n")
+            result = S.run(root, self.options())
+            self.assertFalse(old.exists())
+            self.assertIn(relative, result["removed_modified"])
+            self.assertEqual((root / result["backup"] / ".claude" / relative).read_bytes(),
+                             b"# customized retired script\n")
+            self.assertTrue(registered_user.exists())
+            self.assertEqual(private.read_bytes(), b"# project-only script\n")
+            self.assertTrue(retired_rule.exists(), "同版本门控规则仍保留")
+            self.assertNotIn("scripts/team-managed.py", result["removed_contracts"])
+            self.assertNotIn("scripts/team-private.py", result["removed_contracts"])
 
 
 class ConfigSubKeySafetyTest(unittest.TestCase):

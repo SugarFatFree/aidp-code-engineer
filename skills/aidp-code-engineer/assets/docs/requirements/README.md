@@ -42,11 +42,13 @@ docs/requirements/
                   ux-logic-extractor 模式 B：
                   - 多源融合
                   - 冲突识别
-                  - 不清晰标注（阻塞下一步）
+                  - 不清晰项登记待澄清（不自动阻塞后续设计）
                   - 过度内容裁剪
                          ↓
 研发使用  →  docs/requirements/{version}/研发需求/00_索引.md + 01_研发需求.md（或多系统拆分）
 ```
+
+一般需求歧义、冲突和存疑条目登记 `99_待澄清问题清单.md`，不把待澄清数量当作自动停流条件；可继续设计并并行确认。真实输入缺失、机器门失败或审计 Critical 按对应命令的前置门与失败处置执行，不能用「不中断」豁免。具体分类与兜底以 `{{AIDP_HOME}}/commands/sprint-requirements.md` 及其委派的 `ux-logic-extractor` SKILL 为准，本导航不另立判据。
 
 ## 结构与多系统拆分规则（约定 15）
 

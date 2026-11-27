@@ -1,6 +1,6 @@
 # 执行上下文、动作授权与轻量能力
 
-本片是**执行策略单一信源**与 light 配方；日常 light 先读速览 `reference/light-entry.md`，仅需授权/预算/收口细则时再按节读本片。formal 保留编号、开工、规格、归档，不扩大动作授权；light 不建 Sprint/卡片/审批文档。各入口先按本片选步骤；可选未请求为 NOT_REQUESTED，不是欠账或 PASS。
+本片是**执行策略单一信源**；日常 light 先读 `reference/light-entry.md`，授权/预算/收口细则按需读本片。formal 保留编号、开工、规格、归档，不扩权；light 不建 Sprint/卡片/审批文档。未请求的可选项为 NOT_REQUESTED，不是欠账或 PASS。
 
 ## 业务目标与动作模型
 
@@ -141,13 +141,16 @@ python3 {{AIDP_HOME}}/scripts/development_scope.py --root . \
 
 ## test：只执行授权分支
 
-`related-test` 才生成 scope 和运行单测。自动范围 `test_scope.py` / `light_task.py select/all` 需要有效 Git commit；无 Git 只可按显式文件运行本地测试，自动范围及相关证据链记 `UNVERIFIED / unsupported:vcs-disabled`，不声称完整闭环、不自动 `git init`。真实运行器来自项目 `unit_runners` 的 `cwd/argv/inputs/env_id`；`since/write_set` 来自父上下文。命名或 related 选择器沿用 `/sprint-test` Step 2.6。`light_task.py select/run/report` 即下围栏加命令守卫的单一入口。JSON/YAML/SQL变更无映射须记未核验。
+仅 `related-test` 授权可选测并运行。`test_scope.py` / `light_task.py select/all` 需有效 Git commit；无 Git 只跑显式文件本地测试，自动范围记 `UNVERIFIED / unsupported:vcs-disabled`，不自动 `git init`。运行器取项目 `unit_runners` 的 `cwd/argv/inputs/env_id`，起点与写集取上下文；选择器见 `/sprint-test` Step 2.6。`light_task.py select/run/report` 封装下方围栏及命令守卫。JSON/YAML/SQL 无映射记未核验。
+
+测试并发配置与结算规则见 `light-parallel.md`「测试运行器并发」；默认串行。
 
 <!-- light-task-unit -->
 ```bash
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?入口必须传入机器上下文路径}"
 UNIT_RUNNERS_JSON="${UNIT_RUNNERS_JSON:?读取项目实际测试运行器}"
 TEST_ENV_ID="${TEST_ENV_ID:?提供真实环境标识}"
+TEST_MAX_PARALLEL="${TEST_MAX_PARALLEL:-1}"
 CTX_DIR=$(dirname "$EXECUTION_CONTEXT")
 SCOPE_FILE="$CTX_DIR/unit-scope.json"
 RUN_SET_FILE="$CTX_DIR/run-set.json"
@@ -156,7 +159,7 @@ python3 {{AIDP_HOME}}/scripts/test_scope.py --root . \
   > "$SCOPE_FILE" || exit $?
 python3 {{AIDP_HOME}}/scripts/test_ledger.py run-scope --root . \
   --execution-context "$EXECUTION_CONTEXT" --scope-file "$SCOPE_FILE" \
-  --env-id "$TEST_ENV_ID" > "$RUN_SET_FILE" || exit $?
+  --env-id "$TEST_ENV_ID" --max-parallel "${TEST_MAX_PARALLEL:-1}" > "$RUN_SET_FILE" || exit $?
 SCOPE_HASH=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scope_hash"])' "$SCOPE_FILE") || exit $?
 RUN_IDS=$(python3 -c 'import json,sys;print(*json.loads(open(sys.argv[1]).readlines()[-1])["run_ids"])' "$RUN_SET_FILE") || exit $?
 RUN_ARGS=()

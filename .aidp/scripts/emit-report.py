@@ -51,7 +51,7 @@ if _aidp_scripts not in _aidp_sys.path:
     _aidp_sys.path.insert(0, _aidp_scripts)
 from aidp_runtime import runtime_text
 from unit_report_merge import (merge_unit_tests, unverified_result, validate_report_units,
-                               report_ready, finalize_ready, success_ready, open_bug_count, triage_state)
+                               report_ready, finalize_ready, success_ready, open_bug_count, triage_state, case_source_summary)
 import argparse
 import glob
 import hashlib
@@ -985,6 +985,8 @@ def main():
             raise ValueError("--failure-triage 必须同时提供 --unit-result 或已有单测结果")
         elif args.browser_na_reason:
             raise ValueError("--browser-na-reason 必须同时提供 --unit-result 或已有单测结果")
+        # 来源不由报告撰写者自由声称；包括旧报告/无单测结果在内，缺冻结来源一律未知。
+        payload["caseSources"] = case_source_summary((payload.get("unitTests") or {}).get("testScope"))
         # ★ P0-1 数据契约 fail-fast：字段名/结构/单位漂移在写盘前拦下（执行体是 AI，必然会漂，不能靠散文契约自觉）
         schema_errs = validate_payload(args.kind, payload)
         if schema_errs:

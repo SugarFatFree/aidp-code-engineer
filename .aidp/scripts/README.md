@@ -52,9 +52,9 @@
 
 - **软限降级顺序**固定为：缩小范围 → 使用缓存 → 减少重复取证 → 确实无法继续才请用户决策（`soft_advice`；有新结果产出就不升级；从不停止任务）。
 - **软限转为阻断**仅四种情形：用户显式写入的键（含旧配置，旧 `project-policy`/带 `execution_budget` 的修订记录不静默降为软限）、低于默认值的收紧、autopilot 无人值守链路、deploy/push/live-tests 等高风险动作。
-- **并发池**：父任务、子 Agent、嵌套流程共用根任务同一池；满额进入可见的 FIFO 队列（`slots` 查看、`cancel-queued` 取消）；正常/异常/取消/超时/持有进程死亡/租约（`--lease-seconds`，默认 3600）过期都会释放；排队票据 30 分钟过期。**CLI `acquire-slot` 没拿到槽位时撤销票据并以退出码 2 退出**（JSON `status=QUEUED`），流程里的 `|| exit $?` 会停下重试而不是继续派发；每轮 autopilot tick 开始时按链路回收上一轮遗留的槽位（`reap_slots`，不同链路并行互不影响）。
+- **并发池**：父任务、子 Agent、嵌套流程共用根任务同一池；满额进入可见的 FIFO 队列（`slots` 查看、`cancel-queued` 取消）；正常/异常/取消/超时或持有进程死亡后释放；本机活跃 PID 槽位不会仅因租约到期被回收，并核对进程启动身份防 PID 复用。无本机持有 PID 的槽位按正有限租约（`--lease-seconds`，默认 3600）到期释放；排队票据 30 分钟过期。**CLI `acquire-slot` 没拿到槽位时撤销票据并以退出码 2 退出**（JSON `status=QUEUED`），流程里的 `|| exit $?` 会停下重试而不是继续派发；每轮 autopilot tick 按链路回收旧 CLI／已结束持有者的遗留槽位（`reap_slots`）；仍活跃的本机进程与未到期的远端持有者继续占额度，不因 tick 令牌变化被误回收。
 - **真实耗尽才冻结**：`BUDGET_EXCEEDED` 的 `details.recovery` 给出恢复路径（降耗手段 + 带用户原文的 `revise --execution-budget` 续额；续额不扩大业务授权）；单步估算超出剩余额度只拒绝该步骤，不写耗尽标记、不冻结版本；只有已用 ≥ 上限才标记耗尽。
-- **0 人工续额**：`aidp_scheduler.py install --authorization-text "<原话>" --auto-renew-budget N` 一次性授权 N 次自动续额，耗尽时按 COMMAND_BUDGETS 基本量续一次（告警 `loop-budget-auto-renewed`），只放宽执行资源，不授予业务动作；次数用完才冻结等人。
+- **有界自动续额**：`aidp_scheduler.py install --authorization-text "<原话>" --auto-renew-budget N` 授权最多 N 次；N 为非负整数，N>0 必须同次提供真实授权原文。各平台保存同一策略；同 request/text/N 重装保留已用次数，冲突拒绝。每次最多增加 COMMAND_BUDGETS 的一个累计资源基础额，不增加并发、不授予业务动作、不清零已用量。先持久化固定续额目标与次数，再修改预算；中断后重放同一目标。次数用完或额度仍不足则保留冻结，其他原因的冻结不会被续额解除。
 - **展示与迁移**：`budget-report` 展示每项资源的类别与原因，入口输出的 `budget_policy` 给出迁移说明；脚手架升级报告会点名「含义已变」的配置键（`agents`/`processes` 等）与仍在生效的护栏关闭开关。资源额度不等于业务授权：放宽额度不授予全量回归、启动服务、扩大写集或部署。
 - **单步超时**只有一个信源 `step_timeout`（`scan 300 / selection 60 / command 30 / version-command 3600` 秒，可用显式参数或 `AIDP_STEP_TIMEOUT_<KIND>` 覆盖；仅 elapsed 为阻断类时才以剩余额度封顶），内部不得再出现 `min(10, …)` 一类未说明的更低上限（`test_budget_policy.py` 有静态守卫）。
 - **长任务进展**：`record_progress` / `assess_progress` / `emit_progress` 输出阶段与已处理数，并按 advancing / repeated-failure / external-failure / scope-growth / stalled 归类；同输入同原因的失败不重试。
@@ -63,11 +63,13 @@
 
 ## dispatch_plan.py — light 并行派发判定
 
-用法：`python3 {{AIDP_HOME}}/scripts/dispatch_plan.py --task "a=f1,f2" --task "b=f3,f4" [--reads a=3] [--tasks-json JSON|@文件] [--emit-prompts --execution-context CTX --action implement --budget TEXT]`。≥2 个互不相交写集且各读≥3或改≥2文件 → `decision=parallel`；写集交集列入 `conflicts` 并串行；输出 `parallel_groups/serial/conflicts/reasons/prompts`（prompt 带父上下文、action、budget、写集与「只跑相关测试」，禁传 grant）。只判定不授权；退出码 0/2。规则见 `flows/sprint-dev/light-parallel.md`。
+用法：`python3 {{AIDP_HOME}}/scripts/dispatch_plan.py --root . --task "a=f1,f2" --task "b=f3,f4" [--reads a=3] [--tasks-json JSON|@文件]`。≥2 个互不相交写集且各读≥3或改≥2文件 → `decision=parallel`；目录前缀也算冲突。实现前必须输出 `decision/reasons/conflicts`。生成 prompt 时另传 `--emit-prompts --execution-context CTX --action implement --budget TEXT --child-context a=CHILD_A --child-context b=CHILD_B`，机器核对真实子 context 的父身份与范围；子 context 由 `entry_context.py fork --child-key KEY --write-set PATH` 创建，继承父基线、共享根预算、独立保存证据，禁止子扩权或再次委派。只判定不授权；退出码 0/2。规则见 `flows/sprint-dev/light-parallel.md`。
 
 ## light_task.py — light 任务标准流程单一入口
 
 `python3 {{AIDP_HOME}}/scripts/light_task.py {start|extend-write-set|select|run|report|all} --root . [--execution-context CTX] [--session-id ID] [--runners-json JSON|@文件] [--env-id ID]`：`start` = `entry_context.py resolve/route` + `aidp_config.py branch-policy` + `entry_gate.py bind`；分支未选择时返回 `entry_bound=false`，保存选择后继承同一上下文重跑；缺 `--version` 时取项目最高版本目录（`version_source=inferred`），缺必填项时报错内带完整可复制命令；`extend-write-set --add-write-set <路径>` = 同任务内 `entry_context.py revise` + 重绑，无需重新 start；`select` = `execution_policy require-action related-test` → `test_scope.py` → `select_related_tests.py`（写白名单）；`run` = 对 scope 内每条命令先过 `test_command_guard.py check`（拒绝即终止，不拼整目录/全量命令）再 `test_ledger.py run-scope` + `verify`；`report` = 改动文件/选中测试/通过·失败·未映射/known-failure 差集（`test_baseline.py diff`）与 `verdict`。stdout 末行恒为 JSON；退出 0 成功、1 测试 FAIL、2 输入/授权/守卫/未核验。用法速览见 `{{AIDP_HOME}}/reference/light-entry.md`。
+
+`select/all --changed-files FILE…` 接收已知改动源码，核对实际任务变化，遗漏、越界或目录输入拒绝；无上下文的脏工作区必须明确写集或改动文件，不能自动认领其他任务的变化。`run/all --max-parallel N` 只并行 scope 中已声明 `parallel.enabled:true` 的运行项，受共享根 `processes` 约束；默认串行，同 `parallel.group` 串行，未声明并行的项作为串行屏障。runner 用 `batch_size` 或 `group_by:"directory"` 冻结分组，`parallel.workers` 当前限 1，已知运行器须显式限制内部并发，详见 `flows/sprint-dev/light-context.md`。不自动安装插件、启动容器或变更权限。
 
 ## deployment_ops.py — 发布/规划期 SQL 执行台账渲染
 
@@ -87,11 +89,17 @@
 
 `select_related_tests.py` 由 git 改动、未跟踪文件、导入图与命名约定推出相关测试白名单，复用 `test_scope.py` 的依赖分析。**显式入口** `--explicit-tests FILE… [--basis 依据] [--command 命令]`：人工/调用方已明确相关测试文件时直接生成白名单，只做 stat 与 git 文件清单（零内容读取、零依赖扫描），校验文件存在、位于本项目、是测试文件、未被默认排除且与任务范围有关（写集内 / 同模块 / 同名映射；都不满足须 `--basis`，标记 `declared`），有上下文时须持有 `related-test`；与自动选测写入同一白名单（并集），记录依据/文件/任务身份/命令，不能借此扩大到全量回归或绕过护栏——选测器被预算或时间挡住时先走这里，不要手改白名单、清上下文或关护栏。依赖分析按「路径 + 内容摘要」缓存每个文件的导入事实（`memory/.aidp/scope-facts/facts.json`）：无关文件变化不致全量失效，只重解析变化文件；扫描中途超时已完成部分落盘，重跑即断点续扫。`--scope FILE` 校验已有相关范围的同任务身份、内容 hash 与当前输入后原样使用其测试集合；上下文或推导校验失败即拒绝，不能回退命名猜测。显式相关文件集合即使恰好覆盖小项目全部测试也完整保留；默认不设数量上限，显式 `--max-tests N` 不足时退出 2 并报告 `BUDGET_EXCEEDED`，不发布截断白名单。白名单写入 `memory/.aidp/test-allowlist/<key>.json`（key 为上下文 task_id，无上下文为 `default`）；有上下文时只接受同任务记录，缺失或损坏即拒绝，无上下文时只读取 default，不借用其他任务最新记录。`test_command_guard.py` 的 `check` / `wrap [--background --log F]` / `changed` 对 pytest / jest / vitest / mvn / gradle / go test / `run_tests*` / ruff 判定：无参数或目录拒绝，显式文件须在白名单内，`--allow-full` 仅 autopilot 授权的 full-regression 上下文放行（缺授权 fail closed），`git stash` 拒绝；`--background` 把输出写日志并在结束时写 `<日志>.exit`。`test_baseline.py` 的 `record` / `diff` / `show` 以 `memory/.aidp/test-baseline/<key>.json` 保存已知失败基线，输出「新失败 = 本次失败 − 基线」，基线那次没有执行迹象时拒绝比较。详规见 `{{AIDP_HOME}}/rules/code.md` 约定 35「测试范围由机器强制」，项目入口范例见 `{{AIDP_HOME}}/templates/scripts/run_tests.sh`。
 
+自动选测新增 `--changed-files FILE…`（源码输入，与 `--explicit-tests` 不同）。目录写集只界定范围，不展开未改文件；显式文件写集保留原有专项验证语义。持久 `scope-index` 独立保存闭包及反向消费者：内容变化只重算受影响闭包，成员增删/改名、工具、配置、运行器及环境变化使相关索引失效。light/显式改动模式先读取 Python 解析输入、配置和改动候选，选中未知依赖时保守补齐模块输入；全局成员观察与前后稳定性检查保留。发生 `TREE_CHANGED` 时停止修改后重试，预留以未核验结算，复用已完成文件事实，不能记 PASS。
+
 ## build_unit_test.py / unit_report_merge.py / aiauto_test_join.py — build 两路测试
 
 当前版本全量单测协议见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md`，只有 autopilot 真实委派的 aiauto 子上下文可进入。执行器先核 version/build、委派父链、验收基线、正式用例映射和冻结 manifest，再用隔离 checkout 运行清单中的测试及必要依赖回归；不发现或执行仓库/历史版本测试全集。缺版本或清单就报告缺口，不回落全仓。`status` 读取真实终态，单次总预算默认 3600 秒；版本、范围、关键环境不得混用，同内容有效结果可复用。
 
 `emit-report.py --unit-result <结果JSON> --commit <部署SHA>` 经 `unit_report_merge.py` 合并两路数据；HTML 分开显示实测与单测，未知计数显示未提供。`aiauto_test_join.py begin/settle/release-state` 声明在途、合并终态、幂等登记 BUG 与读取准发布状态；未核验/超时不写通过、不写冻结，运行中不能 finalize。旧报告保持原有兼容读法。
+
+**计划补全（部署前）**：`build_unit_test.py plan-init --version V --execution-context CTX` 只把本版索引明确映射或任务实际变化作为候选；目录授权与全仓发现不等于版本相关。读取输出及计划中的 `needs_review/review_notes`；由原授权开发 Agent 复用相关测试推导和验收映射，把未修改但受影响的测试也登记到本版索引。仍为自动草稿时补齐依据后用同参数加 `--force` 重生成；已有审核过的手工 runner 则定点修订原计划的 `unit_tests/case_tests/cwd/runners`，逐条核清说明，不能被自动发现覆盖。缺事实保持 `UNVERIFIED`、先不部署；`EXISTS` 仅表示保留已有文件，不代表计划完成。
+
+**用例来源**：人工正式用例优先，AI 研发自测按 TC-ID 去重补充；仅 AI 来源的基线须有同版本真实 autopilot 测试授权。manifest 记录来源、部署 commit 中用例册正文摘要及选中 ID；浏览器消费冻结快照，不读取可漂移的当前断言。AI 来源不能冒充独立人工验收，缺有效用例仍未核验。
 
 ## aidp_runtime.py — 运行包与项目根路径解析
 

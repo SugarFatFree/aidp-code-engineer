@@ -63,6 +63,22 @@ class EntryGateTests(unittest.TestCase):
         self.assertIn('范围过大', '\n'.join(broad['hints']))
         self.assertEqual(str(path), entry_gate.check(self.root, 'code/frontend/y/app.ts', env={})['context'])
 
+    def test_light_child_only_uses_its_subset_and_stale_parent_is_denied(self):
+        from entry_context import fork_context, revise_context
+        parent = self.context(write_set=['code'])
+        self.marker()
+        child = fork_context(self.root, parent, child_key='worker', write_set=['code/a.py'])
+        env = {'AIDP_EXECUTION_CONTEXT': child['execution_context']}
+        self.assertTrue(self.check('code/a.py', env)['ok'])
+        denied = self.check('code/b.py', env)
+        self.assertIn('write-set', denied['missing'])
+        self.assertNotIn('revise', '\n'.join(denied['hints']))
+        self.assertIn('主流程', '\n'.join(denied['hints']))
+        revise_context(self.root, parent, ['docs'])
+        stale = self.check('code/a.py', env)
+        self.assertFalse(stale['ok'])
+        self.assertIn('entry-context', stale['missing'])
+
     def test_empty_write_set_hint_names_same_task_command(self):
         self.context(write_set=['docs'])
         self.marker()

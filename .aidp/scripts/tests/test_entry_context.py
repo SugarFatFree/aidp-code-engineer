@@ -67,6 +67,103 @@ class EntryContextTests(unittest.TestCase):
         self.assertFalse((self.root / "docs").exists())
         self.assertFalse((self.root / "memory/activeContext.md").exists())
 
+    def test_light_fork_restricts_scope_and_preserves_baseline_and_budget(self):
+        import entry_context as ec
+        import execution_policy as policy
+        parent = self.resolve('--write-set', 'app.py', 'other.py')
+        original = self.context(parent)
+        (self.root / 'app.py').write_text('answer = 2\n')
+        child = self.cli('fork', '--execution-context', parent['execution_context'],
+                         '--child-key', 'worker-a', '--write-set', 'app.py')
+        ctx = self.context(child)
+        self.assertEqual(ctx['mode'], 'light')
+        self.assertNotIn('sprint', ctx)
+        self.assertEqual(ctx['write_set'], ['app.py'])
+        self.assertEqual(ctx['parent_revision'], original['revision'])
+        for name in ('since', 'initial_files', 'initial_git_files', 'preexisting_dirty', 'execution_budget'):
+            self.assertEqual(ctx[name], original[name], name)
+        self.assertEqual(set(ctx['allowed_actions']), set(original['allowed_actions']) & {'implement', 'static', 'related-test'})
+        self.assertNotEqual(child['execution_context'], parent['execution_context'])
+        policy.reserve_budget(self.root, ctx, 'processes', 1)
+        self.assertEqual(json.loads(Path(parent['execution_context']).with_name('budget.json').read_text())['used']['processes'], 1)
+        self.assertFalse(Path(child['execution_context']).with_name('budget.json').exists())
+        again = self.cli('fork', '--execution-context', parent['execution_context'],
+                         '--child-key', 'worker-a', '--write-set', 'app.py')
+        self.assertEqual(child['identity_hash'], again['identity_hash'])
+        for extra in (['--write-set', 'other.py'], ['--grant', 'review', '--authorization-source',
+                     json.dumps({'kind': 'user-text', 'request_id': 'bad', 'text': 'review'})]):
+            self.cli('revise', '--execution-context', child['execution_context'], *extra, expected=2)
+        self.cli('fork', '--execution-context', child['execution_context'], '--child-key', 'nested',
+                 '--write-set', 'app.py', expected=2)
+        self.cli('fork', '--execution-context', parent['execution_context'], '--child-key', 'bad',
+                 '--write-set', 'outside.py', expected=2)
+        self.cli('fork', '--execution-context', parent['execution_context'], '--child-key', 'bad',
+                 '--write-set', 'app.py', '--allow-action', 'review', expected=2)
+        self.cli('revise', '--execution-context', parent['execution_context'], '--write-set', 'extra.py')
+        with self.assertRaises(ec.ContextError):
+            ec.load_context(self.root, child['execution_context'])
+        self.cli('fork', '--execution-context', parent['execution_context'], '--child-key', 'worker-a',
+                 '--write-set', 'app.py', expected=2)
+        refreshed = self.cli('fork', '--execution-context', parent['execution_context'], '--child-key', 'worker-a-r2',
+                             '--write-set', 'app.py')
+        self.assertEqual(self.context(refreshed)['parent_revision'], 2)
+
+    def test_light_fork_directory_subset_and_skipped_test_grant(self):
+        (self.root / 'src').mkdir()
+        (self.root / 'src/a.py').write_text('a = 1\n')
+        parent = self.resolve_static_only('--write-set', 'src')
+        child = self.cli('fork', '--execution-context', parent['execution_context'], '--child-key', 'a',
+                         '--write-set', 'src/a.py')
+        self.assertNotIn('related-test', child['allowed_actions'])
+        self.cli('fork', '--execution-context', parent['execution_context'], '--child-key', 'escape',
+                 '--write-set', 'src2/a.py', expected=2)
+        self.cli('fork', '--execution-context', parent['execution_context'], '--child-key', 'escape',
+                 '--write-set', '.', expected=2)
+
+    def test_light_child_static_evidence_is_isolated_from_sibling_and_parent(self):
+        import entry_context as ec
+        (self.root / 'other.py').write_text('answer = 1\n')
+        parent = self.resolve('--write-set', 'app.py', 'other.py')
+        children = [ec.fork_context(self.root, parent['execution_context'], child_key=key, write_set=[path])
+                    for key, path in (('a', 'app.py'), ('b', 'other.py'))]
+        evidence = []
+        for child, path in zip(children, ('app.py', 'other.py')):
+            (self.root / path).write_text('answer = 2\n')
+            result = ec.run_static(self.root, child['execution_context'],
+                [sys.executable, '-B', '-c', f"import ast; ast.parse(open('{path}').read())"], [path])
+            self.assertEqual(result['status'], 'PASS', result)
+            row = json.loads(Path(result['evidence_file']).read_text())
+            self.assertEqual(set(row['inputs']), {path})
+            self.assertEqual(Path(result['evidence_file']).parent, Path(child['execution_context']).parent)
+            evidence.append(result['evidence_file'])
+        self.assertNotEqual(evidence[0], evidence[1])
+        self.assertFalse(list(Path(parent['execution_context']).parent.glob('static-*.json')))
+        self.assertTrue(all(Path(path).exists() for path in evidence))
+
+    def test_light_child_cannot_reuse_parent_historical_authorization_scope(self):
+        import entry_context as ec
+        (self.root / 'src').mkdir()
+        (self.root / 'src/a.py').write_text('a = 1\n')
+        (self.root / 'src/b.py').write_text('b = 1\n')
+        parent = self.resolve('--write-set', 'src')
+        ec.revise_context(self.root, parent['execution_context'], ['src/a.py'], replace_write_set=True)
+        child = ec.fork_context(self.root, parent['execution_context'], child_key='a', write_set=['src/a.py'])
+        self.assertNotIn('authorization_scope', child['context'])
+        with self.assertRaises(ec.ContextError):
+            ec.fork_context(self.root, parent['execution_context'], child_key='b', write_set=['src/b.py'])
+
+    def test_wide_write_set_advice_is_non_blocking(self):
+        (self.root / 'src').mkdir()
+        (self.root / 'src/a.py').write_text('a = 1\n')
+        parent = self.resolve('--write-set', 'src')
+        self.assertTrue(parent['write_set_advice'])
+        self.assertEqual(self.context(parent)['write_set'], ['src'])
+        narrow = self.resolve('--write-set', 'app.py')
+        self.assertEqual(narrow['write_set_advice'], [])
+        revised = self.cli('revise', '--execution-context', narrow['execution_context'], '--write-set', 'src')
+        self.assertTrue(revised['write_set_advice'])
+        self.assertEqual(self.context(revised)['write_set'], ['app.py', 'src'])
+
     def test_existing_formal_state_is_not_adopted_or_changed(self):
         paths = ("memory/activeContext.md", "memory/progress.md", "memory/.sprint-autopilot-baseline.json")
         for rel in paths:

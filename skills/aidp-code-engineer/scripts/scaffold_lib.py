@@ -918,18 +918,19 @@ def scan_backups(root: Path):
 
 
 def prune_backups(root: Path, keep_last=PRUNE_KEEP_LAST_DEFAULT, keep_days=PRUNE_KEEP_DAYS_DEFAULT,
-                  dry_run=False, now=None) -> dict:
-    """保留「最近 keep_last 个 ∪ keep_days 天内」的备份，其余删除。keep_last<=0 = 不清理。"""
+                  dry_run=False, now=None, protected=()) -> dict:
+    """保留「最近 N 个 ∪ 天数内 ∪ protected 目录名」；keep_last<=0 不清理。"""
     result = {"removed": [], "kept": [], "failed": [], "disabled": False, "dry_run": dry_run}
     if keep_last is not None and keep_last <= 0:
         result["disabled"] = True
         return result
     now = now or datetime.now()
+    protected = set(protected)
     cutoff = now - timedelta(days=keep_days) if keep_days and keep_days > 0 else None
     for rank, (path, stamp) in enumerate(scan_backups(root)):
         by_count = rank < keep_last
         by_age = cutoff is not None and (stamp is None or stamp >= cutoff)
-        if by_count or by_age:
+        if by_count or by_age or path.name in protected:
             result["kept"].append(path.name)
             continue
         if dry_run:

@@ -191,6 +191,7 @@ def step_start(args):
         "allowed_actions": resolved.get("allowed_actions", []),
         "actions": route.get("actions", []),
         "branch_policy": policy,
+        "write_set_advice": resolved.get("write_set_advice", []),
         "branch_needs_choice": needs_choice,
         "entry_bound": bool(binding and binding.get("ok")),
         "entry_binding_skipped": bool(binding and binding.get("skipped")),
@@ -220,6 +221,7 @@ def step_extend(args):
                              "warnings": ["写集已扩展，须重新 select/run"]})
     return {"step": "extend-write-set", "execution_context": ctx,
             "write_set": ((revised or {}).get("task_scope") or {}).get("paths", args.write_set),
+            "write_set_advice": (revised or {}).get("write_set_advice", []),
             "entry_bound": bool(binding and binding.get("ok")),
             "next": "写集已在同一任务内扩展；改完后重新运行 select/run/report（旧选测与运行结论已失效）"}
 
@@ -231,8 +233,9 @@ def step_select(args):
     _call("execution_policy.py", "require-action", "--root", args.root,
           "--execution-context", ctx, "--action", "related-test")
     scope_file = Path(ctx).parent / "unit-scope.json"
+    changed_args = ["--changed-files", *args.changed_files] if args.changed_files else []
     _, out, _, scope = _call("test_scope.py", "--root", args.root, "--execution-context", ctx,
-                             "--runners-json", runners, "--json")
+                             "--runners-json", runners, *changed_args, "--json")
     if not scope or "scope_hash" not in scope:
         raise StepError("test_scope 未返回有效 scope")
     scope_file.write_text(json.dumps(scope, ensure_ascii=False), encoding="utf-8")
@@ -305,7 +308,7 @@ def step_run(args):
         raise StepError("test_command_guard 拒绝 scope 内命令，未执行任何测试", code=2,
                         step="run", guard_blocked=blocked)
     run_cmd = ["run-scope", "--root", args.root, "--execution-context", ctx,
-               "--scope-file", str(scope_file), "--env-id", env_id]
+               "--scope-file", str(scope_file), "--env-id", env_id, "--max-parallel", str(args.max_parallel)]
     if args.timeout:
         run_cmd += ["--timeout", str(args.timeout)]
     if args.force:
@@ -445,8 +448,11 @@ def build_parser():
     parser.add_argument("--grant", action="append")
     parser.add_argument("--authorization-source")
     parser.add_argument("--runners-json", default="")
+    parser.add_argument("--changed-files", nargs="+", action="extend", help="select/all 显式变化文件；冻结进 scope")
     parser.add_argument("--env-id", default="")
     parser.add_argument("--timeout", type=int)
+    parser.add_argument("--max-parallel", type=int, default=1,
+                        help="run/all 外层并行上限；runner 须显式声明 parallel，仍共享根任务 processes 预算")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--reselect", action="store_true", help="run 前强制重新选测")
     parser.add_argument("--json", action="store_true", help="仅输出一行 JSON（默认同样以 JSON 收尾）")

@@ -94,7 +94,8 @@ def resolve_since(root, since):
     return os.fsdecode(git_output(root, "rev-parse", "--verify", f"{since}^{{commit}}")).strip()
 
 
-def changed_files(root, since, write_set, execution_context=None, files=None, inventory=None, current_files=None, baseline_reader=None):
+def changed_files(root, since, write_set, execution_context=None, files=None, inventory=None, current_files=None, baseline_reader=None,
+                  include_declared=True):
     since = resolve_since(root, since)
     names = set(git_paths(root, "diff", "--name-only", "--no-renames", "-z", since, "--"))
     names.update(git_paths(root, "ls-files", "--others", "--exclude-standard", "-z"))
@@ -141,14 +142,30 @@ def changed_files(root, since, write_set, execution_context=None, files=None, in
             raise ScopeError("工作区存在未归属改动；必须提供 execution-context 或明确 write-set，禁止全工作区选测")
         names = (names | {p for p in dirty if not (root / p).is_dir()}) - {
             p for p in dirty if not any(within(p, value) for value in write_set)}
-    for value in write_set:
-        rel = relative_path(root, value)
-        if (root / rel).is_dir():
-            candidates = (names | set((inventory or {}).get("preexisting_dirty", ())) if execution_context is not None else files)
-            names.update(p for p in candidates if within(p, rel))
-        else:
-            names.add(rel)
+    # 目录只界定授权，不把未变文件或任务开始前已有的 dirty 重新加入选测。
+    # 明确声明单个文件仍保留既有专项验证语义；--changed-files 则只接受实际变化。
+    if include_declared:
+        names.update(relative_path(root, value) for value in write_set if not (root / value).is_dir())
+    if execution_context and execution_context['mode'] == 'light' and 'parent_task_id' in execution_context:
+        names = {p for p in names if any(within(p, owner) for owner in write_set)}
     return sorted(names)
+
+
+def checked_changes(root, supplied, observed, write_set):
+    paths = sorted(set(relative_path(root, value) for value in supplied))
+    if not paths or any((root / path).is_dir() for path in paths):
+        raise ScopeError('--changed-files 必须提供显式文件，不接受目录或空范围')
+    if write_set and any(not any(within(path, owner) for owner in write_set) for path in paths):
+        raise ScopeError('--changed-files 超出任务写集，不能扩大授权')
+    relevant = lambda p: PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS or is_configuration(p)
+    required = {p for p in observed if relevant(p) and (not write_set or any(within(p, owner) for owner in write_set))}
+    missing = required - set(paths)
+    if missing:
+        raise ScopeError('--changed-files 遗漏任务实际变化：' + ', '.join(sorted(missing)))
+    unexpected = set(paths) - set(observed)
+    if unexpected:
+        raise ScopeError('--changed-files 包含相对任务基线未变化的文件：' + ', '.join(sorted(unexpected)))
+    return paths
 
 
 def is_test(rel):
@@ -233,9 +250,44 @@ def validate_runners(runners, root=None):
             inputs = normalize_inputs(root, [*inputs, *(p for p in resources if (root / p).exists())])
         item = {"batch": batch, "resources": resources, "suffixes": sorted(set(suffixes)), "argv": argv, "cwd": cwd, "mode": mode,
                 "env_id": env_id, "inputs": inputs}
+        batch_size, group_by = runner.get('batch_size'), runner.get('group_by')
+        if batch_size is not None:
+            if type(batch_size) is not int or batch_size < 1 or not batch or group_by is not None:
+                raise ScopeError('runner.batch_size 必须为正整数且启用 batch，不能与 group_by 同用')
+            item['batch_size'] = batch_size
+        if group_by is not None:
+            if group_by != 'directory' or not batch:
+                raise ScopeError('runner.group_by 仅支持 directory 且必须启用 batch')
+            item['group_by'] = group_by
+        if 'parallel' in runner:
+            parallel = runner['parallel']
+            if (not isinstance(parallel, dict) or set(parallel) - {'enabled', 'workers', 'group'}
+                    or type(parallel.get('enabled')) is not bool
+                    or type(parallel.get('workers', 1)) is not int or parallel.get('workers', 1) != 1
+                    or not isinstance(parallel.get('group', ''), str)):
+                raise ScopeError('runner.parallel 须声明 enabled 布尔值、workers:1 和可选 group 字符串')
+            if parallel['enabled']:
+                from test_command_guard import validate_parallel_command
+                try:
+                    validate_parallel_command(argv)
+                except ValueError as exc:
+                    raise ScopeError(str(exc)) from exc
+            item['parallel'] = dict(parallel, workers=1)
         if item not in normalized:
             normalized.append(item)
     return normalized
+
+
+def runner_groups(runner, selected):
+    """分组在 scope 冻结前完成；执行器只运行这些显式 argv，不在运行时扩大或重切范围。"""
+    selected = sorted(selected)
+    if runner.get('group_by') == 'directory':
+        groups = {}
+        for path in selected:
+            groups.setdefault(str(PurePosixPath(path).parent), []).append(path)
+        return list(groups.values())
+    size = runner.get('batch_size', len(selected) or 1)
+    return [selected[i:i + size] for i in range(0, len(selected), size)]
 
 
 def is_configuration(path):
@@ -376,7 +428,7 @@ def extract_facts(path, tree):
 class FactsCache:
     """按「路径 + 冻结内容摘要」缓存导入事实：无关文件变化不使其失效，内容变化只重解析该文件。
 
-    进程内与磁盘（memory/.aidp/scope-analysis/facts.json）两级；扫描中途超时也会落盘已完成部分，
+    进程内与磁盘（memory/.aidp/scope-facts/facts.json）两级；扫描中途超时也会落盘已完成部分，
     下次从断点继续而不是从头来过。摘要不同、策略版本不同或文件损坏一律视为未命中并重算。
     """
     def __init__(self, root):
@@ -442,6 +494,68 @@ class FactsCache:
             self.dirty = False
         except OSError:
             pass  # 缓存只是加速，写失败不影响结果
+
+
+class DependencyIndex:
+    """独立保存测试闭包及反向消费者；成员/工具/解析环境变化换键，内容变化只使旧消费者失效。"""
+    def __init__(self, root, key):
+        from aidp_paths import ensure_runtime_dir
+        self.key = key
+        self.file = Path(ensure_runtime_dir(root)) / 'scope-index' / (key + '.json')
+        self.record = None
+        try:
+            record = json.loads(self.file.read_text(encoding='utf-8'))
+            payload = record['payload']
+            if (record.get('key') != key or record.get('checksum') != digest(payload)
+                    or payload.get('policy') != DEPENDENCY_POLICY
+                    or not isinstance(payload['hashes'], dict) or not isinstance(payload['tests'], dict)):
+                return
+            reverse = {}
+            for test, proof in payload['tests'].items():
+                if (not isinstance(proof, dict) or not isinstance(proof.get('files'), list)
+                        or not isinstance(proof.get('unknown'), list)
+                        or not all(isinstance(p, str) for p in proof['files'])):
+                    return
+                for path in proof['files']:
+                    reverse.setdefault(path, []).append(test)
+            if {p: sorted(v) for p, v in reverse.items()} != payload.get('reverse'):
+                return
+            self.record = payload
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
+
+    def reuse(self, hashes, candidates):
+        if self.record is None:
+            return {}, set(candidates)
+        previous = self.record['hashes']
+        changed = {p for p in set(previous) | set(hashes) if previous.get(p) != hashes.get(p)}
+        invalid = set(candidates) - set(self.record['tests'])
+        invalid.update(test for path in changed for test in self.record['reverse'].get(path, ()))
+        invalid.update(set(candidates) & changed)
+        reused = {test: proof for test, proof in self.record['tests'].items()
+                  if test in candidates and test not in invalid}
+        return reused, set(candidates) - set(reused)
+
+    def save(self, analysis, hashes):
+        reverse = {}
+        for test, proof in analysis['tests'].items():
+            for path in proof['files']:
+                reverse.setdefault(path, []).append(test)
+        parsed_paths = {p for test, proof in analysis['tests'].items() if test.endswith('.py') for p in proof['files']}
+        # 索引只保存解析曾依赖的内容；某次保守验证的整模块输入不能污染后续窄选测。
+        hashes = {p: value for p, value in hashes.items() if p.endswith('.py') or p in parsed_paths}
+        payload = {'policy': DEPENDENCY_POLICY, 'tests': analysis['tests'], 'hashes': hashes,
+                   'reverse': {p: sorted(v) for p, v in reverse.items()}}
+        temporary = None
+        try:
+            self.file.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile('w', dir=self.file.parent, delete=False) as stream:
+                temporary = stream.name
+                json.dump({'key': self.key, 'payload': payload, 'checksum': digest(payload)}, stream)
+            os.replace(temporary, self.file)
+        except OSError:
+            if temporary:
+                Path(temporary).unlink(missing_ok=True)
 
 
 def dependency_analysis(root, files, modules, runners, deadline=None, repositories=(".",), frozen_files=None,
@@ -682,16 +796,16 @@ def analysis_paths(root, inventory, context, write_set):
             and (package(path) is None or package(path) in active)]
 
 
-def derive(root, since, runners, write_set=(), execution_context=None):
+def derive(root, since, runners, write_set=(), execution_context=None, *, changed_paths=None):
     owned = []
     try:
-        return _derive(root, since, runners, write_set, execution_context, owned)
+        return _derive(root, since, runners, write_set, execution_context, owned, changed_paths)
     finally:
         for progress in owned:
             progress.finish()
 
 
-def _derive(root, since, runners, write_set=(), execution_context=None, _owned=None):
+def _derive(root, since, runners, write_set=(), execution_context=None, _owned=None, changed_paths=None):
     root = Path(root).resolve()
     execution_context = execution_context_data(root, execution_context)
     identity = context_identity(root, execution_context)
@@ -703,6 +817,8 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
         since, write_set = identity["since"], identity["write_set"]
     since = resolve_since(root, since)
     runners = validate_runners(runners, root)
+    if identity is None and not write_set and changed_paths is not None:
+        write_set = changed_paths
     write_set = sorted(set(relative_path(root, p) for p in write_set))
     from project_inventory import git_worktree_inventory, default_excluded
     from test_ledger import tree_snapshot, environment_hash, snapshot_estimate, _ValidationProgress, _FingerprintCache
@@ -720,11 +836,28 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
     explicit_inputs = sorted(set(explicit_inputs) | set(document_inputs))
     for runner in runners:
         runner["inputs"] = sorted(set(runner["inputs"]) | set(document_inputs))
-    analysis_inputs = analysis_paths(root, inventory, execution_context, [*write_set, *explicit_inputs])
+    analysis_candidates = analysis_paths(root, inventory, execution_context, [*write_set, *explicit_inputs])
+    analysis_inputs = analysis_candidates
+    narrow = (identity is not None and identity['mode'] == 'light') or changed_paths is not None
+    if narrow:
+        # 全局成员清单仍用于发现新消费者；内容只读 Python 解析输入、配置与当前改动/命名候选。
+        visible = analysis_candidates if analysis_candidates is not None else [
+            p for p in repository if not default_excluded(p, inventory['repositories'])]
+        seeds = set(git_paths(root, 'diff', '--name-only', '--no-renames', '-z', since, '--'))
+        seeds.update(inventory['preexisting_dirty'])
+        seeds.update(p for p in write_set if not (root / p).is_dir())
+        if execution_context:
+            seeds.update(execution_context['preexisting_dirty'])
+        if changed_paths is not None:
+            changed_paths = sorted(set(relative_path(root, p) for p in changed_paths))
+            seeds.update(changed_paths)
+        roots = module_roots(repository, runners)
+        seeds.update(t for p in tuple(seeds) for t in mapped_tests(p, repository, roots))
+        analysis_inputs = sorted(p for p in visible if p.endswith('.py') or is_configuration(p) or p in seeds)
     progress, observer = None, None
     facts_cache = FactsCache(root)
     if execution_context:
-        estimate = snapshot_estimate(root, explicit_inputs, analysis_inputs)
+        estimate = snapshot_estimate(root, explicit_inputs, analysis_inputs, inventory=inventory)
         # 只有尚无有效导入事实缓存的 Python 文件才需要重新读取+解析；缓存命中的不计入预估
         parsable = sum(p.endswith(".py") and not default_excluded(p, inventory["repositories"])
                        and not facts_cache.likely_valid(p)
@@ -754,7 +887,10 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
             if reads:
                 baseline_session.save()
     raw_changes = changed_files(root, since, write_set, execution_context, repository, inventory,
-                                snapshot["files"], baseline_reader if baseline_session else None)
+                                snapshot["files"], baseline_reader if baseline_session else None,
+                                include_declared=changed_paths is None)
+    if changed_paths is not None:
+        raw_changes = checked_changes(root, changed_paths, raw_changes, write_set)
     resource_paths = {p for r in runners for p in r["resources"]}
     changes = [p for p in raw_changes if p in resource_paths or
                (not p.startswith(NON_CODE_ROOTS) and (PurePosixPath(p).suffix in CODE_EXTS | RESOURCE_EXTS or is_configuration(p)))]
@@ -802,7 +938,20 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
         snapshot["tokens"].update(extra["tokens"])
         if observed != extra_files:
             analysis = None
+    index_candidates = sorted(p for p in (files if analysis_candidates is None else analysis_candidates) if is_test(p))
+    index_key = digest([str(root), files, modules, runners, index_candidates, environment_hash(), tool_hash,
+                        {p: value for p, value in snapshot['files'].items()
+                         if is_configuration(p) or any(within(p, item) for item in explicit_inputs)}])
+    index = DependencyIndex(root, index_key)
     if analysis is None:
+        # 旧闭包中懒展开的包/资源也是有效性输入；读取其当前摘要后才能复用反向索引。
+        extra_paths = set(index.record['hashes']) - set(snapshot['files']) if index.record else set()
+        extra_paths = {p for p in extra_paths if not p.startswith('@') and not p.endswith(('/', '/@gitlink'))}
+        if extra_paths:
+            extra = tree_snapshot(root, paths=sorted(extra_paths), observer=observer)
+            snapshot['files'].update({p: value for p, value in extra['files'].items() if p in extra_paths})
+            snapshot['tokens'].update(extra['tokens'])
+        reusable, pending = index.reuse(snapshot['files'], index_candidates)
         last_report = [time.monotonic()]
 
         def report(stage, processed, total):
@@ -819,9 +968,11 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
         try:
             analysis = dependency_analysis(root, files, modules, runners, deadline=deadline,
                                            repositories=inventory["repositories"], frozen_files=snapshot["files"],
-                                           observer=observer, candidates=analysis_inputs,
+                                           observer=observer, candidates=sorted(pending),
                                            frozen_tokens=snapshot["tokens"], metadata=cache.metadata,
-                                           facts_cache=facts_cache, progress=report)
+                                           facts_cache=facts_cache, progress=report) if pending else {
+                                               'policy': DEPENDENCY_POLICY, 'tests': {}}
+            analysis['tests'].update(reusable)
         finally:
             facts_cache.save()   # 含超时/异常路径：已完成部分落盘，断点续扫
         pending_analysis = analysis
@@ -845,6 +996,9 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
     criteria = execution_context.get("acceptance", []) if execution_context else []
     acceptance_paths = sorted(p for p in files if any(
         p == criterion or f"`{p}`" in criterion for criterion in criteria))
+    if execution_context and execution_context['mode'] == 'light' and 'parent_task_id' in execution_context:
+        # 父验收最终由主流程统一验证；子任务只直接继承其写集内的显式验收输入。
+        acceptance_paths = [p for p in acceptance_paths if any(within(p, owner) for owner in write_set)]
     mapping, unmapped, tests, related = [], [], set(), []
     for rel in sorted(set(changes) | set(acceptance_paths)):
         matching = [r for r in runners if r["mode"] == "related" and within(rel, r["cwd"])
@@ -873,6 +1027,22 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
             unmapped.append(rel)
     conservative_tests -= proven_tests
     tests.update(conservative_tests)
+    if narrow:
+        needed = set(changes) | tests
+        unknown_roots = set()
+        for test in tests:
+            proof = dependencies['tests'].get(test, {})
+            needed.update(proof.get('files', ()))
+            if proof.get('unknown') or proof.get('runner_unknown'):
+                matching = [r['cwd'] for r in runners if within(test, r['cwd']) and PurePosixPath(test).suffix in r['suffixes']]
+                unknown_roots.add(max(matching, key=lambda p: len(PurePosixPath(p).parts), default=module_for(test, modules)))
+        unknown_roots.update(runner['cwd'] for _, runner in related)
+        needed.update(p for p in files if any(within(p, base) for base in unknown_roots))
+        missing = sorted(p for p in needed if p not in snapshot['files'] and (root / p).is_file())
+        if missing:
+            extra = tree_snapshot(root, paths=missing, observer=observer)
+            snapshot['files'].update({p: value for p, value in extra['files'].items() if p != '@inventory'})
+            snapshot['tokens'].update(extra['tokens'])
     runs, claimed = [], set()
     groups = {}
     for test in sorted(tests):
@@ -895,23 +1065,26 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
     for source, runner in related:
         key = digest(runner) if runner["batch"] else digest([runner, source])
         related_groups.setdefault(key, (runner, set()))[1].add(source)
-    for runner, selected in related_groups.values():
-        selected = sorted(selected)
-        runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"],
-                     "tests": [p for p in selected if is_test(p)], "sources": selected,
-                     "module": module_for(selected[0], modules), "mode": "related",
-                     "env_id": runner["env_id"], "inputs": runner["inputs"],
-                     "argv": render_argv(runner["argv"], [], root, runner["cwd"], selected, frozen_files=snapshot["files"], observer=observer, metadata=cache.metadata)})
-    for runner, selected in groups.values():
-        runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"], "tests": selected, "sources": [],
-                     "module": module_for(selected[0], modules), "mode": "named",
-                     "env_id": runner["env_id"], "inputs": runner["inputs"],
-                     "argv": render_argv(runner["argv"], selected, root, runner["cwd"], frozen_files=snapshot["files"], observer=observer, metadata=cache.metadata)})
+    for runner, selection in related_groups.values():
+        for selected in runner_groups(runner, selection):
+            runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"],
+                         "tests": [p for p in selected if is_test(p)], "sources": selected,
+                         "module": module_for(selected[0], modules), "mode": "related",
+                         "env_id": runner["env_id"], "inputs": runner["inputs"],
+                         **({'parallel': runner['parallel']} if 'parallel' in runner else {}),
+                         "argv": render_argv(runner["argv"], [], root, runner["cwd"], selected, frozen_files=snapshot["files"], observer=observer, metadata=cache.metadata)})
+    for runner, selection in groups.values():
+        for selected in runner_groups(runner, selection):
+            runs.append({"suffixes": runner["suffixes"], "cwd": runner["cwd"], "tests": selected, "sources": [],
+                         "module": module_for(selected[0], modules), "mode": "named",
+                         "env_id": runner["env_id"], "inputs": runner["inputs"],
+                         **({'parallel': runner['parallel']} if 'parallel' in runner else {}),
+                         "argv": render_argv(runner["argv"], selected, root, runner["cwd"], frozen_files=snapshot["files"], observer=observer, metadata=cache.metadata)})
     # 分析期间内容及元数据前后都要稳定，A→B→A 也不能发布依赖证明。
     from test_ledger import snapshot_changed
     if analysis_inputs is not None:
-        missing = {path for proof in dependencies["tests"].values() for path in proof["files"]
-                   if path not in snapshot["files"] and (root / path).is_file()}
+        missing = {path for test, proof in dependencies["tests"].items() if not narrow or test in tests
+                   for path in proof["files"] if path not in snapshot["files"] and (root / path).is_file()}
         if missing:
             extra = tree_snapshot(root, paths=sorted(missing), observer=observer)
             snapshot["files"].update(extra["files"])
@@ -925,7 +1098,7 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
     after = tree_snapshot(root, explicit_inputs, paths=analysis_inputs,
                           observer=progress.observe("post_evidence") if progress else None)
     if snapshot_changed(snapshot, after):
-        raise ScopeError("TREE_CHANGED：范围推导期间输入变化，请重新推导")
+        raise ScopeError("TREE_CHANGED：范围推导期间输入变化，请停止修改后重试；有效文件事实缓存将复用，仅重算变化部分")
     if time.monotonic() > deadline:
         raise ScopeError("BUDGET_EXCEEDED：范围扫描时间超出预算")
     if progress:
@@ -947,9 +1120,10 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
                        "checksum": digest([analysis, extra_files])}, stream)
             temporary = stream.name
         os.replace(temporary, cache_file)
+        index.save(analysis, snapshot['files'])
     dependencies["tests"] = {test: dependencies["tests"][test] for test in sorted(tests)}
     validation_files = None
-    if identity is not None and identity["mode"] == "light":
+    if narrow:
         relevant = set(changes) | tests
         for proof in dependencies["tests"].values():
             relevant.update(proof["files"])
@@ -988,6 +1162,8 @@ def _derive(root, since, runners, write_set=(), execution_context=None, _owned=N
                             "unanalysable": sorted(unmapped), "reason": "unknown dependency candidates require bounded execution"}}
     if identity is not None:
         result["execution_context"] = identity
+    if changed_paths is not None:
+        result['changed_files'] = changed_paths
     if validation_files is not None:
         result["validation_files"] = validation_files
     result["scope_hash"] = digest(result)
@@ -1139,7 +1315,7 @@ def validate_scope(root, scope, execution_context=None):
     if scope.get("execution_context") != context_identity(root, execution_context):
         raise ScopeError("范围 execution-context 与当前任务不一致；不能跨任务或 Sprint 使用")
     current = derive(root, scope.get("since"), scope.get("runners"), scope.get("write_set", []),
-                     execution_context=execution_context)
+                     execution_context=execution_context, changed_paths=scope.get('changed_files'))
     if current != scope:
         raise ScopeError("范围与当前树/确定性推导不一致，请重新运行 test_scope.py")
     return current
@@ -1160,15 +1336,15 @@ def self_check():
         base = resolve_since(root, "HEAD")
         (root / "src/x.py").write_text("x=2\n")
         runners = [{"suffixes": [".py"], "argv": [sys.executable, "{tests}"]}]
-        out = derive(root, base, runners)
+        out = derive(root, base, runners, ['src/x.py'])
         checks.extend((out["tests"] == ["tests/test_x.py"], validate_scope(root, out) == out))
         for argv in ([sys.executable, "-m", "unittest", "discover"], [sys.executable, "{unknown}"]):
             try:
-                derive(root, base, [{"suffixes": [".py"], "argv": argv}])
+                derive(root, base, [{"suffixes": [".py"], "argv": argv}], ['src/x.py'])
                 checks.append(False)
             except ScopeError:
                 checks.append(True)
-        checks.append(derive(root, base, [])["unrunnable"] == ["tests/test_x.py"])
+        checks.append(derive(root, base, [], ['src/x.py'])["unrunnable"] == ["tests/test_x.py"])
     return {"ok": all(checks), "checks": len(checks), "positive": 3, "negative": 2}
 
 
@@ -1179,13 +1355,14 @@ def main(argv=None):
     parser.add_argument("--execution-context", help="入口冻结上下文 JSON；light 不需要 Sprint")
     parser.add_argument("--runners-json", default="[]")
     parser.add_argument("--write-set", action="append", default=[])
+    parser.add_argument('--changed-files', nargs='+', metavar='FILE', help='实际改动源码文件；核对基线后增量选测，不扩大授权')
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--self-check", action="store_true")
     args = parser.parse_args(argv)
     try:
         out = self_check() if args.self_check else derive(Path(args.root).resolve(), args.since,
                                                           json.loads(args.runners_json), args.write_set,
-                                                          args.execution_context)
+                                                          args.execution_context, changed_paths=args.changed_files)
         code = 0 if out.get("ok", True) else 1
     except (OSError, ValueError, TypeError) as exc:
         out, code = {"kind": "error", "status": getattr(exc, "status", "UNVERIFIED"), "error": str(exc)}, 2

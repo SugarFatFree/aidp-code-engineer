@@ -799,7 +799,25 @@ def test_completed_test_cursor_does_not_reopen_old_build():
     print("\n[F07] 实际阶段入口：complete/done 必须短路；新 build 不继承旧终态")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        baseline, old_build = _retest_scene(root)
+        # 正文摘要须绑定真实部署 commit；不能用无 Git + 伪造 SHA 的旧夹具绕过来源验证。
+        def fixture_git(*args):
+            return subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+        fixture_git('init', '-q')
+        fixture_git('config', 'user.name', 'Fixture')
+        fixture_git('config', 'user.email', 'fixture@example.invalid')
+        (root / '.gitignore').write_text('memory/\ndocs/reports/\n__pycache__/\n')
+        (root / 'test_sample.py').write_text('import unittest\nclass T(unittest.TestCase):\n def test_a(self): pass\n')
+        _write_acceptance(root, 'V0.1', ['test_sample.py'])
+        runner = {'suffixes': ['.py'], 'argv': [sys.executable, '-m', 'unittest', '-v', '{tests}'],
+                  'cwd': '.', 'env_id': 'stdlib'}
+        (root / 'unit-plan.json').write_text(json.dumps({'schema': 1, 'unit_tests': ['test_sample.py'],
+            'case_tests': {'TC-ONE': ['test_sample.py']}, 'suites': [{'cwd': '.', 'env_id': 'stdlib',
+                'inputs': [], 'external_dependencies': 'none', 'runners': [runner]}]}))
+        fixture_git('add', '-A')
+        fixture_git('commit', '-qm', 'deployable-cursor-fixture')
+        deployed_commit = fixture_git('rev-parse', 'HEAD')
+        baseline, old_build = _retest_scene(root, deployed_commit=deployed_commit)
         data = json.loads(baseline.read_text())
         data["versions"]["V0.1"]["aiauto_run_state"] = {
             "current_phase": "3-audit", "phase_status": "complete", "next_phase": "done",
@@ -828,7 +846,7 @@ def test_completed_test_cursor_does_not_reopen_old_build():
         import entry_context
         fixture_ctx = json.loads((root / "memory/.aidp/report-fixture-context.json").read_text())
         new_context = entry_context.fork_test_build(root, fixture_ctx["parent"], "V0.1", "V0.1_build1002",
-            manifest=_manifest_for(root, "V0.1", "V0.1_build1002"))["execution_context"]
+            manifest=_manifest_for(root, "V0.1", "V0.1_build1002", deployed_commit))["execution_context"]
         def enter_new():
             return subprocess.run([sys.executable, str(REPO / ".aidp/scripts/aiauto_phase_entry.py"),
                                    "--version", "V0.1", "--phase", "1-probe", "--next-phase", "2-exec",

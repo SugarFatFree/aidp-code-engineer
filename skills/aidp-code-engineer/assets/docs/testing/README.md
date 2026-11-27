@@ -40,7 +40,7 @@ docs/testing/
 >
 > **AI 浏览器自动化（独立目标实测）**：不随开发单测执行；启用时推荐 `chrome-devtools-mcp`（**仅 Web 浏览器项目**，桌面/小程序/原生 APP 不适用）。后端接口 / 前端 E2E 的自动化测试可按需挂接外部 `api-tester`（外部可选）或随仓库分发的 `chrome-devtools-mcp` 插件，产物归目标实测证据目录，不以Sprint单测冒充实测。
 >
-> **版本全量边界**：仅真实 autopilot 委派，且 version/build/验收基线/完整用例集合及必要依赖齐备。基线须逐项映射当前版本正式用例 ID 与可执行测试文件；缺清单即阻塞，禁止回落研发自测/全仓/历史测试全集。独立 aiauto 只执行明确目标。协议见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md`。
+> **版本全量边界**：仅真实 autopilot 委派，且 version/build/验收基线/完整用例集合及必要依赖齐备。冻结集合采用人工正式主集 + AI 研发自测去重补集；无人工用例时允许已获同版本 autopilot 测试授权的 AI 研发自测基线。每册正文及索引 SHA256 绑定部署 commit，manifest/报告明确来源，不能冒称人工验收；缺有效用例仍未核验，禁止全仓/历史全集。独立 aiauto 只执行明确目标。协议见 `{{AIDP_HOME}}/flows/sprint-aiauto-test/phase-2-unit.md`。
 
 ## 相关命令
 

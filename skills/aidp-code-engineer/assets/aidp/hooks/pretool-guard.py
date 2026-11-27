@@ -302,20 +302,25 @@ def _resolve_unattended_ask(root, env, result):
     granted = False
     try:
         import entry_gate
+        from execution_policy import require_action
         _, ctx = entry_gate.find_context(root, env)
-        granted = bool(ctx and "deploy" in (ctx.get("allowed_actions") or []))
-    except Exception:  # noqa: BLE001 — 读不到上下文按未授权处理（fail closed）
+        if ctx:
+            ctx = require_action(ctx, 'deploy')  # 重验当前 revision 与完整父链，不能仅检查子记录中的动作名。
+            granted = True
+    except (OSError, ValueError, KeyError, TypeError):
         granted = False
     if granted:
         try:
-            ledger = Path(root) / "memory" / RUNTIME_DIRNAME / "external-side-effects.jsonl"
+            from entry_context import _safe_inside
+            ledger = _safe_inside(Path(root).resolve(), Path(root) / 'memory' / RUNTIME_DIRNAME / 'external-side-effects.jsonl')
             ledger.parent.mkdir(parents=True, exist_ok=True)
             with ledger.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "decision": "allow",
-                                         "basis": "deploy-authorized-unattended", "detail": result.get("message", "")[:300]},
-                                        ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+                                         "basis": "deploy-authorized-unattended", 'task_id': ctx['task_id'],
+                                         'revision': ctx['revision'], 'authorization_revision': ctx['authorization_revision'],
+                                         "detail": result.get("message", "")[:300]}, ensure_ascii=False) + "\n")
+        except (OSError, ValueError) as exc:
+            return 'deny', '外部副作用授权已核验，但授权留痕写入失败；修复后重试：' + str(exc)
         return "allow", ""
     return "deny", ("无人值守 tick 中该命令属于外部副作用（如 docker cp/exec/run 写容器文件系统），需要 deploy 授权，"
                     "而当前任务没有该授权，且无人可确认。\n" + result.get("message", "") +

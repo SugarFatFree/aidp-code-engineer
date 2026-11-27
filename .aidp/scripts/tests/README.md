@@ -82,6 +82,8 @@
 
 `benchmark_scope_cost.py` 使用临时 Git 仓库和真实 unittest 比较同一冻结输入下的 derive、依赖分析、内容快照、测试进程、scope/ledger 字节数及耗时。例：`python3 .aidp/scripts/tests/benchmark_scope_cost.py --repo . --out memory/.aidp/scope-cost.json --files 16`。`--files` 支持 1–512；前后比较保持脚本、解释器与文件数一致，只切换 `--repo` 指向的实现。该工具不加入 `run.sh`，避免日常验证重复跑性能夹具；本地进程数据不代表真实容器或下游全量业务测试的耗时。
 
+`benchmark_light_selection.py` 比较单文件修改的冷缓存与再次修改后的增量选测：固定 3402 文件、200 个 Python 测试及 3000 个无关 Java 文件，真实执行选中 unittest。例：`python3 .aidp/scripts/tests/benchmark_light_selection.py --scripts .aidp/scripts --out /tmp/light-cost.json`。前后保持该脚本和解释器一致，仅切换 `--scripts`；输出选测/端到端耗时、选中文件、白名单一致性、真实 verdict、指纹内容读取次数和重算候选数。`fingerprint_reads` 不包括 AST 解析器自身读取，不冒充总 I/O；不纳入 `run.sh`，未测下游或真实容器。
+
 ## test_guard_scripts.py 分组（单一信源）
 
 > 顺序 = 脚本 `__main__` 的实跑顺序，与终端里的 `【…】` / `[NN] …` 标题逐条对应。

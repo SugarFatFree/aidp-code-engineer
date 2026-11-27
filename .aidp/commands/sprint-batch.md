@@ -46,9 +46,9 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bat
 
 > ⛔ **零询问连跑铁律（置顶强调 — 下游最易违反）**：本命令一旦启动，**Sprint 循环体（Step 3）内默认直接连跑研发执行计划的全部 Sprint、全程零询问**，把整张计划当**一个不可分割的任务**：
 > - **不问"跑哪个 Sprint"**：无范围参数 = 跑**全部**研发执行计划文件里的未完成 Sprint（首跑 = 001→最后）；只跑一段才显式传 `001-003`。**严禁**启动时 `AskUserQuestion` 让用户选 Sprint。
-> - **不问"是否继续下一个 Sprint"**：一个 `/sprint-full` 返回后**立即**进下一个，直到执行列表全部关闭。
+> - **不问"是否继续下一个 Sprint"**：一个 `/sprint-full` 返回 `closed:true` 且归档核实后**立即**进下一个；`closed:false` 按 Step 4 接续同号或返回阻塞，直到执行列表全部关闭。
 > - **本命令的连跑节奏**：由 Step 1 的 `plan_sprints.py` 执行列表与 Step 3 的逐 Sprint 循环决定；Sprint 之间**绝不**冒出「继续吗 / 跑哪个」类询问。遇阻塞按 Step 4 分类处理；文档义务按子命令分档汇合与既有阶段收口处理，不把编排节奏委托给带交互停顿的通用 SKILL。
-> - **Step 3 循环体内的唯一合法停顿**：① 硬失败（编译/前端校验失败、设计文档缺失，见 Step 4）② `/sprint-full` 内部必要决策门（UI 来源 C/D、约定 22 破坏性变更确认门、Critical 裁决）③ 显式 `--stop-on-blocker`（软失败也停）。除此之外，**Sprint 之间任何"要不要继续 / 跑哪个"的询问都是违规**。
+> - **Step 3 循环体内的唯一合法停顿**：① 硬失败或 `closed:false` 且无可继续的已授权修复（见 Step 4）② `/sprint-full` 内部必要内容决策门（UI 来源 C/D、约定 22 破坏性变更确认门、Critical 裁决）③ 显式 `--stop-on-blocker`（残项即返回阻塞）。除此之外，**Sprint 之间任何"要不要继续 / 跑哪个"的询问都是违规**。
 > - ⛔ **严禁自发弹「工作量大 / 如何推进 / 全自主全做 vs 分阶段逐个确认」范围·进度门**（catch-all，**两种模式都禁**）：研发执行计划的全部 Sprint（含单 Sprint 内多个 REQ / 多端工作）是**一个不可分割、必须一次跑完的整体**。模型**不得**以"两个 REQ / 工作量较大 / 每个 Sprint 可控 / 稳妥起见"为由，自发弹「我全自主完成 N 个 Sprint vs 先做某 Sprint 给你 review 再继续」这类询问——它既违反上面"不问是否继续下一个 Sprint"，也**不属于** ② 的「必要决策门」（② 仅指 UI 来源/上游级联/Critical 这类**内容决策**，**不含**"要不要一次做完 / 分几段做"这种**范围·节奏决策**，后者永远默认"一次全做完"、无需问）。`--unattended` 下更是绝对禁止。
 >   - **★ `--unattended` 例外（autopilot `/loop` 无人值守）= catch-all 绝不停等**：本命令带 `--unattended` 时，上面 ②③ 的内部决策门**以及任何未枚举的交互门一律不再停下等人**——透传 `--unattended` 给 `/sprint-full → /sprint-dev`，由其消费 PRD `autopilot_decisions` 预声明（UI C/D 走 `visual_baseline`、约定22 级联默认自动，见 `/sprint-dev` Step 0 / Step X.0.0）、或走文档化保守默认、或转失败熔断（Critical 无法自动裁决时），**绝不 `AskUserQuestion`**。这堵住 autopilot 7×24 在 Sprint 内部弹窗挂死的缺口；PRD 未预声明则走各门文档化的保守默认。
 > - **★ 本铁律只管 Step 3 Sprint 循环体**：**循环体外**的命令自有交互门不受本铁律约束——现只剩 **Step 6**（循环全部跑完后的部署确认 + AI 自动化测试三选一，`--skip-aiauto-test` / `--auto-aiauto-test` 可跳）。⛔ **Step 0.0 不在此列**：上下文长度**只出 INFO 提示、不设询问门**——「上下文长 → 问 y/n」属于「用『要省上下文』当借口停下来问人」（本命令明禁）（用户回 n 就一个 Sprint 都不跑地终止），**披一层「发生在循环体外」的壳不改变性质**。故纯 INFO 提示后直接继续（`--skip-context-check` 连提示也不打）。被 `/sprint-autopilot` 调起时它已传 `--skip-context-check --skip-aiauto-test`。
@@ -59,10 +59,10 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-bat
 - 为空：由 `plan_sprints.py` 取全部计划文件的未完成 Sprint，依次执行
 - Sprint 范围：`/sprint-batch 001-003` 执行 001 到 003
 - 起始范围：`/sprint-batch 002-` 从 002 开始跑到最后
-- `skip-bugfix`：整体跳过 Sprint 内 bugfix 循环（仅记录 bug，不修复）
+- `skip-bugfix`：仅跳过 `/sprint-full` Phase 4 外层补救，不取消验收内部纠错；残项未闭环仍返回 `closed:false`
 - `--skip-context-check`：跳过 Step 0.0 上下文压缩建议（明确不需要 /compact 时使用）
 - `--cascade-now`：仅用户/父链显式要求时透传给每个 `/sprint-full`；默认不自动添加 `--cascade-now`，按 S/M/L 契约执行文档汇合与攒批。
-- `--stop-on-blocker`：遇阻即停模式（bugfix 循环超限就暂停；默认非阻塞模式继续）
+- `--stop-on-blocker`：遇未闭环项即返回阻塞；默认可在原授权与剩余预算内接续同 Sprint 修复，关闭成功才推进下一号
 - `--skip-aiauto-test`：跳过 Step 6 浏览器仿真测试整合（纯开发模式）
 - `--aiauto-test-required`：父 autopilot 已安排独立测试链路；即使本批次 `--skip-aiauto-test`，仍须生成用例，并逐层透传。
 - `--auto-aiauto-test`：Step 6 跳过"是否要跑 AI 自动化测试"询问门，直接走部署确认 + 执行（仍会问 deployment 字段缺失项）
@@ -212,7 +212,7 @@ N 个 Sprint 子 Agent 各自重读同一批**本版内完全不变**的文档�
 > ★ **执行形态（本步恒适用，与任何 flag 无关）**：按「**每 Sprint 一个独立子 Agent**」跑（`/sprint-full <NNN> --from-batch` 逐个派），上下文压力由子 Agent 隔离承担、主循环只保留进度与收口。
 > ⛔ **与 `--skip-context-check` 无关**：那个 flag 只关掉 Step 0.0 的一次性 INFO 提示，**不改变本步的执行形态**。⚠️ 上游主链路（`/sprint-autopilot` Phase 3.2 step 2）**恒传**该 flag，若把执行形态只写在 Step 0.0 里，本步就会在最常见的路径上失去它承诺的唯一上下文兜底手段。
 
-**每个Sprint唯一派发点**：仅取父授权与development交集，版本级commit/push/deploy/live/full-regression留父级；共享预算不变。父 `EXECUTION_CONTEXT` 保持 formal 批次身份；选出真实 NNN 后、派发 full 前执行 fork，并消费返回的子路径为 `SPRINT_EXECUTION_CONTEXT`。同父同号重试复用已有子任务，不重取开发起点；所有恢复/降级都传原子路径。
+**每个Sprint唯一派发点**：仅取父授权与development交集，版本级commit/push/deploy/live/full-regression留父级；共享预算不变。父 `EXECUTION_CONTEXT` 保持 formal 批次身份；选出真实 NNN 后、派发 full 前执行 fork，并消费返回的子路径为 `SPRINT_EXECUTION_CONTEXT`。同父同号重试复用已有子任务，不重取开发起点；所有恢复/降级都传原子路径。派单要求紧凑摘要携带 `closed:true|false`，并给实际归档路径或未闭环原因；父层核实归档，不把子 Agent 返回当作关闭证据。
 
 ```bash
 SPRINT_ALLOW=$(python3 - "$EXECUTION_CONTEXT" <<'ACTIONS'
@@ -236,14 +236,17 @@ SPRINT_EXECUTION_CONTEXT=$(printf '%s' "$SPRINT_CONTEXT_RESULT" | python3 -c 'im
 ```
 for NNN in 执行列表:
     result = /sprint-full {NNN} --execution-context "$SPRINT_EXECUTION_CONTEXT" --from-batch [--resume] [skip-bugfix] [--cascade-now] [--unattended] [--stop-on-blocker]   # ★ 本命令带 --stop-on-blocker 时必透传（bugfix 超限的停顿判定在 /sprint-full Phase 4 内部，不透传则本 flag 与不带完全等价）；带 --unattended 时必透传，令 Sprint 内部决策门消费 PRD 预声明、不弹窗
-    update progress(NNN, result)
-    if result.kind == "硬失败" or (带 --stop-on-blocker and result.kind == "软失败"):
-        break  # 记账退出；无人值守不得原地等人
-        # ⛔ 中断后仍须执行本批次的落点/终态检查——break 只跳出 Sprint 循环，不消除已登记义务：
-        #   区分未决条目与已完成但未清理的台账；本检查不触发新的通用级联。
-    update context_digest(NNN)   # Step 2.5 的增量更新：把本 Sprint 新增的公共产物追加进摘要
-    # ✅ 完成 / ⚠️ 软失败（bugfix 超限 / 用例失败 / Critical 待裁决）→ 都视为该 Sprint 已结束
-    # 立即继续下一个 NNN，禁止：
+    update progress(NNN, result)  # 原样记录 closed 与未闭环项，不把返回等同归档
+    while result.closed is False and 按 Step 4 可继续同 Sprint 的已授权修复:
+        result = 续接同 Sprint 未闭环阶段(NNN, SPRINT_EXECUTION_CONTEXT)
+        # full Phase 4 的原问题计数与父预算继续累计；不重置轮次、不重放完整验收。
+        # 若必须重启 /sprint-full，仅同号 --resume；内容决策按下方主循环代问规则。
+        update progress(NNN, result)
+    if result.closed is not True or 未核实实际归档:
+        break  # 具体阻塞记账退出，保留当前 Sprint；无人值守不得原地等人
+        # ⛔ 中断后仍须执行 Step 5.6 落点/终态检查，不进入 Step 6、不标全部完成。
+    update context_digest(NNN)   # Step 2.5 仅把已关闭 Sprint 的公共产物追加进摘要
+    # 只有 closed:true 且归档已核实才立即继续下一个 NNN，禁止：
     #   ❌ 询问用户"是否继续下一个 Sprint"
     #   ❌ 输出"📌 下一步：/sprint-full {NNN+1}"等暗示用户手动调用的话
     #   ❌ 把 progress.md / activeContext.md 写成"任务全部完成"状态（必须等 Step 5 之后才写）
@@ -262,26 +265,26 @@ for NNN in 执行列表:
 - Phase 4：bugfix 循环（5 次上限）或跳过
 - Phase 5：/sprint-close {NNN}
 
-等待 `/sprint-full` 返回后**立即**进入下一个 Sprint（不停顿、不向用户汇报"是否继续"）。
+等待 `/sprint-full` 返回后按 Step 4 检查；只有 `closed:true` 且归档已核实才立即进入下一个 Sprint，不询问是否继续。
 
 ### Step 4：阻塞检测
 
-每个 `/sprint-full` 执行后检查返回状态。**默认"软失败"非阻塞**——即使 Sprint 验收未完美通过，记入"待人工处理清单"后**继续下一个 Sprint**；只有**硬失败**（环境/依赖性的不可继续错误）才停：
+每个 `/sprint-full` 返回后先核 `closed` 与实际归档。**只有 `closed:true` 且归档已核实才推进下一号**；`closed:false` 保留当前 Sprint 与上下文，失败级别不构成跳过关闭门的理由。缺 `closed` 或与归档不一致时按未知状态阻塞，不能从摘要「完成」推断已关闭。
 
 | 状态 | 类型 | 默认处理 |
 |------|------|-------------------|
-| ✅ 完成 | — | 输出简要摘要，进入下一个 Sprint |
-| ⚠️ bugfix 循环超限 | **软失败** | 记入"待人工处理 bug 清单"，**继续下一个 Sprint**（不暂停）|
-| ⚠️ 测试用例存在失败 | **软失败** | 记入"待人工验证用例清单"，**继续下一个 Sprint** |
-| ⚠️ 验收 Critical 问题 | **软失败** | 记入"待人工裁决问题清单"，**继续下一个 Sprint** |
-| ⚠️ 相关单测未核验（无 runner / 无映射，`UNVERIFIED`） | **软失败** | 记入"待补测清单"（不当作 PASS、不重试），**继续下一个 Sprint** |
-| ❌ 编译/前端校验失败 | **硬失败** | **停止批量执行**——后续 Sprint 依赖本 Sprint 可编译/校验通过，无法继续（后端编译 / 前端校验（lint + 类型检查，不打包）在本 Sprint 的 `/sprint-test` 验收点触发，仅改动侧 + 资源受限；失败即此硬失败）|
-| ❌ **前置检查失败**（如约定 9「上个 Sprint 未 `/sprint-close` 归档」——`/sprint-full` 对此是**硬停**）| **硬失败** | **停止批量执行**——⛔ 本行不可省：该返回若不被归类，Step 5 的「回 Step 3 继续跑」会把它落进**无界重试**（单 tick 内死循环 + 上下文膨胀，而 autopilot 的 stuck 熔断是 tick 级、管不到 tick 内部）|
-| ❌ 设计文档缺失 | **硬失败** | **停止批量执行**——后续命令链断裂，必须先补设计 |
+| 完成且 `closed:true`、归档已核实 | 已关闭 | 输出简要摘要，进入下一个 Sprint |
+| `closed:false`，仅可修复的测试失败 / 验收残项 | 可接续 | 沿同一 `SPRINT_EXECUTION_CONTEXT` 接续 `/sprint-full` Phase 4 未闭环项，修复与定向复验后重过原 close 门；不得启动下一号 |
+| bugfix 循环超限 / `skip-bugfix` 不允许外层补救 / `--stop-on-blocker` 命中 | 阻塞 | 返回具体未闭环项并停止批次，保留当前 Sprint；不得重置 full 的累计轮次重新派 5 轮 |
+| Critical 待裁决 / 产品、版本或破坏性决策 | 待决策 | 按 Step 3 主循环代问规则处理；有已授权处置则续接同 Sprint，否则返回具体阻塞；无人值守不等人 |
+| 相关单测未核验（无 runner / 无映射，`UNVERIFIED`） | 证据缺口 | 记入待补测项并返回阻塞；不当 PASS、同事实不空重试、不跳下一号 |
+| 编译/前端校验失败 | 硬失败 | 停止批次并保留原因；不调用下一号 `/sprint-start` |
+| 前置检查失败（含约定 9 未归档 / resume-conflict） | 硬失败 | 停止批次，不进入 Step 5 回跳重试，不自动关闭来绕过开工门 |
+| 设计文档缺失 / 状态不可判定 | 硬失败 | 返回具体缺口并停止批次 |
 
-**人工介入时机**：默认**全部 Sprint 跑完后才暂停**（Step 5 之后），由人工依据"待人工清单"做联调验证 + 集中修复。
+**接续边界**：仅原授权、原写集、原问题计数与共享预算允许且有实质进展时续接同 Sprint；不重复已完成的完整质量审查。没有可执行的已授权修复或已达上限时返回阻塞交父级处理，不以连跑为由无界重试。`--unattended` 不询问；交互式仅保留既有内容决策门，不能询问是否继续下一号。
 
-**显式遇阻即停模式**：参数追加 `--stop-on-blocker` → bugfix 循环超限即暂停，等人工处理后再继续。
+**中断收口**：执行 Step 5.6 后输出「批次未完成」及当前号、未闭环原因、已关闭/未启动清单，跳过 Step 6。后续具备新事实或必要授权时恢复同 Sprint；不能以集中人工修复为由先启动后续 Sprint。
 
 ### Step 5：完成前验证
 
@@ -331,7 +334,7 @@ Git 下核验未提交级联改动只落既有主文档/索引，台账的条目
 | 6.1 用例存在性校验 | 测试人员用例（`正式用例/`）或研发自测任一存在即可，均无 → 跳过 AI 测试 |
 | 6.2 deployment 配置 | 读 PRD `autopilot_decisions.deployment`；完整→三选一沿用/改/跳，缺→`AskUserQuestion` 分批收集写回 PRD |
 | 6.3 部署完成确认 | 交互式按 `mode=local/cloud` 分流询问部署状态（无人值守整段不弹窗）|
-| 6.4 baseline 预写 + 调用 | 写 `versions.{version}`（`source="sprint-batch"`）→ 调 `/sprint-aiauto-test --once` |
+| 6.4 baseline 预写 + 调用 | 按 Step 6.4 传真实上下文和明确测试范围；baseline 预写不构成版本全量委派 |
 | 6.5 问题回写 | 失败用例回写 `C-NNN` 到「问题汇总清单」；运行时错误 `R-NNN` 由 aiauto-test 自写；`failed>0‖runtime_errors>0` 均非绿灯 |
 | 6.6 兜底 | AI 测试整体失败（chrome 未装 / 探测超时 / 登录失败）由 aiauto-test 自发里程碑通知后退出；sprint-batch 主流程不回滚、汇总报告标出 |
 
@@ -348,16 +351,19 @@ Git 下核验未提交级联改动只落既有主文档/索引，台账的条目
 🔄 自动进入 Sprint-{NNN+1}...
 ```
 
-或软失败：
+未关闭时必须输出真实状态，不能套用上方自动进入下一号的摘要：
 
 ```
-▶ Sprint-{NNN} ⚠️ 软失败：bugfix 循环超限（{K} 个 bug 留待人工）— 已记账并继续
-🔄 自动进入 Sprint-{NNN+1}...
+Sprint-{NNN} closed:false：{未闭环项与证据}
+可继续修复：沿原上下文接续 Sprint-{NNN}，剩余轮次与预算照旧累计。
+无法继续：批次未完成，已保留当前 Sprint；阻塞={具体原因}，后续 Sprint 未启动。
 ```
 
 每个 Sprint 之间**禁止**输出："下一步：执行 `/sprint-full {NNN+1}`" 等暗示用户手动继续的话；批量循环由 `/sprint-batch` 命令自身负责，必须自动连贯地跑完整个执行列表。
 
 ### 最终汇总报告
+
+以下完成模板仅在本批范围全部关闭后使用。中断时标题改为「批次未完成」，逐号列已关闭、当前 `closed:false` 与未启动，不输出「全部完成」或发布指引；保留具体缺口与同号恢复入口。
 
 ```
 🎉 /sprint-batch 完成（{version}）
@@ -370,8 +376,8 @@ Git 下核验未提交级联改动只落既有主文档/索引，台账的条目
 各 Sprint 结果：
   Sprint-001：✅ 验收通过（bug {N} 个均已修复）
   Sprint-002：✅ 验收通过（bug {N} 个均已修复）
-  Sprint-003：⚠️ bugfix 循环超限，{N} 个 bug 待人工处理（**非阻塞，已继续后续 Sprint**）
-  Sprint-004：⚠️ 测试 N 用例失败（**非阻塞，已记入待人工验证清单**）
+  Sprint-003：✅ 残项已修复并复验、关闭归档
+  Sprint-004：✅ 验收通过、关闭归档
   Sprint-005：✅ 验收通过
 
 📋 产出文件：
@@ -407,20 +413,20 @@ Git 下核验未提交级联改动只落既有主文档/索引，台账的条目
 
   情形 4 — 兜底失败：
   - ❌ AI 自动化测试启动失败（原因：chrome-devtools-mcp 未装 / 部署探测超时 / credentials 收集失败）
-    sprint-batch 主流程不受影响，可单独跑 /sprint-aiauto-test --once 重试
+    sprint-batch 主流程不受影响，可单独跑 /sprint-aiauto-test --target {version} --once "仅复测本批失败用例：<实际用例ID>" 重试
 
 📌 下一步：
 
 ★ **批量执行已全部完成，进入人工联调与验证阶段**：
 
 1. **逐项审视"待人工清单"**（本次批量累计生成）：
-   - `docs/bugfix/{version}/bugfix-{今日}-{user}.md`「待修 bug」段（bugfix 循环超限残留）
-   - 本批各Sprint上下文的测试/审查机器证据中「失败用例 / Critical问题」；不扫描历史Sprint报告
+   - 本批关闭时明确登记的非阻塞事项及其依据；不把未闭环失败或 Critical 写成已关闭
+   - 本批各 Sprint 上下文的测试/审查机器证据；不扫描历史 Sprint 报告
    - **★**：`docs/testing/{version}/正式用例/**` 与 `docs/testing/{version}/研发自测/**` 末尾「问题汇总清单」表（含 aiauto-test 自动回写的 C-NNN 行）
 2. **跨 Sprint 联调验证**：基于研发执行计划（全部分册）的功能依赖链，按业务流跑端到端验证（不以单 Sprint 为单元）
 3. **集中修复**：用 `/sprint-bugfix` 批量处理累计 bug 清单（自动拾取「问题汇总清单」+ 零散 bug 文件）
-4. **回归测试**：修复完后用 `/sprint-aiauto-test --once` 跑浏览器实测复核
-5. **发布**：人工裁决全部通过后执行 `/version {version}` 打 tag + 推送
+4. **回归测试**：修复完后用 `/sprint-aiauto-test --target {version} --once "仅复测本批失败用例：<实际用例ID>"` 做指定目标实测；版本全量须真实 autopilot 委派
+5. **发布**：人工裁决全部通过且明确发布意图后执行 `/version {version} --release`，按授权完成 tag 与推送
 
 如需重跑某个未完成的 Sprint：`/sprint-full {NNN}`
 如需继续剩余 Sprint：`/sprint-batch {NNN}-`
@@ -435,15 +441,15 @@ AI 自动化测试不询问直接跑：`/sprint-batch --auto-aiauto-test`
 # 场景 1：版本规划刚完成，一键跑完所有 Sprint + 自动询问跑 AI 自动化测试（★ 默认）
 /version V0.1.0 "M1 MVP"         # 生成需求+设计+计划+研发自测方案+自测用例
 /sprint-batch                    # development组合；Step 6仅按已有授权执行
-# → 全通过 → /version V0.1.0 发布
-# → 有失败 → 失败用例自动回写问题汇总清单 → /sprint-bugfix 拾取并修复 → /sprint-aiauto-test --once 回归
+# → 本批全部关闭、验收通过且明确发布 → /version V0.1.0 --release
+# → 未关闭 → 同 Sprint 已授权修复或返回具体阻塞；实测复验显式传版本与失败用例范围
 
 # 场景 2：先跑前 3 个 Sprint（仍触发 Step 6 — 测试 Sprint-003 完成后的产物）
 /sprint-batch 001-003
 
-# 场景 3：跳过 Sprint 内 bugfix 循环（所有 bug 批量收尾统一处理）+ 跳过 AI 自动化测试
+# 场景 3：跳过外层补救 + 跳过 AI 自动化测试；验收残项仍阻塞当前 Sprint，不跳号
 /sprint-batch skip-bugfix --skip-aiauto-test
-# 后续：/sprint-bugfix → /sprint-aiauto-test --once
+# 后续：按具体阻塞恢复同 Sprint；需独立实测时显式传版本和目标用例
 
 # 场景 4：无人值守模式 — AI 自动化测试自动跑不询问
 /sprint-batch --auto-aiauto-test

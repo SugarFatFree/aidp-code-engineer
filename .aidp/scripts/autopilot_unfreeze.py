@@ -419,7 +419,9 @@ def env_class_reasons(root=None):
     p = os.path.join(base, ENV_ENUM_FILE)
     out = set()
     try:
-        for ln in open(p, encoding="utf-8").read().splitlines():
+        with open(p, encoding="utf-8") as stream:
+            lines = stream.read().splitlines()
+        for ln in lines:
             m = __import__("re").match(r"^\|\s*`([a-z][a-z0-9-]{3,})`\s*\|\s*环境类\s*\|", ln)
             if m:
                 out.add(m.group(1))

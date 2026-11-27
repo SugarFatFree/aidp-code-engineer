@@ -59,6 +59,41 @@ class GuardBase(unittest.TestCase):
 
 
 class RuleTests(GuardBase):
+    def test_vitest_worker_values_are_options_not_test_files(self):
+        self.allowlist(["tests/test_c.py"])
+        for command in (
+            "vitest run --maxWorkers 1 --minWorkers 1 --no-file-parallelism tests/test_c.py",
+            "vitest run --poolOptions.threads.maxThreads 1 --poolOptions.threads.minThreads 1 tests/test_c.py",
+        ):
+            self.assertTrue(self.ev(command)["allowed"], command)
+
+    def test_unbounded_worker_flags_rejected(self):
+        for command in ("pytest -n auto tests/test_c.py", "pytest -nauto tests/test_c.py",
+                        "pytest --numprocesses=logical tests/test_c.py",
+                        "vitest run --maxWorkers=100% tests/test_c.py",
+                        "mvn -T1C test -Dtest=AppTest", "mvn test -Dtest=AppTest -DforkCount=1C",
+                        "mvn test -Dtest=AppTest -DuseUnlimitedThreads=true",
+                        "mvn test -Dtest=AppTest -D forkCount=auto",
+                        "mvn test -Dtest=AppTest --define=useUnlimitedThreads=true"):
+            self.assertFalse(self.ev(command)["allowed"], command)
+
+    def test_parallel_command_requires_explicit_bounded_runner_configuration(self):
+        validate = getattr(guard, "validate_parallel_command", None)
+        self.assertTrue(callable(validate), "并行执行须有可复用的单 worker 校验函数")
+        accepted = (["pytest", "-n", "0", "{tests}"],
+                    ["vitest", "run", "--maxWorkers", "1", "--minWorkers=1", "--no-file-parallelism", "{tests}"],
+                    ["mvn", "-T1", "test", "-DforkCount=0", "-Dparallel=none", "-DthreadCount=1", "-Dtest={test_classes}"],
+                    [sys.executable, "-B", "{tests}"], [sys.executable, "-m", "unittest", "{tests}"],
+                    ["jest", "--runInBand", "{tests}"])
+        for argv in accepted:
+            validate(argv)
+        rejected = (["pytest", "{tests}"], ["pytest", "-n", "auto", "{tests}"],
+                    ["pytest", "-n0", "-n2", "{tests}"], ["vitest", "run", "--maxWorkers=1", "{tests}"],
+                    ["mvn", "test", "-Dtest={test_classes}"], ["custom-runner", "{tests}"])
+        for argv in rejected:
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                validate(argv)
+
     def test_denied_when_no_args_or_directory(self):
         for cmd in ("pytest", "python3 -m pytest -x", "pytest tests", "pytest tests/unit/", "pytest .",
                     "bash scripts/run_tests.sh tests/unit", "./run_tests.sh", "timeout 300 pytest -q",

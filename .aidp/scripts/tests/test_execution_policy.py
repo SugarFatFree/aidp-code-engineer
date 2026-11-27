@@ -1636,6 +1636,154 @@ class BudgetExhaustionDisposalTests(unittest.TestCase):
         self.assertEqual(res["budget_frozen"], [self.VERSION], "次数用完后仍按原路径冻结等人")
         self.assertEqual(self.node()["freeze_reason"], "budget-exhausted")
 
+    def test_auto_renew_fixed_increment_never_scales_to_estimate_or_concurrency(self):
+        import aidp_scheduler as sched
+        self.make_root()
+        sched.record_authorization(str(self.root), "同意不足时续额一次", "fixed-install", auto_renew=1)
+        before = entry.load_context(self.root, self.path)
+        self.exhaust_retries()
+        self.assertTrue(sched._auto_renew_budget(str(self.root), self.VERSION, self.path,
+            [{"resource": "retries", "required": 10 ** 9}, {"resource": "agents", "required": 100},
+             {"resource": "processes", "required": 100}]))
+        after = entry.load_context(self.root, self.path)
+        self.assertEqual(after["execution_budget"]["retries"], 24)
+        for key in ("agents", "processes"):
+            self.assertEqual(after["execution_budget"][key], before["execution_budget"][key])
+        self.assertEqual(after["allowed_actions"], before["allowed_actions"])
+        self.assertEqual(json.loads(Path(self.path).with_name("budget.json").read_text())["used"]["retries"], 12)
+
+    def test_auto_renew_pending_survives_failure_before_and_after_real_revise(self):
+        import aidp_scheduler as sched
+        import autopilot_unfreeze as unfreeze
+        from unittest.mock import patch
+        for after_revise in (False, True):
+            with self.subTest(after_revise=after_revise):
+                self.make_root()
+                # 每个子用例独立授权；上一轮耗尽状态由相同根继续计量。
+                sched.record_authorization(str(self.root), "同意自动续额一次", "crash-" + str(after_revise), auto_renew=1)
+                self.exhaust_again()
+                before = entry.load_context(self.root, self.path)
+                used_before = json.loads(Path(self.path).with_name("budget.json").read_text())["used"]
+                real = unfreeze.renew_budget
+                calls = []
+                def fail(root, version, budget, source):
+                    calls.append((dict(budget), dict(source)))
+                    auth = sched.load_authorization(root)["auto_renew"]
+                    self.assertEqual(auth["used"], 1, "修改预算前必须先持久化计数")
+                    self.assertEqual(auth["pending"]["new_limits"], budget)
+                    if after_revise:
+                        # 使用真实 revise，随后模拟还没完成解冻/提交授权台账就崩溃。
+                        entry.revise_context(root, self.path, authorization_source=source, execution_budget=budget)
+                    raise OSError("simulated crash")
+                with patch.object(unfreeze, "renew_budget", side_effect=fail):
+                    self.assertEqual(self.tick_check()[1]["budget_frozen"], [self.VERSION])
+                auth = sched.load_authorization(str(self.root))["auto_renew"]
+                self.assertEqual((auth["used"], auth["max"]), (1, 1))
+                self.assertTrue(self.node()["needs_human"])
+                with patch.object(unfreeze, "renew_budget", wraps=real) as replay:
+                    self.tick_check()
+                self.assertEqual(replay.call_count, 1)
+                self.assertEqual((replay.call_args.args[2], replay.call_args.args[3]), calls[0])
+                self.assertFalse(self.node().get("needs_human"))
+                auth = sched.load_authorization(str(self.root))["auto_renew"]
+                self.assertEqual((auth["used"], len(auth["history"])), (1, 1))
+                self.assertNotIn("pending", auth)
+                after = entry.load_context(self.root, self.path)
+                self.assertEqual(after["execution_budget"]["retries"], before["execution_budget"]["retries"] + 12)
+                self.assertEqual(after["allowed_actions"], before["allowed_actions"])
+                self.assertEqual(json.loads(Path(self.path).with_name("budget.json").read_text())["used"], used_before)
+                self.exhaust_again()
+                self.assertEqual(self.tick_check()[1]["budget_frozen"], [self.VERSION])
+
+    def test_auto_renew_huge_exhaustion_still_consumes_only_one_base_and_freezes(self):
+        import aidp_scheduler as sched
+        self.make_root()
+        sched.record_authorization(str(self.root), "同意自动续额一次", "huge-estimate", auto_renew=1)
+        self.policy.reserve_budget(self.root, self.path, "retries", 12, "a" * 64)
+        with self.assertRaises(self.policy.PolicyError):
+            self.policy.reserve_budget(self.root, self.path, "retries", 10 ** 9, "b" * 64)
+        self.assertEqual(self.tick_check()[1]["budget_frozen"], [self.VERSION])
+        self.assertEqual(entry.load_context(self.root, self.path)["execution_budget"]["retries"], 24)
+        auto = sched.load_authorization(str(self.root))["auto_renew"]
+        self.assertEqual((auto["used"], len(auto["history"])), (1, 1))
+        self.assertNotIn("pending", auto)
+        self.tick_check()
+        self.assertTrue(self.node()["needs_human"])
+        self.assertEqual(entry.load_context(self.root, self.path)["execution_budget"]["retries"], 24)
+
+    def test_auto_renew_pending_commit_failures_recover_without_extra_credit(self):
+        import aidp_scheduler as sched
+        import autopilot_unfreeze as unfreeze
+        import baseline_edit
+        from unittest.mock import patch
+        self.make_root()
+        sched.record_authorization(str(self.root), "同意自动续额一次", "write-failure", auto_renew=1)
+        self.exhaust_retries()
+        ledger = self.root / sched.AUTHORIZATION_STATE_REL
+        replace = baseline_edit.os.replace
+        def failed_reservation(src, dst):
+            if str(dst) == str(ledger):
+                raise OSError("pending write failed")
+            return replace(src, dst)
+        with patch.object(baseline_edit.os, "replace", side_effect=failed_reservation), \
+                patch.object(unfreeze, "renew_budget", wraps=unfreeze.renew_budget) as renew:
+            self.assertFalse(sched._auto_renew_budget(str(self.root), self.VERSION, self.path,
+                                                    self.policy.budget_exhaustion(self.root, self.path)[1]))
+        renew.assert_not_called()
+        self.assertEqual(sched.load_authorization(str(self.root))["auto_renew"]["used"], 0)
+        def failed_completion(src, dst):
+            if str(dst) == str(ledger) and "pending" not in json.loads(Path(src).read_text())["auto_renew"]:
+                raise OSError("completion write failed")
+            return replace(src, dst)
+        with patch.object(baseline_edit.os, "replace", side_effect=failed_completion):
+            self.tick_check()
+        self.assertEqual(entry.load_context(self.root, self.path)["execution_budget"]["retries"], 24)
+        self.assertIn("pending", sched.load_authorization(str(self.root))["auto_renew"])
+        self.tick_check()
+        self.assertFalse(self.node().get("needs_human"))
+        auto = sched.load_authorization(str(self.root))["auto_renew"]
+        self.assertEqual((auto["used"], len(auto["history"])), (1, 1))
+        self.assertNotIn("pending", auto)
+        self.assertEqual(entry.load_context(self.root, self.path)["execution_budget"]["retries"], 24)
+
+    def test_concurrent_auto_renewals_share_one_pending_and_one_credit(self):
+        import aidp_scheduler as sched
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        self.make_root()
+        sched.record_authorization(str(self.root), "同意自动续额两次", "concurrent-renewal", auto_renew=2)
+        self.exhaust_retries()
+        items = self.policy.budget_exhaustion(self.root, self.path)[1]
+        barrier = threading.Barrier(4)
+        def renew(_):
+            barrier.wait(timeout=10)
+            return sched._auto_renew_budget(str(self.root), self.VERSION, self.path, items)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(renew, range(4)))
+        self.assertTrue(any(results))
+        auto = sched.load_authorization(str(self.root))["auto_renew"]
+        self.assertEqual((auto["used"], len(auto["history"])), (1, 1))
+        self.assertNotIn("pending", auto)
+        self.assertEqual(entry.load_context(self.root, self.path)["execution_budget"]["retries"], 24)
+
+    def test_auto_renew_pending_does_not_unfreeze_other_reason(self):
+        import aidp_scheduler as sched
+        import autopilot_unfreeze as unfreeze
+        from unittest.mock import patch
+        self.make_root()
+        sched.record_authorization(str(self.root), "同意自动续额一次", "other-freeze", auto_renew=1)
+        self.exhaust_retries()
+        with patch.object(unfreeze, "renew_budget", side_effect=OSError("crash")):
+            self.tick_check()
+        state = json.loads(self.baseline.read_text())
+        state["versions"][self.VERSION]["freeze_reason"] = "stuck-phase"
+        self.baseline.write_text(json.dumps(state))
+        with patch.object(unfreeze, "renew_budget", wraps=unfreeze.renew_budget) as replay:
+            self.tick_check()
+        replay.assert_not_called()
+        self.assertTrue(self.node()["needs_human"])
+        self.assertEqual(self.node()["freeze_reason"], "stuck-phase")
+
     def exhaust_again(self):
         policy = self.policy
         limit = json.loads(Path(self.path).read_text())["execution_budget"]["retries"]

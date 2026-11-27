@@ -93,6 +93,9 @@ def context_identity(ctx):
         identity["parent_identity_hash"] = ctx["parent_identity_hash"]
         if "inherit_action_limit" in ctx:
             identity["inherit_action_limit"] = ctx["inherit_action_limit"]
+        if "parent_revision" in ctx:
+            identity["parent_revision"] = ctx["parent_revision"]
+            identity["child_key"] = ctx["child_key"]
     return identity
 
 
@@ -183,6 +186,21 @@ def _relative_path(root, value):
 
 def _write_set(root, paths):
     return sorted({_relative_path(root, path) for path in (paths or ())})
+
+
+def _paths_subset(paths, allowed):
+    return all(any(path == base or path.startswith(base + '/') for base in allowed) for path in paths)
+
+
+def _write_set_advice(root, ctx):
+    """仅使用目录元数据/已有快照提示范围成本，不扫描正文、不更改授权。"""
+    advice = []
+    for path in ctx['write_set']:
+        count = sum(name.startswith(path + '/') for name in ctx['initial_files'])
+        if (root / path).is_dir() or count or path in ('code', 'src', 'tests', 'docs'):
+            advice.append({'path': path, 'reason': f'目录写集覆盖子树（初始快照内 {count} 个文件）',
+                'suggestion': '建议在用户需求内声明具体文件或最小模块；可先保留目录定位，再由主流程细化。此提示不拒绝也不改变授权。'})
+    return advice
 
 
 def _acceptance(values):
@@ -282,9 +300,15 @@ def _validate(root, ctx):
             valid_parent = str(uuid.UUID(ctx["parent_task_id"])) == ctx["parent_task_id"]
         except (TypeError, ValueError, AttributeError):
             valid_parent = False
-        if (ctx["mode"] != "formal" or not valid_parent or ctx["parent_task_id"] == ctx["task_id"]
+        if (not valid_parent or ctx["parent_task_id"] == ctx["task_id"]
                 or not re.fullmatch(r"[0-9a-f]{64}", str(ctx.get("parent_identity_hash", "")))):
-            raise ContextError("正式子任务的父身份无效")
+            raise ContextError("子任务的父身份无效")
+        if ctx['mode'] == 'light' and (
+                type(ctx.get('parent_revision')) is not int or ctx['parent_revision'] < 1
+                or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', str(ctx.get('child_key', '')))
+                or not ctx['write_set'] or 'authorization_scope' in ctx
+                or not set(ctx.get('allowed_actions', [])) <= {'implement', 'static', 'related-test'}):
+            raise ContextError('light 子任务必须保留父 revision、受限写集与动作')
     elif "parent_identity_hash" in ctx:
         raise ContextError("parent_identity_hash 缺少 parent_task_id")
     if ctx.get("status") not in ("active", "completed"):
@@ -367,6 +391,22 @@ def load_context(root, path, *, migrate=True):
     _validate(root, ctx)
     if source != _context_path(root, ctx["task_id"]):
         raise ContextError("execution-context 必须位于本任务运行目录的 context.json")
+    if ctx['mode'] == 'light' and 'parent_task_id' in ctx:
+        parent_path = _context_path(root, ctx['parent_task_id'])
+        _safe_inside(root, parent_path)
+        try:
+            parent = json.loads(parent_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            raise ContextError('light 子任务缺少有效父上下文') from exc
+        _validate(root, parent)
+        if (parent['task_id'] != ctx['parent_task_id'] or parent['mode'] != 'light'
+                or 'parent_task_id' in parent or parent['status'] != 'active'
+                or parent['revision'] != ctx['parent_revision']
+                or identity_hash(parent) != ctx['parent_identity_hash']
+                or not _paths_subset(ctx['write_set'], parent['write_set'])
+                or not set(ctx['allowed_actions']) <= set(parent['allowed_actions'])
+                or ctx['execution_budget'] != parent['execution_budget']):
+            raise ContextError('light 子任务的父 revision/授权/写集已失效；由主流程重新判定派发')
     return ctx
 
 
@@ -536,6 +576,7 @@ def _result(root, ctx):
             "authorization_identity": context_identity(ctx),
             **{field: ctx[field] for field in policy.POLICY_FIELDS},
             "budget_policy": policy.budget_summary(ctx),
+            "write_set_advice": _write_set_advice(root, ctx),
             "snapshot_cost": {"metadata_files": len(ctx["initial_files"]),
                               "hashed_files": len(ctx["initial_files"]) - len(ctx.get("initial_git_files", {}))}}
 
@@ -785,6 +826,9 @@ def revise_context(root, execution_context, write_set=None, *, additional_grants
                    authorization_source=None, execution_budget=None, verification_inputs=None,
                    replace_write_set=False):
     root = _root(root)
+    current = load_context(root, execution_context)
+    if current['mode'] == 'light' and 'parent_task_id' in current:
+        raise ContextError('light 子任务不得 revise；范围或授权调整交回主流程')
     observed, changed = None, set()
     if replace_write_set:
         if write_set is None:
@@ -910,10 +954,52 @@ def _refresh_child(root, parent, child, action_limit, inherit_scope=False):
     return child
 
 
-def fork_context(root, execution_context, sprint, since=None, *, allowed_actions=None):
-    """正式批量的单 Sprint 子任务；同父同号只创建一次，起点取开工时 HEAD。"""
+def _fork_light(root, execution_context, child_key, write_set, allowed_actions):
+    """主流程冻结 light 子集；沿用父基线与根预算，子状态落独立任务目录。"""
+    if not isinstance(child_key, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', child_key):
+        raise ContextError('child-key 必须是 1–128 位字母数字、点、下划线或横线标识')
+    with _task_lock(root, execution_context) as parent:
+        if parent['mode'] != 'light' or 'parent_task_id' in parent or parent['status'] != 'active':
+            raise ContextError('仅 active light 根任务可派发受限子任务')
+        paths = _write_set(root, write_set)
+        if not paths or not _paths_subset(paths, parent['write_set']):
+            raise ContextError('light 子任务 write_set 必须是父当前写集的非空子集')
+        permitted = set(parent['allowed_actions']) & {'implement', 'static', 'related-test'}
+        actions = permitted if allowed_actions is None else policy._actions(allowed_actions)
+        if not actions or not actions <= permitted:
+            raise policy.PolicyError('UNAUTHORIZED', 'light 子任务动作必须是父 implement/static/related-test 的非空子集')
+        child_id = str(uuid.uuid5(uuid.UUID(parent['task_id']), 'light:' + child_key))
+        candidate = _context_path(root, child_id)
+        if candidate.exists():
+            child = load_context(root, candidate)
+            if (child.get('parent_task_id') != parent['task_id'] or child.get('child_key') != child_key
+                    or child['write_set'] != paths or child['allowed_actions'] != sorted(actions)):
+                raise ContextError('既有子任务范围不可改写；主流程重新判定并使用新的 child-key')
+            return dict(_result(root, child), context=child)
+        child = json.loads(json.dumps(parent))
+        for field in ('authorization_scope', 'scope_history', 'verification_inputs', 'completed_at'):
+            child.pop(field, None)
+        child.update(task_id=child_id, parent_task_id=parent['task_id'],
+                     parent_identity_hash=identity_hash(parent), parent_revision=parent['revision'],
+                     child_key=child_key, revision=1, scope_revision=1, write_set=paths,
+                     allowed_actions=sorted(actions), inherit_action_limit=sorted(actions),
+                     verification_level=policy.verification_level(actions), created_at=time.time(), status='active')
+        child['task_scope']['paths'] = paths
+        _save(root, child)
+        return dict(_result(root, child), context=child)
+
+
+def fork_context(root, execution_context, sprint=None, since=None, *, allowed_actions=None,
+                 child_key=None, write_set=None):
+    """正式 Sprint fork 保持原协议；child-key 分支派发受限 light 子任务。"""
     root = _root(root)
-    if not re.fullmatch(r"[0-9]{3,}", sprint):
+    if child_key is not None:
+        if sprint is not None or since is not None:
+            raise ContextError('light fork 继承父起点，不能指定 sprint/since')
+        return _fork_light(root, execution_context, child_key, write_set, allowed_actions)
+    if write_set is not None:
+        raise ContextError('formal fork 不接受 light 子写集参数')
+    if not isinstance(sprint, str) or not re.fullmatch(r"[0-9]{3,}", sprint):
         raise ContextError("--sprint 必须是已有分配的 NNN")
     with _task_lock(root, execution_context) as parent:
         if parent["mode"] != "formal":
@@ -2232,8 +2318,14 @@ def main(argv=None):
             item.add_argument('--verification-input', action='append')
             item.add_argument('--replace-write-set', action='store_true')
         if command in ("fork", "bind-sprint"):
-            item.add_argument("--sprint", required=True)
             item.add_argument("--since")
+            if command == 'fork':
+                target = item.add_mutually_exclusive_group(required=True)
+                target.add_argument('--sprint')
+                target.add_argument('--child-key')
+                item.add_argument('--write-set', nargs='+', action='extend')
+            else:
+                item.add_argument('--sprint', required=True)
         if command in ("resolve-autopilot-root", "resolve-test-root"):
             item.add_argument("--version", required=True)
             item.add_argument("--authorization-source", type=json.loads)
@@ -2292,7 +2384,8 @@ def main(argv=None):
         elif args.command in ("fork", "bind-sprint"):
             operation = fork_context if args.command == "fork" else bind_sprint
             if args.command == "fork":
-                result = operation(args.root, args.execution_context, args.sprint, args.since, allowed_actions=args.allow_action)
+                result = operation(args.root, args.execution_context, args.sprint, args.since,
+                                   allowed_actions=args.allow_action, child_key=args.child_key, write_set=args.write_set)
             else:
                 result = operation(args.root, args.execution_context, args.sprint, args.since)
         elif args.command == "fork-version":

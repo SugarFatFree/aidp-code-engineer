@@ -159,6 +159,116 @@ class SoftLimitTests(RepoCase):
 
 
 class ConcurrencyTests(RepoCase):
+    def test_resource_group_is_exclusive_across_parent_and_child(self):
+        import inspect
+        self.assertIn("group", inspect.signature(policy.acquire_slot).parameters)
+        parent = self.context(budget={"processes": 3})
+        child = entry.fork_context(self.root, parent["execution_context"], child_key="unit",
+                                   write_set=["src/app.py"])
+        held = policy.acquire_slot(self.root, parent["context"], "test", group="database")["slot"]
+        self.assertEqual(held["group"], "database")
+        queued = policy.acquire_slot(self.root, child["context"], "test", group="database")
+        self.assertEqual(queued["status"], "QUEUED", "根并发有余量也不能同时占用共享数据库")
+        policy.cancel_queued(self.root, child["context"], queued["ticket_id"])
+        other = policy.acquire_slot(self.root, child["context"], "test", group="other")["slot"]
+        policy.release_slot(self.root, child["context"], other)
+        policy.release_slot(self.root, parent["context"], held)
+        with policy.concurrency_slot(self.root, child["context"], "test", group="database"):
+            self.assertEqual(len(policy.slot_status(self.root, parent["context"])["running"]), 1)
+        self.assertEqual(policy.slot_status(self.root, parent["context"])["running"], [])
+
+    def test_cli_group_wait_does_not_leave_queue_ticket(self):
+        result = self.context(budget={"processes": 3})
+        rc, held = self.cli(result, "acquire-slot", "--kind", "test", "--group", "database")
+        self.assertEqual(rc, 0)
+        rc, waiting = self.cli(result, "acquire-slot", "--kind", "test", "--group", "database")
+        self.assertEqual((rc, waiting["status"], waiting["group_busy"]), (2, "QUEUED", True))
+        self.assertEqual(policy.slot_status(self.root, result["context"])["queued"], [])
+        self.cli(result, "release-slot", "--slot-id", held["slot"]["slot_id"])
+        rc, acquired = self.cli(result, "acquire-slot", "--kind", "test", "--group", "database")
+        self.assertEqual(rc, 0)
+        self.cli(result, "release-slot", "--slot-id", acquired["slot"]["slot_id"])
+        self.assertEqual(policy.slot_status(self.root, result["context"])["running"], [])
+
+    def test_light_child_executes_but_cannot_delegate_again(self):
+        parent = self.context()
+        child = entry.fork_context(self.root, parent["execution_context"], child_key="unit",
+                                   write_set=["src/app.py"])
+        self.assertEqual(policy.require_action(child["context"], "related-test")["task_id"], child["task_id"])
+        with self.assertRaises(policy.PolicyError) as denied:
+            policy.require_delegable(child["context"], "related-test")
+        self.assertEqual(denied.exception.status, "UNAUTHORIZED")
+        self.assertEqual(policy.require_delegable(parent["context"], "related-test")["task_id"], parent["task_id"])
+
+    def test_command_lock_wait_is_cancellable(self):
+        import inspect
+        import test_ledger as ledger
+        self.assertIn("cancel_event", inspect.signature(ledger.lock).parameters)
+        cancel = threading.Event()
+        errors = []
+        def wait_for_key():
+            try:
+                with ledger.lock(self.root, "same-test", cancel_event=cancel):
+                    errors.append("acquired")
+            except ledger.LedgerError:
+                errors.append("cancelled")
+        with ledger.lock(self.root, "same-test"):
+            thread = threading.Thread(target=wait_for_key)
+            thread.start()
+            cancel.set()
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, ["cancelled"])
+
+    def test_live_holder_survives_lease_expiry(self):
+        ctx = self.context(budget={"processes": 1})["context"]
+        held = policy.acquire_slot(self.root, ctx, "test", lease_seconds=.01)["slot"]
+        time.sleep(.03)
+        queued = policy.acquire_slot(self.root, ctx, "test")
+        self.assertEqual(queued["status"], "QUEUED", "活跃持有者不能因租约过期被误回收")
+        policy.cancel_queued(self.root, ctx, queued["ticket_id"])
+        policy.release_slot(self.root, ctx, held)
+
+    def test_interrupt_while_waiting_removes_own_queue_ticket(self):
+        from unittest import mock
+        ctx = self.context(budget={"processes": 1})["context"]
+        held = policy.acquire_slot(self.root, ctx, "test")["slot"]
+        with mock.patch.object(policy.time, "sleep", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                policy.acquire_slot(self.root, ctx, "test", wait_seconds=5)
+        self.assertEqual(policy.slot_status(self.root, ctx)["queued"], [])
+        policy.release_slot(self.root, ctx, held)
+
+    def test_invalid_lease_cannot_make_pid_zero_slot_permanent(self):
+        ctx = self.context()["context"]
+        for value in (float("nan"), float("inf"), 0, -1):
+            with self.subTest(value=value), self.assertRaises(policy.PolicyError):
+                policy.acquire_slot(self.root, ctx, "test", pid=0, lease_seconds=value)
+        self.assertEqual(policy.slot_status(self.root, ctx)["running"], [])
+
+    def test_waiting_cancellation_removes_queue(self):
+        ctx = self.context(budget={"processes": 1})["context"]
+        held = policy.acquire_slot(self.root, ctx, "test")["slot"]
+        cancel = threading.Event()
+        errors = []
+        def wait():
+            try:
+                with policy.concurrency_slot(self.root, ctx, "test", wait_seconds=5, cancel_event=cancel):
+                    self.fail("cancelled waiter started")
+            except policy.PolicyError as exc:
+                errors.append(exc.status)
+        thread = threading.Thread(target=wait)
+        thread.start()
+        deadline = time.monotonic() + 3
+        while not policy.slot_status(self.root, ctx)["queued"] and time.monotonic() < deadline:
+            time.sleep(.01)
+        cancel.set()
+        thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, ["CANCELLED"])
+        self.assertEqual(policy.slot_status(self.root, ctx)["queued"], [])
+        policy.release_slot(self.root, ctx, held)
+
     def test_hard_limit_queues_and_release_unblocks_in_order(self):
         """场景2：并发达上限排队（可见），释放后按序取得。"""
         ctx = self.context()["context"]
@@ -214,7 +324,8 @@ class ConcurrencyTests(RepoCase):
         self.assertEqual(reclaimed["status"], "ACQUIRED")
         self.assertEqual(len(policy.slot_status(self.root, ctx)["running"]), 1)
         policy.release_slot(self.root, ctx, reclaimed["slot"])
-        policy.acquire_slot(self.root, ctx, "agent", lease_seconds=-1, pid=0)
+        policy.acquire_slot(self.root, ctx, "agent", lease_seconds=.01, pid=0)
+        time.sleep(.03)
         self.assertEqual(policy.acquire_slot(self.root, ctx, "agent", pid=0)["status"], "ACQUIRED")
 
     def test_parent_and_child_share_one_pool(self):
@@ -271,6 +382,18 @@ class ConcurrencyTests(RepoCase):
         got = policy.acquire_slot(self.root, ctx, "agent", wait_seconds=0.05, poll_seconds=0.02)
         self.assertEqual(got["position"], 1, "过期的孤儿票据不能继续挡在队首")
 
+    def test_new_tick_does_not_reclaim_a_still_running_process(self):
+        from unittest import mock
+        ctx = self.context(budget={'processes': 1})['context']
+        with mock.patch.dict(os.environ, {'AIDP_TICK_COMMAND': 'sprint-autopilot', 'AIDP_TICK_TOKEN': 'previous'}):
+            held = policy.acquire_slot(self.root, ctx, 'test')['slot']
+        result = policy.reap_slots(self.root, ctx, 'sprint-autopilot', keep_tick='next')
+        self.assertEqual(result['reaped'], 0)
+        queued = policy.acquire_slot(self.root, ctx, 'test')
+        self.assertEqual(queued['status'], 'QUEUED')
+        policy.cancel_queued(self.root, ctx, queued['ticket_id'])
+        policy.release_slot(self.root, ctx, held)
+
     def test_reap_slots_only_clears_previous_tick_of_the_same_chain(self):
         """P0-1：tick 开始时回收同链路上一轮遗留槽位；并行的另一条链路（aiauto 测试链）的槽位不受影响。"""
         result = self.context()
@@ -295,6 +418,204 @@ class ConcurrencyTests(RepoCase):
         used = json.loads(Path(entry.load_context(self.root, ctx)["execution_context"] if False else
                           (self.root / "memory/.aidp/entry-contexts" / ctx["task_id"] / "budget.json")).read_text())["used"]
         self.assertEqual(used["processes"], 10)                           # reserve_budget 的统计不被槽位双计
+
+
+class ParallelScopeTests(RepoCase):
+    def prepare_scope(self, *, workers=2, groups=None, outcomes=(0, 0, 0), delay=.18, parallel=True,
+                      batch_size=None, delays=None):
+        import test_ledger as ledger
+        import inspect
+        self.assertIn("max_parallel", inspect.signature(ledger.run_scope).parameters,
+                      "run_scope 须接入有界外层并发")
+        (self.root / "tests/test_app.py").unlink()
+        for index, outcome in enumerate(outcomes):
+            self.write(f"tests/g{index}/test_app.py", (
+                "import fcntl, json, os, sys, time\nfrom pathlib import Path\n"
+                "sys.path.insert(0, str(Path(__file__).resolve().parents[2]))\nfrom src.app import value\n"
+                "def event(kind):\n"
+                " with open(Path(__file__).resolve().parents[2] / 'memory/.aidp/events.jsonl', 'a') as f:\n"
+                "  fcntl.flock(f, fcntl.LOCK_EX)\n"
+                f"  f.write(json.dumps([kind, {index}, time.monotonic()]) + '\\n')\n"
+                f"event('start')\ntime.sleep({delays[index] if delays else delay + index * .01})\nevent('end')\nraise SystemExit({outcome})\n"))
+        if batch_size:
+            self.write("runner.py", "import runpy, sys\nfor path in sys.argv[1:]:\n"
+                       " try: runpy.run_path(path, run_name='__main__')\n"
+                       " except SystemExit as exc:\n  if exc.code: raise\n")
+        self.commit()
+        result = self.context(budget={"processes": workers}, write_set=("src/app.py",))
+        runners = []
+        for index in range(len(outcomes)):
+            runner = {"cwd": ".", "suffixes": [".py"], "argv": [sys.executable, "-B", "{tests}"], "batch": False}
+            if batch_size:
+                runner.update(batch=True, batch_size=batch_size, argv=[sys.executable, "-B", "runner.py", "{tests}"])
+            if groups is not None:
+                runner["cwd"] = f"tests/g{index}"
+            if parallel:
+                runner["parallel"] = {"enabled": True, "workers": 1}
+                if groups is not None:
+                    runner["parallel"]["group"] = groups[index]
+            runners.append(runner)
+            if groups is None:
+                break
+        self.write("src/app.py", "value = 2\n")
+        plan = scope.derive(self.root, None, runners, execution_context=result["execution_context"])
+        path = Path(result["execution_context"]).with_name("parallel-scope.json")
+        path.write_text(json.dumps(plan))
+        return result, path, plan
+
+    def peak(self):
+        events = [json.loads(line) for line in (self.root / "memory/.aidp/events.jsonl").read_text().splitlines()]
+        current = peak = 0
+        for kind, _, _ in events:
+            current += 1 if kind == "start" else -1
+            peak = max(peak, current)
+        return peak
+
+    def test_real_processes_overlap_but_respect_shared_root_limit_and_settle(self):
+        import test_ledger as ledger
+        ctx, path, plan = self.prepare_scope(workers=2)
+        out, code = ledger.run_scope(self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual((out["status"], code), ("PASS", 0), out)
+        self.assertEqual(self.peak(), 2)
+        self.assertEqual(len(out["run_ids"]), 3)
+        self.assertEqual(policy.slot_status(self.root, ctx["context"])["running"], [])
+        budget = json.loads(Path(ctx["execution_context"]).with_name("budget.json").read_text())
+        tickets = [r for r in budget["reservations"] if r.get("action") == "related-test"]
+        self.assertEqual(len(tickets), 3)
+        self.assertTrue(all("settlement" in ticket for ticket in tickets))
+        verified = ledger.verify_scope(self.root, str(path), plan["scope_hash"], out["run_ids"], "local",
+                                       execution_context=ctx["execution_context"])
+        self.assertEqual(verified["status"], "PASS")
+
+    def test_undeclared_runners_remain_serial(self):
+        import test_ledger as ledger
+        ctx, path, _ = self.prepare_scope(parallel=False)
+        out, code = ledger.run_scope(self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.peak(), 1)
+
+    def test_failures_keep_plan_order_and_deterministic_verdict(self):
+        import test_ledger as ledger
+        ctx, path, _ = self.prepare_scope(outcomes=(7, 0, 0), delays=(.6, .05, .05))
+        out, code = ledger.run_scope(self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual((out["status"], code), ("FAIL", 1), out)
+        self.assertEqual([r["status"] for r in out["runs"]], ["FAIL", "PASS", "PASS"])
+        self.assertEqual(len(ledger.load(self.root)), 3)
+
+    def test_explicit_frozen_batches_execute_and_verify_without_changing_argv(self):
+        import test_ledger as ledger
+        ctx, path, plan = self.prepare_scope(outcomes=(0, 0, 0, 0, 0), batch_size=2)
+        self.assertEqual([len(item["tests"]) for item in plan["runs"]], [2, 2, 1])
+        out, code = ledger.run_scope(self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual((out["status"], code), ("PASS", 0), out)
+        self.assertEqual(self.peak(), 2)
+        self.assertEqual([row["command"] for row in out["runs"]], [item["argv"] for item in plan["runs"]])
+        self.assertEqual(ledger.verify_scope(self.root, str(path), plan["scope_hash"], out["run_ids"], "local",
+                                            execution_context=ctx["execution_context"])["status"], "PASS")
+
+    def test_run_scope_waits_for_root_group_holder_and_cancels_cleanly(self):
+        import inspect
+        import test_ledger as ledger
+        self.assertIn("group", inspect.signature(policy.acquire_slot).parameters)
+        ctx, path, _ = self.prepare_scope(groups=("database", "database", "database"))
+        held = policy.acquire_slot(self.root, ctx["context"], "test", group="database")["slot"]
+        cancel = threading.Event()
+        results = []
+        thread = threading.Thread(target=lambda: results.append(ledger.run_scope(
+            self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3, cancel_event=cancel)))
+        thread.start()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not policy.slot_status(self.root, ctx["context"])["queued"]:
+            time.sleep(.01)
+        waiting = policy.slot_status(self.root, ctx["context"])["queued"]
+        cancel.set()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(waiting, "另一个run_scope的同组持有者必须挡住本次执行")
+        self.assertFalse((self.root / "memory/.aidp/events.jsonl").exists(), "等待同组资源时不能启动测试")
+        self.assertEqual(results[0][0]["status"], "UNVERIFIED")
+        state = policy.slot_status(self.root, ctx["context"])
+        self.assertEqual(state["queued"], [])
+        self.assertEqual([r["slot_id"] for r in state["running"]], [held["slot_id"]])
+        policy.release_slot(self.root, ctx["context"], held)
+        out, code = ledger.run_scope(self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual((out["status"], code), ("PASS", 0), out)
+        self.assertEqual(self.peak(), 1)
+
+    def test_independent_runners_can_overlap(self):
+        import test_ledger as ledger
+        ctx, path, _ = self.prepare_scope(groups=("db1", "db2", "db3"))
+        out, code = ledger.run_scope(self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.peak(), 2)
+
+    def test_shared_group_serializes_different_runners(self):
+        import test_ledger as ledger
+        ctx, path, _ = self.prepare_scope(groups=("database", "database", "database"))
+        out, code = ledger.run_scope(self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.peak(), 1)
+
+    def test_cancellation_kills_active_processes_and_settles_all_started_runs(self):
+        import test_ledger as ledger
+        ctx, path, _ = self.prepare_scope(delay=5)
+        cancel = threading.Event()
+        results = []
+        thread = threading.Thread(target=lambda: results.append(ledger.run_scope(
+            self.root, str(path), "local", execution_context=ctx["execution_context"], max_parallel=3, cancel_event=cancel)))
+        thread.start()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            event_file = self.root / "memory/.aidp/events.jsonl"
+            if event_file.exists() and len(event_file.read_text().splitlines()) >= 2:
+                break
+            time.sleep(.01)
+        cancel.set()
+        thread.join(5)
+        self.assertFalse(thread.is_alive(), "取消必须停止子进程，不能等待完整5秒测试结束")
+        self.assertTrue(results)
+        out, code = results[0]
+        self.assertEqual((out["status"], code), ("UNVERIFIED", 2), out)
+        state = policy.slot_status(self.root, ctx["context"])
+        self.assertEqual((state["running"], state["queued"]), ([], []))
+        rows = ledger.load(self.root)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(r["status"] == "ERROR" and r["failure_kind"] == "CANCELLED" for r in rows))
+        budget = json.loads(Path(ctx["execution_context"]).with_name("budget.json").read_text())
+        self.assertTrue(all("settlement" in r for r in budget["reservations"] if r.get("kind") == "validation"))
+
+    def test_cli_termination_cleans_children_and_reservations(self):
+        import test_ledger as ledger
+        ctx, path, _ = self.prepare_scope(delay=.6)
+        proc = subprocess.Popen([sys.executable, str(SCRIPTS / "test_ledger.py"), "run-scope", "--root", str(self.root),
+                                 "--scope-file", str(path), "--env-id", "local", "--execution-context",
+                                 ctx["execution_context"], "--max-parallel", "3"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 5
+        event_file = self.root / "memory/.aidp/events.jsonl"
+        while time.monotonic() < deadline:
+            if event_file.exists() and len(event_file.read_text().splitlines()) >= 2:
+                break
+            time.sleep(.01)
+        proc.terminate()
+        stdout, stderr = proc.communicate(timeout=5)
+        self.assertEqual(proc.returncode, 2, stdout + stderr)
+        self.assertEqual(json.loads(stdout.splitlines()[-1])["status"], "UNVERIFIED")
+        self.assertEqual(policy.slot_status(self.root, ctx["context"])["running"], [])
+        self.assertTrue(all(row["status"] != "RUNNING" for row in ledger.load(self.root)))
+        budget = json.loads(Path(ctx["execution_context"]).with_name("budget.json").read_text())
+        self.assertTrue(all("settlement" in r for r in budget["reservations"] if r.get("kind") == "validation"))
+
+    def test_timeouts_settle_every_ticket_and_clear_slots(self):
+        import test_ledger as ledger
+        ctx, path, _ = self.prepare_scope(delay=.4)
+        out, code = ledger.run_scope(self.root, str(path), "local", timeout=.05,
+                                    execution_context=ctx["execution_context"], max_parallel=3)
+        self.assertEqual((out["status"], code), ("UNVERIFIED", 2), out)
+        self.assertEqual([r["failure_kind"] for r in out["runs"]], ["TIMEOUT"] * 3)
+        self.assertEqual(policy.slot_status(self.root, ctx["context"])["running"], [])
+        budget = json.loads(Path(ctx["execution_context"]).with_name("budget.json").read_text())
+        self.assertTrue(all("settlement" in r for r in budget["reservations"] if r.get("kind") == "validation"))
 
 
 class LegacyLedgerTests(RepoCase):
@@ -454,7 +775,7 @@ class IncrementalAnalysisTests(RepoCase):
         self.write("src/m1.py", "value = 100\n")
         plan, warm = self.derive(["src/m1.py"])
         self.assertLessEqual(warm["misses"], 1)               # 仅被改文件需要重解析
-        self.assertGreater(warm["hits"], cold["misses"] - 3)
+        self.assertGreater(warm["hits"], 0)                  # 窄分析只访问相关缓存，不要求全仓命中
         self.assertEqual(plan["selection"]["proven"], ["tests/test_m1.py"])
         # 改动与测试无关的文件（无任何 import 指向它）：其余文件不重解析
         self.write("notes/standalone.py", "z = 1\n")
@@ -558,6 +879,42 @@ class TimeoutAndProgressTests(RepoCase):
 
 
 class LegacyMigrationTests(RepoCase):
+    def test_public_commands_preserve_explicit_project_budget(self):
+        configured = {"scanned_files": 5000, "elapsed_seconds": 600, "processes": 0,
+                      "agents": 1, "selected_tests": 3, "retries": 0}
+        self.write("memory/aidp-config.yaml", """execution_policy:
+  authorization_source:
+    kind: project-policy
+    user_selected: true
+    request_id: old-budget-choice
+    text: 用户明确限定项目执行预算
+  execution_budget:
+""" + "".join(f"    {key}: {value}\n" for key, value in configured.items()))
+        for command in ("version", "sprint-test", "sprint-autopilot"):
+            with self.subTest(command=command):
+                context = policy.policy_fields(self.root, [], [], authorization_source={
+                    "kind": "explicit-command", "command": command, "request_id": "current-command"})
+                self.assertEqual(context["execution_budget"], configured)
+                self.assertTrue({"scanned_files", "elapsed_seconds"} <= policy.hard_resources(context))
+
+    def test_public_command_defaults_fill_only_unconfigured_budget_keys(self):
+        self.write("memory/aidp-config.yaml", """execution_policy:
+  authorization_source:
+    kind: project-policy
+    user_selected: true
+    request_id: partial-budget-choice
+    text: 用户明确限定累计扫描最多5000文件
+  execution_budget:
+    scanned_files: 5000
+""")
+        source = {"kind": "explicit-command", "command": "sprint-test", "request_id": "current-command"}
+        context = policy.policy_fields(self.root, [], [], authorization_source=source)
+        expected = dict(policy.COMMAND_BUDGETS["sprint-test"], scanned_files=5000)
+        self.assertEqual(context["execution_budget"], expected)
+        revised = policy.policy_fields(self.root, [], [], authorization_source=source,
+                                       execution_budget={"scanned_files": 6000})
+        self.assertEqual(revised["execution_budget"], dict(expected, scanned_files=6000))
+
     def test_legacy_sources_keep_user_written_budget_hard(self):
         """场景10：旧项目配置兼容迁移——用户显式写入的值默认硬上限，不静默降为软限，并向用户展示。"""
         ctx = self.context()["context"]

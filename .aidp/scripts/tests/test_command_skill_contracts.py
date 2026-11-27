@@ -337,6 +337,54 @@ def test_skill_invocation_contracts():
         check("★ %s 回检委派 SKILL 派单块、不另列平行清单" % cmd, dispatch)
 
 
+def test_command_navigation_guards():
+    """命令文本是执行契约：拒绝跳过关闭、缺事实默认和导航隐式扩权。"""
+    print('\n[命令推进与导航授权契约]')
+    def read(relative):
+        return (REPO / relative).read_text(encoding='utf-8')
+
+    batch = read('.aidp/commands/sprint-batch.md')
+    loop = batch.split('for NNN in 执行列表:', 1)[1].split('### Step 4', 1)[0]
+    check('批次先核 closed，再增量摘要并推进；未关闭保留同号',
+          loop.index('result.closed is not True') < loop.index('update context_digest')
+          and 'result.closed is False' in loop and 'SPRINT_EXECUTION_CONTEXT' in loop)
+    check('批次失败不再被当作已结束或非阻塞跳号',
+          all(old not in batch for old in ('都视为该 Sprint 已结束', '非阻塞，已继续后续 Sprint',
+                                         '**默认"软失败"非阻塞**'))
+          and '不得重置' in batch and 'UNVERIFIED' in batch)
+    role = read('.aidp/agents/version-auditor.md')
+    audit = read('.aidp/flows/sprint-autopilot/phase-3-8.md')
+    check('终审从持久规模传入，缺事实阻塞不默认 L',
+          'get req_scale.tier' in audit and 'scale=<读回的档位>' in audit
+          and 'missing-scale' in audit and 'overall=block' in role
+          and 'items.A_existence.level=unverified' in role
+          and '命令端未传 `scale` 时按 `L` 处理' not in role)
+    release = read('.aidp/flows/version/release-6.md')
+    gate = release.split('**★ 触发门', 1)[1].split('\n', 1)[0]
+    check('no-tag 只跳全量设计，仍到版本标识门',
+          '3.3.13' in gate and '只跳过 Step 3.3.11' in gate and '直接进 Step 3.4' not in gate)
+    version = read('.aidp/commands/version.md')
+    protection = version.split('## `--rebuild-baseline`', 1)[1].split('## `--finalize-docs`', 1)[0]
+    check('已发布补跑使用真实 tag 与 commit，worktree 另需显式授权',
+          'released_tags' in protection and 'parse_version' in protection
+          and 'rev-parse --verify' in protection and '用户另行明确授权创建 worktree' in protection
+          and 'v${VERSION#V}' not in protection)
+    frontend = read('.aidp/agents/frontend.md').split('Step 1: API 调用层', 1)[1].split('Step 2:', 1)[0]
+    check('前端 API 步骤引用约定26，不另给 DEV_MOCK 运行时开关判据',
+          '约定 26' in frontend and '运行时开关' not in frontend)
+    aiauto = read('.aidp/commands/sprint-aiauto-test.md')
+    examples = aiauto.split('# 独立单次', 1)[1].split('```', 1)[0]
+    standalone = [line for line in examples.splitlines() if line.startswith('/sprint-aiauto-test --target')]
+    check('独立单次示例同时给显式版本、范围与 once',
+          len(standalone) == 3 and all('--once' in line and '仅测' in line for line in standalone)
+          and '总是测「当前开发版本」' not in aiauto
+          and '不传版本号，自动从 baseline 解析' not in aiauto
+          and '版本号自动读 baseline' not in aiauto)
+    check('计划导航不生成无序号个人计划',
+          'plan-{user}.md' not in read('docs/plans/README.md')
+          and 'NN_研发执行计划-{开发者姓名}.md' in read('docs/plans/README.md'))
+
+
 def test_batch_cascade_and_bugfix_scope_contracts():
     """父编排不能恢复隐式级联；导入的测试缺陷须与 SKILL 的 Sprint 过滤同域。"""
     print('\n[批量级联与测试缺陷归属契约]')
@@ -802,11 +850,21 @@ def test_cvl_callsite_contract_details():
     check("终端模板不把未核验一律导向代码修复",
           "未核验（原因）" in st[st.index("code-verification-loop 验收结果："):]
           and "总体结论：{通过 / 不通过" in st and "❌ 需修复" not in st)
-    check("基线经 SKILL 正式入参 baseline_ref 传递：有起点传 commit，取不到传 none，不回落本轮错误数，无 Git 明记未核验",
-          "baseline_ref=<本 Sprint 起点 commit>" in st and "baseline_ref=none" in st
-          and "不回落 `merge-base`" in st and "本轮首跑错误数作基线" in st and "unsupported:vcs-disabled" in st
-          and "不得回落 merge-base / 本轮首跑错误数" not in st  # 命令端不再把自己的 prompt 约束说成 SKILL 契约
-          and "SKILL 目前没有显式的「无基线」入参" not in st)  # 上游已提供该入参，过期变通不得残留
+    baseline_call = st.split('- **改动前基线 `baseline_ref`**', 1)[1].split('**额外提示**', 1)[0]
+    check("调用方确定性解析 Git 起点并显式传 baseline_ref，非 Git 与缺基线保留 none/未核验",
+          'sprint_baseline.py resolve --root .' in baseline_call
+          and 'baseline_ref=<本 Sprint 起点 commit>' in baseline_call
+          and 'baseline_ref=none' in baseline_call and '必须显式传' in baseline_call
+          and 'vcs_mode=none' in baseline_call and 'unsupported:vcs-disabled' in baseline_call
+          and '不折算为通过' in baseline_call
+          and 'SKILL 目前没有显式的「无基线」入参' not in st)
+    # 解析器可先选择合法祖先 commit；禁止回落是 SKILL 收到显式 none 之后的行为，
+    # 不要求命令重复 SKILL 判据。解析器各路径由 test_sprint_baseline.py 的真实 Git 夹具覆盖。
+    cvl = (REPO / '.aidp/skills/code-verification-loop/SKILL.md').read_text(encoding='utf-8')
+    baseline_input = next(line for line in cvl.splitlines() if line.startswith('| **`baseline_ref`**'))
+    check("SKILL 显式 none 不回落 merge-base 或本轮自身错误数，按未核验返回",
+          'none' in baseline_input and '不回落 merge-base' in baseline_input
+          and '不以本轮自身错误数作基线' in baseline_input and '本项未核验' in baseline_input)
     check("CVL 以 scope_files 限定当前 task/Sprint，范围无法收窄记未核验且不回退全项目，未核验不得写全部通过",
           "scope_files" in st and "SKILL 范围模式规则" in st and "存在未核验维度" in st
           and "未核验" in st and "不转" in st)
@@ -1175,6 +1233,7 @@ def test_mcp_callsite_version_contract():
 
 
 def main():
+    test_command_navigation_guards()
     test_batch_cascade_and_bugfix_scope_contracts()
     test_incremental_acceptance_contract()
     test_incremental_contract_resume()

@@ -1,9 +1,6 @@
 # sprint-autopilot · Phase 3 详情分片 [5b/15]（3.2 步骤 2–4：批量执行 + 推送 + 部署动作 + #2 通知）
 
-> 本文件是 `phase-3-5.md` 的**二次切分**（前片达 20KB 上限）。前片覆盖 3.2 步骤 0–1 与**出口 run-state 写盘**；
-> 本片覆盖 **步骤 2（`/sprint-batch` 执行）/ 步骤 2.5（推送、部署前安全网、部署动作与交接信号、#1d）/ 步骤 3（#2 通知）/ 步骤 4（`--single-sprint`）**。
-> ⚠️ **权威性**：与前片同级，不得因它是续片而略过任一项；本片执行完回 `phase-3-5.md` 执行出口。
-> ⚠️ **理据**：见同目录 `rationale.md`。
+> 续接 `phase-3-5.md`：前片处理步骤 0–1 及 run-state 出口；本片处理批量执行、推送/部署、安全网、交接、通知和 `--single-sprint`。不得跳步，结束后返回前片执行出口。理据见同目录 `rationale.md`。
 
 ---
 
@@ -48,10 +45,11 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py resolve --root . --entry sprint-b
         EXECUTION_CONTEXT=$($BE --version "$TARGET_VERSION" get execution_context --default "") || exit $?
         python3 {{AIDP_HOME}}/scripts/execution_policy.py require-action --root . \
           --execution-context "${EXECUTION_CONTEXT:?父上下文缺失}" --action commit || exit $?
-        # 测试计划草稿：不存在才一次性发现并生成 docs/testing/$TARGET_VERSION/test-plan.json，已存在复用不覆盖；随本步提交，不新开提交循环
-        python3 {{AIDP_HOME}}/scripts/build_unit_test.py plan-init --root . --version "$TARGET_VERSION" || exit $?
+        # 按本版映射/授权范围内实际改动生成计划；已有计划复用，草稿随本步提交。
+        python3 {{AIDP_HOME}}/scripts/build_unit_test.py plan-init --root . --version "$TARGET_VERSION" \
+          --execution-context "$EXECUTION_CONTEXT" || exit $?
         ```
-        plan-init 后以 `git status --porcelain` 重新判定可提交改动（草稿须进入本次提交，即部署 commit）。commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读完整 JSON：退出码3/4是欠账信号、不阻止提交。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 已启用时的 commit 提示行按约定 31.5 现场补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
+        plan-init 后读取 `needs_review/review_notes`；原授权开发 Agent 按 `scripts/README.md` 的计划补全规则，用相关推导/验收映射补本版索引及 runner（含未改动测试）。自动草稿加 `--force` 重生成；已审核手工计划仅定点修订。无法证明则 `UNVERIFIED` 且不部署，禁止清标记冒充完成。就绪后用 `git status --porcelain` 判定改动，随部署 commit 提交。commit 前按约定 24 跑 `python3 {{AIDP_HOME}}/scripts/commit_gate.py --quiet` 读完整 JSON：退出码3/4是欠账信号、不阻止提交。台账结构/清理异常先修正复核，未决义务留给既有阶段收口或显式 `--cascade-now`；**不因提交门返回欠账而派级联**，不重复 M 已完成的文档汇合。CICD 已启用时的 commit 提示行按约定 31.5 现场补监听。porcelain 为空时跳过提交。首次提交没有 HEAD 时 `BASE_REF` 为空，显式传空基准会 fail-closed。
      3. **push 前现场只读分类（不落盘）**：`git push` 前执行，基准取提交前保存的 `push_base_ref`（不能提交后用默认 `HEAD` 推断）；`classify_push.py` 纯只读，结果只决定本 tick 是否监听：
         ```bash
         eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --shell)"

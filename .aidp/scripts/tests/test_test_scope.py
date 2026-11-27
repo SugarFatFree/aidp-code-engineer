@@ -75,6 +75,39 @@ class ScopeFixture(unittest.TestCase):
 
 
 class TestScopeTests(ScopeFixture):
+    def test_self_check_uses_explicit_task_scope(self):
+        import test_scope
+        self.assertTrue(test_scope.self_check()['ok'])
+
+    def test_directory_write_set_does_not_add_unchanged_files(self):
+        import test_scope
+        self.write('src/untouched.py', 'value=1\n')
+        git(self.root, 'add', '-A'); git(self.root, 'commit', '-qm', 'extra source')
+        self.write('src/calc.py', 'def f(): return 2\n')
+        plan = test_scope.derive(self.root, git(self.root, 'rev-parse', 'HEAD'), [], ['src'])
+        self.assertEqual(plan['changed'], ['src/calc.py'])
+
+    def test_runner_batch_size_freezes_explicit_groups(self):
+        import test_scope
+        for i in range(3):
+            self.write(f'tests/test_extra{i}.py', 'from src.calc import f\n')
+        git(self.root, 'add', '-A'); git(self.root, 'commit', '-qm', 'tests')
+        self.write('src/calc.py', 'def f(): return 2\n')
+        plan = test_scope.derive(self.root, git(self.root, 'rev-parse', 'HEAD'),
+            [{'suffixes': ['.py'], 'argv': [PY, '-m', 'unittest', '{tests}'], 'batch_size': 2,
+              'parallel': {'enabled': True, 'workers': 1}}], ['src/calc.py'])
+        self.assertEqual([len(run['tests']) for run in plan['runs']], [2, 2])
+        self.assertTrue(all(run['parallel']['workers'] == 1 for run in plan['runs']))
+        self.assertEqual(sorted(t for run in plan['runs'] for t in run['tests']), plan['tests'])
+
+    def test_invalid_batch_and_parallel_values_are_rejected(self):
+        import test_scope
+        base = {'suffixes': ['.py'], 'argv': [PY, '-m', 'unittest', '{tests}']}
+        for fields in ({'batch_size': 0}, {'batch_size': True}, {'group_by': 'unknown'},
+                       {'batch_size': 2, 'group_by': 'directory'}, {'parallel': {'enabled': True, 'workers': 0}}):
+            with self.subTest(fields=fields), self.assertRaises(test_scope.ScopeError):
+                test_scope.validate_runners([dict(base, **fields)], self.root)
+
     def test_dependency_scan_reads_mount_metadata_once_per_phase(self):
         from unittest.mock import patch
         import project_inventory
@@ -154,7 +187,8 @@ class TestScopeTests(ScopeFixture):
                                [{"suffixes": [".py"], "argv": [PY, "{tests}"]}], ["tests"])
         self.assertIn("src/calc.py", out["changed"])
         self.assertNotIn("web/card.tsx", out["changed"], "写集外未提交文件不能混入当前任务")
-        self.assertIn("tests/test_calc.py", out["changed"])
+        self.assertNotIn("tests/test_calc.py", out["changed"], '目录授权不代表未改测试也已变化')
+        self.assertIn('tests/test_calc.py', out['tests'], '实际源码变化仍映射相关测试')
         self.assertEqual(out["since"], self.base)
         self.assertEqual(out["write_set"], ["tests"])
 
@@ -641,6 +675,38 @@ class TaskScopeTests(ScopeFixture):
                            "--scope-file", scope, "--scope-hash", result["scope_hash"], "--env-id", "e1",
                            *(arg for value in result["run_ids"] for arg in ("--run-id", value)), expect=expect)
 
+    def test_light_child_selection_excludes_sibling_changes(self):
+        import entry_context
+        import test_scope
+        parent = self.context(write_set=['src/calc.py', 'web/card.tsx'])
+        child = entry_context.fork_context(self.root, parent, child_key='python',
+                                          write_set=['src/calc.py'])['execution_context']
+        self.write('src/calc.py', 'def f(): return 2\n')
+        self.write('web/card.tsx', 'export const c = 2\n')
+        plan = test_scope.derive(self.root, '', [], execution_context=child)
+        self.assertEqual(plan['changed'], ['src/calc.py'])
+        self.assertNotIn('web/card.spec.tsx', plan['tests'])
+
+    def test_child_does_not_force_sibling_acceptance_test(self):
+        import entry_context
+        import test_scope
+        parent = self.context(write_set=['src/calc.py', 'web/card.tsx'],
+                              acceptance=['tests/test_calc.py', 'web/card.spec.tsx'])
+        child = entry_context.fork_context(self.root, parent, child_key='python',
+                                          write_set=['src/calc.py'])['execution_context']
+        self.write('src/calc.py', 'def f(): return 2\n')
+        plan = test_scope.derive(self.root, '', [], execution_context=child)
+        self.assertEqual(plan['tests'], ['tests/test_calc.py'])
+        self.assertNotIn('web/card.spec.tsx', plan['acceptance_paths'])
+
+    def test_directory_context_does_not_reinclude_preexisting_dirty(self):
+        import test_scope
+        self.write('src/old.py', 'value=1\n')
+        parent = self.context(write_set=['src'])
+        self.write('src/calc.py', 'def f(): return 2\n')
+        plan = test_scope.derive(self.root, '', [], execution_context=parent)
+        self.assertEqual(plan['changed'], ['src/calc.py'])
+
     def test_post_settlement_failure_keeps_exit_and_invalidates_new_pass(self):
         from unittest.mock import patch
         import test_ledger
@@ -968,8 +1034,10 @@ class TaskScopeTests(ScopeFixture):
         self.assertEqual(initial["changed"], [])
         declared = self.context(write_set=["vendor/pkg/src"])
         _, explicit = self.task_scope(declared, runners)
-        self.assertEqual(explicit["tests"], ["vendor/pkg/tests/test_calc.py"])
+        self.assertEqual(explicit["tests"], [], '目录授权不重新纳入未变化的初始 dirty')
         self.write("vendor/pkg/src/calc.py", "value = 3\n")
+        _, changed = self.task_scope(declared, runners)
+        self.assertEqual(changed['tests'], ['vendor/pkg/tests/test_calc.py'])
         first_scope, first_plan = self.task_scope(first_context, runners)
         second_scope, second_plan = self.task_scope(second_context, runners)
         self.assertEqual(first_plan["changed"], ["vendor/pkg/src/calc.py"])

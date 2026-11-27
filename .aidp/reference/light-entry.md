@@ -16,9 +16,10 @@ python3 {{AIDP_HOME}}/scripts/light_task.py start --root . --version "{version}"
 
 宿主提供会话 ID 时，给 `start` 传 `--session-id`（或设置 `AIDP_SESSION_ID`），与 hook 的 `session_id` 对齐；被拦截时按提示中的当前会话 ID 绑定。只有 `entry_bound=true` 才完成编辑前置。无会话 ID 的宿主使用明确的项目任务标记；并行子 Agent 必须传各自 `AIDP_EXECUTION_CONTEXT`，不能依赖共享标记切换任务。测试范围校验和入口校验分别控制，开关与适配说明见 `agent-tools.md`。
 
-② **实现**：只改写集内文件。**编辑 `code/**` 之前显式 Read 对应规则**（Codex / DeepSeek Harness 没有按路径自动加载，漏读即漏守约定）：`code/frontend/**` → `{{AIDP_HOME}}/rules/frontend.md`；`code/backend/**` → `rules/backend.md`；任意 `code/**` → `rules/code.md`；其余路径无需读。
-③ **静态**：按 `flows/sprint-dev/verification-inputs.md` 先跑只读 `plan-validation`，再按项目工具链检查；缺工具/失败如实保留。
-④ **相关测试 + 汇总**（一条命令完成 选测 → 执行 → 汇总）：
+② **固定前置并行判定**：绑定入口后、实现前，按 `flows/sprint-dev/light-parallel.md` 列候选写集与读/改规模，运行 `dispatch_plan.py` 并输出 `decision`、`reasons`（冲突时列 `conflicts`）。满足 ≥2 个不相交写集且各读≥3 或改≥2 文件时默认并行；其余明确理由后串行。主流程为并行项 fork 受限子 context，子任务只用自己的 context，保留分片，不能沿用父宽 context 做窄选测。`start`/`revise` 的 `write_set_advice` 只提示宽目录成本；建议在用户需求内细化到具体文件或最小模块，不拒绝也不改授权。
+③ **实现**：只改写集内文件。**编辑 `code/**` 之前显式 Read 对应规则**（Codex / DeepSeek Harness 没有按路径自动加载，漏读即漏守约定）：`code/frontend/**` → `{{AIDP_HOME}}/rules/frontend.md`；`code/backend/**` → `rules/backend.md`；任意 `code/**` → `rules/code.md`；其余路径无需读。
+④ **静态**：按 `flows/sprint-dev/verification-inputs.md` 先跑只读 `plan-validation`，再按项目工具链检查并修复；缺工具/失败如实保留。修改稳定后再选测，固定顺序为「静态 → 选测 → 测试」，子任务和主流程合并验证都遵守。选测期间停止编辑；遇到 `TREE_CHANGED`，停止修改后重试，复用有效缓存。
+⑤ **相关测试 + 汇总**：并行子任务只用子 context 做 `select` → `run`，不写父 scope/汇总；全部返回并完成串行项后，主流程用父 context 对合并总写集完成静态检查，再统一生成最终总 scope、运行相关测试及汇总（一条命令完成 选测 → 执行 → 汇总）：
 
 ```bash
 EXECUTION_CONTEXT="{start 返回的 execution_context}"
@@ -27,8 +28,10 @@ python3 {{AIDP_HOME}}/scripts/light_task.py all --root . \
 # 也可分步：select（选测+白名单）→ run（命令守卫 + test_ledger run-scope + verify）→ report（verdict）
 ```
 
-⑤ **读 report**：`verdict=PASS` 直接收口；`FAIL` 看 `known_failure_diff.new_failures`，真实新失败交原实现者修复（自有 `bugfix` SKILL，`report_mode=evidence-only`；传父 context 与明确 failures/真实证据/写集/验收，见 `reference/skills.md`，不创建问题 Markdown）后只复验失败项（`run --reselect`）；`UNVERIFIED`/`unmapped`/`unrunnable` 如实列出，不得写成已覆盖或 PASS。
-⑥ **开发任务收口**：`entry_context.py check`（本任务必要证据齐备后 `complete`；只有上下文已有交付 grant 才要求相应回执，纯交付请求不走本步），参数取自 report 的 `scope_hash`、`run_ids`、`env_id` 与 static 的 `evidence_file`；围栏见 `light-context.md`「close」。终端结果按 task 范围列 PASS / 不适用 / 未执行 / FAIL / 阻塞，不写报告 Markdown、不建 Sprint。
+已知实际改动文件时给 `select/all` 加 `--changed-files FILE…`，脚本会核对任务基线，不能漏传任务变化；目录写集仍可用于授权。测试并发由 `run/all --max-parallel N` 启用，同时需在 runner 中声明 `parallel:{"enabled":true,"workers":1}` 和运行器要求的单 worker 参数；`batch_size` 或 `group_by:"directory"` 在选测时冻结显式文件分组。默认串行，共享根进程额度，具体配置见 `light-context.md`「test」。
+
+⑥ **读 report**：父 scope/报告与子 scope/证据文件分开保留；不得覆盖分片或把子任务通过直接当作合并通过。`verdict=PASS` 直接收口；`FAIL` 看 `known_failure_diff.new_failures`，真实新失败交原实现者修复（自有 `bugfix` SKILL，`report_mode=evidence-only`；传父 context 与明确 failures/真实证据/写集/验收，见 `reference/skills.md`，不创建问题 Markdown）后只复验失败项（`run --reselect`）；`UNVERIFIED`/`unmapped`/`unrunnable` 如实列出，不得写成已覆盖或 PASS。
+⑦ **开发任务收口**：`entry_context.py check`（本任务必要证据齐备后 `complete`；只有上下文已有交付 grant 才要求相应回执，纯交付请求不走本步），参数取自 report 的 `scope_hash`、`run_ids`、`env_id` 与 static 的 `evidence_file`；围栏见 `light-context.md`「close」。终端结果按 task 范围列 PASS / 不适用 / 未执行 / FAIL / 阻塞，不写报告 Markdown、不建 Sprint。
 
 ## 2. 硬边界（脚本与 hook 会拦，别绕）
 
@@ -43,7 +46,7 @@ python3 {{AIDP_HOME}}/scripts/light_task.py all --root . \
 | 无 Git | 可开发、显式文件本地测试、本地归档；自动 test_scope/相关证据链需有效 commit，记 `UNVERIFIED / unsupported:vcs-disabled`，不称完整闭环、不自动 `git init` |
 | 范围 | 写集扩大**在同一任务内增量**：`light_task.py extend-write-set --root . --execution-context CTX --add-write-set <路径>`（或 `entry_context.py revise … --add-write-set <路径>`），无需重新 start，旧选测/运行结论随之失效、重跑 select；light 不建 Sprint/卡片，不改 activeContext/progress |
 | 部署资产 | `docs/deployment` 内相关数据库脚本、实际配置文件可随开发/修复实时更新；操作手册、说明、清单和台账等文档性内容集中在版本规划/正式发布整理 |
-| 并行 | 可拆成 ≥2 个互不相交写集（各读≥3 或改≥2 文件）时按 `flows/sprint-dev/light-parallel.md` 先跑 `dispatch_plan.py` |
+| 并行 | 实现前固定按 `flows/sprint-dev/light-parallel.md` 跑 `dispatch_plan.py` 并输出决定理由；并行项使用受限子 context，父总 scope 与汇总由主流程独占，子分片保留 |
 
 ### 被入口护栏拦截的写法与替代（别靠试错）
 

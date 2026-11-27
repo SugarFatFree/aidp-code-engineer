@@ -313,6 +313,10 @@
       b.overview.statusText = status === "FAIL" ? "测试失败" : "测试未核验完成";
     }
   }
+  function caseSourceHtml(b) {
+    var label = b.caseSources && typeof b.caseSources.label === "string" && b.caseSources.label.trim() ? b.caseSources.label : "验收用例来源未记录，独立人工验收状态未知";
+    return '<section class="card"><h2>验收用例来源</h2><p><strong>' + esc(label) + '</strong></p></section>';
+  }
   function unitConclusionHtml(b) {
     if (!b.unitTests) return "";
     var status = b.testSummary.overallStatus;
@@ -371,7 +375,7 @@
       + '<thead><tr><th>Build</th><th>完成时间</th><th>功能完成率</th><th>测试通过率</th><th>结果</th><th>缺陷</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div></div></div>';
 
-    root.innerHTML = banner + unitConclusionHtml(latest) + cockpit + trend + grid;
+    root.innerHTML = banner + caseSourceHtml(latest) + unitConclusionHtml(latest) + cockpit + trend + grid;
 
     root.querySelectorAll("tr.clickable").forEach(function (tr) {
       tr.addEventListener("click", function () { location.hash = "#/build/" + encodeURIComponent(tr.getAttribute("data-build")); });
@@ -570,7 +574,7 @@
       + '</div>';
 
     // —— 组装（章节序号动态编号，可选章节无数据则跳过）——
-    var n = 0, html = head + unitConclusionHtml(b);
+    var n = 0, html = head + caseSourceHtml(b) + unitConclusionHtml(b);
     html += chap(++n, "执行概览", "整体" + (SK_WORD[sk] || "完成") + " · 待跟进 " + (o.pendingCount != null ? o.pendingCount : 0) + " 项", cockpit);
     html += chap(++n, "需求功能清单", featCount + " 项", featInner);
     html += chap(++n, b.unitTests ? "全量实测" : "测试详情",

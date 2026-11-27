@@ -213,6 +213,29 @@ class UnitReportContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '引用'):
                 merge.merge_unit_tests(source, unit(), BUILD, COMMIT)
 
+    def test_case_sources_are_derived_from_frozen_scope_not_report_claim(self):
+        result = unit()
+        result['testScope']['case_sources'] = {'mode': 'ai-development-baseline', 'primary': 'ai-development',
+                                             'counts': {'human-formal': 0, 'ai-development': 1}}
+        source = browser_payload()
+        source['caseSources'] = {'mode': 'human-formal', 'label': '已经独立人工验收'}
+        report = merge.merge_unit_tests(source, result, BUILD, COMMIT)
+        self.assertEqual(report['caseSources']['mode'], 'ai-development-baseline')
+        self.assertEqual(report['caseSources']['label'], 'AI生成验收基线，未经过独立人工验收（1 条）')
+        self.assertEqual(report['summary']['overallStatus'], 'PASS')
+        legacy = merge.merge_unit_tests(browser_payload(), unit(), BUILD, COMMIT)
+        self.assertEqual(legacy['caseSources']['mode'], 'unknown')
+        self.assertIn('来源未记录', legacy['caseSources']['label'])
+        result['testScope']['case_ids'].append('TC-2')
+        result['testScope']['case_sources'] = {'mode': 'human-primary-ai-supplement', 'primary': 'human-formal',
+                                             'counts': {'human-formal': 1, 'ai-development': 1}}
+        source['summary'].update(total=2, **{'pass': 2})
+        source['cases'].append({'id': 'TC-2', 'result': 'pass', 'title': 'AI补集'})
+        report = merge.merge_unit_tests(source, result, BUILD, COMMIT)
+        self.assertIn('人工正式用例主集 1 条', report['caseSources']['label'])
+        self.assertIn('AI研发自测补集 1 条', report['caseSources']['label'])
+        self.assertIn('AI补集未经过独立人工验收', report['caseSources']['label'])
+
     def test_legacy_report_is_compatible(self):
         report = browser_payload()
         self.assertEqual(emitter.validate_payload("test", report), [])
@@ -276,6 +299,32 @@ class UnitReportEmitTests(unittest.TestCase):
         self.assertEqual(result["overallStatus"], "UNVERIFIED")
         self.assertTrue(result["report_ready"])
         self.assertFalse(result["freeze_ready"])
+
+    def test_cli_emits_ai_source_and_exec_inherits_identical_provenance(self):
+        result = unit_not_applicable()
+        result['testScope']['case_sources'] = {'mode': 'ai-development-baseline', 'primary': 'ai-development',
+                                             'counts': {'human-formal': 0, 'ai-development': 1}}
+        proc, _ = self.emit(browser_payload(), result)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        tested = merge.read_payload(self.payload_path())
+        self.assertIn('AI生成验收基线，未经过独立人工验收', tested['caseSources']['label'])
+        payload = {'build': BUILD, 'version': 'V0.1.0', 'overview': {'statusKind': 'done'}, 'steps': [], 'features': []}
+        proc, _ = self.emit(payload, kind='exec', explicit=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        executed = merge.read_payload(self.payload_path('AI执行报告'))
+        self.assertEqual(executed['caseSources'], tested['caseSources'])
+        for kind in ('AI测试报告', 'AI执行报告'):
+            script = self.payload_path(kind).parent.parent / 'assets/app.js'
+            self.assertIn('caseSources', script.read_text())
+
+    def test_cli_missing_source_is_unknown_even_if_payload_claims_human(self):
+        source = browser_payload()
+        source['caseSources'] = {'mode': 'human-formal', 'label': '人工验收通过'}
+        proc, _ = self.emit(source, explicit=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = merge.read_payload(self.payload_path())
+        self.assertEqual(report['caseSources']['mode'], 'unknown')
+        self.assertIn('来源未记录', report['caseSources']['label'])
 
     def test_cli_legacy_does_not_invent_unit_result(self):
         proc, _ = self.emit(browser_payload(), explicit=False)

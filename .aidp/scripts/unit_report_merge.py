@@ -322,6 +322,30 @@ def finalize_ready(payload):
             and all(run.get("status") in ("PASS", "FAIL") for run in unit.get("runs", [])))
 
 
+def case_source_summary(scope):
+    """报告来源文案只由冻结 testScope 派生；用例作者身份不代表人工已执行验收。"""
+    unknown = {"mode": "unknown", "counts": None, "label": "验收用例来源未记录，独立人工验收状态未知"}
+    source = scope.get("case_sources") if isinstance(scope, dict) else None
+    if not isinstance(source, dict) or not isinstance(source.get("counts"), dict):
+        return unknown
+    counts = {key: source["counts"].get(key) for key in ("human-formal", "ai-development")}
+    if any(type(n) is not int or n < 0 for n in counts.values()):
+        return unknown
+    ids = scope.get("case_ids")
+    if not isinstance(ids, list) or not ids or sum(counts.values()) != len(ids):
+        return unknown
+    human, ai = counts["human-formal"], counts["ai-development"]
+    mode = source.get("mode")
+    if mode == "ai-development-baseline" and human == 0 and ai > 0 and source.get("primary") == "ai-development":
+        label = f"AI生成验收基线，未经过独立人工验收（{ai} 条）"
+    elif mode == "human-primary-ai-supplement" and human > 0 and source.get("primary") == "human-formal":
+        label = f"人工正式用例主集 {human} 条；AI研发自测补集 {ai} 条（AI补集未经过独立人工验收）" if ai else (
+            f"人工提供正式用例 {human} 条；独立人工验收执行状态未记录")
+    else:
+        return unknown
+    return {"mode": mode, "counts": counts, "label": label}
+
+
 def merge_unit_tests(payload, unit, build, commit, kind="test"):
     """返回合并副本，身份错误直接拒绝；统计保持实测原义，总判定另设字段。"""
     if not isinstance(payload, dict):
@@ -334,7 +358,8 @@ def merge_unit_tests(payload, unit, build, commit, kind="test"):
     if errors:
         raise ValueError("；".join(errors))
     result = deepcopy(payload)
-    result.update(build=build, commit=commit, unitTests=deepcopy(unit))
+    result.update(build=build, commit=commit, unitTests=deepcopy(unit),
+                  caseSources=case_source_summary(unit.get("testScope")))
     if unit.get("testScope") is not None:
         if payload.get("testScope") not in (None, unit["testScope"]):
             raise ValueError("实测与单测冻结 testScope 不一致")
@@ -369,6 +394,9 @@ def validate_report_units(payload, kind):
     if "unitTests" not in payload:
         return []
     errors = validate_unit_tests(payload["unitTests"], payload.get("build"), payload.get("commit"))
+    if isinstance(payload["unitTests"], dict) and "caseSources" in payload:
+        if payload["caseSources"] != case_source_summary(payload["unitTests"].get("testScope")):
+            errors.append("caseSources 与冻结 testScope 用例来源不一致")
     errors.extend(validate_failure_triage(payload))
     if payload.get("testScope") is not None or (payload.get("unitTests") or {}).get("testScope") is not None:
         errors.extend(validate_report_scope(payload))

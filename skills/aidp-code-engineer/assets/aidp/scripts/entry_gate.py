@@ -221,7 +221,10 @@ def check(root=".", target=None, env=None):
             except ContextError:
                 valid_target = False
             in_scope = valid_target and any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in scope)
-            if not in_scope and rel in ("code", "code/"):
+            if not in_scope and ctx['mode'] == 'light' and 'parent_task_id' in ctx:
+                result['missing'].append('write-set')
+                result['hints'].append('目标超出受限子任务写集或路径不安全；停止该写入并交回主流程重新判定范围与派发，不得自行扩权。')
+            elif not in_scope and rel in ("code", "code/"):
                 result["missing"].append("write-set")
                 result["hints"].append("目标是整个 code/ 目录，范围过大：缩小到具体的文件或子目录，且须在 write_set 内")
             elif not in_scope:

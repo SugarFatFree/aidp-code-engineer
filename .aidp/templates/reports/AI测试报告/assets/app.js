@@ -109,6 +109,10 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
     return passDenom(s) > 0 && s.pass === passDenom(s) && s.browserTested !== false ? "PASS" : "UNVERIFIED";
   }
   var UNIT_TEXT = { NOT_APPLICABLE: "单测不适用（全部用例仅浏览器实测）", PASS: "通过", FAIL: "失败", UNVERIFIED: "未核验，不能通过", TIMEOUT: "超时，不能通过", RUNNING: "运行中，不能收尾" };
+  function caseSourceHtml(b) {
+    var label = b.caseSources && typeof b.caseSources.label === "string" && b.caseSources.label.trim() ? b.caseSources.label : "验收用例来源未记录，独立人工验收状态未知";
+    return '<section class="section card"><h2>验收用例来源</h2><p><strong>' + esc(label) + '</strong></p></section>';
+  }
   function testConclusion(b) {
     if (!b.unitTests) return ""; // 历史报告不追溯补造单测结论。
     var status = testVerdict(b);
@@ -389,7 +393,7 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
       + '<thead><tr><th>Build</th><th>完成时间</th><th>通过率</th><th>通过</th><th>失败</th><th>阻塞</th><th>忽略</th><th>不适用</th><th>缺陷</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div></div>';
 
-    root.innerHTML = testConclusion(latest) + '<div class="section">' + kpi + '</div>' + trend + grid;
+    root.innerHTML = caseSourceHtml(latest) + testConclusion(latest) + '<div class="section">' + kpi + '</div>' + trend + grid;
 
     // 绑定行点击 → 跳转该 build 子页
     root.querySelectorAll("tr.clickable").forEach(function (tr) {
@@ -532,7 +536,7 @@ var RESULT_KEYS = ["pass", "fail", "block", "skip", "na"];
 
     var browserNA = b.browserTests && b.browserTests.status === "N/A";
     var realHead = '<h2>全量实测</h2>' + (browserNA ? '<p>浏览器 N/A · ' + esc(b.browserTests.reason) + '</p>' : '');
-    root.innerHTML = testConclusion(b) + '<section class="section">' + realHead + kpi + charts + caseTable + defTable + rtTable + '</section>' + renderUnitTests(b) + meta;
+    root.innerHTML = caseSourceHtml(b) + testConclusion(b) + '<section class="section">' + realHead + kpi + charts + caseTable + defTable + rtTable + '</section>' + renderUnitTests(b) + meta;
     } catch (e) { console.error("[report] renderBuild 失败", e); root.innerHTML = errBanner(b, e); }
   }
   function metaItem(k, v, wide) {

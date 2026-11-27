@@ -26,7 +26,7 @@
 | 当前execution context测试证据JSON | 创建 | 测试执行后，终端输出实际结论 |
 | `docs/bugfix/{version}/bugfix-*.md` | 创建/修改 | 发现 Bug 时创建；验证修复后更新 |
 
-> ⚠️ **`docs/testing/{version}/正式用例/` 不在 QA 写权限内**——它是**测试人员手动维护**的方案/用例（AIDP / QA **不写入本目录**，纯测试人员 territory），作 `/sprint-aiauto-test` **AI 自动化测试主集**（测试人员提供、Phase 2.0 优先执行）；QA 只**读取消费**，不创建/修改。单一信源见 `docs/init/06_版本与用户目录约定.md` §2「正式用例」。
+> ⚠️ **`docs/testing/{version}/正式用例/` 不在 QA 写权限内**——它是**测试人员手动维护**的方案/用例（AIDP / QA **不写入本目录**，纯测试人员 territory），作 `/sprint-aiauto-test` **AI 自动化测试主集**（测试人员提供、Phase 2.0 优先执行）；QA 只**读取消费**，不创建/修改。研发自测可按冻结清单作为去重补集；无人提供正式用例时，已授权 autopilot 可消费 AI 研发自测基线，报告明确来源，不取得正式目录写权限。单一信源见 `docs/init/06_版本与用户目录约定.md` §2「正式用例」。
 
 ---
 

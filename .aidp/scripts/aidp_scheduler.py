@@ -557,12 +557,14 @@ def do_install(root, a):
         res["error"] = "；".join(errs)
         return 2, res
     auth_text = (getattr(a, "authorization_text", None) or "").strip()
-    if auth_text:
-        from execution_policy import _text
-        if not _text(auth_text):
-            res["error"] = "--authorization-text 必须是用户真实的持续执行指令原文，不接受模板/占位值"
-            return 2, res
-    elif not authorization_available(root, "sprint-autopilot"):
+    auto_renew = getattr(a, "auto_renew_budget", 0)
+    request_id = (getattr(a, "authorization_request_id", None) or "").strip()
+    try:
+        _check_install_authorization(auth_text, request_id, auto_renew, load_authorization(root))
+    except ValueError as exc:
+        res["error"] = str(exc)
+        return 2, res
+    if not auth_text and not authorization_available(root, "sprint-autopilot"):
         res["warnings"].append(
             "未记录用户持续执行指令：无头 autopilot tick 没有可追溯的授权来源，每轮将以 UNVERIFIED 写告警并停止"
             "（kind=loop-no-authorization）。请在用户明确要求持续运行后用 `install --authorization-text \"<用户原话>\"` 重装；"
@@ -585,8 +587,11 @@ def do_install(root, a):
         res["commands"] = render_schtasks(root, agent, intervals)
         res["notes"].append("Windows 计划任务需手工在管理员终端执行上述 schtasks 命令（需可运行 bash 的环境）")
         if auth_text and not a.dry_run:
-            res["authorization"] = record_authorization(root, auth_text, getattr(a, "authorization_request_id", None),
-                                                    auto_renew=getattr(a, "auto_renew_budget", 0) or 0)
+            try:
+                res["authorization"] = record_authorization(root, auth_text, request_id, auto_renew=auto_renew)
+            except (ValueError, OSError) as exc:
+                res["error"] = str(exc)
+                return 2, res
         return 0, res
     else:
         res["error"] = f"不支持的平台：{plat}"
@@ -621,8 +626,29 @@ def do_install(root, a):
                        "installed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         locked.write = True
     if auth_text:
-        res["authorization"] = record_authorization(root, auth_text, getattr(a, "authorization_request_id", None))
+        try:
+            res["authorization"] = record_authorization(root, auth_text, request_id, auto_renew=auto_renew)
+        except (ValueError, OSError) as exc:
+            res["error"] = str(exc)
+            return 2, res
     return 0, res
+
+
+def _check_install_authorization(text, request_id, auto_renew, previous=None):
+    """预览与落盘共用校验；续额次数只能来自同次真实用户指令。"""
+    from execution_policy import _text
+    if type(auto_renew) is not int or auto_renew < 0:
+        raise ValueError("--auto-renew-budget 必须为非负整数（0 表示不授权自动续额）")
+    if (text or auto_renew) and not _text(text):
+        raise ValueError("--auto-renew-budget N>0 必须同次提供真实 --authorization-text；不接受模板/占位值")
+    if not previous or not text:
+        return
+    old_auto = previous.get("auto_renew") or {}
+    if request_id and previous.get("install_request_id") == request_id:
+        if previous.get("text") != text or old_auto.get("max", 0) != auto_renew:
+            raise ValueError("同一 authorization-request-id 的授权原文或自动续额次数冲突")
+    elif old_auto.get("pending"):
+        raise ValueError("自动续额 pending 尚未完成，不能替换其授权来源；请先恢复原续额")
 
 
 def record_authorization(root, text, request_id=None, auto_renew=0):
@@ -632,15 +658,26 @@ def record_authorization(root, text, request_id=None, auto_renew=0):
     续额只放宽执行资源额度，不授予任何业务动作；用完次数后仍按原路径冻结。
     """
     import uuid
-    rec = {"kind": "explicit-command", "persistent": True, "text": text.strip(),
-           "install_request_id": (request_id or "").strip() or "scheduler-install-" + uuid.uuid4().hex,
-           "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    if auto_renew and auto_renew > 0:
-        rec["auto_renew"] = {"max": int(auto_renew), "used": 0, "history": []}
-    _write_json(os.path.join(root, AUTHORIZATION_STATE_REL), rec)
+    from baseline_edit import LockedBaseline
+    from execution_policy import _text
+    if not _text(text):
+        raise ValueError("--authorization-text 必须是用户真实的持续执行指令原文")
+    text, request_id = text.strip(), (request_id or "").strip()
+    _check_install_authorization(text, request_id, auto_renew)
+    with LockedBaseline(os.path.join(root, AUTHORIZATION_STATE_REL), write=True) as locked:
+        locked.write = False
+        previous = locked.data
+        _check_install_authorization(text, request_id, auto_renew, previous)
+        if request_id and previous.get("install_request_id") == request_id:
+            rec = previous  # 同来源重装保留 used / history / pending，不重置次数。
+        else:
+            rec = {"kind": "explicit-command", "persistent": True, "text": text,
+                   "install_request_id": request_id or "scheduler-install-" + uuid.uuid4().hex,
+                   "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                   "auto_renew": {"max": auto_renew, "used": 0, "history": []}}
+            locked.data, locked.write = rec, True
     out = {k: rec[k] for k in ("install_request_id", "recorded_at")}
-    if "auto_renew" in rec:
-        out["auto_renew_budget"] = rec["auto_renew"]["max"]
+    out["auto_renew_budget"] = (rec.get("auto_renew") or {}).get("max", 0)
     return out
 
 
@@ -1335,39 +1372,67 @@ def _auto_renew_budget(root, version, path, items):
     只放宽执行资源额度（每次加一个 sprint-autopilot 基本量），来源是 install 记录的用户原话；
     不授予 deploy/full-regression 等业务动作，不清零已用量；次数用完或失败则返回 False，沿原路径冻结等人。
     """
-    rec = load_authorization(root)
-    auto = rec.get("auto_renew") if rec else None
-    if not isinstance(auto, dict) or auto.get("used", 0) >= auto.get("max", 0):
-        return False
     try:
-        from execution_policy import COMMAND_BUDGETS
+        from baseline_edit import LockedBaseline
+        from execution_policy import COMMAND_BUDGETS, CONCURRENT_RESOURCES, budget_exhaustion
         from entry_context import load_context
         import autopilot_unfreeze as unfreeze
-        base = COMMAND_BUDGETS["sprint-autopilot"]
-        limits = load_context(root, path)["execution_budget"]
-        new = {row["resource"]: max(limits[row["resource"]], row["required"]) + base[row["resource"]] for row in items
-               if row["resource"] in base and row["resource"] in limits}
-        if not new:
+        ledger = os.path.join(root, AUTHORIZATION_STATE_REL)
+        if not load_authorization(root):
             return False
-        number = auto.get("used", 0) + 1
-        source = {"kind": "user-text", "request_id": f"{rec['install_request_id']}#auto-renew-{number}",
-                  "text": rec["text"], "persistent": True}
-        result = unfreeze.renew_budget(root, version, new, source)
-    except (ImportError, OSError, ValueError, KeyError):
+        # 第一段事务先固定来源、绝对目标和已消费次数。退出锁并成功落盘后，才允许 revise。
+        with LockedBaseline(ledger, write=True) as locked:
+            locked.write = False
+            rec = locked.data
+            auto = rec.get("auto_renew")
+            if (not isinstance(auto, dict) or type(auto.get("max")) is not int
+                    or type(auto.get("used")) is not int or not 0 <= auto["used"] <= auto["max"]):
+                return False
+            pending = auto.get("pending")
+            if pending:
+                if pending.get("version") != version or pending.get("path") != path:
+                    return False
+            else:
+                if auto["used"] >= auto["max"] or budget_exhaustion(root, path)[0] != "exhausted":
+                    return False
+                base = COMMAND_BUDGETS["sprint-autopilot"]
+                limits = load_context(root, path)["execution_budget"]
+                new = {row["resource"]: limits[row["resource"]] + base[row["resource"]] for row in items
+                       if row["resource"] in base and row["resource"] in limits
+                       and row["resource"] not in CONCURRENT_RESOURCES}
+                if not new:
+                    return False
+                number = auto["used"] + 1
+                pending = {"version": version, "path": path, "number": number, "new_limits": new,
+                           "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                           "source": {"kind": "user-text", "request_id": f"{rec['install_request_id']}#auto-renew-{number}",
+                                      "text": rec["text"], "persistent": True}}
+                auto["used"], auto["pending"] = number, pending
+                locked.write = True
+        # 第二段持同一台账锁重放。其他 tick/重装不能覆盖 pending，也不能重复消费次数。
+        with LockedBaseline(ledger, write=True) as locked:
+            locked.write = False
+            auto = locked.data.get("auto_renew") or {}
+            if auto.get("pending") != pending:
+                return budget_exhaustion(root, path)[0] == "renewed"
+            result = unfreeze.renew_budget(root, version, pending["new_limits"], pending["source"])
+            if not result.get("renewed") or (result.get("unfreeze") or {}).get("errors"):
+                return False
+            # 即使这一基本量尚不足以覆盖耗尽项，次数也已消费，不能重复领取。
+            auto.setdefault("history", []).append({"version": version, "at": pending["at"],
+                "number": pending["number"], "new_limits": pending["new_limits"]})
+            del auto["pending"]
+            locked.write = True
+    except (ImportError, OSError, ValueError, KeyError, TypeError):
         return False
-    if not result.get("renewed") or result.get("budget_state") == "exhausted":
-        return False
-    auto["used"] = auto.get("used", 0) + 1
-    auto.setdefault("history", []).append({"version": version, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                                           "new_limits": new})
-    _write_json(os.path.join(root, AUTHORIZATION_STATE_REL), rec)
     try:
         from aidp_paths import append_alert
         append_alert(root, kind="loop-budget-auto-renewed", version=version, renewal=f"{auto['used']}/{auto['max']}",
-                     new_limits=new, note="根预算按 install 时的用户授权自动续额；只放宽执行资源，不授予业务动作")
+                     new_limits=pending["new_limits"], budget_state=result.get("budget_state"),
+                     note="根预算按 install 时的用户授权自动续额；只放宽累计执行资源，不授予业务动作")
     except (ImportError, OSError, ValueError):
         pass
-    return True
+    return result.get("budget_state") != "exhausted"
 
 
 def _freeze_exhausted_budgets(root):
@@ -1380,19 +1445,26 @@ def _freeze_exhausted_budgets(root):
     if not isinstance(state, dict):
         return []
     roots = {}
+    rec = load_authorization(root) or {}
+    pending = (rec.get("auto_renew") or {}).get("pending") or {}
     for version, node in (state.get("versions") or {}).items():
-        if isinstance(node, dict) and not node.get("needs_human") and node.get("autopilot_root_context"):
-            roots[version] = node["autopilot_root_context"]
+        if not isinstance(node, dict) or not node.get("autopilot_root_context"):
+            continue
+        recovering = pending.get("version") == version and pending.get("path") == node["autopilot_root_context"]
+        if not node.get("needs_human") or (node.get("freeze_reason") == "budget-exhausted" and recovering):
+            roots[version] = (node["autopilot_root_context"], recovering, bool(node.get("needs_human")))
     frozen = []
     try:
         from execution_policy import budget_exhaustion
     except ImportError:
         return []
-    for version, path in sorted(roots.items()):
+    for version, (path, recovering, already_frozen) in sorted(roots.items()):
         status, items = budget_exhaustion(root, path)
-        if status != "exhausted":
+        if status != "exhausted" and not recovering:
             continue
         if _auto_renew_budget(root, version, path, items):
+            continue
+        if already_frozen:
             continue
         need = ",".join(f"{row['resource']}>={row['required']}" for row in items)
         rc = _run_script(root, "autopilot_fail_handle.py", "--version", version, "--phase", "budget-exhausted",

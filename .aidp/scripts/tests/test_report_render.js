@@ -179,6 +179,26 @@ const timeoutExec = { build: unitBuild, version: "V0.1.0", commit: unitCommit, u
 r = render(EXEC, "__AIRUNS__", timeoutExec, unitBuild);
 check(r.html.includes("总体结论：FAIL") && r.html.includes("TIMEOUT"), "执行报告也保留失败与超时双重事实");
 
+console.log("⑥ 冻结用例来源在测试/执行报告中真实可见");
+for (const [app, globalName] of [[TEST, "__BUILDS__"], [EXEC, "__AIRUNS__"]]) {
+  const payload = { build: unitBuild, version: "V0.1.0", buildNo: 123, commit: unitCommit,
+    summary: { total: 1, pass: 1, fail: 0, block: 0, skip: 0, na: 0, passRate: 1 },
+    testSummary: { total: 1, pass: 1, fail: 0, block: 0, skip: 0, na: 0, passRate: 1 },
+    overview: { statusKind: "done" }, cases: [{ id: "TC-1", title: "用例", result: "pass" }], steps: [], features: [] };
+  for (const label of ["AI生成验收基线，未经过独立人工验收（1 条）",
+      "人工正式用例主集 1 条；AI研发自测补集 1 条（AI补集未经过独立人工验收）"]) {
+    payload.caseSources = { label };
+    r = render(app, globalName, payload, unitBuild);
+    check(!r.threw && r.html.includes(label), app + "：展示来源与人工验收限制");
+  }
+  delete payload.caseSources;
+  r = render(app, globalName, payload, unitBuild);
+  check(!r.threw && r.html.includes("验收用例来源未记录，独立人工验收状态未知"), app + "：旧报告来源保持未知");
+  payload.caseSources = { label: '<img src=x onerror="alert(1)">' };
+  r = render(app, globalName, payload, unitBuild);
+  check(r.html.includes("&lt;img") && !r.html.includes('<img src=x'), app + "：来源文字安全转义");
+}
+
 console.log();
 if (fails.length) { console.log("❌ " + fails.length + " 项失败"); process.exit(1); }
 console.log("✅ 全部通过"); process.exit(0);

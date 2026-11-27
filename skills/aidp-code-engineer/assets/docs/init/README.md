@@ -50,7 +50,7 @@ AIDP 是一套由 **AI 编码 Agent（Claude Code / Codex / DeepSeek Harness）+
 ### 4. 发布版本
 
 ```bash
-/version V0.1.0                        # 所有 Sprint 完成后打 tag
+/version V0.1.0 --release              # 显式进入发布流程，按发布门与已有授权完成提交、tag 和推送
 ```
 
 ## 📁 目录结构说明
@@ -117,7 +117,8 @@ project/
 | 命令 | 说明 |
 |------|------|
 | `/version {version} "{desc}"` | 创建新版本（自动串联需求/设计/计划） |
-| `/version {version}` | 发布版本（打 tag） |
+| `/version {version}` | 按输入与规划状态选择新规划、补件、增量或无操作；不凭状态取得发布授权 |
+| `/version {version} --release` | 显式发布；提交、tag、推送按发布门与已有授权执行 |
 
 ### Sprint 执行
 
@@ -181,28 +182,17 @@ project/
 2. 批量执行 Sprint
    /sprint-batch
    ↓
-3. 发布版本
-   /version V0.1.0
+3. 显式发布版本
+   /version V0.1.0 --release
 ```
 
 ### 单个 Sprint 流程
 
+```bash
+/sprint-full 001   # 按已规划的 Sprint-001 串联 start → dev → test → 必要修复 → close
 ```
-1. 启动 Sprint
-   /sprint-start {NNN}
-   ↓
-2. 开发实现
-   /sprint-dev "功能描述"
-   ↓
-3. 测试验收
-   /sprint-test
-   ↓
-4. 修复问题
-   /sprint-bugfix
-   ↓
-5. 关闭 Sprint
-   /sprint-close {NNN}
-```
+
+如需分步执行，先 `/sprint-start 001`，保存其返回的真实 `execution_context` 路径；后续 dev/test/bugfix/close 必须继承该路径并指明同一个 Sprint，具体参数见各命令正文。不能在 start 后用无上下文的 `/sprint-dev "功能描述"` 或 `/sprint-test` 接续：这会成为独立 light 任务。
 
 > ⚠️ **详细设计不在这里**：它在 `/version` 版本规划期一次性生成，Sprint 执行期**只读取、不重新生成**（约定 1）。
 

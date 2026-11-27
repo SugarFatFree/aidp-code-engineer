@@ -69,9 +69,14 @@ done
 
 **支持的来源**：JSON 文件根 `suites` 或 `test_plan.suites`；Markdown 契约卡中**恰好一个**语言标记为 `aidp-test-plan` 的 fenced JSON 块，内容为 `schema:1`、`suites` 数组。项目测试配置应在部署前形成该可解析块；缺已提交来源记 `UNVERIFIED`，不得发明命令、读脏工作区配置冒充来源，不为补来源提交或部署。
 
-验收基线 JSON：`version`、与 manifest 一致的 `acceptance_tests/dependencies`、`cases:[{id,test_files}]`、`browser_only:[ID]`、`case_index:{path,sha256}`（指向 `docs/testing/{version}/正式用例/00_*索引*.md`）。`cases[].id` 须与本版本正式用例标题完全一致；`test_files` 非空，仅 `browser_only` 内的 ID 可为空，二者互斥。`unit_tests:[]` 且带 `unit_discovery`（status=none-found、files=0、checked，plan-init 发现为空时写入）时 manifest 带 `unit_applicability:{status,reason:all-cases-browser-only,evidence}`，单测返回 `NOT_APPLICABLE`；手写空清单无证据 `UNVERIFIED`；先过索引核验；不是 PASS，总体通过须有真实浏览器实测，报告醒目显示依据。浏览器与单测用同一 manifest hash。
+验收基线 JSON：`version`、与 manifest 一致的 `acceptance_tests/dependencies`、`cases:[{id,test_files}]`、`browser_only:[ID]`，以及 `case_index`、`case_indexes`、`case_books:[{path,sha256,source,case_ids}]`、`case_sources`。册正文与索引均绑定部署 commit 的 SHA256；人工主集优先，AI研发自测按 TC-ID 去重补齐。无人工用例时仅同版本已授权 autopilot 根可冻结 `ai-development-baseline`，报告不得冒称人工验收；缺有效用例仍 `UNVERIFIED`。`phase-2-1.md` 消费同一 manifest。
 
-**manifest 由谁何时生成**：`phase-0-6b.md` 委派围栏（及换绑回调围栏）在 `fork-test-build` 前调用 `build_unit_test.py freeze --root --version --build --commit [--source] [--out]`，commit 取 baseline 本 build 的 `push_commit`。freeze 只读该 commit：来源取 `--source`，缺省查 `docs/testing/{version}/test-plan.json`、`docs/testing/test-plan.json`；必填 `unit_tests`（本版本单测文件，决定 `acceptance_tests`；须在 commit 内、被某 runner 的 suffixes 命中；未声明即 `UNVERIFIED`），可选 `case_tests:{TC-ID:[测试文件]}`、`dependencies`；未入 case_tests 的正式用例默认归浏览器实测路（摘要列出）；`needs_review`（发现测试文件却无可用 runner）拒绝冻结。正式用例取本版本册（排除 `_` 增量册与方案/账号/总览/索引）；sha256 由脚本算，产物写入 `memory/.aidp/version-freeze/{version}/{build}/`。失败 `UNVERIFIED`（缺口与应补字段，退出码 3，围栏记账、不委派）；同 build 异清单拒绝覆盖。来源由项目侧 `build_unit_test.py plan-init --root --version` 在部署前一次性发现并写草稿（提交后冻结；运行期不全仓发现；已存在不覆盖）。
+`test_files` 非空，仅 `browser_only` 内 ID 可为空，二者互斥。`unit_tests:[]` 须有 `unit_discovery:{status:none-found,files:0,checked:[核验依据]}`；无证据不能认定单测不适用。manifest 带 `unit_applicability:{status,reason:all-cases-browser-only,evidence}` 时返回 `NOT_APPLICABLE`，不是 PASS，总体通过仍须真实实测。
+
+**冻结入口**：`phase-0-6b.md` 委派/换绑前运行 `build_unit_test.py freeze`，继承原 autopilot 根与本 build 的 `push_commit`。来源缺省 `docs/testing/{version}/test-plan.json` 或 `docs/testing/test-plan.json`；必填 `unit_tests`，可选 `case_tests:{TC-ID:[测试文件]}`、`dependencies`；未映射用例归浏览器路，`needs_review` 拒绝冻结。产物在 `memory/.aidp/version-freeze/{version}/{build}/`；同 build 异清单不覆盖；失败退出3，记账不委派。
+
+**部署前生成来源**：`build_unit_test.py plan-init --root --version [--execution-context] [--test PATH]` 只采用本版索引明确引用的测试路径，或同版本授权任务起点以来实际改动的测试文件；宽目录授权不等于版本归属。`--test` 只能收窄已有依据候选。按每个测试所在实际模块识别配置和 cwd；未知归属/运行器标 `needs_review`；原授权开发 Agent 在部署前按 `review_notes` 补可追溯关联（含未改动测试），重跑后再提交，不能无依据清标记或转成人工必需。已有文件不覆盖。
+
 
 每个 suite 的字段为：
 

@@ -59,35 +59,29 @@
 eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command aiauto-test --shell)"
 # 当前版本全量只能来自真实autopilot委派的冻结manifest。
 EXECUTION_CONTEXT="${EXECUTION_CONTEXT:?必须继承真实委派child}"
-PRIMARY_CASES=$(python3 - "$EXECUTION_CONTEXT" "$TARGET_VERSION" "$BUILD" <<'VERSION_CASES'
-import json, subprocess, sys
+CASE_SELECTION=$(python3 - "$EXECUTION_CONTEXT" "$TARGET_VERSION" "$BUILD" <<'VERSION_CASES'
+import json, shlex, sys
 from pathlib import Path
 sys.path.insert(0, "{{AIDP_HOME}}/scripts")
 from entry_context import load_context
 from execution_policy import validate_test_binding
-from build_unit_test import load_plan, validate_case_index, formal_case_books
+from build_unit_test import load_plan, browser_case_selection
 root = Path.cwd()
 ctx = load_context(root, sys.argv[1], migrate=False)
 validate_test_binding(root, ctx, sys.argv[2], sys.argv[3])
 plan = json.loads(Path(ctx["test_manifest"]["path"]).read_text())
 load_plan(root, sys.argv[2], sys.argv[3], plan["commit"], plan)
-ids = set(validate_case_index(root, plan))
-TS = "{{AIDP_HOME}}/skills/auto-test-runner/scripts/tasks_state.py"
-def book_ids(book):  # tasks_state.py ids：只读列出册内用例 ID，不建 tasks.md、不构成执行范围
-    out = subprocess.run([sys.executable, TS, "ids", str(book), "--json"], check=True, capture_output=True, text=True)
-    return {item["id"] for item in json.loads(out.stdout)["cases"]}
-for path in formal_case_books(root, sys.argv[2]):  # 与 validate_case_index 共用同一排除规则
-    selected = book_ids(path)
-    if selected & ids:
-        if not selected <= ids:
-            raise SystemExit("UNVERIFIED: 用例册含未授权ID")
-        print(path.relative_to(root))
+selection = browser_case_selection(root, plan)
+for key, value in {"PRIMARY_CASES": " ".join(selection["primary"]),
+                   "SUPPLEMENT_CASES": " ".join(selection["supplement"]),
+                   "SUPPLEMENT_UNIQUE": " ".join(selection["supplement"]),
+                   "CASE_SOURCE_MODE": selection["case_sources"]["mode"]}.items():
+    print(key + "=" + shlex.quote(value))
 VERSION_CASES
 ) || exit $?
+eval "$CASE_SELECTION"
 [ -n "$PRIMARY_CASES" ] || { printf '%s\n' 'UNVERIFIED: 当前版本完整用例清单缺失'; exit 2; }
-SUPPLEMENT_CASES=""
-SUPPLEMENT_UNIQUE=""
-CASE_SOURCE_MODE="当前版本冻结验收清单"
+# 用例来自部署commit冻结快照；人工主集优先、研发补集按TC-ID去重，来源由manifest记录。
 # 必要回归依赖仅从manifest.dependencies消费；不自动并入历史[回归]册。
 
 # E. ★ 渲染模式拆分（仅 DRIVER=mcp-remote 远程才拆延后集）：
@@ -117,7 +111,7 @@ python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py set --command aiauto-test 
 # RENDER_MODE=headed（已整体有头）：全部用例本轮都能跑，DEFERRED_HEADED_CASES 为空、无延后
 ```
 
-> ★ 报告写法（Phase 3）：主集与补集**分两段**呈现 — 「① 主集用例（来源：测试人员）」+ 「② 补集用例（来源：研发自测查漏）」；执行顺序为主集 → 补集；若主集 = 研发自测唯一来源，则只输出单段。**仅 `DRIVER=mcp-remote` 远程无头模式下，被 E 段拆出的「必须有头」用例不计入本轮主/补集执行，仅在 Phase 3.5「待覆盖」段列出；`DRIVER=cli` 本地则全部计入本轮（含必须有头）。**
+> ★ 报告写法（Phase 3）：依据 manifest/acceptance 的 `case_sources`、`case_books[].source/case_ids` 标注来源。人工主集 + 研发补集时分两段呈现并按此顺序执行；`ai-development-baseline` 只输出「AI 研发自测基线」单段，**不得称为人工验收或测试人员正式用例**。每册正文 SHA256 绑定部署 commit，选集前校验当前内容，再消费去重的冻结快照；缺有效用例仍未核验。**仅 `DRIVER=mcp-remote` 远程无头模式下，被 E 段拆出的「必须有头」用例不计入本轮主/补集执行，仅在 Phase 3.5「待覆盖」段列出；`DRIVER=cli` 本地则全部计入本轮（含必须有头）。**
 
 ### 2.0.7 ★ 前置数据体检门（P0-6 — 前置数据缺则整批 block，不逐条跑到一半才发现）
 

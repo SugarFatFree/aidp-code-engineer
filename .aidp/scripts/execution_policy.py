@@ -342,6 +342,7 @@ def policy_fields(root, paths, acceptance, *, additional_grants=None, authorizat
         raise PolicyError("UNAUTHORIZED", "未知 task_scope")
     actions, sources, budget = set(SCOPE_ACTIONS[kind]), [], {**DEFAULT_BUDGET, **adaptive_defaults(root)}
     configured = read_execution_policy(root)
+    project_budget = None
     if configured and (not configured["authorization_source"].get("command") or
                        configured["authorization_source"]["command"].lstrip("/") == command):
         chosen = validate_source(configured["authorization_source"])
@@ -351,7 +352,8 @@ def policy_fields(root, paths, acceptance, *, additional_grants=None, authorizat
         actions.difference_update(source_removals(chosen))
         sources.append(dict(chosen, actions=sorted(selected),
                             budget_keys=sorted(configured.get("execution_budget") or {})))
-        budget = normalize_budget(configured.get("execution_budget"), budget)
+        project_budget = configured.get("execution_budget")
+        budget = normalize_budget(project_budget, budget)
     if additional_grants or authorization_source:
         source = validate_source(authorization_source)
         grants = _actions(additional_grants or [])
@@ -361,7 +363,8 @@ def policy_fields(root, paths, acceptance, *, additional_grants=None, authorizat
             if grants - public - BASE_ACTIONS:
                 raise PolicyError("UNAUTHORIZED", "额外动作超出公开命令职责，需要独立 user-text 授权")
             grants.update(public)
-            budget = dict(COMMAND_BUDGETS.get(source["command"].lstrip("/"), budget))
+            # 命令职责预算只补缺省，不能覆盖项目已明确选择的限额（含 0）。
+            budget = normalize_budget(project_budget, COMMAND_BUDGETS.get(source["command"].lstrip("/"), budget))
         actions.update(grants)
         actions.difference_update(source_removals(source))
         sources.append(dict(source, actions=sorted(grants), budget_keys=[]))
@@ -438,6 +441,8 @@ def require_delegable(ctx, action):
     root, current = _loaded(ctx)
     action = canonical_action(action)
     _budget_owner(Path(root).resolve(), current)
+    if current.get("mode") == "light" and current.get("parent_task_id"):
+        raise PolicyError("UNAUTHORIZED", "light 子任务仅执行已委派动作，不得再次委派", action=action)
     if action not in ACTIONS or action not in current["allowed_actions"]:
         raise PolicyError("UNAUTHORIZED", f"动作 {action} 未获本任务授权，无权委派", action=action)
     if action == "full-regression" and not any(_autopilot_source(source) for source in current["authorization_source"]):
@@ -997,10 +1002,20 @@ SLOT_LEASE_SECONDS = 3600.0
 QUEUE_TTL_SECONDS = 1800.0   # 排队票据最长保留时间：调用方消失（崩溃/被 kill）后不会永久占着队首
 
 
+def _pid_identity(pid):
+    """Linux starttime 区分 PID 复用；其它平台保守依赖存活检测。"""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
 def _pid_alive(pid):
     import os
+    if type(pid) is not int or pid <= 0:
+        return False
     try:
-        os.kill(int(pid), 0)
+        os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except (PermissionError, OSError, ValueError, TypeError):
@@ -1016,26 +1031,44 @@ def _reap(state, now):
     for key in ("slots", "queue"):
         keep = []
         for row in state[key]:
-            expired = (key == "slots" and row.get("lease_until", 0) < now) or \
+            local_pid = row.get("host") == host and type(row.get("pid")) is int and row["pid"] > 0
+            alive = local_pid and _pid_alive(row["pid"])
+            identity = _pid_identity(row["pid"]) if alive else None
+            if alive and row.get("pid_identity") and identity and row["pid_identity"] != identity:
+                alive = False
+            lease = row.get("lease_until", 0)
+            expired = (key == "slots" and not alive and
+                       (not isinstance(lease, (int, float)) or not math.isfinite(lease) or lease < now)) or \
                       (key == "queue" and now - row.get("enqueued_at", now) > QUEUE_TTL_SECONDS)
-            dead = row.get("host") == host and row.get("pid") and not _pid_alive(row["pid"])
+            dead = local_pid and not alive
             (reaped if expired or dead else keep).append(row)
         state[key] = keep
     return reaped
 
 
 def acquire_slot(root, ctx, kind, *, action=None, wait_seconds=0.0, lease_seconds=SLOT_LEASE_SECONDS,
-                 poll_seconds=0.2, label="", pid=None):
+                 poll_seconds=0.2, label="", pid=None, cancel_event=None, group=None):
     """取得一个并发槽位（agents / processes），与父任务、子 Agent、嵌套流程共用根任务同一并发池。
 
     满额时先进队（队列可见、FIFO、可 cancel_queued）；wait_seconds 内轮询，超时返回 status=QUEUED 而不是失败，
     调用方可继续等待或取消。累计 used 只作统计。槽位必须经 release_slot 或 concurrency_slot 释放。
+    声明 group 时与根池内全部同组槽位互斥，不受上下文、run_scope 或类别边界分割。
     """
     import os
     import socket
     from entry_context import _task_lock, _context_path, _atomic_json
     if kind not in SLOT_KINDS:
         raise PolicyError("UNVERIFIED", f"未知并发类别 {kind}")
+    for name, value, positive in (("lease_seconds", lease_seconds, True),
+                                  ("wait_seconds", wait_seconds, False), ("poll_seconds", poll_seconds, True)):
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                or value < 0 or positive and value == 0):
+            raise PolicyError("UNVERIFIED", f"{name} 必须为{'正' if positive else '非负'}有限秒数")
+    if pid is not None and (type(pid) is not int or pid < 0):
+        raise PolicyError("UNVERIFIED", "pid 必须是非负整数；0 使用有限租约")
+    if group is not None and (not isinstance(group, str) or not group.strip()):
+        raise PolicyError("UNVERIFIED", "group 必须是非空共享资源名")
+    group = group.strip() if group is not None else None
     resource = SLOT_KINDS[kind]
     root = Path(root).resolve()
     current = _context(root, ctx)
@@ -1045,46 +1078,57 @@ def acquire_slot(root, ctx, kind, *, action=None, wait_seconds=0.0, lease_second
     ticket_id = str(uuid.uuid4())
     deadline = time.monotonic() + max(0.0, wait_seconds)
     holder_pid = os.getpid() if pid is None else pid
-    queued = False
-    while True:
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise PolicyError("CANCELLED", "并发等待已取消")
+            with _task_lock(root, _context_path(root, owner["task_id"])) as locked:
+                current = _context(root, ctx)
+                path, state = _budget_state(root, locked)
+                _reap(state, time.time())
+                limit = min(locked["execution_budget"][resource], current["execution_budget"][resource])
+                if limit == 0:
+                    raise PolicyError("BUDGET_EXCEEDED", f"{resource} 并发上限为 0，不允许启动", resource=resource,
+                                      limit=0, recovery=recovery_path(resource))
+                active = [row for row in state["slots"] if row["resource"] == resource]
+                waiting = [row for row in state["queue"] if row["resource"] == resource]
+                mine = next((row for row in waiting if row["ticket_id"] == ticket_id), None)
+                first = (waiting[0]["ticket_id"] == ticket_id) if mine else not waiting
+                group_busy = group is not None and any(row.get("group") == group for row in state["slots"])
+                if len(active) < limit and first and not group_busy:
+                    if mine:
+                        state["queue"] = [row for row in state["queue"] if row["ticket_id"] != ticket_id]
+                    slot = {"slot_id": str(uuid.uuid4()), "kind": kind, "resource": resource, "task_id": current["task_id"],
+                            "label": label, "group": group, "pid": holder_pid, "pid_identity": _pid_identity(holder_pid), "host": socket.gethostname(),
+                            "chain": os.environ.get("AIDP_TICK_COMMAND", ""), "tick": os.environ.get("AIDP_TICK_TOKEN", ""),
+                            "acquired_at": time.time(), "lease_until": time.time() + lease_seconds}
+                    state["slots"].append(slot)
+                    # 槽位累计启动数单独统计（不并入 used：验证预留/reserve_budget 已按各自口径记 used，避免双计）
+                    state["started"][resource] = state["started"].get(resource, 0) + 1
+                    _atomic_json(root, path, state)
+                    return {"status": "ACQUIRED", "slot": slot, "limit": limit, "active": len(active) + 1}
+                if mine is None:
+                    state["queue"].append({"ticket_id": ticket_id, "kind": kind, "resource": resource,
+                                           "task_id": current["task_id"], "label": label, "group": group, "pid": holder_pid,
+                                           "host": socket.gethostname(), "enqueued_at": time.time(),
+                                           "chain": os.environ.get("AIDP_TICK_COMMAND", ""),
+                                           "tick": os.environ.get("AIDP_TICK_TOKEN", "")})
+                else:
+                    mine["enqueued_at"] = time.time()
+                _atomic_json(root, path, state)
+                position = 1 + [row["ticket_id"] for row in state["queue"] if row["resource"] == resource].index(ticket_id)
+                snapshot = {"status": "QUEUED", "ticket_id": ticket_id, "position": position, "limit": limit,
+                            "active": len(active), "resource": resource, "group": group, "group_busy": group_busy}
+            if time.monotonic() >= deadline:
+                return snapshot
+            time.sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
+    except BaseException:
+        # 中断或上下文修订后仍按取得队列时的根身份清理，不能让活跃父 PID 的孤儿队列挡住后续工作。
         with _task_lock(root, _context_path(root, owner["task_id"])) as locked:
-            current = _context(root, ctx)
             path, state = _budget_state(root, locked)
-            _reap(state, time.time())
-            limit = min(locked["execution_budget"][resource], current["execution_budget"][resource])
-            if limit == 0:
-                raise PolicyError("BUDGET_EXCEEDED", f"{resource} 并发上限为 0，不允许启动", resource=resource,
-                                  limit=0, recovery=recovery_path(resource))
-            active = [row for row in state["slots"] if row["resource"] == resource]
-            waiting = [row for row in state["queue"] if row["resource"] == resource]
-            mine = next((row for row in waiting if row["ticket_id"] == ticket_id), None)
-            first = (waiting[0]["ticket_id"] == ticket_id) if mine else not waiting
-            if len(active) < limit and first:
-                if mine:
-                    state["queue"] = [row for row in state["queue"] if row["ticket_id"] != ticket_id]
-                slot = {"slot_id": str(uuid.uuid4()), "kind": kind, "resource": resource, "task_id": current["task_id"],
-                        "label": label, "pid": holder_pid, "host": socket.gethostname(),
-                        "chain": os.environ.get("AIDP_TICK_COMMAND", ""), "tick": os.environ.get("AIDP_TICK_TOKEN", ""),
-                        "acquired_at": time.time(), "lease_until": time.time() + lease_seconds}
-                state["slots"].append(slot)
-                # 槽位累计启动数单独统计（不并入 used：验证预留/reserve_budget 已按各自口径记 used，避免双计）
-                state["started"][resource] = state["started"].get(resource, 0) + 1
-                _atomic_json(root, path, state)
-                return {"status": "ACQUIRED", "slot": slot, "limit": limit, "active": len(active) + 1}
-            if mine is None:
-                state["queue"].append({"ticket_id": ticket_id, "kind": kind, "resource": resource,
-                                       "task_id": current["task_id"], "label": label, "pid": holder_pid,
-                                       "host": socket.gethostname(), "enqueued_at": time.time(),
-                                       "chain": os.environ.get("AIDP_TICK_COMMAND", ""),
-                                       "tick": os.environ.get("AIDP_TICK_TOKEN", "")})
-                queued = True
-                _atomic_json(root, path, state)
-            position = 1 + [row["ticket_id"] for row in state["queue"] if row["resource"] == resource].index(ticket_id)
-            snapshot = {"status": "QUEUED", "ticket_id": ticket_id, "position": position, "limit": limit,
-                        "active": len(active), "resource": resource}
-        if time.monotonic() >= deadline:
-            return snapshot
-        time.sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
+            state["queue"] = [row for row in state["queue"] if row["ticket_id"] != ticket_id]
+            _atomic_json(root, path, state)
+        raise
 
 
 def release_slot(root, ctx, slot):
@@ -1121,18 +1165,35 @@ def cancel_queued(root, ctx, ticket_id):
 def reap_slots(root, ctx, chain, keep_tick=""):
     """新一轮 tick 开始时回收「同一链路上一轮遗留」的槽位与排队票据。
 
-    ticks 在同一链路内串行（调用方持链路锁），所以上一轮没释放的槽位必然是崩溃/被 kill 的子 Agent 留下的；
-    不同链路（autopilot 开发链 vs aiauto 测试链）并行共享同一根，只回收 chain 相同且 tick 令牌不同的记录。
+    旧 tick 的本机活跃进程仍占额度；令牌变化不能证明其已停止。
+    仅回收同链路旧票据：已结束本机持有者、无持有 PID 的 CLI 遗留，或远端到期租约。
     """
+    import socket
     from entry_context import _task_lock, _context_path, _atomic_json
     root = Path(root).resolve()
     current = _context(root, ctx)
     owner = _budget_owner(root, current)
+    host, now = socket.gethostname(), time.time()
+
+    def removable(row, kind):
+        if row.get('chain') != chain or row.get('tick') == keep_tick:
+            return False
+        pid = row.get('pid')
+        if type(pid) is int and pid > 0:
+            if row.get('host') == host:
+                if _pid_alive(pid):
+                    identity = _pid_identity(pid)
+                    return bool(row.get('pid_identity') and identity and row['pid_identity'] != identity)
+            else:
+                expiry = row.get('lease_until', 0) if kind == 'slots' else row.get('enqueued_at', now) + QUEUE_TTL_SECONDS
+                return expiry < now
+        return True
+
     with _task_lock(root, _context_path(root, owner["task_id"])) as locked:
         path, state = _budget_state(root, locked)
         dropped = 0
         for key in ("slots", "queue"):
-            keep = [row for row in state[key] if not (row.get("chain") == chain and row.get("tick") != keep_tick)]
+            keep = [row for row in state[key] if not removable(row, key)]
             dropped += len(state[key]) - len(keep)
             state[key] = keep
         if dropped:
@@ -1156,13 +1217,15 @@ from contextlib import contextmanager  # noqa: E402
 
 
 @contextmanager
-def concurrency_slot(root, ctx, kind, *, action=None, wait_seconds=300.0, lease_seconds=SLOT_LEASE_SECONDS, label=""):
-    """取槽 → 工作 → 无论正常/异常/取消/超时都释放；排队超时则撤销排队并抛 QUEUED（可见、可重试）。"""
+def concurrency_slot(root, ctx, kind, *, action=None, wait_seconds=300.0, lease_seconds=SLOT_LEASE_SECONDS, label="",
+                     cancel_event=None, group=None):
+    """取槽 → 工作 → 无论正常/异常/取消/超时都释放；同 group 在根任务池互斥。"""
     result = acquire_slot(root, ctx, kind, action=action, wait_seconds=wait_seconds,
-                          lease_seconds=lease_seconds, label=label)
+                          lease_seconds=lease_seconds, label=label, cancel_event=cancel_event, group=group)
     if result["status"] != "ACQUIRED":
         cancel_queued(root, ctx, result["ticket_id"])
-        raise PolicyError("QUEUED", f"并发已达上限 {result['limit']}，排队等待超时（第 {result['position']} 位）；"
+        reason = f"共享资源组 {result['group']} 已占用" if result.get("group_busy") else f"并发已达上限 {result['limit']}"
+        raise PolicyError("QUEUED", f"{reason}，排队等待超时（第 {result['position']} 位）；"
                           "队列项已撤销，可稍后重试或调低并行度", **{k: v for k, v in result.items() if k != "status"})
     try:
         yield result["slot"]
@@ -1301,6 +1364,7 @@ def main(argv=None):
             item.add_argument("--lease-seconds", type=float, default=SLOT_LEASE_SECONDS,
                               help="租约（秒）：超过未释放则自动回收，长任务请调大")
             item.add_argument("--label", default="")
+            item.add_argument("--group", help="根任务共享资源组；同组槽位互斥")
         if name == "release-slot":
             item.add_argument("--slot-id", required=True)
         if name == "cancel-queued":
@@ -1333,7 +1397,7 @@ def main(argv=None):
         elif args.command == "acquire-slot":
             # CLI 进程立即退出：不做 pid 存活判定，仅靠租约（lease）回收
             result = acquire_slot(args.root, ctx, args.kind, action=args.action, wait_seconds=args.wait_seconds,
-                                  label=args.label, pid=0, lease_seconds=args.lease_seconds)
+                                  label=args.label, pid=0, lease_seconds=args.lease_seconds, group=args.group)
             if result["status"] != "ACQUIRED":
                 # 没拿到槽位就不能让调用方继续派发：撤销排队票据（不留孤儿）并以非零退出，流程 `|| exit $?` 会停下重试
                 cancel_queued(args.root, ctx, result["ticket_id"])

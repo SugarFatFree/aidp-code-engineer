@@ -550,6 +550,10 @@ class TestLedgerTests(unittest.TestCase):
     def full_suites(self):
         self.enable_scopes()
         self.scope_multi = True
+        # 两套 runner 夹具只保留对应测试；显式 inputs 的保守选测会发现未配置 runner 的根测试。
+        # 根测试来自单套 enable_scopes，非本用例验收对象；纳入临时基线删除，避免制造真实覆盖缺口。
+        test_source = (self.root / "tests/test_app.py").read_text()
+        (self.root / "tests/test_app.py").unlink()
         (self.root / "docs").mkdir(exist_ok=True)
         (self.root / "memory/exit").write_text("0")
         (self.root / "memory/review.md").write_text("Reviewed Sprint suites A and B.")
@@ -560,8 +564,8 @@ class TestLedgerTests(unittest.TestCase):
             (module / "src").mkdir(parents=True, exist_ok=True)
             (module / "tests").mkdir(exist_ok=True)
             (module / "src/app.py").write_text("answer = 1\n")
-            (module / "tests/test_app.py").write_text((self.root / "tests/test_app.py").read_text())
-        self.git("add", "suite-a", "suite-b")
+            (module / "tests/test_app.py").write_text(test_source)
+        self.git("add", "suite-a", "suite-b", "tests/test_app.py")
         self.git("commit", "-qm", "suite baseline")
         self.scope_base = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
                                          check=True, text=True, capture_output=True).stdout.strip()

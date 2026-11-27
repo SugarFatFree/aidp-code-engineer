@@ -6,7 +6,7 @@
 
 ### 当前版本测试真实委派（autopilot 唯一调用点）
 
-autopilot Phase 3.4 的报告骨架与真实部署就绪后，在让位测试链/同步委派前执行本围栏。`VERSION_MANIFEST` 由围栏内 `build_unit_test.py freeze` 从部署 commit 的测试计划来源与正式用例确定性生成（规则见 `phase-2-unit.md` 2.0.5u.1）；`TEST_PLAN_SOURCE` 可选，缺省只查约定位置，不得临时发现全仓测试补全集。清单无法形成则打印原因/缺口并经围栏内失败处置记账，不能跳过本门而委派。父为真实 autopilot 根，同版本、原预算；test-only根不含 implement/commit/push/deploy。
+autopilot Phase 3.4 的报告骨架与真实部署就绪后，在让位测试链/同步委派前执行本围栏。`VERSION_MANIFEST` 由围栏内 `build_unit_test.py freeze` 从部署 commit 的测试计划来源与人工/研发用例确定性生成（规则见 `phase-2-unit.md` 2.0.5u.1）；`TEST_PLAN_SOURCE` 可选，缺省只查约定位置，不得临时发现全仓测试补全集。清单无法形成则打印原因/缺口并经围栏内失败处置记账，不能跳过本门而委派。父为真实 autopilot 根，同版本、原预算；test-only根不含 implement/commit/push/deploy。
 
 <!-- version-test-delegation -->
 ```bash
@@ -17,7 +17,7 @@ BUILD="${BUILD:?当前真实build}"
 BUILD_COMMIT=$(python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "$TARGET_VERSION" --build "$BUILD" get push_commit --default '') || exit $?
 [ -n "$BUILD_COMMIT" ] || { echo "UNVERIFIED: 本build缺部署push_commit，不能冻结版本清单"; exit 2; }
 FREEZE_RESULT=$(python3 {{AIDP_HOME}}/scripts/build_unit_test.py freeze --root . --version "$TARGET_VERSION" \
-  --build "$BUILD" --commit "$BUILD_COMMIT" ${TEST_PLAN_SOURCE:+--source "$TEST_PLAN_SOURCE"}); FREEZE_CODE=$?
+  --build "$BUILD" --commit "$BUILD_COMMIT" --execution-context "$EXECUTION_CONTEXT" ${TEST_PLAN_SOURCE:+--source "$TEST_PLAN_SOURCE"}); FREEZE_CODE=$?
 printf '%s\n' "$FREEZE_RESULT"
 if [ "$FREEZE_CODE" != 0 ]; then
   FREEZE_WHY=$(printf '%s' "$FREEZE_RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason","")+": "+d.get("hint","")+" "+"; ".join(d["summary"]["gaps"]))') || FREEZE_WHY=freeze-error
@@ -195,7 +195,7 @@ if [ "$HANDOFF_TARGET_ONLY" = true ]; then
 else
   TO_COMMIT=$($BE --build "$HANDOFF_TO_BUILD" get push_commit --default '') || exit $?
   FREEZE_RESULT=$(python3 {{AIDP_HOME}}/scripts/build_unit_test.py freeze --root . --version "$TARGET_VERSION" \
-    --build "$HANDOFF_TO_BUILD" --commit "${TO_COMMIT:?新build缺push_commit}" ${TEST_PLAN_SOURCE:+--source "$TEST_PLAN_SOURCE"}) \
+    --build "$HANDOFF_TO_BUILD" --commit "${TO_COMMIT:?新build缺push_commit}" --execution-context "$HANDOFF_ROOT_CONTEXT" ${TEST_PLAN_SOURCE:+--source "$TEST_PLAN_SOURCE"}) \
     || { printf '%s\n' "$FREEZE_RESULT"; exit 2; }
   VERSION_MANIFEST=$(printf '%s' "$FREEZE_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"])') || exit $?
   REBIND_RESULT=$(python3 {{AIDP_HOME}}/scripts/entry_context.py fork-test-build --root . \

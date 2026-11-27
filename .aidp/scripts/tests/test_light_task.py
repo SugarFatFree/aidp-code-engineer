@@ -51,6 +51,44 @@ class LightTaskTests(unittest.TestCase):
         return self.cli("start", "--version", "V1", "--write-set", "app.py",
                         "--acceptance", "x 为 2", *extra, runners=False)
 
+    def test_select_and_all_forward_explicit_changed_files(self):
+        for step in ("select", "all"):
+            with self.subTest(step=step):
+                parser = light_task.build_parser()
+                self.assertIn("--changed-files", parser._option_string_actions)
+                (self.root / "app.py").write_text("x = 1\n")
+                ctx = self.start()["execution_context"]
+                (self.root / "app.py").write_text("x = 2\n")
+                args = parser.parse_args([step, "--root", str(self.root), "--execution-context", ctx,
+                                          "--runners-json", RUNNERS, "--changed-files", "app.py"])
+                result = light_task.STEPS[step](args)
+                self.assertEqual(result.get("exit_code", 0), 0, result)
+                plan = json.loads(Path(ctx).with_name("unit-scope.json").read_text())
+                self.assertEqual(plan["changed_files"], ["app.py"])
+                self.assertEqual(plan["tests"], ["tests/test_app.py"])
+
+    def test_run_and_all_forward_max_parallel(self):
+        for step in ("run", "all"):
+            with self.subTest(step=step):
+                parser = light_task.build_parser()
+                self.assertIn("--max-parallel", parser._option_string_actions,
+                              "light run/all 必须公开有界外层并发参数")
+                ctx = self.start()["execution_context"]
+                (self.root / "app.py").write_text("x = 2\n")
+                args = parser.parse_args([step, "--root", str(self.root), "--execution-context", ctx,
+                                          "--runners-json", RUNNERS, "--max-parallel", "2"])
+                original = light_task._call
+                seen = []
+                def call(name, *values, **kwargs):
+                    if name == "test_ledger.py" and values[0] == "run-scope":
+                        seen.append(values)
+                    return original(name, *values, **kwargs)
+                with mock.patch.object(light_task, "_call", side_effect=call):
+                    result = light_task.STEPS[step](args)
+                self.assertEqual(result["exit_code"], 0, result)
+                self.assertEqual(len(seen), 1)
+                self.assertEqual(seen[0][seen[0].index("--max-parallel") + 1], "2")
+
     def test_start_resolves_light_and_reads_branch_policy(self):
         out = self.start()
         self.assertEqual(out["mode"], "light")

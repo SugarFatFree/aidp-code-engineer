@@ -5,7 +5,8 @@
   [--scope FILE] [--runners-json JSON|@file] [--max-tests N] [--out FILE] [--json]
 
 改动来源：git diff（起点→工作树）+ 未跟踪文件 + 显式写集；有 execution-context 时以冻结任务范围为准。
-选测复用 test_scope.derive（导入闭包/命名映射/资源声明）；无上下文时补充其他布局的命名约定。
+选测复用 test_scope.derive（导入闭包/命名映射/资源声明）；脏工作区须有上下文、显式写集或 --changed-files。
+--changed-files FILE… 提供实际变化源码并核对完整性，复用增量反向索引，不扩大授权。
 --scope 校验已有范围的任务身份、内容 hash 与当前输入后原样使用 tests，禁止版本全量范围。
 上下文或推导校验失败即拒绝，不回退命名猜测。白名单写入
 memory/.aidp/test-allowlist/<key>.json（key = 上下文 task_id，无上下文为 default），
@@ -146,15 +147,15 @@ def tests_for(rel, files, by_name):
     return direct | named
 
 
-def try_derive(root, since, runners, write_set, ctx_path):
+def try_derive(root, since, runners, write_set, ctx_path, changed_paths=None):
     import test_scope
     try:
-        return test_scope.derive(root, since, runners, write_set, ctx_path or None)
+        return test_scope.derive(root, since, runners, write_set, ctx_path or None, changed_paths=changed_paths)
     except (OSError, ValueError) as exc:
         raise InputError(f"范围推导失败：{exc}") from exc
 
 
-def select(root, since, write_set, ctx_path, runners, max_tests, scope_path=""):
+def select(root, since, write_set, ctx_path, runners, max_tests, scope_path="", changed_paths=None):
     root = Path(root).resolve()
     requested_since, requested_write_set = since, write_set
     meta = load_context_meta(root, ctx_path) if ctx_path else None
@@ -165,28 +166,7 @@ def select(root, since, write_set, ctx_path, runners, max_tests, scope_path=""):
     if not (root / ".git").exists() and not _paths_ok(root):
         raise InputError("root 不是 git 仓库")
     _git(root, "rev-parse", "--verify", f"{since}^{{commit}}")
-    changes = collect_changes(root, since, write_set)
-    files = repo_files(root)
-    all_tests = sorted(p for p in files if looks_like_test(p))
-    by_name = {}
-    for t in all_tests:
-        by_name.setdefault(PurePosixPath(t).name, set()).add(t)
-    sources = [c for c in changes if behavior_change(c) and not looks_like_test(c) and (root / c).is_file()]
-    changed_tests = [c for c in changes if looks_like_test(c) and (root / c).is_file()]
-    basis = {"mode": "naming", "since": since, "changed": changes, "total_tests": len(all_tests)}
-
-    proven_changes = set()
-    tier = {}  # test -> 优先级，越小越直接
-    for t in changed_tests:
-        tier[t] = 0
-    covered = set()
-    for src in sources:
-        direct, named = naming_matches(src, files, by_name)
-        for t in direct | named:
-            tier[t] = min(tier.get(t, 1), 1)
-        if direct | named:
-            covered.add(src)
-
+    # 只使用确定性推导的结果；不先做随后被丢弃的全仓命名扫描，也不混入其他任务的脏文件。
     if scope_path:
         import test_scope
         try:
@@ -200,25 +180,19 @@ def select(root, since, write_set, ctx_path, runners, max_tests, scope_path=""):
                 raise InputError("--since 与 scope 起点冲突")
             if runners and test_scope.validate_runners(runners, root) != derived["runners"]:
                 raise InputError("--runners-json 与 scope 运行器冲突")
+            if changed_paths is not None and sorted(set(test_scope.relative_path(root, p) for p in changed_paths)) != derived.get('changed_files'):
+                raise InputError('--changed-files 与 scope 输入冲突')
         except (OSError, ValueError) as exc:
             raise InputError(f"范围校验失败：{exc}") from exc
     else:
-        derived = try_derive(root, since, runners, write_set if ctx_path else (write_set or changes), ctx_path)
-    basis["mode"] = "test_scope"
-    basis["since"] = derived["since"]
-    if ctx_path or scope_path:
-        # 执行及白名单共用同一确定性结果，不混入工作区其他任务的命名命中。
-        tier = {t: 2 for t in derived["tests"]}
-        basis["changed"] = derived["changed"]
-        sources = [c for c in derived["changed"] if behavior_change(c) and not looks_like_test(c)]
-    proven = set(derived.get("selection", {}).get("proven", []))
-    conservative = set(derived.get("selection", {}).get("conservative", []))
-    for t in proven:
-        tier[t] = min(tier.get(t, 2), 2)
-    for t in conservative:
-        tier.setdefault(t, 3)
-    proven_changes = {m["change"] for m in derived.get("mapping", []) if m.get("tests")}
-    covered |= proven_changes
+        derived = try_derive(root, since, runners, write_set, ctx_path, changed_paths)
+    basis = {'mode': 'test_scope', 'since': derived['since'], 'changed': derived['changed'],
+             'total_tests': len(derived['tests'])}
+    if 'changed_files' in derived:
+        basis['changed_files'] = derived['changed_files']
+    sources = [c for c in derived['changed'] if behavior_change(c) and not looks_like_test(c)]
+    conservative = set(derived.get('selection', {}).get('conservative', []))
+    tier = {t: 3 if t in conservative else 2 for t in derived['tests']}
 
     for test in tier:
         if not (root / test).is_file():
@@ -228,9 +202,7 @@ def select(root, since, write_set, ctx_path, runners, max_tests, scope_path=""):
         raise InputError(f"BUDGET_EXCEEDED：相关测试 {len(ordered)} 个超过 --max-tests {max_tests}；不发布截断白名单")
     basis["tiers"] = {str(k): sum(1 for t in ordered if tier[t] == k) for k in (0, 1, 2, 3)}
     tests = sorted(ordered)
-    chosen = set(tests)
-    unmapped = sorted(s for s in sources if s not in covered
-                      or not (set(tests_for(s, files, by_name)) & chosen or s in proven_changes))
+    unmapped = sorted(derived.get('unmapped', []))
     if not tests and "note" not in basis:
         basis["note"] = "改动仅含文档/配置或没有对应测试；无相关测试可跑" if not sources else "改动源码没有可映射的测试，见 unmapped"
     key = safe_key(meta["task_id"] if meta else "default")
@@ -376,6 +348,7 @@ def main(argv=None):
     parser.add_argument("--execution-context", default="")
     parser.add_argument("--runners-json", default="[]")
     parser.add_argument("--scope", default="", help="校验已有 test_scope 范围后原样发布测试文件白名单")
+    parser.add_argument('--changed-files', nargs='+', metavar='FILE', help='已知实际改动源码；核对任务基线并复用增量依赖索引')
     parser.add_argument("--explicit-tests", nargs="+", default=[], metavar="FILE",
                         help="已明确的相关测试文件：直接生成白名单，不做全仓依赖扫描")
     parser.add_argument("--basis", default="", help="显式入口的选择依据（人工确认的理由，原样记录）")
@@ -395,9 +368,11 @@ def main(argv=None):
         except ValueError as exc:
             raise InputError(f"--runners-json 不是合法 JSON：{exc}") from exc
         if args.explicit_tests:
+            if args.changed_files is not None or args.scope:
+                raise InputError('--explicit-tests 不能与 --changed-files 或 --scope 同用')
             result = select_explicit(args.root, args.explicit_tests, args.execution_context, args.basis, args.command)
         else:
-            result = select(args.root, args.since, args.write_set, args.execution_context, runners, args.max_tests, args.scope)
+            result = select(args.root, args.since, args.write_set, args.execution_context, runners, args.max_tests, args.scope, args.changed_files)
     except (InputError, OSError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2

@@ -42,12 +42,45 @@ class SelectTests(unittest.TestCase):
         self.assertEqual(out.returncode, expect, out.stderr)
         return json.loads(out.stdout) if expect == 0 else out
 
+    def test_context_selection_does_not_run_discarded_naming_scan(self):
+        from unittest.mock import patch
+        import select_related_tests as selector
+        ctx, tests = self.import_fixture(2)
+        with patch.object(selector, 'collect_changes', side_effect=AssertionError('重复选测')):
+            out = selector.select(self.root, '', [], ctx, [], None)
+        self.assertEqual(out['tests'], tests)
+
+    def test_explicit_write_set_excludes_other_dirty_source_names(self):
+        self.write('src/foo.py'); self.write('src/bar.py')
+        self.write('tests/test_foo.py', 'from src import foo\n')
+        self.write('tests/test_bar.py', 'from src import bar\n')
+        self.commit()
+        self.write('src/foo.py', 'x = 2\n'); self.write('src/bar.py', 'x = 2\n')
+        out = self.run_select('--write-set', 'src/foo.py')
+        self.assertEqual(out['tests'], ['tests/test_foo.py'])
+
+    def test_changed_files_cli_publishes_exact_related_allowlist(self):
+        ctx, tests = self.import_fixture(2)
+        out = self.run_select('--execution-context', ctx, '--changed-files', 'app.py')
+        self.assertEqual(out['tests'], tests)
+        self.assertEqual(out['basis']['changed_files'], ['app.py'])
+        self.assertFalse(guard.evaluate('pytest tests', self.root, execution_context=ctx)['allowed'])
+
+    def test_changed_files_cannot_hide_observed_task_changes(self):
+        self.write('a.py'); self.write('b.py'); self.commit()
+        ctx = entry.resolve_context(self.root, 'sprint-dev', version='V1', write_set=['a.py', 'b.py'],
+            authorization_source={'kind': 'user-text', 'request_id': 'changes', 'text': '修改两个文件'})
+        self.write('a.py', 'x=2\n'); self.write('b.py', 'x=2\n')
+        out = self.run_select('--execution-context', ctx['execution_context'], '--changed-files', 'a.py', expect=2)
+        self.assertIn('遗漏', out.stderr)
+        self.assertFalse(list((self.root / 'memory/.aidp/test-allowlist').glob('*.json')))
+
     def test_python_without_runner_uses_naming_and_writes_allowlist(self):
         self.write("src/foo.py"); self.write("src/bar.py")
         self.write("tests/test_foo.py", "from src import foo\n"); self.write("tests/test_bar.py", "from src import bar\n")
         self.commit()
         self.write("src/foo.py", "x = 2\n")
-        res = self.run_select()
+        res = self.run_select('--changed-files', 'src/foo.py')
         self.assertEqual(res["tests"], ["tests/test_foo.py"])
         self.assertEqual(res["allowed_args"], res["tests"])
         self.assertEqual(res["unmapped"], [])
@@ -61,14 +94,14 @@ class SelectTests(unittest.TestCase):
     def test_untracked_new_source_and_new_test_are_included(self):
         self.write("tests/test_old.py"); self.write("old.py"); self.commit()
         self.write("newmod.py"); self.write("tests/test_newmod.py")
-        res = self.run_select()
+        res = self.run_select('--changed-files', 'newmod.py', 'tests/test_newmod.py')
         self.assertIn("tests/test_newmod.py", res["tests"])
         self.assertNotIn("tests/test_old.py", res["tests"])
 
     def test_source_without_test_is_unmapped_and_docs_only_is_empty(self):
         self.write("lonely.py"); self.write("tests/test_other.py"); self.commit()
         self.write("lonely.py", "y = 2\n")
-        res = self.run_select()
+        res = self.run_select('--changed-files', 'lonely.py')
         self.assertEqual(res["tests"], [])
         self.assertEqual(res["unmapped"], ["lonely.py"])
         self.git("checkout", "lonely.py")
@@ -181,7 +214,7 @@ class SelectTests(unittest.TestCase):
         self.commit()
         for f in ("src/main/java/a/Foo.java", "pkg/util.go", "web/src/x.ts"):
             self.write(f, "// changed\n")
-        res = self.run_select()
+        res = self.run_select('--changed-files', 'src/main/java/a/Foo.java', 'pkg/util.go', 'web/src/x.ts')
         self.assertEqual(sorted(res["tests"]), ["pkg/util_test.go", "src/test/java/a/FooTest.java", "web/src/x.test.ts"])
         self.assertEqual(res["unmapped"], [])
 
@@ -194,6 +227,13 @@ class SelectTests(unittest.TestCase):
         self.assertEqual(res["tests"], ["tests/test_app.py"])
         self.assertEqual(res["allowlist_file"], f"memory/.aidp/test-allowlist/{ctx['task_id']}.json")
         self.assertTrue((self.root / res["allowlist_file"]).is_file())
+
+    def test_without_context_or_explicit_scope_dirty_changes_are_not_claimed(self):
+        self.write('app.py'); self.write('tests/test_app.py'); self.commit()
+        self.write('app.py', 'x=2\n')
+        result = self.run_select(expect=2)
+        self.assertIn('未归属改动', result.stderr)
+        self.assertFalse(list((self.root / 'memory/.aidp/test-allowlist').glob('*.json')))
 
     def test_input_errors_exit_2(self):
         out = subprocess.run([sys.executable, str(SCRIPT), "--root", self.temp.name + "/nope", "--json"], capture_output=True, text=True)

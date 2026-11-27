@@ -94,17 +94,20 @@ python3 {{AIDP_HOME}}/scripts/entry_context.py route --root . --entry sprint-aia
 ## 命令语法
 
 ```
-/sprint-aiauto-test [flags]
+/sprint-aiauto-test --target <V> --once "<明确目标及用例范围>" [flags]
+/sprint-aiauto-test --execution-context <真实委派子路径> [flags]
 
-# ★ 标准用法（生产 7×24）：操作系统调度（与开发链路一并安装）；版本号自动从 baseline 读
+# ★ 标准用法（生产 7×24）：操作系统调度；消费 autopilot 已持久化的真实测试委派
 python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 开发/测试链路 + 独立 watchdog；测试默认每 5 分钟唤起
 # 交互式短期用法（Claude Code 会话内；会话级、7 天过期、空闲才触发、同会话与开发链路串行）
-/loop 5m /sprint-aiauto-test --unattended --no-loop                             # 每 5 分钟读 baseline 看有无新部署，自动跑测
+/loop 5m /sprint-aiauto-test --unattended --no-loop                             # 每 5 分钟核验 baseline 中真实测试委派，有效才跑测
 
-# 典型单次/临时用法
-/sprint-aiauto-test --once                                           # 立即跑一次后退出（测当前开发版本）
-/sprint-aiauto-test --role admin --once                              # 临时只跑单角色
-/sprint-aiauto-test --skip-login                                     # 测试无需登录的页面（登录页 / 注册页）
+# 独立单次：版本与目标范围均明确；目标描述映射到 task_scope.acceptance 的实际用例/来源
+/sprint-aiauto-test --target V0.1.0 --once "仅测用户列表导出：SUITE-003 用例 C-012"
+/sprint-aiauto-test --target V0.1.0 --role admin --once "仅测管理员用户列表导出：C-012"
+/sprint-aiauto-test --target V0.1.0 --skip-login --once "仅测登录页空密码校验：C-001"
+# 父编排调用：传真实 fork-test-build 返回的子路径；范围固定为已冻结清单
+/sprint-aiauto-test --execution-context "$TEST_EXECUTION_CONTEXT" --once
 ```
 
 > 完整 flag 清单见下方参数表。
@@ -113,7 +116,7 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 
 ★ **核心理念要点**（规则细节下沉到对应 Phase）：
 
-- **版本号不传参**：总是测「当前开发版本」，自动从 baseline 读；`--target <V>` 仅边界兜底（Phase 0.2）。
+- **版本与范围先确定**：独立调用显式 `--target <V>` 并说明目标页面/接口/场景及用例范围；仅版本号不授权全版本。调度调用消费真实父委派的 version/build/manifest，baseline 只校验交接，不替无目标调用选版本。`--once` 仅控制执行一次，不扩大范围。
 - **用例来源三级优先**：测试人员用例 `正式用例/`（主集）> 研发自测 `研发自测/`（查漏补集，去重后只补主集未覆盖项）> 仅 `正式用例/` 为空才以研发自测兜底（Phase 2.0）。
 - **测试方案最终优先**：本命令所有内置规则（渲染模式 / 等待时长 / 工具 / 用例集与顺序等）都是默认 / 兜底；测试人员方案 `正式用例/` 显式写明的任一项直接覆盖默认，方案未规定才用默认填空。三级优先级（自高到低）：① `正式用例/` 测试人员方案 → ② `研发自测/` 研发自测方案 → ③ 本命令内置默认。Phase 0.0.5/0.0.6 读配置、Phase 2.0 选用例、Phase 2.2 控等待、Phase 0.1 定渲染模式均按此优先级。
 - **双驱动**：本地走 `chrome-devtools-cli`（不依赖 MCP 服务、切有头/无头免重启 Claude Code），远程走 `chrome-devtools-mcp`（须改 MCP 配置 + 重启）。映射 + 切模式铁律见 Phase 0.1.3 / 0.1.1.5；CLI 命令细节详见依赖 SKILL。
@@ -122,19 +125,20 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install                       # 
 - **循环交给外部调度**（7×24 = `aidp_scheduler.py` 装的操作系统定时任务；交互式短期 = 会话内 `/loop`）：本命令专注「单轮测试」（检查 baseline → 探测部署 → chrome 跑测 → 写报告 → 退出）。
 - **⚠️ 进入浏览器实测前必须确保本 build 的 AI执行报告已存在**：`REPORT_ENABLED=1`（autopilot 驱动，baseline 有 `current_build`）下，若本 build 的 `docs/reports/{V}/AI执行报告/data/{BUILD}.js` 缺失 → **不得直接手驱浏览器、不得在报告缺失下散落 AI测试报告**；由 **Phase 0.2 自愈交接（baseline 读取段步骤 2.5.1）** 回 `/sprint-autopilot --skip-dev`（autopilot 子流程 R 唯一生产 AI执行报告**骨架**）补齐后再实测，Phase 3.2.7 完成核验门兜底。AI执行报告**骨架**本命令不产（autopilot 产）；但本命令在 **#F 之后** finalize data 真实 testSummary + 发 **#3 里程碑通知**（Phase 3.7 · R-4 收尾）。详见 **Phase 0.2 步骤 2.5.1** / 3.2.7 / 3.7。
 
-★ **用户直接调用（无调度包装）的行为**：判据是 **`LOOP_UNATTENDED`（Phase 0.0.0 派生），不是裸的 `IS_LOOP_CONTEXT`**——
+★ **入口目标与真实委派核验通过后的单轮行为**：独立目标先按文首分支执行并返回；下表仅适用于真实版本委派的正式流程。判据是 **`LOOP_UNATTENDED`（Phase 0.0.0 派生），不是裸的 `IS_LOOP_CONTEXT`**——
 
 | 本轮信号 | 行为 |
 |---|---|
-| `--once` | 强制立即跑一次完整测试 |
+| `--once` | 在已冻结委派范围内立即执行一次；不改变版本、清单或授权 |
 | **`LOOP_UNATTENDED=1`（`/loop` 上下文 / `--no-loop` / 含裸 `--unattended`）★** | **照常进 Phase 1/2/3 跑测**。⛔ **绝不落到下面的"默认"行**——`--unattended` 的语义就是"没人在场、别打印引导等人"；落默认行会让 `/loop 5m /sprint-aiauto-test --unattended --no-loop` 每 tick 跑完 Phase 0（**心跳照刷、`aiauto_blocked_reason` 照清**）就打印引导退出，**一条用例都不跑**。二次伤害更隐蔽：开发链路 Phase 2 0b 读到"新鲜心跳 + 空 blocked_reason"判 `TEST_LOOP_ALIVE=1` → 走"暂缓"而非熔断 → 12 tick 后按 `unconverged` 冻结，告警文案写"测试链路存活但未收敛，请人工看测试结果/环境"，而真相是测试链路一次都没启动。与 `/sprint-autopilot` Phase 1.3 决策表同款分流。 |
 | 默认（无 flag + 非 `/loop` 上下文 + `LOOP_UNATTENDED=0`）| 完成 Phase 0 后**输出引导**「7×24 请用 `python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py install` 装齐开发 + 测试两条链路（会话内临时可用 `/loop 5m /sprint-aiauto-test --unattended --no-loop`）」+ 退出，**不跑测试**；避免误以为单次直接调用就实现了持续测试。 |
 
 | 参数 / Flag | 默认 | 说明 |
 |------------|------|------|
-| **（无位置参数）** | 自动读 baseline | 命令从 `memory/.sprint-autopilot-baseline.json` 取最近一个 `phase_beta_done_at != null && internal_released_at == null` 的版本作为测试目标 — 这就是「当前开发版本」 |
-| `--target <V>` | 不传 | **边界情况兜底**（通常不用）：强制锁定到指定版本（如手动回归验证 V0.1.0）；与无参模式互斥 |
-| `--once` | 关 | 强制立即跑一次完整测试（**不查 deploy_status、且豁免 Phase 0.2「已测去重门」**——`--skip-dev --skip-deploy` 复测、人工修复后只提交未部署的解冻复测都靠它）。**默认交互式**；无头单发跑一轮请配 `--unattended` |
+| **目标描述** | 无 | 独立调用必需，指定页面/接口/场景与实际用例或来源；解析为 `task_scope.acceptance`，无目标返回缺口 |
+| `--target <V>` | 不传 | 独立调用显式版本；与真实委派版本不一致即拒绝，单独传版本不授权全量 |
+| `--execution-context <path>` | 无 | 继承真实父链子上下文；版本全量仅接受有效 `fork-test-build --manifest` 委派 |
+| `--once` | 关 | 在已确认目标范围内立即执行一次；正式委派可豁免 Phase 0.2「已测去重门」，仍须核实部署身份和就绪证据，不默认当前版本、不扩围。默认交互式，无人值守配 `--unattended` |
 | `--unattended` ★ | 关（由本轮 `/loop` 上下文 / `--no-loop` 自动推导） | **显式声明无人值守**——最可靠的 `LOOP_UNATTENDED=1` 信号，不依赖 prompt 的 `/loop` 字符串探测（0.0.0 的 3 个本轮信号之一）。用于 `/loop` runtime 偶发未把 `/loop` 放进 prompt 时兜底、或 `--once --unattended` 无头跑一轮测试。★ 判定**只看本轮信号**；与 autopilot 共享的 baseline `autopilot.unattended_confirmed` 仅作诊断留痕、**不参与判定**（否则过期标志会吞掉手动调用该弹的窗）|
 | `--no-loop` | 关 | 单次部署探测 + 跑/退出（不弹引导）；操作系统调度经 `agent_loop.sh --once` 自动补齐 |
 | `--role <name>` | all | 只用指定角色登录测，不轮所有 user_roles |
@@ -323,19 +327,14 @@ python3 {{AIDP_HOME}}/scripts/aidp_scheduler.py status
 
 ```bash
 /loop 10m /sprint-autopilot --unattended --no-loop     # 监听 PRD → 开发 + 里程碑通知（不跑 chrome）
-/loop 5m  /sprint-aiauto-test --unattended --no-loop   # 监听 baseline 看是否有新部署 → AI 自动化实测 + 报告
+/loop 5m  /sprint-aiauto-test --unattended --no-loop   # 核验 baseline 中真实测试委派 → 授权范围内实测 + 报告
 ```
 
 `/loop` 是会话级定时任务：会话关闭即停、7 天后自动过期、只在会话空闲时触发，同一会话两条实际串行（一次长的浏览器实测会推迟开发链路）。7×24 用 #1。
 
 ### #3 单次 / 临时
 
-```bash
-/sprint-aiauto-test                                       # 用户直接调 = 配置补全 + 提示挂载方式后退出（★ 不传版本号，自动从 baseline 解析）
-/sprint-aiauto-test --once                                # 强制跑一次（兜底锁定版本用 --target {V}）
-/sprint-aiauto-test --role admin --once   # 临时只跑单角色（★ 无位置参数：版本号自动读 baseline）
-/sprint-aiauto-test --headed-glance                       # 仅做有头眼检：打开主要功能界面肉眼快验（不重跑用例；远程切有头重启后续用，见 Phase 3.6）
-```
+单次调用沿用上方「命令语法」的显式版本、目标范围或真实委派示例。仅给 `/sprint-aiauto-test` / `--once` 而没有目标与可信上下文时，返回具体缺口，不从 baseline 选当前版本；`--role` / `--headed-glance` 也不能补出缺失的目标或扩大已授权范围。
 
 ---
 

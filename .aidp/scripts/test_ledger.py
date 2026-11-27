@@ -31,6 +31,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+import threading
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -225,10 +228,10 @@ def inventory_membership(root, inventory, paths):
                          and os.path.lexists(root / path)))
 
 
-def snapshot_estimate(root, inputs=(), paths=None):
+def snapshot_estimate(root, inputs=(), paths=None, *, inventory=None):
     """估算目前缓存未命中的内容读取；后置预算仍预留所有输入各读一次。"""
     from project_inventory import fingerprint_token
-    plan = snapshot_paths(root, inputs, paths)
+    plan = snapshot_paths(root, inputs, paths, inventory)
     cache = _FingerprintCache(root)
     misses, files = 0, dict(plan["directory_inputs"])
     for path in plan["paths"]:
@@ -296,11 +299,21 @@ def snapshot_changed(before, after):
 
 
 @contextmanager
-def lock(root, name):
+def lock(root, name, cancel_event=None):
     directory = Path(ensure_runtime_dir(root)) / "locks"
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / ("test-ledger." + name + ".lock")).open("a+b") as stream:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        if cancel_event is None:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        else:
+            while True:
+                if cancel_event.is_set():
+                    raise LedgerError("CANCELLED：等待测试命令锁时已取消")
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    cancel_event.wait(.05)
         try:
             yield stream.fileno()
         finally:
@@ -745,7 +758,10 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
         raise LedgerError("-- 后必须提供原始命令 argv")
     inputs = normalize_inputs(root, inputs)
     requested_timeout = timeout
-    if execution_context is not None:
+    cancel_event = getattr(_batch, "cancel_event", None)
+    if cancel_event is not None and cancel_event.is_set():
+        raise LedgerError("CANCELLED：运行集合已取消")
+    if execution_context is not None and not (isinstance(_batch, _BatchProof) and timeout is not None):
         if scope == "version" and timeout is None:
             from execution_policy import step_timeout
             timeout = step_timeout(root, execution_context, "version-command", action=action)
@@ -774,7 +790,7 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
     key = digest(context)
     selected_paths = scope_binding["plan"].get("validation_files") if scope_binding else None
     progress = getattr(_batch, "progress", None)
-    with lock(ledger, key) as command_lock:
+    with lock(ledger, key, cancel_event=cancel_event) as command_lock:
         if execution_context is not None and progress is None:
             estimate = snapshot_estimate(root, inputs, selected_paths)
             with lock(ledger, "write"):
@@ -879,8 +895,9 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
             try:
                 slots.enter_context(_policy.concurrency_slot(
                     root, execution_context, "test", wait_seconds=max(60.0, float(timeout or 0)) if timeout else 600.0,
-                    label=" ".join(command)[:120]))
-            except _policy.PolicyError as exc:
+                    label=" ".join(command)[:120], cancel_event=cancel_event,
+                    group=scope_binding["item"].get("parallel", {}).get("group") if scope_binding else None))
+            except BaseException as exc:
                 row.update(status="ERROR", evidence_status="UNVERIFIED", command_status="NOT_EXECUTED",
                            process_started=False, error=str(exc), finished_at=time.time())
                 persist_run(root, ledger, row)
@@ -933,6 +950,8 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
             for name in streams:
                 os.set_blocking(getattr(process, name).fileno(), False)
             while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise KeyboardInterrupt
                 relay_output()
                 exit_code = process.poll()
                 if exit_code is not None:
@@ -1018,7 +1037,7 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
                    duration_seconds=duration, finished_at=time.time())
         if error:
             row["error"] = error
-        row["failure_kind"] = ("TIMEOUT" if exit_code == 124 and error else "ENV_UNAVAILABLE" if exit_code in (126, 127) or missing_module
+        row["failure_kind"] = ("CANCELLED" if exit_code == 130 and error else "TIMEOUT" if exit_code == 124 and error else "ENV_UNAVAILABLE" if exit_code in (126, 127) or missing_module
                                else pytest_failure if pytest_failure else "TOOL_ERROR" if error else "TREE_CHANGED" if status == "TREE_CHANGED"
                                else "TEST_FAILURE" if status == "FAIL" else None)
         persist_run(root, ledger, row)
@@ -1034,6 +1053,8 @@ def _run(root, cwd, scope, env_id, command, inputs=(), force=False, timeout=None
             persist_run(root, ledger, row)
         code = exit_code if exit_code >= 0 else 128 - exit_code
         out = result(row)
+        if progress in _owned:
+            out["validation_cost"] = progress.summary()
         if policy_notice:
             out["policy_notice"] = policy_notice
         return out, 2 if policy_notice else code or (0 if status == "PASS" else 1)
@@ -1377,17 +1398,119 @@ def verify_scope(root, scope_file, scope_hash, run_ids, env_id, ledger_root=None
 
 
 def run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=False, timeout=None,
-              execution_context=None):
+              execution_context=None, max_parallel=1, cancel_event=None):
+    if type(max_parallel) is not int or max_parallel < 1:
+        raise LedgerError("max_parallel 必须为正整数")
+    if max_parallel > 1 and execution_context is None:
+        raise LedgerError("外层并行必须提供 execution-context，以共享根任务 processes 预算")
     owned = []
     try:
-        return _run_scope(root, scope_file, env_id, inputs, ledger_root, force, timeout, execution_context, owned)
+        return _run_scope(root, scope_file, env_id, inputs, ledger_root, force, timeout, execution_context, owned,
+                          max_parallel, cancel_event)
     finally:
         for progress in owned:
             progress.finish()
 
 
+def _parallel_scope(root, scope, proof, env_id, inputs, ledger_root, force, timeout, context, max_parallel,
+                    cancel_event=None):
+    """仅调度冻结运行项；各项自己持有票据/槽位，结果按计划顺序归并。"""
+    from execution_policy import _budget_owner
+    from test_command_guard import validate_parallel_command
+    owner = _budget_owner(root, context)
+    capacity = min(max_parallel, owner["execution_budget"]["processes"], context["execution_budget"]["processes"])
+    if capacity <= 0:
+        raise LedgerError("BUDGET_EXCEEDED：processes 并发上限为 0")
+    for item in scope["runs"]:
+        if item.get("parallel", {}).get("enabled"):
+            validate_parallel_command(item["argv"])
+    cancellation = cancel_event if cancel_event is not None else threading.Event()
+    pending = list(enumerate(scope["runs"]))
+    completed, errors, active = {}, {}, {}
+    scope_kind = "task" if scope.get("execution_context", {}).get("mode") == "light" else "sprint"
+
+    def execute(index, item):
+        batch = copy.copy(proof)
+        batch.input_hash = digest([proof.input_hash, item])
+        batch.cancel_event = cancellation
+        try:
+            out, code = run(root, item["cwd"], scope_kind, env_id, item["argv"],
+                            [*inputs, *item["inputs"]], force, timeout, ledger_root,
+                            scope_binding={"plan": scope, "item": item}, execution_context=context, _batch=batch)
+            return dict(out, exit=code), out.get("policy_notice")
+        except (OSError, ValueError) as exc:
+            return None, {"status": getattr(exc, "status", "UNVERIFIED"), "reason": str(exc)}
+
+    pool = ThreadPoolExecutor(max_workers=capacity, thread_name_prefix="aidp-test")
+    handlers = {}
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            handlers[signum] = signal.signal(signum, lambda _signum, _frame: cancellation.set())
+    try:
+        while pending or active:
+            if cancellation.is_set():
+                pending.clear()
+            groups = {item.get("parallel", {}).get("group") for _, item in active.values()}
+            serial_active = any(not item.get("parallel", {}).get("enabled") for _, item in active.values())
+            for pair in list(pending):
+                if len(active) >= capacity or serial_active:
+                    break
+                index, item = pair
+                parallel = item.get("parallel", {})
+                enabled, group = parallel.get("enabled", False), parallel.get("group")
+                # 未声明/显式关闭是全局屏障，不让后续项越过共享资源串行段。
+                if not enabled and active:
+                    break
+                if enabled and group and group in groups:
+                    continue
+                active[pool.submit(execute, index, item)] = pair
+                pending.remove(pair)
+                groups.add(group)
+                if not enabled:
+                    break
+            if not active:
+                continue
+            finished, _ = wait(active, timeout=.1, return_when=FIRST_COMPLETED)
+            for future in finished:
+                index, _ = active.pop(future)
+                out, error = future.result()
+                if out is not None:
+                    completed[index] = out
+                if error:
+                    errors[index] = error
+    except BaseException:
+        cancellation.set()
+        raise
+    finally:
+        # cancel 先通知正在等待槽位和正在执行的子进程；全部 finally 完成后才能向主流程返回。
+        try:
+            pool.shutdown(wait=True, cancel_futures=True)
+        finally:
+            for signum, handler in handlers.items():
+                signal.signal(signum, handler)
+    runs = [completed[index] for index in sorted(completed)]
+    interruption = errors[min(errors)] if errors else None
+    status, code = set_status(scope, runs)
+    if cancellation.is_set() or errors or len(runs) != len(scope["runs"]):
+        status, code = "UNVERIFIED", 2
+        interruption = interruption or {"status": "CANCELLED", "reason": "运行集合已取消"}
+    ledger = Path(ledger_root).resolve() if ledger_root else root
+    with lock(ledger, "write"):
+        history = historical_failures(load(root, ledger), scope)
+    costs = [row["validation_cost"] for row in runs if row.get("validation_cost")]
+    cost = {key: sum(row.get(key, 0) for row in costs) for key in
+            ("evidence_content_reads", "distinct_content_files", "selected_objects", "metadata_entries", "cache_hits")}
+    cost.update(external_tool_io="unknown", accounting="sum-of-independent-run-reservations")
+    return {"kind": scope_kind + "-run-set", "execution_context": scope.get("execution_context"),
+            "applicability": scope.get("applicability"), "historical_failures": history,
+            "status": status, "run_ids": [r["run_id"] for r in runs], "runs": runs,
+            "interruption": interruption, "unrunnable": scope["unrunnable"], "scope_hash": scope["scope_hash"],
+            "validation_cost": cost, "max_parallel": capacity,
+            "unmapped": scope["unmapped"], "minor": bool(scope["unmapped"])}, code
+
+
 def _run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=False, timeout=None,
-               execution_context=None, _owned=None):
+               execution_context=None, _owned=None, max_parallel=1, cancel_event=None):
     """重推范围后逐项执行。旧 PASS 跨树只可转成带来源的 CARRIED。"""
     root = Path(root).resolve()
     if not root.is_dir() or not isinstance(env_id, str) or not env_id.strip():
@@ -1407,7 +1530,11 @@ def _run_scope(root, scope_file, env_id, inputs=(), ledger_root=None, force=Fals
         require_action(context, "related-test")
         count = len(scope["runs"])
         from execution_policy import step_timeout
-        timeout = timeout or step_timeout(root, context, "command", None, action="related-test") / max(count, 1)
+        timeout = step_timeout(root, context, "command", timeout, action="related-test") / (max(count, 1) if timeout is None else 1)
+        if max_parallel > 1:
+            return _parallel_scope(root, scope, proof, env_id, inputs, ledger_root, force, timeout, context,
+                                   max_parallel, cancel_event)
+        proof.cancel_event = cancel_event
         # 同树证据不消耗新进程/测试额度；锁后失效而无预留时明确终止，不能挪用其它运行项预算。
         ledger = Path(ledger_root).resolve() if ledger_root else root
         with lock(ledger, "write"):
@@ -1518,6 +1645,7 @@ def main(argv=None):
         child.add_argument("--env-id", required=True, help="测试环境/部署/外部状态标识，变化后更新")
         if action == "run-scope":
             child.add_argument("--scope-file", required=True, help="test_scope.py 输出的 JSON")
+            child.add_argument("--max-parallel", type=int, default=1, help="外层并行上限；仍受根共享 processes 预算约束")
             child.add_argument("--input", action="append", default=[])
             child.add_argument("--ledger-root", help="外置账本根目录；full 使用每 build 专属缓存，勿混入主仓 Sprint 账本")
             child.add_argument("--force", action="store_true")
@@ -1573,7 +1701,7 @@ def main(argv=None):
                                 args.input, args.force, args.timeout, args.ledger_root, binding, args.execution_context)
             elif args.action == "run-scope":
                 out, code = run_scope(root, args.scope_file, args.env_id, args.input,
-                                      args.ledger_root, args.force, args.timeout, args.execution_context)
+                                      args.ledger_root, args.force, args.timeout, args.execution_context, args.max_parallel)
             elif args.action == "verify":
                 out = verify_scope(root, args.scope_file, args.scope_hash, args.run_id, args.env_id, args.ledger_root, args.execution_context)
                 code = 0

@@ -76,6 +76,90 @@ class ScopePerformanceTests(unittest.TestCase):
         self.base = git(self.root, 'rev-parse', 'HEAD')
         return self.root / 'backend'
 
+    def test_incremental_index_recomputes_only_consumers_of_changed_file(self):
+        self.write('src/other.py', 'value=1\n')
+        self.write('tests/test_other.py', 'from src.other import value\n')
+        git(self.root, 'add', '-A'); git(self.root, 'commit', '-qm', 'unrelated')
+        self.base = git(self.root, 'rev-parse', 'HEAD')
+        self.write('src/app.py', 'value=2\n')
+        self.plan()
+        self.write('src/app.py', 'value=3\n')
+        with patch.object(scope, 'dependency_analysis', wraps=scope.dependency_analysis) as analysis:
+            _, plan = self.plan()
+        self.assertEqual(plan['tests'], ['tests/test_app.py'])
+        self.assertEqual(analysis.call_count, 1)
+        self.assertEqual(analysis.call_args.kwargs['candidates'], ['tests/test_app.py'])
+        self.assertTrue(list((self.root / 'memory/.aidp/scope-index').glob('*.json')))
+
+    def test_changed_existing_test_can_add_new_reverse_dependency(self):
+        self.write('tests/test_consumer.py', 'value=1\n')
+        git(self.root, 'add', '-A'); git(self.root, 'commit', '-qm', 'consumer')
+        self.base = git(self.root, 'rev-parse', 'HEAD')
+        self.write('src/app.py', 'value=2\n'); self.plan()
+        self.write('tests/test_consumer.py', 'from src.app import value\n')
+        _, plan = self.plan()
+        self.assertIn('tests/test_consumer.py', plan['tests'])
+        self.assertIn('src/app.py', plan['dependencies']['tests']['tests/test_consumer.py']['files'])
+
+    def test_unrelated_non_python_content_is_not_read_by_selection(self):
+        self.write('vendor-data/unrelated.bin', 'unrelated payload')
+        self.write('java/Unused.java', 'class Unused {}\n')
+        git(self.root, 'add', '-A'); git(self.root, 'commit', '-qm', 'unrelated inputs')
+        self.base = git(self.root, 'rev-parse', 'HEAD')
+        self.write('src/app.py', 'value=2\n')
+        with patch.object(ledger, 'file_hash', wraps=ledger.file_hash) as reader:
+            scope.derive(self.root, self.base, self.runners, changed_paths=['src/app.py'])
+        paths = {str(call.args[0]) for call in reader.call_args_list}
+        self.assertNotIn(str(self.root / 'vendor-data/unrelated.bin'), paths)
+        self.assertNotIn(str(self.root / 'java/Unused.java'), paths)
+
+    def test_tree_changed_message_explains_stop_editing_and_retry(self):
+        self.write('src/app.py', 'value=2\n')
+        original = scope.dependency_analysis
+        def change(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.write('src/app.py', 'value=3\n')
+            return result
+        with patch.object(scope, 'dependency_analysis', side_effect=change):
+            with self.assertRaisesRegex(scope.ScopeError, '停止修改后重试'):
+                self.plan()
+
+    def test_tree_change_settles_selection_reservation_without_pass(self):
+        context = self.context()
+        self.write('src/app.py', 'value=2\n')
+        original = scope.dependency_analysis
+        def mutate(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.write('src/app.py', 'value=3\n')
+            return result
+        with patch.object(scope, 'dependency_analysis', side_effect=mutate):
+            with self.assertRaisesRegex(scope.ScopeError, '停止修改后重试'):
+                self.plan(context=context)
+        state = json.loads(Path(context).with_name('budget.json').read_text())
+        rows = [row for row in state['reservations'] if row.get('action') == 'static']
+        self.assertTrue(rows)
+        self.assertTrue(all(row.get('settled_at') and row['status'] == 'UNVERIFIED' for row in rows))
+        self.assertFalse(list((self.root / 'memory/.aidp/scope-index').glob('*.json')))
+        _, recovered = self.plan(context=context)
+        self.assertIn('tests/test_app.py', recovered['tests'])
+
+    def test_membership_change_rebuilds_index_and_discovers_new_consumer(self):
+        self.write('src/app.py', 'value=2\n'); self.plan()
+        self.write('tests/test_new.py', 'from src.app import value\n')
+        _, plan = self.plan()
+        self.assertIn('tests/test_new.py', plan['tests'])
+        self.assertIn('src/app.py', plan['dependencies']['tests']['tests/test_new.py']['files'])
+
+    def test_corrupt_incremental_index_recomputes_instead_of_reusing(self):
+        self.write('src/app.py', 'value=2\n'); self.plan()
+        for path in (self.root / 'memory/.aidp/scope-index').glob('*.json'):
+            path.write_text('{invalid')
+        self.write('src/app.py', 'value=3\n')
+        with patch.object(scope, 'dependency_analysis', wraps=scope.dependency_analysis) as analysis:
+            _, plan = self.plan()
+        self.assertTrue(analysis.called)
+        self.assertEqual(plan['tests'], ['tests/test_app.py'])
+
     def test_trusted_fingerprint_reuses_reads_and_detects_metadata_adversaries(self):
         import project_inventory as inventory
         self.assertTrue(hasattr(inventory, 'fingerprint_file'), '共享可信内容指纹接口尚未提供')
@@ -250,9 +334,9 @@ from contextlib import contextmanager
 sys.path.insert(0,sys.argv[1]); import test_ledger as ledger
 original=ledger.lock
 @contextmanager
-def observed(root,name):
+def observed(root,name,cancel_event=None):
  if name != 'write': Path(sys.argv[4]).write_text('waiting')
- with original(root,name) as fd: yield fd
+ with original(root,name,cancel_event) as fd: yield fd
 ledger.lock=observed
 out,status=ledger.run_scope(Path(sys.argv[2]),sys.argv[3],'lock')
 print(json.dumps(out)); sys.exit(status)

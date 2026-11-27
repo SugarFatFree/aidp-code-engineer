@@ -618,6 +618,26 @@ class ActionableDenialTests(HookBase):
         import aidp_config
         aidp_config._mark_branch_policy_read(str(self.root), aidp_config.branch_policy(str(self.root)))
 
+    def test_unattended_external_write_rechecks_formal_parent_identity(self):
+        import entry_context
+        parent = entry_context.resolve_context(self.root, 'sprint-batch', version='V1.0.0', write_set=['code'],
+            additional_grants=['deploy'], authorization_source={
+                'kind': 'user-text', 'request_id': 'parent-deploy', 'text': '授权批次部署'})
+        child = entry_context.fork_context(self.root, parent['execution_context'], '001')
+        entry_context.revise_context(self.root, parent['execution_context'], execution_budget={'retries': 3},
+            authorization_source={'kind': 'user-text', 'request_id': 'parent-change', 'text': '调整父预算'})
+        result = self.bash('docker cp ./a.txt web:/app/a.txt', env_extra={
+            'AIDP_TICK_COMMAND': 'sprint-autopilot', 'AIDP_EXECUTION_CONTEXT': child['execution_context']})
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertFalse((self.runtime / 'external-side-effects.jsonl').exists())
+
+    def test_external_write_is_denied_if_authorization_receipt_cannot_be_saved(self):
+        self.deploy_ready()
+        (self.runtime / 'external-side-effects.jsonl').mkdir()
+        result = self.bash('docker cp ./a.txt web:/app/a.txt', env_extra={'AIDP_TICK_COMMAND': 'sprint-autopilot'})
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn('留痕', result.stderr)
+
     def test_unattended_docker_write_is_decided_deterministically_not_asked(self):
         """P1-2：无人值守 tick 里没人能答 ask——无 deploy 授权明确拒绝并说明，有则放行并留痕；各 Agent 行为一致。"""
         command = 'docker cp ./a.txt web:/app/a.txt'

@@ -69,7 +69,7 @@ docs/
 | 路径 | 文件命名 |
 |------|---------|
 | `bugfix/{version}/` | `bugfix-{YYYYMMDD}-{user}.md`（一天一人一份汇总） |
-| `plans/{version}/` | `01_研发执行计划.md`（必需） + `plan-{user}.md`（可选） |
+| `plans/{version}/` | `00_索引.md` + `01_研发执行计划.md`；多用户使用 `01_研发执行计划-{开发者姓名}.md` 等连续编号文件，详见 `plans/README.md` |
 | `reports/{version}/` | 团队级用类型名（`delivery-report.md`），个人级带 user（`review-{user}.md`） |
 | `docs/deployment/{version}/sql/增量/` | `{NN}_<中文名>.sql`（中文命名+两位序号前缀，如 `01_用户表DDL.sql`，`99_回滚脚本.sql` 序号保留；⛔ `sql/` 根下不得直放 `.sql`；详见 [`init/06_版本与用户目录约定.md`](init/06_版本与用户目录约定.md) §2.5.4） |
 | `docs/deployment/{version}/sql/全量/` | `建表说明.md` + `{NN}_建表-<业务域>.sql` + `{NN}_初始化数据.sql`（全新部署基线，发布期产出，不含 ALTER；约定 37） |

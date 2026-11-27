@@ -51,12 +51,110 @@ RUFF_VALUE = {"--select", "--ignore", "--extend-select", "--extend-ignore", "--c
 JEST_VALUE = {"-t", "--testNamePattern", "-c", "--config", "--maxWorkers", "-w", "--reporters", "--coverageReporters",
               "--env", "--rootDir", "--testMatch", "--shard", "--outputFile", "--testPathIgnorePatterns",
               "--project", "--projects", "--root", "-r", "--reporter", "--testTimeout", "--pool", "--mode",
-              "--changed", "--coverageDirectory", "--setupFiles", "--cacheDirectory", "--testEnvironment"}
+              "--changed", "--coverageDirectory", "--setupFiles", "--cacheDirectory", "--testEnvironment",
+              "--minWorkers", "--maxConcurrency", "--poolOptions.threads.maxThreads", "--poolOptions.threads.minThreads",
+              "--poolOptions.forks.maxForks", "--poolOptions.forks.minForks"}
 GO_VALUE = {"-run", "-bench", "-count", "-timeout", "-tags", "-p", "-parallel", "-cpu", "-coverprofile", "-covermode",
             "-coverpkg", "-o", "-skip", "-shuffle", "-vet", "-mod", "-ldflags", "-gcflags", "-fuzz", "-fuzztime"}
 GENERIC_VALUE = {"-c", "--config", "-p", "-n", "--filter", "--project", "--test", "--package", "--exclude",
                  "-f", "--format", "-o", "--out", "--tag", "-t", "--testNamePattern", "--features"}
 FULL_RUN_PREFIX = "--allow-full"
+
+
+WORKER_OPTIONS = {
+    "pytest": {"-n", "--numprocesses", "--workers", "--maxprocesses"},
+    "jest": {"-w", "--maxWorkers", "--maxConcurrency"},
+    "vitest": {"--maxWorkers", "--minWorkers", "--maxConcurrency", "--poolOptions.threads.maxThreads",
+               "--poolOptions.threads.minThreads", "--poolOptions.forks.maxForks", "--poolOptions.forks.minForks"},
+    "mvn": {"-T", "--threads", "-DforkCount", "-DthreadCount", "-DthreadCountSuites",
+            "-DthreadCountClasses", "-DthreadCountMethods", "-DuseUnlimitedThreads", "-Dparallel"},
+}
+
+
+def _worker_values(args, kind):
+    values = {}
+    options = WORKER_OPTIONS.get(kind, set())
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            break
+        if kind == "mvn" and arg in ("-D", "--define"):
+            index += 1
+            arg = "-D" + (args[index] if index < len(args) else "")
+        elif kind == "mvn" and arg.startswith("--define="):
+            arg = "-D" + arg[len("--define="):]
+        name, sep, value = arg.partition("=")
+        if name in options:
+            if not sep:
+                index += 1
+                value = args[index] if index < len(args) else ""
+            values.setdefault(name, []).append(value)
+        else:
+            for short in ("-n", "-w", "-T"):
+                if short in options and arg.startswith(short) and len(arg) > len(short):
+                    values.setdefault(short, []).append(arg[len(short):])
+        index += 1
+    return values
+
+
+def _worker_error(args, kind, single=False):
+    values = _worker_values(args, kind)
+    for option, entries in values.items():
+        for value in entries:
+            if option == "-Dparallel":
+                if single and value != "none":
+                    return "外层并行要求 Maven -Dparallel=none"
+                continue
+            if option == "-DuseUnlimitedThreads":
+                if value.lower() != "false":
+                    return "不允许无限 worker：-DuseUnlimitedThreads 必须为 false"
+                continue
+            if not re.fullmatch(r"[0-9]+", value):
+                return f"worker 必须显式有限整数，拒绝 auto/unbounded/CPU倍数/百分比：{option}={value}"
+            if single and int(value) > (0 if kind == "pytest" or option == "-DforkCount" else 1):
+                return f"外层并行要求单 worker，参数冲突：{option}={value}"
+    return None
+
+
+def validate_parallel_command(argv):
+    """纯 argv 校验：外层一项只占一槽，已知 runner 须显式关闭其内部多 worker。
+
+    Python 脚本/unittest 由 runner.parallel.workers=1 声明；不推断任意脚本内部子进程。
+    不修改 argv，选择器和限制参数均进入已冻结范围摘要。
+    """
+    command = _strip_prefix(list(argv))
+    if not command:
+        raise ValueError("并行 runner 缺少命令")
+    name = Path(command[0]).name
+    args = command[1:]
+    if re.fullmatch(r"python[0-9.]*|pypy[0-9]*", name):
+        if "-m" not in args:
+            return
+        offset = args.index("-m")
+        name = args[offset + 1] if len(args) > offset + 1 else ""
+        args = args[offset + 2:]
+        if name == "unittest":
+            return
+    kind = "mvn" if name in ("mvn", "mvnw", "mvnd") else "pytest" if name == "py.test" else name
+    error = _worker_error(args, kind, single=True)
+    if error:
+        raise ValueError(error)
+    values = _worker_values(args, kind)
+    def equals(options, expected):
+        present = [value for option in options for value in values.get(option, [])]
+        return bool(present) and all(value == expected for value in present)
+    valid = (kind == "pytest" and equals(("-n", "--numprocesses"), "0")
+             or kind == "jest" and "--runInBand" in args
+             or kind == "vitest" and equals(("--maxWorkers",), "1") and equals(("--minWorkers",), "1")
+                and "--no-file-parallelism" in args and not any(a in ("--fileParallelism", "--fileParallelism=true",
+                    "--file-parallelism", "--file-parallelism=true") for a in args)
+             or kind == "mvn" and equals(("-T", "--threads"), "1") and equals(("-DforkCount",), "0")
+                and equals(("-Dparallel",), "none") and equals(("-DthreadCount",), "1"))
+    if not valid:
+        raise ValueError("外层并行要求显式单 worker 参数：pytest -n0；Jest --runInBand；"
+                         "Vitest --maxWorkers=1 --minWorkers=1 --no-file-parallelism；"
+                         "Maven -T1 -DforkCount=0 -Dparallel=none -DthreadCount=1；未知 runner 不启用并行")
 
 
 def _result(allowed, reason="", hint="", kind="none"):
@@ -278,6 +376,9 @@ def _no_args(kind, what="未指定任何测试文件"):
 
 
 def _pytest(args, ctx):
+    error = _worker_error(args, "pytest")
+    if error:
+        return _result(False, error, "显式限制 runner worker 后重试", "pytest")
     root, cwd, allow, allow_path = ctx
     pos, flags = _split_args(args, PYTEST_VALUE)
     if set(flags) & {"-h", "--help", "--version", "--fixtures", "--markers"}:
@@ -351,6 +452,9 @@ def _ruff(args, ctx):
 def _jest(tool, args, ctx):
     root, cwd, allow, allow_path = ctx
     kind = "vitest" if tool == "vitest" else "jest"
+    error = _worker_error(args, kind)
+    if error:
+        return _result(False, error, "显式限制 runner worker 后重试", kind)
     pos, flags = _split_args(args, JEST_VALUE)
     if set(flags) & {"-h", "--help", "--version", "--listTests"}:
         return _result(True, "", "", kind)
@@ -375,6 +479,9 @@ def _class_stems(allow):
 
 
 def _mvn(args, ctx):
+    error = _worker_error(args, "mvn")
+    if error:
+        return _result(False, error, "显式限制 runner worker 后重试", "mvn")
     root, cwd, allow, allow_path = ctx
     skip = any(re.match(r"-D(skipTests|maven\.test\.skip)(=true)?$", a) for a in args)
     phases = [a for a in args if not a.startswith("-") and a in _MVN_PHASES]
@@ -607,6 +714,8 @@ def evaluate(command, root=".", execution_context=None, allow_full=False):
     res = _evaluate_text(command_wo, (root, root, allow, allow_path))
     if res is None:
         return _result(True)
+    if "worker" in res["reason"] and not res["allowed"]:
+        return res
     if wants_full and not res["reason"].startswith("git stash"):
         # 声明 --allow-full 的测试命令一律核验真实授权；缺授权 fail closed
         ok, why = _full_authorized(root, ctx)

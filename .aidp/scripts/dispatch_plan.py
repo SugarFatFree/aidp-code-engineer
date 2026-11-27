@@ -8,43 +8,56 @@ from __future__ import annotations
 
 import argparse
 import json
-import posixpath
+from pathlib import Path
+import re
 import sys
+
+from entry_context import ContextError, _relative_path, load_context, identity_hash
+import execution_policy as policy
 
 MIN_READS = 3    # 单个子任务至少读这么多文件
 MIN_WRITES = 2   # 或至少改这么多文件
 
 PROMPT_TEMPLATE = """你是父任务派发的子 Agent，只完成下列子任务 {task_id}。
-- 父 execution_context：{execution_context}（原样沿用，不得新建任务身份）
-- 动作 action：{action}（只在该父授权动作内工作；不得传入/追加任何 grant，不得 revise 授权，不得再向下派发）
+- 父 execution_context：{execution_context}（只用于归属核对，不用于子任务执行）
+- 本子任务 execution_context：{child_context}；显式设置 AIDP_EXECUTION_CONTEXT 为此路径，所有静态/选测/测试命令均传此受限 context，保留分片文件。
+- 动作 action：{action}（只在该子 context 已授权动作内工作；不得传入/追加任何 grant，不得 revise 授权或写集，不得再向下派发）
 - 剩余 budget：{budget}（共享父预算，每个实际动作先按 light-context 围栏预留）
 - 本子任务写集（只允许修改这些文件，其余文件只读）：
 {writes}
 - 子任务说明：{summary}
-- 测试范围：只跑本写集对应的相关测试（select_related_tests.py --write-set 推导），不跑全量、不跑目录级测试；不自行汇总全局测试，主 Agent 完成后统一做一次相关测试。
-- 回传：改动文件清单、已做的静态检查结果、未解决问题；共享状态（ledger/activeContext/报告）由主流程串行写，不要改。"""
+- 验证顺序：先静态，再选测，再测试。只跑本写集对应的相关测试；选测用 light_task.py select --execution-context 子路径，测试用 run，均使用子目录中的 unit-scope.json/状态文件；缺少 related-test 授权时回报未执行，不补 grant。
+- 不跑全量或目录级测试；禁止写父 context 目录的 scope/状态/报告。主 Agent 在合并后独占最终总 scope、合并验证与汇总，保留子分片证据。
+- 回传：改动文件清单、静态结果、子 scope/运行证据路径、未解决问题；业务共享状态（ledger/activeContext/总报告）由主流程串行写。"""
 
 
 class InputError(Exception):
     pass
 
 
-def _norm(path):
-    p = str(path).strip().replace("\\", "/")
-    if not p:
-        raise InputError("写集含空路径")
-    return posixpath.normpath(p)
+def _norm(path, root):
+    if not isinstance(path, str) or not path.strip():
+        raise InputError('写集必须是非空路径文本')
+    p = path.strip()
+    marker = '/**' if p.endswith('/**') else '/' if p.endswith('/') else ''
+    base = p[:-3] if marker == '/**' else p
+    if any(char in base for char in ('\\', '*', '?', '[', ']', '\x00', '\n', '\r')) or re.match(r'^[A-Za-z]:', base):
+        raise InputError('写集必须是安全的项目相对路径；只支持目录尾部 /** 标记')
+    try:
+        normalized = _relative_path(root, base)
+    except ContextError as exc:
+        raise InputError(str(exc)) from exc
+    return normalized + marker
+
+
+def _base(path):
+    return path[:-3] if path.endswith('/**') else path.rstrip('/')
 
 
 def _overlap(a, b):
-    """相同文件，或一方是另一方的目录前缀（以 / 或 /** 结尾的写集项）。"""
-    if a == b:
-        return True
-    for x, y in ((a, b), (b, a)):
-        base = x[:-3] if x.endswith("/**") else x[:-1] if x.endswith("/") else None
-        if base is not None and (y == base or y.startswith(base.rstrip("/") + "/")):
-            return True
-    return False
+    """保守按组件前缀比较普通目录及显式目录，不依赖文件是否已创建。"""
+    a, b = _base(a), _base(b)
+    return a == b or a.startswith(b + '/') or b.startswith(a + '/')
 
 
 def _count(value, label, default):
@@ -57,6 +70,9 @@ def _count(value, label, default):
 
 def parse_tasks(args):
     tasks = {}
+    root = Path(args.root).resolve()
+    if not root.is_dir():
+        raise InputError('root 必须是现存目录')
     if args.tasks_json:
         raw = args.tasks_json
         if raw.startswith("@"):
@@ -81,7 +97,7 @@ def parse_tasks(args):
                 raise InputError(f"任务 {tid} 的 writes 须为非空数组")
             if tid in tasks:
                 raise InputError(f"任务 id 重复: {tid}")
-            tasks[tid] = {"writes": [_norm(w) for w in writes], "reads": item.get("reads"),
+            tasks[tid] = {"writes": [_norm(w, root) for w in writes], "reads": item.get("reads"),
                           "summary": str(item.get("summary", ""))}
     for spec in args.task or []:
         tid, sep, files = spec.partition("=")
@@ -91,7 +107,7 @@ def parse_tasks(args):
             raise InputError(f"--task 须为 ID=file1,file2: {spec!r}")
         if tid in tasks:
             raise InputError(f"任务 id 重复: {tid}")
-        tasks[tid] = {"writes": [_norm(f) for f in paths], "reads": None, "summary": ""}
+        tasks[tid] = {"writes": [_norm(f, root) for f in paths], "reads": None, "summary": ""}
     for spec in args.reads or []:
         tid, sep, num = spec.partition("=")
         if tid not in tasks or not sep or not num.strip().isdigit():
@@ -155,18 +171,43 @@ def plan(tasks):
 def emit_prompts(result, tasks, args):
     if not args.execution_context or not args.action or not args.budget:
         raise InputError("--emit-prompts 须同时给 --execution-context、--action、--budget")
+    children = {}
+    for spec in args.child_context or []:
+        tid, sep, path = spec.partition('=')
+        if not sep or not path or tid not in tasks or tid in children:
+            raise InputError('--child-context 须为唯一已声明任务的 ID=PATH')
+        children[tid] = path
+    group = result['parallel_groups'][0] if result['parallel_groups'] else []
+    if set(children) != set(group):
+        raise InputError('--emit-prompts 必须为每个并行任务提供且仅提供一个 --child-context ID=PATH')
+    if not group:
+        return []
+    root = Path(args.root).resolve()
+    parent = load_context(root, args.execution_context, migrate=False)
+    if parent['mode'] != 'light' or 'parent_task_id' in parent:
+        raise InputError('light 派发必须来自父 light 根 context')
+    policy.require_delegable(parent, args.action)
     out = []
-    for tid in (result["parallel_groups"][0] if result["parallel_groups"] else []):
+    for tid in group:
         t = tasks[tid]
-        out.append({"task_id": tid, "prompt": PROMPT_TEMPLATE.format(
-            task_id=tid, execution_context=args.execution_context, action=args.action,
-            budget=args.budget, writes="\n".join(f"  - {w}" for w in t["writes"]),
-            summary=t["summary"] or "按父任务说明完成该写集内的改动")})
+        child = load_context(root, children[tid], migrate=False)
+        if (child.get('parent_task_id') != parent['task_id']
+                or child.get('parent_identity_hash') != identity_hash(parent)
+                or child.get('child_key') != tid or child['status'] != 'active'
+                or child['write_set'] != sorted({_base(path) for path in t['writes']})):
+            raise InputError('子 context 与父身份、任务标识或声明写集不一致：' + tid)
+        policy.require_action(child, args.action)
+        out.append({'task_id': tid, 'execution_context': children[tid], 'prompt': PROMPT_TEMPLATE.format(
+            task_id=tid, execution_context=args.execution_context, child_context=children[tid], action=args.action,
+            budget=args.budget, writes='\n'.join(f'  - {w}' for w in t['writes']),
+            summary=t['summary'] or '按父任务说明完成该写集内的改动')})
     return out
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--root', default='.', help='项目根，用于校验写集路径与子 context')
+    ap.add_argument('--child-context', action='append', metavar='ID=PATH', help='主流程预先 fork 的受限子 context')
     ap.add_argument("--tasks-json", help='JSON 数组 [{"id","writes":[...],"reads":N,"summary"}] 或 @文件')
     ap.add_argument("--task", action="append", metavar="ID=f1,f2", help="子任务写集，可重复")
     ap.add_argument("--reads", action="append", metavar="ID=N", help="该子任务需读文件数，可重复")
@@ -181,7 +222,7 @@ def main(argv=None):
         result = plan(tasks)
         if args.emit_prompts:
             result["prompts"] = emit_prompts(result, tasks, args)
-    except InputError as exc:
+    except (InputError, ContextError, policy.PolicyError, OSError) as exc:
         print(f"dispatch_plan: 输入错误: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))

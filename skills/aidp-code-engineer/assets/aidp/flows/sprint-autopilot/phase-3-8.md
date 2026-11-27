@@ -8,14 +8,14 @@
 
 1. 启动 `version-auditor` Agent（独立子 Agent，审计八项 A–H）—— **强制仪式**：由 Phase 3.4 完成核验门的外部脚本 `autopilot-ceremony-gate.py` 校验，**任何入口模式（含交互式 / test-only）都不得跳过**（`--skip-audit` 仅 `/version` 内部开关，**不豁免**本终审）
 
-   > ⛔ **产物文件名必须带 build，不得与 `/version` 内部审计同名（否则本终审可被上游遗留文件"静默满足"）**：`/version` Step 2.4.7 内部跑的 version-auditor 写的是 `docs/audit/{V}/version-output-audit-YYYY-MM-DD.md`；若 autopilot 终审也落同一命名空间，收尾门只要 glob 到**任意**一份 `version-output-audit*.md` 就判通过——**本终审压根没跑也能过**（尤其 `PLANNING_DONE=1` 跳过规划、上游文件早已存在时）。
+   > **产物文件名必须带 build**：`/version` Step 2.4.7 的日期审计文件不能满足本终审；即使 `PLANNING_DONE=1`，也不得用旧报告冒充本 build 已审计。
    > 故 autopilot 终审**固定写独立文件**：
    > ```
    > docs/audit/{V}/version-output-audit-{BUILD}.md      # 如 docs/audit/V0.2.0/version-output-audit-V0.2.0_build1001.md
    > ```
-   > 委派 `version-auditor` 子 Agent 时**显式传入 `trigger=autopilot`、`build={BUILD}`、`output_path=docs/audit/{V}/version-output-audit-{BUILD}.md`**，并在报告头注明「autopilot Phase 3.3 终审 · build={BUILD}」。这三个字段已纳入 Agent 交互协议；Agent 不得自行回退到日期文件名。
+   > 派发前从持久 baseline 读取 `versions.{V}.req_scale.tier`（`python3 {{AIDP_HOME}}/scripts/baseline_edit.py --version "${TARGET_VERSION:?}" get req_scale.tier --default ""`），只接受 S/M/L；不得按本轮改动量重判或默认为 L。委派 `version-auditor` 子 Agent 时**显式传入 `trigger=autopilot`、`scale=<读回的档位>`、`build={BUILD}`、`output_path=docs/audit/{V}/version-output-audit-{BUILD}.md`**，并在报告头注明「autopilot Phase 3.3 终审 · build={BUILD}」。缺档位按角色「缺参处置」标未核验并返回阻塞，走下方失败处置（沿用 `--reason audit-critical`，`--why` 明确写「missing-scale：终审缺少 req_scale.tier，未核验」），不询问、不进 3.4、不写本片成功出口。Agent 不得自行回退到日期文件名。
    > 📌 **gate 侧按 build 校验**：`autopilot-ceremony-gate.py` 对本项只认 `version-output-audit-{BUILD}.md`（经 `--build` 传入），同版本其他 build 的终审文件不算数。
-2. 任一审计 Critical → 走「失败处置」流程（⛔ 散文不算处置，必须**可执行地**跑）：
+2. 任一审计 Critical 或输入事实未核验（`overall=block`）→ 走「失败处置」流程（⛔ 散文不算处置，必须**可执行地**跑）：
 
   ```bash
   eval "$(python3 {{AIDP_HOME}}/scripts/autopilot_tick_flags.py --command autopilot --shell)"

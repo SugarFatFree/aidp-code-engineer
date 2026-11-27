@@ -165,14 +165,19 @@ class BuildUnitTests(unittest.TestCase):
         context = self.delegate(plan)
         done = subprocess.run([sys.executable, '-c', body, context, self.version, plan['build']],
                               cwd=self.root, capture_output=True, text=True)
-        return done.returncode, done.stdout.split(), done.stdout + done.stderr
+        import shlex
+        assignments = dict(item.split('=', 1) for item in shlex.split(done.stdout)) if done.returncode == 0 else {}
+        selected = (assignments.get('PRIMARY_CASES', '') + ' ' + assignments.get('SUPPLEMENT_UNIQUE', '')).split()
+        return done.returncode, selected, done.stdout + done.stderr
 
     def test_version_case_fence_uses_frozen_manifest_only(self):
         plan = self.freeze()
         formal = self.root / 'docs/testing' / self.version / '正式用例'
         code, selected, output = self.version_case_fence(plan)
         self.assertEqual(code, 0, output)
-        self.assertEqual(selected, ['docs/testing/%s/正式用例/03_cases.md' % self.version])
+        self.assertEqual(len(selected), 1)
+        self.assertIn('/browser-cases/', selected[0])
+        self.assertEqual((self.root / selected[0]).read_bytes(), (formal / '03_cases.md').read_bytes())
         # 下划线开头的增量册即使含清单内 ID 也不是用例。
         (formal / '_开发期用例增量.md').write_text('#### 用例 TC-ONE: 增量线索\n')
         code, selected, output = self.version_case_fence(plan)
@@ -193,7 +198,7 @@ class BuildUnitTests(unittest.TestCase):
         code, selected, output = self.version_case_fence(plan)
         self.assertNotEqual(code, 0, output)
         # 册内含清单外 ID 时，基线与完整正式清单不一致，先由 validate_case_index 具体拒绝。
-        self.assertIn('不一致', output)
+        self.assertRegex(output, '不一致|重复')
         self.assertIn('BuildError', output)
         self.assertFalse(selected)
 
@@ -775,6 +780,255 @@ class FreezeTests(unittest.TestCase):
         # 同 build 重复冻结幂等。
         self.assertEqual(self.freeze()["manifest"], result["manifest"])
 
+    def ai_cases(self, ids=("TC-AI",)):
+        base = f"docs/testing/{self.version}/研发自测/"
+        self.write(base + "00_索引.md", "# 索引\n" + "\n".join(ids))
+        self.write(base + "02_cases.md", "".join(f"#### 用例 {i}: AI assertion\n期望：真实结果\n" for i in ids))
+
+    def recommit(self):
+        self.git("add", "-A")
+        self.git("commit", "-qm", "updated cases")
+        self.commit = self.git("rev-parse", "HEAD")
+
+    def test_ai_only_baseline_requires_current_autopilot_test_authorization(self):
+        self.ai_cases()
+        self.commit_repo(self.mixed_plan(case_tests={}, browser_only=[]), cases=())
+        denied = self.freeze()
+        self.assertEqual(denied["reason"], "ai-baseline-unauthorized", denied)
+        frozen = self.freeze(execution_context=self.parent_context())
+        self.assertEqual(frozen["status"], "FROZEN", frozen)
+        manifest = json.loads(Path(frozen["manifest"]).read_text())
+        self.assertEqual(manifest["case_sources"]["mode"], "ai-development-baseline")
+        self.assertEqual(build_unit.validate_case_index(self.root, manifest), ["TC-AI"])
+        self.baseline()
+        context = self.delegate(frozen["manifest"])
+        result = build_unit.run_build(self.root, self.version, self.build, self.commit, frozen["manifest"], execution_context=context)
+        self.assertEqual(result["status"], "PASS", result)
+        self.assertEqual(result["testScope"]["case_sources"]["mode"], "ai-development-baseline")
+
+    def test_human_primary_ai_supplement_deduplicates_and_binds_content(self):
+        self.ai_cases(("TC-ONE", "TC-AI"))
+        self.commit_repo(self.mixed_plan())
+        frozen = self.freeze()
+        self.assertEqual(frozen["status"], "FROZEN", frozen)
+        manifest = json.loads(Path(frozen["manifest"]).read_text())
+        acceptance = json.loads(Path(frozen["acceptance"]).read_text())
+        self.assertEqual([c["id"] for c in acceptance["cases"]], ["TC-AI", "TC-ONE", "TC-TWO"])
+        self.assertEqual(acceptance["case_sources"]["primary"], "human-formal")
+        books = acceptance["case_books"]
+        self.assertEqual(next(b["case_ids"] for b in books if b["source"] == "ai-development"), ["TC-AI"])
+        selected = build_unit.browser_case_selection(self.root, manifest)
+        self.assertEqual(len(selected["primary"]), 1)
+        self.assertEqual(len(selected["supplement"]), 1)
+        supplement = (self.root / selected["supplement"][0]).read_text()
+        self.assertIn("TC-AI", supplement)
+        self.assertNotIn("TC-ONE", supplement)
+        book = self.root / books[0]["path"]
+        book.write_text(book.read_text() + "\n相同 TC-ID，断言被替换\n")
+        with self.assertRaisesRegex(build_unit.BuildError, "正文|SHA256"):
+            build_unit.browser_case_selection(self.root, manifest)
+
+    def test_no_valid_cases_stays_unverified_even_with_autopilot(self):
+        self.commit_repo(self.mixed_plan(case_tests={}, browser_only=[]), cases=())
+        result = self.freeze(execution_context=self.parent_context())
+        self.assertEqual((result["status"], result["reason"]), ("UNVERIFIED", "cases-missing"))
+
+    def test_ai_fallback_does_not_expand_skip_test_or_other_version_authorization(self):
+        from entry_context import resolve_autopilot_root
+        self.ai_cases()
+        self.commit_repo(self.mixed_plan(case_tests={}, browser_only=[]), cases=())
+        for version, options in ((self.version, ["--skip-aiauto-test"]), ("V9", [])):
+            context = resolve_autopilot_root(self.root, version, authorization_source={
+                "kind": "explicit-command", "command": "sprint-autopilot", "request_id": version,
+                "options": options})["execution_context"]
+            self.assertEqual(self.freeze(execution_context=context)["reason"], "ai-baseline-unauthorized")
+
+    def test_plan_init_uses_version_index_and_actual_module_runners(self):
+        paths = ["code/backend/server/src/test/java/demo/CurrentTest.java", "code/frontend/web/src/current.spec.ts"]
+        for path in paths:
+            self.write(path, "// current version test\n")
+        self.write("code/backend/server/pom.xml", "<project/>\n")
+        self.write("code/frontend/web/package.json", json.dumps({"devDependencies": {"vitest": "1.0.0"}}))
+        self.write("other/tests/test_history.py", PASS_TEST)
+        self.write(f"docs/testing/{self.version}/研发自测/00_索引.md", "\n".join(f"`{p}`" for p in paths))
+        result = build_unit.plan_init(self.root, self.version)
+        draft = json.loads((self.root / result["path"]).read_text())
+        self.assertEqual(draft["unit_tests"], paths)
+        self.assertFalse(result["needs_review"], result)
+        self.assertEqual([s["cwd"] for s in draft["suites"]], ["code/backend/server", "code/frontend/web"])
+        self.assertNotIn("other/tests/test_history.py", draft["unit_tests"])
+
+    def test_plan_init_without_version_evidence_never_selects_all_tests(self):
+        self.write("tests/test_history.py", PASS_TEST)
+        self.write("package.json", '{"description":"vitest is mentioned but not installed"}')
+        result = build_unit.plan_init(self.root, self.version)
+        draft = json.loads((self.root / result["path"]).read_text())
+        self.assertEqual(draft["unit_tests"], [])
+        self.assertTrue(result["needs_review"])
+        self.assertEqual(draft["unit_discovery"]["status"], "unknown")
+
+    def test_actual_upstream_selftest_template_is_consumed_and_human_index_stays_owned(self):
+        template = SCRIPT.parent.parent / "skills/dev-manual-testcase/assets/full-testcase-template.md"
+        content = template.read_text(encoding="utf-8")
+        ids = {m[1] for m in build_unit.case_parser().CASE_RE.finditer(content)}
+        self.assertIn("TC-LOGIN-001", ids)
+        base = f"docs/testing/{self.version}/研发自测/"
+        self.write(base + "00_索引.md", "| 文件 | 说明 |\n|---|---|\n| [主用例](./02_全量自测用例.md) | 主集 |\n")
+        self.write(base + "02_全量自测用例.md", content)
+        self.write(base + "01_研发自测方案.md", "方案非用例\n")
+        self.write(base + "01_测试环境与账号.md", "环境非用例\n")
+        self.write(base + "02_自测用例-总览.md", "#### 用例 TC-OVERVIEW: 导航非用例\n")
+        self.commit_repo(self.mixed_plan(case_tests={}, browser_only=[]), cases=("TC-LOGIN-001",))
+        human = self.root / f"docs/testing/{self.version}/正式用例/00_索引.md"
+        original = human.read_bytes()
+        frozen = self.freeze()
+        manifest = json.loads(Path(frozen["manifest"]).read_text())
+        self.assertEqual(set(build_unit.validate_case_index(self.root, manifest)), ids)
+        selected = build_unit.browser_case_selection(self.root, manifest)
+        actual = {m[1] for p in selected["supplement"]
+                  for m in build_unit.case_parser().CASE_RE.finditer((self.root / p).read_text())}
+        self.assertEqual(actual, ids - {"TC-LOGIN-001"})
+        self.assertEqual(human.read_bytes(), original)
+        self.assertEqual(manifest["case_sources"]["counts"], {"human-formal": 1, "ai-development": 4})
+        snapshot = self.root / selected["supplement"][0]
+        target = re.search(r"\[`01_研发自测方案.md`\]\(([^)]+)\)", snapshot.read_text())[1]
+        self.assertEqual((snapshot.parent / target).resolve(), (self.root / base / '01_研发自测方案.md').resolve())
+        snapshot.write_text(snapshot.read_text() + '\n篡改已冻结快照\n')
+        with self.assertRaisesRegex(build_unit.BuildError, '快照已改变'):
+            build_unit.browser_case_selection(self.root, manifest)
+
+    def test_real_delegation_and_browser_fences_consume_ai_baseline(self):
+        import shlex
+        self.ai_cases()
+        self.commit_repo(self.mixed_plan(case_tests={}, browser_only=[]), cases=())
+        self.baseline()
+        done = self.delegation_fence(self.parent_context())
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        ctx = json.loads(Path(build_unit.baseline(self.root)).read_text())["aiauto"]["execution_context"]
+        text = (SCRIPT.parent.parent / "flows/sprint-aiauto-test/phase-2-1.md").read_text()
+        body = re.search(r"<<'VERSION_CASES'\n(.*?)\nVERSION_CASES", text, re.S)[1]
+        body = body.replace("{{AIDP_HOME}}", str(SCRIPT.parent.parent))
+        run = subprocess.run([sys.executable, "-c", body, ctx, self.version, self.build], cwd=self.root,
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        selected = dict(v.split("=", 1) for v in shlex.split(run.stdout))
+        self.assertEqual(selected["CASE_SOURCE_MODE"], "ai-development-baseline")
+        self.assertIn("TC-AI", (self.root / selected["PRIMARY_CASES"]).read_text())
+        self.assertEqual(selected["SUPPLEMENT_UNIQUE"], "")
+        source = self.root / f"docs/testing/{self.version}/研发自测/02_cases.md"
+        source.write_text(source.read_text().replace("真实结果", "偷换断言"))
+        run = subprocess.run([sys.executable, "-c", body, ctx, self.version, self.build], cwd=self.root,
+                             capture_output=True, text=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("正文", run.stderr)
+        self.assertFalse(run.stdout)
+
+    def test_broad_authorized_directory_only_selects_actual_changed_tests(self):
+        from entry_context import resolve_context
+        for name in ("current", "historical"):
+            self.write(f"code/tests/test_{name}.py", PASS_TEST)
+        self.commit_repo()
+        context = resolve_context(self.root, "sprint-dev", version=self.version, write_set=["code"])["execution_context"]
+        self.write("code/tests/test_current.py", PASS_TEST + "\n# changed for current version\n")
+        result = build_unit.plan_init(self.root, self.version, execution_context=context)
+        draft = json.loads((self.root / result["path"]).read_text())
+        self.assertEqual(draft["unit_tests"], ["code/tests/test_current.py"])
+        with self.assertRaisesRegex(build_unit.BuildError, "依据|扩权"):
+            build_unit.plan_init(self.root, self.version, force=True, execution_context=context,
+                                 test_files=["code/tests/test_historical.py"])
+
+    def test_actual_plan_init_caller_uses_version_root_changes_only(self):
+        self.write("tests/test_historical.py", PASS_TEST)
+        self.commit_repo()
+        context = self.parent_context()
+        self.write("tests/test_current.py", PASS_TEST)
+        text = (SCRIPT.parent.parent / "flows/sprint-autopilot/phase-3-5b.md").read_text()
+        text = text.replace("\\\n", " ")
+        command = next(line.strip() for line in text.splitlines() if "build_unit_test.py plan-init --root" in line)
+        self.assertIn('--execution-context "$EXECUTION_CONTEXT"', command)
+        for rule in ('needs_review/review_notes', '--force', '已审核手工计划仅定点修订', 'UNVERIFIED', '不部署'):
+            self.assertIn(rule, text)
+        supplement = (SCRIPT.parent / 'README.md').read_text()
+        for rule in ('计划补全（部署前）', '未修改但受影响的测试', '`EXISTS`', '不代表计划完成'):
+            self.assertIn(rule, supplement)
+        command = command.replace("{{AIDP_HOME}}", str(SCRIPT.parent.parent))
+        result = subprocess.run(["bash", "-c", command], cwd=self.root, capture_output=True, text=True,
+                                env=dict(os.environ, EXECUTION_CONTEXT=context, TARGET_VERSION=self.version))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        draft = json.loads((self.root / self.SOURCE).read_text())
+        self.assertEqual(draft["unit_tests"], ["tests/test_current.py"])
+        self.assertNotIn("needs_review", draft)
+
+    def test_source_change_requires_traceable_unchanged_test_mapping_before_freeze(self):
+        from entry_context import resolve_context
+        self.write("code/service.py", "VALUE = 1\n")
+        self.write("code/tests/test_service.py", PASS_TEST)
+        self.write("code/tests/test_history.py", PASS_TEST)
+        self.commit_repo()
+        context = resolve_context(self.root, "sprint-dev", version=self.version, write_set=["code"])["execution_context"]
+        self.write("code/service.py", "VALUE = 2\n")
+        self.write("code/tests/test_new.py", PASS_TEST)
+        pending = build_unit.plan_init(self.root, self.version, execution_context=context)
+        self.assertTrue(pending["needs_review"])
+        self.assertIn("未改动测试", " ".join(pending["review_notes"]))
+        # 原开发 Agent 按依赖证据补本版研发索引；既有测试无需伪造一次代码改动。
+        self.index_tests(["code/tests/test_service.py"])
+        completed = build_unit.plan_init(self.root, self.version, force=True, execution_context=context)
+        draft = json.loads((self.root / completed["path"]).read_text())
+        self.assertFalse(completed["needs_review"], completed)
+        self.assertEqual(draft["unit_tests"], ["code/tests/test_new.py", "code/tests/test_service.py"])
+        self.assertNotIn("code/tests/test_history.py", draft["unit_tests"])
+
+    def test_version_root_before_first_commit_can_select_new_test_only(self):
+        self.write("test_preexisting.py", PASS_TEST)
+        context = self.parent_context()
+        self.write("tests/test_new.py", PASS_TEST)
+        result = build_unit.plan_init(self.root, self.version, execution_context=context)
+        draft = json.loads((self.root / result["path"]).read_text())
+        self.assertEqual(draft["unit_tests"], ["tests/test_new.py"])
+
+    def test_forged_book_hash_cannot_replace_deployment_commit_content(self):
+        self.commit_repo(self.mixed_plan())
+        frozen = self.freeze()
+        manifest = json.loads(Path(frozen["manifest"]).read_text())
+        path = Path(frozen["acceptance"])
+        acceptance = json.loads(path.read_text())
+        acceptance["case_books"][0]["sha256"] = "0" * 64
+        path.write_text(json.dumps(acceptance))
+        manifest["acceptance_baseline"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(build_unit.BuildError, "部署 commit"):
+            build_unit.validate_case_index(self.root, manifest)
+
+    def test_unknown_python_runner_and_nested_gradle_do_not_inherit_guesses(self):
+        paths = ["tests/test_opaque.py", "code/gradle/src/test/java/SampleTest.java"]
+        self.write(paths[0], "print('custom harness required')\n")
+        self.write(paths[1], "// gradle test\n")
+        self.write("pom.xml", "<project/>\n")
+        self.write("code/gradle/build.gradle", "plugins {}\n")
+        self.index_tests(paths)
+        result = build_unit.plan_init(self.root, self.version)
+        self.assertTrue(result["needs_review"])
+        self.assertEqual(result["unit_tests"], 0)
+
+    def test_same_python_module_uses_one_runner_for_pytest_and_unittest(self):
+        paths = ["tests/test_plain.py", "tests/test_pytest.py"]
+        self.write(paths[0], PASS_TEST)
+        self.write(paths[1], "import pytest\ndef test_ok(): assert 1 == 1\n")
+        self.index_tests(paths)
+        result = build_unit.plan_init(self.root, self.version)
+        draft = json.loads((self.root / result["path"]).read_text())
+        self.assertFalse(result["needs_review"])
+        self.assertEqual(len(draft["suites"]), 1)
+        self.assertEqual(draft["suites"][0]["runners"][0]["argv"][2], "pytest")
+
+    def test_package_mentions_are_not_runner_configuration(self):
+        self.write("web/test.spec.ts", "test('x', () => {})")
+        self.write("web/package.json", '{"description":"vitest or jest"}')
+        self.index_tests(["web/test.spec.ts"])
+        result = build_unit.plan_init(self.root, self.version)
+        self.assertTrue(result["needs_review"])
+        self.assertEqual(result["unit_tests"], 0)
+
     def test_cli_freeze_prints_manifest_and_summary(self):
         self.commit_repo(self.mixed_plan())
         done = subprocess.run([sys.executable, str(SCRIPT), "freeze", "--root", str(self.root), "--version", self.version,
@@ -895,10 +1149,14 @@ class FreezeTests(unittest.TestCase):
         self.assertEqual(result["status"], "UNVERIFIED")
         self.assertTrue(any("不在 unit_tests" in gap for gap in result["summary"]["gaps"]))
 
+    def index_tests(self, paths):
+        self.write(f"docs/testing/{self.version}/研发自测/00_索引.md", "\n".join(f"`{p}`" for p in paths))
+
     def test_plan_init_writes_draft_once_and_force_overwrites(self):
         self.write("test_sample.py", PASS_TEST)
         self.write("tests/test_other.py", PASS_TEST)
         self.write("web/a.spec.ts", "test('a', () => {})\n")  # 无 jest/vitest 配置：不识别
+        self.index_tests(["test_sample.py", "tests/test_other.py", "web/a.spec.ts"])
         self.git("add", "-A")
         first = build_unit.plan_init(self.root, self.version)
         self.assertEqual((first["status"], first["unit_tests"]), ("CREATED", 2))
@@ -915,6 +1173,7 @@ class FreezeTests(unittest.TestCase):
         self.assertEqual(build_unit.plan_init(self.root, self.version, force=True)["status"], "CREATED")
 
     def test_plan_init_clean_draft_freezes_without_edit(self):
+        self.index_tests(["test_sample.py"])
         self.write("test_sample.py", PASS_TEST)
         self.git("add", "-A")
         init = build_unit.plan_init(self.root, self.version)
@@ -922,20 +1181,19 @@ class FreezeTests(unittest.TestCase):
         self.commit_repo()  # 提交测试/用例册与草稿
         self.assertEqual(self.freeze()["status"], "FROZEN")
 
-    def test_plan_init_without_any_tests_writes_machine_evidence_and_freezes_not_applicable(self):
+    def test_plan_init_no_version_candidates_is_unknown_not_not_applicable(self):
         self.write("README.md", "x\n")
         self.git("add", "-A")
         init = build_unit.plan_init(self.root, self.version)
         draft = json.loads((self.root / init["path"]).read_text())
         self.assertEqual(draft["unit_tests"], [])
-        self.assertNotIn("needs_review", draft)
-        self.assertEqual((draft["unit_discovery"]["status"], draft["unit_discovery"]["files"]), ("none-found", 0))
-        self.assertTrue(draft["unit_discovery"]["checked"])
+        self.assertTrue(draft["needs_review"])
+        self.assertEqual(draft["unit_discovery"]["status"], "unknown")
         self.commit_repo()
-        frozen = self.freeze()
-        self.assertEqual((frozen["status"], frozen["reason"]), ("FROZEN", "unit-not-applicable"), frozen)
+        self.assertEqual(self.freeze()["reason"], "test-plan-needs-review")
 
     def test_plan_init_tests_found_but_no_runner_needs_review_and_freeze_refuses(self):
+        self.index_tests(["web/a.spec.ts"])
         self.write("web/a.spec.ts", "test('a', () => {})\n")  # 有测试文件，但无 jest/vitest 配置
         self.git("add", "-A")
         init = build_unit.plan_init(self.root, self.version)
